@@ -96,13 +96,13 @@ script's `by_directory` keys). The error has two signs:
 
 - **Under, by 872.** This is almost all three files whose case lists
   are computed by running code:
-  - `l5250_matching/test_phase1_case_matrix.py`: 819 real, 11
-    estimated. Its cases are `_case_matrix_module().MATRIX
-    .enumerate_all()`, a method on an object built at import time.
-  - `l7000_versioned/test_speculative_publication_scenarios.py`: 66
+  - the matching package's case-matrix test: 819 real, 11
+    estimated. Its cases come from a method on an object
+    built at import time.
+  - a versioned package's publication-scenario test: 66
     real, 13 estimated. Its cases are `_build_scenarios()`, nested
     `for` loops that `append`, then `extend`.
-  - `l2060_query/test_predicate_provenance_behavior.py` (head only):
+  - the query package's predicate-provenance test (head only):
     73 real, 5 estimated. Its cases come from discovering the
     library's public functions by introspection.
 - **Over, by 33.** These are the level-5 upper bounds. Several
@@ -287,13 +287,13 @@ already produces.
    optional, for the drop rule. Use a pinned pattern gate until the
    TOML reader lands.
 4. Optional: lengths for `append` inside loops of known length. That
-   closes `test_speculative_publication_scenarios.py`. The case-matrix
+   closes the publication-scenario test. The case-matrix
    object (819 tests) stays out of reach without evaluation, and should
    be reported as `collect_open` with its file.
 
 ## Sources
 
-- The rule: `gate/data-layer/packs/data-layer/candidates/rr/test-budget.rr`
+- The rule: `packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rr/test-budget.rr`
 - The original check: `scripts/check_test_budget.py` in the corpus
   (sharded `pytest --collect-only -q`, `by_directory` keyed by
   `conform/<dir>/`)
@@ -301,7 +301,7 @@ already produces.
   `docs/rule-syntax/lib/core.rr`. Aggregates: `logic/rr/lower.rs`
   (`AggOp`)
 - The spike's files, copied from its session's scratchpad on
-  2026-11-08 into `notes/t13/`: `collect_est.py` (the model, a dev
+  2026-11-08 into `notes/t13/` (removed; at 7efcac9c67): `collect_est.py` (the model, a dev
   tool), `pytest-collect.draft.rr` (the rules, not compiled),
   `truth-full.json` / `truth-head.json` (real collection per file),
   `est-full-6.json` / `est-head-6.json` (level 6, with `unresolved`)

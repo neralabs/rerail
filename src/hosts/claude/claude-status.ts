@@ -1,23 +1,33 @@
-import { spawn } from "node:child_process";
-import { realpathSync } from "node:fs";
-import { isAbsolute, resolve } from "node:path";
+import type { ChildProcessByStdio } from "node:child_process";
+import { existsSync, realpathSync } from "node:fs";
+import { isAbsolute, join, resolve } from "node:path";
 import type { Readable, Writable } from "node:stream";
-import { fileURLToPath } from "node:url";
+import { setTimeout as sleep } from "node:timers/promises";
+import { fileURLToPath, pathToFileURL } from "node:url";
 import { z } from "zod";
+import { endProcessTree, spawn } from "../../engine/child-process.js";
+import { gitBash } from "../../engine/git.js";
+import { fromCurrentDrive, isFullyQualifiedWindowsPath } from "../../engine/system-programs.js";
+import { processState } from "../../engine/process-liveness.js";
 import { readClaudeStatusCommand, type ClaudeStatusLine } from "../../setup/claude-status-store.js";
-import { fallbackPresentation, formatTerminalStatus, readPresentation } from "../../presentation/session-presentation.js";
+import { fallbackPresentation, formatTerminalStatus, readPresentation, type SessionPresentation } from "../../presentation/session-presentation.js";
 import type { RepositoryStartState } from "../../engine/catalog/repository-model.js";
-import { REQUIRED_NODE_MAJOR } from "../../engine/package-root.js";
+import { ENTRY_POINTS, PACKAGE_ROOT, REQUIRED_NODE_MAJOR } from "../../engine/package-root.js";
+import type * as StartStateReader from "../../runtime/start-state-reader.js";
 
 /**
  * The checkout's start state from the database, read-only: the status line refreshes often and must never
  * take the write lock, so where only a writable open could read the database (no schema yet) it cannot say
  * (undefined, "not running").
- * Loaded only when no daemon answers: the reader links Drizzle and SQLite, about 170 ms per status-line run.
+ * Loaded only when no daemon answers, as one does not while it is busy: the reader links Drizzle and SQLite. It is the
+ * bundled `start-state-reader.js`, so the run resolves no Drizzle module at run time (285 MB when it did).
  */
 async function localStartState(root: string): Promise<RepositoryStartState | undefined> {
-  // Static import cannot work here: it would load Drizzle and SQLite on every status-line run, daemon or not.
-  const reader = await import("../../runtime/repository-start.js");
+  const readerPath = join(PACKAGE_ROOT, ENTRY_POINTS.startStateReader);
+  if (!existsSync(readerPath)) return undefined;
+  // Runtime-selected on purpose: this file is bundled, and a static or literal import would put Drizzle and SQLite in
+  // the bundle, loaded on every status-line run, daemon or not.
+  const reader = await import(pathToFileURL(readerPath).href) as typeof StartStateReader;
   return reader.readOnlyStartState(root);
 }
 
@@ -25,12 +35,24 @@ const STATUS_TIMEOUT_MS = 2_000;
 const MAX_INPUT_BYTES = 1_048_576;
 // Process ancestry marker, not a presentation preference: stop a user's command recursively invoking this wrapper.
 const PARENT_PROCESS_KEY = "_RERAIL_CLAUDE_STATUS_PARENT";
-/** `cwd` follows `/cd`; `workspace.project_dir` stays the launch root that identifies the session. */
+/**
+ * `cwd` follows `/cd`; `workspace.project_dir` stays the launch root that identifies the session. The session has had
+ * no reply while `cost.total_api_duration_ms` is 0.
+ */
 const statusPayloadSchema = z.object({
   session_id: z.string(),
   cwd: z.string().optional(),
   workspace: z.object({ project_dir: z.string().optional() }).optional(),
+  cost: z.object({ total_api_duration_ms: z.number().optional() }).optional(),
 });
+
+/**
+ * How long a draw waits between reads while the daemon has not recorded the session's start (`starting`), 7 s in all.
+ * Claude Code draws the status line as a session starts, before the session's start hook has run, and draws again
+ * only with the session's first reply, so `starting` would stay until then. Only a session with no reply yet waits.
+ * The status script waits the same for its file (`claude-status.sh`).
+ */
+const STARTING_WAITS_MS: readonly number[] = [200, 300, 500, 1_000, 2_000, 3_000];
 
 async function rerailStatus(chunks: Buffer[], validInput: boolean): Promise<string> {
   // The recorded-first fallback can start this on an older `node` from PATH once the node set-up recorded is gone;
@@ -39,20 +61,88 @@ async function rerailStatus(chunks: Buffer[], validInput: boolean): Promise<stri
   if (Number.parseInt(node, 10) < REQUIRED_NODE_MAJOR) {
     return formatTerminalStatus(fallbackPresentation(`needs Node ${REQUIRED_NODE_MAJOR} or newer (this is ${node})`));
   }
-  const sessionUnavailable = (): string => formatTerminalStatus(fallbackPresentation("session unavailable"));
-  if (!validInput) return sessionUnavailable();
   try {
-    const payload = statusPayloadSchema.safeParse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
-    if (!payload.success) return sessionUnavailable();
-    const { session_id: sessionId, cwd, workspace } = payload.data;
-    const root = [workspace?.project_dir, cwd].find(path => path !== undefined && isAbsolute(path));
-    if (root === undefined) return sessionUnavailable();
-    // Nothing autostarts where Rerail is off, so with no daemon answering the checkout's own state decides.
-    const result = await readPresentation({ sessionId, host: "claude-code", cwd: root, startState: () => localStartState(root) });
+    const session = validInput ? statusSession(chunks) : undefined;
+    if (session === undefined) return formatTerminalStatus(fallbackPresentation("session unavailable"));
+    const result = await sessionPresentation(session);
     return result.presence === "silent" ? "" : formatTerminalStatus(result);
   } catch {
     return formatTerminalStatus(fallbackPresentation("unavailable"));
   }
+}
+
+/** The session's footer, read again on `STARTING_WAITS_MS` while the daemon says `starting` and the session has had no reply. */
+async function sessionPresentation({ sessionId, root, unanswered }: StatusSession): Promise<SessionPresentation> {
+  for (const pause of unanswered ? STARTING_WAITS_MS : []) {
+    const result = await readSessionPresentation(sessionId, root);
+    if (result.status !== "starting") return result;
+    await sleep(pause);
+  }
+  return await readSessionPresentation(sessionId, root);
+}
+
+/** Nothing autostarts where Rerail is off, so with no daemon answering the checkout's own state decides. */
+async function readSessionPresentation(sessionId: string, root: string): Promise<SessionPresentation> {
+  return await readPresentation({ sessionId, host: "claude-code", cwd: root, startState: () => localStartState(root) });
+}
+
+/** The session a status line's input names, the checkout it runs in, and whether it has had no reply yet. */
+interface StatusSession {
+  sessionId: string;
+  root: string;
+  unanswered: boolean;
+}
+
+/**
+ * The session a status line's input names, the checkout it runs in (its project folder or else its `cwd`) and whether
+ * it has had no reply yet; undefined when the input names no session or no absolute folder. Input that is not JSON throws.
+ */
+function statusSession(chunks: Buffer[]): StatusSession | undefined {
+  const payload = statusPayloadSchema.safeParse(JSON.parse(Buffer.concat(chunks).toString("utf8")));
+  if (!payload.success) return undefined;
+  const { session_id: sessionId, cwd, workspace, cost } = payload.data;
+  const root = [workspace?.project_dir, cwd].find(path => path !== undefined && isAbsolute(path));
+  return root === undefined ? undefined : { sessionId, root, unanswered: cost?.total_api_duration_ms === 0 };
+}
+
+/** How the person's previous status line is started: a program, its arguments, and whether Node wraps it in a shell. */
+export interface PreviousStatusSpawn {
+  file: string;
+  args: string[];
+  shell: boolean;
+}
+
+/**
+ * The previous status line runs as Claude Code ran it: through `/bin/sh` on macOS and Linux, which is Node's
+ * `shell: true` there, and through Git Bash on Windows. `shell: true` on Windows is cmd.exe, which reads `~`, single
+ * quotes and `$(...)` as plain text, so a bash status line broke once Rerail wrapped it. Without a Git Bash to find,
+ * cmd.exe is what is left.
+ */
+export function previousStatusSpawn(command: string, platform: NodeJS.Platform = process.platform, env: NodeJS.ProcessEnv = process.env): PreviousStatusSpawn {
+  const bash = platform === "win32" ? claudeGitBash(env) : undefined;
+  return bash === undefined ? { file: command, args: [], shell: true } : { file: bash, args: ["-c", command], shell: false };
+}
+
+/**
+ * Git Bash's bash.exe: the one `CLAUDE_CODE_GIT_BASH_PATH` names ({@link namedGitBash}), which Claude Code itself
+ * honours, else the one beside Rerail's Git.
+ */
+function claudeGitBash(env: NodeJS.ProcessEnv): string | undefined {
+  const named = env.CLAUDE_CODE_GIT_BASH_PATH;
+  return (named === undefined ? undefined : namedGitBash(named)) ?? gitBash();
+}
+
+/**
+ * The bash `named` names, by a path from a drive or a server, which is how Rerail starts a program on Windows
+ * (`assertProgramPath`); undefined for one it cannot name so, such as `bash.exe`, which threw before anything was
+ * drawn. A path from the root of the current drive (`\msys64\usr\bin\bash.exe`) gets the drive of the current folder,
+ * where Windows and Claude Code read it ({@link fromCurrentDrive}), while that file exists and lies outside the
+ * repository there.
+ */
+function namedGitBash(named: string): string | undefined {
+  if (isFullyQualifiedWindowsPath(named)) return named;
+  const file = fromCurrentDrive(named);
+  return file !== undefined && existsSync(file) ? file : undefined;
 }
 
 /** Preserve the user's status as a byte stream, including output before errors or timeouts. */
@@ -62,12 +152,10 @@ export async function runClaudeStatus(
   settingsPath?: string,
 ): Promise<void> {
   const ancestor = Number(process.env[PARENT_PROCESS_KEY]);
-  if (Number.isSafeInteger(ancestor) && ancestor > 0) {
-    try {
-      process.kill(ancestor, 0);
-      input.resume();
-      return;
-    } catch { /* A stale ancestry marker must not disable status. */ }
+  // A stale ancestry marker, whose pid is gone or another user's now, must not disable status.
+  if (Number.isSafeInteger(ancestor) && ancestor > 0 && processState(ancestor) === "running") {
+    input.resume();
+    return;
   }
   let previous: ClaudeStatusLine | undefined;
   try {
@@ -81,18 +169,29 @@ export async function runClaudeStatus(
       resolvePrevious();
       return;
     }
-    const child = spawn(previous.command, {
-      shell: true,
-      detached: process.platform !== "win32",
-      env: { ...process.env, [PARENT_PROCESS_KEY]: String(process.pid) },
-      stdio: ["pipe", "pipe", "ignore"],
-    });
+    const plan = previousStatusSpawn(previous.command);
+    let child: ChildProcessByStdio<Writable, Readable, null>;
+    try {
+      child = spawn(plan.file, plan.args, {
+        shell: plan.shell,
+        detached: process.platform !== "win32",
+        env: { ...process.env, [PARENT_PROCESS_KEY]: String(process.pid) },
+        stdio: ["pipe", "pipe", "ignore"],
+      });
+    } catch {
+      // A command spawn refuses outright (a NUL byte in it, say) is one that failed to start, as `error` reports: the
+      // person's status is lost, never Rerail's line with it.
+      resolvePrevious();
+      return;
+    }
     const timer = setTimeout(() => {
-      // Kill the shell's entire group so a grandchild cannot retain stdout indefinitely.
-      try {
-        if (process.platform !== "win32" && child.pid !== undefined) process.kill(-child.pid, "SIGKILL");
-        else child.kill("SIGKILL");
-      } catch { /* The command may already have exited. */ }
+      // The command and what it started: on macOS and Linux its process group (`detached`); on Windows the tree from
+      // Git Bash's launcher, which runs the real bash as its child.
+      endProcessTree(child, { group: true });
+      // A process the command started can hold stdout open past the kill (one that left the group, or any child on
+      // Windows); the budget holds without waiting for it to let go.
+      child.stdout.destroy();
+      finish();
     }, STATUS_TIMEOUT_MS);
     child.stdout.on("data", (chunk: Buffer) => {
       if (chunk.length > 0) lastByte = chunk[chunk.length - 1];
@@ -141,7 +240,12 @@ export async function runClaudeStatus(
 
   const rerailText = await rerailStatus(chunks, validInput);
   await previousDone;
-  if (rerailText !== "") output.write(`${lastByte !== undefined && lastByte !== 10 ? "\n" : ""}${rerailText}\n`);
+  if (rerailText !== "") output.write(appendedLine(rerailText, lastByte));
+}
+
+/** `text` as a line after output whose last byte was `lastByte`: a newline first when that output ended mid-line. */
+function appendedLine(text: string, lastByte: number | undefined): string {
+  return `${lastByte !== undefined && lastByte !== 10 ? "\n" : ""}${text}\n`;
 }
 
 const launchedPath = process.argv[1];

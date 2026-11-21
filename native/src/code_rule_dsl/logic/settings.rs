@@ -1,12 +1,12 @@
 //! A program file's text with its includes read in, and the run's settings (`rerail.env`, `--env`) as facts of a
 //! program: what a run of the logic reads before it plans (the command line's tools re-export them).
 
-/// A program file's `.rr` text, with what it `#include`s from the library (`docs/rule-syntax/lib`) read in.
+/// A program file's `.rerail` text, with what it `#include`s from the library (`docs/rule-syntax/lib`) read in.
 pub fn program_text(path: &std::path::Path) -> Result<String, String> {
     program_texts(&[path]).map(|mut texts| texts.remove(0))
 }
 
-/// [`program_text`] for each of `paths`: phase 0 resolves all their `#include`s in one run of `bootstrap.rr`
+/// [`program_text`] for each of `paths`: phase 0 resolves all their `#include`s in one run of `bootstrap.rerail`
 /// (`plan::corpus::phase0`), not one run each.
 pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> {
     use crate::code_rule_dsl::logic::plan::corpus::{observe, phase0};
@@ -36,7 +36,7 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
     let mut seeds = Vec::new();
     for ((path, text), j) in paths.iter().zip(&texts).zip(&json) {
         if includes(text) && !j {
-            seeds.push(phase0::Seed::File(path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?));
+            seeds.push(phase0::Seed::File(dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?));
         }
     }
     let graphs = phase0::graphs(&seeds).map_err(|e| e.to_string())?;
@@ -48,16 +48,16 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
     let mut out = Vec::with_capacity(texts.len());
     for ((path, text), j) in paths.iter().zip(texts).zip(json) {
         if j || !includes(&text) {
-            out.push(if policy(&text) && !includes(&text) { format!("#include \"core.rr\"\n{text}") } else { text });
+            out.push(if policy(&text) && !includes(&text) { format!("#include \"core.rerail\"\n{text}") } else { text });
             continue;
         }
         let graph = graphs.next().expect("a graph per seed");
         // The program as modules (decision 0089): the library files it includes stay `#include`s, read once by a
-        // run however many of its programs include them; a file beside it is written in. A policy reads `core.rr`.
-        let canonical = path.canonicalize().map_err(|e| format!("{}: {e}", path.display()))?;
+        // run however many of its programs include them; a file beside it is written in. A policy reads `core.rerail`.
+        let canonical = dunce::canonicalize(path).map_err(|e| format!("{}: {e}", path.display()))?;
         let library = dirs.as_ref().map(|d| d.lib.as_path()).ok_or_else(|| "the rule library does not canonicalize".to_owned())?;
         let own = module_text(&canonical, &text, &graph, library, &mut Vec::new(), &read)?;
-        let own = if policy(&text) && !includes(&own) { format!("#include \"core.rr\"\n{own}") } else { own };
+        let own = if policy(&text) && !includes(&own) { format!("#include \"core.rerail\"\n{own}") } else { own };
         // The text's own graph is the file's, cut to what the text includes: kept, so no second run derives it.
         if let (Ok(Some(seed)), Some(dirs)) = (crate::code_rule_dsl::logic::rr::text_seed(&own), &dirs) {
             phase0::keep_text(&seed, &graph, dirs);
@@ -70,8 +70,20 @@ pub fn program_texts(paths: &[&std::path::Path]) -> Result<Vec<String>, String> 
 /// The run's settings (t21 E4): `key=value` lines of `<root>/rerail.env` (blank lines and `#` comments
 /// skipped), then each `--env key=value`, a later value for a key replacing an earlier one.
 pub fn settings(root: &std::path::Path, flags: &[String]) -> Result<Vec<(String, String)>, String> {
+    settings_with_file(root, flags, true)
+}
+
+pub(crate) fn settings_with_file(root: &std::path::Path, flags: &[String], read_file: bool) -> Result<Vec<(String, String)>, String> {
     let file = root.join("rerail.env");
-    let text = if file.exists() { std::fs::read_to_string(&file).map_err(|e| format!("{}: {e}", file.display()))? } else { String::new() };
+    let text = if read_file {
+        match crate::git_workspace::snapshot::read_to_string(&file) {
+            Ok(text) => text,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => String::new(),
+            Err(e) => return Err(format!("{}: {e}", file.display())),
+        }
+    } else {
+        String::new()
+    };
     let lines = text.lines().map(str::trim).filter(|l| !l.is_empty() && !l.starts_with('#')).map(|l| (l, file.display().to_string()));
     let mut settings: Vec<(String, String)> = Vec::new();
     for (line, from) in lines.chain(flags.iter().map(|f| (f.as_str(), "--env".to_owned()))) {
@@ -116,7 +128,7 @@ fn module_text(
                 let Some(found) = found else {
                     return Err(format!("{}: #include {name:?}: no such file", path.display()));
                 };
-                if found.starts_with(&library) {
+                if found.starts_with(library) {
                     out.push_str(line);
                 } else if !seen.contains(&found) {
                     seen.push(found.clone());

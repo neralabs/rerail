@@ -195,8 +195,8 @@ impl Frame {
     ) -> Result<()> {
         let _scope = store.activate(self.scope)?;
         self.composed = true;
-        if active.is_empty() {
-            if let Some(desired) = desired.as_ref() {
+        if active.is_empty()
+            && let Some(desired) = desired.as_ref() {
                 // No rule contributes at this gate. Its exact output is the
                 // predecessor's published roots and counters, with no frontier.
                 // Keep suspended operator caches and journals at their cursors.
@@ -221,7 +221,6 @@ impl Frame {
                 self.publication_decisions.clear();
                 return Ok(());
             }
-        }
         self.advance_phase(
             w, store, relations, steps, desired, external, active, preparing, templates, publications, limit,
         )

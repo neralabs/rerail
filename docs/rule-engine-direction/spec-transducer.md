@@ -5,7 +5,7 @@ Status: draft for review. This document is normative for the transducer IR: what
 Sections 1–3 (machine model, operations, group tables) were moved here from `spec-fusion.md` with their numbering unchanged, so references of the form "§2.6" in either document mean this one.
 
 Sources:
-- Tempo's IR, `tempo/native/src/policy_dsl/transducer.rs` at `e95613625` (opcodes `:184-208`, interpreter `:2099-2300`), value programs in `transducer/value.rs`, Metal kernels in `transducer/metal_*.metal`;
+- The predecessor's IR, `<predecessor>/native/src/policy_dsl/transducer.rs` at `e95613625` (opcodes `:184-208`, interpreter `:2099-2300`), value programs in `transducer/value.rs`, Metal kernels in `transducer/metal_*.metal`;
 - `research/transducer-ir.md` (expressivity and gaps), `research/sql-vs-transducer.md` (boundary), `research/metal-recursion.md` and `research/metal-enqueue.md` (Metal execution), `research/fusion.md` and `research/fusion-model.md` (measurements);
 - the rule language model: `native/src/code_rule_dsl/matcher/mod.rs:254` (`AstMatcher`), `matcher/semantic.rs` (`Semantic`), `model.rs:545` (`Query`, `RegexOptions`, `RegexLines`).
 
@@ -116,7 +116,7 @@ For fixed (G, D, demand), `Out` is a function, and every backend produces the sa
 
 ### 2.0 Word encoding
 
-The word is `opcode | mode << 8 | operand << 16`, as in Tempo's `word()` at `transducer.rs:1111`. Existing opcodes keep their codes, listed at `transducer.rs:184-208`:
+The word is `opcode | mode << 8 | operand << 16`, as in the predecessor's `word()` at `transducer.rs:1111`. Existing opcodes keep their codes, listed at `transducer.rs:184-208`:
 
 ```
 0x00 STOP  0x01 KIND  0x02 FIELD  0x03 FLAGS  0x04 TEXT  0x05 SIZE  0x06 ASSERT  0x07 FIRST
@@ -125,15 +125,15 @@ The word is `opcode | mode << 8 | operand << 16`, as in Tempo's `word()` at `tra
 0x22 REPEAT_BUMP  0x23 REPEAT_END  0x30 FORK  0x31 GOTO  0x40 EMIT
 ```
 
-`FLAGS` keeps Tempo's semantics: `mode` holds the required values and `operand` the mask over the nibble `named | extra<<1 | error<<2 | missing<<3` (`:2114-2120`).
+`FLAGS` keeps the predecessor's semantics: `mode` holds the required values and `operand` the mask over the nibble `named | extra<<1 | error<<2 | missing<<3` (`:2114-2120`).
 
 New opcodes are allocated from free space. The ranges are: tests `0x0b–0x0f` (`NTH`, `TEXT_ID`, `TEXT_DFA`, `TEXT_SET`, `TEXT_ID_EQ`), navigation `0x17–0x1f`, sub-programs and calls `0x32–0x3f`, set stage `0x50–0x57`, documents and side facts `0x58–0x5f`, pattern words `0x60–0x6f`, line-document words `0x70–0x77` (§5.4). Codes not listed here are reserved, and the verifier rejects them.
 
 **Set-mode restrictions.** `REPEAT_*` (Tree-sitter quantifiers) is admitted in set mode only with no capture-containment reduction. The capture-containment reduction itself is not part of set mode.
 
-### 2.0a Base operations (Tempo)
+### 2.0a Base operations (the predecessor)
 
-Semantics from Tempo's interpreter (`transducer.rs:2105-2270`), restated over tape columns. "Fork" means one path per result, enumerated lazily (§2.7).
+Semantics from the predecessor's interpreter (`transducer.rs:2105-2270`), restated over tape columns. "Fork" means one path per result, enumerated lazily (§2.7).
 
 | Op | mode | operand | Semantics at node `x` |
 |---|---|---|---|
@@ -379,7 +379,7 @@ The executor keeps `Fired(task)` as a label bitset. At every `FORK`, at every na
 ### 3.4 Other tables
 
 These are all u16-indexed, with at most 65,536 entries each:
-- strings, predicates, capture predicates, u64 constants (Tempo's tables);
+- strings, predicates, capture predicates, u64 constants (the predecessor's tables);
 - `nth`;
 - `count`, `count_set`;
 - sub-programs `{entry, end}`;
@@ -402,7 +402,7 @@ Structural words call typed side programs through `TEXT` (value programs on the 
 
 ### 4.1 Value programs (`TEXT p`)
 
-Tempo's `ValueProgram` (`transducer/value.rs:157`), applied to the bytes `source[start(x), end(x))`:
+The predecessor's `ValueProgram` (`transducer/value.rs:157`), applied to the bytes `source[start(x), end(x))`:
 
 | Variant | Semantics | Encoding |
 |---|---|---|
@@ -421,13 +421,13 @@ Every value program declares a work bound: bytes × states for NFA, bytes for DF
 
 ### 4.2 Capture programs (`ASSERT c`)
 
-Tempo's `CaptureProgram` (`value.rs:17`): `Equal`, `Text`, `AnyOf`, `Kind`, `Contains`, `Relation` (parent/ancestor between captures), `SameLine`, combined with `CAPTURE_EACH`, `CAPTURE_ZIP`, `AGGREGATE all|any` and `SELECT_POLARITY`. They implement Tree-sitter predicates (`#eq?`, `#any-eq?`, `#match?`, `#has-ancestor?`) and Rerail capture constraints.
+The predecessor's `CaptureProgram` (`value.rs:17`): `Equal`, `Text`, `AnyOf`, `Kind`, `Contains`, `Relation` (parent/ancestor between captures), `SameLine`, combined with `CAPTURE_EACH`, `CAPTURE_ZIP`, `AGGREGATE all|any` and `SELECT_POLARITY`. They implement Tree-sitter predicates (`#eq?`, `#any-eq?`, `#match?`, `#has-ancestor?`) and Rerail capture constraints.
 
 In set mode the common case, equality of two captures' text, is the dedicated `TEXT_EQ` word (§2.8); `ASSERT` remains for the general forms.
 
 ### 4.3 Output programs (`EMIT ℓ` with an output id)
 
-Tempo's `OutputProgram` (`#set!`, `#offset!`, `#strip!`, `#select-adjacent!`, `#downcase!`, MIME). Under the findings contract, presentation is owned by the integration, so output programs are used only where they change the finding key (for example, an offset that moves the reported line). All others are dropped at lowering and recomputed during rehydration.
+The predecessor's `OutputProgram` (`#set!`, `#offset!`, `#strip!`, `#select-adjacent!`, `#downcase!`, MIME). Under the findings contract, presentation is owned by the integration, so output programs are used only where they change the finding key (for example, an offset that moves the reported line). All others are dropped at lowering and recomputed during rehydration.
 
 ---
 
@@ -437,7 +437,7 @@ Evidence: `research/regex.md` (all 1,140 regexes of the data-layer rules, measur
 
 ### 5.1 Code conditions are AST conditions
 
-Whole-file text regex clauses (`Query::Regex { source: Content }`) exist because 14 data-layer rules were ported from nera-data-layer's own line-scanning linters at exact parity. Their line state machine (`compile/line_state.rs`), comment filters and indentation filters rebuild parser knowledge by hand (string and docstring tracking, "not a comment", "not under `if TYPE_CHECKING:`"). Measured census of the 113 clauses:
+Whole-file text regex clauses (`Query::Regex { source: Content }`) exist because 14 data-layer rules were ported from the data-layer repository's own line-scanning linters at exact parity. Their line state machine (`compile/line_state.rs`), comment filters and indentation filters rebuild parser knowledge by hand (string and docstring tracking, "not a comment", "not under `if TYPE_CHECKING:`"). Measured census of the 113 clauses:
 
 | Class | Count | Lowering |
 |---|---|---|
@@ -607,7 +607,7 @@ These rewrites apply before fusion and introduce no opcodes:
 
 ## 7. Operation summary
 
-Operations beyond Tempo's original IR (moved from `spec-fusion.md` §8):
+Operations beyond the predecessor's original IR (moved from `spec-fusion.md` §8):
 
 | Op | Purpose | Encoding (opcode / mode / operand) | Verifier | CPU semantics | Metal implementation | Needed by |
 |---|---|---|---|---|---|---|
@@ -674,7 +674,7 @@ A group is admitted only if every rule below holds. Each rejection has a stable 
 
 1. **Encoding.** Every opcode is defined; operands are within their tables; table sizes are within the encoding limits (65,536 entries, `n_labels ≤ 4096`).
 2. **Control flow.** Jumps stay in their region; sub-program and utility regions are properly nested and entered only through `EXISTS`/`NOT_EXISTS`/`CALL`; no `EMIT` inside a sub-program; every `ACCEPT`/`RETURN` is inside a region.
-3. **Progress.** Every cycle in the control-flow graph advances along a navigation axis (Tempo's cycle-progress proof, `transducer/cycle_progress.rs`), or is a bounded `REPEAT`.
+3. **Progress.** Every cycle in the control-flow graph advances along a navigation axis (the predecessor's cycle-progress proof, `transducer/cycle_progress.rs`), or is a bounded `REPEAT`.
 4. **Recursion and strata.** The rule and set-definition graphs are stratifiable. Recursion is positive within a stratum, monotone, along one declared axis; negation, `COUNT` and `NOT_EXISTS` occur only between strata. At most `MAX_STRATA = 16` strata and `MAX_SUB_DEPTH = 8` nested sub-programs.
 5. **Grammar typing.** Kind and field operands are valid for the grammar in force at that pc (tracked through `DOC_GUEST`/`DOC_HOST`).
 6. **Set mode.** No capture-containment reduction; `REPEAT_*` only without it; export schemas declared for every `EXPORT` label.
@@ -690,7 +690,7 @@ A group is admitted only if every rule below holds. Each rejection has a stable 
 | Backend | Role | Obligation |
 |---|---|---|
 | Rust interpreter | reference semantics and test oracle | implements every operation directly from this document |
-| CPU JIT (arm64, from Tempo's `native_ir.rs`) | production on CPU-only deployments | identical output sets to the interpreter |
+| CPU JIT (arm64, from the predecessor's `native_ir.rs`) | production on CPU-only deployments | identical output sets to the interpreter |
 | Metal (interpreter kernels, then MSL code generation from `native_ir.rs`) | production on Apple GPUs; per-edit target | identical output sets; stratified range execution and GPU-driven waves (`spec.md` §8); resource exhaustion → `Unknown(resource)`, counted by `metal_coverage` |
 
 Every backend charges the same abstract work units per operation, so budgets give the same `Complete`/`Unknown` outcome on every backend for the same input.
@@ -705,8 +705,8 @@ Every backend charges the same abstract work units per operation, so budgets giv
 | Labels per group | ≤ 4,096 | §3.2 |
 | `MAX_SUB_DEPTH` | 8 | §2.3 |
 | `MAX_STRATA` | 16 | §2.6 |
-| Steps per path (CPU reference) | 2^20 | Tempo `MAX_STEPS_PER_PATH` |
-| Work per task (CPU reference) | 2^26 | Tempo `MAX_WORK_PER_TASK` |
+| Steps per path (CPU reference) | 2^20 | The predecessor's `MAX_STEPS_PER_PATH` |
+| Work per task (CPU reference) | 2^26 | The predecessor's `MAX_WORK_PER_TASK` |
 | Patterns per `TEXT_SET` word | 64 | §4.1 |
 
 The step and work limits become per-label budgets (`LabelEntry.budget`) sized by the planner; the constants above are upper bounds.

@@ -4,8 +4,8 @@ use super::*;
 use crate::code_rule_dsl::logic::rr::lower::first::{First, Order, recognize};
 use crate::content_store::ContentStore;
 
-fn statements(src: &str) -> Vec<rerail_rr_syntax::syntax::Statement> {
-    rerail_rr_syntax::syntax::Parser::new(src).and_then(|mut p| p.statements()).unwrap_or_else(|e| panic!("{e:?}"))
+fn statements(src: &str) -> Vec<crate::code_rule_dsl::logic::rr::from_tape::Stmt> {
+    crate::code_rule_dsl::logic::rr::from_tape::RrFile::read(src.to_owned()).unwrap_or_else(|e| panic!("{e}")).statements()
 }
 
 const SHORTLEX: &str = "
@@ -19,7 +19,7 @@ later(c, f, r) :- x(c, f, r), x(c, f, s), @strlen(s) < @strlen(r).
 later(c, f, r) :- x(c, f, r), x(c, f, s), @strlen(s) = @strlen(r), s < r.
 ";
 
-/// references.rr's shortlex shape (`rf_method_first`), pytest-collect's max with a literal on the keys
+/// references.rerail's shortlex shape (`rf_method_first`), pytest-collect's max with a literal on the keys
 /// (`pyc_own`), and a min written the other way round are each the first of their group.
 #[test]
 fn a_rows_no_other_row_precedes_is_recognized_with_its_order() {
@@ -81,17 +81,19 @@ fn the_first_of_each_group_is_ws_loops_on_a_large_group() {
     }
     let want: Vec<Vec<String>> = want.into_iter().map(|((c, f), r)| vec![c, f, r]).collect();
 
-    let front = crate::code_rule_dsl::logic::rr::parse(&src).unwrap_or_else(|e| panic!("{e}"));
-    assert!(!front.rules.iter().any(|r| r.head.rel == "later"), "the self-join is not made");
-    assert_eq!(front.lattice.get("first").and_then(|l| l.merge.as_deref()), Some("shortlex_min"), "first keeps a group's least");
     let p = crate::code_rule_dsl::logic::rr::parse_version(&src).unwrap_or_else(|e| panic!("{e}"));
+    assert!(!p.rules().any(|r| p.rel_name(r.head().rel()) == "later"), "the self-join is not made");
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+    assert_eq!(p.lattice().get("first").and_then(|l| l.merge.as_deref()), Some("shortlex_min"), "first keeps a group's least");
     let path = crate::code_rule_dsl::fixtures::temp();
     let store = ContentStore::open(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     super::super::native::register(&db).unwrap();
     super::super::native::register_symbols(&db).unwrap();
     // `shortlex_min<>` orders the symbols by their text: the store's atoms, as a run declares it (`corpus`). More
-    // than it holds in memory: 10⁴ routes, read from the store (`ShortlexMin::lub`).
+    // than it holds in memory: 10⁴ routes, read from the store (`ShortlexMin::lub`). The test's run holds it (decision
+    // 0442).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     super::super::native::declare("shortlex_min", Arc::new(super::super::native::ShortlexMin(store.atoms_handle())));
     let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
     let lowered = lower::lowered(p, python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string()))).unwrap();

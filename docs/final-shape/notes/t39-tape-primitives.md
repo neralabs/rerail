@@ -1360,7 +1360,7 @@ profile: the profile's own writing costs about 25 s of CPU after a cold run). Th
 
 - **python:** rerail's python pack, 317 rules (`docs/rule-syntax/packs/python`), over 1, 10 and 50
   files of the bench corpus0 (61, 2,218 and 13,734 lines).
-- **data-layer:** the gate's data-layer candidates, 75 rules (`gate/data-layer/packs/data-layer/candidates/rr`),
+- **data-layer:** the gate's data-layer candidates, 75 rules (`packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rr`),
   over every k-th `impl/*.py` of the data-layer repository: 10 files (1,508 lines) and 50 (23,491).
 
 ```text
@@ -1559,7 +1559,7 @@ Surveyed in `native/src/code_rule_dsl` (2026-11-14).
 - (1) and (2) carry over to (3) unchanged if they are written against a `Reader`-like interface
   over `Facts` from the start. So (1) should be written that way.
 
-## 4b. Against ast-index-spike's tape
+## 4b. Against the SQL index prototype's tape
 
 The spike's tape (prior-work design index, topic 1; DESIGN S012, S039, S045–S047, S071) is a fixed
 6-byte record a node:

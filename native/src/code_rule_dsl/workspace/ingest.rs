@@ -21,9 +21,15 @@ use crate::code_rule_dsl::model::{
 /// workspace's root): the context of each file of a family that reads one, and what a clean tree's files inherit.
 pub trait RepositoryContext: Send {
     /// The context of the repository file at `file` (absolute).
-    fn of_file(&mut self, file: &std::path::Path) -> Option<crate::code_rule_dsl::language::FileManifest>;
+    fn of_file(
+        &mut self,
+        file: &std::path::Path,
+    ) -> Option<crate::code_rule_dsl::language::FileManifest>;
     /// The context a file directly in `directory` (absolute) inherits.
-    fn of_directory(&mut self, directory: &std::path::Path) -> Option<crate::code_rule_dsl::language::FileManifest>;
+    fn of_directory(
+        &mut self,
+        directory: &std::path::Path,
+    ) -> Option<crate::code_rule_dsl::language::FileManifest>;
 }
 
 /// What makes a repository's context: below `root`, with server graphs where `server_graph`.
@@ -40,16 +46,25 @@ pub fn install_repository_context(make: MakeRepositoryContext) {
 struct NoRepositoryContext;
 
 impl RepositoryContext for NoRepositoryContext {
-    fn of_file(&mut self, _: &std::path::Path) -> Option<crate::code_rule_dsl::language::FileManifest> {
+    fn of_file(
+        &mut self,
+        _: &std::path::Path,
+    ) -> Option<crate::code_rule_dsl::language::FileManifest> {
         None
     }
-    fn of_directory(&mut self, _: &std::path::Path) -> Option<crate::code_rule_dsl::language::FileManifest> {
+    fn of_directory(
+        &mut self,
+        _: &std::path::Path,
+    ) -> Option<crate::code_rule_dsl::language::FileManifest> {
         None
     }
 }
 
 /// The repository's context below `root` (`RepositoryContext`).
-pub(crate) fn repository_context(root: std::path::PathBuf, server_graph: bool) -> Box<dyn RepositoryContext> {
+pub(crate) fn repository_context(
+    root: std::path::PathBuf,
+    server_graph: bool,
+) -> Box<dyn RepositoryContext> {
     match REPOSITORY_CONTEXT.get() {
         Some(make) => make(root, server_graph),
         None => Box::new(NoRepositoryContext),
@@ -57,7 +72,11 @@ pub(crate) fn repository_context(root: std::path::PathBuf, server_graph: bool) -
 }
 
 /// A file a request's context changes moved to another context: its path, its input, and the context it reads now.
-pub(crate) type StaleContext = (String, FileInput, Option<crate::code_rule_dsl::language::FileManifest>);
+pub(crate) type StaleContext = (
+    String,
+    FileInput,
+    Option<crate::code_rule_dsl::language::FileManifest>,
+);
 
 /// A workspace's project context of a language family's files besides the files themselves (ECMAScript's
 /// manifests, project configurations and server graphs), from which the workspace derives the context of a file
@@ -179,7 +198,10 @@ struct BufferFile {
     #[serde(default)]
     module: Option<Value>,
     /// The same package a JSON request's file carries (see `FileInput::new`).
-    #[serde(default, deserialize_with = "crate::code_rule_dsl::language::deserialize_manifest")]
+    #[serde(
+        default,
+        deserialize_with = "crate::code_rule_dsl::language::deserialize_manifest"
+    )]
     package: Option<crate::code_rule_dsl::language::FileManifest>,
 }
 
@@ -242,7 +264,10 @@ pub struct WireFile {
     pub module: Option<Value>,
     /// An ECMA file's nearest `package.json` (see `FileInput::new`); without it the workspace's
     /// `package.json` entries decide (`refresh_manifest_context`).
-    #[serde(default, deserialize_with = "crate::code_rule_dsl::language::deserialize_manifest")]
+    #[serde(
+        default,
+        deserialize_with = "crate::code_rule_dsl::language::deserialize_manifest"
+    )]
     pub package: Option<crate::code_rule_dsl::language::FileManifest>,
 }
 impl WireFile {
@@ -258,11 +283,10 @@ impl WireFile {
     }
 }
 
+/// Whether the workspace evaluates `clause` one file at a time (`CompiledClause::is_file_local`,
+/// which `CompiledCodeRule::reads_other_files` reads too).
 pub(super) fn is_file_local(clause: &CompiledClause) -> bool {
-    matches!(
-        clause.kind,
-        ClauseKind::Forbid(Query::Regex { .. } | Query::Ast { .. } | Query::File)
-    )
+    clause.is_file_local()
 }
 
 pub fn make_file(
@@ -337,8 +361,7 @@ pub fn make_file(
         scopes: None,
         stored: None,
         selector_skipped: false,
-        tape_cache_hit: false,
-        tape_decompressed: false,
+        tape_from_store: false,
         restored_local_results: 0,
         restored_result_ids: HashSet::new(),
         transient_failure: false,

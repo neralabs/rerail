@@ -2,7 +2,7 @@
   "name": "@neralabs/rerail-pack-data-layer",
   "version": "0.1.0",
   "private": true,
-  "description": "Candidate ports of nera-data-layer architecture rules.",
+  "description": "Candidate ports of the data-layer repository's architecture rules.",
   "license": "Apache-2.0",
   "repository": {
     "type": "git",
@@ -17,7 +17,7 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@neralabs/rerail": ">=0.1.0-0 <0.2.0"
+    "@neralabs/rerail": ">=0.1.0-0"
   },
   "publishConfig": {
     "access": "restricted"

@@ -1,7 +1,7 @@
 //! E12 (t39): the tree primitives rules ask for, answered on each candidate tape in place, in two forms:
 //!
 //! - **bulk**: the answer for every node of a file in one pass, as the engine evaluates a rule a set at a
-//!   time (`nearest`, `inside`, `has` are "one tape pass per axis and set", core.rr);
+//!   time (`nearest`, `inside`, `has` are "one tape pass per axis and set", core.rerail);
 //! - **point**: one node's answer, at random.
 //!
 //! Kind sets are named as rules name them (`kinds.tsv`, from `rerail-engine kind-names`), resolved per

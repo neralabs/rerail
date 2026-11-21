@@ -1,11 +1,11 @@
-"""Writes ruff-air302-airflow3-moved-to-provider.moved.rr: the Airflow names that moved into provider packages in
+"""Writes ruff-air302-airflow3-moved-to-provider.moved.rerail: the Airflow names that moved into provider packages in
 Airflow 3 (AIR302), from each clause's `old` import list and its message.
     python3 docs/rule-syntax/packs/python/gen-ruff-air302-airflow3-moved-to-provider.py
 """
 import json, os, re
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules", "ruff-air302-airflow3-moved-to-provider.json")
-OUT = os.path.join(HERE, "ruff-air302-airflow3-moved-to-provider.moved.rr")
+OUT = os.path.join(HERE, "ruff-air302-airflow3-moved-to-provider.moved.rerail")
 MSG = re.compile(r"Install `apache-airflow-providers-([\w.-]+)>=([\w.]+)` and import `([^`]+)` from `([^`]+)` instead\.")
 
 

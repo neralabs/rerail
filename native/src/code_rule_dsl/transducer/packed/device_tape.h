@@ -23,8 +23,11 @@ UKL_STATIC_ASSERT(sizeof(DeviceCode)==24u,"the code layout");
 // A document's first byte from the batch's bound block: its parts are offsets from it. `at` and `at_high` are an
 // i64, the slabs' GPU addresses apart where the document is in another slab of the batch (0353 step 4, 0471).
 UKL_INLINE UKL_GLOBAL const uint8_t* tape_doc(UKL_GLOBAL const uint8_t* chunk,DocView d){return chunk+(int64_t)(((uint64_t)d.at_high<<32)|(uint64_t)d.at);}
+// The document of a batch's global node `node`, of `count` views in node order: its number, and its view.
+UKL_INLINE uint32_t doc_index(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){uint32_t first=0u,last=count;while(last-first>1u){uint32_t middle=(first+last)/2u;if(docs[middle].node_base<=node)first=middle;else last=middle;}return first;}
+UKL_INLINE DocView doc_of(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t node){return docs[doc_index(docs,count,node)];}
 
-// ---- the reads (decision 0310): `<ukl/reads/tape.h>`, written from the tape's reads in CLIF, which the CPU's
+// ---- the reads (decision 0310): `<ukl/reads/tape.h>`, the tape's reads in CLIF written by hand (0524), which the CPU's
 // JIT and the tape crate read through too; each takes the document's first byte and its view.
 #define TAPE_READ(C,D) tape_doc(C,D),(CLIF_VIEW_SPACE const uint32_t*)&(D)
 UKL_INLINE uint32_t tape_size(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_size(TAPE_READ(s,d),i);}
@@ -84,6 +87,19 @@ UKL_INLINE bool code_admits(UKL_GLOBAL const uint32_t* rule,UKL_GLOBAL const Dev
  }
  return true;
 }
+// The kind a presence records for a node of kind `kind`: an ERROR node's (0xffff) is ERROR_CODE (0), the tape's folded
+// code (decision 0434 §4; the host's `tape::presence_kind`).
+UKL_INLINE uint32_t presence_kind(uint32_t kind){return kind==0xffffu?0u:kind;}
+// Whether block `block` of document `d` (its nodes 1024*block ..) may hold a node a rule over codes admits, by the
+// tape's presence in its home (decision 0434 §4, step 6), read where it lies by `tape_has_kind`, the read the host's
+// planners and walks make too (`Roots::may_in`): one of its kinds, and each kind its tests name. A tape that holds no
+// presence admits every block.
+UKL_INLINE bool rule_may_in(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GLOBAL const uint32_t* rule,uint32_t block){
+ uint32_t kinds=rule[0],at=1u;
+ if(kinds!=0xffffffffu){bool any=false;for(uint32_t k=0u;k<kinds&&!any;k++)any=clif_tape_has_kind(TAPE_READ(s,d),block,presence_kind(rule[1u+k]))!=0u;if(!any)return false;at+=kinds;}
+ for(uint32_t k=0u,tests=rule[at];k<tests;k++){uint32_t test=rule[at+1u+k];if((test>>16u)==1u&&clif_tape_has_kind(TAPE_READ(s,d),block,presence_kind(test&0xffffu))==0u)return false;}
+ return true;
+}
 // A row of bits over the batch's nodes, the 64 from batch node `b`.
 UKL_INLINE uint64_t root_row(UKL_GLOBAL const uint32_t* row,uint32_t b){
  uint32_t w=b/32u,sh=b%32u;uint64_t mask=(uint64_t)row[w]|((uint64_t)row[w+1u]<<32u);
@@ -105,6 +121,8 @@ UKL_INLINE uint64_t root_mask_among(UKL_GLOBAL const uint8_t* s,DocView d,UKL_GL
   uint32_t files=roots[0];
   if(((roots[at+1u+file/32u]>>(file%32u))&1u)==0u)return 0ul;
   UKL_GLOBAL const uint32_t* rule=roots+at+1u+(files+31u)/32u;
+  // A block whose presence rules the rule out has none of its codes read (a group lies in one block).
+  if(!rule_may_in(s,d,rule,from/1024u))return 0ul;
   for(uint64_t rest=keep&anchor;rest!=0ul;rest&=rest-1ul){uint32_t k=ukl_ctz64(rest);if(code_admits(rule,tape_code(s,d,from+k)))mask|=1ul<<k;}
  }
  mask&=anchor;

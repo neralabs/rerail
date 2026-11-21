@@ -1,0 +1,57 @@
+.policy "ruff-pth104-os-rename" revision 1
+.description "Use Path.rename() instead of os.rename(); path objects read better than string-based os calls."
+.language python
+.mode steer
+.scope include "**/*"
+// Generated from main's JSON rule by the engine's translator (`rerail-engine translate-json`).
+
+#include "python/names.rerail"
+
+// PTH104(n): a finding at node n, from clause `os-rename`.
+// Each rule below is one way the JSON `rule` can match.
+// Columns after `at` are the metavariables the JSON's message, anchor or `each` names: one finding per distinct row.
+.violation PTH104(at: loc, f: node) "Use `Path(src).rename(dst)` instead of `os.rename(src, dst)`; leave it where the paths are bytes or `src_dir_fd`/`dst_dir_fd` come through `**kwargs`."
+    suppress noqa "PTH104"
+PTH104(F, n) :- kind(n, "call"), field(n, "function", c1), pth104_callee(c1, F),
+    count : { field(n, "arguments", c2), kind(c2, "argument_list"), child(c2, c3, _), kind(c3, "keyword_argument"), pth104_tok_has_1(c3), field(c3, "value", c12), !pth104_none_literal(c12) } = 0,
+    count : { field(n, "arguments", c13), kind(c13, "argument_list"), child(c13, c14, _), kind(c14, "keyword_argument"), pth104_tok_has_2(c14), field(c14, "value", c23), !pth104_none_literal(c23) } = 0.
+
+// target(n): the JSON util `target`, used where the JSON says `matches: "target"`
+.decl pth104_target(n: node)
+pth104_target(n) :- (kind(n, "identifier") ; kind(n, "attribute")), sym_of(n, "os.rename").
+
+// callee(n): the JSON util `callee`, used where the JSON says `matches: "callee"`
+//   F: metavariable this relation binds for the calling rule
+.decl pth104_callee(n: node, f: loc)
+pth104_callee(n, F) :- pth104_target(n), node(_, n, _, _, _), F = n.
+pth104_callee(n, F) :- kind(n, "parenthesized_expression"), child(n, c1, _), pth104_callee(c1, F).
+
+// none_literal(n): the JSON util `none-literal`, used where the JSON says `matches: "none-literal"`
+.decl pth104_none_literal(n: node)
+pth104_none_literal(n) :- kind(n, "none").
+pth104_none_literal(n) :- kind(n, "parenthesized_expression"), child(n, c1, _),
+    pth104_none_literal(c1).
+
+// tok_has_1(n): a child of n, a named node or an anonymous token, matches "^src_dir_fd$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth104_tok_has_1(n: node)
+.stored pth104_tok_has_1 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth104_tok_has_1(n) :- field(n, "name", c4), glob("src_dir_fd", c4).
+pth104_tok_has_1(n) :- op(n, t5), match("src_dir_fd", t5).
+pth104_tok_has_1(n) :- child(n, c11, _), structural_before(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:src_dir_fd)(?:\\W.*)?)$", g6).
+pth104_tok_has_1(n) :- child(n, c11, _), structural_after(c11, g6),
+    match("(?s)^(?:(?:.*\\W)?(?:src_dir_fd)(?:\\W.*)?)$", g6).
+pth104_tok_has_1(n) :- node_text(n, g6), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:src_dir_fd)(?:\\W.*)?)$", g6).
+
+// tok_has_2(n): a child of n, a named node or an anonymous token, matches "^dst_dir_fd$": a named node, a token the tape stores, or one it leaves out, read from the source between stored children
+.decl pth104_tok_has_2(n: node)
+.stored pth104_tok_has_2 "its token reads are of tokens the tape stores; one the tape leaves out is read from the source gap, in its own rule"
+pth104_tok_has_2(n) :- field(n, "name", c15), glob("dst_dir_fd", c15).
+pth104_tok_has_2(n) :- op(n, t16), match("dst_dir_fd", t16).
+pth104_tok_has_2(n) :- child(n, c22, _), structural_before(c22, g17),
+    match("(?s)^(?:(?:.*\\W)?(?:dst_dir_fd)(?:\\W.*)?)$", g17).
+pth104_tok_has_2(n) :- child(n, c22, _), structural_after(c22, g17),
+    match("(?s)^(?:(?:.*\\W)?(?:dst_dir_fd)(?:\\W.*)?)$", g17).
+pth104_tok_has_2(n) :- node_text(n, g17), !child(n, _, _),
+    match("(?s)^(?:(?:.*\\W)?(?:dst_dir_fd)(?:\\W.*)?)$", g17).

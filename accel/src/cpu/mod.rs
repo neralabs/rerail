@@ -41,19 +41,23 @@ pub fn bit_product(a: &Bits, b: &Bits, min: Option<&[u32]>) -> Output {
     match min {
         None => {
             let mut data = vec![0u32; a.rows * b.rows];
-            data.par_chunks_mut(b.rows.max(1)).enumerate().for_each(|(i, out)| {
-                for (j, o) in out.iter_mut().enumerate() {
-                    *o = count(i, j);
-                }
+            rerail_context::on_cores(|| {
+                data.par_chunks_mut(b.rows.max(1)).enumerate().for_each(|(i, out)| {
+                    for (j, o) in out.iter_mut().enumerate() {
+                        *o = count(i, j);
+                    }
+                })
             });
             Output::Counts { rows: a.rows, cols: b.rows, data }
         }
         Some(min) => {
             assert_eq!(min.len(), b.rows, "bit product: one threshold per row of b");
-            let per: Vec<Vec<(u32, u32)>> = (0..a.rows)
-                .into_par_iter()
-                .map(|i| (0..b.rows).filter(|&j| count(i, j) >= min[j]).map(|j| (i as u32, j as u32)).collect())
-                .collect();
+            let per: Vec<Vec<(u32, u32)>> = rerail_context::on_cores(|| {
+                (0..a.rows)
+                    .into_par_iter()
+                    .map(|i| (0..b.rows).filter(|&j| count(i, j) >= min[j]).map(|j| (i as u32, j as u32)).collect())
+                    .collect()
+            });
             Output::Pairs(per.concat())
         }
     }
@@ -77,39 +81,43 @@ pub fn count_table(loff: &[u32], left: &[u16], roff: &[u32], right: &[u16], emit
             slices.push(a);
             rest = b;
         }
-        slices.into_par_iter().enumerate().for_each_init(
-            || vec![0u32; 1 << 16],
-            |table, (p, out)| {
-                let r = &right[roff[p] as usize..roff[p + 1] as usize];
-                for &c in r {
-                    table[c as usize] += 1;
-                }
-                for (o, &c) in out.iter_mut().zip(&left[loff[p] as usize..loff[p + 1] as usize]) {
-                    *o = table[c as usize];
-                }
-                for &c in r {
-                    table[c as usize] = 0;
-                }
-            },
-        );
+        rerail_context::on_cores(|| {
+            slices.into_par_iter().enumerate().for_each_init(
+                || vec![0u32; 1 << 16],
+                |table, (p, out)| {
+                    let r = &right[roff[p] as usize..roff[p + 1] as usize];
+                    for &c in r {
+                        table[c as usize] += 1;
+                    }
+                    for (o, &c) in out.iter_mut().zip(&left[loff[p] as usize..loff[p + 1] as usize]) {
+                        *o = table[c as usize];
+                    }
+                    for &c in r {
+                        table[c as usize] = 0;
+                    }
+                },
+            )
+        });
         return Output::PerRow(out);
     }
-    let per: Vec<Vec<(u32, u32)>> = (0..n)
-        .into_par_iter()
-        .map(|p| {
-            // The partition's right rows sorted by code, stably: equal codes keep the rows' order.
-            let mut order: Vec<u32> = (roff[p]..roff[p + 1]).collect();
-            order.sort_by_key(|&k| right[k as usize]);
-            let keys: Vec<u16> = order.iter().map(|&k| right[k as usize]).collect();
-            let mut out = Vec::new();
-            for li in loff[p]..loff[p + 1] {
-                let c = left[li as usize];
-                let (lo, hi) = (keys.partition_point(|&x| x < c), keys.partition_point(|&x| x <= c));
-                out.extend(order[lo..hi].iter().map(|&ri| (li, ri)));
-            }
-            out
-        })
-        .collect();
+    let per: Vec<Vec<(u32, u32)>> = rerail_context::on_cores(|| {
+        (0..n)
+            .into_par_iter()
+            .map(|p| {
+                // The partition's right rows sorted by code, stably: equal codes keep the rows' order.
+                let mut order: Vec<u32> = (roff[p]..roff[p + 1]).collect();
+                order.sort_by_key(|&k| right[k as usize]);
+                let keys: Vec<u16> = order.iter().map(|&k| right[k as usize]).collect();
+                let mut out = Vec::new();
+                for li in loff[p]..loff[p + 1] {
+                    let c = left[li as usize];
+                    let (lo, hi) = (keys.partition_point(|&x| x < c), keys.partition_point(|&x| x <= c));
+                    out.extend(order[lo..hi].iter().map(|&ri| (li, ri)));
+                }
+                out
+            })
+            .collect()
+    });
     Output::Pairs(per.concat())
 }
 
@@ -117,11 +125,13 @@ pub fn count_table(loff: &[u32], left: &[u16], roff: &[u32], right: &[u16], emit
 pub fn histogram(off: &[u32], codes: &[u16], width: u32) -> Output {
     let (n, w) = (parts(off), width as usize);
     let mut data = vec![0u32; n * w];
-    data.par_chunks_mut(w.max(1)).enumerate().for_each(|(p, out)| {
-        for &c in &codes[off[p] as usize..off[p + 1] as usize] {
-            assert!((c as u32) < width, "histogram: code {c} is not below {width}");
-            out[c as usize] += 1;
-        }
+    rerail_context::on_cores(|| {
+        data.par_chunks_mut(w.max(1)).enumerate().for_each(|(p, out)| {
+            for &c in &codes[off[p] as usize..off[p + 1] as usize] {
+                assert!((c as u32) < width, "histogram: code {c} is not below {width}");
+                out[c as usize] += 1;
+            }
+        })
     });
     Output::Counts { rows: n, cols: w, data }
 }
@@ -225,9 +235,11 @@ pub fn closure(n: u32, off: &[u32], dst: &[u32]) -> Bits {
         reach[c * words..(c + 1) * words].copy_from_slice(&row);
     }
     let mut data = vec![0u64; n * words];
-    data.par_chunks_mut(words).enumerate().for_each(|(v, out)| {
-        let c = comp[v] as usize;
-        out.copy_from_slice(&reach[c * words..(c + 1) * words]);
+    rerail_context::on_cores(|| {
+        data.par_chunks_mut(words).enumerate().for_each(|(v, out)| {
+            let c = comp[v] as usize;
+            out.copy_from_slice(&reach[c * words..(c + 1) * words]);
+        })
     });
     Bits::new(n, words, data)
 }

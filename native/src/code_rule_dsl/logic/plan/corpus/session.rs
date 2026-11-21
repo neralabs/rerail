@@ -30,6 +30,9 @@ pub(in crate::code_rule_dsl) struct Session {
     /// per cross program (`retain::keys`' second, of the cross program alone, which a file-local rule's edit leaves):
     /// a run's passes are different programs, and one would take the other's place.
     pub(super) cross: Mutex<std::collections::HashMap<[u8; 32], super::retain::Retained>>,
+    /// The corpus batch as the last run made it (decision 0458), by the same key as `cross` (the maintained cross
+    /// program's): taken out while a run uses it, and put back with that run's.
+    pub(super) corpus: Mutex<std::collections::HashMap<[u8; 32], HeldCorpus>>,
     /// Each output a run of the session wrote (`out/<rel>`): the program's cross-file key and its rows. A later run of
     /// that program whose output stratum is clean leaves it in the stack as it is.
     pub(super) written: Mutex<std::collections::HashMap<PathBuf, ([u8; 32], usize)>>,
@@ -69,6 +72,7 @@ impl Handle {
             store,
             memo: Default::default(),
             cross: Default::default(),
+            corpus: Default::default(),
             written: Mutex::new(Default::default()),
             stacks: Mutex::new(Default::default()),
             stats: Mutex::new(Default::default()),
@@ -79,36 +83,23 @@ impl Handle {
 
     /// Makes the corpus runs this thread starts, until the guard is dropped, this session's runs.
     pub fn bind(&self) -> Bound {
-        let before = BOUND.with(|b| b.replace(Some(self.clone())));
-        Bound { before }
+        Bound { _session: crate::code_rule_dsl::logic::profile::bind(InSession(Some(self.clone()))) }
     }
 }
 
 /// A session bound to this thread's runs (`Handle::bind`); dropped, the thread's runs are as they were before.
 pub struct Bound {
-    before: Option<Handle>,
+    _session: crate::code_rule_dsl::logic::profile::Bound,
 }
 
-impl Drop for Bound {
-    fn drop(&mut self) {
-        let before = self.before.take();
-        BOUND.with(|b| *b.borrow_mut() = before);
-    }
-}
+/// The session this caller's runs are runs of, in the run's context: a job's nested runs are runs of its caller's
+/// session (decision 0192), as they were when the session was the process's.
+#[derive(Clone, Default)]
+struct InSession(Option<Handle>);
 
-thread_local! {
-    /// The session this thread's runs are runs of.
-    static BOUND: std::cell::RefCell<Option<Handle>> = const { std::cell::RefCell::new(None) };
-    /// A full run (`full`) on this thread.
-    static FULL: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
-}
-
-/// The session and the full mode a job on another thread carries (decision 0192): its nested runs are runs of the
-/// caller's session, as they were when the session was the process's, and full where the caller's are.
-pub(in crate::code_rule_dsl) fn carried(c: &mut crate::code_rule_dsl::logic::run_state::Capture) {
-    c.cloned(&["BOUND"], &BOUND);
-    c.copy(&["FULL"], &FULL);
-}
+/// A full run (`full`), in the run's context: a job's runs are full where its caller's are.
+#[derive(Clone, Copy, Default)]
+struct Full(bool);
 
 /// Opens a session in `dir` and binds it to this thread's runs: they are its runs until the guard is dropped.
 pub fn start(dir: &Path) -> std::result::Result<Bound, String> {
@@ -134,22 +125,16 @@ impl Kept {
 
 /// The generation of the session this thread's next run is a run of (`None`: no session, or a full run).
 pub(super) fn generation() -> Option<u64> {
-    if super::phase0::active() || FULL.with(std::cell::Cell::get) {
+    if super::phase0::active() || crate::code_rule_dsl::logic::profile::bound::<Full>().0 {
         return None;
     }
-    BOUND.with(|b| b.borrow().as_ref().map(|h| h.generation))
+    crate::code_rule_dsl::logic::profile::with_bound(|s: &InSession| s.0.as_ref().map(|h| h.generation))
 }
 
 /// Runs `run` as a full run: as a process without a session would, compiling the program and evaluating every file,
 /// so its profile shows every step (`logic --full`). The session is left as it was.
 pub fn full<T>(run: impl FnOnce() -> T) -> T {
-    struct Reset(bool);
-    impl Drop for Reset {
-        fn drop(&mut self) {
-            FULL.with(|f| f.set(self.0));
-        }
-    }
-    let _reset = Reset(FULL.with(|f| f.replace(true)));
+    let _full = crate::code_rule_dsl::logic::profile::bind(Full(true));
     run()
 }
 
@@ -157,10 +142,10 @@ pub fn full<T>(run: impl FnOnce() -> T) -> T {
 /// for one another; a run of no session holds nothing.
 pub(super) fn current() -> Held {
     // Phase 0's runs (`phase0`) are never a session's, and may run inside one of the session's runs.
-    if super::phase0::active() || FULL.with(std::cell::Cell::get) {
+    if super::phase0::active() || crate::code_rule_dsl::logic::profile::bound::<Full>().0 {
         return Held(None);
     }
-    let Some(handle) = BOUND.with(|b| b.borrow().clone()) else { return Held(None) };
+    let Some(handle) = crate::code_rule_dsl::logic::profile::bound::<InSession>().0 else { return Held(None) };
     // A run holds its session for all of it, so another run of the same session (a job's: the typing programs beside
     // phase 1, decision 0192) waits for it to end. On a pool thread the wait helps the pool (decision 0100 §12):
     // blocked, the thread held the stolen parts of the holder's own parallel work under it, and neither ended.
@@ -170,6 +155,16 @@ pub(super) fn current() -> Held {
         handle.session.lock_arc()
     };
     Held(Some(held))
+}
+
+/// A session's corpus batch as its last run made it (decision 0458): each path's documents (its file's and its guests'),
+/// with the content and key they were made from; the documents' digest, which the base relations' digests are of;
+/// and each base relation's statistics, with the digest of the rows they count. An edit makes the changed files'
+/// documents alone, and the held ones of those paths are the base relations' old versions.
+pub(super) struct HeldCorpus {
+    pub docs: std::collections::HashMap<String, ((memo::Content, i64), Vec<crate::code_rule_dsl::facts::vtab::syntax::Input>)>,
+    pub digest: u64,
+    pub stats: std::collections::HashMap<String, (u64, crate::code_rule_dsl::logic::plan::statkeep::RelStats)>,
 }
 
 /// The session held for a run.
@@ -185,7 +180,7 @@ impl Held {
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `session/tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).
 
 /// An output stack as a run left it: its file's length and modification time, its images, the rows its overlays
 /// added or took away since its base, and each relation's rows' hashes as it reads them (`output::Rel::hash`).

@@ -1,4 +1,4 @@
-//! The SQLite layout from ast-index-spike's tape_store.py: rec6 file rows and positional FTS.
+//! The SQLite layout from the SQL index prototype's tape_store.py: rec6 file rows and positional FTS.
 use crate::code_rule_dsl::{budget, language, tape::TapeDoc};
 use ast_grep_core::Doc;
 #[cfg(any(test, feature = "test-hooks"))]
@@ -155,7 +155,7 @@ impl Store {
         let mut counts = [0_i64; 1024];
         let mut positions = super::kind_postings::Builder::default();
         let mut mask = [0_u8; 128];
-        for (pre, rec) in image.rec.chunks_exact(6).enumerate() {
+        for (pre, rec) in image.rec.as_chunks::<6>().0.iter().enumerate() {
             if pre.is_multiple_of(256) && interrupted() {
                 return Err(rusqlite::Error::UserFunctionError(
                     "index construction interrupted".into(),
@@ -270,7 +270,7 @@ impl Store {
                 &tx,
                 &format!("INSERT INTO {table}"),
                 "",
-                bytes.chunks_exact(8).map(|pair| {
+                bytes.as_chunks::<8>().0.iter().map(|pair| {
                     [
                         fid.into(),
                         i64::from(u32::from_le_bytes(pair[..4].try_into().expect("key width")))

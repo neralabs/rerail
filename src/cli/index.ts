@@ -12,6 +12,7 @@ export {
 export { runRulesCommand } from "./project-cli.js";
 export { describeRemoteStatus, runRemoteCommand } from "./remote-cli.js";
 export { runRuleApproveCommand } from "./rule-approval-cli.js";
+export { AGENT_SESSION_VARIABLES, agentSession } from "../engine/agent-session.js";
 export { parseRuleDraft, testRuleDraftCases } from "./rule-draft.js";
 export {
   MOCK_CODE_RULES,
@@ -30,4 +31,4 @@ export {
   runShowMeCommand,
 } from "./show-me.js";
 export { type DashboardPage, type SetupEnvironment, type SetupRequest, startRerail } from "./repository-setup.js";
-export { type SetupContext, runSetupCommand, runSetupStepArgs, setupAnswerCommand } from "./setup-cli.js";
+export { CARRIED_FLAG_NAMES, type SetupContext, runSetupCommand, runSetupStepArgs, setupAnswerCommand } from "./setup-cli.js";

@@ -41,14 +41,18 @@ TESTS: dict[str, list[str]] = {
 NOSEC = {
     "B101": "assert x{c}\n",
     "B102": "exec('x = 1'){c}\n",
+    "B103": "import os\nos.chmod('/etc/passwd', 0o777){c}\n",
     "B104": "host = '0.0.0.0'{c}\n",
+    "B105": "password = 'hunter2'{c}\n",
     "B108": "path = '/tmp/data'{c}\n",
     "B110": "try:\n    run()\nexcept Exception:{c}\n    pass\n",
     "B112": "for item in items:\n    try:\n        run(item)\n    except Exception:{c}\n        continue\n",
     "B113": "import requests\nrequests.get('https://example.com'){c}\n",
+    "B201": "from flask import Flask\napp = Flask(__name__)\napp.run(debug=True){c}\n",
     "B301": "import pickle\npickle.loads(data){c}\n",
     "B302": "import marshal\nmarshal.loads(data){c}\n",
     "B303": "from Crypto.Hash import MD5\nMD5.new(){c}\n",
+    "B304": "from Crypto.Cipher import ARC4\nARC4.new(key){c}\n",
     "B305": "from cryptography.hazmat.primitives.ciphers import modes\nmodes.ECB(){c}\n",
     "B306": "import tempfile\ntempfile.mktemp(){c}\n",
     "B307": "eval('1 + 1'){c}\n",
@@ -80,10 +84,16 @@ NOSEC = {
             "rsa.generate_private_key(public_exponent=65537, key_size=1024){c}\n",
     "B507": "import paramiko\nclient = paramiko.SSHClient()\n"
             "client.set_missing_host_key_policy(paramiko.AutoAddPolicy()){c}\n",
+    "B508": "from pysnmp.hlapi import CommunityData\nCommunityData('public', mpModel=0){c}\n",
+    "B509": "from pysnmp.hlapi import UsmUserData\nUsmUserData('securityName'){c}\n",
     "B606": "import os\nos.execl('/bin/ls', 'ls'){c}\n",
+    "B609": "import os\nos.system('/bin/chown *'){c}\n",
     "B610": "User.objects.extra(where=[condition]){c}\n",
+    "B612": "import logging.config\nlogging.config.listen(9999){c}\n",
+    "B614": "import torch\ntorch.load('model.pt'){c}\n",
     "B615": "from transformers import AutoModel\nAutoModel.from_pretrained('org/model'){c}\n",
     "B701": "import jinja2\njinja2.Environment(autoescape=False){c}\n",
+    "B702": "from mako.template import Template\nTemplate('hello'){c}\n",
 }
 
 NOSEC_COMMENTS = ["", "  # nosec", "  # nosec {code}", "  # nosec: {code}", "  # nosec {name}", "  # nosec {other}"]
@@ -92,14 +102,18 @@ NOSEC_COMMENTS = ["", "  # nosec", "  # nosec {code}", "  # nosec: {code}", "  #
 NAMES = {
     "B101": "assert_used",
     "B102": "exec_used",
+    "B103": "set_bad_file_permissions",
     "B104": "hardcoded_bind_all_interfaces",
+    "B105": "hardcoded_password_string",
     "B108": "hardcoded_tmp_directory",
     "B110": "try_except_pass",
     "B112": "try_except_continue",
     "B113": "request_without_timeout",
+    "B201": "flask_debug_true",
     "B301": "pickle",
     "B302": "marshal",
     "B303": "md5",
+    "B304": "ciphers",
     "B305": "cipher_modes",
     "B306": "mktemp_q",
     "B307": "eval",
@@ -129,10 +143,16 @@ NAMES = {
     "B502": "ssl_with_bad_version",
     "B505": "weak_cryptographic_key",
     "B507": "ssh_no_host_key_verification",
+    "B508": "snmp_insecure_version",
+    "B509": "snmp_weak_cryptography",
     "B606": "start_process_with_no_shell",
+    "B609": "linux_commands_wildcard_injection",
     "B610": "django_extra_used",
+    "B612": "logging_config_insecure_listen",
+    "B614": "pytorch_load",
     "B615": "huggingface_unsafe_download",
     "B701": "jinja2_autoescape_false",
+    "B702": "use_of_mako_templates",
 }
 
 # Ours: inputs a port once misread, each now a golden case (fixtures/rerail/probes/<name>.py).
@@ -150,7 +170,7 @@ PROBES = {
                       "requests.get(\n    \"https://example.com\",\n)  # nosec\nrequests.get(\n"
                       "    \"https://example.com\",  # nosec B101\n)\ntry:\n    run()\nexcept Exception:\n"
                       "    pass  # nosec B110\n",
-    # From Moti's review of #29. Each port still misreads its case, so it stays a candidate until it agrees.
+    # From the review of #29. Each port still misreads its case, so it stays a candidate until it agrees.
     # B104: a string statement is skipped, and an implicit concatenation is one string.
     "b104-docstring-concatenation.py": "\"0.0.0.0\"\nx = \"not-\" \"0.0.0.0\"\n",
     # B108: a parenthesized string statement is still a statement.

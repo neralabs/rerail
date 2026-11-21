@@ -1,19 +1,19 @@
-# Coverage: the eight analyses mapped onto the `.rr` design
+# Coverage: the eight analyses mapped onto the `.rerail` design
 
 Each row is one check from group-1.md … group-8.md, in group order. The elements column lists what answers the
 check's non-EXISTS needs, using the IDs below; "—" means every need was EXISTS. Elements that answer only CLI-only
-needs are left out: the suite plugin is the path followed. The design read is lib/core.rr, lib/python/ast.rr,
-names/imports/calls/flow, lib/data-layer/signing.rr and the worked ports in data-layer/.
+needs are left out: the suite plugin is the path followed. The design read is lib/core.rerail, lib/python/ast.rerail,
+names/imports/calls/flow, lib/data-layer/signing.rerail and the worked ports in data-layer/.
 
 IDs: L5 `join`, L6 `ordered by earlier`, L7 `dfs_first` / `dfs_first_memo`; N-src (source, src_line, line_count, end_line, col), N-op (op_at), N-parse
 (syntax_error), N-order (earlier, visit_index, ast_depth), N-str (str_part), N-fn:@name, N-git, N-read (`.input IO=…`,
-input_error), N-artifact (a CI-written JSON artifact); P-ast:rel, P-lib:rel, P-sign (signing.rr); LOCAL (a helper in
+input_error), N-artifact (a CI-written JSON artifact); P-ast:rel, P-lib:rel, P-sign (signing.rerail); LOCAL (a helper in
 the check's own file); D-place (`@place` findings), D-code, D-sev, D-gate, D-on, D-budget, D-group, D-scope, D-mode;
 CONTRACT (the loose findings contract makes the need go away).
 
 Conventions:
-- A signed list or baseline in one of signing.rr's two layouts is P-sign. Another layout is LOCAL, built from L5,
-  N-fn:@json_str and N-fn:@ed25519_ok, as signing.rr says a repository does.
+- A signed list or baseline in one of signing.rerail's two layouts is P-sign. Another layout is LOCAL, built from L5,
+  N-fn:@json_str and N-fn:@ed25519_ok, as signing.rerail says a repository does.
 - "One finding that replaces the report" is D-gate plus D-place. A signed-list failure reported beside the other
   findings is D-place alone.
 - A parse error dropped silently is the contract's Unknown outcome, so it needs nothing. N-parse is listed only
@@ -66,7 +66,7 @@ Conventions:
 | bootstrap_eager_resolve | 3 | info | LOCAL, D-scope | expressible |
 | graphql_plan_ownership | 3 | hard-fail | P-ast:sig_param, P-ast:chain_step, P-ast:chain_root, P-ast:py_frame, N-parse, D-on, D-scope | expressible |
 | lazy_adapter_ownership | 3 | hard-fail | P-ast:py_frame, P-ast:str_const, P-ast:sig_param, N-parse, D-on, N-src, D-scope | expressible |
-| legacy_execution_surfaces | 3 | hard-fail | P-sign, D-gate, D-place, P-ast:from_module_raw, P-ast:chain_step, P-ast:class_path, P-ast:py_frame, LOCAL, N-order, N-src, D-scope, L7 | expressible: `dfs_first_memo` reproduces the memoised DFS (data-layer/sketches/transitive-eager.rr) |
+| legacy_execution_surfaces | 3 | hard-fail | P-sign, D-gate, D-place, P-ast:from_module_raw, P-ast:chain_step, P-ast:class_path, P-ast:py_frame, LOCAL, N-order, N-src, D-scope, L7 | expressible: `dfs_first_memo` reproduces the memoised DFS (data-layer/sketches/transitive-eager.rerail) |
 | removed_compat_surfaces | 3 | hard-fail | P-ast:ast_name, D-scope | expressible |
 | legacy_callback_quarantine | 3 | hard-fail | P-ast:chain_step, LOCAL, P-ast:sig_param, D-scope | expressible |
 | pending_pipeline_effect_kinds | 3 | hard-fail | P-ast:ast_name, D-scope | expressible |
@@ -160,9 +160,9 @@ Conventions:
 | imperative_private_functions | 8 | metric | LOCAL | expressible |
 | internal_dead_code | 8 | metric | LOCAL | expressible |
 
-Since this mapping (2026-11-04), each gap below has a resolution in lib/core.rr (`@ast_dump`, `IO=jsonl` and
+Since this mapping (2026-11-04), each gap below has a resolution in lib/core.rerail (`@ast_dump`, `IO=jsonl` and
 `*` pointer steps, `.scope dirs option(…)`, `git_commit`, `.requires`). The PEP 696 question was the grammar's:
-Rerail's vendored tree-sitter-python already parses type-parameter defaults, and python/ast.rr has `type_param`. See [../DESIGN.md](../DESIGN.md), "Coverage".
+Rerail's vendored tree-sitter-python already parses type-parameter defaults, and python/ast.rerail has `type_param`. See [../DESIGN.md](../DESIGN.md), "Coverage".
 
 ## Gaps
 
@@ -171,7 +171,7 @@ These needs map to no element. Each is listed with its check, the need, the anal
 | check | need | citation | suggestion |
 |---|---|---|---|
 | standalone_linter_entrypoints | "this policy fails for each member policy with blocking findings", and a member timeout counts as a failure | lint_standalone_linter_entrypoints_plugin.py:127-152, :104-114 | a directive `.requires "data-layer:x", …` that reports one finding per member that is missing or blocks. Or leave it to CI orchestration: it is not a fact query |
-| broad_type_surfaces, broad_type_surfaces_ratchet | the parser must accept PEP 696 type-parameter defaults (`class C[T: X = X]`); BTS009 reads `type_parameter.default_value`, and the repository uses the syntax | lint_broad_type_surfaces.py:701; impl/common/l2066_plan_optimizer/ir.py:49 | resolved: native/grammars/tree-sitter-python/PATCHES.md patch 1 adds `type_default` (fields `name`, `value`), and the engine's scope pass already binds it; python/ast.rr `type_param(o, p, nm, i, kind, bound, dflt)`. The `t` prefix of tstring_syntax is lexed by the same scanner as `f` (scanner.c), and string_form tells them apart |
+| broad_type_surfaces, broad_type_surfaces_ratchet | the parser must accept PEP 696 type-parameter defaults (`class C[T: X = X]`); BTS009 reads `type_parameter.default_value`, and the repository uses the syntax | lint_broad_type_surfaces.py:701; impl/common/l2066_plan_optimizer/ir.py:49 | resolved: native/grammars/tree-sitter-python/PATCHES.md patch 1 adds `type_default` (fields `name`, `value`), and the engine's scope pass already binds it; python/ast.rerail `type_param(o, p, nm, i, kind, bound, dflt)`. The `t` prefix of tstring_syntax is lexed by the same scanner as `f` (scanner.c), and string_form tells them apart |
 | permission_test_classification | read the JSON-Lines inventory and the manifest's nested arrays (`groups[].operations[]`, `tests[]`). IO=json's pointer reaches one level of records, and IO=lines does not parse JSON | lint_permission_test_classification.py:552-560, 569-597; permission_surface_manifest.py:240 | N-read extensions: `IO=jsonl` (one row per line, with a line-index column) and wildcard pointers (`path="/groups/*/operations/*"`) that bind index columns |
 | matching_architecture | `--application-root` adds directories to the scan and marks their files as application files; a missing root is an error | lint_matching_architecture.py:1162-1172 | a scope entry taken from an option, e.g. `.scope include option "application_root"`, plus a fact for documents it added. `--phase` is not a gap: each rule can test `option("phase", …)` |
 | architecture_rule_docs | existence of commits and blobs anywhere in history (`git cat-file -e`), for the example SHAs the rule docs cite | lint_architecture_rule_docs.py:219-247 | specify `git_has(sha, path)` for any reachable SHA, answered on demand, and add `git_commit(sha)`. Today core describes it only for the `git_rev` revisions |
@@ -200,7 +200,7 @@ decision 0005:
 - the textual callee with a bare-attribute fallback (hot_path_reflection, unforgeable_grants, async_sync_boundary);
 - annotation-mention variants (transaction_callback_wrappers, serverplan_steps, async_patterns,
   grammar_fragment_usage);
-- signing layouts beyond signing.rr's two: transaction_patterns' categories; the count baselines of
+- signing layouts beyond signing.rerail's two: transaction_patterns' categories; the count baselines of
   async_sync_delegation, system_session_scope and ignore_counts; the derived-row messages of cached_pure_lazy_allowlist.
 
 ## Ordered recursion verdicts
@@ -209,11 +209,11 @@ The first four are the LANG claims. The rest are LIB or EXISTS claims of order-d
 
 - versioned_table_name_manipulation (LANG): no-L6. Every event (assignment, `for` target, def parameter) resets the
   name whatever it stores. So the latest event is a `max` over syntax, and only the stored value recurses, positively
-  (data-layer/versioned-table-names.rr).
+  (data-layer/versioned-table-names.rerail).
 - plan_helpers_allowlist (LANG): L6. `imported_names[x]` is written only when the value resolves to a helper, so a
   non-resolving rebinding keeps the old alias. Whether `b = a` counts depends on a's alias state at that write.
 - expression_owner_propagation (LANG): L6 for `src_code`. A name keeps the code of its latest assignment whose value
-  has one, and that value's code can come from another name's state (sketches/owner-code.rr). The constructor aliases
+  has one, and that value's code can come from another name's state (sketches/owner-code.rerail). The constructor aliases
   are monotone, with no kill: positive recursion (no L6).
 - serverplan_state_tripwires (LANG argmin): not recursion. First-witness BFS order is (ast_depth, visit_index):
   N-order and two `min`s.
@@ -233,7 +233,7 @@ The first four are the LANG claims. The rest are LIB or EXISTS claims of order-d
   non-owner one removes it), so the latest store is syntax and ownership recurses positively.
 - versioned_merged_identity (`catalog_proj`): no-L6. The latest assignment before the constructor is a `max` over end
   offsets, and the projection recursion is positive.
-- serverplan_quality and conditional_architecture (`always_raises`): no-L6. A chain over branches, as in flow.rr. The
+- serverplan_quality and conditional_architecture (`always_raises`): no-L6. A chain over branches, as in flow.rerail. The
   stoppers (`return`, a raise of another type) are syntax.
 - eager_resolve (`ordered_alias`): no-L6. A monotone forward pass with no kill: "established before p" is
   existential.

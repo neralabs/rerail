@@ -4,7 +4,7 @@
 pub use rerail_clif::rust::*;
 use std::fmt::Write;
 
-/// Tier 1's source, from a parser compiled with `native_cpu_stream::KEEP_IR`: `tier1_entry_K`
+/// Tier 1's source, from a parser compiled with `native_cpu_codegen::Options::keep_ir`: `tier1_entry_K`
 /// a pass, the record pass's tables as data, `TABLES_DATA`; it ends with its fingerprint,
 /// `SOURCE`.
 /// (Tier 2's is `rust_stream`'s, from the native IR.)
@@ -23,7 +23,8 @@ pub fn rust_source(parser: &crate::native_cpu_stream::Parser) -> Result<String, 
 }
 
 
-#[cfg(test)]
+// The one test is aarch64's (NEON): elsewhere the module is empty.
+#[cfg(all(test, target_arch = "aarch64"))]
 mod tests {
     use cranelift_codegen::ir::{AbiParam, InstBuilder, Signature, types::I64};
     use cranelift_codegen::isa::CallConv;
@@ -33,7 +34,6 @@ mod tests {
     /// written as one `vshrn_n_u16`, its shift, `and` and casts not besides; and the lanes'
     /// count after it reads the nibbles (`lanes_set`).
     #[test]
-    #[cfg(target_arch = "aarch64")]
     fn a_narrowing_shift_is_one_shrn() {
         use cranelift_codegen::ir::types::{I8, I8X16};
         use cranelift_codegen::ir::{MemFlags, condcodes::IntCC};

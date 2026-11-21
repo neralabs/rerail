@@ -1,15 +1,15 @@
-"""Writes plan-helpers-allowlist.tables.rr, the linter's name sets and its signed callsite allowlist.
-    python3 docs/rule-syntax/data-layer/gen-plan-helpers-allowlist.py [--check]
+"""Writes plan-helpers-allowlist.tables.rerail, the linter's name sets and its signed callsite allowlist.
+    DATA_LAYER_REPO=<checkout> python3 docs/rule-syntax/data-layer/gen-plan-helpers-allowlist.py [--check]
 The source is scripts/lint_plan_helpers_allowlist.py at the pinned commit of the data-layer repository. Each table
 is read from the module-level literal of the same name. --check regenerates the text and fails if the committed
 file differs."""
 import ast, json, os, subprocess, sys
 
 HERE = os.path.dirname(os.path.abspath(__file__))
-REPO = "/Users/jeremy/orca/workspaces/nera-data-layer-ner1131-base-audit"
+REPO = os.environ.get("DATA_LAYER_REPO") or sys.exit("set DATA_LAYER_REPO to a checkout of the data-layer repository")
 COMMIT = "2b1504adc4291daaf080b2e932962b134da1a69a"
 LINTER = "scripts/lint_plan_helpers_allowlist.py"
-OUT = os.path.join(HERE, "plan-helpers-allowlist.tables.rr")
+OUT = os.path.join(HERE, "plan-helpers-allowlist.tables.rerail")
 # linter literal -> (relation, comment)
 SETS = [
     ("PUBLIC_TARGET_HELPERS", "pha_public", "the old public *_via_plan helpers"),
@@ -45,7 +45,7 @@ def text():
         rows.append(f".decl {rel}(x: symbol)")
         xs = [f"{rel}({json.dumps(x)})." for x in sorted(lit[name])]
         rows += [" ".join(xs[i:i + 3]) for i in range(0, len(xs), 3)]
-    rows.append("// ALLOWLISTED_CALLSITES, \"module::Class.function\", and _ALLOWLIST_SIGNATURE (lib/data-layer/signing.rr).")
+    rows.append("// ALLOWLISTED_CALLSITES, \"module::Class.function\", and _ALLOWLIST_SIGNATURE (lib/data-layer/signing.rerail).")
     for e in sorted(lit["ALLOWLISTED_CALLSITES"]):
         rows.append(f"allow_entry(\"plan_helpers\", {json.dumps(e)}).")
     rows.append(f"allow_sig(\"plan_helpers\", \"lint_plan_helpers_allowlist\", {json.dumps(lit['_ALLOWLIST_SIGNATURE'])}).")

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, realpath, rm, symlink, unlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, unlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -11,6 +11,8 @@ import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schem
 import type { CodeRule } from "../../../../src/engine/code-rule/code-rule-schema.js";
 import { loadNativeBinding } from "../../../../src/engine/native/native.js";
 import { testCodeRuleCatalog } from "../../../support/repository-rules.js";
+import { linkFolder } from "../../../support/platform/links.js";
+import { removeFolder } from "../../../support/platform/remove-folder.js";
 
 // What an ECMA file's nearest package.json gives it: the module system a query that leaves `languageOptions.sourceType`
 // unset reads (its `type`), and what `file.package` and `file.jsxRuntime` read. Repository audits (native index and host
@@ -18,7 +20,7 @@ import { testCodeRuleCatalog } from "../../../support/repository-rules.js";
 // derive them alike, and a changed manifest must change the next result.
 
 const roots: string[] = [];
-afterEach(async () => { await Promise.all(roots.splice(0).map(root => rm(root, { recursive: true, force: true }))); });
+afterEach(async () => { await Promise.all(roots.splice(0).map(root => removeFolder(root))); });
 
 async function directory(prefix: string): Promise<string> {
   const root = await realpath(await mkdtemp(join(tmpdir(), prefix)));
@@ -142,6 +144,8 @@ async function enforcerFor(workspaceRoot: string, codeRule: CodeRule | (() => Co
     audit, edit, snapshot, derived, steers, revisions, enforcer,
     /** How many audits the enforcer started. */
     auditCount: () => audits.size,
+    /** The violations the audits started after the first `before` reported, per path and code. */
+    reportedSince: (before: number) => counted([...audits.values()].slice(before).flatMap(entry => entry.result?.violations ?? [])),
     acceptsPath: (path: string) => enforcer.acceptsPath(path),
     close: () => enforcer.close(),
   };
@@ -421,6 +425,76 @@ describe("a package.json edit alone", () => {
       expect(await manifest('{ "name": "renamed", "type": "commonjs", "bin": { "tool": "lib/plain" } }\n')).toEqual({});
       // The sources themselves, sent again, read the current manifest.
       expect(await edit()).toEqual(both(["PROGRAM", "REQUIRE"], true));
+    } finally {
+      await close();
+    }
+  });
+
+  // A count across files makes a lane check a tool call's edit with the log edits queued ahead of it in one apply.
+  const CROSS_FILE = codeRuleSchema.parse({
+    format: "rerail.policy/v1", id: "package-facts:manifest-edit-together", revision: 1, mode: "steer",
+    scope: { include: ["**/*.js", "**/*.ts"], exclude: [] },
+    clauses: [...CODE_RULE.clauses, {
+      id: "budget", violation: { code: "BUDGET", anchor: "witness.span", message: "Too many files" },
+      budget: { query: { evidence: { as: "n", query: { ast: { language: "typescript", rule: { kind: "program" } } }, project: { path: "file.path" } } }, count: { lte: 100 } },
+    }],
+  });
+
+  it("refreshes the sources below a walk's manifest edit checked in one engine call with a tool call's edit, where a rule counts across files", async () => {
+    const root = await repository(false, SOURCES);
+    const { edit, enforcer, auditCount, reportedSince, close } = await enforcerFor(root, CROSS_FILE, SOURCES);
+    const manifest = '{ "type": "module" }\n';
+    const applies = vi.spyOn(loadNativeBinding().CodeRuleDslWorkspace.prototype, "applyBufferAsync");
+    try {
+      expect(await edit()).toEqual(both(["PROGRAM", "REQUIRE"]));
+      applies.mockClear();
+      await writeFile(join(root, "package.json"), manifest);
+      await writeFile(join(root, "lib/own.ts"), "export const own = 1;\n");
+      const before = auditCount();
+      // A walk's log edit of the manifest, then the session's own edit: checked together, in one engine call.
+      await enforcer.auditGeneratedEdits("package-facts", {
+        revision: 10, checkpoints: ["edit"], mode: "log", edits: [{ path: "package.json", language: "json", generatedText: manifest }],
+      });
+      await enforcer.auditGeneratedEdits("package-facts", {
+        revision: 11, checkpoints: ["edit"], edits: [{ path: "lib/own.ts", language: "typescript", generatedText: "export const own = 1;\n" }],
+      });
+      await enforcer.settle();
+      // The manifest's edit reports the sources it made modules, as a check of it alone does: no CommonJS require now.
+      expect(reportedSince(before)).toEqual({ ...both(["PROGRAM"]), "lib/own.ts PROGRAM": 1 });
+      // One engine call for the manifest, the sources it refreshed and the tool call's edit, not one per edit.
+      expect(applies).toHaveBeenCalledTimes(1);
+    } finally {
+      applies.mockRestore();
+      await close();
+    }
+  });
+
+  it("leaves a source with its own edit in a walk's batch to that edit, when the batch is checked with a tool call's edit in one engine call", async () => {
+    const root = await repository(false, SOURCES);
+    const { edit, enforcer, auditCount, reportedSince, close } = await enforcerFor(root, CROSS_FILE, SOURCES);
+    const manifest = '{ "type": "commonjs", "bin": "./lib/plain.js" }\n';
+    try {
+      expect(await edit()).toEqual(both(["PROGRAM", "REQUIRE"]));
+      await writeFile(join(root, "package.json"), manifest);
+      await writeFile(join(root, "lib/plain.js"), "exports.a = 1;\n");
+      await writeFile(join(root, "lib/own.ts"), "export const own = 1;\n");
+      const before = auditCount();
+      // The walk found the manifest and lib/plain.js changed; the manifest gives lib/plain.js other facts, but its own
+      // edit, in the same apply, is what the engine evaluates: its old text, which required, is not sent again.
+      await enforcer.auditGeneratedEdits("package-facts", {
+        revision: 10, checkpoints: ["edit"], mode: "log", edits: [
+          { path: "package.json", language: "json", generatedText: manifest },
+          { path: "lib/plain.js", language: "javascript", generatedText: "exports.a = 1;\n" },
+        ],
+      });
+      await enforcer.auditGeneratedEdits("package-facts", {
+        revision: 11, checkpoints: ["edit"], edits: [{ path: "lib/own.ts", language: "typescript", generatedText: "export const own = 1;\n" }],
+      });
+      await enforcer.settle();
+      const reported = reportedSince(before);
+      expect(reported["lib/plain.js BIN"]).toBe(1);
+      expect(reported["lib/plain.js REQUIRE"]).toBeUndefined();
+      expect(reported["lib/own.ts PROGRAM"]).toBe(1);
     } finally {
       await close();
     }
@@ -766,7 +840,7 @@ describe("a package.json edit alone", () => {
     const outside = await directory("rerail-package-facts-outside-");
     await writeFile(join(outside, "package.json"), '{ "type": "commonjs", "dependencies": { "next": "15" } }\n');
     await writeFile(join(outside, "x.js"), "module.exports = require('x');\n");
-    await symlink(outside, join(root, "vendor"), "dir");
+    linkFolder(outside, join(root, "vendor"));
     const binding = loadNativeBinding();
     const reads = [vi.spyOn(binding, "packageFacts"), vi.spyOn(binding, "nearestPackage"), vi.spyOn(binding, "serverGraphAsync")];
     const { edit, close } = await enforcerFor(root, CODE_RULE, sources);
@@ -950,7 +1024,7 @@ describe("a Next app's server module graph (file.package.serverGraph)", () => {
       await mkdir(dirname(join(outside, path)), { recursive: true });
       await writeFile(join(outside, path), source);
     }
-    await symlink(outside, join(root, "vendor"), "dir");
+    linkFolder(outside, join(root, "vendor"));
     const binding = loadNativeBinding();
     const reads = [vi.spyOn(binding, "packageFacts"), vi.spyOn(binding, "nearestPackage"), vi.spyOn(binding, "serverGraphAsync")];
     const { edit, close } = await enforcerFor(root, CODE_RULE, {});

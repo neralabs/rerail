@@ -104,10 +104,60 @@ fn map(path: &Path) -> Option<&'static [u8]> {
     Some(unsafe { std::slice::from_raw_parts(at.cast::<u8>(), len) })
 }
 
-/// Where no mapping is, the file read once for the process.
+/// Where no mapping is, the file read once for the process, into a buffer at 16 bytes (its images are read in place
+/// at 16, decision 0464).
 #[cfg(not(unix))]
 fn map(path: &Path) -> Option<&'static [u8]> {
-    Some(Box::leak(std::fs::read(path).ok()?.into_boxed_slice()))
+    use std::io::Read;
+    let mut file = std::fs::File::open(path).ok()?;
+    let len = file.metadata().ok()?.len() as usize;
+    let buf: &'static mut [u128] = Box::leak(vec![0u128; len.div_ceil(16)].into_boxed_slice());
+    // SAFETY: `buf` holds at least `len` bytes, never freed, and borrowed here alone until it is returned.
+    let bytes = unsafe { std::slice::from_raw_parts_mut(buf.as_mut_ptr().cast::<u8>(), len) };
+    file.read_exact(bytes).ok()?;
+    Some(bytes)
+}
+
+/// An image in the shipped bundle's mapping, held as an image's bytes are (`program_image::SharedBytes`).
+struct InBundle(&'static [u8]);
+
+impl AsRef<[u8]> for InBundle {
+    fn as_ref(&self) -> &[u8] {
+        self.0
+    }
+}
+
+/// The image the shipped bundle keeps under `key`, read in its mapping (decision 0464): at 16 bytes, as the bundle
+/// places each.
+pub fn shipped_image(key: HashKey) -> Option<crate::code_rule_dsl::logic::program_image::SharedBytes> {
+    shipped().and_then(|b| b.get(key)).map(|b| Arc::new(InBundle(b)) as _)
+}
+
+/// A program image `read_image` found: its bytes where they are held, and the store's source for it (`None` for one
+/// shipped with the engine).
+pub type ImageFound = (crate::code_rule_dsl::logic::program_image::SharedBytes, Option<SourceId>);
+
+/// The program image under `key`, read where it is held (decision 0464): in the shipped bundle's mapping, else the
+/// store's, mapped from its segment (every object is in one); never copied.
+pub fn read_image(store: Option<&ContentStore>, key: HashKey) -> Option<ImageFound> {
+    read_images(store, &[key]).pop().flatten()
+}
+
+/// `read_image` of many keys, in their order, in a few statements.
+pub fn read_images(store: Option<&ContentStore>, keys: &[HashKey]) -> Vec<Option<ImageFound>> {
+    let mut out: Vec<Option<ImageFound>> = keys.iter().map(|key| shipped_image(*key).map(|b| (b, None))).collect();
+    let shipped_count = out.iter().filter(|f| f.is_some()).count();
+    crate::code_rule_dsl::prof::count("rr.image_shipped", shipped_count);
+    let Some(store) = store else { return out };
+    let asked: Vec<usize> = (0..keys.len()).filter(|&i| out[i].is_none()).collect();
+    let asked_keys: Vec<HashKey> = asked.iter().map(|&i| keys[i]).collect();
+    let (Ok(ids), Ok(bytes)) = (store.sources_by_aliases(&asked_keys), store.sources_by_alias_in_place(&asked_keys)) else { return out };
+    for ((&i, id), b) in asked.iter().zip(ids).zip(bytes) {
+        if let (Some(id), Some(b)) = (id, b) {
+            out[i] = Some((Arc::new(b) as _, Some(id)));
+        }
+    }
+    out
 }
 
 /// The bundle shipped with the engine: `RERAIL_SHIPPED_IMAGES` (a path, or `off`), else `rerail-library.images`
@@ -143,7 +193,8 @@ pub fn store() -> Option<Arc<ContentStore>> {
     ContentStore::open_images(&path).ok().map(Arc::new)
 }
 
-/// The image kept under `key`: the shipped bundle's, else `store`'s, with its source there (for its lease).
+/// The entry kept under `key` (a group of automata, a phase 0 graph: bytes their reader decodes, not a program image,
+/// which `read_image` reads in place): the shipped bundle's, else `store`'s, with its source there (for its lease).
 pub fn read(store: Option<&ContentStore>, key: HashKey) -> Option<(Cow<'static, [u8]>, Option<SourceId>)> {
     if let Some(bytes) = shipped().and_then(|b| b.get(key)) {
         crate::code_rule_dsl::prof::count("rr.image_shipped", 1);
@@ -153,27 +204,6 @@ pub fn read(store: Option<&ContentStore>, key: HashKey) -> Option<(Cow<'static, 
     let id = store.source_by_alias(key).ok()??;
     let bytes = store.get_source(id).ok()?;
     Some((Cow::Owned(bytes), Some(id)))
-}
-
-/// An image `read` found: its bytes, and the store's source for it (`None` for one shipped with the engine).
-pub type Found = (Cow<'static, [u8]>, Option<SourceId>);
-
-/// `read` of many keys, in their order: the shipped ones from the bundle, the rest from the store in a few
-/// statements (their aliases, then their bytes), not three statements each from as many threads.
-pub fn read_all(store: Option<&ContentStore>, keys: &[HashKey]) -> Vec<Option<Found>> {
-    let mut out: Vec<Option<Found>> = keys.iter().map(|key| shipped().and_then(|b| b.get(*key)).map(|bytes| (Cow::Borrowed(bytes), None))).collect();
-    let Some(store) = store else { return out };
-    let asked: Vec<usize> = (0..keys.len()).filter(|&i| out[i].is_none()).collect();
-    let Ok(ids) = store.sources_by_aliases(&asked.iter().map(|&i| keys[i]).collect::<Vec<_>>()) else { return out };
-    let found: Vec<(usize, SourceId)> = asked.iter().zip(ids).filter_map(|(&i, id)| Some((i, id?))).collect();
-    let Ok(mut bytes) = store.get_sources_bulk(&found.iter().map(|(_, id)| *id).collect::<Vec<_>>()) else { return out };
-    for (i, id) in found {
-        if let Some((b, _)) = bytes.remove(&id) {
-            out[i] = Some((Cow::Owned(b.to_vec()), Some(id)));
-        }
-    }
-    crate::code_rule_dsl::prof::count("rr.image_shipped", out.iter().filter(|f| f.as_ref().is_some_and(|f| f.1.is_none())).count());
-    out
 }
 
 /// With `RERAIL_EXPORT_IMAGES=<dir>`, `bytes` written there as `<key>.img` too: what a bundle is packed from
@@ -205,7 +235,7 @@ pub fn pack(dir: &Path, out: &Path) -> std::io::Result<usize> {
         }
         images.push((key, std::fs::read(&path)?));
     }
-    images.sort_by(|a, b| a.0.cmp(&b.0));
+    images.sort_by_key(|a| a.0);
     let mut head = Vec::with_capacity(HEADER + images.len() * ENTRY);
     head.extend_from_slice(MAGIC);
     head.extend_from_slice(&VERSION.to_le_bytes());

@@ -5,31 +5,39 @@
 //! and `fscanf` calls as PHP 8.5.11 validates them (`scanf`), and for Rust's `format_args!`
 //! family as rustc 1.99.0 binds them (`rust`).
 
-use crate::code_rule_dsl::tree::Tree;
 use super::AstMatcher;
 use super::each::{self, HostRanges};
 use super::exported::export;
 use super::parse::parsed_tree;
 use super::util::{THREE_VALUED, UNKNOWN};
 use super::value::Reading;
+use crate::code_rule_dsl::language::GrammarDialect;
 use crate::code_rule_dsl::literal::{Grammar, Parsed, SubDoc, offsets};
 use crate::code_rule_dsl::origin::Origin;
+use crate::code_rule_dsl::tape::TapeDoc;
 use crate::code_rule_dsl::transducer::semantic_facts::{Facts, Target, slot};
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::value::Value;
 use ast_grep_core::Matcher;
 use ast_grep_core::meta_var::MetaVarEnv;
+use ast_grep_core::tree_sitter::StrDoc;
 use ast_grep_core::{AstGrep, Doc, Node};
 use std::borrow::Cow;
 use std::collections::BTreeSet;
-use crate::code_rule_dsl::language::GrammarDialect;
-use crate::code_rule_dsl::tape::TapeDoc;
-use ast_grep_core::tree_sitter::StrDoc;
 
 /// What a family's format style reads of a call before any sub-rule matches (`Prepared`), one method per document
 /// type the engine has; registered per style at load (`install_format_preparers`).
 pub trait FormatPreparer: Send + Sync {
-    fn prepare_tape<'t>(&self, format: &FormatArgs, env: &MetaVarEnv<'t, TapeDoc>) -> Prepared<'t, TapeDoc>;
-    fn prepare_sub<'t>(&self, format: &FormatArgs, env: &MetaVarEnv<'t, SubDoc>) -> Prepared<'t, SubDoc>;
+    fn prepare_tape<'t>(
+        &self,
+        format: &FormatArgs,
+        env: &MetaVarEnv<'t, TapeDoc>,
+    ) -> Prepared<'t, TapeDoc>;
+    fn prepare_sub<'t>(
+        &self,
+        format: &FormatArgs,
+        env: &MetaVarEnv<'t, SubDoc>,
+    ) -> Prepared<'t, SubDoc>;
     fn prepare_str<'t>(
         &self,
         format: &FormatArgs,
@@ -37,7 +45,8 @@ pub trait FormatPreparer: Send + Sync {
     ) -> Prepared<'t, StrDoc<GrammarDialect>>;
 }
 
-static PREPARERS: std::sync::OnceLock<Vec<(Style, &'static dyn FormatPreparer)>> = std::sync::OnceLock::new();
+static PREPARERS: std::sync::OnceLock<Vec<(Style, &'static dyn FormatPreparer)>> =
+    std::sync::OnceLock::new();
 
 /// Registers each style's preparer (once, at load).
 pub fn install_format_preparers(preparers: Vec<(Style, &'static dyn FormatPreparer)>) {
@@ -169,7 +178,10 @@ impl FormatArgs {
         if TypeId::of::<D>() == TypeId::of::<StrDoc<GrammarDialect>>() {
             return unsafe { same(preparer.prepare_str(self, same(env))) };
         }
-        unreachable!("formatArgs over a document type the engine has not: {}", std::any::type_name::<D>())
+        unreachable!(
+            "formatArgs over a document type the engine has not: {}",
+            std::any::type_name::<D>()
+        )
     }
 
     pub(super) fn match_node<'t, D: Doc>(
@@ -302,8 +314,7 @@ fn first<'t, D: Doc>(
 /// The expression inside parentheses, as Ruff's AST has none.
 pub fn unparenthesized<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
     while node.kind() == "parenthesized_expression" {
-        let mut inner = node
-            .named_code();
+        let mut inner = node.named_code();
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
@@ -312,7 +323,6 @@ pub fn unparenthesized<'t, D: Doc>(mut node: Node<'t, D>) -> Node<'t, D> {
     }
     node
 }
-
 
 /// The positional fields (placeholders and stars) whose index is at or past `count`.
 pub fn positional_past(fields: &Fields, count: usize) -> Side<usize> {
@@ -325,8 +335,6 @@ pub fn positional_past(fields: &Fields, count: usize) -> Side<usize> {
             .collect(),
     )
 }
-
-
 
 // cratify: `python` is rerail-lang-python's (it mounts it)
 // cratify: `printf` is rerail-lang-php's (it mounts it)
@@ -381,5 +389,3 @@ impl FormatArgs {
         );
     }
 }
-
-

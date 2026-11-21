@@ -1,6 +1,6 @@
-"""Checks ruff-ruf013-implicit-optional.stdlib.rr: it round-trips against Ruff's known_stdlib.rs, and its modules at
+"""Checks ruff-ruf013-implicit-optional.stdlib.rerail: it round-trips against Ruff's known_stdlib.rs, and its modules at
 Python 3.10 are the JSON's `known-name` list.
-    python3 docs/rule-syntax/packs/python/check-ruff-ruf013-implicit-optional.py
+    RUFF_SRC=<Ruff checkout at 0be08a2> python3 docs/rule-syntax/packs/python/check-ruff-ruf013-implicit-optional.py
 """
 import importlib.util, json, os, re
 HERE = os.path.dirname(os.path.abspath(__file__))
@@ -10,7 +10,7 @@ text = open(gen.OUT).read()
 every = re.findall(r'stdlib_module\("([^"]+)"\)\.', text)
 some = [(m, int(v)) for m, v in re.findall(r'stdlib_module_in\("([^"]+)", (\d+)\)\.', text)]
 bad = 0
-if (every, some) != gen.split(gen.table(open(gen.RS).read())):
+if (every, some) != gen.split(gen.table(gen.known_stdlib())):
     bad += 1
     print("known_stdlib.rs: DIFFERENT")
 else:

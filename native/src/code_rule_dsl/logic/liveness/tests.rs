@@ -18,9 +18,9 @@ fan(a, n) :- path(a, _), n = count : { e(a, _) }.
 out(a, b) :- path(a, b), a = 1.
 .output out, fan
 "#;
-        let prog = crate::code_rule_dsl::logic::rr::parse(src).unwrap();
-        let live = super::program(&prog);
-        let text = format!("{src}\n{}", crate::code_rule_dsl::logic::rr::print(&live).unwrap());
+        let prog = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
+        let live = super::program(&prog).unwrap();
+        let text = format!("{src}\n{}", crate::code_rule_dsl::logic::rr::print_version(&live).unwrap());
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension("liveness");
         std::fs::create_dir_all(&dir).unwrap();
         let root = dir.join("root");

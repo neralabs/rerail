@@ -506,7 +506,7 @@ program, planner fix on both:
 
 ## Prior work and how each approach relates to it
 
-The ast-index-spike indexes (design index, history index) and the lessons ledger
+The SQL index prototype indexes (design index, history index) and the lessons ledger
 have no topic on in-memory relation indexes for a Datalog fixpoint. The nearest
 entries:
 
@@ -568,5 +568,5 @@ All in the engine's `native/src/code_rule_dsl/logic/native/setfix.rs` and its
 - [j] ae9b21080, on a side branch only.
 - Earlier work: 7d7827a87 and ffae8ae7e (per-chunk index builds); c7ba9dce5 (SQL
   chain-cover orders, in `open-items.md`); decision 0095's lab check (radix sort
-  join); `docs/comparisons/candidate-and-index-spikes.md` (bulk lookups);
+  join); `docs/comparisons/candidate-and-index-spikes.md` (removed; at 7efcac9c67) (bulk lookups);
   decision 0045 (chunked containers).

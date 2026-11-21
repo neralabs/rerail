@@ -1,13 +1,14 @@
-"""Checks ruff-air312-airflow3-suggested-to-move-to-provider.moved.rr against its two sources: its old names are the
+"""Checks ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail against its two sources: its old names are the
 JSON's `deprecated` list, in order, and each (old, module, name) row is an arm of Ruff 0.16.9's
-suggested_to_move_to_provider_in_3 (the commit the JSON was written from), read from the Rust source."""
+suggested_to_move_to_provider_in_3 (the commit the JSON was written from), read from the Rust source.
+    RUFF_SRC=<Ruff checkout at 0be08a2> python3 docs/rule-syntax/packs/python/check-ruff-air312-airflow3-suggested-to-move-to-provider.py
+"""
 import json, os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules", "ruff-air312-airflow3-suggested-to-move-to-provider.json")
-OUT = os.path.join(HERE, "ruff-air312-airflow3-suggested-to-move-to-provider.moved.rr")
-RUST = os.environ.get("RUFF_SRC", "/Users/jeremy/orca/workspaces/rerail/wolfeel/.rerail/port-readiness/upstream/ruff/"
-                      "0be08a206f9c3180afd3e93bcc792ed5cb1f4db1/crates/ruff_linter") + \
-    "/src/rules/airflow/rules/suggested_to_move_to_provider_in_3.rs"
+OUT = os.path.join(HERE, "ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail")
+RUFF = os.environ.get("RUFF_SRC") or sys.exit("set RUFF_SRC to a Ruff checkout at 0be08a206f9c3180afd3e93bcc792ed5cb1f4db1")
+RUST = os.path.join(RUFF, "crates", "ruff_linter", "src", "rules", "airflow", "rules", "suggested_to_move_to_provider_in_3.rs")
 got = re.findall(r'air312_moved\("([^"]+)", "([^"]+)", "([^"]+)"\)\.', open(OUT).read())
 olds = json.load(open(JSON))["clauses"][0]["forbid"]["ast"]["utils"]["deprecated"]["resolves"]["import"]
 src = open(RUST).read()

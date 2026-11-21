@@ -23,7 +23,7 @@ struct Args {
     cells: u32,
     capacity: u32,
     polls: u32,
-    pad: u32,
+    budget: u32,
 }
 unsafe impl lane::Pod for Args {}
 
@@ -91,9 +91,10 @@ pub(in crate::code_rule_dsl) fn solve(system: &System<'_>) -> Result<Solved, Err
     let (out_start, outs, queued) = (upload(&out_start)?, upload(&outs)?, upload(&queued)?);
     let stats = zeroed::<u32>(4)?;
     let made_in = super::metal_backend::launch::host_seconds() - begun;
-    let args = Args { cells: n as u32, capacity: queue.capacity, polls: super::work_queue::POLLS, pad: 0 };
+    let budget = super::work_queue::budget(groups);
+    let args = Args { cells: n as u32, capacity: queue.capacity, polls: super::work_queue::POLLS, budget };
     let kernel = lane::kernel_fixed(SOURCE, "lattice_queue", None);
-    let ran = super::work_queue::run(&kernel, &queue, groups, "Rerail lattice FIX", |launch| {
+    let ran = super::work_queue::run(&kernel, &queue, groups, budget, "Rerail lattice FIX", |launch| {
         let rows: [(&'static str, &super::blocks::Block); 14] = [
             ("state", &state),
             ("values", &values),
@@ -207,7 +208,7 @@ mod tests {
             match next() % 4 {
                 0 => copies.push((c, c - 1)),
                 1 => copies.push((c, next() % n)),
-                2 => bins.push((c, [b'+', b'-', b'*', b'/'][(next() % 4) as usize], next() % c, next() % c)),
+                2 => bins.push((c, b"+-*/"[(next() % 4) as usize], next() % c, next() % c)),
                 _ => {}
             }
         }

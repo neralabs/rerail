@@ -382,11 +382,27 @@ fn a_commit_past_a_blocks_room_starts_the_next() {
     let ids = store.intern_atoms(&words.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
     store.immediate_transaction(|_| Ok(())).unwrap();
     assert!(!store.atoms.pending());
-    assert_eq!(store.atoms.state.read().atoms.buf.capacity(), 0, "the heap gave its stored bytes up");
+    assert!(store.atoms.state.read().atoms.pending.is_empty(), "the pending atoms' blocks, wholly stored, let go (decision 0478 step 2a)");
     let rows = blocks(&path);
     assert!(rows.len() == 1 && rows[0].0.starts_with('b') && (rows[0].1, rows[0].2) == (1, 70_002 + cap), "one base: {rows:?}");
     for i in [0, 69_999] {
         assert_eq!(store.atom(&words[i]).unwrap(), Some(ids[i]), "read through the base here");
+    }
+    // Decision 0478 step 2b: every atom read through the directory, by the reads written once in CLIF, is the
+    // store's: across the base, and the pending blocks of atoms interned since.
+    let more: Vec<String> = (0..300).map(|i| format!("x{i}")).collect();
+    let more_ids = store.intern_atoms(&more.iter().map(String::as_str).collect::<Vec<_>>()).unwrap();
+    {
+        let state = store.atoms.state.read();
+        let dir = state.atoms.dir();
+        let last = *more_ids.last().unwrap();
+        for id in (0..=last).step_by(97).chain([1, cap, cap + 1, 70_001 + cap, more_ids[0], last]) {
+            // SAFETY: a host directory over blocks this process maps.
+            let got = unsafe { rerail_blocks::atoms::str_in(dir.root(), id) };
+            assert_eq!(got, state.atoms.str(id).map(str::as_bytes), "id {id}");
+        }
+        // SAFETY: as above.
+        assert_eq!(unsafe { rerail_blocks::atoms::str_in(dir.root(), last + 1) }, None, "past every atom");
     }
     drop(store);
     let copy = elsewhere(&path, "next-block-again");
@@ -561,7 +577,7 @@ fn a_reservation_inside_another_holds_its_own_atoms() {
 
 /// Decision 0170: ids given out here while another process stored atoms past this one's end are not the store's. This
 /// process forks: its pending strings are stored under ids of their own (a string the store has takes its id), and a
-/// frame's symbol columns are the store's ids in the store and this process's in memory.
+/// kept entry's atom columns are the store's ids in its block.
 #[test]
 fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
     let path = path("forked");
@@ -576,22 +592,25 @@ fn atoms_another_process_stored_past_this_ones_end_are_mapped_after_a_fork() {
     assert!(handle.forked());
     assert!(!handle.pending(), "every atom has its store id");
     assert_eq!(stored(&path), ["", "a", "z", "y", "b"], "`b` stored after the other's atoms, `y` found in them");
-    // A frame of `b`, `y` and `a` holds the store's ids there (4, 3, 1), and this process's when read back.
+    // A kept entry of `b`, `y` and `a` holds the store's ids in its block (4, 3, 1), mapped as it is written.
     let space = [7u8; 32];
-    let rel = crate::content_store::FrameRel { name: "r".into(), ident: [1; 32] };
-    let rows = crate::content_store::FrameRows { types: vec![b's', b'i'], rows: vec![2, 2, 3, 3, 1, 1], n: 3 };
-    let put = crate::content_store::FramePut { rel: rel.clone(), part: 0, digest: 9, reads: Vec::new(), rows };
-    super::mapped(|| store.keep_frames(&space, &[put], &[], None)).unwrap();
-    let connection = rusqlite::Connection::open(&path).unwrap();
-    let data: Vec<u8> = connection.query_row("SELECT data FROM frames WHERE rel = 'r'", [], |r| r.get(0)).unwrap();
-    let mut cols = vec![Vec::new(); 2];
-    crate::content_store::cross_rows::decode(2, 3, &data, &mut cols).unwrap();
-    assert_eq!(cols[0], [4, 3, 1], "the store's ids");
-    assert_eq!(cols[1], [2, 3, 1], "an integer column is as it was");
-    crate::content_store::forget_frames_snapshot(path.to_str().unwrap());
-    let reopened = ContentStore::open(&path).unwrap();
-    let (_, frame) = reopened.admit_all_parts(&space, &rel).unwrap().pop().unwrap();
-    assert_eq!(frame.rows().unwrap().rows, [2, 2, 3, 3, 1, 1], "this process's ids");
+    let put = crate::content_store::kept_facts::KeptPut {
+        rel: "r".into(),
+        ident: [1; 32],
+        part: 0,
+        digest: 9,
+        reads: Vec::new(),
+        types: vec![b's', b'i'],
+        what: crate::content_store::kept_facts::KeptWhat::Flat { widths: vec![8, 8], rows: vec![2, 2, 3, 3, 1, 1], n: 3, levels: None, given: false },
+    };
+    super::mapped(|| store.queue_kept(space, vec![put]));
+    let row = store.kept_row(&space).unwrap().expect("written");
+    let kept = store.open_kept(&space, &row).unwrap();
+    let view = kept.view();
+    let entry = rerail_blocks::kept::KeptRead::get(&view, &rerail_blocks::kept::FactKey { rel: "r", ident: &[1; 32], part: 0 }).expect("the entry");
+    // In canonical order (decision 0456 K3): by the store's ids.
+    let rows: Vec<Vec<i64>> = (0..3).map(|id| entry.row(id)).collect();
+    assert_eq!(rows, [vec![1, 1], vec![3, 3], vec![4, 2]], "the store's ids (b 4, y 3, a 1), each integer with its row");
     // The other process's `z` is held here under an id of this process's.
     let mut z = [2i64];
     handle.to_local(StoreIds::as_stored(&mut z)).unwrap();
@@ -658,7 +677,7 @@ fn a_forked_processs_derivations_name_the_stores_atoms() {
     assert_eq!(store.readers_of(3).unwrap(), [2], "`y` is read by `b`, in this process's ids");
     assert_eq!(store.derivation_of(2).unwrap().unwrap().inputs, [(Some(3), digest(2))]);
     // Another process reads the store's.
-    crate::content_store::forget_frames_snapshot(path.to_str().unwrap());
+    crate::content_store::forget_held_snapshot(path.to_str().unwrap());
     let other = ContentStore::open(&path).unwrap();
     assert_eq!(other.binding("b").unwrap(), Some(digest(3)));
     assert_eq!(other.binding("z").unwrap(), None);
@@ -749,4 +768,30 @@ fn a_forked_processs_unnamed_atoms_queue_no_write() {
     drop(store);
     drop(handle);
     assert_eq!(stored(&path), ["", "a", "b", "c"], "nothing stored at the close");
+}
+
+/// Decision 0478 step 2a: the run's pending atoms are in atoms blocks, the stored chain's format, each string where
+/// a block holds it (a device reads it there): none in a heap buffer. The chain grows past its first block, every
+/// atom is found by its string and read by its id, and the blocks of atoms stored since are let go.
+#[test]
+fn pending_atoms_live_in_atoms_blocks() {
+    use super::{Interner, PENDING_FIRST_CAP, hash_str};
+    let mut i = Interner::default();
+    let n = 3 * PENDING_FIRST_CAP as usize;
+    let strings: Vec<String> = (0..n).map(|k| format!("atom-{k}-{}", "x".repeat(k % 37))).collect();
+    let ids: Vec<Sym> = strings.iter().map(|s| i.intern(s)).collect();
+    assert_eq!(ids, (1..=n as Sym).collect::<Vec<_>>(), "dense ids from the first");
+    let blocks = i.pending_regions();
+    assert!(blocks.len() >= 2, "the chain grew past its first block: {blocks:?}");
+    for (s, &id) in strings.iter().zip(&ids) {
+        let got = i.str(id).expect("a pending atom's string");
+        assert_eq!(got, s);
+        let at = got.as_ptr() as usize;
+        assert!(blocks.iter().any(|&(lo, hi)| at >= lo && at + got.len() <= hi), "{s}: read where an atoms block holds it");
+        assert_eq!(i.get(s), Some(id));
+        assert_eq!(i.hash_of(id), Some(hash_str(s)));
+    }
+    assert_eq!(i.intern(&strings[5]), ids[5], "interned again: the same id");
+    assert_eq!(i.pending(), (n, strings.iter().map(String::len).sum()));
+    assert_eq!(i.len(), n + 1);
 }

@@ -53,6 +53,28 @@ pub fn chunk_of(i: u32, min_log: u32) -> (usize, usize) {
     (4 * k as usize + (l >> qlog) as usize, (l & ((1u64 << qlog) - 1)) as usize)
 }
 
+impl ColDir {
+    /// Where row `i`'s value lies, its rows' first chunk `2^min_log` rows: its chunk's offset from this directory,
+    /// then its place at the column's width (the reads in CLIF's `col_at`, the kernels' and the JIT's).
+    #[inline(always)]
+    pub fn at(&self, min_log: u32, i: u32) -> *mut u8 {
+        let (chunk, place) = chunk_of(i, min_log);
+        let start = std::ptr::from_ref(self).cast::<u8>().wrapping_offset(self.chunk[chunk].load(Relaxed) as isize);
+        start.wrapping_add(place * self.width as usize).cast_mut()
+    }
+
+    /// Row `i`'s value (a 4-byte column's unsigned; the CLIF's `col_get`).
+    ///
+    /// # Safety
+    /// Row `i` is reserved: its chunk is made.
+    #[inline(always)]
+    pub unsafe fn get(&self, min_log: u32, i: u32) -> i64 {
+        let p = self.at(min_log, i);
+        // SAFETY: the row's value in its chunk, aligned to the column's width (the caller's).
+        unsafe { if self.width == 4 { i64::from(*p.cast::<u32>()) } else { *p.cast::<i64>() } }
+    }
+}
+
 /// Rows chunk `s` holds.
 #[inline]
 pub fn chunk_rows(s: usize, min_log: u32) -> u64 {
@@ -82,11 +104,11 @@ pub struct ColRead {
 }
 
 impl ColRead {
-    /// Row `i`'s value: the read written once (`col_get`, decision 0325), the kernels' and the JIT's too.
+    /// Row `i`'s value (`ColDir::get`; the CLIF's `col_get`, decision 0325, the kernels' and the JIT's).
     #[inline(always)]
     pub fn get(&self, i: u32) -> i64 {
         // SAFETY: the directory is its relation's, which outlives the reader; row `i` was claimed and reserved.
-        unsafe { crate::generated_reads::col_get(self.dir.cast(), self.min_log, i) as i64 }
+        unsafe { (*self.dir).get(self.min_log, i) }
     }
 }
 
@@ -157,21 +179,18 @@ impl Rows {
         &self.cols.as_slice()[c]
     }
 
-    /// Where row `i`'s value in column `c` lies, and the column's width: the reads written once (`rows_at`,
-    /// `rows_width`; decision 0325).
+    /// Where row `i`'s value in column `c` lies, and the column's width (the CLIF's `rows_at`, `rows_width`).
     #[inline]
     fn at(&self, i: u32, c: usize) -> (*mut u8, u32) {
-        let desc = std::ptr::from_ref(self).cast::<u8>();
-        // SAFETY: a live descriptor of this block; column `c` is one of its columns (the callers' row reserved).
-        unsafe { (crate::generated_reads::rows_at(desc, i, c as u32) as usize as *mut u8, crate::generated_reads::rows_width(desc, c as u32)) }
+        let d = self.col(c);
+        (d.at(self.min_log, i), d.width)
     }
 
-    /// Row `i`'s value in column `c`: the read written once (`rows_get`, decision 0325), the kernels' and the JIT's
-    /// too.
+    /// Row `i`'s value in column `c` (the CLIF's `rows_get`, decision 0325, the kernels' and the JIT's).
     #[inline]
     pub fn get(&self, i: u32, c: usize) -> i64 {
-        // SAFETY: a live descriptor; row `i` was claimed and reserved, column `c` is one of its columns.
-        unsafe { crate::generated_reads::rows_get(std::ptr::from_ref(self).cast(), i, c as u32) as i64 }
+        // SAFETY: row `i` was claimed and reserved.
+        unsafe { self.col(c).get(self.min_log, i) }
     }
 
     /// # Safety
@@ -232,60 +251,6 @@ impl Rows {
             self.reserved.store(capacity(nchunks, self.min_log).min(u32::MAX as u64) as u32, Release);
         }
         true
-    }
-
-    /// Makes these rows (empty, of `src`'s widths and `min_log`, in open `block`) hold `src`'s: the same chunks made,
-    /// each column's chunks copied whole by `memcpy`, nothing decoded. False when `block` has no room (the rows are
-    /// then empty).
-    pub fn try_copy_from(&self, block: &Block, src: &Rows) -> bool {
-        assert!(self.is_empty() && self.ncols == src.ncols && self.min_log == src.min_log, "a copy into rows of another shape");
-        let n = src.len();
-        if !self.try_reserve(block, u64::from(n)) {
-            return false;
-        }
-        for c in 0..self.ncols as usize {
-            let (from, to) = (src.col(c), self.col(c));
-            assert_eq!(from.width, to.width);
-            let mut k = 0;
-            while chunk_first(k, self.min_log) < u64::from(n) {
-                let rows = (u64::from(n) - chunk_first(k, self.min_log)).min(chunk_rows(k, self.min_log)) as usize;
-                // SAFETY: chunk `k` of both columns is made (`n` is within both reserves) and holds `rows` rows of
-                // `width` bytes; they lie in different blocks' memory, and this block is open with this one writer.
-                unsafe {
-                    let a = (from as *const ColDir as *const u8).offset(from.chunk[k].load(Relaxed) as isize);
-                    let b = (to as *const ColDir as *const u8).offset(to.chunk[k].load(Relaxed) as isize) as *mut u8;
-                    std::ptr::copy_nonoverlapping(a, b, rows * from.width as usize);
-                }
-                k += 1;
-            }
-        }
-        self.len.store(n, Release);
-        true
-    }
-
-    /// Each value of column `c` replaced by `f` of it, where it lies, chunk by chunk: the one writer of an open block's
-    /// rows (a copy's, mapped to another numbering, 0401 F6).
-    ///
-    /// # Safety
-    /// Nothing else reads or writes these rows meanwhile.
-    pub unsafe fn map_col(&self, c: usize, mut f: impl FnMut(i64) -> i64) {
-        let w = self.col(c).width;
-        let mut k = 0;
-        while let Some((_, len, p)) = self.chunk_raw(c, k, u64::from(self.len())) {
-            // SAFETY: chunk `k` holds `len` rows of width `w`; the caller's: no one else touches them.
-            unsafe {
-                if w == 4 {
-                    for v in std::slice::from_raw_parts_mut(p.cast::<u32>(), len) {
-                        *v = f(i64::from(*v)) as u32;
-                    }
-                } else {
-                    for v in std::slice::from_raw_parts_mut(p.cast::<i64>(), len) {
-                        *v = f(*v);
-                    }
-                }
-            }
-            k += 1;
-        }
     }
 
     /// Gives every column's chunks back to `block`'s free list (decision 0342), when it keeps one; the rows are
@@ -496,7 +461,9 @@ mod tests {
             next.rows.reserve(&block, step * n as u64 / 8);
         }
         fill(next, 3);
-        assert!(block.used() < used + 64 << 10, "{} bytes used after, {used} before", block.used());
+        // A 64 KiB margin for the descriptor. Read as `(used + 64) << 10` it was a thousand times the block, and held
+        // of any growth.
+        assert!(block.used() < used + (64 << 10), "{} bytes used after, {used} before", block.used());
         for i in 0..n {
             assert_eq!((next.rows.get(i, 0), next.rows.get(i, 1)), (i64::from(i), 3 * i64::from(i)), "row {i}");
             assert_eq!(kept.rows.get(i, 1), -i64::from(i), "row {i}");

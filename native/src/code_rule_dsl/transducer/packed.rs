@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 use super::super::tape::TapeDoc;
 use ast_grep_core::MatchStrictness;
@@ -48,19 +47,19 @@ pub mod metal_batch_abi;
 pub mod device;
 pub use device::{RootJobs, RootsFound};
 
-#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
 pub fn reset_metal_execution_metrics() {
     if let Some(device) = device::matcher() {
         device.reset_execution_metrics();
     }
 }
 
-#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
 pub fn metal_execution_metrics() -> (usize, usize) {
     device::matcher().map_or((0, 0), |device| device.execution_metrics())
 }
-// The verifier's proofs (05 Phase 4 row 2, from Tempo's transducer, kept under `packed/verify/`
-// and declared here so their `super::` is the program and its opcodes, as in Tempo).
+// The verifier's proofs (05 Phase 4 row 2, from the predecessor's transducer, kept under `packed/verify/`
+// and declared here so their `super::` is the program and its opcodes, as in the predecessor).
 // cratify: `bounded_repeat_proof` is rerail-device-metal's (it mounts it)
 #[path = "packed/verify/closure_proof.rs"]
 pub mod closure_proof;
@@ -77,7 +76,7 @@ pub mod terminal_repeat_proof;
 #[cfg(test)]
 #[path = "packed/verify/backend_parity_tests.rs"]
 pub mod backend_parity_tests;
-// The tree-sitter query front end (05 Phase 4 row 4, from Tempo's `scm.rs`).
+// The tree-sitter query front end (05 Phase 4 row 4, from the predecessor's `scm.rs`).
 #[path = "packed/compile/scm.rs"]
 pub mod scm;
 // W's composite matcher as label passes and programs (06-first-slice S1).
@@ -133,7 +132,7 @@ pub mod regex_block;
 // cratify: `block_rows_tests` is rerail-device-metal's (it mounts it)
 #[cfg(test)]
 pub mod block_digest_tests;
-// The `.rr` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
+// The `.rerail` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
 // what it refuses. Nothing in the engine parses with it yet; named here for the engine's callers.
 #[allow(unused_imports)]
 pub use rerail_rr_parser as rr_parser;
@@ -331,8 +330,8 @@ fn restarting_grown(
     crate::code_rule_dsl::logic::profile::decision("evaluations over their budget, restarted with twice the budget (0334)", || {
         format!("{} evaluations at {budget:?}", unfinished.len())
     });
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-        eprintln!("TEMPO_PACKED_RESTART budget={budget:?} next={next:?} unfinished={unfinished:?}");
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!("RERAIL_PACKED_RESTART budget={budget:?} next={next:?} unfinished={unfinished:?}");
     }
     let mut rerun = anchors.iter().map(|file| vec![Vec::new(); file.len()]).collect::<Vec<_>>();
     for &(file, program, _) in &unfinished {
@@ -3452,7 +3451,7 @@ impl Program {
         self.execute_roots_from_with_work_limit(tape, roots, initial_pc, stats, MAX_STEPS_PER_PATH)
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
     pub fn execute_terminal_reference_with_work_limit(
         &self,
         tape: &TapeDoc,

@@ -6,9 +6,9 @@
 //! literal_json(n, v)                 W's pythonAst `literal_json` of expression node n: `json.dumps(ast.literal_eval(
 //!                                    node), sort_keys=True, separators=(",", ":"))` of the `ast` node at n's span
 //!                                    whose class n's kind is (W's `KINDS`); no row where either raises
-//! cpython_unparse(n, s)              core.rr's @py_unparse(n): `ast.unparse` of the `ast` expression (keyword, arg,
+//! cpython_unparse(n, s)              core.rerail's @py_unparse(n): `ast.unparse` of the `ast` expression (keyword, arg,
 //!                                    alias) at n's span whose class n's kind is
-//! cpython_ast_dump(n, s)             core.rr's @ast_dump(n): `ast.dump(node, include_attributes=False)` of the
+//! cpython_ast_dump(n, s)             core.rerail's @ast_dump(n): `ast.dump(node, include_attributes=False)` of the
 //!                                    `ast` node at n's span whose class n's kind is
 //! dump_sha256(n, h)                  W's `dump_sha256`: sha256 of that dump (lowercase hex)
 //! body_sha256(f, h)                  W's `body_sha256` of def f: of `ast.dump(ast.Module(body=f.body, type_ignores=[]))`
@@ -16,7 +16,7 @@
 //!                                    dump(ast.Tuple(elts=type_params))`
 //! ```
 //!
-//! `cpython_syntax_error` is core.rr's `syntax_error(d, l, msg)` of a Python document under the name the converter
+//! `cpython_syntax_error` is core.rerail's `syntax_error(d, l, msg)` of a Python document under the name the converter
 //! gives it: both read the tape's one cached verdict (`Facts::python_syntax`, `python_syntax::error`); the tape's
 //! `syntax_error(d)` (an ERROR or MISSING node) is apart. Where `ast.parse` raises no `SyntaxError` but another
 //! exception (a format spec's `UnicodeDecodeError`), a batch reading any of these relations for that document fails,
@@ -96,7 +96,7 @@ impl CPython {
                     let Some(nodes) = by_span.get(&(l.start, l.end)) else { continue };
                     let mut v = None;
                     for &local in nodes {
-                        if l.class.of_kind(dialect.name(f, p.node(local as u32))) {
+                        if l.class.of_kind(dialect.name(f, p.node(local))) {
                             let v = *v.get_or_insert_with(|| string(&l.json) as i64);
                             self.literals.push([p.global(local), v]);
                         }
@@ -143,24 +143,24 @@ impl CPython {
         Ok(())
     }
 
-    /// The relations read, their strings as atoms (`atom` of a string index).
-    pub(super) fn relations(self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
+    /// The relations read of the rows made since the last call, their strings as atoms (`atom` of a string index).
+    pub(super) fn relations(&mut self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
         let mut out = Vec::new();
         if self.syntax_error {
             let mut r = super::Relation::new(&["d", "l", "msg"]);
-            self.syntax_errors.iter().for_each(|&[d, l, m]| r.push(&[d, l, atom(m)]));
+            std::mem::take(&mut self.syntax_errors).into_iter().for_each(|[d, l, m]| r.push(&[d, l, atom(m)]));
             out.push((SYNTAX_ERROR, r));
         }
         if self.literal_json {
             let mut r = super::Relation::new(&["n", "v"]);
-            self.literals.iter().for_each(|&[n, v]| r.push(&[n, atom(v)]));
+            std::mem::take(&mut self.literals).into_iter().for_each(|[n, v]| r.push(&[n, atom(v)]));
             out.push((LITERAL_JSON, r));
         }
         let wanted = [self.want.unparse, self.want.dump, self.want.dump_sha256, self.want.body_sha256, self.want.signature_sha256];
-        for ((rel, rows), wanted) in PRINTED.into_iter().zip(&self.printed).zip(wanted) {
+        for ((rel, rows), wanted) in PRINTED.into_iter().zip(self.printed.iter_mut()).zip(wanted) {
             if wanted {
                 let mut r = super::Relation::new(columns(rel));
-                rows.iter().for_each(|&[n, s]| r.push(&[n, atom(s)]));
+                std::mem::take(rows).into_iter().for_each(|[n, s]| r.push(&[n, atom(s)]));
                 out.push((rel, r));
             }
         }
@@ -188,7 +188,7 @@ impl super::ProducerRun for CPython {
     fn document(&mut self, p: &super::Projected, d: &super::Document, dialect: Option<&super::Dialect>, own: bool, string: &mut dyn FnMut(&str) -> usize) -> crate::content_store::StoreResult<()> {
         CPython::document(self, p, &d.path, dialect, own, string)
     }
-    fn relations(self: Box<Self>, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
-        CPython::relations(*self, atom)
+    fn relations(&mut self, atom: &dyn Fn(i64) -> i64) -> Vec<(&'static str, super::Relation)> {
+        CPython::relations(self, atom)
     }
 }

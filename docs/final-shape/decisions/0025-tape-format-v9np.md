@@ -5,18 +5,18 @@ Status: accepted (2026-11-01, user decision)
 ## Context
 
 O8 asks for five pre-lock measurements of v9np on Rerail's own grammars, then a decision. v9np is
-P decision 0003's proposal (Pulling-it-all-together `docs/rule-engine-direction/decisions/`): a
+P decision 0003's proposal (PIAT `docs/rule-engine-direction/decisions/`): a
 structure-only, regular, column-stored tape. W runs `TMPTAPE8`, which is v7 plus N's supertype
 table. The spike's harness is placed as `tape::v9np`. `tape::v9np::tests::measure_on_a_corpus` runs
 its `measure` mode on a corpus through Rerail's vendored and patched grammars.
 
 The user's requirements (O8): the format must be completely regular, and stay processable in SQL
-with ast-index-spike techniques. A change must show clear benefits; a size increase was not
+with the SQL index prototype techniques. A change must show clear benefits; a size increase was not
 acceptable.
 
 **Corpora.** The harness holds every node in memory: 31.5 MB of source peaked at 783 MB RSS. So
 each corpus is a sample, not the whole repository:
-- the data-layer repository (`~/orca/projects/nera-data-layer-gruel-main`, without `.venv`): every
+- the data-layer repository (a local checkout, without `.venv`): every
   fifth Python file (1,903 files, 31.5 MB), and all of its JavaScript, TypeScript and Rust;
 - CPython 3.15's standard library: every third file (673 files, 14 MB).
 
@@ -126,7 +126,7 @@ TypeScript 0.78×, JavaScript 0.72×); the code table is 0.17–0.53 B/node.
 
 ## Amendment (2026-11-02): no parent column
 
-Decided after list step 12's lab, with ast-index-spike's design and history indexes (rec6 stores
+Decided after list step 12's lab, with the SQL index prototype's design and history indexes (rec6 stores
 `par`, a parent delta, because its SQL climbs read the blob in place: D S047; HI L240, L271).
 Rerail's tapes are zstd frames decoded whole before any read, so parents are rebuilt by one stack
 pass at decode: `TapeDoc::restore` and the SQL fallback's `prefilter::tapes`. On the lab's

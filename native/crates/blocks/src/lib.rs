@@ -13,8 +13,8 @@
 //! - **Relations** (`relation`): rows, kills, dead bits, a canonical order, hash indexes and statistics, all in
 //!   one descriptor. `freeze` builds what reads need, so that they come in a fixed order. `View` reads a full
 //!   relation, or a base and its delta, as one.
-//! - **Blocks of the engine:** `facts`, `chunk`, `program` and `journal`. On macOS, `gpu` holds the Metal
-//!   kernels, which read and write the same structures through generated MSL.
+//! - **Blocks of the engine:** `facts`, `chunk`, `program` and `journal`. `gpu` holds the join's UKL
+//!   kernels, which read and write the same structures through generated UKL, on every backend.
 //!
 //! Descriptors are never `Copy`: a reference is only meaningful at its own address, so a descriptor is only ever
 //! reached by reference into its block.
@@ -22,31 +22,40 @@
 pub mod alloc;
 pub mod atoms;
 pub mod block;
+pub mod bloom;
 pub mod chunk;
 pub mod col;
 #[cfg(unix)]
 pub mod deferrable;
 pub mod facts;
 pub mod free;
-/// A relation's reads, generated from their CLIF (decision 0325; `rerail_clif::relation`): what `Rows` and
-/// `Relation` read through, the same reads the kernels' (`<ukl/reads/relation.h>`) and the JIT make.
-#[rustfmt::skip]
-pub mod generated_reads;
-/// The same reads in UKL, for every kernel that reads a relation in its block (decision 0325): the library's header,
-/// which a kernel source including it is preprocessed with (`rerail_ukl::metal_source`; decision 0440 §3.3).
+/// A relation's reads in UKL, for every kernel that reads a relation in its block (decision 0325; the host's are
+/// written directly, decision 0536, and the CLIF's are the JIT's, `rerail_clif::relation`): the library's header,
+/// which a kernel source including it is preprocessed with (the device layer's programs; decision 0440 §3.3).
 pub const RELATION_READS: &str = "#include <ukl/reads/relation.h>\n";
 pub mod journal;
 pub mod kept;
+pub mod ledger;
 pub mod mem;
 pub mod packed;
 pub mod ranged;
 pub mod program;
 pub mod refs;
+pub mod region;
 pub mod relation;
 pub mod rows;
 pub mod scratch;
 pub mod sort;
-#[cfg(target_os = "macos")]
+
+/// The flag an anonymous mapping takes to be address space reserved, its pages committed as they are written: Linux's
+/// `MAP_NORESERVE`. Without it Linux's overcommit heuristic refuses a reservation larger than memory and swap (a 64
+/// GiB scratch region on a 16 GiB runner), which macOS grants as it maps every anonymous region so.
+#[cfg(target_os = "linux")]
+pub(crate) const RESERVE_ONLY: libc::c_int = libc::MAP_NORESERVE;
+#[cfg(all(unix, not(target_os = "linux")))]
+pub(crate) const RESERVE_ONLY: libc::c_int = 0;
+#[cfg(windows)]
+mod windows;
 pub mod gpu;
 
 pub use block::{Block, Cells, Frozen, Header};
@@ -58,8 +67,9 @@ pub use refs::{Ptr, Span};
 /// Implementors are `#[repr(C)]` with every byte a named field, and hold no address.
 pub unsafe trait Pod: 'static {}
 
-/// How a type is declared in MSL, and the declarations it needs first.
-pub trait MslField {
+/// How a type is declared in UKL, and the declarations it needs first: C's fixed-width types, a structure a
+/// `typedef`, its assertions `UKL_STATIC_ASSERT`s, for a kernel on every backend (decision 0440).
+pub trait KernelField {
     fn ty() -> String;
     fn decl(name: &str) -> String {
         format!("{} {}", Self::ty(), name)
@@ -68,19 +78,19 @@ pub trait MslField {
 }
 
 macro_rules! scalar {
-    ($($t:ty => $m:literal),*) => {$(
+    ($($t:ty => $c:literal),*) => {$(
         unsafe impl Pod for $t {}
-        impl MslField for $t { fn ty() -> String { $m.into() } }
+        impl KernelField for $t { fn ty() -> String { $c.into() } }
     )*};
 }
-scalar!(u8 => "uchar", u16 => "ushort", u32 => "uint", u64 => "ulong", i32 => "int", i64 => "long");
+scalar!(u8 => "uint8_t", u16 => "uint16_t", u32 => "uint32_t", u64 => "uint64_t", i32 => "int32_t", i64 => "int64_t");
 // A field that changes while its block is open (a counter, a chunk's offset, a span set at freeze) is an atomic:
 // written through a shared reference, which Rust allows only by interior mutability. On ARM a relaxed load is a
-// plain load. MSL declares it as the plain type; a kernel that claims casts it to `atomic_uint`.
-scalar!(std::sync::atomic::AtomicU32 => "uint", std::sync::atomic::AtomicU64 => "ulong", std::sync::atomic::AtomicI64 => "long");
+// plain load. UKL declares it as the plain type; a kernel that claims passes it to `ukl_atomic_add`.
+scalar!(std::sync::atomic::AtomicU32 => "uint32_t", std::sync::atomic::AtomicU64 => "uint64_t", std::sync::atomic::AtomicI64 => "int64_t");
 
 unsafe impl<T: Pod, const N: usize> Pod for [T; N] {}
-impl<T: MslField, const N: usize> MslField for [T; N] {
+impl<T: KernelField, const N: usize> KernelField for [T; N] {
     fn ty() -> String {
         T::ty()
     }
@@ -92,16 +102,16 @@ impl<T: MslField, const N: usize> MslField for [T; N] {
     }
 }
 
-/// The MSL declarations of `T` and of everything it nests: structs in dependency order, each followed by its
-/// size and offset assertions against the Rust layout.
-pub fn msl_of<T: MslField>() -> String {
+/// The UKL declarations of `T` and of everything it nests: structs in dependency order, each followed by its size and
+/// offset assertions against the Rust layout.
+pub fn ukl_of<T: KernelField>() -> String {
     let mut out = Vec::new();
     T::deps(&mut out);
     out.concat()
 }
 
 /// Declares a structure that lives in a block: `#[repr(C)]`, every byte a named field (padding is an error, so
-/// MSL cannot lay it out differently), never `Copy`, and with its MSL text and offset assertions.
+/// a kernel cannot lay it out differently), never `Copy`, and with its UKL text and offset assertions.
 #[macro_export]
 macro_rules! structure {
     ($(#[$m:meta])* pub struct $name:ident { $($(#[$fm:meta])* pub $f:ident : $t:ty),* $(,)? }) => {
@@ -113,15 +123,15 @@ macro_rules! structure {
             assert!(sum == core::mem::size_of::<$name>(), concat!(stringify!($name), ": implicit padding; name it as a field"));
         };
         unsafe impl $crate::Pod for $name {}
-        impl $crate::MslField for $name {
+        impl $crate::KernelField for $name {
             fn ty() -> String { stringify!($name).into() }
             fn deps(out: &mut Vec<String>) {
-                $(<$t as $crate::MslField>::deps(out);)*
-                let mut s = format!("struct {} {{\n", stringify!($name));
-                $(s += &format!("    {};\n", <$t as $crate::MslField>::decl(stringify!($f)));)*
-                s += "};\n";
-                s += &format!("static_assert(sizeof({0}) == {1}, \"{0}: size\");\n", stringify!($name), core::mem::size_of::<$name>());
-                $(s += &format!("static_assert(__builtin_offsetof({0}, {1}) == {2}, \"{0}.{1}\");\n",
+                $(<$t as $crate::KernelField>::deps(out);)*
+                let mut s = format!("typedef struct {} {{\n", stringify!($name));
+                $(s += &format!("    {};\n", <$t as $crate::KernelField>::decl(stringify!($f)));)*
+                s += &format!("}} {};\n", stringify!($name));
+                s += &format!("UKL_STATIC_ASSERT(sizeof({0}) == {1}, \"{0}: size\");\n", stringify!($name), core::mem::size_of::<$name>());
+                $(s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF({0}, {1}) == {2}, \"{0}.{1}\");\n",
                     stringify!($name), stringify!($f), core::mem::offset_of!($name, $f));)*
                 if !out.contains(&s) { out.push(s); }
             }
@@ -129,13 +139,13 @@ macro_rules! structure {
     };
 }
 
-/// The hash every index and every kernel uses for a key: one value at a time, the same arithmetic in MSL.
+/// The hash every index and every kernel uses for a key: one value at a time, the same arithmetic in UKL.
 pub const SEED: u64 = 0x243F_6A88_85A3_08D3;
-/// The arithmetic is the read written once (`rel_key_mix`, decision 0325 step 5), which the kernels call too.
+/// The arithmetic is the CLIF's `rel_key_mix` (decision 0325 step 5), which the kernels and the JIT call.
 #[inline(always)]
 pub fn mix(h: u64, v: i64) -> u64 {
-    // SAFETY: `rel_key_mix` reads nothing through its descriptor.
-    unsafe { crate::generated_reads::rel_key_mix(std::ptr::null(), h, v as u64) }
+    let h = (h ^ v as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    h ^ (h >> 29)
 }
 #[inline]
 pub fn key_hash(vals: &[i64]) -> u64 {

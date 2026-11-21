@@ -22,6 +22,9 @@
 // expected findings with paths relative to themselves.
 // Exemption `structure-gate`: this gate (`scripts/check-structure*`) and its tests in `test/structure/`
 // name layout paths to classify them; they never read fixture data through them.
+// Exemption `workbench` (the `.rerail` workbench, kept in git as it is: docs/repository-structure.md, "Kept as they are"):
+// `docs/rule-syntax/site/upstream_check.py` and `docs/rule-syntax/tools/rrlab/rrlab.py` join `fixtures` onto a
+// tool-pack's directory (`packs/<id>/upstream/<tool>/fixtures/`, pulled pack test data), never the fixtures root.
 
 import { extension, finding, isCode, isDataPath, isStructureGate, isVendored, lineAt, sortFindings } from "../lib.mjs";
 
@@ -42,6 +45,9 @@ const LANGUAGES = {
   ".php": "PHP",
   ".sh": "shell",
 };
+
+/** Exemption `workbench`. */
+const WORKBENCH = ["docs/rule-syntax/site/upstream_check.py", "docs/rule-syntax/tools/rrlab/rrlab.py"];
 
 const LITERAL = /(["'`])((?:\.\.?\/)*fixtures(?:\/[^"'`\n]*)?)\1/g;
 const PATH_BUILDING = /\bjoin\s*\(|\bresolve\s*\(|\bURL\s*\(|Path::new\s*\(|PathBuf::from\s*\(|\|\||\?\?|\s\/\s/;
@@ -104,7 +110,7 @@ export function check(repo) {
   const byLanguage = new Map();
   let production = 0;
   for (const path of repo.files) {
-    if (!isCode(path) || isDataPath(path) || isVendored(path) || isStructureGate(path)) continue;
+    if (!isCode(path) || isDataPath(path) || isVendored(path) || isStructureGate(path) || WORKBENCH.includes(path)) continue;
     const line = resolverLine(repo.text(path));
     if (line === null) continue;
     if (path.startsWith("src/")) {

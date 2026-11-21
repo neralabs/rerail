@@ -8,7 +8,7 @@ use super::persisted::{decode_local_result, encode_local_result, grammar_version
 use super::results::{
     RESULT_PAGE_EVICTED_RESTORES, RESULT_PAGE_SORTS, RESULT_PAGE_WITNESSES_VISITED,
 };
-use super::storage::{CONTENT_STORES, StorageContext, index_stored_tapes, shared_content_store};
+use super::storage::{ContentStores, StorageContext, index_stored_tapes, shared_content_store};
 use super::*;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::content_store::{ContentStore, GitTree, HashKey};
@@ -25,7 +25,9 @@ pub(super) static WORKSPACE_TEST_SLOT: Mutex<()> = Mutex::new(());
 #[cfg(test)]
 /// Build a Git fixture repository. Tests only: production discovery reads Git through gix.
 pub(super) fn git(root: &std::path::Path, arguments: &[&str]) {
-    let status = std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1")
+    let status = std::process::Command::new("git")
+        .env("GIT_CONFIG_GLOBAL", "/dev/null")
+        .env("GIT_CONFIG_NOSYSTEM", "1")
         .arg("-C")
         .arg(root)
         .args(arguments)
@@ -37,7 +39,7 @@ pub(super) fn git(root: &std::path::Path, arguments: &[&str]) {
 }
 
 #[test]
-fn content_store_registry_shares_one_process_store() {
+fn content_store_registry_shares_one_store_per_shared_object() {
     let nonce = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .unwrap()
@@ -52,7 +54,7 @@ fn content_store_registry_shares_one_process_store() {
     assert!(StdArc::ptr_eq(&first.1, &second.1));
     drop(first);
     drop(second);
-    CONTENT_STORES.lock().unwrap().remove(&path);
+    crate::code_rule_dsl::logic::profile::shared::<ContentStores>().0.lock().unwrap().remove(&path);
     for suffix in ["", "-wal", "-shm"] {
         let _ = std::fs::remove_file(format!("{}{suffix}", path.display()));
     }
@@ -306,6 +308,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: request.clone(),
             request_buffer: None,
             request_direct: None,
@@ -343,7 +346,7 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
 fn a_panic_holding_the_cpu_slot_leaves_the_next_apply_free_to_run() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
     let panicked = crate::panic_boundary::contain_panic::<()>("apply", || {
-        let _held = super::api::cpu_slot().lock();
+        let _held = super::api::cpu_slot().lock_arc();
         panic!("apply panicked holding the CPU slot");
     });
     assert!(panicked.is_err());
@@ -351,6 +354,7 @@ fn a_panic_holding_the_cpu_slot_leaves_the_next_apply_free_to_run() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -436,6 +440,7 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: apply(revision, if submit { vec![file(source)] } else { vec![] }),
             request_buffer: None,
             request_direct: None,
@@ -484,6 +489,7 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
     let mut bad = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: apply(9, vec![file("print('wrong')\n")]),
         request_buffer: None,
         request_direct: None,
@@ -492,6 +498,7 @@ fn tape_workspace_matches_native_after_edit_noop_and_invalid_revision() {
     let mut verify = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: apply(10, vec![]),
         request_buffer: None,
         request_direct: None,
@@ -632,6 +639,7 @@ fn deferred_global_flush_uses_complete_taped_evidence() {
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: json!({ "revision": revision, "files": files,
                 "removed": [], "deferGlobal": deferred })
             .to_string(),
@@ -704,6 +712,7 @@ fn tape_test_apply(workspace: &CodeRuleDslWorkspace, revision: u32, files: Vec<V
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": revision, "files": files, "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -733,6 +742,7 @@ fn binary_workspace_request_matches_json_and_rejects_malformed_lengths() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: String::new(),
         request_buffer: Some(buffer.clone()),
         request_direct: None,
@@ -841,11 +851,13 @@ fn stored_workspace_releases_source_and_returns_changed_file_deltas() {
         crate::content_store::SearchKindLookup {
             tape_id,
             index_version: crate::code_rule_dsl::search_index::POSITIONAL_INDEX_VERSION,
-            kind_tokens: vec![crate::code_rule_dsl::search_index::kind_index_token(
-                crate::code_rule_dsl::language::GrammarDialect::Python,
-                call,
-            )
-            .unwrap()],
+            kind_tokens: vec![
+                crate::code_rule_dsl::search_index::kind_index_token(
+                    crate::code_rule_dsl::language::GrammarDialect::Python,
+                    call,
+                )
+                .unwrap(),
+            ],
         }
     });
     assert_eq!(
@@ -1208,6 +1220,7 @@ fn close_during_live_native_tree_or_restored_doc_cancels_and_releases_source() {
             let mut task = WorkspaceApplyTask {
                 state: Arc::clone(&owner.state),
                 closed: Arc::clone(&owner.closed),
+                shared: Arc::clone(&owner.shared),
                 request_json: json!({
                     "revision": revision, "files": files, "removed": []
                 })
@@ -1259,6 +1272,7 @@ fn close_during_live_native_tree_or_restored_doc_cancels_and_releases_source() {
         let mut later = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: json!({ "revision": revision + 1, "files": [],
                 "removed": [] })
             .to_string(),
@@ -1572,6 +1586,7 @@ fn rejected_inline_staging_does_not_retain_new_scope_or_grammar_candidates() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({
             "revision": 1,
             "files": [{"path": "src/a/live.ts", "language": "typescript", "source": "safe"}],
@@ -1649,6 +1664,7 @@ fn apply_revisions(clauses: Vec<Value>, revisions: Vec<Value>) -> Vec<Value> {
             let mut task = WorkspaceApplyTask {
                 state: Arc::clone(&workspace.state),
                 closed: Arc::clone(&workspace.closed),
+                shared: Arc::clone(&workspace.shared),
                 request_json: json!({ "revision": index + 1, "files": files, "removed": [] })
                     .to_string(),
                 request_buffer: None,
@@ -2389,6 +2405,7 @@ fn regex_group_transform_limit_is_local_to_its_clause_in_native_and_workspace_ev
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -2470,6 +2487,7 @@ fn matching_stops_after_decision_or_witness_budget_in_native_and_workspace() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -2536,6 +2554,7 @@ fn suppressible_each_stops_at_the_witness_overflow_in_native_and_workspace() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -2605,6 +2624,7 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -2639,6 +2659,52 @@ fn roots_past_max_visited_nodes_are_not_matched_in_native_and_workspace() {
             "{evaluation}"
         );
     }
+}
+
+/// Decision 0434 §4, step 6: a clause none of whose root kinds the document's presence holds is ruled out before any
+/// node is read; a clause whose root kinds it holds runs as before; a document where every clause is ruled out builds
+/// no anchor index and visits no node.
+#[test]
+fn a_clause_whose_root_kinds_the_presence_lacks_does_not_run() {
+    let _slot = WORKSPACE_TEST_SLOT.lock();
+    let capabilities = json!({
+        "ast": { "engine": "ast-grep-core", "engineVersion": "0.45",
+            "languages": { "python": "tree-sitter-python@0.23" } },
+        "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
+            "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
+            "maxVisitedNodes": 100000, "maxWitnesses": 10000 }
+    });
+    let clause = |id: &str, kind: &str| json!({
+        "id": id, "violation": { "anchor": "witness.span", "code": id.to_uppercase(), "message": id },
+        "forbid": { "ast": { "language": "python", "rule": { "kind": kind } } }
+    });
+    let run = |clauses: Vec<Value>| {
+        let code_rule = json!({
+            "format": "rerail.policy/v1", "id": "presence", "revision": 1, "mode": "steer",
+            "scope": { "include": ["**/*"], "exclude": [] }, "clauses": clauses
+        });
+        let compiled = CodeRuleDslRuntime::compile(code_rule.to_string(), "json".into(), capabilities.to_string()).unwrap();
+        let file = json!({ "path": "sample.py", "language": "python", "source": "x = f(1)\n" });
+        let mut workspace = CodeRuleDslWorkspace::new();
+        workspace.add_code_rule(&compiled, None).unwrap();
+        super::evaluate::take_presence_ruled_out();
+        let mut task = WorkspaceApplyTask {
+            state: Arc::clone(&workspace.state),
+            closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
+            request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
+            request_buffer: None,
+            request_direct: None,
+        };
+        let out: Value = serde_json::from_str(&task.compute().unwrap()).unwrap();
+        let codes = out["evaluation"]["violations"].as_array().unwrap().iter().map(|v| v["code"].as_str().unwrap().to_owned()).collect::<Vec<_>>();
+        (super::evaluate::take_presence_ruled_out(), codes, out["evaluation"]["metrics"]["visitedNodes"].clone())
+    };
+    let (ruled_out, codes, visited) = run(vec![clause("classes", "class_definition"), clause("calls", "call")]);
+    assert_eq!((ruled_out, codes), (1, vec!["CALLS".to_owned()]), "the class clause is ruled out, the call clause runs");
+    assert_ne!(visited, json!(0));
+    let (ruled_out, codes, visited) = run(vec![clause("classes", "class_definition")]);
+    assert_eq!((ruled_out, codes, visited), (1, vec![], json!(0)), "no clause runs: no index, no node visited");
 }
 
 #[test]
@@ -2679,6 +2745,7 @@ fn workspace_visits_grow_with_the_file_by_max_visits_per_node() {
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": 1, "files": [file], "removed": [] }).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -2766,6 +2833,7 @@ fn select_when_exists_leaf_decides_at_first_witness_in_native_and_workspace() {
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: json!({ "revision": 1, "files": [file.clone()], "removed": [] })
                 .to_string(),
             request_buffer: None,
@@ -3591,23 +3659,35 @@ fn host_rules_and_item_globals_agree_across_paths_and_revisions() {
 
 #[test]
 fn index_labels_a_basename_by_its_longest_listed_suffix_shorter_than_the_basename() {
-    let workspace = CodeRuleDslWorkspace::new();
-    let mut task = super::index::WorkspaceIndexTask::for_test(
-        StdArc::clone(&workspace.state),
-        StdArc::clone(&workspace.closed),
-        u32::MAX,
-    );
-    task.options.source_languages = [(".php", "php"), (".blade.php", "blade")]
-        .into_iter()
-        .map(|(extension, label)| (extension.to_owned(), label.to_owned()))
-        .collect();
-    let label = |path: &str| task.source_language(path);
-    assert_eq!(label("views/x.blade.php").as_deref(), Some("blade"));
-    assert_eq!(label("views/X.Blade.PHP").as_deref(), Some("blade"));
-    assert_eq!(label("app/Kernel.php").as_deref(), Some("php"));
-    // Suffix-only basenames have no extension, as the host's `languageOfPath` reads them.
-    assert_eq!(label("views/.blade.php").as_deref(), Some("php"));
-    assert_eq!(label("app/.php"), None);
+    let registry = crate::git_workspace::snapshot::SourceLanguages {
+        suffixes: [(".php", "php"), (".blade.php", "blade")].map(|(suffix, label)| (suffix.to_owned(), label.to_owned())).into(),
+        names: [(".npmignore".to_owned(), "text".to_owned())].into(),
+    };
+    let cases = [
+        ("a.php", Some("php")),
+        ("app/Http/Kernel.php", Some("php")),
+        ("A.PHP", Some("php")),
+        ("resources/views/page.blade.php", Some("blade")),
+        ("deep/nested/dir/Page.Blade.PHP", Some("blade")),
+        ("archive.v1.blade.php", Some("blade")),
+        ("blade.php", Some("php")),
+        ("x.blade.php.bak", None),
+        ("page.phtml", None),
+        (".php", None),
+        ("dir/.php", None),
+        (".blade.php", Some("php")),
+        (".npmignore", Some("text")),
+        ("pkg/.NPMIGNORE", Some("text")),
+        ("a.npmignore", None),
+    ];
+    let paths: Vec<_> = cases.iter().map(|(path, _)| (*path).to_owned()).collect();
+    let root = tempfile::tempdir().unwrap();
+    let labels = crate::code_rule_dsl::logic::plan::corpus::source_languages::classify(
+        root.path(), std::path::Path::new(":memory:"), None, &paths, &registry,
+    ).unwrap();
+    for (path, expected) in cases {
+        assert_eq!(labels.get(path).map(String::as_str), expected, "{path}");
+    }
 }
 
 #[test]
@@ -3702,6 +3782,7 @@ fn positional_index_lives_with_the_workspace_across_applies_and_deletions() {
     let mut remove = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({"revision":6,"files":[],"removed":["a.py"]}).to_string(),
         request_buffer: None,
         request_direct: None,
@@ -3740,6 +3821,7 @@ fn apply_import_files(
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": revision, "files": files, "removed": removed,
             "deferGlobal": defer })
         .to_string(),

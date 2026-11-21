@@ -1,13 +1,25 @@
-import { chmod, mkdtemp, rm, writeFile } from "node:fs/promises";
+import * as childProcess from "node:child_process";
+import { EventEmitter } from "node:events";
+import { chmod, mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
-import { cleanCommandError, environmentForNode, resolveExecutable, runNpm } from "../../src/runtime/npm.js";
+import { PassThrough } from "node:stream";
+import { afterEach, describe, expect, it, vi } from "vitest";
+
+vi.mock("node:child_process", { spy: true });
+
+import { cleanCommandError, CommandTimeoutError, environmentForNode, runCommand, runNpm, windowsNpmCliPath } from "../../src/runtime/npm.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+import { fromDriveRoot, fullyQualified } from "../support/platform/windows-paths.js";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
-  await Promise.all(temporaryDirectories.splice(0).map(async directory => await rm(directory, { recursive: true, force: true })));
+  vi.unstubAllEnvs();
+  await Promise.all(temporaryDirectories.splice(0).map(async directory => await removeFolder(directory)));
 });
+
+/** The file name of a program called `name` on this platform: Windows runs only a file with an extension in PATHEXT. */
+const program = (name: string): string => (process.platform === "win32" ? `${name}.exe` : name);
 
 async function binDirectory(...files: string[]): Promise<string> {
   const bin = await mkdtemp(join(tmpdir(), "rerail-npm-"));
@@ -26,42 +38,98 @@ async function fakeNpm(body: string): Promise<string> {
   return bin;
 }
 
-describe("resolveExecutable", () => {
-  it("returns an absolute command unchanged and finds a bare name through PATH", async () => {
-    const bin = await binDirectory("node");
-    expect(resolveExecutable("/opt/x/bin/node", { PATH: "" })).toBe("/opt/x/bin/node");
-    expect(resolveExecutable("node", { PATH: `/nowhere${delimiter}${bin}` })).toBe(join(bin, "node"));
+describe("runNpm on Windows", () => {
+  const platform = Object.getOwnPropertyDescriptor(process, "platform")!;
+  afterEach(() => {
+    Object.defineProperty(process, "platform", platform);
+    vi.mocked(childProcess.spawn).mockClear();
   });
 
-  it("returns undefined when nothing on PATH carries the name", async () => {
-    const bin = await binDirectory();
-    expect(resolveExecutable("node", { PATH: bin })).toBeUndefined();
-    expect(resolveExecutable("node", {})).toBeUndefined();
+  it("puts the requested node first on PATH, so the install scripts npm runs build for it", async () => {
+    const node = fullyQualified(join(await binDirectory("node.exe"), "node.exe"));
+    vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
+      process.nextTick(() => child.emit("exit", 0, null));
+      return child as unknown as childProcess.ChildProcess;
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    await runNpm(["rebuild", "better-sqlite3"], { node, env: { PATH: "/usr/bin" } });
+    const [command, , options] = vi.mocked(childProcess.spawn).mock.calls.at(-1)!;
+    expect(command).toBe(node);
+    expect((options as childProcess.SpawnOptions).env?.PATH).toBe(`${dirname(node)}${delimiter}/usr/bin`);
   });
 
-  it("tries PATHEXT extensions on Windows", async () => {
+  // On Windows only: elsewhere the PATH search finds a Linux or macOS path, which a program start on Windows refuses as a
+  // path from the root of the current drive.
+  it.runIf(process.platform === "win32")("runs npm under the node.exe PATH finds, never a node.cmd shim before it, which no spawn without a shell starts", async () => {
+    const shims = await binDirectory("node.cmd");
+    const binaries = await binDirectory("node.exe");
+    vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
+      process.nextTick(() => child.emit("exit", 0, null));
+      return child as unknown as childProcess.ChildProcess;
+    });
+    Object.defineProperty(process, "platform", { ...platform, value: "win32" });
+    await runNpm(["rebuild", "better-sqlite3"], { node: "node", env: { PATH: `${shims};${binaries}`, PATHEXT: ".cmd;.exe" } });
+    const [command] = vi.mocked(childProcess.spawn).mock.calls.at(-1)!;
+    expect(command).toBe(join(binaries, "node.exe"));
+  });
+
+  // On Windows only: elsewhere a path from the root has no drive to change with. A program start read such a name on the
+  // drive of the child's folder, and Rerail now starts a program there only by a path from a drive or a server.
+  it.runIf(process.platform === "win32")("runs npm under a node named from the root of the current drive, with the current folder's drive", async () => {
     const bin = await binDirectory("node.exe");
-    expect(resolveExecutable("node", { Path: bin, PATHEXT: ".com;.exe" }, "win32")).toBe(join(bin, "node.exe"));
-    expect(resolveExecutable("node", { Path: bin, PATHEXT: ".CMD" }, "win32")).toBeUndefined();
+    const node = join(bin, "node.exe");
+    vi.stubEnv("npm_execpath", "");
+    vi.mocked(childProcess.spawn).mockImplementationOnce(() => {
+      const child = Object.assign(new EventEmitter(), { stdout: new PassThrough(), stderr: new PassThrough() });
+      process.nextTick(() => child.emit("exit", 0, null));
+      return child as unknown as childProcess.ChildProcess;
+    });
+    await inFolder(bin, async () => {
+      await runNpm(["rebuild", "better-sqlite3"], { node: fromDriveRoot(node), env: { PATH: String.raw`C:\Windows` } });
+      expect(windowsNpmCliPath(fromDriveRoot(node))).toBe(join(bin, "node_modules", "npm", "bin", "npm-cli.js"));
+      expect(environmentForNode(fromDriveRoot(node), { PATH: "" })).toEqual({ PATH: bin });
+    });
+    const [command, args, options] = vi.mocked(childProcess.spawn).mock.calls.at(-1)!;
+    expect(command).toBe(node);
+    expect(args?.[0]).toBe(join(bin, "node_modules", "npm", "bin", "npm-cli.js"));
+    expect((options as childProcess.SpawnOptions).env?.PATH).toBe(`${bin};C:\\Windows`);
   });
 });
 
+/** Runs `body` with this process's current folder at `folder`, and puts the folder back after it. */
+async function inFolder(folder: string, body: () => Promise<void>): Promise<void> {
+  const before = process.cwd();
+  process.chdir(folder);
+  try {
+    await body();
+  } finally {
+    process.chdir(before);
+  }
+}
+
 describe("environmentForNode", () => {
+  // A Node by a path that names one file on this machine: on Windows one with a drive, since a name from the root of the
+  // current drive gets that drive (the case above).
+  const otherNode = process.platform === "win32" ? String.raw`C:\opt\other\bin\node` : "/opt/other/bin/node";
+  const otherBin = dirname(otherNode);
+
   it("puts the chosen Node's directory first on PATH so npm's env shebang resolves to it", () => {
-    const env = environmentForNode("/opt/other/bin/node", { PATH: "/usr/bin", HOME: "/home/x" });
-    expect(env).toEqual({ PATH: `/opt/other/bin${delimiter}/usr/bin`, HOME: "/home/x" });
+    const env = environmentForNode(otherNode, { PATH: "/usr/bin", HOME: "/home/x" });
+    expect(env).toEqual({ PATH: `${otherBin}${delimiter}/usr/bin`, HOME: "/home/x" });
   });
 
   it("keeps the platform's own PATH key and handles an empty PATH", () => {
-    expect(environmentForNode("/opt/other/bin/node", { Path: "" })).toEqual({ Path: "/opt/other/bin" });
-    expect(environmentForNode("/opt/other/bin/node", {})).toEqual({ PATH: "/opt/other/bin" });
+    expect(environmentForNode(otherNode, { Path: "" })).toEqual({ Path: otherBin });
+    expect(environmentForNode(otherNode, {})).toEqual({ PATH: otherBin });
   });
 
   it("leaves the environment alone for a name PATH cannot resolve, and resolves one it can", async () => {
     const empty = await binDirectory();
     const env = { PATH: empty };
     expect(environmentForNode("node", env)).toBe(env);
-    const bin = await binDirectory("node");
+    const bin = await binDirectory(program("node"));
     const searched = `${empty}${delimiter}${bin}`;
     expect(environmentForNode("node", { PATH: searched })).toEqual({ PATH: `${bin}${delimiter}${searched}` });
   });
@@ -82,6 +150,26 @@ describe("cleanCommandError", () => {
     expect(cleaned).not.toContain("c2VjcmV0");
     expect(cleaned).toContain(":_authToken=[REDACTED]");
     expect(cleaned).toContain(":_password=[REDACTED]");
+  });
+});
+
+describe("runCommand", () => {
+  it("stops a command that runs past its timeout", async () => {
+    const started = Date.now();
+    const failure = runCommand(process.execPath, ["-e", "setTimeout(() => {}, 30_000)"], { timeoutMs: 200 });
+    await expect(failure).rejects.toThrow(CommandTimeoutError);
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it("kills a command that ignores SIGTERM once its grace period is over", async () => {
+    const started = Date.now();
+    const script = "process.on('SIGTERM', () => {}); process.stdout.write('ready'); setInterval(() => {}, 1_000)";
+    await expect(runCommand(process.execPath, ["-e", script], { timeoutMs: 500 })).rejects.toThrow(CommandTimeoutError);
+    expect(Date.now() - started).toBeLessThan(12_000);
+  }, 20_000);
+
+  it("leaves a command that finishes in time alone", async () => {
+    await expect(runCommand(process.execPath, ["-e", "process.stdout.write('ok')"], { timeoutMs: 30_000 })).resolves.toEqual({ stdout: "ok", stderr: "" });
   });
 });
 
@@ -113,6 +201,25 @@ describe.skipIf(process.platform === "win32")("runNpm", () => {
     await expect(runNpm(["view", "@neralabs/rerail"], { env: { PATH: bin } })).rejects.toThrow(
       `could not reach the npm registry (http://127.0.0.1:9, ${why}): check your network, proxy, or registry in ~/.npmrc`,
     );
+  });
+
+  it("stops npm once it runs past its timeout, and says which npm command was stopped", async () => {
+    const bin = await fakeNpm("exec sleep 30");
+    const started = Date.now();
+    const failure = runNpm(["install", "--prefix", "/nowhere", "@neralabs/rerail@1.0.0"], { env: { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }, timeoutMs: 1_000 });
+    await expect(failure).rejects.toThrow(CommandTimeoutError);
+    await expect(failure).rejects.toThrow("npm install did not finish within 1 s and was stopped");
+    expect(Date.now() - started).toBeLessThan(10_000);
+  });
+
+  it("keeps the last lines npm printed before it was stopped, redacted", async () => {
+    const bin = await fakeNpm('printf "npm http fetch GET 200 one\\nnpm http fetch GET 200 two\\n//x/:_authToken=secret-token\\n" >&2; exec sleep 30');
+    const failure = runNpm(["install", "@neralabs/rerail@1.0.0"], { env: { PATH: `${bin}${delimiter}${process.env.PATH ?? ""}` }, timeoutMs: 1_000 });
+    await expect(failure).rejects.toThrow(
+      "npm install did not finish within 1 s and was stopped; its last output:\nnpm http fetch GET 200 one\nnpm http fetch GET 200 two\n//x/:_authToken=[REDACTED]",
+    );
+    await expect(failure).rejects.not.toThrow("secret-token");
+    await expect(failure).rejects.toHaveProperty("cause", expect.any(CommandTimeoutError));
   });
 
   it("leaves other npm failures unchanged", async () => {

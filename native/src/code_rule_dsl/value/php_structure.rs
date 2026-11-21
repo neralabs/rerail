@@ -15,10 +15,10 @@
 //! compares by the key PHP coerces it to (`1 == '1' == 1.5 == true`, `null == ''`); anything else
 //! structurally.
 
-use crate::code_rule_dsl::tree::Tree;
 use super::php::{self, Key};
 use super::structure::{Equality, Tok};
 use super::{Context, Value};
+use crate::code_rule_dsl::tree::Tree;
 use ast_grep_core::{Doc, Node};
 
 /// The node's structure under an equality; `None` where it is not known (a syntax error, a literal
@@ -63,7 +63,6 @@ fn folded_key<D: Doc>(node: &Node<'_, D>, context: &mut Context<'_>) -> Option<K
 fn trivia<D: Doc>(node: &Node<'_, D>) -> bool {
     node.kind() == "comment"
 }
-
 
 /// The expression inside any number of parentheses.
 fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
@@ -439,11 +438,7 @@ const STATEMENT_LISTS: &[&str] = &[
 /// A comment after a statement list's last statement is PHP-Parser's zero-length `Nop`
 /// (`maybeCreateZeroLengthNop`): `{ // c }` is not `{ }`.
 fn trailing_comment<D: Doc>(list: &Node<'_, D>, out: &mut Vec<Tok>) {
-    if list
-        .named()
-        .last()
-        .is_some_and(|child| trivia(&child))
-    {
+    if list.named().last().is_some_and(|child| trivia(&child)) {
         out.push(Tok::Leaf("#nop".into(), String::new()));
     }
 }
@@ -538,7 +533,10 @@ fn interpolated<D: Doc>(
     // leaves an implied delimiter out, and nothing here makes one up.
     let bytes = source.as_bytes();
     let open = bytes.iter().position(|&b| b == b'"' || b == b'`')?;
-    let close = bytes.len().checked_sub(1).filter(|&close| close > open && bytes[close] == bytes[open])?;
+    let close = bytes
+        .len()
+        .checked_sub(1)
+        .filter(|&close| close > open && bytes[close] == bytes[open])?;
     let (open_end, close_start) = (base + open + 1, base + close);
     out.push(Tok::Open(if kind == "shell_command_expression" {
         "#shell".into()
@@ -559,7 +557,10 @@ fn interpolated<D: Doc>(
     let byte_at = |at: usize| at.checked_sub(base).and_then(|at| bytes.get(at)).copied();
     for child in node.named().filter(|child| !trivia(child)) {
         let range = child.range();
-        if range.start < open_end || range.start >= close_start || matches!(child.kind().as_ref(), "string_content" | "escape_sequence") {
+        if range.start < open_end
+            || range.start >= close_start
+            || matches!(child.kind().as_ref(), "string_content" | "escape_sequence")
+        {
             continue;
         }
         // `{$expr}`: the braces delimit an expression.

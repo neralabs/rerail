@@ -1,5 +1,8 @@
 //! A test's JIT of every read, of every family (decisions 0310, 0325).
 
+// Cranelift's `ModuleError`, as `Module` returns it: large, and unwrapped where it is made.
+#![allow(clippy::result_large_err)]
+
 use crate::view::TapeView;
 use cranelift_module::Module;
 
@@ -11,10 +14,24 @@ use cranelift_module::Module;
 /// the allocator, and a large one may lie anywhere, so a module whose code takes two chunks could not link
 /// (`compiled_blob`'s `Arm64Call`). Every module that compiles the reads is built from it.
 pub fn builder() -> Result<cranelift_jit::JITBuilder, String> {
-    let mut builder = cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names()).map_err(|e| format!("the JIT builder: {e}"))?;
+    let mut builder = cranelift_jit::JITBuilder::with_flags(&flags(&[]), cranelift_module::default_libcall_names()).map_err(|e| format!("the JIT builder: {e}"))?;
     let arena = cranelift_jit::ArenaMemoryProvider::new_with_size(CODE_RESERVE).map_err(|e| format!("the JIT's code reservation: {e}"))?;
     builder.memory_provider(Box::new(arena));
     Ok(builder)
+}
+
+/// A JIT module's Cranelift flags: the caller's `own`, then the host's. A function returns past its integer return
+/// registers (x86-64's two, AArch64's eight) only through an implicit return area (else "too many return values to
+/// fit in registers"), on every host: it changes no function whose results fit. On x86-64 Cranelift's tail calls
+/// also need frame pointers kept (`emit_return_call_common_sequence` asserts it). Every JIT module of the engine
+/// takes its flags from here.
+pub fn flags<'a>(own: &[(&'a str, &'a str)]) -> Vec<(&'a str, &'a str)> {
+    let mut all = own.to_vec();
+    all.push(("enable_multi_ret_implicit_sret", "true"));
+    if cfg!(target_arch = "x86_64") {
+        all.push(("preserve_frame_pointers", "true"));
+    }
+    all
 }
 
 /// The address space a module's code is reserved (not committed): well within a `bl`'s reach.
@@ -81,5 +98,30 @@ impl Reads {
         // SAFETY: as `one`, with a second u32.
         let f: extern "C" fn(*const u8, *const TapeView, u32, u32) -> u32 = unsafe { std::mem::transmute(self.fns[name]) };
         f(tape.as_ptr(), view, i as u32, k)
+    }
+}
+
+/// The writer's ops (decision 0434 §6) compiled by the JIT, each its own exported function, calling the others: what
+/// a test runs against their Rust and the reference writer (R15). Each takes the state's address, then its own
+/// parameters, in the platform's C convention.
+pub struct Writer {
+    _module: cranelift_jit::JITModule,
+    fns: std::collections::HashMap<&'static str, *const u8>,
+}
+
+impl Writer {
+    #[allow(clippy::new_without_default)]
+    pub fn new() -> Self {
+        // Its code in one reservation, so a call between the ops stays in a `bl`'s reach (`builder`): near.
+        let mut module = cranelift_jit::JITModule::new(builder().unwrap());
+        let ids = crate::writer::define_ops(&mut module, cranelift_module::Linkage::Export, true).unwrap();
+        module.finalize_definitions().unwrap();
+        let fns = ids.into_iter().map(|(name, (id, _))| (name, module.get_finalized_function(id))).collect();
+        Self { _module: module, fns }
+    }
+
+    /// The compiled op `name`, for a caller that types it by its signature (`writer::signature`).
+    pub fn function(&self, name: &str) -> *const u8 {
+        self.fns[name]
     }
 }

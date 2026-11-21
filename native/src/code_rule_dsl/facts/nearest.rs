@@ -43,7 +43,7 @@ pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) ->
 /// the batch's `node`, the first of its rows (`nodes + 1` values, `u32`, in the chunk), and its rows, each the ids
 /// of `n` and `a`, written once into a relation of their own (decision 0353 step 5), which the host and the device
 /// read where it lies.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub struct InChunk {
     pub start: usize,
     pub rows: super::rows::Part,
@@ -51,20 +51,22 @@ pub struct InChunk {
 
 /// What makes an axis's solve in a chunk: `members` per dialect tag (256) and kind code (1,024) a bit, `None` for
 /// every kind (containment); `inside` for every ancestor in the set, else the nearest.
-#[cfg(target_os = "macos")]
-pub type ChunkAxis = fn(&crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk, Option<&[u32]>, bool) -> Result<InChunk, String>;
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+/// Several chunks' rows go in one relation, each chunk's past those before (a chunk's batch and its tape values,
+/// decision 0431 §8); the starts are the first's.
+pub type ChunkAxis = fn(&[&crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk], Option<&[u32]>, bool) -> Result<InChunk, String>;
 
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 static CHUNK_AXIS: std::sync::OnceLock<ChunkAxis> = std::sync::OnceLock::new();
 
 /// Registers the device's solve of an axis in a chunk (once, at load: the Metal device's).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn install_chunk_axis(solve: ChunkAxis) {
     let _ = CHUNK_AXIS.set(solve);
 }
 
 /// The device's solve of an axis in a chunk, when one is registered.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 pub(crate) fn chunk_axis() -> Option<ChunkAxis> {
     CHUNK_AXIS.get().copied()
 }

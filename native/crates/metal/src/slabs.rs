@@ -44,7 +44,7 @@
 use crate::Error;
 use sha2::{Digest as _, Sha256};
 use std::collections::HashMap;
-use std::sync::{Arc, Condvar, LazyLock, Mutex};
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 /// A slab's bytes (PIAT §20.2.1's default).
@@ -62,14 +62,14 @@ pub fn aligned(length: usize) -> usize {
 /// A document as the device reads it: its first byte in the batch's chunk block (`at`, decision 0289 §4), and its
 /// parts as byte offsets from there, so a copy into another block changes `at` alone. It is the view the reads
 /// written once take (`rerail_clif::view::TapeView`, decision 0310), one definition for the device, the JIT and the
-/// tape crate, and its MSL is written from it (`msl`), with every field's offset asserted. `node_base` is the
+/// tape crate, and its UKL struct is written from it (`ukl`), with every field's offset asserted. `node_base` is the
 /// document's first node in a batch's numbering, set by the batch's document table (`DocTable`). The tape is read
 /// where it lies, format 15's columns or format 16's arrays (decision 0293): nothing per node is derived beside it.
 pub use rerail_clif::view::TapeView as DocView;
-const _: () = assert!(std::mem::size_of::<DocView>() == 124);
+const _: () = assert!(std::mem::size_of::<DocView>() == 128);
 
-/// The MSL of `DocView`, for the kernels that read documents in place (`device_tape.h`).
-pub fn msl() -> String {
+/// The UKL struct of `DocView`, for the kernels that read documents in place (`device_tape.h`).
+pub fn ukl() -> String {
     rerail_clif::view::ukl()
 }
 
@@ -96,11 +96,10 @@ pub struct Table {
 impl Slab {
     /// A slab of at least `bytes`, within the Metal budget.
     fn lease(id: u64, bytes: usize) -> Result<Slab, Error> {
-        // The device first: making it installs the one block policy (decision 0342), without which no block is a
-        // device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before anything else
-        // touched the device (the parser crate's tests) had every lease refused as over capacity.
-        crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-        let device = &rerail_device::shared::get().ok_or(Error::UnsupportedBackend)?.device;
+        // The device first, whatever its backend: making it installs the one block policy (decision 0342), without
+        // which no block is a device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before
+        // anything else touched the device (the parser crate's tests) had every lease refused as over capacity.
+        let device = crate::lane::device()?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
         let block = rerail_blocks::alloc::block(&need).map_err(|_| Error::BackendCapacity)?;
@@ -132,11 +131,6 @@ impl Slab {
         unsafe { std::slice::from_raw_parts(self.host().add(at), len) }
     }
 
-    /// Its buffer, as Metal's kernels not yet on the device layer bind it (decision 0440 step C moves each).
-    pub fn buffer(&self) -> &metal::Buffer {
-        self.buffer.metal().expect("a slab's buffer is Metal's while the residency is")
-    }
-
     /// Its buffer in the device layer, as UKL kernels bind it on every backend.
     pub fn device_buffer(&self) -> &rerail_device::device::Buffer {
         &self.buffer
@@ -163,7 +157,7 @@ pub struct Resident {
     pub slab: Arc<Slab>,
     /// Its view, `at` its range's start in `slab`, `node_base` 0.
     pub view: DocView,
-    /// Its range in the slab, every part inside it: what `gather` copies.
+    /// Its range in the slab, every part inside it.
     pub at: usize,
     pub len: usize,
     /// Bytes per pool: `tape.resident`, `source.resident`, `tape.derived`.
@@ -258,7 +252,7 @@ pub struct DocTable {
     /// The cache the batch's 16z documents' reads decode their blocks into (decision 0353 step 4b, `view::cache`),
     /// which each of their views names: none where no tape is 16z. A kernel that reads them makes it resident to
     /// be read and written, and its batch is refused where its failures rose (`cache_failed`).
-    pub cache: Option<metal::Buffer>,
+    pub cache: Option<rerail_device::device::Buffer>,
 }
 
 impl Drop for DocTable {
@@ -273,8 +267,9 @@ impl Drop for DocTable {
 /// A cache for `views`' 16z documents, made on the device, each view pointed at it: its address less the view's
 /// document's (`base` + its `at`: where a kernel's reads take the document), its entry size, its reads checked
 /// (shared). `Some(None)` where no view is 16z; `None` where there is no device to make it on, and then no view may
-/// be read (a 16z view's cache would be its tape's own bytes). Its shape goes to the profile (`zcache.*`).
-pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> u64) -> Option<Option<metal::Buffer>> {
+/// be read (a 16z view's cache would be its tape's own bytes): OpenCL 1.2's kernels follow no address a buffer
+/// holds. Its shape goes to the profile (`zcache.*`).
+pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> Option<u64>) -> Option<Option<rerail_device::device::Buffer>> {
     use rerail_clif::view::{F16Z_BLOCK, F16Z_FORMAT};
     let z: Vec<usize> = (0..views.len()).filter(|&i| views[i].format == F16Z_FORMAT).collect();
     if z.is_empty() {
@@ -283,12 +278,13 @@ pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> u64) -> Opti
     let blocks = z.iter().map(|&i| (views[i].nodes as usize).div_ceil(F16Z_BLOCK as usize)).sum();
     let entry = z.iter().map(|&i| views[i].columns[3] as usize).max().unwrap_or(0);
     let spec = rerail_clif::view::cache::Spec::configured(blocks, entry);
-    let device = crate::METAL_DEVICE.as_ref()?;
-    let cache = device.new_buffer(spec.bytes() as u64, metal::MTLResourceOptions::StorageModeShared);
+    let device = crate::lane::device().ok()?;
+    let cache = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, spec.bytes());
+    let address = cache.device_address()?;
     // SAFETY: the buffer's bytes, shared with the host, read by no kernel yet.
     spec.init(unsafe { std::slice::from_raw_parts_mut(cache.contents().cast::<u8>(), spec.bytes()) }).expect("a cache's buffer of its size");
     for &i in &z {
-        let rel = cache.gpu_address().wrapping_sub(base(&views[i])) as i64;
+        let rel = address.wrapping_sub(base(&views[i])?) as i64;
         let v = &mut views[i];
         (v.side[0], v.side[1]) = (rel as u32, (rel >> 32) as u32);
         (v.columns[3], v.columns[4]) = (spec.entry_bytes() as u32, 1);
@@ -301,7 +297,7 @@ pub fn zcache_for(views: &mut [DocView], base: impl Fn(&DocView) -> u64) -> Opti
 }
 
 /// A cache's counts in the profile (`zcache.*`; the statistics mode's too, where it is on): when its batch is done.
-pub fn zcache_report(cache: &metal::Buffer) {
+pub fn zcache_report(cache: &rerail_device::device::Buffer) {
     let c = zcache_counts(cache);
     for (name, n) in c.named() {
         rerail_prof::count(name, n as usize);
@@ -309,12 +305,12 @@ pub fn zcache_report(cache: &metal::Buffer) {
 }
 
 /// The failures a cache has counted (no room: a read of its dead entry).
-pub fn zcache_failed(cache: &metal::Buffer) -> u32 {
+pub fn zcache_failed(cache: &rerail_device::device::Buffer) -> u32 {
     zcache_counts(cache).failed
 }
 
-/// A cache's counts once its batch's kernels are done, the cache checked (`Spec::check`, decision 0427).
-fn zcache_counts(cache: &metal::Buffer) -> rerail_clif::view::cache::Counts {
+/// A cache's counts once its batch's kernels are done, the cache checked (`Spec::check`, decision 0463).
+fn zcache_counts(cache: &rerail_device::device::Buffer) -> rerail_clif::view::cache::Counts {
     // SAFETY: the cache's shared buffer, all of it; its batch's kernels are done.
     rerail_clif::view::cache::Counts::checked(unsafe { std::slice::from_raw_parts(cache.contents().cast::<u8>(), cache.length() as usize) })
 }
@@ -334,7 +330,7 @@ impl DocTable {
     /// The table of `documents`, in order, read where they lie: in the first one's slab (the block), or in another
     /// slab of the batch, reached by the slabs' GPU addresses (decision 0353 step 4, 0471). Nothing is copied. Before,
     /// a batch over several slabs was copied into one (`gather`); with the residency full of tapes' homes that copy
-    /// found no room, and each wave was halved until its files shared a slab (0466's small label runs). `None` for a
+    /// found no room, and each wave was halved until its files shared a slab (0476's small label runs). `None` for a
     /// batch past the u32 numbering.
     pub fn new(documents: Vec<Arc<Resident>>) -> Option<Self> {
         let block = documents.first().map(|document| Arc::clone(&document.slab));
@@ -344,8 +340,10 @@ impl DocTable {
                 slabs.push(Arc::clone(&document.slab));
             }
         }
-        // A kernel's reads take a document at the block's address plus its offset (`tape_doc`).
-        let address = block.as_ref().map_or(0, |b| b.buffer().gpu_address());
+        // A kernel's reads take a document at the block's address plus its offset (`tape_doc`): its `at` in the
+        // block's own slab, else the slabs' device addresses apart (`None` for a device that gives no addresses).
+        let address = block.as_ref().map_or(Some(0), |b| b.device_buffer().device_address());
+        let block_id = block.as_ref().map(|block| block.id);
         let mut views = Vec::with_capacity(documents.len());
         let mut nodes = 0usize;
         let (mut source, mut lines) = (0usize, 0usize);
@@ -356,7 +354,11 @@ impl DocTable {
                 line_base: u32::try_from(lines).ok()?,
                 ..document.view
             };
-            let first = (document.slab.buffer().gpu_address() as i64).wrapping_sub(address as i64).wrapping_add(i64::from(document.view.at));
+            let first = if Some(document.slab.id) == block_id {
+                i64::from(document.view.at)
+            } else {
+                (document.slab.device_buffer().device_address()? as i64).wrapping_sub(address? as i64).wrapping_add(i64::from(document.view.at))
+            };
             view.set_offset(first);
             views.push(view);
             nodes += document.view.nodes as usize;
@@ -365,7 +367,7 @@ impl DocTable {
         }
         u32::try_from(nodes).ok()?;
         u32::try_from(source).ok()?;
-        let cache = zcache_for(&mut views, |v| address.wrapping_add(v.offset() as u64))?;
+        let cache = zcache_for(&mut views, |v| Some(address?.wrapping_add(v.offset() as u64)))?;
         Some(Self { views, block, slabs, nodes, documents, cache })
     }
 }
@@ -391,7 +393,20 @@ struct State {
     deadline: Option<Instant>,
 }
 
-static STATE: LazyLock<(Mutex<State>, Condvar)> = LazyLock::new(Default::default);
+/// The machine's residency (decision 0442): its state, the wake of its drop thread, and that thread, started once.
+#[derive(Default)]
+struct Residency {
+    state: Mutex<State>,
+    /// The slab `tape_room` places tapes in now: the residency's newest when its last tape was placed. `None` before
+    /// the first and after `clear`.
+    tape_slab: std::sync::RwLock<Option<Arc<Slab>>>,
+    wake: Condvar,
+    dropper: std::sync::OnceLock<()>,
+}
+
+fn residency() -> std::sync::Arc<Residency> {
+    rerail_context::machine::<Residency>()
+}
 
 /// What the residency holds now: slabs, documents and bytes per pool.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
@@ -403,7 +418,8 @@ pub struct Held {
 }
 
 pub fn held() -> Held {
-    let state = STATE.0.lock().expect("residency poisoned");
+    let st_ = residency();
+    let state = st_.state.lock().expect("residency poisoned");
     Held { slabs: state.slabs.len(), documents: state.documents.len(), sources: state.sources.len(), pools: state.pools }
 }
 
@@ -509,7 +525,8 @@ pub fn admit_sources(files: &[&[u8]]) -> Result<Vec<Arc<ResidentSource>>, Error>
 /// (decision 0032 §4), so no file's bytes are hashed here. A digest must be its file's.
 pub fn admit_sources_digested(files: &[&[u8]], digests: &[[u8; 32]]) -> Result<Vec<Arc<ResidentSource>>, Error> {
     let _admit = rerail_prof::Stage::start("residency.sources");
-    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let st_ = residency();
+    let mut state = st_.state.lock().map_err(|_| Error::BackendFailure)?;
     state.clock += 1;
     let clock = state.clock;
     let mut keep = Vec::new();
@@ -545,7 +562,8 @@ pub fn admit_sources_digested(files: &[&[u8]], digests: &[[u8; 32]]) -> Result<V
 
 /// The digests the residency does not hold (each once); the hits' slabs are marked used.
 pub fn misses(digests: &[[u8; 32]]) -> Result<Vec<[u8; 32]>, Error> {
-    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let st_ = residency();
+    let mut state = st_.state.lock().map_err(|_| Error::BackendFailure)?;
     state.clock += 1;
     let clock = state.clock;
     let mut missing = Vec::new();
@@ -567,7 +585,8 @@ pub fn misses(digests: &[[u8; 32]]) -> Result<Vec<[u8; 32]>, Error> {
 
 
 pub fn resident(digests: &[[u8; 32]]) -> Result<Vec<Arc<Resident>>, Error> {
-    let state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let st_ = residency();
+    let state = st_.state.lock().map_err(|_| Error::BackendFailure)?;
     digests.iter().map(|digest| state.documents.get(digest).cloned().ok_or(Error::BackendCapacity)).collect()
 }
 
@@ -575,6 +594,33 @@ pub fn resident(digests: &[[u8; 32]]) -> Result<Vec<Arc<Resident>>, Error> {
 /// write it into a slab at an offset (`bytes` of room there, its own). The writer is given where the table lies in
 /// that slab, and whether it is new: the room after the document's, for the writer to fill (`Placed::table`).
 pub type Placement<'a> = ([u8; 32], usize, Option<Table>, Box<dyn FnOnce(&Arc<Slab>, usize, Option<TableAt>) -> Result<Placed, Error> + 'a>);
+
+/// A room of `bytes` (16-byte aligned) for a tape the store loads (decision 0353 step 4a): its slab and its offset
+/// there. The tape is written there once, by its load, and read there by the host and the device; the slab lives as
+/// long as a holder of it does, retired from the residency or not.
+///
+/// A room is a bump of the slab's block (a compare-and-swap), so a tape is placed in the slab tapes go to now
+/// (`Residency::tape_slab`) under a read lock; the residency's lock is taken only to begin the next slab. Every parse
+/// worker places its tapes and line tables here, and with the residency's lock each time they waited on it (0477).
+pub fn tape_room(bytes: usize) -> Result<(Arc<Slab>, usize), Error> {
+    let residency = residency();
+    if let Some(slab) = residency.tape_slab.read().ok().and_then(|slab| slab.clone())
+        && let Some(offset) = slab.room(bytes)
+    {
+        return Ok((slab, offset));
+    }
+    let mut state = residency.state.lock().map_err(|_| Error::BackendFailure)?;
+    let (at, offset) = state.room(bytes, &[])?;
+    let clock = state.clock;
+    state.slabs[at].last_use = clock;
+    state.slabs[at].tapes = true;
+    let slab = Arc::clone(&state.slabs[at].slab);
+    // Held here, the slab is not retired (`retire` keeps a tapes' slab another holds) while tapes go to it.
+    if let Ok(mut current) = residency.tape_slab.write() {
+        *current = Some(Arc::clone(&slab));
+    }
+    Ok((slab, offset))
+}
 
 /// Where a document's language table lies in its slab: `at`, and whether the slab holds it already (else the writer
 /// writes it there).
@@ -590,42 +636,13 @@ pub struct Placed {
     pub table: Option<Vec<u8>>,
 }
 
-/// A room of `bytes` (16-byte aligned) for a tape the store loads (decision 0353 step 4a): its slab and its offset
-/// there. The tape is written there once, by its load, and read there by the host and the device; the slab lives as
-/// long as a holder of it does, retired from the residency or not.
-///
-/// A room is a bump of the slab's block (a compare-and-swap), so a tape is placed in the slab tapes go to now
-/// (`TAPE_SLAB`) under a read lock; the residency's lock is taken only to begin the next slab. Every parse worker
-/// places its tapes and line tables here, and with the residency's lock each time they waited on it (0472).
-pub fn tape_room(bytes: usize) -> Result<(Arc<Slab>, usize), Error> {
-    if let Some(slab) = TAPE_SLAB.read().ok().and_then(|slab| slab.clone())
-        && let Some(offset) = slab.room(bytes)
-    {
-        return Ok((slab, offset));
-    }
-    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
-    let (at, offset) = state.room(bytes, &[])?;
-    let clock = state.clock;
-    state.slabs[at].last_use = clock;
-    state.slabs[at].tapes = true;
-    let slab = Arc::clone(&state.slabs[at].slab);
-    // Held here, the slab is not retired (`retire` keeps a tapes' slab another holds) while tapes go to it.
-    if let Ok(mut current) = TAPE_SLAB.write() {
-        *current = Some(Arc::clone(&slab));
-    }
-    Ok((slab, offset))
-}
-
-/// The slab `tape_room` places tapes in now: the residency's newest when its last tape was placed. `None` before the
-/// first and after `clear`.
-static TAPE_SLAB: std::sync::RwLock<Option<Arc<Slab>>> = std::sync::RwLock::new(None);
-
 /// Places the misses, keeping the slabs of every document `digests` reads. A document of format 16 or 16z reads its
 /// language's table from its slab: placed with the first document of the language there, after its room. Every
 /// miss is placed before any is published: a document is found only once it reads whole.
 pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>) -> Result<(), Error> {
     let _admit = rerail_prof::Stage::start("residency.admit");
-    let mut state = STATE.0.lock().map_err(|_| Error::BackendFailure)?;
+    let st_ = residency();
+    let mut state = st_.state.lock().map_err(|_| Error::BackendFailure)?;
     let mut keep = digests.iter().filter_map(|digest| state.documents.get(digest).map(|document| document.slab.id)).collect::<Vec<_>>();
     let mut placed_all = Vec::with_capacity(parts.len());
     for (digest, bytes, table, place) in parts {
@@ -671,18 +688,20 @@ pub fn insert(digests: &[[u8; 32]], parts: Vec<Placement<'_>>) -> Result<(), Err
 /// slab, whatever reads it, when the residency's lock is free now; whether it did. A batch holding
 /// the slab keeps its memory until it ends; the documents in it are admitted again when next asked.
 pub fn evict() -> bool {
-    let Ok(mut state) = STATE.0.try_lock() else { return false };
+    let st_ = residency();
+    let Ok(mut state) = st_.state.try_lock() else { return false };
     state.retire(&[])
 }
 
 /// Forgets everything resident: documents, sources and slabs (each slab's memory goes as its last
 /// batch lets go). The engine's drop releases its pipelines and pools with it.
 pub fn clear() {
-    if let Ok(mut state) = STATE.0.lock() {
+    let st_ = residency();
+    if let Ok(mut state) = st_.state.lock() {
         state.documents.clear();
         state.sources.clear();
         state.slabs.clear();
-        if let Ok(mut current) = TAPE_SLAB.write() {
+        if let Ok(mut current) = st_.tape_slab.write() {
             *current = None;
         }
         state.pools = [0; 3];
@@ -693,15 +712,16 @@ pub fn clear() {
 /// A full execution ended: `drop_all` runs `DROP_AFTER` from now, unless another ends first
 /// (which moves the deadline). The first call's `drop_all` is the one kept.
 pub fn executed(drop_all: fn()) {
-    static DROPPER: std::sync::Once = std::sync::Once::new();
-    let (lock, wake) = &*STATE;
+    let r = residency();
+    let (lock, wake) = (&r.state, &r.wake);
     if let Ok(mut state) = lock.lock() {
         state.deadline = Some(Instant::now() + DROP_AFTER);
     }
     wake.notify_all();
-    DROPPER.call_once(|| {
+    r.dropper.get_or_init(|| {
+        let r = std::sync::Arc::clone(&r);
         rerail_accel::exec::service("rerail-residency-drop", None, move || {
-                let (lock, wake) = &*STATE;
+                let (lock, wake) = (&r.state, &r.wake);
                 let Ok(mut state) = lock.lock() else { return };
                 loop {
                     match state.deadline {
@@ -730,7 +750,7 @@ mod tests {
     /// that buffer, its rooms zeroed though it holds the last lease's bytes.
     #[test]
     fn an_evicted_slab_is_recycled_and_its_rooms_read_zero() {
-        if crate::METAL_DEVICE.is_none() {
+        if crate::lane::device().is_err() {
             return;
         }
         // The residency is the process's; other tests of this crate admit sources into it too.
@@ -740,7 +760,7 @@ mod tests {
         // An object past `SLAB_BYTES` gets a class of its own: 64 MiB + 1 MiB is in the 80 MiB class.
         let big = vec![0xA5_u8; SLAB_BYTES + (1 << 20)];
         let first = admit_sources(&[&big]).unwrap();
-        let address = first[0].slab.buffer().gpu_address();
+        let address = first[0].slab.device_buffer().device_address();
         assert_eq!(first[0].bytes(), &big[..]);
         drop(first);
         assert!(evict(), "the residency's slab retired");
@@ -748,7 +768,7 @@ mod tests {
         // A smaller source, of the same class: the buffer comes back, dirty, and its room reads zero past the bytes.
         let small = vec![0x11_u8; SLAB_BYTES + (1 << 19)];
         let again = admit_sources(&[&small]).unwrap();
-        assert_eq!(again[0].slab.buffer().gpu_address(), address, "the evicted slab's buffer served the next lease");
+        assert_eq!(again[0].slab.device_buffer().device_address(), address, "the evicted slab's buffer served the next lease");
         assert_eq!(again[0].bytes(), &small[..]);
         // SAFETY: the room's margin, inside the slab, written by no one but the zeroing.
         let margin = unsafe { std::slice::from_raw_parts(again[0].slab.host().add(again[0].offset + small.len()), SOURCE_MARGIN) };

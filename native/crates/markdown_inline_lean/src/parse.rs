@@ -537,11 +537,10 @@ impl<'a> P<'a> {
             let (F::Seq { any: true, .. }, Some(F::Emph { d, .. })) = (v.f[n - 1], n.checked_sub(2).map(|i| v.f[i])) else { continue };
             let (_, ext) = valid(v);
             let mut sc = v.sc;
-            if let Ok(Some((Ext::Close(c), _))) = scan(self.src, &self.b, at, ext & !(x::LTW | x::LTP), &mut sc) {
-                if c == d && tok.t != T::X(Ext::Close(d)) {
+            if let Ok(Some((Ext::Close(c), _))) = scan(self.src, &self.b, at, ext & !(x::LTW | x::LTP), &mut sc)
+                && c == d && tok.t != T::X(Ext::Close(d)) {
                     return Err(Refusal::Parse(at as u32));
                 }
-            }
         }
         Ok(())
     }
@@ -594,11 +593,10 @@ impl<'a> P<'a> {
             b' ' | b'\t' if lex & l::WS != 0 => {
                 // `_whitespace_ge_2` (`\t`, or a space and more blanks), or one space.
                 let e = if c == b'\t' { at + 1 } else { self.b.blank_end(at) };
-                if (c == b'\t' || e - at >= 2) && lex & l::HARD != 0 {
-                    if let Some(n) = newline_end(src, e) {
+                if (c == b'\t' || e - at >= 2) && lex & l::HARD != 0
+                    && let Some(n) = newline_end(src, e) {
                         return tok(T::Hard { bs: false }, n);
                     }
-                }
                 tok(T::Ws, e)
             }
             b'\n' | b'\r' if lex & l::NL != 0 => tok(T::Nl, newline_end(src, at).expect("a line end")),
@@ -751,14 +749,13 @@ impl<'a> P<'a> {
     /// description starts with its first.
     fn elem(&mut self, w: &mut V, s: usize) {
         let n = w.f.len();
-        if let F::Seq { any, .. } = &mut w.f[n - 1] {
-            if !*any {
+        if let F::Seq { any, .. } = &mut w.f[n - 1]
+            && !*any {
                 *any = true;
                 if n >= 2 && matches!(w.f[n - 2], F::LinkText | F::Desc) {
                     self.open(w, s);
                 }
             }
-        }
     }
 
     fn top(w: &mut V) -> &mut F {
@@ -885,11 +882,10 @@ impl<'a> P<'a> {
         let parent = if n >= 2 { Some(v.f[n - 2]) } else { None };
         let (s, e) = (t.s, t.e);
         match t.t {
-            T::Eof => {
-                if n == 1 && any {
+            T::Eof
+                if n == 1 && any => {
                     self.done.push(v.clone());
                 }
-            }
             T::Word | T::Digits | T::Ws | T::Nl | T::X(Ext::Unclosed) => {
                 let mut w = Self::next(v, t);
                 self.elem(&mut w, s);
@@ -943,8 +939,8 @@ impl<'a> P<'a> {
                 w.last = x::LTP;
                 out.push(w);
             }
-            T::X(Ext::Close(d)) => {
-                if any && matches!(parent, Some(F::Emph { d: pd, .. }) if pd == d) {
+            T::X(Ext::Close(d))
+                if any && matches!(parent, Some(F::Emph { d: pd, .. }) if pd == d) => {
                     let mut w = Self::next(v, t);
                     w.f.pop();
                     self.leaf(&mut w, K::EmphasisDelimiter, s, e);
@@ -959,7 +955,6 @@ impl<'a> P<'a> {
                     }
                     out.push(w);
                 }
-            }
             T::X(Ext::CodeStart) | T::X(Ext::LatexStart) => {
                 let latex = t.t == T::X(Ext::LatexStart);
                 let mut w = Self::next(v, t);
@@ -1005,15 +1000,14 @@ impl<'a> P<'a> {
                 *Self::top(&mut w) = F::After { image };
                 out.push(w);
             }
-            T::P(b']') => {
-                if !no_link {
+            T::P(b']')
+                if !no_link => {
                     let mut w = Self::next(v, t);
                     self.elem(&mut w, s);
                     self.leaf(&mut w, K::TRBracket, s, e);
                     w.last = x::LTP;
                     out.push(w);
                 }
-            }
             T::P(c @ (b'!' | b'<')) => {
                 // Text, or an image's or a tag's start.
                 let mut w = Self::next(v, t);
@@ -1131,14 +1125,13 @@ impl<'a> P<'a> {
                     w.score += 10;
                     self.tail_end(w, t, image, out);
                 }
-                T::Ws | T::Nl => {
-                    if depth == 0 {
+                T::Ws | T::Nl
+                    if depth == 0 => {
                         self.close(&mut w, K::LinkDestination, s);
                         w.score += 10;
                         set(&mut w, true, Tl::AfterDest { ws: true });
                         out.push(w);
                     }
-                }
                 T::Esc | T::Ent | T::Num | T::P(_) => {
                     let k = leaf_kind(t.t).expect("a leaf");
                     self.leaf(&mut w, k, s, e);
@@ -1168,12 +1161,11 @@ impl<'a> P<'a> {
                     out.push(w);
                 }
                 T::P(b'(') if q == b')' => {}
-                T::Nl => {
-                    if !nl {
+                T::Nl
+                    if !nl => {
                         set(&mut w, dest, Tl::Title { q, nl: true });
                         out.push(w);
                     }
-                }
                 T::Word | T::Digits | T::Ws => {
                     set(&mut w, dest, Tl::Title { q, nl: false });
                     out.push(w);
@@ -1342,7 +1334,7 @@ impl<'a> P<'a> {
                 let n = w.push(key(k), s);
                 stack.push((n, e, i + size as usize));
                 // The nodes are written in order and never edited: committed (passed to format 16's ops; decision
-                // 0426 §2) every 256.
+                // 0434 §2) every 256.
                 if n % 256 == 255 {
                     w.commit();
                 }
@@ -1517,8 +1509,8 @@ fn walk(a: usize, kids: &[(u32, bool)], out: &mut [bool]) {
             if w != 0 && (w >> 8 & 0xf) as usize == to - from {
                 let word = &kinds::WORD[(w >> 12) as usize..(w >> 12) as usize + (to - from)];
                 if word.iter().zip(&kids[from..to]).all(|(&l, k)| l == k.0) {
-                    for i in from..to {
-                        out[i] |= w >> (i - from) & 1 == 1;
+                    for (j, o) in out[from..to].iter_mut().enumerate() {
+                        *o |= w >> j & 1 == 1;
                     }
                 }
             }

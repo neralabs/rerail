@@ -1,4 +1,4 @@
-//! Pure-SQL tape decoding on the bundled SQLite (ast-index-spike `index_spike_sqlite_puresql.py`
+//! Pure-SQL tape decoding on the bundled SQLite (SQL index prototype `index_spike_sqlite_puresql.py`
 //! technique: fixed-stride `substr` over per-file blobs, rows from `generate_series`, structure by
 //! subtree size and parent delta). No registered function: a byte is
 //! `instr(X'000102..FF', substr(col, pos, 1)) - 1`.
@@ -103,7 +103,7 @@ fn q_span_v9r(kstr: u16) -> String {
     format!(
         "SELECT count(*), sum(length(substr(t.src, {st}+1, {en}-{st}))), sum({st}) FROM t9r t, generate_series(0, t.n-1) s WHERE {ks}={kstr}",
         st = v9r_start("s.value"),
-        en = format!("({} + {})", v9r_start(&last), u16le("t.sp", "4*s.value+2")),
+        en = format_args!("({} + {})", v9r_start(&last), u16le("t.sp", "4*s.value+2")),
         ks = v7_kind("s.value"),
     )
 }
@@ -112,7 +112,7 @@ fn q_span_v9i(kstr: u16) -> String {
     format!(
         "SELECT count(*), sum(length(substr(t.src, {st}+1, {en}-{st}))), sum({st}) FROM t9i t, generate_series(0, t.n-1) s WHERE {ks}={kstr}",
         st = v9i_start("s.value"),
-        en = format!("({} + {})", v9i_start(&last), u16le("t.rec", "8*s.value+6")),
+        en = format_args!("({} + {})", v9i_start(&last), u16le("t.rec", "8*s.value+6")),
         ks = v9i_kind("s.value"),
     )
 }
@@ -176,7 +176,7 @@ fn q_span_v9(kstr: u16) -> String {
     format!(
         "SELECT count(*), sum(length(substr(t.src, {st}+1, {en}-{st}))), sum({st}) FROM t9 t, generate_series(0, t.n-1) s WHERE {ks}={kstr}",
         st = v9_start("s.value"),
-        en = format!("({} + {})", v9_start(&last), u16le("t.tail", "2*s.value")),
+        en = format_args!("({} + {})", v9_start(&last), u16le("t.tail", "2*s.value")),
         ks = v9_kind("s.value"),
     )
 }

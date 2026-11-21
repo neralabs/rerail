@@ -58,7 +58,7 @@ impl Repository {
                 "seed",
             ],
         );
-        Self(directory.canonicalize().unwrap())
+        Self(dunce::canonicalize(directory).unwrap())
     }
 
     fn root(&self) -> String {
@@ -176,6 +176,7 @@ fn apply_value(
     let mut task = WorkspaceApplyTask {
         state: Arc::clone(&workspace.state),
         closed: Arc::clone(&workspace.closed),
+        shared: Arc::clone(&workspace.shared),
         request_json: json!({ "revision": revision, "files": files, "removed": removed })
             .to_string(),
         request_buffer: None,
@@ -1908,6 +1909,7 @@ fn the_store_never_holds_a_file_named_like_one_holding_secrets() {
         let mut task = WorkspaceApplyTask {
             state: Arc::clone(&workspace.state),
             closed: Arc::clone(&workspace.closed),
+            shared: Arc::clone(&workspace.shared),
             request_json: json!({ "revision": revision, "files": files, "removed": [] })
                 .to_string(),
             request_buffer: None,

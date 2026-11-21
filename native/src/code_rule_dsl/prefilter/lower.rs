@@ -1,6 +1,6 @@
 //! Candidate plans lower to SQL sets of (tape, preorder). The matcher retains capture semantics.
 //!
-//! Adapted from Pulling-it-all-together's `matcher/anchors/sql/lower.rs`. The sets read the
+//! Adapted from PIAT's `matcher/anchors/sql/lower.rs`. The sets read the
 //! content store's per-tape prefilter rows (`content_store::prefilter`); `fid` names a tape
 //! (`tape_id`) throughout, and the requested tapes are the `request_file` temp table. P decoded
 //! node properties (parents, ends, fields, spans) into SQL tables to evaluate relations, pattern
@@ -10,10 +10,10 @@
 //!
 //! The pure-SQL fallback (03 §17, `fallback`) lowers the same plans with relations exact: each
 //! relation reads the tape's structure through `nera_tree` and `nera_size` (`tapes.rs`), only at
-//! the scope's nodes, so nothing is decoded into tables (ast-index-spike Representation rule 3).
+//! the scope's nodes, so nothing is decoded into tables (SQL index prototype Representation rule 3).
 //! Pattern parent hops and uncovered text stay supersets; `Statement::exact` names the plans
 //! whose rows are exactly their matches' roots. Tape-level filters composed
-//! into the candidate set were good enough for word containment in ast-index-spike (history index
+//! into the candidate set were good enough for word containment in the SQL index prototype (history index
 //! l.404, S192–S193), and each rule's sets stay scoped to its own candidate tapes (T2, S149).
 use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
 use crate::code_rule_dsl::stats::inputs::Statistics;
@@ -469,11 +469,10 @@ impl Lower {
                     .copied()
                     .collect::<BTreeSet<_>>()
             });
-        if names.len() > 1 {
-            if let Some(selected) = self.factored(&names, exact)? {
+        if names.len() > 1
+            && let Some(selected) = self.factored(&names, exact)? {
                 return Ok(selected);
             }
-        }
         // A branch that contains every other branch is the union.
         if let Some(name) = names
             .iter()

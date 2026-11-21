@@ -296,7 +296,7 @@ const LISTED: &[(&str, &str)] = &[
 ];
 
 /// A cross-file rule over a directory's entries (`dir_entry`, answered on request) and every file's exports. The
-/// directory is computed (`cat`, as the libraries' `env.rr` computes theirs), or a constant (a request fact).
+/// directory is computed (`cat`, as the libraries' `env.rerail` computes theirs), or a constant (a request fact).
 fn listing_program(dir: &str) -> String {
     format!(
         r#"
@@ -403,8 +403,9 @@ ids(m, x) :- idents(m, x), x != "{ids_edit}".
 const ANNOTATED_OUTPUTS: &[&str] = &["names", "flag_col", "ids"];
 
 /// An edit's chunks of partial hits run its cone alone, and make only the guests the cone can see
-/// (`guests::guests_seen`): an edit of `flagged`, which names no guest and reads no relation an annotation reaches,
-/// makes no annotation guest; one of `names`, which reads them through `parsed`, makes them all. Either way the rows
+/// (decision 0431 §8: a tape value is admitted only as the cone's rules ask for it): an edit of `flagged`, which names
+/// no guest and reads no relation an annotation reaches, admits no annotation; one of `names`, which reads them
+/// through `parsed`, admits them. Either way the rows
 /// are a full run's. Before, every chunk made every guest its entries asked for (27,373 on an edit of ep2, 1.6 s).
 #[test]
 fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
@@ -422,21 +423,36 @@ fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
     let program = annotated("n0", "while_statement", "i0");
     let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
     assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");
-    assert!(edited.guests_unseen > 0, "the cone of `flagged` sees no annotation: none is made");
+    // A tape value is made only as a rule of the cone asks for it (decision 0431 §8): no request, none admitted.
+    assert_eq!((edited.values_admitted, edited.guest_parses), (0, 0), "the cone of `flagged` sees no annotation: none is made");
     assert_eq!(rows, fresh("flagged", &program), "the rows of a full run");
     // `names`' edit: its cone reads the annotations.
     let program = annotated("n1", "while_statement", "i0");
     let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
     assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");
-    assert_eq!(edited.guests_unseen, 0, "the cone of `names` reads every annotation");
     assert!(rows[0].iter().any(|r| r[0] == "Foo"), "the annotations' names: {:?}", rows[0]);
     assert_eq!(rows, fresh("names", &program), "the rows of a full run");
-    // `ids`' edit: it names no guest, but reads `idents`, which hiding widened to the annotations it copied it for
-    // (`FoldOwn`): it sees them, as a full run's does.
+    // `ids`' edit: it names no guest and reaches no annotation, so it reads `idents` narrow, as hiding keeps it for
+    // such a rule (`FoldOwn`'s narrow copy, #923: a rule that reads no annotation finds what it finds beside rules
+    // that do): the host files' identifiers only, as a full run's.
     let program = annotated("n1", "while_statement", "i1");
     let (edited, rows) = run(&dir, &program, ANNOTATED_OUTPUTS);
     assert_eq!(edited.memo_partial, ANNOTATED.len(), "every file is a partial hit");
-    assert!(rows[2].iter().any(|r| r[1] == "Bar"), "`ids` sees the annotations' identifiers: {:?}", rows[2]);
+    assert!(rows[2].iter().any(|r| r[1] == "typing") && !rows[2].iter().any(|r| r[1] == "Bar" || r[1] == "Foo"), "`ids` sees the host files' identifiers only: {:?}", rows[2]);
     assert_eq!(rows, fresh("ids", &program), "the rows of a full run");
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Q384: a chunk's files' rows are made once, whatever guests its rules ask for. Before, the batch with guests was
+/// built again and made every file's rows again (773 of `leg-083-typed`'s 901 files, 0.8 s of its chunks' CPU).
+/// Under decision 0431 an annotation is a tape value admitted in the program's fixpoint: there is no slice round and
+/// no batch grown (R5, R10, step 7), so no file is made twice.
+#[test]
+fn a_chunks_files_rows_are_made_once_with_its_guests() {
+    let marker = format!("{:?}", std::time::SystemTime::now());
+    let dir = corpus("guests-once", &marker, ANNOTATED);
+    let (report, rows) = run(&dir, &annotated("n0", "f0", "i0"), ANNOTATED_OUTPUTS);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert!(rows[0].iter().any(|r| r[0] == "Foo"), "the annotations' names: {:?}", rows[0]);
+    assert!(report.values_admitted > 0, "the annotations are values admitted in the fixpoint");
 }

@@ -2,19 +2,19 @@
 
 Sources read:
 
-- **Tempo (Landing):** `~/orca/workspaces/nera-landing-2/ner-1562-scale-test-the-re-railer/tempo`, branch `jbarnes/ner-1562-scale-test-the-re-railer`, tip `e95613625`. Docs read: `transducer-design.md`, `transducer-value-program-design.md`, `sql-driven-transducer-execution.md`, `metal-batch-executor-design.md`, `metal-optimal-execution-shape.md`, `metal-execution-cutover-{plan,handover,phase5}.md`, `cpython-335-seconds-workplan.md`, `ner-1562-full-corpus-production-index.md`, `rerail-observable-requirements.md`, `transducer-native-jit-design.md`. Code read: `native/src/policy_dsl/{tape.rs, transducer.rs, transducer/packed_batch.rs, transducer/metal_batch_abi.rs, transducer/metal_output_pages.rs, transducer/metal_typed_output.rs}`.
-- **Rerail N1562:** `~/orca/workspaces/rerail/ner-1562-scale-test-the-re-railer`, worktree HEAD `c674f4b6`, one commit past `8b6576f0`. Docs read: `transducer-design.md`, `packed-executor-architecture.md`, `ner-1562-landing-pad.md`, `rerail-pattern-lowering-design.md`. Code read: `native/src/code_rule_dsl/{packed.rs, packed/**, transducer.rs, transducer/sql_backend.rs, transducer/semantic_facts.rs, query/relational.rs}`.
+- **The predecessor:** the N1562 worktree's `<predecessor>/`, on a branch of the predecessor repository, tip `e95613625`. Docs read: `transducer-design.md`, `transducer-value-program-design.md`, `sql-driven-transducer-execution.md`, `metal-batch-executor-design.md`, `metal-optimal-execution-shape.md`, `metal-execution-cutover-{plan,handover,phase5}.md`, `cpython-335-seconds-workplan.md`, `full-corpus-production-index.md`, `rerail-observable-requirements.md`, `transducer-native-jit-design.md`. Code read: `native/src/policy_dsl/{tape.rs, transducer.rs, transducer/packed_batch.rs, transducer/metal_batch_abi.rs, transducer/metal_output_pages.rs, transducer/metal_typed_output.rs}`.
+- **Rerail N1562:** a worktree of this repository, worktree HEAD `c674f4b6`, one commit past `8b6576f0`. Docs read: `transducer-design.md`, `packed-executor-architecture.md`, its landing-pad notes, `rerail-pattern-lowering-design.md`. Code read: `native/src/code_rule_dsl/{packed.rs, packed/**, transducer.rs, transducer/sql_backend.rs, transducer/semantic_facts.rs, query/relational.rs}`.
 
 ## 0. Bottom line
 
-1. **What the IR is.** A verified, fixed-width (one 32-bit word per instruction) structural automaton. It is a path-enumerating tree walker over one document, starting from supplied root ordinals. Typed side programs (value, capture, output) handle text, regex, Lua and output directives. It has no registers, no arithmetic, no calls and no host callbacks. Four backends execute the same `Program`: a Rust interpreter, a CPU JIT, a Metal interpreter and a Metal JIT. Tempo's version is the newer and more complete one.
+1. **What the IR is.** A verified, fixed-width (one 32-bit word per instruction) structural automaton. It is a path-enumerating tree walker over one document, starting from supplied root ordinals. Typed side programs (value, capture, output) handle text, regex, Lua and output directives. It has no registers, no arithmetic, no calls and no host callbacks. Four backends execute the same `Program`: a Rust interpreter, a CPU JIT, a Metal interpreter and a Metal JIT. The predecessor's version is the newer and more complete one.
 2. **Your suspicion is confirmed.** In N1562's Rerail branch, tree relations (`inside`, `has`, `precedes`, `follows`, `stopBy`) are lowered to **SQL over navigation-edge rows**:
    - The `Navigation` producer emits one row for every parent→child edge in every file. Each row comes from the 35-column `rerail_matches` union virtual table (`transducer/sql_backend.rs:1567-1612`).
    - `query/relational.rs` then lowers relations with a recursive closure in SQL (`lower_navigation`, `:2783`). It also uses a `Universe` terminal that emits one row per node.
    - The transducer itself is given only kind, regex and "navigation descriptor" programs.
    - ast-grep patterns do not lower to transducer words. They run as a separate Rust tree interpreter (`PackedPattern`, `packed.rs:1418-1460`) inside `xFilter`, on the CPU only.
 
-   This is the row-per-node, closure-in-SQL design that ast-index-spike measured as a dead end. It is the opposite of what the IR was built for.
+   This is the row-per-node, closure-in-SQL design that the SQL index prototype measured as a dead end. It is the opposite of what the IR was built for.
 3. **What exceeds the IR, and why.** Almost all of the gap between ast-grep/Rerail rules and the IR comes from requirements the findings contract has now dropped:
    - first-match binding;
    - ordered alternatives;
@@ -24,7 +24,7 @@ Sources read:
    The remaining real gaps are small and well defined: an existence/negation sub-program, the missing axes (previous sibling, child position), bounded counts, ast-grep pattern opcodes, utility calls, and side-table reads (section 5).
 4. **Where Metal's cost comes from.** Its problems mostly come from reproducing exact Tree-sitter query semantics: capture-containment antichains, ordered output and dynamic quantifier frontiers. They are not inherent to tree walking. The decoded node table the executors need is fully regular (11 × u32 per node), but it is rebuilt from the irregular persisted tape for every batch.
 
-## 1. IR specification (Tempo `transducer-design.md`; implemented in `native/src/policy_dsl/transducer.rs`)
+## 1. IR specification (the predecessor's `transducer-design.md`; implemented in `native/src/policy_dsl/transducer.rs`)
 
 ### Input
 - An immutable tape, optional source bytes, and an ordered set of starting nodes.
@@ -101,7 +101,7 @@ In the packed ABI the output is typed arenas (`metal_batch_abi.rs:256-299`):
 - a layout table;
 - `TaskStatus`.
 
-Durable publication (`NormalizedRowSource`, `content_store.rs:815`) uses evaluations, matches, captures and properties. Tempo's handover now calls for "demand plus six typed output relations over tape v7". I found no document that lists the six exactly; the records above are the candidates.
+Durable publication (`NormalizedRowSource`, `content_store.rs:815`) uses evaluations, matches, captures and properties. The predecessor's handover now calls for "demand plus six typed output relations over tape v7". I found no document that lists the six exactly; the records above are the candidates.
 
 ### Batching
 - `execute_batch` takes many programs and many tapes. Results are grouped by file, then program, then ordered outputs.
@@ -113,8 +113,8 @@ Output order is fixed by (task, local) ordinals. Errors are written per task. A 
 
 ### Versions compared
 - Rerail N1562's `docs/transducer-design.md` is an older copy. It lacks `SUPERTYPE`, `FOLLOWING`, cursor slots, repeat counters and fork policies, and its `FORK` takes no policy.
-- N1562's `packed/**` (packed ABI, CPU, regex, Lua, output, scheduler, Metal, `native_ir`) was ported from Landing's v3/v4 eras (`ner-1562-landing-pad.md`, "Source eras").
-- **Tempo is the canonical, newer IR.** Its newer parts are value, capture and output programs on Metal, the grid and frontier execution shape, and typed output pages.
+- N1562's `packed/**` (packed ABI, CPU, regex, Lua, output, scheduler, Metal, `native_ir`) was ported from the predecessor repository's v3/v4 eras (its landing-pad notes, "Source eras").
+- **The predecessor is the canonical, newer IR.** Its newer parts are value, capture and output programs on Metal, the grid and frontier execution shape, and typed output pages.
 
 ## 2. Expressivity
 
@@ -131,7 +131,7 @@ Output order is fixed by (task, local) ordinals. Errors are written per task. A 
 | Capture equality (`$A == $A`) and kind sets | Yes, as a capture predicate | `ASSERT_EVAL` with `TEXT_EQUAL` over `CAPTURE_ZIP` |
 | `#has-ancestor` / `#has-parent` | Yes | `CAPTURE_PARENT` loop |
 | Output transforms (strip, offset, downcase, set) | Yes | `OutputProgram` |
-| ast-grep patterns | **No** | Tempo: exact Smart root-terminal patterns only (`transducer-design.md`, "Implemented ast-grep comparison"). Rerail: a separate `PackedPattern` tree interpreted in Rust, CPU-only, with no Metal or JIT version. The proposed `P_*` instruction set is not implemented (`rerail-pattern-lowering-design.md:382-480`, `:695-703`) |
+| ast-grep patterns | **No** | The predecessor: exact Smart root-terminal patterns only (`transducer-design.md`, "Implemented ast-grep comparison"). Rerail: a separate `PackedPattern` tree interpreted in Rust, CPU-only, with no Metal or JIT version. The proposed `P_*` instruction set is not implemented (`rerail-pattern-lowering-design.md:382-480`, `:695-703`) |
 | `all` (conjunction at one node) | Partly | Sequence of tests plus `SAVE_CURSOR`/`RESTORE_CURSOR`. But a sub-walk that matches several times forks duplicate paths; there is no "exists" barrier |
 | `not` | **No** | There is no rule-level negation (`transducer-design.md:241`) |
 | `inside` / `has` with `stopBy: end` | Expressible | A `PARENT`/`GOTO` loop and `DESCEND`. They would be filters, but without an exists barrier they multiply paths |
@@ -156,7 +156,7 @@ Nothing in the table is fundamental to a tree-walking automaton. The missing pie
 - **Bounded subroutine calls** for utilities.
 - **Typed side-table reads** keyed by node, for scope, binding and reference facts produced upstream.
 
-Tempo's design deliberately left these out because its source language, SCM (Tree-sitter's query language), is a positive pattern language.
+The predecessor's design deliberately left these out because its source language, SCM (Tree-sitter's query language), is a positive pattern language.
 
 ### Rerail's own extension design is shaped by exact parity
 N1562's `packed-executor-architecture.md` ("Target Program design for Rerail", "Execution transaction model") proposes:
@@ -230,7 +230,7 @@ These belong above the IR, in SQL:
 - **Inherent to the IR:** a path-enumeration semantics with no aggregation or existence barrier. Every intermediate path materializes and every successful path is an output, so `has`-style filters and counts multiply work. The existence and count primitives in section 2 fix this.
 
 ## 4. Relationship to the tape
-- **Tempo's tape is v4 (`TMPTAPE4`, 6-byte records, `policy_dsl/tape.rs:16-24`).** It reuses the final header table for supertypes. Rerail's v4 used the same slot for Blade error ranges, so the two formats are incompatible under one magic number. N1562 forbids reading Landing tape bytes (`ner-1562-landing-pad.md`, "Tape boundary").
+- **The predecessor's tape is v4 (`TMPTAPE4`, 6-byte records, `policy_dsl/tape.rs:16-24`).** It reuses the final header table for supertypes. Rerail's v4 used the same slot for Blade error ranges, so the two formats are incompatible under one magic number. N1562 forbids reading the predecessor repository's tape bytes (its landing-pad notes, "Tape boundary").
 - **The executors do not read the persisted tape.** The packed batch decodes each file through `TapeDoc` accessors into a **fully regular** node table (`packed_batch.rs:199-283`):
   - per node: `parent, next_any, next_named, child_start, child_count, descendant_end, source_start, source_end, kind, field, flags`, which is 11 × u32 = 44 B;
   - a child array;
@@ -267,7 +267,7 @@ These belong above the IR, in SQL:
 - findings consolidation;
 - incremental invalidation.
 
-### Interface (fits `architecture.md` principles 1–6 and Tempo's `sql-driven-transducer-execution.md`)
+### Interface (fits `architecture.md` principles 1–6 and the predecessor's `sql-driven-transducer-execution.md`)
 - **In:** a demand relation, `demand(program_id, doc_id, roots)`.
   - `roots` is an interned root list, or "all".
   - One `xFilter` per batch, using `sqlite3_vtab_in`.
@@ -298,7 +298,7 @@ These belong above the IR, in SQL:
 - SSC's grammar→relations SQL pattern compiler as an executor. Keep it as the reference pure-SQL lowering of the same IR for the SQLite-only fallback.
 
 ### Sources to merge or port
-- **Tempo:** `transducer.rs`, the value, capture and output programs, the verifier, `native_ir.rs` (shared CPU/MSL lowering), the packed ABI v4, and the grid, count, scan and scatter Metal shape. Port them onto v7 `TapeDoc` accessors. Keep SCM only as a test frontend; the 335-pattern corpus stays a parity and throughput benchmark.
+- **The predecessor:** `transducer.rs`, the value, capture and output programs, the verifier, `native_ir.rs` (shared CPU/MSL lowering), the packed ABI v4, and the grid, count, scan and scatter Metal shape. Port them onto v7 `TapeDoc` accessors. Keep SCM only as a test frontend; the 335-pattern corpus stays a parity and throughput benchmark.
 - **N1562:** its ported `packed/**`, its pattern-lowering design, and its semantic-fact descriptors, which become the `SIDE` producers.
 - **Drop:** the parts of N1562's `RuleProgram` transaction model that only serve exact parity.
 

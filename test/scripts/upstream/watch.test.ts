@@ -4,7 +4,7 @@
  * throwaway checkout whose registry and tag answers are recorded. Nothing reaches the network.
  */
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { afterEach, test } from "vitest";
@@ -16,10 +16,11 @@ import type { Fetch } from "../../../scripts/upstream/releases.js";
 import { compareWatch } from "../../../scripts/upstream/watch-compare.js";
 import { releasesBetween, renderWatch, watchUpstreams } from "../../../scripts/upstream/watch.js";
 import { fakeGitHub } from "./support/fake-github.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const roots: string[] = [];
 afterEach(() => {
-  for (const root of roots.splice(0)) rmSync(root, { recursive: true, force: true });
+  for (const root of roots.splice(0)) removeFolderSync(root);
 });
 
 function patterns(paths: string[], globs: string[] = [], byRule: Record<string, string[]> = {}): WatchPatternSet {

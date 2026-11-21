@@ -270,7 +270,7 @@ impl<'t> Extractor<'t> {
             }
             if let Some(table) = self.table {
                 // Read only for an identifier or an attribute, the only nodes the tests below take them for: the
-                // parent read and its field's range were made for every node (0472).
+                // parent read and its field's range were made for every node (0477).
                 let named = kind == "identifier" || kind == "attribute";
                 let parent = if named { node.parent() } else { None };
                 let head_of_attribute = kind == "identifier"

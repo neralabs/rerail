@@ -91,6 +91,10 @@ jobs:
     needs: changes
     if: needs.changes.outputs.run == 'true'
     uses: ./.github/workflows/package.yml
+    # package.yml's native builds read main's compile cache store from its runs' artifacts.
+    permissions:
+      contents: read
+      actions: read
 
   # Bundles the package with this checkout's rule packs once and puts it where every environment's VM fetches it.
   stage:

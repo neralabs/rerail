@@ -1,6 +1,6 @@
 # 0471. A batch reads its tapes in every slab they lie in, and the device joins' caches share one cap
 
-Status: accepted (2026-11-19). Follows 0465 §3 and 0466 (Q284's third item).
+Status: accepted (2026-11-19). Follows 0465 §3 and 0476 (Q334's third item).
 
 ## Intro
 
@@ -75,4 +75,4 @@ run.
 
 ## What is next
 
-Q284's first two items: the parse workers' CPU (W's reference graph, 0466's next steps) and the run's serial phases.
+Q334's first two items: the parse workers' CPU (W's reference graph, 0476's next steps) and the run's serial phases.

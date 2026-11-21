@@ -5,16 +5,18 @@ use super::model::{ClauseKind, Query};
 use super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
 use napi::Result;
 use serde_json::{Map, Value, json};
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 pub(super) const CAPABILITIES: &str = include_str!("capabilities.json");
 
 /// Pack test data at `relative` (a repository path under `packs/<id>/upstream/<tool>/`), which is not in
 /// git (scripts/s3/pack-fixtures.mjs): its path in the checkout, or a failure saying to fetch and derive it.
 pub(super) fn pack_test_data(relative: &str) -> PathBuf {
-    let path = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("..")
-        .join(relative);
+    let path = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("..")
+    .join(relative);
     assert!(
         path.exists(),
         "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each \
@@ -22,6 +24,29 @@ pub(super) fn pack_test_data(relative: &str) -> PathBuf {
          data\")"
     );
     path
+}
+
+/// Runs `test` (its whole path, an ignored test of this binary) alone in a child process of this binary. Every test
+/// of a run shares the process: its one pool, which a long parallel loop of another test's holds (minutes, on a loaded
+/// 4-core runner), and its process-wide counts, which other tests' runs move. In the child, both are the test's own,
+/// so what it times, overlaps or counts is its own run's.
+pub(super) fn alone(test: &str) {
+    let mut command = std::process::Command::new(std::env::current_exe().unwrap());
+    command.args(["--exact", test, "--ignored"]);
+    let mut process = super::logic::plan::corpus::switches::started(|| command.spawn()).unwrap();
+    let started = std::time::Instant::now();
+    let status = loop {
+        if let Some(status) = process.try_wait().unwrap() {
+            break status;
+        }
+        if started.elapsed() > std::time::Duration::from_secs(120) {
+            let _ = process.kill();
+            let _ = process.wait();
+            panic!("{test} stalled");
+        }
+        std::thread::sleep(std::time::Duration::from_millis(20));
+    };
+    assert!(status.success(), "{test} failed: {status}");
 }
 
 pub(super) const JSX_SOURCE: &str =
@@ -380,26 +405,61 @@ impl ast_grep_core::language::Language for Unfiltered {
     fn pre_process_pattern<'q>(&self, query: &'q str) -> std::borrow::Cow<'q, str> {
         self.0.pre_process_pattern(query)
     }
-    fn build_pattern(&self, builder: &ast_grep_core::matcher::PatternBuilder) -> std::result::Result<ast_grep_core::matcher::Pattern, ast_grep_core::matcher::PatternError> {
+    fn build_pattern(
+        &self,
+        builder: &ast_grep_core::matcher::PatternBuilder,
+    ) -> std::result::Result<ast_grep_core::matcher::Pattern, ast_grep_core::matcher::PatternError>
+    {
         match self.0 {
             // Forte's trees are Blade's own: no tree-sitter tree to read.
             super::language::GrammarDialect::Blade => self.0.build_pattern(builder),
-            dialect => builder.build(|source| ast_grep_core::tree_sitter::StrDoc::try_new(source, dialect)),
+            dialect => {
+                builder.build(|source| ast_grep_core::tree_sitter::StrDoc::try_new(source, dialect))
+            }
         }
     }
 }
 
 /// `text` as a pattern over tree-sitter's tree of `lang` (every token kept).
-pub(super) fn unfiltered_pattern(text: &str, lang: super::language::GrammarDialect) -> ast_grep_core::matcher::Pattern {
+pub(super) fn unfiltered_pattern(
+    text: &str,
+    lang: super::language::GrammarDialect,
+) -> ast_grep_core::matcher::Pattern {
     ast_grep_core::matcher::Pattern::try_new(text, Unfiltered(lang)).unwrap()
 }
 
 /// `text` as a pattern over documents of type `D` of `lang`: a tape's (`TapeDoc`), else the unfiltered
 /// one over tree-sitter's tree.
-pub(super) fn pattern_for<D: 'static>(text: &str, lang: super::language::GrammarDialect) -> ast_grep_core::matcher::Pattern {
+pub(super) fn pattern_for<D: 'static>(
+    text: &str,
+    lang: super::language::GrammarDialect,
+) -> ast_grep_core::matcher::Pattern {
     if std::any::TypeId::of::<D>() == std::any::TypeId::of::<super::tape::TapeDoc>() {
         ast_grep_core::matcher::Pattern::try_new(text, lang).unwrap()
     } else {
         unfiltered_pattern(text, lang)
     }
+}
+
+/// This test binary as a child process at the lowest priority (AGENTS.md: every test run at a high nice value):
+/// through `nice -n 19` on Unix; on Windows, which has no `nice`, started in the idle priority class.
+pub(crate) fn niced_self() -> std::process::Command {
+    let exe = std::env::current_exe().expect("the test binary's path");
+    #[cfg(unix)]
+    {
+        let mut c = std::process::Command::new("nice");
+        c.args(["-n", "19"]).arg(exe);
+        c
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::process::CommandExt as _;
+        /// `IDLE_PRIORITY_CLASS`: the process runs when nothing else on the machine wants the CPU.
+        const IDLE_PRIORITY_CLASS: u32 = 0x40;
+        let mut c = std::process::Command::new(exe);
+        c.creation_flags(IDLE_PRIORITY_CLASS);
+        c
+    }
+    #[cfg(not(any(unix, windows)))]
+    std::process::Command::new(exe)
 }

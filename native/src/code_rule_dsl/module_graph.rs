@@ -42,24 +42,6 @@ pub const MAX_GRAPH_BYTES: u64 = 512 * 1024 * 1024;
 /// included) gets no server graph, as past `MAX_GRAPH_FILES`: the host's audit bound
 /// (`AUDIT_MAX_FILES`).
 pub const MAX_GRAPH_ENTRIES: usize = 100_000;
-/// The folders a server graph does not read, beside hidden ones: the host's
-/// `IGNORED_DIRECTORIES` (code-rule-enforcer.ts), which its repository walk skips.
-const IGNORED_DIRECTORIES: [&str; 14] = [
-    ".git",
-    ".hg",
-    ".svn",
-    ".rerail",
-    ".venv",
-    "__pycache__",
-    "node_modules",
-    "dist",
-    "build",
-    ".next",
-    ".turbo",
-    "coverage",
-    "target",
-    "vendor",
-];
 /// A source larger than this is not read for imports; it imports nothing.
 pub const MAX_SOURCE_BYTES: u64 = 1024 * 1024;
 /// How many `extends` a configuration chain follows.
@@ -95,6 +77,48 @@ pub struct Summary {
 thread_local! {
     /// ECMA sources `summarize` parsed on this thread.
     pub static SUMMARIES: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// Server graph over the selected Git tree, with the same file and byte bounds as the disk walk.
+fn snapshot_graph(directory: &Path, folder: &str, config: &Config) -> Option<BTreeSet<String>> {
+    use crate::git_workspace::snapshot;
+    let mut pending = vec![String::new()];
+    let mut files = BTreeMap::new();
+    let mut entries = MAX_GRAPH_ENTRIES;
+    let mut budget = MAX_GRAPH_BYTES;
+    while let Some(prefix) = pending.pop() {
+        let listing = snapshot::listing(directory.join(&prefix)).ok()?;
+        entries = entries.checked_sub(listing.len())?;
+        for (name, is_directory) in listing {
+            let relative = join(&prefix, &name);
+            let file = directory.join(&relative);
+            if is_directory {
+                if !skipped_folder(&name) && !snapshot::is_file(file.join("package.json")) {
+                    pending.push(relative);
+                }
+                continue;
+            }
+            if !is_source(&relative) || name.starts_with('.') {
+                continue;
+            }
+            let source = match snapshot::read_bounded(&file, MAX_SOURCE_BYTES) {
+                Ok(bytes) => {
+                    budget = budget.checked_sub(bytes.len() as u64)?;
+                    String::from_utf8_lossy(&bytes).into_owned()
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => String::new(),
+                Err(_) => return None,
+            };
+            let path = join(folder, &relative);
+            if let Some(summary) = summarize(&path, &source) {
+                files.insert(path, summary);
+                if files.len() > MAX_GRAPH_FILES {
+                    return None;
+                }
+            }
+        }
+    }
+    Some(server_graph(folder, &files, config, snapshot::is_dir(directory.join("app"))))
 }
 
 /// The summary of the ECMA source at `path`; `None` for a path of no ECMA dialect.
@@ -160,10 +184,9 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
             if !(dynamic || function.kind() == "identifier" && function.text() == "require") {
                 continue;
             }
-            let first = call.field("arguments").and_then(|arguments| {
-                arguments
-                    .first_code()
-            });
+            let first = call
+                .field("arguments")
+                .and_then(|arguments| arguments.first_code());
             specifiers.extend(
                 first
                     .filter(|first| first.kind() == "string")
@@ -177,12 +200,10 @@ fn summary_of<D: Doc>(root: &Node<'_, D>) -> Summary {
 
 /// A directive's text: an expression statement that is only a string literal (comments aside).
 fn directive<D: Doc>(statement: &Node<'_, D>) -> Option<String> {
-    let mut named = statement
-        .named_code();
+    let mut named = statement.named_code();
     let string = named.next().filter(|child| child.kind() == "string")?;
     named.next().is_none().then(|| literal(&string)).flatten()
 }
-
 
 /// A string literal's text between its quotes.
 fn literal<D: Doc>(string: &Node<'_, D>) -> Option<String> {
@@ -595,8 +616,8 @@ impl Stamp {
 type CachedSummary = (Stamp, Arc<Summary>);
 
 /// Summaries of files on disk, by absolute path, across calls.
-static DISK_SUMMARIES: LazyLock<Mutex<HashMap<PathBuf, CachedSummary>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+#[derive(Default)]
+struct DiskSummaries(Mutex<HashMap<PathBuf, CachedSummary>>);
 /// The disk cache is dropped whole beyond this many entries.
 const MAX_CACHED_SUMMARIES: usize = 200_000;
 /// A file modified less than this long before it is read is not cached: a rewrite within the
@@ -605,7 +626,7 @@ const SETTLED_AFTER: Duration = Duration::from_secs(2);
 
 /// The server graph of the package whose folder (workspace-relative) is `folder`, read on disk
 /// below `root` with its `config`: its source files outside hidden folders, the host's ignored
-/// ones (`IGNORED_DIRECTORIES`), nested packages and nested checkouts (a folder holding `.git`).
+/// ones (`git_workspace::ignored_directories`), nested packages and nested checkouts (a folder holding `.git`).
 /// `overlay` replaces one source's text with a host's (`None`: deleted), for a source being
 /// edited that disk does not hold yet. `None` where the package has no graph rather than a
 /// partial one: a folder or source cannot be read, its walk lists more than `MAX_GRAPH_ENTRIES`
@@ -623,6 +644,9 @@ pub fn on_disk(
     } else {
         root.join(folder)
     };
+    if crate::git_workspace::snapshot::contains(&directory) {
+        return snapshot_graph(&directory, folder, config);
+    }
     let mut sources = Vec::new();
     let mut budget = MAX_GRAPH_BYTES;
     let mut entries = MAX_GRAPH_ENTRIES;
@@ -640,7 +664,8 @@ pub fn on_disk(
     let mut hits = Vec::with_capacity(sources.len());
     let mut misses = Vec::new();
     {
-        let cache = DISK_SUMMARIES.lock();
+        let held_ = crate::code_rule_dsl::logic::profile::shared::<DiskSummaries>();
+        let cache = held_.0.lock();
         for (relative, absolute, metadata) in sources {
             let path = join(folder, &relative);
             // The overlay's text replaces this source's below; disk's is not read.
@@ -688,7 +713,8 @@ pub fn on_disk(
         files.insert(path, summary);
     }
     if !read.is_empty() {
-        let mut cache = DISK_SUMMARIES.lock();
+        let held_ = crate::code_rule_dsl::logic::profile::shared::<DiskSummaries>();
+        let mut cache = held_.0.lock();
         if cache.len() > MAX_CACHED_SUMMARIES {
             cache.clear();
         }
@@ -742,7 +768,7 @@ pub(crate) fn summarize_bounded(path: &str, source: &str) -> Option<Summary> {
 /// canonical path lies below the root's, so a symlink on the way leads nowhere outside the
 /// workspace.
 pub fn config_on_disk(root: &Path, folder: &str) -> Config {
-    let Ok(canonical_root) = root.canonicalize() else {
+    let Ok(canonical_root) = crate::git_workspace::snapshot::canonicalize(root) else {
         return Config::default();
     };
     let read = |path: &str| {
@@ -755,11 +781,14 @@ pub fn config_on_disk(root: &Path, folder: &str) -> Config {
             return None;
         }
         let file = root.join(path);
+        if crate::git_workspace::snapshot::contains(root) {
+            return String::from_utf8(crate::git_workspace::snapshot::read_bounded(&file, MAX_SOURCE_BYTES).ok()?).ok();
+        }
         let metadata = std::fs::metadata(&file).ok()?;
         if !metadata.is_file() || metadata.len() > MAX_SOURCE_BYTES {
             return None;
         }
-        let file = file.canonicalize().ok()?;
+        let file = dunce::canonicalize(file).ok()?;
         file.starts_with(&canonical_root)
             .then(|| std::fs::read_to_string(file).ok())
             .flatten()
@@ -768,9 +797,9 @@ pub fn config_on_disk(root: &Path, folder: &str) -> Config {
 }
 
 /// Whether a server graph skips a folder of this name: a hidden one, or one the host's walk
-/// ignores (`IGNORED_DIRECTORIES`).
+/// ignores (`git_workspace::ignored_directories`).
 fn skipped_folder(name: &str) -> bool {
-    name.starts_with('.') || IGNORED_DIRECTORIES.contains(&name)
+    name.starts_with('.') || crate::git_workspace::ignored_directory(name)
 }
 
 /// Collects the ECMA source files below `directory` (paths relative to `top`), skipping the

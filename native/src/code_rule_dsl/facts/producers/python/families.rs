@@ -213,11 +213,10 @@ fn collect_rows(g: &Grammar, f: &Facts, with_arguments: bool) -> Rows {
         out.call.push([call, callee]);
         out.site.push([report, call, reference]);
         out.context.push([call, owner, kind]);
-        if g.role(f, report) == Role::Attribute {
-            if let (Some(object), Some(name)) = (field(f, report, g.object), field(f, report, g.attribute)) {
+        if g.role(f, report) == Role::Attribute
+            && let (Some(object), Some(name)) = (field(f, report, g.object), field(f, report, g.attribute)) {
                 out.attribute.push([report, object, name]);
             }
-        }
         if with_arguments { append_arguments(g,f,call,&mut out); }
     }
     out

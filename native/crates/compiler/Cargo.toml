@@ -7,9 +7,10 @@ description = "The transducer's parser compiler: Bitlex to tier 1 and tier 2, an
 
 [features]
 # The relocations' recording (`native_cpu_codegen::relocations`), for the engine's tests.
-test-hooks = []
+test-hooks = ["rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail-context/test-hooks", ]
 
 [dependencies]
+rerail-context = { path = "../context" }
 # The engine's tape, which tier 2 writes (decision 0140).
 rerail-tape-format = { path = "../tape_format" }
 # Bitlex's parser, for the masks' lowering (`bitlex_masks`). No dependencies of its own.
@@ -28,6 +29,8 @@ rayon = "=1.12.0"
 # fixed hasher, so a compile is the same each run (the questions asked, and so the program, follow
 # the maps' order), and a cheap one for its small integer keys.
 rustc-hash = "=2.1.3"
+# The provers' answers keyed by their questions' digests (`bitlex_prove::Key`, decision 0414).
+sha2 = "0.11"
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

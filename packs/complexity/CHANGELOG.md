@@ -4,6 +4,31 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.9 (2026-11-20)
+
+8 rules, all on by default.
+
+### Changed
+
+- Every rule now takes a `ceiling` option, the highest cyclomatic complexity a function may have (default 6). Set it for one rule with a rule setting's `config`; in internal testing, `rerail scan` also reads it for all 8 rules from `.rerail/packs.json`. The message names the ceiling in effect. Without it, the rules flag exactly what they did.
+- Each rule's title now says what its description says, in the same words: "Keep TypeScript functions to 6 or fewer paths" rather than "at cyclomatic complexity 6 or lower". The limit, the rule ids and the message the coding agent reads are unchanged.
+
+## 0.1.8 (2026-11-17)
+
+8 rules, all on by default.
+
+### Added
+
+- `complexity-cyclomatic-java` (starts in Steer): Keep Java methods and constructors to 6 or fewer paths (cyclomatic complexity), counting each if, for, while, catch, switch, ternary and && or ||, so they stay easy to read and test.
+- `complexity-cyclomatic-java`: set-up now recommends the pack for a repository with Java source.
+
+### Changed
+
+- The pack's npm keywords now name Blade, as its description does. Its rules are unchanged.
+- The pack is now titled "Function complexity". Its rule descriptions explain the count in plain words, as paths through a function, and why it matters. The limit of 6 and the message the coding agent reads are unchanged.
+- This version needs the Rerail released with it, or a newer one: update Rerail when you update the pack (`rerail update`). An older Rerail leaves the whole pack out.
+- The pack's summary line and its README now name the tool versions it matches.
+
 ## 0.1.7 (2026-11-06)
 
 7 rules, all on by default.

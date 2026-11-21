@@ -3,7 +3,7 @@
 //!
 //! RERAIL_LAB_CAPTURES=<dir> cargo test --release --lib -- --ignored candidate_replay --nocapture
 //!
-//! From Pulling-it-all-together's `matcher/anchors/sql/replay.rs`. P also replayed each capture
+//! From PIAT's `matcher/anchors/sql/replay.rs`. P also replayed each capture
 //! under three layouts of retained (file, pre) relations (`lab_node`, `lab_ready`,
 //! `lab_revision`) for `retention_spikes.rs`; those relations were decoded ones, which
 //! transducers now produce, so that experiment, its schema and its modes are not kept.
@@ -22,7 +22,9 @@ pub(super) fn replay(capture: &std::path::Path) -> (Json, CandidateRows) {
     let data: Json = serde_json::from_slice(&std::fs::read(capture).unwrap()).unwrap();
     let database = capture.parent().unwrap().join(data["database"].as_str().unwrap());
     let copy = temp();
-    std::fs::copy(database, &copy).unwrap();
+    std::fs::copy(&database, &copy).unwrap();
+    // The capture's atoms blocks and segments, beside the copy as beside the capture.
+    crate::content_store::copy_beside(&database, &copy).unwrap();
     let store = open(&copy);
     let parameters: Vec<_> = data["parameters"]
         .as_array()

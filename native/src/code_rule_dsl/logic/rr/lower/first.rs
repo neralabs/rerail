@@ -11,8 +11,11 @@
 //! is read as a lattice relation: `F`'s value column joins its key's rows under the order (`min<>`, `max<>`,
 //! `shortlex_min<>`), and `F`'s rule is `X` and its other literals. The self-join `L` made a row for every pair of a
 //! group's rows; the lattice keeps one a key, in one pass. `L` is dropped when nothing else reads it. Nothing changes
-//! in `.rr`. `RERAIL_FIRST=off` leaves the shape as written, for measuring.
-use rerail_rr_syntax::syntax::{Head, Item, Lit, Statement, Term};
+//! in `.rerail`: the statements are read off their tape (decision 0276) and lowered so: `F`'s declaration with the
+//! lattice column, its rule without `!L`, and a dropped `L` left out (`lower_module_seeded_written`). `RERAIL_FIRST=off` leaves the shape as written, for measuring.
+use super::super::check::{clause_body, clause_reads};
+use super::super::clause::{At, L, LitAt, Reads, T};
+use super::super::from_tape::{RrFile, S, Stmt};
 use std::collections::{BTreeMap, BTreeSet};
 
 /// The order a later-relation states, and the lattice that keeps its first.
@@ -45,6 +48,55 @@ pub struct First {
     pub drop_later: bool,
 }
 
+/// A term as recognition reads it: a variable, a wildcard, `@strlen` of a variable, or anything else.
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum Term {
+    Var(String),
+    Wild,
+    Strlen(String),
+    Other,
+}
+
+/// A literal as recognition reads it, with the variables it reads.
+#[derive(Debug)]
+enum Lit {
+    Atom { rel: String, args: Vec<Term>, neg: bool },
+    Cmp { l: Term, op: &'static str, r: Term },
+    Other,
+}
+
+/// A clause of one head and no edits, read off its tape.
+struct Clause {
+    rel: String,
+    modal: bool,
+    args: Vec<Term>,
+    body: Vec<(Lit, Vec<String>)>,
+}
+
+fn term(f: &RrFile, a: &At) -> Term {
+    match f.tv(a) {
+        T::Var(v) => Term::Var(v),
+        T::Wild => Term::Wild,
+        T::Call { name, args, .. } if name == "strlen" && args.len() == 1 => match f.tv(&args[0]) {
+            T::Var(v) => Term::Strlen(v),
+            _ => Term::Other,
+        },
+        _ => Term::Other,
+    }
+}
+
+fn lit(f: &RrFile, l: &LitAt) -> (Lit, Vec<String>) {
+    let mut reads = Vec::new();
+    f.lit_vars(l, &mut reads);
+    let lit = match f.lit(l) {
+        L::Atom { rel, args, neg } => Lit::Atom { rel, args: args.iter().map(|a| term(f, a)).collect(), neg },
+        L::Cmp { l, op, r } => Lit::Cmp { l: term(f, &l), op, r: term(f, &r) },
+        _ => Lit::Other,
+    };
+    (lit, reads)
+}
+
+/// An atom's arguments as variables, each once; None for anything else.
 fn vars(args: &[Term]) -> Option<Vec<&str>> {
     let vs: Vec<&str> = args.iter().map(|a| if let Term::Var(v) = a { Some(v.as_str()) } else { None }).collect::<Option<_>>()?;
     let distinct: BTreeSet<&&str> = vs.iter().collect();
@@ -67,37 +119,8 @@ fn is_head_with_wilds(args: &[Term], h: &[&str]) -> bool {
     pattern(args).is_some_and(|p| p.iter().flatten().copied().eq(h.iter().copied()))
 }
 
-fn term_reads(t: &Term, v: &str) -> bool {
-    match t {
-        Term::Var(x) => x == v,
-        Term::Call { args, .. } => args.iter().any(|a| term_reads(a, v)),
-        Term::Bin { l, r, .. } => term_reads(l, v) || term_reads(r, v),
-        _ => false,
-    }
-}
-
-fn lit_reads(l: &Lit, v: &str) -> bool {
-    match l {
-        Lit::Atom { args, .. } => args.iter().any(|a| term_reads(a, v)),
-        Lit::Cmp { l, r, .. } => term_reads(l, v) || term_reads(r, v),
-        Lit::Pattern { subject, .. } => term_reads(subject, v),
-        Lit::Group { alts, .. } => alts.iter().flatten().any(|l| lit_reads(l, v)),
-    }
-}
-
-fn var(t: &Term) -> Option<&str> {
-    if let Term::Var(v) = t { Some(v) } else { None }
-}
-
-fn strlen_of(t: &Term) -> Option<&str> {
-    match t {
-        Term::Call { name, args, .. } if name == "strlen" && args.len() == 1 => var(&args[0]),
-        _ => None,
-    }
-}
-
-/// A comparison of a later-rule, as `(what, before)`: "w before v" in the text order (`"<"`), in length (`"len<"`), as
-/// long (`"len="`); or `">"`, w after v. None for anything else.
+/// A comparison of a later-rule, as "w before v" in the text order (`"<"`), in length (`"len<"`), as long
+/// (`"len="`); or `">"`, w after v. None for anything else.
 fn comparison(l: &Lit, v: &str, w: &str) -> Option<&'static str> {
     let Lit::Cmp { l, op, r } = l else { return None };
     // `a op b` as "w op' v".
@@ -120,27 +143,25 @@ fn comparison(l: &Lit, v: &str, w: &str) -> Option<&'static str> {
             None
         }
     };
-    if let (Some(a), Some(b)) = (var(l), var(r)) {
-        return oriented(a, b).filter(|o| *o != "=");
-    }
-    if let (Some(a), Some(b)) = (strlen_of(l), strlen_of(r)) {
-        return match oriented(a, b)? {
+    match (l, r) {
+        (Term::Var(a), Term::Var(b)) => oriented(a, b).filter(|o| *o != "="),
+        (Term::Strlen(a), Term::Strlen(b)) => match oriented(a, b)? {
             "<" => Some("len<"),
             "=" => Some("len="),
             _ => None,
-        };
+        },
+        _ => None,
     }
-    None
 }
 
 /// The later-rule's shape: `L(h…) :- X(h…), X(h… with w for the value), comparisons`. Its `X`, and its comparisons
 /// as `comparison` names them, sorted.
-fn later_rule(head: &Head, body: &[Lit]) -> Option<(String, Vec<&'static str>)> {
-    let h = vars(&head.args)?;
+fn later_rule(c: &Clause) -> Option<(String, Vec<&'static str>)> {
+    let h = vars(&c.args)?;
     let (v, keys) = h.split_last()?;
     let mut atoms = Vec::new();
     let mut cmps = Vec::new();
-    for l in body {
+    for (l, _) in &c.body {
         match l {
             Lit::Atom { rel, args, neg: false } => atoms.push((rel, args)),
             Lit::Cmp { .. } => cmps.push(l),
@@ -185,120 +206,126 @@ fn typed_for(order: Order, ty: &str) -> bool {
     }
 }
 
-/// The module's first-of-a-group relations.
-pub fn recognize(statements: &[Statement]) -> Vec<First> {
+/// The module's first-of-a-group relations, read off its statements' tapes.
+pub fn recognize(statements: &[Stmt]) -> Vec<First> {
     if std::env::var("RERAIL_FIRST").is_ok_and(|v| v == "off") {
         return Vec::new();
     }
-    let mut decls: BTreeMap<&str, &Vec<(String, String)>> = BTreeMap::new();
-    let mut tails: BTreeMap<&str, &Vec<String>> = BTreeMap::new();
-    let mut rules: BTreeMap<&str, Vec<(&Head, &Vec<Lit>)>> = BTreeMap::new();
+    let mut decls: BTreeMap<String, (Vec<(String, String)>, Vec<String>)> = BTreeMap::new();
+    let mut rules: BTreeMap<String, Vec<Clause>> = BTreeMap::new();
     // How many literals (and `.output`s) read each relation.
-    let mut reads: BTreeMap<&str, usize> = BTreeMap::new();
-    let mut multi_head: BTreeSet<&str> = BTreeSet::new();
-    fn count<'a>(l: &'a Lit, reads: &mut BTreeMap<&'a str, usize>) {
-        match l {
-            Lit::Atom { rel, .. } => *reads.entry(rel).or_default() += 1,
-            Lit::Group { alts, .. } => alts.iter().flatten().for_each(|l| count(l, reads)),
-            _ => {}
-        }
-    }
-    for (item, _) in statements {
-        match item {
-            Item::Decl { name, cols, tail } => {
-                decls.insert(name, cols);
-                tails.insert(name, tail);
+    let mut reads: BTreeMap<String, usize> = BTreeMap::new();
+    let mut multi_head: BTreeSet<String> = BTreeSet::new();
+    for st in statements {
+        let (t, node) = st.tape();
+        match st.what() {
+            Some(S::Decl(_)) => {
+                if let Ok((name, cols, tail)) = t.decl(node) {
+                    decls.insert(name, (cols, tail));
+                }
             }
-            Item::Io { names, .. } => names.iter().for_each(|n| *reads.entry(n).or_default() += 1),
-            Item::Clause { heads, body, edits } => {
-                body.iter().for_each(|l| count(l, &mut reads));
-                if heads.len() != 1 || !edits.is_empty() {
-                    heads.iter().for_each(|h| {
-                        multi_head.insert(&h.rel);
-                    });
+            Some(S::Io { .. }) => {
+                if let Ok((_, names, _)) = t.io(node) {
+                    names.into_iter().for_each(|n| *reads.entry(n).or_default() += 1);
+                }
+            }
+            Some(S::Clause) => {
+                let f = st.file();
+                let body = clause_body(f, node);
+                let mut read = Vec::new();
+                clause_reads(f, &body, &mut read);
+                read.into_iter().for_each(|r| *reads.entry(r).or_default() += 1);
+                let heads = f.heads_at(node);
+                if heads.len() != 1 || st.has_edits() {
+                    multi_head.extend(heads.into_iter().map(|h| h.rel));
                     continue;
                 }
-                rules.entry(&heads[0].rel).or_default().push((&heads[0], body));
+                let [h] = heads.as_slice() else { unreachable!("one head") };
+                let clause = Clause { rel: h.rel.clone(), modal: h.modal.is_some(), args: h.args.iter().map(|a| term(f, a)).collect(), body: body.iter().map(|l| lit(f, l)).collect() };
+                rules.entry(h.rel.clone()).or_default().push(clause);
             }
             // A test or fixture reads the module's relations too.
-            Item::Test { .. } | Item::Fixtures { .. } => return Vec::new(),
+            Some(S::Test | S::Fixtures) => return Vec::new(),
             _ => {}
         }
     }
     let mut found = Vec::new();
-    for (&first, frules) in &rules {
-        let ([(head, body)], false) = (frules.as_slice(), multi_head.contains(first)) else { continue };
-        if head.modal.is_some() {
+    for (first, frules) in &rules {
+        let ([c], false) = (frules.as_slice(), multi_head.contains(first)) else { continue };
+        if c.modal {
             continue;
         }
-        let Some(cols) = decls.get(first) else { continue };
-        if !tails.get(first).is_some_and(|t| t.is_empty()) || cols.iter().any(|(_, t)| t.ends_with("<>")) {
+        let Some((cols, tail)) = decls.get(first) else { continue };
+        if !tail.is_empty() || cols.iter().any(|(_, t)| t.ends_with("<>")) {
             continue;
         }
-        let Some(h) = vars(&head.args) else { continue };
+        let Some(h) = vars(&c.args) else { continue };
         let Some((v, _)) = h.split_last() else { continue };
         // `X(h…)` and `!L(h…)`, with other literals that do not read the value.
         let mut of = None;
         let mut later = None;
         let mut rest_reads_v = false;
-        for l in body.iter() {
+        for (l, read) in &c.body {
             match l {
                 Lit::Atom { rel, args, neg } if (!neg && is_head_with_wilds(args, &h)) || (*neg && vars(args).as_ref() == Some(&h)) => match (neg, &of, &later) {
                     (false, None, _) => of = Some(rel),
                     (true, _, None) => later = Some(rel),
                     _ => rest_reads_v = true,
                 },
-                l => rest_reads_v |= lit_reads(l, v),
+                _ => rest_reads_v |= read.iter().any(|r| r == v),
             }
         }
         let (Some(of), Some(later), false) = (of, later, rest_reads_v) else { continue };
         let Some(lrules) = rules.get(later.as_str()) else { continue };
-        if multi_head.contains(later.as_str()) || lrules.iter().any(|(h, _)| h.modal.is_some()) {
+        if multi_head.contains(later.as_str()) || lrules.iter().any(|c| c.modal) {
             continue;
         }
-        let Some(shapes) = lrules.iter().map(|(h, b)| later_rule(h, b)).collect::<Option<Vec<_>>>() else { continue };
+        let Some(shapes) = lrules.iter().map(later_rule).collect::<Option<Vec<_>>>() else { continue };
         if shapes.iter().any(|(x, _)| x != of) {
             continue;
         }
         let Some(order) = order_of(&shapes.iter().map(|(_, c)| c.clone()).collect::<Vec<_>>()) else { continue };
-        let typed = |r: &str| decls.get(r).and_then(|c| c.last()).is_some_and(|(_, t)| typed_for(order, t));
+        let typed = |r: &str| decls.get(r).and_then(|(c, _)| c.last()).is_some_and(|(_, t)| typed_for(order, t));
         // F's head copies the value from X, so F's column is its type.
         if !typed(first) {
             continue;
         }
         // F's rule reads L once; L's own rules read it never. Anything else keeps it.
         let drop_later = reads.get(later.as_str()).copied().unwrap_or(0) == 1;
-        found.push(First { first: first.to_owned(), later: later.clone(), of: of.clone(), order, drop_later });
+        found.push(First { first: first.clone(), later: later.clone(), of: of.clone(), order, drop_later });
     }
     found
 }
 
-/// Rewrites the module's statements for `found`: each `F`'s value column is its lattice, its rule loses `!L`, and a
-/// dropped `L` loses its declaration and rules.
-pub fn rewrite(statements: &mut Vec<Statement>, found: &[First]) {
-    if found.is_empty() {
-        return;
-    }
-    let by_first: BTreeMap<&str, &First> = found.iter().map(|f| (f.first.as_str(), f)).collect();
-    let dropped: BTreeSet<&str> = found.iter().filter(|f| f.drop_later).map(|f| f.later.as_str()).collect();
-    statements.retain(|(item, _)| match item {
-        Item::Decl { name, .. } => !dropped.contains(name.as_str()),
-        Item::Clause { heads, .. } => !(heads.len() == 1 && dropped.contains(heads[0].rel.as_str())),
-        _ => true,
-    });
-    for (item, _) in statements.iter_mut() {
-        match item {
-            Item::Decl { name, cols, .. } => {
-                if let (Some(f), Some(last)) = (by_first.get(name.as_str()), cols.last_mut()) {
-                    last.1 = f.order.column().to_owned();
-                }
-            }
-            Item::Clause { heads, body, .. } if heads.len() == 1 => {
-                if let Some(f) = by_first.get(heads[0].rel.as_str()) {
-                    body.retain(|l| !matches!(l, Lit::Atom { rel, neg: true, .. } if *rel == f.later));
-                }
-            }
-            _ => {}
+/// How the lowering reads the module for `found` (`lower_module_seeded_written`): each `F`'s value column is its
+/// lattice, its rule is read without `!L`, and a dropped `L`'s declaration and rules are left out.
+#[derive(Clone, Debug, Default)]
+pub struct Firsts {
+    /// `F`'s lattice column, by `F`.
+    pub column: BTreeMap<String, &'static str>,
+    /// `L`, by `F`: the negation `F`'s rule is read without.
+    pub without: BTreeMap<String, String>,
+    /// The later-relations left out.
+    pub dropped: BTreeSet<String>,
+}
+
+impl Firsts {
+    pub fn of(found: &[First]) -> Firsts {
+        Firsts {
+            column: found.iter().map(|f| (f.first.clone(), f.order.column())).collect(),
+            without: found.iter().map(|f| (f.first.clone(), f.later.clone())).collect(),
+            dropped: found.iter().filter(|f| f.drop_later).map(|f| f.later.clone()).collect(),
         }
+    }
+
+    /// Declaration `name`'s columns, as the module is read: `None` for a dropped later-relation.
+    pub fn columns(&self, name: &str, mut cols: Vec<(String, String)>) -> Option<Vec<(String, String)>> {
+        if self.dropped.contains(name) {
+            return None;
+        }
+        if let (Some(c), Some(last)) = (self.column.get(name), cols.last_mut()) {
+            last.1 = (*c).to_owned();
+        }
+        Some(cols)
     }
 }

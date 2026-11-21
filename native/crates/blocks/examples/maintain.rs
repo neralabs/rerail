@@ -139,8 +139,8 @@ impl Src for VSrc<'_> {
         let a = v.arity();
         let mut row = [0i64; 8];
         let mut emit = |id: u32| -> bool {
-            for c in 0..a {
-                row[c] = v.get(id, c);
+            for (c, cell) in row.iter_mut().enumerate().take(a) {
+                *cell = v.get(id, c);
             }
             if !cols.iter().zip(key).all(|(&c, &k)| row[c] == k) {
                 return true;
@@ -418,7 +418,7 @@ struct Doc {
 fn import_name(d: u64, r: &mut impl FnMut() -> u64) -> i64 {
     let p = d / PACKAGE;
     // 5% from the package before: the recursion crosses packages.
-    let p = if p > 0 && r() % 20 == 0 { p - 1 } else { p };
+    let p = if p > 0 && r().is_multiple_of(20) { p - 1 } else { p };
     ((p * PACKAGE + r() % PACKAGE) * NAMES + r() % NAMES) as i64
 }
 
@@ -673,12 +673,12 @@ fn maintained(way: Way, kept: &FrozenFacts, prog: &[Rule], docs: &[Doc], edited:
             let (kill, add) = match (way, recursive) {
                 (Way::Again, _) | (Way::Delta, true) => again(&sc, &rules, &rels, &new_views, kept, stats),
                 (_, false) => by_deltas(&rules, &rels, &changes, &old_srcs, &new_views, kept, stats),
-                (Way::DeltaDred, true) => dred(&rules, &rels, &changes, &old_views, &new_views, kept, stats),
+                (Way::DeltaDred, true) => dred(&rules, &rels, &changes, Views { old: &old_views, new: &new_views }, kept, stats),
                 (Way::DeltaPart, true) => match partition_col(&rules, &rels) {
                     true => by_partition(&rules, &rels, &changes, &old_srcs, &new_views, kept, stats),
                     false => again(&sc, &rules, &rels, &new_views, kept, stats),
                 },
-                (Way::DeltaLevels, true) => by_levels(&rules, &rels, &changes, &old_views, &new_views, kept, lv, stats),
+                (Way::DeltaLevels, true) => by_levels(&rules, &rels, &changes, Views { old: &old_views, new: &new_views }, kept, lv, stats),
             };
             for &r in &rels {
                 let w = f.w(r);
@@ -779,12 +779,20 @@ fn by_deltas(rules: &[&Rule], rels: &[usize], changes: &[Change], old: &[&dyn Sr
     (kill, add)
 }
 
+/// The views of every relation over the old state and over the new one (`None`: not yet made in the new), which a
+/// recursive stratum's maintenance reads both of.
+#[derive(Clone, Copy)]
+struct Views<'a, 'v> {
+    old: &'a [Option<VSrc<'v>>],
+    new: &'a [Option<VSrc<'v>>],
+}
+
 /// A recursive stratum by delete and rederive, from the deltas alone. Overdelete: the old rows a removed read
 /// reached, and what they reach in turn, over the old state. Rederive: of those, the rows some rule still derives
 /// directly over the new state, the stratum's own rows being the old ones less the overdeleted. Insert: semi-naive
 /// from those and the added reads, over that state.
-fn dred(rules: &[&Rule], rels: &[usize], changes: &[Change], old_views: &[Option<VSrc>], new_views: &[Option<VSrc>], kept: &FrozenFacts, stats: &mut Stats) -> (Rows, Rows) {
-    let old = srcs_of(old_views);
+fn dred(rules: &[&Rule], rels: &[usize], changes: &[Change], views: Views<'_, '_>, kept: &FrozenFacts, stats: &mut Stats) -> (Rows, Rows) {
+    let old = srcs_of(views.old);
     let own = |r: usize| rels.contains(&r);
     // Overdelete, over the old state.
     let mut del: BTreeMap<usize, HashSet<Vec<i64>>> = rels.iter().map(|&r| (r, HashSet::new())).collect();
@@ -837,7 +845,7 @@ fn dred(rules: &[&Rule], rels: &[usize], changes: &[Change], old_views: &[Option
     let mut start = Rows::new();
     {
         let overlays: Vec<(usize, Overlay)> = rels.iter().map(|&r| (r, Overlay { base: old[r], minus: &del[&r], plus: &plus[&r] })).collect();
-        let mut srcs = srcs_of(new_views);
+        let mut srcs = srcs_of(views.new);
         for (r, o) in &overlays {
             srcs[*r] = o;
         }
@@ -886,7 +894,7 @@ fn dred(rules: &[&Rule], rels: &[usize], changes: &[Change], old_views: &[Option
         let mut found_all: Vec<(usize, Vec<i64>)> = Vec::new();
         {
             let overlays: Vec<(usize, Overlay)> = rels.iter().map(|&r| (r, Overlay { base: old[r], minus: &del[&r], plus: &plus[&r] })).collect();
-            let mut srcs = srcs_of(new_views);
+            let mut srcs = srcs_of(views.new);
             for (r, o) in &overlays {
                 srcs[*r] = o;
             }
@@ -1103,14 +1111,14 @@ impl Src for Below<'_> {
 fn level_of(rule: &Rule, env: &[Option<i64>; 8], rels: &[usize], lv: &BTreeMap<usize, HashMap<Vec<i64>, u32>>) -> u32 {
     let mut top = 0;
     for l in &rule.body {
-        if let L::A(r, args) = l {
-            if rels.contains(r) {
-                let row: Vec<i64> = args.iter().map(|t| match t {
-                    T::V(v) => env[*v].unwrap(),
-                    T::W => panic!("a wildcard in a recursive atom: its row cannot be rebuilt"),
-                }).collect();
-                top = top.max(lv[r][&row]);
-            }
+        if let L::A(r, args) = l
+            && rels.contains(r)
+        {
+            let row: Vec<i64> = args.iter().map(|t| match t {
+                T::V(v) => env[*v].unwrap(),
+                T::W => panic!("a wildcard in a recursive atom: its row cannot be rebuilt"),
+            }).collect();
+            top = top.max(lv[r][&row]);
         }
     }
     top + 1
@@ -1121,8 +1129,8 @@ fn level_of(rule: &Rule, env: &[Option<i64>; 8], rels: &[usize], lv: &BTreeMap<u
 /// new state's other reads); a row that does not is killed, and the rows it took part in become candidates in turn.
 /// Then the killed rows some rule derives at any level, and the added reads' heads, are inserted semi-naive, each at
 /// one more than its derivation's highest level. Kept rows keep their levels.
-fn by_levels(rules: &[&Rule], rels: &[usize], changes: &[Change], old_views: &[Option<VSrc>], new_views: &[Option<VSrc>], kept: &FrozenFacts, lv0: &Levels, stats: &mut Stats) -> (Rows, Rows) {
-    let old = srcs_of(old_views);
+fn by_levels(rules: &[&Rule], rels: &[usize], changes: &[Change], views: Views<'_, '_>, kept: &FrozenFacts, lv0: &Levels, stats: &mut Stats) -> (Rows, Rows) {
+    let old = srcs_of(views.old);
     let own = |r: usize| rels.contains(&r);
     let old_has = |r: usize, h: &[i64]| lv0[&r].contains_key(h);
     let mut lv: Levels = rels.iter().map(|&r| (r, lv0[&r].clone())).collect();
@@ -1158,7 +1166,7 @@ fn by_levels(rules: &[&Rule], rels: &[usize], changes: &[Change], old_views: &[O
         stats.candidates += 1;
         let survives = {
             let belows: Vec<(usize, Below)> = rels.iter().map(|&x| (x, Below { base: old[x], minus: &killed[&x], plus: &empty[&x], lv: &lv[&x], bound: &bound })).collect();
-            let mut srcs = srcs_of(new_views);
+            let mut srcs = srcs_of(views.new);
             for (x, b) in &belows {
                 srcs[*x] = b;
             }
@@ -1195,7 +1203,7 @@ fn by_levels(rules: &[&Rule], rels: &[usize], changes: &[Change], old_views: &[O
     let mut wave: Vec<(usize, Vec<i64>, u32)> = Vec::new();
     {
         let overlays: Vec<(usize, Overlay)> = rels.iter().map(|&r| (r, Overlay { base: old[r], minus: &killed[&r], plus: &plus[&r] })).collect();
-        let mut srcs = srcs_of(new_views);
+        let mut srcs = srcs_of(views.new);
         for (r, o) in &overlays {
             srcs[*r] = o;
         }
@@ -1264,7 +1272,7 @@ fn by_levels(rules: &[&Rule], rels: &[usize], changes: &[Change], old_views: &[O
         let mut found_all: Vec<(usize, Vec<i64>, u32)> = Vec::new();
         {
             let overlays: Vec<(usize, Overlay)> = rels.iter().map(|&r| (r, Overlay { base: old[r], minus: &killed[&r], plus: &plus[&r] })).collect();
-            let mut srcs = srcs_of(new_views);
+            let mut srcs = srcs_of(views.new);
             for (r, o) in &overlays {
                 srcs[*r] = o;
             }
@@ -1351,7 +1359,7 @@ fn main() {
 
     let mut r = rng(11);
     let mut sum: BTreeMap<&str, (u64, u64)> = BTreeMap::new();
-    println!("{:>4} {:>5} {:>10} {:>10} {:>10} {:>10} {:>10}  {}", "edit", "doc", "again M", "delta M", "+dred M", "+part M", "+levels M", "part: keys, rechecks, kills, adds; dred: overdeleted, rechecks; levels: candidates, level writes");
+    println!("{:>4} {:>5} {:>10} {:>10} {:>10} {:>10} {:>10}  part: keys, rechecks, kills, adds; dred: overdeleted, rechecks; levels: candidates, level writes", "edit", "doc", "again M", "delta M", "+dred M", "+part M", "+levels M");
     for e in 1..=nedits + 1 {
         let d = (r() % ndocs) as usize;
         if e == nedits + 1 {

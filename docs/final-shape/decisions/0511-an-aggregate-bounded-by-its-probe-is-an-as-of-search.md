@@ -1,6 +1,6 @@
 # 0511. An aggregate bounded by its probe is an as-of search, not a helper per probe
 
-Status: accepted (2026-11-20), steps 1, 2, 4 (SQL) and 5 built; the search of step 3 not yet (§ Built). t50 step 3; follows 0476.
+Status: accepted (2026-11-20), steps 1, 2, 4 (SQL) and 5 built; the search of step 3 not yet (§ Built). t50 step 3; follows 0483.
 
 ## Intro
 
@@ -36,7 +36,7 @@ for the search.
      (`t < r`, `t <= r`; for `min`, `t > r`, `t >= r`);
    - no other literal of the body reads an outside variable that is not a key of the group.
 
-   The front keeps its syntax. Nothing changes in `.rr`.
+   The front keeps its syntax. Nothing changes in `.rerail`.
 2. **The lowering keeps the bound on the aggregate.** The body without the comparison is the group's timeline: one
    helper over the group's keys and the value, `rr_asof(s, x, t) :- rf_fn_at(s, x, _, t)`, which does not carry the
    probe. The aggregate literal reads that helper and carries the bound: `u = max t : { rr_asof(s, x, t) } below r`.

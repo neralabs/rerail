@@ -64,10 +64,10 @@ pub fn callees(clif: &str) -> Vec<u32> {
             if let Some(n) = decl.split(" u0:").nth(1).and_then(|r| r.split_whitespace().next()).and_then(|n| n.parse().ok()) {
                 names.insert(name.to_owned(), n);
             }
-        } else if let Some(rest) = line.split("call ").nth(1).filter(|_| line.starts_with("call ") || line.contains(" call ")) {
-            if let Some(&n) = names.get(rest.split('(').next().unwrap_or_default()) {
-                out.push(n);
-            }
+        } else if let Some(rest) = line.split("call ").nth(1).filter(|_| line.starts_with("call ") || line.contains(" call "))
+            && let Some(&n) = names.get(rest.split('(').next().unwrap_or_default())
+        {
+            out.push(n);
         }
     }
     out
@@ -80,6 +80,8 @@ pub fn reached_calls(clif: &str) -> usize {
     for function in clif.split("\nfunction ").filter(|f| !f.trim().is_empty()) {
         let mut blocks: Vec<(String, Vec<&str>)> = Vec::new();
         for line in function.lines().map(str::trim) {
+            // An instruction's source location (`@0005`) before it, if any: a jump behind one is a branch too.
+            let line = if line.starts_with('@') { line.split_once(char::is_whitespace).map_or("", |(_, rest)| rest.trim_start()) } else { line };
             if line.starts_with("block") && line.ends_with(':') {
                 blocks.push((line.split(['(', ':', ' ']).next().unwrap_or_default().to_owned(), Vec::new()));
             } else if let Some((_, lines)) = blocks.last_mut()
@@ -231,4 +233,15 @@ pub fn carried_params(clif: &str) -> usize {
 pub fn sink_params(native: &crate::block_native::BlockNative) -> usize {
     // A delayed output's word is not held (`native_cpu_block::delayed_store`).
     crate::native_cpu_block::counted(native).len()
+}
+
+#[cfg(test)]
+mod reached_tests {
+    /// A call in a block no branch reaches is not counted: code generation drops it. One behind a source location
+    /// is, and so is one in a block only a jump behind a source location reaches (PR #508's 53361e039).
+    #[test]
+    fn a_call_nothing_reaches_is_not_counted() {
+        let clif = "function u0:1(i64) -> i64 system_v {\n    fn0 = colocated u0:2 sig0\n\nblock0(v0: i64):\n    brif v0, block1, block4\n\nblock3 cold:\n    v9 = call fn0(v0)\n    return v9\n\nblock1:\n@0001                               v1 = call fn0(v0)\n@0001                               jump block2\n\nblock2:\n    v2 = call fn0(v0)\n    return v2\n\nblock4:\n    return v0\n}\n";
+        assert_eq!(super::reached_calls(clif), 2);
+    }
 }

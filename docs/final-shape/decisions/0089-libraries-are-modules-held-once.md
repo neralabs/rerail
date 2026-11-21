@@ -283,7 +283,7 @@ a `stat` later), the lowering of each program's own rules, and printing the prep
   reader needs is not made. Holding a library once never makes more of it than some reader asks for.
 - **Ledger 16** (the cost is repeated scans of the same broad relations). The 538 copies of a library made the
   same relations 538 times before the merge. Holding them once removes that repetition at its source.
-- **ast-index-spike design index §13 (sharing and dedup):**
+- **SQL index prototype design index §13 (sharing and dedup):**
   - S143: anchors share 4.0x across 1,970 queries;
   - S149 and S176: a union scoped to the whole corpus lost (0.86x, 7.27x scope inflation), while per-group sharing
     gained 1.45x.

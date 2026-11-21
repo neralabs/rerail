@@ -53,12 +53,14 @@ body[data-panel="open"] .sess > aside{display:none}
 .slist .srow .t{font-weight:500;font-size:13px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .slist .srow .m{font-size:12px;color:var(--muted-foreground);display:flex;flex-wrap:wrap;align-items:center;gap:2px 12px}
 .slist .srow .m > span{white-space:nowrap}
-.slist .srow .m .sid{font-family:var(--font-mono);font-size:11px;color:var(--muted-foreground);opacity:.85}
-.slist .srow .c{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15;font-size:10.5px;color:var(--muted-foreground);white-space:nowrap}
+/* "N steered · N declined" after the state, as one unit: a narrow list wraps it whole onto a line of its own. */
+.slist .srow .m .dc:empty{display:none}
+.slist .srow .m .dc::before{content:"·";margin:0 6px;color:var(--muted-foreground);opacity:.6}
+.slist .srow .m .dc{color:var(--danger-foreground)}
+.slist .srow .c{display:flex;flex-direction:column;align-items:flex-end;line-height:1.15;white-space:nowrap}
 .slist .srow .c b{font-size:16px;color:var(--foreground);font-weight:600}
 .slist .srow .c.zero b{color:var(--muted-foreground);font-weight:400}
 .slist .srow .c.zero{opacity:.7}
-.slist .srow .c .st:empty{display:none}
 .slhead{display:flex;justify-content:space-between;align-items:center;padding:8px 12px;font-size:11px;font-weight:600;letter-spacing:.06em;text-transform:uppercase;color:var(--muted-foreground)}
 .slhead + .srows .daygrp:first-child{border-top:1px solid var(--border)}
 .sess .live{display:inline-flex;align-items:center;gap:5px;color:var(--success-foreground);font-size:12px}
@@ -66,7 +68,14 @@ body[data-panel="open"] .sess > aside{display:none}
 .sess .stale{display:inline-flex;align-items:center;gap:5px;color:var(--muted-foreground);font-size:12px}
 .sess .stale::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--muted-foreground);opacity:.5}
 .shead{padding:16px 18px 8px}
-.shead .l1{display:flex;flex-wrap:wrap;align-items:baseline;justify-content:space-between;gap:4px 16px}
+/* Three lines: the title and its one action; when the session ran; what Rerail saw. One muted colour below the title,
+ * the state's dot its only mark. */
+/* The button stays beside the title, which takes two lines before it clamps; once the title would get less than 240px
+ * (a phone), the button wraps under it instead of squeezing it. */
+.shead .l1{display:flex;flex-wrap:wrap;align-items:flex-start;justify-content:space-between;gap:8px 16px}
+.shead .l1 h2{flex:1 1 240px}
+.shead .l1 h2.clamp2{display:-webkit-box;-webkit-box-orient:vertical;-webkit-line-clamp:2;overflow:hidden;overflow-wrap:anywhere}
+.shead .l1 .acts{flex:none;display:inline-flex;gap:8px}
 .shead .l1 h2{margin:0;font-size:16px;line-height:1.35;font-weight:600;min-width:0;color:var(--header)}
 .shead .l1 h2[hidden]{display:none}
 /* List hidden: the session heading is the picker; a hidden measuring span gives the select the title's own width. */
@@ -77,10 +86,15 @@ body[data-panel="open"] .sess > aside{display:none}
 .hpick select{grid-area:1/1;width:100%;min-width:0;appearance:none;-webkit-appearance:none;border:0;background:transparent;font:inherit;color:var(--header);padding:3px 34px 3px 9px;border-radius:999px;cursor:pointer;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .hpick select:focus-visible{outline:2px solid var(--ring);outline-offset:1px}
 .hpick .sel svg{position:absolute;right:11px;top:50%;margin-top:-6px;transform:rotate(90deg);opacity:.7;pointer-events:none}
-.shead .l3{display:flex;flex-wrap:wrap;align-items:center;gap:4px 0;margin-top:8px;font-size:12.5px;color:var(--muted-foreground)}
-.shead .l3 > span + span::before{content:"·";margin:0 8px;opacity:.6}
-.shead .l3 .acts{margin-left:auto;display:inline-flex;gap:8px;padding-left:12px}
-.shead .l3 .acts::before{content:none}
+.shead .l2{display:flex;flex-wrap:wrap;align-items:center;gap:2px 0;margin-top:4px;font-size:12.5px;color:var(--muted-foreground)}
+.shead .l2.when{margin-top:6px}
+.shead .l2 > span{white-space:nowrap}
+.shead .l2 > span + span::before{content:"·";margin:0 8px;opacity:.6}
+/* The state keeps the list's dot (live green, silent grey; none once ended) but not its green text. */
+.shead .when .state .dot{display:inline-block;width:7px;height:7px;margin-right:6px;border-radius:50%;vertical-align:1px}
+.shead .when .state[data-state="live"] .dot{background:var(--success)}
+.shead .when .state[data-state="stale"] .dot{background:var(--muted-foreground);opacity:.5}
+.shead .when .state[data-state="ended"] .dot{display:none}
 .pask.sresume{position:relative;margin-top:16px;border:0;border-radius:var(--radius-xl);background:var(--sheet-inset);padding:20px 18px}
 .pask.sresume .cmd{background:var(--card)}
 .pask.sresume .lbl{font-size:14px;font-weight:600;letter-spacing:-.005em;color:var(--foreground);margin:0 0 12px;padding-right:32px}
@@ -89,51 +103,88 @@ body[data-panel="open"] .sess > aside{display:none}
 .pask textarea.one{min-height:0;height:54px}
 /* The controls row: the rule dropdown, then Show all events at the right end. */
 .tfilter{display:flex;flex-wrap:wrap;gap:6px 12px;padding:10px 16px;border-bottom:1px solid var(--border);align-items:center}
-.tfilter .srule select{max-width:min(360px,50vw);overflow:hidden;text-overflow:ellipsis}
+.tfilter .srule{min-width:0;max-width:100%}
+/* The select fills its label (which draws the chevron), up to 360px and never past the row. */
+.tfilter .srule select{width:100%;max-width:360px;overflow:hidden;text-overflow:ellipsis}
 .tfilter .tall{margin-left:auto;display:inline-flex;align-items:center;gap:7px;font-size:13px;cursor:pointer;white-space:nowrap}
 .tfilter .tall input{width:15px;height:15px;margin:0;accent-color:var(--brand)}
 .ssearch{display:flex;align-items:center;gap:8px;background:var(--card);border:1px solid var(--border);border-radius:var(--radius-lg);padding:6px 9px;margin-bottom:8px}
 .ssearch input{flex:1;border:0;background:none;font:inherit;font-size:13px;color:inherit;min-width:0}
 .ssearch input::placeholder{color:var(--muted-foreground)}
-.daygrp{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:8px;width:100%;padding:7px 12px;background:var(--muted);border-top:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-foreground);text-align:left}
+.daygrp{position:sticky;top:0;z-index:1;display:flex;align-items:center;gap:6px;width:100%;padding:7px 12px;background:var(--muted);border-top:1px solid var(--border);font-size:11px;text-transform:uppercase;letter-spacing:.06em;color:var(--muted-foreground);text-align:left}
 .daygrp:first-child{border-top:0}
-.daygrp .cnt{margin-left:auto;text-transform:none;letter-spacing:0;font-size:11.5px}
+/* One line whatever the counts: the day never wraps, and a count too long for the row ends in an ellipsis (its
+ * tooltip has it whole). */
+.daygrp .name{flex:none;white-space:nowrap}
+.daygrp .cnt{margin-left:auto;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;text-transform:none;letter-spacing:0;font-size:11px}
 .daygrp svg{transition:transform .15s;flex:none}
 .daygrp[aria-expanded="true"] svg{transform:rotate(90deg)}
 .smore{padding:8px 12px;border-top:1px solid var(--border);text-align:center}
 
 /* ---- the transcript ---- */
-.tlwrap{display:grid;grid-template-columns:28px minmax(0,1fr);position:relative}
+.tlwrap{display:grid;grid-template-columns:24px minmax(0,1fr);position:relative}
 .rail{grid-column:1;position:relative}
-.rail .line{position:absolute;left:13px;top:0;bottom:0;width:2px;background:var(--border)}
-.rail .tick{position:absolute;left:8px;width:12px;height:12px;border-radius:50%;background:var(--steer-fg);border:2px solid var(--card);box-shadow:0 0 0 1px var(--steer-fg);cursor:pointer;transform:translateY(-6px)}
+.rail .line{position:absolute;left:11px;top:0;bottom:0;width:2px;background:var(--border)}
+.rail .tick{position:absolute;left:6px;width:12px;height:12px;border-radius:50%;background:var(--steer-fg);border:2px solid var(--card);box-shadow:0 0 0 1px var(--steer-fg);cursor:pointer;transform:translateY(-6px)}
 .rail .tick:hover{transform:translateY(-6px) scale(1.25)}
-.tl{grid-column:2;padding:6px 16px 16px 14px;display:flex;flex-direction:column;gap:4px;min-width:0}
+/* A tick takes its card's outcome: yellow for steered, the quiet grey of a logged card. */
+.rail .tick[data-outcome="logged"]{background:var(--log-fg);box-shadow:0 0 0 1px var(--log-fg)}
+.tl{grid-column:2;padding:6px 16px 16px 8px;display:flex;flex-direction:column;gap:4px;min-width:0}
 .tl .turns{display:flex;flex-direction:column;gap:4px}
 .bound{display:flex;align-items:center;gap:8px;font-size:11px;color:var(--muted-foreground);text-transform:uppercase;letter-spacing:.05em;padding:8px 0}
 .bound::after{content:"";flex:1;height:1px;background:var(--border)}
+.tlplaces{border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);padding:10px 14px;font-size:13px}
+.tlplaces p{margin:0 0 6px;color:var(--muted-foreground)}
+.tlplaces ul{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:3px}
+.tlplaces li{overflow-wrap:anywhere}
+.tlplaces code{font-family:var(--font-mono);font-size:12px}
 .turn{display:block;padding:8px 0}
-.msgrow{display:grid;grid-template-columns:48px minmax(0,1fr) auto;gap:0 10px;align-items:start;padding:3px 0}
+/* "You" / "Agent" in a 40px column and an 8px gap: the 48px that calls and cards indent by. */
+.msgrow{display:grid;grid-template-columns:40px minmax(0,1fr) auto;gap:0 8px;align-items:start;padding:3px 0}
 .msgrow .who{font-size:12px;font-weight:600;color:var(--muted-foreground);line-height:22px;white-space:nowrap}
 .msgrow .msg{font-size:14px;line-height:22px;max-width:74ch;min-width:0;overflow-wrap:break-word;white-space:pre-line}
 .msgrow.u .msg{background:var(--brand-subtle);border-radius:var(--radius-lg);padding:5px 10px;font-weight:500;margin:-1px 0}
-.msgrow .mt{font-family:var(--font-mono);font-size:11px;line-height:22px;color:var(--muted-foreground);white-space:nowrap;padding-right:8px}
-.corr{margin:6px 0 6px 58px;border-radius:var(--radius-xl);background:var(--card);padding:13px 15px;scroll-margin-top:90px}
+/* A message's time reads like a call's: the same size and colour, at the same right edge (a call's row border and
+ * padding, 1px and 8px). */
+.msgrow .mt{font-size:11.5px;line-height:22px;color:var(--muted-foreground);white-space:nowrap;text-align:right;padding-right:9px}
+/* A call's or card's speaker, in the 40px column "You" and "Agent" sit in, left of its 8px gap. */
+.evt > .spk,.corr > .spk{position:absolute;right:calc(100% + 8px);width:40px;font-size:12px;font-weight:600;line-height:22px;color:var(--muted-foreground);white-space:nowrap}
+.evt > .spk{top:3px}
+/* On the card's first title line (its 13px padding, a 20px line), where the rail's tick centres too. */
+.corr > .spk{top:13px;line-height:20px}
+.corr{position:relative;margin:6px 0 6px 48px;border-radius:var(--radius-xl);background:var(--card);padding:13px 15px;scroll-margin-top:90px}
 .corr[data-outcome="logged"]{background:var(--log-bg)}
 .corr[data-outcome="steered"]{background:var(--steer-bg)}
 .corr.hit{animation:hit 1.2s ease-out}
 @keyframes hit{0%{box-shadow:0 0 0 6px var(--brand-subtle-hover)}100%{box-shadow:0 0 0 0 transparent}}
-.corr .ch{display:flex;flex-wrap:wrap;align-items:center;gap:6px 10px;font-size:12px;color:var(--muted-foreground)}
-.corr .ch b{color:var(--foreground);font-weight:600;font-size:13px}
-.corr .ch .act{margin-left:auto;display:flex;gap:6px}
+/* Title, then the rule id, then the badges, each on its own line. The title opens the rule, underlined on hover. */
+.corr .ch{display:flex;flex-direction:column;align-items:flex-start;gap:3px;font-size:12px;color:var(--muted-foreground)}
+.corr .ch .ctitle{color:var(--foreground);font-weight:600;font-size:13px;line-height:20px;text-align:left;text-underline-offset:2px}
+.corr .ch .ctitle:not(:disabled):hover{text-decoration:underline}
+.corr .ch .ctitle:disabled{cursor:text}
+.corr .ch .mono,.corr .ch .ctitle{max-width:100%;overflow-wrap:anywhere}
+.corr .ch .badges{display:flex;flex-wrap:wrap;gap:6px;margin-top:3px}
 .beats{display:grid;grid-template-columns:auto minmax(0,1fr);gap:5px 12px;margin:8px 0 0;font-size:13px}
 .beats dt{font-size:11px;text-transform:uppercase;letter-spacing:.05em;color:var(--muted-foreground);padding-top:2px}
 .beats dt.nera{color:var(--brand-foreground)}
-.beats dd{margin:0}
-.evt{margin-left:58px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);margin-top:4px;overflow:hidden}
+/* A card can be narrow (the rule's sheet open beside it): a long word, id or path wraps inside it, never past its edge. */
+.beats dd{margin:0;min-width:0;overflow-wrap:anywhere}
+/* A declined steer: its red badge beside the outcome's, and the agent's reasons, one per line, however long a word. */
+.corr .badge.declined{background:var(--danger-subtle);color:var(--danger-foreground)}
+.beats dt.reason{color:var(--danger-foreground)}
+.beats dd.reason{white-space:pre-line}
+/* No overflow clip, so the speaker can sit outside the row: the header and the payload round their own corners. */
+.evt{position:relative;margin-left:48px;border:1px solid var(--border);border-radius:var(--radius-lg);background:var(--card);margin-top:4px}
+.evt .eh{border-radius:calc(var(--radius-lg) - 1px)}
+.evt[data-open="true"] .eh{border-radius:calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px) 0 0}
+.evt .pay{border-radius:0 0 calc(var(--radius-lg) - 1px) calc(var(--radius-lg) - 1px)}
 .evt.failed{border-color:var(--fail-border)}
 .evt.lvl-outside{border-color:var(--outside-border)}
-.evt .eh{display:grid;grid-template-columns:20px auto minmax(0,1fr) auto;gap:0 8px;align-items:center;width:100%;padding:5px 8px;text-align:left}
+.evt .eh{display:grid;grid-template-columns:20px minmax(0,auto) minmax(0,1fr) auto;gap:0 8px;align-items:center;width:100%;padding:5px 8px;text-align:left}
+/* The verb's badge, and an MCP call's "server · tool" beside it, which ellipsizes before the row overflows. */
+.evt .eh .vcell{display:flex;align-items:center;gap:6px;min-width:0}
+.evt .eh .vb{flex:none}
+.evt .eh .vtool{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:11.5px;color:var(--muted-foreground)}
 .evt .eh:hover{background:var(--subtle)}
 .evt .eh svg{transition:transform .15s;color:var(--muted-foreground)}
 .evt[data-open="true"] .eh svg{transform:rotate(90deg)}
@@ -146,13 +197,29 @@ body[data-panel="open"] .sess > aside{display:none}
 .tg.desc{font-family:var(--font-sans);font-size:13px}
 .out{display:flex;align-items:center;gap:10px;font-size:11.5px;color:var(--muted-foreground);white-space:nowrap}
 .out > span{flex:none;text-align:right}
-.out .oc{width:84px;display:inline-flex;justify-content:flex-end;gap:6px;margin-right:0}
+/* Right of a call: an outcome only when it says something (no result, failed, a read's length), then its time; the
+ * description to its left takes every other pixel. */
+.out .oc{display:inline-flex;justify-content:flex-end;gap:6px}
+.out .oc:empty{display:none}
 .out .tn{display:none;width:104px;font-family:var(--font-mono);font-size:11px;opacity:.8;overflow:hidden;text-overflow:ellipsis}
-.out .sq{min-width:62px;font-family:var(--font-mono);font-size:11px;opacity:.8}
-.out .tm{min-width:100px}
 @media (min-width:1600px){.out .tn{display:inline-block}}
-body[data-panel="open"] .out .tn,body[data-panel="open"] .out .sq{display:none}
-@media (max-width:1180px){.out .sq{display:none}}
+body[data-panel="open"] .out .tn{display:none}
+/* Where the timeline is narrow (the sheet open beside it, or a small window), a message's time goes under it instead of
+ * squeezing it, still at the right edge every time sits on. */
+@media (min-width:1100px){
+  body[data-panel="open"] .msgrow{grid-template-columns:40px minmax(0,1fr)}
+  body[data-panel="open"] .msgrow .mt{grid-column:2;justify-self:end;line-height:18px}
+}
+@media (max-width:760px){
+  .msgrow{grid-template-columns:40px minmax(0,1fr)}
+  .msgrow .mt{grid-column:2;justify-self:end;line-height:18px}
+}
+/* A phone: a call's outcome and time take a second line under it, at the right edge, so a long label never pushes them
+ * out. */
+@media (max-width:640px){
+  .evt .eh{grid-template-columns:20px minmax(0,auto) minmax(0,1fr);row-gap:2px}
+  .evt .eh .out{grid-column:2 / -1;justify-self:end}
+}
 .ok{color:var(--success-foreground)}
 .bad{color:var(--danger-foreground);font-weight:600}
 .pay{display:none;border-top:1px solid var(--border);padding:8px 10px 10px 36px;font-size:12.5px;background:var(--nested)}
@@ -167,7 +234,7 @@ body[data-panel="open"] .out .tn,body[data-panel="open"] .out .sq{display:none}
 .pay .diff .d{background:var(--danger-subtle)}
 .pay details{margin-top:8px}
 .pay details summary{font-size:12px;padding:5px 10px}
-.fold{margin:4px 0 0 58px;display:grid;grid-template-columns:20px minmax(0,1fr);gap:0 8px;align-items:center;width:calc(100% - 58px);padding:5px 8px;font-size:12.5px;color:var(--muted-foreground);border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:left}
+.fold{margin:4px 0 0 48px;display:grid;grid-template-columns:20px minmax(0,1fr);gap:0 8px;align-items:center;width:calc(100% - 48px);padding:5px 8px;font-size:12.5px;color:var(--muted-foreground);border:1px dashed var(--border);border-radius:var(--radius-lg);text-align:left}
 .fold:hover{background:var(--subtle)}
 .fold svg{transition:transform .15s}
 .fold[aria-expanded="true"] svg{transform:rotate(90deg)}

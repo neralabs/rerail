@@ -25,6 +25,16 @@ pub const EMPTY: u32 = u32::MAX;
 pub const SLOT: usize = 3;
 /// The fewest slots a map holds.
 const LEAST: usize = 16;
+/// Column places 0, 1, 2, …: a key of a relation's first columns (`find`), as one of any columns (`find_at`).
+const LEADING: [usize; 64] = {
+    let mut out = [0; 64];
+    let mut c = 0;
+    while c < 64 {
+        out[c] = c;
+        c += 1;
+    }
+    out
+};
 
 /// A lattice relation's key map: see the module's doc.
 #[derive(Clone)]
@@ -43,7 +53,7 @@ impl KeyMap {
 
     /// A map of the slots `slots` (another writer's to fill, `held`), holding `keys` keys.
     pub fn of(slots: BlockVec<u32>, keys: usize) -> KeyMap {
-        debug_assert!((slots.len() / SLOT).is_power_of_two() && slots.len() % SLOT == 0, "a map of {} words", slots.len());
+        debug_assert!((slots.len() / SLOT).is_power_of_two() && slots.len().is_multiple_of(SLOT), "a map of {} words", slots.len());
         KeyMap { slots, keys }
     }
 
@@ -82,6 +92,12 @@ impl KeyMap {
     /// The slot of `key` (the first `key.len()` columns of the relation `data`, `k` columns a row): `Ok`, the slot
     /// holding it; `Err`, the empty slot it would go in.
     pub(super) fn find<D: RowData + ?Sized>(&self, data: &D, k: usize, key: &[i64]) -> Result<usize, usize> {
+        self.find_at(data, k, &LEADING[..key.len()], key)
+    }
+
+    /// The slot of `key`, the values of columns `cols` (in order) of the relation `data`: `find` of any columns, as a
+    /// declared key's map probes them (decision 0361 step 6).
+    pub(super) fn find_at<D: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], key: &[i64]) -> Result<usize, usize> {
         let mask = self.places() - 1;
         let mut s = self.start(rerail_blocks::key_hash(key));
         // Bounded: a map past half full grows before a key goes in, so an empty slot is always found.
@@ -90,7 +106,7 @@ impl KeyMap {
             if row == EMPTY {
                 return Err(s);
             }
-            if key.iter().enumerate().all(|(c, &v)| data.value(row, k, c) == v) {
+            if key.iter().zip(cols).all(|(&v, &c)| data.value(row, k, c) == v) {
                 return Ok(s);
             }
             s = (s + 1) & mask;
@@ -128,21 +144,29 @@ impl KeyMap {
     /// Room for one more key: past half full, every key placed again in twice the slots (its rows' keys read where
     /// they lie, `nkeys` columns of `k`), near `home`.
     pub(super) fn reserve<D: RowData + ?Sized>(&mut self, data: &D, k: usize, nkeys: usize, home: Option<&Home>) {
-        if 2 * (self.keys + 1) <= self.places() {
+        self.reserve_at(data, k, &LEADING[..nkeys], home)
+    }
+
+    /// `reserve` of a map keyed by columns `cols` (`find_at`).
+    pub(super) fn reserve_at<D: RowData + ?Sized>(&mut self, data: &D, k: usize, cols: &[usize], home: Option<&Home>) {
+        // Its relation's rows moved to another block (their tail past its room): placed again there, at its size.
+        let moved = matches!((self.slots.facts(), home), (Some(f), Some(h)) if !Arc::ptr_eq(f, h.facts()));
+        let grows = 2 * (self.keys + 1) > self.places();
+        if !grows && !moved {
             return;
         }
-        let mut grown = KeyMap::new(home, 2 * self.places());
+        let mut grown = KeyMap::new(home, if grows { 2 * self.places() } else { self.places() / 2 });
         // copy: not block data: one key's values at a time, what the hash reads.
-        let mut key = vec![0i64; nkeys];
+        let mut key = vec![0i64; cols.len()];
         for s in 0..self.places() {
             let row = self.row(s);
             if row == EMPTY {
                 continue;
             }
-            for (c, v) in key.iter_mut().enumerate() {
+            for (v, &c) in key.iter_mut().zip(cols) {
                 *v = data.value(row, k, c);
             }
-            let Err(at) = grown.find(data, k, &key) else { unreachable!("a key held twice") };
+            let Err(at) = grown.find_at(data, k, cols, &key) else { unreachable!("a key held twice") };
             grown.set(at, row, self.changes(s), self.round(s));
         }
         *self = grown;
@@ -150,7 +174,7 @@ impl KeyMap {
 
     /// Each key's slot: (its live row, its changes, its round).
     pub fn each(&self) -> impl Iterator<Item = (u32, u32, u32)> + '_ {
-        self.slots.chunks_exact(SLOT).filter(|w| w[0] != EMPTY).map(|w| (w[0], w[1], w[2]))
+        self.slots.as_chunks::<SLOT>().0.iter().filter(|w| w[0] != EMPTY).map(|w| (w[0], w[1], w[2]))
     }
 }
 
@@ -236,12 +260,14 @@ impl RowSet {
     /// their relation's block (`RowData::home`).
     pub(super) fn reserve<D: RowData + ?Sized>(&mut self, data: &D, k: usize, extra: usize) {
         let need = self.rows + extra;
-        if 2 * need <= self.places() {
+        // Its relation's rows moved to another block (their tail past its room): placed again there.
+        let moved = self.slots.facts().is_some_and(|f| !data.lies_in(f));
+        if 2 * need <= self.places() && !moved {
             return;
         }
         let places = (2 * need).next_power_of_two().max(LEAST);
         let old = std::mem::replace(&mut self.slots, BlockVec::from_iter_in(data.home().as_ref(), std::iter::repeat_n(EMPTY, places * ROW_SLOT)));
-        for w in old.chunks_exact(ROW_SLOT).filter(|w| w[0] != EMPTY) {
+        for w in old.as_chunks::<ROW_SLOT>().0.iter().filter(|w| w[0] != EMPTY) {
             self.place(rerail_blocks::key_hash(&data.row(w[0], k)), w[0]);
         }
     }
@@ -284,6 +310,45 @@ mod tests {
             assert_eq!((rel.data.value(row, 2, 1), map.changes(s)), want[&key], "key {key}");
         }
         assert_eq!(rel.n - rel.ndead, 3000, "one live row a key");
+    }
+
+    /// A relation's tables follow its rows (decisions 0384, 0491): rows moved to another block (a tail past its
+    /// block's room, `Part::grow`; here a run's rows the next run copies into its own block) take the table with them
+    /// at its next placement, every row found there.
+    #[test]
+    fn a_moved_tail_takes_its_tables() {
+        let rows = |n: i64| -> super::super::rows::Rows {
+            let mut r = super::super::rows::Rows::new(2);
+            // copy: not block data: a test's rows
+            r.extend_from_slice(&(0..n).flat_map(|i| [i, i * 7]).collect::<Vec<i64>>());
+            r
+        };
+        let (mut set, mut map, old) = {
+            let _run = crate::code_rule_dsl::logic::profile::test_run();
+            let data = rows(3000);
+            let (mut set, mut map) = (RowSet::default(), KeyMap::new(data.home().as_ref(), 0));
+            for id in 0..3000 {
+                set.insert(&data, 2, id);
+                map.reserve(&data, 2, 1, data.home().as_ref());
+                let Err(at) = map.find(&data, 2, &[i64::from(id)]) else { unreachable!("a key held twice") };
+                map.set(at, id, 0, 0);
+            }
+            (set, map, data)
+        };
+        let _run = crate::code_rule_dsl::logic::profile::test_run();
+        let moved = rows(3001);
+        let (was, home) = (set.facts().expect("a block").clone(), moved.home().expect("a home"));
+        assert!(Arc::ptr_eq(&was, old.home().expect("a home").facts()) && !Arc::ptr_eq(&was, home.facts()), "the rows moved");
+        set.insert(&moved, 2, 3000);
+        assert!(set.facts().is_some_and(|f| Arc::ptr_eq(f, home.facts())), "the table moved after them");
+        map.reserve(&moved, 2, 1, Some(&home));
+        assert!(map.facts().is_some_and(|f| Arc::ptr_eq(f, home.facts())), "the key map moved after them");
+        for i in 0..3001i64 {
+            assert_eq!(set.find(&moved, 2, &[i, i * 7], |_| false), Some(i as u32), "row {i}");
+        }
+        for i in 0..3000i64 {
+            assert_eq!(map.find(&moved, 2, &[i]).map(|s| map.row(s)), Ok(i as u32), "key {i}");
+        }
     }
 
     /// Decision 0384: the rows a relation holds past its orders (`pending`, the dedup test's until the next wave) are

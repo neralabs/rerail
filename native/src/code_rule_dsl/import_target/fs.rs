@@ -1,12 +1,13 @@
 //! The files an import target's resolution reads: the ones a workspace or snapshot holds, and,
-//! below the workspace's root on disk, the ones there. Paths are absolute: the root's own path
-//! (`View::base`), or `/` for a file set without a root on disk.
+//! below the workspace's root on disk, the ones there. Paths are absolute and `/`-separated: below
+//! the root's own path (`View::base`, a Windows root's in the same form), or below
+//! `VIRTUAL_BASE` for a file set without a root on disk.
 
 use super::json::Json as Parsed;
 use super::path;
 use parking_lot::Mutex;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::sync::Arc;
 
 /// A file a resolution reads the text of is read only up to this size; a larger one is absent.
@@ -19,6 +20,25 @@ const MAX_HELD_JSON_BYTES: usize = 64 * 1024;
 const VIRTUAL_BASE: &str = "/workspace";
 /// A view's caches are dropped whole beyond this many entries.
 const MAX_CACHED: usize = 200_000;
+
+/// The absolute path a root on disk is read at (`View::base`): a `/` root's own path, and a
+/// Windows root's in the same form (`path::windows`: `C:\repo` and its verbatim form
+/// `\\?\C:\repo` are `/C:/repo`, `\\server\share\repo` is `/server/share/repo`), the form a
+/// specifier naming a file below it takes too. `None` where `root` is no root: a path the
+/// platform does not read as absolute, the rule `set_root` holds a root to, or `/` itself, which
+/// leaves no folder name to read files below.
+fn base_of(root: &Path) -> Option<String> {
+    if !root.is_absolute() {
+        return None;
+    }
+    let root = root.to_str()?;
+    let base = if root.starts_with('/') {
+        path::resolve("/", root)
+    } else {
+        path::windows(root)?
+    };
+    (base != "/").then_some(base)
+}
 
 /// Whether the text of a held file at `path` (workspace-relative) is kept: what a resolution
 /// reads besides the files' existence (manifests, project configurations and their bases, the
@@ -147,7 +167,7 @@ pub(crate) struct View {
     /// `root` with its symlinks resolved: a path on disk is read only where its own resolved path
     /// lies below it.
     canonical_root: Option<PathBuf>,
-    /// The absolute path of the root: `root` as given, or `VIRTUAL_BASE` without one.
+    /// The absolute path of the root (`base_of`), or `VIRTUAL_BASE` without one.
     base: String,
     cache: Mutex<Cache>,
     /// Whether each folder (workspace-relative) resolves inside the root (`directory_inside`).
@@ -157,20 +177,14 @@ pub(crate) struct View {
 }
 
 impl View {
+    /// The view of `held` over the files on disk below `root`, where it is a root (`base_of`).
     pub(crate) fn new(held: Arc<HeldFiles>, root: Option<&Path>) -> Self {
-        let root = root.map(Path::to_path_buf).filter(|root| {
-            root.to_str()
-                .is_some_and(|root| path::normalize(root) != "/")
-        });
-        let base = root
-            .as_ref()
-            .and_then(|root| root.to_str())
-            .filter(|root| root.starts_with('/'))
-            .map(|root| path::normalize(root).trim_end_matches('/').to_owned())
-            .unwrap_or_else(|| VIRTUAL_BASE.to_owned());
-        let root = root.filter(|_| base != VIRTUAL_BASE);
+        let (base, root) = match root.and_then(|root| Some((base_of(root)?, root))) {
+            Some((base, root)) => (base, Some(root.to_path_buf())),
+            None => (VIRTUAL_BASE.to_owned(), None),
+        };
         Self {
-            canonical_root: root.as_ref().and_then(|root| root.canonicalize().ok()),
+            canonical_root: root.as_ref().and_then(|root| crate::git_workspace::snapshot::canonicalize(root).ok()),
             held,
             root,
             base,
@@ -200,23 +214,35 @@ impl View {
             .and_then(|rest| rest.strip_prefix('/'))
     }
 
-    /// The path on disk of `relative`, where it lies inside the root's resolved folder: its
-    /// folder's resolved path does (`directory_inside`), and so does its own where it is a
-    /// symlink.
+    /// The path on disk of `relative`, where it lies inside the root's resolved folder: it names
+    /// only folders and a file below the root, its folder's resolved path lies inside
+    /// (`directory_inside`), and so does its own where it is a symlink. On Windows `\` separates
+    /// names too, so a `\..` or a drive in a name would leave the root.
     fn on_disk(&self, relative: &str) -> Option<PathBuf> {
         let root = self.root.as_ref()?;
         let canonical_root = self.canonical_root.as_ref()?;
         if relative.is_empty() {
             return Some(root.clone());
         }
-        let parent = relative.rfind('/').map_or("", |at| &relative[..at]);
+        if !Path::new(relative)
+            .components()
+            .all(|name| matches!(name, Component::Normal(_)))
+        {
+            return None;
+        }
+        let parent = relative
+            .rfind(std::path::is_separator)
+            .map_or("", |at| &relative[..at]);
         if !self.directory_inside(parent) {
             return None;
         }
         let path = root.join(relative);
+        if crate::git_workspace::snapshot::contains(root) {
+            return crate::git_workspace::snapshot::canonicalize(&path).ok();
+        }
         let metadata = std::fs::symlink_metadata(&path).ok()?;
         if metadata.file_type().is_symlink() {
-            let canonical = path.canonicalize().ok()?;
+            let canonical = dunce::canonicalize(&path).ok()?;
             if !canonical.starts_with(canonical_root) {
                 return None;
             }
@@ -238,8 +264,7 @@ impl View {
             .as_ref()
             .zip(self.canonical_root.as_ref())
             .is_some_and(|(root, canonical_root)| {
-                root.join(relative)
-                    .canonicalize()
+                crate::git_workspace::snapshot::canonicalize(root.join(relative))
                     .is_ok_and(|canonical| canonical.starts_with(canonical_root))
             });
         let mut cache = self.inside.lock();
@@ -263,10 +288,9 @@ impl View {
             return *kind;
         }
         let kind = self.on_disk(relative).and_then(|path| {
-            let metadata = std::fs::metadata(path).ok()?;
-            if metadata.is_file() {
+            if crate::git_workspace::snapshot::is_file(&path) {
                 Some(Kind::File)
-            } else if metadata.is_dir() {
+            } else if crate::git_workspace::snapshot::is_dir(&path) {
                 Some(Kind::Directory)
             } else {
                 None
@@ -297,11 +321,15 @@ impl View {
         }
         let text = self
             .on_disk(relative)
-            .filter(|path| {
-                std::fs::metadata(path)
+            .and_then(|path| {
+                if crate::git_workspace::snapshot::contains(&path) {
+                    return crate::git_workspace::snapshot::read_bounded(&path, MAX_TEXT_BYTES).ok();
+                }
+                std::fs::metadata(&path)
                     .is_ok_and(|metadata| metadata.is_file() && metadata.len() <= MAX_TEXT_BYTES)
+                    .then(|| std::fs::read(path).ok())
+                    .flatten()
             })
-            .and_then(|path| std::fs::read(path).ok())
             .and_then(|bytes| String::from_utf8(bytes).ok())
             .map(Arc::new);
         let mut cache = self.cache.lock();
@@ -334,15 +362,14 @@ impl View {
             return Arc::clone(names);
         }
         let mut names = self.held.children(relative);
-        if let Some(entries) = self
-            .on_disk(relative)
-            .and_then(|path| std::fs::read_dir(path).ok())
-        {
-            names.extend(
-                entries
-                    .flatten()
-                    .filter_map(|entry| entry.file_name().into_string().ok()),
-            );
+        if let Some(path) = self.on_disk(relative) {
+            if crate::git_workspace::snapshot::contains(&path) {
+                if let Ok(entries) = crate::git_workspace::snapshot::listing(&path) {
+                    names.extend(entries.into_iter().map(|(name, _)| name));
+                }
+            } else if let Ok(entries) = std::fs::read_dir(&path) {
+                names.extend(entries.flatten().filter_map(|entry| entry.file_name().into_string().ok()));
+            }
         }
         let names = Arc::new(names.into_iter().collect::<Vec<_>>());
         let mut cache = self.cache.lock();
@@ -371,10 +398,17 @@ impl View {
             .as_ref()
             .zip(self.canonical_root.as_ref())
             .and_then(|(root, canonical_root)| {
-                let canonical = root.join(relative).canonicalize().ok()?;
-                let inside = canonical.strip_prefix(canonical_root).ok()?;
-                let inside = inside.to_str()?;
-                Some(self.absolute(inside))
+                let canonical = crate::git_workspace::snapshot::canonicalize(root.join(relative)).ok()?;
+                // Its names joined by `/`, as every path here is: Windows separates the ones
+                // disk gives by `\`.
+                let inside = canonical
+                    .strip_prefix(canonical_root)
+                    .ok()?
+                    .components()
+                    .map(|name| name.as_os_str().to_str())
+                    .collect::<Option<Vec<_>>>()?
+                    .join("/");
+                Some(self.absolute(&inside))
             })
             .unwrap_or_else(|| absolute.to_owned());
         cache.bound();

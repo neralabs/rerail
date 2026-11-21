@@ -11,9 +11,11 @@
 # programs, or every authored rule file, end to end. A test that grows past 20 s joins here.
 [profile.default]
 default-filter = """not (
-    test(/^code_rule_dsl::logic::convert::tests::(a_sample_of_the_replay_gives_the_recorded_findings|the_pack_holds_the_converters_run_over_every_authored_file|reference_tests::reference_edge_is_ws_reference_graph_on_the_fixtures)$/)
-  | test(/^code_rule_dsl::logic::rr::tests::(dropping_unreached_clauses_prunes_to_the_same_program|lowering_is_idempotent)/)
+    binary(=git_revision_cli)
+  | test(/^code_rule_dsl::logic::convert::tests::(a_sample_of_the_replay_gives_the_recorded_findings|the_pack_holds_the_converters_run_over_every_authored_file|reference_tests::reference_edge_is_ws_reference_graph_on_the_fixtures)$/)
+  | test(/^code_rule_dsl::logic::rr::tests::(dropping_unreached_clauses_prunes_to_the_same_program|lowering_is_idempotent|library_modules_link_to_the_lowering_of_them_together)/)
   | test(=code_rule_dsl::logic::rr::tests::rule_syntax_files_pass_check_rr)
+  | test(=code_rule_dsl::logic::rr::tests::library_modules_link_to_the_lowering_of_them_together)
   | test(/^code_rule_dsl::logic::program_image::tests::(pack_programs_read_back_from_their_images|the_passes_over_a_version_are_the_tree_passes|the_planners_reading_of_a_rule_is_the_trees|the_analyses_over_a_version_say_what_the_tree_says|views_and_overlays_are_the_programs_they_say)$/)
   | test(=code_rule_dsl::logic::program_text::tests::pack_programs_read_back_from_their_text)
   | test(=code_rule_dsl::transducer::packed::metal_program_backend::tape_tests::the_label_kernels_compile_for_every_format)
@@ -27,6 +29,8 @@ default-filter = """not (
   | test(/^code_rule_dsl::waves::matches::tests::the_wave_/)
   | test(=class_pack::tests::random_needs_are_answered)
   | package(rerail-c-directives)
+  | (package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits))
+  | (package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/))
 )"""
 # A test past this is reported as slow; past four periods it is stopped.
 slow-timeout = { period = "60s", terminate-after = 4 }
@@ -38,8 +42,39 @@ failure-output = "final"
 filter = "package(rerail-c-directives)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
+# The FSEvents tests (the store's journal and observer, the engine's tree watch): each waits on the journal's cookies,
+# which `fseventsd` tells every stream of the machine in turn. Run at once, they push one another's notices past their
+# waits (Q320: 11 of 51 failed together on an M3, none alone): one at a time, beside everything else.
+[test-groups]
+fsevents = { max-threads = 1 }
+
+[[profile.default.overrides]]
+platform = "cfg(target_os = \"macos\")"
+filter = "test(/^(content_store::(observe|journal)|tree_watch)::/)"
+test-group = "fsevents"
+
+# The Rust backend on every ladder step: each `.rerail` step compiles through Cranelift twice (formats 15 and 16), and
+# rustc builds each ladder's Rust (2–3 min in a debug build on an M3 Max).
+[[profile.default.overrides]]
+filter = "package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits)"
+slow-timeout = { period = "60s", terminate-after = 8 }
+
+# Kotlin's grammar compiled cold (no shipped answers, 0414: 41 s on a Linux Spark): without the walk lemmas,
+# and twice to compare programs. The rest of the crate's tests compile with the answers, in 1.5 s (Q371).
+[[profile.default.overrides]]
+filter = "package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/)"
+slow-timeout = { period = "60s", terminate-after = 8 }
+
 [profile.default.junit]
 path = "junit.xml"
+
+# The warm tier (Q332): what a run over a kept store does to the files that did not change, by count, in seconds
+# (`cargo nextest run -p rerail-engine --lib --features test-hooks --profile warm`). A warm run that parses, builds or
+# makes an unchanged file, writes again, hashes or binds an input whole, or counts a kept statistic again fails here.
+[profile.warm]
+default-filter = "test(/::warm_tests::|::the_run_after_a_cold_one|maintain_tests::r2_|made_batch_tests::|cross_views_tests::a_session_holds_its_corpus_batch|base_tests::a_copy_of_any_inputs_columns_is_held_in_place/)"
+slow-timeout = { period = "30s", terminate-after = 2 }
+failure-output = "immediate"
 
 # Everything. The longest test (convert's replay sample, ~230 s on an M3 Max) bounds its wall time.
 [profile.gate]
@@ -47,3 +82,15 @@ default-filter = "all()"
 
 [profile.gate.junit]
 path = "junit.xml"
+
+# The preprocessor's evaluation tests, each stopped at 1 s and failed (the user, 2026-11-20: "you
+# may not run tests over 1 second; none of these cases should take more than a few milliseconds").
+#   cargo nextest run -p rerail-c-directives --lib --profile second
+[profile.second]
+default-filter = "package(rerail-c-directives) & test(/^eval::tests::/)"
+slow-timeout = { period = "1s", terminate-after = 1 }
+failure-output = "final"
+# Past the default profile's override for the package (which every profile takes), the second's.
+[[profile.second.overrides]]
+filter = "package(rerail-c-directives)"
+slow-timeout = { period = "1s", terminate-after = 1 }

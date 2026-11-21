@@ -1,11 +1,11 @@
 # 0419. `label_formula`'s time is latency, a level per chunk: a chain's reach by blocks, chunks grow until measured
 
-Status: accepted (2026-11-18). Follows 0425 and Q271.
+Status: accepted (2026-11-18). Follows 0460 and Q288.
 
 ## Intro
 
-0425 removed about a quarter of `label_formula`'s (file, formula) pairs and half its formula images, and the kernel's
-time did not fall. The user asked: "1. identify why the GPU time didn't drop 2. do Q271: evaluating each level's
+0460 removed about a quarter of `label_formula`'s (file, formula) pairs and half its formula images, and the kernel's
+time did not fall. The user asked: "1. identify why the GPU time didn't drop 2. do Q288: evaluating each level's
 formulas together per file." Asked which way to go (evaluating per file together looked slower than what it replaced),
 they said: "I want both, and I also want you to survey the code for existing lauch-delay and chunking affordances and
 reuse theinfrastecture and patterns already in the tree".
@@ -20,7 +20,7 @@ A trace switch (`RERAIL_FORMULA_TRACE=<file>` with `RERAIL_GPU_KERNEL_TIMES`, on
 opcodes, the files, its µs; `RERAIL_FORMULA_ONE` dispatches one formula at a time) showed this on internal_dead_code,
 s1000, at load 18:
 
-- **The pairs 0425 removed were cheap.** A seed was a one-step image. A dispatch of plain formulas (leaves, AND, OR)
+- **The pairs 0460 removed were cheap.** A seed was a one-step image. A dispatch of plain formulas (leaves, AND, OR)
   takes about 140 µs whatever it holds: 224 such dispatches took 40 ms. The time goes to the step formulas: 872
   dispatches, 245 ms (each committed and waited for apart in trace mode, so the sums are larger than a run's).
 - **One formula shape was the long pole:** a chain's reach (`REACH_CHAIN`, e.g. `13.6.4.5.4.25`). Each member's
@@ -86,7 +86,7 @@ s1000, at load 18:
 - **Gathering concurrent chunks' label runs is not built.** Its prize is fewer label runs, and fewer runs (one chunk
   at a time, larger chunks) did not lower the GPU time measurably. Decision 0386 keeps each job's wave its own, so
   gathering would also make chunks wait on each other.
-- 0425's GPU numbers were taken under the default memory line (`RUN_MB` 1024), which cut its chunks smaller. Its
+- 0460's GPU numbers were taken under the default memory line (`RUN_MB` 1024), which cut its chunks smaller. Its
   before-and-after comparison stands, since both sides ran under the same line. Its absolute times are those of
   14–17 chunks.
 
@@ -110,5 +110,5 @@ dispatch. It was built, with the rows the same (17c18ee8), and was not kept. The
 The steps' time by op (one formula a dispatch, so fixed costs are inflated): a chain's reach (`REACH_CHAIN`) 68.7 ms
 over 60 passes, 1.1 ms each; the children of members (`PARENT`) 36.6 ms over 540 passes, 68 µs each; descendants
 (`REACH_DESCENDANT`) 10.7 ms over 340; a child within a conjunction 7.1 ms over 312. A chain's reach is the long
-pole: Q252.
+pole: Q331.
 

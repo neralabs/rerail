@@ -1,27 +1,37 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { mkdtemp, rm } from "node:fs/promises";
+import { chmodSync, cpSync, existsSync, mkdirSync, mkdtempSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { join, parse, resolve, sep } from "node:path";
+import { and, eq, ne } from "drizzle-orm";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { openRerailDatabase, type RerailDatabase } from "../../../src/engine/storage/database.js";
+import { checkouts, mergeAssistState, repositories } from "../../../src/engine/storage/schema.js";
+import { withinCheckout } from "../../../src/engine/catalog/checkout-control.js";
+import type { CheckoutRecord, RepositoryStatus } from "../../../src/engine/catalog/repository-model.js";
 import {
   adoptRemote,
+  checkoutStatus,
+  createCheckoutResolver,
   linkAlias,
+  listedCheckoutStates,
   listRepositories,
   lookupCheckout,
   parentCheckouts,
   pruneCheckouts,
   recordCheckout,
+  recordedCheckoutsReader,
 } from "../../../src/engine/catalog/repository-registry.js";
 import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
+import { shortSpelling } from "../support/short-path.js";
+import { removeFolder, removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const temporaryDirectories: string[] = [];
 const openDatabases: RerailDatabase[] = [];
 afterEach(async () => {
   for (const database of openDatabases.splice(0)) database.$client.close();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporary(prefix: string): Promise<string> {
@@ -48,7 +58,7 @@ function caseInsensitiveFilesystem(): boolean {
   try {
     return existsSync(probe.toUpperCase()) && existsSync(probe.toLowerCase());
   } finally {
-    rmSync(probe, { recursive: true, force: true });
+    removeFolderSync(probe);
   }
 }
 
@@ -68,7 +78,388 @@ function settingOwners(database: RerailDatabase): unknown[] {
   return database.$client.prepare("SELECT owner_kind, owner_id FROM rule_settings ORDER BY owner_kind, owner_id").all();
 }
 
+/** Merge Assist's state, by key. */
+function mergeAssistRows(database: RerailDatabase): Record<string, unknown> {
+  return Object.fromEntries(database.select().from(mergeAssistState).all().map(row => [row.key, JSON.parse(row.valueJson)]));
+}
+
+/** A Merge Assist hook command set for `repositoryKey` (`settings:`), and its `gh` readiness read (`github:`). */
+function mergeAssistSettings(database: RerailDatabase, repositoryKey: string, command: string): void {
+  database.insert(mergeAssistState).values([
+    { key: `settings:${repositoryKey}`, valueJson: JSON.stringify({ hook: { command: [command], timeoutSeconds: 10 } }), updatedAt: 1 },
+    { key: `github:${repositoryKey}`, valueJson: JSON.stringify({ state: "signed-in", login: "octocat", repository: null }), updatedAt: 1 },
+  ]).run();
+}
+
+/**
+ * A stopped, set-up repository with `rows` (path, own on/off) recorded straight into the table in that order, in
+ * spellings `recordCheckout` would not write but older builds and other tools left. The clock reads `times`, by
+ * default one millisecond more for each row.
+ */
+async function recordedRows(rows: ReadonlyArray<readonly [string, boolean | null]>, times = rows.map((_, index) => index + 1)) {
+  const database = open(join(await temporary("rerail-registry-listed-"), "rerail.sqlite"));
+  const repositoryKey = "remote:github.com/acme/web";
+  database.insert(repositories).values({ repositoryKey, displayName: "web", configuredAt: 1, started: false, createdAt: 1, updatedAt: 1 }).run();
+  database.insert(checkouts).values(rows.map(([checkoutPath, started], index) => ({
+    checkoutPath, repositoryKey, cloneId: "clone", started, createdAt: times[index]!, lastSeenAt: 1,
+  }))).run();
+  return { database, repositoryKey };
+}
+
+/** Each recorded checkout's on/off, what decided it and its nearest parent: as the dashboard's listing gives them, and as the runtime reads them. */
+function bothReads(database: RerailDatabase, repositoryKey: string) {
+  const listing = listRepositories(database).find(repository => repository.repositoryKey === repositoryKey)!;
+  const stateAt = listedCheckoutStates(listing);
+  const read = (status: RepositoryStatus, parent: string | null) => [status.started, status.startedBy, parent];
+  return {
+    listed: new Map(listing.checkouts.map(row => {
+      const { status, parentCheckoutPath } = stateAt(row.checkoutPath);
+      return [row.checkoutPath, read(status, parentCheckoutPath)];
+    })),
+    runtime: new Map(listing.checkouts.map(row => [
+      row.checkoutPath,
+      read(checkoutStatus(database, { ...row, git: true, main: true }), parentCheckouts(database, row)[0]?.checkoutPath ?? null),
+    ])),
+  };
+}
+
+/**
+ * How long a containing checkout's path counts as, which orders a checkout's containing checkouts, the longer nearer:
+ * `main` took the recorded spelling's length; this change takes the length of the folder it names.
+ */
+type PathLength = (checkoutPath: string) => number;
+const SPELLED_LENGTH: PathLength = path => path.length;
+const FOLDER_LENGTH: PathLength = path => resolve(path).length;
+
+/**
+ * `main`'s readers of a checkout's containing checkouts and of its state, as they were before the dashboard's listing
+ * reader, copied here to hold that reader to `main`'s answers, with the length that orders containing checkouts as an
+ * argument. Containing checkouts of one length come in the order SQLite returns the rows: the order they were recorded
+ * in.
+ */
+function mainParentCheckouts(
+  database: RerailDatabase,
+  checkout: Pick<CheckoutRecord, "checkoutPath" | "repositoryKey">,
+  length: PathLength = SPELLED_LENGTH,
+): CheckoutRecord[] {
+  return database.select().from(checkouts)
+    .where(and(eq(checkouts.repositoryKey, checkout.repositoryKey), ne(checkouts.checkoutPath, checkout.checkoutPath))).all()
+    .filter(row => withinCheckout(row.checkoutPath, checkout.checkoutPath))
+    .sort((left, right) => length(right.checkoutPath) - length(left.checkoutPath));
+}
+
+/** `main`'s `checkoutStatus` of a recorded checkout (see {@link mainParentCheckouts}). */
+function mainCheckoutStatus(
+  database: RerailDatabase,
+  checkout: Pick<CheckoutRecord, "checkoutPath" | "repositoryKey">,
+  length: PathLength = SPELLED_LENGTH,
+): RepositoryStatus {
+  const repository = database.select({ started: repositories.started, configuredAt: repositories.configuredAt })
+    .from(repositories).where(eq(repositories.repositoryKey, checkout.repositoryKey)).get();
+  const setUp = repository?.configuredAt != null;
+  const own = database.select({ started: checkouts.started }).from(checkouts).where(eq(checkouts.checkoutPath, checkout.checkoutPath)).get()?.started;
+  if (own != null) return { started: own, setUp, startedBy: "checkout" };
+  const parent = mainParentCheckouts(database, checkout, length).find(row => row.started !== null);
+  if (parent?.started != null) return { started: parent.started, setUp, startedBy: "parent" };
+  return { started: repository?.started === true, setUp, startedBy: "repository" };
+}
+
+/** A checkout's on/off, whether its repository is set up, what decided the on/off, and its nearest parent. */
+function answerOf(status: RepositoryStatus, parentCheckoutPath: string | null): string {
+  return JSON.stringify([status.started, status.setUp, status.startedBy, parentCheckoutPath]);
+}
+
+/** Each recorded checkout's answer, by path, as the dashboard's listing reader gives it. */
+function listedAnswers(database: RerailDatabase): Map<string, string> {
+  const answers = new Map<string, string>();
+  for (const listing of listRepositories(database)) {
+    const stateAt = listedCheckoutStates(listing);
+    for (const { checkoutPath } of listing.checkouts) {
+      const { status, parentCheckoutPath } = stateAt(checkoutPath);
+      answers.set(checkoutPath, answerOf(status, parentCheckoutPath));
+    }
+  }
+  return answers;
+}
+
+/** Each recorded checkout's answer, by path, as `main`'s readers give it with containing checkouts ordered by `length`. */
+function mainAnswers(database: RerailDatabase, length: PathLength): Map<string, string> {
+  return new Map(database.select().from(checkouts).all().map(row => [
+    row.checkoutPath,
+    answerOf(mainCheckoutStatus(database, row, length), mainParentCheckouts(database, row, length)[0]?.checkoutPath ?? null),
+  ]));
+}
+
+/** Each recorded checkout's answer, by path, as the runtime's readers give it. */
+function runtimeAnswers(database: RerailDatabase): Map<string, string> {
+  return new Map(database.select().from(checkouts).all().map(row => [
+    row.checkoutPath,
+    answerOf(checkoutStatus(database, { ...row, git: true, main: true }), parentCheckouts(database, row)[0]?.checkoutPath ?? null),
+  ]));
+}
+
+/** mulberry32: the same numbers from the same seed on every run. */
+function seeded(seed: number): () => number {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let mixed = Math.imul(state ^ (state >>> 15), state | 1);
+    mixed ^= mixed + Math.imul(mixed ^ (mixed >>> 7), mixed | 61);
+    return ((mixed ^ (mixed >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+/** `items` in a random order. */
+function shuffled<T>(items: readonly T[], next: () => number): T[] {
+  const order = [...items];
+  for (let index = order.length - 1; index > 0; index -= 1) {
+    const other = Math.floor(next() * (index + 1));
+    [order[index], order[other]] = [order[other]!, order[index]!];
+  }
+  return order;
+}
+
+/** Folder names of random trees: two in two letter cases each, two one letter apart, one that ends in a dot. */
+const TREE_NAMES = ["a", "ab", "wt", "WT", "é", "É", "a."];
+const ON_OFF = [true, false, null, null] as const;
+
+/**
+ * A folder as older builds and other tools recorded it: as is, with a `.` segment, with a trailing separator, or with a
+ * trailing `.` segment. All four name one folder, and the second and the fourth are as long as each other.
+ */
+const SPELLINGS: ReadonlyArray<(segments: readonly string[], next: () => number) => string> = [
+  segments => segments.join(sep),
+  (segments, next) => {
+    const at = 1 + Math.floor(next() * (segments.length - 1));
+    return [...segments.slice(0, at), ".", ...segments.slice(at)].join(sep);
+  },
+  segments => `${segments.join(sep)}${sep}`,
+  segments => `${segments.join(sep)}${sep}.`,
+];
+
+interface RandomTree {
+  readonly repositories: ReadonlyArray<typeof repositories.$inferInsert>;
+  /** In the order they were recorded. */
+  readonly checkouts: ReadonlyArray<typeof checkouts.$inferInsert>;
+}
+
+/** Each of `folders` in one to three random spellings, each under one of `roots`. */
+function spelledPaths(next: () => number, roots: readonly string[], folders: ReadonlyArray<readonly string[]>): string[] {
+  const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)]!;
+  const paths = new Set<string>();
+  for (const names of folders) {
+    for (let count = 1 + Math.floor(next() * 3); count > 0; count -= 1) paths.add(pick(SPELLINGS)([pick(roots), ...names], next));
+  }
+  return [...paths];
+}
+
+/**
+ * How the clock moves between two recordings: on a millisecond with chance `tick`, and back by up to a second with
+ * chance `back`, as a clock set back by hand or by a time sync does.
+ */
+interface Clock {
+  readonly tick: number;
+  readonly back: number;
+}
+
+/**
+ * The clocks of random trees, by seed: every row in one millisecond, about half of them in the millisecond of the row
+ * before, each in a millisecond of its own, and one that goes back now and then.
+ */
+const CLOCKS: readonly Clock[] = [{ tick: 0, back: 0 }, { tick: 0.5, back: 0 }, { tick: 1, back: 0 }, { tick: 1, back: 0.5 }];
+
+/** How far `clock` moves after a recording. */
+function clockStep(clock: Clock, next: () => number): number {
+  if (next() < clock.back) return -1 - Math.floor(next() * 1_000);
+  return next() < clock.tick ? 1 : 0;
+}
+
+/** `count` times read from `clock`, one per recording. */
+function recordingTimes(count: number, clock: Clock, next: () => number): number[] {
+  const times: number[] = [];
+  for (let now = 1_000_000; times.length < count; now += clockStep(clock, next)) times.push(now);
+  return times;
+}
+
+/**
+ * Two repositories and their checkouts in random folders and spellings under `roots`, now and then one at the
+ * filesystem's root, recorded in a random order by one of {@link CLOCKS}.
+ */
+function randomTree(seed: number, roots: readonly string[]): RandomTree {
+  const next = seeded(seed);
+  const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)]!;
+  const folders: string[][] = [[]];
+  for (let index = 0; index < 7; index += 1) folders.push([...pick(folders), pick(TREE_NAMES)]);
+  const paths = shuffled([...spelledPaths(next, roots, folders), ...pick([[], [], [parse(roots[0]!).root]])], next);
+  const times = recordingTimes(paths.length, CLOCKS[seed % CLOCKS.length]!, next);
+  return {
+    repositories: ["k1", "k2"].map(repositoryKey => ({
+      repositoryKey, displayName: repositoryKey, started: pick(ON_OFF), configuredAt: pick([1, null]), createdAt: 1, updatedAt: 1,
+    })),
+    checkouts: paths.map((checkoutPath, index) => ({
+      checkoutPath, repositoryKey: pick(["k1", "k1", "k1", "k2"]), cloneId: "clone", started: pick(ON_OFF), createdAt: times[index]!, lastSeenAt: 1,
+    })),
+  };
+}
+
+/** Puts `tree`'s rows in place of every repository and checkout row, the checkouts recorded in their order. */
+function recordTree(database: RerailDatabase, tree: RandomTree): void {
+  database.transaction(transaction => {
+    transaction.delete(checkouts).run();
+    transaction.delete(repositories).run();
+    transaction.insert(repositories).values([...tree.repositories]).run();
+    transaction.insert(checkouts).values([...tree.checkouts]).run();
+  });
+}
+
+/** Each checkout `reader` answers otherwise than `expected` has it, with the seed of its tree. */
+function differences(seed: number, reader: string, answers: Map<string, string>, expected: Map<string, string>): string[] {
+  const differing = answers.size === expected.size ? [] : [`seed ${seed}: ${reader} answers ${answers.size} checkouts of ${expected.size}`];
+  for (const [path, answer] of answers) {
+    if (answer !== expected.get(path)) differing.push(`seed ${seed}, ${reader}, ${path}: ${answer}, where main gives ${expected.get(path)}`);
+  }
+  return differing;
+}
+
+/**
+ * Each checkout of `tree` that the dashboard's listing reader or the runtime's readers answer otherwise than main's
+ * readers do with containing checkouts ordered by the folder each names (`differing`), and how many checkouts main's
+ * own order, by the recorded spelling's length, answers otherwise (`byFolder`).
+ */
+function comparedWithMain(database: RerailDatabase, seed: number, tree: RandomTree): { differing: string[]; byFolder: number } {
+  recordTree(database, tree);
+  const expected = mainAnswers(database, FOLDER_LENGTH);
+  const spelled = mainAnswers(database, SPELLED_LENGTH);
+  return {
+    differing: [
+      ...differences(seed, "listing", listedAnswers(database), expected),
+      ...differences(seed, "runtime", runtimeAnswers(database), expected),
+    ],
+    byFolder: [...expected].filter(([path, answer]) => spelled.get(path) !== answer).length,
+  };
+}
+
+/** A checkout's repository, clone id, on/off, set-up, what decided the on/off, and every containing checkout, nearest first. */
+function fullAnswerOf(repositoryKey: string, cloneId: string, status: RepositoryStatus, parents: readonly string[]): string {
+  return JSON.stringify([repositoryKey, cloneId, status.started, status.setUp, status.startedBy, parents]);
+}
+
+/** Each recorded checkout's full answer, as the runtime's readers give it for one checkout at a time. */
+function aloneAnswers(database: RerailDatabase): Map<string, string> {
+  return new Map(database.select().from(checkouts).all().map(row => [
+    row.checkoutPath,
+    fullAnswerOf(row.repositoryKey, row.cloneId, checkoutStatus(database, { ...row, git: true, main: true }), parentCheckouts(database, row).map(parent => parent.checkoutPath)),
+  ]));
+}
+
+type Reader = ReturnType<typeof recordedCheckoutsReader>;
+
+/** Each of `asked` that a read of all of them together answers, with its full answer. */
+function togetherAnswers(reader: Reader, asked: readonly string[]): Map<string, string> {
+  const read = reader.read(asked);
+  return new Map([...read].map(([path, state]) => [path, fullAnswerOf(state.repositoryKey, state.cloneId, state.status, state.parents)]));
+}
+
+/** Each recorded path, and each folder above one: the checkouts a session asks after, recorded or not. */
+function askedPaths(database: RerailDatabase): string[] {
+  const recorded = database.select().from(checkouts).all().map(row => row.checkoutPath);
+  const above = recorded.flatMap(path => {
+    const folders: string[] = [];
+    for (let folder = resolve(path); parse(folder).root !== folder; folder = resolve(folder, "..")) folders.push(resolve(folder, ".."));
+    return folders;
+  });
+  return [...new Set([...recorded, ...above])];
+}
+
+/** Each of `asked` that the reader, asked them again, answers otherwise than the readers of one checkout do. */
+function askedAgainDiffers(database: RerailDatabase, reader: Reader, asked: readonly string[], label: string): string[] {
+  const alone = aloneAnswers(database);
+  const together = togetherAnswers(reader, asked);
+  return asked
+    .filter(path => together.get(path) !== alone.get(path))
+    .map(path => `${label}, ${path}: read together ${together.get(path)}, alone ${alone.get(path)}`);
+}
+
+/** The recorded checkouts strictly inside `root`, as a read of every row and `withinCheckout` give them. */
+function insideAlone(database: RerailDatabase, root: string): string[] {
+  return database.select().from(checkouts).all().map(row => row.checkoutPath)
+    .filter(path => path !== root && withinCheckout(root, path))
+    .sort();
+}
+
+/**
+ * Each checkout of the database that one read of every checkout and folder a session asks after answers otherwise than
+ * the readers of one checkout do, and each folder whose recorded checkouts inside it the reader names otherwise.
+ */
+function togetherDiffersFromAlone(database: RerailDatabase, label: string, reader: Reader = recordedCheckoutsReader(database)): string[] {
+  const asked = askedPaths(database);
+  const alone = aloneAnswers(database);
+  const together = togetherAnswers(reader, asked);
+  const differing = [...new Set([...alone.keys(), ...together.keys()])]
+    .filter(path => alone.get(path) !== together.get(path))
+    .map(path => `${label}, ${path}: read together ${together.get(path)}, alone ${alone.get(path)}`);
+  for (const root of asked) {
+    const inside = reader.within(root);
+    const expected = insideAlone(database, root);
+    if (JSON.stringify(inside) !== JSON.stringify(expected)) differing.push(`${label}, inside ${root}: ${JSON.stringify(inside)}, alone ${JSON.stringify(expected)}`);
+  }
+  return differing;
+}
+
+/** Rows for checkouts of `clone` at `paths` that could not be recorded now, as their folders are not there, seen long ago. */
+function recordRows(database: RerailDatabase, clone: { readonly repositoryKey: string; readonly cloneId: string }, paths: readonly string[]): void {
+  const insert = database.$client.prepare(
+    "INSERT INTO checkouts (checkout_path, repository_key, clone_id, started, created_at, last_seen_at) VALUES (?, ?, ?, NULL, 1, 1)",
+  );
+  database.$client.transaction(() => {
+    for (const path of paths) insert.run(path, clone.repositoryKey, clone.cloneId);
+  })();
+}
+
+/** An unused drive letter's root on Windows: nothing is mounted at it. */
+function unmountedDrive(): string {
+  const letter = [..."QRSTUVWXYZ"].find(candidate => !existsSync(`${candidate}:\\`));
+  if (letter === undefined) throw new Error("every drive letter from Q to Z is in use");
+  return `${letter}:\\`;
+}
+
 describe("the repository registry", () => {
+  it("resolves the current linked checkout through moves, replacement, and restoration", async () => {
+    const root = await temporary("rerail-resolver-replace-"), db = open(join(root, "home.sqlite"));
+    const a = gitRepository(join(root, "a")), b = gitRepository(join(root, "b"));
+    const first = recordCheckout(db, a), second = recordCheckout(db, b);
+    const path = join(root, "linked"), moved = join(root, "moved");
+    git(a, "worktree", "add", "--detach", path);
+    const lookup = createCheckoutResolver(db);
+    expect(lookup(path)?.repositoryKey).toBe(first.repositoryKey);
+    git(a, "worktree", "move", path, moved);
+    expect(lookup(path)).toBeUndefined();
+    git(b, "worktree", "add", "--detach", path);
+    expect(lookup(path)).toEqual(lookupCheckout(db, path));
+    expect(lookup(path)?.repositoryKey).toBe(second.repositoryKey);
+    git(b, "worktree", "remove", path);
+    git(a, "worktree", "move", moved, path);
+    expect(lookup(path)?.repositoryKey).toBe(first.repositoryKey);
+  });
+
+  it("observes changed, removed, and included origin URLs in a long-lived resolver", async () => {
+    const root = await temporary("rerail-resolver-remote-"), db = open(join(root, "home.sqlite"));
+    const a = "https://example.invalid/team/alpha", b = "https://example.invalid/team/beta";
+    const first = recordCheckout(db, gitRepository(join(root, "a"), a));
+    const second = recordCheckout(db, gitRepository(join(root, "b"), b));
+    const clone = gitRepository(join(root, "clone"), a), lookup = createCheckoutResolver(db);
+    expect(lookup(clone)?.repositoryKey).toBe(first.repositoryKey);
+    git(clone, "remote", "set-url", "origin", b);
+    expect(lookup(clone)?.repositoryKey).toBe(second.repositoryKey);
+    git(clone, "remote", "remove", "origin");
+    expect(lookup(clone)).toBeUndefined();
+    const include = join(root, "remotes.config");
+    git(clone, "config", "include.path", include);
+    for (const [url, key] of [[a, first.repositoryKey], [b, second.repositoryKey]] as const) {
+      writeFileSync(include, `[remote "origin"]\n  url = ${url}\n`);
+      expect(lookup(clone)?.repositoryKey).toBe(key);
+    }
+  });
   it("puts clones that share a remote and worktrees that share a clone in one repository", async () => {
     const root = await temporary("rerail-registry-join-");
     const database = open(join(root, "rerail.sqlite"));
@@ -88,6 +479,44 @@ describe("the repository registry", () => {
     expect(recordCheckout(database, second).repositoryKey).toBe("remote:github.com/acme/web");
   });
 
+  it("uses one clone ID for a bare repository and linked checkout in either discovery order", async () => {
+    const root = await temporary("rerail-registry-bare-");
+    const database = open(join(root, "rerail.sqlite")), source = gitRepository(join(root, "source"));
+    for (const first of ["bare", "linked"] as const) {
+      const bare = join(root, first + ".git"), linked = join(root, first + "-linked");
+      git(root, "clone", "--bare", source, bare);
+      git(bare, "worktree", "add", "--detach", linked, "HEAD");
+      const [a, b] = first === "bare" ? [bare, linked] : [linked, bare];
+      const one = recordCheckout(database, a), two = recordCheckout(database, b);
+      expect(two.cloneId).toBe(one.cloneId);
+      expect(two.repositoryKey).toBe(one.repositoryKey);
+      // A bare repository is a folder, as Git places it (no top level), and its id is its worktrees' one.
+      expect(repositoryIdentityLocation(bare)).toMatchObject({ workspaceRoot: bare, git: false });
+    }
+  });
+
+  it("adopts the earlier bare ID and preserves bare checkout settings when a linked ID already exists", async () => {
+    const root = await temporary("rerail-registry-older-bare-");
+    const database = open(join(root, "rerail.sqlite")), source = gitRepository(join(root, "source"));
+    for (const existing of [false, true]) {
+      const bare = join(root, String(existing) + ".git"), linked = join(root, "linked-" + existing);
+      // Earlier releases treated the bare path as a non-Git folder.
+      mkdirSync(bare);
+      const old = recordCheckout(database, bare);
+      checkoutSetting(database, bare);
+      git(root, "init", "--bare", bare);
+      git(bare, "fetch", source, "HEAD:refs/heads/main");
+      git(bare, "worktree", "add", "--detach", linked, "refs/heads/main");
+      if (existing) writeFileSync(join(bare, "rerail-repository-id"), "git:previous-linked-id\n");
+      const worktree = recordCheckout(database, linked);
+      expect(worktree.cloneId).toBe(existing ? "git:previous-linked-id" : old.cloneId);
+      const upgraded = recordCheckout(database, bare);
+      expect(upgraded.cloneId).toBe(worktree.cloneId);
+      expect(upgraded.repositoryKey).toBe(worktree.repositoryKey);
+      expect(settingOwners(database)).toContainEqual({ owner_kind: "checkout", owner_id: bare });
+    }
+  });
+
   it("keys a clone without an origin and with several remotes by its clone id", async () => {
     const root = await temporary("rerail-registry-remotes-");
     const database = open(join(root, "rerail.sqlite"));
@@ -104,7 +533,7 @@ describe("the repository registry", () => {
     const path = gitRepository(join(root, "checkout"));
     const before = recordCheckout(database, path);
     checkoutSetting(database, path);
-    rmSync(path, { recursive: true, force: true });
+    removeFolderSync(path);
     gitRepository(path, "https://github.com/acme/web.git");
     const after = recordCheckout(database, path);
     expect(after.cloneId).not.toBe(before.cloneId);
@@ -125,6 +554,166 @@ describe("the repository registry", () => {
     const [, , innerCheckout] = [main, outer, inner, beside].map(path => recordCheckout(database, path));
     expect(parentCheckouts(database, innerCheckout!).map(row => row.checkoutPath)).toEqual([outer, main]);
   });
+
+  it("gives each checkout in the dashboard's listing the state and parent the runtime gives it, in whatever spelling a folder was recorded", async () => {
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const { database, repositoryKey } = await recordedRows([
+      // The filesystem's root holds every other row.
+      [parse(base).root, null],
+      // A trailing separator and a `.` segment: the folders a and b, as path.relative reads them.
+      [`${join(base, "a")}${sep}`, true],
+      [join(base, "a", "inner"), null],
+      [`${join(base, "b")}${sep}.`, true],
+      [join(base, "b", "inner"), null],
+      [join(base, "beside"), null],
+      // One folder on Windows, where path.relative ignores letter case; two elsewhere.
+      [join(base, "CASE"), true],
+      [join(base, "case", "inner"), null],
+      // A share root recorded without the separator path.resolve gives it.
+      ...process.platform === "win32" ? [["\\\\server\\share", true], ["\\\\server\\share\\inner", null]] as const : [],
+    ]);
+    const { listed, runtime } = bothReads(database, repositoryKey);
+    expect(listed).toEqual(runtime);
+    // The inner checkouts follow their parents in the runtime's reads, so the two reads agree on more than the repository.
+    expect(runtime.get(join(base, "a", "inner"))).toEqual([true, "parent", `${join(base, "a")}${sep}`]);
+    expect(runtime.get(join(base, "b", "inner"))).toEqual([true, "parent", `${join(base, "b")}${sep}.`]);
+    if (process.platform === "win32") expect(runtime.get("\\\\server\\share\\inner")).toEqual([true, "parent", "\\\\server\\share"]);
+  });
+
+  it("lets the spelling recorded first decide for the checkouts inside a folder recorded under two spellings of one length", async () => {
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const inner = join(base, "wt", "inner");
+    // One folder as path.relative reads both: a `.` segment before or after its name, and on Windows its letter case.
+    const spellings: Array<readonly [string, string]> = [
+      [`${base}${sep}.${sep}wt`, `${base}${sep}wt${sep}.`],
+      ...process.platform === "win32" ? [[join(base, "wt"), join(base, "WT")] as const] : [],
+    ];
+    // The clock moving on between the recordings, standing still, and set back.
+    const clocks = [[1, 2, 3], [1, 1, 1], [2_000, 1_000, 3_000]];
+    for (const [one, other] of spellings) {
+      for (const [first, second] of [[one, other], [other, one]] as const) {
+        for (const times of clocks) {
+          // Stopped as the spelling recorded first, started as the other one.
+          const { database, repositoryKey } = await recordedRows([[first, false], [second, true], [inner, null]], times);
+          const { listed, runtime } = bothReads(database, repositoryKey);
+          expect(runtime.get(inner), `${first} then ${second} at ${times.join(", ")}`).toEqual([false, "parent", first]);
+          expect(listed.get(inner), `${first} then ${second} at ${times.join(", ")}`).toEqual([false, "parent", first]);
+        }
+      }
+    }
+  });
+
+  it("takes the deeper of two containing checkouts whose recorded paths are one length, in either order", async () => {
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const inner = join(base, "b", "x", "inner");
+    // The folder b with a trailing `.` segment, and its subfolder x: both hold `inner`, and their paths are one length.
+    const farther = `${join(base, "b")}${sep}.`;
+    const nearer = join(base, "b", "x");
+    expect(farther).toHaveLength(nearer.length);
+    for (const recorded of [[[farther, false], [nearer, true]], [[nearer, true], [farther, false]]] as const) {
+      const { database, repositoryKey } = await recordedRows([...recorded, [inner, null]]);
+      const { listed, runtime } = bothReads(database, repositoryKey);
+      expect(runtime.get(inner), `${recorded[0][0]} first`).toEqual([true, "parent", nearer]);
+      expect(listed.get(inner), `${recorded[0][0]} first`).toEqual([true, "parent", nearer]);
+    }
+  });
+
+  it("gives each checkout, in the dashboard's listing and in the runtime, the state and parent main gave it, whatever the clock did", async () => {
+    const database = open(join(await temporary("rerail-registry-main-"), "rerail.sqlite"));
+    // These rows need not survive a crash, so no transaction waits for the disk.
+    database.$client.pragma("synchronous = OFF");
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const roots = process.platform === "win32" ? [base, base, "\\\\server\\share"] : [base];
+    const differing: string[] = [];
+    let byFolder = 0;
+    for (let seed = 1; seed <= 200; seed += 1) {
+      const compared = comparedWithMain(database, seed, randomTree(seed, roots));
+      differing.push(...compared.differing);
+      byFolder += compared.byFolder;
+    }
+    // Main's answers, where a farther folder's row, as long as a nearer one's or longer, no longer comes first.
+    expect(differing).toEqual([]);
+    // The trees hold such rows, so the order by folder is what this compares.
+    expect(byFolder).toBeGreaterThan(0);
+  }, 30_000);
+
+  it("reads many checkouts in one statement as it reads each alone, with every containing checkout and the checkouts inside each folder, in whatever spelling a folder was recorded", async () => {
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const farther = `${join(base, "b")}${sep}.`;
+    // The shapes of the tests above: the filesystem's root, a trailing separator, a `.` segment before or after a name,
+    // letter case, a share root without its separator, and two containing folders whose recorded paths are one length.
+    const shapes: Array<ReadonlyArray<readonly [string, boolean | null]>> = [
+      [
+        [parse(base).root, null], [`${join(base, "a")}${sep}`, true], [join(base, "a", "inner"), null],
+        [farther, true], [join(base, "b", "inner"), null], [join(base, "beside"), null],
+        [join(base, "CASE"), true], [join(base, "case", "inner"), null],
+        ...process.platform === "win32" ? [["\\\\server\\share", true], ["\\\\server\\share\\inner", null]] as const : [],
+      ],
+      [[`${base}${sep}.${sep}wt`, false], [`${base}${sep}wt${sep}.`, true], [join(base, "wt", "inner"), null]],
+      [[join(base, "WT"), false], [join(base, "wt"), true], [join(base, "wt", "inner"), null]],
+      [[farther, false], [join(base, "b", "x"), true], [join(base, "b", "x", "inner"), null]],
+      [[join(base, "b", "x"), true], [farther, false], [join(base, "b", "x", "inner"), null]],
+    ];
+    const differing: string[] = [];
+    for (const [index, rows] of shapes.entries()) {
+      const { database } = await recordedRows(rows);
+      differing.push(...togetherDiffersFromAlone(database, `shape ${index + 1}`));
+    }
+    const database = open(join(await temporary("rerail-registry-together-"), "rerail.sqlite"));
+    database.$client.pragma("synchronous = OFF");
+    const roots = process.platform === "win32" ? [base, base, "\\\\server\\share"] : [base];
+    for (let seed = 1; seed <= 200; seed += 1) {
+      recordTree(database, randomTree(seed, roots));
+      differing.push(...togetherDiffersFromAlone(database, `seed ${seed}`));
+    }
+    expect(differing).toEqual([]);
+  }, 60_000);
+
+  it("keeps reading many checkouts as it reads each alone while checkouts are recorded, recorded again, forgotten, started and stopped", async () => {
+    const database = open(join(await temporary("rerail-registry-changes-"), "rerail.sqlite"));
+    database.$client.pragma("synchronous = OFF");
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const roots = process.platform === "win32" ? [base, base, "\\\\server\\share"] : [base];
+    const differing: string[] = [];
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const tree = randomTree(seed, roots);
+      recordTree(database, tree);
+      // One reader over the whole run, as a runtime keeps one: it must follow every change below.
+      const reader = recordedCheckoutsReader(database);
+      // The same checkouts asked at every step, as a session asks its own again at each event, across the changes:
+      // a checkout recorded in a folder above one of them must reach the next answer.
+      const fixed = askedPaths(database);
+      reader.read(fixed);
+      const next = seeded(seed * 7_919);
+      const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)]!;
+      const spare = randomTree(seed + 1_000, roots).checkouts.map(row => row.checkoutPath);
+      let now = 2_000_000;
+      for (let step = 0; step < 30; step += 1) {
+        for (let change = 1 + Math.floor(next() * 3); change > 0; change -= 1) {
+          now += 1;
+          const recorded = database.select().from(checkouts).all();
+          const row = recorded.length === 0 ? undefined : pick(recorded);
+          const kind = pick(["record", "record", "again", "forget", "turn", "turn", "repository"] as const);
+          if (kind === "record") {
+            database.insert(checkouts).values({ checkoutPath: pick(spare), repositoryKey: pick(["k1", "k2"]), cloneId: "clone", started: pick(ON_OFF), createdAt: now, lastSeenAt: now }).onConflictDoNothing().run();
+          } else if (row !== undefined && kind === "again") {
+            database.delete(checkouts).where(eq(checkouts.checkoutPath, row.checkoutPath)).run();
+            database.insert(checkouts).values({ ...row, cloneId: "other", started: null, createdAt: now }).run();
+          } else if (row !== undefined && kind === "forget") {
+            database.delete(checkouts).where(eq(checkouts.checkoutPath, row.checkoutPath)).run();
+          } else if (row !== undefined && kind === "turn") {
+            database.update(checkouts).set({ started: pick(ON_OFF) }).where(eq(checkouts.checkoutPath, row.checkoutPath)).run();
+          } else {
+            database.update(repositories).set({ started: pick(ON_OFF), configuredAt: pick([1, null]) }).where(eq(repositories.repositoryKey, pick(["k1", "k2"]))).run();
+          }
+        }
+        differing.push(...askedAgainDiffers(database, reader, fixed, `seed ${seed}, step ${step}, asked again`));
+        differing.push(...togetherDiffersFromAlone(database, `seed ${seed}, step ${step}`, reader));
+        reader.read(fixed);
+      }
+    }
+    expect(differing).toEqual([]);
+  }, 60_000);
 
   it("puts a submodule checked out under two worktrees of its parent in one repository", async () => {
     const root = await temporary("rerail-registry-submodule-");
@@ -188,6 +777,56 @@ describe("the repository registry", () => {
     expect(recordCheckout(database, clone).repositoryKey).toBe("remote:github.com/acme/late");
   });
 
+  it("keeps the Merge Assist hook command when a clone gains a remote, and reads `gh` again under the new key", async () => {
+    const root = await temporary("rerail-registry-late-remote-hook-");
+    const database = open(join(root, "rerail.sqlite"));
+    const clone = gitRepository(join(root, "clone"));
+    const cloneKey = recordCheckout(database, clone).repositoryKey;
+    mergeAssistSettings(database, cloneKey, "notify");
+
+    git(clone, "remote", "add", "origin", "https://github.com/acme/late.git");
+    expect(recordCheckout(database, clone).repositoryKey).toBe("remote:github.com/acme/late");
+    expect(mergeAssistRows(database)).toEqual({
+      "settings:remote:github.com/acme/late": { hook: { command: ["notify"], timeoutSeconds: 10 } },
+    });
+  });
+
+  it("drops the Merge Assist settings of a repository it removes, so they never become another's hook command", async () => {
+    const root = await temporary("rerail-registry-absorb-hook-");
+    const database = open(join(root, "rerail.sqlite"));
+    const clone = gitRepository(join(root, "clone"));
+    const cloneKey = recordCheckout(database, clone).repositoryKey;
+    const web = gitRepository(join(root, "web"), "https://github.com/acme/web.git");
+    const webKey = recordCheckout(database, web).repositoryKey;
+    mergeAssistSettings(database, webKey, "stale");
+
+    // The clone, with no hook command, becomes the remote's repository: the one it replaces leaves no hook behind.
+    adoptRemote(database, cloneKey, webKey);
+    expect(mergeAssistRows(database)).toEqual({});
+
+    // A repository an alias brings in goes with its own.
+    const mirror = gitRepository(join(root, "mirror"), "https://github.com/acme/web-mirror.git");
+    const mirrorKey = recordCheckout(database, mirror).repositoryKey;
+    mergeAssistSettings(database, mirrorKey, "mirror");
+    linkAlias(database, webKey, "https://github.com/acme/web-mirror");
+    expect(mergeAssistRows(database)).toEqual({});
+  });
+
+  it("adopts a clone's remote in both catalogs and retries a rolled-back adoption", async () => {
+    const root = await temporary("rerail-registry-catalog-adopt-");
+    const first = open(join(root, "first.sqlite")), second = open(join(root, "second.sqlite"));
+    const clone = gitRepository(join(root, "clone"));
+    const { repositoryKey } = recordCheckout(second, clone);
+    expect(recordCheckout(first, clone).repositoryKey).toBe(repositoryKey);
+    git(clone, "remote", "add", "origin", "https://example.com/acme/web.git");
+    first.$client.exec("CREATE TRIGGER refuse_adoption BEFORE UPDATE OF repository_key ON repositories BEGIN SELECT RAISE(ABORT, 'fixture'); END");
+    expect(() => recordCheckout(first, clone)).toThrow(/fixture/u);
+    expect(recordCheckout(second, clone).repositoryKey).toBe("remote:example.com/acme/web");
+    expect(listRepositories(first)[0]?.repositoryKey).toBe(repositoryKey);
+    first.$client.exec("DROP TRIGGER refuse_adoption");
+    expect(recordCheckout(first, clone).repositoryKey).toBe("remote:example.com/acme/web");
+  });
+
   it("gives an unconfigured target the clone repository's configuration, and moves only checkouts to a configured one", async () => {
     const root = await temporary("rerail-registry-adopt-");
     const database = open(join(root, "rerail.sqlite"));
@@ -236,9 +875,155 @@ describe("the repository registry", () => {
     checkoutSetting(database, main);
     git(main, "worktree", "remove", worktree);
 
-    expect(pruneCheckouts(database)).toEqual([worktree]);
+    expect(await pruneCheckouts(database)).toEqual([worktree]);
     expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
     expect(settingOwners(database)).toEqual([{ owner_kind: "checkout", owner_id: main }]);
+  });
+
+  it("keeps a removed checkout seen again since the prune began, and forgets it at the next one", async () => {
+    const root = await temporary("rerail-registry-prune-seen-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    recordCheckout(database, main, 1_000);
+    recordCheckout(database, worktree, 3_000);
+    git(main, "worktree", "remove", worktree);
+
+    // A session that starts in a worktree made again at the path while the prune looks at the folders records it after then.
+    expect(await pruneCheckouts(database, { now: 2_000 })).toEqual([]);
+    expect(await pruneCheckouts(database, { now: 4_000 })).toEqual([worktree]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
+  });
+
+  it("forgets nothing when its signal aborts while it looks at the folders, as when the daemon stops", async () => {
+    const root = await temporary("rerail-registry-prune-abort-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    recordCheckout(database, main);
+    recordCheckout(database, worktree);
+    git(main, "worktree", "remove", worktree);
+
+    const abort = new AbortController();
+    // The pass has read the rows and asked for the first folder by the time the call returns.
+    const pass = pruneCheckouts(database, { signal: abort.signal });
+    abort.abort();
+    expect(await pass).toEqual([]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath).sort()).toEqual([main, worktree].sort());
+  });
+
+  it("keeps the checkouts of clones with none on disk, renamed away or deleted, with their start state and settings", async () => {
+    const root = await temporary("rerail-registry-prune-away-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"), "git@github.com:acme/web.git");
+    const worktree = join(root, "main-feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    const other = gitRepository(join(root, "other"), "git@github.com:acme/web.git");
+    const recorded = [main, worktree, other].map(path => recordCheckout(database, path).checkoutPath).sort();
+    for (const path of recorded) checkoutSetting(database, path);
+    database.$client.prepare("UPDATE checkouts SET started = 0 WHERE checkout_path = ?").run(main);
+    for (const path of [main, worktree]) renameSync(path, `${path}-away`);
+    removeFolderSync(other);
+
+    // No checkout of either clone is on disk to ask Git in, and a folder renamed away looks like a deleted one.
+    expect(await pruneCheckouts(database)).toEqual([]);
+    for (const path of [main, worktree]) renameSync(`${path}-away`, path);
+    expect(await pruneCheckouts(database)).toEqual([]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => [row.checkoutPath, row.started]))
+      .toEqual(recorded.map(path => [path, path === main ? false : null]));
+    expect(settingOwners(database)).toEqual(recorded.map(path => ({ owner_kind: "checkout", owner_id: path })));
+  });
+
+  it("keeps a worktree moved without Git, at its old path and its new one, until Git prunes its entry", async () => {
+    const root = await temporary("rerail-registry-prune-moved-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    recordCheckout(database, main);
+    recordCheckout(database, worktree);
+    checkoutSetting(database, worktree);
+    const moved = `${worktree}-moved`;
+    renameSync(worktree, moved);
+    // A session that starts there records it: Git runs in it, though its registry still names the old path.
+    recordCheckout(database, moved);
+
+    expect(await pruneCheckouts(database)).toEqual([]);
+    git(main, "worktree", "prune");
+    expect((await pruneCheckouts(database)).sort()).toEqual([worktree, moved].sort());
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
+    expect(settingOwners(database)).toEqual([]);
+  });
+
+  it("keeps a main checkout with a separate Git directory and its linked worktree", async () => {
+    const root = await temporary("rerail-registry-separate-git-");
+    const database = open(join(root, "rerail.sqlite"));
+    const checkout = gitRepository(join(root, "checkout")), linked = join(root, "linked");
+    git(checkout, "init", "--quiet", "--separate-git-dir", join(root, "metadata"));
+    git(checkout, "worktree", "add", "-q", "--detach", linked);
+    for (const dir of [checkout, linked]) {
+      recordCheckout(database, dir);
+      checkoutSetting(database, dir);
+    }
+    expect(await pruneCheckouts(database)).toEqual([]);
+    expect(settingOwners(database)).toHaveLength(2);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("keeps settings while a checkout parent is inaccessible", async () => {
+    const root = await temporary("rerail-registry-inaccessible-");
+    const database = open(join(root, "rerail.sqlite"));
+    const parent = join(root, "private"), dir = gitRepository(join(parent, "checkout"));
+    recordCheckout(database, dir);
+    checkoutSetting(database, dir);
+    chmodSync(parent, 0);
+    try {
+      expect(await pruneCheckouts(database)).toEqual([]);
+    } finally { chmodSync(parent, 0o700); }
+    expect(await pruneCheckouts(database)).toEqual([]);
+    expect(settingOwners(database)).toHaveLength(1);
+    // Renamed away, the only checkout of its clone is off disk: it stays, as one on a drive that is unplugged does.
+    renameSync(dir, join(root, "moved"));
+    expect(await pruneCheckouts(database)).toEqual([]);
+  });
+
+  it.each(["restored", "replaced"])("keeps a checkout %s between enumeration and pruning", async change => {
+    const root = await temporary("rerail-registry-prune-race-"), path = join(root, "catalog.sqlite");
+    const db = open(path), other = open(path), moved = join(root, "moved");
+    // A pass forgets a checkout only when its clone's Git no longer lists it: a worktree Git moved away, its other
+    // checkout recorded.
+    const main = gitRepository(join(root, "main")), dir = join(root, "checkout");
+    git(main, "worktree", "add", "-q", "-b", "feature", dir);
+    recordCheckout(db, main);
+    const original = recordCheckout(db, dir);
+    checkoutSetting(db, dir);
+    git(main, "worktree", "move", dir, moved);
+    const transaction = db.transaction.bind(db);
+    vi.spyOn(db, "transaction").mockImplementationOnce((run, options) => {
+      if (change === "restored") git(main, "worktree", "move", moved, dir);
+      else {
+        gitRepository(dir);
+        expect(recordCheckout(other, dir).cloneId).not.toBe(original.cloneId);
+        checkoutSetting(other, dir);
+      }
+      return transaction(run, options);
+    });
+    expect(await pruneCheckouts(db)).toEqual([]);
+    expect(lookupCheckout(db, dir)?.cloneId).toBe(recordCheckout(other, dir).cloneId);
+    expect(settingOwners(db)).toEqual([{ owner_kind: "checkout", owner_id: dir }]);
+  });
+
+  it("requires a replacement directory's own identity before using the recorded checkout", async () => {
+    const root = await temporary("rerail-registry-replaced-"), db = open(join(root, "catalog.sqlite"));
+    const dir = gitRepository(join(root, "checkout")), moved = join(root, "moved");
+    const recorded = recordCheckout(db, dir);
+    renameSync(dir, moved);
+    mkdirSync(dir);
+    expect(lookupCheckout(db, dir)).toBeUndefined();
+    removeFolderSync(dir);
+    renameSync(moved, dir);
+    expect(lookupCheckout(db, dir)).toEqual(recorded);
   });
 
   it.skipIf(!caseInsensitiveFilesystem())("keeps a worktree Git registered under a path typed in another case than the folder has", async () => {
@@ -251,8 +1036,178 @@ describe("the repository registry", () => {
     const worktree = recordCheckout(database, join(root, "elsewhere", "feature")).checkoutPath;
     expect(worktree).toBe(join(root, "elsewhere", "feature"));
 
-    expect(pruneCheckouts(database)).toEqual([]);
+    expect(await pruneCheckouts(database)).toEqual([]);
   });
+
+  it.skipIf(!caseInsensitiveFilesystem())("keeps a worktree Git registered under a name typed in another case, while its folder is away", async () => {
+    const root = await temporary("rerail-registry-prune-case-away-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    // Git takes the empty folder `feature` for `Feature`, and registers the name as typed.
+    mkdirSync(join(root, "feature"));
+    git(main, "worktree", "add", "-q", "-b", "feature", join(root, "Feature"));
+    recordCheckout(database, main);
+    const worktree = recordCheckout(database, join(root, "feature")).checkoutPath;
+    renameSync(worktree, `${worktree}-away`);
+
+    expect(await pruneCheckouts(database)).toEqual([]);
+  });
+
+  it.each([
+    { when: "the clone's own checkout is looked at first", outer: "outer", earlierPass: false },
+    { when: "the folder is looked at first", outer: "around", earlierPass: false },
+    { when: "the folder is looked at first and a pass asked Git in it before", outer: "around", earlierPass: true },
+  ])("keeps a worktree that lost its .git file while its clone's registry names it, and forgets it once Git prunes it, when $when", async ({ outer, earlierPass }) => {
+    const root = await temporary("rerail-registry-prune-outer-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(gitRepository(join(root, outer)), "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    // Recorded in path order, which is the order a pass reads them in.
+    for (const path of [main, worktree].sort()) recordCheckout(database, path);
+    // A worktree holds its files; one left empty could be the mount point of a drive that is unplugged.
+    writeFileSync(join(worktree, "README.md"), "feature\n");
+    if (earlierPass) expect(await pruneCheckouts(database)).toEqual([]);
+    // Git in the folder now answers for the repository around it, while main's registry still names the folder, and
+    // `git worktree repair` there would write its .git file again.
+    unlinkSync(join(worktree, ".git"));
+
+    expect(await pruneCheckouts(database)).toEqual([]);
+    git(main, "worktree", "prune");
+    expect(await pruneCheckouts(database)).toEqual([worktree]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
+  });
+
+  it("keeps a submodule and a clone made with --separate-git-dir, there or renamed away, though Git lists their Git folders", async () => {
+    const root = await temporary("rerail-registry-prune-own-");
+    const database = open(join(root, "rerail.sqlite"));
+    const parent = gitRepository(join(root, "parent"));
+    git(parent, "submodule", "add", "-q", gitRepository(join(root, "library")), "vendor/library");
+    const submodule = join(parent, "vendor", "library");
+    const separate = join(root, "separate");
+    git(root, "init", "-q", "-b", "main", "--separate-git-dir", join(root, "separate.git"), separate);
+    git(separate, "-c", "user.name=Rerail", "-c", "user.email=rerail@example.invalid", "commit", "-q", "--allow-empty", "-m", "base");
+    // A worktree of each, on disk, is where the pass asks Git about them once they are renamed away.
+    const worktrees = [join(root, "library-feature"), join(root, "separate-feature")];
+    git(submodule, "worktree", "add", "-q", "-b", "feature", worktrees[0]!);
+    git(separate, "worktree", "add", "-q", "-b", "feature", worktrees[1]!);
+    const own = [submodule, separate].map(path => recordCheckout(database, path).checkoutPath).sort();
+    for (const path of worktrees) recordCheckout(database, path);
+    for (const path of own) checkoutSetting(database, path);
+
+    expect(await pruneCheckouts(database)).toEqual([]);
+    for (const path of own) renameSync(path, `${path}-away`);
+    expect(await pruneCheckouts(database)).toEqual([]);
+    expect(settingOwners(database)).toEqual(own.map(path => ({ owner_kind: "checkout", owner_id: path })));
+  });
+
+  it.each([
+    { when: "its folder is gone from an empty folder, as from the mount point of a drive that is unplugged", offDisk: (copy: string) => removeFolderSync(copy) },
+    {
+      // A repository of dotfiles at a home folder is no checkout Rerail recorded, though the mount point sits inside it.
+      when: "its folder is gone from an empty folder inside a repository that is no recorded checkout",
+      offDisk: (copy: string, root: string) => {
+        removeFolderSync(copy);
+        git(root, "init", "-q");
+      },
+    },
+    {
+      when: "its own folder is left empty, as a drive mounted at the copy's folder leaves it once unplugged",
+      offDisk: (copy: string) => {
+        removeFolderSync(copy);
+        mkdirSync(copy);
+      },
+    },
+    {
+      when: "its .git can't be read",
+      offDisk: (copy: string) => {
+        removeFolderSync(join(copy, ".git"));
+        writeFileSync(join(copy, ".git"), "not a Git folder\n");
+      },
+    },
+  ])("keeps every checkout of a clone, with its settings, while a copy of the clone is off disk, when $when", async ({ offDisk }) => {
+    const root = await temporary("rerail-registry-prune-copy-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    recordCheckout(database, main);
+    // A copy made with its `.git` keeps the clone id; this one sits alone on a drive mounted at `drive`.
+    const copy = join(root, "drive", "main");
+    cpSync(main, copy, { recursive: true });
+    const recorded = [main, worktree, copy].map(path => recordCheckout(database, path).checkoutPath).sort();
+    expect(new Set(listRepositories(database).flatMap(repository => repository.checkouts.map(row => row.cloneId))).size).toBe(1);
+    for (const path of recorded) checkoutSetting(database, path);
+    git(main, "worktree", "remove", worktree);
+    offDisk(copy, root);
+
+    // main's registry never named the copy, and the copy's, which can't be read, may still name the worktree.
+    expect(await pruneCheckouts(database)).toEqual([]);
+    expect(settingOwners(database)).toEqual(recorded.map(path => ({ owner_kind: "checkout", owner_id: path })));
+  });
+
+  it.each([
+    { when: "the checkout is recorded", recordMain: true },
+    { when: "the checkout, the clone's own, was never recorded", recordMain: false },
+  ])("forgets a removed worktree whose folder sat alone in a folder of worktrees inside a checkout, now empty, when $when", async ({ recordMain }) => {
+    const root = await temporary("rerail-registry-prune-nested-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const worktree = join(main, ".worktrees", "child");
+    const other = join(root, "other");
+    git(main, "worktree", "add", "-q", "-b", "child", worktree);
+    git(main, "worktree", "add", "-q", "-b", "other", other);
+    if (recordMain) recordCheckout(database, main);
+    // Sessions that start only in worktrees record those alone; Git is asked in one that is on disk.
+    recordCheckout(database, other);
+    recordCheckout(database, worktree);
+    checkoutSetting(database, worktree);
+    git(main, "worktree", "remove", worktree);
+    expect(existsSync(join(main, ".worktrees"))).toBe(true);
+
+    // An empty folder inside a checkout of the clone is no mount point a drive was unmounted from.
+    expect(await pruneCheckouts(database)).toEqual([worktree]);
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual(recordMain ? [main, other] : [other]);
+    expect(settingOwners(database)).toEqual([]);
+  });
+
+  it.runIf(process.platform === "win32")("keeps a checkout on a drive letter nothing is mounted at, with its settings", async () => {
+    const root = await temporary("rerail-registry-prune-drive-");
+    const database = open(join(root, "rerail.sqlite"));
+    const unmounted = join(unmountedDrive(), "work", "app");
+    recordRows(database, recordCheckout(database, gitRepository(join(root, "main"))), [unmounted]);
+    checkoutSetting(database, unmounted);
+
+    expect(await pruneCheckouts(database)).toEqual([]);
+    expect(settingOwners(database)).toEqual([{ owner_kind: "checkout", owner_id: unmounted }]);
+  });
+
+  it.runIf(process.platform === "win32")("forgets a removed worktree when Git lists another on a drive nothing is mounted at", async () => {
+    const root = await temporary("rerail-registry-prune-listed-drive-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    const [removed, unplugged] = [join(root, "removed"), join(root, "unplugged")];
+    git(main, "worktree", "add", "-q", "-b", "removed", removed);
+    git(main, "worktree", "add", "-q", "-b", "unplugged", unplugged);
+    for (const path of [main, removed]) recordCheckout(database, path);
+    // Git keeps the entry of a worktree on a drive that is unplugged, and lists it at its path there; Git writes it with `/`.
+    writeFileSync(join(main, ".git", "worktrees", "unplugged", "gitdir"), `${unmountedDrive().replaceAll("\\", "/")}work/unplugged/.git\n`);
+    git(main, "worktree", "remove", removed);
+
+    expect(await pruneCheckouts(database)).toEqual([removed]);
+  });
+
+  it("forgets more gone checkouts than one SQLite statement can bind", async () => {
+    const root = await temporary("rerail-registry-prune-many-");
+    const database = open(join(root, "rerail.sqlite"));
+    const main = gitRepository(join(root, "main"));
+    // SQLite binds at most 32,766 variables in one statement, and the settings delete binds one more than it has paths.
+    const gone = Array.from({ length: 32_766 }, (_, index) => join(root, "gone", String(index)));
+    recordRows(database, recordCheckout(database, main), gone);
+
+    expect((await pruneCheckouts(database)).length).toBe(gone.length);
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([main]);
+  }, 60_000);
 
   it("looks a checkout up without writing anything or creating a clone id", async () => {
     const root = await temporary("rerail-registry-lookup-");
@@ -264,6 +1219,47 @@ describe("the repository registry", () => {
     const recorded = recordCheckout(database, checkout);
     mkdirSync(join(checkout, "src"));
     expect(lookupCheckout(database, join(checkout, "src"))).toEqual(recorded);
+  });
+
+  it("records and finds one checkout under one key, whatever spelling of its folder a caller passes", async () => {
+    const root = await temporary("rerail-registry-spellings-");
+    const database = open(join(root, "rerail.sqlite"));
+    const checkout = gitRepository(join(root, "checkout folder"));
+    // The key every spelling must come to: each name's long form, as stored, through any link.
+    const key = realpathSync.native(checkout);
+    const linked = join(root, "linked");
+    symlinkSync(checkout, linked, "junction");
+    const spellings = [checkout, linked, `${checkout}${sep}.`, checkout.split(sep).join("/")];
+    if (process.platform === "win32") {
+      spellings.push(checkout.replace(/^[A-Z]:/u, drive => drive.toLowerCase()));
+      const short = shortSpelling(checkout);
+      if (short !== undefined) spellings.push(short);
+    }
+    const recorded = recordCheckout(database, checkout);
+    expect(recorded.checkoutPath).toBe(key);
+    for (const spelling of spellings) {
+      expect(recordCheckout(database, spelling), spelling).toEqual(recorded);
+      expect(lookupCheckout(database, spelling), spelling).toEqual(recorded);
+    }
+    expect(listRepositories(database)[0]?.checkouts.map(row => row.checkoutPath)).toEqual([key]);
+  });
+
+  it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("recognizes a moved read-only checkout and ignores its unrelated replacement", async () => {
+    const root = await temporary("rerail-registry-readonly-");
+    const database = open(join(root, "rerail.sqlite"));
+    const path = gitRepository(join(root, "checkout")), moved = join(root, "moved");
+    chmodSync(join(path, ".git"), 0o555);
+    try {
+      const recorded = recordCheckout(database, path);
+      expect(existsSync(repositoryIdentityLocation(path).identityPath)).toBe(false);
+      renameSync(path, moved);
+      gitRepository(path);
+      expect(lookupCheckout(database, moved)).toEqual({ ...recorded, checkoutPath: moved });
+      expect(lookupCheckout(database, path)).toBeUndefined();
+      expect(existsSync(repositoryIdentityLocation(path).identityPath)).toBe(false);
+    } finally {
+      chmodSync(join(existsSync(moved) ? moved : path, ".git"), 0o755);
+    }
   });
 
   it("finds a fresh clone without an id file by its remote, with no clone id, and records it under that repository", async () => {

@@ -492,6 +492,20 @@ fn no_dupe_keys_through_key_nodes() {
     );
 }
 
+/// `precedes` and `follows` a token the tape leaves out (the gap test, t31), with no stop rule: the word after a node is
+/// the gap before the next stored child, or the parent's end gap after the last. Before, `precedes` read the end gap
+/// for every node, so a pair's key never preceded its `:`.
+#[test]
+fn a_neighbour_token_the_tape_leaves_out_is_found_both_ways() {
+    let source = "const o = { a: 1 }; f(x, y);\n";
+    let rule = |r: Value| starts("typescript", json!({ "rule": r }), "witness.span", source);
+    assert_eq!(rule(json!({ "kind": "property_identifier", "precedes": { "regex": "^:$" } })), [12], "a key before its `:`");
+    assert_eq!(rule(json!({ "kind": "number", "follows": { "regex": "^:$" } })), [15], "a value after the `:`");
+    assert_eq!(rule(json!({ "kind": "identifier", "inside": { "kind": "arguments" }, "precedes": { "regex": "^,$" } })), [22], "an argument before a `,`");
+    assert_eq!(rule(json!({ "kind": "identifier", "inside": { "kind": "arguments" }, "precedes": { "regex": "^\\)$" } })), [25], "the last argument before the end's `)`");
+    assert!(rule(json!({ "kind": "number", "precedes": { "regex": "^:$" } })).is_empty(), "nothing after the value is a `:`");
+}
+
 /// no-dupe-keys as the TypeScript conformance pack ports it (`no_dupe_keys_ast`): each property
 /// counts the earlier properties of its key, reading only the siblings of that key
 /// (`Related::same_key_siblings`). It reports what the walk over every earlier sibling reports:

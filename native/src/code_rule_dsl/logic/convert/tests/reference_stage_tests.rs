@@ -1,14 +1,14 @@
 //! Each stage of W's reference graph beside the rules that stand for it (note t50): the same files through W's Rust
-//! stage and through `python/references.rr`, their rows compared stage by stage, and each side's CPU per stage.
+//! stage and through `python/references.rerail`, their rows compared stage by stage, and each side's CPU per stage.
 //!
 //! The stages, W's way and the rules':
 //!
 //! | stage   | W                                                  | rules                                                 |
 //! |---------|----------------------------------------------------|-------------------------------------------------------|
-//! | scope   | `ScopeTable::build_in`: the scopes, the loads       | `names.rr`'s bindings and `nameref`, `bind_only`      |
+//! | scope   | `ScopeTable::build_in`: the scopes, the loads       | `names.rerail`'s bindings and `nameref`, `bind_only`      |
 //! | lookup  | `ScopeTable::resolve_python_index` per load         | `wstart`, `walk`, `look`                              |
-//! | summary | `calls::summarize` over the table: defs, references | `references.rr`'s per-file part: `rf_qn`, `rf_ref`, … |
-//! | link    | `Graph::link_references`, its rows                  | `references.rr`'s cross-file part: `rf_link`, …       |
+//! | summary | `calls::summarize` over the table: defs, references | `references.rerail`'s per-file part: `rf_qn`, `rf_ref`, … |
+//! | link    | `Graph::link_references`, its rows                  | `references.rerail`'s cross-file part: `rf_link`, …       |
 //!
 //! Rows are compared as text, a node as (path, start, end). W's reference names carry its markers
 //! (`m.<bare>.x=>q`, `C.<self>.f`, …, `closure::reference_via`); the rules' `rf_ref` forms are spelled into them.
@@ -209,12 +209,12 @@ pub(super) fn w_side(files: &[(String, String)]) -> Side {
 const PROGRAM: &str = r#"
 .language python
 .scope include "**/*.py", "**/*.pyi"
-#include "python/references.rr"
+#include "python/references.rerail"
 // A node's (path, start, end) is read from the tape where a rule needs it (`node` keyed by the node, then `doc`),
 // not made as a relation of every node: a view's rows are never made (decision 0353).
-// A load: a name read of a primary document (a string annotation's names are another document's), no `del` target.
+// A load: a name read in its file's code (not of a string parsed as code: `guest_of`, decision 0431), no `del` target.
 .decl st_read(n: node, x: symbol)
-st_read(n, x) :- nameref(n, x), !bind_only(n), !rf_deleted(n), docof(n, d), doc_role(d, "primary").
+st_read(n, x) :- nameref(n, x), !bind_only(n), !rf_deleted(n), !guest_of(n, _).
 .decl st_load(p: symbol, s: number, e: number)
 st_load(p, s, e) :- st_read(n, _), node(d_n, n, _, s, e), doc(d_n, p, _).
 .decl st_look(p: symbol, s: number, e: number, ss: number, se: number)
@@ -255,7 +255,7 @@ pub(super) const RELATIONS: [(&str, &str); 8] = [
     ("open", "st_open"),
 ];
 
-/// The stage a rule's stratum belongs to: `names.rr`'s lookup rules, the rest of `names.rr`, `references.rr` before
+/// The stage a rule's stratum belongs to: `names.rerail`'s lookup rules, the rest of `names.rerail`, `references.rerail` before
 /// its "across files" line and after it; the run's generated relations apart.
 fn stage_of(rel: &str, names: &HashSet<String>, local: &HashSet<String>, cross: &HashSet<String>) -> &'static str {
     const LOOKUP: [&str; 6] = ["wstart", "walk", "look", "miss", "in_first_iter", "builtin_ref"];
@@ -288,10 +288,10 @@ pub(super) fn rules_side(dir: &std::path::Path) -> Side {
 
 /// `rules_side` with chunks of `chunk_nodes` nodes: the rows are the same at any size.
 pub(super) fn rules_side_in(dir: &std::path::Path, chunk_nodes: usize) -> Side {
-    let lib = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/lib/python");
-    let names = heads(&std::fs::read_to_string(lib.join("names.rr")).unwrap());
-    let refs = std::fs::read_to_string(lib.join("references.rr")).unwrap();
-    let (before, after) = refs.split_once("// ==== across files").expect("references.rr's across-files line");
+    let lib = rerail_store::source_tree::native().join("../docs/rule-syntax/lib/python");
+    let names = heads(&std::fs::read_to_string(lib.join("names.rerail")).unwrap());
+    let refs = std::fs::read_to_string(lib.join("references.rerail")).unwrap();
+    let (before, after) = refs.split_once("// ==== across files").expect("references.rerail's across-files line");
     let (local, cross) = (heads(before), heads(after));
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("reference-stages-out");
     let _ = std::fs::remove_dir_all(&out);
@@ -392,10 +392,10 @@ fn files_under(root: &std::path::Path) -> Vec<(String, String)> {
             let path = entry.unwrap().path();
             if path.is_dir() {
                 pending.push(path);
-            } else if path.extension().is_some_and(|e| e == "py" || e == "pyi") {
-                if let Ok(source) = std::fs::read_to_string(&path) {
-                    files.push((path.strip_prefix(root).unwrap().to_string_lossy().into_owned(), source));
-                }
+            } else if path.extension().is_some_and(|e| e == "py" || e == "pyi")
+                && let Ok(source) = std::fs::read_to_string(&path)
+            {
+                files.push((path.strip_prefix(root).unwrap().to_string_lossy().into_owned(), source));
             }
         }
     }

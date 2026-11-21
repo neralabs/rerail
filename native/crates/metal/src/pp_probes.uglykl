@@ -1,0 +1,243 @@
+// The evaluator's probes, for its tests and measurements alone: its searches, the relexer, and
+// the grid's sort and barriers by themselves (decision 0468). Each scalar is a field of `args`.
+
+typedef struct PpProbeArgs { uint32_t a, b, c, d; } PpProbeArgs;
+UKL_REFLECT_STRUCT(PpProbeArgs, a, b, c, d)
+
+// Each of `nq[args.b]` queries' lower bound in `sorted` (`ns[args.a]` keys).
+DEFINE_KERNEL2(pp, pb_search,
+               ROBUFFER, uint64_t,    sorted,  "[n]",
+               ROBUFFER, uint32_t,    ns,      "[n]",
+               ROBUFFER, uint64_t,    queries, "[n]",
+               ROBUFFER, uint32_t,    nq,      "[n]",
+               RWBUFFER, uint32_t,    out,     "[n]",
+               ARGS,     PpProbeArgs, args,    ,
+               GID0,     uint32_t,    i,       )
+{
+    if (i < nq[args.b]) out[i] = pb_lower_bound(sorted, ns[args.a], queries[i]);
+}
+
+// Each of `total[0]` output elements' item and its rank in the item (`n[args.a]` items).
+DEFINE_KERNEL2(pp, pb_expand,
+               ROBUFFER, uint32_t,    offsets, "[n]",
+               ROBUFFER, uint32_t,    n,       "[n]",
+               ROBUFFER, uint32_t,    total,   "[n]",
+               RWBUFFER, uint32_t,    item,    "[n]",
+               RWBUFFER, uint32_t,    rank,    "[n]",
+               ARGS,     PpProbeArgs, args,    ,
+               GID0,     uint32_t,    j,       )
+{
+    if (j >= total[0]) return;
+    uint32_t k = pb_item_of(offsets, n[args.a], j);
+    item[j] = k;
+    rank[j] = j - offsets[k];
+}
+
+// Each spelling's answer (`offsets[i]..offsets[i + 1]` of `bytes`): `args.a` spellings, the
+// dialect's options `args.b`.
+DEFINE_KERNEL2(pp, pd_relex_test,
+               ROBUFFER, uint8_t,     bytes,   "[n]",
+               ROBUFFER, uint32_t,    offsets, "[n]",
+               RWBUFFER, uint32_t,    out,     "[n]",
+               ARGS,     PpProbeArgs, args,    ,
+               GID0,     uint32_t,    i,       )
+{
+    if (i >= args.a) return;
+    uint32_t a = offsets[i];
+    out[i] = relex(bytes + a, offsets[i + 1u] - a, args.b);
+}
+
+// Each of `args.a` expressions through the `#if` evaluator (`sy_feed`, `sy_end`): its items
+// `offsets[i]..offsets[i + 1]`, each an operator (`ops`, 0 a value) and a value (`vals`, its flags
+// `flags`). `out[4 i..]`: the value's truth, the value's low word, the stacks' depths, the
+// evaluator's state (bit 0 bad, 1 big, 2 want).
+DEFINE_KERNEL2(pp, pb_if_eval,
+               ROBUFFER, uint32_t,    offsets, "[n]",
+               ROBUFFER, uint32_t,    ops,     "[n]",
+               ROBUFFER, uint64_t,    vals,    "[n]",
+               ROBUFFER, uint32_t,    flags,   "[n]",
+               RWBUFFER, uint32_t,    out,     "[n]",
+               ARGS,     PpProbeArgs, args,    ,
+               GID0,     uint32_t,    i,       )
+{
+    if (i >= args.a) return;
+    IfSy y;
+    y.nv = 0u; y.no = 0u; y.want = true; y.bad = false; y.big = false;
+    for (uint32_t k = offsets[i]; k < offsets[i + 1u]; k++)
+        sy_feed(&y, ops[k], vals[k], flags[k]);
+    bool v = sy_end(&y);
+    out[4u * i] = v ? 1u : 0u;
+    out[4u * i + 1u] = (uint32_t)y.vb[0];
+    out[4u * i + 2u] = y.nv | y.no << 16;
+    out[4u * i + 3u] = (y.bad ? 1u : 0u) | (y.big ? 2u : 0u) | (y.want ? 4u : 0u);
+}
+
+// Each of `args.a` expressions through the `#if` evaluator from its tokens' text, read as
+// `p1_if_eval` reads a number, a character constant and a punctuator: its tokens
+// `offsets[i]..offsets[i + 1]`, token `k` the bytes `starts[k]..starts[k + 1]` of `bytes` (a number
+// where it starts with a digit, else a character constant where it holds a `'`). `out[4 i..]`: the
+// value's truth, its low and high words, and the evaluator's state as `pb_if_eval`'s.
+DEFINE_KERNEL2(pp, pb_if_text,
+               ROBUFFER, uint8_t,     bytes,   "[n]",
+               ROBUFFER, uint32_t,    starts,  "[n]",
+               ROBUFFER, uint32_t,    offsets, "[n]",
+               RWBUFFER, uint32_t,    out,     "[n]",
+               ARGS,     PpProbeArgs, args,    ,
+               GID0,     uint32_t,    i,       )
+{
+    if (i >= args.a) return;
+    IfSy y;
+    y.nv = 0u; y.no = 0u; y.want = true; y.bad = false; y.big = false;
+    uint8_t b[IF_TOKB];
+    for (uint32_t k = offsets[i]; k < offsets[i + 1u] && !y.bad && !y.big; k++) {
+        Span r;
+        r.p = (PP_GLOBAL const uint8_t*)(bytes + starts[k]);
+        r.len = starts[k + 1u] - starts[k];
+        bool quoted = false;
+        for (uint32_t c = 0u; c < r.len; c++) quoted = quoted || r.p[c] == ((uint8_t)('\''));
+        r.kind = r.p[0] >= '0' && r.p[0] <= '9' ? K_NUMBER : quoted ? K_LITERAL : K_PUNCT;
+        if (r.kind == K_NUMBER) {
+            uint32_t n = if_bytes(r, b);
+            if (n > IF_TOKB) { y.big = true; break; }
+            IfVal c = if_number(b, n);
+            if (!c.ok) { y.bad = true; break; }
+            sy_feed(&y, 0u, c.bits, c.f);
+        } else if (r.kind == K_LITERAL) {
+            uint32_t n = if_bytes(r, b);
+            if (n > IF_TOKB) { y.big = true; break; }
+            IfVal c = if_char(b, n);
+            if (!c.ok) { y.bad = true; break; }
+            sy_feed(&y, 0u, c.bits, 0u);
+        } else {
+            sy_feed(&y, eo_punct(r.p, r.len), 0ul, 0u);
+        }
+    }
+    bool v = sy_end(&y);
+    out[4u * i] = v ? 1u : 0u;
+    out[4u * i + 1u] = (uint32_t)y.vb[0];
+    out[4u * i + 2u] = (uint32_t)(y.vb[0] >> 32);
+    out[4u * i + 3u] = (y.bad ? 1u : 0u) | (y.big ? 2u : 0u) | (y.want ? 4u : 0u);
+}
+
+#if UKL_SIMD_WIDTH >= 8
+// For measurements: the grid's sort alone (`ukl_grid_sort_u64_from`), `args.a` keys by their
+// bits `args.c..args.b`.
+DEFINE_KERNEL2(pp, pb_sort_alone,
+               RWBUFFER, uint32_t,    ctl,     "[4]",
+               RWBUFFER, uint64_t,    keys,    "[n]",
+               RWBUFFER, uint32_t,    values,  "[n]",
+               RWBUFFER, uint64_t,    keys2,   "[n]",
+               RWBUFFER, uint32_t,    values2, "[n]",
+               RWBUFFER, uint32_t,    hist,    "[n]",
+               RWBUFFER, uint32_t,    sums,    "[n]",
+               ARGS,     PpProbeArgs, args,    ,
+               SHARED,   uint32_t,    flag,    1,
+               SHARED,   uint32_t,    join,    2,
+               SHARED,   uint32_t,    scratch, UKL_TG_SCRATCH,
+               SHARED,   uint32_t,    big,     UKL_GRID_SORT_WORDS,
+               GSZ0,     uint32_t,    gsz,     ,
+               TGID0,    uint32_t,    group,   ,
+               LID0,     uint32_t,    lid,     ,
+               LSZ0,     uint32_t,    lsz,     )
+{
+    // The grid is the groups that are running (decision 0540 §3): the rest end.
+    UklGrid g;
+    g.ctl = ctl; g.lid = lid; g.lsz = lsz;
+    if (!ukl_grid_join(&g, gsz / lsz, join)) return;
+    (void)group;
+    UklGridSortLocal sl;
+    sl.counts = big; sl.h = big + UKL_RADIX_GROUPS * UKL_RADIX_DIGITS;
+    sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS;
+    sl.digits = sl.base + UKL_RADIX_DIGITS; sl.tile = big;
+    ukl_grid_sort_u64_from(g, args.a, args.c, args.b, true, (UKL_COHERENT uint64_t*)keys, (UKL_COHERENT uint32_t*)values,
+                           (UKL_COHERENT uint64_t*)keys2, (UKL_COHERENT uint32_t*)values2, (UKL_COHERENT uint32_t*)hist,
+                           (UKL_COHERENT uint32_t*)sums, sl, scratch, flag __UKL_ARGS);
+}
+#endif
+
+// For measurements: `args.a` grid barriers, then (`args.b` 1) `args.a` device fences, (2)
+// threadgroup barriers with device scope, (3) dependent coherent loads by thread 0, (4) plain ones.
+DEFINE_KERNEL2(pp, pb_barriers_alone,
+               RWBUFFER, uint32_t,    ctl,     "[4]",
+               RWBUFFER, uint32_t,    data,    "[512]",
+               ARGS,     PpProbeArgs, args,    ,
+               SHARED,   uint32_t,    flag,    1,
+               SHARED,   uint32_t,    join,    2,
+               GSZ0,     uint32_t,    gsz,     ,
+               TGID0,    uint32_t,    group,   ,
+               LID0,     uint32_t,    lid,     ,
+               LSZ0,     uint32_t,    lsz,     )
+{
+    // The grid is the groups that are running (decision 0540 §3): the rest end.
+    UklGrid g;
+    g.ctl = ctl; g.lid = lid; g.lsz = lsz;
+    if (!ukl_grid_join(&g, gsz / lsz, join)) return;
+    (void)group;
+    uint32_t n = args.a, what = args.b;
+    if (what == 0u) { for (uint32_t k = 0u; k < n; k++) if (!ukl_grid_barrier(g, flag)) return; }
+    if (what == 1u) { for (uint32_t k = 0u; k < n; k++) { ukl_fence_device(); data[lid] += k; } }
+    if (what == 2u) { for (uint32_t k = 0u; k < n; k++) { ukl_tg_barrier_device(); data[lid] += k; } }
+    if (what == 3u && lid == 0u) {
+        UKL_COHERENT uint32_t* c = (UKL_COHERENT uint32_t*)data;
+        uint32_t at = 0u;
+        for (uint32_t k = 0u; k < n; k++) at = c[at & 255u] + k;
+        data[256] = at;
+    }
+    if (what == 4u && lid == 0u) {
+        uint32_t at = 0u;
+        for (uint32_t k = 0u; k < n; k++) at = data[at & 255u] + k;
+        data[256] = at;
+    }
+}
+
+// The pool (`<ukl/pool.h>`) over a grid, `args.c` rounds: round 0 gives each of `args.a` ranges
+// (`ranges`: start, count), then each thread takes `args.b` blocks of the classes `classes` names
+// (its thread's `args.b` in a row), into `out` (a block's start, `UKL_POOL_NONE` none); each
+// later round gives back the blocks the round before took, then takes again. A take that finds
+// none tries again while its class is not empty, a bounded number of times. `args.d` 1: split
+// takes (`ukl_pool_take_split`), tried again while any class at least the take's is not empty.
+DEFINE_KERNEL2(pp, pb_pool,
+               RWBUFFER, uint32_t,    ctl,     "[4]",
+               ROBUFFER, uint32_t,    ranges,  "[n]",
+               ROBUFFER, uint32_t,    classes, "[n]",
+               RWBUFFER, uint32_t,    heads,   "[n]",
+               RWBUFFER, uint32_t,    next,    "[n]",
+               RWBUFFER, uint32_t,    out,     "[n]",
+               ARGS,     PpProbeArgs, args,    ,
+               SHARED,   uint32_t,    flag,    1,
+               SHARED,   uint32_t,    join,    2,
+               GSZ0,     uint32_t,    gsz,     ,
+               TGID0,    uint32_t,    group,   ,
+               LID0,     uint32_t,    lid,     ,
+               LSZ0,     uint32_t,    lsz,     )
+{
+    // The grid is the groups that are running (decision 0540 §3): the rest end.
+    UklGrid g;
+    g.ctl = ctl; g.lid = lid; g.lsz = lsz;
+    if (!ukl_grid_join(&g, gsz / lsz, join)) return;
+    (void)group;
+    UklPool p; p.heads = heads; p.next = next;
+    // Every thread of the dispatch is a taker (`out`'s), the grid's threads taking them in turn.
+    uint32_t first = g.group * lsz + lid, step = g.groups * lsz;
+    for (uint32_t c = first; c < UKL_POOL_CLASSES; c += step) ukl_pool_clear(p, c);
+    if (!ukl_grid_barrier(g, flag)) return;
+    for (uint32_t r = 0u; r < args.c; r++) {
+        if (r == 0u) { for (uint32_t i = first; i < args.a; i += step) ukl_pool_give_range(p, ranges[2u * i], ranges[2u * i + 1u]); }
+        else for (uint32_t t = first; t < gsz; t += step) for (uint32_t k = 0u; k < args.b; k++) {
+            uint32_t at = out[t * args.b + k];
+            if (at != UKL_POOL_NONE) ukl_pool_give(p, at, classes[t * args.b + k]);
+        }
+        if (!ukl_grid_barrier(g, flag)) return;
+        for (uint32_t t = first; t < gsz; t += step) for (uint32_t k = 0u; k < args.b; k++) {
+            uint32_t c = classes[t * args.b + k], at = UKL_POOL_NONE;
+            for (uint32_t turn = 0u; turn < 1000u && at == UKL_POOL_NONE; turn++) {
+                at = args.d != 0u ? ukl_pool_take_split(p, c) : ukl_pool_take(p, c);
+                bool any = false;
+                for (uint32_t k = c + 1u; args.d != 0u && k < UKL_POOL_CLASSES; k++) any = any || ukl_atomic_poll(&heads[k]) != UKL_POOL_NONE;
+                if (at == UKL_POOL_NONE && ukl_atomic_poll(&heads[c]) == UKL_POOL_NONE && !any) break;
+            }
+            out[t * args.b + k] = at;
+        }
+        if (!ukl_grid_barrier(g, flag)) return;
+    }
+}

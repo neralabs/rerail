@@ -587,7 +587,7 @@
         let ms = |duration: Duration| duration.as_secs_f64() * 1000.0;
         let report = json!({
             "benchmark": "rerail-fixed-word-transducer-v1",
-            "corpus": fs::canonicalize(&root).unwrap(),
+            "corpus": dunce::canonicalize(&root).unwrap(),
             "files": paths.len(), "sourceBytes": source_bytes, "patterns": names,
             "matches": expected.len(), "orderedRangeSha256": digest,
             "iterations": iterations,
@@ -605,17 +605,17 @@
     }
 
     #[test]
-    #[ignore = "full ast-index-spike tree-sitter query oracle benchmark"]
+    #[ignore = "full SQL index prototype tree-sitter query oracle benchmark"]
     fn benchmark_tree_sitter_query_oracle() {
         use tree_sitter::StreamingIterator;
 
         let query_root = PathBuf::from(
             std::env::var("RERAIL_QUERY_CORPUS")
-                .expect("RERAIL_QUERY_CORPUS must name ast-index-spike bench/corpus/queries"),
+                .expect("RERAIL_QUERY_CORPUS must name the SQL index prototype bench/corpus/queries"),
         );
         let source_root = PathBuf::from(
             std::env::var("RERAIL_SOURCE_CORPUS")
-                .expect("RERAIL_SOURCE_CORPUS must name ast-index-spike bench/corpus/repos"),
+                .expect("RERAIL_SOURCE_CORPUS must name the SQL index prototype bench/corpus/repos"),
         );
         let languages: &[(&str, GrammarDialect, &[&str])] = &[
             ("python", GrammarDialect::Python, &["py"]),
@@ -772,11 +772,11 @@
     }
 
     #[test]
-    #[ignore = "full ast-index-spike tree-sitter query corpus audit"]
+    #[ignore = "full SQL index prototype tree-sitter query corpus audit"]
     fn audit_tree_sitter_query_corpus() {
         let query_root = PathBuf::from(
             std::env::var("RERAIL_QUERY_CORPUS")
-                .expect("RERAIL_QUERY_CORPUS must name ast-index-spike bench/corpus/queries"),
+                .expect("RERAIL_QUERY_CORPUS must name the SQL index prototype bench/corpus/queries"),
         );
         let languages = [
             ("python", GrammarDialect::Python),

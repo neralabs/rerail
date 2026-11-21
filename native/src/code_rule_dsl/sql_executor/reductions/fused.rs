@@ -134,13 +134,12 @@ fn append_using(
                 );
                 proof.proven.then_some((atom.at, delta.inserted, proof))
             }).min_by_key(|(at, rows, _)| (*rows, *at));
-            if let Some((at, _, proof)) = &covering {
-                if w.profiler.is_some() {
+            if let Some((at, _, proof)) = &covering
+                && w.profiler.is_some() {
                     phase.analyses.push(json!({"operation":"positive context insertion coverage",
                         "rule":rule.step,"anchor":at,"decision":proof,
                         "scope":"Insertion branches only; deletions and scalar invalidations remain"}));
                 }
-            }
             for atom in &rule.atoms {
                 let Some(delta) = changes.get(&atom.relation) else {
                     continue;

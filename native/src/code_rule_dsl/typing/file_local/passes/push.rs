@@ -77,8 +77,17 @@ fn descends(v: &Version, rule: RuleRef<'_>, atoms: &[AtomRef<'_>]) -> bool {
     })
 }
 
-/// `push_with`'s `independent_node_groups`.
-fn independent_node_groups(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'_>], equal: &[(String, String)]) -> usize {
+/// The variables of `atom` in its node columns (`node`, `loc`, `span`): what puts it in a node group.
+fn node_vars(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atom: AtomRef<'_>) -> BTreeSet<String> {
+    let Some(columns) = f.columns(v.rel_name(atom.rel())) else { return BTreeSet::new() };
+    atom.args()
+        .zip(&columns)
+        .filter_map(|(term, (_, ty))| if matches!(*ty, "node" | "loc" | "span") && let TermRef::Var(s) = term { Some(name(v, rule, s)) } else { None })
+        .collect()
+}
+
+/// `push_with`'s `independent_node_groups`, each group's variables.
+fn node_groups(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms: &[AtomRef<'_>], equal: &[(String, String)]) -> Vec<BTreeSet<String>> {
     let documents: BTreeSet<String> = atoms
         .iter()
         .filter_map(|a| {
@@ -92,12 +101,10 @@ fn independent_node_groups(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms:
         .collect();
     let mut groups: Vec<BTreeSet<String>> = Vec::new();
     for (ai, atom) in atoms.iter().enumerate() {
-        let Some(columns) = f.columns(v.rel_name(atom.rel())) else { continue };
-        let mut nodes: BTreeSet<String> = atom
-            .args()
-            .zip(&columns)
-            .filter_map(|(term, (_, ty))| if matches!(*ty, "node" | "loc" | "span") && let TermRef::Var(s) = term { Some(name(v, rule, s)) } else { None })
-            .collect();
+        if f.columns(v.rel_name(atom.rel())).is_none() {
+            continue;
+        }
+        let mut nodes = node_vars(v, f, rule, *atom);
         if nodes.is_empty() {
             let own: BTreeSet<String> = atom.args().filter_map(|t| t.var()).map(|s| name(v, rule, s)).filter(|x| !documents.contains(x)).collect();
             let met = atoms.iter().enumerate().any(|(bi, b)| bi != ai && b.args().any(|t| matches!(t, TermRef::Var(s) if own.contains(&name(v, rule, s)))));
@@ -119,7 +126,49 @@ fn independent_node_groups(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, atoms:
         separate.push(connected);
         groups = separate;
     }
-    groups.len()
+    groups
+}
+
+/// `comp` (its literals, of `body`, and their variables), one component of each of its independent node groups
+/// (`node_groups`): two files' nodes joined by a value (`text(a, t), text(b, t)`, a cross-file join by a string) are
+/// each a file's, joined in the cross part by that value, their interface. An atom of node columns goes with its
+/// group; one of none (a text test of `t`) with every group that binds all its variables, a filter of each; one that
+/// joins two groups by values alone stays in the rule. A component of one group is itself.
+fn by_node_group(v: &Version, f: Fields<'_>, rule: RuleRef<'_>, body: &[LitRef<'_>], comp: (BTreeSet<usize>, BTreeSet<String>), equal: &[(String, String)]) -> Vec<(BTreeSet<usize>, BTreeSet<String>)> {
+    let atoms: Vec<(usize, AtomRef<'_>)> = comp.0.iter().filter_map(|&j| body[j].atom().map(|a| (j, a))).collect();
+    let groups = node_groups(v, f, rule, &atoms.iter().map(|(_, a)| *a).collect::<Vec<_>>(), equal);
+    if groups.len() < 2 {
+        return vec![comp];
+    }
+    // A part's variables are its literals' own, not closed under the rule's equalities: an equality across two
+    // groups (`dr = ds`, two digests' test) is no part's, and stays in the rule to join them.
+    let vars_of = |j: usize| lit_vars(v, rule, body[j]);
+    let mut parts: Vec<(BTreeSet<usize>, BTreeSet<String>)> = groups.into_iter().map(|g| (BTreeSet::new(), g)).collect();
+    let mut rest = Vec::new();
+    for &(j, a) in &atoms {
+        let mut nodes = node_vars(v, f, rule, a);
+        close_under(&mut nodes, equal);
+        match parts.iter_mut().find(|(_, g)| !nodes.is_empty() && !g.is_disjoint(&nodes)) {
+            Some(part) => {
+                part.0.insert(j);
+                part.1.extend(vars_of(j));
+            }
+            None => rest.push(j),
+        }
+    }
+    for j in rest {
+        let x = vars_of(j);
+        for part in parts.iter_mut().filter(|(_, vars)| x.is_subset(vars)) {
+            part.0.insert(j);
+        }
+    }
+    // A group that narrows no node (a node's attributes alone, `docof(a, d), visit_index(a, ai)`) or enumerates
+    // subtrees would be a row of each: it stays in the rule, as the component did whole.
+    parts.retain(|(lits, _)| {
+        let atoms: Vec<AtomRef<'_>> = lits.iter().filter_map(|&j| body[j].atom()).collect();
+        !atoms.is_empty() && !unrestricted(v, f, rule, &atoms) && !descends(v, rule, &atoms)
+    });
+    parts
 }
 
 /// A round of `push_with` that made helpers: its program, the helpers by rule, and the program's split.
@@ -184,6 +233,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 comps = rest;
                 comps.push(all);
             }
+            let comps: Vec<(BTreeSet<usize>, BTreeSet<String>)> = comps.into_iter().flat_map(|c| by_node_group(v, f, rule, &body, c, &equal)).collect();
             let mut taken: BTreeSet<usize> = BTreeSet::new();
             let mut replaced: Vec<(usize, BodyItem<'v>)> = Vec::new();
             for (mut lits, mut vars) in comps {
@@ -199,7 +249,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 if !must && !atoms.iter().any(|a| base(rel(a))) && atoms.len() < 2 {
                     continue;
                 }
-                if independent_node_groups(v, f, rule, &atoms, &equal) > 1 {
+                if node_groups(v, f, rule, &atoms, &equal).len() > 1 {
                     continue;
                 }
                 let attribute = |a: &AtomRef<'_>| ATTRIBUTES.contains(&rel(a)) && plain(v, rule, *a);
@@ -296,13 +346,22 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 let Some(typed) = typed else { continue };
                 let content = format!("{head_rel}({}) :- {}", iface.join(", "), lits.iter().map(|&j| v.show_lit(rule, body[j])).collect::<Vec<_>>().join(", "));
                 let helper = super::super::helper_name("fl", head_rel, &content, |n| decl_names.contains(n), &mut used);
-                decls.retain(|(r, _)| *r != helper);
-                decls.push((helper.clone(), typed));
                 let args: Vec<NOwned<'v>> = iface.iter().map(|x| NOwned::V(x.clone())).collect();
-                helpers.push(Made { src: rule, head: Some((helper.clone(), args.clone())), body: lits.iter().map(|&j| BodyItem::Orig(body[j])).collect(), kept: false });
-                replaced.push((*lits.iter().next().expect("a literal"), BodyItem::New(helper.clone(), args)));
+                // A helper of the same content (two files' parts of one join, `by_node_group`) is the one made: read
+                // again, not made again.
+                if !helpers.iter().any(|h| h.head.as_ref().is_some_and(|(name, _)| *name == helper)) {
+                    decls.retain(|(r, _)| *r != helper);
+                    decls.push((helper.clone(), typed));
+                    helpers.push(Made { src: rule, head: Some((helper.clone(), args.clone())), body: lits.iter().map(|&j| BodyItem::Orig(body[j])).collect(), kept: false });
+                }
+                // Where the helper's read goes: its first literal no other helper's read took (a filter copied into
+                // several components is the first literal of more than one).
+                let at = lits.iter().copied().find(|j| !replaced.iter().any(|(at, _)| at == j)).expect("a literal no other helper's read took");
+                replaced.push((at, BodyItem::New(helper.clone(), args)));
                 taken.extend(lits);
-                made.push((i, helper));
+                if !made.iter().any(|(_, n)| *n == helper) {
+                    made.push((i, helper));
+                }
             }
             if taken.is_empty() {
                 keep(&mut program);
@@ -322,7 +381,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
             return Ok(None);
         }
         program.extend(helpers);
-        let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new() };
+        let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new(), nullary: Vec::new() };
         let (candidate, split) = super::candidate(v, &round)?;
         let now = split.local.clone();
         let failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();
@@ -335,9 +394,12 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
     }
 }
 
-/// Whether a rule outside the chunks (`local`) reads a base relation.
-fn cross_reads_base(v: &Version, inputs: &BTreeSet<&str>, local: &BTreeSet<String>) -> bool {
-    v.rules().filter(|r| !local.contains(v.rel_name(r.head().rel()))).any(|r| r.body().any(|l| l.atom().is_some_and(|a| inputs.contains(v.rel_name(a.rel())))))
+/// The rules outside the chunks (`local`) that read a base relation, each with the relation.
+fn cross_reads_base(v: &Version, inputs: &BTreeSet<&str>, local: &BTreeSet<String>) -> Vec<(String, String)> {
+    v.rules()
+        .filter(|r| !local.contains(v.rel_name(r.head().rel())))
+        .filter_map(|r| r.body().find_map(|l| l.atom().map(|a| v.rel_name(a.rel())).filter(|rel| inputs.contains(rel))).map(|rel| (v.show_rule(r), rel.to_owned())))
+        .collect()
 }
 
 impl ProgramPass for PushLocalJoins {
@@ -353,6 +415,13 @@ impl ProgramPass for PushLocalJoins {
             Some(p) => cross_reads_base(&p.candidate, &inputs, &p.local),
             None => cross_reads_base(v, &inputs, &split.local),
         };
+        if !reads_base.is_empty() {
+            crate::code_rule_dsl::logic::profile::decision("file-local joins pushed into the chunks", || {
+                let first: Vec<String> = reads_base.iter().take(4).map(|(rule, rel)| format!("{rule} reads {rel}")).collect();
+                format!("the cross-file part reads base relations after the first push, {} rules ({}): a finding's location lookups are read there, not pushed", reads_base.len(), first.join("; "))
+            });
+        }
+        let reads_base = !reads_base.is_empty();
         self.reads_base = reads_base;
         // A part pushes in the run's mode (decision 0345 stage 2): every part's reads together decide it.
         use crate::code_rule_dsl::logic::plan::fields::{PART_WHOLE, PUSH_BASE, PUSH_DECIDED};

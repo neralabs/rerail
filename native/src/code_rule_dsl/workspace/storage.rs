@@ -7,14 +7,14 @@ use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::tape;
 use crate::content_store::{
-    CapacityState, ContentStore, OperationDeadline, SnapshotId, StoreError,
-    StoreResult, WorkspaceId, WorkspaceRegistration,
+    CapacityState, ContentStore, OperationDeadline, SnapshotId, StoreError, StoreResult,
+    WorkspaceId, WorkspaceRegistration,
 };
 use crate::git_workspace;
 use napi::Result;
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{Arc, Arc as StdArc, LazyLock, Mutex};
+use std::sync::{Arc, Arc as StdArc, Mutex};
 use std::time::{Duration, Instant};
 
 pub struct StoreRegistryEntry {
@@ -22,13 +22,17 @@ pub struct StoreRegistryEntry {
     maintenance: std::sync::Weak<StorageMaintenance>,
 }
 
-pub static CONTENT_STORES: LazyLock<Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>> =
-    LazyLock::new(|| Mutex::new(HashMap::new()));
+/// The shared object's content stores, by path (decision 0442): another object's workspaces on a store open their
+/// own, as another process's would.
+#[derive(Default)]
+pub struct ContentStores(pub Mutex<HashMap<std::path::PathBuf, StoreRegistryEntry>>);
 
 pub fn shared_content_store(
     path: std::path::PathBuf,
 ) -> StoreResult<(StdArc<ContentStore>, StdArc<StorageMaintenance>)> {
-    let mut stores = CONTENT_STORES
+    let held = crate::code_rule_dsl::logic::profile::shared::<ContentStores>();
+    let mut stores = held
+        .0
         .lock()
         .map_err(|_| StoreError::Invalid("content store registry mutex poisoned".to_owned()))?;
     if let Some(store) = stores.get(&path).and_then(|entry| entry.store.upgrade()) {
@@ -75,38 +79,41 @@ impl StorageMaintenance {
         use rerail_accel::upkeep::register;
         let jobs = vec![
             register(Box::new(Collect::new(&store))),
-            register(Box::new(crate::content_store::upkeep::Frames::new(store.database_path()))),
+            register(Box::new(crate::content_store::upkeep::MemoSweep::new(store.database_path()))),
             register(Box::new(SearchIndex::new(&store))),
-            register(Box::new(SqliteFile::new(store.database_path(), Tables::All))),
+            register(Box::new(SqliteFile::new(
+                store.database_path(),
+                Tables::All,
+            ))),
         ];
         rerail_accel::upkeep::start();
         let thread_stop = StdArc::clone(&stop);
         let thread_workspaces = StdArc::clone(&workspaces);
         let thread = rerail_accel::exec::service("rerail-store-maintenance", None, move || {
-                loop {
-                    std::thread::park_timeout(Duration::from_secs(30));
-                    if thread_stop.load(Ordering::Acquire) {
-                        break;
-                    }
-                    let active = thread_workspaces
-                        .lock()
-                        .map(|workspaces| {
-                            workspaces
-                                .iter()
-                                .map(|(workspace_id, (owner, _))| (*workspace_id, owner.clone()))
-                                .collect::<Vec<_>>()
-                        })
-                        .unwrap_or_default();
-                    if let Ok(now) = unix_seconds() {
-                        let leases = active
-                            .iter()
-                            .map(|(workspace_id, owner)| (*workspace_id, owner.as_str()))
-                            .collect::<Vec<_>>();
-                        let _ = store.renew_workspace_leases(&leases, now + 120);
-                    }
+            loop {
+                std::thread::park_timeout(Duration::from_secs(30));
+                if thread_stop.load(Ordering::Acquire) {
+                    break;
                 }
-            })
-            .expect("start content-store maintenance thread");
+                let active = thread_workspaces
+                    .lock()
+                    .map(|workspaces| {
+                        workspaces
+                            .iter()
+                            .map(|(workspace_id, (owner, _))| (*workspace_id, owner.clone()))
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                if let Ok(now) = unix_seconds() {
+                    let leases = active
+                        .iter()
+                        .map(|(workspace_id, owner)| (*workspace_id, owner.as_str()))
+                        .collect::<Vec<_>>();
+                    let _ = store.renew_workspace_leases(&leases, now + 120);
+                }
+            }
+        })
+        .expect("start content-store maintenance thread");
         Self {
             stop,
             workspaces,
@@ -148,8 +155,16 @@ pub struct SearchIndex {
 
 impl SearchIndex {
     pub fn new(store: &StdArc<ContentStore>) -> Self {
-        let name = store.database_path().file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-        SearchIndex { store: StdArc::downgrade(store), name: format!("search-index {name}"), cursor: None, stop: AtomicBool::new(false) }
+        let name = store
+            .database_path()
+            .file_name()
+            .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        SearchIndex {
+            store: StdArc::downgrade(store),
+            name: format!("search-index {name}"),
+            cursor: None,
+            stop: AtomicBool::new(false),
+        }
     }
 }
 
@@ -159,28 +174,50 @@ impl rerail_accel::upkeep::Job for SearchIndex {
     }
 
     fn file(&self) -> Option<std::path::PathBuf> {
-        self.store.upgrade().map(|s| s.database_path().to_path_buf())
+        self.store
+            .upgrade()
+            .map(|s| s.database_path().to_path_buf())
     }
 
     fn due(&mut self) -> rerail_accel::upkeep::Due {
         // Upkeep is behind the run: its SQL is on its own connections, never a wave's (decision 0104).
         crate::code_rule_dsl::logic::profile::behind_the_run();
         use rerail_accel::upkeep::Due;
-        let Some(store) = self.store.upgrade() else { return Due::No };
+        let Some(store) = self.store.upgrade() else {
+            return Due::No;
+        };
         // From the start: a backlog below the cursor is the backlog too.
-        match store.tapes_without_search_index_after(grammar_version(), i64::from(tape::formats::stored_version()), None, 1) {
-            Ok(b) if !b.is_empty() => Due::Idle { starve: Duration::from_secs(60) },
+        match store.tapes_without_search_index_after(
+            grammar_version(),
+            i64::from(tape::formats::stored_version()),
+            None,
+            1,
+        ) {
+            Ok(b) if !b.is_empty() => Due::Idle {
+                starve: Duration::from_secs(60),
+            },
             _ => Due::No,
         }
     }
 
-    fn step(&mut self, slice: &rerail_accel::upkeep::Slice) -> std::result::Result<rerail_accel::upkeep::Step, String> {
+    fn step(
+        &mut self,
+        slice: &rerail_accel::upkeep::Slice,
+    ) -> std::result::Result<rerail_accel::upkeep::Step, String> {
         crate::code_rule_dsl::logic::profile::behind_the_run();
         use rerail_accel::upkeep::Step;
-        let Some(store) = self.store.upgrade() else { return Ok(Step::Done) };
+        let Some(store) = self.store.upgrade() else {
+            return Ok(Step::Done);
+        };
         // A run that begins stops it between batches, the backlog still due (`Slice::over`).
-        index_stored_tapes_until(&store, &self.stop, &mut self.cursor, slice.until, &|| slice.over());
-        Ok(if self.cursor.is_none() { Step::Done } else { Step::More })
+        index_stored_tapes_until(&store, &self.stop, &mut self.cursor, slice.until, &|| {
+            slice.over()
+        });
+        Ok(if self.cursor.is_none() {
+            Step::Done
+        } else {
+            Step::More
+        })
     }
 }
 
@@ -196,7 +233,13 @@ pub fn index_stored_tapes(
     stop: &AtomicBool,
     cursor: &mut Option<crate::content_store::TapeId>,
 ) {
-    index_stored_tapes_until(store, stop, cursor, Instant::now() + Duration::from_secs(1), &|| false);
+    index_stored_tapes_until(
+        store,
+        stop,
+        cursor,
+        Instant::now() + Duration::from_secs(1),
+        &|| false,
+    );
 }
 
 /// [`index_stored_tapes`] until `until`.
@@ -278,7 +321,7 @@ fn decode_stored_tape(
             loaded
         }
     };
-    let source = String::from_utf8(unindexed.source).ok()?;
+    let source = std::str::from_utf8(&unindexed.source).ok()?.to_owned();
     let image = tape::TapeImage::from_bytes(&unindexed.image, &grammar).ok()?;
     let lines = Arc::new(LineTable::new(&source, Terminators::of(language)));
     let image = tape::FileImage::single(image, &source);
@@ -305,11 +348,15 @@ impl Drop for StorageMaintenance {
 pub struct StorageRegistration {
     maintenance: StdArc<StorageMaintenance>,
     workspace_id: WorkspaceId,
+    transient_store: Option<StdArc<ContentStore>>,
 }
 
 impl Drop for StorageRegistration {
     fn drop(&mut self) {
         self.maintenance.unregister(self.workspace_id);
+        if let Some(store) = &self.transient_store {
+            let _ = store.retire_workspace(self.workspace_id);
+        }
     }
 }
 
@@ -343,37 +390,33 @@ pub(super) fn unix_seconds() -> Result<i64> {
 /// A workspace's storage context over an explicit store file, discovering its Git worktree, with
 /// no secret-like names.
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn storage_context_in(
-    root: &str,
-    store_path: std::path::PathBuf,
-) -> Result<StorageContext> {
+pub fn storage_context_in(root: &str, store_path: std::path::PathBuf) -> Result<StorageContext> {
     let discovered = git_workspace::discover(std::path::Path::new(root))
         .map_err(|error| invalid(error.to_string()))?;
-    match attach_storage(root, discovered, store_path, StdArc::default())? {
+    match attach_storage(root, discovered, store_path, StdArc::default(), false)? {
         Attached::Storage(context) => Ok(context),
-        Attached::Busy(reason) => Err(invalid(reason)),
+        Attached::Unavailable(reason) => Err(invalid(reason)),
     }
 }
 
 /// What a storage attach produced.
 pub(super) enum Attached {
     Storage(StorageContext),
-    /// Another writer held the store past the write deadline, so the workspace runs without
-    /// reuse: the store is a cache, and waiting on it costs time, never results. Says why.
-    Busy(String),
+    /// The store could not open or persist this workspace.
+    Unavailable(String),
 }
 
 /// The storage context of the workspace at `root` in the `discovered` Git worktree, over an
-/// explicit store file, never holding files `secret_names` names; `Attached::Busy` when the store
-/// stays busy.
+/// explicit store file, never holding files `secret_names` names.
 pub(super) fn attach_storage(
     root: &str,
     discovered: git_workspace::GitWorkspace,
     store_path: std::path::PathBuf,
     secret_names: StdArc<SecretNames>,
+    transient: bool,
 ) -> Result<Attached> {
     let busy = |during: &str| {
-        Attached::Busy(format!(
+        Attached::Unavailable(format!(
             "content store busy: another writer held it past the write deadline {during}"
         ))
     };
@@ -381,23 +424,39 @@ pub(super) fn attach_storage(
     // publication share it (`publish_snapshot` joins it).
     let _deadline = OperationDeadline::enter();
     let repository_prefix = repository_prefix(root, &discovered.worktree_root)?;
-    let (store, maintenance) = match shared_content_store(store_path) {
-        Ok(shared) => shared,
-        Err(StoreError::Busy) => return Ok(busy("while opening the store")),
-        Err(error) => return Err(invalid(error.to_string())),
+    let (store, maintenance) = if store_path == std::path::Path::new(":memory:") {
+        let store = match ContentStore::open_ephemeral() {
+            Ok(store) => store,
+            Err(error) => return Ok(Attached::Unavailable(error.to_string())),
+        };
+        (StdArc::new(store), None)
+    } else {
+        match shared_content_store(store_path) {
+            Ok((store, maintenance)) => (store, Some(maintenance)),
+            Err(StoreError::Busy) => return Ok(busy("while opening the store")),
+            Err(error) => return Ok(Attached::Unavailable(error.to_string())),
+        }
     };
-    let owner = format!(
+    let mut owner = format!(
         "rerail:{}:{}",
         std::process::id(),
         discovered.worktree_root.to_string_lossy()
     );
+    let registered = if transient {
+        static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        let invocation = format!("{}-{}", std::process::id(), NEXT.fetch_add(1, Ordering::Relaxed));
+        owner.push_str(&invocation);
+        discovered.worktree_root.join("rerail-invocations").join(invocation)
+    } else {
+        discovered.worktree_root.clone()
+    };
     let published = discovered.publish_snapshot(
         &store,
         1,
         grammar_set(),
         i64::from(tape::formats::stored_version()),
         &WorkspaceRegistration {
-            root: discovered.worktree_root.to_string_lossy().as_ref(),
+            root: registered.to_string_lossy().as_ref(),
             repository: discovered.common_directory.to_string_lossy().as_ref(),
             owner: &owner,
             generation: 1,
@@ -408,15 +467,18 @@ pub(super) fn attach_storage(
         Ok(published) => published,
         Err(StoreError::Busy) => return Ok(busy("while publishing the Git snapshot")),
         Err(error) => {
-            return Err(invalid(format!(
+            return Ok(Attached::Unavailable(format!(
                 "snapshot publication failed: cannot persist Git snapshot: {error}"
             )));
         }
     };
-    maintenance.register(workspace_id, &owner);
-    let registration = StdArc::new(StorageRegistration {
-        maintenance,
-        workspace_id,
+    let registration = maintenance.map(|maintenance| {
+        maintenance.register(workspace_id, &owner);
+        StdArc::new(StorageRegistration {
+            maintenance,
+            workspace_id,
+            transient_store: transient.then(|| StdArc::clone(&store)),
+        })
     });
     Ok(Attached::Storage(StorageContext {
         store,
@@ -426,14 +488,13 @@ pub(super) fn attach_storage(
         snapshot_id: snapshot,
         owner,
         secret_names,
-        _maintenance: Some(registration),
+        _maintenance: registration,
     }))
 }
 
 /// `root` relative to `worktree` as a path prefix: `""` at the worktree root, else `dir/`.
 fn repository_prefix(root: &str, worktree: &std::path::Path) -> Result<String> {
-    let root = std::path::Path::new(root)
-        .canonicalize()
+    let root = git_workspace::snapshot::canonicalize(root)
         .map_err(|error| invalid(format!("cannot resolve workspace root: {error}")))?;
     let relative = root
         .strip_prefix(worktree)

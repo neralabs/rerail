@@ -18,8 +18,8 @@ on:
   # executed: the reviewer checks the PR out as data and never runs it. Fork PRs never get the model key or
   # the app key, on any trigger: the `same-repo` job below holds neither key and calls the reviewer only when the
   # PR's head repo is this repo. An issue comment's event carries no head repo, so the job asks the API, the same
-  # way for every trigger. (The called workflow's own `gate` job checks review requests and finding-thread replies,
-  # but not a top-level comment command, which would otherwise review a fork PR with both keys.)
+  # way for every trigger. (The called workflow's own `gate` job checks the head repo for review requests and review
+  # comments, but not for a top-level comment command, which would otherwise review a fork PR with both keys.)
   pull_request_target:
     types: [review_requested]
   issue_comment:
@@ -50,9 +50,28 @@ jobs:
     # A comment on an issue that is not a pull request has nothing to review. A CI run counts only when it passed on a
     # pull request in this repo (a fork's run lists no pull request); pushes to main and the CI re-runs that
     # dependabot-automerge.yml dispatches are not pull_request events.
+    # The rest is the called workflow's own `gate` prefilter, repeated here so an event the reviewer would drop never
+    # starts this job's runner: a review request counts only for the reviewer team and only from a person, and a
+    # comment (a reply on a finding thread too) only from a person and only when it names the bot or the team. So the
+    # bot's own findings and replies, which are comments too, never start a run. Keep it in step with `gate` at the
+    # pinned commit and with `handle` below.
     if: >-
       ${{
         (github.event_name != 'issue_comment' || github.event.issue.pull_request) &&
+        (
+          github.event_name != 'pull_request_target' ||
+          (github.event.requested_team.slug == 'reviewer' && github.event.sender.type != 'Bot')
+        ) &&
+        (
+          (github.event_name != 'issue_comment' && github.event_name != 'pull_request_review_comment') ||
+          (
+            github.event.comment.user.type != 'Bot' &&
+            (
+              contains(github.event.comment.body, '@neralabs-reviewer') ||
+              contains(github.event.comment.body, '@neralabs/reviewer')
+            )
+          )
+        ) &&
         (
           github.event_name != 'workflow_run' ||
           (
@@ -89,13 +108,13 @@ jobs:
   reviewer:
     needs: same-repo
     if: needs.same-repo.outputs.same_repo == 'true'
-    # Pinned to a release commit. `reviewer_ref` is where the called workflow loads the reviewer's own code
-    # from, so it is the same commit: Dependabot moves `uses:` alone, and `npm run check:pins` fails until
-    # `npm run deps:sync` brings `reviewer_ref` along (scripts/deps/sync-pins.mjs).
-    uses: neralabs/reviewer/.github/workflows/review.yml@fefb172ecf6f3a44f43aec97d34fb35b5295dd09 # v0.1.2
+    # `reviewer_ref` is where the called workflow loads the reviewer's own code from, so it is the same commit:
+    # Dependabot moves `uses:` alone, and `npm run check:pins` fails until `npm run deps:sync` brings `reviewer_ref`
+    # along (scripts/deps/sync-pins.mjs).
+    uses: neralabs/reviewer/.github/workflows/review.yml@6b393dd3c809fd695a034d96067c471b17dca79f # v0.1.3
     with:
       app_client_id: ${{ vars.REVIEWER_APP_CLIENT_ID }}
-      reviewer_ref: fefb172ecf6f3a44f43aec97d34fb35b5295dd09
+      reviewer_ref: 6b393dd3c809fd695a034d96067c471b17dca79f
       allow_approve: true
       handle: "@neralabs-reviewer"
       bot_login: neralabs-reviewer[bot]
@@ -111,9 +130,10 @@ jobs:
       # recommends which new violations to post; a new violation of a steer rule can be a blocker that names its
       # rule. The review itself never sees the scan. Rerail is the published npm release; the scan result is sent
       # to the Rerail remote (send_results), in a job that holds only the remote's URL and token. To turn it off,
-      # remove these five inputs and the two RESULTS_SINK secrets.
+      # remove these five inputs and the two RESULTS_SINK secrets. The two pack inputs stay until the Rerail here
+      # reads .rerail/packs.json (neralabs/rerail#736, after 0.1.5): left empty before that, only .rerail/rules/ runs.
       modules: rerail
-      rerail_package: "@neralabs/rerail@0.1.1"
+      rerail_package: "@neralabs/rerail@0.1.5"
       rerail_packs: complexity
       rerail_repo_packs: packs/rerail
       send_results: true

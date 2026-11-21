@@ -38,10 +38,105 @@ impl Summary {
         })
     }
 }
+/// A bag's summaries by group key, in a block (decision 0478 step 6d): open addressing, each slot `1 + width + 6`
+/// words: used (0 for none), the key's values, then the summary (count, sum's low and high words, min, max, which of
+/// min and max it has). It doubles past half full.
+#[derive(Default)]
+struct Groups {
+    width: usize,
+    words: super::rows::BlockVec<i64>,
+    len: usize,
+}
+impl Groups {
+    const SUMMARY: usize = 6;
+    fn stride(&self) -> usize {
+        1 + self.width + Self::SUMMARY
+    }
+    fn slots(&self) -> usize {
+        self.words.len() / self.stride().max(1)
+    }
+    fn hash(key: &[i64]) -> usize {
+        rerail_blocks::key_hash(key) as usize
+    }
+    /// The slot holding `key`, or the empty one it would go in.
+    fn slot(&self, key: &[i64]) -> usize {
+        let (st, m) = (self.stride(), self.slots() - 1);
+        let mut at = Self::hash(key) & m;
+        loop {
+            let w = &self.words[at * st..][..st];
+            if w[0] == 0 || w[1..1 + self.width] == *key {
+                return at;
+            }
+            at = (at + 1) & m;
+        }
+    }
+    fn get(&self, key: &[i64]) -> Option<Summary> {
+        if self.len == 0 || key.len() != self.width {
+            return None;
+        }
+        let st = self.stride();
+        let w = &self.words[self.slot(key) * st..][..st];
+        if w[0] == 0 {
+            return None;
+        }
+        let v = &w[1 + self.width..];
+        Some(Summary {
+            count: v[0],
+            sum: i128::from(v[1] as u64) | i128::from(v[2]) << 64,
+            min: (v[5] & 1 != 0).then_some(v[3]),
+            max: (v[5] & 2 != 0).then_some(v[4]),
+        })
+    }
+    fn insert(&mut self, key: &[i64], s: Summary) {
+        if self.len == 0 && self.words.is_empty() || self.width != key.len() {
+            *self = Groups { width: key.len(), words: super::rows::BlockVec::new(), len: 0 };
+            self.words.resize(16 * self.stride(), 0);
+        }
+        if 2 * (self.len + 1) > self.slots() {
+            let mut grown = Groups { width: self.width, words: super::rows::BlockVec::new(), len: 0 };
+            grown.words.resize(2 * self.words.len(), 0);
+            let st = self.stride();
+            for at in 0..self.slots() {
+                let w = &self.words[at * st..][..st];
+                if w[0] != 0 {
+                    let to = grown.slot(&w[1..1 + self.width]) * st;
+                    grown.words[to..to + st].copy_from_slice(w);
+                    grown.len += 1;
+                }
+            }
+            *self = grown;
+        }
+        let st = self.stride();
+        let at = self.slot(key) * st;
+        let w = &mut self.words[at..at + st];
+        if w[0] == 0 {
+            self.len += 1;
+        }
+        w[0] = 1;
+        w[1..1 + key.len()].copy_from_slice(key);
+        let v = &mut w[1 + key.len()..];
+        v[0] = s.count;
+        v[1] = s.sum as u64 as i64;
+        v[2] = (s.sum >> 64) as i64;
+        v[3] = s.min.unwrap_or(0);
+        v[4] = s.max.unwrap_or(0);
+        v[5] = i64::from(s.min.is_some()) | i64::from(s.max.is_some()) << 1;
+    }
+    fn clear(&mut self) {
+        *self = Groups::default();
+    }
+    fn len(&self) -> usize {
+        self.len
+    }
+    fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+}
+
 #[derive(Default)]
 struct Memo {
     epoch: (usize, usize, usize, usize),
-    groups: HashMap<Vec<i64>, Summary>,
+    groups: Groups,
     preferred_value: Option<Arc<Bag>>,
     builds: usize,
     /// Counted under a read lock: a hit takes no write lock.
@@ -157,7 +252,7 @@ impl Pool {
                 && let Some(summary) = memo.groups.get(key)
             {
                 memo.lookups.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                return *summary;
+                return summary;
             }
         }
         {
@@ -175,14 +270,14 @@ impl Pool {
                 memo.epoch = epoch;
             }
             if let Some(summary) = memo.groups.get(key) {
-                return *summary;
+                return summary;
             }
         }
         let summary = build(selected.value);
         let mut pool = shard.write();
         let memo = pool.get_mut(&selected).unwrap();
         memo.builds += 1;
-        memo.groups.insert(key.to_vec(), summary);
+        memo.groups.insert(key, summary);
         summary
     }
 }
@@ -350,6 +445,27 @@ pub(super) fn plan(steps: &mut [Step]) -> bags::Analysis {
     }).to_string()
     });
     analysis
+}
+
+#[cfg(test)]
+mod groups_tests {
+    use super::*;
+
+    /// Decision 0478 step 6d: a bag's summaries by key are slots in a block, found again by their key, whatever the
+    /// growth; a key of another width is no hit.
+    #[test]
+    fn a_bags_summaries_by_key_are_in_a_block() {
+        let mut g = Groups::default();
+        for k in 0..500i64 {
+            g.insert(&[k, -k], Summary { count: k, sum: i128::from(k) << 70, min: (k % 2 == 0).then_some(k), max: Some(-k) });
+        }
+        assert!(g.words.facts().is_some() && g.len() == 500);
+        for k in [0i64, 1, 77, 499] {
+            let s = g.get(&[k, -k]).expect("a summary");
+            assert_eq!((s.count, s.sum, s.min, s.max), (k, i128::from(k) << 70, (k % 2 == 0).then_some(k), Some(-k)));
+        }
+        assert!(g.get(&[500, -500]).is_none() && g.get(&[1]).is_none());
+    }
 }
 
 #[cfg(test)]
@@ -655,7 +771,7 @@ pub mod tests {
         assert!(
             fresh[0]
                 .data
-                .chunks_exact(5)
+                .as_chunks::<5>().0.iter()
                 .all(|row| row[1..] == [3, 17, 3, 7])
         );
         let Step::Scalar {

@@ -1,8 +1,8 @@
 //! Cranelift IR as Rust source (decision 0310: moved here from `rerail_compiler::clif_rust`): the
 //! parser's, for an ahead-of-time build of the same code, each function of the JIT's, tier 1's
 //! (`CompiledBlock::ir`) and tier 2's (`CompiledStream::ir`), as Cranelift is given it, a Rust
-//! function, compiled by rustc and LLVM, so the two builds differ only in the compiler; and the
-//! tape's reads (`reads`), for the tape crate.
+//! function, compiled by rustc and LLVM, so the two builds differ only in the compiler. (The reads
+//! in Rust are written directly: decisions 0534, 0536.)
 //!
 //! A function's graph is structured control (`Shape`); each value a local, a block's
 //! parameters set where a branch goes to it. A vector is NEON's (`uint8x16_t`), each vector
@@ -51,90 +51,6 @@ fn local(t: ir::Type) -> Result<(&'static str, &'static str), String> {
 thread_local! {
     /// The constants that are addresses of the JIT's process (`translate`'s `addresses`).
     static ADDRESSES: std::cell::RefCell<Vec<(i64, i64, String, bool)>> = const { std::cell::RefCell::new(Vec::new()) };
-    /// The functions' style: `None` the parser's (`translate`), else the reads' (`translate_reads`), each
-    /// function's inlining by its id.
-    static READS: std::cell::RefCell<Option<Vec<(u32, bool)>>> = const { std::cell::RefCell::new(None) };
-}
-
-/// Whether the functions are the reads' (`translate_reads`): no pinned register; and function `id`'s
-/// attribute.
-fn read_style(id: u32) -> Option<&'static str> {
-    READS.with(|r| r.borrow().as_ref().map(|hot| if hot.iter().any(|&(f, h)| f == id && h) { "#[inline(always)]" } else { "#[inline(never)]" }))
-}
-
-/// The tape's reads as Rust (decision 0310), for the tape crate: `funcs` by their user name's index, each
-/// with whether it is hot, the JIT's mark (a hot one `#[inline(always)]`, as the JIT's pass inlines it, a
-/// cold one `#[inline(never)]`); each of `entries` a safe public function of its name, over the tape's bytes
-/// and its view. A load of the tape (one not marked aligned: the view's fields are) is checked against the
-/// tape's bytes, as the slices a hand-written reader indexes: a corrupt tape panics where it is read. Each
-/// function takes the bytes' length first, where the parser's take the pinned register. No addresses, no
-/// vectors: plain Rust for every target.
-pub fn translate_reads(funcs: &[(u32, ir::Function, bool)], entries: &[(u32, &str)], family: crate::reads::Family) -> Result<String, String> {
-    READS.with(|r| *r.borrow_mut() = Some(funcs.iter().map(|(id, _, hot)| (*id, *hot)).collect()));
-    ADDRESSES.with(|a| a.borrow_mut().clear());
-    let result = (|| {
-        let mut out = String::from(
-            "/// A load of `T` at address `at` of the tape that starts at `base`, `len` bytes long.\n\
-             #[inline(always)]\n\
-             fn ld<T: Copy>(base: u64, len: u64, at: usize) -> T {\n    \
-                 let off = (at as u64).wrapping_sub(base);\n    \
-                 if off > len || len - off < core::mem::size_of::<T>() as u64 {\n        \
-                     past();\n    \
-                 }\n    \
-                 // SAFETY: the load lies in the tape's bytes, as just checked.\n    \
-                 unsafe { core::ptr::read_unaligned(at as *const T) }\n\
-             }\n\n\
-             #[cold]\n\
-             #[inline(never)]\n\
-             fn past() -> ! {\n    \
-                 panic!(\"a read past the tape's bytes: a corrupt tape\")\n\
-             }\n\n",
-        );
-        for (id, f, _) in funcs {
-            function(&mut out, *id, f).map_err(|e| format!("u0:{id}: {e}"))?;
-        }
-        for &(entry, n) in entries {
-            let f = &funcs.iter().find(|(id, ..)| *id == entry).ok_or("no entry")?.1;
-            let types: Vec<&str> = f.signature.params.iter().map(|p| ty(p.value_type).map(|t| t.0)).collect::<Result<_, _>>()?;
-            if family == crate::reads::Family::Relation {
-                // A relation's read: its descriptor's address, every load an aligned word of its block (`ld`'s
-                // check is the tape's alone).
-                if types.first() != Some(&"u64") {
-                    return Err(format!("{n}: a relation's read takes its descriptor first"));
-                }
-                let params: Vec<String> = types.iter().enumerate().skip(1).map(|(i, t)| format!("a{i}: {t}")).collect();
-                let args: Vec<String> = (1..types.len()).map(|i| format!(", a{i}")).collect();
-                let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
-                let ret = ty(ret.value_type)?.0;
-                writeln!(
-                    out,
-                    "/// The read `{n}` of the relation (or rows) whose descriptor is at `desc`.\n///\n/// # Safety\n/// `desc` is a live descriptor of its kind in a block, and the read's arguments are in its bounds.\n#[inline(always)]\npub unsafe fn {n}(desc: *const u8{}{}) -> {ret} {{\n    // SAFETY: the caller's.\n    unsafe {{ f{entry}(u64::MAX, desc as u64{}) }}\n}}\n",
-                    if params.is_empty() { "" } else { ", " },
-                    params.join(", "),
-                    args.concat()
-                )
-                .unwrap();
-                continue;
-            }
-            if types.get(..2) != Some(&["u64", "u64"][..]) {
-                return Err(format!("{n}: a read takes the tape and its view first"));
-            }
-            let params: Vec<String> = types.iter().enumerate().skip(2).map(|(i, t)| format!("a{i}: {t}")).collect();
-            let args: Vec<String> = (2..types.len()).map(|i| format!(", a{i}")).collect();
-            let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
-            let ret = ty(ret.value_type)?.0;
-            writeln!(
-                out,
-                "/// The read `{n}` of the tape in `tape`, whose `view`'s offsets count from its first byte.\n#[inline(always)]\npub fn {n}(tape: &[u8], view: &rerail_clif::view::TapeView, {}) -> {ret} {{\n    // SAFETY: each load of the view is of its fields; each of the tape is checked against `tape` (`ld`).\n    unsafe {{ f{entry}(tape.len() as u64, tape.as_ptr() as u64, core::ptr::from_ref(view) as u64{}) }}\n}}\n",
-                params.join(", "),
-                args.concat()
-            )
-            .unwrap();
-        }
-        Ok(out)
-    })();
-    READS.with(|r| *r.borrow_mut() = None);
-    result
 }
 
 /// The functions, by their user name's index (`u0:N`, the JIT's `FuncId`), as Rust: each of
@@ -196,13 +112,8 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
     };
     let entry = f.layout.entry_block().ok_or("no entry block")?;
     let params: Vec<String> = dfg.block_params(entry).iter().map(|&v| Ok(format!("a{}: {}", v.as_u32(), local(dfg.value_type(v))?.0))).collect::<Result<_, String>>()?;
-    match read_style(id) {
-        Some(inline) => writeln!(out, "{inline}\nunsafe fn f{id}(len: u64, {}) -> {ret_ty} {{", params.join(", ")).unwrap(),
-        None => {
-            writeln!(out, "#[inline(never)]\nunsafe fn f{id}(pin: u64{}{}) -> {ret_ty} {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
-            out.push_str("    let mut pin = pin;\n");
-        }
-    }
+    writeln!(out, "#[inline(never)]\nunsafe fn f{id}(pin: u64{}{}) -> {ret_ty} {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
+    out.push_str("    let mut pin = pin;\n");
     let absorbed = absorbed(f);
     // Every value a local, declared once.
     let mut declared = std::collections::BTreeMap::new();
@@ -271,6 +182,10 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
     Ok(false)
 }
 
+/// A graph being shaped: each node's block, its successors, and the edges into a dispatch node with their
+/// target's place (`Shape`'s `block`, `succ` and `label`).
+type Graph = (Vec<Option<usize>>, Vec<Vec<usize>>, std::collections::HashMap<(usize, usize), usize>);
+
 /// A function's graph as Rust's structured control ("Beyond Relooper", Ramsey 2022, as
 /// WebAssembly's backends do): a loop header a labelled `loop`, a node two forward edges reach (a
 /// merge) the code after a labelled block its branches `break` out of, any other node inline at
@@ -293,11 +208,11 @@ pub struct Shape {
     merges: Vec<Vec<usize>>,
     header: Vec<bool>,
     merge: Vec<bool>,
-    /// The structure printed as MSL's C++ (`clif_msl`), which has no labels: each labelled
+    /// The structure printed as C (`clif_ukl`), which has no labels: each labelled
     /// block a `do { … } while (false)` and each loop a `for (;;)` over one. A jump sets the
     /// target's number (`j`: a loop's `2x + 1`, a merge's `2y + 2`) and breaks; each construct
     /// on the way out stops it there or breaks on.
-    pub msl: bool,
+    pub c: bool,
 }
 
 pub fn successors(f: &ir::Function, b: ir::Block) -> Vec<ir::Block> {
@@ -307,11 +222,16 @@ pub fn successors(f: &ir::Function, b: ir::Block) -> Vec<ir::Block> {
 
 /// The graph's order, dominators and loops: reverse postorder, each node's immediate dominator
 /// (by place), its predecessors; or the first edge back to a node that does not dominate it.
+/// The dominator tree numbered in preorder (`pre`, by place) with each subtree's end (`end`): `a`
+/// dominates `b` where `b`'s number is in `a`'s subtree's, one test (`dominates`) where a walk up the
+/// tree is as long as it is deep, for each edge of each round of `Shape::threaded`'s splitting.
 struct Order {
     order: Vec<usize>,
     rpo: Vec<usize>,
     idom: Vec<usize>,
     preds: Vec<Vec<usize>>,
+    pre: Vec<usize>,
+    end: Vec<usize>,
 }
 
 impl Order {
@@ -345,53 +265,108 @@ impl Order {
                 preds[t].push(b);
             }
         }
-        // Immediate dominators (Cooper, Harvey, Kennedy), by place in the order.
-        let mut idom = vec![usize::MAX; order.len()];
-        idom[0] = 0;
-        let mut changed = true;
-        while changed {
-            changed = false;
-            for i in 1..order.len() {
-                let mut new = usize::MAX;
-                for &p in &preds[order[i]] {
-                    let mut q = rpo[p];
-                    if idom[q] == usize::MAX {
-                        continue;
-                    }
-                    if new == usize::MAX {
-                        new = q;
-                        continue;
-                    }
-                    let mut a = new;
-                    while a != q {
-                        while a > q {
-                            a = idom[a];
-                        }
-                        while q > a {
-                            q = idom[q];
-                        }
-                    }
-                    new = a;
-                }
-                if idom[i] != new {
-                    idom[i] = new;
-                    changed = true;
-                }
+        let idom = Self::idoms(succ, &order, &rpo, &preds);
+        // The dominator tree in preorder, iteratively: each place's number, and its subtree's end.
+        let m = order.len();
+        let mut children = vec![Vec::new(); m];
+        for i in 1..m {
+            children[idom[i]].push(i);
+        }
+        let (mut pre, mut end) = (vec![0; m], vec![0; m]);
+        let mut next = 0;
+        let mut stack = vec![(0usize, 0usize)];
+        pre[0] = 0;
+        next += 1;
+        while let Some(top) = stack.last_mut() {
+            let (i, k) = *top;
+            if let Some(&c) = children[i].get(k) {
+                top.1 += 1;
+                pre[c] = next;
+                next += 1;
+                stack.push((c, 0));
+            } else {
+                end[i] = next;
+                stack.pop();
             }
         }
-        Order { order, rpo, idom, preds }
+        Order { order, rpo, idom, preds, pre, end }
     }
 
-    fn dominates(&self, a: usize, mut b: usize) -> bool {
-        loop {
-            if a == b {
-                return true;
+    /// Each place's immediate dominator, by place (the entry's its own), by Semi-NCA (Georgiadis;
+    /// LLVM's): semidominators by Lengauer and Tarjan's evaluation with path compression on a
+    /// depth-first spanning tree, then each node's immediate dominator the nearest of its tree
+    /// parent's dominators at or above its semidominator. One pass, where Cooper, Harvey and
+    /// Kennedy's iteration to a fixed point takes many on an irreducible graph.
+    fn idoms(succ: &[Vec<usize>], order: &[usize], rpo: &[usize], preds: &[Vec<usize>]) -> Vec<usize> {
+        const NONE: usize = usize::MAX;
+        let n = succ.len();
+        // The spanning tree: each node's preorder number, the node at each, each one's parent.
+        let mut num = vec![NONE; n];
+        let (mut vertex, mut parent) = (vec![0usize], vec![0usize]);
+        num[0] = 0;
+        let mut stack = vec![(0usize, 0usize)];
+        while let Some(top) = stack.last_mut() {
+            let (b, k) = *top;
+            if let Some(&t) = succ[b].get(k) {
+                top.1 += 1;
+                if num[t] == NONE {
+                    num[t] = vertex.len();
+                    parent.push(num[b]);
+                    vertex.push(t);
+                    stack.push((t, 0));
+                }
+            } else {
+                stack.pop();
             }
-            if b == 0 {
-                return false;
-            }
-            b = self.idom[b];
         }
+        let m = vertex.len();
+        let mut semi: Vec<usize> = (0..m).collect();
+        let mut label: Vec<usize> = (0..m).collect();
+        let mut ancestor = vec![NONE; m];
+        let mut path = Vec::new();
+        for w in (1..m).rev() {
+            for &v in &preds[vertex[w]] {
+                let v = num[v];
+                // `eval(v)`: the least semidominator on `v`'s path in the linked forest, the path
+                // compressed on the way.
+                let u = if ancestor[v] == NONE {
+                    v
+                } else {
+                    let mut x = v;
+                    while ancestor[ancestor[x]] != NONE {
+                        path.push(x);
+                        x = ancestor[x];
+                    }
+                    while let Some(x) = path.pop() {
+                        let a = ancestor[x];
+                        if semi[label[a]] < semi[label[x]] {
+                            label[x] = label[a];
+                        }
+                        ancestor[x] = ancestor[a];
+                    }
+                    label[v]
+                };
+                semi[w] = semi[w].min(semi[u]);
+            }
+            ancestor[w] = parent[w];
+        }
+        let mut idom = parent;
+        for w in 1..m {
+            while idom[w] > semi[w] {
+                idom[w] = idom[idom[w]];
+            }
+        }
+        // By place in the order.
+        let mut by_place = vec![0; order.len()];
+        for (i, &b) in order.iter().enumerate().skip(1) {
+            by_place[i] = rpo[vertex[idom[num[b]]]];
+        }
+        by_place
+    }
+
+    /// Whether place `a` dominates place `b`: `b` in `a`'s subtree of the dominator tree.
+    fn dominates(&self, a: usize, b: usize) -> bool {
+        self.pre[a] <= self.pre[b] && self.pre[b] < self.end[a]
     }
 
     /// An edge (its source node and its place in the source's successors) back to a node that
@@ -413,27 +388,75 @@ impl Shape {
     /// copies; past that, each loop with two entries given one, a dispatch.
     /// A graph's nodes' successors, the entry node 0, and each node's size (its copies' cost).
     pub fn of(first: Vec<Vec<usize>>, sizes: &[usize]) -> Option<Shape> {
+        Self::threaded(first, sizes, &vec![false; sizes.len()])
+    }
+
+    /// As `of`, `only_jump[b]` where block `b`'s code is its one jump: a dispatch's entry that
+    /// only jumps to another of its entries is not one; the edges labelled for it carry the
+    /// other's label (so no arm only sets `d` again).
+    pub fn threaded(first: Vec<Vec<usize>>, sizes: &[usize], only_jump: &[bool]) -> Option<Shape> {
         let size = |b: usize| sizes[b];
         let budget: usize = sizes.iter().sum();
-        let (mut block, mut succ): (Vec<Option<usize>>, _) = ((0..first.len()).map(Some).collect(), first.clone());
-        let mut copied = 0;
-        let mut label = std::collections::HashMap::new();
-        let order = loop {
-            let order = Order::of(&succ);
-            let Some((x, k)) = order.irreducible(&succ) else { break order };
-            let t = succ[x][k];
-            copied += block[t].map_or(0, size);
-            if copied > budget {
-                (block, succ, label) = Self::dispatched((0..first.len()).map(Some).collect(), first.clone())?;
+        // Split within the budget; past it, one dispatch for the outermost loops entered at two places, and the
+        // loops within them split (as the lean parser's one `match label`, its `ScopeEnd` a copy of each container's
+        // continue); past that again, a dispatch for every such loop.
+        // An edge into a loop entered at two places, where a dispatch holds it and the entry branches, goes to the
+        // dispatch, as the lean parser's `break Label::ArrayValue` from its `ScopeEnd`; any other is given a copy of
+        // its target (an entry that only goes on to one place, as a `TOKEN` before a switch: its copy is that much).
+        let split = |mut block: Vec<Option<usize>>, mut succ: Vec<Vec<usize>>, mut label: std::collections::HashMap<(usize, usize), usize>| {
+            let mut copied = 0;
+            loop {
                 let order = Order::of(&succ);
-                if order.irreducible(&succ).is_some() {
+                let Some((x, k)) = order.irreducible(&succ) else { return Some((block, succ, label, order)) };
+                let t = succ[x][k];
+                if let Some(d) = Self::dispatch_over(&block, &order, x).filter(|_| succ[t].len() > 1 && Self::two_entries(&block, &succ).contains(&t)) {
+                    let j = succ[d].iter().position(|&e| e == t).unwrap_or_else(|| {
+                        succ[d].push(t);
+                        succ[d].len() - 1
+                    });
+                    label.insert((x, k), j);
+                    succ[x][k] = d;
+                    continue;
+                }
+                copied += block[t].map_or(budget + 1, size);
+                if copied > budget {
                     return None;
                 }
-                break order;
+                let c = block.len();
+                block.push(block[t]);
+                succ.push(succ[t].clone());
+                let carried: Vec<(usize, usize)> = label.iter().filter(|&(&(u, _), _)| u == t).map(|(&(_, e), &l)| (e, l)).collect();
+                label.extend(carried.into_iter().map(|(e, l)| ((c, e), l)));
+                succ[x][k] = c;
             }
-            block.push(block[t]);
-            succ.push(succ[t].clone());
-            succ[x][k] = block.len() - 1;
+        };
+        let plain: Vec<Option<usize>> = (0..first.len()).map(Some).collect();
+        let (block, succ, label, order) = match split(plain.clone(), first.clone(), std::collections::HashMap::new()) {
+            Some(done) => done,
+            None => {
+                let outer = Self::dispatched(plain.clone(), first.clone(), true)?;
+                let threaded = |(block, mut succ, mut label): Graph| {
+                    Self::thread(&block, &mut succ, &mut label, only_jump);
+                    (block, succ, label)
+                };
+                let (b, s, l) = threaded(outer);
+                match split(b, s, l) {
+                    // The edges the split gave the dispatch threaded too.
+                    Some((block, succ, label, _)) => {
+                        let (block, succ, label) = threaded((block, succ, label));
+                        let order = Order::of(&succ);
+                        (block, succ, label, order)
+                    }
+                    None => {
+                        let (block, succ, label) = threaded(Self::dispatched(plain, first.clone(), false)?);
+                        let order = Order::of(&succ);
+                        if order.irreducible(&succ).is_some() {
+                            return None;
+                        }
+                        (block, succ, label, order)
+                    }
+                }
+            }
         };
         let n = block.len();
         let (mut header, mut merge) = (vec![false; n], vec![false; n]);
@@ -452,20 +475,75 @@ impl Shape {
         for m in &mut merges {
             m.sort_by_key(|&b| std::cmp::Reverse(order.rpo[b]));
         }
-        Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge, msl: false })
+        Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge, c: false })
+    }
+
+    /// The dispatch nearest above node `x` in the dominator tree.
+    fn dispatch_over(block: &[Option<usize>], order: &Order, x: usize) -> Option<usize> {
+        let mut i = order.rpo[x];
+        loop {
+            let b = order.order[i];
+            if block[b].is_none() {
+                return Some(b);
+            }
+            if i == 0 {
+                return None;
+            }
+            i = order.idom[i];
+        }
+    }
+
+    /// The entries of each loop entered at two places or more, the dispatches left out (a loop's
+    /// nodes a strongly connected part; its entries the nodes an edge from outside it reaches).
+    fn two_entries(block: &[Option<usize>], succ: &[Vec<usize>]) -> std::collections::HashSet<usize> {
+        let out: Vec<bool> = block.iter().map(Option::is_none).collect();
+        let mut all = std::collections::HashSet::new();
+        for part in strong_parts(succ, &out) {
+            let inside: std::collections::HashSet<usize> = part.iter().copied().collect();
+            let entries: std::collections::HashSet<usize> = succ.iter().enumerate().filter(|(u, _)| !inside.contains(u)).flat_map(|(_, next)| next.iter().copied().filter(|t| inside.contains(t))).collect();
+            if entries.len() >= 2 {
+                all.extend(entries);
+            }
+        }
+        all
+    }
+
+    /// Each dispatch's entry `e` that only jumps (`only_jump`) on into the same dispatch, with
+    /// label `i`: the edges labelled `e`'s place carry `i`, until none does. `e` is then
+    /// reached from no edge, and its arm is not written (`within`).
+    fn thread(block: &[Option<usize>], succ: &mut [Vec<usize>], label: &mut std::collections::HashMap<(usize, usize), usize>, only_jump: &[bool]) {
+        for d in (0..block.len()).filter(|&d| block[d].is_none()) {
+            for _ in 0..succ[d].len() {
+                let mut changed = false;
+                for j in 0..succ[d].len() {
+                    let e = succ[d][j];
+                    let jumps = block[e].is_some_and(|b| only_jump.get(b) == Some(&true)) && succ[e].len() == 1 && succ[e][0] == d;
+                    let Some(&i) = label.get(&(e, 0)).filter(|&&i| jumps && i != j) else { continue };
+                    for (&(u, k), l) in label.iter_mut() {
+                        if *l == j && u != e && succ[u][k] == d {
+                            *l = i;
+                            changed = true;
+                        }
+                    }
+                }
+                if !changed {
+                    break;
+                }
+            }
+        }
     }
 
     /// Each loop (a strongly connected part of the graph, its header out, then the parts within,
     /// as a loop forest) entered at two nodes or more given a dispatch node, its one entry: the
     /// edges into those nodes go to the dispatch, each with its target's place (`label`), the
-    /// dispatch on to it. `None` where the function's first block is one of two entries.
-    #[allow(clippy::type_complexity)]
-    fn dispatched(mut block: Vec<Option<usize>>, mut succ: Vec<Vec<usize>>) -> Option<(Vec<Option<usize>>, Vec<Vec<usize>>, std::collections::HashMap<(usize, usize), usize>)> {
+    /// dispatch on to it. `None` where the function's first block is one of two entries. `outer`: only the
+    /// outermost such loops, those no loop entered at two places holds.
+    fn dispatched(mut block: Vec<Option<usize>>, mut succ: Vec<Vec<usize>>, outer: bool) -> Option<Graph> {
         let mut label = std::collections::HashMap::new();
         let mut out = vec![false; block.len()];
         loop {
             let parts = strong_parts(&succ, &out);
-            if parts.is_empty() {
+            if parts.is_empty() || (outer && !label.is_empty()) {
                 return Some((block, succ, label));
             }
             for part in parts {
@@ -506,61 +584,103 @@ impl Shape {
 
     /// The code of node `x` and the nodes it dominates: each node's own code by `emit`, given
     /// the node (its place in the graph given) and its branches' code (`jump(k)`, its `k`th
-    /// successor's).
+    /// successor's). Its labels `'bN` (a loop's) and `'mN` (a merge's), N the node.
     pub fn tree(&self, emit: Emit<'_>, x: usize) -> Result<String, String> {
-        let within = self.within(emit, x, &self.merges[x])?;
-        Ok(match (self.header[x], self.msl) {
+        self.tree_named(emit, x, &|x, looped| if looped { format!("b{x}") } else { format!("m{x}") })
+    }
+
+    /// As `tree`, each label named by `name` (its node, whether a loop's): a loop's and a merge's of one node differ,
+    /// and so do two nodes' (each name its node's, a copy's its own: `copy_of`).
+    pub fn tree_named(&self, emit: Emit<'_>, x: usize, name: Names<'_>) -> Result<String, String> {
+        self.tree_labelled(emit, x, name, &|_, k| k.to_string())
+    }
+
+    /// As `tree_named`, each dispatch's value named by `label` (the dispatch's node, and the place of the entry it
+    /// goes on to): `d = {label}` at an edge into the loop, `{label} =>` its arm, as the lean parser's named
+    /// `Label`s. `tree_named`'s are the places, numbers.
+    pub fn tree_labelled(&self, emit: Emit<'_>, x: usize, name: Names<'_>, label: Labels<'_>) -> Result<String, String> {
+        let within = self.within(emit, x, &self.merges[x], name, label)?;
+        Ok(match (self.header[x], self.c) {
             (false, _) => within,
-            (true, false) => format!("'b{x}: loop {{\n{within}}}\n"),
+            (true, false) => format!("'{}: loop {{\n{within}}}\n", name(x, true)),
             (true, true) => format!("for (;;) {{\ndo {{\n{within}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n}}\n", 2 * x + 1),
         })
     }
 
+    /// The node a dispatch's `k`th entry is: what its label names.
+    pub fn entry_of(&self, dispatch: usize, k: usize) -> usize {
+        self.succ[dispatch][k]
+    }
+
+    /// The graph's node that node `x` is (a copy of), `None` for a dispatch.
+    pub fn block_of(&self, x: usize) -> Option<usize> {
+        self.block[x]
+    }
+
+    /// Which copy of its graph's node node `x` is: 0 the first, then each one made after it.
+    pub fn copy_of(&self, x: usize) -> usize {
+        self.block[..x].iter().filter(|&&b| b.is_some() && b == self.block[x]).count()
+    }
+
     /// Node `x`'s `k`th edge: its dispatch's label, then a jump.
-    fn transfer(&self, emit: Emit<'_>, x: usize, k: usize) -> Result<String, String> {
+    fn transfer(&self, emit: Emit<'_>, x: usize, k: usize, name: Names<'_>, label: Labels<'_>) -> Result<String, String> {
         let to = self.succ[x][k];
         let jump = if self.rpo[to] <= self.rpo[x] {
-            if self.msl { format!("{{ j = {}u; break; }}", 2 * to + 1) } else { format!("continue 'b{to};") }
+            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 1) } else { format!("continue '{};", name(to, true)) }
         } else if self.merge[to] {
-            if self.msl { format!("{{ j = {}u; break; }}", 2 * to + 2) } else { format!("break 'm{to};") }
+            if self.c { format!("{{ j = {}u; break; }}", 2 * to + 2) } else { format!("break '{};", name(to, false)) }
         } else {
-            self.tree(emit, to)?
+            self.tree_labelled(emit, to, name, label)?
         };
         Ok(match self.label.get(&(x, k)) {
-            Some(j) => format!("d = {j}; {jump}"),
+            Some(&j) => format!("d = {}; {jump}", label(to, j)),
             None => jump,
         })
     }
 
-    fn within(&self, emit: Emit<'_>, x: usize, ys: &[usize]) -> Result<String, String> {
+    fn within(&self, emit: Emit<'_>, x: usize, ys: &[usize], name: Names<'_>, label: Labels<'_>) -> Result<String, String> {
         if let Some((&y, rest)) = ys.split_first() {
-            let inner = self.within(emit, x, rest)?;
-            let after = self.tree(emit, y)?;
-            if self.msl {
+            let inner = self.within(emit, x, rest, name, label)?;
+            let after = self.tree_labelled(emit, y, name, label)?;
+            if self.c {
                 return Ok(format!("do {{\n{inner}}} while (false);\nif (j != 0u && j != {}u) break;\nj = 0u;\n{after}", 2 * y + 2));
             }
-            return Ok(format!("'m{y}: {{\n{inner}}}\n{after}"));
+            return Ok(format!("'{}: {{\n{inner}}}\n{after}", name(y, false)));
         }
         let Some(b) = self.block[x] else {
-            if self.msl {
+            if self.c {
                 // A jump in a case breaks the `switch`, then the construct around it.
                 let mut s = String::from("switch (d) {\n");
                 for k in 0..self.succ[x].len() {
-                    writeln!(s, "case {k}u: {{ {} }} break;", self.transfer(emit, x, k)?).unwrap();
+                    writeln!(s, "case {k}u: {{ {} }} break;", self.transfer(emit, x, k, name, label)?).unwrap();
                 }
                 s.push_str("default: break;\n}\n");
                 return Ok(s);
             }
             let mut s = String::from("match d {\n");
-            for k in 0..self.succ[x].len() {
-                writeln!(s, "{k} => {{ {} }}", self.transfer(emit, x, k)?).unwrap();
+            // Only the arms an edge labels (`thread` leaves some none).
+            for k in (0..self.succ[x].len()).filter(|&k| self.label.iter().any(|(&(u, e), &l)| l == k && self.succ[u][e] == x)) {
+                // An arm of one line on its line, a longer one's lines within it.
+                let arm = self.transfer(emit, x, k, name, label)?;
+                let l = label(x, k);
+                if arm.trim_end().contains('\n') {
+                    writeln!(s, "{l} => {{\n{}\n}}", arm.trim_end()).unwrap();
+                } else {
+                    writeln!(s, "{l} => {{ {arm} }}").unwrap();
+                }
             }
             s.push_str("// SAFETY: a dispatch's label is one of its entries.\n_ => unsafe { core::hint::unreachable_unchecked() },\n}\n");
             return Ok(s);
         };
-        emit(b, &|k| self.transfer(emit, x, k))
+        emit(b, &|k| self.transfer(emit, x, k, name, label))
     }
 }
+
+/// A label's name (`Shape::tree_named`): of its node, and whether a loop's.
+pub type Names<'a> = &'a dyn Fn(usize, bool) -> String;
+
+/// A dispatch's value (`Shape::tree_labelled`): of the dispatch's node, and its entry's place.
+pub type Labels<'a> = &'a dyn Fn(usize, usize) -> String;
 
 /// A node's own code (`Shape::tree`): the node, and its branches' code.
 pub type Emit<'a> = &'a dyn Fn(usize, &dyn Fn(usize) -> Result<String, String>) -> Result<String, String>;
@@ -674,7 +794,57 @@ pub fn returned_call(f: &ir::Function, inst: ir::Inst) -> bool {
     f.layout.next_inst(inst).is_some_and(|r| dfg.insts[r].opcode() == ir::Opcode::Return && dfg.inst_args(r) == dfg.inst_results(inst) && !dfg.inst_results(inst).is_empty())
 }
 
+/// Instruction `inst`'s code: a branch's by `branch`, its successors' code by `jump`; any other's by
+/// `operation`. The structuring recurses through a branch (`Shape::tree`, a successor's code
+/// inside its branch's), so the frame held per level is `branch`'s, not the whole match's.
 fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, jump: &dyn Fn(usize, ir::Block) -> Result<String, String>) -> Result<String, String> {
+    match f.dfg.insts[inst].opcode() {
+        Opcode::Jump | Opcode::Brif | Opcode::BrTable => branch(f, inst, name, jump),
+        _ => operation(f, inst, name),
+    }
+}
+
+/// A branch's code: each successor's arguments into its parameters, then its code (`jump`).
+fn branch(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String, jump: &dyn Fn(usize, ir::Block) -> Result<String, String>) -> Result<String, String> {
+    let data = &f.dfg.insts[inst];
+    Ok(match data {
+        InstructionData::Jump { destination, .. } => goto(f, destination, 0, name, jump)?,
+        InstructionData::Brif { blocks, arg, .. } => format!("if {} != 0 {} else {}", name(*arg), goto(f, &blocks[0], 0, name, jump)?, goto(f, &blocks[1], 1, name, jump)?),
+        // A jump table: a `match`, its arms the table's (successors 1 on), the rest the default
+        // (successor 0), as `successors` lists them; rustc makes it a table, or compares, again.
+        // Entries that go to the same place one arm, its patterns their ranges, as a lexer's
+        // `b'0'..=b'9' =>`; those that are the default's, the default's.
+        InstructionData::BranchTable { table, arg, .. } => {
+            let jt = &f.dfg.jump_tables[*table];
+            let default = goto(f, &jt.default_block(), 0, name, jump)?;
+            let mut arms: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
+            for (i, call) in jt.as_slice().iter().enumerate() {
+                let to = goto(f, call, i + 1, name, jump)?;
+                if to == default {
+                    continue;
+                }
+                match arms.iter_mut().find(|a| a.0 == to) {
+                    Some(a) => match a.1.last_mut() {
+                        Some(r) if r.1 + 1 == i => r.1 = i,
+                        _ => a.1.push((i, i)),
+                    },
+                    None => arms.push((to, vec![(i, i)])),
+                }
+            }
+            let mut s = format!("match {} {{ ", name(*arg));
+            for (to, ranges) in &arms {
+                let pats: Vec<String> = ranges.iter().map(|&(a, b)| if a == b { format!("{a}") } else { format!("{a}..={b}") }).collect();
+                write!(s, "{} => {to} ", pats.join(" | ")).unwrap();
+            }
+            write!(s, "_ => {default} }}").unwrap();
+            s
+        }
+        _ => return Err(format!("{}: not a branch", data.opcode())),
+    })
+}
+
+/// An instruction's code, but a branch's (`branch`).
+fn operation(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> String) -> Result<String, String> {
     let dfg = &f.dfg;
     let data = &dfg.insts[inst];
     let op = data.opcode();
@@ -696,7 +866,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         if off == 0 { format!("({p} as usize)") } else { format!("(({p} as usize).wrapping_add({off}isize as usize))") }
     };
     let vector = |t: Option<ir::Type>| t.is_some_and(|t| t.is_vector());
-    if vector(rt) || (vector(at) && !matches!(op, Opcode::Brif | Opcode::Jump | Opcode::Return | Opcode::Call)) {
+    if vector(rt) || (vector(at) && !matches!(op, Opcode::Return | Opcode::Call)) {
         return vector_instruction(f, inst, op, &args, rt, at, &set, &addr);
     }
     let slot = |ss: &ir::StackSlot, offset: i64| format!("((ss{}.as_mut_ptr() as usize).wrapping_add({offset}isize as usize))", ss.as_u32());
@@ -781,17 +951,6 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             let from = ty(dfg.value_type(dfg.inst_args(inst)[0]))?;
             set(format!("({} as {} as {s}) as {u}", args[0], from.1))
         }
-        // A read's load of the tape: checked against its bytes (`translate_reads`).
-        Opcode::Load | Opcode::Uload8 | Opcode::Uload16 | Opcode::Uload32 if read_style(u32::MAX).is_some() && !data.memflags().is_some_and(|m| m.aligned()) => {
-            let base = name(dfg.block_params(f.layout.entry_block().ok_or("no entry block")?)[0]);
-            let t = match op {
-                Opcode::Uload8 => "u8",
-                Opcode::Uload16 => "u16",
-                Opcode::Uload32 => "u32",
-                _ => u,
-            };
-            set(format!("ld::<{t}>({base}, len, {}) as {u}", addr(&args[0])))
-        }
         Opcode::Load => set(format!("unsafe {{ core::ptr::read_unaligned({} as *const {u}) }}", addr(&args[0]))),
         Opcode::Uload8 => set(format!("unsafe {{ core::ptr::read_unaligned({} as *const u8) }} as {u}", addr(&args[0]))),
         Opcode::Uload16 => set(format!("unsafe {{ core::ptr::read_unaligned({} as *const u16) }} as {u}", addr(&args[0]))),
@@ -806,7 +965,6 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Istore8 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u8, {} as u8) }};", addr(&args[1]), args[0]),
         Opcode::Istore16 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u16, {} as u16) }};", addr(&args[1]), args[0]),
         Opcode::Istore32 => format!("unsafe {{ core::ptr::write_unaligned({} as *mut u32, {} as u32) }};", addr(&args[1]), args[0]),
-        Opcode::GetPinnedReg if read_style(u32::MAX).is_some() => return Err("a read takes no pinned register".into()),
         Opcode::GetPinnedReg => set("pin".to_string()),
         Opcode::SetPinnedReg => format!("pin = {};", args[0]),
         Opcode::GetStackPointer => set("sp()".to_string()),
@@ -820,11 +978,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
                 ir::ExternalName::User(r) => f.params.user_named_funcs()[*r].index,
                 n => return Err(format!("a call of {n:?}")),
             };
-            let call = if read_style(callee).is_some() {
-                format!("unsafe {{ f{callee}(len, {}) }}", args.join(", "))
-            } else {
-                format!("unsafe {{ f{callee}(pin{}{}) }}", if args.is_empty() { "" } else { ", " }, args.join(", "))
-            };
+            let call = format!("unsafe {{ f{callee}(pin{}{}) }}", if args.is_empty() { "" } else { ", " }, args.join(", "));
             // Its results returned as they are (`returned_call`): the call in the return, so
             // rustc hands its caller's result on (a tail call, no copy through the stack).
             if returned_call(f, inst) {
@@ -849,44 +1003,6 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             1 => format!("return {};", args[0]),
             _ => format!("return ({});", args.join(", ")),
         },
-        Opcode::Jump => {
-            let InstructionData::Jump { destination, .. } = data else { return Err("a jump with no destination".into()) };
-            goto(f, destination, 0, name, jump)?
-        }
-        Opcode::Brif => {
-            let InstructionData::Brif { blocks, .. } = data else { return Err("a branch with no blocks".into()) };
-            format!("if {} != 0 {} else {}", args[0], goto(f, &blocks[0], 0, name, jump)?, goto(f, &blocks[1], 1, name, jump)?)
-        }
-        // A jump table: a `match`, its arms the table's (successors 1 on), the rest the default
-        // (successor 0), as `successors` lists them; rustc makes it a table, or compares, again.
-        // Entries that go to the same place one arm, its patterns their ranges, as a lexer's
-        // `b'0'..=b'9' =>`; those that are the default's, the default's.
-        Opcode::BrTable => {
-            let InstructionData::BranchTable { table, .. } = data else { return Err("a jump table of nothing".into()) };
-            let jt = &f.dfg.jump_tables[*table];
-            let default = goto(f, &jt.default_block(), 0, name, jump)?;
-            let mut arms: Vec<(String, Vec<(usize, usize)>)> = Vec::new();
-            for (i, call) in jt.as_slice().iter().enumerate() {
-                let to = goto(f, call, i + 1, name, jump)?;
-                if to == default {
-                    continue;
-                }
-                match arms.iter_mut().find(|a| a.0 == to) {
-                    Some(a) => match a.1.last_mut() {
-                        Some(r) if r.1 + 1 == i => r.1 = i,
-                        _ => a.1.push((i, i)),
-                    },
-                    None => arms.push((to, vec![(i, i)])),
-                }
-            }
-            let mut s = format!("match {} {{ ", args[0]);
-            for (to, ranges) in &arms {
-                let pats: Vec<String> = ranges.iter().map(|&(a, b)| if a == b { format!("{a}") } else { format!("{a}..={b}") }).collect();
-                write!(s, "{} => {to} ", pats.join(" | ")).unwrap();
-            }
-            write!(s, "_ => {default} }}").unwrap();
-            s
-        }
         op => return Err(format!("the opcode {op}")),
     })
 }
@@ -1148,6 +1264,56 @@ mod tests {
         b.seal_all_blocks();
         b.finalize();
         f
+    }
+
+    /// `Order::of`'s dominators are the definition's (a node's are itself and those of all its
+    /// predecessors), on random graphs, irreducible ones among them: each node's immediate
+    /// dominator, and `dominates` for every pair.
+    #[test]
+    fn the_dominators_are_the_definitions() {
+        let mut seed = 0x9e37_79b9_7f4a_7c15u64;
+        let mut next = |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            (seed % n) as usize
+        };
+        for _ in 0..300 {
+            let n = 2 + next(30);
+            let succ: Vec<Vec<usize>> = (0..n).map(|_| (0..next(4)).map(|_| next(n as u64)).collect()).collect();
+            let order = super::Order::of(&succ);
+            let m = order.order.len();
+            // By the definition, over the places reached: each place's dominators, to a fixed point.
+            let mut dom: Vec<Vec<bool>> = (0..m).map(|i| (0..m).map(|j| i == 0 && j == 0 || i != 0).collect()).collect();
+            let mut changed = true;
+            while changed {
+                changed = false;
+                for i in 1..m {
+                    let mut d = vec![true; m];
+                    for &p in &order.preds[order.order[i]] {
+                        for (j, x) in d.iter_mut().enumerate() {
+                            *x &= dom[order.rpo[p]][j];
+                        }
+                    }
+                    d[i] = true;
+                    if d != dom[i] {
+                        dom[i] = d;
+                        changed = true;
+                    }
+                }
+            }
+            for (i, of) in dom.iter().enumerate() {
+                for (j, &d) in of.iter().enumerate() {
+                    assert_eq!(order.dominates(j, i), d, "{succ:?}: does place {j} dominate {i}?");
+                }
+                if i > 0 {
+                    // The immediate one: a strict dominator every other strict one dominates.
+                    let strict: Vec<usize> = (0..m).filter(|&j| j != i && of[j]).collect();
+                    let want = *strict.iter().find(|&&d| strict.iter().all(|&e| dom[d][e])).expect("an immediate dominator");
+                    assert_eq!(order.idom[i], want, "{succ:?}: place {i}'s immediate dominator");
+                }
+            }
+        }
     }
 
     #[test]

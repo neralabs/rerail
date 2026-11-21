@@ -1,0 +1,43 @@
+.policy "rerail-generator-placement" revision 2
+.description "Keep scripts in packs or the engine sources that write committed files under scripts/generate, not beside their output; fixtures, upstream oracles and tests are exempt."
+.language php
+.mode steer
+.scope include "packs/**/*.php", "native/src/**/*.php"
+.scope exclude "packs/*/upstream/**", "**/fixtures/**", "**/*.test.*", "**/*.spec.*", "**/*Test.php"
+// rerail-generator-placement for PHP scripts (the JavaScript policy, rerail-generator-placement.rerail, says why).
+// A write is reported at the call:
+//   file_put_contents($out, $text); \copy($a, $b)        GENERATOR_BESIDE_OUTPUT
+//   fopen($out, 'w')                                     GENERATOR_BESIDE_OUTPUT (a mode that writes: w, a, x or c)
+//   fopen('php://stdout', 'w'); fopen($in, 'rb')         not reported
+
+.violation GENERATOR_BESIDE_OUTPUT(at: node) "If what it writes is committed, move this script to scripts/generate/<area>/, re-root its paths and imports, and add its row to scripts/generate/README.md. Leave temporary output."
+GENERATOR_BESIDE_OUTPUT(c) :- kind(c, "function_call_expression"), field(c, "function", f),
+    match("\\\\?(?:file_put_contents|copy)", f).
+GENERATOR_BESIDE_OUTPUT(c) :- kind(c, "function_call_expression"), field(c, "function", f), match("\\\\?fopen", f),
+    field(c, "arguments", args), child(args, a, _), kind(a, "argument"), match("['\"][rbt+]*[waxc][bt+]*['\"]", a),
+    !match("(?s:.*)['\"]php://(?s:.*)", args).
+
+.test writes_are_reported exactly
+    .fixture "packs/php/candidates/build.php" ```
+        <?php
+        file_put_contents($out, $text);
+        \copy($src, $dst);
+        $f = fopen($out, 'w');
+        ```
+    .expect GENERATOR_BESIDE_OUTPUT at "packs/php/candidates/build.php":2
+    .expect GENERATOR_BESIDE_OUTPUT at "packs/php/candidates/build.php":3
+    .expect GENERATOR_BESIDE_OUTPUT at "packs/php/candidates/build.php":4
+.end
+
+.test reads_streams_and_tests_pass exactly
+    .fixture "packs/php/candidates/read.php" ```
+        <?php
+        $out = fopen('php://stdout', 'w');
+        $in = fopen($path, 'rb');
+        $text = file_get_contents($path);
+        ```
+    .fixture "packs/php/candidates/BuildTest.php" ```
+        <?php
+        file_put_contents($out, $text);
+        ```
+.end

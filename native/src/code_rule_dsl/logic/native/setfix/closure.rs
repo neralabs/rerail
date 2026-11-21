@@ -24,7 +24,7 @@
 //! - a component past `MAX_DENSE` nodes (or past the bits budget, `MAX_BITS`) is walked on the host: a search from
 //!   each start node in it, once per start. That reads each start's reach once, which semi-naive reads once per row.
 //!
-//! **The keyed form (decision 0523).** A walk whose rest also reads the row's other columns (`!bound_in(s, x)`: the
+//! **The keyed form (decision 0570).** A walk whose rest also reads the row's other columns (`!bound_in(s, x)`: the
 //! scope a name is looked up in, and the name), and a walk of several recursive probes along the same column (a second
 //! step that climbs on where another test holds), have no reach per node: a node's successors depend on the row. They
 //! run as a worklist instead: the seeds, then each probe's rest for every row made at the last depth, with all of the
@@ -49,7 +49,7 @@ const PACK: usize = 1_024;
 const MAX_BITS: u64 = 1 << 30;
 
 /// A recognized closure: the walking column, the probe's rest as a join from `y` to `z`, and the slot of `y`. Keyed
-/// (decision 0523): each recursive probe's rest instead, run per row (`keyed`); `rest` and `y` are then unused.
+/// (decision 0570): each recursive probe's rest instead, run per row (`keyed`); `rest` and `y` are then unused.
 pub(super) struct Closure {
     col: usize,
     rest: JoinRule,
@@ -212,12 +212,13 @@ fn reader_of(j: &JoinRule, k: usize, w: usize, nrels: usize) -> Option<(Vec<usiz
 }
 
 /// A rest as its own join, to the new value `z`.
-fn rest_join(rest: &[Step], z: usize, nslots: usize) -> JoinRule {
-    rest_join_to(rest, vec![Term::Slot(z)], nslots)
+fn rest_join(rest: &[Step], z: usize, nslots: usize, bound: &[usize]) -> JoinRule {
+    rest_join_to(rest, vec![Term::Slot(z)], nslots, bound)
 }
 
-/// A rest as its own join, to the terms `out`.
-fn rest_join_to(rest: &[Step], out: Vec<Term>, nslots: usize) -> JoinRule {
+/// A rest as its own join, to the terms `out`, `bound` the slots its row binds before it (the removed first step's:
+/// a range's ends may be among them, `super::ranges_from`).
+fn rest_join_to(rest: &[Step], out: Vec<Term>, nslots: usize, bound: &[usize]) -> JoinRule {
     let rest = JoinRule {
         steps: rest.to_vec(),
         out,
@@ -232,6 +233,8 @@ fn rest_join_to(rest: &[Step], out: Vec<Term>, nslots: usize) -> JoinRule {
         step_ns: (0..=rest.len()).map(|_| Default::default()).collect(),
         from: (0..rest.len()).collect(),
         plan_steps: rest.len(),
+        ranges: super::ranges_from(rest, bound),
+        est: Vec::new(),
     };
     JoinRule { probes: super::probes(&rest.steps, &rest.out), ..rest }
 }
@@ -333,9 +336,9 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     }
     // One walk whose rest reads only the walking column: the reach per node.
     if let [(w, nslots)] = &walks[..] && !w.keyed && readers.is_empty() && wi == 0 {
-        return Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new(), atoms: Vec::new() });
+        return Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new(), atoms: Vec::new() });
     }
-    // Keyed (decision 0523): `RERAIL_KEYED_CLOSURE=off` leaves it semi-naive.
+    // Keyed (decision 0570): `RERAIL_KEYED_CLOSURE=off` leaves it semi-naive.
     if std::env::var("RERAIL_KEYED_CLOSURE").is_ok_and(|v| v == "off") {
         return None;
     }
@@ -347,7 +350,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         .iter()
         .map(|(w, nslots)| {
             let (left, need) = split(w.rest, &w.slot_of);
-            Keyed { rest: rest_join(&left, w.z, *nslots), slots: w.slot_of.clone(), need }
+            Keyed { rest: rest_join(&left, w.z, *nslots, &w.slot_of), slots: w.slot_of.clone(), need }
         })
         .collect();
     let readers = readers
@@ -361,13 +364,13 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
             }).collect::<Option<Vec<_>>>()).flatten();
             // A head the row's columns do not make keeps its rest (its tests too): it is run.
             let (left, need) = if left.is_empty() && direct.is_none() { (rest.to_vec(), Vec::new()) } else { (left, need) };
-            Reader { head, rest: rest_join_to(&left, j.out.clone(), j.nslots), slots, need, direct }
+            Reader { head, rest: rest_join_to(&left, j.out.clone(), j.nslots, &slots), slots, need, direct }
         })
         .collect();
     let atoms = tests.clone();
-    let tests = tests.iter().map(|t| rest_join_to(std::slice::from_ref(t), vec![Term::Const(1)], k)).collect();
+    let tests = tests.iter().map(|t| rest_join_to(std::slice::from_ref(t), vec![Term::Const(1)], k, &(0..k).collect::<Vec<_>>())).collect();
     let (w, nslots) = &walks[0];
-    Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed, w: wi, readers, tests, atoms })
+    Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots, &w.slot_of), y: w.slot_of[col], keyed, w: wi, readers, tests, atoms })
 }
 
 /// What the closure did, for the run's report: nodes reached, rows made, and which way.
@@ -402,7 +405,7 @@ pub(super) struct Prepared {
     /// The relation keeps levels (decision 0090): its rows are made by distance on the host (`by_distance`), with no
     /// launches.
     levels: bool,
-    /// A keyed closure's run (decision 0523), done in the first half: the rows it made and its depths.
+    /// A keyed closure's run (decision 0570), done in the first half: the rows it made and its depths.
     keyed: Option<(usize, usize)>,
 }
 
@@ -466,7 +469,7 @@ pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interne
     Some(Prepared { nodes, index, adj, at, pieces, launches, levels: false, keyed: None })
 }
 
-/// The keyed closure (decision 0523): from the seeds, each depth's rows run every probe's rest with the row's slots
+/// The keyed closure (decision 0570): from the seeds, each depth's rows run every probe's rest with the row's slots
 /// bound, and the rows they make that are new are the next depth's. A relation that keeps levels (decision 0090) is
 /// left to semi-naive (`None`), which gives each row its depth.
 fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<Prepared> {
@@ -805,7 +808,6 @@ pub(super) fn finish(cl: &Closure, p: Prepared, outs: Vec<Output>, store: &mut S
             rows += rel.push(&row) as usize;
         }
     }
-    drop(reach);
     prof::count("closure", "rows made", rows as u64);
     let how: Vec<&str> = [(dense, "bit rows"), (chain, "chains"), (host, "host walks past the limits")].iter().filter(|w| w.0).map(|w| w.1).collect();
     Some(Ran { nodes: n, rows, how: if how.is_empty() { "chains".into() } else { how.join(" and ") } })

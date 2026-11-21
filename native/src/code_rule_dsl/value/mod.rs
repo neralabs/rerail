@@ -74,14 +74,13 @@ impl NodeRef {
     /// In a file's tape (whose preorder is by start byte) a nonempty range is found by binary search from the
     /// root (`find_in_tape`), not by the descent: the reference graph's summaries look a node up from the root for
     /// each parameter, member and branch, and the descent's reads of every child's range were a quarter of their
-    /// time (0465, Q284).
+    /// time (0465, Q334).
     pub fn find<'r, D: Doc>(&self, root: Node<'r, D>) -> Option<Node<'r, D>> {
         let (start, end) = (self.start as usize, self.end as usize);
-        if start < end && root.parent().is_none() {
-            if let Some(found) = self.find_in_tape(&root) {
+        if start < end && root.parent().is_none()
+            && let Some(found) = self.find_in_tape(&root) {
                 return found;
             }
-        }
         let covers = |child: &Node<'r, D>| {
             let range = child.range();
             range.start <= start && end <= range.end && range.start < range.end

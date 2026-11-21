@@ -3,7 +3,7 @@
   "id": "data-layer-plan-scope-side-effects",
   "revision": 1,
   "mode": "block",
-  "description": "Candidate port of nera-data-layer plan_scope_side_effects at 2b1504adc4291daaf080b2e932962b134da1a69a.",
+  "description": "Candidate port of the data-layer repository's plan_scope_side_effects at 2b1504adc4291daaf080b2e932962b134da1a69a.",
   "scope": {
     "include": [
       "impl/**/*.py",

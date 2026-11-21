@@ -1,4 +1,4 @@
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { OpenAPIHono } from "@hono/zod-openapi";
@@ -17,8 +17,10 @@ import {
   upsertLibraryRule,
   audits,
   checkouts,
+  events,
   libraryRules,
   repositories,
+  steerFeedback,
   PACKAGE_ROOT,
   defaultRerailHome,
 } from "../../src/engine/index.js";
@@ -26,6 +28,11 @@ import { MOCK_CODE_RULES, MOCK_CONVERSATION_RULES } from "../../src/cli/index.js
 import { SqliteSessionStore } from "../../src/runtime/index.js";
 import { codingAgentHome, codingAgentStates, registerHarnesses, registrationRoot } from "../../src/setup/index.js";
 import { installPack, uninstallPack } from "../support/installed-packs.js";
+import { stubUserHome } from "../support/user-home.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+import { withExperiments } from "../support/environment/experiments.js";
+
+withExperiments("CONVERSATION_RULES");
 
 /** The host a browser addressed the page to through a container port mapping; the fixture never binds it. */
 const PAGE_HOST = "localhost:35831";
@@ -78,7 +85,7 @@ describe("Rerail API over HTTP", () => {
     database.$client.close();
     if (originalRerailHome === undefined) delete process.env.RERAIL_HOME;
     else process.env.RERAIL_HOME = originalRerailHome;
-    await rm(root, { recursive: true, force: true });
+    await removeFolder(root);
   });
 
   /** A completed run with an explicit start time, which is what every range query is bounded by. */
@@ -143,11 +150,11 @@ describe("Rerail API over HTTP", () => {
 
     expect(body.since).toBe(1000);
     // Evaluated by the two runs in range; the run at 500 is before the range and counts for nothing.
-    expect(body.rules[codeRule.id]).toEqual({ measured: true, distinctViolations: 1, sessions: 1, lastSeenAt: 3_000, audits: 2, loggedViolations: 0, rerails: 0 });
+    expect(body.rules[codeRule.id]).toEqual({ measured: true, distinctViolations: 1, sessions: 1, lastSeenAt: 3_000, audits: 2, loggedViolations: 0, declinedViolations: 0, declinedLoggedViolations: 0, rerails: 0 });
     // Compiled into a run but never flagged: a zero backed by evidence rather than by silence.
     expect(body.rules[otherCodeRule.id]).toMatchObject({ measured: true, distinctViolations: 0, audits: 1, lastSeenAt: null });
     // Conversation rules never write an audit, so there is nothing to report either way.
-    expect(body.rules[conversationRule.id]).toEqual({ measured: false, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, rerails: 0 });
+    expect(body.rules[conversationRule.id]).toEqual({ measured: false, distinctViolations: 0, sessions: 0, lastSeenAt: null, audits: 0, loggedViolations: 0, declinedViolations: 0, declinedLoggedViolations: 0, rerails: 0 });
   });
 
   it("counts logged-only violations by the mode recorded with each, not the rule's mode now", async () => {
@@ -240,13 +247,55 @@ describe("Rerail API over HTTP", () => {
     sessionStore.recordIgnoredEdit(SESSION, { path: "scratch/a.ts", source: ".git/info/exclude", line: 1, pattern: "scratch/" });
     sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".git/info/exclude", via: "observed", ignoresMore: ["scratch/"] });
     sessionStore.recordIgnoreRulesChanged(SESSION, { path: ".gitignore", via: "tool", ignoresMore: ["out/"] });
-    // More than a transcript page of later events: the dashboard opens on those and never loads the gaps.
-    for (let index = 0; index < 600; index += 1) {
-      sessionStore.append({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payload: {} });
-    }
+    // A place a walk could not check is recorded once per key, however many turn ends meet it, whatever its text says then.
+    const locked = { boundary: "turn" as const, path: "src/locked", reason: "EACCES: permission denied, opendir '/repo/src/locked'", key: JSON.stringify(["src/locked", "EACCES"]) };
+    sessionStore.recordDiscoveryGap(SESSION, locked);
+    sessionStore.recordDiscoveryGap(SESSION, { ...locked, reason: "EACCES: permission denied, open '/repo/src/locked'" });
+    const large = { path: "big.bin", reason: "Source exceeds 1000000 byte policy limit" };
+    sessionStore.recordDiscoveryGap(SESSION, { boundary: "turn", ...large, key: JSON.stringify(["big.bin", large.reason]) });
+    // The record that says the walks met more places than it takes, once: no place, neither counted nor listed as one.
+    const more = { boundary: "turn" as const, reason: "The walks could not check more than 1000 places; the rest are not recorded", more: true as const };
+    sessionStore.recordDiscoveryGap(SESSION, { ...more, key: JSON.stringify(["", more.reason]) });
+    sessionStore.recordDiscoveryGap(SESSION, { ...more, key: JSON.stringify(["", more.reason]) });
+    // More than a transcript page of later events: the dashboard opens on those and never loads the gaps. One
+    // transaction writes them all: a commit of its own for each, as the session store makes, waits on the disk 600
+    // times, seconds on a busy machine.
+    database.$client.transaction(() => {
+      for (let index = 0; index < 600; index += 1) {
+        database.insert(events).values({ sessionId: SESSION.sessionId, eventId: `later-${index}`, kind: "turn-end", observedAt: 10_000 + index, payloadJson: "{}" }).run();
+      }
+    })();
 
-    expect((await getJson<{ gaps: unknown }>(`/api/sessions/${SESSION.sessionId}`)).gaps)
-      .toEqual({ droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2 });
+    const { gaps } = await getJson<{ gaps: Record<string, unknown> }>(`/api/sessions/${SESSION.sessionId}`);
+    expect(gaps).toEqual({
+      droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2, discoveryGapsMore: true,
+      // Each place with why, in the order the session met them, for the person to act on.
+      discoveryGapPlaces: [
+        { boundary: "turn", path: "src/locked", reason: locked.reason, observedAt: expect.any(Number) },
+        { boundary: "turn", ...large, observedAt: expect.any(Number) },
+      ],
+    });
+    // The API's published answer (/openapi.json) names each of these fields, so a client written against it reads them.
+    type Documented = { paths: Record<string, { get?: { responses: Record<string, { content?: Record<string, { schema?: { properties?: { gaps?: { properties?: Record<string, unknown> } } } }> }> } }> };
+    const documented = await getJson<Documented>("/openapi.json");
+    const declared = documented.paths["/api/sessions/{sessionId}"]?.get?.responses["200"]?.content?.["application/json"]?.schema?.properties?.gaps?.properties;
+    expect(Object.keys(declared ?? {}).sort()).toEqual(Object.keys(gaps).sort());
+  });
+
+  it("lists a session's other places, to a person and to the bridge, and every event in its place, when one place's row does not parse", async () => {
+    const place = (path: string) => ({ boundary: "turn" as const, path, reason: `EACCES: permission denied, opendir '/repo/${path}'`, key: JSON.stringify([path, "EACCES"]) });
+    sessionStore.recordDiscoveryGap(SESSION, place("src/a"));
+    database.insert(events).values({ sessionId: SESSION.sessionId, eventId: "source-discovery-gap:bad", kind: "source-discovery-gap", observedAt: 2, payloadJson: "{not json" }).run();
+    sessionStore.recordDiscoveryGap(SESSION, place("src/b"));
+
+    const listed = [{ path: "src/a" }, { path: "src/b" }];
+    expect((await getJson<{ gaps: { discoveryGapPlaces: unknown } }>(`/api/sessions/${SESSION.sessionId}`)).gaps.discoveryGapPlaces).toMatchObject(listed);
+    // The bridge reads the places its session's record holds from the same rows as the workspace opens.
+    expect(sessionStore.discoveryGaps(SESSION.sessionId, 1_001)).toMatchObject(listed);
+    // A person's read of the session's events lists that row too, with no payload, so a page holds every row it reads.
+    const { events: listing } = await getJson<{ events: Array<{ eventId: string; payload: unknown }> }>(`/api/sessions/${SESSION.sessionId}/events`);
+    expect(listing.filter(event => event.eventId.startsWith("source-discovery-gap")).map(event => event.payload))
+      .toEqual([expect.objectContaining(listed[0]), null, expect.objectContaining(listed[1])]);
   });
 
   it("lists sessions newest first, a page at a time, with their violation counts", async () => {
@@ -285,6 +334,83 @@ describe("Rerail API over HTTP", () => {
     const row = (sessionId: string) => sessions.find(session => session.sessionId === sessionId);
     expect(row("session-mixed")).toMatchObject({ violationCount: 4, steeredViolations: 3, lastEventAt: 2_020 });
     expect(row("session-quiet")).toMatchObject({ violationCount: 0, steeredViolations: 0, lastEventAt: null });
+  });
+
+  it("places each declined steer's note on the latest audit that steered its rule before it, and counts that audit's steered violations once", async () => {
+    sessionStore.openSession({ ...SESSION, sessionId: "session-declined" }, 2_000);
+    sessionStore.openSession({ ...SESSION, sessionId: "session-other" }, 1_000);
+    const steered = { ...flagged, id: "violation-steered", path: "web/src/z.ts", mode: "steer" as const };
+    const logged = { ...flagged, id: "violation-logged", path: "web/src/y.ts", mode: "log" as const };
+    const declinedAudit = seedAudit({ sessionId: "session-declined", at: 2_100, violations: [steered, logged] });
+    // Reported steered again after the agent declined: a later steer the notes say nothing about.
+    seedAudit({ sessionId: "session-declined", at: 2_200, violations: [steered] });
+    seedAudit({ sessionId: "session-other", at: 1_100, violations: [steered] });
+    const note = (id: string, ruleId: string, sessionId: string | null, recordedAt: number) => ({
+      id, ruleId, sessionId, repositoryId: "repo", reason: `reason ${id}`, rerailVersion: "0", recordedAt,
+    });
+    database.insert(steerFeedback).values([
+      // Before any steer of the rule: no audit to place it on.
+      note("early", flagged.ruleId, "session-declined", 1_000),
+      note("declined", flagged.ruleId, "session-declined", 2_150),
+      // A second note on the same steer marks nothing more.
+      note("again", flagged.ruleId, "session-declined", 2_160),
+      note("unsteered-rule", "never-steered", "session-declined", 2_170),
+      note("no-session", flagged.ruleId, null, 2_180),
+    ]).run();
+
+    const { declined } = await getJson<{ declined: unknown }>("/api/sessions/session-declined");
+    expect(declined).toEqual({
+      violations: 1,
+      notes: [
+        { ruleId: flagged.ruleId, reason: "reason early", recordedAt: 1_000, auditId: null },
+        { ruleId: flagged.ruleId, reason: "reason declined", recordedAt: 2_150, auditId: declinedAudit },
+        { ruleId: flagged.ruleId, reason: "reason again", recordedAt: 2_160, auditId: declinedAudit },
+        { ruleId: "never-steered", reason: "reason unsteered-rule", recordedAt: 2_170, auditId: null },
+      ],
+    });
+    const { sessions } = await getJson<{ sessions: Array<{ sessionId: string; steeredViolations: number; declinedViolations: number }> }>("/api/sessions");
+    const row = (sessionId: string) => sessions.find(session => session.sessionId === sessionId);
+    expect(row("session-declined")).toMatchObject({ steeredViolations: 2, declinedViolations: 1 });
+    expect(row("session-other")).toMatchObject({ steeredViolations: 1, declinedViolations: 0 });
+    expect((await getJson<{ declined: unknown }>("/api/sessions/session-other")).declined).toEqual({ violations: 0, notes: [] });
+  });
+
+  it("counts a rule's declined violations apart from its steered and log-only ones, and gives each violation of a declined steer its reasons", async () => {
+    addLibraryRules();
+    const at = (id: string, path: string, mode: CodeRuleViolation["mode"] = "steer") => ({ ...flagged, id, path, mode });
+    const [a, b, c, d, e, f] = [at("a", "web/src/a.ts"), at("b", "web/src/b.ts"), at("c", "web/src/c.ts", "log"), at("d", "web/src/d.ts"), at("e", "web/src/e.ts"), at("f", "web/src/f.ts")];
+    const early = seedAudit({ at: 500, violations: [f] });
+    const declinedAudit = seedAudit({ at: 2_100, violations: [a, b, c, d] });
+    // Recorded in Log mode later in range: still declined, and counted among the logged too.
+    const loggedAudit = seedAudit({ at: 2_300, mode: "log", violations: [d] });
+    const steeredAudit = seedAudit({ at: 2_400, violations: [e] });
+    const note = (id: string, recordedAt: number) => ({
+      id, ruleId: flagged.ruleId, sessionId: SESSION.sessionId, repositoryId: "repo", reason: `reason ${id}`, rerailVersion: "0", recordedAt,
+    });
+    database.insert(steerFeedback).values([note("early", 600), note("declined", 2_150), note("again", 2_160)]).run();
+
+    const activity = async (since: number) =>
+      (await getJson<{ rules: Record<string, Record<string, unknown>> }>(`/api/rules/activity?since=${since}`)).rules[flagged.ruleId];
+    // Declined a, b and d (d also logged), Log only c, steered e: each violation in one outcome.
+    expect(await activity(1_000)).toMatchObject({ distinctViolations: 5, loggedViolations: 2, declinedViolations: 3, declinedLoggedViolations: 1 });
+    expect(await activity(0)).toMatchObject({ distinctViolations: 6, loggedViolations: 2, declinedViolations: 4, declinedLoggedViolations: 1 });
+    // Before the declined audit's range: the decline of d no longer counts, and d is Log only again.
+    expect(await activity(2_200)).toMatchObject({ distinctViolations: 2, loggedViolations: 1, declinedViolations: 0, declinedLoggedViolations: 0 });
+    expect((await getJson<{ rules: Record<string, Record<string, unknown>> }>("/api/rules/activity?since=1000")).rules[MOCK_CODE_RULES[1]!.id])
+      .toMatchObject({ declinedViolations: 0, declinedLoggedViolations: 0 });
+
+    const { violations } = await getJson<{ violations: Array<{ id: string; auditId: string; declinedReasons: string[] }> }>(
+      `/api/violations?since=0&ruleId=${encodeURIComponent(flagged.ruleId)}`);
+    expect(violations.map(({ id, auditId, declinedReasons }) => ({ id, auditId, declinedReasons }))).toEqual([
+      { id: "e", auditId: steeredAudit, declinedReasons: [] },
+      { id: "d", auditId: loggedAudit, declinedReasons: [] },
+      { id: "a", auditId: declinedAudit, declinedReasons: ["reason declined", "reason again"] },
+      { id: "b", auditId: declinedAudit, declinedReasons: ["reason declined", "reason again"] },
+      // Recorded in Log mode in the declined audit: no steer to decline.
+      { id: "c", auditId: declinedAudit, declinedReasons: [] },
+      { id: "d", auditId: declinedAudit, declinedReasons: ["reason declined", "reason again"] },
+      { id: "f", auditId: early, declinedReasons: ["reason early"] },
+    ]);
   });
 
   it("counts nothing an audit in Log mode recorded as steered, and marks its violations logged, whatever their rules' modes", async () => {
@@ -418,6 +544,7 @@ describe("Rerail API over HTTP", () => {
     const rule = (regex: string) => ({
       id,
       mode: "steer",
+      title: "No force-push",
       match: { all: [{ field: "tool.name", eq: "Bash" }, { field: "input.command", regex }] },
       sample: { source: "tool:Bash", boundary: "tool-call" },
       action: { content: "Do not force-push." },
@@ -434,6 +561,25 @@ describe("Rerail API over HTTP", () => {
 
     expect((await put("\\bgit\\s+push\\b[^\\n]*--force\\b")).status).toBe(200);
     expect((await getJson<{ rule: { rule: unknown } }>(`/api/library-rules/${id}`)).rule.rule).toEqual(rule("\\bgit\\s+push\\b[^\\n]*--force\\b"));
+  });
+
+  it("refuses a conversation rule while conversation rules are off, and answers full-repository scanning 404 while it is off", async () => {
+    vi.stubEnv("RERAIL_EXPERIMENTAL_CONVERSATION_RULES", "0");
+    const rule = {
+      id: "no-force-push",
+      mode: "steer",
+      match: { field: "input.command", regex: "--force" },
+      sample: { source: "tool:Bash", boundary: "tool-call" },
+      action: { content: "Do not force-push." },
+    };
+    const refused = await putJson("/api/library-rules/no-force-push", { kind: "conversation", rule });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ error: "experimental-off", message: expect.stringContaining("RERAIL_EXPERIMENTAL_CONVERSATION_RULES=1") });
+    expect((await app.request("/api/library-rules/no-force-push")).status).toBe(404);
+
+    const audits = await app.request("/api/repository-audits");
+    expect(audits.status).toBe(404);
+    expect(await audits.json()).toMatchObject({ error: "experimental-off", message: expect.stringContaining("RERAIL_EXPERIMENTAL_REPOSITORY_SCAN=1") });
   });
 
   it("dates activity, violations, and sessions by their own result", async () => {
@@ -590,8 +736,7 @@ describe("Rerail API over HTTP", () => {
     await mkdir(join(home, ".claude"), { recursive: true });
     await mkdir(join(home, ".cursor"), { recursive: true });
     await mkdir(join(home, ".codex"), { recursive: true });
-    const previousHome = process.env.HOME;
-    process.env.HOME = home;
+    stubUserHome(home);
     try {
       await registerHarnesses({ root: PACKAGE_ROOT, home, harnesses: ["cursor"] });
       // One coding agent whose config cannot be read must not hide the others.
@@ -604,8 +749,7 @@ describe("Rerail API over HTTP", () => {
       expect(agents.find(agent => agent.id === "omp")).toMatchObject({ found: false, connected: false });
       expect(await readdir(join(home, ".claude"))).toEqual(before);
     } finally {
-      if (previousHome === undefined) delete process.env.HOME;
-      else process.env.HOME = previousHome;
+      vi.unstubAllEnvs();
     }
   });
 });

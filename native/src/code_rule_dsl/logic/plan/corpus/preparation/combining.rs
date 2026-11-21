@@ -148,7 +148,7 @@ impl ProgramPass for FactSpaces<'_> {
         let locations = &split.locations;
         let derived: BTreeSet<String> =
             v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).chain(f.natives().iter().map(|n| v.rel_name(n.rel).to_owned())).filter(|r| !f.is_input(r)).collect();
-        let place = |rel: &str| place_of(f, &locations, derived.contains(rel), rel);
+        let place = |rel: &str| place_of(f, locations, derived.contains(rel), rel);
         // Each relation's places, asked once.
         let s_places = crate::code_rule_dsl::logic::profile::span(|| "fact spaces: the places".into());
         let mut places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)> = BTreeMap::new();
@@ -249,7 +249,7 @@ impl ProgramPass for FactSpaces<'_> {
         }
         let derived_in = |of: &Version, rel: &str| of.rel(rel).is_some_and(|id| of.heads(id).next().is_some());
         let natives: BTreeSet<&str> = f.natives().iter().map(|n| v.rel_name(n.rel)).collect();
-        if heads.iter().any(|h| derived_in(&**v, h) != derived_in(&**last.input, h)) {
+        if heads.iter().any(|h| derived_in(v, h) != derived_in(last.input, h)) {
             return Ok(false);
         }
         let split = {
@@ -273,7 +273,7 @@ impl ProgramPass for FactSpaces<'_> {
                 groups_of.entry(h.clone()).or_default().push(k);
             }
         }
-        let is_derived = |rel: &str| (derived_in(&**v, rel) || natives.contains(rel)) && !f.is_input(rel);
+        let is_derived = |rel: &str| (derived_in(v, rel) || natives.contains(rel)) && !f.is_input(rel);
         let mut places: BTreeMap<String, (Vec<usize>, Vec<usize>, Vec<usize>)> = BTreeMap::new();
         let mut derived: BTreeSet<String> = BTreeSet::new();
         let mut note = |rel: &str| {
@@ -282,7 +282,7 @@ impl ProgramPass for FactSpaces<'_> {
                 if dv {
                     derived.insert(rel.to_owned());
                 }
-                places.insert(rel.to_owned(), place_of(f, &locations, dv, rel));
+                places.insert(rel.to_owned(), place_of(f, locations, dv, rel));
             }
         };
         note("docof");
@@ -302,7 +302,7 @@ impl ProgramPass for FactSpaces<'_> {
         for id in last.delta.removed.iter() {
             let (Some(src), Some(made)) = (last.input.rule(id), last.output.derived(id).next()) else { return Ok(false) };
             for (k, o) in outside.iter().enumerate() {
-                counts[k] = counts[k].saturating_sub(guards_in(&**last.output, made, o).saturating_sub(guards_in(&**last.input, src, o)));
+                counts[k] = counts[k].saturating_sub(guards_in(last.output, made, o).saturating_sub(guards_in(last.input, src, o)));
             }
         }
         let mut guards = Guards { policies, groups: &groups, groups_of, places, derived, added: vec![0; groups.len()] };
@@ -386,12 +386,12 @@ impl Guards<'_> {
         // A check of a bound document, never a relation to start from: the documents out of the scope, negated.
         let at = |d: &str| Made::Atom { rel: outside.to_owned(), args: vec![Tm::Var(d.to_owned())], neg: true, gated: false };
         let of_node = |n: &str, fresh: &mut usize| -> Vec<Made> {
-            let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
+            let g = format!("{}{}", super::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
             vec![Made::Cmp { l: Tm::Var(g.clone()), op: CmpOp::Eq, r: Tm::Call("doc".into(), vec![Tm::Var(n.to_owned())]) }, at(&g)]
         };
         let of_span = |n: &str, fresh: &mut usize| -> Vec<Made> {
-            let g = format!("{}{}", crate::code_rule_dsl::logic::simplify::GUARD_VAR, *fresh);
+            let g = format!("{}{}", super::simplify::GUARD_VAR, *fresh);
             *fresh += 1;
             vec![Made::Atom { rel: "docof".into(), args: vec![Tm::Var(n.to_owned()), Tm::Var(g.clone())], neg: false, gated: false }, at(&g)]
         };
@@ -484,7 +484,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn same_relations(p: &mut crat
 }
 
 /// The copies of `label`'s own guests folded into their originals (`FoldOwn`), and then the rules that repeat another
-/// dropped and the relations that are one merged, as `merge_and_drop_repeats` (decision 0058): the run's edit, once
+/// dropped and the relations that are one merged, as `preparation::run` merges (decision 0058): the run's edit, once
 /// its language is known.
 pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::sync::Arc<Version>, label: &str) -> Result<std::sync::Arc<Version>> {
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("fold own guests", v);
@@ -512,7 +512,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::syn
 /// so a copy specialized to it holds its original's rows: its rules differ only by the seeded column's bound, which
 /// those documents are under, and by the qualified kinds. Its readers read the original, its rules go, and a
 /// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
-/// `DropRepeated`. With guests not shown (`bound`, `.guests off`) nothing is folded.
+/// `DropRepeated`.
 /// `folded`: how many copies and kind sets it folded. `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
 pub(in crate::code_rule_dsl::logic::plan::corpus) struct FoldOwn<'a> {
     pub(in crate::code_rule_dsl::logic::plan::corpus) label: &'a str,
@@ -522,17 +522,18 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) struct FoldOwn<'a> {
 impl ProgramPass for FoldOwn<'_> {
     const NAME: &'static str = "fold own guests' copies";
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
-        use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, HIDDEN_KEYS};
+        use crate::code_rule_dsl::facts::vtab::syntax::{RUN_VALUE_KEYS, HIDDEN_KEYS};
         let v = cx.v();
         let d = cx.get::<FieldsData>()?;
         let f = Fields::over(v, &d);
         let label = self.label;
-        if super::super::hiding::bound(&**v) != ANNOTATION_KEYS || std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|x| x == "on") {
+        if std::env::var("RERAIL_SHOWN_COPIES").is_ok_and(|x| x == "on") {
             return Ok(());
         }
         let dialect = crate::code_rule_dsl::logic::plan::corpus::hiding::dialect_label;
         // `rr_in_<g>_<c>_…<orig>`, every `<g>` the run's own (as `Hide` names them: `g` with non-alphanumerics as `_`).
-        let grammars: Vec<&str> = ["annotation", label].into_iter().filter(|g| dialect(g) == label).collect();
+        // The run's language and its fragments (decision 0466).
+        let grammars: Vec<&str> = crate::code_rule_dsl::language::fragments().iter().map(|(n, ..)| *n).chain([label]).filter(|g| dialect(g) == label).collect();
         let own_mid = |mut mid: &str| -> bool {
             if mid.is_empty() {
                 return false;
@@ -563,44 +564,100 @@ impl ProgramPass for FoldOwn<'_> {
                 grammars.iter().find_map(|g| tail.strip_prefix(*g).and_then(|r| r.strip_prefix('_'))).filter(|set| set_names.contains(*set)).map(|set| ((*k).to_owned(), set.to_owned()))
             })
             .collect();
+        // A tree axis over a copied set (`Hide`'s `rr_inside_rr_in_<g>_<set>`, `rr_has_…`) reads the original set's
+        // axis: the copied set goes, and an axis left on it names no set, so the transducer made it with no rows and
+        // its negation held for every node (`!inside(t, _, S)` and `within_stop` in a clone over an annotation's node;
+        // main's #862, ported from the tree's `fold_own`).
+        let axes: BTreeMap<String, String> = declared
+            .iter()
+            .copied()
+            .chain(f.inputs())
+            .filter_map(|rel| {
+                let (set, has) = front::axis(rel)?;
+                sets.get(set).map(|orig| (rel.to_owned(), format!("{}{orig}", if has { front::DESCENDANTS } else { front::AXIS })))
+            })
+            .collect();
         if folded.is_empty() && sets.is_empty() {
             return Ok(());
         }
-        // An original holds its copies' rows: its rules' bounds take the annotations in (`ANNOTATION_KEYS` to
-        // `HIDDEN_KEYS`), as its copies' seeded columns did. A rule that does not reach an annotation keeps the bound.
-        let originals: BTreeSet<String> = folded.values().cloned().collect();
-        let (narrow, wide) = (i64::from(ANNOTATION_KEYS), i64::from(HIDDEN_KEYS));
+        // An original holds its copies' rows: the bounds of an annotation's take the annotations in (`RUN_VALUE_KEYS`
+        // to `HIDDEN_KEYS`), as its copies' seeded columns did. A copy for a code guest of the run's language holds rows
+        // under the narrow bound already. A rule that does not reach an annotation keeps the bound.
+        let originals = annotated(&folded);
+        let narrowing = Narrowing { widened: &originals, asking: asking(v) };
+        let read = narrowing.reads(v, &folded);
+        let (narrow, wide) = (i64::from(RUN_VALUE_KEYS), i64::from(HIDDEN_KEYS));
         let plain = format!("{label}:");
-        let mut rules = Folding { folded: &folded, sets: &sets, originals: &originals, narrow, wide, plain: &plain };
+        let mut rules = Folding { folded: &folded, axes: &axes, sets: &sets, originals: &originals, narrowing: &narrowing, read: &read, narrow, wide, plain: &plain };
         w.derive()?;
         w.apply(cx, &mut rules, &crate::code_rule_dsl::logic::program_image::manager::Select::All)?;
         // The fields edited in the same derivation.
         let b = w.derive()?;
         for rel in folded.keys() {
-            b.undeclare(rel);
+            b.fields().undeclare(rel);
+        }
+        // Each axis copy is declared as its original, where its original was not.
+        for (copy, orig) in &axes {
+            if let Some(cols) = v.columns_of(copy) {
+                if !v.declares(orig) {
+                    let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+                    b.fields().declare(orig, &pairs);
+                }
+                b.fields().undeclare(copy);
+            }
         }
         let named = |b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, c: Cell, gone: &dyn Fn(&str) -> bool| matches!(c, Cell::Str(a) if gone(b.text(a)));
-        let qualifiers: Vec<Vec<Cell>> = b.about_rows("qualifier").into_iter().filter(|r| !named(b, r[1], &|x| folded.contains_key(x))).collect();
-        b.set_about_rows("qualifier", qualifiers);
+        let mut qualifiers: Vec<Vec<Cell>> = b.about_rows("qualifier").into_iter().filter(|r| !named(b, r[1], &|x| folded.contains_key(x))).collect();
+        let narrowed: Vec<Vec<Cell>> = qualifiers
+            .iter()
+            .filter_map(|r| match r[1] {
+                Cell::Str(a) if read.contains(b.text(a)) => Some((r.clone(), narrow_name(b.text(a)))),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+            .into_iter()
+            .map(|(mut row, name)| {
+                row[1] = Cell::Str(b.atom(&name));
+                row
+            })
+            .collect();
+        qualifiers.extend(narrowed);
+        b.fields().set_about_rows("qualifier", qualifiers);
+        declare_narrow(v, b, &read, &narrowing)?;
         // The request record's readers (`hiding::fold_own`'s `rename_readers`, decision 0331).
         b.rename_asked_readers(&|r| folded.get(r).cloned());
         for about in ["kindset", "kindset_kind"] {
             let rows: Vec<Vec<Cell>> = b.about_rows(about).into_iter().filter(|r| !named(b, r[1], &|x| sets.contains_key(x))).collect();
-            b.set_about_rows(about, rows);
+            b.fields().set_about_rows(about, rows);
         }
-        let renamed = |list: Vec<String>| -> Vec<String> { list.into_iter().map(|r| folded.get(&r).cloned().unwrap_or(r)).collect() };
+        // A list names the originals; an axis copy's place is its original's, unless the original is listed already.
+        let renamed = |list: Vec<String>| -> Vec<String> {
+            let mut list: Vec<String> = list.into_iter().map(|r| folded.get(&r).cloned().unwrap_or(r)).collect();
+            for (copy, orig) in &axes {
+                let Some(i) = list.iter().position(|r| r == copy) else { continue };
+                if list.contains(orig) {
+                    list.remove(i);
+                } else {
+                    list[i] = orig.clone();
+                }
+            }
+            list
+        };
+        let moved = |r: &str| folded.contains_key(r) || axes.contains_key(r);
         let inputs = renamed(f.inputs().map(str::to_owned).collect());
         let outputs = renamed(f.outputs().map(str::to_owned).collect());
-        if f.inputs().any(|r| folded.contains_key(r)) {
-            b.set_inputs(&inputs);
+        if f.inputs().any(moved) {
+            b.fields().set_inputs(&inputs);
         }
-        if f.outputs().any(|r| folded.contains_key(r)) {
-            b.set_outputs(&outputs);
+        if f.outputs().any(moved) {
+            b.fields().set_outputs(&outputs);
         }
-        if f.demand().any(|r| folded.contains_key(r)) {
+        if f.demand().any(|r| moved(r) || read.contains(r)) {
+            let mut demand = renamed(f.demand().map(str::to_owned).collect());
+            demand.extend(f.demand().filter(|r| read.contains(*r)).map(narrow_name));
             let p = super::demand::about_p(b);
-            let rows: Vec<Vec<Cell>> = renamed(f.demand().map(str::to_owned).collect()).iter().enumerate().map(|(k, r)| vec![p, Cell::Int(k as i64), Cell::Str(b.atom(r))]).collect();
-            b.set_about_rows("demand", rows);
+            let rows: Vec<Vec<Cell>> = demand.iter().enumerate().map(|(k, r)| vec![p, Cell::Int(k as i64), Cell::Str(b.atom(r))]).collect();
+            b.fields().set_about_rows("demand", rows);
         }
         // The request record's readers renamed as the reads are (`Program::rename_readers`): a request of a folded
         // copy serves its original (decision 0331).
@@ -610,9 +667,12 @@ impl ProgramPass for FoldOwn<'_> {
             if readers.iter().any(|x| folded.contains_key(x)) {
                 *readers = std::mem::take(readers).into_iter().map(|x| folded.get(&x).cloned().unwrap_or(x)).collect();
             }
+            // A request serving an original kept narrow serves its narrow copy's readers too.
+            let narrowed: Vec<String> = readers.iter().filter(|x| read.contains(*x)).map(|x| narrow_name(x)).collect();
+            readers.extend(narrowed);
         }
         if asked != was {
-            b.set_asked(&asked);
+            b.fields().set_asked(&asked);
         }
         self.folded += folded.len() + sets.len();
         Ok(())
@@ -622,8 +682,14 @@ impl ProgramPass for FoldOwn<'_> {
 /// `FoldOwn`'s edit of each rule.
 struct Folding<'a> {
     folded: &'a HashMap<String, String>,
+    /// Each tree axis over a copied kind set, and the original set's axis.
+    axes: &'a BTreeMap<String, String>,
     sets: &'a HashMap<String, String>,
+    /// The originals widened: an annotation's (`annotated`).
     originals: &'a BTreeSet<String>,
+    narrowing: &'a Narrowing<'a>,
+    /// The originals kept narrow for the rules that read them narrow (`Narrowing::reads`).
+    read: &'a BTreeSet<String>,
     narrow: i64,
     wide: i64,
     plain: &'a str,
@@ -637,7 +703,8 @@ impl RulePass for Folding<'_> {
         if self.folded.contains_key(head) {
             return Ok(Step::Drop);
         }
-        let mut rw = Fold { v, at: self, original: self.originals.contains(head), changed: false, plain: HashMap::new(), ids: HashMap::new() };
+        let sees = self.narrowing.sees(head);
+        let mut rw = Fold { v, at: self, original: self.originals.contains(head), narrow_reads: sees, head: None, changed: false, plain: HashMap::new(), ids: HashMap::new() };
         // Asked once to find whether anything changes; the rule is kept as it is where nothing does.
         for l in r.body() {
             match l.view() {
@@ -651,7 +718,8 @@ impl RulePass for Folding<'_> {
                 _ => {}
             }
         }
-        if !rw.changed {
+        let copy = self.read.contains(head);
+        if !rw.changed && !copy {
             return Ok(Step::Keep);
         }
         // The plain names, as the builder's atoms.
@@ -661,14 +729,183 @@ impl RulePass for Folding<'_> {
             rw.plain.insert(a, n);
             rw.ids.insert(a, id);
         }
-        out.rewrite(&mut rw)
+        let step = out.rewrite(&mut rw)?;
+        if copy {
+            // As hiding left it (decision 0165 §3), for the rules that read it narrow: not widened, reading the others'
+            // narrow copies.
+            let mut narrow = Fold { original: false, narrow_reads: true, head: Some(narrow_name(head)), changed: true, plain: rw.plain.clone(), ids: rw.ids.clone(), ..rw };
+            out.rewrite(&mut narrow)?;
+        }
+        Ok(step)
     }
+}
+
+/// The name of `orig` as hiding left it, for the rules that read it and are not its own (`Narrowing`).
+fn narrow_name(orig: &str) -> String {
+    format!("rr_narrow_{orig}")
+}
+
+/// The originals of copies made for an annotation (`rr_in_…annotation_<c>_…<orig>`). A copy for a code guest of the
+/// run's language holds rows under the narrow bound already; one for an annotation holds an annotation's, which its
+/// original takes in once widened.
+fn annotated(folded: &HashMap<String, String>) -> BTreeSet<String> {
+    let for_annotation = |copy: &str, orig: &str| {
+        let mid = &copy["rr_in_".len()..copy.len() - orig.len()];
+        mid.starts_with("annotation_") || mid.contains("_annotation_")
+    };
+    folded.iter().filter(|(copy, orig)| for_annotation(copy, orig)).map(|(_, orig)| orig.clone()).collect()
+}
+
+/// The guest demand and the contexts only it reads, transitively (`hide::asking`, over the version).
+fn asking(v: &Version) -> BTreeSet<String> {
+    let mut readers: HashMap<&str, BTreeSet<&str>> = HashMap::new();
+    for r in v.rules() {
+        let head = v.rel_name(r.head().rel());
+        for a in r.body().filter_map(|l| l.atom()) {
+            readers.entry(v.rel_name(a.rel())).or_default().insert(head);
+        }
+    }
+    let mut asking: BTreeSet<String> = BTreeSet::from([crate::code_rule_dsl::logic::plan::corpus::guests::DEMAND.to_owned()]);
+    loop {
+        let more: Vec<String> = v
+            .declared_names()
+            .into_iter()
+            .filter(|r| super::hide::is_context(r) && !asking.contains(r.as_str()))
+            .filter(|r| readers.get(r.as_str()).is_some_and(|by| by.iter().all(|h| asking.contains(*h))))
+            .collect();
+        if more.is_empty() {
+            return asking;
+        }
+        asking.extend(more);
+    }
+}
+
+/// Which rules read the widened originals narrow (decision 0165 §3). Such a rule reached no annotation (it would
+/// read a copy), so it reads the original under the narrow bound, `rr_narrow_<orig>`: the original's rules before
+/// they are widened, each reading the others' narrow ones too. Without it a rule's rows depended on what else the run
+/// held: a program whose rules read a copy widened the original another program's rule read, and that rule saw the
+/// annotations (RUF060 found `x: "1 in []"` beside C417 only; main's #923).
+struct Narrowing<'w> {
+    widened: &'w BTreeSet<String>,
+    /// The guest demand and the contexts only it reads (`asking`).
+    asking: BTreeSet<String>,
+}
+
+impl Narrowing<'_> {
+    /// Whether the rules of `head` read the originals narrow: not a widened original's own, and not asking for what
+    /// every reader is answered from.
+    fn sees(&self, head: &str) -> bool {
+        !self.widened.contains(head) && !self.asks(head)
+    }
+
+    /// Whether `rel` is kept narrow for the rules that read it narrow.
+    fn narrowed(&self, rel: &str) -> bool {
+        self.widened.contains(rel) && !self.asks(rel)
+    }
+
+    /// Whether `rel` asks for what every reader is answered from, so it reads the originals widened: a guest request
+    /// and the contexts only it reads (`guests::REQUESTS`, `asking`; asking is not seeing, decision 0165 §4), or the
+    /// on-request rewrite's attributes, their requests, eager halves and widened copies (decision 0174). Read narrow, a
+    /// request asks too little for the widened original's readers.
+    fn asks(&self, rel: &str) -> bool {
+        use crate::code_rule_dsl::logic::rr::lower::{made_on_request, on_request_rule};
+        self.asking.contains(rel) || crate::code_rule_dsl::logic::plan::corpus::guests::REQUESTS.contains(&rel) || on_request_rule(rel) || made_on_request(rel)
+    }
+
+    /// The originals kept narrow that a rule reading them narrow reads, and those their rules read in turn. The
+    /// folded copies' rules go, and are not followed.
+    fn reads(&self, v: &Version, folded: &HashMap<String, String>) -> BTreeSet<String> {
+        let mut rules_of: HashMap<&str, Vec<RuleRef<'_>>> = HashMap::new();
+        for r in v.rules() {
+            rules_of.entry(v.rel_name(r.head().rel())).or_default().push(r);
+        }
+        let mut todo: Vec<RuleRef<'_>> = v
+            .rules()
+            .filter(|r| {
+                let head = v.rel_name(r.head().rel());
+                !folded.contains_key(head) && self.sees(head)
+            })
+            .collect();
+        let mut read = BTreeSet::new();
+        while let Some(rule) = todo.pop() {
+            for l in rule.body() {
+                let (Lit::Atom(a) | Lit::Agg { atom: a, .. }) = l.view() else { continue };
+                let rel = v.rel_name(a.rel());
+                if self.narrowed(rel) && read.insert(rel.to_owned()) {
+                    todo.extend(rules_of.get(rel).into_iter().flatten().copied());
+                }
+            }
+        }
+        read
+    }
+}
+
+/// What the program says of each original kept narrow (`read`) by name, said of `rr_narrow_<orig>` too: its
+/// declaration, facts, tape columns, lattice, nullary encoding, join shapes and native operator (its qualifiers, demand
+/// and the request rules that serve its readers are `FoldOwn`'s). A native operator whose rule reads narrow reads the
+/// narrow copies: its rows are made from the relations its fields name, its rule only orders it after them.
+fn declare_narrow(v: &Version, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, read: &BTreeSet<String>, narrowing: &Narrowing<'_>) -> Result<()> {
+    use crate::code_rule_dsl::logic::program_facts::Field;
+    if read.is_empty() {
+        return Ok(());
+    }
+    for orig in read {
+        if let Some(cols) = v.columns_of(orig) {
+            let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+            b.fields().declare(&narrow_name(orig), &pairs);
+        }
+        if let Some(rows) = v.fact_values(orig, &Default::default()) {
+            b.fields().set_facts(&narrow_name(orig), &rows);
+        }
+    }
+    let copy = |name: &str| read.contains(name).then(|| narrow_name(name));
+    let mut tapes = v.tape_columns()?;
+    let extra: Vec<_> = tapes.iter().filter_map(|(r, c)| copy(r).map(|n| (n, c.clone()))).collect();
+    if !extra.is_empty() {
+        tapes.extend(extra);
+        b.fields().set_field(Field::Tapes(&tapes));
+    }
+    let mut lattice = v.lattice_decls()?;
+    let extra: Vec<_> = lattice.iter().filter_map(|(r, l)| copy(r).map(|n| (n, l.clone()))).collect();
+    if !extra.is_empty() {
+        lattice.extend(extra);
+        b.fields().set_field(Field::Lattice(&lattice));
+    }
+    let nullary: Vec<String> = v.nullary_names()?.iter().filter_map(|r| copy(r)).collect();
+    if !nullary.is_empty() {
+        b.fields().add_nullary(&nullary);
+    }
+    let mut shapes = v.shape_list()?;
+    let extra: Vec<_> = shapes.iter().filter_map(|s| copy(&s.head).map(|n| front::Shape { head: n, ..s.clone() })).collect();
+    if !extra.is_empty() {
+        shapes.extend(extra);
+        b.fields().set_field(Field::Shapes(&shapes));
+    }
+    let mut natives = v.native_map()?;
+    let mut changed = false;
+    for (_, native) in natives.iter_mut().filter(|(head, _)| narrowing.sees(head)) {
+        if native.reads().iter().any(|r| read.contains(*r)) {
+            native.rename_reads(|r| if read.contains(r) { narrow_name(r) } else { r.to_owned() });
+            changed = true;
+        }
+    }
+    let extra: Vec<_> = natives.iter().filter_map(|(r, n)| copy(r).map(|c| (c, n.clone()))).collect();
+    changed |= !extra.is_empty();
+    natives.extend(extra);
+    if changed {
+        b.fields().set_field(Field::Natives(&natives));
+    }
+    Ok(())
 }
 
 struct Fold<'a, 'v> {
     v: &'v Version,
     at: &'a Folding<'a>,
     original: bool,
+    /// Whether its reads of the originals kept narrow read their narrow copies (`Narrowing::sees`).
+    narrow_reads: bool,
+    /// The head it is written under: a narrow copy's (`narrow_name`); else its own.
+    head: Option<String>,
     changed: bool,
     /// Each qualified kind or field constant, by its atom, and its plain name.
     plain: HashMap<AtomId, String>,
@@ -692,7 +929,7 @@ impl Fold<'_, '_> {
     }
     fn look(&mut self, a: AtomRef<'_>) {
         let rel = self.v.rel_name(a.rel());
-        if self.at.folded.contains_key(rel) {
+        if self.at.folded.contains_key(rel) || self.at.axes.contains_key(rel) || self.narrow_reads && self.at.read.contains(rel) {
             self.changed = true;
         }
         for (c, t) in a.args().enumerate() {
@@ -718,7 +955,14 @@ impl Fold<'_, '_> {
 
 impl Rewrite for Fold<'_, '_> {
     fn atom_as(&mut self, a: AtomRef<'_>) -> Option<(String, bool, bool)> {
-        self.at.folded.get(self.v.rel_name(a.rel())).map(|o| (o.clone(), a.neg(), a.gated()))
+        let rel = self.v.rel_name(a.rel());
+        if self.narrow_reads && self.at.read.contains(rel) {
+            return Some((narrow_name(rel), a.neg(), a.gated()));
+        }
+        self.at.folded.get(rel).or_else(|| self.at.axes.get(rel)).map(|o| (o.clone(), a.neg(), a.gated()))
+    }
+    fn head_as(&mut self, _a: AtomRef<'_>) -> Option<String> {
+        self.head.clone()
     }
     fn arg(&mut self, a: AtomRef<'_>, c: usize, t: TermRef<'_>) -> Option<T<'static>> {
         let TermRef::Str(s) = t else { return None };

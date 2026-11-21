@@ -19,7 +19,7 @@ A computation that cannot be stated declaratively becomes an engine producer beh
 
 It is also where DLRE's runtime went: 733 of 760 CPU samples in batch six were in relational evaluation.
 
-Scope: DLRE branch `jeremybarnes/Data-layer-rule-expressivity` at `d3470da2`, as merged into the Pulling-it-all-together worktree. All paths are relative to the repo root.
+Scope: DLRE branch `Data-layer-rule-expressivity` at `d3470da2`, as merged into the PIAT worktree. All paths are relative to the repo root.
 
 ## 1. Mechanisms by which a rule document can carry SQL or code
 
@@ -54,8 +54,8 @@ The relational engine is about 7,000 lines of Rust: `relational.rs`, `relational
   - `f52817fc`: deferred SQL facts and native forest;
   - `c4bd76bf`: shared syntax facts.
   - 19 commits on the branch touch the relational engine.
-- **Stated rationale.** From `docs/data-layer-batch-five.md:86-99` and `docs/data-layer-engine-gaps.md:144-158`: "Actual ports proved two further execution shapes… Relational clauses join projected source facts, group exported families, and compute recursive reachability with native reference edges." The clause was justified by the need to reproduce what the Python oracle scripts do.
-- **The governing requirement.** From `docs/data-layer-rule-port.md:83`: "Model the exact state tracked by the oracle." Rules are admitted "as exact only after its diagnostics and coverage match the oracle" (`:264`). Batch five boasts: "No oracle source, expected findings, or existing AST work limit changed to obtain parity" (`batch-five.md:117`).
+- **Stated rationale.** From `docs/data-layer-batch-five.md:86-99` and `docs/data-layer-engine-gaps.md:144-158` (both removed; at 7efcac9c67): "Actual ports proved two further execution shapes… Relational clauses join projected source facts, group exported families, and compute recursive reachability with native reference edges." The clause was justified by the need to reproduce what the Python oracle scripts do.
+- **The governing requirement.** From `docs/data-layer-rule-port.md:83` (removed; at 7efcac9c67): "Model the exact state tracked by the oracle." Rules are admitted "as exact only after its diagnostics and coverage match the oracle" (`:264`). Batch five boasts: "No oracle source, expected findings, or existing AST work limit changed to obtain parity" (`batch-five.md:117`).
   - The root-cause table in batch five shows the cost of that bar. One example: "Dead-code parity had 42 extra and one missing diagnostic | Plain imports vanished through SQL null arithmetic…" (`:114`). The SQL had to reproduce the oracle's own quirks.
 - **Consequence.** The oracle scripts are imperative Python analyzers: scope tracking, import resolution, class hierarchy, call graphs and taint propagation. Exact-parity porting therefore demanded a Turing-ish escape hatch, and the escape hatch became SQL. The branch then spent its performance work on SQL materialization:
   - `batch-six.md:148`: "733 of the active worker's 760 samples in relational evaluation. Of these, 716 included SQL stage materialization."
@@ -73,7 +73,7 @@ The relational engine is about 7,000 lines of Rust: `relational.rs`, `relational
 | data-layer-serverplan-quality | 6 |
 | execution-authority-bypass, impl-direct-execution, internal-dead-code, legacy-execution-surfaces, public-api-triples, serverplan-dispatch-architecture, serverplan-target-architecture | 1 each |
 
-Also: `fixtures/host/data-layer-port/profiling/{batched-sql,evidence,native-relations-metrics}.json` and `test/scripts/test_sql_variants.py`.
+Also: `packs/data-layer/upstream/benchmarks/authored/profiling/{batched-sql,evidence,native-relations-metrics}.json` and `test/scripts/test_sql_variants.py`.
 
 ### What the SQL computes, by semantic primitive
 
@@ -115,16 +115,16 @@ Shared principle: the rule states *what relation it wants*, and the engine owns 
 |---|---|---|---|
 | A dedupe | **None in the rule.** Findings are a *set* keyed by a declared identity (`violation` identity fields, e.g. the existing `key`). Collapsing several matches on one line into one finding happens in the integration's normalization step. | Mostly: `key` exists. Delete the SQL. | Trivial: a `DISTINCT` on the identity, or done by the consumer |
 | B count | `budget` (group_by, count lte/distinct); `define.report_when.count.gt`. Extend with `gte`/`min` and `scope: file\|repository` | Mostly | `GROUP BY … HAVING` |
-| C CST rows | **Delete.** Use AST rules (`inside`/`has` with `stopBy: end`, `field`, `nthChild`, `precedes`/`follows`). Structural joins between captures go through engine `node`/`kids`/`ancestor` contracts. Containment is an interval test on tape extents (ast-index-spike LINTER_ARCHITECTURE.md §7 G1). | Yes | Native matcher per file, or the `node` vtab |
+| C CST rows | **Delete.** Use AST rules (`inside`/`has` with `stopBy: end`, `field`, `nthChild`, `precedes`/`follows`). Structural joins between captures go through engine `node`/`kids`/`ancestor` contracts. Containment is an interval test on tape extents (SQL index prototype LINTER_ARCHITECTURE.md §7 G1). | Yes | Native matcher per file, or the `node` vtab |
 | D scope/qualname | An engine relation `scope(file, node, owner_fn, owner_class, top_fn, qualname)`, exposed as capture projections (`capture.X.qualname`, `capture.X.owner`) and as `inside: {owner: function}` | Partly (`syntax.ownership/owners` is the native seed) | A per-file native producer behind a relation contract |
 | E name resolution | `resolves` / `binds` / `calls {graph: references}` and the declared-reference graph, backed by an engine relation `symbol_ref(file, node, target)` plus `import(module, name, target)` | Largely (declared-reference graphs, batch five) | A repository-scoped relation; incremental by dependency cone |
 | F hierarchy | `NameClosure` (`extends`, `edges`, `partition_by`), or an engine `class_base` relation plus a closure operator | Partly | A recursive CTE with cycle guard, or the native forest |
 | G reachability | A first-class operator, e.g. `reaches: {from: <rule>, via: calls\|references, to: <rule>}`. The native `reachability` stage already exists; it only needs to take *declarative* roots and edges instead of authored stages. | Engine yes, surface partly | A recursive CTE, or the native batched closure (`relational/reachability.rs`) |
-| H data flow | The genuine residual. Either (a) an engine-owned def-use / value-flow relation with a `flows: {from, to, through}` operator, or (b) loosening the findings to site-level candidates. ast-index-spike declined this as "a resolver, not an index" for 2/99 specs (§7 G3). | No | (a) a native producer behind a contract |
+| H data flow | The genuine residual. Either (a) an engine-owned def-use / value-flow relation with a `flows: {from, to, through}` operator, or (b) loosening the findings to site-level candidates. SQL index prototype declined this as "a resolver, not an index" for 2/99 specs (§7 G3). | No | (a) a native producer behind a contract |
 | I allowlists | Policy *data*: an `allowlist:` relation from a declared (signed) artifact, joined by an `except: {allowlist, on: [path, qualname]}`. Path lists go in the existing `paths` scope. | No surface; the host has signed-allowlist verification | A plain table join |
 | J oracle modes | **Delete.** Keep only `$option` cases that are product options; drop the ones that emulate an oracle script's entry point | n/a | n/a |
 
-General composition (join two evidence relations on a captured value, union, anti-join) needs only a small closed relational algebra over named evidence relations, with typed column references and the existing `Predicate` AST. Examples: `require_each`, `select_when`, plus a `join`/`union` node. No SQL text. This is what PR 2539 landed on, and what ast-index-spike argued from the consumer side.
+General composition (join two evidence relations on a captured value, union, anti-join) needs only a small closed relational algebra over named evidence relations, with typed column references and the existing `Predicate` AST. Examples: `require_each`, `select_when`, plus a `join`/`union` node. No SQL text. This is what PR 2539 landed on, and what the SQL index prototype argued from the consumer side.
 
 **PR 2539** (`pr2539/docs/design/DECLARATIVE_LINTER_SQL_ONLY_BOUNDARY.md`) took this route:
 - Generic, framework-owned facts: `python_definition` (with qualname, bases and decorators), `python_function_body_call` (with resolved symbol), imports and parameters.
@@ -135,7 +135,7 @@ General composition (join two evidence relations on a captured value, union, ant
 
 Its explicit "Process Failure" section warns against "Python prepares convenient rows, YAML queries them" and against rule-shaped relations. DLRE failed in the mirror direction: rules re-derive generic semantic facts in SQL, once per rule.
 
-**ast-index-spike** (`LINTER_ARCHITECTURE.md` §5, §7, §8, §10):
+**SQL index prototype** (`LINTER_ARCHITECTURE.md` §5, §7, §8, §10):
 - 77 of 99 rules are single-file syntax questions.
 - Anti-join (16 specs), counting (24) and closure are written by the **caller** around structural fragments.
 - The real gaps are containment-at-depth (expose extents), child ordinal (project the ordinal onto captures) and data flow (declined).

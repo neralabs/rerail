@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-"""rrlab: run a .rr rule on real files through plain Soufflé, and score it against an upstream recording.
+"""rrlab: run a .rerail rule on real files through plain Soufflé, and score it against an upstream recording.
 
-  rrlab.py run RULE.rr FILE... [--options JSON] [--lang LANG] [--root DIR] [-v]
-  rrlab.py score PACK RULE-ID [RULE.rr] [--all] [--options JSON] [--data DIR] [--show N] [--column]
-  rrlab.py dl CHECK [RULE.rr] [--entry NAME] [--test TEXT]   score a data-layer rule on the port's events (dl.py)
-  rrlab.py lower RULE.rr                 the Soufflé program, with its warnings
+  rrlab.py run RULE.rerail FILE... [--options JSON] [--lang LANG] [--root DIR] [-v]
+  rrlab.py score PACK RULE-ID [RULE.rerail] [--all] [--options JSON] [--data DIR] [--show N] [--column]
+  rrlab.py dl CHECK [RULE.rerail] [--entry NAME] [--test TEXT]   score a data-layer rule on the port's events (dl.py)
+  rrlab.py lower RULE.rerail                 the Soufflé program, with its warnings
   rrlab.py pattern LANG 'PATTERN' [KIND]  the structural rule a backtick pattern compiles to
 
 README.md in this directory: what is modelled and what is not.
@@ -22,7 +22,14 @@ SOUFFLE = shutil.which("souffle") or "/opt/homebrew/bin/souffle"
 FACTS_BIN = os.path.join(HERE, "target", "release", "rrlab-facts")
 FN_DIR = os.path.join(HERE, "target", "functors")
 ECMA = (".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx")
-SKIP_DIRS = {".git", "node_modules", "__pycache__", ".venv", "venv", "target", "dist", "build"}
+# The folders the engine's walks skip (its `file` facts, the corpus): the host's IGNORED_DIRECTORIES, as the data the
+# engine reads, from rrlab's own checkout (RRLAB_RR may name another one's rules).
+_IGNORED = os.path.join(HERE, "..", "..", "..", "..", "native", "src", "ignored_directories.generated.json")
+try:
+    with open(_IGNORED) as _f:
+        SKIP_DIRS = set(json.load(_f))
+except (OSError, ValueError) as _e:
+    raise SystemExit(f"rrlab: cannot read the ignored directories from {os.path.normpath(_IGNORED)}: {_e}")
 csv.field_size_limit(1 << 30)
 
 
@@ -257,7 +264,7 @@ def scope_glob(g):
             out.append("[^/]*")
         elif c == "?":
             out.append("[^/]")
-        elif c == "[":   # `[A-Z]` / `[0-9_]`: one listed character (core.rr, glob)
+        elif c == "[":   # `[A-Z]` / `[0-9_]`: one listed character (core.rerail, glob)
             j = g.find("]", i + 1)
             if j > i + 1:
                 out.append("[" + g[i + 1:j].replace("\\", "\\\\") + "]"); i = j + 1; continue
@@ -349,8 +356,8 @@ class Run:
                     p.warn(f"input {name} has no rows in rrlab")
 
     def serve_typing(self):
-        """core.rr's typing programs. A rule that declares `typing_<program>__<output>` reads that output of
-        typing/programs/<program>.rr, run first over this run's facts, as the engine does. A node column of the
+        """core.rerail's typing programs. A rule that declares `typing_<program>__<output>` reads that output of
+        typing/programs/<program>.rerail, run first over this run's facts, as the engine does. A node column of the
         output becomes four columns (path, kind, start byte, end byte), which the libraries join back to nodes.
         The engine runs a program file by file and then in bounded cross-file rounds; rrlab runs it once over every
         file of the run, which is the fixpoint those rounds converge to."""
@@ -386,7 +393,7 @@ class Run:
         out = {}
         self.typing_cpu = 0.0
         for prog, names in want.items():
-            src = os.path.join(RR, "typing", "programs", prog + ".rr")
+            src = os.path.join(RR, "typing", "programs", prog + ".rerail")
             if not os.path.exists(src):
                 raise SystemExit(f"rrlab: {names[0][0]} names typing program {prog}, but {src} does not exist")
             tp = L.Program(src, P.Compiler(FACTS_BIN))
@@ -512,7 +519,7 @@ class Run:
 
     # -- dfs_first / dfs_first_memo: souffle writes edge, target (and roots); rrlab searches and answers rr_dfs{k}
     def serve_dfs(self):
-        """core.rr's dfs_first(r, hit, first, edge, target): from r, a node's edges are tried in increasing (ord,
+        """core.rerail's dfs_first(r, hit, first, edge, target): from r, a node's edges are tried in increasing (ord,
         dst), each node is entered once and a node on the current path is skipped; the first edge that reaches a
         target gives hit, and first is the ord of r's edge that starts the path. r is never its own hit.
         dfs_first_memo searches the roots in increasing order of their second column with one shared memo, and a
@@ -799,7 +806,7 @@ class Run:
                     out.append({"path": path[r[0]], "line": 1 if at1 else int(r[1]), "col": 0, "code": code,
                                 "violation": None, "row": r, "message": r[2] if len(r) > 2 else "syntax error",
                                 "syntax_error": True, "at": None})
-        # core.rr: @place of a missing path (a directory, a file not given) is a repository-level finding, which
+        # core.rerail: @place of a missing path (a directory, a file not given) is a repository-level finding, which
         # .scope does not filter; only findings on the run's documents are
         docs = {f[2:] if f.startswith("./") else f for f in self.files}
         out = [f for f in out if f["path"] not in docs or self.in_scope(f["path"])]
@@ -1115,13 +1122,13 @@ def score(args):
     pack = os.path.join(data, "packs", args.pack)
     conf = json.load(open(os.path.join(pack, "conformance.json")))
     entry = next((r for r in conf["rules"] if r["id"] == args.rule_id), None)
-    rule = args.rule or os.path.join(RR, "packs", args.pack, args.rule_id + ".rr")
+    rule = args.rule or os.path.join(RR, "packs", args.pack, args.rule_id + ".rerail")
     if not os.path.exists(rule):
-        cands = [f for f in os.listdir(os.path.join(RR, "packs", args.pack)) if f.endswith(".rr") and args.rule_id in f]
+        cands = [f for f in os.listdir(os.path.join(RR, "packs", args.pack)) if f.endswith(".rerail") and args.rule_id in f]
         if len(cands) == 1:
             rule = os.path.join(RR, "packs", args.pack, cands[0])
     if entry is None:
-        # a rule the pack's conformance.json does not list (yet): take the tool and rule from the .rr's code
+        # a rule the pack's conformance.json does not list (yet): take the tool and rule from the .rerail's code
         prog = L.Program(rule)
         codes = {v["code"] for v in prog.violations.values() if v["code"]}
         tools = [d for d in os.listdir(os.path.join(pack, "upstream")) if os.path.isdir(os.path.join(pack, "upstream", d))]
@@ -1155,9 +1162,9 @@ def score(args):
 
 def score_snapshots(args):
     """score --snapshots RUFF_SRC: the rule against Ruff's snapshot tests in a Ruff checkout."""
-    rule = args.rule or os.path.join(RR, "packs", args.pack, args.rule_id + ".rr")
+    rule = args.rule or os.path.join(RR, "packs", args.pack, args.rule_id + ".rerail")
     if not os.path.exists(rule):
-        cands = [f for f in os.listdir(os.path.join(RR, "packs", args.pack)) if f.endswith(".rr") and args.rule_id in f]
+        cands = [f for f in os.listdir(os.path.join(RR, "packs", args.pack)) if f.endswith(".rerail") and args.rule_id in f]
         if len(cands) == 1:
             rule = os.path.join(RR, "packs", args.pack, cands[0])
     prog = L.Program(rule)

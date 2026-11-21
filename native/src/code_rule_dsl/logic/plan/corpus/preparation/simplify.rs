@@ -1,5 +1,48 @@
-//! `simplify::simplify` on the version (decision 0281's path, step 6e): each of its passes a manager pass, one for
-//! one, in its order, the rules kept in their order (each pass derives its output), and its decisions as it made them.
+//! Rule bodies simplified before planning (decision 0038), so a long or repeated rule costs what it says:
+//!
+//! - **Implied atoms drop.** A positive atom goes when another positive atom of the same relation has, at every
+//!   position, the same term, or any term where it has `_`: `doc($d, $p, _)` beside `doc($d, $p, $m)`.
+//! - **A kind test on a set member drops.** `node(_, $a, "k", _, _)` goes where `$a` is the ancestor of a
+//!   `nearest($n, $a, set)` or `inside_<set>($n, $a)` of the same rule and the set is exactly `{k}`.
+//! - **A variable equal to a constant is the constant.** `text($n, $v), $v = "get"` is `text($n, "get")`: the
+//!   planner then reads the atom by its constant column (a lookup by string), where a separate `$v = "get"` binds
+//!   `$v` only after the atom is scanned some other way. A variable the head names stays (a head column filled from a
+//!   text column keeps its relation a string filter, decision 0037), as does one an aggregate, `nearest` or `ast` names.
+//! - **A test of one node read only positively is inlined.** `m($n) :- node(_, $n, _, _, _), !k($n)` (a complement:
+//!   the converter's `not`) read as `m($t)` becomes the reader's `node(_, $t, _, _, _), !k($t)`: where the reader has
+//!   bound `$t`, a probe of `k`, not a relation of every node less `k`'s. Such a relation has one rule, over its one
+//!   node variable alone and not recursive, and no negated or aggregated reader; kept relations (below) stay. (One
+//!   rule: a relation of several would copy each reader once per rule, its whole join run again.)
+//! - **A variable named once is `_`.** In a positive atom, `text($v122, $s)` where `$v122` appears nowhere else is
+//!   `text(_, $s)`; it is then implied by any `text($n, $s)` beside it and goes.
+//! - **Two atoms of one keyed row are one.** `node($d, $n, _, _, _), node(_, $n, "call", _, _)` is
+//!   `node($d, $n, "call", _, _)`: a node's row is one (`KEYS`), so atoms with the same key term read the same row.
+//!   Columns merge where one is `_` or both are the same; two variables in one column are one variable.
+//! - **A part of a body that meets the rest only at a document is a relation of documents.**
+//!   `m($n) :- node($d, $n, "module", _, _), node($d, $y, _, _, _), name($y, $s), @contains($s, "cache")` asks
+//!   whether the file names something with `cache`, once per such name: every match multiplies the rest's rows. The
+//!   part `node($d, $y, …), name($y, $s), @contains(…)` shares only `$d` with the rest and the head, so it becomes
+//!   `exists_k($d) :- node($d, $y, _, _, _), name($y, $s), @contains($s, "cache")`, one row per file, and the rule reads
+//!   `exists_k($d)` (a semi-join). The same set of rows: the part's other variables appear nowhere else. A part moves
+//!   when it has two literals or more, a variable of its own, no aggregate, `nearest` or `ast`, and every variable
+//!   it names bound by a positive atom of its own. A document variable is one in `node`'s or `doc`'s first column.
+//! - **A relation of no columns has one.** `version_given()` is `version_given(1)` where it is made and
+//!   `version_given(_)` where it is read: a table needs a column, and the one row says what the empty tuple did.
+//! - **A rule of constants alone is facts.** `q(@dot("builtins", $x)) :- $x = "bool"` (a disjunction of constants,
+//!   split into one rule per arm) reads no relation, so it has no SQL to run: it is the fact `q("builtins.bool")`.
+//!   A rule whose body is only equations of a variable and a constant, and whose head is then constants (`@dot` of
+//!   two constants included), becomes its facts; one that equates a variable with two different constants goes.
+//! - **Relations no output reads go.** A derived relation that no output, demanded or kept relation reads,
+//!   directly or through others, is not computed.
+//! - **Identical relations merge.** Derived relations whose rules are equal once their variables are renamed in
+//!   order and each relation is named by its class are one relation: the greatest such partition (`congruence`), so
+//!   recursive relations equal only to each other merge too. A library relation every combined program has (`p0_qn`,
+//!   `p1_qn`) is one relation in the shared namespace (`s_qn`); a program's own relations keep its namespace unless
+//!   they are the same as another's. Outputs, inputs, lattices, relations with facts and demanded relations are kept
+//!   as they are.
+//!
+//! Each simplification is a manager pass (decision 0281's path, step 6e), run in the order `passes` gives, the rules
+//! kept in their order (each pass derives its output), and its decisions recorded as it makes them.
 //!
 //! A pass reads a rule through its handles. What it writes of a rule it changes is the rule's own literals (copied,
 //! through a `Rewrite` where a variable or term changes) and the literals it makes; `Tm` is a term it makes or
@@ -16,9 +59,10 @@ type Result<T> = std::result::Result<T, String>;
 
 const SPAN_WITHIN: &str = crate::code_rule_dsl::facts::vtab::syntax::SPAN_WITHIN;
 const WITHIN: &str = crate::code_rule_dsl::facts::vtab::syntax::WITHIN;
-const GUARD_VAR: &str = "rr_sd";
+/// The variables of decision 0091's scope guards (`corpus::scoping`): a node's document, `rr_sd0 = @doc($n)`.
+pub(super) const GUARD_VAR: &str = "rr_sd";
 
-/// What was simplified (`simplify::Report`), added up over the passes.
+/// What was simplified, added up over the passes.
 #[derive(Debug, Default, PartialEq)]
 pub struct Report {
     pub implied: usize,
@@ -105,7 +149,7 @@ impl Tm {
 }
 
 /// A term of `v`'s rule `r` to write as it is, under `v`'s ids (`program_image::t_of`, with no borrow).
-fn own(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
+fn own(r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
     match t {
         TermRef::Var(s) => T::VarAtom(r.var(s)),
         TermRef::Wild => T::Wild,
@@ -113,7 +157,7 @@ fn own(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
         TermRef::Int(i) => T::Int(i),
         TermRef::Str(a) => T::StrAtom(a),
         TermRef::Branded(b) => T::Branded(b),
-        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| own(v, r, a)).collect()),
+        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| own(r, a)).collect()),
     }
 }
 
@@ -177,7 +221,7 @@ fn same_term(x: TermRef<'_>, y: TermRef<'_>) -> bool {
         (TermRef::Wild, TermRef::Wild) | (TermRef::Top, TermRef::Top) => true,
         (TermRef::Int(a), TermRef::Int(b)) => a == b,
         (TermRef::Str(a), TermRef::Str(b)) => a == b,
-        (TermRef::Call(f, xs), TermRef::Call(g, ys)) => f == g && xs.clone().count() == ys.clone().count() && xs.zip(ys).all(|(a, b)| same_term(a, b)),
+        (TermRef::Call(f, xs), TermRef::Call(g, ys)) => f == g && xs.count() == ys.count() && xs.zip(ys).all(|(a, b)| same_term(a, b)),
         _ => false,
     }
 }
@@ -192,7 +236,7 @@ fn term_slots(t: TermRef<'_>, out: &mut BTreeSet<Slot>) {
     }
 }
 
-/// The variables literal `l` names (`front::Literal::vars`).
+/// The variables literal `l` names.
 fn lit_slots(l: LitRef<'_>) -> BTreeSet<Slot> {
     let mut out = BTreeSet::new();
     match l.view() {
@@ -263,7 +307,7 @@ impl Rewrite for Subst {
         }
         match t {
             TermRef::Var(s) => self.to.get(&s).cloned(),
-            TermRef::Call(f, mut args) if Some(f) == self.doc && args.clone().count() == 1 => match args.next() {
+            TermRef::Call(f, mut args) if Some(f) == self.doc && args.count() == 1 => match args.next() {
                 Some(TermRef::Int(n)) => Some(T::Int(n >> 32)),
                 Some(TermRef::Var(s)) => self.ints.get(&s).map(|n| T::Int(n >> 32)),
                 _ => None,
@@ -370,20 +414,31 @@ impl Rewrite for Dyn<'_> {
 
 // ---- what keeps a relation ----
 
-/// `simplify::kept`: outputs, inputs, lattices, natives and what they read, relations with facts, demand, gates, and
+/// Outputs, inputs, lattices, natives and what they read, relations with facts, demand, gates, and
 /// an attribute's request.
 fn kept(f: &Fields<'_>, rel: &str) -> bool {
     f.is_output(rel) || f.is_input(rel) || f.lattice(rel) || f.native(rel).is_some() || f.natives_read().contains(rel) || f.has_facts(rel) || f.demanded(rel) || f.gate(rel) || request(rel)
 }
 
-/// `simplify::request`: an attribute's request (decision 0174) is read by name (`syntax::VALUE_REQ`), so neither
+/// An attribute's request (decision 0174) is read by name (`syntax::VALUE_REQ`), so neither
 /// inlined nor merged into another relation: inlined into its one reader, a request over one node left `value` empty.
+///
+/// An attribute's request (decision 0174): read by name, so neither inlined nor merged into another relation. The
+/// fact layer answers `value` only where `rr_value_req` is derived (`syntax::VALUE_REQ`); inlined into its one
+/// reader, a request over one node (`rr_value_req($n) :- node(_, $n, "number", _, _)`) left `value` empty.
 fn request(rel: &str) -> bool {
     crate::code_rule_dsl::logic::rr::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| a.req == rel)
 }
 
-/// `simplify::fixed`: inputs, natives, lattices, demand, gates, relations the program qualifies, and an attribute's
+/// Inputs, natives, lattices, demand, gates, relations the program qualifies, and an attribute's
 /// request.
+///
+/// The program's own choice of what it keeps (`.decl r(…) inline`, decision 0099) stays with its name.
+///
+/// Whether a relation's rules may not change: outputs, inputs, lattices, relations with facts, demanded relations and
+/// gates.
+/// A relation the merge leaves as it is: an input, a lattice, demanded, a gate. (An output merges, and keeps its name
+/// as a copy of its class.)
 fn fixed(f: &Fields<'_>, rel: &str) -> bool {
     f.is_input(rel) || f.native(rel).is_some() || f.lattice(rel) || f.demanded(rel) || f.gate(rel) || !f.qualifiers_of(rel).is_empty() || request(rel)
 }
@@ -394,7 +449,11 @@ fn fields<'v>(cx: &Cx<'v>) -> Result<(&'v Arc<Version>, Arc<FieldsData>)> {
 
 // ---- the passes, in `simplify`'s order ----
 
-/// `simplify::unit_columns`: a derived relation of no columns has one, `1` where it is made and `_` where read.
+/// A derived relation of no columns has one, `1` where it is made and `_` where read.
+///
+/// Replaces each variable the body equates to a constant (`$v = "s"`, `$v = 3`) by the constant, in the head and
+/// every literal, and drops the equation. Returns how many variables went.
+/// Gives each derived relation of no columns one integer column (above).
 #[derive(Default)]
 pub struct UnitColumns;
 
@@ -413,6 +472,10 @@ impl ProgramPass for UnitColumns {
             head: u32,
         }
         impl Rewrite for Units<'_> {
+            fn begin(&mut self, r: RuleRef<'_>) -> bool {
+                self.head = r.head().node();
+                std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.arity() == 0 && self.units.contains(self.v.rel_name(a.rel())))
+            }
             fn prefix(&mut self, a: AtomRef<'_>, out: &mut Vec<T<'static>>) {
                 if a.arity() == 0 && self.units.contains(self.v.rel_name(a.rel())) {
                     out.push(if a.node() == self.head { T::Int(1) } else { T::Wild });
@@ -421,19 +484,12 @@ impl ProgramPass for UnitColumns {
         }
         let input = w.input().clone();
         let b = w.derive()?;
-        for r in input.rules() {
-            let touches = std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.arity() == 0 && units.contains(input.rel_name(a.rel())));
-            if touches {
-                b.rewrite(&input, r, &mut Units { v: &input, units: &units, head: r.head().node() }).finish()?;
-            } else {
-                b.keep(&input, r);
-            }
-        }
+        b.rewrite_all(&input, &mut Units { v: &input, units: &units, head: 0 })?;
         for rel in &units {
-            b.declare(rel, &[("unit", "int")]);
+            b.fields().declare(rel, &[("unit", "int")]);
             if let Some(rows) = f.facts(rel) {
                 let n = rows.rows().len();
-                b.set_fact_cells(rel, vec![vec![Cell::Int(1)]; n]);
+                b.fields().set_fact_cells(rel, vec![vec![Cell::Int(1)]; n]);
             }
         }
         Ok(())
@@ -449,7 +505,7 @@ fn cell_of(t: TermRef<'_>) -> Option<Cell> {
     }
 }
 
-/// `simplify::ground_rules`: a rule of constants alone is facts. How many rules it replaced.
+/// A rule of constants alone is facts. How many rules it replaced.
 #[derive(Default)]
 pub struct GroundRules(pub usize);
 
@@ -465,6 +521,7 @@ impl ProgramPass for GroundRules {
             if r.body().count() == 0 || f.lattice(v.rel_name(r.head().rel())) {
                 continue;
             }
+            // The body's bindings, or None when it is not equations of constants alone; Some(None) when two disagree.
             let mut binds: HashMap<Slot, Value> = HashMap::new();
             let mut consistent = true;
             let all = r.body().all(|l| {
@@ -489,13 +546,14 @@ impl ProgramPass for GroundRules {
             let value = |t: TermRef<'_>| -> Option<Value> {
                 match t {
                     TermRef::Var(s) => binds.get(&s).cloned(),
-                    TermRef::Call(fa, mut args) if v.text(fa) == "cat" && args.clone().count() == 2 => {
+                    TermRef::Call(fa, mut args) if v.text(fa) == "cat" && args.count() == 2 => {
                         let part = |t: TermRef<'_>| match t {
                             TermRef::Var(s) => binds.get(&s).cloned(),
                             _ => Value::of(v, t),
                         };
                         let (a, b) = (args.next()?, args.next()?);
                         match (part(a)?, part(b)?) {
+                            // `@dot("", y)` is `y` (`core.rerail`).
                             (Value::Str(m), Value::Str(x)) => Some(Value::Str(if m.is_empty() { x } else { format!("{m}.{x}") })),
                             _ => None,
                         }
@@ -527,7 +585,7 @@ impl ProgramPass for GroundRules {
         }
         for (rel, rows) in facts {
             let cells = rows.into_iter().map(|row| row.into_iter().map(|x| x.write(b)).collect()).collect();
-            b.set_fact_cells(&rel, cells);
+            b.fields().set_fact_cells(&rel, cells);
         }
         Ok(())
     }
@@ -566,8 +624,15 @@ impl Value {
     }
 }
 
-/// `simplify::decided_fact_tests`: a test of stated facts alone is decided before the run. How many tests and rules
+/// A test of stated facts alone is decided before the run. How many tests and rules
 /// it decided.
+///
+/// Facts stated: a relation of none may be filled from outside the program (a later phase's input).
+///
+/// Rules whose bodies are only `$v = constant` equations, made facts (above). Returns the rules replaced.
+/// facts and no rules (`guest_policy("library", "off")`, a library's setting) holds or not. A positive one that holds,
+/// or a negated one that does not, is dropped from its body; a rule with one that cannot hold goes. The rows are the
+/// facts only when some are stated and no rule, input or engine relation adds to them.
 #[derive(Default)]
 pub struct DecidedFactTests(pub usize);
 
@@ -653,7 +718,7 @@ impl ProgramPass for DecidedFactTests {
     }
 }
 
-/// The counts of `r` that only test existence (`simplify::existence_counts`), by variable name in name order.
+/// The counts of `r` that only test existence, by variable name in name order.
 fn existence_counts(v: &Version, r: RuleRef<'_>) -> Vec<Slot> {
     let mut out: BTreeMap<&str, Slot> = BTreeMap::new();
     let head = head_slots(r);
@@ -681,7 +746,13 @@ fn existence_counts(v: &Version, r: RuleRef<'_>) -> Vec<Slot> {
     out.into_values().collect()
 }
 
-/// `simplify::existence_as_reads`: an existence count is a negation (`= 0`) or a read (`> 0`).
+/// An existence count is a negation (`= 0`) or a read (`> 0`).
+///
+/// **An existence count is a negation** (decision 0099 item 2). `$c = count { r(…) }` whose `$c` is named only in
+/// comparisons with 0 asks whether a row exists: `$c = 0` is `!r(…)`, and `$c > 0` (`!=`, `<>`, `0 <`) is `r(…)`. The
+/// count's own variables are `_` already (lowering makes them so), so the atom names only the rule's variables and
+/// constants, as a negation must. Read as the atom, demand, inlining and projection see a plain read; a count over a
+/// negated atom, or compared both ways, stays. Returns the counts replaced.
 #[derive(Default)]
 pub struct ExistenceAsReads(pub usize);
 
@@ -704,6 +775,7 @@ impl RulePass for ExistenceAsReads {
         for var in counts {
             let is = |t: TermRef<'_>| matches!(t, TermRef::Var(s) if s == var);
             let zero = |t: TermRef<'_>| matches!(t, TermRef::Int(0));
+            // Per comparison of `$c`: `Some(true)` none exists, `Some(false)` one does, `None` anything else.
             let mut none = BTreeSet::new();
             for b in &body {
                 let B::Own(l) = b else { continue };
@@ -737,7 +809,7 @@ impl RulePass for ExistenceAsReads {
             w = match *b {
                 B::Own(l) => w.lit(v, r, l),
                 B::Read(a, neg) => {
-                    let args: Vec<T<'static>> = a.args().map(|t| own(v, r, t)).collect();
+                    let args: Vec<T<'static>> = a.args().map(|t| own(r, t)).collect();
                     w.atom_with(a.rel(), &args, neg, a.gated())
                 }
             };
@@ -747,8 +819,12 @@ impl RulePass for ExistenceAsReads {
     }
 }
 
-/// `simplify::join_complements`: a relation of several rules each `node(_, $n, _, _, _), !x_i($n)` is one rule,
+/// A relation of several rules each `node(_, $n, _, _, _), !x_i($n)` is one rule,
 /// `node(_, $n, _, _, _), !r_all($n)`, with `r_all($n) :- x_1($n), …, x_k($n)`.
+///
+/// failing one of its parts) is one rule, `node(_, $n, _, _, _), !r_all($n)`, with `r_all($n) :- x_1($n), …, x_k($n)`
+/// (De Morgan): a test of one node, then inlined. `r_all` holds the nodes passing every part, a join of relations
+/// that are each a test already, not every node of the chunk.
 #[derive(Default)]
 pub struct JoinComplements;
 
@@ -818,7 +894,7 @@ impl ProgramPass for JoinComplements {
             }
             wr.finish()?;
             b.rule().head(*rel, &n).atom("node", &[T::Wild, T::Var("n"), T::Wild, T::Wild, T::Wild]).not(all.as_str(), &n).finish()?;
-            b.declare(all, &[("n", "node")]);
+            b.fields().declare(all, &[("n", "node")]);
         }
         Ok(())
     }
@@ -851,8 +927,16 @@ fn write_placed<'b, 'p>(v: &Version, w: RuleBuilder<'b, 'p>, p: &Placed<'_>) -> 
     }
 }
 
-/// `simplify::inline_node_tests`: each one-rule test of one node read only positively, inlined into its readers.
+/// Each one-rule test of one node read only positively, inlined into its readers.
 /// The relations inlined.
+///
+/// Read only as a positive atom over a variable, by rules of other relations.
+///
+/// A candidate's body may read another: inline readers in turn until none reads one (each pass removes a level).
+///
+/// Each read in turn: an inlined body may read another candidate, read on the next pass.
+///
+/// Inlines each one-rule test of one node read only positively (the module's list); returns the relations inlined.
 #[derive(Default)]
 pub struct InlineNodeTests(pub Vec<String>);
 
@@ -901,7 +985,7 @@ fn replace_inlined_readers(v: &Version, b: &mut Builder<'_>, gone: &BTreeSet<&st
         }
     }
     if asked != was {
-        b.set_asked(&asked);
+        b.fields().set_asked(&asked);
     }
 }
 
@@ -911,6 +995,7 @@ impl ProgramPass for InlineNodeTests {
         let (v, d) = fields(cx)?;
         let f = Fields::over(v, &d);
         // Each candidate's body and its node variable.
+        // Each candidate's bodies, over the variable `$h`.
         let mut bodies: BTreeMap<&str, Vec<(RuleRef<'_>, Slot)>> = BTreeMap::new();
         let mut refused: BTreeSet<&str> = BTreeSet::new();
         for r in v.rules() {
@@ -919,6 +1004,7 @@ impl ProgramPass for InlineNodeTests {
                 [TermRef::Var(h)] => {
                     let h = *h;
                     let tests_node = r.body().any(|l| matches!(l.view(), Lit::Atom(a) if !a.neg() && v.rel_name(a.rel()) == "node" && matches!(a.args().nth(1), Some(TermRef::Var(s)) if s == h)));
+                    // A scope guard's document (`rr_sd0 = @doc($h)`, decision 0091) is a function of the node.
                     let alone = r.body().all(|l| matches!(l.view(), Lit::Atom(_) | Lit::Cmp { .. }) && lit_slots(l).iter().all(|&s| s == h || v.text(r.var(s)).starts_with(GUARD_VAR)));
                     let recursive = r.body().any(|l| matches!(l.view(), Lit::Atom(a) if a.rel() == r.head().rel()));
                     (tests_node && alone && !recursive).then_some(h)
@@ -958,6 +1044,7 @@ impl ProgramPass for InlineNodeTests {
         };
         // Every rule's body as the rounds leave it.
         let mut rules: Vec<(RuleRef<'_>, Vec<Placed<'_>>)> = v.rules().map(|r| (r, r.body().map(|lit| Placed { owner: r, lit, to: None }).collect())).collect();
+        // The guard's variables renamed apart: a reader may inline several tests, each with its own.
         let mut fresh = 0usize;
         for _ in 0..8 {
             let mut changed = false;
@@ -994,6 +1081,7 @@ impl ProgramPass for InlineNodeTests {
         }
         // Unfinished (a chain of reads deeper than the rounds): nothing is inlined.
         let reads = |body: &[Placed<'_>]| body.iter().any(|p| matches!(p.lit.view(), Lit::Atom(a) if bodies.contains_key(v.rel_name(a.rel()))));
+        // Unfinished (a chain of reads deeper than the passes): nothing is inlined.
         if rules.iter().any(|(r, body)| !bodies.contains_key(v.rel_name(r.head().rel())) && reads(body)) {
             return Ok(());
         }
@@ -1014,7 +1102,7 @@ impl ProgramPass for InlineNodeTests {
             wr.finish()?;
         }
         for rel in bodies.keys() {
-            b.undeclare(rel);
+            b.fields().undeclare(rel);
         }
         replace_inlined_readers(v, b, &bodies.keys().copied().collect());
         self.0.extend(bodies.keys().map(|r| (*r).to_owned()));
@@ -1022,10 +1110,10 @@ impl ProgramPass for InlineNodeTests {
     }
 }
 
-/// At most this many rules in a filter inlined (`simplify::FILTER_RULES`).
+/// At most this many rules in a filter inlined.
 const FILTER_RULES: usize = 2;
 
-/// `simplify::base_lookup`.
+/// A base relation a negation may test inside a filter: the functional lookups' relations.
 fn base_lookup(rel: &str) -> bool {
     matches!(rel, "docof" | "visit_index" | "node_order" | "kind" | "text" | "name" | "line" | "op" | "node" | "field" | "child")
 }
@@ -1038,9 +1126,27 @@ enum FLit<'v> {
     Eq { reader: RuleRef<'v>, l: TermRef<'v>, r: Tm },
 }
 
-/// `simplify::inline_filters`: each filter (a relation whose every rule reads only functional lookups and tests of
+/// Each filter (a relation whose every rule reads only functional lookups and tests of
 /// what its head binds), inlined into its readers, and each computed view where its reader reads its domain. The
 /// relations inlined.
+///
+/// A rule is a filter when every literal is a functional lookup or a test of what its head (and earlier
+/// lookups) bind.
+///
+/// `core.rerail`'s relations (`kind`, `precedes`) are the engine's, read by name (kind views, kind sets).
+///
+/// A computed view is inlined only where its reader reads its domain already (each of its atoms implied by one of
+/// the reader's), so the copy adds the function and nothing else.
+///
+/// Each rule with its place among the program's, so the request record follows its copies (`Program::set_rules_from`).
+///
+/// Inlines each filter: a relation whose every rule, once its head's variables are bound, reads only functional
+/// lookups of them and tests (`gis_before(i, n) :- kind(n, "call"), earlier(i, n)`, lowered to `docof` and
+/// `visit_index` of both and a comparison). Built whole it holds every pair the test admits (9.8M on 50 files: every
+/// node before every call of its file); inlined, each reader tests its own pairs. A lookup is functional when its
+/// key is bound: `docof`, `visit_index`, `kind`, `text`, `name`, `line`, `op` and `node` by the node; `field` and
+/// `child` by the child (one parent). Read only positively, with variables or constants, by other relations; at
+/// most `FILTER_RULES` rules, each reader becoming one copy per rule. Returns the relations inlined.
 #[derive(Default)]
 pub struct InlineFilters(pub Vec<String>);
 
@@ -1064,6 +1170,11 @@ impl ProgramPass for InlineFilters {
                 _ => false,
             }
         };
+        // A derived relation read with every variable bound is a test of those values (`er_sym(f, _)`, `!is_async(f)`):
+        // the reader reached it, and its negation, through the filter already, so inlining keeps the strata. Only in a
+        // rule that also looks up a base relation, which built whole is the cross product (`er_wrapped(f, v, v) :-
+        // er_sym(f, _), !is_async(f), kind(v, "call")`: every def with every call, 1.4 GB on 200 files); an alias or an
+        // intersection of derived relations (`u19(n) :- m25(n)`) is no bigger than what it reads.
         let derived: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
         let test = |a: AtomRef<'_>, bound: &BTreeSet<Slot>| derived.contains(rel_of(a)) && a.args().all(|t| matches!(t, TermRef::Wild | TermRef::Int(_) | TermRef::Str(_)) || matches!(t, TermRef::Var(s) if bound.contains(&s)));
         let doc = v.find("doc");
@@ -1078,6 +1189,7 @@ impl ProgramPass for InlineFilters {
                         Lit::Atom(a) if a.rel() != head_rel && test(a, &bound) => true,
                         Lit::Atom(a) if !a.neg() => functional(a, &bound),
                         Lit::Atom(a) => base_lookup(rel_of(a)) && lit_slots(l).is_subset(&bound),
+                        // `g = @doc(n)` (decision 0091's scope guards) is a function of a bound node: a lookup.
                         Lit::Cmp { l: TermRef::Var(_), op: CmpOp::Eq, r: TermRef::Call(fa, xs) } if Some(fa) == doc => xs.into_iter().all(|x| matches!(x, TermRef::Var(s) if bound.contains(&s))),
                         Lit::Cmp { .. } => lit_slots(l).is_subset(&bound),
                         _ => false,
@@ -1115,6 +1227,7 @@ impl ProgramPass for InlineFilters {
         let mut candidates: BTreeSet<&str> = rules_of
             .iter()
             .filter(|(rel, rules)| {
+                // A request the engine reads (a guest's `embed`, the demand a `parsed` read makes) stays a relation.
                 !kept(&f, rel)
                     && !crate::code_rule_dsl::logic::plan::corpus::guests::REQUESTS.contains(rel)
                     && !core.contains(**rel)
@@ -1134,9 +1247,12 @@ impl ProgramPass for InlineFilters {
                 }
             }
         }
-        // A computed view only where its reader reads its domain already (`simplify::domain_read`).
+        // A computed view only where its reader reads its domain already (each of the view's atoms, with the head's variables as the read names them and the others `_`, implied by one of the reader's).
         let domain_read = |def: RuleRef<'_>, reader: RuleRef<'_>, read: AtomRef<'_>| -> bool {
             let mut as_read: HashMap<Slot, Tm> = HashMap::new();
+            // A computed column (`@replace_all($raw, …)`) or a constant, once the domain binds its variables. Only the
+            // head's side is renamed: the read's term is the reader's, whose variables may share a name with the
+            // definition's.
             for (h, t) in def.head().args().zip(read.args()) {
                 if let TermRef::Var(s) = h {
                     let t = Tm::of(v, reader, t);
@@ -1177,6 +1293,7 @@ impl ProgramPass for InlineFilters {
         for rel in drop {
             candidates.remove(rel);
         }
+        // A filter's body reads no other candidate (one level; deeper chains stay built).
         let bodies: BTreeMap<&str, Vec<RuleRef<'_>>> = candidates
             .iter()
             .filter(|rel| rules_of[*rel].iter().all(|r| r.body().all(|l| !matches!(l.view(), Lit::Atom(a) if candidates.contains(rel_of(a))))))
@@ -1185,15 +1302,16 @@ impl ProgramPass for InlineFilters {
         if bodies.is_empty() {
             return Ok(());
         }
-        let mut fresh = 0usize;
         let mut out: Vec<(RuleRef<'_>, Vec<FLit<'_>>)> = Vec::new();
-        let mut work: Vec<(RuleRef<'_>, Vec<FLit<'_>>)> = v
+        // Each rule with how many inlinings made it: a definition's variables are renamed apart by that count
+        // (`_f<k>`), the rule's own: their names follow neither the program's order of rules nor its definitions'.
+        let mut work: Vec<(RuleRef<'_>, Vec<FLit<'_>>, usize)> = v
             .rules()
             .filter(|r| !bodies.contains_key(v.rel_name(r.head().rel())))
-            .map(|r| (r, r.body().map(|lit| FLit::Placed(Placed { owner: r, lit, to: None })).collect()))
+            .map(|r| (r, r.body().map(|lit| FLit::Placed(Placed { owner: r, lit, to: None })).collect(), 0))
             .collect();
         work.reverse();
-        while let Some((rule, body)) = work.pop() {
+        while let Some((rule, body, depth)) = work.pop() {
             let at = body.iter().position(|x| matches!(x, FLit::Placed(p) if matches!(p.lit.view(), Lit::Atom(a) if !a.neg() && bodies.contains_key(rel_of(a)))));
             let Some(at) = at else {
                 out.push((rule, body));
@@ -1201,8 +1319,10 @@ impl ProgramPass for InlineFilters {
             };
             let FLit::Placed(read_p) = body[at].clone() else { unreachable!("a read") };
             let Lit::Atom(read) = read_p.lit.view() else { unreachable!("a read") };
+            let fresh = depth + 1;
             for &def in &bodies[rel_of(read)] {
-                fresh += 1;
+                // The definition's variables renamed apart; a head variable read as a variable becomes it, anything else
+                // an equality.
                 let mut local: BTreeSet<Slot> = head_slots(def);
                 def.body().for_each(|l| local.extend(lit_slots(l)));
                 let mut to: HashMap<String, String> = local.iter().map(|&s| (v.text(def.var(s)).to_owned(), format!("{}_f{fresh}", v.text(def.var(s))))).collect();
@@ -1227,7 +1347,7 @@ impl ProgramPass for InlineFilters {
                 }
                 let mut c = body.clone();
                 c.splice(at..=at, inlined);
-                work.push((rule, c));
+                work.push((rule, c, fresh));
             }
         }
         let input = w.input().clone();
@@ -1243,7 +1363,7 @@ impl ProgramPass for InlineFilters {
                 wr = match x {
                     FLit::Placed(p) => write_placed(&input, wr, p),
                     FLit::Eq { reader, l, r: rt } => {
-                        let lt = own_t(&input, *reader, *l);
+                        let lt = self::own(*reader, *l);
                         let rt = rt.write(wr.builder());
                         wr.cmp(lt, CmpOp::Eq, rt)
                     }
@@ -1252,7 +1372,7 @@ impl ProgramPass for InlineFilters {
             wr.finish()?;
         }
         for rel in bodies.keys() {
-            b.undeclare(rel);
+            b.fields().undeclare(rel);
         }
         replace_inlined_readers(v, b, &bodies.keys().copied().collect());
         self.0.extend(bodies.keys().map(|r| (*r).to_owned()));
@@ -1260,16 +1380,12 @@ impl ProgramPass for InlineFilters {
     }
 }
 
-fn own_t(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> T<'static> {
-    own(v, r, t)
-}
-
 // ---- each rule alone ----
 
 /// The parts of a concatenation (`@concat`), in order: variables and constant texts only.
 fn concat_parts(v: &Version, r: RuleRef<'_>, t: TermRef<'_>) -> Option<Vec<Tm>> {
     match t {
-        TermRef::Call(f, mut args) if v.text(f) == "concat" && args.clone().count() == 2 => {
+        TermRef::Call(f, mut args) if v.text(f) == "concat" && args.count() == 2 => {
             let (a, b) = (args.next()?, args.next()?);
             let mut parts = concat_parts(v, r, a)?;
             parts.extend(concat_parts(v, r, b)?);
@@ -1288,7 +1404,14 @@ fn concat_of(parts: &[Tm]) -> Tm {
     }
 }
 
-/// `simplify::concat_inverses`: `$v = cat($a, $x, $b)` gets `$x = @str_between($v, cat(before), cat(after))`.
+/// `$v = cat($a, $x, $b)` gets `$x = @str_between($v, cat(before), cat(after))`.
+///
+/// `$v = cat($a, $x, $b)` runs backwards: given `$v` and every other part, `$x` is the text between them, and there is
+/// none when `$v` does not start and end with them (concatenation is one-to-one in any one part). So each variable
+/// part, named once there, gets `$x = @str_between($v, cat(before), cat(after))` beside the concatenation. Whichever
+/// the plan binds first, the other is then a test that holds of what it bound: the rule's rows are the same, and a
+/// rule that reaches `$v` first (a delta of the relation giving it) binds the parts from it instead of crossing to
+/// the relation that gives them.
 #[derive(Default)]
 pub struct ConcatInverses(pub usize);
 
@@ -1327,7 +1450,10 @@ impl RulePass for ConcatInverses {
     }
 }
 
-/// `simplify::cat_variables`: a constant part of `@cat` is a variable equal to it.
+/// A constant part of `@cat` is a variable equal to it.
+///
+/// `$q = @cat("builtins", $x)` (`split_dot(q, "builtins", x)`) as `$q = @cat($k, $x), $k = "builtins"`: `@cat` runs
+/// backwards over variables only, and `fold_constants` leaves those in place.
 #[derive(Default)]
 pub struct CatVariables;
 
@@ -1343,7 +1469,7 @@ impl RulePass for CatVariables {
             let mut changed = false;
             let mut side = |t: TermRef<'_>| -> Tm {
                 match t {
-                    TermRef::Call(f, args) if v.text(f) == "cat" && args.clone().count() == 2 => Tm::Call(
+                    TermRef::Call(f, args) if v.text(f) == "cat" && args.count() == 2 => Tm::Call(
                         "cat".into(),
                         args.map(|x| match x {
                             TermRef::Int(_) | TermRef::Str(_) => {
@@ -1379,12 +1505,17 @@ impl RulePass for CatVariables {
     }
 }
 
-/// Whether `t` is `@cat` of variables alone (`front::Term::is_cat`).
+/// Whether `t` is `@cat` of variables alone.
 fn is_cat(v: &Version, t: TermRef<'_>) -> bool {
     matches!(t, TermRef::Call(f, args) if v.text(f) == "cat" && args.clone().all(|a| matches!(a, TermRef::Var(_))))
 }
 
-/// `simplify::fold_constants`: a variable equal to a constant is the constant.
+/// A variable equal to a constant is the constant.
+///
+/// `$q = @cat($m, $x)` runs backwards (splitting a bound $q) only over variables: a constant folded into
+/// it (`split_dot(q, m, x), m = "typing"`) would leave it runnable in neither direction.
+///
+/// A node's document of a constant node is a constant (`DocOf`: the node's high 32 bits).
 #[derive(Default)]
 pub struct FoldConstants(pub usize);
 
@@ -1399,6 +1530,9 @@ impl RulePass for FoldConstants {
         for l in r.body() {
             match l.view() {
                 Lit::Agg { var, op, over, .. } => {
+                    // Variables the head names, or a literal other than as a term (an aggregate's result, `nearest`, `ast`), stay
+                    // variables. A head column the rule fills from a text column is what keeps its relation a string filter, run per
+                    // chunk (`typing::file_local`'s split); `t($s) :- doc(_, $s, _), $s = "a.py"` stays as it is.
                     named.insert(var);
                     named.extend(over);
                     named.extend(op.bound());
@@ -1449,7 +1583,7 @@ impl RulePass for FoldConstants {
         self.0 += gone.len();
         let mut rw = Subst { drop: gone, doc: v.find("doc"), ..Default::default() };
         for (s, c) in &to {
-            rw.to.insert(*s, own(v, r, *c));
+            rw.to.insert(*s, own(r, *c));
             if let TermRef::Int(n) = c {
                 rw.ints.insert(*s, *n);
             }
@@ -1459,8 +1593,13 @@ impl RulePass for FoldConstants {
     }
 }
 
-/// `simplify::span_containment`: `node(d, a, _, sa, ea), node(d, b, _, sb, eb), sb <= sa, ea <= eb` reads
+/// `node(d, a, _, sa, ea), node(d, b, _, sb, eb), sb <= sa, ea <= eb` reads
 /// `span_within(a, b)` in place of the comparisons.
+///
+/// Replaces each pair `node(d, a, _, sa, ea), node(d, b, _, sb, eb), sb <= sa, ea <= eb` (one document variable
+/// `d`, either side of each comparison) by `span_within(a, b)`: the comparisons, not the atoms, which may bind or test
+/// more. A join of every pair of a file's nodes becomes a walk of the tree (`syntax::within`). Returns the pairs
+/// replaced.
 #[derive(Default)]
 pub struct SpanContainment(pub usize);
 
@@ -1473,13 +1612,16 @@ impl RulePass for SpanContainment {
             Own(LitRef<'v>),
             Within(Slot, Slot),
         }
+        // `x <= y` as written, either way round.
         let var = |t: Option<TermRef<'_>>| match t {
             Some(TermRef::Var(s)) => Some(s),
             _ => None,
         };
         let mut body: Vec<B<'_>> = r.body().map(B::Own).collect();
+        // The rule changed: look again for another pair.
         let mut made = 0;
         'again: loop {
+            // (d, n, start, end) of each positive node atom with variables there.
             let nodes: Vec<(Slot, Slot, Slot, Slot)> = body
                 .iter()
                 .filter_map(|b| match b {
@@ -1533,10 +1675,17 @@ impl RulePass for SpanContainment {
     }
 }
 
-/// The base relations whose rows are keyed (`simplify::KEYS`): (relation, arity, key column).
+/// The base relations whose rows are keyed: (relation, arity, key column).
 const KEYS: &[(&str, usize, usize)] = &[("node", 5, 1), ("doc", 3, 0), ("kind", 2, 0), ("text", 2, 0), ("name", 2, 0), ("line", 2, 0), ("docof", 2, 0)];
 
-/// `simplify::merge_keyed`: positive atoms of a keyed relation with the same key term are one.
+/// Positive atoms of a keyed relation with the same key term are one.
+///
+/// Inside the head's computed terms too: `rn(n, @lower(t)) :- …, text(n, t)` merged into a
+/// `text(n, u)` reads u there, or t is left unbound.
+///
+/// Merges positive atoms of a keyed relation (`KEYS`) with the same key term into one; returns how many went.
+/// Two columns merge where they are equal or one is `_`; two different variables merge by renaming the later one
+/// (one the head, atoms and comparisons name, so `rename_var` reaches every use). Anything else stays two atoms.
 #[derive(Default)]
 pub struct MergeKeyed(pub usize);
 
@@ -1644,7 +1793,7 @@ impl RulePass for MergeKeyed {
                     _ => w.lit(v, r, *l),
                 },
                 B::Merged(a, args) => {
-                    let ts: Vec<T<'static>> = args.iter().map(|&t| renamed_t(v, r, t, &|s| find(&ren, s))).collect();
+                    let ts: Vec<T<'static>> = args.iter().map(|&t| renamed_t(r, t, &|s| find(&ren, s))).collect();
                     w.atom_with(a.rel(), &ts, a.neg(), a.gated())
                 }
             };
@@ -1659,11 +1808,11 @@ fn keyed_rel(v: &Version, a: AtomRef<'_>) -> Option<usize> {
 }
 
 /// Term `t` of rule `r` to write, each variable as `to` maps it.
-fn renamed_t(v: &Version, r: RuleRef<'_>, t: TermRef<'_>, to: &dyn Fn(Slot) -> Slot) -> T<'static> {
+fn renamed_t(r: RuleRef<'_>, t: TermRef<'_>, to: &dyn Fn(Slot) -> Slot) -> T<'static> {
     match t {
         TermRef::Var(s) => T::VarAtom(r.var(to(s))),
-        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| renamed_t(v, r, a, to)).collect()),
-        t => own(v, r, t),
+        TermRef::Call(f, args) => T::CallAtom(f, args.map(|a| renamed_t(r, a, to)).collect()),
+        t => own(r, t),
     }
 }
 
@@ -1677,11 +1826,13 @@ impl Tm {
     }
 }
 
-/// `simplify::wild_singletons`: a variable of a positive atom named nowhere else is `_`.
+/// A variable of a positive atom named nowhere else is `_`.
+///
+/// Makes `_` each variable of a positive atom that appears nowhere else in `rule`; returns how many.
 #[derive(Default)]
 pub struct WildSingletons(pub usize);
 
-/// How many times each variable appears in `r` (`simplify::occurrences`).
+/// How many times each variable appears in `r` .
 fn occurrences(r: RuleRef<'_>) -> HashMap<Slot, usize> {
     fn term(t: TermRef<'_>, n: &mut HashMap<Slot, usize>) {
         match t {
@@ -1754,7 +1905,9 @@ impl RulePass for WildSingletons {
     }
 }
 
-/// `simplify::drop_kind_tests`: a kind test on a member of a set of one kind drops.
+/// A kind test on a member of a set of one kind drops.
+///
+/// `node`'s columns as declared: the node and its kind.
 #[derive(Default)]
 pub struct DropKindTests(pub usize);
 
@@ -1766,6 +1919,7 @@ impl RulePass for DropKindTests {
         let f = Fields::over(v, &d);
         let Some(cols) = f.columns("node") else { return Ok(Step::Keep) };
         let (Some(n), Some(k)) = (cols.iter().position(|(c, _)| *c == "n"), cols.iter().position(|(c, _)| *c == "kind")) else { return Ok(Step::Keep) };
+        // The members of a single-kind set, by variable: `nearest`'s and `inside`'s ancestor, `has`'s descendant.
         let mut member: HashMap<Slot, &str> = HashMap::new();
         for l in r.body() {
             let (a, set) = match l.view() {
@@ -1810,7 +1964,7 @@ impl RulePass for DropKindTests {
     }
 }
 
-/// Whether atom `b` implies `a` in one rule (`simplify::implies`).
+/// Whether atom `b` implies `a` in one rule .
 fn implies(r: RuleRef<'_>, b: AtomRef<'_>, a: AtomRef<'_>) -> bool {
     b.rel() == a.rel() && !a.neg() && !b.neg() && a.arity() == b.arity() && a.args().zip(b.args()).all(|(x, y)| same_term(x, y) || matches!(x, TermRef::Wild)) && {
         let _ = r;
@@ -1818,7 +1972,7 @@ fn implies(r: RuleRef<'_>, b: AtomRef<'_>, a: AtomRef<'_>) -> bool {
     }
 }
 
-/// The literals `simplify::drop_implied` drops from `r`, by node.
+/// The literals `DropImplied` drops from `r`, by node.
 fn implied(r: RuleRef<'_>) -> HashSet<u32> {
     let lits: Vec<LitRef<'_>> = r.body().collect();
     let atoms: Vec<Option<AtomRef<'_>>> = lits.iter().map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).collect();
@@ -1834,7 +1988,10 @@ fn implied(r: RuleRef<'_>) -> HashSet<u32> {
         .collect()
 }
 
-/// `simplify::drop_implied`: an atom implied by another, or a literal equal to an earlier one, drops.
+/// An atom implied by another, or a literal equal to an earlier one, drops.
+///
+/// A dropped atom is implied by one that stays: by a different atom, or by an equal one earlier. Any literal
+/// equal to an earlier one goes too.
 #[derive(Default)]
 pub struct DropImplied(pub usize);
 
@@ -1852,8 +2009,25 @@ impl RulePass for DropImplied {
 
 // ---- the whole program again ----
 
-/// `simplify::function_keys`: a join on a function of a relation's columns, a join on a relation keyed by the
+/// A join on a function of a relation's columns, a join on a relation keyed by the
 /// function's value. The relations made.
+///
+/// The world's relations and the program's inputs are as large as what was read: not copied.
+///
+/// An atom keyed by this variable already (an earlier pass of the loop) is not keyed again.
+///
+/// The function over R's columns: each variable as the column it is first at.
+///
+/// The comparison stays: a plan that has R's columns first computes `$v` forward from them, and the keyed
+/// atom is then a test (as a concatenation and its inverse are).
+///
+/// a join on a column: `R__f<k>($v, …) :- R(…), $v = @f(…)` holds each row of R with the function's value first, and
+/// the rule reads it in place of R and the comparison. A plan that has `$v` before R's columns then probes the new
+/// relation by `$v`, where it would otherwise cross every row of R with what it has (an index is of columns, not of
+/// functions). The new relation is a relation like any other: kept, maintained and planned as one.
+/// Only for relations without a node column, whose rows are few (a vocabulary, not a document's tree), and for
+/// pure functions of R's columns alone; `@concat` runs backwards instead (`concat_inverses`). One relation for each
+/// R, function and argument shape, shared by every rule that reads it.
 #[derive(Default)]
 pub struct FunctionKeys(pub Vec<String>);
 
@@ -1883,6 +2057,7 @@ impl ProgramPass for FunctionKeys {
                     let TermRef::Call(fa, args) = call else { continue };
                     let fname = v.text(fa);
                     let Some((_, _, kind)) = native_call(fname) else { continue };
+                    // A concatenation's inverse binds from a column it already has (`concat_inverses`).
                     if fname.starts_with("git_") || fname == "str_between" || args.clone().any(|a| !matches!(a, TermRef::Var(_) | TermRef::Str(_) | TermRef::Int(_))) {
                         continue;
                     }
@@ -1891,6 +2066,8 @@ impl ProgramPass for FunctionKeys {
                     if vars.is_empty() || vars.contains(&x) {
                         continue;
                     }
+                    // `$v` is a key only where another atom joins on it (or a concatenation's inverse gives it from one):
+                    // a value only comparisons read is computed forward, never probed.
                     let read_elsewhere = r.body().enumerate().any(|(j, other)| {
                         j != ci
                             && match other.view() {
@@ -1923,7 +2100,7 @@ impl ProgramPass for FunctionKeys {
                         let col = |s: Slot| aargs.iter().position(|t| matches!(t, TermRef::Var(y) if *y == s));
                         let shape = Tm::Call(
                             fname.to_owned(),
-                            args.clone()
+                            args
                                 .map(|t| match t {
                                     TermRef::Var(s) => col(s).map_or_else(|| Tm::of(v, r, t), |i| Tm::Var(format!("c{i}"))),
                                     t => Tm::of(v, r, t),
@@ -1969,7 +2146,7 @@ impl ProgramPass for FunctionKeys {
                 wr = match (keyed.get(&l.node()), l.view()) {
                     (Some((name, x)), Lit::Atom(a)) => {
                         let mut args = vec![T::VarAtom(r.var(*x))];
-                        args.extend(a.args().map(|t| own(&input, r, t)));
+                        args.extend(a.args().map(|t| own(r, t)));
                         let rel = wr.builder().rel(name);
                         wr.atom_with(rel, &args, a.neg(), a.gated())
                     }
@@ -1980,7 +2157,7 @@ impl ProgramPass for FunctionKeys {
         }
         for (name, decl) in &decls {
             let cols: Vec<(&str, &str)> = decl.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            b.declare(name, &cols);
+            b.fields().declare(name, &cols);
         }
         for (name, rel, n, shape) in &new_rules {
             let cols: Vec<String> = (0..*n).map(|i| format!("c{i}")).collect();
@@ -2004,8 +2181,15 @@ enum EItem<'v> {
     Exists(String, Slot),
 }
 
-/// `simplify::project_existentials`: a part of a body that meets the rest only at a document is a relation of
+/// A part of a body that meets the rest only at a document is a relation of
 /// documents. The relations made.
+///
+/// The same rule again: it may have another such part.
+///
+/// Moves each part of a body that meets the rest only at a document variable into a relation of documents
+/// (`exists_<k>`, the module's list); returns the relations made. A part equal to one moved before (the same template,
+/// `template`) reads that relation: the same test in several rules, a library's in each policy, was a relation per
+/// rule that `merge` found equal again.
 #[derive(Default)]
 pub struct ProjectExistentials(pub Vec<String>);
 
@@ -2088,14 +2272,14 @@ impl ProgramPass for ProjectExistentials {
             wr.finish()?;
         }
         for (name, ty) in &decls {
-            b.declare(name, &[("d", ty.as_str())]);
+            b.fields().declare(name, &[("d", ty.as_str())]);
         }
         self.0 = made;
         Ok(())
     }
 }
 
-/// A part's template (`front::template::template` of `exists(d) :- lits`): its literals by text, its variables
+/// A part's template (of `exists(d) :- lits`): its literals by text, its variables
 /// numbered by first appearance, the head's first.
 fn template_of(v: &Version, r: RuleRef<'_>, d: Slot, lits: &[LitRef<'_>]) -> Vec<Made> {
     let mut names: Vec<String> = vec![v.text(r.var(d)).to_owned()];
@@ -2139,8 +2323,13 @@ fn item_slots(it: &EItem<'_>) -> BTreeSet<Slot> {
     }
 }
 
-/// `simplify::existential`: the first part of the body meeting the rest and the head only at one document
+/// The first part of the body meeting the rest and the head only at one document
 /// variable, replaced by `name($d)`: the variable, the part and its column's type.
+///
+/// Only `$d` may be shared with the rest or the head (it is: other shared variables join parts).
+///
+/// The first part of `rule`'s body that meets the rest and the head only at one document variable, replaced by
+/// `name($d)`: that relation's rule and columns.
 fn existential<'v>(v: &'v Version, f: &Fields<'_>, r: RuleRef<'v>, body: &mut Vec<EItem<'v>>, name: &str) -> Option<(Slot, Vec<LitRef<'v>>, String)> {
     let head = head_slots(r);
     let name_of = |s: Slot| v.text(r.var(s));
@@ -2159,7 +2348,8 @@ fn existential<'v>(v: &'v Version, f: &Fields<'_>, r: RuleRef<'v>, body: &mut Ve
         .collect();
     let vars: Vec<BTreeSet<Slot>> = body.iter().map(item_slots).collect();
     let n = body.len();
-    for (_, &d) in &docs {
+    for &d in docs.values() {
+        // Parts: literals joined by a shared variable other than `$d`.
         let mut part: Vec<usize> = (0..n).collect();
         fn root(part: &mut [usize], i: usize) -> usize {
             let mut r = i;
@@ -2221,6 +2411,7 @@ fn existential<'v>(v: &'v Version, f: &Fields<'_>, r: RuleRef<'v>, body: &mut Ve
             if !own.is_subset(&bound) {
                 continue;
             }
+            // `$d`'s column type, from a positive atom of the part that names it.
             let ty = lits.iter().find_map(|l| match l.view() {
                 Lit::Atom(a) if !a.neg() => a.args().position(|t| matches!(t, TermRef::Var(s) if s == d)).and_then(|c| f.column_type(v.rel_name(a.rel()), c).map(str::to_owned)),
                 _ => None,
@@ -2242,8 +2433,16 @@ fn existential<'v>(v: &'v Version, f: &Fields<'_>, r: RuleRef<'v>, body: &mut Ve
     None
 }
 
-/// `simplify::climbs_as_axes`: a recursive component of unary node relations that steps one `child` edge at a
+/// A recursive component of unary node relations that steps one `child` edge at a
 /// time, all one way, reads `within`. The components rewritten, by their members.
+///
+/// Each relation's rules, by place: made again only when a component is rewritten.
+///
+/// and steps along one `child` edge, all one way (`R(x) :- S(y), child(x, y, _)`: up; `child(y, x, _)`: down),
+/// is a closure along the tree: each member holds its bases' nodes that a path of copies reaches with no step, and
+/// their strict ancestors (descendants) that paths of every length from one step reach. That is `within` (decision
+/// 0050: read off the tree per node looked up), with no fixpoint: one wave a level of nesting otherwise.
+/// Rewritten so; the components rewritten, by their members.
 #[derive(Default)]
 pub struct ClimbsAsAxes(pub Vec<String>);
 
@@ -2268,6 +2467,7 @@ impl ProgramPass for ClimbsAsAxes {
             }
             let mut rules: Vec<RuleRef<'_>> = members.iter().flat_map(|m| by_head.get(m.as_str()).cloned().unwrap_or_default()).collect();
             rules.sort_by_key(|r| r.id());
+            // (from, to, step) edges and (relation, base rule) pairs.
             let mut edges: Vec<(String, String, bool)> = Vec::new();
             let mut bases: Vec<(String, RuleRef<'_>)> = Vec::new();
             let mut up = None;
@@ -2330,6 +2530,7 @@ impl ProgramPass for ClimbsAsAxes {
             if !ok {
                 continue;
             }
+            // Depths of steps by which each base relation reaches each member, capped at n (n stands for n or more).
             let n = 2 * members.len() + 2;
             let mut valid = true;
             let base_rels: BTreeSet<&String> = bases.iter().map(|(r, _)| r).collect();
@@ -2357,6 +2558,7 @@ impl ProgramPass for ClimbsAsAxes {
                 for q in &base_rels {
                     let depths = &reach[&(*q, m)];
                     let stepped: BTreeSet<usize> = depths.iter().copied().filter(|dd| *dd > 0).collect();
+                    // Every depth from one step on, or none: else the closure is not the axis.
                     if !(stepped.is_empty() || stepped == (1..=n).collect::<BTreeSet<_>>()) {
                         valid = false;
                     }
@@ -2401,7 +2603,7 @@ impl ProgramPass for ClimbsAsAxes {
                 let tname = input.text(base.var(t)).to_owned();
                 match step {
                     None => {
-                        let args: Vec<T<'static>> = base.head().args().map(|x| own(&input, *base, x)).collect();
+                        let args: Vec<T<'static>> = base.head().args().map(|x| own(*base, x)).collect();
                         let mut wr = b.rule().head(rel, &args);
                         for l in base.body() {
                             wr = wr.lit(&input, *base, l);
@@ -2421,20 +2623,23 @@ impl ProgramPass for ClimbsAsAxes {
             }
         }
         if !declared_within {
-            b.declare(WITHIN, &[("n", "node"), ("a", "node")]);
+            b.fields().declare(WITHIN, &[("n", "node"), ("a", "node")]);
         }
         if !input_within {
             let mut inputs = inputs;
             inputs.push(WITHIN.to_owned());
-            b.set_inputs(&inputs);
+            b.fields().set_inputs(&inputs);
         }
         self.0.extend(done.into_iter().map(|(m, _)| m.into_iter().collect::<Vec<_>>().join("/")));
         Ok(())
     }
 }
 
-/// `front::subsume_requests`: each request rule (`Program::asked_by`) whose body holds every literal of another rule of
-/// its relation with the same head, dropped; the rule kept takes the dropped one's readers into its gate. How many.
+/// Drops each request rule (the program's `asked_by`) whose body holds every literal of another rule of its relation
+/// with the same head: that one derives all it does. The request kept whole for a reader that asks for all, beside the
+/// one its other readers' asks narrow (decision 0291, `rr::lower`'s `demand_of`), where both are reached. The rule
+/// kept takes the dropped one's readers into its gate, so it is kept wherever the dropped one would have been. Run by
+/// `simplify`, before relations merge, between the prunes that keep the reached ones. How many were dropped.
 #[derive(Default)]
 pub struct SubsumeRequests(pub usize);
 
@@ -2478,13 +2683,16 @@ impl ProgramPass for SubsumeRequests {
         self.0 += n;
         let gone: HashSet<_> = rules.iter().zip(&dropped).filter(|(_, d)| **d).map(|(r, _)| r.id()).collect();
         w.keep(|r| !gone.contains(&r.id()))?;
-        w.on()?.set_asked(&asked);
+        w.on()?.fields().set_asked(&asked);
         Ok(())
     }
 }
 
-/// `simplify::drop_unread`: the rules of relations no kept relation reads, directly or through others. Those
+/// The rules of relations no kept relation reads, directly or through others. Those
 /// relations.
+///
+/// Drops the rules of derived relations that no kept relation (`kept`: outputs, demanded relations, gates, …)
+/// reads, directly or through others; returns those relations.
 #[derive(Default)]
 pub struct DropUnread(pub Vec<String>);
 
@@ -2525,7 +2733,7 @@ impl ProgramPass for DropUnread {
             let mut asked = was.clone();
             asked.retain(|req, _| !unread.contains(req.as_str()));
             if asked != was {
-                b.set_asked(&asked);
+                b.fields().set_asked(&asked);
             }
         }
         self.0 = unread.into_iter().map(str::to_owned).collect();
@@ -2533,8 +2741,12 @@ impl ProgramPass for DropUnread {
     }
 }
 
-/// `simplify::location_column`: whether column `c` of derived relation `rel` holds a location.
-fn location_column(v: &Version, f: &Fields<'_>, rel: &str, c: usize) -> bool {
+/// Whether column `c` of derived relation `rel` holds a location, as the split takes one (`file_local::split`'s base
+/// locations): declared a node, or filled by every rule from a node column, or a document column, of a base relation
+/// it reads. A location through another derived relation's number column is not seen (none is projected today: such
+/// a column holds a document key only where it is filled from one). `rules` are `rel`'s, by its head (`ProjectAll`
+/// indexes them once: a scan of every rule for each relation and column was quadratic in the program).
+fn location_column(v: &Version, f: &Fields<'_>, rel: &str, rules: &[RuleRef<'_>], c: usize) -> bool {
     if f.column_type(rel, c) == Some("node") {
         return true;
     }
@@ -2542,12 +2754,28 @@ fn location_column(v: &Version, f: &Fields<'_>, rel: &str, c: usize) -> bool {
         let name = v.rel_name(a.rel());
         crate::code_rule_dsl::typing::file_local::document_column(name) == Some(i) || (name == "docof" && i == 1) || f.column_type(name, i) == Some("node")
     };
-    let rules: Vec<RuleRef<'_>> = v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).collect();
     !rules.is_empty()
         && rules.iter().all(|r| {
             let Some(TermRef::Var(x)) = r.head().args().nth(c) else { return false };
             r.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).filter(|a| !a.neg()).any(|a| a.args().enumerate().any(|(i, t)| matches!(t, TermRef::Var(y) if y == x) && base_location(a, i)))
         })
+}
+
+/// Whether every rule of derived relation `rel` reads only relations a split can hold per file: inputs, natives, and
+/// derived relations with a location column (`location_column`). Only then does a projection keep a location its
+/// readers do not read: the split partitions such a relation's rows by it. A rule that also joins a relation of no
+/// location is no file's, and a location kept there only multiplies its rows: `bcgp_decorated`'s zero count read
+/// `!rr_agg15($a, $b, $p, _)`, whose helper over `rr_ctx16($a, $b, $p)` (pairs of a decorator and a later def, no
+/// location) kept each line's span, a row per line between every pair (3.6-10 M rows priced for 25,425 pairs).
+/// `rules` are the relation's, and `by_head` every derived relation's, indexed once (`ProjectAll`).
+fn file_local_reads(v: &Version, f: &Fields<'_>, by_head: &BTreeMap<&str, Vec<RuleRef<'_>>>, rules: &[RuleRef<'_>]) -> bool {
+    rules.iter().all(|r| {
+        let rel = v.rel_name(r.head().rel());
+        r.body().filter_map(|l| if let Lit::Atom(a) = l.view() { Some(a) } else { None }).filter(|a| !a.neg()).all(|a| {
+            let name = v.rel_name(a.rel());
+            name == rel || by_head.get(name).is_none_or(|of| (0..a.args().count()).any(|c| location_column(v, f, name, of, c)))
+        })
+    })
 }
 
 /// The columns each relation's readers read (`project_unread_columns`' first step): `None` where something reads it
@@ -2580,11 +2808,25 @@ fn columns_read(v: &Version) -> HashMap<String, Option<BTreeSet<usize>>> {
     read
 }
 
+/// **Columns no reader reads go** (decision 0098 §1: `count only`, inferred). A derived relation whose column is `_` in
+/// every atom that reads it, positive or negated, keeps only its other columns: its rows become their projection, so
+/// a reader that asks only whether a row exists (`!r($x, _)`, `r($x, _)`) reads one row per key, not every row the
+/// rules make. The rows the readers see are the same: the column decides nothing they test.
+/// Not projected: kept relations (outputs, inputs, lattices, natives and what they read, facts, demand, gates),
+/// answered and nullary ones, and a relation an aggregate reads (a count, a sum or a string join counts its rows, which
+/// a projection would merge). One column at least stays. Dropping a head column can leave its variable named once in
+/// the body, made `_` there, which can free another relation's column: so it repeats until nothing changes.
+///
 /// One round of `project_unread_columns`: each relation projected on the columns its readers read (and a location),
 /// where that drops one, all in one rewrite of the program. Within a round one relation's projection decides nothing
 /// of another's: the columns read are the round's (`columns_read`), and a projection drops only arguments no reader
 /// names. The columns each projected relation kept.
+///
+/// Every reader, an existence count's atom too (any other aggregate's read keeps the relation whole).
+///
+/// Columns as the relation first had them.
 struct ProjectAll {
+    // Per relation: the columns a reader reads; `None` once something reads it whole.
     read: HashMap<String, Option<BTreeSet<usize>>>,
     kept: BTreeMap<String, Vec<usize>>,
 }
@@ -2594,17 +2836,24 @@ impl ProgramPass for ProjectAll {
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         let (v, d) = fields(cx)?;
         let f = Fields::over(v, &d);
-        let heads: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+        let mut by_head: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
+        for r in v.rules() {
+            by_head.entry(v.rel_name(r.head().rel())).or_default().push(r);
+        }
         let mut keep_of: HashMap<String, Vec<usize>> = HashMap::new();
-        for rel in heads {
+        for (&rel, rules) in &by_head {
             if kept(&f, rel) || f.nullary(rel) || f.answer(rel) {
                 continue;
             }
             let Some(Some(cols)) = self.read.get(rel) else { continue };
             let Some(n) = f.arity(rel) else { continue };
             let mut keep: Vec<usize> = (0..n).filter(|c| cols.contains(c)).collect();
-            if !keep.iter().any(|&c| location_column(v, &f, rel, c))
-                && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, c))
+            // A location stays though no reader reads it: the split partitions a file-local relation's rows by one,
+            // and a load hands on a document's rows by it (`py_docmod(d, p, q)`, read as `py_docmod(_, p, q)`). One
+            // is enough: the first, when no column read is one.
+            if !keep.iter().any(|&c| location_column(v, &f, rel, rules, c))
+                && file_local_reads(v, &f, &by_head, rules)
+                && let Some(c) = (0..n).find(|&c| location_column(v, &f, rel, rules, c))
             {
                 keep.push(c);
                 keep.sort_unstable();
@@ -2624,6 +2873,9 @@ impl ProgramPass for ProjectAll {
             keep: &'a HashMap<String, Vec<usize>>,
         }
         impl Rewrite for Project<'_> {
+            fn begin(&mut self, r: RuleRef<'_>) -> bool {
+                std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| self.keep.contains_key(self.v.rel_name(a.rel())))
+            }
             fn drop_arg(&mut self, a: AtomRef<'_>, c: usize) -> bool {
                 self.keep.get(self.v.rel_name(a.rel())).is_some_and(|k| !k.contains(&c))
             }
@@ -2637,17 +2889,10 @@ impl ProgramPass for ProjectAll {
             .collect();
         let input = w.input().clone();
         let b = w.derive()?;
-        for r in input.rules() {
-            let touches = std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| keep_of.contains_key(input.rel_name(a.rel())));
-            if touches {
-                b.rewrite(&input, r, &mut Project { v: &input, keep: &keep_of }).finish()?;
-            } else {
-                b.keep(&input, r);
-            }
-        }
+        b.rewrite_all(&input, &mut Project { v: &input, keep: &keep_of })?;
         for (rel, cols) in &decls {
             let decl: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-            b.declare(rel, &decl);
+            b.fields().declare(rel, &decl);
         }
         self.kept = keep_of.into_iter().collect();
         Ok(())
@@ -2656,7 +2901,15 @@ impl ProgramPass for ProjectAll {
 
 // ---- the driver ----
 
-/// `simplify::simplify`'s passes on the pipeline, in its order, and its decisions (when the run is profiled).
+/// The simplifications' passes on the pipeline, in their order, and their decisions (when the run is profiled).
+///
+/// Each rule rewritten alone: each pass reads only its rule (and the kind sets and
+/// declarations, which none changes).
+///
+/// A request rule another of its relation subsumes (decision 0291's whole request beside its narrowed one), before
+/// relations merge: a request and its widened copy are compared with what is left.
+///
+/// A merge can leave a literal twice (`!m1($n), !m2($n)` became `!m1($n), !m1($n)`).
 pub fn passes(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<Report> {
     let mut report = Report::default();
     p.program(&mut UnitColumns);
@@ -2666,6 +2919,7 @@ pub fn passes(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipel
     let mut decided = DecidedFactTests::default();
     p.program(&mut decided);
     report.constants += decided.0;
+    // `RERAIL_EXISTENCE_COUNTS=off`: existence counts stay counts, for comparison.
     if std::env::var("RERAIL_EXISTENCE_COUNTS").map_or(true, |x| x != "off") {
         let mut e = InOrder(ExistenceAsReads::default());
         p.program(&mut e);
@@ -2675,11 +2929,13 @@ pub fn passes(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipel
     let mut inline = InlineNodeTests::default();
     p.program(&mut inline);
     report.inlined = inline.0;
+    // `RERAIL_INLINE_FILTERS=off`: filters are built, for comparison.
     if std::env::var("RERAIL_INLINE_FILTERS").map_or(true, |x| x != "off") {
         let mut filters = InlineFilters::default();
         p.program(&mut filters);
         report.inlined.extend(filters.0);
     }
+    // `RERAIL_JOIN_KEYS=off`: no concatenation runs backwards and no relation is keyed by a function, for comparison.
     let join_keys = std::env::var("RERAIL_JOIN_KEYS").map_or(true, |x| x != "off");
     if join_keys {
         let mut x = InOrder(ConcatInverses::default());
@@ -2781,14 +3037,14 @@ impl ProgramPass for DeclareInput {
         let v = cx.v();
         let mut inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).collect();
         let b = w.on()?;
-        b.declare(self.rel, self.cols);
+        b.fields().declare(self.rel, self.cols);
         inputs.push(self.rel.to_owned());
-        b.set_inputs(&inputs);
+        b.fields().set_inputs(&inputs);
         Ok(())
     }
 }
 
-/// The decisions `simplify::simplify` makes when the run is profiled.
+/// The decisions `passes` makes when the run is profiled.
 pub fn decide(report: &Report) {
     use crate::code_rule_dsl::logic::profile;
     if !profile::on() {
@@ -2852,13 +3108,13 @@ impl ProgramPass for BaseInputs {
             }
         }
         if inputs.len() > n {
-            w.on()?.set_inputs(&inputs);
+            w.on()?.fields().set_inputs(&inputs);
         }
         Ok(())
     }
 }
 
-/// core.rr's functors only CPython gives, each of a node, and the relations the batches bind them as
+/// core.rerail's functors only CPython gives, each of a node, and the relations the batches bind them as
 /// (`facts::vtab::syntax::cpython`): `@py_unparse(n)` is the `s` of `cpython_unparse(n, s)`. `@unparse` is decision
 /// 0058's, a tape's text (`rr::lower`, `unparse_of`), not intercepted here.
 const CPYTHON_FUNCTORS: [(&str, &str); 2] = [("py_unparse", crate::code_rule_dsl::facts::core::cpython_relations::UNPARSE), ("ast_dump", crate::code_rule_dsl::facts::core::cpython_relations::AST_DUMP)];
@@ -2876,10 +3132,10 @@ impl ProgramPass for CpythonFunctors {
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<()> {
         let v = cx.v();
         let functor = |f: AtomId| CPYTHON_FUNCTORS.iter().find(|(g, _)| *g == v.text(f)).map(|&(_, rel)| rel);
-        fn calls(v: &Version, t: TermRef<'_>, functor: &dyn Fn(AtomId) -> Option<&'static str>) -> bool {
-            matches!(t, TermRef::Call(f, args) if functor(f).is_some() || args.clone().any(|a| calls(v, a, functor)))
+        fn calls(t: TermRef<'_>, functor: &dyn Fn(AtomId) -> Option<&'static str>) -> bool {
+            matches!(t, TermRef::Call(f, args) if functor(f).is_some() || args.clone().any(|a| calls(a, functor)))
         }
-        let any = v.rules().any(|r| std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.args().any(|t| calls(v, t, &functor))) || r.body().any(|l| matches!(l.view(), Lit::Cmp { l, r: rt, .. } if calls(v, l, &functor) || calls(v, rt, &functor))));
+        let any = v.rules().any(|r| std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.args().any(|t| calls(t, &functor))) || r.body().any(|l| matches!(l.view(), Lit::Cmp { l, r: rt, .. } if calls(l, &functor) || calls(rt, &functor))));
         if !any {
             return Ok(());
         }
@@ -2908,7 +3164,7 @@ impl ProgramPass for CpythonFunctors {
         let mut used: BTreeSet<&str> = BTreeSet::new();
         let b = w.derive()?;
         for r in input.rules() {
-            let touches = std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.args().any(|t| calls(&input, t, &functor))) || r.body().any(|l| matches!(l.view(), Lit::Cmp { l, r: rt, .. } if calls(&input, l, &functor) || calls(&input, rt, &functor)));
+            let touches = std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.args().any(|t| calls(t, &functor))) || r.body().any(|l| matches!(l.view(), Lit::Cmp { l, r: rt, .. } if calls(l, &functor) || calls(rt, &functor)));
             if !touches {
                 b.keep(&input, r);
                 continue;
@@ -2922,7 +3178,7 @@ impl ProgramPass for CpythonFunctors {
                         let x = lift(&input, r, x, &functor, &mut bound);
                         body.push(Out::Made(Made::Cmp { l: x, op, r: lift(&input, r, y, &functor, &mut bound) }));
                     }
-                    Lit::Agg { atom, .. } if atom.args().any(|t| calls(&input, t, &functor)) => {
+                    Lit::Agg { atom, .. } if atom.args().any(|t| calls(t, &functor)) => {
                         return Err(format!("@py_unparse or @ast_dump in an aggregate over {}: bind it to a variable outside the aggregate", input.rel_name(atom.rel())));
                     }
                     _ => body.push(Out::Own(l)),
@@ -2948,7 +3204,7 @@ impl ProgramPass for CpythonFunctors {
         for rel in used {
             if input.decl_of(rel).is_none() {
                 let cols = crate::code_rule_dsl::facts::core::cpython_relations::columns(rel);
-                b.declare(rel, &[(cols[0], "node"), (cols[1], "sym")]);
+                b.fields().declare(rel, &[(cols[0], "node"), (cols[1], "sym")]);
             }
         }
         Ok(())

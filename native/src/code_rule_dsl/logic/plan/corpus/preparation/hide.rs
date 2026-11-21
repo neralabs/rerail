@@ -209,7 +209,7 @@ impl ProgramPass for Hide {
                 let grammar_of = |s: Slot| facts.get(&s).filter(|f| f.scoped && f.definite).and_then(|f| f.grammar.clone()).filter(|g| !g.is_empty());
                 // A kind read off a guest's node is its grammar's (decision 0222): `kind(f, k), fn_scope(k)` over a view's
                 // node reads the kind set named in the view's grammar, and `k = "arrow_function"` names that grammar's
-                // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rr
+                // kind. Unqualified, both are the run language's, and a library over another grammar (tsx/names.rerail
                 // read over a Vue component's view) finds none of its kinds.
                 let kind_of: BTreeMap<Slot, String> = rule
                     .body
@@ -363,18 +363,18 @@ impl ProgramPass for Hide {
             touched = edited.into_iter().chain(first_copy..rules.len()).collect();
             delta.changed(&rules, &touched);
             for (name, cols) in decls {
-                declare_columns(&mut prog.b, &name, &cols);
+                declare_columns(&mut prog.b.fields(), &name, &cols);
             }
             all_kindsets.extend(kindsets);
             for (name, orig, kinds) in kind_facts {
                 if let Some(d) = prog.columns_of(orig.as_str()) {
-                    declare_columns(&mut prog.b, &name, &d);
+                    declare_columns(&mut prog.b.fields(), &name, &d);
                 }
                 let rows: Vec<front::List<Value>> = kinds.iter().map(|k| [Value::Str(k.as_str().into())].into()).collect();
-                prog.b.set_facts(&name, &rows);
+                prog.b.fields().set_facts(&name, &rows);
             }
             for axis in axes {
-                prog.b.add_input(&axis);
+                prog.b.fields().add_input(&axis);
             }
             if !changed {
                 break;
@@ -468,13 +468,13 @@ impl ProgramPass for Hide {
         });
         for h in &helpers {
             let cols: Vec<(&str, &str)> = h.vars.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-            prog.b.declare(&h.name, &cols);
+            prog.b.fields().declare(&h.name, &cols);
         }
         // The version: every rule copied from its source with its edits, then the helpers, then the fields.
         let b = w.derive()?;
-        b.state_fields_of(&prog.b);
+        b.fields().state_fields_of(&prog.b);
         if all_kindsets != v.kindsets() {
-            b.set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&all_kindsets));
+            b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Kindsets(&all_kindsets));
         }
         let asked = asked_after(v, &rules);
         for (rule, fin) in rules.iter().zip(&finals) {
@@ -503,7 +503,7 @@ impl ProgramPass for Hide {
             out.finish()?;
         }
         if let Some(asked) = asked {
-            b.set_asked(&asked);
+            b.fields().set_asked(&asked);
         }
         self.kept = plan_rows(&reached, &made, &specialized, &asking, &carried);
         Ok(())
@@ -574,7 +574,7 @@ impl ProgramPass for Hide {
             }
         }
         for (_, w) in &removed {
-            if enters(w) && !rules_of(&w.head).iter().any(|r| enters(r)) {
+            if enters(w) && !rules_of(&w.head).iter().any(&enters) {
                 return Ok(false);
             }
         }
@@ -1000,7 +1000,7 @@ fn reaching(rules: &[W], seeds: &[Facts]) -> Vec<bool> {
 }
 
 /// A context relation (`rr_ctx…`, a policy's copy too): what `asking` adds.
-fn is_context(r: &str) -> bool {
+pub(super) fn is_context(r: &str) -> bool {
     let own = r.strip_prefix('p').and_then(|t| t.find('_').filter(|&i| i > 0 && t[..i].bytes().all(|b| b.is_ascii_digit())).map(|i| &t[i + 1..]));
     own.unwrap_or(r).starts_with("rr_ctx")
 }
@@ -1266,18 +1266,29 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
         }
     }
     // A tape's documents and a document's nodes are the tape's, and a base atom's locations are in one document.
+    // A document column is one way (decision 0431 §4): a document's nodes are its guest's (a tape value's, its own
+    // document), but a node's document may be its file (a program's nodes are the file's), so a node gives it scope,
+    // not its grammar. `(from, to)`: from's facts flow to `to`, its grammar too unless `to` is the document.
     let mut groups: Vec<Vec<Slot>> = Vec::new();
+    let mut to_document: Vec<(Slot, Slot)> = Vec::new();
     const PAIR: &[usize] = &[0, 1];
     for a in positive() {
-        let cols: &[usize] = match a.rel.as_str() {
+        let (cols, document): (&[usize], Option<usize>) = match a.rel.as_str() {
             // A node's parent is in its document (`tape(n, par, size, depth)`, the climbs' walk).
-            "tape_of" | "doc_root" | "tape" => PAIR,
+            "tape_of" | "tape" => (PAIR, None),
             // A tree axis's node and its ancestor (`rr_has_<set>(n, a)`, `rr_inside_<set>(n, a)`): `has(r, c, "field")`
             // over a guest's root r makes c the guest's node.
-            r if front::is_axis(r) => PAIR,
-            r => base.get(r).map_or(&[], Vec::as_slice),
+            r if front::is_axis(r) => (PAIR, None),
+            r => (base.get(r).map_or(&[], Vec::as_slice), front::document_column(r)),
         };
-        let vars: Vec<Slot> = cols.iter().filter_map(|&c| a.args.get(c).and_then(S::var)).collect();
+        let doc = document.filter(|d| cols.contains(d)).and_then(|d| a.args.get(d).and_then(S::var));
+        let vars: Vec<Slot> = cols.iter().filter(|&&c| Some(c) != document).filter_map(|&c| a.args.get(c).and_then(S::var)).collect();
+        if let Some(d) = doc {
+            for &x in vars.iter().filter(|&&x| x != d) {
+                groups.push(vec![d, x]);
+                to_document.push((x, d));
+            }
+        }
         if vars.len() > 1 {
             groups.push(vars);
         }
@@ -1293,6 +1304,21 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
     loop {
         let mut changed = false;
         for g in &groups {
+            // A node and its document: the document's facts flow to the node, the node's to the document without
+            // its grammar.
+            let one_way = match g.as_slice() {
+                [d, x] if to_document.contains(&(*x, *d)) => Some((*d, *x)),
+                _ => None,
+            };
+            if let Some((d, x)) = one_way {
+                if let Some(f) = facts.get(&d).cloned() {
+                    changed |= facts.entry(x).or_default().join(&f);
+                }
+                if let Some(f) = facts.get(&x).cloned() {
+                    changed |= facts.entry(d).or_default().join(&Fact { grammar: None, ..f });
+                }
+                continue;
+            }
             let mut all = Fact::default();
             for x in g {
                 if let Some(f) = facts.get(x) {
@@ -1311,6 +1337,13 @@ fn analyse(rule: &W, base: &HashMap<String, Vec<usize>>, carried: &HashMap<Strin
         }
     }
     facts
+}
+
+
+/// Declares `rel` with `cols` on the staged fields.
+fn declare_columns(b: &mut (impl FieldsMut + ?Sized), rel: &str, cols: &[(String, String)]) {
+    let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
+    b.declare(rel, &pairs);
 }
 
 #[cfg(test)]
@@ -1383,7 +1416,7 @@ mod tests {
         assert!(out.iter().any(|r| r.contains("rr_in_sql_0_sql_1_pair(")), "{out:?}");
     }
 
-    /// O110: a column filled by host and guest nodes alike (`calls.rr`'s `tv`) is not a guest's column. A rule reading
+    /// O110: a column filled by host and guest nodes alike (`calls.rerail`'s `tv`) is not a guest's column. A rule reading
     /// a relation with a variable from it keeps reading the relation for the host's nodes, and a clone reads the
     /// guest's copy; before, the rule read only the copy, and `tbv` lost every host assignment.
     #[test]
@@ -1429,11 +1462,10 @@ mod tests {
 
     /// A copy for a guest in the run's own language (an annotation in a Python run, its guests shown) is its
     /// original: folded once the language is known (`FoldOwn`), its reader reads the original and its clone repeats
-    /// its rule. In another language's run, or with guests hidden, the copies stay.
+    /// its rule. In another language's run the copies stay.
     #[test]
     fn copies_for_a_guest_in_the_runs_own_language_are_folded_into_their_originals() {
-        use crate::code_rule_dsl::facts::vtab::syntax::{ANNOTATION_KEYS, GUEST_KEYS, GUEST_POLICY, HIDDEN_KEYS};
-        use crate::code_rule_dsl::logic::front::Value;
+        use crate::code_rule_dsl::facts::vtab::syntax::{RUN_VALUE_KEYS, HIDDEN_KEYS};
         let text = |g: &str| {
             format!(concat!(
                 ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
@@ -1443,19 +1475,11 @@ mod tests {
                 ".decl out(n: node)\n.output out\nout(n) :- val(n), asg(n).\nout(n) :- only(n), asg(n).\n",
             ), g = g)
         };
-        // Hidden, its own guests' copies folded, and merged, as the preparation runs them; with guests off as
-        // `.guests off` states it.
-        let folded = |grammar: &str, label: &str, guests: bool| -> (usize, usize, Vec<String>) {
+        // Hidden, its own guests' copies folded, and merged, as the preparation runs them.
+        let folded = |grammar: &str, label: &str| -> (usize, usize, Vec<String>) {
             let read = crate::code_rule_dsl::logic::rr::parse_version(&text(grammar)).unwrap();
-            let read = if guests {
-                read
-            } else {
-                let mut b = Builder::on(&read);
-                b.set_facts(GUEST_POLICY, &[[Value::Str("library".into()), Value::Str("off".into())].into()]);
-                b.finish().unwrap().0
-            };
             let mut p = Pipeline::new("test", read);
-            p.program(&mut super::Hide::new(if guests { ANNOTATION_KEYS } else { GUEST_KEYS }));
+            p.program(&mut super::Hide::new(RUN_VALUE_KEYS));
             let (v, _) = p.finish().unwrap();
             let made = v.declared_names().iter().filter(|r| r.starts_with("rr_in_")).count();
             let mut p = Pipeline::new("test", v);
@@ -1465,27 +1489,99 @@ mod tests {
             let (v, _) = p.finish().unwrap();
             (made, fold.folded, v.rules().map(|r| v.show_rule(r)).collect())
         };
-        let (made, n, rules) = folded("python", "python", true);
+        let (made, n, rules) = folded("python", "python");
         assert!(made > 0, "hiding made the guest's copies");
         assert_eq!(n, made);
         assert!(rules.iter().all(|r| !r.contains("rr_in_") && !r.contains("python:")), "{rules:#?}");
         let outs: Vec<&String> = rules.iter().filter(|r| r.starts_with("out(")).collect();
         assert_eq!(outs.len(), 2, "each clone repeats its rule: {outs:#?}");
-        assert_eq!(folded("python", "rust", true).1, 0, "another language's run keeps them");
-        assert_eq!(folded("python", "python", false).1, 0, "guests hidden keep them");
+        assert_eq!(folded("python", "rust").1, 0, "another language's run keeps them");
         // An annotation is not shown to a rule that does not name it, so its copies fold into originals whose
         // bounds take annotations in; a rule no annotation reaches keeps the narrow bound.
-        let (made, n, rules) = folded("annotation", "python", true);
+        let (made, n, rules) = folded("annotation", "python");
         assert!(made > 0 && n == made, "{made} made, {n} folded");
         let wide = (i64::from(HIDDEN_KEYS) << 32).to_string();
-        let narrow = (i64::from(ANNOTATION_KEYS) << 32).to_string();
+        let narrow = (i64::from(RUN_VALUE_KEYS) << 32).to_string();
         assert!(rules.iter().any(|r| r.starts_with("asg(") && r.contains(&wide)), "{rules:#?}");
         assert!(rules.iter().any(|r| r.starts_with("out(") && r.contains(&narrow)) || rules.iter().filter(|r| r.starts_with("out(")).all(|r| !r.contains(&wide)), "{rules:#?}");
     }
-}
 
-/// Declares `rel` with `cols` on the staged fields.
-fn declare_columns(b: &mut (impl FieldsMut + ?Sized), rel: &str, cols: &[(String, String)]) {
-    let pairs: Vec<(&str, &str)> = cols.iter().map(|(c, t)| (c.as_str(), t.as_str())).collect();
-    b.declare(rel, &pairs);
+    /// An original widened for an annotation's copies is read as hiding left it by the rules that are not its own and
+    /// reach no annotation (decision 0165 §3, main's #923): `rr_narrow_<orig>`, its rules under the narrow bound. A
+    /// native operator whose relation reads narrow reads the narrow copy too: its rows are made from the relation its
+    /// fields name, not from its rule.
+    #[test]
+    fn a_rule_reaching_no_annotation_reads_the_widened_original_narrow() {
+        use crate::code_rule_dsl::facts::vtab::syntax::{HIDDEN_KEYS, RUN_VALUE_KEYS};
+        use crate::code_rule_dsl::logic::front::Native;
+        use crate::code_rule_dsl::logic::program_facts::Field;
+        use crate::code_rule_dsl::logic::program_image::fields::Edit;
+        let v = hidden(
+            concat!(
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+                ".decl asg(n: node)\nasg(n) :- e(n), kind(n, \"identifier\").\n",
+                ".decl only(n: node)\nonly(r) :- parsed(_, \"annotation\", r).\n",
+                ".decl named(n: node)\nnamed(n) :- asg(n).\n",
+                ".decl out(n: node)\n.output out\nout(n) :- only(n), asg(n).\nout(n) :- named(n).\n",
+            ),
+            RUN_VALUE_KEYS,
+        );
+        let v = {
+            let mut e = Edit::on(&v);
+            let mut natives = v.native_map().unwrap();
+            natives.insert("named".into(), Native::TextTest { input: "asg".into(), column: 0, op: "match".into(), patterns: Vec::new() });
+            e.b.fields().set_field(Field::Natives(&natives));
+            e.finish().unwrap()
+        };
+        let mut p = Pipeline::new("test", v);
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        p.program(&mut fold);
+        let (v, _) = p.finish().unwrap();
+        assert!(fold.folded > 0);
+        let wide = (i64::from(HIDDEN_KEYS) << 32).to_string();
+        let asg = rules_of(&v, "asg");
+        assert!(!asg.is_empty() && asg.iter().all(|r| r.contains(&wide)), "the original takes the annotations in: {asg:#?}");
+        let narrow = rules_of(&v, "rr_narrow_asg");
+        assert!(!narrow.is_empty() && narrow.iter().all(|r| !r.contains(&wide)), "its narrow copy does not: {narrow:#?}");
+        let named = rules_of(&v, "named");
+        assert!(!named.is_empty() && named.iter().all(|r| r.contains("rr_narrow_asg(")), "{named:#?}");
+        assert_eq!(v.native_map().unwrap()["named"].reads(), ["rr_narrow_asg"]);
+        assert!(v.declares("rr_narrow_asg"));
+    }
+
+    /// A tree axis read over a node that may be an annotation's is the clone's copy of the axis, over a copy of its kind
+    /// set (`rr_inside_rr_in_annotation_<set>`). Folding the copied set folds the axis too: before, the set went and
+    /// the axis stayed, naming no set, so the transducer made it with no rows, and the clone's `!inside(t, _, S)` held
+    /// for every node, below S too (the Django rules' `within_stop` over a block found through `sym_of`; main's #862).
+    #[test]
+    fn an_axis_over_a_folded_kind_set_reads_the_original_set() {
+        use crate::code_rule_dsl::facts::vtab::syntax::RUN_VALUE_KEYS;
+        use crate::code_rule_dsl::logic::front::{axis, is_axis};
+        let v = hidden(
+            concat!(
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+                ".decl body(b: node)\nbody(b) :- e(b).\nbody(r) :- parsed(_, \"annotation\", r).\n",
+                ".decl attempt(t: node)\nattempt(t) :- e(t).\n",
+                ".decl out(t: node)\n.output out\n",
+                "out(t) :- attempt(t), body(b), within(t, b), !inside(t, _, \"function_definition\").\n",
+            ),
+            RUN_VALUE_KEYS,
+        );
+        let axes = |v: &Version| -> Vec<String> { v.rules().flat_map(|r| v.show_rule(r).split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| is_axis(w)).map(str::to_owned).collect::<Vec<_>>()).collect() };
+        assert!(axes(&v).iter().any(|r| r.contains("rr_in_annotation_")), "the clone reads the annotation's axis: {:?}", axes(&v));
+        let mut p = Pipeline::new("test", v);
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        let (mut merge, mut repeats) = (super::super::merge::MergeIdentical::default(), super::super::merge::DropRepeated::default());
+        p.program(&mut fold).program(&mut repeats).program(&mut merge).program(&mut repeats);
+        let (v, _) = p.finish().unwrap();
+        assert!(fold.folded > 0);
+        let sets = ProgramFields::kindsets(&*v);
+        let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).filter(|r| is_axis(r)).collect();
+        for rel in axes(&v).iter().chain(&inputs) {
+            let (set, _) = axis(rel).unwrap();
+            assert!(sets.contains_key(set), "{rel} names no kind set of the program: {sets:?}");
+        }
+        let outs = rules_of(&v, "out");
+        assert!(!outs.is_empty() && outs.iter().all(|r| r.contains("!rr_inside_rr_kind_function_definition(") && !r.contains("rr_in_")), "{outs:#?}");
+    }
 }

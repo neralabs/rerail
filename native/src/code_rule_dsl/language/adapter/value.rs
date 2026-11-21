@@ -197,7 +197,7 @@ pub mod kit {
     }
 
     /// The first node of `kind` in a document, read by `with`.
-    fn first<A: Adapter, T>(
+    fn first<T>(
         doc: &AstGrep<TapeDoc>,
         kind: &str,
         with: impl FnOnce(&ast_grep_core::Node<'_, TapeDoc>) -> T,
@@ -212,10 +212,7 @@ pub mod kit {
 
     /// Checks `A`'s values against `expect`, over the documents its semantics read of each source
     /// (`tape`).
-    pub fn check<A: Adapter>(
-        expect: &Expect,
-        tape: impl Fn(&str) -> AstGrep<TapeDoc>,
-    ) {
+    pub fn check<A: Adapter>(expect: &Expect, tape: impl Fn(&str) -> AstGrep<TapeDoc>) {
         assert_eq!(<A::Value as ValueRules>::LANG, expect.lang);
         assert_eq!(<A::Value as ValueRules>::string("é"), expect.string);
         assert_eq!(
@@ -230,7 +227,7 @@ pub mod kit {
         assert!(<A::Value as ValueRules>::VALUE_KINDS.contains(kind));
         let doc = tape(source);
         let mut spend = || true;
-        let value = first::<A, _>(&doc, kind, |node| {
+        let value = first(&doc, kind, |node| {
             <A::Value as ValueRules>::decode(node, &mut Context::new(&mut spend))
         });
         assert_eq!(&value, decoded, "{source:?}");
@@ -255,7 +252,7 @@ pub mod kit {
         );
         if let Some((source, kind, name)) = expect.name {
             let doc = tape(source);
-            let read = first::<A, _>(&doc, kind, <A::Value as ValueRules>::node_name);
+            let read = first(&doc, kind, <A::Value as ValueRules>::node_name);
             assert_eq!(read, Some(name.encode_utf16().collect()), "{source:?}");
         }
     }

@@ -1,4 +1,4 @@
-//! File-backed positional FTS, following ast-index-spike. SQL selects candidates;
+//! File-backed positional FTS, following the SQL index prototype. SQL selects candidates;
 //! the existing matcher validates them and constructs captures.
 #[path = "lower/audit.rs"]
 pub mod audit;
@@ -83,7 +83,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
         let interrupted = std::cell::RefCell::new(interrupted);
         let poll = || interrupted.borrow_mut()();
         let file = if nodes <= max_nodes && !poll() {
-            CorpusSlot::current().prepared_file(path, lang, &doc.index_source_digest())
+            CorpusSlot::current().prepared_file(path, lang, doc.index_source_digest())
         } else {
             None
         };

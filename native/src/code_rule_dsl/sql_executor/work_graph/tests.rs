@@ -196,6 +196,12 @@ fn invalid_dependencies_opaque_functions_and_writes_are_rejected() {
 
 #[test]
 fn workers_share_vm_limits_and_failed_queries_do_not_publish() {
+    crate::code_rule_dsl::test_support::alone("code_rule_dsl::sql_executor::work_graph::tests::shared_vm_limits_child");
+}
+
+#[test]
+#[ignore = "child process of workers_share_vm_limits_and_failed_queries_do_not_publish"]
+fn shared_vm_limits_child() {
     let expensive = "WITH RECURSIVE n(x) AS (SELECT 1 UNION ALL SELECT x+1 FROM n WHERE x<50) SELECT sum(x) FROM n";
     let one = execute(
         request(vec![node("a", expensive, 1, &[])], &["a"], 1),
@@ -232,9 +238,7 @@ fn workers_share_vm_limits_and_failed_queries_do_not_publish() {
 fn worker_profiles_cover_every_statement_and_session_totals() {
     for threads in [1_u64, 2] {
         let directory = tempfile::tempdir().unwrap();
-        let mut child = std::process::Command::new("nice")
-            .args(["-n", "19"])
-            .arg(std::env::current_exe().unwrap())
+        let mut child = crate::code_rule_dsl::test_support::niced_self()
             .args([
                 "--exact",
                 "code_rule_dsl::sql_executor::work_graph::tests::profiled_graph_child",
@@ -388,6 +392,12 @@ fn public_query_plan_reads_pinned_facts_and_explains_its_groups() {
 
 #[test]
 fn actual_sql_readers_overlap_and_a_shared_intermediate_reads_storage_once() {
+    crate::code_rule_dsl::test_support::alone("code_rule_dsl::sql_executor::work_graph::tests::overlapping_readers_child");
+}
+
+#[test]
+#[ignore = "child process of actual_sql_readers_overlap_and_a_shared_intermediate_reads_storage_once"]
+fn overlapping_readers_child() {
     struct Observed {
         entered: AtomicUsize,
         active: AtomicUsize,
@@ -527,6 +537,12 @@ fn ten_thousand_regions_and_512_operators_fit_four_submissions() {
 
 #[test]
 fn successors_run_before_an_unrelated_group_finishes() {
+    crate::code_rule_dsl::test_support::alone("code_rule_dsl::sql_executor::work_graph::tests::released_successors_child");
+}
+
+#[test]
+#[ignore = "child process of successors_run_before_an_unrelated_group_finishes"]
+fn released_successors_child() {
     if rerail_accel::exec::threads() < 2 {
         return;
     }

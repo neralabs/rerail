@@ -116,7 +116,7 @@ step("3. Use a library relation", [
     "Swap <code>text</code> for <code>sym_of</code> and both calls are found. Click <code>sym_of</code> to see its definition.",
 ], [
  ("rr", '''
-#include "python/names.rr"               // load the library that defines sym_of
+#include "python/names.rerail"               // load the library that defines sym_of
 
 // Rows the library derives for the code above:
 //   sym_of(#4, "builtins.exec")   `exec` is not bound in this file, so it is the builtin
@@ -150,7 +150,7 @@ sect("A rule file", [
 .mode steer                      // steer the agent; `block` would stop the edit
 .scope include "**/*.py"         // which files the rule reads
 
-#include "python/names.rr"       // sym_of: what a name refers to
+#include "python/names.rerail"       // sym_of: what a name refers to
 
 // The finding: a relation with one column, the node to report. The string is the message.
 .violation B102(at: node)
@@ -229,7 +229,7 @@ w('''  <section class="sect">
       <tr><td><code>.budget * { "total": N }</code></td><td>One budget across every violation the policy declares.</td></tr>
       <tr><td><code>.mode log CODE</code></td><td>After <code>.mode block</code>: one code that only logs.</td></tr>
       <tr><td><code>.output rel</code></td><td>Soufflé. Publish a derived relation as metrics, not findings.</td></tr>
-      <tr><td><code>#include "python/names.rr"</code></td><td>Soufflé. Load a library's relations.</td></tr>
+      <tr><td><code>#include "python/names.rerail"</code></td><td>Soufflé. Load a library's relations.</td></tr>
       <tr><td><code>.decl r(a: node, b: symbol)</code></td><td>Soufflé. Declare a relation. Types: <code>node</code>, <code>span</code> (a regex capture), <code>loc</code> (either), <code>symbol</code>, <code>number</code>.</td></tr>
       <tr><td><code>scope("module"). scope("lambda").</code></td><td>Soufflé facts. A constant set is a one-column relation; <code>scope(k)</code> tests membership.</td></tr>
       <tr><td><code>.input r(IO=file, filename="…")</code></td><td>Soufflé. Facts from a policy file: allowlists, baselines, registries.</td></tr>
@@ -246,6 +246,7 @@ w('''  <section class="sect">
       <tr><td><code>.on input_error report CODE</code></td><td>Report a policy file that is missing or cannot be read, instead of reading it as empty.</td></tr>
       <tr><td><code>.budget V by code from base [floor] [drop 10%]</code></td><td>Ratchet whose ceilings are the rows of relation base, derived by rules, usually from a verified baseline file. It counts distinct findings. A ratchet on a metric (annotations, tests) is an ordinary rule comparing the metric with its ceiling.</td></tr>
       <tr><td><code>.scope report dirs "api"</code><br><code>.scope text "**/*.md"</code></td><td>Findings only land under these directories / read these files as text only (lines, no tree).</td></tr>
+      <tr><td><code>.scope tool_calls</code><br><code>.violation V(at: symbol) "…"</code></td><td>The policy reads a coding agent's tool calls, not files: <code>tool_call(c, tool)</code> and <code>tool_input(c, key, value)</code>, each call's string arguments. Its findings are at a call (<code>at</code> its id). A test gives calls with <code>.tool_call "Bash" `{"command": "…"}`</code> (see <code>tool-calls.md</code>).</td></tr>
       <tr><td><code>.input r(IO=json, filename="b.json", path="/counts")</code></td><td>Read a repository file: json, yaml, lines (<code>dir=</code> for a directory), file. A missing or malformed file gives an <code>input_error</code> row.</td></tr>
       <tr><td><code>.artifact "test_collection" inputs "**/*.py"</code><br><code>.input r(IO=json, artifact="test_collection")</code></td><td>Facts from a file a CI step wrote by running the repository's code, which Rerail never runs. A change to any input makes the file stale: its rules are then Unknown where they could report.</td></tr>
       <tr><td><code>.edit e(…)</code></td><td>An edit defined in Datalog, for fixes (see "Fixes").</td></tr>
@@ -331,12 +332,12 @@ hook_name(f, x) :- def_name(f, n), match("use_(?<x>.*)", n).
 
 w('''  <section class="sect">
     <div class="txt">
-      <h2>From JSON to .rr</h2>
+      <h2>From JSON to .rerail</h2>
       <p>Every JSON construct has a fixed lowering. The tree axes become native tree relations: <code>within</code> is "below", and <code>within_stop</code> is "below, with no stop node in between". Utilities become relations. ast-grep shares metavariables between a rule and its utilities; a Datalog variable belongs to one rule, so a utility that reads or binds a metavariable its caller uses gets it as an extra column. Anything without a lowering stays as a matcher atom, <code>ast(n, {…})</code>, and runs as it does today.</p>
       <p class="perf"><b>Performance.</b> The tree axes with a set (<code>inside</code>, <code>has</code>, <code>nearest</code>, <code>within_stop</code>, <code>precedes_stop</code>) are one pass over the document's tape per axis and set, not recursion. Plain <code>within(n, a)</code> relates a node to every ancestor, so its rows grow with nesting depth: prefer <code>inside(n, a, "kind")</code> or <code>nearest</code> when the ancestor's kind is known.</p>
     </div>
     <div class="tablewrap"><table class="map">
-      <tr><th>JSON</th><th>.rr</th></tr>
+      <tr><th>JSON</th><th>.rerail</th></tr>
       <tr><td><code>"kind": "call"</code></td><td><code>kind(n, "call")</code></td></tr>
       <tr><td><code>"regex": "^exec$"</code>, <code>"_async$"</code>, <code>"^(?:api/)?impl/"</code></td><td><code>glob("exec", n)</code>, <code>suffix("_async", n)</code>, <code>glob("{api/,}impl/**", n)</code>: a glob test wherever it is exactly the regex (1,949 of 2,123 distinct patterns)</td></tr>
       <tr><td><code>"regex": "0[xbo][0-9A-Fa-f_]*_(?:8|16)"</code></td><td><code>match("0[xbo][0-9A-Fa-f_]*_(?:8|16)", n)</code>: whole-text, so <code>^</code> and <code>$</code> go and <code>.*</code> marks open ends</td></tr>
@@ -461,7 +462,7 @@ NO_DOUBLE_BANG(n) :- n ~ `$E!!` => replace(n, `$E!`).
 ], FIX_TABLE)
 
 sect("Native or Datalog", [
-    "The binary provides the parse tape, tree arithmetic, value builtins, file readers and the edit applier. Name resolution, imports, JSX structure and most edits are Datalog libraries over those. Call targets and types come from typing programs, also <code>.rr</code>, that the engine runs before the rules. A library or program update ships without a new binary.",
+    "The binary provides the parse tape, tree arithmetic, value builtins, file readers and the edit applier. Name resolution, imports, JSX structure and most edits are Datalog libraries over those. Call targets and types come from typing programs, also <code>.rerail</code>, that the engine runs before the rules. A library or program update ships without a new binary.",
     '''<ul class="tight">
         <li><code>core</code>: native. Tape relations, <code>within</code>, <code>nearest</code>, functors, config readers, the four edits.</li>
         <li><code>python/names</code>, <code>python/imports</code>: adapted from an earlier Datalog prototype of Python call resolution.</li>
@@ -471,10 +472,10 @@ sect("Native or Datalog", [
     perf("A library relation is computed once per run and shared by every policy that reads it, so a second policy over <code>python/names</code> adds only its own rules. Name resolution and imports span the workspace, so they cost the most: reach them through a selective atom (<code>sym_of(t, q)</code> after <code>kind(t, \"identifier\")</code> and a name test), not as a whole relation."),
 ], [
  ("rr", '''
-#include "python/names.rr"     // scope_node, binding, ref_site, sym_of, annotation, catches, …
-#include "python/imports.rr"   // import_alias, loads, reaches, exports, hoist, …
-#include "python/calls.rr"     // call_target, call_open, reach, call_arg, awaited, …
-#include "python/types.rr"     // type_of, type_open, proven_type, possible_type, possible_open
+#include "python/names.rerail"     // scope_node, binding, ref_site, sym_of, annotation, catches, …
+#include "python/imports.rerail"   // import_alias, loads, reaches, exports, hoist, …
+#include "python/calls.rerail"     // call_target, call_open, reach, call_arg, awaited, …
+#include "python/types.rerail"     // type_of, type_open, proven_type, possible_type, possible_open
 
 // core (native): kind, field, child, text, value, within, nearest, line, doc, file, tsconfig_path,
 //                replace, delete, insert_before, insert_after
@@ -526,7 +527,7 @@ TYPES_TABLE = """<div class="tablewrap"><table class="map">
 
 sect("Types", [
     "Many checks are about what a value is, not how it is spelled: a write on a read-only connection, a blocking call reached from async code, a method called on the wrong class. A text test on the receiver's name finds some of these and misses every alias. Types make them checks about values.",
-    "Rerail does not run a type checker. A typing program, itself written in <code>.rr</code>, infers what each expression may hold from what the code assigns, returns, constructs and inherits, and keeps every gap as unknown. The engine runs it over the repository before the rules, file by file and then in a few cross-file rounds, and only when a rule reads one of its answers.",
+    "Rerail does not run a type checker. A typing program, itself written in <code>.rerail</code>, infers what each expression may hold from what the code assigns, returns, constructs and inherits, and keeps every gap as unknown. The engine runs it over the repository before the rules, file by file and then in a few cross-file rounds, and only when a rule reads one of its answers.",
     "Rules read the answers as ordinary relations, from two libraries. They are three-valued, like <code>must, may</code>: <code>proven_type(n, t)</code> means <code>isinstance(n, t)</code> is surely true; <code>possible_type(n, t)</code> or <code>possible_open(n)</code> means it may be. A call has its <code>call_target</code> rows, and <code>call_open</code> when it may run something else as well. A missing row is never read as false while the open relation holds.",
     """<ul class="tight">
         <li><code>python/calls</code>: <code>call_target(c, f)</code>, <code>call_open(c)</code>, and the call graph built on them: <code>calls</code>, <code>calls_open</code>, <code>reach</code>.</li>
@@ -552,8 +553,8 @@ def handler(conn, sql):
     conn.execute_write(sql)       # ← possible: conn's class is unknown
 """, "Python being checked"),
  ("rr", """
-#include "python/types.rr"    // proven_type, possible_type, possible_open
-#include "python/names.rr"    // attr_of
+#include "python/types.rerail"    // proven_type, possible_type, possible_open
+#include "python/names.rerail"    // attr_of
 
 .violation RO001(at: node) "execute_write on a read-only connection"
 .violation RO002(at: node) "execute_write on a value that may be a read-only connection"
@@ -578,7 +579,7 @@ sect("What the data-layer checks need", [
     perf("<code>join</code> sorts each group, so it is meant for short lists (an allowlist, a key), not whole files. An <code>ordered by earlier</code> relation is evaluated one document at a time in visit order, which is sequential: use it only when which write counts depends on the relation itself; a plain <code>max</code> over <code>earlier</code> is set-based. <code>@unparse</code>, <code>@ast_dump</code> and <code>str_part</code> come from an isolated CPython worker, one batch per wave: put a cheap filter before them so only the nodes that need them are sent."),
 ], [
  ("rr", '''
-// lib/data-layer/signing.rr: the signed bytes of an allowlist, rebuilt and verified.
+// lib/data-layer/signing.rerail: the signed bytes of an allowlist, rebuilt and verified.
 // The repository signs json.dumps({"allowlist": sorted(entries), "linter": …, "version": 1}).
 allow_message(l, msg) :- allow_sig(l, linter, _),
     body = join q by e sep "," : { allow_entry(l, e), q = @json_str(e) },
@@ -589,7 +590,7 @@ allow_status(l, v) :- allow_sig(l, _, s), !unsigned_sig(s), allow_message(l, m),
     ( ok > 0, v = "valid" ; ok = 0, v = "invalid" ).
 ''', "Signatures in Datalog (checked against the repository's real signatures)"),
  ("rr", '''
-// data-layer/file-length.rr: a bad signature replaces every other finding.
+// data-layer/file-length.rerail: a bad signature replaces every other finding.
 invalid_allowlist_signature(@place(".file-length-allowlist.json", 1)) :- allowlisted(_, _),
     !allow_status("file_length", "valid").
 .gate invalid_allowlist_signature
@@ -601,7 +602,7 @@ invalid_allowlist_signature(@place(".file-length-allowlist.json", 1)) :- allowli
 src_code(n, c) :- ast_name(n, x), expr_ctx(n, "load"), frame(n, f),
     k = max i : { write(w2, f, x, v2), earlier(v2, n), src_code(v2, _), visit_index(w2, i) },
     visit_index(w, k), write(w, f, x, v), src_code(v, c).
-''', "ordered by earlier (data-layer/sketches/owner-code.rr)"),
+''', "ordered by earlier (data-layer/sketches/owner-code.rerail)"),
 ])
 
 
@@ -628,7 +629,7 @@ eager_call(c) :- eager_resolve(c), callee(c, m), attr_of(m, o, _),
 // that starts the first path.
 LEG_083(c) :- leg_root(f, _), dfs_first(f, _, i, leg_edge, eager_call),
     py_frame(c, f), visit_index(c, i).
-''', "Rule (data-layer/sketches/transitive-eager.rr)"),
+''', "Rule (data-layer/sketches/transitive-eager.rerail)"),
  ("src", '''
 def load(x):
     check(x)          # check reaches no eager call
@@ -650,29 +651,26 @@ edge2(v, t, l) :- known(v, t, l).
 ''', "Known answers and avoided nodes, as a rewrite of the edges"),
 ])
 
-sect("Code inside code (proposed)", [
-    "Code often holds other code: SQL in a Python string, expressions in a template, a type annotation written as a string. Today a rule reaches such text through <code>parsed(s, grammar, root)</code>, which the binary provides for a few grammars.",
-    "The proposal makes each one a guest document, declared by a library rule rather than built in. A guest has its own grammar, nodes, kinds and lines, so every rule of that language runs on it unchanged; relations tie its nodes back to the host. A policy that should see only real files says <code>.scope embedded false</code>.",
-    "A parsed tape would also become a value inside rules, so a fix can splice new code into a tree and print it. None of this is built yet.",
+sect("Code inside code", [
+    "Code often holds other code: SQL in a Python string, a script in an HTML page, a type annotation written as a string. A rule reaches such text through <code>parsed(s, grammar, root)</code>: the root of the code at node <code>s</code>, read in that grammar, whose kinds the rule then names in it.",
+    "A string a rule parses is a value: one tree per text and grammar, whichever strings hold it, parsed only because a rule asked. A program the file's grammar holds (an HTML page's scripts and styles, a Vue component's view, a Markdown file's inline text) is part of its file: its language declares it, it is read as the file is, and its nodes have the file's lines. A run reads another language's files for the programs they hold in its own only when it says <code>.embedded on</code>.",
 ], [
  ("rr", """
-// A library declares where guests are: here, the SQL a Python call passes to execute().
-embed(at, "sql", "program") :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "execute"),
-    posarg(c, 0, at), str(at, _).
+// The SQL a Python call passes to execute(): asked for by the rule that reads it.
+sql_table(t) :- kind(c, "call"), field(c, "function", f), attr_of(f, _, "execute"),
+    posarg(c, 0, s), parsed(s, "sql", r), within(n, r), kind(n, "object_reference"), text(n, t).
 
-// Rules read guests like documents:
-//   guest(g, host, at, grammar)  document g is the text at `at` in document host, parsed as grammar
-//   doc_role(d, r)               "primary" (a file), "program" or "fragment" (a guest)
-//   host_node(n, h)              h is the innermost host node spanning guest node n
-//   root(d, n)                   d's root; for a fragment, the expression inside its wrapper
-// A SQL rule reports inside the string; host_node puts the finding on the Python line.
-""", "The proposed relations"),
+// A script in an HTML page: the page's program at its raw_text, at the page's lines.
+script_call(c, l) :- kind(t, "raw_text"), parsed(t, "javascript", p), within(c, p),
+    kind(c, "call_expression"), line(c, l).
+// host_node(n, h) gives the host node a guest node stands for.
+""", "Reaching code inside code"),
 ])
 
 w('''  <section class="sect">
     <div class="txt">
       <h2>What the engine runs today</h2>
-      <p>The engine reads <code>.rr</code> as its only rule format. Of the clauses on this page, it lowers 4,256 of the libraries' 4,277, 5,202 of the packs' 5,264 and 2,403 of the data-layer checks' 2,418. The rest are constructs it refuses by name, never runs wrongly.</p>
+      <p>The engine reads <code>.rerail</code> as its only rule format. Of the clauses on this page, it lowers 4,256 of the libraries' 4,277, 5,202 of the packs' 5,264 and 2,403 of the data-layer checks' 2,418. The rest are constructs it refuses by name, never runs wrongly.</p>
       <p>Most of the language runs: tape and tree relations, text tests, aggregates, lattices and demand, <code>must, may</code>, <code>join</code>, <code>dfs_first</code>, captures over a file's source and lines, signatures and subtree digests, <code>.on syntax_error</code> and <code>.on input_error</code>, and the typing programs. Python's <code>syntax_error</code> is the verdict of a parser that follows CPython's grammar.</p>
     </div>
     <div class="tablewrap"><table class="map">
@@ -737,7 +735,7 @@ w('''  <section class="sect">
     <div class="txt">
       <h2>Where to look next</h2>
       <ul class="tight">
-        <li><a href="#packs">Pack rules</a>: every shipped rule, its hand-written .rr beside today's JSON.</li>
+        <li><a href="#packs">Pack rules</a>: every shipped rule, its hand-written .rerail beside today's JSON.</li>
         <li><a href="#data-layer">Data-layer rules</a>: hand-written final forms of complex data-layer checks, and the router example in four forms. function-level-imports, missing-async-pairs and the router carry fixes.</li>
         <li><a href="#library">Library</a>: the Datalog libraries, the native core they stand on, and the Python typing program.</li>
       </ul>

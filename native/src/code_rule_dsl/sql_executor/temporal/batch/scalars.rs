@@ -60,11 +60,10 @@ fn joined(outer: &Select, inner: &Select, width: usize, id: usize) -> Option<Sel
         }))
     {
         expression.visit_mut(&mut |e| {
-            if let E::Qualified { alias, .. } = e {
-                if let Some(name) = aliases.get(alias) {
+            if let E::Qualified { alias, .. } = e
+                && let Some(name) = aliases.get(alias) {
                     *alias = name.clone();
                 }
-            }
         });
     }
     for item in &mut inner.from {

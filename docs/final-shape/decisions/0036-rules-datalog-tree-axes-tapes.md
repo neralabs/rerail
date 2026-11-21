@@ -18,14 +18,14 @@ containment, or provided as a built-in computed by the transducer, as `nearest` 
 - **Tree axes are built-ins, as `nearest` is.**
   - They are `inside($n, $a, kindset)` and `has($a, $n, …)`.
   - They run as tape arithmetic in the transducer, and the rules read them as relations.
-- **The NFA is optimized** as in the Pulling-it-all-together workstream, and the built-ins lower
+- **The NFA is optimized** as in the PIAT workstream, and the built-ins lower
   to the appropriate tapes.
 - **If needed, an optimizer** lowers Datalog rules that could be tapes into tapes, probably
   through transducers.
 
 ## Evidence
 
-`measure_inside_three_ways` asks "calls inside a function" over nera-data-layer `2b1504ad`
+`measure_inside_three_ways` asks "calls inside a function" over the data-layer repository at `2b1504ad`
 (9,010 files, 28.2M nodes, 104 chunks). It is CPU, at load 43–87, and every way finds 999,607
 rows.
 
@@ -41,7 +41,7 @@ rows.
 - **Recursion:** the native engine's recursion is far better than SQLite's recursive CTE (03 §7:
   4.5 s against 4 ms over 1.2M nodes). It is still 4.5× the tape.
 - **Prior work agrees:**
-  - The AST-index spike's design index (§7 and the tape's shape) has preorder plus subtree size,
+  - The SQL index prototype's design index (§7 and the tape's shape) has preorder plus subtree size,
     a nested interval: a descendant test is an O(1) range check on the tape, not a join.
   - The lessons ledger's row 22 says ordered sibling semantics need an NFA, not independent
     `cpos <` joins.

@@ -70,9 +70,8 @@ impl Work<'_> {
         Ok(())
     }
     pub fn remove(&self,table:&str,keys:&str,width:usize)->Result<usize> {
-        if let Some(store)=self.versions && let Some(old)=store.available(table) {
-            if old.primary_key_len()!=Some(width) || old.columns().len()!=width {return Err(error("Native set deletion requires complete tuple keys"));}
-        }
+        if let Some(store)=self.versions && let Some(old)=store.available(table)
+            && (old.primary_key_len()!=Some(width) || old.columns().len()!=width) {return Err(error("Native set deletion requires complete tuple keys"));}
         self.remove_keys(table,keys,width)
     }
     pub fn remove_keys(&self,table:&str,keys:&str,key_width:usize)->Result<usize> {
@@ -181,11 +180,9 @@ impl Work<'_> {
         let old = self.set_table(width)?;
         if let Some(store) = self.versions
             && let Some(source) = store.available(rel)
-        {
-            if store.clone_scratch(&old, &source)? {
+            && store.clone_scratch(&old, &source)? {
                 return Ok((old, source.len() as u64));
             }
-        }
         let n=self.insert(&old,&format!("SELECT * FROM {}",quote(rel)),true)? as u64;
         Ok((old, n))
     }

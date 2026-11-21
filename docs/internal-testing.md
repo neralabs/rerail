@@ -8,19 +8,28 @@
 Each is marked `Internal testing:` where defined. Its descriptions (CLI usage, MCP tools, OMP and Pi tools and commands)
 start with `[Internal testing]`, via `internalTesting()` in `src/engine/internal-testing.ts`.
 
-| Feature | Where it surfaces |
-| --- | --- |
-| Full-repository scanning | `rerail scan`; `audit_requests_create`, `audit_requests_list`, `repository_audits_list`, `repository_audit_entries_list` |
-| Conversation rules, cosine (similarity) and command (tool-call) | `kind: "conversation"` rules, badged `Internal testing` in the dashboard; `/cosine-rules` and `conversation_rules` in OMP and Pi; `/rerail-create`'s command rules ([Tool-call rules](tool-call-rules.md)); conversation rules a rule pack ships ([pack format](pack-format.md#packjson)) |
-| Semantic tools | `rerail_mark`, `rerail_select`, `rerail_project`, `rerail_relate` in OMP and Pi |
-| Block mode | `mode: "block"`, stored and delivered exactly like `steer`; CLI and API writes that set it say it steers in this release, the dashboard shows `Block (steers for now)` |
-| Activation profiles | `rerail activate`, `rerail activation request`, `rerail profile`, `--profile` |
-| Event stream | `rerail events` |
-| [Headless scan](headless-scan.md) | `rerail scan` without `--session`: a scan of a checkout with no daemon or session; its `rerail.scan/1` report |
-| [Remote sink](remote-sink.md) | `rerail remote`; the daemon's sender; remote lines in `rerail status`; `remote.json`, `remote-tokens/`, `remote-outbox.sqlite`, `machine-id` in the Rerail home |
-| [Steer strategies](#steer-strategies) `rewind` and `subagent`, experimental: off unless `RERAIL_EXPERIMENTAL_STEER_STRATEGIES=1` | `steerStrategy` in audit settings (`rerail settings --steer-strategy`, `audit_settings_update`); Pi's `rerail_fix` tool; `benchmark/steer-strategy.ts` |
-| Automatic first repository audit, experimental: off unless `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT=1` | One full-repository audit in `log` mode at the first session in a checkout |
-| [Missed-steer digest](#missed-steer-digest), experimental: off unless `RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST=1` | Late code-rule steers held and sent as one steer at the agent's yield; Cursor's `stop` follow-up |
+Every one is experimental and off by default: its variable turns it on ([below](#turning-experimental-features-on)).
+
+| Feature, and its variable | Where it surfaces | While it is off |
+| --- | --- | --- |
+| Full-repository scanning, `RERAIL_EXPERIMENTAL_REPOSITORY_SCAN` (daemon) | `rerail scan --session`; `audit_requests_create`, `audit_requests_list`, `repository_audits_list`, `repository_audit_entries_list` | The operations answer `404 experimental-off` and are no MCP tools, so `rerail scan --session` fails with that message |
+| [Headless scan](headless-scan.md), `RERAIL_EXPERIMENTAL_HEADLESS_SCAN` (the CLI) | `rerail scan` without `--session`: a scan of a checkout with no daemon or session; its `rerail.scan/1` report; the packs a repository lists in `.rerail/packs.json` ([design](repository-packs.md)), which the scan runs, at the rule options the file's `config` sets, and `rerail rules approve` lists | `rerail scan` without `--session` refuses, and `rerail rules approve` does not read `.rerail/packs.json` |
+| Conversation rules, cosine (similarity) and command (tool-call), `RERAIL_EXPERIMENTAL_CONVERSATION_RULES` (daemon, or Pi itself for a Pi session running Rerail in process; OMP or Pi for their tools; the CLI for drafts) | `kind: "conversation"` rules, badged `Internal testing` in the dashboard; `/cosine-rules` and `conversation_rules` in OMP and Pi; `/rerail-create`'s command rules ([Tool-call rules](tool-call-rules.md)); conversation rules a rule pack ships ([pack format](pack-format.md#packjson)) | None is checked, wherever it is stored; the dashboard lists them as `Not running`. `library_rules_upsert` answers `400 experimental-off` for one, `rerail rules test` and `rules add` refuse its draft, and OMP and Pi register neither the tool nor the command |
+| Semantic tools, `RERAIL_EXPERIMENTAL_SEMANTIC_TOOLS` (OMP or Pi; the daemon for OMP's calls) | `rerail_mark`, `rerail_select`, `rerail_project`, `rerail_relate` in OMP and Pi | OMP and Pi do not register them |
+| Block mode, `RERAIL_EXPERIMENTAL_BLOCK_MODE` (daemon; the CLI for drafts) | `mode: "block"`, stored and delivered exactly like `steer`; CLI and API writes that set it say it steers in this release, the dashboard shows `Block (steers for now)` | A write that sets it answers `400 experimental-off` (`repository_settings_set`, `repository_attachments_set`, `library_rules_upsert`) or is refused (`rerail rules test`, `rules add`), and the dashboard shows no Block button; the refusal says to save the rule on `steer`, which does the same in this release. A rule already on Block keeps it, and steers: an edit that writes it back on Block is taken, and `rerail rules import` restores a dump as it was, Block included |
+| Activation profiles, `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES` (the CLI) | `rerail activate`, `rerail activation request`, `rerail profile`, `--profile` | `activate`, `activation request`, `profile select` and `--profile` refuse. `profile status` and `profile remove` work, and a profile stored earlier still restricts `rerail update` and `rerail events` |
+| Event stream, `RERAIL_EXPERIMENTAL_EVENT_STREAM` (the CLI) | `rerail events` | `rerail events` refuses. The built `dist/harness/event-stream.js`, which `rerail update`'s health check runs, and the package's `serveRerailEventStream` stay |
+| [Remote sink](remote-sink.md), `RERAIL_EXPERIMENTAL_REMOTE_SINK` (daemon for sending; the CLI for its commands) | `rerail remote`; the daemon's sender; remote lines in `rerail status`; `remote.json`, `remote-tokens/`, `remote-outbox.sqlite`, `machine-id` in the Rerail home | The daemon sends nothing, a headless scan queues no report, and `rerail remote add` and `push` refuse. The other `remote` commands work, so a remote added earlier can be seen and taken away and a repository excluded; turned on again, the daemon sends what was recorded while it was off |
+| [Steer strategies](#steer-strategies) `rewind` and `subagent`, `RERAIL_EXPERIMENTAL_STEER_STRATEGIES` (daemon) | `steerStrategy` in audit settings (`rerail settings --steer-strategy`, `audit_settings_update`); Pi's `rerail_fix` tool; `benchmark/steer-strategy.ts` | Every steer goes out as `message`, whatever the checkout saved |
+| Automatic first repository audit, `RERAIL_EXPERIMENTAL_FIRST_REPOSITORY_AUDIT` (daemon, or Pi itself for a Pi session running Rerail in process) | One full-repository audit in `log` mode at the first session in a checkout, without `RERAIL_EXPERIMENTAL_REPOSITORY_SCAN` ([reference](reference.md#defaults-and-requested-audits)) | No such audit |
+| [Missed-steer digest](#missed-steer-digest), `RERAIL_EXPERIMENTAL_MISSED_STEER_DIGEST` (daemon; Cursor's hook) | Late code-rule steers held and sent as one steer at the agent's yield; Cursor's `stop` follow-up | A late steer reaches the agent at its next event or poll |
+| [Merge Assist](#merge-assist), in-flight conflict detection, `RERAIL_EXPERIMENTAL_MERGE_ASSIST` (daemon, or Pi itself for a Pi session running Rerail in process; the CLI for `rerail merge-assist`), then off for every repository until a person turns it on ([build](merge-assist-v1-build.md), [reference](reference.md#merge-assist)) | `rerail merge-assist`; the `merge_assist_get`, `merge_assist_settings_get`, `merge_assist_scan`, `merge_assist_settings_set` and `merge_assist_conflict_dismiss` operations; the dashboard's Merge Assist page; its in-session notes ([In-session surfaces](in-session-surfaces.md#merge-assist-notes)) | Nothing of it runs; its operations answer `404 experimental-off` and are no MCP tools, and `rerail merge-assist` refuses |
+| Engine tools, `RERAIL_EXPERIMENTAL_ENGINE_TOOLS` (the CLI) | `rerail engine dump`, `rerail engine asm` and `rerail engine sql`: the rule engine's text tools | `rerail engine` refuses |
+| Relational rules, `RERAIL_EXPERIMENTAL_RELATIONAL_RULES` (daemon; the CLI for drafts) | Code rules with a `relational` clause, SQL over the engine's relations | None runs, wherever it is stored: the checkout's catalog skips it with the variable as its reason, and a pack that ships one still loads. A write that adds one is refused (`library_rules_upsert`, `rerail rules add`). `rerail rules test` does not check the variable: it runs the draft's cases and repository pass as for any other rule, and stores nothing |
+
+An operation of a feature that is off is left out of the MCP tool list, so a coding agent is never offered a tool that
+would only refuse; the HTTP API and the OpenAPI document keep it. The daemon's `/healthz` lists the features it runs
+(`experiments`), and the dashboard shows only theirs.
 
 - `rerail settings` and the `audit_settings_*` operations are not tagged yet; their scope is undecided.
 - The daemon's HTTP API, OpenAPI document and MCP endpoint are in the [reference](reference.md#run); the dashboard uses
@@ -28,12 +37,25 @@ start with `[Internal testing]`, via `internalTesting()` in `src/engine/internal
 - Found something in this list? Feedback is welcome in an issue labelled as internal testing.
 - [Governance](GOVERNANCE.md#internal-testing-features) says who decides when a feature graduates or is removed.
 
+## Turning experimental features on
+
+Every experimental feature in the table is off by default. Each has its own variable, `RERAIL_EXPERIMENTAL_<FEATURE>`,
+and `RERAIL_EXPERIMENTAL=1` turns on every one of them. A feature's own variable wins: `1` turns it on, `0` keeps it
+off even with `RERAIL_EXPERIMENTAL=1`; unset (or any other value), the feature follows `RERAIL_EXPERIMENTAL`. For
+example, `RERAIL_EXPERIMENTAL=1 RERAIL_EXPERIMENTAL_STEER_STRATEGIES=0` runs every experimental feature but steer
+strategies (`src/engine/experimental-features.ts`).
+
+Set them for the process that runs the feature, which the table names in brackets. For the daemon, a daemon already
+running keeps the environment it started with: stop it and start it again with the variable, as in
+`rerail daemon stop && RERAIL_EXPERIMENTAL=1 rerail daemon start`. Their behaviour may change or go away.
+
 ## Experimental steer features
 
-Each is off unless its variable is `1` for the process running Rerail's runtime.
+Each is off unless it is turned on ([above](#turning-experimental-features-on)) for the process running Rerail's
+runtime.
 
-That is the daemon for OMP, Claude Code, Codex and Cursor. For a Pi session, which runs Rerail in process, it is the
-coding agent itself.
+That is the daemon for OMP, Claude Code, Codex, Cursor and Pi. Only a Pi session of a Rerail built from a checkout runs
+Rerail in process; for that one it is the coding agent itself.
 
 ### Missed-steer digest
 
@@ -82,3 +104,16 @@ picks how a code-rule steer reaches the agent; off, every steer is `message`.
 </details>
 
 `benchmark/steer-strategy.ts` measures the three strategies on real coding agents.
+
+## Merge Assist
+
+Merge Assist is experimental and off by default. Set `RERAIL_EXPERIMENTAL_MERGE_ASSIST=1` (or `RERAIL_EXPERIMENTAL=1`,
+[above](#turning-experimental-features-on)) for the Rerail daemon (it
+runs the sessions' detection, the API and the dashboard), for Pi itself when a Pi session runs Rerail in process (its
+detection and notes run there), and for the shell that runs `rerail merge-assist`; then a
+person still turns it on per repository (`rerail merge-assist on`, or the dashboard's Merge Assist page).
+
+Without the variable nothing of it runs, even in a repository where it was turned on before: no detection, no `gh`, no
+hook command, no notes to the agent and no footer segment. The `merge_assist_*` operations answer
+`404 experimental-off`, `rerail merge-assist` exits 1 naming the variable, and the dashboard shows no Merge Assist item
+in its sidebar.

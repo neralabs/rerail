@@ -1,6 +1,6 @@
 import type { ExtensionAPI, Theme } from "@oh-my-pi/pi-coding-agent";
-import { isSteerRule, RULE_MESSAGE_TYPE, STEER_LINE_MESSAGE_TYPE, type SteerRule } from "../../engine/adapter-contract.js";
-import { STEER_GLYPHS } from "../../engine/code-rule/rerail-steer.js";
+import { isConflictNotice, isSteerRule, RULE_MESSAGE_TYPE, STEER_LINE_MESSAGE_TYPE, type ConflictNotice, type SteerRule } from "../../engine/adapter-contract.js";
+import { STEER_GLYPHS, steerRuleName } from "../../engine/code-rule/rerail-steer.js";
 import { colourDepth, rerailMark } from "../../presentation/rerail-mark.js";
 import { terminalDrawsHyperlinks } from "../../presentation/terminal-hyperlinks.js";
 
@@ -30,19 +30,38 @@ function detailRules(details: unknown): SteerRule[] {
   return details.rules.filter(isSteerRule);
 }
 
+/** The conflict a Merge Assist note's details carry (`sendNativeDeliveries`); none when it is missing or malformed. */
+function detailConflict(details: unknown): ConflictNotice | undefined {
+  if (details === null || typeof details !== "object" || !("conflict" in details)) return undefined;
+  return isConflictNotice(details.conflict) ? details.conflict : undefined;
+}
+
 /**
  * `◆ R E R A I L · <rule>  steered`, `steerHeadlines`' header: the glyph and state in the theme's accent, the separator
  * dimmed, and Rerail as its mark, the footer's coloured letters.
  */
-function headerText({ id, state }: SteerRule, mark: string, theme: SteerTheme): string {
-  return `${theme.fg("accent", STEER_GLYPHS[state])} ${mark}${theme.fg("dim", " · ")}${terminalText(id)}  ${theme.fg("accent", state)}`;
+function headerText(rule: SteerRule, mark: string, theme: SteerTheme): string {
+  return `${theme.fg("accent", STEER_GLYPHS[rule.state])} ${mark}${theme.fg("dim", " · ")}${terminalText(steerRuleName(rule))}  ${theme.fg("accent", rule.state)}`;
 }
 
-/** The `why?` after a headline: the word itself linked where the terminal draws links, else the word and its address. */
-function whyText(url: string, hyperlinks: boolean, theme: SteerTheme): string {
+/** The `why?` (or `open`) after a headline: the word itself linked where the terminal draws links, else the word and its address. */
+function linkText(word: string, url: string, hyperlinks: boolean, theme: SteerTheme): string {
   const separator = theme.fg("dim", "  ·  ");
-  if (hyperlinks) return `${separator}${hyperlink(url, theme.fg("mdLink", "why?"))}`;
-  return `${separator}${theme.fg("mdLink", "why?")}${theme.fg("dim", " → ")}${theme.fg("mdLinkUrl", terminalText(url))}`;
+  if (hyperlinks) return `${separator}${hyperlink(url, theme.fg("mdLink", word))}`;
+  return `${separator}${theme.fg("mdLink", word)}${theme.fg("dim", " → ")}${theme.fg("mdLinkUrl", terminalText(url))}`;
+}
+
+/**
+ * The person's line for the conflict a Merge Assist note surfaces, `◆ R E R A I L · your edit overlaps <label>
+ * (<author>): <title>  ·  open` (`conflictLine`), `open` linking its card; expanded, its link written out under it.
+ */
+function conflictRows({ text, url }: ConflictNotice, options: { expanded: boolean; hyperlinks: boolean; mark: string }, theme: SteerTheme): SteerRow[] {
+  const header = `${theme.fg("accent", STEER_GLYPHS.steered)} ${options.mark}${theme.fg("dim", " · ")}${terminalText(text)}`;
+  const rows: SteerRow[] = [{ detail: false, text: `${header}${url === undefined ? "" : linkText("open", url, options.hyperlinks, theme)}` }];
+  if (options.expanded && url !== undefined && options.hyperlinks) {
+    rows.push({ detail: true, text: `${theme.fg("dim", "open")} ${hyperlink(url, theme.fg("mdLink", terminalText(url)))}` });
+  }
+  return rows;
 }
 
 /**
@@ -50,19 +69,20 @@ function whyText(url: string, hyperlinks: boolean, theme: SteerTheme): string {
  * same line Claude Code and Codex show, built from the rules the message carries. Expanded (Ctrl+O) adds under each
  * line where its rule comes from and its link written out, for copying (a terminal without links has it written on
  * the line already), then the block the coding agent read. A rule with no link (no dashboard was known) has no
- * `why?`: a link to nowhere would only mislead.
+ * `why?`: a link to nowhere would only mislead. A Merge Assist note names no rule: its `conflict` has its line instead.
  */
 export function formatOmpSteer(
   content: string,
   rules: readonly SteerRule[],
   options: { expanded: boolean; hyperlinks: boolean; mark: string },
   theme: SteerTheme,
+  conflict?: ConflictNotice,
 ): SteerRow[] {
-  const rows = rules.flatMap(rule => {
+  const ruleRows = rules.flatMap(rule => {
     const { url } = rule;
     const headline: SteerRow = {
       detail: false,
-      text: `${headerText(rule, options.mark, theme)}${url === undefined ? "" : whyText(url, options.hyperlinks, theme)}`,
+      text: `${headerText(rule, options.mark, theme)}${url === undefined ? "" : linkText("why?", url, options.hyperlinks, theme)}`,
     };
     if (!options.expanded) return [headline];
     const drawn: SteerRow[] = [headline];
@@ -72,6 +92,7 @@ export function formatOmpSteer(
     }
     return drawn;
   });
+  const rows = [...ruleRows, ...(conflict === undefined ? [] : conflictRows(conflict, options, theme))];
   if (rows.length === 0 || !options.expanded) return rows;
   const block = content.split("\n").filter(line => line.trim() !== "");
   return [...rows, ...block.map(line => ({ detail: true, text: theme.fg("dim", terminalText(line)) }))];
@@ -82,9 +103,9 @@ type HostComponents = Pick<ExtensionAPI["pi"], "Container" | "Text">;
 /**
  * Draws `rerail.rule` messages, and the `rerail.steer-line` the person sees for steers that rode a tool result, as the
  * steer's one line per rule instead of OMP's default card, which repeats the whole model-facing block under the message
- * type. The model still receives a `rerail.rule` message's full `content`. The components are the host's own (`pi.pi`),
- * never bundled copies; without them, or with no rule in the message's details, the renderer declines and OMP's default
- * card shows the content.
+ * type, and a Merge Assist note as its conflict's line. The model still receives a `rerail.rule` message's full
+ * `content`. The components are the host's own (`pi.pi`), never bundled copies; without them, or with neither a rule nor
+ * a conflict in the message's details, the renderer declines and OMP's default card shows the content.
  */
 export function registerOmpSteerRenderer(
   pi: Pick<ExtensionAPI, "registerMessageRenderer"> & { pi?: Partial<HostComponents> },
@@ -98,7 +119,7 @@ export function registerOmpSteerRenderer(
       const text = typeof content === "string"
         ? content
         : content.flatMap(block => (block.type === "text" ? [block.text] : [])).join("\n");
-      const rows = formatOmpSteer(text, detailRules(details), { expanded, hyperlinks: hyperlinks(), mark: mark() }, theme);
+      const rows = formatOmpSteer(text, detailRules(details), { expanded, hyperlinks: hyperlinks(), mark: mark() }, theme, detailConflict(details));
       if (rows.length === 0) return undefined;
       const steer = new Container();
       for (const row of rows) steer.addChild(new Text(row.text, MARGIN + (row.detail ? DETAIL_INDENT : 0), 0));

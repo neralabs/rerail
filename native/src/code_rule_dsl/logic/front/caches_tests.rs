@@ -2,15 +2,10 @@
 
 use super::caches;
 
-/// A parsed program's version, as `finish`'s checks read it.
-fn version(p: &crate::code_rule_dsl::logic::front::Program) -> std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version> {
-    crate::code_rule_dsl::logic::program_image::Builder::of_program(p).and_then(|b| b.finish()).unwrap().0
-}
-
 fn refused(text: &str) -> String {
-    match crate::code_rule_dsl::logic::rr::parse(text) {
+    match crate::code_rule_dsl::logic::rr::parse_version(text) {
         Err(e) => e.to_string(),
-        Ok(p) => caches(&version(&p)).err().map(|e| e.to_string()).unwrap_or_else(|| panic!("accepted: {text}")),
+        Ok(p) => caches(&p).err().map(|e| e.to_string()).unwrap_or_else(|| panic!("accepted: {text}")),
     }
 }
 
@@ -18,8 +13,8 @@ const DECLS: &str = ".decl src(a: symbol, b: symbol)\n.input src\n.decl k(a: sym
 
 #[test]
 fn a_cache_is_a_key_rule_with_a_version_tag_and_an_output_rule() {
-    let p = crate::code_rule_dsl::logic::rr::parse(&format!("{DECLS}.cache c by k\nk(a, \"v1\") :- src(a, _).\nc(a, v, b) :- k(a, v), src(a, b).\n.output c\n")).unwrap();
-    let got = caches(&version(&p)).unwrap();
+    let p = crate::code_rule_dsl::logic::rr::parse_version(&format!("{DECLS}.cache c by k\nk(a, \"v1\") :- src(a, _).\nc(a, v, b) :- k(a, v), src(a, b).\n.output c\n")).unwrap();
+    let got = caches(&p).unwrap();
     assert_eq!((got[0].out.as_str(), got[0].key.as_str(), got.len()), ("c", "k", 1));
 }
 

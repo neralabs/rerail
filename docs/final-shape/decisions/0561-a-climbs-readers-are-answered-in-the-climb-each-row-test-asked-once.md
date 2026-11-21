@@ -1,10 +1,10 @@
 # 0561. A climb's readers are answered in the climb, each of a row's tests asked once
 
-Status: accepted (2026-11-21), the CPU form built. t50 step 5, second part; extends 0523.
+Status: accepted (2026-11-21), the CPU form built. t50 step 5, second part; extends 0570.
 
 ## Intro
 
-The scope lookup is a climb (decision 0523) and two readers of where it ends:
+The scope lookup is a climb (decision 0570) and two readers of where it ends:
 
 ```
 walk(n, x, s) :- nameref(n, x), wstart(n, s), !tp_ref(n, x).
@@ -23,7 +23,7 @@ again.
 ## Decision
 
 1. **The climb's ends join its stratum** (`plan::climb_ends`). A stratum of one relation joins the stratum of a
-   keyed walk (0523's shape as written: `plan::keyed_walk`) when:
+   keyed walk (0570's shape as written: `plan::keyed_walk`) when:
    - each of its rules reads the walk once, as a positive atom;
    - everything else it reads is made before the walk.
 
@@ -48,7 +48,7 @@ it climbs: W's questions, read from the rules.
 
 ## Test
 
-`a_walks_readers_are_answered_in_its_climb`: the walk of 0523's test with `look` and `miss` beside it, the walk
+`a_walks_readers_are_answered_in_its_climb`: the walk of 0570's test with `look` and `miss` beside it, the walk
 last in the component's relations, as a stratum's names sort. The rows of all three are a search's and
 semi-naive's, in one wave.
 
@@ -92,4 +92,4 @@ rows it no longer holds: `walk` is now read only in its own stratum, so the run 
 - `walk`'s rows are still pushed during the climb, as its set check. They are released after its stratum.
 - W's probe is a hash probe. Cheaper probes are the probe structure's job (t50 step 5, the spike; no sorted hash,
   the user, 2026-11-21).
-- Metal: the device refuses a keyed closure, as in 0523.
+- Metal: the device refuses a keyed closure, as in 0570.

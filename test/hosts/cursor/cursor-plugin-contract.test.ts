@@ -1,11 +1,13 @@
-import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { mkdtemp, readFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { steerBlock, type AdapterDelivery, type AdapterEvent, type RerailEventLoop } from "../../../src/engine/index.js";
 import { CURSOR_FOLLOWUP_LOOP_LIMIT, cursorHookEvent, cursorHookOutput, handleCursorEvent } from "../../../src/hosts/cursor/cursor-hook.js";
+import { cursorWorkspace } from "../../../src/hosts/cursor/cursor-hook-adapter.js";
 import { steeredRules } from "../../support/steers.js";
+import { removeFolder } from "../../support/platform/remove-folder.js";
 
 async function json(path: string): Promise<unknown> {
   return JSON.parse(await readFile(path, "utf8")) as unknown;
@@ -15,7 +17,7 @@ const temporaryDirectories: string[] = [];
 
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 async function temporaryDirectory(): Promise<string> {
@@ -118,6 +120,38 @@ describe("Cursor plugin contract", () => {
     expect(cursorHookOutput("postToolUse", [{ ...delivery, requested: "block" }])).toEqual({ additional_context: "Preserve the session." });
     expect(cursorHookOutput("stop", [delivery])).toEqual({ followup_message: "Preserve the session." });
     expect(cursorHookOutput("stop", [])).toEqual({});
+  });
+
+  it("asks the agent to relay a titled rule's line by its title, as inline code, beside a block that names its id", () => {
+    const output = cursorHookOutput("postToolUse", [{
+      sessionId: "cursor-session",
+      requested: "steer",
+      mechanism: "deferred-context",
+      content: "Rerail found 1 problem in your last edit:\n- a.ts:1:1 — Take this shadow off. [local:no-shadows]",
+      ruleIds: ["local:no-shadows"],
+      rules: [{ id: "local:no-shadows", title: "No shadows, see http://example.com", state: "steered", url: "http://127.0.0.1:4737/#rule/local%3Ano-shadows" }],
+    }]);
+    expect(output).toEqual({
+      additional_context: "Rerail found 1 problem in your last edit:\n- a.ts:1:1 — Take this shadow off. [local:no-shadows]\n\n"
+        + "Cursor shows the user none of this. Begin your next reply with these lines, exactly as written:\n"
+        + "`◆ Rerail · No shadows, see http://example.com  steered`  ·  [why?](http://127.0.0.1:4737/#rule/local%3Ano-shadows)",
+    });
+  });
+
+  it("reads a workspace on Windows as a native path, in every form Cursor may send it", () => {
+    const root = (value: string) => cursorWorkspace({ hook_event_name: "sessionStart", workspace_roots: [value] }, "win32");
+    for (const form of ["file:///c:/Users/me/repo", "file:///c%3A/Users/me/repo", "/c:/Users/me/repo", "/c/Users/me/repo", "c:\\Users\\me\\repo", "C:/Users/me/repo"]) {
+      expect(root(form)).toBe("C:\\Users\\me\\repo");
+    }
+    expect(cursorWorkspace({ hook_event_name: "postToolUse", cwd: "/d/work", workspace_roots: ["C:\\repo"] }, "win32")).toBe("D:\\work");
+    // A workspace at a drive's root keeps the separator: `C:` alone would name the drive's current folder.
+    for (const form of ["file:///c:/", "/c:", "/c"]) expect(root(form)).toBe("C:\\");
+    expect(root("\\\\server\\share\\repo")).toBe("\\\\server\\share\\repo");
+    expect(root("/workspace")).toBe("/workspace");
+    expect(cursorWorkspace({ workspace_roots: ["file:///home/me/my%20repo"] }, "linux")).toBe("/home/me/my repo");
+    expect(cursorWorkspace({ workspace_roots: ["/c/repo"] }, "linux")).toBe("/c/repo");
+    // A URI that names another host has no path on this machine, so it stays as sent.
+    expect(cursorWorkspace({ workspace_roots: ["file://server/share/repo"] }, "linux")).toBe("file://server/share/repo");
   });
 
   it("maps Cursor session and assistant lifecycle hooks to the shared session event vocabulary", () => {
@@ -224,7 +258,7 @@ describe("Cursor plugin contract", () => {
     expect(followUp.followup_message).toContain("- a.ts:2:7 — Do not write bad. [test:no-bad]");
     // The person sees none of a hook's text in Cursor, so the agent is asked to relay the rule's line (with no dashboard
     // running here, the rule stays unlinked and the line carries no link).
-    expect(followUp.followup_message).toContain("Begin your next reply with these lines, exactly as written:\n◆ Rerail · test:no-bad  steered");
+    expect(followUp.followup_message).toContain("Begin your next reply with these lines, exactly as written:\n`◆ Rerail · test:no-bad  steered`");
     // Carried once.
     expect(await handleCursorEvent({ ...common, loop_count: 1 }, scriptedLoop({}), storage)).toEqual({});
 

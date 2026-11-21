@@ -1,4 +1,4 @@
-"""Cross-check n-no-unsupported-features-node-builtins.facts.rr against the policy JSON it was generated from, by a
+"""Cross-check n-no-unsupported-features-node-builtins.facts.rerail against the policy JSON it was generated from, by a
 round trip. Run: python3 check-node-builtins.py   (exit status 1 on any difference)
 
 It rebuilds eslint-plugin-n's trace map from the table (modules, globals, import.meta; every API with its how and
@@ -7,7 +7,7 @@ compact_doc), and compares the result with the shipped JSON, compact utilities i
 clause's alternatives (as a multiset), and each clause's version gate, languageOptions and message. So a wrong path,
 a wrong how (call for new), a wrong version or a missing row each changes some clause. It never parses the clauses'
 alternatives itself, so it is independent of gen-node-builtins.py's reading of them. (After a reviewer's roundtrip.py.)
-It also checks the rows values.rr reads: node_module, node_global and api_known.
+It also checks the rows values.rerail reads: node_module, node_global and api_known.
 
 With --plugin DIR (eslint-plugin-n 18.4.1 unpacked; or $ESLINT_PLUGIN_N) it checks the experimental columns, which
 the JSON does not have, against the plugin's own trace map: every row's experimental versions, and its supported
@@ -24,7 +24,7 @@ sys.dont_write_bytecode = True
 import node_policies as NP  # noqa: E402
 import importlib.util  # noqa: E402
 
-FACTS = os.path.join(HERE, "n-no-unsupported-features-node-builtins.facts.rr")
+FACTS = os.path.join(HERE, "n-no-unsupported-features-node-builtins.facts.rerail")
 JSON = os.path.join(REPO, "packs", "node", "rules", "n-no-unsupported-features-node-builtins.json")
 FLAG = {"read": "$READ", "call": "$CALL", "new": "$CONSTRUCT"}
 

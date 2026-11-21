@@ -8,12 +8,12 @@ These are 36 rules from eslint-plugin-n 18.4.1, checked against ESLint 9.39.
 
 The shared vocabulary lives in four libraries:
 
-- `lib/tsx/node.rr`: CommonJS view, calls, ESTree ancestors, `node_runs_on` and the built-in module table.
-- `lib/tsx/node-package.rr`: package.json, bin, shebang and the Program start.
-- `lib/tsx/node-resolve.rr`: module specifiers and resolution.
-- `lib/tsx/node-trace.rr`: ReferenceTracker uses of a built-in module, built on values.rr.
+- `lib/tsx/node.rerail`: CommonJS view, calls, ESTree ancestors, `node_runs_on` and the built-in module table.
+- `lib/tsx/node-package.rerail`: package.json, bin, shebang and the Program start.
+- `lib/tsx/node-resolve.rerail`: module specifiers and resolution.
+- `lib/tsx/node-trace.rerail`: ReferenceTracker uses of a built-in module, built on values.rerail.
 
-Two rules read generated tables, `n-no-deprecated-api.facts.rr` and `n-no-unsupported-features-es-builtins.facts.rr`.
+Two rules read generated tables, `n-no-deprecated-api.facts.rerail` and `n-no-unsupported-features-es-builtins.facts.rerail`.
 Both come from `gen-node-tables.py --plugin DIR --globals globals.json`, which reads the plugin's own trace maps.
 
 | rule | lines | TP/FP/FN | deviations |
@@ -69,7 +69,7 @@ never ran those rules on:
   list of accepted parents and are not checked.
 - **D3** hashbang: invalid-026 has two findings at the same key. The recording counts both and rrlab counts one, so the
   1 FN is that artefact. A `#!` line with no line break after it is no shebang, as in the plugin.
-  additionalExecutables are gitignore patterns (node-package.rr's `pkg_listed`: anchoring, directories, `!`), and a
+  additionalExecutables are gitignore patterns (node-package.rerail's `pkg_listed`: anchoring, directories, `!`), and a
   file they match is checked even under ignoreUnpublished.
 - **D4** `convertPath`, `settings.n` and `pnpm-workspace.yaml` are not read. Only the `version` option and
   package.json are read.
@@ -84,11 +84,11 @@ never ran those rules on:
   entries are.
 - **D9** no-unpublished-\* and no-top-level-await: `ignorePrivate` needs `package_field(dir, "private", "true")`. rrlab
   emits booleans as scalars, but core does not document them (C3).
-- **D10** es-builtins: names are followed as values.rr follows them. The ESLint globals come from npm `globals`
+- **D10** es-builtins: names are followed as values.rerail follows them. The ESLint globals come from npm `globals`
   (`builtin` plus `node`), which may differ from ESLint's own ES globals list for a very new ecmaVersion.
 - **D11** get-builtin-module: a module name is constant as getStaticValue folds it without a scope: a literal, a
   template of constants, a `+` of them, `true ? a : b`. Other folds (`!0 ? …`, `String.raw`) are not modelled.
-- **D12** trace rules (node-trace.rr): a file that writes the global `require` (`require = f`) still has its
+- **D12** trace rules (node-trace.rerail): a file that writes the global `require` (`require = f`) still has its
   `require("m")` traced (C7); a written global itself (`Buffer = 1`) is not.
 
 ## Library and core change requests
@@ -100,7 +100,7 @@ never ran those rules on:
 .input spec_resolved                         // enhanced-resolve does with eslint-plugin-n's options; no row = fails
 ```
 
-Today it is declared in `lib/tsx/node-resolve.rr`, which also gives the options it needs: the conditions, the
+Today it is declared in `lib/tsx/node-resolve.rerail`, which also gives the options it needs: the conditions, the
 tryExtensions, the tsconfig paths and the .js->.ts map.
 
 **C2. core: npm's publish view.** Add this native input:
@@ -110,14 +110,14 @@ tryExtensions, the tsconfig paths and the .js->.ts map.
 .input npm_ignored                // else .gitignore; README/LICENSE/CHANGELOG/package.json/main always in
 ```
 
-Today it is declared in `lib/tsx/node-package.rr`.
+Today it is declared in `lib/tsx/node-package.rerail`.
 
 **C3. core: package_field booleans.** Document `package_field` so that booleans and numbers give their JSON text, as in
 `package_field(dir, "private", "true")`.
 
-**C4. names.rr: one declaration per reference.** Done in 5e3da9d0b; handle-callback-err no longer works around it.
+**C4. names.rerail: one declaration per reference.** Done in 5e3da9d0b; handle-callback-err no longer works around it.
 
-**C5. values.rr: comment-declared globals.** Line 137 should not need `node_global(g)`. The rule's own table already
+**C5. values.rerail: comment-declared globals.** Line 137 should not need `node_global(g)`. The rule's own table already
 bounds `api_known`. The new line:
 
 ```
@@ -129,8 +129,8 @@ This is because ESLint declares `/* global GLOBAL */` names in the global scope,
 **C6. check_rr: false "unbound x".** It reports `unbound x` on a disjunction whose second branch binds the variable by
 equality: `p(x) :- q(x) ; x = "c".` n-prefer-promises-dns was split into two clauses to get past it.
 
-**C7. values.rr: the forms ReferenceTracker follows.** node-trace.rr adds these for the node rules; they belong in
-values.rr, after `loader` and the alias clauses of `val`:
+**C7. values.rerail: the forms ReferenceTracker follows.** node-trace.rerail adds these for the node rules; they belong in
+values.rerail, after `loader` and the alias clauses of `val`:
 
 ```
 loader(f) :- val(f, "require", "api").   // const r = require; r("fs"), global.require("fs")
@@ -155,7 +155,7 @@ env_written(d, g) :- kind(a, "update_expression"), child(a, l, _), kind(l, "iden
     !ref_site(l, _), docof(a, d).
 ```
 
-node-trace.rr filters `global_use` this way today; the module side needs it in values.rr.
+node-trace.rerail filters `global_use` this way today; the module side needs it in values.rerail.
 
 **rrlab notes:**
 
@@ -168,17 +168,17 @@ node-trace.rr filters `global_use` this way today; the module side needs it in v
 
 ## Duplicates to merge
 
-- `node_call` in `node.rr` and `called` in `eslint-b-scope.rr`: both are a call's callee with parentheses skipped.
-- `cjs_ref` in `node.rr` and `env_global` in `values.rr` cover the CommonJS globals. `cjs_ref` also allows
+- `node_call` in `node.rerail` and `called` in `eslint-b-scope.rerail`: both are a call's callee with parentheses skipped.
+- `cjs_ref` in `node.rerail` and `env_global` in `values.rerail` cover the CommonJS globals. `cjs_ref` also allows
   `/* global */`.
-- `node_runs_on`/`node_version_opt` in `node.rr` duplicate `runs_on`/`version_opt` in
-  n-no-unsupported-features-node-builtins.rr. The exemplar could use the library.
-- `node_builtin` in `node.rr` (Node's builtinModules) and the exemplar facts' `node_module` rows: one table could give
+- `node_runs_on`/`node_version_opt` in `node.rerail` duplicate `runs_on`/`version_opt` in
+  n-no-unsupported-features-node-builtins.rerail. The exemplar could use the library.
+- `node_builtin` in `node.rerail` (Node's builtinModules) and the exemplar facts' `node_module` rows: one table could give
   both.
-- `const_string` in n-prefer-process-get-builtin-module is values.rr's `const_str` plus getStaticValue's folds (`+`,
-  templates, `true ? a : b`). values.rr could take them.
-- `pkg_listed`'s gitignore matcher in `node-package.rr` is the logic `npm_ignored` (C2) needs for .npmignore; a
+- `const_string` in n-prefer-process-get-builtin-module is values.rerail's `const_str` plus getStaticValue's folds (`+`,
+  templates, `true ? a : b`). values.rerail could take them.
+- `pkg_listed`'s gitignore matcher in `node-package.rerail` is the logic `npm_ignored` (C2) needs for .npmignore; a
   native matcher would serve both.
-- `trace_written` in `node-trace.rr` and `global_written` in `eslint-b-scope.rr`.
+- `trace_written` in `node-trace.rerail` and `global_written` in `eslint-b-scope.rerail`.
 - The `literal()` parser in `gen-node-tables.py` and the JSON inversion in `gen-node-builtins.py` both read
   plugin trace maps. The exemplar's generator could read the plugin's literal directly, as this one does.

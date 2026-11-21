@@ -1,12 +1,17 @@
-//! A `Program` as `.rr` text, which `rr::parse` reads back as the same program: for programs the engine builds
-//! (a wave's rules, the converter's output) and passes on as text.
+//! A program's version as `.rerail` text, which `rr::parse_version` reads back as the same program: for programs the
+//! engine builds (a wave's rules, the converter's output) and passes on as text. Read by the version's handles
+//! (0276 §6): nothing decodes it to a tree.
 
-use std::collections::BTreeSet;
+use std::borrow::Cow;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
+use std::sync::Arc;
 
 use rerail_rr_syntax::syntax::quote;
 use super::translate::{relation, var};
-use crate::code_rule_dsl::logic::front::{AggOp, Atom, Error, Literal, Native, Program, Term, Value, axis};
+use crate::code_rule_dsl::logic::front::{Error, Native, Value, axis};
+use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
+use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, CmpOp, Lit, LitRef, RuleRef, TermRef, Version};
 use crate::code_rule_dsl::logic::strings::{SET, is_test};
 
 fn ty(t: &str) -> &str {
@@ -15,24 +20,6 @@ fn ty(t: &str) -> &str {
         "sym" => "symbol",
         other => other,
     }
-}
-
-fn term(t: &Term) -> Result<String, Error> {
-    Ok(match t {
-        Term::Var(v) => var(v),
-        Term::Wild => "_".to_owned(),
-        Term::Int(n) => n.to_string(),
-        Term::Str(s) => quote(s),
-        Term::Top => "top".to_owned(),
-        // A lowered program's atom (decision 0270) is the store's: a lowered program is kept as its image.
-        Term::Branded(b) => return Err(Error::Syntax(format!("the atom {b}: no .rr form"))),
-        Term::Call(f, _) if is_test(f) || f == SET => return Err(Error::Syntax(format!("@{f} as a value: no .rr form"))),
-        Term::Call(f, args) => format!("@{}({})", if f == "cat" { "dot" } else { f }, terms(args)?),
-    })
-}
-
-fn terms(ts: &[Term]) -> Result<String, Error> {
-    Ok(ts.iter().map(term).collect::<Result<Vec<_>, _>>()?.join(", "))
 }
 
 /// A glob matching exactly `s`.
@@ -47,7 +34,7 @@ pub(super) fn glob_literal(s: &str) -> String {
     out
 }
 
-/// A regex test's `.rr` pattern: `match` is whole-string, the engine's `rx` a search. A `match("X", s)` lowers to
+/// A regex test's `.rerail` pattern: `match` is whole-string, the engine's `rx` a search. A `match("X", s)` lowers to
 /// `rx` of `^(?:X)$` and prints back as written; another `rx` is the search `(?s:.*)(?:P)(?s:.*)`, its flag on the
 /// dots only (a leading `(?s)` would give P's own `.` newlines), `irx` that under `(?i:…)`.
 pub fn search(op: &str, p: &str) -> String {
@@ -78,206 +65,292 @@ fn whole(p: &str) -> Option<&str> {
     (depth == 0 && !class).then_some(inner)
 }
 
-/// The text test `op(s, pattern)`, holding or (`neg`) failing.
-fn test(op: &str, s: &Term, pattern: &Term, neg: bool) -> Result<String, Error> {
-    let s = term(s)?;
-    let bang = if neg { "!" } else { "" };
-    let one = |p: &Term| -> Result<String, Error> {
-        let Term::Str(p) = p else {
-            // A regex the rule computes: `match`, whose lowering anchored it (`lower::anchored`).
-            if op == "rx" && let Some(re) = super::lower::unanchored(p) {
-                return Ok(format!("{bang}match({}, {s})", term(re)?));
-            }
-            let p = term(p)?;
-            // These internal functors search. Printing `rx(p, s)` would turn one into an
-            // undeclared relation; printing `match(p, s)` would instead require the whole string.
-            if op == "rx" || op == "irx" {
-                return Ok(format!("@{op}({s}, {p}) = {}", if neg { 0 } else { 1 }));
-            }
-            return Ok(if op == "equals" { format!("{s} {} {p}", if neg { "!=" } else { "=" }) } else { format!("{bang}{op}({p}, {s})") });
-        };
-        Ok(match op {
-            "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, quote(p)),
-            "iequals" => format!("{bang}iglob({}, {s})", quote(&glob_literal(p))),
-            // A search (`rx` of no `^(?:X)$`) is the data-layer builtin `@rx_matches` (`functions::catalogue`).
-            "rx" if whole(p).is_none() => format!("@rx_matches({s}, {}) = {}", quote(p), if neg { 0 } else { 1 }),
-            "rx" | "irx" => format!("{bang}match({}, {s})", quote(&search(op, p))),
-            _ => format!("{bang}{op}({}, {s})", quote(p)),
-        })
-    };
-    match pattern {
-        Term::Call(f, items) if f == SET && items.len() == 1 => one(&items[0]),
-        Term::Call(f, items) if f == SET && neg => Ok(items.iter().map(one).collect::<Result<Vec<_>, _>>()?.join(", ")),
-        Term::Call(f, items) if f == SET => Ok(format!("({})", items.iter().map(one).collect::<Result<Vec<_>, _>>()?.join(" ; "))),
-        p => one(p),
-    }
+/// What the printer reads of a version beside its rules: its fields, read once.
+struct Printer<'v> {
+    v: &'v Version,
+    nullary: BTreeSet<String>,
+    kindsets: BTreeMap<String, Vec<String>>,
 }
 
-/// An atom. `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are the built-ins where the program
-/// declares no relation of that name (a `.rr` program cannot): they print as themselves, where a relation of a
-/// reserved name gets a trailing `_` (`translate::relation`).
-fn atom(a: &Atom, prog: &Program) -> Result<String, Error> {
-    let bang = if a.neg { "!" } else { "" };
-    if let Some((set, has)) = axis(&a.rel)
-        && prog.kindsets.contains_key(set)
-        && let [n, x] = a.args.as_slice()
-    {
-        return Ok(if has { format!("{bang}has({}, {}, {set})", term(x)?, term(n)?) } else { format!("{bang}inside({}, {}, {set})", term(n)?, term(x)?) });
+/// A text test's pattern: a string, a set of them, or a term the rule computes.
+enum Pattern<'t> {
+    Str(Cow<'t, str>),
+    Set(Vec<Pattern<'t>>),
+    Term(TermRef<'t>),
+}
+
+impl<'v> Printer<'v> {
+    fn var(&self, r: RuleRef<'_>, s: crate::code_rule_dsl::logic::program_image::Slot) -> String {
+        var(self.v.text(r.var(s)))
     }
-    let builtin = BUILTINS.contains(&a.rel.as_str()) && !prog.decls.contains_key(a.rel.as_str());
-    let name = if builtin { a.rel.clone() } else { relation(&a.rel).into() };
-    Ok(format!("{bang}{name}({})", terms(&a.args)?))
+
+    fn term(&self, r: RuleRef<'_>, t: TermRef<'_>) -> Result<String, Error> {
+        Ok(match t {
+            TermRef::Var(s) => self.var(r, s),
+            TermRef::Wild => "_".to_owned(),
+            TermRef::Int(n) => n.to_string(),
+            TermRef::Str(a) => quote(self.v.text(a)),
+            TermRef::Top => "top".to_owned(),
+            // A lowered program's atom (decision 0270) is the store's: a lowered program is kept as its image.
+            TermRef::Branded(b) => return Err(Error::Syntax(format!("the atom {b}: no .rerail form"))),
+            TermRef::Call(f, _) if is_test(self.v.text(f)) || self.v.text(f) == SET => {
+                return Err(Error::Syntax(format!("@{} as a value: no .rerail form", self.v.text(f))));
+            }
+            TermRef::Call(f, args) => {
+                let f = self.v.text(f);
+                format!("@{}({})", if f == "cat" { "dot" } else { f }, self.terms(r, args)?)
+            }
+        })
+    }
+
+    fn terms<'t>(&self, r: RuleRef<'_>, ts: impl Iterator<Item = TermRef<'t>>) -> Result<String, Error> {
+        Ok(ts.map(|t| self.term(r, t)).collect::<Result<Vec<_>, _>>()?.join(", "))
+    }
+
+    /// An atom's arguments: none for a relation of no columns as written (its presence column the engine's).
+    fn args(&self, r: RuleRef<'_>, a: AtomRef<'_>) -> Result<String, Error> {
+        if self.nullary.contains(self.v.rel_name(a.rel())) { Ok(String::new()) } else { self.terms(r, a.args()) }
+    }
+
+    /// The pattern `lower::anchored` made `p` of, if `p` is one.
+    fn unanchored<'t>(&self, p: TermRef<'t>) -> Option<TermRef<'t>> {
+        let TermRef::Call(f, mut args) = p else { return None };
+        if self.v.text(f) != "concat" {
+            return None;
+        }
+        let (Some(TermRef::Str(open)), Some(TermRef::Call(g, mut inner)), None) = (args.next(), args.next(), args.next()) else { return None };
+        if self.v.text(open) != "^(?:" || self.v.text(g) != "concat" {
+            return None;
+        }
+        match (inner.next(), inner.next(), inner.next()) {
+            (Some(p), Some(TermRef::Str(close)), None) if self.v.text(close) == ")$" => Some(p),
+            _ => None,
+        }
+    }
+
+    /// Term `t` as a text test's pattern.
+    fn pattern<'t>(&self, t: TermRef<'t>) -> Pattern<'t>
+    where
+        'v: 't,
+    {
+        match t {
+            TermRef::Str(a) => Pattern::Str(Cow::Borrowed(self.v.text(a))),
+            TermRef::Call(f, items) if self.v.text(f) == SET => Pattern::Set(items.map(|i| self.pattern(i)).collect()),
+            t => Pattern::Term(t),
+        }
+    }
+
+    /// The text test `op(s, pattern)`, holding or (`neg`) failing.
+    fn test(&self, r: RuleRef<'_>, op: &str, s: &str, pattern: &Pattern<'_>, neg: bool) -> Result<String, Error> {
+        let bang = if neg { "!" } else { "" };
+        let one = |p: &Pattern<'_>| -> Result<String, Error> {
+            let p = match p {
+                Pattern::Str(p) => p,
+                Pattern::Set(_) => return Err(Error::Syntax("a set inside a set: no .rerail form".into())),
+                Pattern::Term(t) => {
+                    // A regex the rule computes: `match`, whose lowering anchored it (`lower::anchored`).
+                    if op == "rx" && let Some(re) = self.unanchored(*t) {
+                        return Ok(format!("{bang}match({}, {s})", self.term(r, re)?));
+                    }
+                    let p = self.term(r, *t)?;
+                    // These internal functors search. Printing `rx(p, s)` would turn one into an
+                    // undeclared relation; printing `match(p, s)` would instead require the whole string.
+                    if op == "rx" || op == "irx" {
+                        return Ok(format!("@{op}({s}, {p}) = {}", if neg { 0 } else { 1 }));
+                    }
+                    return Ok(if op == "equals" { format!("{s} {} {p}", if neg { "!=" } else { "=" }) } else { format!("{bang}{op}({p}, {s})") });
+                }
+            };
+            Ok(match op {
+                "equals" => format!("{s} {} {}", if neg { "!=" } else { "=" }, quote(p)),
+                "iequals" => format!("{bang}iglob({}, {s})", quote(&glob_literal(p))),
+                // A search (`rx` of no `^(?:X)$`) is the data-layer builtin `@rx_matches` (`functions::catalogue`).
+                "rx" if whole(p).is_none() => format!("@rx_matches({s}, {}) = {}", quote(p), if neg { 0 } else { 1 }),
+                "rx" | "irx" => format!("{bang}match({}, {s})", quote(&search(op, p))),
+                _ => format!("{bang}{op}({}, {s})", quote(p)),
+            })
+        };
+        match pattern {
+            Pattern::Set(items) if items.len() == 1 => one(&items[0]),
+            Pattern::Set(items) if neg => Ok(items.iter().map(one).collect::<Result<Vec<_>, _>>()?.join(", ")),
+            Pattern::Set(items) => Ok(format!("({})", items.iter().map(one).collect::<Result<Vec<_>, _>>()?.join(" ; "))),
+            p => one(p),
+        }
+    }
+
+    /// An atom. `match_all("re", sp, m)` and `match_group("re", sp, m, g, gsp)` are the built-ins where the program
+    /// declares no relation of that name (a `.rerail` program cannot): they print as themselves, where a relation of a
+    /// reserved name gets a trailing `_` (`translate::relation`).
+    fn atom(&self, r: RuleRef<'_>, a: AtomRef<'_>) -> Result<String, Error> {
+        let bang = if a.neg() { "!" } else { "" };
+        let rel = self.v.rel_name(a.rel());
+        if let Some((set, has)) = axis(rel)
+            && self.kindsets.contains_key(set)
+            && let (Some(n), Some(x), None) = { let mut it = a.args(); (it.next(), it.next(), it.next()) }
+        {
+            let (n, x) = (self.term(r, n)?, self.term(r, x)?);
+            return Ok(if has { format!("{bang}has({x}, {n}, {set})") } else { format!("{bang}inside({n}, {x}, {set})") });
+        }
+        let builtin = BUILTINS.contains(&rel) && !self.v.declares(rel);
+        let name = if builtin { rel.to_owned() } else { relation(rel) };
+        Ok(format!("{bang}{name}({})", self.args(r, a)?))
+    }
+
+    fn literal(&self, r: RuleRef<'_>, l: LitRef<'_>) -> Result<String, Error> {
+        Ok(match l.view() {
+            Lit::Atom(a) => self.atom(r, a)?,
+            Lit::Cmp { l: TermRef::Call(f, args), op: CmpOp::Eq, r: TermRef::Int(b @ (0 | 1)) } if is_test(self.v.text(f)) && args.count() == 2 => {
+                let mut args = args;
+                let (s, p) = (args.next().expect("two arguments"), args.next().expect("two arguments"));
+                self.test(r, self.v.text(f), &self.term(r, s)?, &self.pattern(p), b == 0)?
+            }
+            Lit::Cmp { l, op, r: rt } => format!("{} {} {}", self.term(r, l)?, op.as_str(), self.term(r, rt)?),
+            Lit::Agg { var: v, op, over, atom: a } => {
+                let over = || over.map_or_else(|| "_".to_owned(), |s| self.var(r, s));
+                let op_ref = op;
+                let op = match op {
+                    AggRef::Count => "count".to_owned(),
+                    AggRef::Min => format!("min {}", over()),
+                    AggRef::Max => format!("max {}", over()),
+                    AggRef::Sum => format!("sum {}", over()),
+                    AggRef::Product => format!("product {}", over()),
+                    AggRef::Join { by, sep } => {
+                        let by: Vec<String> = by.map(|k| self.var(r, k)).collect();
+                        let by = if by.is_empty() { String::new() } else { format!(" by ({})", by.join(", ")) };
+                        format!("join {}{by} sep {}", over(), quote(self.v.text(sep)))
+                    }
+                    AggRef::Bounded { max, .. } => format!("{} {}", if max { "max" } else { "min" }, over()),
+                };
+                // A bounded aggregate's bound is the comparison it was written with, which lowering recognizes again
+                // (decision 0511).
+                let bound = match op_ref {
+                    AggRef::Bounded { max, bound, strict } => {
+                        format!(", {} {} {}", over(), crate::code_rule_dsl::logic::front::ast::AggOp::bound_cmp(max, strict), self.var(r, bound))
+                    }
+                    _ => String::new(),
+                };
+                format!("{} = {op} : {{ {}{bound} }}", self.var(r, v), self.atom(r, a)?)
+            }
+            Lit::Nearest { n, a, kindset } => format!("nearest({}, {}, {})", self.var(r, n), self.var(r, a), self.v.text(kindset)),
+            Lit::Ast { document, node, matcher, captures } => {
+                let mut out = format!("ast({}, {}, {}", self.var(r, document), self.var(r, node), self.v.text(matcher));
+                for (name, s) in captures {
+                    write!(out, ", {}: {}", self.v.text(name), self.var(r, s)).expect("a string");
+                }
+                out + ")"
+            }
+        })
+    }
+
+    /// A natively made relation's rule `r` as the construct it lowers from: `dfs_first(…)`, `dfs_first_memo(…)`, or
+    /// `match_all(re, s)` over its input, the groups bound to the head's columns by name.
+    fn native_rule(&self, r: RuleRef<'_>, native: &Native) -> Result<String, Error> {
+        let head = r.head();
+        let head_rel = self.v.rel_name(head.rel());
+        let args = || self.args(r, head);
+        Ok(match native {
+            Native::DfsFirst { edge, target, roots } => {
+                let args = args()?;
+                let call = match roots {
+                    Some(roots) => format!("dfs_first_memo({args}, {}, {}, {})", relation(edge), relation(target), relation(roots)),
+                    None => format!("dfs_first({args}, {}, {})", relation(edge), relation(target)),
+                };
+                format!("{} :- {call}.", self.atom(r, head)?)
+            }
+            Native::PythonCandidates { input, targets, context, member } => {
+                format!("{} :- python_candidates({}, {}, {}, {}, {}).", self.atom(r, head)?, args()?, relation(input), relation(targets), quote(context), quote(member))
+            }
+            Native::Python { kind, input, targets } => {
+                let tail = targets.as_ref().map(|t| format!(", {}", relation(t))).unwrap_or_default();
+                format!("{} :- python_{}({}, {}{}).", self.atom(r, head)?, kind, args()?, relation(input), tail)
+            }
+            Native::Components { edge, own } => {
+                format!("{} :- components({}, {}, {}).", self.atom(r, head)?, args()?, relation(edge), relation(own))
+            }
+            // The reach index's relations are plain rules (decision 0119): printed as the closure they hold, which is
+            // recognized again when read back.
+            Native::Reach { seed, edge } => {
+                let (rel, x, y, z) = (relation(head_rel), var("rr_x"), var("rr_y"), var("rr_z"));
+                format!("{rel}({x}, {y}) :- {}({x}, {y}).\n{rel}({x}, {z}) :- {rel}({x}, {y}), {}({y}, {z}).", relation(seed), relation(edge))
+            }
+            Native::ReachThrough { reach, map } => {
+                let (x, e, q) = (var("rr_x"), var("rr_e"), var("rr_q"));
+                format!("{}({x}, {q}) :- {}({x}, {e}), {}({e}, {q}).", relation(head_rel), relation(reach), relation(map))
+            }
+            // The text test over its input's rows, as the rule it was made from (`preparation::text::TextRelations`).
+            Native::TextTest { input, column, op, patterns } => {
+                let s = match head.args().nth(*column) {
+                    Some(t) => self.term(r, t)?,
+                    None => var("rr_text0"),
+                };
+                let set = Pattern::Set(patterns.iter().map(|p| Pattern::Str(Cow::Borrowed(p.as_str()))).collect());
+                format!("{} :- {}({}), {}.", self.atom(r, head)?, relation(input), args()?, self.test(r, op, &s, &set, false)?)
+            }
+            // A count below a bound, as the count it holds (`rank_form`): read back, it is found in the form again.
+            Native::Rank { query, counted, group, op } => {
+                let width = |rel: &str| self.v.columns_of(rel).map_or(0, |c| c.len());
+                let (wq, wc) = (width(query), width(counted));
+                let g: Vec<String> = (0..*group).map(|i| var(&format!("rr_g{i}"))).collect();
+                let q: Vec<String> = (*group..wq.saturating_sub(1)).map(|i| var(&format!("rr_q{i}"))).collect();
+                let c: Vec<String> = (*group..wc.saturating_sub(1)).map(|i| var(&format!("rr_c{i}"))).collect();
+                let (kx, ky, n) = (var("rr_kx"), var("rr_ky"), var("rr_n"));
+                let head_cols = g.iter().chain(&q).cloned().chain([n.clone()]).collect::<Vec<_>>().join(", ");
+                let query_cols = g.iter().chain(&q).cloned().chain([kx.clone()]).collect::<Vec<_>>().join(", ");
+                let counted_cols = g.iter().chain(&c).cloned().chain([ky.clone()]).collect::<Vec<_>>().join(", ");
+                format!("{}({head_cols}) :- {}({query_cols}), {n} = count : {{ {}({counted_cols}), {ky} {op} {kx} }}.", relation(head_rel), relation(query), relation(counted))
+            }
+            Native::MatchAll { input, pattern, groups, positions } => {
+                let s = (0..).map(|i| format!("rr_text{i}")).find(|v| !groups.contains(v)).expect("a free name");
+                let coordinates: Vec<_> = (0..).map(|i| format!("rr_position{i}")).filter(|v| !groups.contains(v) && v != &s).take(if *positions { 3 } else { 0 }).map(|v| var(&v)).collect();
+                let args = std::iter::once(var(&s)).chain(groups.iter().map(|g| var(g))).chain(coordinates.iter().cloned()).collect::<Vec<_>>().join(", ");
+                let matched = std::iter::once(quote(pattern)).chain(std::iter::once(var(&s))).chain(coordinates).collect::<Vec<_>>().join(", ");
+                format!("{}({args}) :- {}({}), match_all({matched}).", relation(head_rel), relation(input), var(&s))
+            }
+        })
+    }
 }
 
 /// The built-in constraints that read like relations (`atom`).
 const BUILTINS: [&str; 2] = ["match_all", "match_group"];
 
-fn literal(l: &Literal, prog: &Program) -> Result<String, Error> {
-    Ok(match l {
-        Literal::Atom(a) => atom(a, prog)?,
-        Literal::Cmp { l: Term::Call(f, args), op: "=", r: Term::Int(b @ (0 | 1)) } if is_test(f) && args.len() == 2 => test(f, &args[0], &args[1], *b == 0)?,
-        Literal::Cmp { l, op, r } => format!("{} {op} {}", term(l)?, term(r)?),
-        Literal::Agg { var: v, op, over, atom: a } => {
-            let over = || var(over.as_deref().unwrap_or("_"));
-            let agg = op;
-            let op = match op {
-                AggOp::Count => "count".to_owned(),
-                AggOp::Min => format!("min {}", over()),
-                AggOp::Max => format!("max {}", over()),
-                AggOp::Sum => format!("sum {}", over()),
-                AggOp::Product => format!("product {}", over()),
-                AggOp::Join { by, sep } => {
-                    let by: Vec<String> = by.iter().map(|k| var(k)).collect();
-                    let by = if by.is_empty() { String::new() } else { format!(" by ({})", by.join(", ")) };
-                    format!("join {}{by} sep {}", over(), quote(sep))
-                }
-                AggOp::Bounded { max, .. } => format!("{} {}", if *max { "max" } else { "min" }, over()),
-            };
-            // A bounded aggregate's bound is the comparison it was written with, which lowering recognizes again.
-            let bound = match agg {
-                AggOp::Bounded { max, bound, strict } => format!(", {} {} {}", over(), AggOp::bound_cmp(*max, *strict), var(bound)),
-                _ => String::new(),
-            };
-            format!("{} = {op} : {{ {}{bound} }}", var(v), atom(a, prog)?)
-        }
-        Literal::Nearest { n, a, kindset } => format!("nearest({}, {}, {kindset})", var(n), var(a)),
-        Literal::Ast { document, node, matcher, captures } => {
-            let mut out = format!("ast({}, {}, {matcher}", var(document), var(node));
-            for (name, v) in captures {
-                write!(out, ", {name}: {}", var(v)).expect("a string");
-            }
-            out + ")"
-        }
-    })
-}
-
-/// A natively made relation's rule as the construct it lowers from: `dfs_first(…)`, `dfs_first_memo(…)`, or
-/// `match_all(re, s)` over its input, the groups bound to the head's columns by name.
-fn native_rule(head: &Atom, native: &Native, prog: &Program) -> Result<String, Error> {
-    Ok(match native {
-        Native::DfsFirst { edge, target, roots } => {
-            let args = terms(&head.args)?;
-            let call = match roots {
-                Some(roots) => format!("dfs_first_memo({args}, {}, {}, {})", relation(edge), relation(target), relation(roots)),
-                None => format!("dfs_first({args}, {}, {})", relation(edge), relation(target)),
-            };
-            format!("{} :- {call}.", atom(head, prog)?)
-        }
-        Native::PythonCandidates {input,targets,context,member} => format!("{} :- python_candidates({}, {}, {}, {}, {}).",atom(head, prog)?,terms(&head.args)?,relation(input),relation(targets),quote(context),quote(member)),
-        Native::Python {kind,input,targets} => {
-            let tail=targets.as_ref().map(|t|format!(", {}",relation(t))).unwrap_or_default();
-            format!("{} :- python_{}({}, {}{}).",atom(head, prog)?,kind,terms(&head.args)?,relation(input),tail)
-        }
-        Native::Components { edge, own } => {
-            format!("{} :- components({}, {}, {}).", atom(head, prog)?, terms(&head.args)?, relation(edge), relation(own))
-        }
-        // The reach index's relations are plain rules (decision 0119): printed as the closure they hold, which is
-        // recognized again when read back.
-        Native::Reach { seed, edge } => {
-            let (r, x, y, z) = (relation(&head.rel), var("rr_x"), var("rr_y"), var("rr_z"));
-            format!("{r}({x}, {y}) :- {}({x}, {y}).\n{r}({x}, {z}) :- {r}({x}, {y}), {}({y}, {z}).", relation(seed), relation(edge))
-        }
-        Native::ReachThrough { reach, map } => {
-            let (x, e, q) = (var("rr_x"), var("rr_e"), var("rr_q"));
-            format!("{}({x}, {q}) :- {}({x}, {e}), {}({e}, {q}).", relation(&head.rel), relation(reach), relation(map))
-        }
-        // A count below a bound, as the count it holds (`rank_form`): read back, it is found in the form again.
-        Native::Rank { query, counted, group, op } => {
-            let width = |r: &str| prog.decls.get(r).map_or(0, |c| c.len());
-            let (wq, wc) = (width(query), width(counted));
-            let g: Vec<String> = (0..*group).map(|i| var(&format!("rr_g{i}"))).collect();
-            let q: Vec<String> = (*group..wq.saturating_sub(1)).map(|i| var(&format!("rr_q{i}"))).collect();
-            let c: Vec<String> = (*group..wc.saturating_sub(1)).map(|i| var(&format!("rr_c{i}"))).collect();
-            let (kx, ky, n) = (var("rr_kx"), var("rr_ky"), var("rr_n"));
-            let head_cols = g.iter().chain(&q).cloned().chain([n.clone()]).collect::<Vec<_>>().join(", ");
-            let query_cols = g.iter().chain(&q).cloned().chain([kx.clone()]).collect::<Vec<_>>().join(", ");
-            let counted_cols = g.iter().chain(&c).cloned().chain([ky.clone()]).collect::<Vec<_>>().join(", ");
-            format!("{}({head_cols}) :- {}({query_cols}), {n} = count : {{ {}({counted_cols}), {ky} {op} {kx} }}.", relation(&head.rel), relation(query), relation(counted))
-        }
-        // The text test over its input's rows, as the rule it was made from (`strings::as_relations`).
-        Native::TextTest { input, column, op, patterns } => {
-            let s = head.args.get(*column).cloned().unwrap_or_else(|| Term::Var("rr_text0".into()));
-            let set = Term::Call(crate::code_rule_dsl::logic::strings::SET.into(), patterns.iter().map(|p| Term::Str(p.as_str().into())).collect::<Vec<_>>().into());
-            format!("{} :- {}({}), {}.", atom(head, prog)?, relation(input), terms(&head.args)?, test(op, &s, &set, false)?)
-        }
-        Native::MatchAll { input, pattern, groups, positions } => {
-            let s = (0..).map(|i| format!("rr_text{i}")).find(|v| !groups.contains(v)).expect("a free name");
-            let coordinates: Vec<_> = (0..).map(|i| format!("rr_position{i}")).filter(|v| !groups.contains(v) && v != &s).take(if *positions { 3 } else { 0 }).map(|v| var(&v)).collect();
-            let args = std::iter::once(var(&s)).chain(groups.iter().map(|g| var(g))).chain(coordinates.iter().cloned()).collect::<Vec<_>>().join(", ");
-            let matched = std::iter::once(quote(pattern)).chain(std::iter::once(var(&s))).chain(coordinates).collect::<Vec<_>>().join(", ");
-            format!("{}({args}) :- {}({}), match_all({matched}).", relation(&head.rel), relation(input), var(&s))
-        }
-    })
-}
-
-/// The program's `.rr` text: as written, its node attributes inputs again where the lowering answered them on request
-/// (decision 0174, `lower::undo_on_request`), which reading the text makes again.
-pub fn print(prog: &Program) -> Result<String, Error> {
-    if super::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| prog.decls.contains_key(a.req)) {
-        let mut written = prog.clone();
-        super::lower::undo_on_request(&mut written);
+/// The program's `.rerail` text: as written, its node attributes inputs again where the lowering answered them on request
+/// (decision 0174, `lower::undone_on_request`), which reading the text makes again.
+pub fn print_version(v: &Arc<Version>) -> Result<String, Error> {
+    if super::lower::ON_REQUEST.iter().flat_map(|round| round.iter()).any(|a| v.declares(a.req)) {
+        let written = super::lower::undone_on_request(v).map_err(Error::Syntax)?;
         return print_written(&written);
     }
-    print_written(prog)
+    print_written(v)
 }
 
-fn print_written(prog: &Program) -> Result<String, Error> {
-    // Keep the public schema when printing frontend unit columns back to rule source.
-    let mut logical;
-    let prog = if prog.nullary.is_empty() { prog } else {
-        logical=prog.clone();
-        for name in &prog.nullary {
-            if let Some(cols)=logical.decls.get_mut(name.as_str()){cols.clear();}
-            for row in logical.facts.get_mut(name).into_iter().flatten(){row.clear();}
-        }
-        let decode=|a:&mut Atom|{if prog.nullary.contains(a.rel.as_str()){a.args.clear();}};
-        for rule in &mut logical.rules {
-            decode(&mut rule.head);
-            for lit in &mut rule.body{if let Literal::Atom(a)|Literal::Agg{atom:a,..}=lit{decode(a);}}
-        }
-        logical.nullary.clear();&logical
-    };
+fn print_written(v: &Version) -> Result<String, Error> {
+    // Relations of no columns as written keep their public schema: their presence column is the engine's.
+    let p = Printer { v, nullary: ProgramFields::nullary(v), kindsets: ProgramFields::kindsets(v) };
     let mut out = String::new();
-    for p in &prog.policies {
-        writeln!(out, ".policy {p}").expect("a string");
+    for policy in ProgramFields::policies(v) {
+        writeln!(out, ".policy {policy}").expect("a string");
     }
-    for (key, text) in &prog.settings {
+    for (key, text) in ProgramFields::settings(v) {
         writeln!(out, ".{key} {text}").expect("a string");
     }
     // A set that is no relation of the program (no rule reads it) is printed by its kinds; one that is stays a
     // relation, declared and stated below with the rest, once.
-    for (name, kinds) in prog.kindsets.iter().filter(|(name, _)| !prog.decls.contains_key(name.as_str())) {
+    for (name, kinds) in p.kindsets.iter().filter(|(name, _)| !v.declares(name)) {
         writeln!(out, ".decl {name}(kind: symbol)").expect("a string");
         writeln!(out, "{}", kinds.iter().map(|k| format!("{name}({}).", quote(k))).collect::<Vec<_>>().join(" ")).expect("a string");
     }
+    let lattice = ProgramFields::lattice(v);
+    let tapes = ProgramFields::tapes(v);
+    let inputs = v.input_names();
     let mut lattices = BTreeSet::new();
-    // The tree axes' relations are made again from `inside(n, a, set)` and `has(a, n, set)` (`front::finish`).
-    let made = |rel: &str| axis(rel).is_some_and(|(set, _)| prog.kindsets.contains_key(set));
-    for (name, cols) in &prog.decls {
-        if made(name) {
+    // The tree axes' relations are made again from `inside(n, a, set)` and `has(a, n, set)` (`lowering_tail::DeclareAxes`).
+    let made = |rel: &str| axis(rel).is_some_and(|(set, _)| p.kindsets.contains_key(set));
+    for name in v.declared_names() {
+        if made(&name) {
             continue;
         }
-        let lattice = prog.lattice.get(name.as_str());
+        let cols = if p.nullary.contains(&name) { Vec::new() } else { v.columns_of(&name).unwrap_or_default() };
+        let lattice = lattice.get(&name);
         let mut printed = Vec::new();
         for (i, (c, t)) in cols.iter().enumerate() {
             match lattice {
@@ -293,48 +366,53 @@ fn print_written(prog: &Program) -> Result<String, Error> {
                     };
                     printed.push(format!("{c}: {column}"));
                 }
-                // `core.rr`'s `docof` over nodes and spans stays an input (`lower::projections`).
-                _ if i == 0 && name == "docof" && prog.inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
-                _ if prog.tapes.get(name.as_str()).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
+                // `core.rerail`'s `docof` over nodes and spans stays an input (`lower::projections`).
+                _ if i == 0 && name == "docof" && inputs.iter().any(|r| r == "docof") => printed.push(format!("{c}: loc")),
+                _ if tapes.get(&name).is_some_and(|cols| cols.contains(&i)) => printed.push(format!("{c}: tape")),
                 _ => printed.push(format!("{c}: {}", ty(t))),
             }
         }
-        write!(out, ".decl {}({})", relation(name), printed.join(", ")).expect("a string");
+        write!(out, ".decl {}({})", relation(&name), printed.join(", ")).expect("a string");
         if let Some(k) = lattice.and_then(|l| l.widen) {
             write!(out, " widen {k}").expect("a string");
         }
         out.push('\n');
     }
     // An input with parameters is printed with them, as a setting (`.input r(IO=…)`).
-    let with_params: BTreeSet<&str> = prog.settings.iter().filter(|(k, _)| k == "input").filter_map(|(_, t)| t.split('(').next()).collect();
-    let inputs: Vec<String> = prog.inputs.iter().filter(|i| !made(i) && !with_params.contains(i.as_str())).map(|i| relation(i)).collect();
-    if !inputs.is_empty() {
-        writeln!(out, ".input {}", inputs.join(", ")).expect("a string");
+    let settings = ProgramFields::settings(v);
+    let with_params: BTreeSet<&str> = settings.iter().filter(|(k, _)| k == "input").filter_map(|(_, t)| t.split('(').next()).collect();
+    let printed_inputs: Vec<String> = inputs.iter().filter(|i| !made(i) && !with_params.contains(i.as_str())).map(|i| relation(i)).collect();
+    if !printed_inputs.is_empty() {
+        writeln!(out, ".input {}", printed_inputs.join(", ")).expect("a string");
     }
-    if !prog.outputs.is_empty() {
-        writeln!(out, ".output {}", prog.outputs.iter().map(|o| relation(o)).collect::<Vec<_>>().join(", ")).expect("a string");
+    let outputs = v.output_names();
+    if !outputs.is_empty() {
+        writeln!(out, ".output {}", outputs.iter().map(|o| relation(o)).collect::<Vec<_>>().join(", ")).expect("a string");
     }
-    if !prog.demand.is_empty() {
-        writeln!(out, ".pragma \"magic-transform\" {}", quote(&prog.demand.iter().map(|d| if d == "*" { d.clone() } else { relation(d) }).collect::<Vec<_>>().join(", "))).expect("a string");
+    let demand = ProgramFields::demand(v);
+    if !demand.is_empty() {
+        writeln!(out, ".pragma \"magic-transform\" {}", quote(&demand.iter().map(|d| if d == "*" { d.clone() } else { relation(d) }).collect::<Vec<_>>().join(", "))).expect("a string");
     }
-    for (rel, rows) in &prog.facts {
-        for row in rows {
-            let values = row.iter().map(|v| match v {
+    for rel in v.fact_names() {
+        let nullary = p.nullary.contains(&rel);
+        for row in v.fact_rows(&rel) {
+            let values = row.iter().filter(|_| !nullary).map(|value| match value {
                 Value::Int(n) => Ok(n.to_string()),
                 Value::Str(s) => Ok(quote(s)),
-                Value::Branded(b) => Err(Error::Syntax(format!("the atom {b}: no .rr form"))),
+                Value::Branded(b) => Err(Error::Syntax(format!("the atom {b}: no .rerail form"))),
             });
-            writeln!(out, "{}({}).", relation(rel), values.collect::<Result<Vec<_>, _>>()?.join(", ")).expect("a string");
+            writeln!(out, "{}({}).", relation(&rel), values.collect::<Result<Vec<_>, _>>()?.join(", ")).expect("a string");
         }
     }
-    for rule in &prog.rules {
+    let natives = ProgramFields::natives(v);
+    for r in v.rules() {
         // A relation made natively is printed as what made it: its rule only orders it after its inputs.
-        if let Some(native) = prog.natives.get(rule.head.rel.as_str()) {
-            writeln!(out, "{}", native_rule(&rule.head, native, prog)?).expect("a string");
+        if let Some(native) = natives.get(v.rel_name(r.head().rel())) {
+            writeln!(out, "{}", p.native_rule(r, native)?).expect("a string");
             continue;
         }
-        let body = rule.body.iter().map(|l| literal(l, prog)).collect::<Result<Vec<_>, _>>()?;
-        let head = atom(&rule.head, prog)?;
+        let body = r.body().map(|l| p.literal(r, l)).collect::<Result<Vec<_>, _>>()?;
+        let head = p.atom(r, r.head())?;
         if body.is_empty() {
             writeln!(out, "{head}.").expect("a string");
         } else {

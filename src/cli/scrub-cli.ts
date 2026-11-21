@@ -1,5 +1,5 @@
-import { constants, existsSync, lstatSync, writeFileSync } from "node:fs";
-import { type FileHandle, open, opendir } from "node:fs/promises";
+import { constants, type Dirent, existsSync, lstatSync, writeFileSync } from "node:fs";
+import { type FileHandle, opendir } from "node:fs/promises";
 import { isAbsolute, join } from "node:path";
 import { setTimeout as delay } from "node:timers/promises";
 import { deserialize, serialize } from "node:v8";
@@ -9,17 +9,18 @@ import type { AuditFailure } from "../engine/audit/audit.js";
 import type { CodeRuleViolation } from "../engine/code-rule/code-rule.js";
 import { scrubSecrets, scrubValue } from "../engine/secret-scrub.js";
 import { stableJsonText } from "../engine/stable-json.js";
+import { openNoFollow } from "../engine/no-follow.js";
 import {
   eraseFreedPages, openRerailDatabase, openSqliteDatabase, RERAIL_DATABASE_FILE, type RerailDatabase,
 } from "../engine/storage/database.js";
 import { openLedgerFile, readLedgerFile, writeLedgerFile } from "../engine/storage/ledger-paths.js";
 import { defaultRerailHome } from "../engine/storage/rerail-home.js";
 import { tableColumns } from "../engine/storage/table-probe.js";
-import { type HookHost, scrubbedPendingText, withPendingFileLock } from "../harness/hook-adapter.js";
+import { type HookHost, pendingPath, scrubbedPendingText, withPendingFileLock } from "../harness/hook-adapter.js";
 import { preUpdateSnapshotPath } from "./project-cli.js";
 import { DAEMON_LOG_FILE } from "../runtime/daemon-control.js";
 import { scrubbedLedgerLine } from "../runtime/runtime.js";
-import { defaultStorageRoot } from "../runtime/session-paths.js";
+import { defaultStorageRoot, sessionDirectory } from "../runtime/session-paths.js";
 
 /** Rows read and rewritten per transaction: a running daemon waits on at most one batch. */
 const BATCH_ROWS = 500;
@@ -34,7 +35,7 @@ const MID_LINE_WAIT_MS = 50;
 const RESERVE_LINE_START = '{"rerail-scrub-reserve":"';
 const RESERVE_LINE_END = '"}\n';
 /** The hosts whose hooks hold steers between hooks (`<storageRoot>/<host>-pending`). */
-const PENDING_HOSTS = Object.keys({ "claude-code": true, codex: true, cursor: true } satisfies Record<HookHost, true>);
+const PENDING_HOSTS = Object.keys({ "claude-code": true, codex: true, cursor: true } satisfies Record<HookHost, true>) as HookHost[];
 /** Written once the hint to run `rerail scrub` was shown (or had nothing to scrub), so it is shown once. */
 export const SCRUB_HINT_FILE = "scrub-hint.json";
 
@@ -50,13 +51,15 @@ interface DatabaseReport {
   eraseFailure?: string;
 }
 
-/** What `rerail scrub` rewrote below the checkouts' session folders, and the files it left. */
+/** What `rerail scrub` rewrote below the checkouts' session folders, the files it left, and the folders it could not list. */
 interface SessionFilesReport {
   lines: number;
   files: number;
   pendingFiles: number;
   checkouts: number;
   skipped: string[];
+  /** Each folder this account may not list, with what it scrubbed there through the database ({@link listedOrRecorded}). */
+  unlisted: string[];
 }
 
 function message(error: unknown): string {
@@ -377,28 +380,81 @@ function logLine(line: string): string | undefined {
 /**
  * Scrubs the steers hooks hold between hooks (`<sessions>/<host>-pending/<session>.json`). A hook reads and replaces
  * one only while it holds that session's lock, and so does this (`withPendingFileLock`), so neither replaces a steer
- * the other wrote. A folder or file that is a link is skipped, never followed.
+ * the other wrote. A folder or file that is a link is skipped, never followed. In a held-steer folder this account may
+ * not list, those of the sessions the database records, the folder named in `report` as unlisted ({@link listedOrRecorded}).
  */
-async function scrubPending(sessions: string, report: SessionFilesReport): Promise<void> {
+async function scrubPending(sessions: string, sessionIds: readonly string[], report: SessionFilesReport): Promise<void> {
   for (const host of PENDING_HOSTS) {
     const folder = join(sessions, `${host}-pending`);
     if (!realDirectory(folder)) continue;
-    for await (const entry of await opendir(folder)) {
-      if (!entry.isFile() || !entry.name.endsWith(".json")) continue;
-      const path = join(folder, entry.name);
-      try {
-        const scrubbed = await withPendingFileLock(path, async () => {
-          const text = await readLedgerFile(path, folder);
-          const next = text === undefined ? undefined : scrubbedPendingText(text);
-          if (next !== undefined) await writeLedgerFile(path, folder, next);
-          return next !== undefined;
-        });
-        if (scrubbed) report.pendingFiles += 1;
-      } catch (error) {
-        report.skipped.push(`${path} (${message(error)})`);
-      }
-    }
+    const recorded = () => sessionIds.map(id => pendingPath(sessions, host, id)).filter(path => realFile(path));
+    const paths = await listedOrRecorded(folder, entry => entry.isFile() && entry.name.endsWith(".json"), recorded, "held steer file", report);
+    for (const path of paths) await scrubPendingFile(path, folder, report);
   }
+}
+
+/** Scrubs one held-steer file under its session's lock, counting it in `report`, or naming it there as left. */
+async function scrubPendingFile(path: string, folder: string, report: SessionFilesReport): Promise<void> {
+  try {
+    const scrubbed = await withPendingFileLock(path, async () => {
+      const text = await readLedgerFile(path, folder);
+      const next = text === undefined ? undefined : scrubbedPendingText(text);
+      if (next !== undefined) await writeLedgerFile(path, folder, next);
+      return next !== undefined;
+    });
+    if (scrubbed) report.pendingFiles += 1;
+  } catch (error) {
+    report.skipped.push(`${path} (${message(error)})`);
+  }
+}
+
+/** A real file at `path`, never a link to one. */
+function realFile(path: string): boolean {
+  try {
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The paths in `folder` it lists that `listed` keeps, or, where this account may not list it, the `recorded` ones: those
+ * the database's session ids name, the folder then named in `report` as unlisted with how many `kind`s the database
+ * named there, since what a session it does not record left there is not scrubbed. That is no failure: in a records
+ * folder another account shares, this one may make its own session folders and held steers but list neither the
+ * records folder nor a held-steer folder another account made (`keepFoundFolderPrivate`, `shareLikeParent`), and
+ * running again lists them no better.
+ */
+async function listedOrRecorded(
+  folder: string,
+  listed: (entry: Dirent) => boolean,
+  recorded: () => string[],
+  kind: string,
+  report: SessionFilesReport,
+): Promise<string[]> {
+  const paths: string[] = [];
+  try {
+    for await (const entry of await opendir(folder)) if (listed(entry)) paths.push(join(folder, entry.name));
+    return paths;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code !== "EACCES" && code !== "EPERM") throw error;
+    const found = recorded();
+    report.unlisted.push(`${folder} (${code}): scrubbed the ${plural(found.length, kind)} the database records there`);
+    return found;
+  }
+}
+
+/** What the database records that `rerail scrub` finds session files by: its checkouts and its sessions' ids. */
+interface RecordedSessions {
+  readonly checkouts: readonly string[];
+  readonly sessionIds: readonly string[];
+}
+
+/** The session folders in `sessions`, a checkout's records folder, as {@link listedOrRecorded} finds them. */
+async function sessionFolders(sessions: string, sessionIds: readonly string[], report: SessionFilesReport): Promise<string[]> {
+  const recorded = () => sessionIds.map(id => sessionDirectory(sessions, id)).filter(folder => realDirectory(folder));
+  return await listedOrRecorded(sessions, entry => entry.isDirectory(), recorded, "session folder", report);
 }
 
 /**
@@ -406,36 +462,44 @@ async function scrubPending(sessions: string, report: SessionFilesReport): Promi
  * steers (`scrubPending`) of every checkout the database records. A checkout, `.rerail`, `sessions` or session folder
  * that is a link, or not a folder, is skipped, never followed; so is a ledger that is a link.
  */
-async function scrubSessionFiles(checkoutPaths: readonly string[]): Promise<SessionFilesReport> {
-  const report: SessionFilesReport = { lines: 0, files: 0, pendingFiles: 0, checkouts: 0, skipped: [] };
-  for (const checkout of checkoutPaths) {
-    const sessions = defaultStorageRoot(checkout);
-    if (!isAbsolute(checkout) || !realDirectory(checkout) || !realDirectory(join(checkout, ".rerail")) || !realDirectory(sessions)) continue;
+async function scrubSessionFiles(recorded: RecordedSessions): Promise<SessionFilesReport> {
+  const report: SessionFilesReport = { lines: 0, files: 0, pendingFiles: 0, checkouts: 0, skipped: [], unlisted: [] };
+  for (const checkout of recorded.checkouts) {
+    const sessions = recordsFolder(checkout);
+    if (sessions === undefined) continue;
     report.checkouts += 1;
-    for await (const entry of await opendir(sessions)) {
-      if (!entry.isDirectory()) continue;
-      const path = join(sessions, entry.name, "events.jsonl");
-      try {
-        const lines = await rewriteAppendedFile(flags => openLedgerFile(path, flags), ledgerLine);
-        if (lines === undefined) report.skipped.push(`${path} (a session kept writing to it)`);
-        else if (lines > 0) {
-          report.lines += lines;
-          report.files += 1;
-        }
-      } catch (error) {
-        report.skipped.push(`${path} (${message(error)})`);
-      }
-    }
-    await scrubPending(sessions, report);
+    for (const folder of await sessionFolders(sessions, recorded.sessionIds, report)) await scrubLedger(join(folder, "events.jsonl"), report);
+    await scrubPending(sessions, recorded.sessionIds, report);
   }
   return report;
+}
+
+/** `<checkout>/.rerail/sessions` when the checkout path is absolute and it, `.rerail` and `sessions` are each a real folder. */
+function recordsFolder(checkout: string): string | undefined {
+  const sessions = defaultStorageRoot(checkout);
+  const real = isAbsolute(checkout) && [checkout, join(checkout, ".rerail"), sessions].every(folder => realDirectory(folder));
+  return real ? sessions : undefined;
+}
+
+/** Scrubs one session ledger in place (`rewriteAppendedFile`), counting it in `report`, or naming it there as left. */
+async function scrubLedger(path: string, report: SessionFilesReport): Promise<void> {
+  try {
+    const lines = await rewriteAppendedFile(flags => openLedgerFile(path, flags), ledgerLine);
+    if (lines === undefined) report.skipped.push(`${path} (a session kept writing to it)`);
+    else if (lines > 0) {
+      report.lines += lines;
+      report.files += 1;
+    }
+  } catch (error) {
+    report.skipped.push(`${path} (${message(error)})`);
+  }
 }
 
 /** Scrubs `daemon.log` in the Rerail home in place (`rewriteAppendedFile`), never through a link. */
 async function scrubDaemonLog(home: string, report: SessionFilesReport): Promise<number> {
   const path = join(home, DAEMON_LOG_FILE);
   try {
-    const lines = await rewriteAppendedFile(flags => open(path, flags | constants.O_NOFOLLOW), logLine);
+    const lines = await rewriteAppendedFile(flags => openNoFollow(path, flags), logLine);
     if (lines !== undefined) return lines;
     report.skipped.push(`${path} (Rerail kept writing to it)`);
   } catch (error) {
@@ -510,6 +574,25 @@ function scrubDatabaseFile(path: string, openDatabase: () => RerailDatabase, ope
 }
 
 /**
+ * Scrubs the Rerail database at `path`, when there is one, and gives what it records of checkouts and sessions, read
+ * first so the ledgers are scrubbed even when the database cannot be.
+ */
+function scrubRecordingDatabase(path: string): { complete: boolean; recorded: RecordedSessions } {
+  let recorded: RecordedSessions = { checkouts: [], sessionIds: [] };
+  if (!existsSync(path)) {
+    process.stdout.write(`No Rerail database at ${path}; no stored history to scrub.\n`);
+    return { complete: true, recorded };
+  }
+  const complete = scrubDatabaseFile(path, () => openRerailDatabase(path), db => {
+    recorded = {
+      checkouts: db.$client.prepare("SELECT checkout_path FROM checkouts ORDER BY checkout_path").pluck().all() as string[],
+      sessionIds: db.$client.prepare("SELECT session_id FROM sessions ORDER BY session_id").pluck().all() as string[],
+    };
+  });
+  return { complete, recorded };
+}
+
+/**
  * `rerail scrub`: redacts secrets from what earlier builds stored, with the scrubber writes now use (`secret-scrub`):
  * the Rerail database's events and audit text (then rewritten so the old text is gone from its bytes and WAL), the
  * copy `rerail update` keeps of it for a rollback, the session ledgers and held steers of every checkout it records,
@@ -523,25 +606,27 @@ export async function runScrubCommand(args: readonly string[], usage: () => stri
   const home = defaultRerailHome();
   const path = join(home, RERAIL_DATABASE_FILE);
   markHintShown(home);
-  let complete = true;
-  let checkouts: string[] = [];
-  if (existsSync(path)) {
-    // The checkouts are read first, so the ledgers are scrubbed even when the database cannot be.
-    complete = scrubDatabaseFile(path, () => openRerailDatabase(path), db => {
-      checkouts = (db.$client.prepare("SELECT checkout_path AS path FROM checkouts ORDER BY checkout_path").all() as Array<{ path: string }>)
-        .map(row => row.path);
-    });
-  } else process.stdout.write(`No Rerail database at ${path}; no stored history to scrub.\n`);
+  const scrubbed = scrubRecordingDatabase(path);
+  let { complete } = scrubbed;
   // The copy `rerail update` took before switching versions: opened without this build's schema, so it stays the
   // earlier version's file.
   const copy = preUpdateSnapshotPath(path);
   if (existsSync(copy)) complete = scrubDatabaseFile(copy, () => openSqliteDatabase(copy)) && complete;
-  const files = await scrubSessionFiles(checkouts);
+  const files = await scrubSessionFiles(scrubbed.recorded);
   const daemonLogLines = await scrubDaemonLog(home, files);
+  return reportScrub(files, daemonLogLines, complete);
+}
+
+/**
+ * Prints what `rerail scrub` scrubbed and what it left, and gives its exit code: 1 when the databases were not all
+ * scrubbed or a file was left for another run, 0 otherwise.
+ */
+function reportScrub(files: SessionFilesReport, daemonLogLines: number, databasesComplete: boolean): number {
   process.stdout.write(
     `Scrubbed ${plural(files.lines, "line")} in ${plural(files.files, "session ledger")} and ${plural(files.pendingFiles, "held steer file")} `
     + `across ${plural(files.checkouts, "checkout")}; ${plural(daemonLogLines, "line")} of daemon.log.\n`,
   );
+  for (const unlisted of files.unlisted) process.stdout.write(`Could not list ${unlisted}; a session it does not record is left.\n`);
   for (const skipped of files.skipped) process.stdout.write(`Left ${skipped}; run rerail scrub again.\n`);
-  return complete && files.skipped.length === 0 ? 0 : 1;
+  return databasesComplete && files.skipped.length === 0 ? 0 : 1;
 }

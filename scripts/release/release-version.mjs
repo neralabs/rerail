@@ -11,8 +11,17 @@
 //     today: the lead under the unreleased heading and the entries pending in .changelog/ by change type, whose files it
 //     deletes. A version not tagged yet is a release under way (release-pr.yml tags it before this runs), so core is
 //     left alone.
+//   - Core ranges: a pack this run releases that an older core cannot load (a rule any released core from 0.1.5
+//     refuses, as it checks the rule itself (acceptedFloor in core.mjs); for older cores, core.mjs's maps: a rule held off, a
+//     rule in a language added since, an ast rule key added since) has its core range raised to leave those cores out, in its
+//     package.json and in package-lock.json, once core is at the release that first loads it. The description lists
+//     each; a pack that needs it and is not released here is named in a warning, since nothing publishes its
+//     package.json. Only a plain >=<version> range is rewritten: a released pack with any other stops the run, to be
+//     raised by hand. A pack released here while core stays older than the release that first loads it (core left out
+//     of this pull request, say) is named in a warning not to merge: published so, no Rerail could load it.
 // The description ends with the checklist whoever merges it ticks first (BEFORE_MERGING; docs/release.md, "Before
-// merging"). It is written unticked each time, so a push to main clears it.
+// merging"). It is written unticked each time, so a push to main clears it. Testing the release comes after merging,
+// on `next`, before it is promoted to `latest` (docs/release.md, "Before promoting").
 // Writes `releasable` (true when anything changed) to $GITHUB_OUTPUT when it is set. Needs the `v*` tags and the
 // packs' release tags fetched, with the history back to each pack's last release.
 //
@@ -20,7 +29,7 @@
 import { execFileSync } from "node:child_process";
 import { appendFileSync, existsSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { join, posix } from "node:path";
-import { changelogEntryTypeRefusal, changelogLead, changelogSection, PLUGIN_PINS, CORE_NAME, coreTag, coreTagRefusal, nextCoreVersion, readChangelogEntries, releaseChangelog, setPluginVersion, setLockVersion, setPackageVersion } from "./core.mjs";
+import { acceptedFloor, admitsRefusingCore, changelogEntryTypeRefusal, changelogLead, changelogSection, CORE_NAME, coreBeforeFloor, coreFloor, coreTag, coreTagRefusal, heldOffRules, isOpenRange, newerFloor, nextCoreVersion, PLUGIN_PINS, raisedCoreRange, readChangelogEntries, releaseChangelog, publishedPackDocuments, releasedCoreRefusals, setLockVersion, setPackageVersion, setPluginVersion, shippedLanguages, shippedRuleKeys } from "./core.mjs";
 import { coreChanges } from "./core-paths.mjs";
 import { packRuleChanges, packRuleNotes, packRules, releasedPackChangelog } from "./pack-changelog.mjs";
 import { changesetNotes, changesetTypeRefusal, listPacks, readChangesets, ROOT } from "./packs.mjs";
@@ -39,7 +48,6 @@ const LISTED_CHANGES = 20;
  * as a whole.
  */
 const BEFORE_MERGING = [
-  "**End-user testing.** One hour using the staged release the way a user does. Core: `gh workflow run release.yml --ref changeset-release/main` builds it from this branch as the `rerail-package` run artifact, unpublished. Packs: this pull request's Release packs run uploads their tarballs as `rule-packs`, and `rerail packs add <tarball>` installs one (docs/release.md, \"Before merging\").",
   "**Release notes.** The notes above are accurate and complete, and each says what changed for the person upgrading.",
   "**Documentation.** `README.md` and `docs/` are accurate for what this releases: nothing merged since the last release left them behind.",
   "**`context7.json`.** Its folders, exclusions and rules match the docs and commands as they are now, so AI tools pull current Rerail docs.",
@@ -167,6 +175,112 @@ function versionCore() {
 
 const core = versionCore();
 
+/**
+ * What each released core from 0.1.5 refuses of the published packs' rules: a Map from version to `{ pack: [rule id] }`.
+ * In CI, release-pr.yml's core-refusals job works it out without the release app's token and hands it on as
+ * $RELEASE_CORE_REFUSALS; this script never runs a released core beside that token. Run by hand, it installs and runs
+ * them itself (releasedCoreRefusals in core.mjs). Read once, the first time a floor is asked for.
+ */
+let refusalsByVersion;
+function coreRefusalsByVersion() {
+  if (refusalsByVersion !== undefined) return refusalsByVersion;
+  const handed = process.env.RELEASE_CORE_REFUSALS;
+  if ((handed === undefined || handed === "") && process.env.GITHUB_ACTIONS === "true") {
+    throw new Error("RELEASE_CORE_REFUSALS is not set: in CI the released cores' check runs in release-pr.yml's core-refusals job, never here");
+  }
+  const refusals = handed === undefined || handed === "" ? releasedCoreRefusals(publishedPackDocuments(listPacks(), ROOT)) : JSON.parse(handed);
+  refusalsByVersion = new Map(Object.entries(refusals));
+  return refusalsByVersion;
+}
+
+/** Each pack's floor once worked out, so a pack is judged once a run. */
+const packFloors = new Map();
+
+/**
+ * The oldest core release that loads pack `id` as the checkout holds it; undefined when every core does. The newer of
+ * two floors: the oldest release from which every released core accepts all its rules, as those cores check them
+ * (acceptedFloor), and, for the cores before 0.1.5, which can't check, the maps' floor (coreFloor in core.mjs).
+ */
+function packFloor(id) {
+  if (packFloors.has(id)) return packFloors.get(id);
+  const directory = `packs/${id}`;
+  const packJson = existsSync(join(ROOT, directory, "pack.json")) ? JSON.parse(readText(`${directory}/pack.json`)) : {};
+  const mapped = coreFloor(heldOffRules(packJson), shippedLanguages(join(ROOT, directory)), shippedRuleKeys(join(ROOT, directory)));
+  const byVersion = coreRefusalsByVersion();
+  const checked = acceptedFloor([...byVersion.keys()], (version) => byVersion.get(version)[id] ?? [], JSON.parse(readText("package.json")).version);
+  for (const { version, rules } of checked.refusals) console.log(`${id}: core ${version} refuses ${rules.length} rule(s): ${rules.join(", ")}`);
+  const floor = newerFloor(mapped, checked.floor);
+  packFloors.set(id, floor);
+  return floor;
+}
+
+/**
+ * The packs an older core cannot load whose core range still admits one, now that core is `coreVersion` (core.mjs):
+ * `{ id, name, from, to, open }`, the range each has, the one it needs, and whether the range is one open lower bound
+ * (isOpenRange), the only kind this script rewrites.
+ */
+function dueCoreRanges(coreVersion) {
+  return listPacks()
+    .filter((pack) => !pack.private)
+    .flatMap((pack) => {
+      const directory = `packs/${pack.id}`;
+      const range = JSON.parse(readText(`${directory}/package.json`)).peerDependencies?.[CORE_NAME];
+      const floor = packFloor(pack.id);
+      if (range === undefined || !admitsRefusingCore(range, floor, coreVersion)) return [];
+      return [{ id: pack.id, name: pack.name, from: range, to: raisedCoreRange(floor), open: isOpenRange(range) }];
+    });
+}
+
+/** Writes pack `id`'s core range `to` over `from` in its package.json: that one line, so the rest stays byte for byte. */
+function writeCoreRange({ id, name, from, to }) {
+  const path = `packs/${id}/package.json`;
+  // peerDependenciesMeta names core too, with an object, so the line with the range is the only one of its kind.
+  const line = `${JSON.stringify(CORE_NAME)}: ${JSON.stringify(from)}`;
+  const text = readText(path);
+  if (text.split(line).length !== 2) throw new Error(`${path}: expected its core range once, as ${line}`);
+  writeFileSync(join(ROOT, path), text.replace(line, `${JSON.stringify(CORE_NAME)}: ${JSON.stringify(to)}`));
+  console.log(`${name}: core range ${from} -> ${to}`);
+}
+
+/** Records the `raised` ranges in package-lock.json's pack entries. versionCore may have rewritten it, so it is read here. */
+function lockCoreRanges(raised) {
+  if (raised.length === 0 || !existsSync(join(ROOT, "package-lock.json"))) return;
+  const lock = JSON.parse(readText("package-lock.json"));
+  for (const { id, to } of raised) {
+    const entry = lock.packages?.[`packs/${id}`];
+    if (entry === undefined) throw new Error(`package-lock.json has no packs/${id}; run npm install`);
+    entry.peerDependencies = { ...entry.peerDependencies, [CORE_NAME]: to };
+  }
+  writeFileSync(join(ROOT, "package-lock.json"), `${JSON.stringify(lock, null, 2)}\n`);
+}
+
+/**
+ * Raises the core range of each released pack an older core cannot load, now that core is at the release that first
+ * loads it, in its package.json and package-lock.json. Returns `{ raised, waiting }`, each `{ name, from, to, open }`:
+ * `waiting` are packs that need it and are not released by this run, left as they are, whatever their range.
+ */
+function raiseCoreRanges() {
+  const due = dueCoreRanges(JSON.parse(readText("package.json")).version);
+  const released = new Set(packs.map((pack) => pack.id));
+  const raised = due.filter(({ id }) => released.has(id));
+  // A released pack is published with the range it has here. One that is not an open range is not rewritten, since
+  // its upper bound or alternatives would be lost, so the run stops for a person to raise it.
+  const closed = raised.find(({ open }) => !open);
+  if (closed !== undefined) throw new Error(`packs/${closed.id}/package.json: its core range ${closed.from} admits Rerail older than this release needs and is not a plain >=<version>; raise it by hand to ${closed.to} or stricter`);
+  raised.forEach(writeCoreRange);
+  lockCoreRanges(raised);
+  return { raised, waiting: due.filter(({ id }) => !released.has(id)) };
+}
+
+const coreRanges = raiseCoreRanges();
+/** The version core has once this pull request merges: bumped above, or left as it was. */
+const coreVersion = JSON.parse(readText("package.json")).version;
+/** Released packs that core, at that version, is too old to load: `{ name, floor }`. Published so, no Rerail could load them. */
+const aheadOfCore = packs.filter((pack) => !pack.private).flatMap((pack) => {
+  const floor = packFloor(pack.id);
+  return coreBeforeFloor(coreVersion, floor) ? [{ name: pack.name, floor }] : [];
+});
+
 /** Each released package's notes for the description: `{ title, path, section }`, core's first. */
 const released = [
   ...(core === null ? [] : [{ title: `${CORE_NAME} ${core.version}`, path: "CHANGELOG.md", version: core.version }]),
@@ -195,11 +309,20 @@ const lines = [];
 if (coreRefusal !== null) {
   lines.push("> [!WARNING]", `> Core is not released by this pull request: ${coreRefusal}.`, "");
 }
+if (aheadOfCore.length > 0) {
+  const named = aheadOfCore.map(({ name, floor }) => `\`${name}\` (needs Rerail ${floor} or newer)`).join(", ");
+  lines.push("> [!WARNING]", `> Do not merge yet: this pull request releases ${named} and leaves core at ${coreVersion}, so no released Rerail could load it. Release core in the same pull request.`, "");
+  console.log(`::warning title=Pack ahead of core::${aheadOfCore.map(({ name }) => name).join(", ")} need a newer core than ${coreVersion}`);
+}
+if (coreRanges.waiting.length > 0) {
+  const named = coreRanges.waiting.map(({ name, from, to, open }) => `\`${name}\` (\`${from}\`, needs \`${to}\`${open ? "" : ", raised by hand: it is not a plain `>=<version>`"})`).join(", ");
+  lines.push("> [!WARNING]", `> Not released by this pull request, and an older Rerail cannot load it: ${named}. Pack validation fails until its core range is raised, and only a release publishes that: add a changeset for it on \`main\`.`, "");
+}
 if (rows.length === 0) {
   lines.push("Nothing to release.");
 } else {
   lines.push(
-    "Merging this pull request releases these packages to npm under `latest` (each publish waits for a reviewer to approve the `release` environment):",
+    "Merging this pull request releases these packages to npm under `next`, where they wait to be promoted to `latest` (docs/release.md, \"Promoting\"). Each publish waits for a reviewer to approve the `release` environment:",
     "",
     "| Package | Version | Published by |",
     "|---|---|---|",
@@ -215,6 +338,14 @@ if (rows.length === 0) {
       lines.push("", "> [!WARNING]", `> ${core.version}'s notes open with an entry and have no lead: CI fails this pull request until a paragraph saying what the release gives the people who upgrade is written at the top of \`## Unreleased\` on \`main\` (docs/release.md, "Release notes"). This pull request picks it up.`);
     }
   }
+  if (coreRanges.raised.length > 0) {
+    lines.push(
+      "",
+      "Core range raised, because an older Rerail cannot load what the pack now ships and would leave the whole pack out:",
+      "",
+      ...coreRanges.raised.map(({ name, from, to }) => `- \`${name}\`: \`${from}\` → \`${to}\``),
+    );
+  }
   for (const note of released) lines.push("", ...notes(note));
   lines.push(
     "",
@@ -223,6 +354,8 @@ if (rows.length === 0) {
     "Whoever merges this ticks each box first. A push to `main` rewrites this description and clears them, because what you checked is no longer what merging releases: check again.",
     "",
     ...BEFORE_MERGING.map((item) => `- [ ] ${item}`),
+    "",
+    'After merging, test the release on `next`, then promote it (docs/release.md, "Before promoting").',
   );
 }
 lines.push("", "This pull request is rewritten from `main` on every push to it (.github/workflows/release-pr.yml).");

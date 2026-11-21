@@ -7,7 +7,7 @@
 //! by name pay one lookup of the name, not a string built per key.
 
 use rustc_hash::FxHashMap;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 /// A relation's number in this process.
 pub type RelId = u32;
@@ -19,33 +19,46 @@ struct Names {
 }
 
 /// Read on every lookup of a relation by name, on every thread of the pool, and written only for a new name: sharded
-/// by reader, so lookups on different threads write no shared lock word (decision 0279 §7).
-static NAMES: LazyLock<rerail_accel::sharded::Sharded<Names>> = LazyLock::new(|| rerail_accel::sharded::Sharded::new(Names::default()));
+/// by reader, so lookups on different threads write no shared lock word (decision 0279 §7), and lent (`with_shared`),
+/// so they count no reference either. The shared object's (decision 0442): a number is its own object's.
+struct RelNames(rerail_accel::sharded::Sharded<Names>);
+
+impl Default for RelNames {
+    fn default() -> Self {
+        RelNames(rerail_accel::sharded::Sharded::new(Names::default()))
+    }
+}
+
+fn with_names<R>(f: impl FnOnce(&rerail_accel::sharded::Sharded<Names>) -> R) -> R {
+    crate::code_rule_dsl::logic::profile::with_shared::<RelNames, _>(|n| f(&n.0))
+}
 
 /// `name`'s number, given it on first sight.
 pub fn rel_id(name: &str) -> RelId {
-    if let Some(&id) = NAMES.read().ids.get(name) {
-        return id;
-    }
-    let mut n = NAMES.write();
-    if let Some(&id) = n.ids.get(name) {
-        return id;
-    }
-    let id = n.names.len() as RelId;
-    let name: Arc<str> = name.into();
-    n.names.push(Arc::clone(&name));
-    n.ids.insert(name, id);
-    id
+    with_names(|names| {
+        if let Some(&id) = names.read().ids.get(name) {
+            return id;
+        }
+        let mut n = names.write();
+        if let Some(&id) = n.ids.get(name) {
+            return id;
+        }
+        let id = n.names.len() as RelId;
+        let name: Arc<str> = name.into();
+        n.names.push(Arc::clone(&name));
+        n.ids.insert(name, id);
+        id
+    })
 }
 
 /// `name`'s number, where it has one.
 pub fn find(name: &str) -> Option<RelId> {
-    NAMES.read().ids.get(name).copied()
+    with_names(|names| names.read().ids.get(name).copied())
 }
 
 /// The name numbered `id`.
 pub fn rel_name(id: RelId) -> Arc<str> {
-    Arc::clone(&NAMES.read().names[id as usize])
+    with_names(|names| Arc::clone(&names.read().names[id as usize]))
 }
 
 /// A statistic of relations: a value per relation number.
@@ -372,6 +385,27 @@ pub struct HeavyCol {
     pub cube: f64,
 }
 
+/// A column as `heavy_fan` prices it: its heavy values, and its keys where the engine keeps them (decision 0488: the
+/// relation's column's own filter or few values, `logic::bloom::Keys`, read where it lies; no filter is made for the
+/// statistics). The keys say whether a value outside `top` is held at all, and how many values two columns share.
+#[derive(Clone, Copy, Debug)]
+pub struct PricedCol<'a> {
+    pub heavy: &'a HeavyCol,
+    pub keys: Option<&'a crate::code_rule_dsl::logic::bloom::Keys>,
+}
+
+impl<'a> PricedCol<'a> {
+    pub fn new(heavy: &'a HeavyCol, keys: Option<&'a crate::code_rule_dsl::logic::bloom::Keys>) -> PricedCol<'a> {
+        PricedCol { heavy, keys }
+    }
+
+    /// A value's rows: its own where it is heavy, none where the column's keys refuse it, else the tail's mean.
+    #[inline]
+    pub fn rows_of(&self, v: i64) -> f64 {
+        self.heavy.count(v).unwrap_or_else(|| if self.keys.is_some_and(|k| !k.may_hold(v)) { 0.0 } else { self.heavy.tail_mean() })
+    }
+}
+
 impl HeavyCol {
     /// From a column's exact counts.
     pub fn of_counts(counts: impl IntoIterator<Item = (i64, u64)>) -> HeavyCol {
@@ -445,20 +479,15 @@ impl HeavyCol {
     pub fn tail_mean(&self) -> f64 {
         if self.tail_ndv >= 1.0 { self.tail_rows / self.tail_ndv } else { 0.0 }
     }
-    /// A value's rows: its own where it is heavy, else the tail's mean.
-    #[inline]
-    pub fn rows_of(&self, v: i64) -> f64 {
-        self.count(v).unwrap_or_else(|| self.tail_mean())
-    }
 }
 
 /// Decision 0209 §4's price of a probe: the rows column `here` holds per binding of its variable, where the binding
 /// was drawn through the columns `by` (the atoms placed before that hold it). A value's weight is the product of its
 /// rows in each of `by`, so a value common in all is drawn more often: value by value over the heavy values of any,
-/// a value heavy in one only taken at the others' tail mean, and the tails' shared values (containment: as many as
-/// the fewest any has left) at their means. `None` where no value is drawn.
-pub fn heavy_fan(here: &HeavyCol, by: &[&HeavyCol]) -> Option<f64> {
-    let mut vals: Vec<i64> = here.top.iter().map(|t| t.0).chain(by.iter().flat_map(|h| h.top.iter().map(|t| t.0))).collect();
+/// a value heavy in one only taken at the others' tail mean (none where a column's filter refuses it), and the tails'
+/// values at their means: those `by` share drawn, those `here` shares too met. `None` where no value is drawn.
+pub fn heavy_fan(here: PricedCol<'_>, by: &[PricedCol<'_>]) -> Option<f64> {
+    let mut vals: Vec<i64> = here.heavy.top.iter().map(|t| t.0).chain(by.iter().flat_map(|h| h.heavy.top.iter().map(|t| t.0))).collect();
     vals.sort_unstable();
     vals.dedup();
     let (mut num, mut den) = (0.0f64, 0.0f64);
@@ -467,12 +496,38 @@ pub fn heavy_fan(here: &HeavyCol, by: &[&HeavyCol]) -> Option<f64> {
         num += w * here.rows_of(v);
         den += w;
     }
-    // The values heavy in none: each column's tail less the values of `vals` it holds in its tail.
-    let left = |h: &HeavyCol| (h.tail_ndv - (vals.len() - h.top.len()) as f64).max(0.0);
-    let shared = by.iter().map(|h| left(h)).fold(left(here), f64::min);
-    let w: f64 = by.iter().map(|h| h.tail_mean()).product();
-    num += shared * w * here.tail_mean();
-    den += shared * w;
+    // The values heavy in none: each column's tail less the values of `vals` it holds in its tail. A binding is
+    // drawn from a value every column of `by` holds (`drawn`), and finds rows where `here` holds it too (`met`); a
+    // drawn value `here` lacks is a binding of no rows. Both are counted by containment (as many as the fewest any
+    // has left) or, where two columns' filters tell values apart (decision 0488), as many as those two share, less
+    // the heavy values both hold.
+    let left = |h: &PricedCol<'_>| (h.heavy.tail_ndv - (vals.len() - h.heavy.top.len()) as f64).max(0.0);
+    let shared = |x: &PricedCol<'_>, y: &PricedCol<'_>| -> Option<f64> {
+        let (a, b) = (x.keys?, y.keys?);
+        // The same keys (a self-join, or one key set): containment's count is exact there, the estimate not.
+        if a.same(b) {
+            return None;
+        }
+        let both = a.shared(b)?;
+        let heavy_both = vals.iter().filter(|&&v| x.rows_of(v) > 0.0 && y.rows_of(v) > 0.0).count() as f64;
+        Some((both - heavy_both).max(0.0))
+    };
+    let mut drawn = by.iter().map(&left).fold(f64::INFINITY, f64::min);
+    for (i, x) in by.iter().enumerate() {
+        for y in &by[i + 1..] {
+            drawn = shared(x, y).map_or(drawn, |s| drawn.min(s));
+        }
+    }
+    if !drawn.is_finite() {
+        drawn = left(&here);
+    }
+    let mut met = drawn.min(left(&here));
+    for h in by {
+        met = shared(&here, h).map_or(met, |s| met.min(s));
+    }
+    let w: f64 = by.iter().map(|h| h.heavy.tail_mean()).product();
+    num += met * w * here.heavy.tail_mean();
+    den += drawn * w;
     (den > 0.0).then(|| num / den)
 }
 
@@ -487,13 +542,15 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
     let rows: usize = reqs.iter().map(|(s, _, cols)| s.as_ref().map_or(0, |s| s.len() * cols.len())).sum();
     if gpu_pays(rows) {
         // Values gathered only for a source the engine does not hold as a relation.
-        let values: Vec<Option<Vec<Vec<i64>>>> = reqs
-            .par_iter()
-            .map(|(src, rel, cols)| match (src, rel) {
-                (Some(src), None) => Some(cols.iter().map(|&c| (0..src.len()).map(|row| src.value(row, c)).collect()).collect()),
-                _ => None,
-            })
-            .collect();
+        let values: Vec<Option<Vec<Vec<i64>>>> = rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+            reqs
+                .par_iter()
+                .map(|(src, rel, cols)| match (src, rel) {
+                    (Some(src), None) => Some(cols.iter().map(|&c| (0..src.len()).map(|row| src.value(row, c)).collect()).collect()),
+                    _ => None,
+                })
+                .collect()
+        });
         let mut cols: Vec<StatColumn<'_>> = Vec::new();
         for ((src, rel, cs), v) in reqs.iter().zip(&values) {
             match (src, rel, v) {
@@ -503,53 +560,55 @@ pub fn heavy_batch(reqs: Vec<HeavyReq>) -> Vec<Option<Vec<HeavyCol>>> {
             }
         }
         if let Some(mut made) = heavy_of_device(&cols) {
-            BATCHES[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            rerail_prof::code_rule_dsl::logic::profile::local::<Batches>().0[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let mut made = made.drain(..);
             return reqs.iter().map(|(src, _, cs)| src.as_ref().map(|_| cs.iter().map(|_| made.next().expect("one a column")).collect())).collect();
         }
     }
-    BATCHES[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    reqs.into_par_iter()
-        .map(|(src, _, cols)| {
-            let src = src?;
-            let mut counts: Vec<FxHashMap<i64, u64>> = cols.iter().map(|_| FxHashMap::default()).collect();
-            for row in 0..src.len() {
-                for (k, &c) in cols.iter().enumerate() {
-                    *counts[k].entry(src.value(row, c)).or_default() += 1;
+    rerail_prof::code_rule_dsl::logic::profile::local::<Batches>().0[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    rerail_prof::code_rule_dsl::logic::profile::on_cores(|| {
+        reqs.into_par_iter()
+            .map(|(src, _, cols)| {
+                let src = src?;
+                let mut counts: Vec<FxHashMap<i64, u64>> = cols.iter().map(|_| FxHashMap::default()).collect();
+                for row in 0..src.len() {
+                    for (k, &c) in cols.iter().enumerate() {
+                        *counts[k].entry(src.value(row, c)).or_default() += 1;
+                    }
                 }
-            }
-            Some(counts.into_iter().map(HeavyCol::of_counts).collect())
-        })
-        .collect()
+                Some(counts.into_iter().map(HeavyCol::of_counts).collect())
+            })
+            .collect()
+    })
 }
 
 /// A request of `heavy_batch`: a relation's source, the engine's relation where it holds one, and the columns.
 pub type HeavyReq = (Option<std::sync::Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>, Option<std::sync::Arc<crate::code_rule_dsl::logic::native::component::InRel>>, Vec<usize>);
 
 /// The batches made, on the CPU and on the GPU.
-static BATCHES: [std::sync::atomic::AtomicU64; 2] = [const { std::sync::atomic::AtomicU64::new(0) }; 2];
+#[derive(Default)]
+struct Batches([std::sync::atomic::AtomicU64; 2]);
 
 pub fn batches() -> [u64; 2] {
-    BATCHES.each_ref().map(|b| b.load(std::sync::atomic::Ordering::Relaxed))
+    rerail_prof::code_rule_dsl::logic::profile::local::<Batches>().0.each_ref().map(|b| b.load(std::sync::atomic::Ordering::Relaxed))
 }
 
 /// Whether a round of `rows` rows (each column's rows, summed) is made on the GPU: `RERAIL_STATS_GPU` on or off,
 /// else from `GPU_ROWS`, where one launch and the columns' upload cost less than the CPU's hashing.
 fn gpu_pays(rows: usize) -> bool {
     const GPU_ROWS: usize = 1 << 20;
-    static MODE: std::sync::LazyLock<Option<bool>> = std::sync::LazyLock::new(|| match std::env::var("RERAIL_STATS_GPU").as_deref() {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_STATS_GPU").as_deref() {
         Ok("on") => Some(true),
         Ok("off") => Some(false),
         _ => None,
-    });
-    MODE.unwrap_or(rows >= GPU_ROWS)
+    }).unwrap_or(rows >= GPU_ROWS)
 }
 
 /// Columns' heavy values made on the registered device (`SolverDevice::column_stats`), exact; `None` without one.
 /// The columns read in place are counted (`in_place`).
 pub fn heavy_of_device(cols: &[crate::code_rule_dsl::logic::device::StatColumn<'_>]) -> Option<Vec<HeavyCol>> {
     let (made, read) = crate::code_rule_dsl::logic::device::solver()?.column_stats(cols, KEPT).ok()?;
-    IN_PLACE.fetch_add(read as u64, std::sync::atomic::Ordering::Relaxed);
+    rerail_prof::code_rule_dsl::logic::profile::local::<InPlace>().0.fetch_add(read as u64, std::sync::atomic::Ordering::Relaxed);
     Some(made.into_iter().map(|m| {
         let mut top: Vec<(i64, f64)> = m.top.iter().map(|&(v, n)| (v, n as f64)).collect();
         top.sort_unstable_by_key(|t| t.0);
@@ -560,10 +619,11 @@ pub fn heavy_of_device(cols: &[crate::code_rule_dsl::logic::device::StatColumn<'
 }
 
 /// Columns the device read in place (`heavy_of_device`).
-static IN_PLACE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+#[derive(Default)]
+struct InPlace(std::sync::atomic::AtomicU64);
 
 pub fn read_in_place() -> u64 {
-    IN_PLACE.load(std::sync::atomic::Ordering::Relaxed)
+    rerail_prof::code_rule_dsl::logic::profile::local::<InPlace>().0.load(std::sync::atomic::Ordering::Relaxed)
 }
 
 /// Columns' heavy values made on the device, from host values (`heavy_of_device`).
@@ -611,10 +671,32 @@ mod tests {
         let h = HeavyCol::of_counts(counts.clone());
         assert_eq!((h.rows, h.ndv, h.top.len(), h.count(1000), h.tail_ndv), (500.0, 201.0, KEPT, Some(300.0), 73.0));
         // The second atom's rows a binding are sq / rows; the third's, cube / sq.
-        assert!((heavy_fan(&h, &[&h]).unwrap() - true2 / 500.0).abs() < 1e-9);
-        assert!((heavy_fan(&h, &[&h, &h]).unwrap() - true3 / true2).abs() < 1e-9);
+        assert!((heavy_fan(PricedCol::new(&h, None), &[PricedCol::new(&h, None)]).unwrap() - true2 / 500.0).abs() < 1e-9);
+        assert!((heavy_fan(PricedCol::new(&h, None), &[PricedCol::new(&h, None), PricedCol::new(&h, None)]).unwrap() - true3 / true2).abs() < 1e-9);
         assert_eq!((h.sq, h.cube), (true2, true3));
     }
+    /// Two columns whose tails share 50 of 2,000 keys (decision 0488): containment would price a probe as if all
+    /// 2,000 met; the columns' filters price it by about the 50 that do.
+    #[test]
+    fn the_columns_filters_count_the_tail_keys_two_columns_share() {
+        let a: Vec<(i64, u64)> = (0..2000).map(|v| (v, 2)).chain([(1_000_000, 500)]).collect();
+        let b: Vec<(i64, u64)> = (1950..3950).map(|v| (v, 3)).chain([(1_000_000, 400)]).collect();
+        let (ha, hb) = (HeavyCol::of_counts(a.clone()), HeavyCol::of_counts(b.clone()));
+        // Each column's keys as the engine keeps them: a filter (past a few values) and its sample.
+        use crate::code_rule_dsl::logic::bloom::Keys;
+        let (ka, kb) = (Keys::of(a.iter().map(|t| t.0)), Keys::of(b.iter().map(|t| t.0)));
+        assert!(matches!((&ka, &kb), (Keys::Filter(_), Keys::Filter(_))), "2,000 keys are kept in a filter");
+        // The exact fan: rows of b per row of a, a row of a meeting none a binding of no rows.
+        let bm: FxHashMap<i64, u64> = b.iter().copied().collect();
+        let num: f64 = a.iter().map(|&(v, n)| n as f64 * bm.get(&v).map_or(0.0, |&m| m as f64)).sum();
+        let exact = num / a.iter().map(|&(_, n)| n as f64).sum::<f64>();
+        let est = heavy_fan(PricedCol::new(&hb, Some(&kb)), &[PricedCol::new(&ha, Some(&ka))]).unwrap();
+        // Without the keys: every tail key a has left met as if b held it.
+        let without = heavy_fan(PricedCol::new(&hb, None), &[PricedCol::new(&ha, None)]).unwrap();
+        assert!((est / exact - 1.0).abs() < 0.15, "with the filters {est}, exact {exact}");
+        assert!((without / exact - 1.0).abs() > (est / exact - 1.0).abs(), "the filters closer than containment: {without} against {est}, exact {exact}");
+    }
+
     #[test]
     fn a_change_merged_into_heavy_values_is_its_full_count() {
         // 300 values of 2 rows and one of 100, then a change: 50 rows more of the heavy value, 40 of a new one, 30
@@ -631,7 +713,7 @@ mod tests {
         // The heavy value and the new one are counted exactly; the rows, exactly.
         assert_eq!((merged.count(9_999), merged.count(77_777), merged.rows, merged.ndv), (Some(140.0), Some(40.0), full.rows, full.ndv));
         // Its price of a three-way self-join is the full count's within 2%.
-        let (m3, f3) = (heavy_fan(&merged, &[&merged, &merged]).unwrap(), heavy_fan(&full, &[&full, &full]).unwrap());
+        let (m3, f3) = (heavy_fan(PricedCol::new(&merged, None), &[PricedCol::new(&merged, None); 2]).unwrap(), heavy_fan(PricedCol::new(&full, None), &[PricedCol::new(&full, None); 2]).unwrap());
         assert!((m3 / f3 - 1.0).abs() < 0.02, "{m3} against {f3}");
         assert!(merged.err <= 2.0 + 30.0, "a value left out held at most its rows: {}", merged.err);
     }

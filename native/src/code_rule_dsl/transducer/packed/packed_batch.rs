@@ -181,15 +181,17 @@ fn contains_rows(needles: &[&[u8]], files: &[&TapeDoc], starts: &[usize], words:
         })
         .collect::<Vec<_>>();
     let literals = scan::Batch::of(plans);
-    let per_file: Vec<Vec<Option<Vec<u64>>>> = files
-        .par_iter()
-        .map(|tape| {
-            let len = tape.transducer_len();
-            let candidates: Vec<u32> = (0..len as u32).collect();
-            let span = |node: u32| tape.transducer_span(node);
-            literals.bits(&scan::Nodes { text: tape.transducer_source(), len, candidates: &candidates, span: &span })
-        })
-        .collect();
+    let per_file: Vec<Vec<Option<Vec<u64>>>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        files
+            .par_iter()
+            .map(|tape| {
+                let len = tape.transducer_len();
+                let candidates: Vec<u32> = (0..len as u32).collect();
+                let span = |node: u32| tape.transducer_span(node);
+                literals.bits(&scan::Nodes { text: tape.transducer_source(), len, candidates: &candidates, span: &span })
+            })
+            .collect()
+    });
     for (at, needle) in needles.iter().enumerate() {
         let plan = distinct.binary_search(needle).expect("a needle of the batch");
         let row = &mut rows[at * words..(at + 1) * words];
@@ -326,9 +328,9 @@ impl PackedBatch {
     /// case's states is `StatesOutgrown`: unfinished, restarted with twice the states (decision 0334 §9).
     pub(super) fn task_error(&self, at: usize, status: &TaskStatus) -> Option<Error> {
         let task = &self.tasks[at];
-        // `TEMPO_PACKED_BATCH_PROFILE`: why a task stopped, with its budgets (decision 0334's restarts read it).
-        if status.error != 0 && std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-            eprintln!("TEMPO_TASK_STATUS {status:?} work_limit={} states={}", task.work_limit, self.task_state_capacity(task));
+        // `RERAIL_PACKED_BATCH_PROFILE`: why a task stopped, with its budgets (decision 0334's restarts read it).
+        if status.error != 0 && std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+            eprintln!("RERAIL_TASK_STATUS {status:?} work_limit={} states={}", task.work_limit, self.task_state_capacity(task));
         }
         match status_error(status, task.work_limit) {
             Some(Error::BackendCapacity)
@@ -351,7 +353,7 @@ impl PackedBatch {
         materialize_tasks: bool,
         layout: Layout,
     ) -> Result<Self, Error> {
-        static PACKED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(11, "7", "the transducer's packed batch: sources and line starts (PackedBatch)");
+        const PACKED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(11, "7", "the transducer's packed batch: sources and line starts (PackedBatch)");
         let copying = PACKED.start();
         let batch = Self::build_tapes_in(programs, files, anchors, materialize_tasks, layout);
         copying.done(batch.as_ref().map_or(0, |b| b.source.len() + std::mem::size_of_val(b.line_starts.as_slice())));
@@ -383,8 +385,7 @@ impl PackedBatch {
         // source and line counters in place of the bytes.
         let mut documents = Vec::new();
         let (mut source_length, mut line_length) = (0usize, 0usize);
-        for file in 0..file_count {
-            let tape = &files[file];
+        for tape in files.iter().take(file_count) {
             if layout == Layout::Resident {
                 let source = tape.transducer_source();
                 let lines = 1 + source.iter().filter(|&&byte| byte == b'\n').count();
@@ -971,7 +972,7 @@ impl PackedBatch {
                 Ok::<_, Error>((program_values, strip_states, source_transform, mime_transform, one_result, marks, query))
             })
             .collect::<Result<Vec<_>, _>>()?;
-        let capacities = self
+        self
             .tasks
             .iter()
             .map(|task| {
@@ -1065,8 +1066,7 @@ impl PackedBatch {
                     properties,
                 })
             })
-            .collect::<Result<Vec<_>, Error>>();
-        capacities
+            .collect::<Result<Vec<_>, Error>>()
     }
 
     /// Each program's record counts over its tasks (`workspace_counts`' order, before arenas are
@@ -1322,7 +1322,7 @@ fn status_error(status: &TaskStatus, work_limit: u32) -> Option<Error> {
         4 if work_limit < super::MAX_WORK_PER_TASK as u32 => Error::OverBudget,
         4 => Error::WorkLimit,
         7 => Error::InvalidOperand(status.program_counter as usize),
-        // A mark or a tally of a node past the batch's (decision 0427): not written.
+        // A mark or a tally of a node past the batch's (decision 0463): not written.
         9 => Error::BackendFailure,
         _ => Error::BackendFailure,
     })
@@ -1625,9 +1625,9 @@ pub struct PackedExecution {
 
 #[track_caller]
 fn grid_result_failure() -> Error {
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_GRID_RESULT_INVARIANT {}",
+            "RERAIL_PACKED_GRID_RESULT_INVARIANT {}",
             std::panic::Location::caller()
         );
     }
@@ -2020,7 +2020,7 @@ impl PackedExecution {
         self.program_count
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
     pub fn host_arena_counts(&self) -> [usize; 4] {
         self.pages.iter().fold([0; 4], |mut counts, page| {
             for (count, length) in counts.iter_mut().zip([
@@ -2035,7 +2035,7 @@ impl PackedExecution {
         })
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
     pub fn physical_file_count(&self) -> usize {
         self.batch.files.len()
     }

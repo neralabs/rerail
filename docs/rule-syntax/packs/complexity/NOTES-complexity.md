@@ -5,15 +5,15 @@ are tables:
 
 | file | what |
 |---|---|
-| `lib/complexity/cyclomatic.rr` | CCN = 1 + decision points inside a function, not entering nested functions (`within_stop` on the table's function kinds); the ceiling and the message |
-| `lib/complexity/python.rr` | Python's function kind and decisions |
-| `lib/complexity/ecma.rr` | TypeScript's and JavaScript's (and Vue scripts'), and how an unnamed function takes its variable's, field's or key's name |
-| `lib/complexity/php.rr` | PHP's (and a Blade template's compiled program's, reached through `parsed(document, "compiled-view", program)`: `blade_code`); a closure takes its variable's name |
-| `lib/complexity/rust.rr` | Rust's, with each `&&` of a let chain (`cc_decision(n, i)` has an index for these) |
+| `lib/complexity/cyclomatic.rerail` | CCN = 1 + decision points inside a function, not entering nested functions (`within_stop` on the table's function kinds); the ceiling and the message |
+| `lib/complexity/python.rerail` | Python's function kind and decisions |
+| `lib/complexity/ecma.rerail` | TypeScript's and JavaScript's (and Vue scripts'), and how an unnamed function takes its variable's, field's or key's name |
+| `lib/complexity/php.rerail` | PHP's (and a Blade template's compiled program's, reached through `parsed(document, "compiled-view", program)`: `blade_code`); a closure takes its variable's name |
+| `lib/complexity/rust.rerail` | Rust's, with each `&&` of a let chain (`cc_decision(n, i)` has an index for these) |
 
 Each rule is the directives, one include and one line: `complexity(f, msg) :- cc_report(f, msg).` Vue adds that
-the function is in a `<script>` block's program (`vscript` from `lib/vue/component.rr`); its template's guest
-expressions are left out. Blade adds `blade_code(f)` (`lib/blade/syntax.rr`): the compiled PHP is a document of
+the function is in a `<script>` block's program (`vscript` from `lib/vue/component.rerail`); its template's guest
+expressions are left out. Blade adds `blade_code(f)` (`lib/blade/syntax.rerail`): the compiled PHP is a document of
 its own, derived from the template and reached through `parsed(document, "compiled-view", program)`, not the
 template's last child as the first version's comment said (review fix; the engine requirement is in
 packs/blade/NOTES-blade.md).

@@ -2,7 +2,7 @@
 
 The SQL executor exposes facts, derived relations, and the content store through a session-owned SQLite connection.
 Read-only work groups use separate worker connections over pinned native inputs.
-It lowers `.rr` fact and rule programs through the existing typed SQL planner.
+It lowers `.rerail` fact and rule programs through the existing typed SQL planner.
 The existing wave scheduler runs those statements until their relations stop changing.
 Planning reads bound row estimates and recorded wave counts. An SQL input without a recorded count uses a default estimate.
 AST matching stays in the native matcher. Its output can enter SQL as another fact relation.
@@ -53,16 +53,16 @@ The connection reads the supplied content store as `main`.
 Virtual fact tables and derived tables belong to this session.
 The command closes the session after the request.
 
-The package CLI accepts the same request:
+The package CLI accepts the same request, with the engine tools turned on ([internal testing](internal-testing.md)):
 
 ```sh
-rerail engine sql /tmp/rerail-extension.sqlite request.json
+RERAIL_EXPERIMENTAL_ENGINE_TOOLS=1 rerail engine sql /tmp/rerail-extension.sqlite request.json
 ```
 
 For a corpus audit through the existing logic command, select SQL rule execution with `--sql`:
 
 ```sh
-target/debug/rerail-engine logic rules.rr /path/to/corpus /tmp/sql-results --sql
+target/debug/rerail-engine logic rules.rerail /path/to/corpus /tmp/sql-results --sql
 ```
 
 This disables native rule components. Native fact producers and tree matching keep their existing execution path.
@@ -105,8 +105,8 @@ const result = JSON.parse(session.query(
 | `bindRelation(relationJson)` | Adds or replaces facts with integer values or string symbols. Duplicate rows collapse. |
 | `lower(program, dialect)` | Returns the setup SQL and wave program without executing its rules. |
 | `explain()` | Returns logical proofs and retained execution choices without evaluating facts or executing SQL. |
-| `run(program, dialect, maxWaves?)` | Runs an inline `.rr` program through the SQL wave scheduler. |
-| `runFile(path, dialect, maxWaves?)` | Reads a `.rr` file, its includes, and `core.rr`, then runs it. |
+| `run(program, dialect, maxWaves?)` | Runs an inline `.rerail` program through the SQL wave scheduler. |
+| `runFile(path, dialect, maxWaves?)` | Reads a `.rerail` file, its includes, and `core.rerail`, then runs it. |
 | `applyChanges(changesJson, maxWaves?)` | Applies an atomic fact batch and maintains retained results and dependent programs. |
 | `query(sql, parametersJson?, maxRows?)` | Returns columns, row arrays, and a `truncated` flag. |
 | `queryPlan(planJson)` | Fuses a read-only SQL graph and schedules independent groups on the shared worker pool. |
@@ -171,7 +171,9 @@ Only cut edges and requested outputs leave SQLite. Native code stores those rows
 Independent groups run on the existing `RERAIL_THREADS` pool. Each worker owns its connection and reads pinned inputs.
 Worker completions release successors immediately, without waiting for unrelated groups.
 The session owner waits for every worker before it can change those inputs.
-Library initialization creates actual workers. The headless CLI explicitly registers its own main thread in the pool.
+Node starts the pool when it registers the addon's exports, after the operating system finishes loading the library.
+The workers can service background calls while the JavaScript thread waits, including with `RERAIL_THREADS=1`.
+The standalone CLI registers its main thread in the pool when execution starts.
 
 The default submission allowance is 100 for the complete graph. A smaller allowance combines independent work when it fits.
 Planning rejects a graph that exceeds its allowance before any group executes.
@@ -444,7 +446,7 @@ const documents = JSON.parse(session.query(
 ));
 ```
 
-The snapshot binds the `core.rr` projection, including `node`, `child`, `field`, `tape`, `name`, and source-location relations.
+The snapshot binds the `core.rerail` projection, including `node`, `child`, `field`, `tape`, `name`, and source-location relations.
 These relations read native columns through virtual tables. Core input relations remain virtual.
 Retained rule maintenance can materialize positive contexts from these columns.
 Incomplete parses fail the binding instead of supplying partial facts.
@@ -675,11 +677,11 @@ These diagnostics share retained roots. Additional indexes requested by extensio
 An earlier frame can become active when an edit shortens an upstream dependency gate.
 Immutable initial templates supply its retained roots. Accumulated journals reconcile external edits before that frame evaluates.
 Native savepoints restore roots, bindings, and schemas if initial execution fails.
-See the [implementation plan](sql-unification-and-updates-plan.md#retained-recursive-iterations) for measurements, root causes, and remaining work.
+See the implementation plan, `sql-unification-and-updates-plan.md` (removed; at 7efcac9c67), for measurements, root causes, and remaining work.
 
 ## Explain and profiling
 
-The cost database and SQL plan forecasts are described in [Cost-based SQL planning](sql-planning-feedback.md).
+The cost database and SQL plan forecasts are described in Cost-based SQL planning, `sql-planning-feedback.md` (removed; at 7efcac9c67).
 
 SQL sessions use the shared query profiler, including the standalone headless engine.
 Set `RERAIL_SQL_PROFILE_DIR` before the process opens a session:

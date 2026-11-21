@@ -1,6 +1,6 @@
 # 0437. A chain's reach is descendant images, a level each time a member sits below a blocker
 
-Status: accepted (2026-11-18). Follows 0419; closes Q252.
+Status: accepted (2026-11-18). Follows 0419; closes Q331.
 
 ## Intro
 
@@ -11,7 +11,7 @@ The CPU's `Reader` reads it in preorder: a node is reached where its parent is i
 
 0419 found this step to be `label_formula`'s long pole: about 1.1 ms a pass, against 23–68 µs for the other steps.
 Each thread took a block of words and read every node's parent (`tape_parent`). That read is a search of the tape
-(CLIF's `parent`, a cold read), so each node of the file paid a chain of dependent reads. The user, on Q252: "I
+(CLIF's `parent`, a cold read), so each node of the file paid a chain of dependent reads. The user, on Q331: "I
 think this is mostly fixed by using an accessor".
 
 ## Decision
@@ -74,4 +74,4 @@ same commit with the old kernel.
 
 - **The children of members** (op 9, `tape_first_child` then `tape_next` per member) is now the largest step in
   one-formula mode: 103 ms over 224 passes, 461 µs a pass. It is the same shape, a dependent chain of child reads on
-  one thread per member (Q270).
+  one thread per member (Q332).

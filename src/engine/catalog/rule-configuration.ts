@@ -4,12 +4,13 @@
  * its parent checkouts or the repository change them. See `repository-model.ts` for the precedence.
  */
 import { createHash } from "node:crypto";
-import { and, eq, inArray, or } from "drizzle-orm";
+import { and, eq, inArray, or, sql } from "drizzle-orm";
 import type { RerailDatabase } from "../storage/database.js";
 import {
   folderContains,
   normalizeFolder,
   type RuleCatalog,
+  type RrPolicySource,
   type CheckoutContext,
   type CheckoutRuleSet,
   type Decider,
@@ -29,7 +30,7 @@ import type { CodeRuleDslValue } from "../code-rule/code-rule.js";
 import type { RuleMode } from "./rule-mode.js";
 import type { RulePackRule } from "./rule-packs.js";
 import type { RuleDocument } from "./rule-store.js";
-import { libraryRules, repositories, ruleAttachments, ruleSettings, type RuleKind } from "../storage/schema.js";
+import { libraryRules, repositories, ruleApprovals, ruleAttachments, ruleSettings, type RuleKind } from "../storage/schema.js";
 import { clearSetupReview } from "./setup-review.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { configureBundledCodeRule } from "./rule-config.js";
@@ -54,24 +55,30 @@ function insertAttachment(db: Queries, attachment: RuleAttachment, now: number):
     .run();
 }
 
+/** Option values as a row stores them: none (`null`) for no options. */
+const storedConfig = (config: RuleConfig | null | undefined): RuleConfig | null =>
+  (config === undefined || config === null || Object.keys(config).length === 0 ? null : config);
+
+/**
+ * Writes `setting`'s row, or deletes it when every field is null. The row takes `setting.origin`, null when omitted:
+ * a write that does not say the lint config gave it (the dashboard, the API, MCP) makes the row a person's.
+ */
 function writeSetting(db: Queries, setting: RuleSetting, now: number): void {
   const { ownerKind, ownerId } = ownerColumns(setting.owner);
-  const folder = normalizeFolder(setting.folder);
-  const suppressions = setting.suppressions ?? null;
-  const config = setting.config === undefined || setting.config === null || Object.keys(setting.config).length === 0 ? null : setting.config;
-  if (setting.on === null && setting.mode === null && suppressions === null && config === null) {
+  const key = { ownerKind, ownerId, folder: normalizeFolder(setting.folder), targetKind: setting.targetKind, targetId: setting.targetId };
+  const values = { on: setting.on, mode: setting.mode, suppressions: setting.suppressions ?? null, config: storedConfig(setting.config), origin: setting.origin ?? null };
+  if (values.on === null && values.mode === null && values.suppressions === null && values.config === null) {
     db.delete(ruleSettings).where(and(
-      eq(ruleSettings.ownerKind, ownerKind),
-      eq(ruleSettings.ownerId, ownerId),
-      eq(ruleSettings.folder, folder),
-      eq(ruleSettings.targetKind, setting.targetKind),
-      eq(ruleSettings.targetId, setting.targetId),
+      eq(ruleSettings.ownerKind, key.ownerKind),
+      eq(ruleSettings.ownerId, key.ownerId),
+      eq(ruleSettings.folder, key.folder),
+      eq(ruleSettings.targetKind, key.targetKind),
+      eq(ruleSettings.targetId, key.targetId),
     )).run();
     return;
   }
-  const values = { on: setting.on, mode: setting.mode, suppressions, config };
   db.insert(ruleSettings)
-    .values({ ownerKind, ownerId, folder, targetKind: setting.targetKind, targetId: setting.targetId, ...values, updatedAt: now })
+    .values({ ...key, ...values, updatedAt: now })
     .onConflictDoUpdate({
       target: [ruleSettings.ownerKind, ruleSettings.ownerId, ruleSettings.folder, ruleSettings.targetKind, ruleSettings.targetId],
       set: { ...values, updatedAt: now },
@@ -137,26 +144,43 @@ interface ConfigurationRows {
   readonly approvals: ReadonlySet<string>;
 }
 
-function readRows(db: RerailDatabase, ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey, ownerCheckoutPaths: readonly string[]): ConfigurationRows {
-  const repository = db.select({ configuredAt: repositories.configuredAt }).from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
-  // A checkout's own rules (`worktree-pack.ts`) are in its catalog alone, and present in it for the whole checkout.
-  const worktree: AttachmentRow[] = isWorktreePack(ruleCatalog.packs.get(WORKTREE_PACK_ID))
+/** A checkout's own rules (`worktree-pack.ts`): in its catalog alone, and present in it for the whole checkout. */
+function worktreeAttachments(ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey): AttachmentRow[] {
+  return isWorktreePack(ruleCatalog.packs.get(WORKTREE_PACK_ID))
     ? [{ repositoryKey, folder: "", sourceKind: "pack", sourceId: WORKTREE_PACK_ID, createdAt: 0 }]
     : [];
-  const attachments = [...db.select().from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all(), ...worktree];
+}
+
+/** Attached library rules, and library rules that shadow a present By Rerail rule, pack members included. */
+function libraryIdsOf(ruleCatalog: RuleCatalog, attachments: readonly Pick<AttachmentRow, "sourceKind" | "sourceId">[]): string[] {
+  return [...new Set(attachments.flatMap(row => row.sourceKind === "pack"
+    ? (ruleCatalog.packs.get(row.sourceId)?.rules ?? []).map(rule => rule.id)
+    : [row.sourceId]))];
+}
+
+function readRows(db: RerailDatabase, ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey, ownerCheckoutPaths: readonly string[]): ConfigurationRows {
+  const repository = db.select({ configuredAt: repositories.configuredAt }).from(repositories).where(eq(repositories.repositoryKey, repositoryKey)).get();
+  const attachments = [...db.select().from(ruleAttachments).where(eq(ruleAttachments.repositoryKey, repositoryKey)).all(), ...worktreeAttachments(ruleCatalog, repositoryKey)];
   const repositoryOwned = and(eq(ruleSettings.ownerKind, "repository"), eq(ruleSettings.ownerId, repositoryKey));
   const settings = db.select().from(ruleSettings).where(ownerCheckoutPaths.length === 0
     ? repositoryOwned
     : or(repositoryOwned, and(eq(ruleSettings.ownerKind, "checkout"), inArray(ruleSettings.ownerId, [...ownerCheckoutPaths])))).all();
-  // Attached library rules, and library rules that shadow a present By Rerail rule, pack members included.
-  const ids = [...new Set(attachments.flatMap(row => row.sourceKind === "pack"
-    ? (ruleCatalog.packs.get(row.sourceId)?.rules ?? []).map(rule => rule.id)
-    : [row.sourceId]))];
+  const ids = libraryIdsOf(ruleCatalog, attachments);
   const library = ids.length === 0 ? [] : db.select().from(libraryRules).where(inArray(libraryRules.ruleId, ids)).all();
   return { configuredAt: repository?.configuredAt ?? null, attachments, settings, library, approvals: readApprovals(db) };
 }
 
-function signatureOf(catalogDigest: string, ownerCheckoutPaths: readonly string[], rows: ConfigurationRows): string {
+/** What {@link signatureOf} hashes: {@link ConfigurationRows}, or the fields of them that one statement reads. */
+interface SignatureRows {
+  readonly configuredAt: number | null;
+  readonly attachments: readonly Pick<AttachmentRow, "folder" | "sourceKind" | "sourceId">[];
+  // A setting's origin says who made it and decides no rule, so the signature leaves it out, as it leaves updatedAt.
+  readonly settings: readonly Omit<SettingRow, "updatedAt" | "origin">[];
+  readonly library: readonly Pick<LibraryRow, "ruleId" | "revision" | "payloadHash">[];
+  readonly approvals: ReadonlySet<string>;
+}
+
+function signatureOf(catalogDigest: string, ownerCheckoutPaths: readonly string[], rows: SignatureRows): string {
   const lines = [
     `catalog\0${catalogDigest}`,
     `configured\0${String(rows.configuredAt)}`,
@@ -177,9 +201,68 @@ function signatureOf(catalogDigest: string, ownerCheckoutPaths: readonly string[
 }
 
 /**
+ * The rows {@link ruleConfigurationSignature} hashes, in one row: the repository's set-up time and, as JSON arrays, its
+ * attachments, the settings of the repository and of the given checkouts, every library rule and every approval. Library
+ * rules are few, and which of them count depends on the rule catalog's packs, so they are picked in {@link signatureRowsOf}.
+ */
+function signatureStatement(db: RerailDatabase) {
+  const key = sql.placeholder("key");
+  const owners = sql.placeholder("owners");
+  return db.select({
+    configuredAt: sql<number | null>`(SELECT ${repositories.configuredAt} FROM ${repositories} WHERE ${repositories.repositoryKey} = ${key})`,
+    attachments: sql<string>`(SELECT json_group_array(json_array(${ruleAttachments.folder}, ${ruleAttachments.sourceKind}, ${ruleAttachments.sourceId}))
+      FROM ${ruleAttachments} WHERE ${ruleAttachments.repositoryKey} = ${key})`,
+    settings: sql<string>`(SELECT json_group_array(json_array(${ruleSettings.ownerKind}, ${ruleSettings.ownerId}, ${ruleSettings.folder},
+      ${ruleSettings.targetKind}, ${ruleSettings.targetId}, ${ruleSettings.on}, ${ruleSettings.mode}, ${ruleSettings.suppressions}, json(${ruleSettings.config})))
+      FROM ${ruleSettings} WHERE (${ruleSettings.ownerKind} = 'repository' AND ${ruleSettings.ownerId} = ${key})
+      OR (${ruleSettings.ownerKind} = 'checkout' AND ${ruleSettings.ownerId} IN (SELECT value FROM json_each(${owners}))))`,
+    library: sql<string>`(SELECT json_group_array(json_array(${libraryRules.ruleId}, ${libraryRules.revision}, ${libraryRules.payloadHash})) FROM ${libraryRules})`,
+    approvals: sql<string>`(SELECT json_group_array(json_array(${ruleApprovals.subjectKind}, ${ruleApprovals.subjectId}, ${ruleApprovals.digest})) FROM ${ruleApprovals})`,
+  }).from(sql`(SELECT 1)`).prepare();
+}
+
+type SignatureRead = NonNullable<ReturnType<ReturnType<typeof signatureStatement>["get"]>>;
+
+/** One JSON array of {@link signatureStatement}; SQL built it from the table's columns, so each tuple has their types. */
+function tuples<Tuple extends readonly unknown[]>(json: string): Tuple[] {
+  return JSON.parse(json) as Tuple[]; // Built by json_group_array over the table's own columns.
+}
+
+/** {@link SignatureRows} from {@link signatureStatement}'s row: the same rows {@link readRows} gives the signature. */
+function signatureRowsOf(read: SignatureRead, ruleCatalog: RuleCatalog, repositoryKey: RepositoryKey): SignatureRows {
+  const attachments = [
+    ...tuples<[string, AttachmentRow["sourceKind"], string]>(read.attachments).map(([folder, sourceKind, sourceId]) => ({ folder, sourceKind, sourceId })),
+    ...worktreeAttachments(ruleCatalog, repositoryKey),
+  ];
+  const ids = new Set(libraryIdsOf(ruleCatalog, attachments));
+  type Setting = [SettingRow["ownerKind"], string, string, SettingRow["targetKind"], string, number | null, SettingRow["mode"], SettingRow["suppressions"], SettingRow["config"]];
+  return {
+    configuredAt: read.configuredAt,
+    attachments,
+    settings: tuples<Setting>(read.settings).map(([ownerKind, ownerId, folder, targetKind, targetId, on, mode, suppressions, config]) =>
+      ({ ownerKind, ownerId, folder, targetKind, targetId, on: on === null ? null : on === 1, mode, suppressions, config })),
+    library: tuples<[string, number, string]>(read.library).filter(([ruleId]) => ids.has(ruleId)).map(([ruleId, revision, payloadHash]) => ({ ruleId, revision, payloadHash })),
+    approvals: new Set(tuples<[RuleApprovalSubject["kind"], string, string]>(read.approvals).map(([kind, id, digest]) => approvalKey({ kind, id, digest }))),
+  };
+}
+
+/** A connection's {@link signatureStatement}, and the last signature of each checkout with the row it was hashed from. */
+interface SignatureReader {
+  readonly statement: ReturnType<typeof signatureStatement>;
+  readonly last: Map<string, { readonly read: string; readonly signature: string }>;
+}
+
+const signatureReaders = new WeakMap<RerailDatabase, SignatureReader>();
+
+/** Checkouts whose last signature a connection keeps: more than a runtime knows, and a bound on what it keeps. */
+const KEPT_SIGNATURES = 1024;
+
+/**
  * Changes whenever the rule catalog, the repository's set-up, attachments or settings, the settings of the given checkouts
  * (the checkout and its parents), a library rule that is attached or shadows a present By Rerail rule, or an approval
- * changes. Not the start state.
+ * changes. Not the start state. Every lane a session opens and every refresh asks it, so it reads one statement prepared
+ * once per connection, and hashes again only when that statement's row differs from the one it hashed last for the same
+ * checkout: a change made by any process is read at the next call.
  */
 export function ruleConfigurationSignature(
   db: RerailDatabase,
@@ -187,7 +270,40 @@ export function ruleConfigurationSignature(
   repositoryKey: RepositoryKey,
   ownerCheckoutPaths: readonly string[],
 ): string {
-  return signatureOf(ruleCatalog.digest, ownerCheckoutPaths, readRows(db, ruleCatalog, repositoryKey, ownerCheckoutPaths));
+  let reader = signatureReaders.get(db);
+  if (reader === undefined) {
+    reader = { statement: signatureStatement(db), last: new Map() };
+    signatureReaders.set(db, reader);
+  }
+  const row = reader.statement.get({ key: repositoryKey, owners: JSON.stringify(ownerCheckoutPaths) })!;
+  const read = JSON.stringify(row);
+  const checkout = JSON.stringify([ruleCatalog.digest, repositoryKey, ownerCheckoutPaths]);
+  const last = reader.last.get(checkout);
+  if (last?.read === read) return last.signature;
+  const signature = signatureOf(ruleCatalog.digest, ownerCheckoutPaths, signatureRowsOf(row, ruleCatalog, repositoryKey));
+  if (reader.last.size >= KEPT_SIGNATURES) reader.last.clear();
+  reader.last.set(checkout, { read, signature });
+  return signature;
+}
+
+/**
+ * Reads, in one statement prepared once, every repository's set-up time, attachments and settings, every checkout's
+ * settings, every library rule and every approval, as one text: it differs from the last one read whenever any process
+ * changed what any checkout's {@link ruleConfigurationSignature} reads from the database. The tables hold a few rows per
+ * rule set up, never one per checkout recorded.
+ */
+export function ruleConfigurationVersionReader(db: RerailDatabase): () => string {
+  const statement = db.select({
+    repositories: sql<string>`(SELECT json_group_array(json_array(${repositories.repositoryKey}, ${repositories.configuredAt})) FROM ${repositories})`,
+    attachments: sql<string>`(SELECT json_group_array(json_array(${ruleAttachments.repositoryKey}, ${ruleAttachments.folder},
+      ${ruleAttachments.sourceKind}, ${ruleAttachments.sourceId})) FROM ${ruleAttachments})`,
+    settings: sql<string>`(SELECT json_group_array(json_array(${ruleSettings.ownerKind}, ${ruleSettings.ownerId}, ${ruleSettings.folder},
+      ${ruleSettings.targetKind}, ${ruleSettings.targetId}, ${ruleSettings.on}, ${ruleSettings.mode}, ${ruleSettings.suppressions}, json(${ruleSettings.config})))
+      FROM ${ruleSettings})`,
+    library: sql<string>`(SELECT json_group_array(json_array(${libraryRules.ruleId}, ${libraryRules.revision}, ${libraryRules.payloadHash})) FROM ${libraryRules})`,
+    approvals: sql<string>`(SELECT json_group_array(json_array(${ruleApprovals.subjectKind}, ${ruleApprovals.subjectId}, ${ruleApprovals.digest})) FROM ${ruleApprovals})`,
+  }).from(sql`(SELECT 1)`).prepare();
+  return () => JSON.stringify(statement.get());
 }
 
 /** A rule present at a path, before its settings are applied. */
@@ -319,9 +435,7 @@ class ConfigurationResolver {
     return present;
   }
 
-  #decide<T>(presence: Presence, path: string, field: (setting: SettingRow) => T | null): { value: T; decider: Decider } | undefined {
-    const id = presence.document.rule.id;
-    const packId = presence.source.packId;
+  #decide<T>(id: string, packId: string | null, path: string, field: (setting: SettingRow) => T | null): { value: T; decider: Decider } | undefined {
     for (const owner of this.#owners) {
       for (const setting of this.#settingsByOwner.get(`${owner.kind}\0${owner.id}`) ?? []) {
         const targets = setting.targetKind === "rule" ? setting.targetId === id : packId !== null && setting.targetId === packId;
@@ -331,6 +445,12 @@ class ConfigurationResolver {
       }
     }
     return undefined;
+  }
+
+  rrMode(policy: RrPolicySource, path: string, packId: string | null): RuleMode | null {
+    if (this.#decide(policy.id, packId, path, setting => setting.on)?.value === false) return null;
+    if (!this.#approvals.has(approvalKey(ruleSubject(policy.id, policy.payloadHash)))) return "log";
+    return this.#decide(policy.id, packId, path, setting => setting.mode)?.value ?? policy.mode;
   }
 
   /**
@@ -371,11 +491,12 @@ class ConfigurationResolver {
   #effective(presence: Presence, path: string): EffectiveRule {
     const { packRule } = presence;
     const packId = presence.source.packId;
+    const id = presence.document.rule.id;
     const start = packRule === null || packId === null ? undefined : { rule: packRule, decider: { by: "pack-start", packId } as Decider };
     const ruleDefault: Decider = { by: "rule-default" };
-    const on = this.#decide<boolean>(presence, path, setting => setting.on)
+    const on = this.#decide<boolean>(id, packId, path, setting => setting.on)
       ?? (start === undefined ? { value: true, decider: ruleDefault } : { value: start.rule.on, decider: start.decider });
-    const configuredMode = this.#decide<RuleMode>(presence, path, setting => setting.mode)
+    const configuredMode = this.#decide<RuleMode>(id, packId, path, setting => setting.mode)
       ?? (start === undefined ? { value: presence.document.rule.mode, decider: ruleDefault } : { value: start.rule.mode, decider: start.decider });
     const subject = this.#approvalSubject(presence);
     const approval = subject === undefined ? undefined : { subject, approved: this.#approvals.has(approvalKey(subject)) };
@@ -384,7 +505,7 @@ class ConfigurationResolver {
       ? { value: "log" as RuleMode, decider: { by: "awaiting-approval" } as Decider }
       : configuredMode;
     const pack = packId === null ? undefined : this.#ruleCatalog.packs.get(packId);
-    const suppressions = this.#decide<RuleSuppressions>(presence, path, setting => setting.suppressions)
+    const suppressions = this.#decide<RuleSuppressions>(id, packId, path, setting => setting.suppressions)
       ?? (start === undefined || pack === undefined
         ? { value: "honour", decider: ruleDefault }
         : { value: pack.honourSuppressionComments ? "honour" : "ignore", decider: start.decider });
@@ -417,6 +538,15 @@ function deciderOf(owner: Owner, setting: SettingRow): Decider {
 
 function ownersOf(repositoryKey: RepositoryKey, checkoutPaths: readonly string[]): Owner[] {
   return [...checkoutPaths.map((id): Owner => ({ kind: "checkout", id })), { kind: "repository", id: repositoryKey }];
+}
+
+export function resolveRrModes(db: RerailDatabase, catalog: RuleCatalog, checkout: CheckoutContext, parents: readonly string[], fromRef = false) {
+  const paths = [checkout.checkoutPath, ...parents];
+  const rows = readRows(db, catalog, checkout.repositoryKey, paths);
+  const resolver = new ConfigurationResolver(catalog, rows, ownersOf(checkout.repositoryKey, paths));
+  const folders = ["", ...new Set(rows.settings.map(setting => setting.folder))];
+  const at = (policy: RrPolicySource, path: string): RuleMode | null => resolver.rrMode(policy, normalizeFolder(path), fromRef ? null : WORKTREE_PACK_ID);
+  return { at, enabled: (policy: RrPolicySource) => folders.some(folder => at(policy, folder) !== null) };
 }
 
 /**

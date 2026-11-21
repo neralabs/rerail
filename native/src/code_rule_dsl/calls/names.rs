@@ -1,11 +1,11 @@
-//! Dotted names, interned per process: every summary and call graph of every workspace holds a
-//! name as a reference to its one entry. A name holds its dotted parent (`a.b` of `a.b.c`), so the
+//! Dotted names, interned per shared object (decision 0442): every summary and call graph of the
+//! object's workspaces holds a name as a reference to its one entry. A name holds its dotted parent (`a.b` of `a.b.c`), so the
 //! graph walks prefixes without building strings. A name nothing else holds is dropped when its
 //! shard has doubled since it was last swept.
 //!
 //! The table is `SHARDS` shards, a name's by the hash of its family and text, each behind its own
 //! lock: the parse workers summarize their files at once, and behind one lock their interning was
-//! a third of the summaries' time, waiting (0465's next steps, Q284). A name's parent is interned
+//! a third of the summaries' time, waiting (0465's next steps, Q334). A name's parent is interned
 //! before its own shard is locked, so no thread holds two shards' locks.
 
 use crate::code_rule_dsl::language::Family;
@@ -13,7 +13,7 @@ use foldhash::{HashMap, HashSet};
 use parking_lot::RwLock;
 use std::borrow::Borrow;
 use std::hash::{Hash, Hasher};
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 
 struct Entry {
     family: Family,
@@ -32,7 +32,8 @@ pub struct Name(Arc<Entry>);
 impl Name {
     /// Interns `text` in `family`'s namespace, along with its dotted prefixes.
     pub fn new(family: Family, text: &str) -> Self {
-        let shard = shard(family, text);
+        let names = crate::code_rule_dsl::logic::profile::shared::<Names>();
+        let shard = names.shard(family, text);
         if let Some(name) = shard.read().get(family, text) {
             return name;
         }
@@ -50,8 +51,9 @@ impl Name {
     /// names at once (a summary's), each shard's lock taken once a prefix depth (a read for the names it has, a
     /// write for the rest), not once a name. Most of a file's names are its own, new to the table, so one by one
     /// each took a write lock, and the parse workers summarizing their files at once waited on each other's
-    /// (0465, Q284). The names come back in `texts`' order.
+    /// (0465, Q334). The names come back in `texts`' order.
     pub fn new_all<'t>(family: Family, texts: impl IntoIterator<Item = &'t str>) -> Vec<Self> {
+        let names = crate::code_rule_dsl::logic::profile::shared::<Names>();
         let texts = texts.into_iter().collect::<Vec<_>>();
         // Every text and dotted prefix, once, by depth (its dots): a prefix's name is made before the names under it.
         let mut wanted: HashMap<&str, Option<Name>> = HashMap::default();
@@ -88,7 +90,7 @@ impl Name {
                 if group.is_empty() {
                     continue;
                 }
-                let shard = &TABLE[index];
+                let shard = &names.0[index];
                 let mut missing = Vec::new();
                 {
                     let table = shard.read();
@@ -132,7 +134,7 @@ impl Name {
 
     /// `text`'s name in `family`, if something interned it.
     pub fn get(family: Family, text: &str) -> Option<Self> {
-        shard(family, text).read().get(family, text)
+        crate::code_rule_dsl::logic::profile::with_shared::<Names, _>(|names| names.shard(family, text).read().get(family, text))
     }
 
     pub fn text(&self) -> &str {
@@ -248,11 +250,20 @@ const SHARDS: usize = 256;
 /// A shard is swept once it holds twice this many names, or twice what its last sweep left.
 const SWEEP_AT: usize = (1 << 16) / SHARDS;
 
-static TABLE: LazyLock<[RwLock<Table>; SHARDS]> = LazyLock::new(|| std::array::from_fn(|_| RwLock::default()));
+/// The shared object's table (decision 0442): its names are its own, and equal only to its own.
+struct Names([RwLock<Table>; SHARDS]);
 
-/// The shard of `text` in `family`.
-fn shard(family: Family, text: &str) -> &'static RwLock<Table> {
-    &TABLE[shard_index(family, text)]
+impl Default for Names {
+    fn default() -> Self {
+        Names(std::array::from_fn(|_| RwLock::default()))
+    }
+}
+
+impl Names {
+    /// The shard of `text` in `family`.
+    fn shard(&self, family: Family, text: &str) -> &RwLock<Table> {
+        &self.0[shard_index(family, text)]
+    }
 }
 
 fn shard_index(family: Family, text: &str) -> usize {

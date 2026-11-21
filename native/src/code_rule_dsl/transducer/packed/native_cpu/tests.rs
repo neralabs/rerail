@@ -51,7 +51,7 @@
                 bytes.extend_from_slice(&column);
                 bytes.resize(bytes.len().next_multiple_of(8), 0);
             }
-            // The source its nodes span, as a tape's header states it: its reads hold spans to it (decision 0427).
+            // The source its nodes span, as a tape's header states it: its reads hold spans to it (decision 0463).
             let source_len = nodes.iter().map(|node| node.source_end).max().unwrap_or(0);
             let view = rerail_clif::view::TapeView { nodes: n as u32, format: 15, widths: 4 | 4 << 4 | 4 << 8 | 1 << 12, columns: at, source_len, ..Default::default() };
             let codes = nodes
@@ -202,7 +202,7 @@
                     [(b"language".to_vec(), Some(b"json".to_vec())),]
                 );
             }
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             let scope = crate::code_rule_dsl::transducer::packed::MetalTestScope::enter();
             let actual = crate::code_rule_dsl::transducer::packed::interpreter_reference(
                 std::slice::from_ref(&program),
@@ -215,7 +215,7 @@
             .unwrap();
             assert_eq!(actual.outputs, expected, "{query}");
             assert_eq!(actual.errors, vec![vec![None]]);
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             assert!(scope.snapshot().is_empty());
         }
     }
@@ -302,8 +302,8 @@
     #[ignore = "pinned pattern 277 and argparse output-directive reference regression"]
     fn interpreter_output_reference_preserves_pinned_argparse_results() {
         let repository =
-            std::path::PathBuf::from(std::env::var("TEMPO_ALL_SCM_REPOSITORY").unwrap());
-        let query_root = std::env::var("TEMPO_PYTHON_SCM_QUERY_DIR").unwrap();
+            std::path::PathBuf::from(std::env::var("RERAIL_PACKED_ALL_SCM_REPOSITORY").unwrap());
+        let query_root = std::env::var("RERAIL_PACKED_PYTHON_SCM_QUERY_DIR").unwrap();
         let mut paths = std::fs::read_dir(query_root)
             .unwrap()
             .map(|entry| entry.unwrap().path())
@@ -392,7 +392,7 @@
             assert_eq!(actual.outputs, expected);
             assert_eq!(actual.errors, vec![vec![None]]);
             eprintln!(
-                "TEMPO_ARGPARSE_REFERENCE_EVIDENCE {}",
+                "RERAIL_PACKED_ARGPARSE_REFERENCE_EVIDENCE {}",
                 serde_json::json!({
                     "roots": roots.len(), "matches": actual.outputs[0][0].len(),
                     "captures": actual.outputs[0][0].iter().map(|row| row.captures.len()).sum::<usize>(),
@@ -405,7 +405,7 @@
     #[test]
     #[ignore = "offline independent interpreter timing for the CPU corpus reference"]
     fn cpu_quantifier_interpreter_reference_profile() {
-        let path = std::env::var("TEMPO_CPU_QUANTIFIER_SOURCE").unwrap();
+        let path = std::env::var("RERAIL_PACKED_CPU_QUANTIFIER_SOURCE").unwrap();
         let source = std::fs::read_to_string(path).unwrap();
         let files = [tape(&source)];
         let programs = [Program::compile_tree_sitter_query_pattern(
@@ -424,7 +424,7 @@
             crate::code_rule_dsl::transducer::packed::execute_batch(&programs, &files, Some(&anchors))
                 .unwrap();
         eprintln!(
-            "TEMPO_INTERPRETER_QUANTIFIER_REFERENCE roots={} matches={} captures={} seconds={:.6}",
+            "RERAIL_PACKED_INTERPRETER_QUANTIFIER_REFERENCE roots={} matches={} captures={} seconds={:.6}",
             anchors[0][0].len(),
             output[0][0].len(),
             output[0][0]

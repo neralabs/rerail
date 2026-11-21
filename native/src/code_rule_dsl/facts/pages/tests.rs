@@ -49,7 +49,7 @@ fn a_subtree_one_workspace_evaluated_is_a_lookup_for_another_and_edits_elsewhere
         evaluate_pages(&overlay, directory, || {
             computed.borrow_mut().push(format!("{}:{}", directory.scope, directory.prefix));
             let tree = overlay.binding(&tree_name(directory.scope, directory.prefix)).unwrap().unwrap();
-            Ok(vec![TreePage { file_count: 1, bytes: tree.to_vec() }])
+            Ok(vec![TreePage::new(1, tree.to_vec())])
         })
         .unwrap()
     };

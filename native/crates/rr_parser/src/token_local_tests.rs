@@ -1,11 +1,11 @@
-//! `token_local`'s facts on the `.rr` grammar: every claim checked on its corpus, and two
+//! `token_local`'s facts on the `.rerail` grammar: every claim checked on its corpus, and two
 //! censuses run by hand, of tier 1's operations by their facts and of its values' sparsity
 //! (docs/parser-generators/25-token-local-work.md §5, 26 §1).
 
 use rerail_compiler::bitlex_masks::Named;
 use rerail_compiler::token_local;
 
-/// Every claim on the `.rr` grammar's tier 1 holds on its corpus (a sample of files, every
+/// Every claim on the `.rerail` grammar's tier 1 holds on its corpus (a sample of files, every
 /// claim on each), with each token kind's first bytes as the anchors.
 #[test]
 fn rr_facts_hold_on_the_corpus() {
@@ -42,7 +42,7 @@ fn rr_facts_hold_on_the_corpus() {
     assert!(checked.local > 100 && checked.anchored >= 8, "too few claims: {checked:?}");
 }
 
-/// How much of the `.rr` grammar's tier 1 is token-level: each operation by its facts, and the
+/// How much of the `.rerail` grammar's tier 1 is token-level: each operation by its facts, and the
 /// share in the cones of values that only marks and the fallback read. A census for the plan's
 /// payoff (doc 25 §5); run by hand.
 #[test]
@@ -56,12 +56,12 @@ fn rr_census() {
     let members = token_local::members(p);
     let n = p.ops.len();
     let (mut carried, mut positional, mut anchored, mut free) = (0, 0, 0, 0);
-    for x in 0..n {
+    for (x, f) in facts.iter().enumerate() {
         if token_local::carried(p, &members, x) {
             carried += 1;
         } else if token_local::positional(&p.ops[x]) {
             positional += 1;
-        } else if !facts[x].anchors.is_empty() {
+        } else if !f.anchors.is_empty() {
             anchored += 1;
         } else {
             free += 1;
@@ -70,11 +70,11 @@ fn rr_census() {
     eprintln!("{n} operations: {carried} carried, {positional} byte tests and positions, {anchored} local and anchored, {free} local, not anchored");
     // Where the unanchored local operations come from, by statement.
     let mut stmts: std::collections::BTreeMap<&str, (usize, usize)> = Default::default();
-    for x in 0..n {
+    for (x, f) in facts.iter().enumerate() {
         let e = stmts.entry(c.origin.get(x).map_or("?", String::as_str)).or_default();
         if token_local::carried(p, &members, x) {
             e.1 += 1;
-        } else if !token_local::positional(&p.ops[x]) && facts[x].anchors.is_empty() {
+        } else if !token_local::positional(&p.ops[x]) && f.anchors.is_empty() {
             e.0 += 1;
         }
     }
@@ -88,8 +88,7 @@ fn rr_census() {
     eprintln!("outputs: {kinds:?}");
     // The anchored values read by no carried value, by the outputs they reach.
     let mut by: std::collections::BTreeMap<String, usize> = Default::default();
-    for x in 0..n {
-        let f = &facts[x];
+    for (x, f) in facts.iter().enumerate() {
         if f.local.is_some() && !f.anchors.is_empty() && !token_local::positional(&p.ops[x]) {
             let reach = if f.carried_readers.is_empty() { "no carried reader" } else { "a carried reader" };
             let outs: Vec<&str> = f.outputs.iter().map(|&k| kinds[k].as_str()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
@@ -109,7 +108,7 @@ fn rr_census() {
     }
 }
 
-/// How sparse `.rr`'s tier 1 values are: for each named value, the share of the corpus's
+/// How sparse `.rerail`'s tier 1 values are: for each named value, the share of the corpus's
 /// 64-byte blocks where it has a bit, and, for each sparse one, the operations that are zero
 /// wherever it is (by `zero_with`). The measure of simdjson's skip-when-absent branches
 /// (doc 26); run by hand.
@@ -132,7 +131,7 @@ fn rr_sparsity() {
     }
 }
 
-/// Tier 1's outputs and totals on `.rr`, and its passes' machine code: the measurement of
+/// Tier 1's outputs and totals on `.rerail`, and its passes' machine code: the measurement of
 /// doc 26 §1.5.
 #[test]
 #[ignore = "a measurement: run by hand"]
@@ -167,7 +166,7 @@ fn rr_sparse_marks_bound() {
         let compiled = rerail_compiler::native_cpu_block::compile(&native).expect("compiles");
         let ms = compiled.batch_cpu_seconds(&files, 9) * 1e3;
         eprintln!("  tier 1 alone: {ms:.2} ms CPU over {mb:.2} MB");
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         {
             use rerail_metal::block_program::serial::{Segments, run_serial_split};
             let batch: Vec<rerail_compiler::block::BatchFile<'_>> = files.iter().map(|&bytes| rerail_compiler::block::BatchFile { bytes, program: 0 }).collect();

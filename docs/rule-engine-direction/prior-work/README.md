@@ -1,15 +1,15 @@
 # Prior work: consult before every design decision
 
-`neralabs/ast-index-spike` already ran most of the experiments this engine needs: tape layout, indexes, anchor choice, pattern lowering, planner behaviour, materialization, batching, parity and measurement. Its design record (`DESIGN.md`, 7,129 lines) and journal (`DESIGN_HISTORY.md`, 8,775 lines) hold the evidence. Branches here have repeatedly re-learned its results, at real cost.
+the SQL index prototype already ran most of the experiments this engine needs: tape layout, indexes, anchor choice, pattern lowering, planner behaviour, materialization, batching, parity and measurement. Its design record (`DESIGN.md`, 7,129 lines) and journal (`DESIGN_HISTORY.md`, 8,775 lines) hold the evidence. Branches here have repeatedly re-learned its results, at real cost.
 
 The two indexes in this folder are organised by decision topic. Each conclusion carries its numbers and line-range citations into the source at commit `9449260`.
 
 | Index | Covers | Use it for |
 |---|---|---|
-| `ast-index-spike-design-index.md` | `DESIGN.md`, `README.md`, `LINTER_ARCHITECTURE.md`, `LINTER_CASE_STUDY.md`, `SQL_ONLY_RECOVERY_ANALYSIS.md`, `bench/AST_GREP_SQL_GAPS.md` | Current conclusions; a revision and contradiction ledger; the section map |
-| `ast-index-spike-history-index.md` | `DESIGN_HISTORY.md` plus the bench notes | Experiments with numbers; 57 measurement traps (T1–T57); 75 dead ends (D1–D75); a "before deciding X, read Y" checklist (Part 4) |
+| `sql-index-prototype-design-index.md` | `DESIGN.md`, `README.md`, `LINTER_ARCHITECTURE.md`, `LINTER_CASE_STUDY.md`, `SQL_ONLY_RECOVERY_ANALYSIS.md`, `bench/AST_GREP_SQL_GAPS.md` | Current conclusions; a revision and contradiction ledger; the section map |
+| `sql-index-prototype-history-index.md` | `DESIGN_HISTORY.md` plus the bench notes | Experiments with numbers; 57 measurement traps (T1–T57); 75 dead ends (D1–D75); a "before deciding X, read Y" checklist (Part 4) |
 
-The other prior source is `../lessons-ledger.md`. It holds lessons from nera-data-layer PR 2539 (the declarative YAML linter over SQLite facts) and the runtime comparison.
+The other prior source is `../lessons-ledger.md`. It holds lessons from the data-layer repository's PR 2539 (the declarative YAML linter over SQLite facts) and the runtime comparison.
 
 ## Protocol
 

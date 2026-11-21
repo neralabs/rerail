@@ -1,7 +1,7 @@
 //! The prefilter (docs/final-shape/03-architecture.md §6, §16; 05 Phase 3): SQL over per-tape
 //! access paths selects candidate (tape, preorder) sets; transducers confirm them. Adapted from
-//! Pulling-it-all-together's anchor store (`matcher/anchors/sql/store.rs`), which followed
-//! ast-index-spike's `tape_store.py`.
+//! PIAT's anchor store (`matcher/anchors/sql/store.rs`), which followed
+//! the SQL index prototype's `tape_store.py`.
 //!
 //! P's store owned a private database: a `file` table with a second copy of every tape, language,
 //! kind and field catalogs, overflow tables and decoded-property tables. Here a tape's index image
@@ -111,7 +111,7 @@ pub(in crate::code_rule_dsl) fn select(
         .collect::<Vec<_>>();
     // In order per plan (the statement's arms stream unsorted, `lower::batch`).
     use rayon::prelude::*;
-    rows.par_iter_mut().for_each(|rows| rows.sort_unstable());
+    crate::code_rule_dsl::logic::profile::on_cores(|| rows.par_iter_mut().for_each(|rows| rows.sort_unstable()));
     Ok(rows)
 }
 
@@ -182,6 +182,7 @@ pub(in crate::code_rule_dsl) fn select_indexed_sql(
 /// tape (`nera_tree`), over `tapes`. Per plan, its (index in `tapes`, preorder) rows and whether
 /// they are exactly its rule's roots; where not, they are a superset, as `select`'s. The wave's
 /// `Candidates::Sql` route (`RERAIL_CANDIDATES=sql`) drives it.
+#[allow(clippy::type_complexity)]
 pub(in crate::code_rule_dsl) fn fallback(
     store: &ContentStore,
     lang: u32,

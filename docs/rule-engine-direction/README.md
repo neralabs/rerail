@@ -3,22 +3,22 @@
 This document gathers what has been learned so far about running Rerail code rules at scale, and sets the direction that all execution work should converge on. It draws on:
 
 - the current execution branches;
-- the Tempo Metal work;
-- nera-data-layer PR 2539, the declarative YAML linter over SQLite facts;
-- the `neralabs/ast-index-spike` repository, a syntax tape stored in SQL with structural patterns lowered to SQL.
+- the predecessor's Metal work;
+- the data-layer repository's PR 2539, the declarative YAML linter over SQLite facts;
+- the SQL index prototype repository, a syntax tape stored in SQL with structural patterns lowered to SQL.
 
 The other files here:
 
-- `lessons-ledger.md`: 36 lessons from PR 2539 and ast-index-spike, each marked as adopted, re-learned (where and when), violated, or not yet relevant in the current branches. It also has a like-for-like runtime comparison.
+- `lessons-ledger.md`: 36 lessons from PR 2539 and the SQL index prototype, each marked as adopted, re-learned (where and when), violated, or not yet relevant in the current branches. It also has a like-for-like runtime comparison.
 - `flip.py`, `guard_sqlite2.py`, `vocab.py`: small, self-contained SQLite experiments cited below. Run them with `python3 -I <script>`.
 - `architecture.md`: the module layout, the starting point, and the integration phases.
 - `findings-contract.md`: the loosest output contract that supports the end-to-end task.
 - `authored-sql.md`: why rules came to carry SQL, a census of that SQL, and how to remove it.
-- `prior-work/`: decision indexes into ast-index-spike's design record and journal, and the protocol for using them.
+- `prior-work/`: decision indexes into the SQL index prototype's design record and journal, and the protocol for using them.
 - `decisions/`: decision records, each citing the prior work it consulted.
 - `spec.md`: the normative specification (§0–§19), with `spec-transducer.md` (the transducer IR), `spec-indexes.md` (exact index DDL), `spec-fusion.md` (transducer fusion) and `spec-tooling.md` (memory limits, debugging, testing, profiling).
-- `research/`: the evidence behind each spec section: tape regularity and v8/v9np measurements, the transducer IR, the SQL/transducer boundary, Metal recursion and device-side enqueue, fusion, the fusion opportunity and cost model on the data-layer rules, heavy-rule execution profiles, regex lowering and trigram indexes (`regex.md`), the heavy relational inputs (`heavy-inputs.md`), the latest SSC fragment work (`ssc-fragments.md`), Tempo tape residency (`tempo-residency.md`), measurements M1 and M2/M7, the data-layer rule shape fixes with their measured costs (`shape-fixes.md`), and the workstream scan.
-- `experiments/`: the code and raw output for each research document. Database files are not checked in.
+- `research/`: the evidence behind each spec section: tape regularity and v8/v9np measurements, the transducer IR, the SQL/transducer boundary, Metal recursion and device-side enqueue, fusion, the fusion opportunity and cost model on the data-layer rules, heavy-rule execution profiles, regex lowering and trigram indexes (`regex.md`), the heavy relational inputs (`heavy-inputs.md`), the latest SSC fragment work (`ssc-fragments.md`), the predecessor's tape residency (`predecessor-residency.md`), measurements M1 and M2/M7, the data-layer rule shape fixes with their measured costs (`shape-fixes.md`), and the workstream scan.
+- `experiments/` (removed; at 7efcac9c67): the code and raw output for each research document. Database files are not checked in.
 
 ## Product targets
 
@@ -30,15 +30,15 @@ All three are required:
 
 ## Architecture
 
-1. **Substrate.** There is one common tape: the code_rule_dsl v7 tape, derived from the ast-index-spike record format, moving to the regular v9np layout (decision 0003, `spec.md` §3). Statistics are kept in SQL, derived from indexes where possible (see Statistics below).
+1. **Substrate.** There is one common tape: the code_rule_dsl v7 tape, derived from the SQL index prototype record format, moving to the regular v9np layout (decision 0003, `spec.md` §3). Statistics are kept in SQL, derived from indexes where possible (see Statistics below).
 
 2. **Logical relation contracts.** Each contract is a named, typed, narrow relation with declared output ordering. Examples: `node`, `kids`, `terminal_match(term, file, root, match_ord, captures…)`, and one relation per fact family. Every contract has two interchangeable bindings:
    - a pure-SQL CTE over the tape;
    - a virtual table backed by native code: the CPU matcher, the JIT, or Metal.
 
    A differential test runs both bindings on every rule. Precedent:
-   - ast-index-spike swapped a native child-enumeration table function for its pure-SQL equivalent with 0 mismatches over 4,264 queries.
-   - The ner-1562 tests swap an ordinary table in for `rerail_matches`.
+   - SQL index prototype swapped a native child-enumeration table function for its pure-SQL equivalent with 0 mismatches over 4,264 queries.
+   - The scale-test branch's tests swap an ordinary table in for `rerail_matches`.
 
 3. **Compiler.** Rules lower to SQL fragments over these contracts. The caller writes the anti-join, aggregate or recursion; there is no interpreter or program counter encoded in CTEs.
    - The compiler chooses the query shape at plan time from stored statistics: which kind to anchor on, whether to climb from a leaf or descend from the anchor, whether to seed from a value or a structure, whether to emit a probe.
@@ -67,7 +67,7 @@ All three are required:
 
 The right query shape depends on corpus statistics. A synthetic reproduction (`flip.py`, 1.5M nodes) showed a fixed anchor losing about 200× on a slice with the kind frequencies swapped. Choosing the anchor from stored kind frequencies won on both slices.
 
-The shape choice belongs in the compiler, from stored statistics. Don't trust SQLite's planner on CTEs, recursive CTEs or table functions: ast-index-spike measured estimate errors of 4,669× and worse. SQLite's planner is reliable only for join order over base tables that have ANALYZE/STAT4 statistics.
+The shape choice belongs in the compiler, from stored statistics. Don't trust SQLite's planner on CTEs, recursive CTEs or table functions: SQL index prototype measured estimate errors of 4,669× and worse. SQLite's planner is reliable only for join order over base tables that have ANALYZE/STAT4 statistics.
 
 Where each statistic lives:
 
@@ -105,7 +105,7 @@ The bar: PR 2539 ran its whole repository (5,073 files) in about 70 s, and Rerai
 The ledger has details and citations. The most frequent:
 
 - **Proxy metrics.** Statement count, SQL size and VM steps were optimized without end-to-end confirmation.
-- **Temp tables plus `ANALYZE`.** ast-index-spike measured them 57–115× slower than one fused statement.
+- **Temp tables plus `ANALYZE`.** SQL index prototype measured them 57–115× slower than one fused statement.
 - **Anchor and probe selectivity.** A probe that rejects nothing still costs; emit probes only when they are selective.
 - **Fragments, not an interpreter.** A hand-written query was 94× faster than the generated interpreter for the same rule.
 - **Sharing over a union of rules.** It inflates reads; share only within scope-identical groups.
@@ -119,4 +119,4 @@ The ledger has details and citations. The most frequent:
 
 ## Prior work protocol
 
-Every design decision consults the ast-index-spike indexes and the lessons ledger first, and is recorded with citations in `decisions/`. See `prior-work/README.md`.
+Every design decision consults the SQL index prototype indexes and the lessons ledger first, and is recorded with citations in `decisions/`. See `prior-work/README.md`.

@@ -1,8 +1,8 @@
-"""Rewrite .rr text from the first draft's syntax into Soufflé form.
+"""Rewrite .rerail text from the first draft's syntax into Soufflé form.
 
 First draft            Soufflé form
   $x                   x                       (`$` stays only inside backtick patterns and templates)
-  .use a/b             #include "a/b.rr"
+  .use a/b             #include "a/b.rerail"
   .set s = "a" | "b"   .decl s(v: symbol)  s("a"). s("b").
   .kindset k = …       .decl k(kind: symbol)  k("…").
   .native r(…)         .decl r(…) and an `.input` list per section
@@ -313,7 +313,7 @@ def directives(text):
             flush()
         m = re.match(r"\.use\s+(\S+)(.*)$", line)
         if m:
-            out.append(f'#include "{m.group(1)}.rr"{m.group(2)}')
+            out.append(f'#include "{m.group(1)}.rerail"{m.group(2)}')
             i += 1
             continue
         m = re.match(r"\.(set|kindset)\s+(\w+)\s*=\s*(.*)$", line)
@@ -609,71 +609,179 @@ def _drop_aggregates(toks):
 
 
 def _literal(l, bound, force=False):
-    """(binds, needs, ready) for one body literal."""
-    if l[0] == "(" and l[-1] == ")" and ";" in l:     # disjunction
-        branches = [b for b in _split_top(l[1:-1], ";")]
-        sets, needs = [], set()
-        for br in branches:
-            inner = set(bound)
-            for lit in [x for x in _split_top(br, ",") if x]:
-                b, n, _ = _literal(lit, inner, force=True)
-                inner |= b
-                needs |= n - inner
-            sets.append(inner - bound)
-        binds = set.intersection(*sets) if sets else set()
-        return binds, needs, True
-    if l[0] == "!":
-        rest = l[1:]
-        vs = _vars(_strip_relation_args(rest))
-        if rest and rest[0] in ("match", "match_all"):
-            vs = _vars(rest[3:])
-        ready = force or vs <= bound
-        return set(), vs, ready
-    if "~" in l and any(t.startswith("`") for t in l):    # pattern
-        k = l.index("~")
-        return _vars(l[:k]) | _vars(l[k + 1:]), set(), True
-    if l[0] in TEXT_TESTS and len(l) > 2 and l[1] == "(":    # glob(p, s) …: tests, binding nothing
-        vs = _vars(l)
-        return set(), vs, force or vs <= bound
-    if l[0] in ("match", "match_all") and len(l) > 2:
-        args = _split_top(l[2:-1], ",")
-        groups = set(re.findall(r"\(\?P?<([A-Za-z_]\w*)>", l[2]))
-        subj = _vars(args[1]) if len(args) > 1 else set()
-        ready = force or subj <= bound
-        return groups, subj, ready
-    if "count" in l or "min" in l or "max" in l or "sum" in l or "join" in l:
-        # v = agg … : { … }   or   agg : { … } op value
-        if ":" in l and "{" in l:
-            a = l.index("{")
-            e = len(l) - 1 - l[::-1].index("}")
-            inner = l[a + 1:e]
-            outside = l[:a] + l[e + 1:]
-            inner_vars = _inner_needs(inner, bound)
-            if len(outside) >= 2 and outside[1] == "=" and _is_var(outside[0]):
-                ready = force or inner_vars <= bound
-                return {outside[0]}, inner_vars, ready
-            vs = _vars([t for t in outside if t not in ("count", "min", "max", "sum", "join", ":")]) | inner_vars
-            # `min k : { … }`: k is local
-            agg_local = {outside[1]} if outside and outside[0] in ("min", "max", "sum") and len(outside) > 1 else set()
-            vs -= agg_local
-            return set(), vs, force or vs <= bound
-    for op in ("!=", "<=", ">=", "<", ">"):
-        if op in l:
-            vs = _vars(l)
-            return set(), vs, force or vs <= bound
-    if "=" in l:
-        k = l.index("=")
-        left, right = l[:k], l[k + 1:]
-        lv, rv = _vars(left), _vars(right)
-        if len(left) == 1 and _is_var(left[0]) and rv <= bound:
-            return {left[0]}, rv, True
-        if len(right) == 1 and _is_var(right[0]) and lv <= bound:
-            return {right[0]}, lv, True
-        return set(), lv | rv, force or (lv | rv) <= bound
-    # positive atom
+    """(binds, needs, ready) for one body literal: read by the first kind of `_LITERAL_KINDS` whose test it passes
+    and that reads it (an aggregate's word without a body is no aggregate), else as a positive atom."""
+    for test, read in _LITERAL_KINDS:
+        if test(l):
+            out = read(l, bound, force)
+            if out is not None:
+                return out
+    return _atom(l)
+
+
+def _ready(vs, bound, force):
+    """A test reading vs, binding nothing: ready once they are all bound."""
+    return set(), vs, force or vs <= bound
+
+
+def _is_disjunction(l):
+    return l[0] == "(" and l[-1] == ")" and ";" in l
+
+
+def _disjunction(l, bound, force):
+    """`(a ; b)`: binds what every branch binds; needs what any branch needs and does not bind first."""
+    sets, needs = [], set()
+    for br in _split_top(l[1:-1], ";"):
+        inner, n = _branch(br, bound)
+        needs |= n
+        sets.append(inner - bound)
+    binds = set.intersection(*sets) if sets else set()
+    return binds, needs, True
+
+
+def _branch(br, bound):
+    """One branch of a disjunction, its literals in order: what is bound after it, and what it needs."""
+    inner, needs = set(bound), set()
+    for lit in [x for x in _split_top(br, ",") if x]:
+        b, n, _ = _literal(lit, inner, force=True)
+        inner |= b
+        needs |= n - inner
+    return inner, needs
+
+
+def _negation(l, bound, force):
+    """`!r(…)`: binds nothing; a negated match needs only its subject (its groups are its own)."""
+    rest = l[1:]
+    vs = _vars(rest[3:]) if rest and rest[0] in ("match", "match_all") else _vars(_strip_relation_args(rest))
+    return _ready(vs, bound, force)
+
+
+def _is_pattern(l):
+    return "~" in l and any(t.startswith("`") for t in l)
+
+
+def _pattern(l, bound, force):
+    """`n ~ `pattern``: binds n and the pattern's metavariables."""
+    k = l.index("~")
+    return _vars(l[:k]) | _vars(l[k + 1:]), set(), True
+
+
+def _is_text_test(l):
+    return l[0] in TEXT_TESTS and len(l) > 2 and l[1] == "("
+
+
+def _text_test(l, bound, force):
+    """glob(p, s) …: tests, binding nothing."""
+    return _ready(_vars(l), bound, force)
+
+
+def _is_match(l):
+    return l[0] in ("match", "match_all") and len(l) > 2
+
+
+def _match(l, bound, force):
+    """match/match_all: binds the regex's named groups (and match_all's match columns); needs its subject."""
+    args = _split_top(l[2:-1], ",")
+    groups = set(re.findall(r"\(\?P?<([A-Za-z_]\w*)>", l[2])) | _match_all_binds(l[0], args)
+    subj = _match_needs(l[0], args)
+    return groups, subj, force or subj <= bound
+
+
+def _match_needs(name, args):
+    """What a match needs bound, as rr/check.rs reads it: match_all's subject at the arities that bind columns (3 and
+    5), else every argument after the regex."""
+    if name == "match_all" and len(args) in (3, 5):
+        return _vars(args[1])
+    return set().union(*(_vars(a) for a in args[1:]))
+
+
+def _match_all_binds(name, args):
+    """match_all("re", sp, m) binds the match m; over a symbol, match_all("re", s, ordinal, start, end) binds the
+    rest. The engine reads no other arity (rr/check.rs), so neither does this."""
+    if name != "match_all" or len(args) not in (3, 5):
+        return set()
+    return set().union(*(_vars(a) for a in args[2:]))
+
+
+def _is_aggregate(l):
+    return any(word in l for word in ("count", "min", "max", "sum", "join"))
+
+
+def _aggregate(l, bound, force):
+    """`v = agg … : { … }` binds v; `agg : { … } op value` binds nothing. None when l has no `: { … }` body."""
+    if not _has_body(l):
+        return None
+    a = l.index("{")
+    e = len(l) - 1 - l[::-1].index("}")
+    outside = l[:a] + l[e + 1:]
+    inner_vars = _inner_needs(l[a + 1:e], bound)
+    if _assigns(outside):
+        return {outside[0]}, inner_vars, force or inner_vars <= bound
+    return _ready(_aggregate_needs(outside) | inner_vars, bound, force)
+
+
+def _has_body(l):
+    return ":" in l and "{" in l
+
+
+def _assigns(outside):
+    """An aggregate's head outside its body is `v = …`."""
+    return len(outside) >= 2 and outside[1] == "=" and _is_var(outside[0])
+
+
+def _aggregate_needs(outside):
+    """The variables an aggregate's head reads, less its own: `min k : { … }`: k is local."""
+    vs = _vars([t for t in outside if t not in ("count", "min", "max", "sum", "join", ":")])
+    local = {outside[1]} if outside and outside[0] in ("min", "max", "sum") and len(outside) > 1 else set()
+    return vs - local
+
+
+def _is_comparison(l):
+    return any(op in l for op in ("!=", "<=", ">=", "<", ">"))
+
+
+def _comparison(l, bound, force):
+    return _ready(_vars(l), bound, force)
+
+
+def _is_equality(l):
+    return "=" in l
+
+
+def _equality(l, bound, force):
+    """`x = e` (or `e = x`) binds x once e's variables are bound; otherwise a test of both sides."""
+    k = l.index("=")
+    left, right = l[:k], l[k + 1:]
+    lv, rv = _vars(left), _vars(right)
+    for side, other in ((left, rv), (right, lv)):
+        if _binds_one(side, other, bound):
+            return {side[0]}, other, True
+    return _ready(lv | rv, bound, force)
+
+
+def _binds_one(side, other, bound):
+    """One side of `=` is a lone variable, and the other's variables are bound."""
+    return len(side) == 1 and _is_var(side[0]) and other <= bound
+
+
+def _atom(l):
+    """A positive atom binds its variables."""
     if len(l) >= 3 and l[1] == "(":
         return _vars(_strip_relation_args(l)), set(), True
     return set(), _vars(l), True
+
+
+# The kinds of body literal, in the order `_literal` tries them.
+_LITERAL_KINDS = (
+    (_is_disjunction, _disjunction),
+    (lambda l: l[0] == "!", _negation),
+    (_is_pattern, _pattern),
+    (_is_text_test, _text_test),
+    (_is_match, _match),
+    (_is_aggregate, _aggregate),
+    (_is_comparison, _comparison),
+    (_is_equality, _equality),
+)
 
 
 def _inner_needs(inner, bound):

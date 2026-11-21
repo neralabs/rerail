@@ -304,11 +304,10 @@ impl<'s> Lexer<'s> {
     #[inline]
     pub fn skip(&self, mut at: usize, extras: &mut Vec<(u32, u32, u32)>) -> R<(usize, bool)> {
         // A token touching the last one (`f(`, `.b`): no white space, no comment.
-        if let Some(&c) = self.src.get(at) {
-            if c < 0x80 && c != b'/' && !crate::block::is_space(c) {
+        if let Some(&c) = self.src.get(at)
+            && c < 0x80 && c != b'/' && !crate::block::is_space(c) {
                 return Ok((at, false));
             }
-        }
         let mut nl = false;
         loop {
             loop {
@@ -321,13 +320,11 @@ impl<'s> Lexer<'s> {
                     _ => break,
                 }
             }
-            if self.at(at) >= 0x80 {
-                if let Some((c, _)) = decode(self.src, at) {
-                    if c.is_whitespace() {
+            if self.at(at) >= 0x80
+                && let Some((c, _)) = decode(self.src, at)
+                    && c.is_whitespace() {
                         return Err(Refusal::Lex(at as u32));
                     }
-                }
-            }
             match self.comment(at)? {
                 None => return Ok((at, nl)),
                 Some((end, true)) => {
@@ -685,13 +682,11 @@ impl<'s> Lexer<'s> {
                 break;
             }
         }
-        if self.at(e) >= 0x80 {
-            if let Some((ch, _)) = decode(self.src, e) {
-                if !ch.is_alphanumeric() && !ch.is_whitespace() {
+        if self.at(e) >= 0x80
+            && let Some((ch, _)) = decode(self.src, e)
+                && !ch.is_alphanumeric() && !ch.is_whitespace() {
                     return Err(Refusal::Lex(e as u32));
                 }
-            }
-        }
         Ok(e)
     }
 
@@ -753,9 +748,8 @@ impl<'s> Lexer<'s> {
                 i = digits(j);
             }
         }
-        if matches!(self.at(i), b'f' | b'F' | b'd' | b'D') {
-            i += 1;
-        } else if !float && matches!(self.at(i), b'l' | b'L') {
+        // A float's suffix, or an integer's `L`.
+        if matches!(self.at(i), b'f' | b'F' | b'd' | b'D') || (!float && matches!(self.at(i), b'l' | b'L')) {
             i += 1;
         }
         self.number_end(i)

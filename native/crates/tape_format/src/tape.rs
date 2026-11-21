@@ -14,7 +14,7 @@
 //! (`crate::f16::F16`). A caller dispatches once a document (`with_tape!`), so the per-node reads are compiled
 //! for each format.
 
-use crate::generated_reads::f15 as reads;
+use crate::reads::f15 as reads;
 use crate::{CHECKPOINT_STRIDE, HEADER_BYTES, MAGIC, FORMAT_VERSION, TAIL_FROM_START, header, padded};
 
 /// What a code is: the grammar's kind and field, the flags (`CODE_EXTRA`, `CODE_ERROR`, `CODE_MISSING`), a
@@ -215,6 +215,12 @@ impl CodeSet {
 pub trait Tape {
     /// The nodes.
     fn len(&self) -> usize;
+    /// Whether block `block` (nodes `f16::Z * block ..`; `u32::MAX`: the document) may have a node of kind `kind`,
+    /// by the tape's presence in its home (`tape_has_kind`, decision 0434 §4, step 6): true for a tape that has none.
+    fn has_kind(&self, block: u32, kind: u16) -> bool {
+        let _ = (block, kind);
+        true
+    }
     fn is_empty(&self) -> bool {
         self.len() == 0
     }
@@ -255,6 +261,15 @@ pub trait Tape {
     #[inline(always)]
     fn end_with_start(&self, i: usize, _start: u64) -> u64 {
         self.end(i)
+    }
+    /// `match_groups` over the blocks `block` admits alone (block `b`: nodes `f16::Z * b ..`), as a planner tells
+    /// them from the tape's presence (`has_kind`): a format 16 or 16z tape reads no codes of a block left out.
+    fn match_groups_in(&self, set: &CodeSet, block: &dyn Fn(u32) -> bool, mut f: impl FnMut(usize, u64)) {
+        self.match_groups(set, |base, m| {
+            if block((base / crate::f16::Z) as u32) {
+                f(base, m);
+            }
+        });
     }
     /// The codes 64 nodes at a time: `f(base, m)`, bit j of `m` set when node `base + j` is in `set`.
     fn match_groups(&self, set: &CodeSet, mut f: impl FnMut(usize, u64)) {
@@ -330,12 +345,12 @@ pub struct F15Columns<'a> {
     pub tail: &'a [u8],
     pub widths: [u8; 3],
     pub from_start: bool,
-    /// The source's length (its header's, or its image's): a view's spans are held to it (decision 0427).
+    /// The source's length (its header's, or its image's): a view's spans are held to it (decision 0463).
     pub source_len: u64,
 }
 
-/// Format 15, read where its columns lie, through the tape's reads (decision 0310's Rust backend,
-/// `generated_reads`) over its view. Its codes are the tape's own table (numbered by first use); its parent is not
+/// Format 15, read where its columns lie, through the tape's reads (`crate::reads`, written directly,
+/// decision 0534) over its view. Its codes are the tape's own table (numbered by first use); its parent is not
 /// stored, so it is found back over the nodes before (the format's cost: 0156 §1.7).
 #[derive(Clone, Copy)]
 pub struct F15<'a> {
@@ -385,17 +400,17 @@ impl Tape for F15<'_> {
     }
     #[inline(always)]
     fn code(&self, i: usize) -> u32 {
-        reads::tape_number(self.bytes, &self.view, i as u32)
+        reads::number(self.bytes, &self.view, i as u32)
     }
     #[inline(always)]
     fn subtree_end(&self, i: usize) -> usize {
-        i + reads::tape_size(self.bytes, &self.view, i as u32) as usize
+        i + reads::size(self.bytes, &self.view, i as u32) as usize
     }
     /// Not stored: the nearest node before `i` whose subtree holds it, searched back over at most 64 nodes, else
     /// found by descending from the root over the siblings' subtree ends (`Tape::path`): a search is never longer
     /// than the path's siblings.
     fn parent(&self, i: usize) -> Option<usize> {
-        let p = reads::tape_parent(self.bytes, &self.view, i as u32);
+        let p = reads::parent(self.bytes, &self.view, i as u32);
         (p != u32::MAX).then_some(p as usize)
     }
     /// The node before when it holds `i` (a first child), else a descent from `a` over the siblings' subtree ends:
@@ -429,18 +444,18 @@ impl Tape for F15<'_> {
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
-        u64::from(reads::tape_start(self.bytes, &self.view, i as u32))
+        u64::from(reads::start(self.bytes, &self.view, i as u32))
     }
     #[inline(always)]
     fn end(&self, i: usize) -> u64 {
-        u64::from(reads::tape_end(self.bytes, &self.view, i as u32))
+        u64::from(reads::end(self.bytes, &self.view, i as u32))
     }
-    /// A scan's span is the tape's as stated (decision 0427: what its check reads; its slices are checked).
+    /// A scan's span is the tape's as stated (decision 0463: what its check reads; its slices are checked).
     fn start_next(&self, i: usize, _prev_start: u64) -> u64 {
-        u64::from(reads::tape_start_stated(self.bytes, &self.view, i as u32))
+        u64::from(reads::start_stated(self.bytes, &self.view, i as u32))
     }
     fn end_with_start(&self, i: usize, _start: u64) -> u64 {
-        u64::from(reads::tape_end_stated(self.bytes, &self.view, i as u32))
+        u64::from(reads::end_stated(self.bytes, &self.view, i as u32))
     }
 }
 
@@ -643,6 +658,12 @@ impl Tape for AnyTape<'_> {
     }
     fn match_groups(&self, set: &CodeSet, f: impl FnMut(usize, u64)) {
         with_tape!(self, |t| t.match_groups(set, f))
+    }
+    fn match_groups_in(&self, set: &CodeSet, block: &dyn Fn(u32) -> bool, f: impl FnMut(usize, u64)) {
+        with_tape!(self, |t| t.match_groups_in(set, block, f))
+    }
+    fn has_kind(&self, block: u32, kind: u16) -> bool {
+        with_tape!(self, |t| t.has_kind(block, kind))
     }
     fn path(&self, i: usize, out: &mut Vec<usize>) {
         with_tape!(self, |t| t.path(i, out))

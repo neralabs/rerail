@@ -4,6 +4,43 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.11 (2026-11-20)
+
+538 rules, 317 of them on by default.
+
+### Added
+
+- `bandit-b105-hardcoded-password-string` (starts in Steer): Don't assign or compare a string literal to a variable, attribute, or key named like a password, token, or secret; read credentials from the environment or a secret store.
+
+### Changed
+
+- This version needs Rerail 0.2.0 or newer, where rules that test punctuation or keywords the grammar implies run again; 0.2.0 skips the previous version's. They report what they did, except that `ruff-ret505` to `ruff-ret508` now span the whole `else` or `elif` clause, not only its keyword.
+
+### Fixed
+
+- `bandit-b201-flask-debug-true` now reports `.run(debug=True)` on an app from a factory, such as `app = create_app()`, as Bandit does. After an import of a module whose name contains `flask`, any `.run` call whose `debug` keyword is `True` or `"True"` is reported. Apps made by `Flask(...)` are reported as before.
+- `bandit-b401-import-telnetlib` now reports telnetlib in three more kinds of import statement, as Bandit does: as one name of a multi-name import (`import os, telnetlib`), through a relative import (`from . import telnetlib`), and as any module whose name starts with telnetlib (`import telnetlib3 as telnetlib`).
+- `bandit-b402-import-ftplib` now reports ftplib in three more kinds of import statement, as Bandit does: as one name of a multi-name import (`import os, ftplib`), through a relative import (`from . import ftplib`), and as any module whose name starts with ftplib.
+- `bandit-b405-import-xml-etree` now reports xml.etree.ElementTree and xml.etree.cElementTree in three more kinds of import statement, as Bandit does: as one name of a multi-name import (`import os, xml.etree.ElementTree` or `from xml.etree import ElementInclude, ElementTree`), through a relative import, and as any longer dotted name that starts with either module's.
+- `bandit-b406-import-xml-sax` now reports xml.sax in three more kinds of import statement, as Bandit does: as one name of a multi-name import (`import os, xml.sax`), through a relative import, and as a longer dotted name (`import xml.sax.handler`). `from xml.sax import saxutils, handler` is reported too; a from-import of only saxutils still is not.
+- `bandit-b407-import-xml-expat` now reports xml.dom.expatbuilder in three more kinds of import statement, as Bandit does: as one name of a multi-name import (`import os, xml.dom.expatbuilder` or `from xml.dom import Node, expatbuilder`), through a relative import, and as any longer dotted name that starts with xml.dom.expatbuilder.
+- `bandit-b408-import-xml-minidom` now reports xml.dom.minidom in three more kinds of import statement, as Bandit does: as one name of a multi-name import (`import sys, xml.dom.minidom` or `from xml.dom import Node, minidom`), through a relative import, and as any longer dotted name that starts with xml.dom.minidom.
+- `bandit-b409-import-xml-pulldom` now reports xml.dom.pulldom in three more kinds of import statement, as Bandit does: as one name of a multi-name import (`import sys, xml.dom.pulldom` or `from xml.dom import Node, pulldom`), through a relative import, and as any longer dotted name that starts with xml.dom.pulldom.
+- `bandit-b411-import-xmlrpclib` now reports xmlrpc in three more kinds of import statement, as Bandit does: as one name of a multi-name import (`import os, xmlrpc.client`), through a relative import (`from . import xmlrpc`), and as any module whose name starts with xmlrpc, such as Python 2's `xmlrpclib`.
+- `bandit-b413-import-pycrypto` now reports PyCrypto's modules in three more kinds of import statement, as Bandit does: as one name of a multi-name import (`import os, Crypto.Cipher` or `from Crypto import Random, Hash`), through a relative import, and as a submodule or longer dotted name of one of them (`import Crypto.Cipher.AES`, `from Crypto.Util.number import bytes_to_long`).
+- `bandit-b415-import-pyghmi` now reports pyghmi in three more kinds of import statement, as Bandit does: as one name of a multi-name import (`import os, pyghmi`), through a relative import (`from . import pyghmi`), and as any module whose name starts with pyghmi.
+- `ruff-sim113-enumerate-for-loop` no longer reports a counter that is read after its loop outside the block holding the counter and the loop, such as in an `if` after the enclosing `if` or `for`, as Ruff does not.
+
+## 0.1.10 (2026-11-17)
+
+537 rules, 316 of them on by default.
+
+### Changed
+
+- This version needs the Rerail released with it, or a newer one: update Rerail when you update the pack (`rerail update`). An older Rerail leaves the whole pack out.
+- The pack's summary line and its README now name the tool versions it matches.
+- `ruff-b009-get-attr-with-constant` and `ruff-b010-set-attr-with-constant` are now held off with their reason, so set-up never turns them on to match a Ruff config that runs B009 or B010.
+
 ## 0.1.9 (2026-11-12)
 
 537 rules, 316 of them on by default.

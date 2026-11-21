@@ -603,7 +603,7 @@ Three changes, each on the full corpus, cold, profiled. 252 violations each time
   where `exists_10` holds) still read every node of each demanded document.
 
 **The data-layer pack's rules.** The rules moved from More-ergonomic's drafts (`docs/rule-syntax/data-layer`, 56) to
-Data-layer-rule-expressivity's pack (`gate/data-layer/packs/data-layer/candidates/rr`, 68 checks, copied at
+Data-layer-rule-expressivity's pack (`packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rr`, 68 checks, copied at
 994be7e84). Those read `core.rr` relations the data-layer engine adds (`split_line`, `lf_line`, repository inputs),
 so its engine was merged (ca930d974). It had already merged this branch at d334d5bf8.
 

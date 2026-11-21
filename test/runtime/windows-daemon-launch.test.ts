@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 import { promisify } from "node:util";
 import { afterEach, describe, expect, it } from "vitest";
 import { stopDaemon } from "../../src/runtime/daemon-control.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 const packageRoot = resolve(dirname(fileURLToPath(import.meta.url)), "..", "..");
 const run = promisify(execFile);
@@ -14,7 +15,7 @@ const homes: string[] = [];
 afterEach(async () => {
   await Promise.all(homes.splice(0).map(async home => {
     await stopDaemon(home);
-    await rm(home, { recursive: true, force: true });
+    await removeFolder(home);
   }));
 });
 

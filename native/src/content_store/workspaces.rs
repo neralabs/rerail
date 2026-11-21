@@ -1,6 +1,5 @@
 //! Workspace registry, overlays, promotion to snapshots, and workspace leases.
 
-use crate::content_store::connection::Cached as _;
 #[cfg(any(test, feature = "test-hooks"))]
 use super::StoredFile;
 use super::rows::{intern_path, intern_string, validate_relative_path};
@@ -9,6 +8,7 @@ use super::{
     STRING_REPOSITORY, SnapshotId, SourceId, StoreError, StoreResult, StoredPathObjects,
     StoredSourceObjects, TapeId, WorkspaceId, WorkspaceRegistration,
 };
+use crate::content_store::connection::Cached as _;
 #[cfg(any(test, feature = "test-hooks"))]
 use rusqlite::OptionalExtension;
 use rusqlite::{Connection, TransactionBehavior, params};
@@ -35,6 +35,17 @@ impl WorkspaceRegistration<'_> {
         let root_path_id = intern_path(transaction, self.root)?;
         let repository_id = intern_string(transaction, STRING_REPOSITORY, self.repository)?;
         let owner_id = intern_string(transaction, STRING_OWNER, self.owner)?;
+        // A workspace registered again after it ended (decision 0450 §2) starts a new session: the ended one's overlay
+        // was its own, and goes; its snapshot is released once no workspace names it.
+        transaction.execute_cached(
+            "DELETE FROM workspace_overlay WHERE workspace_id IN (SELECT workspace_id FROM workspaces WHERE root_path_id=?1 AND state_id>=2)",
+            [root_path_id],
+        )?;
+        transaction.execute_cached(
+            "INSERT INTO store_sessions(kind,key,latest,last_used,ended,aged_bytes) VALUES (?1,?2,?3,?4,NULL,0) \
+             ON CONFLICT(kind,key) DO UPDATE SET latest=excluded.latest,last_used=excluded.last_used,ended=NULL,aged_bytes=0",
+            params![super::reclamation::SESSION_WORKSPACE, root_path_id, self.generation, super::unix_seconds()?],
+        )?;
         transaction.execute_cached(
             "INSERT INTO workspaces(root_path_id,repository_string_id,owner_string_id,snapshot_id,generation,lease_until,state_id)\
              VALUES (?1,?2,?3,?4,?5,?6,1)\
@@ -96,7 +107,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = intern_path(&transaction, path)?;
         transaction.execute_cached(
             "INSERT INTO workspace_overlay(workspace_id,path_id,state_id,source_id,tape_id) VALUES (?1,?2,?3,?4,?5)\
@@ -111,7 +123,9 @@ impl ContentStore {
         &self,
         workspace_id: WorkspaceId,
         snapshot_id: SnapshotId,
-        paths: &[&str],
+        paths: &[(&str, i64)],
+        grammar_version: i64,
+        tape_format: i64,
     ) -> StoreResult<()> {
         if paths.is_empty() {
             return Ok(());
@@ -121,19 +135,21 @@ impl ContentStore {
                 "snapshot promotion batch cannot exceed {MAX_PUBLICATION_BATCH} files"
             )));
         }
-        for path in paths {
+        for (path, _) in paths {
             validate_relative_path(path)?;
         }
         self.immediate_transaction(|transaction| {
-            for path in paths {
+            for &(path, grammar) in paths {
                 let path_id = intern_path(transaction, path)?;
                 transaction.execute_cached(
                     "INSERT INTO snapshot_files(snapshot_id,path_id,source_id,tape_id) \
-                     SELECT ?1,path_id,source_id,tape_id FROM workspace_overlay \
-                     WHERE workspace_id=?2 AND path_id=?3 \
+                     SELECT ?1,o.path_id,o.source_id,coalesce(o.tape_id,t.tape_id) FROM workspace_overlay o \
+                     LEFT JOIN tape_objects t ON t.source_id=o.source_id AND t.grammar_id=?4 \
+                       AND t.grammar_version=?5 AND t.tape_format_version=?6 \
+                     WHERE o.workspace_id=?2 AND o.path_id=?3 \
                      ON CONFLICT(snapshot_id,path_id) DO UPDATE SET \
                      source_id=excluded.source_id,tape_id=excluded.tape_id",
-                    params![snapshot_id.0, workspace_id.0, path_id],
+                    params![snapshot_id.0, workspace_id.0, path_id, grammar, grammar_version, tape_format],
                 )?;
             }
             Ok(())
@@ -199,7 +215,8 @@ impl ContentStore {
             .connection
             .lock()
             .expect("content store mutex poisoned");
-        let transaction = super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
+        let transaction =
+            super::connection::begin(&mut connection, TransactionBehavior::Immediate)?;
         let path_id = transaction
             .query_row_cached(
                 "SELECT p.path_id FROM paths p JOIN strings s ON s.string_id=p.string_id \
@@ -329,7 +346,7 @@ impl ContentStore {
             StoreError::Invalid(format!("workspace leases cannot be encoded: {error}"))
         })?;
         let renew = |transaction: &Connection| {
-            transaction
+            let renewed = transaction
                 .prepare_cached(
                     "WITH input AS (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) workspace_id, \
                      json_extract(value,'$[1]') owner FROM json_each(?1)) \
@@ -337,8 +354,15 @@ impl ContentStore {
                      JOIN strings s ON s.domain_id=?3 AND s.value=i.owner \
                      WHERE i.workspace_id=workspaces.workspace_id AND s.string_id=workspaces.owner_string_id)",
                 )?
-                .execute(params![encoded, lease_until, STRING_OWNER])
-                .map_err(StoreError::from)
+                .execute(params![encoded, lease_until, STRING_OWNER])?;
+            // Their store sessions were used now (decision 0450 §2).
+            transaction
+                .prepare_cached(
+                    "UPDATE store_sessions SET last_used=?2 WHERE kind=?3 AND ended IS NULL AND key IN (SELECT w.root_path_id FROM workspaces w \
+                     WHERE w.state_id=1 AND w.lease_until=?4 AND w.workspace_id IN (SELECT CAST(json_extract(value,'$[0]') AS INTEGER) FROM json_each(?1)))",
+                )?
+                .execute(params![encoded, super::unix_seconds()?, super::reclamation::SESSION_WORKSPACE, lease_until])?;
+            Ok(renewed)
         };
         if retried {
             self.immediate_transaction(renew)

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Check lib/python/security-blacklist.rr.
+"""Check lib/python/security-blacklist.rerail.
 
 1. Round trip: read the table back, rebuild what each rule's JSON says (its `resolves.import` list; its `import M`,
    `import M as $ALIAS`, `from M import $$$NAMES`, `from P import X`, `from P import X as $ALIAS` patterns) and diff.

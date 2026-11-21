@@ -11,8 +11,15 @@ pub fn run() {
         return;
     }
     let mut build = cc::Build::new();
+    // A C compiler older than the M4 (Xcode's clang before it knew `apple-m4`) builds no SME lane: the crate builds,
+    // and the executor's other lanes take its work (`sme_lane` unset).
+    if !build.is_flag_supported("-mcpu=apple-m4").unwrap_or(false) {
+        println!("cargo:warning=the C compiler does not know -mcpu=apple-m4: no SME lane in this build");
+        return;
+    }
     build.file("src/sme/kernels.c").flag("-mcpu=apple-m4").flag("-Wall").opt_level(2).debug(false);
     build.compile("rerail_sme");
+    println!("cargo:rustc-cfg=sme_lane");
     // The SME ABI's support routines (`__arm_tpidr2_save`, entered with each new ZA state) live in clang's
     // compiler-rt, which the clang driver links and rustc's link line does not: link it by name.
     let out = build.get_compiler().to_command().arg("--print-file-name=libclang_rt.osx.a").output().expect("ask the C compiler for compiler-rt");

@@ -2,7 +2,7 @@
 //! §2, §15). Two root trees are walked together, one level per statement, over the stored
 //! `git_trees`/`git_tree_entries` rows (the reachability walk in `reclamation.rs` is its pattern).
 //! A subtree whose hash is the same on both sides is never read: that is where an edit's cost
-//! stops growing with the repository (Tempo E31–E34).
+//! stops growing with the repository (the predecessor's E31–E34).
 
 use super::{ContentStore, HashKey, StoreError, StoreResult};
 use std::collections::{BTreeMap, HashMap};
@@ -143,7 +143,7 @@ impl ContentStore {
 
 fn digest(lanes: [i64; 4]) -> [u8; 32] {
     let mut digest = [0; 32];
-    for (chunk, lane) in digest.chunks_exact_mut(8).zip(lanes) {
+    for (chunk, lane) in digest.as_chunks_mut::<8>().0.iter_mut().zip(lanes) {
         chunk.copy_from_slice(&lane.to_be_bytes());
     }
     digest

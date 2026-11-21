@@ -11,7 +11,7 @@ use std::collections::{BTreeMap, BTreeSet};
 #[cfg(any(test, feature = "test-hooks"))]
 use std::ops::Range;
 
-// The packed runtime (05 Phase 4, from ner-1562-scale-test-the-re-railer): every backend over one
+// The packed runtime (05 Phase 4, from N): every backend over one
 // program. Nothing outside its tests calls it until the demand vtab (Phase 5) drives it.
 #[allow(dead_code)]
 pub mod packed;
@@ -499,10 +499,7 @@ pub fn execute_batch(
 use super::search_index::persist_search_index_batch;
 
 #[cfg(any(test, feature = "test-hooks"))]
-pub fn execute_many(
-    programs: &[Program],
-    tape: &TapeDoc,
-) -> Result<Vec<Vec<Output>>, Error> {
+pub fn execute_many(programs: &[Program], tape: &TapeDoc) -> Result<Vec<Vec<Output>>, Error> {
     let required = programs
         .iter()
         .filter_map(|program| match split(program.words[0]) {

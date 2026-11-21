@@ -8,7 +8,7 @@
 # LOGIC_ARGS: more arguments to the engine's `logic` (`--metal`); SKIP_MAIN=1: main is not run (a second engine pass);
 # PROFILE_DIR: each step's engine profile in PROFILE_DIR/<step> (RERAIL_PROFILE; it costs CPU: attribution only).
 set -u
-SP=${SP:-${RERAIL_SHARED:-$HOME/orca/rerail-shared}/bench/step-vs-main}
+SP=${SP:-${RERAIL_SHARED:?set SP, or RERAIL_SHARED to the shared data folder}/bench/step-vs-main}
 CLI=${CLI:-$SP/main-pkg/node_modules/@neralabs/rerail/dist/cli/cli.js}
 SHAPE=$1; ENGINE=$2; shift 2; EXTRA=("RERAIL_SQL_STRICT=1" "$@")
 case $SHAPE in
@@ -48,7 +48,7 @@ measure() { # <log> -> "cpu wall rssMB footprintMB"
 printf "%-8s %-8s %8s %8s %8s %8s %9s  %s\n" step engine cpu_s wall_s rss_MB foot_MB findings note
 for r in $STEPS; do
   if [ $r = rule ]; then
-    sed -i '' 's/Replace this assert with/Replace this assert statement with/' $R/rules/bandit-b101-assert-used.rr
+    sed -i '' 's/Replace this assert with/Replace this assert statement with/' $R/rules/bandit-b101-assert-used.rerail
     sed -i '' 's/Replace this assert with/Replace this assert statement with/' $PACK/rules/bandit-b101-assert-used.json
   elif [ $r != cold ] && [ $r != warm ]; then
     edit $r $R/corpus-dl; edit $r $R/corpus-main

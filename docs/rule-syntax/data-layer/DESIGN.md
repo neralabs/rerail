@@ -3,14 +3,14 @@
 ## Intro
 
 The data-layer repository enforces its architecture with 142 lint checks, written as Python scripts. They are the
-hardest test the `.rr` rule language has: if it can say what these scripts say, with the same findings, it can
+hardest test the `.rerail` rule language has: if it can say what these scripts say, with the same findings, it can
 replace them. Seven checks were already written by hand. This page asks the question for all 142: what does the
 language, its native core or its libraries lack? It then records what was added.
 
 The answer is mostly facts, not syntax. The scripts read things Python gives them for free: CPython's `ast` (where
 a decorator belongs, which names are `Name` nodes, the order a visitor walks), its string decoder, the raw lines
 of a file, the repository's own files (allowlists, signed baselines, Markdown), and git. Each of those became a
-native fact or functor in `lib/core.rr`, or a Datalog relation in a library. Three needs became language:
+native fact or functor in `lib/core.rerail`, or a Datalog relation in a library. Three needs became language:
 
 - `join`, an ordered string aggregate, because nothing else can build the exact text a signature covers;
 - `ordered by earlier`, for state where only some writes count;
@@ -41,15 +41,15 @@ How this was done:
    [checks/group-8.md](checks/group-8.md).
 2. The needs were merged and designed into the core, the libraries and the directives (below).
 3. Three checks were written as worked ports that use the new parts, plus one sketch:
-   - [file-length.rr](file-length.rr): a JSON allowlist, a signature checked in Datalog, a gate.
-   - [noqa-sec-ratchet.rr](noqa-sec-ratchet.rr): a line scan, codes from a column, a ratchet against a signed
+   - [file-length.rerail](file-length.rerail): a JSON allowlist, a signature checked in Datalog, a gate.
+   - [noqa-sec-ratchet.rerail](noqa-sec-ratchet.rerail): a line scan, codes from a column, a ratchet against a signed
      baseline.
-   - [test-budget.rr](test-budget.rr): a run artifact (pytest's count), a static bound that works without it, a
+   - [test-budget.rerail](test-budget.rerail): a run artifact (pytest's count), a static bound that works without it, a
      gate. Its signed layout was checked against the real signature too.
-   - [versioned-table-names.rr](versioned-table-names.rr): file-wide state in visit order, as plain recursion.
-   - [sketches/owner-code.rr](sketches/owner-code.rr): the one shape that needs `ordered by earlier`.
+   - [versioned-table-names.rerail](versioned-table-names.rerail): file-wide state in visit order, as plain recursion.
+   - [sketches/owner-code.rerail](sketches/owner-code.rerail): the one shape that needs `ordered by earlier`.
 4. Every check was then mapped onto the design: [checks/COVERAGE.md](checks/COVERAGE.md).
-5. `site/check_rr.py` checks every `.rr` file for grounded rules, duplicate declarations and, new here,
+5. `site/check_rr.py` checks every `.rerail` file for grounded rules, duplicate declarations and, new here,
    stratification. All files pass.
 
 ## The three language additions
@@ -71,13 +71,13 @@ of a finding's identity. Most uses the analyses listed were for messages; those 
 contract leaves messages free.
 
 ```
-// lib/data-layer/signing.rr: the canonical message of an allowlist.
+// lib/data-layer/signing.rerail: the canonical message of an allowlist.
 allow_message(l, msg) :- allow_sig(l, linter, _),
     body = join q by e sep "," : { allow_entry(l, e), q = @json_str(e) },
     msg = cat("{\"allowlist\":[", body, "],\"linter\":", @json_str(linter), ",\"version\":1}").
 ```
 
-Both layouts in `signing.rr` (allowlist and ratchet baseline) were checked against the repository's real
+Both layouts in `signing.rerail` (allowlist and ratchet baseline) were checked against the repository's real
 signatures: built as these rules build them, each message verifies. The alternative was a native `signed=` option
 on the readers, one per layout. It was rejected: it fixes one repository's scheme in the engine, and a second
 repository would need new engine code.
@@ -101,7 +101,7 @@ either the declaration or the `earlier` tie is removed. The engine evaluates suc
 order, so the rows at n depend only on rows already final.
 
 ```
-// data-layer/sketches/owner-code.rr
+// data-layer/sketches/owner-code.rerail
 src_code(n, c) :- ast_name(n, x), expr_ctx(n, "load"), frame(n, f),
     k = max i : { write(w2, f, x, v2), earlier(v2, n), src_code(v2, _), visit_index(w2, i) },
     visit_index(w, k), write(w, f, x, v), src_code(v, c).
@@ -113,13 +113,13 @@ plain positive recursion, which Soufflé already accepts:
 - versioned_table_name_manipulation keeps two file-wide maps updated as the visitor walks. Every assignment resets
   the name before it stores, so "the latest write before n" is a `max` over syntax. Only what that write stored
   is recursive, and it is used positively. A def that returns a suffix adds itself without resetting, which is a
-  union, also positive. [versioned-table-names.rr](versioned-table-names.rr) is the whole check, and it
+  union, also positive. [versioned-table-names.rerail](versioned-table-names.rerail) is the whole check, and it
   stratifies.
 - python/flow's `always_raises` ("every branch of the last `if` raises") was first written with
   `count : { … !always_raises(…) } = 0` and `ordered by within`. "Every branch" is a chain over the `elif`/`else`
   clauses, so it is now positive recursion, and `ordered by within` was dropped from the design.
 
-The rule of thumb, in core.rr: use `ordered by earlier` only when *which* write counts depends on the recursion.
+The rule of thumb, in core.rerail: use `ordered by earlier` only when *which* write counts depends on the recursion.
 The coverage pass ([checks/COVERAGE.md](checks/COVERAGE.md), "Ordered recursion verdicts") applies it to every
 check that claimed the need.
 
@@ -207,7 +207,7 @@ SQLite + Python:
 | 100,000 functions, 500,000 calls, same shape | not run (quadratic) | 203 k steps, 0.25 s | 2.2 s SQL; 15 k / 36 k search steps; knot 739 nodes |
 | 5,000 functions, one cycle through almost all of them | 2.5 M steps, 0.45 s | 11 k steps, 0.01 s | 0.09 s SQL; 1.7 M search steps (fresh), 10 k (shared); knot 4,791 nodes |
 
-Native (spikes/dfs-first/native; every set pass is a linear scan of a CSR edge array, Tarjan reads it directly):
+Native (spikes/dfs-first/native (removed; at 7efcac9c67); every set pass is a linear scan of a CSR edge array, Tarjan reads it directly):
 
 | Graph | Set passes | Every root, fresh memo | Every root, shared memo | Scripts' search (oracle) |
 |---|---|---|---|---|
@@ -219,11 +219,11 @@ Native (spikes/dfs-first/native; every set pass is a linear scan of a CSR edge a
 Peak resident memory at 1,000,000 functions: 435 MB, including the oracle's memo. CPU time, user+sys; the machine
 was heavily loaded (load average 20–150; 50–110 for the real-data, thread and GPU runs), so times are upper bounds.
 
-On the real repository. spikes/dfs-first/realgraph.py rebuilds LEG-083's call graph from the data-layer
+On the real repository. spikes/dfs-first/realgraph.py (removed; at 7efcac9c67) rebuilds LEG-083's call graph from the data-layer
 repository, reading blobs through `git cat-file` and parsing them with `ast` (nothing from the repository
 runs), and runs a copy of the script's own `_transitive_eager_resolve`. The copy is checked against the real
 linter's output: the data-layer worktree keeps the fact cache of a lint-all run at 41ab36f, and on all 355
-files it covers, the copy gives the same LEG-083 rows (spikes/dfs-first/vs_cache.py).
+files it covers, the copy gives the same LEG-083 rows (spikes/dfs-first/vs_cache.py (removed; at 7efcac9c67)).
 
 Four versions of the search are compared, each against the set-based plan on the rewritten graph (legacy
 surfaces blocked). The oracle is also compared with the script.
@@ -242,7 +242,7 @@ surfaces blocked). The oracle is also compared with the script.
 The set-based plan equals the script's answer on every root of every version, on one core, 8 threads and
 the GPU.
 
-What the versions show (data-layer/upstream/LEG-083.md, with a patch for the script):
+What the versions show (the LEG-083 port note, with a patch for the script, both removed):
 
 - The eager test, not the search, is what is wrong today. At the October commit all 18 LEG-083 findings
   in its files are a pathlib `resolve()` or a `resolve(arg)` lookup, and none is a lazy terminal.
@@ -255,8 +255,8 @@ What the versions show (data-layer/upstream/LEG-083.md, with a patch for the scr
   outside its directories.
 
 The target relation decides how exact a `dfs_first` check is. The search reproduces the script exactly;
-the corrected `target` is what makes it right. The sketch (sketches/transitive-eager.rr) writes the
-receiver test as `path_value`, over python/names.rr's bindings. Real call graphs are mostly dead: under 2%
+the corrected `target` is what makes it right. The sketch (sketches/transitive-eager.rerail) writes the
+receiver test as `path_value`, over python/names.rerail's bindings. Real call graphs are mostly dead: under 2%
 of functions are live, so steps 2-5 touch few nodes.
 
 Threads and GPU. Steps 1-3 and 5 run as waves: `live` as a frontier per level, `next` as one pass per node,
@@ -305,7 +305,7 @@ through most of the graph is the case no plan avoids: depth-first order on gener
 - Zhao, Subotić and Scholz, "Debugging large-scale Datalog", TOPLAS 42(2), 2020: Soufflé builds a witness after
   the fixpoint, on demand. The same split as here: sets first, the chosen path last.
 
-## Native facts and functors (lib/core.rr)
+## Native facts and functors (lib/core.rerail)
 
 Native means the binary computes it: IO, parsing a format, or a fact the tree-sitter tree does not show. Each entry
 says why Datalog cannot derive it.
@@ -334,7 +334,7 @@ A library relation is a named derived fact, and follows the admission rules of t
 it all together, decision 0005): its name is a concept, not a rule's name; at least two checks use it; and it has
 at most as many rows per document as the document has nodes. A helper that one check needs stays in that check.
 
-**lib/python/ast.rr** (new) is Python as CPython's `ast` module sees it. The scripts walk `ast`, not tree-sitter,
+**lib/python/ast.rerail** (new) is Python as CPython's `ast` module sees it. The scripts walk `ast`, not tree-sitter,
 and the two differ in ways that change findings:
 
 - `ast_name(n, x)`, `expr_ctx(n, c)`: which identifiers are `ast.Name`, and their Load/Store/Del context;
@@ -355,7 +355,7 @@ and the two differ in ways that change findings:
 - `latest_assign`: last write before a read, a `max` over visit order;
 - `same_file_call`, `name_reach`: calls followed by spelling, as several scripts do.
 
-**lib/data-layer/signing.rr** (new) holds the repository's key, its unsigned placeholders, and its three signed
+**lib/data-layer/signing.rerail** (new) holds the repository's key, its unsigned placeholders, and its three signed
 layouts: allowlist, named multi-allowlist and ratchet baseline. Each layout gives a `*_status` of `valid`, `invalid`
 or `unsigned`. The library reports; each check decides what a status means, because the scripts differ. An empty
 allowlist is not checked, and a missing baseline passes.
@@ -431,11 +431,11 @@ What the checks use most:
 
 | Element | Checks |
 |---|---|
-| python/ast.rr relations | 76; `sig_param` alone is 28, `ast_name` 19 |
+| python/ast.rerail relations | 76; `sig_param` alone is 28, `ast_name` 19 |
 | check-local helpers | 60 |
 | findings at `@place` | 46 |
 | source text and lines | 38 |
-| signing.rr | 30 |
+| signing.rerail | 30 |
 | `.gate` | 27 |
 | `.scope report / text` | 23 |
 | file readers | 21 |
@@ -453,7 +453,7 @@ The three approximations:
 - serverplan_state_tripwires and legacy_execution_surfaces use a memoised search. It answers "not reached" on some
   paths through cycles. A Datalog fixpoint does reach them, so the ports would report more.
 
-The mapping's gaps, and how each was closed in core.rr:
+The mapping's gaps, and how each was closed in core.rerail:
 
 | Check | Need | Resolution |
 |---|---|---|
@@ -462,7 +462,7 @@ The mapping's gaps, and how each was closed in core.rr:
 | matching_architecture | scope from `--application-root` (:1162-1172) | `.scope dirs option("application_root")` |
 | architecture_rule_docs | a cited commit exists; files at that commit (:219-247) | `git_commit(sha)`; `git_has` for any commit reachable from head |
 | standalone_linter_entrypoints | a suite fails when a member policy fails or times out (plugin.py:127-152) | `.requires "policy", …`: one finding per member that blocks or ends Unknown(budget or timeout) |
-| broad_type_surfaces, broad_type_surfaces_ratchet | PEP 696 type-parameter defaults (lint_broad_type_surfaces.py:701) | not a language need: Rerail's vendored tree-sitter-python already parses them (`type_default`, its patch 1); python/ast.rr's `type_param` reads bound and default |
+| broad_type_surfaces, broad_type_surfaces_ratchet | PEP 696 type-parameter defaults (lint_broad_type_surfaces.py:701) | not a language need: Rerail's vendored tree-sitter-python already parses them (`type_default`, its patch 1); python/ast.rerail's `type_param` reads bound and default |
 
 ## Prior work consulted
 
@@ -472,14 +472,14 @@ Recorded as for a decision: the source, what it says, and whether this design ag
   Agrees. Findings are keys, so message-only joins, duplicate findings and witness choice are not needs. File- and
   repository-level findings have no line, which is what `@place(path, 0)` and a missing path give.
 - **Decision 0005, named derived facts** (admission rule 3). Agrees. New library relations are concept-named and
-  shared by at least two checks (python/ast.rr, signing.rr). Single-check helpers stay in the check.
-- **Stateful-reset semantics are a limit of relational lowering** (ast-index-spike history index, topic 2.21:
+  shared by at least two checks (python/ast.rerail, signing.rerail). Single-check helpers stay in the check.
+- **Stateful-reset semantics are a limit of relational lowering** (SQL index prototype history index, topic 2.21:
   DH L3791-3795; design index §7: LCS L191-195). Agrees for SQL, departs for this language. A guard cleared at
   each reassignment cannot be one flat anti-join. As Datalog it is "the latest reset before n", a `max` over
-  syntax, followed by positive recursion; versioned-table-names.rr is that case. The remaining case, "latest
+  syntax, followed by positive recursion; versioned-table-names.rerail is that case. The remaining case, "latest
   qualifying write", is what `ordered by earlier` adds. It is evaluated in visit order, not lowered to SQL.
 - **The policy layer (allowlist, ratchet, signatures) sits outside the query** (design index §18, LA). Departs, in
-  part. Verification moves into Datalog (signing.rr), because each repository signs its own layout and the
+  part. Verification moves into Datalog (signing.rerail), because each repository signs its own layout and the
   engine should not hard-code one. Enforcement stays outside the query: `.gate` and `.budget` are directives
   applied to the finished relations, not rules.
 - **Lessons ledger #18: structured facts over text matching.** Agrees. `str_part`, `op_at`, `ast_name` and
@@ -497,5 +497,5 @@ Nothing here has been compiled or run against an engine. `site/check_rr.py` chec
 declarations and stratification statically; it passes on every file. The signing layouts were checked against the
 real signatures with PyNaCl. The rules that build those messages were not run. The findings layer and the run
 artifacts are designed (FINDINGS-LAYER.md, RUN-FACTS.md), not built; the producers are sketches over the data
-layer's existing functions. `dfs_first` exists as a spike (spikes/dfs-first), differential-tested against the
+layer's existing functions. `dfs_first` exists as a spike (spikes/dfs-first (removed; at 7efcac9c67)), differential-tested against the
 Data-layer branch's ordered_first.rs semantics; no engine has it.

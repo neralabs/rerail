@@ -141,7 +141,7 @@ fn executable(_: &Path) -> StoreResult<bool> {
 pub fn git_root(store: &ContentStore, root: &Path) -> StoreResult<HashKey> {
     let workspace = git_workspace::discover(root).map_err(|error| StoreError::Invalid(format!("{error:?}")))?;
     store.put_git_trees_bulk(&workspace.trees)?;
-    let repository = gix::open(&workspace.worktree_root)
+    let repository = crate::git_access::opener::open(&workspace.worktree_root)
         .map_err(|error| StoreError::Invalid(format!("cannot open the Git repository: {error}")))?;
     for file in workspace.base_files.iter().filter(|file| label_of_path(&file.path).is_some()) {
         if store.source_by_alias(file.blob)?.is_some() {
@@ -153,7 +153,7 @@ pub fn git_root(store: &ContentStore, root: &Path) -> StoreResult<HashKey> {
         let blob = repository
             .find_object(id)
             .map_err(|error| StoreError::Invalid(format!("cannot read a committed blob: {error}")))?;
-        store.put_source_at(&blob.data, &[file.blob], &file.path)?;
+        store.put_source(&blob.data, &[file.blob])?;
     }
     Ok(workspace.root_tree)
 }

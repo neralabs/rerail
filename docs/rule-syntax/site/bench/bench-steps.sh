@@ -6,7 +6,7 @@
 #   corpus0, pack-B, home-B, rules/<dir>, rs-now/lib (async_blocking renamed in the copy).
 # CPU = user + sys from /usr/bin/time -l; peak = footprint (RSS also shown: it counts the store's file map).
 set -u
-SP=${SP:-${RERAIL_SHARED:-$HOME/orca/rerail-shared}/bench/step-vs-main}
+SP=${SP:-${RERAIL_SHARED:?set SP, or RERAIL_SHARED to the shared data folder}/bench/step-vs-main}
 CLI=${CLI:-$SP/main-pkg/node_modules/@neralabs/rerail/dist/cli/cli.js}
 RULES=$1; ENGINE=$2; shift 2; EXTRA=("RERAIL_SQL_STRICT=1" "$@"); R=${OUT:-$PWD/tmp/bench}/run-steps  # run outputs: the caller's ./tmp, never the shared inputs
 rm -rf "$R"; mkdir -p "$R"
@@ -35,7 +35,7 @@ measure() { # <log> -> "cpu wall rssMB footprintMB"
 printf "%-8s %-8s %8s %8s %8s %8s %9s  %s\n" step engine cpu_s wall_s rss_MB foot_MB findings note
 for r in cold warm append body comment import rule; do
   if [ $r = rule ]; then
-    sed -i '' 's/Replace this assert with/Replace this assert statement with/' $R/rules/bandit-b101-assert-used.rr
+    sed -i '' 's/Replace this assert with/Replace this assert statement with/' $R/rules/bandit-b101-assert-used.rerail
     sed -i '' 's/Replace this assert with/Replace this assert statement with/' $PACK/rules/bandit-b101-assert-used.json
   elif [ $r != cold ] && [ $r != warm ]; then
     edit $r $R/corpus-dl; edit $r $R/corpus-main

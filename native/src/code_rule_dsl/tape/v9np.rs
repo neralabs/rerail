@@ -1,7 +1,7 @@
 //! Tape v8 spike: v7 baseline (copied from rerail native/src/code_rule_dsl/tape.rs and tape/wire.rs)
 //! against regular column variants. Modes:
 //!   measure <corpus> <lang> <dir>...   storage, encode, Rust decode, invariant statistics (one JSON line)
-//!   sql <lang> <db> <maxfiles> <dir>... pure-SQL decoding (ast-index-spike technique) on bundled SQLite
+//!   sql <lang> <db> <maxfiles> <dir>... pure-SQL decoding (SQL index prototype technique) on bundled SQLite
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
@@ -935,12 +935,12 @@ fn measure(corpus: &str, lang: &str, dirs: &[String]) {
                 let mut cols = vec![[0u32; 5]; n];
                 let mut offset = 0usize;
                 let mut start = 0i64;
-                for i in 0..n {
+                for (i, col) in cols.iter_mut().enumerate() {
                     let enc = read_varint(&a.spans, &mut offset);
                     let delta = ((enc >> 1) as i32) ^ -((enc & 1) as i32);
                     let len = read_varint(&a.spans, &mut offset);
                     start += i64::from(delta);
-                    cols[i] = [a.kind(i) as u32, a.parent(i) as u32, a.size(i), start as u32, start as u32 + len];
+                    *col = [a.kind(i) as u32, a.parent(i) as u32, a.size(i), start as u32, start as u32 + len];
                 }
                 sink = sink.wrapping_add(cols.len() as u64);
             }

@@ -116,4 +116,4 @@ contend for no lease.
 
 - 0049 (one interner, the lease), 0104 (no SQL inside the waves), 0111 (atoms found by key), 0114 §4 (reserved
   atoms of components), 0131 (the default store's key).
-- ast-index-spike indexes: interned ids were process-local there; no shared store, so no cross-process allocation.
+- SQL index prototype indexes: interned ids were process-local there; no shared store, so no cross-process allocation.

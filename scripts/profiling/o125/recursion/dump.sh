@@ -18,6 +18,6 @@ env RERAIL_SQL_STRICT=1 RERAIL_TAPE_CACHE=$PWD/$REC/store${COLD:+-$s}.sqlite RER
   RERAIL_RR_LIB=$PWD/docs/rule-syntax/lib \
   zsh tmp/capped.sh 3000 115 /usr/bin/time -l target/debug/rerail-engine $( if [ -n "$LOGIC" ]; then
     # `logic` over the whole tree, a policy's scope left out (dl10 holds none of a data-layer policy's files).
-    mkdir -p $REC/rules; grep -v "^\.scope " $PWD/$POLICY > $REC/rules/prov.rr; echo logic $REC/rules $W $REC/out-$s --chunk 1000000
-  else echo run-policies $W $REC/out-$s $PWD/${POLICY:-tmp/o125/calls-policy.rr}; fi ) > $REC/$s.json 2> $REC/$s.err
+    mkdir -p $REC/rules; grep -v "^\.scope " $PWD/$POLICY > $REC/rules/prov.rerail; echo logic $REC/rules $W $REC/out-$s --chunk 1000000
+  else echo run-policies $W $REC/out-$s $PWD/${POLICY:-tmp/o125/calls-policy.rerail}; fi ) > $REC/$s.json 2> $REC/$s.err
 echo "step $s rc=$?"

@@ -1,6 +1,6 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
-import type { AddressInfo } from "node:net";
+import { createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
@@ -18,7 +18,9 @@ import { type AdapterDelivery, type RepositoryStartState, sessionStartNote } fro
 import type { presentationResponseSchema, sessionResponseSchema } from "../../src/api/index.js";
 import { hookRerailStarted } from "../../src/harness/index.js";
 import type { z } from "zod";
+import { holdEngineEndpoint, testEngineEndpoint } from "../support/platform/engine-endpoint.js";
 import { startTestRepository } from "../support/started-repository.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
 
 let home: string;
 let cwd: string;
@@ -28,6 +30,8 @@ let response: z.infer<typeof presentationResponseSchema>;
 let sessionContext: z.infer<typeof sessionResponseSchema>;
 const sessionId = "session /?&one";
 let requested: string[];
+/** Closes the engine endpoint the recorded daemon holds. */
+let releaseEndpoint: () => Promise<void>;
 
 beforeEach(async () => {
   home = await mkdtemp(join(tmpdir(), "rerail-presentation-"));
@@ -36,8 +40,11 @@ beforeEach(async () => {
   await mkdir(join(cwd, ".rerail"), { recursive: true });
   await writeFile(database, "");
   await writeFile(join(cwd, ".rerail", "repository-id"), "repository-under-test\n");
+  // On Windows a recorded daemon counts as alive only while its engine pipe exists (`recordedDaemonAlive`).
+  const kernelSocketPath = testEngineEndpoint(home);
+  releaseEndpoint = await holdEngineEndpoint(kernelSocketPath);
   state = { pid: process.pid, host: "127.0.0.1", port: 4737, url: "http://127.0.0.1:4737/", version: "test",
-    databasePath: database, kernelSocketPath: join(home, "engine.sock"), ui: "bundled", startedAt: 1, packageRoot: home };
+    databasePath: database, kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home };
   await writeFile(join(home, "daemon.json"), JSON.stringify(state));
   requested = [];
   sessionContext = { session: { sessionId, host: "claude-code", cwd, repositoryId: "repository-under-test", startedAt: 1, endedAt: null, eventCount: 0 },
@@ -58,7 +65,8 @@ beforeEach(async () => {
 afterEach(async () => {
   vi.unstubAllGlobals();
   vi.unstubAllEnvs();
-  await rm(home, { recursive: true, force: true });
+  await releaseEndpoint();
+  await removeFolder(home);
 });
 
 const read = (onDemand = false) => readPresentation({ sessionId: "session /?&one", host: "claude-code", cwd, onDemand });
@@ -218,6 +226,26 @@ describe("installed session presentation", () => {
     expect((await read()).text).toBe("R E R A I L ● rules unavailable · steering unavailable");
   });
 
+  it("adds Merge Assist's segment: the newest conflict's line with the others counted, linked to its card", async () => {
+    const session = response.context!.session!;
+    const summary = { id: "conflict:overlap:abc:12345678", text: "PR #398 (jdoe) shares compiled matchers you clone" };
+    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 3, summary } };
+    const overlaps = await read();
+    expect(overlaps.text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jdoe) shares compiled matchers you clone (+2)");
+    expect(overlaps.parts.at(-1)!.url).toMatch(/#merge\?conflict=conflict:overlap:abc:12345678$/u);
+    session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 1, summary } };
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jdoe) shares compiled matchers you clone");
+  });
+
+  it("cuts a long conflict line in Merge Assist's segment short, keeping the others' count", async () => {
+    const session = response.context!.session!;
+    const text = `origin/akim/${"long-branch-".repeat(20)} (${"Someone ".repeat(10)}) is changing src/a/very/deep/path/to/a/file.ts`;
+    session.hud = { activeRuleCount: 3, steeringCount: 0, mergeAssist: { conflicts: 2, summary: { id: "conflict:a", text } } };
+    const segment = (await read()).parts.at(-1)!.text;
+    expect(segment).toMatch(/^◐ origin\/akim\/long-branch-.*… \(\+1\)$/u);
+    expect([...segment.replace(/^◐ /u, "").replace(/ \(\+1\)$/u, "")]).toHaveLength(90);
+  });
+
   it("draws no footer where Rerail is stopped, says not on here on demand, and Not set up with the start command where no rules are configured", async () => {
     response.repositoryState = "stopped";
     // The ambient footer takes no space in a repository Rerail does not run in (#298).
@@ -293,6 +321,132 @@ describe("installed session presentation", () => {
   });
 });
 
+describe("the folder as spelt, which the daemon's start check reads what Rerail 0.1.4 saved under", () => {
+  /** `folder` with its drive letter in the other case, as VS Code spells it on Windows; as it is elsewhere. */
+  const otherCase = (folder: string) => folder.replace(/^[a-z](?=:)/iu, letter => letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase());
+  const askedFor = () => requested.map(href => new URL(href).searchParams).map(query => [query.get("repository"), query.get("spelling")]);
+
+  it("goes on Windows apart from `repository`, which stays the real path, to a daemon that says it reads it", async () => {
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, readsSpelling: true }));
+    const spelt = otherCase(cwd);
+    await readPresentation({ sessionId, host: "claude-code", cwd: spelt });
+    await readRepositoryState(spelt, "claude-code");
+    const stored = await realpath(cwd);
+    expect(askedFor()).toEqual(Array(2).fill([stored, process.platform === "win32" && spelt !== stored ? spelt : null]));
+  });
+
+  it("does not go to a daemon whose state does not say so, which refuses a query value it does not know", async () => {
+    const spelt = otherCase(cwd);
+    await readPresentation({ sessionId, host: "claude-code", cwd: spelt });
+    await readRepositoryState(spelt, "claude-code");
+    expect(askedFor()).toEqual(Array(2).fill([await realpath(cwd), null]));
+  });
+
+  it("goes only on Windows where a link makes the folder's spelling another path than its real one", async () => {
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, readsSpelling: true }));
+    const link = join(home, "linked-workspace");
+    await symlink(cwd, link, "junction");
+    await readRepositoryState(link, "claude-code");
+    expect(askedFor()).toEqual([[await realpath(cwd), process.platform === "win32" ? link : null]]);
+  });
+
+  it("does not go where the folder is spelt as its real path", async () => {
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, readsSpelling: true }));
+    const stored = await realpath(cwd);
+    await readPresentation({ sessionId, host: "claude-code", cwd: stored });
+    await readRepositoryState(stored, "claude-code");
+    expect(askedFor()).toEqual(Array(2).fill([stored, null]));
+  });
+});
+
+describe("a live daemon that does not answer in time", () => {
+  let held: Server | undefined;
+
+  afterEach(async () => {
+    const server = held;
+    held = undefined;
+    server?.closeAllConnections();
+    if (server !== undefined) await new Promise<void>(resolve => server.close(() => resolve()));
+  });
+
+  /**
+   * A listener that takes every request and never answers it, as a daemon whose main thread is busy does, recorded
+   * with `recorded` over the state the daemon writes.
+   */
+  const holdRequests = async (recorded: Record<string, unknown> = {}): Promise<void> => {
+    vi.unstubAllGlobals();
+    held = createServer(() => { /* The answer never comes. */ });
+    await new Promise<void>((resolve, reject) => held!.once("error", reject).listen(0, "127.0.0.1", () => resolve()));
+    const { port } = held.address() as AddressInfo;
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, pid: process.pid, port, url: `http://127.0.0.1:${port}/`, ...recorded }));
+  };
+
+  /** An engine endpoint that takes each connection and never answers, as a busy daemon's engine does; closes it. */
+  const silentEngine = async (endpoint: string): Promise<() => Promise<void>> => {
+    const sockets = new Set<Socket>();
+    const engine = createNetServer((socket) => {
+      sockets.add(socket);
+      socket.once("close", () => sockets.delete(socket));
+    });
+    await new Promise<void>((resolve, reject) => engine.once("error", reject).listen(endpoint, () => resolve()));
+    return async () => {
+      for (const socket of sockets) socket.destroy();
+      await new Promise<void>(resolve => engine.close(() => resolve()));
+    };
+  };
+
+  const readWith = (startState: () => RepositoryStartState, onDemand = true) =>
+    readPresentation({ sessionId, host: "claude-code", cwd, startState, onDemand });
+
+  it("says not answering, never not running, where the checkout is started", async () => {
+    await holdRequests();
+    // Each read waits out its time, so they wait together.
+    const [started, stopped, summary, stoppedSummary, hookState] = await Promise.all([
+      readWith(() => "started"),
+      readWith(() => "stopped", false),
+      readSummaryState(cwd, "cursor", () => "started"),
+      readSummaryState(cwd, "cursor", () => "stopped"),
+      readRepositoryState(cwd, "omp"),
+    ]);
+    expect(started).toMatchObject({ status: "not-answering", text: "R E R A I L ● not answering", repositoryState: null, counts: null });
+    // Where Rerail is off here, the ambient footer still draws nothing.
+    expect(stopped).toMatchObject({ status: "not-on-here", text: "", repositoryState: "stopped" });
+    expect(summary).toBe("not-answering");
+    expect(stoppedSummary).toBe("stopped");
+    // The hook start check reads the database when no answer comes, as it did.
+    expect(hookState).toBeNull();
+  });
+
+  it("says not answering where the daemon's engine says nothing to the proof of its capability either", async () => {
+    // On Windows the daemon is sent the capability daemon.json records only once its engine proves it holds it, and a
+    // busy daemon's engine stays silent through that proof. Elsewhere the read itself goes unanswered.
+    const engine = testEngineEndpoint(home);
+    const closeEngine = await silentEngine(engine);
+    try {
+      await holdRequests({ kernelSocketPath: engine, accessToken: "capability" });
+      const [started, summary, hookState] = await Promise.all([
+        readWith(() => "started"),
+        readSummaryState(cwd, "cursor", () => "started"),
+        readRepositoryState(cwd, "omp"),
+      ]);
+      expect(started).toMatchObject({ status: "not-answering", text: "R E R A I L ● not answering" });
+      expect(summary).toBe("not-answering");
+      expect(hookState).toBeNull();
+    } finally {
+      await closeEngine();
+    }
+  });
+
+  it("still says not running where the recorded pid is alive but nothing listens", async () => {
+    await holdRequests();
+    const server = held!;
+    held = undefined;
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    expect(await readWith(() => "started")).toMatchObject({ status: "not-running", text: "R E R A I L ✕ not running" });
+    expect(await readSummaryState(cwd, "cursor", () => "started")).toBeNull();
+  });
+});
+
 describe("dashboard links", () => {
   const steer = {
     sessionId: "s", requested: "steer" as const, mechanism: "additional-context" as const, content: "Rerail found 1 problem in your last edit:",
@@ -303,6 +457,19 @@ describe("dashboard links", () => {
     expect(await dashboardOrigin(cwd)).toBe("http://127.0.0.1:4737/");
     const [linked] = await linkDeliveries([steer], cwd);
     expect(linked).toEqual({ ...steer, rules: [{ id: "a:b", state: "steered", url: "http://127.0.0.1:4737/#rule/a%3Ab" }] });
+  });
+
+  it("links a Merge Assist note's conflict to its card, though the note names no rule", async () => {
+    const note = { ...steer, ruleIds: [], rules: [], conflict: { id: "conflict:src/x.ts:1-4:ab12", text: "your edit overlaps PR #398 (Sam): x.ts" } };
+    const [linked] = await linkDeliveries([note], cwd);
+    expect(linked).toEqual({ ...note, conflict: { ...note.conflict, url: "http://127.0.0.1:4737/#merge?conflict=conflict:src%2Fx.ts:1-4:ab12" } });
+  });
+
+  it("asks the daemon nothing when no delivery has a rule or a conflict to link, as on most events", async () => {
+    expect(await linkDeliveries([], cwd)).toEqual([]);
+    const note = { ...steer, ruleIds: [], rules: [] };
+    expect(await linkDeliveries([note], cwd)).toEqual([note]);
+    expect(requested).toEqual([]);
   });
 
   it("leaves rules unlinked for a daemon bound to 0.0.0.0, which no browser should be sent to", async () => {
@@ -318,6 +485,8 @@ describe("rules page", () => {
   let health: Record<string, unknown>;
   /** Whether the stub daemon has recorded the checkout, so `GET /api/repository?checkout=` answers. */
   let knownCheckout: boolean;
+  /** The paths the stub daemon was asked for. */
+  let served: string[];
   const repositoryKey = "remote:github.com/acme/app";
 
   const stop = async (): Promise<void> => {
@@ -336,10 +505,12 @@ describe("rules page", () => {
   const listen = async (pid: number = process.pid): Promise<number> => {
     vi.unstubAllGlobals();
     knownCheckout = true;
+    served = [];
     health = { status: "ok", pid, database: { path: database, exists: true }, native: { ok: true } };
     const checkoutPath = await realpath(cwd);
     stub = createServer((request, response) => {
       const url = new URL(request.url ?? "/", "http://127.0.0.1");
+      served.push(url.pathname);
       const answers: Record<string, unknown> = {
         "/healthz": health,
         "/api/presentation": { presence: "compact", repositoryState: "stopped" },
@@ -367,6 +538,8 @@ describe("rules page", () => {
     const port = await listen();
     await record(join(home, "daemon.json"), { pid: process.pid, port, url: `http://127.0.0.1:${port}/` });
     expect(await readRulesDashboard({ cwd })).toEqual({ url: await scoped(`http://127.0.0.1:${port}`), reason: null });
+    // The stub answers only what every daemon version answers, so the link is scoped whichever version runs.
+    expect(served).toEqual(["/healthz", "/api/repository"]);
     await rm(join(home, "daemon.json"));
     expect(await readRulesDashboard({ cwd })).toEqual({ url: null, reason: "daemon unavailable" });
   });

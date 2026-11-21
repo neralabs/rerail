@@ -12,8 +12,8 @@ make each test repeat the work every run starts with: loading the rule library (
 program. So each test's store starts as a copy of a template that already holds that work. The template is made once
 per build of the engine.
 
-The prior art is the data-layer repository's SQLite test fixtures (`conform/conftest.py`,
-`data_layer_testing/helpers/sqlite_*.py`): a template per schema key, built under a file lock into a staging file,
+The prior art is the data-layer repository's SQLite test fixtures (its conformance suite's
+`conftest.py` and its SQLite test helpers): a template per schema key, built under a file lock into a staging file,
 published with a rename and a ready mark; each test clones it (APFS `clonefile`, else a copy); dead processes' files
 are swept.
 
@@ -33,7 +33,8 @@ are swept.
    `build_ids::grammar`), so a new build makes a new one. It lives in `$TMPDIR/rerail-store-templates/<key>.sqlite`.
    It is made by the first process that needs it:
    - under a file lock (`<key>.lock`), into a staging store;
-   - then drained (pending atoms, queued writes) and written whole with `VACUUM INTO`;
+   - then drained (pending atoms, queued writes) and written whole with `VACUUM INTO`, its memo packs
+     (`<key>.sqlite.memo/`, decision 0240 §4) copied beside it, and a copy clones both;
    - then renamed into place, after which `<key>.ready` names the key.
 
    The processes that come after find it ready. Another build's template unused for an hour is removed, and so is

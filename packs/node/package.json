@@ -1,6 +1,6 @@
 {
   "name": "@neralabs/rerail-pack-node",
-  "version": "0.1.7",
+  "version": "0.1.9",
   "description": "Rerail rule pack: eslint-plugin-n rules ported to Rerail code rules.",
   "keywords": [
     "rerail",
@@ -25,7 +25,7 @@
     "README.md"
   ],
   "peerDependencies": {
-    "@neralabs/rerail": ">=0.1.0-0 <0.2.0"
+    "@neralabs/rerail": ">=0.1.0-0"
   },
   "peerDependenciesMeta": {
     "@neralabs/rerail": {

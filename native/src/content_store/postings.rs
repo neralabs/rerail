@@ -1,4 +1,4 @@
-//! Streaming adapter for packed posting segments (`nera_postings`), from Pulling-it-all-together's
+//! Streaming adapter for packed posting segments (`nera_postings`), from PIAT's
 //! anchor store. Every store connection has it (`configure_connection`), so the prefilter's SQL
 //! decodes postings where it selects them. SQLite owns all selection and joins.
 use rusqlite::{
@@ -291,10 +291,10 @@ pub fn segment_positions(mut bytes: &[u8]) -> std::result::Result<Vec<u32>, &'st
         };
         let (payload, rest) = rest.split_at_checked(size).ok_or(invalid)?;
         match head[2] {
-            0 => out.extend(payload.chunks_exact(2).map(|c| high | u32::from(u16::from_le_bytes([c[0], c[1]])))),
+            0 => out.extend(payload.as_chunks::<2>().0.iter().map(|c| high | u32::from(u16::from_le_bytes([c[0], c[1]])))),
             1 => {
-                for (w, c) in payload.chunks_exact(8).enumerate() {
-                    let mut word = u64::from_le_bytes(c.try_into().expect("8 bytes"));
+                for (w, c) in payload.as_chunks::<8>().0.iter().enumerate() {
+                    let mut word = u64::from_le_bytes(*c);
                     while word != 0 {
                         out.push(high | (w as u32 * 64 + word.trailing_zeros()));
                         word &= word - 1;
@@ -302,7 +302,7 @@ pub fn segment_positions(mut bytes: &[u8]) -> std::result::Result<Vec<u32>, &'st
                 }
             }
             _ => {
-                for c in payload.chunks_exact(4) {
+                for c in payload.as_chunks::<4>().0.iter() {
                     let (s, l) = (u16::from_le_bytes([c[0], c[1]]), u16::from_le_bytes([c[2], c[3]]));
                     if s > l {
                         return Err(invalid);

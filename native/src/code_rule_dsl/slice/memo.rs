@@ -81,9 +81,11 @@ const HOLD_SECS: i64 = 86_400;
 /// rows of a plan no wave has written under for that long (rules since changed) are collected by the store's
 /// corpus pass (decision 0053), as a corpus run's dead plans are; their sources may live on in later snapshots.
 fn hold(store: &ContentStore, plan: [u8; 32]) -> StoreResult<()> {
-    static HELD: std::sync::Mutex<Option<std::collections::HashMap<[u8; 32], i64>>> = std::sync::Mutex::new(None);
+    #[derive(Default)]
+    struct HeldPlans(std::sync::Mutex<Option<std::collections::HashMap<[u8; 32], i64>>>);
     let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
-    let mut held = HELD.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<HeldPlans>();
+    let mut held = held_.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
     let held = held.get_or_insert_with(Default::default);
     if held.get(&plan).is_some_and(|&at| now - at < 3_600) {
         return Ok(());

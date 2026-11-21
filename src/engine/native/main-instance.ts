@@ -1,7 +1,9 @@
-import { mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { existsSync, mkdirSync, readFileSync, rmSync } from "node:fs";
+import { replaceFileSync } from "../file-replace.js";
+import { join, resolve } from "node:path";
 import { loadNativeBinding, type NativeExclusiveFileLock } from "./native.js";
-import { mainContentStoreDirectory, type RerailBuild } from "./rerail-build.js";
+import { isInMainContentStoreDirectory, mainContentStoreDirectory, type RerailBuild } from "./rerail-build.js";
+import { keepFolderPrivate } from "../storage/private-files.js";
 
 /**
  * At most one main Rerail instance runs on a machine: the main daemon, which alone opens the machine-wide
@@ -59,6 +61,15 @@ function isMainInstanceHolder(value: unknown): value is MainInstanceHolder {
     && typeof record.packageRoot === "string" && typeof record.startedAt === "string";
 }
 
+/**
+ * Removes the holder record when it names `pid`, a holder the OS ended without its `release`: on Windows a daemon is
+ * always ended that way, and the record would then name whatever process Windows gives that pid next. The lock itself
+ * went with the process.
+ */
+export function forgetMainInstanceHolder(pid: number, directory: string = mainContentStoreDirectory()): void {
+  if (readHolder(directory)?.pid === pid) rmSync(join(directory, MAIN_INSTANCE_HOLDER_FILE), { force: true });
+}
+
 function readHolder(directory: string): MainInstanceHolder | undefined {
   try {
     const value: unknown = JSON.parse(readFileSync(join(directory, MAIN_INSTANCE_HOLDER_FILE), "utf8"));
@@ -69,12 +80,33 @@ function readHolder(directory: string): MainInstanceHolder | undefined {
 }
 
 /**
+ * Whether a process holds the main-instance lock in `directory`, asked by taking the lock and giving it straight back:
+ * the lock is the liveness signal, where the holder record can name a pid the OS has given another process since.
+ * False where there is no lock file, which is left unmade; undefined when the native binding does not load or the
+ * lock cannot be tried, for the caller to fall back on what else it knows.
+ */
+export function mainInstanceLockHeld(directory: string): boolean | undefined {
+  const path = join(directory, MAIN_INSTANCE_LOCK_FILE);
+  if (!existsSync(path)) return false;
+  let lock: NativeExclusiveFileLock | null;
+  try {
+    lock = loadNativeBinding().tryLockExclusive(path);
+  } catch {
+    return undefined;
+  }
+  if (lock === null) return true;
+  lock.release();
+  return false;
+}
+
+/**
  * Makes this process the machine's main Rerail instance for the rest of its life, or throws
  * `MainInstanceConflictError` at once when another process already is. Never waits.
  */
 export function acquireMainInstance(build: MainRerailBuild, directory: string = mainContentStoreDirectory()): MainInstanceLease {
   if (held !== undefined) throw new Error(`This process is already the main Rerail instance (${held.directory})`);
-  mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const made = mkdirSync(directory, { recursive: true, mode: 0o700 }) !== undefined;
+  if (resolve(directory) === resolve(mainContentStoreDirectory())) keepFolderPrivate(directory, { made });
   const lock = loadNativeBinding().tryLockExclusive(join(directory, MAIN_INSTANCE_LOCK_FILE));
   if (lock === null) throw new MainInstanceConflictError(directory, readHolder(directory));
   const holder: MainInstanceHolder = {
@@ -84,13 +116,10 @@ export function acquireMainInstance(build: MainRerailBuild, directory: string = 
     startedAt: new Date().toISOString(),
   };
   const holderPath = join(directory, MAIN_INSTANCE_HOLDER_FILE);
-  const staged = `${holderPath}.${process.pid}`;
   try {
-    // A refusal may read the record at any moment; the rename keeps it from ever seeing half of one.
-    writeFileSync(staged, `${JSON.stringify(holder)}\n`, { mode: 0o600 });
-    renameSync(staged, holderPath);
+    // A refusal may read the record at any moment; replacing it whole keeps it from ever seeing half of one.
+    replaceFileSync(holderPath, `${JSON.stringify(holder)}\n`, { mode: 0o600 });
   } catch (error) {
-    rmSync(staged, { force: true });
     lock.release();
     throw error;
   }
@@ -114,12 +143,12 @@ export function acquireMainInstance(build: MainRerailBuild, directory: string = 
  * instance. Dev builds never take the lock, so this also keeps them, and any short-lived main process, off the
  * main store whatever `RERAIL_CONTENT_STORE_PATH` says; they reach it only through the main daemon.
  */
+export function canOpenContentStore(storePath: string): boolean {
+  return !isInMainContentStoreDirectory(storePath) || (held !== undefined && resolve(held.directory) === resolve(mainContentStoreDirectory()));
+}
+
 export function assertContentStoreOwner(storePath: string): void {
-  const directory = resolve(mainContentStoreDirectory());
-  const path = relative(directory, resolve(storePath));
-  const insideMainDirectory = path === "" || (path !== ".." && !path.startsWith(`..${sep}`) && !isAbsolute(path));
-  if (!insideMainDirectory) return;
-  if (held !== undefined && resolve(held.directory) === directory) return;
+  if (canOpenContentStore(storePath)) return;
   throw new Error(
     `The machine-wide Rerail content store ${storePath} belongs to the main Rerail daemon, and process ${process.pid} is not it. ` +
       "Main harness processes evaluate policies through the daemon; dev builds use their checkout's own store.",

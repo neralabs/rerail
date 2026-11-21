@@ -3,11 +3,11 @@
 Status: draft for review. This document is normative for the set-mode transducer IR, its fusion transformations, and the operations fusion needs.
 
 Inputs:
-- `research/fusion.md` and `experiments/fusion/`, the CPU measurements;
+- `research/fusion.md` and `experiments/fusion/` (removed; at 7efcac9c67), the CPU measurements;
 - `research/metal-recursion.md`, the stratified range execution;
 - `research/transducer-ir.md`;
 - `spec.md` §6–§9 and §11;
-- Tempo's IR, `tempo/native/src/policy_dsl/transducer.rs` at `e95613625`:
+- The predecessor's IR, `<predecessor>/native/src/policy_dsl/transducer.rs` at `e95613625`:
   - opcodes at `:184-208`;
   - word layout at `:1111`;
   - the verifier at `:1628-1700`;
@@ -218,7 +218,7 @@ Forks in a trie make SIMD lanes diverge. The planner bounds the expected live br
 
 Per-thread state:
 - pc, the node, a cursor per enumeration level (≤ `MAX_SUB_DEPTH + 2`);
-- capture slots (≤ 16 live; Tempo's capture arena for more);
+- capture slots (≤ 16 live; the predecessor's capture arena for more);
 - the label bitset;
 - counters (≤ 4).
 

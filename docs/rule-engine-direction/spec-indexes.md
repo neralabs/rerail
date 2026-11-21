@@ -1,6 +1,6 @@
 # Index and statistics specification (engine spec, part: indexes)
 
-Status: draft for the engine spec. All paths are relative to the merged worktree (`Pulling-it-all-together`) unless another ref is named. Spike citations use the prior-work indexes: **DI** is `prior-work/ast-index-spike-design-index.md` (topic numbers) and **HI** is `prior-work/ast-index-spike-history-index.md`. Source lines are in ast-index-spike `DESIGN.md` (D) at `9449260`.
+Status: draft for the engine spec. All paths are relative to the merged worktree (PIAT) unless another ref is named. Spike citations use the prior-work indexes: **DI** is `prior-work/sql-index-prototype-design-index.md` (topic numbers) and **HI** is `prior-work/sql-index-prototype-history-index.md`. Source lines are in the SQL index prototype `DESIGN.md` (D) at `9449260`.
 
 The index layer has one job under decision 0004 (the transducer is the concrete IR). That job is file- and document-level candidate scope plus statistics for plan choice. Finding candidate nodes inside a document is the transducer's work: it scans the kind column. Per-node positional postings in SQL serve only the low-priority pure-SQL fallback.
 
@@ -58,7 +58,7 @@ ORDER BY r.position
 
 ### 1.2 DLRE (merged; `matcher/anchors/sql/`, ~7.0k lines; no uncommitted index changes in the DLRE worktree)
 
-DLRE built a **second, private SQLite store** following ast-index-spike's `tape_store.py`.
+DLRE built a **second, private SQLite store** following the SQL index prototype's `tape_store.py`.
 - Its location is a `tempfile` database per corpus (`store.rs:44-55`), opened with `schema.sql` (`user_version` 2).
 - It copies source and tape bytes in again (`file.src`, `file.rec`, ...), so it duplicates the content store.
 
@@ -82,22 +82,22 @@ DLRE built a **second, private SQLite store** following ast-index-spike's `tape_
 
 `ANALYZE temp.*` runs after each materialized relational stage (`relational/storage.rs:68`, `reachability.rs:87,144`, `forest.rs:159`). That is spike dead end D50: temp tables plus ANALYZE, 57-115x slower.
 
-### 1.3 N1562 (`jbarnes/ner-1562-sql-rerailer` @ `8b6576f0`)
+### 1.3 N1562 (`sql-rerailer` @ `8b6576f0`)
 - **Schema:** none new. Its `content_store/schema.rs` is older than main (it predates `file_documents`).
 - **Estimates:** constants. `set_estimated_rows(100_000)` or `i64::MAX` in `rerail_matches` `xBestIndex` (`transducer/sql_backend.rs:2461-2468`).
 - **Design:** `docs/sql-scope-and-operational-semantics-design.md:609-627` specifies SQL-visible statistics: documents by language, nodes by document and kind, kind frequencies "from `fts5vocab` over `search_kind_fts`", candidate counts per scope recipe, demand counts, multiplicity and failure counts. "Virtual tables use these values for `estimatedRows`." None of this is implemented. `query/plan/` has identities and grouping, no statistics.
 
-### 1.4 SSC (`jeremy/sql-capture-demand-spikes` @ `b87eba3b`)
+### 1.4 SSC (`sql-capture-demand-spikes` @ `b87eba3b`)
 - `sql/relational/planner_stats.rs:8-95` holds in-memory `PlannerStats { kinds: BTreeMap<u16,u64>, edges: BTreeMap<(u16,u16),u64> }`.
 - It is built by walking every node of the batch per run (`from_batch`). It picks the anchor as the minimum summed kind count, and it uses direct-edge counts for edge decisions.
 - It is the right statistics (kind plus edge, as in the spike), held in the wrong place: Rust, rebuilt per batch, local codes per dialect. That is against principle 3 and the README rule that Rust-held statistics need justification.
 
-### 1.5 Moti `facts-plan` (Y1, `docs/facts/reports/explore-y1-graph.md`)
+### 1.5 facts-engine `facts-plan` (Y1, `docs/facts/reports/explore-y1-graph.md`)
 - An in-memory Rust reference graph: keyed tables plus memoised keyed queries with recorded read sets, layered base → cluster overlay → worktree delta.
 - 72 MB base; 0.73 / 2.40 ms p50 / p95 per edit; exact against native (145,431 edges).
 - It is a cross-file **fact relation**, not a statistic or a tape index. It belongs to phase 7 and the relation-contract layer. It is out of scope here, except that its edge counts could feed `xBestIndex` estimates for graph vtabs.
 
-### 1.6 ast-index-spike: index designs and measurements
+### 1.6 SQL index prototype: index designs and measurements
 - **Two-stage execution.** Postings generate candidates and the tape confirms them. An index may over-produce and must never under-produce (DI 3; D S016 L426-436).
 - **FTS structural tokens.** Bare-kind tokens cost 2.60 B/node. Positions equal preorder, and phrase queries are exact. NEAR is not recall-safe. File-level pruning saturated at 1.03x *in its SQL executor* (DI 3; D S032-S038 L2211-2651).
 - **kidx** is a positional kind posting per (kind[, batch]) with columnar fid and preorder deltas. It cost 1.61 B/node on PG and 2.40 on MariaDB, and took an `identifier` anchor from 1.8 s to 64 ms. Absolute preorder was rejected (+2.6 to 4.2 B/node for 10 ms) (DI 3; D S053 L3319-3348).

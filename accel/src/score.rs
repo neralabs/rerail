@@ -22,7 +22,8 @@
 //! **Phases.** A lane's code names the parts of a job's host work ([`phase`]): its thread CPU and its wall seconds,
 //! summed per lane and phase. The GPU lane also adds each command buffer's timeline as wall-only phases (`gpu
 //! submit`: commit to the system's scheduling; `gpu schedule`: to the device's start; `gpu run`; `gpu wake`: the
-//! device's end to the host's wait returning). And every job's own thread CPU is kept: on a device lane, that is the
+//! device's end to the host's wait returning; on a backend whose events give only the device's seconds, `gpu run` and
+//! the rest of the span from the commit). And every job's own thread CPU is kept: on a device lane, that is the
 //! host CPU the device cost, which on a loaded machine is the price that matters, not the device's latency. Metal's
 //! own threads (its completion handlers, the driver's) are not on the job's thread, so they are not in it.
 //!
@@ -380,21 +381,38 @@ pub struct Sample {
     pub threads: u32,
 }
 
-static KEEP: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
-static SAMPLES: Mutex<Vec<Sample>> = Mutex::new(Vec::new());
+impl Sample {
+    /// What a price learns from in it ([`crate::price::fit_rates`]).
+    pub fn measured(&self) -> crate::price::Measured<'_> {
+        let Sample { lane, ref forms, launches, units, wall, cpu, cold, ok, load, .. } = *self;
+        crate::price::Measured { lane, forms, launches, units, wall, cpu, load, cold, ok }
+    }
+}
+
+/// The machine's samples for its cost model, kept for the engine to take (decision 0442).
+#[derive(Default)]
+struct Samples {
+    keep: std::sync::atomic::AtomicBool,
+    held: Mutex<Vec<Sample>>,
+    dropped: std::sync::atomic::AtomicU64,
+}
+
+fn samples() -> std::sync::Arc<Samples> {
+    rerail_context::machine::<Samples>()
+}
 /// The most samples held for the engine to take: past it, new ones are dropped (and counted).
 const HELD: usize = 100_000;
-static DROPPED: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
 
 /// Keeps every finished job's sample from now on, for [`take_samples`].
 pub fn keep_samples(on: bool) {
-    KEEP.store(on, Ordering::Relaxed);
+    samples().keep.store(on, Ordering::Relaxed);
 }
 
 /// The samples kept since the last take, and how many were dropped since (more than [`HELD`] waiting).
 pub fn take_samples() -> (Vec<Sample>, u64) {
-    let s = std::mem::take(&mut *SAMPLES.lock().unwrap_or_else(|p| p.into_inner()));
-    (s, DROPPED.swap(0, Ordering::Relaxed))
+    let samples = samples();
+    let s = std::mem::take(&mut *samples.held.lock().unwrap_or_else(|p| p.into_inner()));
+    (s, samples.dropped.swap(0, Ordering::Relaxed))
 }
 
 /// A launch of a job: its form's name, units and estimate.
@@ -476,16 +494,19 @@ static NEXT: AtomicU64 = AtomicU64::new(1);
 const AVG: f64 = 0.2;
 
 /// The trace's file, opened once, its header written (`RERAIL_SCOREBOARD`).
-fn trace() -> Option<&'static Mutex<std::fs::File>> {
-    static TRACE: OnceLock<Option<Mutex<std::fs::File>>> = OnceLock::new();
-    TRACE
+/// The run's own (decision 0442): its setting's file.
+fn trace() -> Option<std::sync::Arc<Mutex<std::fs::File>>> {
+    #[derive(Default)]
+    struct Trace(OnceLock<Option<std::sync::Arc<Mutex<std::fs::File>>>>);
+    rerail_context::local::<Trace>()
+        .0
         .get_or_init(|| {
             let path = std::env::var("RERAIL_SCOREBOARD").ok().filter(|p| !p.is_empty())?;
             let mut f = std::fs::OpenOptions::new().create(true).append(true).open(path).ok()?;
             let _ = writeln!(f, "job\tlane\tthread\tlaunches\tforms\tunits\testimate\tqueued\tstart\tend\tok\tcpu\tphases");
-            Some(Mutex::new(f))
+            Some(std::sync::Arc::new(Mutex::new(f)))
         })
-        .as_ref()
+        .clone()
 }
 
 fn since(t: Instant) -> f64 {
@@ -535,6 +556,17 @@ impl Scoreboard {
             u.outstanding += est;
         });
         Ticket { id: NEXT.fetch_add(1, Ordering::Relaxed), lane, items, queued: Instant::now(), started: None, share0: 0.0, cpu: 0.0, cpu0: None, phases: Vec::new() }
+    }
+
+    /// A queued job dropped unrun (a stream's, left when its caller returned early): off the lane's queue, its
+    /// estimate no longer outstanding. It never started, so it was never running and is no job the lane ran.
+    pub fn unqueue(&self, t: Ticket) {
+        let est: f64 = t.items.iter().map(|i| i.estimate).sum();
+        self.with(|s| {
+            let u = &mut s.units[t.lane.index()];
+            u.queued -= 1;
+            u.outstanding = (u.outstanding - est).max(0.0);
+        });
     }
 
     /// A worker took the job.
@@ -619,9 +651,20 @@ impl Scoreboard {
         let cold = phases.iter().any(|p| matches!(p.0, "pipeline compile" | "pipeline wait" | "new buffer"));
         // The run prices its later launches from this one (`price::observe`): one kernel name's jobs only.
         if units > 0.0 && t.items.windows(2).all(|w| w[0].form == w[1].form) && let Some(first) = t.items.first() {
-            crate::price::observe(t.lane, first.form, t.items.len() as u32, units, share, cpu, crate::exec::cores_slowdown(), cold, ok);
+            crate::price::observe(crate::price::Measured {
+                lane: t.lane,
+                forms: first.form,
+                launches: t.items.len() as u32,
+                units,
+                wall: share,
+                cpu,
+                load: crate::exec::cores_slowdown(),
+                cold,
+                ok,
+            });
         }
-        if KEEP.load(Ordering::Relaxed) && units > 0.0 {
+        let kept = samples();
+        if kept.keep.load(Ordering::Relaxed) && units > 0.0 {
             let sample = Sample {
                 lane: t.lane,
                 forms: t.items.iter().map(|i| i.form).collect::<Vec<_>>().join(","),
@@ -638,11 +681,11 @@ impl Scoreboard {
                 load: crate::exec::cores_slowdown(),
                 threads: crate::exec::threads() as u32,
             };
-            let mut held = SAMPLES.lock().unwrap_or_else(|p| p.into_inner());
+            let mut held = kept.held.lock().unwrap_or_else(|p| p.into_inner());
             if held.len() < HELD {
                 held.push(sample);
             } else {
-                DROPPED.fetch_add(1, Ordering::Relaxed);
+                kept.dropped.fetch_add(1, Ordering::Relaxed);
             }
         }
         if let Some(f) = trace() {
@@ -804,15 +847,24 @@ mod tests {
         let begun = Instant::now();
         b.start(&mut first);
         pause();
+        let before_second = Instant::now();
         b.start(&mut second);
+        let after_second = Instant::now();
         pause();
+        let before_first = Instant::now();
         let (ran_first, _) = b.finish(first, true);
+        let after_first = Instant::now();
         pause();
         let (ran_second, _) = b.finish(second, true);
         let span = begun.elapsed().as_secs_f64();
         let busy = b.score().units[Lane::Gpu.index()].busy;
-        // Each ran about 60 ms; together the lane was busy about 90.
-        assert!(ran_first + ran_second > 1.2 * span, "the walls overlap: {ran_first} + {ran_second} against {span}");
+        // Each ran about 60 ms; together the lane was busy about 90. The walls overlap by the time both ran: from the
+        // second's start to the first's finish, bounded by the clock read on either side of each (a stall of the
+        // machine anywhere stretches the span and the walls alike, never the overlap's bounds).
+        let overlap = ran_first + ran_second - span;
+        let (least, most) = ((before_first - after_second).as_secs_f64(), (after_first - before_second).as_secs_f64());
+        assert!(least > 0.025, "the jobs ran side by side for {least} s");
+        assert!(overlap > least - 0.002 && overlap < most + 0.002, "the walls overlap by {overlap}, not within {least}..{most}");
         assert!((busy - span).abs() < 0.005, "shares {busy} against the lane's span {span}");
         // The cores run jobs on threads of their own: each is charged its wall.
         let (mut a, mut c) = (b.queue(Lane::Cpu, item()), b.queue(Lane::Cpu, item()));

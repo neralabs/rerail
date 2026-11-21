@@ -101,3 +101,5 @@ logic::liveness::tests	rerail-engine
 typing::phase_tests	rerail-engine
 waves::owner::tests	rerail-engine
 logic::strings::registered_tests	rerail-engine
+regexes::tests	rerail-engine
+compile::shared::tests	rerail-engine

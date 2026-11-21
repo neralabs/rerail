@@ -15,11 +15,10 @@
 //!   splits its batch.
 //! - **Everything idle is dropped** with the residency slabs, two minutes after the last execution
 //!   (the engine's `residency::slabs::drop_all`).
-//! - **One command queue** for the solves that lease blocks (`queue`): the process's.
+//! - **One command queue** for the solves that lease blocks: the process's (`lane`).
 //!
 //! A lease's holder waits for every command that reads the block before dropping the lease.
 use crate::Error;
-use metal::Device;
 use rerail_accel::gpu::shared::{self, Pooled};
 use std::mem::size_of;
 
@@ -31,10 +30,6 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn buffer(&self) -> &metal::BufferRef {
-        self.lease.buffer()
-    }
-
     /// The block's buffer in the device layer (decision 0440 step C), on any backend.
     pub fn device_buffer(&self) -> &rerail_device::device::Buffer {
         self.lease.device_buffer()
@@ -56,14 +51,16 @@ impl Block {
     }
 }
 
-static MADE: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-static MADE_BYTES: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+/// The blocks made on this machine's device, and their bytes (decision 0442: the machine's).
+#[derive(Default)]
+struct Made(std::sync::atomic::AtomicUsize, std::sync::atomic::AtomicUsize);
 
 /// The blocks made so far, and their bytes: a warm run makes none (each is a new buffer, every
 /// page faulted in by the host).
 pub fn made() -> (usize, usize) {
     use std::sync::atomic::Ordering::Relaxed;
-    (MADE.load(Relaxed), MADE_BYTES.load(Relaxed))
+    let made = rerail_context::machine::<Made>();
+    (made.0.load(Relaxed), made.1.load(Relaxed))
 }
 
 /// A block of at least `bytes`, its contents whatever its last lease left.
@@ -78,8 +75,9 @@ pub fn lease(bytes: usize) -> Result<Block, Error> {
     let made = lease.fresh();
     if made {
         let length = lease.length() as usize;
-        MADE.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-        MADE_BYTES.fetch_add(length, std::sync::atomic::Ordering::Relaxed);
+        let counted = rerail_context::machine::<Made>();
+        counted.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        counted.1.fetch_add(length, std::sync::atomic::Ordering::Relaxed);
         // Every page written once: backed now, not on the device's first touch.
         // SAFETY: `length` bytes of a new buffer, this lease's alone.
         unsafe { std::ptr::write_bytes(lease.host(), 0, length) };
@@ -104,29 +102,21 @@ pub fn zeroed<T>(count: usize) -> Result<Block, Error> {
     clear(lease(bytes.max(1))?, bytes)
 }
 
-/// A block whose first `count` values of `T` are zero, zeroed by the device (a blit's fill),
-/// not by the host: for the large ones, such as a run's slots.
+/// A block whose first `count` values of `T` are zero, zeroed by the device (a fill on the
+/// process's device, decision 0440 step C), not by the host: for the large ones, such as a run's
+/// slots.
 pub fn zeroed_on_device<T>(count: usize) -> Result<Block, Error> {
     let bytes = count.checked_mul(size_of::<T>()).ok_or(Error::BackendCapacity)?;
     let block = lease(bytes.max(1))?;
     if bytes == 0 {
         return Ok(block);
     }
-    let device = crate::METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
-    let queue = queue(device)?;
+    debug_assert!(bytes.div_ceil(4) * 4 <= block.byte_length(), "a lease of whole words");
+    // A launch scope of its own (the evaluation's, when one is running): a submission outside one is refused.
     let _scope = crate::launch::LaunchScope::enter();
-    metal::objc::rc::autoreleasepool(|| {
-        let command = queue.new_command_buffer();
-        command.set_label("Rerail zeroed block");
-        let blit = command.new_blit_command_encoder();
-        blit.fill_buffer(block.buffer(), metal::NSRange::new(0, bytes as u64), 0);
-        blit.end_encoding();
-        if let Err(refused) = crate::launch::commit_checked(command) {
-            crate::launch::release_refused(command);
-            return Err(refused);
-        }
-        crate::launch::wait_checked(command)
-    })?;
+    let mut command = crate::lane::Command::new("Rerail zeroed block");
+    command.fill(block.device_buffer(), 0, bytes.div_ceil(4) as u64, 0);
+    command.run()?;
     Ok(block)
 }
 
@@ -134,12 +124,6 @@ fn clear(block: Block, bytes: usize) -> Result<Block, Error> {
     // SAFETY: as `upload`.
     unsafe { std::ptr::write_bytes(block.host(), 0, bytes) };
     Ok(block)
-}
-
-/// The command queue for solves over blocks: the process's one (`rerail_accel::gpu::shared`, decision 0100 §2), so
-/// the engine's programs and the executor's lanes submit in one order.
-pub fn queue(_device: &Device) -> Result<metal::CommandQueue, Error> {
-    crate::queue()
 }
 
 /// Releases every idle buffer of the pool (the engine's drop: its blocks are the pool's).
@@ -150,12 +134,11 @@ pub fn drop_all() {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::METAL_DEVICE;
 
     /// A returned block serves the next lease of its size class, written over in place.
     #[test]
     fn blocks_are_reused_by_size_class() {
-        if METAL_DEVICE.is_none() {
+        if crate::lane::device().is_err() {
             return;
         }
         // 3 MiB + 1: a class (3.5 MiB) no other test leases.
@@ -163,11 +146,11 @@ mod tests {
         let a = upload(&vec![7_u32; bytes.div_ceil(4)]).unwrap();
         assert!(a.byte_length() >= bytes);
         assert_eq!(a.read::<u32>(3), [7, 7, 7]);
-        let first = a.buffer().gpu_address();
+        let first = a.device_buffer().device_address();
         drop(a);
         let b = zeroed::<u8>(bytes).unwrap();
         assert!(!b.made, "the returned block served the lease");
-        assert_eq!(b.buffer().gpu_address(), first);
+        assert_eq!(b.device_buffer().device_address(), first);
         assert_eq!(b.read::<u32>(3), [0, 0, 0]);
     }
 }

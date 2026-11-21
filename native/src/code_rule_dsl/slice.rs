@@ -54,13 +54,13 @@ pub(in crate::code_rule_dsl) struct Rules {
 impl Rules {
     /// The clauses of `policies` (each by its file stem) that lower (S1), with their shapes.
     pub(in crate::code_rule_dsl) fn lower(policies: &[(String, CompiledCodeRuleDsl)], backend: ExecutionBackend) -> StoreResult<Self> {
-        Self::lower_with(policies, &crate::code_rule_dsl::logic::front::Program::default(), backend)
+        Self::lower_with(policies, &crate::code_rule_dsl::waves::policies::nothing()?, backend)
     }
 
     /// `lower`, with a program in Rerail logic beside the policies (`policies::lower_with`).
     pub(in crate::code_rule_dsl) fn lower_with(
         policies: &[(String, CompiledCodeRuleDsl)],
-        authored: &crate::code_rule_dsl::logic::front::Program,
+        authored: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
         backend: ExecutionBackend,
     ) -> StoreResult<Self> {
         let lowered = crate::code_rule_dsl::waves::policies::lower_with(policies, authored)?;
@@ -134,7 +134,7 @@ pub(in crate::code_rule_dsl) fn apply(store: &ContentStore, scope: &str, root: H
 /// §20.10, decision 0032).
 fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold: bool) -> StoreResult<Run> {
     let run = execute(store, scope, root, rules, cold);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     crate::code_rule_dsl::residency::slabs::executed();
     run
 }

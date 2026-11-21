@@ -2,7 +2,7 @@
 
 Five checks, written by hand from the Python linters at `2b1504adc`.
 
-| Check | Python lines | `.rr` lines | rrlab dl (exact / events) | Engine reader |
+| Check | Python lines | `.rerail` lines | rrlab dl (exact / events) | Engine reader |
 |---|---|---|---|---|
 | hnsw_architecture | 263 | 132 | 60 / 61 | lowers |
 | generated_index_sources | 275 | 90 | 24 / 24 (a) | lowers |
@@ -10,14 +10,12 @@ Five checks, written by hand from the Python linters at `2b1504adc`.
 | embedding_vector_orchestration | 596 | 129 | 70 / 70 (a) | lowers |
 | matching_architecture | 1,268 | 476 | 286 / 286 (a); the 287th event was not run (c) | lowers |
 
-There is also one library: `lib/data-layer/match-frames.rr` (52 lines). conditional_architecture and
+There is also one library: `lib/data-layer/match-frames.rerail` (52 lines). conditional_architecture and
 matching_architecture use it.
 
 (a) The stock `rrlab dl` stops with an error on these four checks, before it runs any rule. Their batch-10 records
 write `expected` in shapes that `dl.py` does not read (see "Harness change request" below). I scored them with a
-wrapper that only changes how those records are read:
-`/private/tmp/claude-501/-Users-jeremy-orca-workspaces-rerail-More-ergonomic-rule-syntax/1ecc536f-2d93-443b-ac6f-d3945bb921ac/scratchpad/dl/match/dlx.py`.
-It loads `dl.py` and changes only `_load` and `events`.
+wrapper that only changes how those records are read (`dlx.py`, in a session scratchpad, not kept). It loads `dl.py` and changes only `_load` and `events`.
 
 (b) In 47 events, conditional_architecture is called through `conditional_architecture_findings`. That function
 returns every finding of the facts module, and the findings have no code. The plugin keeps only the findings whose
@@ -37,7 +35,7 @@ limit. `SKIP_BIG=1` in the wrapper leaves it out.
 ## Misses
 
 - **hnsw_architecture, `test_hnsw_text_and_parser_forms[json = (\n]`.** The file does not parse, so the linter
-  reports nothing. core.rr says the engine holds back a document with a syntax error, so it gives no findings.
+  reports nothing. core.rerail says the engine holds back a document with a syntax error, so it gives no findings.
   rrlab does not hold such documents back: it runs the rule on tree-sitter's recovered tree, and finds HNSW007 at
   line 1. This is a harness gap: rrlab should drop the facts of documents that have a `syntax_error` row.
 
@@ -76,7 +74,7 @@ limit. `SKIP_BIG=1` in the wrapper leaves it out.
   - matching's `_static_string` for `"a" + "b"`.
 
   A recursive `@dot`/`cat` form does not lower: the engine refuses it with `UnboundedValueCycle`, which it also
-  reports for python/ast.rr's own `dotted_expr`. So each name is a `join` of the chain's pieces, ordered by offset,
+  reports for python/ast.rerail's own `dotted_expr`. So each name is a `join` of the chain's pieces, ordered by offset,
   over a recursion that collects nodes only. These forms lower.
 
   matching's `_annotation_name` uses core `name` for attribute chains. On an attribute over a subscript it differs
@@ -103,7 +101,7 @@ limit. `SKIP_BIG=1` in the wrapper leaves it out.
 
 ## Library and core changes
 
-None needed. The new vocabulary is in `lib/data-layer/match-frames.rr`:
+None needed. The new vocabulary is in `lib/data-layer/match-frames.rerail`:
 - `mf_class(n, k)`: the innermost class around n, through defs, as the scripts' class stack has it;
 - `mf_def(n, f)`: the innermost def around n, through classes, decorators included;
 - `mf_walk(n, o)`: n is in `ast.walk(o)`, decorators included;
@@ -142,7 +140,7 @@ UNCODED = {"conditional_architecture": "CONDA-005"}   # and drop messages withou
 
 Two more fixes would let rrlab score the remaining events:
 - skip events with more than a few hundred files, or record them as not run (note (c));
-- hold back documents that have a `syntax_error` row, as core.rr specifies.
+- hold back documents that have a `syntax_error` row, as core.rerail specifies.
 
 ## Nothing left unexpressed
 

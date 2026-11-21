@@ -99,7 +99,7 @@ form. This decision says which of them go and what replaces them.
      what this item left open, and goes further: a 16z tape is resident as stored, and every reader (the CPU, the
      JIT and the kernels) decodes a block where a read falls, into a rolling cache. The whole decode on placement
      is a copy (0353 row 15), so it is gone: `decode16z.metal`, `Decodes` and `Tape16Z::piece_jobs` are deleted.
-     The cache's decoder (`z_decode`, CLIF) decodes 0426's four pieces a block.
+     The cache's decoder (`z_decode`, CLIF) decodes 0434's four pieces a block.
 
 ## Consequences
 

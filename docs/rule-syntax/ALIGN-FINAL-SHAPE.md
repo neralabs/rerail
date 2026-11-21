@@ -1,19 +1,19 @@
-# Aligning `.rr` with the final-shape engine
+# Aligning `.rerail` with the final-shape engine
 
 ## Intro
 
-The final-shape engine (branch `jeremybarnes/final-rerail-shape`, worktree `wolfeel`) reads `.rr` as its only rule
-format. Its reader is `logic::rr::parse` and `parse_file`. They lower a program, with `lib/core.rr` as its prelude,
-to the engine's `Program`. This page compares what `core.rr` promises with what that reader and the engine's base
+The final-shape engine (branch `final-rerail-shape`, worktree `wolfeel`) reads `.rerail` as its only rule
+format. Its reader is `logic::rr::parse` and `parse_file`. They lower a program, with `lib/core.rerail` as its prelude,
+to the engine's `Program`. This page compares what `core.rerail` promises with what that reader and the engine's base
 relations deliver. It records which side should move, and what was changed on this branch.
 
 In short:
 
-- The engine is behind `core.rr` far more often than the reverse. Most rows below are engine work.
+- The engine is behind `core.rerail` far more often than the reverse. Most rows below are engine work.
 - Two syntax forms stopped all 930 pack rules at the reader: the constant `code "X"` and the `suppress` line.
   The reader has since learnt both (section 4, status).
 - One engine lowering is wrong rather than missing: `has(a, n, set)` puts the set on the ancestor.
-- This branch changed descriptions in `core.rr`, one `rrlab` fact (`str` of an interpolated literal), two rules
+- This branch changed descriptions in `core.rerail`, one `rrlab` fact (`str` of an interpolated literal), two rules
   whose refused construct had an equally clear form, and one malformed message string.
 
 Section 6 says where the two engine branches stand: the reader work of section 4 is on a sibling branch that
@@ -33,9 +33,9 @@ program that reads it fails at planning ("no statistics for …"). "Refused" mea
 
 ### Tape relations
 
-| Name/arity | core.rr | Engine | Side | Action |
+| Name/arity | core.rerail | Engine | Side | Action |
 |---|---|---|---|---|
-| `doc/3` | `(d, path, module)`; module `""` when the file has none | provided; the module is the path with `/` as `.` for every file (`src/a.ts` gives `src.a.ts`), `crate.a` for Rust. The translated prelude declares `doc/2` (O74) | engine | `""` for files with no dotted module; the prelude includes `core.rr` (O74). Whether `src/` is a source root (rrlab strips it, the engine does not) is a setting, not a rule matter |
+| `doc/3` | `(d, path, module)`; module `""` when the file has none | provided; the module is the path with `/` as `.` for every file (`src/a.ts` gives `src.a.ts`), `crate.a` for Rust. The translated prelude declares `doc/2` (O74) | engine | `""` for files with no dotted module; the prelude includes `core.rerail` (O74). Whether `src/` is a source root (rrlab strips it, the engine does not) is a setting, not a rule matter |
 | `pkg/2` | the Python package | provided, for every document | engine | rows for Python only (minor) |
 | `path_part/2`, `file_name/2` | as written | same | — | — |
 | `node/5` | every node, comments included | named nodes, comments left out (T's projection) | engine | comments become nodes (see `child`) |
@@ -43,8 +43,8 @@ program that reads it fails at planning ("no statistics for …"). "Refused" mea
 | `field/3` | `(p, f, c)` | same | — | — |
 | `child/3` | i-th named child; comments are named children and are counted (now stated) | named children without comments; `i` counts only those | engine | comment nodes in `node`, `child` and `tape`. The libraries are written against tree-sitter's children: they filter comments themselves (`!kind(c, "comment")`, `body_stmt`, `call_arg`), and `php/phpdoc` and `has(b, _, "comment")` need comments in the tree. T's programs can keep T's projection |
 | `text/2` | every node's and span's source text (now stated) | identifiers only (T's `Text` kinds), and none with `\t \n \r \\` | engine | text of every node. 0042 already plans the vocabulary for token-like nodes and a file scan for the rest |
-| `op/2` | every anonymous token child, punctuation and keywords included (now stated) | T's: the `operator` field of five Python operator kinds, and `async`. No comparisons (O79), nothing for TypeScript, PHP or Rust | engine | `op` as `core.rr` says; T's narrow view under its own name for T's parity tests. Rules read 60 distinct tokens through `op` (`readonly`, `static`, `get`, `,`, `?.`, …) in 177 files; T's `op` has fewer than 20 of them, in Python only |
-| `op_at/3` | ordered non-punctuation tokens (now stated exactly) | tokens of the `operator`/`operators` fields only (uncommitted worktree code) | engine | every non-punctuation anonymous token: `lib/complexity/rust.rr` reads `op_at(chain, i, "&&")` of a `let` chain, which has no operator field |
+| `op/2` | every anonymous token child, punctuation and keywords included (now stated) | T's: the `operator` field of five Python operator kinds, and `async`. No comparisons (O79), nothing for TypeScript, PHP or Rust | engine | `op` as `core.rerail` says; T's narrow view under its own name for T's parity tests. Rules read 60 distinct tokens through `op` (`readonly`, `static`, `get`, `,`, `?.`, …) in 177 files; T's `op` has fewer than 20 of them, in Python only |
+| `op_at/3` | ordered non-punctuation tokens (now stated exactly) | tokens of the `operator`/`operators` fields only (uncommitted worktree code) | engine | every non-punctuation anonymous token: `lib/complexity/rust.rerail` reads `op_at(chain, i, "&&")` of a `let` chain, which has no operator field |
 | `docof/2`, `line/2` | as written | `docof` a projection of `node`; `line` a view | — | spans have no rows (no spans yet) |
 | `unset/1` | one row, the empty value; `text(x, "")` holds | the constant -1; `text(-1, "")` does not hold; refused inside an aggregate, `nearest` or `ast` (O77) | engine | as O77 says |
 | `value/2` | static value: decoded strings, normalised numbers, keywords | decoded Python strings and decimal integers only (`0xff` has none) | engine | the other literals and languages |
@@ -56,11 +56,11 @@ program that reads it fails at planning ("no statistics for …"). "Refused" mea
 | `source/2`, `src_line/3`, `line_count/2`, `end_line/2`, `col/2` | the raw text of every document | missing | engine | file-length and test-budget need them |
 | `first_token`, `last_token`, `token_before`, `token_after` (2) | tokens as spans | missing | engine | — |
 | `syntax_error/3` | `(d, line, msg)` | `syntax_error(d)`, one column | engine | add the line and the message |
-| `intval/2`, `tape/4`, `core_node/3`, `py_*` | not in core.rr | provided (T's) | — | internal; `tape` is what `within` lowers to |
+| `intval/2`, `tape/4`, `core_node/3`, `py_*` | not in core.rerail | provided (T's) | — | internal; `tape` is what `within` lowers to |
 
 ### Tree axes and order
 
-| Name/arity | core.rr | Engine | Side | Action |
+| Name/arity | core.rerail | Engine | Side | Action |
 |---|---|---|---|---|
 | `within/2` | n strictly below a | a range over the tape's ids; when nothing else gives n, a walk down `child` (O77) | — | the same set |
 | `inside/3` | a a strict ancestor of n, a's kind in the set | `inside_<set>(n, a)`, made by the transducer | — | — |
@@ -80,7 +80,7 @@ program that reads it fails at planning ("no statistics for …"). "Refused" mea
 
 ### Text tests, functions and aggregates
 
-| Name/arity | core.rr | Engine | Side | Action |
+| Name/arity | core.rerail | Engine | Side | Action |
 |---|---|---|---|---|
 | `glob`, `prefix`, `suffix`, `contains`, `word` and `i` forms (2) | pattern first, both bound | the engine's tests; sets of one test are one test | — | — |
 | `match/2` | whole-string regex; named groups bind | anchored `rx`; captures computed per row (O77); a named group outside a body is refused | engine | per O77 |
@@ -98,15 +98,15 @@ program that reads it fails at planning ("no statistics for …"). "Refused" mea
 
 ### Additions and directives
 
-| Construct | core.rr | Engine | Side | Action |
+| Construct | core.rerail | Engine | Side | Action |
 |---|---|---|---|---|
 | `n ~ \`pattern\`` | addition 1 | refused | engine | O73 |
 | `must`, `may` | addition 3 | refused | engine | O73 |
 | `ordered by earlier` | addition 6 | refused (`ordered` on `.decl`) | engine | O73 |
 | `=> edits`, `.edit` | addition 4 | fixes are left out | — | — |
 | `.violation V(at: node, …)` | at a node, a span or a `@place` | lowered at a node; at a span or a place refused | engine | O73 |
-| `.violation … code "E501"` | a constant code (916 packs); now listed in core.rr | syntax error: only `code {column}` | engine | parse it; the finding's code is the string |
-| `suppress TOOL "rule", …` | continuation line (910 packs); now listed in core.rr | syntax error | engine | parse it; the findings layer applies it |
+| `.violation … code "E501"` | a constant code (916 packs); now listed in core.rerail | syntax error: only `code {column}` | engine | parse it; the finding's code is the string |
+| `suppress TOOL "rule", …` | continuation line (910 packs); now listed in core.rerail | syntax error | engine | parse it; the findings layer applies it |
 | `tag {t}` | an extra key field | checked, not carried | engine | — |
 | `.mode`, `.scope`, `.gate`, `.budget`, `.on`, … | findings-layer settings | kept as settings | engine | the findings layer |
 | `.input r(IO=…, filename=…)` | a policy file | empty when absent, an error when present (O76) | engine | — |
@@ -115,10 +115,10 @@ program that reads it fails at planning ("no statistics for …"). "Refused" mea
 
 ### O79: `op` of a comparison
 
-O79 leaves it to the user: either `op` follows `core.rr`, or comparisons get their own relation. The census above
+O79 leaves it to the user: either `op` follows `core.rerail`, or comparisons get their own relation. The census above
 settles more than comparisons. TypeScript, PHP and Rust rules read keywords and punctuation through `op`, and T's
 `op` has none of them. A comparison relation would fix one row of the table and leave the rest. The recommendation
-is that `op` follows `core.rr`, and that T's parity tests read T's view under another name. Until then,
+is that `op` follows `core.rerail`, and that T's parity tests read T's view under another name. Until then,
 `op_at(c, _, s)` gives the comparison operators in both implementations.
 
 ## 2. Parse census
@@ -135,7 +135,7 @@ The scratch crate sits beside a symlink `docs → this branch's docs`. So `rr::l
 (`CARGO_MANIFEST_DIR/../docs/rule-syntax/lib`) resolves `#include` against this branch's `lib/`. A driver
 (`rr/census.rs`) does two things:
 
-1. It calls `parse_file` on each file: lowering, includes and the `core.rr` prelude.
+1. It calls `parse_file` on each file: lowering, includes and the `core.rerail` prelude.
 2. It lowers each of the file's own rule clauses alone, with every declaration and fact of its program. This shows
    every refusal, not only the first, and places each one at its clause.
 
@@ -165,8 +165,8 @@ accepted, two syntax errors are left:
 
 | File | Error | Cause | Side |
 |---|---|---|---|
-| `packs/python/ruff-up032-f-string.rr:71` | `expected ".", got Id("strlen")` | `g = sum strlen(x) - strlen(a) : { … }`, an aggregate over an expression | engine (and `sum` is refused anyway) |
-| `packs/python/ruff-ytt102-sys-version2.rr:13` | `expected an identifier, got Num(1)` | an unescaped `"1"` inside the message | this branch: fixed |
+| `packs/python/ruff-up032-f-string.rerail:71` | `expected ".", got Id("strlen")` | `g = sum strlen(x) - strlen(a) : { … }`, an aggregate over an expression | engine (and `sum` is refused anyway) |
+| `packs/python/ruff-ytt102-sys-version2.rerail:13` | `expected an identifier, got Num(1)` | an unescaped `"1"` inside the message | this branch: fixed |
 
 ### Refusals by construct, per clause
 
@@ -176,36 +176,36 @@ Libraries: 3,905 clauses, 3,831 lowered.
 
 | Clauses | Refusal | Examples |
 |---:|---|---|
-| 29 | `UnboundedValueCycle` (recursion making values, bounded by the data) | `lib/php/format.rr:71`, `lib/python/ast.rr:103`, `lib/python/names.rr:275` |
-| 12 | the built-in function `cat/3` (and 1 of `cat/5`) | `lib/complexity/cyclomatic.rr:41`, `lib/php/format.rr:51` |
-| 10 | the aggregate `join` | `lib/data-layer/signing.rr:35` |
-| 10 | the built-in function `to_number/1` | `lib/php/arrays.rr:76`, `lib/php/values.rr:78` |
-| 4 | the built-in function `to_float/1` | `lib/python/compare.rr:55`, `lib/python/security.rr:165` |
-| 2 | an aggregate inside a term | `lib/complexity/cyclomatic.rr:36`, `lib/python/ruff.rr:82` |
-| 2 | the built-in function `max/2` | `lib/php/format.rr:60`, `lib/tsx/modules.rr:198` |
-| 1 | `precedes_stop` | `lib/php/phpdoc.rr:22` |
-| 1 | the aggregate `sum` | `lib/python/misc2-messages.rr:58` |
-| 1 | `!nearest(n, s, set)` with s named | `lib/python/misc2-self.rr:35` |
-| 1 | arithmetic `%` | `lib/rust/syntax-literals.rr:153` |
-| 0 (was 1) | a negated conjunction | `lib/python/docstrings.rr:89`, rewritten |
+| 29 | `UnboundedValueCycle` (recursion making values, bounded by the data) | `lib/php/format.rerail:71`, `lib/python/ast.rerail:103`, `lib/python/names.rerail:275` |
+| 12 | the built-in function `cat/3` (and 1 of `cat/5`) | `lib/complexity/cyclomatic.rerail:41`, `lib/php/format.rerail:51` |
+| 10 | the aggregate `join` | `lib/data-layer/signing.rerail:35` |
+| 10 | the built-in function `to_number/1` | `lib/php/arrays.rerail:76`, `lib/php/values.rerail:78` |
+| 4 | the built-in function `to_float/1` | `lib/python/compare.rerail:55`, `lib/python/security.rerail:165` |
+| 2 | an aggregate inside a term | `lib/complexity/cyclomatic.rerail:36`, `lib/python/ruff.rerail:82` |
+| 2 | the built-in function `max/2` | `lib/php/format.rerail:60`, `lib/tsx/modules.rerail:198` |
+| 1 | `precedes_stop` | `lib/php/phpdoc.rerail:22` |
+| 1 | the aggregate `sum` | `lib/python/misc2-messages.rerail:58` |
+| 1 | `!nearest(n, s, set)` with s named | `lib/python/misc2-self.rerail:43` |
+| 1 | arithmetic `%` | `lib/rust/syntax-literals.rerail:153` |
+| 0 (was 1) | a negated conjunction | `lib/python/docstrings.rerail:89`, rewritten |
 
-There are also two file-level errors in the libraries: a kind set that is a relation of nodes (`lib/sql/syntax.rr`
-`block_scope_at`, `lib/tsx/statements.rr` `block_node`), and four `UnboundedValueCycle` errors in `lib/rust/*`.
+There are also two file-level errors in the libraries: a kind set that is a relation of nodes (`lib/sql/syntax.rerail`
+`block_scope_at`, `lib/tsx/statements.rerail` `block_node`), and four `UnboundedValueCycle` errors in `lib/rust/*`.
 
 Data layer: 347 clauses, 268 lowered. The counts moved from 315 and 236 during the run, because of concurrent edits
 to `data-layer/` that are not this work.
 
 | Clauses | Refusal | Examples |
 |---:|---|---|
-| 31 | `.violation` at a `loc` (a `@place`) | `data-layer/file-length.rr:33`, `test-budget.rr` |
-| 21 | `must` | `data-layer/plan-scope-side-effects.rr:72` |
-| 13 | `.violation` at a span | `data-layer/noqa-sec-ratchet.rr:28` |
-| 10 | `ordered by earlier` | `data-layer/sketches/owner-code.rr:22` |
-| 1 each | `dfs_first`, `dfs_first_memo`, a pattern `~`, `precedes_stop` | `sketches/transitive-eager.rr`, `versioned-table-names.rr:191`, `:201` |
+| 31 | `.violation` at a `loc` (a `@place`) | `data-layer/file-length.rerail:33`, `test-budget.rerail` |
+| 21 | `must` | `data-layer/plan-scope-side-effects.rerail:72` |
+| 13 | `.violation` at a span | `data-layer/noqa-sec-ratchet.rerail:28` |
+| 10 | `ordered by earlier` | `data-layer/sketches/owner-code.rerail:22` |
+| 1 each | `dfs_first`, `dfs_first_memo`, a pattern `~`, `precedes_stop` | `sketches/transitive-eager.rerail`, `versioned-table-names.rerail:191`, `:201` |
 
-The data layer's `join` refusals are in files, through `lib/data-layer/signing.rr`. Five data-layer files parse
+The data layer's `join` refusals are in files, through `lib/data-layer/signing.rerail`. Five data-layer files parse
 whole: layer-violations, post-op-no-internal-dispatch, public-api-triples and swallowed-exceptions, and
-missing-async-pairs before the concurrent edits. It now stops at the `join` of `lib/python/ast.rr:300`, which
+missing-async-pairs before the concurrent edits. It now stops at the `join` of `lib/python/ast.rerail:300`, which
 it reaches through an include.
 
 Packs, with the shim: 5,242 of the packs' own clauses, 4,602 lowered. The first error of a pack file is
@@ -214,18 +214,18 @@ usually in a library (`join` 500, `max/2` 214, `cat/3` 34, a node-valued kind se
 
 | Clauses | Refusal | Examples |
 |---:|---|---|
-| 373 | `.violation` at a `loc` (a `@place`, a token) | `packs/javascript/eslint-accessor-pairs.rr:23` |
-| 109 | `.violation` at a span | `packs/javascript/eslint-eqeqeq.rr:17` |
-| 94 | `cat` of 3 to 22 arguments | `eslint-capitalized-comments.rr:42`, `ruff-era001-commented-out-code.rr:80` |
-| 17 (was 18) | a negated conjunction, mostly "an option is set and …": `!(option("x", "true"), afterthought(u))` | `eslint-no-plusplus.rr:20`, `typescript-eslint-no-use-before-define.rr:29` |
-| 14 | `to_number/1` | `eslint-id-length.rr:21` |
-| 11 | the aggregate `join` | `eslint-no-console.rr:20` |
-| 6 | `to_float/1` | `eslint-yoda.rr:66`, `bandit-b505-weak-cryptographic-key.rr:25` |
-| 6 | `UnboundedValueCycle` | `ruff-b005-strip-with-multi-characters.rr:26` |
-| 5 | a decimal number | `eslint-yoda.rr:63` |
-| 2 | `%` | `bandit-b103-set-bad-file-permissions.rr:20` |
-| 2 | an aggregate inside a term | `ruff-pyi036-bad-exit-annotation.rr:44` |
-| 1 | `max/2` | `eslint-max-classes-per-file.rr:23` |
+| 373 | `.violation` at a `loc` (a `@place`, a token) | `packs/javascript/eslint-accessor-pairs.rerail:23` |
+| 109 | `.violation` at a span | `packs/javascript/eslint-eqeqeq.rerail:17` |
+| 94 | `cat` of 3 to 22 arguments | `eslint-capitalized-comments.rerail:42`, `ruff-era001-commented-out-code.rerail:80` |
+| 17 (was 18) | a negated conjunction, mostly "an option is set and …": `!(option("x", "true"), afterthought(u))` | `eslint-no-plusplus.rerail:20`, `typescript-eslint-no-use-before-define.rerail:29` |
+| 14 | `to_number/1` | `eslint-id-length.rerail:21` |
+| 11 | the aggregate `join` | `eslint-no-console.rerail:20` |
+| 6 | `to_float/1` | `eslint-yoda.rerail:66`, `bandit-b505-weak-cryptographic-key.rerail:25` |
+| 6 | `UnboundedValueCycle` | `ruff-b005-strip-with-multi-characters.rerail:26` |
+| 5 | a decimal number | `eslint-yoda.rerail:63` |
+| 2 | `%` | `bandit-b103-set-bad-file-permissions.rerail:20` |
+| 2 | an aggregate inside a term | `ruff-pyi036-bad-exit-annotation.rerail:44` |
+| 1 | `max/2` | `eslint-max-classes-per-file.rerail:23` |
 
 The 17 negated conjunctions are left as they are. Each reads "unless the option is on and this holds", in the
 place it applies. A helper relation per option would scatter them. The engine can name the helper itself, or
@@ -235,18 +235,18 @@ apply De Morgan to a conjunction of tests.
 
 | File | Change | Why | Semantics |
 |---|---|---|---|
-| `lib/core.rr` | `child`: comments are named children and are counted | the engine leaves them out; the libraries rely on them | unchanged (rrlab already did this) |
-| `lib/core.rr` | `text`: every node's and span's text, as written | the engine reads it as "identifiers" | unchanged |
-| `lib/core.rr` | `op`: every anonymous token, punctuation and keywords included, with examples; `op_at`: the punctuation it leaves out, and any field | O79; the engine's `op` and `op_at` are narrower | unchanged (as rrlab and 177 files use it) |
-| `lib/core.rr` | `str`: decoded (0037), and no row for a literal with interpolations | the engine's and 0037's built `str` have no row there | **changed**, rrlab follows |
-| `lib/core.rr` | `has`: "not `inside` with its columns swapped", with its Datalog meaning | the engine's lowering swaps the columns | unchanged |
-| `lib/core.rr` | `precedes` given as `child` order | exactness | unchanged |
-| `lib/core.rr` | `match("re", s)`, which the text called `glob("re", s)` | typo | — |
-| `lib/core.rr` | the `.violation` list gains `code "X"`, `suppress TOOL "rule", …` and `fix [safe] F "title"` | 930 packs use them; core.rr did not list them | — |
+| `lib/core.rerail` | `child`: comments are named children and are counted | the engine leaves them out; the libraries rely on them | unchanged (rrlab already did this) |
+| `lib/core.rerail` | `text`: every node's and span's text, as written | the engine reads it as "identifiers" | unchanged |
+| `lib/core.rerail` | `op`: every anonymous token, punctuation and keywords included, with examples; `op_at`: the punctuation it leaves out, and any field | O79; the engine's `op` and `op_at` are narrower | unchanged (as rrlab and 177 files use it) |
+| `lib/core.rerail` | `str`: decoded (0037), and no row for a literal with interpolations | the engine's and 0037's built `str` have no row there | **changed**, rrlab follows |
+| `lib/core.rerail` | `has`: "not `inside` with its columns swapped", with its Datalog meaning | the engine's lowering swaps the columns | unchanged |
+| `lib/core.rerail` | `precedes` given as `child` order | exactness | unchanged |
+| `lib/core.rerail` | `match("re", s)`, which the text called `glob("re", s)` | typo | — |
+| `lib/core.rerail` | the `.violation` list gains `code "X"`, `suppress TOOL "rule", …` and `fix [safe] F "title"` | 930 packs use them; core.rerail did not list them | — |
 | `tools/rrlab/src/main.rs`, `README.md` | no `str` or `value` for a Python string with an `interpolation` child, or a PHP `encapsed_string` with a part other than `string_content`/`escape_sequence`; `strprefix` kept | the `str` change | facts |
-| `lib/python/docstrings.rr` | `!(prefix("__", x), suffix("__", x))` becomes `!doc_dunder_seg(x)`, a named helper | refused construct, equally clear named form | none |
-| `packs/javascript/eslint-no-warning-comments.rr` | `!(eslint_directive(c), match(…, v))` becomes `!names_this_rule(c)` | the same | none |
-| `packs/python/ruff-ytt102-sys-version2.rr` | the message's `"1"` becomes `` `1` `` | an unescaped quote ended the string | message only |
+| `lib/python/docstrings.rerail` | `!(prefix("__", x), suffix("__", x))` becomes `!doc_dunder_seg(x)`, a named helper | refused construct, equally clear named form | none |
+| `packs/javascript/eslint-no-warning-comments.rerail` | `!(eslint_directive(c), match(…, v))` becomes `!names_this_rule(c)` | the same | none |
+| `packs/python/ruff-ytt102-sys-version2.rerail` | the message's `"1"` becomes `` `1` `` | an unescaped quote ended the string | message only |
 
 Not changed, and why:
 
@@ -255,8 +255,8 @@ Not changed, and why:
   rest have no equally clear form. Nesting `cat` three deep, or spelling `max(a, b)` as two rules, would make the
   rules worse.
 - **`op` and `cmp` (O79):** `lib/python` reads `op(c, "in")`. Moving it to `op_at(c, _, "in")` would fix one
-  library for the engine, while 176 other files still need `op` as `core.rr` has it. The fix belongs in the engine.
-- **`lib/python/names.rr` and `imports.rr`** (O78) are the coordinator's. Nothing here needs them changed.
+  library for the engine, while 176 other files still need `op` as `core.rerail` has it. The fix belongs in the engine.
+- **`lib/python/names.rerail` and `imports.rerail`** (O78) are the coordinator's. Nothing here needs them changed.
 
 `python3 site/check_rr.py` prints `ok` after the changes.
 
@@ -271,7 +271,7 @@ In order of what it unblocks:
 3. **Soufflé's built-ins:** `cat` of any arity, `max/2`, `min/2`, `to_number`, `to_float`, `%`, decimals, and an
    aggregate inside a term. These are small. They are the first refusal of 41 library files and of 274 packs
    (with the shim; section 2).
-4. **Base relations as `core.rr` states them:** comment nodes (in `node`, `child`, `tape`) with `comment`; `text`
+4. **Base relations as `core.rerail` states them:** comment nodes (in `node`, `child`, `tape`) with `comment`; `text`
    of every node; `op` of every anonymous token (T's view kept under another name: O79); `op_at` beyond operator
    fields; `syntax_error/3`; `next_sibling`; `str` decoded and in every language; `value`, `strprefix` and
    `name` for the other languages; `@dot("", b) = b`; `@lower` registered.
@@ -285,13 +285,13 @@ In order of what it unblocks:
 7. **O77 shortcuts:** `unset` as a value with `text(x, "")`; `within` as a range read; captures chunk-at-a-time;
    `earlier` in CPython's order for Python.
 8. **Hygiene:** an axis prefix that rule names cannot collide with (`inside_def` and four others exist);
-   `doc`'s module `""` for files with none, and `pkg` for Python only; translated programs include `core.rr`
+   `doc`'s module `""` for files with none, and `pkg` for Python only; translated programs include `core.rerail`
    (O74).
 
 ### Status after the engine work (2026-11-06)
 
-The work was done on the sibling branch `jeremybarnes/final-rerail-shape-rr-align`, recorded in its decision
-0046-rr-as-core-rr-states-it.md. The `op` question (O79) was settled as `core.rr` says: `op` is every anonymous
+The work was done on the sibling branch `final-rerail-shape-rr-align`, recorded in its decision
+0046-rr-as-core-rr-states-it.md. The `op` question (O79) was settled as `core.rerail` says: `op` is every anonymous
 token, and T's narrower view is kept as `op_t` for T's parity tests.
 
 | Census | Before | After |
@@ -328,14 +328,14 @@ Findings replay (path, line, code), as `events / compared / exact / errors`:
 | After the PSE fixes | `2350 178 177 0` | `1638 117 113 0` |
 
 The hand-written data-layer rules now lower, and are compared instead of the converted JSON. The drop of 5 was
-plan-scope-side-effects. The recorded findings spell its codes `PSE-050`, but `core.rr` names a violation's code
+plan-scope-side-effects. The recorded findings spell its codes `PSE-050`, but `core.rerail` names a violation's code
 after the violation. Its rule now gives each code with `code "PSE-…"`, and it sees through a parenthesized `if`
 test. The replay also drops `.mode log` codes on the suite plugin's events, as the plugin does. The check is then
 7 of 7 and 22 of 22. The last row adds that check's targeted replay to the reader run's other checks.
 
 ## 5. Scores before and after
 
-Only the `str` change touches semantics. In Python, only `lib/python/pyflakes.rr`'s `all_entry` reads `str`.
+Only the `str` change touches semantics. In Python, only `lib/python/pyflakes.rerail`'s `all_entry` reads `str`.
 Through it, F822, F405, F406, the D1xx visibility rules (`doc_listed`) and the ANN2xx rules read it too. In PHP,
 `php_value` reads `str`, and it already guards interpolation itself. Each rule was scored with
 `tools/rrlab/rrlab score` before and after (own fixtures):
@@ -370,16 +370,16 @@ The two rewrites (section 3) do not change semantics, and were checked as well:
 ## 6. Where the engine branches stand (2026-11-06)
 
 There are two engine branches:
-- **`jeremybarnes/final-rerail-shape`** at `a2667aed2`: the final-shape engine itself. Since `42af062ab` it has
+- **`final-rerail-shape`** at `a2667aed2`: the final-shape engine itself. Since `42af062ab` it has
   added steps of decisions 0044 and 0045, and copies of this branch's files.
-- **`jeremybarnes/final-rerail-shape-rr-align`** at `38d105533`: the reader work of section 4, cut from
+- **`final-rerail-shape-rr-align`** at `38d105533`: the reader work of section 4, cut from
   `42af062ab`. It is not merged into `final-rerail-shape`.
 
 How they compare:
 
 | | `final-rerail-shape` | `-rr-align` |
 |---|---|---|
-| `.rr` reader (`rr/syntax.rs`, `rr/lower.rs`) | as `42af062ab`: section 2's first census | section 4's status table |
+| `.rerail` reader (`rr/syntax.rs`, `rr/lower.rs`) | as `42af062ab`: section 2's first census | section 4's status table |
 | Pack files the reader takes | none (`code "X"` stops all of them) | 871 of 949 |
 | Replay, recordings 1–8 together | `3988 273 266 0` | `3988 295 290 0` |
 | Library files hashed, program cached by them (0044 step 1) | yes | no |
@@ -396,12 +396,12 @@ Neither side changes what the other does. The merge keeps both.
 
 ### What 0044 means for the rules
 
-0044's later steps change what `core.rr` describes. Nothing on this branch changes yet:
-- **`file`:** its L0 seeded fact is `file(path, hash)`, but `core.rr` declares `file(path)` for import
-  resolution. Either `core.rr` adds the hash, or the engine keeps `file/1` as a projection. The rules read only
+0044's later steps change what `core.rerail` describes. Nothing on this branch changes yet:
+- **`file`:** its L0 seeded fact is `file(path, hash)`, but `core.rerail` declares `file(path)` for import
+  resolution. Either `core.rerail` adds the hash, or the engine keeps `file/1` as a projection. The rules read only
   the path.
-- **Path facts (step 3):** `module`, `pkg`, `path_part` and `file_name` become `.rr` rules over `file` in the
-  library, instead of base relations computed in Rust. Their `.input` lines in `core.rr` would then become rules,
+- **Path facts (step 3):** `module`, `pkg`, `path_part` and `file_name` become `.rerail` rules over `file` in the
+  library, instead of base relations computed in Rust. Their `.input` lines in `core.rerail` would then become rules,
   with the same meaning: `doc`'s module is `""` for a file with no dotted module, and `pkg` is for Python only.
 - **`library_file` and `config_file`:** the engine reads these for itself; no rule reads them.
   `config_file` waits for O76, so that `.input` files (`option`, the ignore lists) become hashed inputs.

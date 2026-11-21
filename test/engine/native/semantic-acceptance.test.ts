@@ -11,12 +11,14 @@ import {
 import { applyCodeRuleConfig, resolveCodeRuleOptions } from "../../../src/engine/code-rule/code-rule-options.js";
 import { contentStorePath } from "../../../src/engine/native/rerail-build.js";
 import { SENSITIVE_FILE_NAMES, SENSITIVE_FOLDER_NAMES } from "../../../src/engine/path-boundary.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 const SECRET_NAMES = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NAMES };
 
 /** The reference binary intentionally retains these reviewed defects. */
 const REFERENCE_BUGS: Record<string, true> = { B1: true, B2: true, B3: true, B5: true, B6: true, B7: true, B11: true, B12: true, B13: true, B14: true, B15: true, B19: true };
-const USING_REFERENCE_ADDON = process.env.RERAIL_ENGINE_PATH?.includes("jeff-baseline") === true;
+/** Whether RERAIL_ENGINE_PATH names the reference binary: set RERAIL_REFERENCE_ADDON=1 beside it. */
+const USING_REFERENCE_ADDON = process.env.RERAIL_REFERENCE_ADDON === "1";
 
 const capabilities = JSON.stringify({
   format: "rerail.policy-capabilities/v1",
@@ -233,7 +235,7 @@ describe("semantic acceptance", () => {
         await attachment;
       } finally {
         native.close();
-        rmSync(root, { force: true, recursive: true });
+        removeFolderSync(root);
       }
     });
 
@@ -302,7 +304,7 @@ describe("semantic acceptance", () => {
         expect(new Set(results.map(siblingId)).size).toBe(1);
       } finally {
         native.close();
-        rmSync(root, { force: true, recursive: true });
+        removeFolderSync(root);
       }
     });
 
@@ -314,7 +316,7 @@ describe("semantic acceptance", () => {
         expect(USING_REFERENCE_ADDON).toBe(true);
         first.close();
         second.close();
-        rmSync(root, { force: true, recursive: true });
+        removeFolderSync(root);
         return;
       }
       try {
@@ -335,7 +337,7 @@ describe("semantic acceptance", () => {
       } finally {
         first.close();
         second.close();
-        rmSync(root, { force: true, recursive: true });
+        removeFolderSync(root);
       }
     });
   });

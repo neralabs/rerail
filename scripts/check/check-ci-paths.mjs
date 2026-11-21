@@ -96,8 +96,8 @@ export const GROUPS = {
     // step bundles, and the built package.
     entries: ["vitest.config.ts", "integration/**/*.ts", ...PACKAGE_BUILD],
     // The dashboard page daemon-cli.test.ts compares, the model the OMP host loads, Codex's hooks file, the OMP host
-    // the job provisions.
-    reads: [...PACKAGE_READS, "hooks/codex.json", "scripts/host/install-omp-host.mjs"],
+    // the job provisions, the pack claude-hook-rules.test.ts adds from this checkout.
+    reads: [...PACKAGE_READS, "hooks/codex.json", "scripts/host/install-omp-host.mjs", "packs/complexity/package.json"],
   },
   sessions: {
     jobs: ["real-sessions", "provider-smoke"],
@@ -106,12 +106,25 @@ export const GROUPS = {
     // Claude Code and Cursor load this checkout as a plugin directory, Codex its hooks file.
     reads: [...PACKAGE_READS, "hooks/codex.json", ".claude-plugin/plugin.json", ".cursor-plugin/plugin.json", ".codex-plugin/plugin.json", "skills/rerail-create/SKILL.md"],
   },
+  translations: {
+    jobs: ["translations"],
+    // The suite, and what product-run.ts imports at run time from the checkout it is given (src/engine/index.ts,
+    // conformance/engine.ts and the runner): the product's path, which esbuild cannot follow from a computed import.
+    entries: ["scripts/ship/translations.ts", "scripts/ship/product-run.ts", "src/engine/index.ts", "conformance/engine.ts", "conformance/languages/runner.ts"],
+    // The pack's rules, examples and declaration, the corpora pins, the engine's crate.
+    reads: ["packs/rerail/pack.json", "docs/rule-syntax/packs/rerail/equivalence.json", "scripts/ship/corpora.json", "native/Cargo.toml", "languages/python.json", "tsconfig.json"],
+  },
 };
 
 /** Outputs of the `changes` job this check leaves alone, and why. */
 export const UNGUARDED = {
   "release-pr": "whether this is the Release pull request, which its branch decides, no file path",
   rust: "the Rust jobs build and test crates; cargo's inputs are no TypeScript import closure",
+  "rust-all": "scripts/check/ci/rust-selection.mjs selects from cargo's packages and module trees, no import closure",
+  "rust-packages": "scripts/check/ci/rust-selection.mjs, as rust-all",
+  "rust-cargo-args": "scripts/check/ci/rust-selection.mjs, as rust-all",
+  "rust-nextest-filter": "scripts/check/ci/rust-selection.mjs, as rust-all",
+  "rust-engine": "scripts/check/ci/rust-selection.mjs, as rust-all",
 };
 
 /** The `changes` output of filter `name`: the filter's answer on a pull request it could list whole, else `'true'`. */

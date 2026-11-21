@@ -233,7 +233,7 @@ added.
 ## O8. Tape format
 
 **Two different "v8"s.** P's tape spike (2026-10-25, `research/tape-v8-measurements.md`,
-`experiments/tape-v8/`) measured a "v8" proposal (SoA columns, absolute u16/u32 positions) and
+`experiments/tape-v8/`, removed; at 7efcac9c67) measured a "v8" proposal (SoA columns, absolute u16/u32 positions) and
 rejected it: 11.1–13.5 B/node, 1.24–1.59× v7 (1.47–1.90× after zstd). W's `TMPTAPE8` is something
 else: v7 plus N's supertype table (`c3dd82e4`, `3cf93edb`). No other tape format past v7 exists in
 any worktree, branch or repo under `~/orca` (searched 2026-10-27).
@@ -251,7 +251,7 @@ pending pre-lock measurements**, never accepted.
 **Requirements from the discussion** (P session 2026-10-25):
 - The format must be completely regular. v4 to v7 were irregular in intermediate versions (overflow
   pairs, sorted flag lists, alias tables), and it doesn't work unless it is regular.
-- ast-index-spike experimented with multiple trees for different ranges within a file. That has to
+- SQL index prototype experimented with multiple trees for different ranges within a file. That has to
   be taken into account (embedded documents, Blade, Vue).
 - Don't overload the tape with things only associated with the source structure. Per-file alias
   string tables, the digest and length header, and Blade's omissions are kept off the tape: in
@@ -260,11 +260,11 @@ pending pre-lock measurements**, never accepted.
 - Blade stores nothing more or less than the tree-sitter-php tape it replaced. Today its
   compiled-view tape drops nodes over synthetic placeholder segments, so a directive call has no
   `function` child. Proposed fix: the plain tree-sitter-php tape, with omission through the segment
-  map in `file_documents`. Error spans stay in the tape as tree-sitter emits them, as ast-index-spike does. It
+  map in `file_documents`. Error spans stay in the tape as tree-sitter emits them, as the SQL index prototype does. It
   is fine for Blade to store something compatible with the generic structure, in a generic way.
-- Tapes must stay processable in SQL with ast-index-spike techniques. A format change has to show
+- Tapes must stay processable in SQL with the SQL index prototype techniques. A format change has to show
   clear benefits; a size increase (8 → 11 B/node, about 30%) was not acceptable, hence v9np.
-- Tempo keeps cached, pinned, page-allocated uncompressed tapes and source (§ residency, O5). The
+- The predecessor keeps cached, pinned, page-allocated uncompressed tapes and source (§ residency, O5). The
   at-rest format and the resident page format should be designed together.
 
 **Pre-lock measurements** (`research/tape-regularity.md` "Open measurements"). The spike used
@@ -279,7 +279,7 @@ crates.io grammars, not Rerail's vendored and patched ones, so each must be reru
 kept (resolved 2026-11-02, 0025 amended: no; parents are rebuilt at decode).
 
 **Closure.** Run the five measurements on Rerail's grammars; record an accepted decision (cite
-0003 and the spike indexes); then copy P `experiments/tape-v8/src/{main.rs, sql.rs}` into
+0003 and the spike indexes); then copy P `experiments/tape-v8/src/{main.rs, sql.rs}` (removed; at 7efcac9c67) into
 `cr/tape/v9np.rs` and adapt (05 Phase 2). Until then everything reads tapes only through
 `TapeDoc`'s `transducer_*` accessors, so the switch stays local to `tape.rs`.
 
@@ -983,7 +983,7 @@ S8 measures these with interleaved arms. Where the memory goes is the first ques
 ## O31. Per-node structures beside the tape
 
 Closed (2026-11-02). The user's ruling: only per-node structures stored in the database must go
-(ast-index-spike: "nothing may *store* one row per node"). None is: S7's store, 322,472 nodes,
+(SQL index prototype: "nothing may *store* one row per node"). None is: S7's store, 322,472 nodes,
 peaks at `derivation_inputs` with 0.12 rows/node. `no_relation_stores_a_row_per_node` and S7 now
 assert at most 0.25 rows/node per table. The in-memory structures the linter first listed
 (`TapeDoc`'s records, `Facts`, the facts vtab's projection, `MetalNode`, Forte's and literal
@@ -1439,7 +1439,7 @@ include `core.rr` and their tests read T's view by name.
 ## O75. The `.rdl` copies and T's tools
 
 T's 10 programs (`typing/programs`, `plan/golden/programs`), the old parser `front::parse`, and T's
-reference scripts (`front/rdl.py`, `magic/golden/generate.py`, `plan/golden/generate.sh`) are the only
+reference scripts (`front/rdl.py`, `scripts/generate/logic/magic_goldens.py`, `plan/golden/generate.sh`) are the only
 `.rdl` left. **Closure:** step 31 (O19) removes them.
 
 ## O76. Base relations and inputs the engine does not make yet
@@ -1607,7 +1607,7 @@ one run. There were five causes:
 **Closed:** `transducer::packed` passes in one parallel run: 689 passed, 0 failed, 63 ignored (the grid
 executor's, and the admission spike), 104 s at load 40-73.
 
-## O84. The Pulling-it-all-together merge (41f1c88e5): what was checked, and P's tests that need P's addon
+## O84. The PIAT merge (41f1c88e5): what was checked, and P's tests that need P's addon
 
 **Native code.** Every native file P changed since the merge base (`5cf4246e`) was checked hunk by
 hunk against this tree. All but 59 hunks are here. 35 of the 59 are in `matcher/anchors*`: P's
@@ -1620,7 +1620,7 @@ and SQL anchor engine are production in P and test-only here (`CLAUSE_KINDS` and
 **TS and scripts.** Taken from P as they were (the schema's `filePath`, `pythonFString`,
 `calls.graph`, `query.regex.lines`, `layout.line`, which this native compiles; the `data-layer`
 pack in the catalog, whose `rules` list is empty). Checked against this branch's addon (a
-`--profile profiling` build) and against P's own (`Pulling-it-all-together/native/*.node`, built
+`--profile profiling` build) and against P's own (`<PIAT>/native/*.node`, built
 after P's last native commit):
 - Tests that compile a `relational` clause fail here with "unknown field `relational`" and pass on
   P's addon. `vitest.config.ts` leaves them out unless `RERAIL_RELATIONAL_TESTS=1`.
@@ -1628,9 +1628,15 @@ after P's last native commit):
   positive and 2 false negatives; batch 02: 1 and 1; batch 02 probes: 6 and 0; batch 04: 6 and 2).
   It is P's open parity, and is left out the same way.
 - `execution-owner.test.ts` calls `native.CodeRuleDslExecution`, which neither addon has.
+- P's producer-shape and SQL-budget CI steps (`npm run test:producer-shape`,
+  `npm run test:sql-execution-budget`) measure P's SQL anchor engine, test-only here (O20). On this
+  branch's `code-rule-profile` addon the shape gate finds no anchor batches or producer plans (12 of
+  17 fail), and the cold job takes 353 engine SQL submissions against the 100 the budget allows,
+  which P's own workplan records as an expected acceptance failure. `ci.yml` runs them only with
+  `RERAIL_RELATIONAL_TESTS=1`; both scripts still run by hand.
 - Not the merge's: `audit-cli.test.ts` has 1 failure before and after it.
   `checkout-code-rule-router.test.ts` had 17 failures before and has 1 after it (a 5 s timeout
-  under load). The `gate/data-layer/test/conformance` copies fail to load before and after it
+  under load). The `packs/data-layer/upstream/lint/authored/test/conformance` copies fail to load before and after it
   (imports relative to `gate/`).
 
 To close: when O18 is decided, either the relational clause becomes production and these run by
@@ -1838,7 +1844,7 @@ where it is faster (the rows then filled from its answer), or the device path is
 
 ## O93. The data-layer pack's rules do not run on the full corpus
 
-These are the 68 checks in `gate/data-layer/packs/data-layer/candidates/rr` (Data-layer-rule-expressivity), measured
+These are the 68 checks in `packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/rr` (Data-layer-rule-expressivity), measured
 with `RERAIL_HAND_DIR=<that dir> RERAIL_MEASURE_HAND=only`. They need the data-layer engine's `core.rr` relations,
 merged at ca930d974. Of the 68 run one at a time on s50:
 
@@ -2694,7 +2700,7 @@ definitions whose digest changed, and base rows changed under `(document, preord
 
 **Closure:** the distributions recorded in 0083, and the symbol key's form decided.
 
-**Measured** (2026-11-08) on `nera-data-layer-gruel-main` (13,088 `.py` files, 218,046 definitions), last 224 non-merge
+**Measured** (2026-11-08) on the data-layer repository (13,088 `.py` files, 218,046 definitions), last 224 non-merge
 commits, with Python's `ast` standing in for the tape (`ast` has fewer nodes than tree-sitter; the ratios are what
 count). The tool is a dev script, not engine code.
 - **The commits are bulk.**
@@ -3029,7 +3035,7 @@ and both in a `rr_in_annotation_0_*` relation.
 
   It persists on the tree with every branch merged (survivors in place, scalar sharing, exports in memory;
   2026-11-08). One session over steps 01–20 matches a full run until step 05. From step 05 on, `call_open` has 2
-  extra rows (`l2055_lazy_result/tests/test_lazy_result_bugs.py:1067`), unchanged through step 20. Survivors in
+  extra rows (one call in a test of the lazy-result package), unchanged through step 20. Survivors in
   place is not the cause, because the departure is older than that spike. On the merged tree, the row is
   `(c, b) = (…6151, …5048)` with `e = …6154`, and the rule now reads `fl684_ext_base_up__old(c, e),
   pv__del(e, 158, b), !special_base__old(e)`. Every input row is present: `ext_base_up__old(c, e)`,
@@ -3311,12 +3317,12 @@ a phase output (t24, "not built").
 
 ## O-test-collect-rules. `test-budget` counts tests with rules, not pytest's artifact
 
-Decision 0142 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/`.
+Decision 0142 §1, t13 §6–§7. The spike's model and draft rules are in `notes/t13/` (removed; at 7efcac9c67).
 
 **Built (2026-11-08).** The `product` aggregate (`de8b50a9f`); `python/pytest-collect.rr` (`8c68e8d82`), the
 model's levels 0–6 as rules, with lengths evaluated on demand (`pc_want`) and bounded by a number domain, not by the
 tree; `test-budget` counting with it, the artifact optional, `collect_disabled` reported as `collection_disabled`.
-**Measured (2026-11-08, pinned corpus, against `notes/t13/truth-full.json`).**
+**Measured (2026-11-08, pinned corpus, against `notes/t13/truth-full.json` (removed; at 7efcac9c67)).**
 
 | Scope | Files exact | Total (pytest 14,449; model 13,610) | CPU |
 |---|---:|---:|---:|
@@ -3330,20 +3336,18 @@ or an enum. `data_layer_testing/` holds the first two; `test-budget` reads it. T
 
 **Measured (2026-11-09), `test-budget`'s scope** (`conform/`, `data_layer_testing/`, the root's files; 1,601
 files): 1,127 of 1,143 exact, total 13,585; 262 s user + 4.6 s sys, load 90–130. The four files where the rules and
-the model differ read an enum defined outside the scope (`MatchProducerFamily` in `l1470_matching_contracts/`,
-`BranchTipMaterialization` and two more in `data_layer/`); each is reported open and counted as 1.
+the model differ read an enum defined outside the scope (one in the matching contracts package, three in
+another package); each is reported open and counted as 1.
 
 **Beyond the model (2026-11-09).** Lists a function builds by `append`/`extend`/`+=` under `for` loops, helpers
 with several returns (the largest), function-local names, and `range` bounds given as `len(x)`.
-`test_speculative_publication_scenarios.py` (pytest 66, model 13) and `test_branches.py` (18, model 8) are now
+The publication-scenario test (pytest 66, model 13) and a branches test (18, model 8) are now
 exact. The same scope run with them: 1,129 of 1,143 exact, total 13,648; 208 s user + 4.2 s sys, load 20–60; the
-only files below the model are the four enum files above. A list built by introspection (`test_phase1_case_matrix.py`, 819) has no length; it stays in
+only files below the model are the four enum files above. A list built by introspection (the case-matrix test, 819) has no length; it stays in
 `collect_disabled`.
 
 **The enums need only their documents (2026-11-09).** A scoped run of the four files, plus each enum's re-export
-chain (`data_layer/matching.py` → `l5250_matching/__init__.py` → `l1470_matching_contracts/graph_producer_models.py`;
-`data_layer/versioned_schema.py` → `l7000_versioned_schema/compatibility.py` → `…/versioned_schema.py`;
-`l1500_llm/delegation_consent.py`), counts all four exactly (22, 12, 25, 40): no rule change.
+chain, counts all four exactly (22, 12, 25, 40): no rule change.
 
 **Status:** closed except for the scope: an enum outside `test-budget`'s scope is open. Through the `values` phase
 (O-names-cost) the four enum files count exactly on a 212-file root; over the whole workspace that waits on the
@@ -3418,7 +3422,7 @@ the wrapper's, in bytes, not the engine's.)
   files, their conftests, each enum's re-export chain (19 files), and `data_layer_testing/` and the root's files
   (`pcE.rr`'s scope). `struct` and `values` run over all 212; `pytest-collect` reads `values__len`. All four exact
   (22, 12, 25, 40), none open. Cold 25.0 s CPU (318 MB peak RSS); phases reused 13.9 s; with the per-file memo on,
-  19.4 s then 5.6 s. `test_fts_versioned_isolation.py`'s 12 needs `data_layer_testing`: its `TestFTSBranchIsolation`
+  19.4 s then 5.6 s. A versioned full-text test's 12 needs `data_layer_testing`: its test class
   is replaced by a function (`@requires_capabilities`, `pc_replaced`); without the decorator's document the class
   counts 21 more (its fixture's 7 scenarios, now read through `values`, times three tests).
 - What a cold phase spends, measured on samples (237, 591 and 2,063 files), and fixed (2026-11-09; outputs
@@ -3858,7 +3862,7 @@ The tier 2 ratchets rose: per rule, 371 states and 8,860 words to 380 and 9,348;
 2,590 arms to 271 and 2,621.
 
 **Seen (2026-11-12), decision 0130.** The engine's parser (`syntax.rs`) and the lean parser (`lean.rs`) read a
-`.test` … `.end` block into a `test_block` node. The Bitlex grammar (`rr_syntax/bitlex_ladder/21-named-only.bitlex`,
+`.test` … `.end` block into a `test_block` node. The Bitlex grammar (`rr_syntax/bitlex_ladder/21-named-only.bitlex`, now `rr_parser/rr.bitlex` (0531),
 compiled by `rerail-rr-parser`) does not: it reads each of the block's lines as a setting and does not refuse the
 file, so its tape differs from the engine's on a file with tests. The compiled parser is on no read path yet
 (`transducer/packed.rs`), and its corpus test (`corpus_tapes_are_the_engines`) is ignored and was not run.
@@ -3921,7 +3925,7 @@ in a process waits for the last run's queued writes before it writes. Then twent
 **Status (2026-11-12):** the target builds (the engine hosts the tests that read above the crate); 20 pass,
 the two text tests fail (O-device-step-counts).
 
-## O-phase0-store-state. Phase 0's include graph depends on what the store already holds
+## O-phase0-store-state (closed 2026-11-12). Phase 0's include graph depends on what the store already holds
 
 Each test now starts from a copy of a store template that already holds the
 library's facts (decision 0118). In such a store, two runs of phase 0 on the
@@ -3952,6 +3956,14 @@ then, four runs of that set in one process have passed. Four threads deriving th
 a derive alone, three rounds of it (a test written for the check, then removed). Shared derive state is not the
 cause, then; the graph side (`graph`, the kept text) is the suspect. On a failure, the assertion now prints both
 graphs (`Graph::describe`: includes, missing, absent), so the next one shows which edge differs.
+
+**Closed (2026-11-12): the cause was the batch, not the store.** The template's fill (`test_store::fill`) runs phase
+0 once over every library module as a file seed, and keeps each seed's graph. `bootstrap.rr` names `core.rr` at
+-1 for every `p0_file`, so that run held `python/env.rr -> core.rr`, and `Graph::of` carried the edge into every
+other seed's graph that reaches `env.rr` (`python/conditions.rr`'s, and the text kept from it). A run of that seed
+alone has no such edge, so the kept graph's digest depended on the run's other seeds; the test failed in any
+process that made the template, which is why it was intermittent. `Graph::of` now keeps an edge at -1 only for the
+seed's own start and the engine's.
 
 ## O-repetition-implied-boundary. A `+` run on the tape does not end at an implied token
 

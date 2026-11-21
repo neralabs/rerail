@@ -14,7 +14,9 @@ fn connection() -> Connection {
 #[test]
 fn computed_sql_inputs_do_not_reenter_a_held_symbol_lock() {
     let (send, receive) = std::sync::mpsc::channel();
+    let caller = crate::code_rule_dsl::logic::profile::caller();
     std::thread::spawn(move || {
+        let _caller = caller.enter();
         let db = connection();
         super::register_symbols(&db).unwrap();
         let atom: i64 = db.query_row("SELECT sym_atom('kept')", [], |r| r.get(0)).unwrap();
@@ -204,6 +206,8 @@ fn a_declared_lattice_replaces_the_join() {
         fn top(&self) -> i64 { 0b111 }
         fn finite(&self) -> bool { true }
     }
+    // The test's run holds the lattice it declares (decision 0442).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     super::declare("bits", std::sync::Arc::new(Or));
     let db = connection();
     db.execute_batch(
@@ -246,7 +250,7 @@ fn symbols_are_the_stores_atoms() {
 /// The device work queue's file-local FIX (list step 17) solves the CPU's system: many components (as
 /// files), with chains, cycles, transfers and conflicting seeds, and one long counting chain,
 /// give the same values on both.
-#[cfg(all(target_os = "macos", feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
 #[test]
 fn the_device_fix_waves_reach_the_cpus_fixpoint() {
     let db = connection();
@@ -485,7 +489,7 @@ fn a_closure_over_many_components_runs_in_pieces_like_semi_naive() {
     assert!(waved == semi, "the closure after its wave gives semi-naive's rows");
 }
 
-/// The keyed closure (decision 0523): the scope walk's shape. A walk climbs one column along an edge while a test of
+/// The keyed closure (decision 0570): the scope walk's shape. A walk climbs one column along an edge while a test of
 /// the row's other columns holds (`!bound(s, x)`), and a second step climbs on where another does (`late(n, x, s)`).
 /// It runs in one wave, each row's steps tested as the row is made, and gives semi-naive's rows and a search's.
 #[test]

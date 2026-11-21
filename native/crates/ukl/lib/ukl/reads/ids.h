@@ -33,35 +33,35 @@ typedef struct Numbering {
     Run jumps[2];
 } Numbering;
 UKL_STATIC_ASSERT(sizeof(Numbering) == 400, "Numbering: size");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, first) == 0, "Numbering.first");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, granules) == 4, "Numbering.granules");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, count) == 8, "Numbering.count");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, preorder_keys) == 24, "Numbering.preorder_keys");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, groups) == 32, "Numbering.groups");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, samples) == 48, "Numbering.samples");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, starts) == 112, "Numbering.starts");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, ends) == 128, "Numbering.ends");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, parents) == 144, "Numbering.parents");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, nodes) == 160, "Numbering.nodes");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, tokens) == 176, "Numbering.tokens");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, at) == 192, "Numbering.at");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, slots) == 208, "Numbering.slots");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, by_slot) == 224, "Numbering.by_slot");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, first_kid) == 240, "Numbering.first_kid");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, kids) == 256, "Numbering.kids");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, runs) == 272, "Numbering.runs");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, run_at) == 288, "Numbering.run_at");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, rank_starts) == 304, "Numbering.rank_starts");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, rank_ends) == 336, "Numbering.rank_ends");
-UKL_STATIC_ASSERT(__builtin_offsetof(Numbering, jumps) == 368, "Numbering.jumps");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, first) == 0, "Numbering.first");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, granules) == 4, "Numbering.granules");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, count) == 8, "Numbering.count");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, preorder_keys) == 24, "Numbering.preorder_keys");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, groups) == 32, "Numbering.groups");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, samples) == 48, "Numbering.samples");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, starts) == 112, "Numbering.starts");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, ends) == 128, "Numbering.ends");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, parents) == 144, "Numbering.parents");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, nodes) == 160, "Numbering.nodes");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, tokens) == 176, "Numbering.tokens");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, at) == 192, "Numbering.at");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, slots) == 208, "Numbering.slots");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, by_slot) == 224, "Numbering.by_slot");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, first_kid) == 240, "Numbering.first_kid");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, kids) == 256, "Numbering.kids");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, runs) == 272, "Numbering.runs");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, run_at) == 288, "Numbering.run_at");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, rank_starts) == 304, "Numbering.rank_starts");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, rank_ends) == 336, "Numbering.rank_ends");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Numbering, jumps) == 368, "Numbering.jumps");
 UKL_INLINE uint32_t clif_num_is(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
 UKL_INLINE uint32_t clif_num_rank(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
-UKL_INLINE uint32_t clif_num_select(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
+UKL_COLD uint32_t clif_num_select(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
 UKL_COLD uint64_t clif_num_granule(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
-UKL_INLINE uint32_t clif_num_low_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
+UKL_COLD uint32_t clif_num_low_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2);
 UKL_COLD uint32_t clif_num_number_in(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2,uint32_t a3,uint32_t a4);
-UKL_INLINE uint64_t clif_num_number_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
-UKL_INLINE uint32_t clif_num_order_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
+UKL_COLD uint64_t clif_num_number_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
+UKL_COLD uint32_t clif_num_order_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
 UKL_INLINE uint32_t clif_num_number_of_order(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
 UKL_INLINE uint32_t clif_num_is(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2){
  uint64_t v0=0;
@@ -175,7 +175,7 @@ UKL_INLINE uint32_t clif_num_rank(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32
  }
  return v6;
 }
-UKL_INLINE uint32_t clif_num_select(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2){
+UKL_COLD uint32_t clif_num_select(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2){
  uint64_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;
@@ -447,7 +447,7 @@ UKL_COLD uint64_t clif_num_granule(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint3
  }
  return v54;
 }
-UKL_INLINE uint32_t clif_num_low_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2){
+UKL_COLD uint32_t clif_num_low_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1,uint32_t a2){
  uint64_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;
@@ -671,7 +671,7 @@ UKL_COLD uint32_t clif_num_number_in(UKL_GLOBAL const uint8_t* t,uint64_t a0,uin
  }
  return v47;
 }
-UKL_INLINE uint64_t clif_num_number_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
+UKL_COLD uint64_t clif_num_number_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
  uint64_t v0=0;
  uint32_t v1=0;
  uint32_t v2=0;
@@ -865,7 +865,7 @@ UKL_INLINE uint64_t clif_num_number_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,u
  }
  return v62;
 }
-UKL_INLINE uint32_t clif_num_order_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
+UKL_COLD uint32_t clif_num_order_of(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
  uint64_t v0=0;
  uint32_t v1=0;
  uint32_t v3=0;

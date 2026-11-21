@@ -1,6 +1,8 @@
 # 0076: A corpus run's cross-file rows are memoised per import component, keyed by facts the run derives
 
 Status: built (2026-11-07; steps 1–4, Python imports). Measured on the typing corpus (§7): correct, and no faster.
+Retired for typing by 0083 and 0094 §7 (2026-11-08); removed by 0450 §3 (2026-11-19). The import closure
+(`components.rr`, less the component key) stays, for the programs that read it.
 
 ## Intro
 
@@ -234,7 +236,7 @@ load average was 40–125, so compare the cross part:
   - `calls.rr`'s own fixpoint grew across the final-rerail-shape merge, from 53 relations and 8.1 s to 74
     relations and 20.9 s (O133).
 - What a replay still spends is reading and binding 4 M rows (5.9 s). The next step is reading them in place.
-- **An edit does not pay yet.** One comment added to a widely imported file (`l1100_exceptions/exceptions.py`)
+- **An edit does not pay yet.** One comment added to a widely imported file (the corpus's exceptions module)
   misses the 41 components that reach it. The guarded rules then run their joins over every replayed row and drop
   the rows about found documents only at the end. So the cross part costs what deriving everything does. Cutting a
   guarded rule to the missing documents before its joins is what that case needs (O114).

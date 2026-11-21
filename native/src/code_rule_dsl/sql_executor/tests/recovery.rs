@@ -7,12 +7,12 @@ fn original_cpython_programs_use_private_projections_and_bounded_join_work() {
     let corpus: Vec<(String, String)> = serde_json::from_slice(&raw).unwrap();
     for (program, output, count) in [
         (
-            include_str!("../../logic/plan/golden/programs/workload.rr"),
+            include_str!("../../logic/plan/golden/programs/workload.rerail"),
             "type_of",
             1841,
         ),
         (
-            include_str!("../../logic/plan/golden/programs/calls.rr"),
+            include_str!("../../logic/plan/golden/programs/calls.rerail"),
             "call_target",
             256,
         ),
@@ -370,10 +370,7 @@ fn corpus_sql_uses_the_shared_wave_kernel_for_min_lattices() {
         &root,
         None,
         &dir.path().join("out"),
-        "",
-        false,
-        1024,
-        &[],
+        &crate::code_rule_dsl::tools::LogicRun { modes: "", metal: false, chunk_nodes: 1024, settings: &[] },
     );
     result.unwrap();
     assert_eq!(
@@ -397,6 +394,8 @@ fn both_sql_entry_points_share_custom_lattices_and_logical_zero_arity_outputs() 
             true
         }
     }
+    // The test's run holds the lattice it declares; the executor's run joins it (decision 0442).
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     native::declare("shared_sql_test_bits", Arc::new(Bits));
     let program = ".lattice shared_sql_test_bits<number> { Lub -> @shared_sql_test_bits }\n.decl seed(k:number,v:number)\nseed(1,3). seed(1,8).\n.decl smallest(k:number,v:min<>) widen 10\nsmallest(k,v) :- seed(k,v).\n.decl largest(k:number,v:max<>) widen 10\nlargest(k,v) :- seed(k,v).\n.decl best(v:min<>) widen 10\nbest(v) :- seed(_,v).\n.decl permission(k:number,v:shared_sql_test_bits<>) widen 3\n.decl bit(k:number,v:number)\nbit(1,1). bit(1,2).\npermission(k,v) :- bit(k,v).\n.decl flag()\nflag() :- seed(1,3).\n.decl total(n:number)\ntotal(n) :- n = count : {seed(_,_)}.\n.output smallest,largest,best,permission,flag,total\n";
     let (_d, mut e) = executor();
@@ -412,10 +411,7 @@ fn both_sql_entry_points_share_custom_lattices_and_logical_zero_arity_outputs() 
         &root,
         None,
         &dir.path().join("out"),
-        "",
-        false,
-        1024,
-        &[],
+        &crate::code_rule_dsl::tools::LogicRun { modes: "", metal: false, chunk_nodes: 1024, settings: &[] },
     )
     .unwrap();
     // Each relation's one row (`flag`'s, of no columns).
@@ -442,12 +438,14 @@ fn frontend_boolean_units_preserve_logical_arity_and_round_trip() {
     e.bind_relation(json!({"name":"flag","columns":[],"rows":[[]]}).to_string())
         .unwrap();
     let text = ".decl flag()\n.input flag\n.decl copied()\ncopied() :- flag().\n.decl ordinary(rr_unit:number)\nordinary(7).\n.output copied,ordinary\n";
-    let parsed = rr::parse(text).unwrap();
-    let printed = rr::print(&parsed).unwrap();
-    let again = rr::parse(&printed).unwrap();
-    assert_eq!(parsed.nullary, again.nullary);
-    assert_eq!(parsed.decls, again.decls);
-    assert_eq!(parsed.rules, again.rules);
+    let parsed = rr::parse_version(text).unwrap();
+    let printed = rr::print_version(&parsed).unwrap();
+    let again = rr::parse_version(&printed).unwrap();
+    assert_eq!(parsed.nullary_names().unwrap(), again.nullary_names().unwrap());
+    let decls = |v: &crate::code_rule_dsl::logic::program_image::Version| v.declared_names().into_iter().map(|r| (v.columns_of(&r), r)).collect::<Vec<_>>();
+    assert_eq!(decls(&parsed), decls(&again));
+    let shown = |v: &crate::code_rule_dsl::logic::program_image::Version| v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>();
+    assert_eq!(shown(&parsed), shown(&again));
     let lower: Value =
         serde_json::from_str(&e.lower(text.into(), "python".into()).unwrap()).unwrap();
     assert_eq!(lower["logical_arities"]["flag"], 0);
@@ -472,10 +470,7 @@ fn combined_corpus_programs_keep_boolean_output_metadata_after_renaming() {
         &root,
         None,
         &dir.path().join("out"),
-        "",
-        false,
-        1024,
-        &[],
+        &crate::code_rule_dsl::tools::LogicRun { modes: "", metal: false, chunk_nodes: 1024, settings: &[] },
     )
     .unwrap();
     for name in ["p0_flag", "p1_flag"] {

@@ -1,4 +1,4 @@
-import { ADAPTER_CAPABILITIES, type RerailHost, type SteerRule } from "../adapter-contract.js";
+import { ADAPTER_CAPABILITIES, type ConflictNotice, type RerailHost, type SteerRule } from "../adapter-contract.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
 
 /**
@@ -106,17 +106,77 @@ export const FEEDBACK_COMMAND_HINT = "rerail feedback <rule-id> '<that line>'";
 export const FEEDBACK_STDIN_HINT = "rerail feedback <rule-id> - <<'LINE'";
 
 /**
- * What the agent may do about it: fix it (follow it, for a tool call's guidance) or say why not, and record that line
- * with `rerail feedback` under the rule (named, when the steer has one and the id is a plain word); a Log is recorded only.
+ * The command in Git Bash on Windows. Git Bash runs `rerail` as the sh launcher, never `rerail.cmd`, and as the launcher
+ * starts node, Git Bash rewrites an argument that starts with `/` into a Windows path: the line `/v1 is exempt` would
+ * reach Rerail as `C:/Program Files/Git/v1 is exempt`. The line goes through a pipe instead, which it passes on as it is.
  */
-function steerLatitude(trigger: SteerTrigger, findings: readonly SteerFinding[]): string {
+export const WINDOWS_FEEDBACK_COMMAND_HINT = "echo '<that line>' | rerail feedback <rule-id> -";
+
+/**
+ * Has PowerShell pipe text to a program as UTF-8. Windows PowerShell 5.1, which every Windows 10 and 11 install ships,
+ * pipes ASCII by default and turns every other character into a `?`.
+ */
+const POWERSHELL_UTF8 = "$OutputEncoding = [Text.UTF8Encoding]::new();";
+
+/**
+ * How to record a declined line in PowerShell, which Codex and Cursor run on Windows: three lines, the agent's line in
+ * a here-string between `@'` and `'@`, piped in as UTF-8 past `rerail.cmd`, whose arguments cmd.exe reads again and
+ * would split at a `&` or `|`. A single-quoted line would end at any quote in it, since PowerShell reads ' ‘ ’ ‚ ‛ all
+ * as single quotes, and the rest of the line would run as a command. PowerShell reads nothing inside a here-string; it
+ * ends one only at a line that starts with a quote and `@`, which the space before the line rules out. `rerail
+ * feedback` trims the space.
+ */
+function powershellFeedback(rule: string): string {
+  return `three PowerShell lines: \`${POWERSHELL_UTF8} @'\`, a space and the line, then \`'@ | rerail feedback ${rule} -\``;
+}
+
+/**
+ * The shell a coding agent runs the commands a steer names in: sh or bash off Windows (`posix`); on Windows the one its
+ * capability profile names (`windowsCommandShell`), Git Bash or PowerShell. Git Bash is set apart from `posix`
+ * because it rewrites an argument that starts with `/` into a Windows path before node reads it.
+ */
+export type SteerShell = "posix" | "git-bash" | "powershell";
+
+/** The shell `host` runs commands in on `platform`; on Windows a host that is not known is taken to run Git Bash. */
+export function steerShell(host: RerailHost | undefined, platform: NodeJS.Platform = process.platform): SteerShell {
+  if (platform !== "win32") return "posix";
+  return host !== undefined && ADAPTER_CAPABILITIES[host].windowsCommandShell === "powershell" ? "powershell" : "git-bash";
+}
+
+/**
+ * How the session-start note tells the agent to record a declined steer's line, in its shell: the command, and the stdin
+ * form for a line with a quote in it; in PowerShell, which has no heredoc, the here-string form for every line.
+ */
+function feedbackHowTo(host: RerailHost, platform: NodeJS.Platform): string {
+  switch (steerShell(host, platform)) {
+    case "posix": return `\`${FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`)`;
+    case "git-bash": return `\`${WINDOWS_FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`)`;
+    case "powershell": return powershellFeedback("<rule-id>");
+  }
+}
+
+/** How a steer's last line tells the agent to record its line for `rule`, in `shell`. */
+function feedbackAction(shell: SteerShell, rule: string): string {
+  switch (shell) {
+    case "posix": return `run \`${FEEDBACK_COMMAND_HINT.replace("<rule-id>", rule)}\``;
+    case "git-bash": return `run \`${WINDOWS_FEEDBACK_COMMAND_HINT.replace("<rule-id>", rule)}\``;
+    case "powershell": return `record that line with ${powershellFeedback(rule)}`;
+  }
+}
+
+/**
+ * What the agent may do about it: fix it (follow it, for a tool call's guidance) or say why not, and record that line
+ * with `rerail feedback` under the rule (named, when the steer has one and the id is a plain word), in the agent's
+ * `shell`; a Log is recorded only.
+ */
+function steerLatitude(trigger: SteerTrigger, findings: readonly SteerFinding[], shell: SteerShell): string {
   if (findings.every(finding => finding.mode === "log")) return "Recorded only.";
   // Blocking is not built yet, so a Block-mode rule steers.
   const one = findings.length === 1;
   const verb = trigger.kind === "tool" ? "Follow" : "Fix";
   const ids = new Set(findings.map(finding => finding.ruleId));
   const rule = ids.size === 1 && SHELL_SAFE_RULE_ID.test(findings[0]!.ruleId) ? findings[0]!.ruleId : "<rule-id>";
-  return `${verb} ${one ? "it" : "these"}, or tell the user in one line why you won't and run \`${FEEDBACK_COMMAND_HINT.replace("<rule-id>", rule)}\`.`;
+  return `${verb} ${one ? "it" : "these"}, or tell the user in one line why you won't and ${feedbackAction(shell, rule)}.`;
 }
 
 /**
@@ -137,21 +197,36 @@ function findingLines({ ruleId, message, location, fix }: SteerFinding): string 
   return lines.join("\n");
 }
 
-/** The steer block for `findings`, in the order given: the trigger's lead, one line per finding, then the latitude. */
-export function steerBlock(trigger: SteerTrigger, findings: readonly SteerFinding[]): string {
-  return [steerLead(trigger, findings.length), ...findings.map(findingLines), steerLatitude(trigger, findings)].join("\n");
+/**
+ * The steer block for `findings`, in the order given: the trigger's lead, one line per finding, then the latitude, whose
+ * command is written for the agent's `shell`. The daemon renders it on the agent's own machine, so by default the shell
+ * is this machine's for a coding agent that is not known.
+ */
+export function steerBlock(trigger: SteerTrigger, findings: readonly SteerFinding[], shell: SteerShell = steerShell(undefined)): string {
+  return [steerLead(trigger, findings.length), ...findings.map(findingLines), steerLatitude(trigger, findings, shell)].join("\n");
 }
 
 /**
  * The rules behind `findings`, each once, in first-seen order: what the person's line names (`steerHeadlines`), with
- * the rule's state from its first finding and where it comes from (`origin`, `steerOrigin`'s sentence).
+ * the rule's state from its first finding, where it comes from (`origin`, `steerOrigin`'s sentence) and its title
+ * (`title`, `steerTitle`'s words).
  */
-export function steerRules(findings: readonly SteerFinding[], origin: (ruleId: string) => string | undefined = () => undefined): SteerRule[] {
+export function steerRules(
+  findings: readonly SteerFinding[],
+  origin: (ruleId: string) => string | undefined = () => undefined,
+  title: (ruleId: string) => string | undefined = () => undefined,
+): SteerRule[] {
   const rules = new Map<string, SteerRule>();
   for (const { ruleId, mode } of findings) {
     if (rules.has(ruleId)) continue;
     const source = origin(ruleId);
-    rules.set(ruleId, { id: ruleId, state: mode === "log" ? "logged" : "steered", ...(source === undefined ? {} : { origin: source }) });
+    const named = title(ruleId);
+    rules.set(ruleId, {
+      id: ruleId,
+      ...(named === undefined ? {} : { title: named }),
+      state: mode === "log" ? "logged" : "steered",
+      ...(source === undefined ? {} : { origin: source }),
+    });
   }
   return [...rules.values()];
 }
@@ -182,9 +257,18 @@ export interface SteerHeadline {
   readonly url: string | undefined;
 }
 
+/**
+ * The words a person's line names `rule` by: its title on one line, cut to {@link STEER_NAME_CHARS}, else its id. The
+ * coding agent's steer names the id, which its `rerail feedback` command takes.
+ */
+export function steerRuleName(rule: Pick<SteerRule, "id" | "title">): string {
+  const title = rule.title === undefined ? "" : cappedLine(rule.title);
+  return title === "" ? rule.id : title;
+}
+
 /** The person's headline for each of `rules`, in order: `◆ Rerail · <rule>  steered`, with the rule's link once it has one. */
 export function steerHeadlines(rules: readonly SteerRule[]): SteerHeadline[] {
-  return rules.map(rule => ({ header: `${STEER_GLYPHS[rule.state]} Rerail · ${rule.id}  ${rule.state}`, url: rule.url }));
+  return rules.map(rule => ({ header: `${STEER_GLYPHS[rule.state]} Rerail · ${steerRuleName(rule)}  ${rule.state}`, url: rule.url }));
 }
 
 /** The tool each coding agent starts a subagent with; Pi has none of its own, so Rerail registers `rerail_fix` there. */
@@ -205,6 +289,12 @@ export function subagentSteer(content: string, host: RerailHost): string {
     + `subagent with the \`${SUBAGENT_TOOLS[host]}\` tool, giving it the rule, the file and the guidance above, then `
     + "keep working on your own task.";
 }
+
+/** One line of someone's text ({@link oneLine}), its runs of whitespace one space and its ends trimmed. */
+export const plainLine = (text: string): string => oneLine(text).replace(/\s+/gu, " ").trim();
+
+/** Someone's text fit to show on one line ({@link plainLine}), cut to at most `max` characters, `…` marking the cut. */
+export const cappedLine = (text: string, max: number = STEER_NAME_CHARS): string => capped(plainLine(text), max);
 
 /**
  * A steer the coding agent reads as a message of its own, not in a tool result, from a host that hands that message to
@@ -253,13 +343,31 @@ const CONTROL = /[\p{Cc}\p{Cf}\p{Zl}\p{Zp}]/gu;
  * agent that draws colour passes `mark` (the coloured `R E R A I L`) to show in place of the word Rerail.
  */
 export function headlineText({ header, url }: SteerHeadline, style: HeadlineLinkStyle, mark?: string): string {
+  return linkedLine(header, url, "why?", style, mark);
+}
+
+/**
+ * A line led by `◆ Rerail · ` (the word replaced by `mark` when given), then `word` linked to `url` in `style`. In
+ * markdown the line's own text is inline code, so a rule's title shows as written: no link, bare address or emphasis
+ * of its own.
+ */
+function linkedLine(header: string, url: string | undefined, word: string, style: HeadlineLinkStyle, mark?: string): string {
   const plain = header.replace(CONTROL, "");
-  const text = mark === undefined ? plain : plain.replace(/^([○◆]) Rerail · /u, (_, glyph: string) => `${glyph} ${mark} · `);
+  const marked = mark === undefined ? plain : plain.replace(/^([○◆]) Rerail · /u, (_, glyph: string) => `${glyph} ${mark} · `);
+  const text = style === "markdown" ? inlineCode(marked) : marked;
   if (url === undefined) return text;
   const target = url.replace(CONTROL, "");
-  if (style === "hyperlink") return `${text}  ·  \u001b]8;;${target}\u0007why?\u001b]8;;\u0007`;
-  if (style === "markdown") return `${text}  ·  [why?](${target})`;
-  return `${text}  ·  why? → ${target}`;
+  if (style === "hyperlink") return `${text}  ·  \u001b]8;;${target}\u0007${word}\u001b]8;;\u0007`;
+  if (style === "markdown") return `${text}  ·  [${word}](${target})`;
+  return `${text}  ·  ${word} → ${target}`;
+}
+
+/**
+ * The one line the person sees for an in-flight conflict a note surfaces: `◆ Rerail · your edit overlaps PR #398
+ * (Sam): model.rs  ·  open`, `open` linking its card on the Merge Assist page once the adapter knows the dashboard.
+ */
+export function conflictLine({ text, url }: ConflictNotice, style: HeadlineLinkStyle, mark?: string): string {
+  return linkedLine(`${STEER_GLYPHS.steered} Rerail · ${text}`, url, "open", style, mark);
 }
 
 /** This session's dashboard page on `origin`. */
@@ -285,7 +393,9 @@ const rulesOn = (count: number): string => `${count} ${count === 1 ? "rule is" :
  * turning a rule off (N7); or, where the repository is not set up yet, that no rules run until the person sets it
  * up. The person sees nothing.
  */
-export function sessionStartNote(origin: string | undefined, host: RerailHost, sessionId: string, rules: SessionNoteRules): string {
+export function sessionStartNote(
+  origin: string | undefined, host: RerailHost, sessionId: string, rules: SessionNoteRules, platform: NodeJS.Platform = process.platform,
+): string {
   const sigil = ADAPTER_CAPABILITIES[host].commandSigil;
   const sessionLink = origin === undefined ? [] : [`This session in the Rerail dashboard: ${sessionPageUrl(origin, host, sessionId)}`];
   if (!rules.setUp) {
@@ -298,7 +408,7 @@ export function sessionStartNote(origin: string | undefined, host: RerailHost, s
   return [
     `Rerail is on in this repo${rules.ruleCount === null ? "" : `: ${rulesOn(rules.ruleCount)}`}. It checks your work against this repo's rules and stays silent until one is broken.`,
     `When one is, you get a message starting "Rerail found" that lists each problem with its location, what to do, and the rule id in brackets.`,
-    `A steer is advice. Fix it and carry on, or, if you decide not to follow it, tell the user in one line why, record that line with \`${FEEDBACK_COMMAND_HINT}\` (a line with a ' in it: \`${FEEDBACK_STDIN_HINT}\`, the line, then \`LINE\`), and carry on.`,
+    `A steer is advice. Fix it and carry on, or, if you decide not to follow it, tell the user in one line why, record that line with ${feedbackHowTo(host, platform)}, and carry on.`,
     "If the user asks why Rerail flagged something, answer from that message: the rule id and what it matched. The user can open the rule from the why? link on their own line.",
     "Before you turn a Rerail rule off or change its mode, name the rule and ask the user: Off, Log (kept on record, you are not told), or leave it.",
     `Never turn a rule off or stop Rerail on your own to get past a rule. ${sigil}rerail-stop is the user's own command: run it without asking.`,

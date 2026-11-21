@@ -1,9 +1,10 @@
 import { spawn } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, readFileSync, realpathSync } from "node:fs";
-import { mkdir, mkdtemp, rm, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { createServer } from "node:net";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { afterEach, describe, expect, it } from "vitest";
 import {
@@ -19,6 +20,8 @@ import {
   stopDevCheckout,
   validateDevInstance,
 } from "../../scripts/dev/rerail-dev.mjs";
+import { linkFolder } from "../support/platform/links.ts";
+import { removeFolder } from "../support/platform/remove-folder.ts";
 
 const cleanups = [];
 afterEach(async () => {
@@ -27,7 +30,7 @@ afterEach(async () => {
 
 async function sandbox() {
   const root = realpathSync(await mkdtemp(join(tmpdir(), "rerail-dev-")));
-  cleanups.push(() => rm(root, { recursive: true, force: true }));
+  cleanups.push(() => removeFolder(root));
   const env = { RERAIL_HOME: join(root, "rerail-home"), XDG_STATE_HOME: join(root, "state") };
   const checkout = async (name) => {
     const path = join(root, name);
@@ -59,7 +62,9 @@ describe("launch arguments", () => {
 
 describe("dev instance", () => {
   it("is one validated loopback target whose URL names its port", () => {
-    const instance = { checkout: "/c", home: "/c/.rerail/dev/home", port: 35_167, url: "http://127.0.0.1:35167" };
+    // Absolute on this platform: the home must be its own resolved path, and on Windows that starts with a drive.
+    const checkout = resolve("/c");
+    const instance = { checkout, home: join(checkout, ".rerail", "dev", "home"), port: 35_167, url: "http://127.0.0.1:35167" };
     expect(validateDevInstance(instance)).toEqual(instance);
     expect(() => validateDevInstance({ ...instance, url: "http://127.0.0.1:35168" })).toThrow(/url must be http:\/\/127\.0\.0\.1:35167/);
     for (const port of [0, 1023, 65_536, 35_167.5, "35167"]) {
@@ -106,7 +111,7 @@ describe("dev instance", () => {
     const { env, checkout } = await sandbox();
     const bridged = await checkout("bridged");
     await mkdir(env.RERAIL_HOME, { recursive: true });
-    await symlink(bridged, join(env.RERAIL_HOME, "current"));
+    linkFolder(bridged, join(env.RERAIL_HOME, "current"));
 
     expect(devHome(bridged, env)).toBe(env.RERAIL_HOME);
     expect((await setupDevInstance(bridged, { env, isFree: alwaysFree })).home).toBe(env.RERAIL_HOME);
@@ -152,8 +157,12 @@ async function fakeDaemon(home, packageRoot) {
     process.on("SIGTERM", () => { rmSync(stateFile, { force: true }); process.exit(0); });
   `;
   const child = spawn(process.execPath, ["-e", source, stateFile, packageRoot], { stdio: "ignore" });
-  cleanups.push(() => {
-    if (child.exitCode === null) child.kill("SIGKILL");
+  // Waits for the exit too: a fake daemon still running holds its home, which the next cleanup removes.
+  cleanups.push(async () => {
+    if (child.exitCode !== null || child.signalCode !== null) return;
+    const exited = once(child, "exit");
+    child.kill("SIGKILL");
+    await exited;
   });
   for (let attempt = 0; !existsSync(stateFile); attempt += 1) {
     if (attempt > 100) throw new Error("fake daemon did not start");

@@ -269,8 +269,8 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
 - **Declared types, Python** (2026-11-07; O89, step 2). `calls.rr` reads parameter, return and class-attribute
   annotations, and decorators declared `(fn: F) -> F`; what it trusts and what stays open is in O89. Django is
   barely annotated, so the score was taken on the data layer (commit 41ab36f): Jedi 0.19.2 `goto` recorded over
-  its l1–l20 packages (489 files, 246 s of CPU), and both programs scored on 84 of those files
-  (`_internal`, `l1100_exceptions`, `l1200_json`, `l1400_types`, `l2050_transaction`, `l2055_lazy_result`):
+  its lowest layers' packages (489 files, 246 s of CPU), and both programs scored on 84 of those files
+  (six of its packages):
 
   | Calls of the 84 files | Before | Annotations read |
   |---|---|---|
@@ -286,11 +286,11 @@ parity twin, as `LEG_083_SOUND` does, never in its place.
 
 - **The first rule that reads types** (step 1's end-to-end rule): `docs/rule-syntax/data-layer/leg-083-typed.rr`.
   - **What it does.** LEG-083 counts every `x.resolve()` as an eager lazy terminal, by name; at the data layer's
-    October commit all its findings are pathlib paths or lookups (`data-layer/upstream/LEG-083.md`). This rule
+    October commit all its findings are pathlib paths or lookups (the LEG-083 port note, removed). This rule
     counts a `resolve()` or `resolve_async()` with no arguments only when its receiver may be a `LazyResult` or a
     `LazySeq` (`possible_type`). It reports a function that reaches one through calls in its own file.
   - **Fixture.** `typing::oracle_tests::leg_083_typed_counts_resolve_by_the_receivers_type` pins it on
-    `fixtures/python/leg083`: a declared return, a decorated method, a class attribute and an attribute chain are
+    `fixtures/python/typing/leg083`: a declared return, a decorated method, a class attribute and an attribute chain are
     counted; a path, a quoted annotation and an untyped parameter are unknown; a call with an argument is
     not counted.
   - **Data layer.** On the 84 files, the 16 calls it counts are all lazy terminals, and none of the 17 pathlib

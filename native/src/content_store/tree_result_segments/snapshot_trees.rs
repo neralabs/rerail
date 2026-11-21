@@ -1,4 +1,4 @@
-// COPY: Tempo ner-1562-scale-test-the-re-railer@8fe9ffed4:tempo/native/src/content_store.rs, fragments verbatim:
+// COPY: the predecessor@8fe9ffed4 (a branch of the predecessor repository):<predecessor>/native/src/content_store.rs, fragments verbatim:
 // l.253-263 (SCHEMA_V9), l.3082-3159 (reusable_snapshot_tree_prefixes, reusable_maximal_tree_prefixes).
 use super::super::{CandidateCatalogIdentity, ContentStore, HashKey, StoreError, StoreResult};
 use rusqlite::params;

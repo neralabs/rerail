@@ -9,12 +9,12 @@ pub mod p_anchors;
 pub use p_anchors::sql::{Corpus, CorpusSlot};
 #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
 pub use p_anchors::sql::{anchor_plans, anchor_plans_for_file};
+pub mod arguments;
 /// D's anchors module and SQL anchor engine as copied (bb79b40a), test-only: the closure of D's
 /// plan-input statistics (O19).
 #[cfg(any(test, feature = "test-hooks"))]
 #[allow(dead_code, unused_imports)]
 pub mod d_anchors;
-pub mod arguments;
 // cratify: `arguments_sql` is rerail-lang-sql's (it mounts it)
 pub mod binding;
 pub mod binds;
@@ -47,11 +47,14 @@ pub mod value;
 
 use super::budget;
 use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
+use crate::code_rule_dsl::regexes::Regex;
 pub use analysis::RequiredText;
-#[cfg_attr(not(any(test, feature = "test-hooks")), allow(unused_imports))]
-pub use lower::{Axis, Fact, FactFound, MatchTree, Stop, DocumentGate, gated_match_tree, match_tree};
 pub use analysis::{calls_positive_only, reads_import_targets};
 pub use anchors::{AnchorPlan, FileAnchorIndex, Selection};
+#[cfg_attr(not(any(test, feature = "test-hooks")), allow(unused_imports))]
+pub use lower::{
+    Axis, DocumentGate, Fact, FactFound, MatchTree, Stop, gated_match_tree, match_tree,
+};
 // The prefilter lowers a plan's structure to SQL (`prefilter/lower.rs`).
 pub use anchors::{Condition, Direction, Required, Requirement};
 pub use arguments::{Arguments, Passed, SlotKind};
@@ -67,31 +70,28 @@ pub use compare::{Collation, CompareOp, CompareText, Comparison, EqClass, Semant
 pub use count::{Count, CountBinding};
 pub use each::binding_range;
 pub use embedded::EmbeddedTest;
-pub use exported::{
-    WITNESS_NODE, export_text, exported_span, exported_text, is_span_variable,
-};
+pub use exported::{WITNESS_NODE, export_text, exported_span, exported_text, is_span_variable};
 pub use format_args::{FormatArgs, Style};
 pub use layout::{Gap, Layout, LineContext, LineCount, Neighbour};
-/// P's: the path of the file being matched (P's `calls` delta reads it).
-pub use resolve::file_path;
 pub use memo::with_file as with_file_memo;
-pub use nth_child::{NthChild, Position as NthPosition, parse_position};
 pub use nth_child::SiblingPositions;
+pub use nth_child::{NthChild, Position as NthPosition, parse_position};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use nth_child::{named_sibling_visits, reset_named_sibling_visits};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use parse::parse_fact_tree;
 pub use parse::{HostTest, ParseTest};
-use regex::Regex;
 pub use relation::{FieldRelation, Related, StopBy, stop_rule};
 #[cfg(any(test, feature = "test-hooks"))]
 pub use relation::{set_answers_off, set_same_key_off};
+pub use resolve::Resolves;
+/// P's: the path of the file being matched (P's `calls` delta reads it).
+pub use resolve::file_path;
 pub use resolve::{
-    FileGates, calls_tables, file_index, file_lines, file_module, file_rerail_ignores, file_source_type_for,
-    table_reading,
+    FileGates, calls_tables, file_index, file_lines, file_module, file_rerail_ignores,
+    file_source_type_for, table_reading,
 };
 pub use resolve::{FileScopeSlot, Unresolved, matched_file_path};
-pub use resolve::Resolves;
 // cratify: a re-export of rerail-lang-php's, which its facades of this module make
 #[cfg(any(test, feature = "test-hooks"))]
 pub use resolve::{JSX_RUNTIME_DERIVATIONS, SOURCE_TYPE_DERIVATIONS, TABLE_BUILDS};
@@ -114,12 +114,12 @@ pub use util::{
     UtilTable, UtilitySummary,
 };
 use util::{
-    MAX_UTIL_STACK_BYTES, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STACK_BASE,
-    UTIL_STEPS_LEFT, stack_address,
+    MAX_UTIL_STACK_BYTES, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STACK_BASE, UTIL_STEPS_LEFT,
+    stack_address,
 };
 use util::{THREE_VALUED, UNKNOWN};
-pub use value::{Bound, Reading, ValueTest};
 pub use value::Values;
+pub use value::{Bound, Reading, ValueTest};
 
 pub mod term;
 pub use term::{LanguageTerm, TermCompiler, install_terms};
@@ -300,6 +300,7 @@ pub enum AstMatcher {
     /// members, which the tape stores per node (decision 0025). Membership is contextual (an
     /// `identifier` assigned to is a `pattern`, not an `expression`), not a function of the kind.
     Supertype(Supertype),
+    /// The node's text matches; the terms that write one pattern share its regex (`regexes`).
     Regex(Regex),
     All(Vec<AstMatcher>),
     Any(Vec<AstMatcher>),
@@ -341,7 +342,10 @@ pub struct Supertype {
 
 impl Supertype {
     pub(super) fn new(class: u16, language: GrammarDialect) -> Self {
-        Self { class, kinds: Arc::new(language.supertype_kinds(class)) }
+        Self {
+            class,
+            kinds: Arc::new(language.supertype_kinds(class)),
+        }
     }
 }
 
@@ -360,7 +364,9 @@ impl Matcher for AstMatcher {
             Self::Kind(kind) => kind.match_node_with_env(node, env),
             // Memberships are the tape's; a tree that is no tape's has none to read.
             Self::Supertype(supertype) => match crate::code_rule_dsl::tape::tape_doc(&node) {
-                Some(tape) => tape.transducer_has_supertype(node.node_id() as u32, supertype.class).then_some(node),
+                Some(tape) => tape
+                    .transducer_has_supertype(node.node_id() as u32, supertype.class)
+                    .then_some(node),
                 None => {
                     UNKNOWN.set(true);
                     None
@@ -560,7 +566,12 @@ impl AstMatcher {
     fn binds_nothing(&self) -> bool {
         match self {
             Self::Semantic(semantic) => semantic.binds_nothing(),
-            Self::Kind(_) | Self::Supertype(_) | Self::Regex(_) | Self::Not(_) | Self::Compare(_) | Self::Never => true,
+            Self::Kind(_)
+            | Self::Supertype(_)
+            | Self::Regex(_)
+            | Self::Not(_)
+            | Self::Compare(_)
+            | Self::Never => true,
             // A count binds its value under `as`.
             Self::Count(count) => count.binding.is_none(),
             Self::TestUnknown(_) => true,
@@ -583,12 +594,17 @@ impl AstMatcher {
             _ => false,
         };
         match self {
-            Self::Kind(_) | Self::Supertype(_) | Self::Regex(_) | Self::Pattern(_) | Self::Never => false,
+            Self::Kind(_)
+            | Self::Supertype(_)
+            | Self::Regex(_)
+            | Self::Pattern(_)
+            | Self::Never => false,
             Self::All(items) | Self::Any(items) => items.iter().any(Self::calls_util),
             Self::Not(item) => item.calls_util(),
-            Self::Inside(related, by) | Self::Has(related, by) | Self::Precedes(related, by) | Self::Follows(related, by) => {
-                related.rule().calls_util() || stop(by)
-            }
+            Self::Inside(related, by)
+            | Self::Has(related, by)
+            | Self::Precedes(related, by)
+            | Self::Follows(related, by) => related.rule().calls_util() || stop(by),
             Self::NthChild(nth) => nth.of_rule.as_ref().is_some_and(Self::calls_util),
             _ => true,
         }
@@ -638,10 +654,7 @@ impl AstMatcher {
 /// Whether a matcher can reach an unknown verdict: it holds a `value` predicate or a comparison over
 /// values or property names, directly or through a composite, relation, stop rule, count,
 /// constraint or utility. Clauses without one never touch the `UNKNOWN` flag.
-pub fn reads_values(
-    matcher: &AstMatcher,
-    seen: &mut std::collections::BTreeSet<usize>,
-) -> bool {
+pub fn reads_values(matcher: &AstMatcher, seen: &mut std::collections::BTreeSet<usize>) -> bool {
     match matcher {
         AstMatcher::Semantic(semantic) => semantic.reads_values(seen),
         AstMatcher::TestUnknown(_) => true,
