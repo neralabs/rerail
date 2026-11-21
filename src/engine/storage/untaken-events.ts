@@ -12,7 +12,8 @@ import { openNoFollowSync } from "../no-follow.js";
  * at once instead of waiting again. Each event is one file, written whole (`replaceFile`), named
  * `<arrival ms>-<daemon pid>-<hook pid>-<count>-<bytes>.json`: the order hooks met their events, whose silence it was,
  * and its size. The daemon takes the folder in that order whenever its event loop runs (a watch of the folder, its
- * start, and before any event sent to it), so no event sent after a silence is checked before one left during it. As it
+ * start, and before any event sent to it), so no event sent after a silence is checked before one left during it, but
+ * for one whose file the daemon cannot read then: it is checked at the pass that reads it, after those behind it. As it
  * begins to take, it marks the newest event it takes (`TAKEN_MARK`), so a hook counts as untaken only what came after:
  * events the daemon is taking, a file another program keeps it from removing, or one it cannot read, never make a hook
  * skip a daemon that reads. Its state file names the folder it watches (`untakenFolderId`), so a hook skips its wait only for events in
@@ -217,21 +218,28 @@ export const NO_UNTAKEN_EVENTS: UntakenEventTaker = { taken: async () => undefin
 const PASS_SLICE = 16;
 
 /**
- * How many passes may fail to read an event's file (another program holds it, no descriptor is free) before it is lost.
+ * How many passes may fail to read an event's file (another program holds it, no descriptor is free), and for how long
+ * from the first, before it is lost. Each pass reads it again, so a file let go of is read at the next one. Nothing tells
+ * when a program lets go of a file, so the give-up is timed: passes start at every event a hook sends, and an active
+ * session's next hooks could use up a count of passes within the second a program holds the file. The daemon's sweep of
+ * idle sessions starts a pass each minute; the count keeps the first pass after a stalled event loop from being the last.
  */
 const READ_TRIES = 3;
+const READ_GIVE_UP_MS = 60_000;
 
 /**
  * The taker of `home`'s untaken events for its daemon, which hands each to `handler`. Each pass first moves the taken
  * mark on, so hooks stop counting what it takes, then hands the events on a slice at a time: the daemon answers between
  * slices. Each name is handed on once: a file Windows keeps from removal is removed at a later pass and not handed on
- * twice. A file the daemon cannot read now is read again at the next pass, until `READ_TRIES` passes could not; one
- * that is no event a hook wrote (a folder, a link, a pipe, a size other than its name's) fails in the pass that met it.
- * Each failure goes to stderr (daemon.log) with the event's name. A pass writes into the folder only for names newer
- * than its taken mark, so a pass its own writes start, or one that reads such a file again, writes nothing.
+ * twice. A file the daemon cannot read now is read again at each pass, until `READ_TRIES` passes over `READ_GIVE_UP_MS`
+ * could not; one that is no event a hook wrote (a folder, a link, a pipe, a size other than its name's) fails in the
+ * pass that met it. Each failure, and the first pass that could not read a file, goes to stderr (daemon.log) with the
+ * event's name. A pass writes into the folder only for names newer than its taken mark, so a pass its own writes start,
+ * or one that reads such a file again, writes nothing. `now` is the clock the give-up is timed by, the monotonic one by
+ * default.
  */
-export function untakenEventTaker(home: string, handler: UntakenHandler): UntakenEventTaker {
-  const taker = new Taker(home, handler);
+export function untakenEventTaker(home: string, handler: UntakenHandler, now: () => number = () => performance.now()): UntakenEventTaker {
+  const taker = new Taker(home, handler, now);
   let watcher: FolderWatch | undefined;
   return {
     taken: () => {
@@ -257,12 +265,12 @@ class Taker {
    * removed at a later pass where it can be, never handed on or failed again.
    */
   readonly #done = new Set<string>();
-  /** By name, how many passes could not read an event's file, which stays for the next. */
-  readonly #unread = new Map<string, number>();
+  /** By name, how many passes could not read an event's file, which stays for the next, and when the first could not. */
+  readonly #unread = new Map<string, { readonly tries: number; readonly since: number }>();
   #running: Promise<void> | undefined;
   #next: Promise<void> | undefined;
 
-  constructor(readonly home: string, readonly handler: UntakenHandler) {}
+  constructor(readonly home: string, readonly handler: UntakenHandler, readonly now: () => number) {}
 
   taken(): Promise<void> {
     if (this.#running !== undefined) {
@@ -282,7 +290,9 @@ class Taker {
   async #pass(): Promise<void> {
     if (this.closed) return;
     for (const name of [...this.#done]) removedName(this.home, name, this.#done);
-    const fresh = untakenNames(this.home).filter(name => !this.#done.has(name.name));
+    const listed = untakenNames(this.home);
+    forgetUnlisted(this.#unread, listed);
+    const fresh = listed.filter(name => !this.#done.has(name.name));
     if (fresh.length === 0) return;
     await markTaken(this.home, fresh.at(-1)!);
     void reportPass(await this.#handOnInSlices(fresh), this.handler);
@@ -305,8 +315,8 @@ class Taker {
 
   /**
    * Hands the event `name` holds to the handler, removes its file, and returns its check, failed where the file is no
-   * event or could not be read `READ_TRIES` times; undefined, the file left for the next pass, while fewer passes could
-   * not read it. The taker is done with a name it hands on (`#done`), so it is met once.
+   * event or could not be read for as long as `READ_TRIES` says; undefined, the file left for the next pass, until then,
+   * or once the file is gone. The taker is done with a name it hands on (`#done`), so it is met once.
    */
   #handOn(name: UntakenName): Promise<void> | undefined {
     const read = this.#read(name);
@@ -320,19 +330,38 @@ class Taker {
     return check;
   }
 
-  /** What `name`'s file holds, or why it fails; undefined, said on stderr, when the next pass reads it again. */
+  /**
+   * What `name`'s file holds, or why it fails; undefined when the next pass reads it again, or when it went since the
+   * pass listed it: nothing is left to take, or to tell of.
+   */
   #read(name: UntakenName): string | Error | undefined {
     try {
       return eventText(join(untakenFolder(this.home), name.name), name.bytes);
     } catch (thrown) {
       const error = thrown instanceof Error ? thrown : new Error(String(thrown));
-      const tries = (this.#unread.get(name.name) ?? 0) + 1;
-      if (error instanceof NotAnEventError || tries >= READ_TRIES) return error;
-      this.#unread.set(name.name, tries);
-      process.stderr.write(`rerail: the event a hook left in ${name.name} could not be read, and is read again at the next pass: ${error.message}\n`);
-      return undefined;
+      if (error instanceof NotAnEventError) return error;
+      return "code" in error && error.code === "ENOENT" ? undefined : this.#unreadable(name, error);
     }
   }
+
+  /**
+   * Counts a pass that could not read `name`'s file for `error`: the error once `READ_TRIES` passes over
+   * `READ_GIVE_UP_MS` could not, else undefined, said on stderr at the first pass.
+   */
+  #unreadable(name: UntakenName, error: Error): Error | undefined {
+    const now = this.now();
+    const { tries, since } = this.#unread.get(name.name) ?? { tries: 0, since: now };
+    if (tries + 1 >= READ_TRIES && now - since >= READ_GIVE_UP_MS) return error;
+    this.#unread.set(name.name, { tries: tries + 1, since });
+    if (tries === 0) process.stderr.write(`rerail: the event a hook left in ${name.name} could not be read, and is read again at the next pass: ${error.message}\n`);
+    return undefined;
+  }
+}
+
+/** Forgets what `unread` counts of a name the folder no longer lists: its file went. */
+function forgetUnlisted<T>(unread: Map<string, T>, listed: readonly UntakenName[]): void {
+  const names = new Set(listed.map(name => name.name));
+  for (const name of unread.keys()) if (!names.has(name)) unread.delete(name);
 }
 
 /** An event a pass handed on, with its check: true once it passed. */

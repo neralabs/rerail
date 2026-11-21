@@ -1,6 +1,6 @@
 import { spawn } from "node:child_process";
 import { on, once } from "node:events";
-import { chmodSync, existsSync, mkdirSync, renameSync, symlinkSync, watch, writeFileSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, renameSync, rmSync, symlinkSync, watch, writeFileSync } from "node:fs";
 import { mkdtemp, readdir, rename } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -284,7 +284,7 @@ describe("the home's untaken events", () => {
   });
 
   // A file mode keeps no one from reading on Windows, and root reads it anyway.
-  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("read a file the daemon could not read again at the next pass, saying so with its name, and check it once it reads", async () => {
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("read a file the daemon could not read again at each pass, saying so once with its name, and check it once it reads, after the event left behind it", async () => {
     const rerailHome = await home();
     await leaveUntaken(rerailHome, 7, "unread", 1_000);
     const [name] = await eventFiles(rerailHome);
@@ -295,16 +295,25 @@ describe("the home's untaken events", () => {
     const handler = keeper();
     const taker = untakenEventTaker(rerailHome, handler);
     await taker.taken();
+    await leaveUntaken(rerailHome, 7, "newer", 2_000);
+    await taker.taken();
     expect(await eventFiles(rerailHome)).toEqual([name]);
-    expect(stderr).toHaveBeenCalledWith(expect.stringMatching(new RegExp(`^rerail: the event a hook left in ${name!.replace(/\./gu, "\\.")} could not be read, and is read again at the next pass: EACCES`, "u")));
+    // Before, each pass that could not read it said so again: a line for each event hooks sent while it could not.
+    expect(stderr.mock.calls.filter(([text]) => String(text).includes("could not be read"))).toEqual([
+      [expect.stringMatching(new RegExp(`^rerail: the event a hook left in ${name!.replace(/\./gu, "\\.")} could not be read, and is read again at the next pass: EACCES`, "u"))],
+    ]);
     // Before, the pass that could not read it removed it, and the event was lost.
     chmodSync(file, 0o600);
     await taker.taken();
-    expect(handler.events.map(event => event.body)).toEqual(["unread"]);
+    expect(handler.events.map(event => event.body)).toEqual(["newer", "unread"]);
     expect(await eventFiles(rerailHome)).toEqual([]);
   });
 
-  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("remove a file the daemon could not read at three passes, counted lost", async () => {
+  // Passes start at every event a hook sends, so an active session's next hooks start several within a second.
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0).each([
+    { schedule: "passes a millisecond apart", kept: [0, 1, 2], lost: 60_000 },
+    { schedule: "a pass a minute after the first", kept: [0, 60_000], lost: 60_001 },
+  ])("remove a file the daemon could not read at three passes over a minute, counted lost: $schedule", async ({ kept, lost }) => {
     const rerailHome = await home();
     await leaveUntaken(rerailHome, 7, "unread", 1_000);
     const [name] = await eventFiles(rerailHome);
@@ -312,13 +321,63 @@ describe("the home's untaken events", () => {
     const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
     onTestFinished(() => stderr.mockRestore());
     const handler = keeper();
-    const taker = untakenEventTaker(rerailHome, handler);
-    await taker.taken();
-    await taker.taken();
+    let now = 0;
+    const taker = untakenEventTaker(rerailHome, handler, () => now);
+    for (const at of kept) {
+      now = at;
+      await taker.taken();
+    }
+    // Before, the third pass lost it, however soon it came.
     expect(await eventFiles(rerailHome)).toEqual([name]);
+    now = lost;
     await taker.taken();
     expect(handler.events).toEqual([]);
     expect(await eventFiles(rerailHome)).toEqual([]);
+  });
+
+  it.runIf(process.platform !== "win32" && process.getuid?.() !== 0)("count a name's failed reads afresh once its file went and one came back under it", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "unread", 1_000);
+    const [name] = await eventFiles(rerailHome);
+    const file = join(rerailHome, UNTAKEN_EVENTS_DIR, name!);
+    chmodSync(file, 0o000);
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    let now = 0;
+    const taker = untakenEventTaker(rerailHome, keeper(), () => now);
+    await taker.taken();
+    now = 1;
+    await taker.taken();
+    rmSync(file);
+    await taker.taken();
+    writeFileSync(file, "unread", { mode: 0o000 });
+    now = 60_000;
+    await taker.taken();
+    // Before, the count of the file that went stayed, and this pass, the third it counted, lost the one there now.
+    expect(await eventFiles(rerailHome)).toEqual([name]);
+  });
+
+  it("pass over an event whose file went after the pass listed it, saying nothing", async () => {
+    const rerailHome = await home();
+    await leaveUntaken(rerailHome, 7, "first", 1_000);
+    await leaveUntaken(rerailHome, 7, "gone", 2_000);
+    const gone = (await eventFiles(rerailHome)).find(name => name.startsWith(String(2_000).padStart(13, "0")))!;
+    const stderr = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    onTestFinished(() => stderr.mockRestore());
+    const handler = keeper();
+    const reported = Promise.withResolvers<UntakenPass>();
+    const taker = untakenEventTaker(rerailHome, {
+      // Begun before the next name is read: another program removes that file meanwhile.
+      take: async event => {
+        rmSync(join(rerailHome, UNTAKEN_EVENTS_DIR, gone));
+        await handler.take(event);
+      },
+      passed: pass => reported.resolve(pass),
+    });
+    await taker.taken();
+    expect(await reported.promise).toEqual({ events: 1, from: 1_000, to: 1_000, failed: 0 });
+    // Before, daemon.log said it could not be read and would be read again.
+    expect(stderr).not.toHaveBeenCalled();
   });
 
   it("fail in the pass that met it a larger file put under an event's name after it was looked at, unread", async () => {
@@ -390,8 +449,8 @@ describe("the home's untaken events", () => {
       const taker = untakenEventTaker(rerailHome, handler);
       const holder = await heldOpen(join(rerailHome, UNTAKEN_EVENTS_DIR, name!), share);
       try {
-        await taker.taken();
-        await taker.taken();
+        // As an active session's next hooks start passes while the program holds the file.
+        for (let pass = 0; pass < 3; pass += 1) await taker.taken();
         expect(await eventFiles(rerailHome)).toEqual([name]);
         expect(untakenFor(rerailHome, 7, folder)).toBe(false);
         expect(untakenWaiting(rerailHome, 7)).toBeUndefined();
