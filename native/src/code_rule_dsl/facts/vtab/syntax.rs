@@ -3456,20 +3456,14 @@ impl Batch {
         });
         made::Firsts::new(&self.docs, slot_of(view))
     }
-    /// The document and its row index of `row`.
-    /// Rows are read in runs of one document, so the last document found (per thread, per offsets array) is tried
-    /// before the search: its range is checked against the offsets, so a stale hint costs a comparison, never a
-    /// wrong document. The search per row was 13 s of the pack's cold run.
-    pub fn locate(&self, view: View, row: usize) -> (&Projected, usize) {
+    /// The document and its row index of `row`: the directory's search (`ViewDir::doc_of_row`), `memo` the
+    /// caller's. Rows are read in runs of one document, so the document found last is tried before the search: a
+    /// stale memo costs a comparison, never a wrong document (the search per row was 13 s of the pack's cold run).
+    /// A memo is the caller's for one view of one batch: a reader of several keeps one each.
+    pub fn locate(&self, view: View, row: usize, memo: &mut u32) -> (&Projected, usize) {
         let firsts = self.firsts(view);
-        // The memo: this thread's last document of this directory's view (step 3 passes the executor's own).
-        let key = self.docs.addr() ^ slot_of(view);
-        let doc = LOCATED.with(|h| {
-            let (k, d) = h.get();
-            let d = firsts.doc_of(row, if k == key { d as u32 } else { rerail_clif::view_reads::NO_DOC });
-            h.set((key, d));
-            d
-        });
+        let doc = firsts.doc_of(row, *memo);
+        *memo = doc as u32;
         (&self.docs[doc], row - firsts.at(doc))
     }
     /// The documents of file `file`'s programs (decision 0431 §4).
@@ -3477,21 +3471,17 @@ impl Batch {
         let at = self.programs.partition_point(|&(f, _)| f < file);
         self.programs[at..].iter().take_while(move |&&(f, _)| f == file).map(|&(_, d)| d)
     }
-    /// The document of key `d`, by index (the last one found tried first, as `locate`).
-    fn doc(&self, d: i64) -> Option<usize> {
+    /// The document of key `d`, by index: the directory's search (`ViewDir::doc_of_key`), `memo` the caller's, as
+    /// `locate`'s.
+    fn doc(&self, d: i64, memo: &mut u32) -> Option<usize> {
         let d = u32::try_from(d).ok()?;
-        let key = self.docs.addr();
-        // The memo, as `locate`'s: the directory's search tries it first.
-        DOC.with(|h| {
-            let (k, i) = h.get();
-            let found = self.docs.position_from(d, if k == key { i as u32 } else { rerail_clif::view_reads::NO_DOC })?;
-            h.set((key, found));
-            Some(found)
-        })
+        let found = self.docs.position_from(d, *memo)?;
+        *memo = found as u32;
+        Some(found)
     }
     /// The document index and node of id `n`.
-    pub fn node(&self, n: i64) -> Option<(usize, u32)> {
-        let doc = self.doc(n >> 32)?;
+    pub fn node(&self, n: i64, memo: &mut u32) -> Option<(usize, u32)> {
+        let doc = self.doc(n >> 32, memo)?;
         let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
         (n >= 0 && local < self.docs[doc].len()).then_some((doc, local))
     }
@@ -3503,8 +3493,8 @@ impl Batch {
         k.keys.binary_search(&kind).map_or(&[][..], |i| &k.at[k.starts[i] as usize..k.starts[i + 1] as usize])
     }
     /// The document index and node or span of id `n`.
-    fn loc(&self, n: i64) -> Option<(usize, u32)> {
-        let doc = self.doc(n >> 32)?;
+    fn loc(&self, n: i64, memo: &mut u32) -> Option<(usize, u32)> {
+        let doc = self.doc(n >> 32, memo)?;
         let local = self.docs[doc].local_of((n & 0xffff_ffff) as u32)?;
         (n >= 0 && (local < self.docs[doc].len() || local < self.docs[doc].locs())).then_some((doc, local))
     }
@@ -3761,9 +3751,11 @@ impl Source for Viewed {
     }
     /// `lookup_docs`' own column, for one value.
     fn key_row(&self, column: usize, value: i64) -> Option<usize> {
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         debug_assert_eq!(column, self.own());
         let b = &*self.batch;
-        let found = if matches!(self.view, View::Loc(_)) { b.loc(value) } else { b.node(value) };
+        let found = if matches!(self.view, View::Loc(_)) { b.loc(value, &mut memo) } else { b.node(value, &mut memo) };
         found.and_then(|(doc, local)| b.row(self.view, doc, local))
     }
     /// A field's children by parent and field (`field($a, #f, $t)`, `$a` bound): each child's field read off the
@@ -3772,13 +3764,15 @@ impl Source for Viewed {
     /// none. Found by child and filtered, `nameref`'s `!field(_, #f65541, $n)` took 300 ns a probe, 25 M probes of a
     /// cold PostHog run.
     fn lookup_eq(&self, column: usize, value: i64, eqs: &[(usize, i64)]) -> Option<Vec<usize>> {
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         let &[(1, f)] = eqs else { return None };
         if !matches!(self.view, View::Field) {
             return None;
         }
         let b = &*self.batch;
         if column == 2 {
-            let Some((doc, local)) = b.node(value) else { return Some(Vec::new()) };
+            let Some((doc, local)) = b.node(value, &mut memo) else { return Some(Vec::new()) };
             let p = &b.docs[doc];
             let x = p.node(local);
             let own = i64::from(field_atom(p.tag, p.facts.field(x))) == f;
@@ -3788,7 +3782,7 @@ impl Source for Viewed {
             return None;
         }
         let mut rows = Vec::new();
-        if let Some((doc, local)) = b.node(value) {
+        if let Some((doc, local)) = b.node(value, &mut memo) {
             let p = &b.docs[doc];
             p.each_child_node(local, |c, x| {
                 if i64::from(field_atom(p.tag, p.facts.field(x))) == f {
@@ -3805,17 +3799,19 @@ impl Source for Viewed {
         matches!((self.view, column), (View::Node, 2) | (View::Core, 1))
     }
     fn lookup_in(&self, column: usize, values: &[i64], doc: i64) -> Option<Vec<usize>> {
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         if !self.kept_to_doc(column) {
             return None;
         }
         // A document not in the batch has no rows.
-        Some(match self.batch.doc(doc) {
+        Some(match self.batch.doc(doc, &mut memo) {
             Some(doc) => self.lookup_docs(column, values, Some(doc))?,
             None => Vec::new(),
         })
     }
     fn value(&self, row: usize, column: usize) -> i64 {
-        self.row_value(row, column)
+        self.row_value(row, column, &mut { super::NO_MEMO })
     }
     /// Document by document, with no search for each row's document. (A merge had left this in `impl Viewed`,
     /// where the trait's per-row scan, a document search for each row, shadowed it.)
@@ -3926,7 +3922,14 @@ impl Source for Viewed {
     }
     /// The row's node selected once (`Projected::node`), however many columns read it.
     fn row_at(&self, row: usize, columns: &[usize], out: &mut [i64]) {
-        let (p, i) = self.batch.locate(self.view, row);
+        self.row_at_memo(row, columns, out, &mut { super::NO_MEMO });
+    }
+    fn value_memo(&self, row: usize, column: usize, memo: &mut u32) -> i64 {
+        self.row_value(row, column, memo)
+    }
+    /// The row's node selected once (`Projected::node`), however many columns read it.
+    fn row_at_memo(&self, row: usize, columns: &[usize], out: &mut [i64], memo: &mut u32) {
+        let (p, i) = self.batch.locate(self.view, row, memo);
         if matches!(self.view, View::Loc(_)) {
             for (o, &c) in out.iter_mut().zip(columns) {
                 *o = self.value_at(p, i, c);
@@ -3957,33 +3960,35 @@ impl Viewed {
     /// The rows whose `column` is one of `values`, in document `only` (by index) where the column spans the
     /// documents (a kind, a tape node), else in every document.
     fn lookup_docs(&self, column: usize, values: &[i64], only: Option<usize>) -> Option<Vec<usize>> {
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         let b = &*self.batch;
         // A lookup kept to a file keeps to its programs too (decision 0431 §4).
         let kept = |doc: &usize| only.is_none_or(|o| o == *doc || b.file(*doc) == b.docs.key(o));
         let mut rows = Vec::new();
         for &v in values {
             if column == self.own() {
-                let found = if matches!(self.view, View::Loc(_)) { b.loc(v) } else { b.node(v) };
+                let found = if matches!(self.view, View::Loc(_)) { b.loc(v, &mut memo) } else { b.node(v, &mut memo) };
                 rows.extend(found.and_then(|(doc, local)| b.row(self.view, doc, local)));
             } else if Some(column) == self.parent() {
                 if v == -1 && matches!(self.view, View::Tape) {
                     rows.extend((0..b.docs.len()).filter(|&doc| b.docs[doc].len() > 0).map(|doc| b.nodes().at(doc)));
-                } else if let Some((doc, local)) = b.node(v) {
+                } else if let Some((doc, local)) = b.node(v, &mut memo) {
                     b.docs[doc].each_child(local, |c| rows.extend(b.row(self.view, doc, c)));
                 }
             } else if matches!(self.view, View::Order) && column == 1 {
                 // An order key: its document, and the node with that key (`Projected::local_of_order`).
                 let key = (v & 0xffff_ffff) as u32;
-                rows.extend(b.doc(v >> 32).filter(|_| v >= 0).and_then(|doc| b.docs[doc].local_of_order(key).and_then(|local| b.row(self.view, doc, local))));
+                rows.extend(b.doc(v >> 32, &mut memo).filter(|_| v >= 0).and_then(|doc| b.docs[doc].local_of_order(key).and_then(|local| b.row(self.view, doc, local))));
             } else if matches!(self.view, View::Sibling) && column == 0 {
                 // The row of `a`'s next sibling: a hop along the tape's siblings.
-                rows.extend(b.node(v).and_then(|(doc, local)| b.docs[doc].next_sibling(local).and_then(|s| b.row(self.view, doc, s))));
+                rows.extend(b.node(v, &mut memo).and_then(|(doc, local)| b.docs[doc].next_sibling(local).and_then(|s| b.row(self.view, doc, s))));
             } else if matches!(self.view, View::Core) && column == 0 {
-                rows.extend(b.doc(v).map_or(0..0, |doc| b.nodes().at(doc)..b.nodes().at(doc + 1)));
+                rows.extend(b.doc(v, &mut memo).map_or(0..0, |doc| b.nodes().at(doc)..b.nodes().at(doc + 1)));
             } else if matches!(self.view, View::Node) && column == 0 {
                 // A file's rows, then its programs' (decision 0431 §4).
                 let Ok(file) = u32::try_from(v) else { continue };
-                for doc in b.doc(v).into_iter().chain(b.programs_of(file)) {
+                for doc in b.doc(v, &mut memo).into_iter().chain(b.programs_of(file)) {
                     rows.extend(b.nodes().at(doc)..b.nodes().at(doc + 1));
                 }
             } else if matches!(self.view, View::Core) && column == 1 {
@@ -4007,6 +4012,8 @@ impl Viewed {
     /// kind or a tape node, the tape node: no select, granule search or parent search a row for those. Views whose
     /// rows are not one a node (`field`, `loc`), and the other lookups, read none (`false`).
     fn read_matches(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         if columns.len() > 8 || matches!(self.view, View::Field | View::Loc(_)) {
             return false;
         }
@@ -4042,14 +4049,14 @@ impl Viewed {
             each(row, &vals[..columns.len()]);
         };
         if column == self.own() {
-            if let Some((doc, local)) = b.node(value) {
+            if let Some((doc, local)) = b.node(value, &mut memo) {
                 emit(doc, local, NONE, Some(value), None);
             }
         } else if Some(column) == self.parent() {
             if value == -1 {
                 return false;
             }
-            if let Some((doc, local)) = b.node(value) {
+            if let Some((doc, local)) = b.node(value, &mut memo) {
                 b.docs[doc].each_child_node(local, |c, x| emit(doc, c, x, None, Some(value)));
             }
         } else if matches!(self.view, View::Core) && column == 1 {
@@ -4069,8 +4076,8 @@ impl Viewed {
         }
         true
     }
-    fn row_value(&self, row: usize, column: usize) -> i64 {
-        let (p, i) = self.batch.locate(self.view, row);
+    fn row_value(&self, row: usize, column: usize, memo: &mut u32) -> i64 {
+        let (p, i) = self.batch.locate(self.view, row, memo);
         self.value_at(p, i, column)
     }
 }
@@ -4368,8 +4375,8 @@ pub fn views(batch: &Arc<Batch>) -> Vec<(&'static str, Arc<dyn Source>)> {
 impl Batch {
 
     /// The node id of row `row` of the node view.
-    pub fn id(&self, row: usize) -> i64 {
-        let (p, local) = self.locate(View::Node, row);
+    pub fn id(&self, row: usize, memo: &mut u32) -> i64 {
+        let (p, local) = self.locate(View::Node, row, memo);
         p.global(local as u32)
     }
 }
@@ -4833,12 +4840,6 @@ fn slot_of(view: View) -> usize {
     }
 }
 
-thread_local! {
-    /// `Batch::locate`'s hint: the offsets array (its address) and the document last found in it.
-    static LOCATED: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
-    /// `Batch::doc`'s hint: the documents (their address) and the index last found.
-    static DOC: std::cell::Cell<(usize, usize)> = const { std::cell::Cell::new((0, 0)) };
-}
 
 // cratify: `candidate_spike` is rerail-lang-python's (it mounts it)
 // cratify: `annotation` is rerail-lang-python's (it mounts it)

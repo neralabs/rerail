@@ -371,6 +371,8 @@ impl Within {
     /// Per node row its rows: its nearest member ancestor (`found`, a node row), or for `inside` the chain of them;
     /// counted, then written once as ids into the axis's relation (decision 0353 step 5).
     fn solved_from(&self, found: &[u32], inside: bool) -> Solved {
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         use crate::code_rule_dsl::facts::nearest as file_local;
         use crate::code_rule_dsl::facts::rows::Part;
         let n = found.len();
@@ -393,12 +395,12 @@ impl Within {
         let rows = Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, 2);
         let mut at = 0u32;
         for v in 0..n {
-            let id = self.batch.id(v);
+            let id = self.batch.id(v, &mut memo);
             chain(v, &mut |a| {
                 // SAFETY: row `at` is below the `len` rows reserved, and nothing reads it before `written`.
                 unsafe {
                     rows.put(at, 0, id);
-                    rows.put(at, 1, self.batch.id(a as usize));
+                    rows.put(at, 1, self.batch.id(a as usize, &mut memo));
                 }
                 at += 1;
             });
@@ -663,7 +665,9 @@ impl Within {
     /// Nothing is made, and no tape reader is opened: a reader a call (`tape_of`) cost more than the rows it saved
     /// in strata that check the same nodes again (t50 step 4).
     fn below(&self, n: i64, a: i64) -> bool {
-        let (Some((dn, ln)), Some((da, la))) = (self.batch.node(n), self.batch.node(a)) else { return false };
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
+        let (Some((dn, ln)), Some((da, la))) = (self.batch.node(n, &mut memo), self.batch.node(a, &mut memo)) else { return false };
         dn == da && la < ln && ln <= la + self.batch.docs[da].size(la as usize)
     }
 
@@ -857,16 +861,18 @@ impl Source for Within {
     /// By `n`, a document's nodes looked up: a node's pairs are its own document's (none crosses documents), so
     /// the rows of the documents `owned` names are found without the batch's solve or a scan.
     fn rows_owned(&self, g: usize, owned: &dyn Fn(i64) -> bool) -> Option<Vec<usize>> {
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         if g != 0 {
             return None;
         }
         let mut out = Vec::new();
         for doc in 0..self.batch.docs.len() {
             let (from, to) = (self.batch.nodes().at(doc), self.batch.nodes().at(doc + 1));
-            if from == to || !owned(self.batch.id(from)) {
+            if from == to || !owned(self.batch.id(from, &mut memo)) {
                 continue;
             }
-            let ids: Vec<i64> = (from..to).map(|r| self.batch.id(r)).collect();
+            let ids: Vec<i64> = (from..to).map(|r| self.batch.id(r, &mut memo)).collect();
             out.extend(self.lookup(0, &ids)?);
         }
         Some(out)
@@ -899,9 +905,11 @@ impl Source for Within {
         Some(self.below(n, a))
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         let mut out = Vec::new();
         for &v in values {
-            let Some((doc, local)) = self.batch.node(v) else { continue };
+            let Some((doc, local)) = self.batch.node(v, &mut memo) else { continue };
             let row = self.batch.nodes().at(doc) + local as usize;
             if column == 0 && self.reads_solved() {
                 let start = self.starts();
@@ -934,12 +942,14 @@ impl Source for Within {
     }
     /// A pair's node's document: the key of the document its row is in (`Batch::locate`), no id read.
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         if self.solvable() {
             // The solve's rows are ids: each one's document is its node's.
             let rows = self.solved_rows();
             for r in 0..rows.len() {
                 let id = rows.get(r, column.min(1));
-                let key = self.batch.node(id).map_or(0, |(doc, _)| self.batch.docs[doc].key);
+                let key = self.batch.node(id, &mut memo).map_or(0, |(doc, _)| self.batch.docs[doc].key);
                 each(r as usize, if key == 0 { id } else { i64::from(key) });
             }
             return;
@@ -947,17 +957,19 @@ impl Source for Within {
         for r in 0..self.len() {
             let pair = self.pair(r);
             let node = if column == 0 { (pair >> 32) as usize } else { (pair & 0xffff_ffff) as usize };
-            let p = self.batch.locate(View::Node, node).0;
+            let p = self.batch.locate(View::Node, node, &mut memo).0;
             // A document keyed 0 has ids below `1 << 32`, each its own "document" (`memo::document_of`).
             each(r, if p.key == 0 { self.value(r, column) } else { i64::from(p.key) });
         }
     }
     fn value(&self, row: usize, column: usize) -> i64 {
+        // The directory's searches' memo, this read's (decision 0353 step 3 on the CPU).
+        let mut memo = crate::code_rule_dsl::facts::vtab::NO_MEMO;
         if self.solvable() && row < LOOKED_UP {
             return self.solved_rows().get(row as u32, column.min(1));
         }
         let pair = self.pair(row);
-        self.batch.id(if column == 0 { (pair >> 32) as usize } else { (pair & 0xffff_ffff) as usize })
+        self.batch.id(if column == 0 { (pair >> 32) as usize } else { (pair & 0xffff_ffff) as usize }, &mut memo)
     }
     /// From the tree (`shape`): for containment, as many rows as nodes have containers (their depth + 1), per
     /// inner node its depth + 1, per outer node its subtree. Values never cross documents.

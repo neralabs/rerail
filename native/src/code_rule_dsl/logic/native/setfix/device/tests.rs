@@ -1431,7 +1431,7 @@
             // Each row's ids are its nodes': `n` a member's descendant (an ancestor `a` of it), as the tree says.
             for r in (0..n).step_by(11) {
                 let (inner, outer) = (src.value(r, 0), src.value(r, 1));
-                let (Some((d0, l0)), Some((d1, l1))) = (batch.node(inner), batch.node(outer)) else { panic!("{name}: row {r}'s ids are nodes") };
+                let (Some((d0, l0)), Some((d1, l1))) = (batch.node(inner, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO }), batch.node(outer, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO })) else { panic!("{name}: row {r}'s ids are nodes") };
                 assert_eq!(d0, d1, "{name}: row {r} within one document");
                 assert_ne!(l0, l1, "{name}: row {r} strictly below");
             }

@@ -856,6 +856,14 @@ load of about 33). On Metal, the M3 passes `the_kernels_directory_searches_are_t
 `a_views_index_is_in_its_block_for_every_thread`, `views_made_on_the_device_are_the_hosts_rows` and
 `a_view_made_on_the_device_is_made_at_each_stratum`. The mini could not build: its Xcode license is not agreed to.
 
+**Step 3, the memo (2026-11-21).** The `DOC` and `LOCATED` thread-locals are gone. `Batch::locate`, `doc`, `node`,
+`loc` and `id` take the caller's memo (`&mut u32`, a document index for both searches, started at
+`vtab::NO_MEMO`). A source's readers pass theirs through `Source::row_at_memo` and `value_memo`, and the trait's
+own row-by-row scans (`for_rows`, `for_rows_in`, `rows_of`) keep one across their rows. Each of `Viewed`'s lookups
+keeps one across its values. Readers that read one row at a time with no memo (`row_at`, `value`) search afresh.
+Cold hogql gives 1,629 findings at 91.4 B and 90.0 B instructions (89.4 B and 91.2 B before), so the executor's
+point reads (`RowRef`) carry no memo yet.
+
 ## What it replaces
 
 - **0289 §1–2.** The chunk block holds the placed tapes, the line starts and the granule tables. It holds no node

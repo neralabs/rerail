@@ -676,7 +676,7 @@ fn within_with_both_given_is_an_interval_test() {
                     up = p.parent(up as usize);
                 }
                 let want = dn == da && up != NONE;
-                let eq = [(0, batch.id(n)), (1, batch.id(a))];
+                let eq = [(0, batch.id(n, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO })), (1, batch.id(a, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO }))];
                 assert_eq!(within.holds(&eq), Some(want), "{format:?}: node rows {n} below {a}");
                 held += usize::from(want);
                 pairs += 1;
@@ -686,7 +686,7 @@ fn within_with_both_given_is_an_interval_test() {
         assert!(!within.is_solved() && within.made_rows() == 0, "{format:?}: the test made no row");
         // The composite probe reads the pair's row: one where the test holds.
         for (n, a) in [(nodes - 1, 0), (1, 0), (0, 1)] {
-            let eq = [(0, batch.id(n)), (1, batch.id(a))];
+            let eq = [(0, batch.id(n, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO })), (1, batch.id(a, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO }))];
             assert_eq!(within.lookup_all(&eq).unwrap().len(), usize::from(within.holds(&eq).unwrap()), "{format:?}: {n} below {a}");
         }
     }
@@ -706,7 +706,7 @@ fn within_holds_exactly_the_contained_pairs() {
     }
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
     let nodes = batch.nodes().total();
-    let id = |r: usize| batch.id(r);
+    let id = |r: usize| batch.id(r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
     // Borrow the demanded columns once, as a bulk consumer does. Keep lazy initialization
     // out of the exhaustive reference loop; that loop checks the relation, not setup cost.
     let axes: Vec<Vec<u32>> = batch.docs.iter().map(|p| p.places().map(|(_, _, d)| d).collect()).collect();
@@ -804,14 +804,14 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     docs.push(Document { key: 4, core: "/w#core:broken.py".into(), digest: core::digest(&broken), path: "broken.py".into(), facts: broken, tape: None, guest: None, module: None, unpackaged: false });
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
     let nodes = batch.nodes().total();
-    let id = |r: usize| batch.id(r);
+    let id = |r: usize| batch.id(r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
     // (document, local, size) and kind atom of node row r.
     let at = |r: usize| {
-        let (p, local) = batch.locate(View::Node, r);
+        let (p, local) = batch.locate(View::Node, r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
         (p.key, local, p.size(local) as usize)
     };
     let kind = |r: usize| {
-        let (p, local) = batch.locate(View::Node, r);
+        let (p, local) = batch.locate(View::Node, r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
         let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
         i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
@@ -1868,7 +1868,7 @@ fn an_axis_counts_its_rows_without_its_solve() {
     let (batch, _, _, _) = Batch::build(&store, docs, &Projection::default(), &[], &[], false).unwrap();
     let nodes = batch.nodes().total();
     let kind = |r: usize| {
-        let (p, local) = batch.locate(View::Node, r);
+        let (p, local) = batch.locate(View::Node, r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
         let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
         i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
@@ -1880,7 +1880,7 @@ fn an_axis_counts_its_rows_without_its_solve() {
     ];
     // The last two documents' nodes, as a guest round's new documents (`retain::owners_delta`).
     let new_from = batch.nodes().at(2);
-    let new_ids: BTreeSet<i64> = (new_from..nodes).map(|r| batch.id(r)).collect();
+    let new_ids: BTreeSet<i64> = (new_from..nodes).map(|r| batch.id(r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO })).collect();
     for (name, source) in sources {
         let len = source.len();
         assert!(len > 0, "{name}");

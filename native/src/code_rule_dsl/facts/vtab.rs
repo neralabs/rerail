@@ -114,6 +114,9 @@ impl ViewInPlace {
     }
 }
 
+/// A reader's memo of a source's search before its first read (`Source::row_at_memo`): none found yet.
+pub const NO_MEMO: u32 = rerail_clif::view_reads::NO_DOC;
+
 pub trait Source: Send + Sync {
     fn python_batch(&self) -> Option<Arc<syntax::Batch>> { None }
     fn row_stream(&self,_range:Range<usize>,_reverse:bool)->Option<Box<dyn RowStream>> {None}
@@ -150,13 +153,21 @@ pub trait Source: Send + Sync {
             *o = self.value(row, c);
         }
     }
+    /// `row_at`, with the caller's memo: what the source's search for a row last found (the document a views
+    /// directory's search found, `ViewDir::doc_of_row`), handed back on the caller's next read (decision 0353 step 3
+    /// on the CPU). Any value is correct, a stale one costs a comparison: a reader starts one at `NO_MEMO` and keeps
+    /// it across its reads of this source. A source with no search ignores it.
+    fn row_at_memo(&self, row: usize, columns: &[usize], out: &mut [i64], memo: &mut u32) {
+        let _ = memo;
+        self.row_at(row, columns, out)
+    }
     /// Each row's values of `columns`, row after row, given to `each` with the row's number: `row_at` a row at a time
     /// by default; a view of a batch's documents walks each document's nodes once, finding no row's place and
     /// selecting no node.
     fn for_rows(&self, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) {
-        let mut row = vec![0i64; columns.len()];
+        let (mut row, mut memo) = (vec![0i64; columns.len()], NO_MEMO);
         for r in 0..self.len() {
-            self.row_at(r, columns, &mut row);
+            self.row_at_memo(r, columns, &mut row, &mut memo);
             each(r, &row);
         }
     }
@@ -171,9 +182,9 @@ pub trait Source: Send + Sync {
     /// so (decision 0353 step 2), a view of a batch's documents walking the documents the range holds once, each row's
     /// node, id and parent coming from the walk, not a point read a row.
     fn for_rows_in(&self, range: Range<usize>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) {
-        let mut row = vec![0i64; columns.len()];
+        let (mut row, mut memo) = (vec![0i64; columns.len()], NO_MEMO);
         for r in range {
-            self.row_at(r, columns, &mut row);
+            self.row_at_memo(r, columns, &mut row, &mut memo);
             if !each(r, &row) {
                 return;
             }
@@ -198,10 +209,11 @@ pub trait Source: Send + Sync {
     fn rows_of(&self, columns: &[usize], out: &mut Vec<i64>) {
         let k = columns.len();
         out.reserve(self.len() * k);
+        let mut memo = NO_MEMO;
         for row in 0..self.len() {
             let at = out.len();
             out.resize(at + k, 0);
-            self.row_at(row, columns, &mut out[at..]);
+            self.row_at_memo(row, columns, &mut out[at..], &mut memo);
         }
     }
     fn estimated_len(&self) -> usize {
@@ -350,6 +362,11 @@ pub trait Source: Send + Sync {
         None
     }
     fn value(&self, row: usize, column: usize) -> i64;
+    /// `value`, with the caller's memo (`row_at_memo`).
+    fn value_memo(&self, row: usize, column: usize, memo: &mut u32) -> i64 {
+        let _ = memo;
+        self.value(row, column)
+    }
     /// The rows whose `column` is `value`, as a slice of the source's own sorted index (no allocation); `None`
     /// where the source keeps none.
     fn sorted_rows(&self, _column: usize, _value: i64) -> Option<&[u32]> {
