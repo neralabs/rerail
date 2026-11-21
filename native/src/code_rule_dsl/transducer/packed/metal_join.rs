@@ -3021,6 +3021,19 @@ impl Batch {
             const MOVED_OWN: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a second key's index (DevIndex::moved): the device's own");
             const MOVED_IN_BLOCK: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a key's index (DevIndex::moved): in a block with no room left");
             (if rel.part.is_some() { &MOVED_OWN } else { &MOVED_IN_BLOCK }).copied(8 * rel.cols * rel.rows);
+            // Why its block refused the index: its directory full, or no bytes left; and what the relation is.
+            if rel.part.is_none() {
+                let full = r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize >= rerail_blocks::relation::ADDED_INDEXES;
+                let free = home.block.reserved().saturating_sub(home.block.used());
+                let why = format!(
+                    "device.moved in a block: {}, {}, {} of {} MB left",
+                    if full { "its directory full" } else { "no bytes for it" },
+                    if r.continues() { "a continuation" } else if rel.dead != 0 { "with dead rows" } else { "a relation" },
+                    if free < 1 << 20 { "< 1" } else if free < 16 << 20 { "1-16" } else { ">= 16" },
+                    (home.block.reserved() >> 20).next_power_of_two(),
+                );
+                crate::code_rule_dsl::prof::count_named(why, 8 * rel.cols * rel.rows);
+            }
             let copy = DevRel::empty(rel.cols, rel.rows)?;
             let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
             self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
