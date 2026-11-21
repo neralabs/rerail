@@ -170,11 +170,21 @@ impl NthChild {
         let mut counted = std::collections::HashMap::<u32, Option<Vec<u32>>>::new();
         let mut rows = Vec::new();
         for node in starts {
-            let Some(parent) = tape.transducer_parent(node) else { continue };
-            let list = counted.entry(parent).or_insert_with(|| self.counted(file, tape, parent));
+            let Some(parent) = tape.transducer_parent(node) else {
+                continue;
+            };
+            let list = counted
+                .entry(parent)
+                .or_insert_with(|| self.counted(file, tape, parent));
             let Some(list) = list else { continue };
-            let Ok(position) = list.binary_search(&node) else { continue };
-            let index = if self.reverse { list.len() - 1 - position } else { position };
+            let Ok(position) = list.binary_search(&node) else {
+                continue;
+            };
+            let index = if self.reverse {
+                list.len() - 1 - position
+            } else {
+                position
+            };
             if self.position.holds(index) {
                 rows.push(node);
             }
@@ -199,7 +209,13 @@ impl NthChild {
         };
         for &parent in &positions.parents {
             let counted = positions.counted(parent);
-            let at = |index: usize| if self.reverse { counted[counted.len() - 1 - index] } else { counted[index] };
+            let at = |index: usize| {
+                if self.reverse {
+                    counted[counted.len() - 1 - index]
+                } else {
+                    counted[index]
+                }
+            };
             if self.position.step == 0 {
                 // `holds(index)` is `index + 1 == B`.
                 if let Ok(index) = usize::try_from(i64::from(self.position.offset) - 1)
@@ -218,7 +234,12 @@ impl NthChild {
     }
 
     /// W's matcher's verdict of `rule` at `child`; `None` where it is unknown.
-    fn probe(&self, file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>, rule: &AstMatcher, child: u32) -> Option<bool> {
+    fn probe(
+        &self,
+        file: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        rule: &AstMatcher,
+        child: u32,
+    ) -> Option<bool> {
         use super::util::{UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STEPS_LEFT};
         THREE_VALUED.set(true);
         UTIL_DEPTH.set(0);
@@ -226,7 +247,9 @@ impl NthChild {
         UTIL_STEPS_LEFT.set(usize::MAX);
         UNKNOWN.set(false);
         let mut env = Cow::Owned(MetaVarEnv::new());
-        let matched = rule.match_node_with_env(super::node_at(file, child), &mut env).is_some();
+        let matched = rule
+            .match_node_with_env(super::node_at(file, child), &mut env)
+            .is_some();
         (!UNKNOWN.replace(false)).then_some(matched)
     }
 
@@ -237,7 +260,8 @@ impl NthChild {
         parent: u32,
     ) -> Option<Vec<u32>> {
         let mut list = Vec::new();
-        self.count_into(file, tape, parent, &mut list).then_some(list)
+        self.count_into(file, tape, parent, &mut list)
+            .then_some(list)
     }
 
     /// `parent`'s counted children into `list`; `false` where a child's verdict is unknown.
@@ -296,7 +320,8 @@ pub(in crate::code_rule_dsl) struct Positions {
 
 impl Positions {
     fn counted(&self, parent: u32) -> &[u32] {
-        &self.counted[self.offsets[parent as usize] as usize..self.offsets[parent as usize + 1] as usize]
+        &self.counted
+            [self.offsets[parent as usize] as usize..self.offsets[parent as usize + 1] as usize]
     }
 
     /// One pass over each parent's children, appending the counted ones; a parent with a child of
@@ -307,7 +332,11 @@ impl Positions {
         let file = std::cell::OnceCell::new();
         let file = || {
             file.get_or_init(|| {
-                let scopes = super::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+                let scopes = super::FileScopeSlot::install(
+                    Vec::new(),
+                    None,
+                    !tape.syntax_error_ranges().is_empty(),
+                );
                 (ast_grep_core::AstGrep::doc(tape.clone()), scopes)
             })
         };
@@ -317,7 +346,9 @@ impl Positions {
             if !tape.transducer_is_named(node) {
                 return Some(false);
             }
-            let Some(rule) = &nth.of_rule else { return Some(true) };
+            let Some(rule) = &nth.of_rule else {
+                return Some(true);
+            };
             let kind = usize::from(tape.transducer_kind(node));
             if by_kind.len() <= kind {
                 by_kind.resize(kind + 1, 0);
@@ -355,7 +386,11 @@ impl Positions {
             }
             offsets[parent as usize + 1] = counted.len() as u32;
         }
-        Self { parents, offsets, counted }
+        Self {
+            parents,
+            offsets,
+            counted,
+        }
     }
 }
 
@@ -363,20 +398,29 @@ impl Positions {
 /// question (`Fact::question`): each made on first use and shared by the tape's facts.
 #[derive(Default)]
 pub struct SiblingPositions {
-    positions: std::sync::Mutex<std::collections::HashMap<Option<String>, std::sync::Arc<Positions>>>,
+    positions:
+        std::sync::Mutex<std::collections::HashMap<Option<String>, std::sync::Arc<Positions>>>,
     answers: std::sync::Mutex<std::collections::HashMap<String, std::sync::Arc<Vec<u64>>>>,
-    /// The answers written in a batch's fact block (`Fact::found`, Q251): each one's byte offset there.
+    /// The answers written in a batch's fact block (`Fact::found`, Q289): each one's byte offset there.
     placed: std::sync::Mutex<std::collections::HashMap<String, usize>>,
 }
 
 impl SiblingPositions {
-    pub(in crate::code_rule_dsl) fn of(&self, nth: &NthChild, tape: &crate::code_rule_dsl::tape::TapeDoc) -> std::sync::Arc<Positions> {
+    pub(in crate::code_rule_dsl) fn of(
+        &self,
+        nth: &NthChild,
+        tape: &crate::code_rule_dsl::tape::TapeDoc,
+    ) -> std::sync::Arc<Positions> {
         // A rule without a key is its own.
         if nth.of_rule.is_some() && nth.of_rule_key.is_none() {
             return std::sync::Arc::new(Positions::of(nth, tape));
         }
         let mut positions = self.positions.lock().expect("sibling positions");
-        std::sync::Arc::clone(positions.entry(nth.of_rule_key.clone()).or_insert_with(|| std::sync::Arc::new(Positions::of(nth, tape))))
+        std::sync::Arc::clone(
+            positions
+                .entry(nth.of_rule_key.clone())
+                .or_insert_with(|| std::sync::Arc::new(Positions::of(nth, tape))),
+        )
     }
 
     /// Where the answer to `question` is in the fact block: written by `place` the first time it is asked.
@@ -391,12 +435,19 @@ impl SiblingPositions {
     }
 
     /// The answer to `question`, made by `answer` the first time it is asked.
-    pub(in crate::code_rule_dsl) fn answer(&self, question: &str, answer: impl FnOnce() -> Vec<u64>) -> std::sync::Arc<Vec<u64>> {
+    pub(in crate::code_rule_dsl) fn answer(
+        &self,
+        question: &str,
+        answer: impl FnOnce() -> Vec<u64>,
+    ) -> std::sync::Arc<Vec<u64>> {
         if let Some(found) = self.answers.lock().expect("nthChild answers").get(question) {
             return std::sync::Arc::clone(found);
         }
         let found = std::sync::Arc::new(answer());
-        self.answers.lock().expect("nthChild answers").insert(question.to_owned(), std::sync::Arc::clone(&found));
+        self.answers
+            .lock()
+            .expect("nthChild answers")
+            .insert(question.to_owned(), std::sync::Arc::clone(&found));
         found
     }
 }
@@ -404,8 +455,12 @@ impl SiblingPositions {
 fn on_kinds(rule: &AstMatcher, kind: u16) -> Option<bool> {
     match rule {
         AstMatcher::Kind(matcher) => Some(matcher.potential_kinds()?.contains(usize::from(kind))),
-        AstMatcher::All(items) => items.iter().try_fold(true, |all, item| Some(all && on_kinds(item, kind)?)),
-        AstMatcher::Any(items) => items.iter().try_fold(false, |any, item| Some(any || on_kinds(item, kind)?)),
+        AstMatcher::All(items) => items
+            .iter()
+            .try_fold(true, |all, item| Some(all && on_kinds(item, kind)?)),
+        AstMatcher::Any(items) => items
+            .iter()
+            .try_fold(false, |any, item| Some(any || on_kinds(item, kind)?)),
         AstMatcher::Not(item) => Some(!on_kinds(item, kind)?),
         _ => None,
     }
@@ -504,4 +559,3 @@ pub fn reset_named_sibling_visits() {
 }
 
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
-

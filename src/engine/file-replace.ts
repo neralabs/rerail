@@ -1,0 +1,286 @@
+/**
+ * Replacing, removing and exclusively creating files where Windows holds them open.
+ *
+ * On Windows, renaming a file onto or from one another process holds open fails with EPERM, EACCES or EBUSY: a
+ * reader of `daemon.json`, an editor or language server with a source file open, or antivirus and the indexer scanning
+ * a file just written. Removing a folder fails the same way while a file in it is held. Each hold lasts a moment, so
+ * these helpers retry there; elsewhere the first failure stands, as a rename over a file never fails for that reason.
+ * Every rename in `src/` goes through them: `npm run check:owned-builtins` fails on any other. Creating a file or
+ * folder only if none is there fails with those codes too, not EEXIST, while another process deletes one of that name:
+ * `nameTaken` reads them as the name being taken.
+ *
+ * To make text the whole of a file, use `replaceFile` or `replaceFileSync`. `renameWithRetry` is for moving a file or
+ * folder that already exists, and for a writer that must open its new file itself. `removeWithRetry` removes a file or
+ * folder and waits out a held file in it; it retries on every platform, as node:fs's `rm` does, since a folder another
+ * process still writes in refuses removal anywhere.
+ */
+import { randomUUID } from "node:crypto";
+import { chmodSync, closeSync, fchmodSync, openSync, renameSync as fsRenameSync, rmSync, statSync, writeFileSync, type RmOptions } from "node:fs";
+import { chmod, open, rename as fsRename, rm as fsRm, stat } from "node:fs/promises";
+import { setTimeout as sleep } from "node:timers/promises";
+
+/**
+ * How a folder removal waits out a file Windows holds for a moment: 10 more tries, each 100 ms later than the one
+ * before, 5.5 s of waits in all. A file a running program keeps open stays held, and the removal then fails.
+ * `removeWithRetry` counts these tries itself, for `removeScratch` and every folder removal in `src/` that waits out a
+ * held file; the tests' `removeFolder` repeats them, held equal by `test/engine/file-replace.test.ts`.
+ */
+export const FOLDER_REMOVAL_RETRIES = { maxRetries: 10, retryDelay: 100 } as const;
+
+/** The waits between {@link FOLDER_REMOVAL_RETRIES}' tries, added up: 100 ms, then each 100 ms longer than the last. */
+const REMOVAL_WAIT_MS = FOLDER_REMOVAL_RETRIES.retryDelay
+  * (FOLDER_REMOVAL_RETRIES.maxRetries * (FOLDER_REMOVAL_RETRIES.maxRetries + 1) / 2);
+
+/**
+ * The codes node:fs's `rm` retries, and so does {@link removeWithRetry}: a file another process holds (EBUSY, EPERM), a
+ * folder it still writes in or still holds a deleted file in (ENOTEMPTY), and too many files open (EMFILE, ENFILE).
+ */
+const REMOVAL_RETRIED: ReadonlySet<unknown> = new Set(["EBUSY", "EPERM", "ENOTEMPTY", "EMFILE", "ENFILE"]);
+
+/** Of those, the codes Windows gives while another program holds the folder or a file in it open. */
+const HELD_IN_FOLDER: ReadonlySet<unknown> = new Set(["EBUSY", "EPERM", "ENOTEMPTY"]);
+
+/** How long a rename is retried on Windows. */
+const RENAME_RETRY_MS = 2_000;
+const RENAME_RETRY_INTERVAL_MS = 50;
+const HELD: ReadonlySet<unknown> = new Set(["EPERM", "EACCES", "EBUSY"]);
+
+export interface RenameOptions {
+  platform?: NodeJS.Platform;
+  rename?: (from: string, to: string) => Promise<void>;
+  retryMs?: number;
+}
+
+const codeOf = (error: unknown): unknown => (error instanceof Error && "code" in error ? error.code : undefined);
+
+/**
+ * Whether `error` is Windows refusing a file or folder another process holds open or is deleting (EPERM, EACCES or
+ * EBUSY), which it is free of a moment later. Never on another platform, where those codes mean this process may not.
+ */
+export function heldOnWindows(error: unknown, platform: NodeJS.Platform = process.platform): boolean {
+  return platform === "win32" && HELD.has(codeOf(error));
+}
+
+/**
+ * Whether `error`, from creating a file or folder only if none is there (`wx`, `O_EXCL`, or a `mkdir` taken as a lock),
+ * says another process has the name. EEXIST says so everywhere. On Windows a file or folder another process is deleting
+ * keeps its name until the delete ends: creating, reading or removing it in that moment fails with EPERM, EACCES or
+ * EBUSY, and looking at it (`stat`) still succeeds. The name is free again a moment later.
+ */
+export function nameTaken(error: unknown, platform: NodeJS.Platform = process.platform): boolean {
+  return codeOf(error) === "EEXIST" || heldOnWindows(error, platform);
+}
+
+/**
+ * What a rename Windows refused for the whole retry throws. The bare `EPERM: operation not permitted, rename` never
+ * says that another program had the file open, which is what the person must close; the code stays for callers that
+ * branch on it, and the last refusal is the cause.
+ */
+function heldTooLong(error: unknown, from: string, to: string, retryMs: number): Error {
+  const code = codeOf(error);
+  const message = `${String(code)}: Windows refused for ${retryMs / 1_000} s to rename ${from} to ${to}, as another`
+    + " program held one of them open. Close the program that has it open, such as an editor or a virus scan, and try again.";
+  return Object.assign(new Error(message, { cause: error }), { code });
+}
+
+/**
+ * Renames `from` over `to`, retried on Windows for {@link RENAME_RETRY_MS} ms while either file is held, then thrown
+ * as an error that says another program held it. A read-only `to` is made writable first there, since Windows refuses
+ * to replace a read-only file, which mode bits elsewhere never stop; the file moved in keeps its own mode. A folder at
+ * `to` fails at once with the refusal itself: Windows never renames over one, so waiting would only delay the error.
+ */
+export async function renameWithRetry(from: string, to: string, options: RenameOptions = {}): Promise<void> {
+  const rename = options.rename ?? fsRename;
+  const retryMs = options.retryMs ?? RENAME_RETRY_MS;
+  const deadline = Date.now() + retryMs;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      await rename(from, to);
+      return;
+    } catch (error) {
+      if (!heldOnWindows(error, options.platform)) throw error;
+      if (attempt === 1 && await makeWritable(to) === "folder") throw error;
+      if (Date.now() >= deadline) throw heldTooLong(error, from, to, retryMs);
+      await sleep(RENAME_RETRY_INTERVAL_MS);
+    }
+  }
+}
+
+export interface RenameSyncOptions extends Omit<RenameOptions, "rename"> {
+  rename?: (from: string, to: string) => void;
+}
+
+/** Blocks this thread for `ms` milliseconds; Node allows it on the main thread. */
+const PAUSE = new Int32Array(new SharedArrayBuffer(4));
+
+/** {@link renameWithRetry} for synchronous code, which waits between attempts without yielding. */
+export function renameWithRetrySync(from: string, to: string, options: RenameSyncOptions = {}): void {
+  const rename = options.rename ?? fsRenameSync;
+  const retryMs = options.retryMs ?? RENAME_RETRY_MS;
+  const deadline = Date.now() + retryMs;
+  for (let attempt = 1; ; attempt += 1) {
+    try {
+      rename(from, to);
+      return;
+    } catch (error) {
+      if (!heldOnWindows(error, options.platform)) throw error;
+      if (attempt === 1 && makeWritableSync(to) === "folder") throw error;
+      if (Date.now() >= deadline) throw heldTooLong(error, from, to, retryMs);
+      Atomics.wait(PAUSE, 0, 0, RENAME_RETRY_INTERVAL_MS);
+    }
+  }
+}
+
+export interface ReplaceFileOptions extends RenameOptions {
+  /** The file's permission bits, set exactly: the umask does not narrow them. Windows keeps only the read-only bit. */
+  mode: number;
+}
+
+export interface ReplaceFileSyncOptions extends RenameSyncOptions {
+  /** As {@link ReplaceFileOptions.mode}. */
+  mode: number;
+}
+
+/**
+ * The new file written beside `path` first. The uninstall knows `<file>.<pid>.<uuid>.tmp` in the Rerail home as a
+ * write cut short. The name is new, so creating it exclusively refuses a link someone planted there.
+ */
+const sidecarOf = (path: string): string => `${path}.${process.pid}.${randomUUID()}.tmp`;
+
+/**
+ * Makes `text` the whole of the file at `path`: a reader sees the old file or the new one, never part of either, and
+ * the old file is never removed first. The text goes to a new file beside `path`, which {@link renameWithRetry} then
+ * moves over it, so a file another program holds on Windows is retried and the give-up says what held it. When any
+ * step fails the new file is removed, the old one stays, and the error is the step's. The folder must exist.
+ */
+export async function replaceFile(path: string, text: string, options: ReplaceFileOptions): Promise<void> {
+  const { mode, ...renameOptions } = options;
+  const sidecar = sidecarOf(path);
+  try {
+    const handle = await open(sidecar, "wx", mode);
+    try {
+      await handle.writeFile(text, "utf8");
+      await handle.chmod(mode);
+    } finally {
+      await handle.close();
+    }
+    await renameWithRetry(sidecar, path, renameOptions);
+  } catch (error) {
+    // The failure the caller must see is the write's or the rename's, not a removal's.
+    await fsRm(sidecar, { force: true }).catch(() => undefined);
+    throw error;
+  }
+}
+
+/** {@link replaceFile} for synchronous code. */
+export function replaceFileSync(path: string, text: string, options: ReplaceFileSyncOptions): void {
+  const { mode, ...renameOptions } = options;
+  const sidecar = sidecarOf(path);
+  try {
+    const descriptor = openSync(sidecar, "wx", mode);
+    try {
+      writeFileSync(descriptor, text, "utf8");
+      fchmodSync(descriptor, mode);
+    } finally {
+      closeSync(descriptor);
+    }
+    renameWithRetrySync(sidecar, path, renameOptions);
+  } catch (error) {
+    removeQuietlySync(sidecar);
+    throw error;
+  }
+}
+
+function removeQuietlySync(path: string): void {
+  try {
+    rmSync(path, { force: true });
+  } catch {
+    // The failure the caller must see is the write's or the rename's, not a removal's.
+  }
+}
+
+/** What a rename target is once a read-only file there was made writable: a folder, or anything a retry can replace. */
+type RenameTarget = "folder" | "replaceable";
+
+function makeWritableSync(path: string): RenameTarget {
+  try {
+    const info = statSync(path);
+    if (info.isDirectory()) return "folder";
+    if ((info.mode & 0o200) === 0) chmodSync(path, info.mode | 0o200);
+  } catch {
+    // Missing or unreadable: the next rename attempt reports what is wrong.
+  }
+  return "replaceable";
+}
+
+async function makeWritable(path: string): Promise<RenameTarget> {
+  try {
+    const info = await stat(path);
+    if (info.isDirectory()) return "folder";
+    if ((info.mode & 0o200) === 0) await chmod(path, info.mode | 0o200);
+  } catch {
+    // Missing or unreadable: the next rename attempt reports what is wrong.
+  }
+  return "replaceable";
+}
+
+export interface RemoveOptions {
+  platform?: NodeJS.Platform;
+  rm?: (path: string, options: RmOptions) => Promise<void>;
+  sleep?: (ms: number) => Promise<void>;
+}
+
+const pathOf = (error: unknown): string | undefined =>
+  (error instanceof Error && "path" in error && typeof error.path === "string" ? error.path : undefined);
+
+/**
+ * What a removal throws once its retries are spent. On Windows, where its code says another program held the folder or
+ * a file in it open, that is an error naming the file, as the bare `EBUSY: resource busy or locked, unlink` never says
+ * a program had it open; the code stays for callers that branch on it, and the last refusal is the cause. Elsewhere it
+ * is the last refusal itself.
+ */
+function removalHeldTooLong(error: unknown, path: string, platform: NodeJS.Platform = process.platform): unknown {
+  const code = codeOf(error);
+  if (platform !== "win32" || !HELD_IN_FOLDER.has(code)) return error;
+  const held = pathOf(error) ?? path;
+  const message = `${String(code)}: Windows refused for ${REMOVAL_WAIT_MS / 1_000} s to remove ${path}, as another program`
+    + ` held ${held === path ? "it, or a file in it," : held} open`;
+  return Object.assign(new Error(message, { cause: error }), { code });
+}
+
+/**
+ * Removes the file or folder at `path` and everything in it, if it is there. While another process holds a file in it
+ * (Windows refuses to delete a file held open), the removal is tried again {@link FOLDER_REMOVAL_RETRIES} times, 5.5 s
+ * of waits in all, then fails: on Windows with an error that names the file and says another program held it open. Any
+ * other failure is thrown at once.
+ *
+ * The tries are counted here, each one `rm` with no retries of its own: node:fs/promises' `rm` applies `maxRetries` at
+ * every level of the folder, each try at a folder removing its contents with a full set of retries again, so one held
+ * file kept it trying for 67 s rather than 5.5 s, and each folder further down multiplies that by 11.
+ * `npm run check:owned-builtins` fails on any other `rm` given `maxRetries` in `src/`.
+ */
+export async function removeWithRetry(path: string, options: RemoveOptions = {}): Promise<void> {
+  const { rm = fsRm, sleep: wait = sleep } = options;
+  for (let retry = 1; ; retry += 1) {
+    try {
+      await rm(path, { recursive: true, force: true });
+      return;
+    } catch (error) {
+      if (!REMOVAL_RETRIED.has(codeOf(error))) throw error;
+      if (retry > FOLDER_REMOVAL_RETRIES.maxRetries) throw removalHeldTooLong(error, path, options.platform);
+      await wait(retry * FOLDER_REMOVAL_RETRIES.retryDelay);
+    }
+  }
+}
+
+/**
+ * Removes a temporary folder Rerail made, retrying while Windows holds a file in it ({@link removeWithRetry}), and never
+ * fails: a leftover folder in the temp directory must not replace the result, or the error, of the work that used it.
+ */
+export async function removeScratch(path: string, options: RemoveOptions = {}): Promise<void> {
+  try {
+    await removeWithRetry(path, options);
+  } catch {
+    // Left for the system's temp cleanup.
+  }
+}

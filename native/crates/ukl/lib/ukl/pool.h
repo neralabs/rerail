@@ -1,4 +1,4 @@
-// ukl/pool.h: a store's blocks used again, a free list a size class (decision 0478 §10).
+// ukl/pool.h: a store's blocks used again, a free list a size class (decision 0486 §10).
 //
 // A store (an array of units: tokens, rows, ...) handed out from its front by an atomic add never takes back what
 // its users are done with. A pool keeps those blocks to hand out again: a free list a size class, each list linked
@@ -86,7 +86,7 @@ UKL_INLINE uint32_t ukl_pool_give_range(UklPool p, uint32_t start, uint32_t n)
 // never handed out twice).
 UKL_INLINE void ukl_pool_push(UklPool p, uint32_t start, uint32_t c)
 {
-    uint32_t head = ukl_atomic_load(&p.heads[c]);
+    uint32_t head = ukl_atomic_poll(&p.heads[c]);
     for (uint32_t turn = 0u; turn < UKL_POOL_TURNS; turn++) {
         ukl_atomic_store(&p.next[start], head);
         ukl_fence_device();
@@ -100,9 +100,9 @@ UKL_INLINE void ukl_pool_push(UklPool p, uint32_t start, uint32_t c)
 // Taking: a block of class `c` (its first unit), or `UKL_POOL_NONE`.
 UKL_INLINE uint32_t ukl_pool_take(UklPool p, uint32_t c)
 {
-    uint32_t head = ukl_atomic_load(&p.heads[c]);
+    uint32_t head = ukl_atomic_poll(&p.heads[c]);
     for (uint32_t turn = 0u; turn < UKL_POOL_TURNS && head != UKL_POOL_NONE; turn++) {
-        uint32_t next = ukl_atomic_load(&p.next[head]);
+        uint32_t next = ukl_atomic_poll(&p.next[head]);
         uint32_t seen = ukl_atomic_cas(&p.heads[c], head, next);
         if (seen == head)
             return head;
@@ -117,7 +117,7 @@ UKL_INLINE uint32_t ukl_pool_take(UklPool p, uint32_t c)
 UKL_INLINE uint32_t ukl_pool_take_split(UklPool p, uint32_t c)
 {
     for (uint32_t k = c; k < UKL_POOL_CLASSES; k++) {
-        if (ukl_atomic_load(&p.heads[k]) == UKL_POOL_NONE)
+        if (ukl_atomic_poll(&p.heads[k]) == UKL_POOL_NONE)
             continue;
         uint32_t s = ukl_pool_take(p, k);
         if (s == UKL_POOL_NONE)

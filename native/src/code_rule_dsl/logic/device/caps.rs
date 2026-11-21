@@ -2,7 +2,7 @@
 //! placement (`plan::placement`) and a device's compile (Metal's `setfix::device::compile`) both read, so a
 //! function the device gains is placed on it at once, and a function it lacks is named where the planner refuses it.
 //!
-//! The planner's terms name a function as `.rr` does (`@substr`, `@add`); `native` gives the native engine's name
+//! The planner's terms name a function as `.rerail` does (`@substr`, `@add`); `native` gives the native engine's name
 //! for it (`rr_substr`, `rr_add`), the name the compiled steps carry. The table names no device's operation codes: a
 //! device maps each entry to its own (Metal: an exhaustive match in `setfix::device`, so an entry without an
 //! operation does not compile).
@@ -74,7 +74,7 @@ impl DeviceFn {
     }
 }
 
-/// The native engine's name for `.rr`'s function `f` (`strings::functions::native_call`), or `f` itself.
+/// The native engine's name for `.rerail`'s function `f` (`strings::functions::native_call`), or `f` itself.
 pub fn native(f: &str) -> &str {
     crate::code_rule_dsl::logic::strings::functions::native_call(f).map_or(f, |(n, _, _)| n)
 }
@@ -113,7 +113,7 @@ pub fn device_fn(name: &str) -> Option<DeviceFn> {
 mod tests {
     use super::*;
 
-    /// Every `.rr` name the planner's terms carry for a device function reaches its form by `native`, and each
+    /// Every `.rerail` name the planner's terms carry for a device function reaches its form by `native`, and each
     /// form takes as many arguments as the native engine's function (`strings::functions`), so the planner and the
     /// device read one table.
     #[test]

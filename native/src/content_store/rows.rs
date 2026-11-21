@@ -1,9 +1,9 @@
 //! Row primitives shared by every table: hash lanes, interned hashes/strings/paths, validated
 //! relative paths, and the store generation.
 
+use super::{HashKey, STRING_PATH, StoreError, StoreResult};
 #[allow(unused_imports)]
 use crate::content_store::connection::Cached as _;
-use super::{HashKey, STRING_PATH, StoreError, StoreResult};
 use rusqlite::{Connection, OptionalExtension, params};
 
 pub(super) fn generation(transaction: &Connection) -> StoreResult<i64> {

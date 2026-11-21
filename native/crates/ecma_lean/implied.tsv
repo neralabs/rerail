@@ -323,6 +323,7 @@ typescript	type_predicate	is
 typescript	type_predicate_annotation	:	
 typescript	type_query	typeof	
 typescript	union_type	|	
+typescript	using_declaration	,	
 typescript	variable_declaration	,	
 typescript	variable_declaration	var	
 typescript	variable_declarator	=	
@@ -535,6 +536,7 @@ tsx	type_predicate	is
 tsx	type_predicate_annotation	:	
 tsx	type_query	typeof	
 tsx	union_type	|	
+tsx	using_declaration	,	
 tsx	variable_declaration	,	
 tsx	variable_declaration	var	
 tsx	variable_declarator	=	

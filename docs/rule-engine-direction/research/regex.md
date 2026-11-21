@@ -1,11 +1,11 @@
 # Regex lowering, transducer regex ops and trigram prefilter (data-layer gate)
 
-Tags: **M** measured on the 9,010-file gate corpus (Apple M5 Max, 18 cores), **D** derived, **A** assumed. Code and outputs: `../experiments/regex/`.
+Tags: **M** measured on the 9,010-file gate corpus (Apple M5 Max, 18 cores), **D** derived, **A** assumed. Code and outputs: `../experiments/regex/` (removed; at 7efcac9c67).
 
 ## 0. Answers in brief
 
-- **Why we run regexes over file text.** The 14 rules that do it are ports of nera-data-layer's own regex linters (`scripts/lint_*.py`). Those linters scan lines of text; 9 of the 14 never parse Python.
-  - The port aimed at exact parity with them (NER-1969, NER-1971, and the batch-two additions: per-file line state, indentation filters, LF-only splitting, content gates).
+- **Why we run regexes over file text.** The 14 rules that do it are ports of the data-layer repository's own regex linters (`scripts/lint_*.py`). Those linters scan lines of text; 9 of the 14 never parse Python.
+  - The port aimed at exact parity with them (the line-query and line-context features, and the batch-two additions: per-file line state, indentation filters, LF-only splitting, content gates).
   - Those features rebuild parser knowledge by hand:
     - the "line state machine" (`compile/line_state.rs`, 8 clauses) tracks triple-quoted strings, i.e. a hand-made Python tokenizer;
     - `lines.exclude: ^\s*#` means "not a comment";
@@ -227,7 +227,7 @@ This uses the opcodes already reserved in spec-transducer.md (0x0c–0x0e, 0x70�
 
 ## Files
 
-All under `../experiments/regex/`:
+All under `../experiments/regex/` (removed; at 7efcac9c67):
 
 **Scripts:**
 - `clauses_norm.py`, `scope.py` — normalise the clauses and compute scoped file lists

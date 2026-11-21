@@ -273,12 +273,11 @@ impl P<'_> {
 
     /// An assignment's right side: an expression, or an indented block.
     fn indentable_assign(&mut self) -> R<u32> {
-        if self.tok().nl {
-            if let Some(Ext::Indent) = self.layout(v::INDENT)? {
+        if self.tok().nl
+            && let Some(Ext::Indent) = self.layout(v::INDENT)? {
                 let at = self.take();
                 return self.indented_block(f::RIGHT, at);
             }
-        }
         self.expression_m(f::RIGHT, true)
     }
 
@@ -311,7 +310,7 @@ impl P<'_> {
                     // `10 seconds`, `a op b c`: a postfix expression (its operand and identifier
                     // unfielded), where the operand is all the expression so far (an
                     // `_infix_operand`, an infix expression too).
-                    if !(min == 0 && !self.right_operand) {
+                    if min != 0 || self.right_operand {
                         return self.refuse();
                     }
                     self.t.refield(n, f::NONE);
@@ -401,11 +400,10 @@ impl P<'_> {
         loop {
             let t = self.tok();
             match t.kind {
-                T::Dot | T::LParen | T::LBracket | T::LBrace if t.nl => {
-                    if self.layout(AFTER_OPERAND | v::COLON_EOL)?.is_some() {
+                T::Dot | T::LParen | T::LBracket | T::LBrace if t.nl
+                    && self.layout(AFTER_OPERAND | v::COLON_EOL)?.is_some() => {
                         break;
                     }
-                }
                 _ => {}
             }
             match t.kind {
@@ -915,11 +913,10 @@ impl P<'_> {
                 if p.is_word(w::CASE) && !matches!(p.word_at(1), w::CLASS | w::OBJECT) {
                     return Ok(());
                 }
-                if region == Region::Indent {
-                    if let Some(Ext::Outdent | Ext::CommaOutdent) = p.layout(fol)? {
+                if region == Region::Indent
+                    && let Some(Ext::Outdent | Ext::CommaOutdent) = p.layout(fol)? {
                         return Ok(());
                     }
-                }
                 p.deeper()?;
                 p.statement(f::BODY)?;
                 p.depth -= 1;
@@ -1132,11 +1129,10 @@ impl P<'_> {
             return self.refuse();
         }
         self.t.refield(c, f::CONDITION);
-        if self.tok().nl {
-            if let Some(Ext::Semi) = self.layout(v::SEMI)? {
+        if self.tok().nl
+            && let Some(Ext::Semi) = self.layout(v::SEMI)? {
                 return self.refuse();
             }
-        }
         self.expression_f(f::BODY)?;
         Ok(self.close(n))
     }
@@ -1372,8 +1368,8 @@ impl P<'_> {
             self.t.refield(b, f::BODY);
             return Ok(());
         }
-        if self.tok().nl {
-            if let Some(Ext::Indent) = self.layout(v::INDENT)? {
+        if self.tok().nl
+            && let Some(Ext::Indent) = self.layout(v::INDENT)? {
                 let at = self.take();
                 if !self.is_word(w::CASE) {
                     return self.refuse();
@@ -1381,7 +1377,6 @@ impl P<'_> {
                 self.indented_block(f::BODY, at)?;
                 return Ok(());
             }
-        }
         self.refuse()
     }
 

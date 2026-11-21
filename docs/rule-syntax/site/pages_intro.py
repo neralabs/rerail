@@ -14,7 +14,7 @@ def row(title, paras, blocks):
 w('''<div class="col">
   <div style="display:grid;gap:14px">
     <h1>Rerail logic: rules as Datalog</h1>
-    <p class="lede">A proposal for how Rerail rules are written. It replaces today's <code>rerail.policy/v1</code> JSON with one text format, <code>.rr</code>, and moves name, import and call resolution out of the binary into libraries written in the same format.</p>
+    <p class="lede">A proposal for how Rerail rules are written. It replaces today's <code>rerail.policy/v1</code> JSON with one text format, <code>.rerail</code>, and moves name, import and call resolution out of the binary into libraries written in the same format.</p>
     <p class="lede">The format is <a href="https://souffle-lang.github.io/">Soufflé</a> Datalog with four additions for code: syntax patterns, regex captures that bind variables, findings with fixes, and relations that may be unknown.</p>
   </div>
   <h2>Why change</h2>
@@ -22,22 +22,22 @@ w('''<div class="col">
 
 row("The JSON is hard to read and write", [
     "A rule is a nested matcher tree. Every <em>and</em>, <em>or</em> and helper is another level of objects, and the logic is spread across them.",
-    "This is Bandit B102, \"no exec()\", as it ships today, next to the same check in .rr.",
+    "This is Bandit B102, \"no exec()\", as it ships today, next to the same check in .rerail.",
 ], [
  ("json", open(os.path.join(HERE, "..", "..", "..", "packs", "python", "rules", "bandit-b102-exec-used.json")).read(),
   "Today: packs/python/rules/bandit-b102-exec-used.json"),
  ("rr", '''
-#include "python/names.rr"   // sym_of: what an expression refers to
+#include "python/names.rerail"   // sym_of: what an expression refers to
 B102(c) :- kind(c, "call"), field(c, "function", f), sym_of(f, "builtins.exec").
 B102(c) :- kind(c, "call"), field(c, "function", f),
     kind(f, "parenthesized_expression"),
     child(f, g, 0), sym_of(g, "builtins.exec").     // (exec)(src)
-''', ".rr: the same check"),
+''', ".rerail: the same check"),
 ])
 
 row("It cannot say what the data-layer checks need", [
     "The data layer is a Python codebase of about 9,000 files whose architecture is enforced by custom checks: which layer may import which, sync and async methods in pairs, no import cycles. They follow imports across files and reason over the module graph, so today they are Python scripts, not Rerail rules. The 49 on this page are {{dl_py_lines}} lines of Python. An earlier attempt moved one into YAML rules with embedded SQL, which can only test the text of names.",
-    "Example: function-level-imports calls an import \"circular-avoidance\" when the module <em>name</em> looks internal. The .rr version proves the cycle on the import graph.",
+    "Example: function-level-imports calls an import \"circular-avoidance\" when the module <em>name</em> looks internal. The .rerail version proves the cycle on the import graph.",
 ], [
  ("src", '''
 - when:
@@ -62,12 +62,12 @@ if _LAYERED_MODULE_RE.match(first_segment):     # l1000_schema, l9600_graphs, �
 cycle(i) :- local_import(i), module_of(i, a), loads(i, b),
     b != a, !pkg_above(a, b),
     reaches(b, a).
-''', ".rr: function-level-imports.b2.rr"),
+''', ".rerail: function-level-imports.b2.rerail"),
 ])
 
 row("Resolution logic ships in the binary", [
     "What a name refers to, what an import loads and what a call targets are computed in Rust. A JSON rule can only ask through fixed keys such as <code>resolves</code>. Changing how Python scoping or re-exports are handled means changing the binary.",
-    "In .rr, the same logic is rules in a library. This is the core of Python name lookup.",
+    "In .rerail, the same logic is rules in a library. This is the core of Python name lookup.",
 ], [
  ("json", '''
 "resolves": { "binding": { "form": "import", "site": { "matches": "alias-to-exec" } } }
@@ -81,7 +81,7 @@ look(n, x, s) :- walk(n, x, s), bound_in(s, x).   // the scope that binds it
 sym_of(n, q) :- qn(n, q0), resolve_export(q0, q).
 sym_of(n, q) :- look(n, x, s), defn(s, x, f), qualname(f, q).
 sym_of(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
-''', ".rr: lib/python/names.rr ({{lib_py_lines}} lines for all Python libraries)"),
+''', ".rerail: lib/python/names.rerail ({{lib_py_lines}} lines for all Python libraries)"),
 ])
 
 w('  <h2>What changes</h2>\n')
@@ -103,11 +103,11 @@ row("Settings become directives", [
 .policy "bandit-b102-exec-used" revision 3
 .mode steer
 .scope include "**/*.py"
-''', ".rr"),
+''', ".rerail"),
 ])
 
 row("Libraries are Datalog; the binary keeps the basics", [
-    "The binary provides facts about the tree and a few operations on it. Everything that interprets the language, such as scopes, imports, calls and JSX, is Datalog that ships as data. A library change is a text change to a <code>.rr</code> file, with no new release.",
+    "The binary provides facts about the tree and a few operations on it. Everything that interprets the language, such as scopes, imports, calls and JSX, is Datalog that ships as data. A library change is a text change to a <code>.rerail</code> file, with no new release.",
 ], [
  ("rr", '''
 .decl kind(n: node, k: symbol)             // a node's grammar kind
@@ -115,15 +115,15 @@ row("Libraries are Datalog; the binary keeps the basics", [
 .decl within(n: node, a: node)             // n is somewhere below a
 .input kind, field, within                 // rows come from the binary
 .edit replace(n: loc, text: symbol)        // an edit, for fixes
-''', "lib/core.rr: native, in the binary"),
+''', "lib/core.rerail: native, in the binary"),
  ("rr", '''
 // python/names: `len(xs)` with no local `len` refers to the builtin.
 sym_of(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
-''', "lib/python/names.rr: Datalog, shipped as data"),
+''', "lib/python/names.rerail: Datalog, shipped as data"),
 ])
 
 row("Unknown is not false", [
-    "Some facts cannot be known, such as what a component from a package renders. Today's rules must guess. A .rr relation can be declared <code>must, may</code>: a finding proven from known facts is definite, and one that needs an unknown fact is reported as <em>possible</em>, with its own mode.",
+    "Some facts cannot be known, such as what a component from a package renders. Today's rules must guess. A .rerail relation can be declared <code>must, may</code>: a finding proven from known facts is definite, and one that needs an unknown fact is reported as <em>possible</em>, with its own mode.",
 ], [
  ("src", '''
 <BrowserRouter>
@@ -133,13 +133,13 @@ row("Unknown is not false", [
 ''', "TSX"),
  ("src", '''
 today (JSON)    no findings: the rule stops at any component
-.rr             line 2  nested router   definite  → .mode
+.rerail             line 2  nested router   definite  → .mode
                 line 3  nested router   possible  → .possible
 ''', "Findings"),
 ])
 
 row("Fixes are rules", [
-    "Today a fix is one text template that replaces the match. In .rr a fix is a set of edits derived from facts, so it can touch several places, and a rule can mark it <code>safe</code> only where its evidence shows the edit changes nothing else.",
+    "Today a fix is one text template that replaces the match. In .rerail a fix is a set of edits derived from facts, so it can touch several places, and a rule can mark it <code>safe</code> only where its evidence shows the edit changes nothing else.",
 ], [
  ("json", '''
 "fix": "$E"
@@ -147,7 +147,7 @@ row("Fixes are rules", [
  ("rr", '''
 // Hoist a function-level import, but only if it closes no cycle and is a plain statement.
 hoist_import(i, "deferred-no-cycle") :- plain_stmt(i), !clash(i) => hoist(i).
-''', ".rr"),
+''', ".rerail"),
  ("diff", '''
   import os
 + from app.storage import read_blob
@@ -209,17 +209,17 @@ stop(e) :- kind(e, "jsx_element"), !router_el(e), tag(e, t),     // not <div>, <
 // 3. The finding: the nearest stop above a router is a router.
 NESTED_ROUTER_JSX(inner) :- router_el(inner),
     nearest(inner, outer, stop), router_el(outer).
-''', "The three relations, from nested-routers.b1.rr"),
+''', "The three relations, from nested-routers.b1.rerail"),
 ])
 
 w('''  <section style="display:grid;gap:10px">
     <h3>The whole rule, both ways</h3>
-    <p style="max-width:75ch">Left: the rule as it is written today. Right: the same meaning in .rr, with comments. A more accurate version, which reads <code>&lt;Layout&gt;</code>'s source across files to see whether it renders its children, is in the Data-layer rules tab.</p>
+    <p style="max-width:75ch">Left: the rule as it is written today. Right: the same meaning in .rerail, with comments. A more accurate version, which reads <code>&lt;Layout&gt;</code>'s source across files to see whether it renders its children, is in the Data-layer rules tab.</p>
     <div class="pair">
       <div class="code"><div class="cap">Today: JSON ({{router_json_lines}} lines)</div><div data-json>
 @@router_json@@
 </div></div>
-      <div class="code"><div class="cap">.rr, same meaning ({{router_b1_code}} lines of logic)</div><div data-rr>
+      <div class="code"><div class="cap">.rerail, same meaning ({{router_b1_code}} lines of logic)</div><div data-rr>
 @@router_b1@@
 </div></div>
     </div>
@@ -228,9 +228,9 @@ w('''  <section style="display:grid;gap:10px">
   <section style="display:grid;gap:10px">
     <h2>Where it stands</h2>
     <div class="stats">
-      <div class="stat"><b>{{hand_rules}} / {{rules}}</b><span>pack rules written by hand in .rr, each reviewed against its tool</span></div>
-      <div class="stat"><b>{{json_mb}} → {{hand_mb}}</b><span>pretty JSON → hand-written .rr, comments excluded</span></div>
-      <div class="stat"><b>{{dl_py_lines}} → {{dl_rr_code}}</b><span>data-layer lines: Python → .rr logic</span></div>
+      <div class="stat"><b>{{hand_rules}} / {{rules}}</b><span>pack rules written by hand in .rerail, each reviewed against its tool</span></div>
+      <div class="stat"><b>{{json_mb}} → {{hand_mb}}</b><span>pretty JSON → hand-written .rerail, comments excluded</span></div>
+      <div class="stat"><b>{{dl_py_lines}} → {{dl_rr_code}}</b><span>data-layer lines: Python → .rerail logic</span></div>
     </div>
     <ul class="tight">
       <li>Every pack rule is written by hand on the shared libraries. A second person reviewed each batch against the
@@ -238,12 +238,12 @@ w('''  <section style="display:grid;gap:10px">
         fixed. Each rule's NOTES file lists where it still differs from the tool, and why.</li>
       <li>The rules run in <code>tools/rrlab</code>, a lab harness on Soufflé, and are scored against the tool's own
         findings on its test fixtures.</li>
-      <li>The engine reads <code>.rr</code> as its only rule format. It lowers 4,256 of the libraries' 4,277
+      <li>The engine reads <code>.rerail</code> as its only rule format. It lowers 4,256 of the libraries' 4,277
         clauses, 5,202 of the packs' 5,264 and 2,403 of the data-layer checks' 2,418. The rest are constructs it
         still refuses by name, such as patterns, <code>ordered by</code> and recursion whose bound it cannot yet
         prove ("What the engine runs today", on the Syntax page). <code>docs/rule-syntax/ALIGN-FINAL-SHAPE.md</code>
         lists every difference.</li>
-      <li>Types are arriving. A typing program, itself <code>.rr</code>, resolves Python calls and infers what class
+      <li>Types are arriving. A typing program, itself <code>.rerail</code>, resolves Python calls and infers what class
         each value may hold, keeping every gap as unknown. Rules read <code>call_target</code> and
         <code>proven_type</code> as relations. Against what the code does at run time, none of its definite
         answers has been wrong ("Types", on the Syntax page).</li>
@@ -259,9 +259,9 @@ w('''  <section style="display:grid;gap:10px">
     <ul class="tight">
       <li><a href="#syntax">Syntax</a>: Datalog from the start, then what is added to Soufflé, each part of the format, fixes, possible findings, types, and what the engine runs today.</li>
       <li><a href="#library">Library</a>: the Datalog libraries and the native core they stand on.</li>
-      <li><a href="#packs">Pack rules</a>: every shipped rule, its hand-written .rr beside today's JSON.</li>
+      <li><a href="#packs">Pack rules</a>: every shipped rule, its hand-written .rerail beside today's JSON.</li>
       <li><a href="#data-layer">Data-layer rules</a>: the hand-written rules, each beside the JSON port and the Python linter.</li>
-      <li>In any .rr code, relation names are links. Blue names come from a Datalog library, orange names are native, and names with a dotted underline are defined in the same file.</li>
+      <li>In any .rerail code, relation names are links. Blue names come from a Datalog library, orange names are native, and names with a dotted underline are defined in the same file.</li>
     </ul>
   </section>
 </div>

@@ -236,6 +236,10 @@ pub struct MetalComputeFunctionLibrary {
 impl MetalComputeFunctionLibrary {
     /// Compiles (preprocessed) source on the device.
     pub fn compile_from_source(device: &DeviceRef, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
+        // A measurement aid: `RERAIL_DEVICE_TRACE` prints where each library is compiled.
+        if std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+            eprintln!("RERAIL_DEVICE_TRACE a library compiled, {file_name_to_appear_in_error_messages} (driver {} MB):\n{}", device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
+        }
         let lib = objc::rc::autoreleasepool(|| device.new_library_with_source(preprocessed_source, &metal::CompileOptions::new()));
         let mtl_library = lib.map_err(|e| format!("Error compiling Metal library from source ({file_name_to_appear_in_error_messages}): {e}"))?;
         Ok(MetalComputeFunctionLibrary { mtl_library })
@@ -432,6 +436,9 @@ impl MetalComputeQueue {
 /// `allocUninitializedArraySync`: device memory for `length` elements (shared storage, so the host reads it back
 /// after the work completes; at least 16 bytes, as Metal will not bind an empty buffer).
 pub fn alloc_uninitialized_array_sync<T>(device: &DeviceRef, length: usize) -> metal::Buffer {
+    if length * std::mem::size_of::<T>() >= 4 << 20 && std::env::var_os("RERAIL_DEVICE_TRACE").is_some() {
+        eprintln!("RERAIL_DEVICE_TRACE an array of {} MB (driver {} MB):\n{}", (length * std::mem::size_of::<T>()) >> 20, device.current_allocated_size() >> 20, std::backtrace::Backtrace::force_capture());
+    }
     pooled(|| device.new_buffer((length * std::mem::size_of::<T>()).max(16) as u64, metal::MTLResourceOptions::StorageModeShared))
 }
 
@@ -442,7 +449,7 @@ pub fn alloc_uninitialized_array_sync<T>(device: &DeviceRef, length: usize) -> m
 /// The memory outlives the buffer and its clones, and every use of them by queued work.
 pub unsafe fn wrap_host_memory(device: &DeviceRef, ptr: *mut u8, len: usize) -> Result<metal::Buffer, String> {
     let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(1) as usize;
-    if (ptr as usize) % page != 0 || len % page != 0 || len == 0 {
+    if !(ptr as usize).is_multiple_of(page) || !len.is_multiple_of(page) || len == 0 {
         return Err(format!("Metal: a no-copy buffer at {ptr:p} ({len} bytes) is not page-aligned"));
     }
     Ok(pooled(|| device.new_buffer_with_bytes_no_copy(ptr.cast(), len as u64, metal::MTLResourceOptions::StorageModeShared, None)))

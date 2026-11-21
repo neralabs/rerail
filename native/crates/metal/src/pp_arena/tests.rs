@@ -43,6 +43,111 @@ fn run<'a>(f: impl FnOnce(&Enc<'a>)) {
     .unwrap();
 }
 
+/// The `#if` evaluator by itself (`pp_if.uglykl`'s `sy_feed`, `sy_end`), a thread an expression:
+/// each one's truth and value as the serial pass gives them.
+#[test]
+fn the_if_evaluator_is_the_serial_passes() {
+    // Operators as the evaluator numbers them (`EO_*`); 0 a value.
+    const PLUS: u32 = 14;
+    const MINUS: u32 = 15;
+    const STAR: u32 = 16;
+    const EQ: u32 = 6;
+    const LPAREN: u32 = 22;
+    const RPAREN: u32 = 23;
+    const QUESTION: u32 = 24;
+    const COLON: u32 = 25;
+    let v = |x: u64| (0u32, x);
+    let o = |op: u32| (op, 0u64);
+    // An expression's text, its items (an operator and a value each), its truth and its value's low word.
+    type Case = (&'static str, Vec<(u32, u64)>, u32, u32);
+    let cases: Vec<Case> = vec![
+        ("1", vec![v(1)], 1, 1),
+        ("1 == 1", vec![v(1), o(EQ), v(1)], 1, 1),
+        ("1 + 1", vec![v(1), o(PLUS), v(1)], 1, 2),
+        ("1 + 2 * 3", vec![v(1), o(PLUS), v(2), o(STAR), v(3)], 1, 7),
+        ("1 + 2 * 3 == 7", vec![v(1), o(PLUS), v(2), o(STAR), v(3), o(EQ), v(7)], 1, 1),
+        ("(1 + 2) * 3 == 9", vec![o(LPAREN), v(1), o(PLUS), v(2), o(RPAREN), o(STAR), v(3), o(EQ), v(9)], 1, 1),
+        ("10 - 2 - 3 == 5", vec![v(10), o(MINUS), v(2), o(MINUS), v(3), o(EQ), v(5)], 1, 1),
+        ("1 ? 2 : 3", vec![v(1), o(QUESTION), v(2), o(COLON), v(3)], 1, 2),
+        ("0 ? 2 : 0", vec![v(0), o(QUESTION), v(2), o(COLON), v(0)], 0, 0),
+    ];
+    let (mut offsets, mut ops, mut vals) = (vec![0u32], Vec::new(), Vec::new());
+    for (_, items, _, _) in &cases {
+        for &(op, x) in items {
+            ops.push(op);
+            vals.push(x);
+        }
+        offsets.push(ops.len() as u32);
+    }
+    let flags = vec![0u32; ops.len()];
+    let (ob, pb, vb, fb, out) = (buf(&offsets), buf(&ops), buf(&vals), buf(&flags), zeroed::<u32>(4 * cases.len()));
+    run(|e| e.run("pb_if_eval", &[("offsets", &ob), ("ops", &pb), ("vals", &vb), ("flags", &fb), ("out", &out)], Some(ProbeArgs([cases.len() as u32, 0, 0, 0])), 1));
+    let got: Vec<u32> = read(&out, 4 * cases.len());
+    for (k, (what, _, truth, value)) in cases.iter().enumerate() {
+        let g = &got[4 * k..4 * k + 4];
+        assert_eq!((g[0], g[1]), (*truth, *value), "{what}: truth and value (depths {:#x}, state {:#x})", g[2], g[3]);
+    }
+}
+
+/// The `#if` evaluator from its tokens' text, read as `p1_if_eval` reads numbers and character
+/// constants (`if_number`, `if_char`): each expression's truth and 64-bit value as the serial
+/// pass gives them. Q367: on an M1 Max (macOS 26.2), a thread's bytes stored at a counter other
+/// than the loop's (`b[n++] = p[i++]`, as `if_bytes` and `if_number` copied a token) read back
+/// wrong, so every decimal number and character constant was refused or misread.
+#[test]
+fn the_if_evaluator_reads_the_texts_values() {
+    let texts: [(&str, u32, u64); 24] = [
+        ("1", 1, 1),
+        ("0", 0, 0),
+        ("2", 1, 2),
+        ("1 + 1", 1, 2),
+        ("1 == 1", 1, 1),
+        ("1 + 2 * 3 == 7", 1, 1),
+        ("0x10 + 010 + 0b11 == 27", 1, 1),
+        ("1'000 == 1000", 1, 1),
+        ("10uLL > 9", 1, 1),
+        ("0xFFFFFFFFFFFFFFFFull", 1, u64::MAX),
+        ("18446744073709551615", 1, u64::MAX),
+        ("99999999999999999999", 0, 0),
+        ("1.0", 0, 0),
+        ("'a' == 97", 1, 1),
+        ("'a'", 1, 97),
+        (r"'\n' + '\x41' + '\101' == 140", 1, 1),
+        (r"'\377'", 1, u64::MAX),
+        ("'ab'", 1, 0x6162),
+        (r"L'\xffffffff'", 1, u64::MAX),
+        (r"U'\xffffffff'", 1, 0xffff_ffff),
+        (r"u8'a'", 1, 97),
+        ("'\\u00e9'", 1, 0xffff_ffff_ffff_ffe9),
+        // Two bytes of UTF-8 in a plain constant: two characters.
+        ("'\u{e9}'", 1, 0xc3a9),
+        ("u'\u{e9}'", 1, 0xe9),
+    ];
+    let (mut bytes, mut starts, mut offsets) = (Vec::new(), vec![0u32], vec![0u32]);
+    for (t, _, _) in &texts {
+        for tok in t.split(' ') {
+            bytes.extend_from_slice(tok.as_bytes());
+            starts.push(bytes.len() as u32);
+        }
+        offsets.push(starts.len() as u32 - 1);
+    }
+    let (bb, sb, ob, out) = (buf(&bytes), buf(&starts), buf(&offsets), zeroed::<u32>(4 * texts.len()));
+    run(|e| e.run("pb_if_text", &[("bytes", &bb), ("starts", &sb), ("offsets", &ob), ("out", &out)], Some(ProbeArgs([texts.len() as u32, 0, 0, 0])), 1));
+    let got: Vec<u32> = read(&out, 4 * texts.len());
+    let wrong: Vec<String> = texts
+        .iter()
+        .enumerate()
+        .filter_map(|(k, (what, truth, value))| {
+            let g = &got[4 * k..4 * k + 4];
+            let v = u64::from(g[2]) << 32 | u64::from(g[1]);
+            // A refused expression's value is no value.
+            let v = if g[3] & 1 != 0 { 0 } else { v };
+            ((g[0], v) != (*truth, *value)).then(|| format!("{what}: truth {} value {v:#x} state {:#x}", g[0], g[3]))
+        })
+        .collect();
+    assert!(wrong.is_empty(), "{wrong:?}");
+}
+
 #[test]
 fn search_and_expand_equal_the_host() {
     let mut r = Rng(17);
@@ -125,7 +230,7 @@ fn the_grid_sort_alone_is_fast() {
     }
 }
 
-/// `<ukl/pool.h>` over a grid (decision 0478 §10): the pieces of ranges given, taken by every
+/// `<ukl/pool.h>` over a grid (decision 0486 §10): the pieces of ranges given, taken by every
 /// thread of 8 groups at once, then given back and taken again. No block is taken twice in a
 /// round, each lies inside one given range and fits its class, and where the takers ask for
 /// more than a class holds, every block of it is taken.
@@ -187,7 +292,7 @@ fn the_pool_gives_each_block_once() {
     }
 }
 
-/// `<ukl/pool.h>`'s split takes over a grid (decision 0478 §10): every thread of 8 groups takes
+/// `<ukl/pool.h>`'s split takes over a grid (decision 0486 §10): every thread of 8 groups takes
 /// blocks of one class from pieces of every class, a larger piece split and its rest pushed back
 /// while others take; then they are given back and taken again. No unit is taken twice, each block
 /// lies inside one given range, and the takes met are the demand or the pieces' room in blocks of
@@ -284,7 +389,7 @@ fn the_source_compiles() {
     }
 }
 
-/// §5 of decision 0460: the evaluator's source is UKL for every backend, not Metal's alone: for
+/// §5 of decision 0468: the evaluator's source is UKL for every backend, not Metal's alone: for
 /// OpenCL (its SIMD group emulated, width 32) it is OpenCL C 1.2 that clang's front end accepts,
 /// so it holds no C++ and every function that reaches a SIMD-group operation takes its state
 /// (`__UKL_PARAMS`). The OpenCL gate of decision 0440 §3.5.
@@ -306,9 +411,9 @@ fn the_source_is_opencl_c_1_2() {
     assert!(o.status.success(), "the evaluator is not OpenCL C 1.2 ({}):\n{errors}", file.display());
 }
 
-/// §4 of decision 0460: the grid is the device's resident count at the grid kernels' threadgroup
+/// §4 of decision 0468: the grid is the device's resident count at the grid kernels' threadgroup
 /// memory (`Device::resident_groups`), at most `GROUPS_MOST`, and `GROUPS_UNKNOWN` on a device
-/// that gives no cores. On the CPU it is one group (decision 0523 §3: its groups are coroutines
+/// that gives no cores. On the CPU it is one group (decision 0527 §3: its groups are coroutines
 /// on one host thread).
 #[test]
 fn the_grid_is_the_devices_resident_count() {

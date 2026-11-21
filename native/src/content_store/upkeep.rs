@@ -1,5 +1,5 @@
 //! The store's upkeep jobs (decision 0190 §4): a SQLite file kept small and its statistics fresh ([`SqliteFile`]),
-//! the store's collection ([`Collect`]), and the frames a keep decision left unreachable ([`Frames`]), each a
+//! the store's collection ([`Collect`]), and the memo entries a keep decision left unreachable ([`MemoSweep`]), each a
 //! `rerail_accel::upkeep::Job`.
 
 #[allow(unused_imports)]
@@ -244,8 +244,12 @@ impl Job for SqliteFile {
     }
 }
 
+/// Sources and tapes one archive step takes of each (`ContentStore::archive_aged`).
+const ARCHIVE_BATCH: usize = 256;
+
 /// The store's collection (decision 0053): corpus runs' passes when collection is due (idle work, run within
-/// an hour of waiting), and at once past the store's soft limit (urgent work).
+/// an hour of waiting), and at once past the store's soft limit (urgent work); then the archive of what is aged
+/// (decision 0450 step 4).
 pub struct Collect {
     store: Weak<ContentStore>,
     name: String,
@@ -274,7 +278,7 @@ impl Job for Collect {
         if store.capacity().is_ok_and(|c| !matches!(c.state, CapacityState::Normal)) {
             return Due::Urgent;
         }
-        if store.corpus_pass_wanted(&self.policy, unix_now()).unwrap_or(false) {
+        if store.corpus_pass_wanted(&self.policy, unix_now()).unwrap_or(false) || store.archive_due().unwrap_or(false) {
             return Due::Idle { starve: Duration::from_secs(3600) };
         }
         Due::No
@@ -291,7 +295,15 @@ impl Job for Collect {
         while !slice.over() {
             match store.collect_corpus_pass(&self.policy, now) {
                 Ok(pass) if pass.did_work() => {}
-                Ok(_) => return Ok(Step::Done),
+                Ok(_) => break,
+                Err(e) => return Err(e.to_string()),
+            }
+        }
+        // Then the archive (decision 0450 step 4): what collection left aged, compressed into rows.
+        while !slice.over() {
+            match store.archive_due().and_then(|due| if due { store.archive_aged(now, ARCHIVE_BATCH) } else { Ok(0) }) {
+                Ok(0) => return Ok(Step::Done),
+                Ok(_) => {}
                 Err(e) => return Err(e.to_string()),
             }
         }
@@ -305,29 +317,29 @@ pub fn interrupted(e: &rusqlite::Error) -> bool {
     matches!(e, rusqlite::Error::SqliteFailure(f, _) if f.code == rusqlite::ErrorCode::OperationInterrupted)
 }
 
-/// The frames the last keep decision left unreachable, collected (decision 0227): a utility job ([`Qos::Utility`]),
+/// The memo entries the last keep decision left unreachable, collected (decision 0227): a utility job ([`Qos::Utility`]),
 /// due once a decision is past the last sweep (`corpus_decided.swept`), so the sweep runs soon after the decision, behind the
 /// run, and before the process exits (`upkeep::finish_soon`). A decision left unswept (a process stopped) is the
 /// next process's to sweep.
-pub struct Frames {
+pub struct MemoSweep {
     path: PathBuf,
     name: String,
 }
 
-impl Frames {
+impl MemoSweep {
     pub fn new(path: &Path) -> Self {
         let name = path.file_name().map_or_else(String::new, |n| n.to_string_lossy().into_owned());
-        Frames { path: path.to_path_buf(), name: format!("frames {name}") }
+        MemoSweep { path: path.to_path_buf(), name: format!("memo sweep {name}") }
     }
 
     /// The job for the store at `path`, registered once a process: the runs over that store share it (the
     /// registry finds it by its name and file).
     pub fn register_once(path: &Path) {
-        rerail_accel::upkeep::register_for_process(Box::new(Frames::new(path)));
+        rerail_accel::upkeep::register_for_process(Box::new(MemoSweep::new(path)));
     }
 }
 
-impl Job for Frames {
+impl Job for MemoSweep {
     fn name(&self) -> String {
         self.name.clone()
     }
@@ -336,16 +348,14 @@ impl Job for Frames {
         rerail_prof::code_rule_dsl::logic::profile::behind_the_run();
         // A point read on a connection of its own, closed after it: at most one a poll (10 s). Kept from poll to poll,
         // it held the store's file open between them: a store removed (a test's, with its directory) was held open
-        // until the next poll found its path gone. Under `GONE`'s lock, so a store forgotten (`forget`) is read by no
-        // check under way as it is removed (a read connection makes the store's `-shm` file).
-        let gone = GONE.lock().unwrap_or_else(|p| p.into_inner());
-        let now = identity(&self.path);
-        if now.is_none() || gone.get(&self.path).is_some_and(|was| *was == now) {
+        // until the next poll found its path gone. A store forgotten (`ContentStore::forget`) is read by no check
+        // under way as it is removed (a read connection makes the store's `-shm` file): its jobs are taken out under
+        // the registry's lock, which a check runs under, and the steps' (`upkeep::forget_file`).
+        if !self.path.exists() {
             return Due::No;
         }
         let wanted = Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX)
-            .is_ok_and(|c| super::corpus_runs::frames_sweep_wanted(&c).unwrap_or(false));
-        drop(gone);
+            .is_ok_and(|c| super::corpus_runs::memo_sweep_wanted(&c).unwrap_or(false));
         if wanted { Due::Urgent } else { Due::No }
     }
 
@@ -362,52 +372,89 @@ impl Job for Frames {
         if slice.over() {
             return Ok(Step::More);
         }
-        // A store gone since the job became due (or forgotten, being removed) has nothing to sweep, and opening it would
-        // make a new one.
-        let now = identity(&self.path);
-        if now.is_none() || GONE.lock().unwrap_or_else(|p| p.into_inner()).get(&self.path).is_some_and(|was| *was == now) {
+        // A store gone since the job became due has nothing to sweep, and opening it would make a new one. (One
+        // forgotten has no job left to step.)
+        if !self.path.exists() {
             return Ok(Step::Done);
         }
         let store = ContentStore::open(&self.path).map_err(|e| e.to_string())?;
         // Stopped by a run that began: rolled back, and still due.
-        let Some((u, seconds)) = store.sweep_frames(slice.stopper()).map_err(|e| e.to_string())? else { return Ok(Step::More) };
-        rerail_prof::code_rule_dsl::logic::profile::decision("unreachable frames collected (decision 0227)", || {
-            format!("{} memo entries, {} maintained, {} programs' rows ({} of programs no manifest names), {:.3} s", u.memo, u.maintained, u.programs, u.unnamed, seconds)
-        });
+        let Some((n, seconds)) = store.sweep_memo(slice.stopper()).map_err(|e| e.to_string())? else { return Ok(Step::More) };
+        rerail_prof::code_rule_dsl::logic::profile::decision("unreachable memo entries collected (decision 0227)", || format!("{n} memo entries, {seconds:.3} s"));
         Ok(Step::Done)
     }
 }
 
-/// Which file a path names: its device and inode where the system has them, else its creation time.
-type FileIdentity = (u64, u64);
-
-/// The stores forgotten (`ContentStore::forget`, as a test's store is removed), by path, with the file each was: its
-/// frames job neither reads nor sweeps that file again; a store made again at the path is another file, read as before.
-static GONE: std::sync::LazyLock<std::sync::Mutex<std::collections::HashMap<PathBuf, Option<FileIdentity>>>> = std::sync::LazyLock::new(Default::default);
-
-/// The store at `path` is being removed: once this returns, no frames job reads it (a check under way has ended).
-pub(super) fn forget(path: &Path) {
-    GONE.lock().unwrap_or_else(|p| p.into_inner()).insert(path.to_path_buf(), identity(path));
-}
-
-fn identity(path: &Path) -> Option<FileIdentity> {
-    let m = std::fs::metadata(path).ok()?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::MetadataExt as _;
-        Some((m.dev(), m.ino()))
-    }
-    #[cfg(not(unix))]
-    {
-        let t = m.created().or_else(|_| m.modified()).ok()?.duration_since(std::time::UNIX_EPOCH).ok()?;
-        Some((t.as_secs(), u64::from(t.subsec_nanos())))
-    }
-}
 
 #[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::atomic::AtomicBool;
+
+    #[test]
+    fn removal_waits_for_maintenance_with_an_active_wal_reader() {
+        use std::sync::mpsc::{Receiver, SyncSender, sync_channel};
+        // A job that holds a WAL reader on the store, as a collector's poll does (the frame collector's was, before
+        // kept facts retired it, 0456).
+        struct ReadWal {
+            path: PathBuf,
+            reader: Option<Connection>,
+            reading: Option<SyncSender<()>>,
+            finish: Receiver<()>,
+        }
+        impl Job for ReadWal {
+            fn file(&self) -> Option<PathBuf> { Some(self.path.clone()) }
+            fn name(&self) -> String { "test WAL retirement".to_owned() }
+            fn due(&mut self) -> Due {
+                if self.reading.is_none() { return Due::No; }
+                if self.reader.is_none() {
+                    self.reader = Some(Connection::open_with_flags(&self.path, OpenFlags::SQLITE_OPEN_READ_ONLY | OpenFlags::SQLITE_OPEN_NO_MUTEX).unwrap());
+                }
+                Due::Urgent
+            }
+            fn step(&mut self, _: &Slice) -> Result<Step, String> {
+                let db = self.reader.as_ref().expect("the job opened its reader");
+                db.execute_batch("BEGIN").unwrap();
+                let read = || db.query_row("SELECT generation FROM analysis_scope_generation WHERE scope = 'test'", [], |row| row.get::<_, i64>(0)).unwrap();
+                assert_eq!(read(), 2);
+                self.reading.take().unwrap().send(()).unwrap();
+                self.finish.recv_timeout(Duration::from_secs(5)).unwrap();
+                assert_eq!(read(), 2);
+                db.execute_batch("ROLLBACK").unwrap();
+                Ok(Step::Done)
+            }
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("store.sqlite");
+        drop(ContentStore::open_images(&path).unwrap());
+        let db = Connection::open(&path).unwrap();
+        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
+            INSERT INTO analysis_scope_generation VALUES ('test', 1);
+            PRAGMA wal_checkpoint(TRUNCATE);
+            UPDATE analysis_scope_generation SET generation = 2 WHERE scope = 'test'").unwrap();
+        assert!(std::fs::metadata(directory.path().join("store.sqlite-wal")).unwrap().len() > 32);
+        let (entered, active) = sync_channel(0);
+        let (release, finish) = sync_channel(0);
+        let _job = rerail_accel::upkeep::register(Box::new(ReadWal { path: path.clone(), reader: None, reading: Some(entered), finish }));
+        std::thread::scope(|threads| {
+            threads.spawn(rerail_accel::upkeep::run_now);
+            active.recv_timeout(Duration::from_secs(5)).unwrap();
+            let (started, removing) = sync_channel(0);
+            let (retired, removed) = sync_channel(0);
+            let directory = directory.path();
+            threads.spawn(move || {
+                started.send(()).unwrap();
+                rerail_accel::upkeep::retire_files_under(directory);
+                retired.send(()).unwrap();
+            });
+            removing.recv_timeout(Duration::from_secs(5)).unwrap();
+            assert!(removed.recv_timeout(Duration::from_millis(30)).is_err());
+            release.send(()).unwrap();
+            removed.recv_timeout(Duration::from_secs(5)).unwrap();
+        });
+        db.close().unwrap();
+        directory.close().unwrap();
+    }
 
     fn file(dir: &Path, auto: &str) -> PathBuf {
         let p = dir.join(format!("upkeep-{auto}.sqlite"));
@@ -480,5 +527,23 @@ mod tests {
             assert_eq!(db.query_row_cached("PRAGMA auto_vacuum", [], |r| r.get::<_, i64>(0)).unwrap(), 2, "{auto}: incremental after");
             assert_eq!(job.due(), Due::No);
         }
+    }
+
+    /// A store removed after its last keep decision (a test's, with its directory) is due no more, and its job makes
+    /// no store at its path: its reader, opened before the removal, still read the old file's unswept decision.
+    #[test]
+    fn a_removed_stores_memo_sweep_is_not_due_and_no_store_is_made_again() {
+        let dir = tempfile::tempdir().unwrap();
+        let folder = dir.path().join("test-store");
+        let path = folder.join("store.sqlite");
+        drop(ContentStore::open(&path).unwrap());
+        Connection::open(&path).unwrap().execute("UPDATE corpus_decided SET run = swept + 1 WHERE singleton = 1", []).unwrap();
+        let mut job = MemoSweep::new(&path);
+        assert_eq!(job.due(), Due::Urgent, "a decision past the last sweep");
+        std::fs::remove_dir_all(&folder).unwrap();
+        assert_eq!(job.due(), Due::No, "the store is gone");
+        let stop = AtomicBool::new(false);
+        assert_eq!(job.step(&Slice::for_test(Duration::from_millis(200), 64 << 20, &stop)), Ok(Step::Done));
+        assert!(!folder.exists(), "no store is made where the removed one was");
     }
 }

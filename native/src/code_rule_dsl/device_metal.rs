@@ -20,12 +20,15 @@ pub fn register() {
     crate::code_rule_dsl::prof::register_device_memory(|| (packed::metal_backend::reserved_mb(), packed::metal_backend::driver_mb()));
 }
 
-/// This crate's own test binary, which the engine does not load: Metal is registered as the binary loads, as the
-/// engine registers it (`crate::install_devices`), so the device's tests run on the device.
+/// This crate's own test binary, which the engine does not load: Metal and the language packs its tests read are
+/// registered as the binary loads, as the engine registers them (`crate::install_devices`, `install_languages`), so
+/// the device's tests run on the device and no test's CPU worker meets a document before its pack is registered.
 #[cfg(test)]
 mod test_load {
     extern "C" fn load() {
         super::register();
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        crate::test_languages();
     }
     #[used]
     #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
@@ -57,7 +60,7 @@ impl SolverDevice for Metal {
     }
 
     fn compile_join(&self, join: &JoinRule, spec: &str, own_texts: &[(usize, usize)]) -> Result<JoinPlan, String> {
-        joins::own_texts(own_texts.to_vec(), || joins::compile(join, spec)).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
+        joins::compile(join, spec, own_texts).map(|plan| JoinPlan(std::sync::Arc::new(plan)))
     }
 
     fn refuse(&self, why: String) {
@@ -183,6 +186,10 @@ pub mod matcher {
 
         fn wave_pattern_sources(&self, wave: &LoweredWave, format: u32) -> Result<Vec<String>, Error> {
             matcher_metal::wave_pattern_sources(wave, format)
+        }
+
+        fn pattern_variant(&self, format: u32) -> usize {
+            crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::pattern_variant(format)
         }
 
         fn patterns_ready(&self, sources: &[String], format: u32) -> bool {

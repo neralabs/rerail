@@ -48,7 +48,7 @@ fn ends_anchor(a: &str) -> bool {
     if !a.ends_with('$') {
         return false;
     }
-    trailing_backslashes(&a[..a.len() - 1]) % 2 == 0
+    trailing_backslashes(&a[..a.len() - 1]).is_multiple_of(2)
 }
 
 
@@ -61,10 +61,10 @@ pub fn whole(px: &Patterns, r: &str) -> String {
     let multiline = flags.contains('m');
     let any = if multiline || r.contains("\\n") || r.contains("\\r") { "(?s:.*)" } else { ".*" };
     let starts = |a: &str| (a.starts_with('^') && !multiline) || a.starts_with("\\A");
-    let strip_start = |a: &str| -> String { if a.starts_with("\\A") { a[2..].to_owned() } else { a.get(1..).unwrap_or("").to_owned() } };
+    let strip_start = |a: &str| -> String { if let Some(r) = a.strip_prefix("\\A") { r.to_owned() } else { a.get(1..).unwrap_or("").to_owned() } };
     let ends = |a: &str| {
         if a.ends_with("\\z") || a.ends_with("\\Z") {
-            return trailing_backslashes(&a[..a.len() - 2]) % 2 == 0;
+            return trailing_backslashes(&a[..a.len() - 2]).is_multiple_of(2);
         }
         !multiline && ends_anchor(a)
     };

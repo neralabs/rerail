@@ -480,6 +480,10 @@ pub struct BlockProgram {
     /// the last byte of each token whose end its row does not know (`SPAN m=1`), found as the
     /// next set bit. Nothing flattens them.
     pub masks: Vec<u16>,
+    /// The value, also an output, whose bits are the stream's `\n` bytes, where the program has a tree section: the
+    /// format 16 tape's newline index is made from its words (`rerail_tape_format::newlines::index_of`), with no scan of
+    /// the source of its own.
+    pub newlines: Option<u16>,
     /// How many bytes late the outputs are (0..=63): each executor runs over the stream and
     /// `delay` bytes past it, and an output's bit `i + delay` is byte `i`'s. The compiler delays
     /// values so that `next` reads earlier bits (`bitlex_compile`).
@@ -778,7 +782,7 @@ impl BlockProgram {
                     BlockOp::Const(_) | BlockOp::Not(_) | BlockOp::And(..) | BlockOp::Or(..) | BlockOp::Xor(..) | BlockOp::AndNot(..) => true,
                     _ => false,
                 });
-                reads && self.delay == 0 && self.output_delays.is_empty() && self.rounds.is_empty() && self.masks.is_empty()
+                reads && self.delay == 0 && self.output_delays.is_empty() && self.rounds.is_empty() && self.masks.is_empty() && self.newlines.is_none()
             }
             None => !self.ops.iter().any(|op| matches!(op, BlockOp::Cmp { .. } | BlockOp::Bit { .. })),
         };
@@ -795,7 +799,7 @@ impl BlockProgram {
             _ => true,
         });
         // The extract pass writes positions from the undelayed outputs.
-        let extracts = self.extracts.iter().chain(&self.totals).chain(&self.masks).all(|v| self.outputs.contains(v));
+        let extracts = self.extracts.iter().chain(&self.totals).chain(&self.masks).chain(&self.newlines).all(|v| self.outputs.contains(v));
         let delay = self.delay <= 63
             && self.output_delays.len() <= self.outputs.len()
             && self.output_delays.iter().all(|&d| d == u8::MAX || d <= self.delay);
@@ -895,6 +899,11 @@ impl BlockProgram {
                 out.extend_from_slice(&v.to_le_bytes());
             }
         }
+        // Likewise the newlines, tagged.
+        if let Some(v) = self.newlines {
+            out.extend_from_slice(b"newlines");
+            out.extend_from_slice(&v.to_le_bytes());
+        }
         // Likewise the delay, tagged.
         if self.delay != 0 {
             out.extend_from_slice(b"delay");
@@ -985,6 +994,11 @@ impl BlockProgram {
             .iter()
             .map(|v| self.outputs.iter().position(|o| o == v).expect("verified: an extract is an output"))
             .collect()
+    }
+
+    /// Each mask's output index.
+    pub fn newline_output(&self) -> Option<usize> {
+        self.newlines.map(|v| self.outputs.iter().position(|&o| o == v).expect("verified: the newlines are an output"))
     }
 
     /// Each mask's output index.
@@ -1225,7 +1239,7 @@ impl BlockProgram {
                 BlockOp::Escaped(a) => carried(one(a), &first, 0u64, |x, _, c| carry::escaped(x, c)),
                 BlockOp::Fill(a, b) => {
                     let pairs = v(a).iter().zip(v(b)).enumerate().map(|(i, (&x, &y))| (i, x, y));
-                    carried(pairs, &first, 0u64, |x, y, c| carry::fill(x, y, c))
+                    carried(pairs, &first, 0u64, carry::fill)
                 }
                 // Last block to first, the carry zero at each file's last block.
                 BlockOp::BackFill(a, b) => {
@@ -1616,7 +1630,7 @@ pub fn undelay(words: &[u64], delay: u8, len: usize) -> Vec<u64> {
 /// Clear the bits past `len` bytes.
 pub fn mask_tail(words: &mut [u64], len: usize) {
     if let Some(last) = words.last_mut()
-        && len % 64 != 0
+        && !len.is_multiple_of(64)
     {
         *last &= (1u64 << (len % 64)) - 1;
     }
@@ -1812,6 +1826,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
     for value in &block.masks {
         let _ = writeln!(out, "  block {at} mask %{value}");
     }
+    if let Some(value) = block.newlines {
+        let _ = writeln!(out, "  block {at} newlines %{value}");
+    }
     if block.delay != 0 {
         let _ = writeln!(out, "  block {at} delay {}", block.delay);
     }
@@ -1846,11 +1863,15 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 let _ = writeln!(out, "  block {at} recrule {how} {o}");
             }
             // `block N recnext ROWS` each `next` rule's table's rows (a byte a first byte), then
-            // `block N recpairs W0 W1 W2 W3` each of its sets (`PairTable`).
+            // `block N recpairs W0 W1 W2 W3` each of its sets, and `block N recthird ABC` each
+            // of its triples (`PairTable`).
             for n in &r.nexts {
                 let _ = writeln!(out, "  block {at} recnext {}", hex(&n.row));
                 for set in &n.sets {
                     let _ = writeln!(out, "  block {at} recpairs {} {} {} {}", set[0], set[1], set[2], set[3]);
+                }
+                for t in &n.thirds {
+                    let _ = writeln!(out, "  block {at} recthird {}", hex(t));
                 }
             }
             // `block N recreader OTHER` each reader, then `block N recarm K OPENER CLOSER OFF
@@ -1874,10 +1895,11 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                     let last = a.last.map_or(String::new(), |o| format!(" last {o}"));
                     let _ = writeln!(out, "  block {at} recarm {k} {} {} {} {none}{retag}{last}", a.opener, a.closer, a.off);
                 }
-                // `block N recpart K START BYTES [last O]` each part of a region read in parts.
+                // `block N recpart K START BYTES [last O] [kind K]` each part of a region read in parts.
                 for p in &rd.parts {
                     let last = p.last.map_or(String::new(), |o| format!(" last {o}"));
-                    let _ = writeln!(out, "  block {at} recpart {k} {} {}{last}", p.start, p.bytes);
+                    let kind = p.kind.map_or(String::new(), |k| format!(" kind {k}"));
+                    let _ = writeln!(out, "  block {at} recpart {k} {} {}{last}{kind}", p.start, p.bytes);
                 }
                 if rd.quiet {
                     let _ = writeln!(out, "  block {at} recquiet {k}");
@@ -1887,9 +1909,9 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
                 }
             }
         }
-        // `block N recretag O KIND MARKS`: a reader's kind and marks by its start mask.
+        // `block N recretag O KIND MARKS [part]`: a reader's or a part's kind and marks by its start mask.
         for t in &r.retags {
-            let _ = writeln!(out, "  block {at} recretag {} {} {}", t.o, t.kind, t.marks);
+            let _ = writeln!(out, "  block {at} recretag {} {} {}{}", t.o, t.kind, t.marks, if t.part { " part" } else { "" });
         }
         // `block N recgaps G` the gap marks' bits, `block N recextra K` an extra's mark.
         if r.gaps != 0 {
@@ -1932,6 +1954,10 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         // `block N recread R`: the marks a token pattern's `without` reads (0430).
         if r.read != 0 {
             let _ = writeln!(out, "  block {at} recread {}", r.read);
+        }
+        // `block N recown O`: the gap marks an extra keeps of its own gap (0451).
+        if r.own != 0 {
+            let _ = writeln!(out, "  block {at} recown {}", r.own);
         }
         // `block N recblank K O`: gap mark `K` read from the blanks, by class output `O` (0430).
         for &(k, o) in &r.blanks {

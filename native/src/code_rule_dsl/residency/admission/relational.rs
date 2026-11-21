@@ -1086,7 +1086,7 @@ pub(in crate::code_rule_dsl) fn evaluate(
 /// SQL remains the consumer; capacity partitions bound suspended sessions.
 pub(in crate::code_rule_dsl) fn evaluate_batch(jobs: Vec<Job<'_>>) -> Vec<Evaluation> {
     use crate::code_rule_dsl::phase_clock;
-    phase_clock::timed(&phase_clock::RELATIONAL, || batch::evaluate(jobs))
+    phase_clock::timed(|c| &c.relational, || batch::evaluate(jobs))
 }
 
 /// Restore documents only when the scheduler prepares this consumer.
@@ -1095,7 +1095,7 @@ pub(in crate::code_rule_dsl) fn evaluate_prepared(
     prepare: impl FnMut(&mut Inputs, &CompiledCodeRule, &CompiledClause, Preparation) -> Result<()>,
 ) -> Vec<Evaluation> {
     use crate::code_rule_dsl::phase_clock;
-    phase_clock::timed(&phase_clock::RELATIONAL, || {
+    phase_clock::timed(|c| &c.relational, || {
         batch::evaluate_prepared(jobs, prepare)
     })
 }

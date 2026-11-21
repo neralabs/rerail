@@ -3,7 +3,7 @@ name = "rrlab"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Lab tool: tree-sitter facts for core.rr's tape relations, for lowering .rr rules to Soufflé"
+description = "Lab tool: tree-sitter facts for core.rerail's tape relations, for lowering .rerail rules to Soufflé"
 
 # Its own workspace: not part of the engine's.
 [workspace]

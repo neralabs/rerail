@@ -106,7 +106,7 @@ struct Pass<'a> {
 impl<'a> Pass<'a> {
     /// A relation the chunk holds by document: file-local or a base input of the chunk.
     fn usable(&self, rel: &str) -> bool {
-        (self.local.contains(rel) || self.f.is_input(rel)) && !matches!(rel, "reference_edge" | "reference_open") && self.same_doc.contains_key(rel)
+        (self.local.contains(rel) || self.f.is_input(rel)) && self.same_doc.contains_key(rel)
     }
     fn same(&self, rel: &str, at: usize) -> bool {
         self.same_doc.get(rel).is_some_and(|c| c.contains(&at))
@@ -450,7 +450,7 @@ impl Rewrite for ReadCut<'_> {
 fn write(b: &mut Builder<'_>, input: &Version, plan: &Plan<'_>, onto: bool) -> Result<(), String> {
     for (rel, cols) in &plan.decls {
         let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
-        b.declare(rel, &cols);
+        b.fields().declare(rel, &cols);
     }
     for r in input.rules() {
         if r.body().any(|l| plan.renamed.contains_key(&l.node())) {
@@ -501,7 +501,7 @@ fn write(b: &mut Builder<'_>, input: &Version, plan: &Plan<'_>, onto: bool) -> R
     }
     if !plan.keys.is_empty() {
         let words: Vec<(&str, &str)> = plan.keys.iter().map(|k| (k.as_str(), "no_inline")).collect();
-        b.add_qualifiers(&words);
+        b.fields().add_qualifiers(&words);
     }
     Ok(())
 }

@@ -64,9 +64,8 @@ pub fn translate_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str, family
     for (id, f, n) in funcs {
         // Each read in its own family (a view read's source holds the lines' reads it calls too).
         let family = crate::reads::READS.get(*id as usize).map_or(family, |read| read.family);
-        // Cold (a call) where 0310's policy marks the read so, and a read's 16z body called apart (decision 0353 step
-        // 4b, past `Z_APART`): inlined, each view's kernel carried the decoder once for every tape read in it.
-        let hot = *id < crate::reads::Z_APART && crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot);
+        // Cold (a call) where 0310's policy marks the read so.
+        let hot = crate::reads::READS.get(*id as usize).is_none_or(|read| read.hot);
         let signature = signature(f, &format!("{prefix}{n}"), family, hot)?;
         writeln!(out, "{signature};").unwrap();
         writeln!(bodies, "{signature}{{").unwrap();
@@ -105,7 +104,7 @@ fn low_words(f: &ir::Function, family: Family) -> std::collections::HashSet<ir::
                 // Whether the use of argument `k` reads only its low 32 bits.
                 let reads_low = |k: usize| -> bool {
                     match data.opcode() {
-                        Opcode::Iadd | Opcode::Isub | Opcode::Imul | Opcode::Band | Opcode::Bor | Opcode::Bxor | Opcode::Bnot => result_low,
+                        Opcode::Iadd | Opcode::Isub | Opcode::Imul | Opcode::Band | Opcode::BandNot | Opcode::Bor | Opcode::Bxor | Opcode::Bnot => result_low,
                         Opcode::IaddImm | Opcode::ImulImm | Opcode::IrsubImm | Opcode::BandImm | Opcode::BorImm | Opcode::BxorImm | Opcode::IshlImm => result_low,
                         Opcode::Ishl => k == 1 || result_low,
                         Opcode::Ushr | Opcode::Sshr => k == 1,
@@ -157,14 +156,26 @@ fn pointers(family: Family) -> (&'static str, &'static str) {
     }
 }
 
-/// A read's declaration: `UKL_INLINE` where it is hot, `UKL_COLD` (a call) where it is marked cold, as the JIT's
-/// inlining pass and the Rust backend treat it (decision 0310).
+/// The most instructions a read may have and still be inlined into its callers. A larger one (the 16z tape's block
+/// decode, about 3,000) is called, not copied into each caller: the backend's compile of a kernel grows with every
+/// copy, and a read that calls it from a loop gets several (Q383: one view read's pipeline took 32 s cold with its
+/// copies inlined, 2 s with the decode called).
+const MOST_INLINED: usize = 1024;
+
+/// Whether `f` is small enough to be inlined into its callers (`MOST_INLINED`).
+fn inlined(f: &ir::Function) -> bool {
+    f.layout.blocks().map(|b| f.layout.block_insts(b).count()).sum::<usize>() <= MOST_INLINED
+}
+
+/// A read's declaration: `UKL_INLINE` where it is hot and small (`MOST_INLINED`), else `UKL_COLD` (a call), as the
+/// JIT's inlining pass and the Rust backend treat a cold one (decision 0310): inlined at each use, 16z's block decoder
+/// (3,000 lines) made the node view's read 118,000 lines, and the M3's compiler took 114 s over it (2.6 s called).
 fn signature(f: &ir::Function, name: &str, family: Family, hot: bool) -> Result<String, String> {
     let [ret] = f.signature.returns.as_slice() else { return Err(format!("{name}: a read returns one value")) };
     let params: Vec<String> =
         f.signature.params.iter().enumerate().skip(family.pointers()).map(|(i, p)| Ok(format!("{} a{i}", ty(p.value_type)?.0))).collect::<Result<_, String>>()?;
     let more = if params.is_empty() { String::new() } else { format!(",{}", params.join(",")) };
-    let qualifier = if hot { "UKL_INLINE" } else { "UKL_COLD" };
+    let qualifier = if hot && inlined(f) { "UKL_INLINE" } else { "UKL_COLD" };
     Ok(format!("{qualifier} {} {name}({}{more})", ty(ret.value_type)?.0, pointers(family).0))
 }
 
@@ -212,6 +223,7 @@ fn body(out: &mut String, f: &ir::Function, named: &dyn Fn(u32) -> Result<String
     // read's own parameters are its arguments.
     for (k, &p) in dfg.block_params(entry).iter().enumerate() {
         if family != Family::Tape && k == 0 {
+            // The descriptor: its offset from `t`.
             writeln!(out, " {}=a0;", name(p)).unwrap();
         } else if k < family.pointers() {
             writeln!(out, " {}=0;", name(p)).unwrap();
@@ -586,6 +598,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             | Opcode::Isub
             | Opcode::Imul
             | Opcode::Band
+            | Opcode::BandNot
             | Opcode::Bor
             | Opcode::Bxor
             | Opcode::Bnot
@@ -651,6 +664,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::Udiv => set(format!("{}/{}", args[0], args[1])),
         Opcode::Urem => set(format!("{}%{}", args[0], args[1])),
         Opcode::Band => set(format!("{}&{}", args[0], args[1])),
+        Opcode::BandNot => set(format!("{}&~{}", args[0], args[1])),
         Opcode::Bor => set(format!("{}|{}", args[0], args[1])),
         Opcode::Bxor => set(format!("{}^{}", args[0], args[1])),
         Opcode::Bnot => set(format!("~{}", args[0])),
@@ -751,8 +765,12 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
         Opcode::AtomicLoad => set(format!("ukl_atomic_load_at(t,{})", wide_addr(&args[0]))),
         Opcode::AtomicStore => format!("ukl_atomic_store_at(t,{},((uint32_t)({})));", wide_addr(&args[1]), args[0]),
         Opcode::AtomicRmw => {
-            let InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } = data else { return Err("an atomic other than an add".into()) };
-            set(format!("ukl_atomic_add_at(t,{},((uint32_t)({})))", wide_addr(&args[0]), args[1]))
+            let how = match data {
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Add, .. } => "ukl_atomic_add_at",
+                InstructionData::AtomicRmw { op: ir::AtomicRmwOp::Or, .. } => "ukl_atomic_or_at",
+                _ => return Err("an atomic other than an add or an or".into()),
+            };
+            set(format!("{how}(t,{},((uint32_t)({})))", wide_addr(&args[0]), args[1]))
         }
         Opcode::AtomicCas => set(format!("ukl_atomic_cas_at(t,{},((uint32_t)({})),((uint32_t)({})))", wide_addr(&args[0]), args[1], args[2])),
         Opcode::Fence => "ukl_fence_device();".to_owned(),

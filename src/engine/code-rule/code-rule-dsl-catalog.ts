@@ -8,6 +8,7 @@ import { readFileSync } from "node:fs";
 import { resolve } from "node:path";
 import { and, eq, inArray, or } from "drizzle-orm";
 import { loadRuleCatalog } from "../catalog/rule-catalog.js";
+import { conversationRulesEnabled } from "../experimental-features.js";
 import { worktreeRuleCatalog } from "../catalog/worktree-pack.js";
 import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
 import { CheckoutOwners, type CheckoutOwner } from "../catalog/checkout-owner.js";
@@ -16,7 +17,7 @@ import { reportQuarantinedRule, type QuarantinedRule } from "../catalog/rule-qua
 import { languageNotSupportedOf } from "./code-rule-language-support.js";
 import { loadNativeBinding, type NativeCompiledCodeRuleDsl } from "../native/native.js";
 import type { RepositoryAuditRuleProvenance, AuditRuleProvenance, RulePlacementDecision } from "../audit/audit.js";
-import { bundledCodeRuleDslDirectory } from "./code-rule-compile.js";
+import { bundledCodeRuleDslDirectory, relationalRulesOff } from "./code-rule-compile.js";
 import {
   folderContains,
   type RuleCatalog,
@@ -28,7 +29,7 @@ import {
   type RepositoryStatus,
 } from "../catalog/repository-model.js";
 import { repositoryIdentityLocation, type RepositoryIdentityLocation } from "../catalog/repository-identity.js";
-import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVersion, recordStartedWorktree } from "../catalog/repository-registry.js";
+import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVersionReader, recordStartedWorktree } from "../catalog/repository-registry.js";
 import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
@@ -58,15 +59,23 @@ export function loadCodeRuleCapabilities(path: string = resolve(bundledCodeRuleD
 
 type CompileOutcome = { readonly ok: true; readonly executable: NativeCompiledCodeRuleDsl } | { readonly ok: false; readonly reason: string };
 
+/** A compiled outcome as the cache keeps it: a failure whole, an executable only while a catalog still holds it. */
+type HeldOutcome = { readonly ok: true; readonly executable: WeakRef<NativeCompiledCodeRuleDsl> } | { readonly ok: false; readonly reason: string };
+
 /**
  * Compiled executables shared by every checkout of the process: one per rule id, capabilities and `config` (a
  * repository's option values), for the source last compiled. Editing a rule replaces its entries, so a long-running
  * daemon keeps no earlier versions; two repositories configuring one rule differently each keep theirs.
+ *
+ * An executable is held weakly: the catalogs of the checkouts that run it hold it, and once the daemon closes the last
+ * runtime using it (`IDLE_RUNTIME_MS` after its repository's last session ended) the engine frees its program. Most
+ * rules compile to 0.3 MB, the Node pack's builtins rule to 512 MB, so keeping every rule ever compiled kept a daemon
+ * with no session open at its busiest size.
  */
 export class CompiledRuleCache {
-  readonly #outcomes = new Map<string, { readonly sourceDigest: string; readonly outcome: CompileOutcome }>();
+  readonly #outcomes = new Map<string, { readonly sourceDigest: string; readonly outcome: HeldOutcome }>();
 
-  /** Rules (per capabilities and config) with a compiled version held. */
+  /** Rules (per capabilities and config) with a compiled version known. */
   get size(): number {
     return this.#outcomes.size;
   }
@@ -75,20 +84,30 @@ export class CompiledRuleCache {
   compile(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string, sourceDigest: string, config: string): CompileOutcome {
     const key = `${capabilities.digest}\0${policyId}\0${config}`;
     const cached = this.#outcomes.get(key);
-    let outcome = cached?.sourceDigest === sourceDigest ? cached.outcome : undefined;
-    if (outcome === undefined) {
-      try {
-        const executable = loadNativeBinding().CodeRuleDslRuntime.compile(sourceText, "json", capabilities.json);
-        const canonical = JSON.parse(executable.canonicalJson()) as { id?: unknown };
-        outcome = canonical.id === policyId
-          ? { ok: true, executable }
-          : { ok: false, reason: `Compiled policy ID does not match rule document: ${policyId}` };
-      } catch (error) {
-        outcome = { ok: false, reason: error instanceof Error ? error.message : String(error) };
-      }
-      this.#outcomes.set(key, { sourceDigest, outcome });
-    }
+    const held = cached?.sourceDigest === sourceDigest ? liveOutcome(cached.outcome) : undefined;
+    if (held !== undefined) return held;
+    const outcome = compileOutcome(capabilities, policyId, sourceText);
+    this.#outcomes.set(key, { sourceDigest, outcome: outcome.ok ? { ok: true, executable: new WeakRef(outcome.executable) } : outcome });
     return outcome;
+  }
+}
+
+/** The outcome `held` keeps, or undefined once its executable was freed. */
+function liveOutcome(held: HeldOutcome): CompileOutcome | undefined {
+  if (!held.ok) return held;
+  const executable = held.executable.deref();
+  return executable === undefined ? undefined : { ok: true, executable };
+}
+
+function compileOutcome(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string): CompileOutcome {
+  try {
+    const executable = loadNativeBinding().CodeRuleDslRuntime.compile(sourceText, "json", capabilities.json);
+    const canonical = JSON.parse(executable.canonicalJson()) as { id?: unknown };
+    return canonical.id === policyId
+      ? { ok: true, executable }
+      : { ok: false, reason: `Compiled policy ID does not match rule document: ${policyId}` };
+  } catch (error) {
+    return { ok: false, reason: error instanceof Error ? error.message : String(error) };
   }
 }
 
@@ -255,6 +274,11 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
         quarantined.push({ ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` });
         continue;
       }
+      const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
+      if (relationalOff !== undefined) {
+        quarantined.push({ ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER, reason: relationalOff });
+        continue;
+      }
       const sourceText = stableJsonText(rule.document.rule);
       if (sourceText === undefined) throw new Error(`Policy ${id} is not JSON representable`);
       const sourceDigest = digest(sourceText);
@@ -321,19 +345,30 @@ interface CheckoutEntry {
 export class CheckoutCatalogs {
   readonly databasePath: string;
   readonly database: RerailDatabase;
+  readonly #ownsDatabase: boolean;
   readonly #ruleCatalog: RuleCatalog | undefined;
+  readonly #checkoutRules: ((root: string) => RuleCatalog) | undefined;
   readonly #capabilities: CodeRuleCapabilities;
   readonly #entries = new Map<string, CheckoutEntry>();
+  readonly #recordedCheckoutsVersion: () => string;
 
   /**
    * `options.ruleCatalog` fixes the installed packs; without it each read follows them (`loadRuleCatalog`). Either way a
    * checkout's own rules are added to its catalog.
    */
-  constructor(databasePath: string = defaultRerailDatabasePath(), options: { capabilities?: CodeRuleCapabilities; ruleCatalog?: RuleCatalog } = {}) {
+  constructor(databasePath: string = defaultRerailDatabasePath(), options: {
+    database?: RerailDatabase;
+    capabilities?: CodeRuleCapabilities;
+    ruleCatalog?: RuleCatalog;
+    checkoutRules?: (root: string) => RuleCatalog;
+  } = {}) {
     this.databasePath = resolve(databasePath);
-    this.database = openRerailDatabase(this.databasePath);
+    this.#ownsDatabase = options.database === undefined;
+    this.database = options.database ?? openRerailDatabase(this.databasePath);
     this.#ruleCatalog = options.ruleCatalog;
+    this.#checkoutRules = options.checkoutRules;
     this.#capabilities = options.capabilities ?? loadCodeRuleCapabilities();
+    this.#recordedCheckoutsVersion = recordedCheckoutsVersionReader(this.database);
   }
 
   /**
@@ -342,7 +377,7 @@ export class CheckoutCatalogs {
    * checkout's configuration signature, so the next refresh rebuilds its rules.
    */
   #ruleCatalogOf(root: string): RuleCatalog {
-    return worktreeRuleCatalog(this.#ruleCatalog ?? loadRuleCatalog(), root);
+    return this.#checkoutRules?.(root) ?? worktreeRuleCatalog(this.#ruleCatalog ?? loadRuleCatalog(), root);
   }
 
   /** The checkout at `root` (a physical checkout top level) as last read; refreshed with `refresh`. */
@@ -374,7 +409,7 @@ export class CheckoutCatalogs {
 
   /** See {@link recordedCheckoutsVersion}; `CheckoutOwners` forgets its cached ownership when it changes. */
   recordedCheckoutsVersion(): string {
-    return recordedCheckoutsVersion(this.database);
+    return this.#recordedCheckoutsVersion();
   }
 
   /** The recorded checkouts strictly inside `root` (physical paths), at any depth. */
@@ -395,12 +430,16 @@ export class CheckoutCatalogs {
     return entry.catalog;
   }
 
-  /** The conversation rules of the session folder `folder` (relative to `root`), as they change. */
+  /**
+   * The conversation rules of the session folder `folder` (relative to `root`), as they change. Internal testing: none
+   * while conversation rules are off in this process ({@link conversationRulesEnabled}), wherever they are stored.
+   */
   conversationRules(root: string, folder: string): ConversationRuleSource {
     const entry = this.#entry(root);
     return {
       signature: () => this.#signature(entry),
       rules: () => {
+        if (!conversationRulesEnabled()) return [];
         const ruleSet = this.#ruleSet(entry);
         if (ruleSet === undefined || entry.eligibility !== "ok") return [];
         return ruleSet.conversationRules(folder).filter(rule => rule.on).map(rule => rule.document.rule as ConversationRule);
@@ -411,7 +450,7 @@ export class CheckoutCatalogs {
 
   close(): void {
     this.#entries.clear();
-    this.database.$client.close();
+    if (this.#ownsDatabase) this.database.$client.close();
   }
 
   #entry(root: string, read = true): CheckoutEntry {

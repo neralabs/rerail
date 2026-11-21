@@ -14,11 +14,12 @@ use crate::code_rule_dsl::calls::{self, CallsView, FileSeeds, TermId};
 use crate::code_rule_dsl::eval::{file_language, grammar_matcher};
 use crate::code_rule_dsl::json::invalid;
 use crate::code_rule_dsl::language::Family;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
 use crate::code_rule_dsl::model::{ClauseKind, CompiledCodeRule, FileInput, Metrics, Query, Terms};
 use crate::code_rule_dsl::tape;
 use crate::content_store::{
-    CandidateClause, HashKey, LocalResultPublication, StoredLocalResult, compress,
+    CandidateClause, HashKey, LocalResultPublication, StoredLocalResult,
 };
 use ast_grep_core::AstGrep as Root;
 use napi::Result;
@@ -27,8 +28,7 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::atomic::AtomicBool;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::Ordering;
-use std::sync::{Arc, LazyLock};
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
+use std::sync::Arc;
 
 /// A consumer file whose results must follow the graph: its new stamp, and the terms silent in
 /// it (no call reaches or may reach their seeds).
@@ -170,6 +170,7 @@ impl CallsState {
                 // A seed only answers which definitions match: nothing is reported or suppressed.
                 producer.violation.each = None;
                 producer.violation.node_regexes.clear();
+                producer.violation.gap_tests.clear();
                 producer.violation.suppress = None;
                 producer.violation.ignored_by = None;
                 producer.violation.group_transform = None;
@@ -446,7 +447,7 @@ impl CallsState {
         let changed: Vec<Restamp> = if candidates.len() < 256 {
             candidates.into_iter().filter_map(stamp).collect()
         } else {
-            (|| candidates.into_par_iter().filter_map(stamp).collect())()
+            crate::code_rule_dsl::logic::profile::on_cores(|| candidates.into_par_iter().filter_map(stamp).collect())
         };
         Some((view, changed))
     }
@@ -569,9 +570,10 @@ pub(super) fn restore_summary(file: &mut FileState, persisted: &[StoredLocalResu
     if !calls::summarizes(language) || file.crossfile.summary.is_some() {
         return;
     }
-    let Some(family) =
-        ({ let pack = language_pack::pack(Family::of(language)); pack.calls_names() })
-    else {
+    let Some(family) = ({
+        let pack = language_pack::pack(Family::of(language));
+        pack.calls_names()
+    }) else {
         return;
     };
     let candidate = summary_candidate();
@@ -598,8 +600,8 @@ struct SharedSummaries {
     swept: usize,
 }
 
-static SHARED_SUMMARIES: LazyLock<parking_lot::Mutex<SharedSummaries>> =
-    LazyLock::new(Default::default);
+#[derive(Default)]
+struct SharedSummariesKept(parking_lot::Mutex<SharedSummaries>);
 
 fn version_key(file: &FileState) -> (HashKey, HashKey) {
     (
@@ -610,7 +612,7 @@ fn version_key(file: &FileState) -> (HashKey, HashKey) {
 
 /// `file`'s summary as some workspace holds it.
 fn shared_summary(file: &FileState) -> Option<Arc<Summary>> {
-    SHARED_SUMMARIES
+    crate::code_rule_dsl::logic::profile::shared::<SharedSummariesKept>().0
         .lock()
         .summaries
         .get(&version_key(file))
@@ -620,7 +622,8 @@ fn shared_summary(file: &FileState) -> Option<Arc<Summary>> {
 /// Shares `summary` as `file`'s, unless another workspace did meanwhile: then theirs.
 fn share_summary(file: &FileState, summary: Summary) -> Arc<Summary> {
     let key = version_key(file);
-    let mut shared = SHARED_SUMMARIES.lock();
+    let held_ = crate::code_rule_dsl::logic::profile::shared::<SharedSummariesKept>();
+    let mut shared = held_.0.lock();
     if let Some(known) = shared
         .summaries
         .get(&key)
@@ -646,13 +649,10 @@ pub(super) fn summary_publication(file: &FileState) -> Result<Option<LocalResult
     }) else {
         return Ok(None);
     };
-    let bytes = summary.encode();
-    let frame = compress(&bytes, 3).map_err(|error| invalid(error.to_string()))?;
     Ok(Some(LocalResultPublication {
         candidate: summary_candidate(),
         context: file_context(&file.input),
-        raw_length: bytes.len(),
-        frame,
+        bytes: summary.encode(),
     }))
 }
 
@@ -722,9 +722,10 @@ pub(super) fn summarize_file(
         open: true,
         bytes: u32::try_from(file.input.source.len()).unwrap_or(u32::MAX),
         // What the file names regardless (`CallRules::unread`).
-        ..{ let pack = language_pack::pack(Family::of(language)); pack.calls_unread(
-            file.input.module.as_deref(),
-        ) }
+        ..{
+            let pack = language_pack::pack(Family::of(language));
+            pack.calls_unread(file.input.module.as_deref())
+        }
     };
     // An opaque summary may be a transient failure's: it is this workspace's alone.
     let (summary, shared) = match file.tape.as_ref().filter(|_| taped) {

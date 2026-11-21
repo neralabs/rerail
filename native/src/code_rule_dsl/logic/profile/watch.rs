@@ -9,6 +9,12 @@
 //! - **`RERAIL_DEADLINE=<seconds>`:** at that wall time after start, a snapshot (`<dir>/deadline`), and go on: for a
 //!   run stopped by SIGKILL, which cannot be caught.
 //!
+//! - **The memory ceiling's backstop** (decision 0462): each run watches its own ceiling and stops itself, naming the
+//!   relations it held (`native::width`). A path that does not stop when told (a SQL stratum, the device) is stopped
+//!   here: the process's resident memory is read every 50 ms, and once it has stayed past `RERAIL_MEMORY_MAX_MB`
+//!   (`memory_ceiling`) for `GRACE`, the run is dumped as at a deadline and the process exits with code 3. A runaway
+//!   cannot take the machine, on any path.
+//!
 //! `<dir>` is the profile's directory (`RERAIL_PROFILE`), else `RERAIL_DUMP`. With neither, a signal stops the run as
 //! before, saying so. The dump is the profile report of everything recorded so far (spans that closed, SQL
 //! statements that ended, plans, the explain section, memory), with the open spans first (`open_spans`), plus
@@ -98,9 +104,9 @@ pub fn watch() {
             libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
             set
         };
-        use std::sync::atomic::{AtomicU32, Ordering};
-        static SNAPSHOTS: AtomicU32 = AtomicU32::new(0);
         let _ = rerail_accel::exec::service("rerail-watch", None, move || {
+            // The snapshots this watcher has dumped: its thread's alone.
+            let mut snapshots = 0u32;
             loop {
                 let mut sig = 0;
                 // SAFETY: waits for one of the blocked signals in `set`.
@@ -110,7 +116,10 @@ pub fn watch() {
                 let stop = sig != libc::SIGUSR1;
                 match destination() {
                     Some(dir) => {
-                        let dir = if stop { dir.join("interrupted") } else { dir.join(format!("snapshot-{}", SNAPSHOTS.fetch_add(1, Ordering::Relaxed) + 1)) };
+                        let dir = if stop { dir.join("interrupted") } else { {
+                            snapshots += 1;
+                            dir.join(format!("snapshot-{snapshots}"))
+                        } };
                         match dump(&dir, &format!("signal {sig}"), started) {
                             Ok(()) => eprintln!("rerail-engine: signal {sig}: dumped the run into {}", dir.display()),
                             Err(e) => eprintln!("rerail-engine: signal {sig}: the dump failed: {e}"),
@@ -124,6 +133,34 @@ pub fn watch() {
                 }
             }
         });
+        if let Some(max) = memory_ceiling() {
+            let _ = rerail_accel::exec::service("rerail-memory", None, move || {
+                // The run stops itself first, naming its relations: this stops what did not.
+                const GRACE: std::time::Duration = std::time::Duration::from_secs(2);
+                let mut past: Option<std::time::Instant> = None;
+                loop {
+                    std::thread::sleep(std::time::Duration::from_millis(50));
+                    let Some(now) = resident_bytes() else { return };
+                    if now <= max {
+                        past = None;
+                        continue;
+                    }
+                    if past.get_or_insert_with(std::time::Instant::now).elapsed() < GRACE {
+                        continue;
+                    }
+                    let why = format!("RERAIL_MEMORY_MAX_MB={}: {} MB resident", max >> 20, now >> 20);
+                    if let Some(dir) = destination() {
+                        let _ = dump(&dir.join("memory"), &why, started);
+                    }
+                    eprintln!(
+                        "rerail-engine: stopped at the memory ceiling ({why}), {} s after the run was told to stop: the path \
+                         that held the memory does not stop when told (a SQL stratum, the device, a cache).",
+                        GRACE.as_secs()
+                    );
+                    std::process::exit(3);
+                }
+            });
+        }
         if let Some(seconds) = std::env::var("RERAIL_DEADLINE").ok().and_then(|s| s.parse::<f64>().ok()).filter(|s| *s > 0.0) {
             let _ = rerail_accel::exec::service("rerail-deadline", None, move || {
                 std::thread::sleep(std::time::Duration::from_secs_f64(seconds));
@@ -136,5 +173,67 @@ pub fn watch() {
                 }
             });
         }
+    }
+}
+
+/// The memory ceiling in bytes: `RERAIL_MEMORY_MAX_MB`, else three quarters of the machine's memory; `None` with
+/// `off` (or where neither the machine's memory nor the process's can be read).
+pub fn memory_ceiling() -> Option<u64> {
+    match std::env::var("RERAIL_MEMORY_MAX_MB").ok().as_deref().map(str::trim) {
+        Some("off") | Some("0") => None,
+        Some(mb) if mb.parse::<u64>().is_ok() => Some(mb.parse::<u64>().unwrap() << 20),
+        _ => physical_bytes().map(|b| b / 4 * 3),
+    }
+    .filter(|_| resident_bytes().is_some())
+}
+
+/// The machine's memory, in bytes.
+pub fn physical_bytes() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut size: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        // SAFETY: `hw.memsize` is a u64; `size` and `len` describe its buffer.
+        let code = unsafe { libc::sysctlbyname(c"hw.memsize".as_ptr(), (&mut size as *mut u64).cast(), &mut len, std::ptr::null_mut(), 0) };
+        (code == 0 && size > 0).then_some(size)
+    }
+    #[cfg(all(unix, not(target_os = "macos"), not(target_family = "wasm")))]
+    {
+        // SAFETY: sysconf has no pointer arguments.
+        let (pages, page) = unsafe { (libc::sysconf(libc::_SC_PHYS_PAGES), libc::sysconf(libc::_SC_PAGESIZE)) };
+        (pages > 0 && page > 0).then(|| pages as u64 * page as u64)
+    }
+    #[cfg(not(all(unix, not(target_family = "wasm"))))]
+    {
+        None
+    }
+}
+
+/// The process's resident memory, in bytes (`None` where it cannot be read).
+pub fn resident_bytes() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info = std::mem::MaybeUninit::<libc::mach_task_basic_info>::zeroed();
+        let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
+        unsafe extern "C" {
+            // The task's own port (`mach_task_self()` is a macro over it; libc's function is deprecated).
+            static mach_task_self_: libc::mach_port_t;
+        }
+        // SAFETY: task_info writes this C-layout buffer; count describes its capacity in words.
+        let code = unsafe { libc::task_info(mach_task_self_, libc::MACH_TASK_BASIC_INFO, info.as_mut_ptr().cast(), &mut count) };
+        // SAFETY: a successful task_info call initializes the output structure.
+        (code == libc::KERN_SUCCESS).then(|| unsafe { info.assume_init() }.resident_size)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/statm").ok()?;
+        let pages = status.split_whitespace().nth(1)?.parse::<u64>().ok()?;
+        // SAFETY: sysconf has no pointer arguments.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        (page_size > 0).then(|| pages.saturating_mul(page_size as u64))
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    {
+        None
     }
 }

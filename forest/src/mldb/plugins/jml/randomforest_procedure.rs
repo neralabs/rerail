@@ -28,6 +28,7 @@
 //! - the bootstrap's generator is seeded apart from the shuffle's (upstream seeded both with the same number, so the
 //!   draws were the shuffle's), and the feature samplings' seeds are distinct (upstream's `bag + 371 + i` gives bag
 //!   b's tree i + 1 and bag b + 1's tree i the same features once the proportion's branch runs).
+//!
 //! The RNG is MT19937 as upstream; the shuffles are Fisher-Yates over `rng() % n` and the uniform draws `rng() /
 //! 2^32`, as `std::shuffle` and `uniform_real_distribution` are not the same across C++ libraries.
 
@@ -242,27 +243,29 @@ pub fn bag_counts(num_rows: usize, bag: usize, config: &RandomForestProcedureCon
     use rayon::prelude::*;
     let per = num_rows / num_partitions;
     let stretches: Vec<(usize, usize)> = (0..num_partitions).map(|i| (per * i, if i == num_partitions - 1 { num_rows } else { per * (i + 1) })).collect();
-    let parts: Vec<Vec<u32>> = stretches.par_iter().enumerate().map(|(i, &(first, last))| {
-        let n = last - first;
-        if !config.sample_feature_vectors {
-            return vec![1; n];
-        }
-        let seed = 245 + (bag * num_partitions) as u32 + i as u32;
-        let mut in_training = vec![false; n];
-        let mut order: Vec<usize> = (0..n).collect();
-        Mt19937::new(seed).shuffle(&mut order);
-        // As upstream's `i < numRowsInPartition * trainprop`: ceil(n * prop) rows.
-        let kept = ((n as f64 * config.feature_vector_sampling_prop as f64).ceil() as usize).min(n);
-        for &k in &order[..kept] {
-            in_training[k] = true;
-        }
-        let mut myrng = random_forest_rng(seed ^ 0x9E37_79B9);
-        let mut w = vec![0u32; n];
-        for _ in 0..n {
-            w[myrng.below(n)] += 1;
-        }
-        w.iter().zip(&in_training).map(|(&c, &t)| if t { c } else { 0 }).collect()
-    }).collect();
+    let parts: Vec<Vec<u32>> = rerail_context::on_cores(|| {
+        stretches.par_iter().enumerate().map(|(i, &(first, last))| {
+            let n = last - first;
+            if !config.sample_feature_vectors {
+                return vec![1; n];
+            }
+            let seed = 245 + (bag * num_partitions) as u32 + i as u32;
+            let mut in_training = vec![false; n];
+            let mut order: Vec<usize> = (0..n).collect();
+            Mt19937::new(seed).shuffle(&mut order);
+            // As upstream's `i < numRowsInPartition * trainprop`: ceil(n * prop) rows.
+            let kept = ((n as f64 * config.feature_vector_sampling_prop as f64).ceil() as usize).min(n);
+            for &k in &order[..kept] {
+                in_training[k] = true;
+            }
+            let mut myrng = random_forest_rng(seed ^ 0x9E37_79B9);
+            let mut w = vec![0u32; n];
+            for _ in 0..n {
+                w[myrng.below(n)] += 1;
+            }
+            w.iter().zip(&in_training).map(|(&c, &t)| if t { c } else { 0 }).collect()
+        }).collect()
+    });
     for ((first, _), part) in stretches.iter().zip(parts) {
         counts[*first..*first + part.len()].copy_from_slice(&part);
     }
@@ -402,6 +405,9 @@ enum Trained {
     Flat(FlatTree),
 }
 
+/// The trees a thread trained, by bag in its order: each bag and its trees.
+type BagTrees = Vec<(usize, Vec<Trained>)>;
+
 /// The fewest rows a bag the device draws expects (its proportion of the rows): fewer, and the host draws the bags.
 const DEVICE_BAG_MIN_ROWS: f64 = 256.0;
 
@@ -516,12 +522,12 @@ fn train_weighted(all_data: &PartitionData, config: &RandomForestProcedureConfig
         .start_handler(move |_| set_qos(qos))
         .build()
         .map_err(|e| e.to_string())?;
-    let trained: Vec<Result<Vec<(usize, Vec<Trained>)>, String>> = pool.install(|| chunks.par_iter().map(|chunk| {
+    let trained: Vec<Result<BagTrees, String>> = pool.install(|| chunks.par_iter().map(|chunk| {
         let mine: Vec<Vec<i32>> = chunk.iter().flat_map(|&b| samplings[b].iter().cloned()).collect();
         let mut partition = FeatureSamplingTrainerPartition::allocate(&trainer, &mine, "forest")?;
         let mut in_flight = std::collections::VecDeque::new();
-        let mut out: Vec<(usize, Vec<Trained>)> = Vec::new();
-        let finish = |partition: &FeatureSamplingTrainerPartition, (b, i, scheduled, d): (usize, usize, crate::randomforest::ScheduledTree, crate::randomforest::PartitionControlData), out: &mut Vec<(usize, Vec<Trained>)>| -> Result<(), String> {
+        let mut out: BagTrees = Vec::new();
+        let finish = |partition: &FeatureSamplingTrainerPartition, (b, i, scheduled, d): (usize, usize, crate::randomforest::ScheduledTree, crate::randomforest::PartitionControlData), out: &mut BagTrees| -> Result<(), String> {
             scheduled.event.await_()?;
             let err = |e: String| format!("error training bag {b}: {e}");
             let tree = match &cols {
@@ -596,19 +602,21 @@ pub fn train_forest_compacted(all_data: &PartitionData, config: &RandomForestPro
     let pool = rayon::ThreadPoolBuilder::new().num_threads(config.feature_vector_samplings.clamp(1, MAX_BAGS_AT_ONCE)).build().map_err(|e| e.to_string())?;
     use rayon::prelude::*;
     let bags: Vec<Result<Vec<Tree>, String>> = pool.install(|| {
-        (0..config.feature_vector_samplings).into_par_iter().map(|b| {
-            let debug_name = format!("bag {b}");
-            let (mut data, samplings) = bag(all_data, b, config).map_err(|e| format!("error training {debug_name}: {e}"))?;
-            data.set_categorical_subsets(config.categorical_subsets);
-            if config.min_leaf_examples > 1 {
-                data.fs = Arc::new(DatasetFeatureSpace { min_leaf_examples: config.min_leaf_examples, ..(*data.fs).clone() });
-            }
-            let trees = data.train_multiple_samplings(b as i32, &debug_name, config.max_depth, &samplings, config.training_scheme).map_err(|e| format!("error training {debug_name}: {e}"))?;
-            if trees.len() != samplings.len() {
-                return Err(format!("{debug_name}: {} trees for {} samplings", trees.len(), samplings.len()));
-            }
-            Ok(trees)
-        }).collect()
+        rerail_context::on_cores(|| {
+            (0..config.feature_vector_samplings).into_par_iter().map(|b| {
+                let debug_name = format!("bag {b}");
+                let (mut data, samplings) = bag(all_data, b, config).map_err(|e| format!("error training {debug_name}: {e}"))?;
+                data.set_categorical_subsets(config.categorical_subsets);
+                if config.min_leaf_examples > 1 {
+                    data.fs = Arc::new(DatasetFeatureSpace { min_leaf_examples: config.min_leaf_examples, ..(*data.fs).clone() });
+                }
+                let trees = data.train_multiple_samplings(b as i32, &debug_name, config.max_depth, &samplings, config.training_scheme).map_err(|e| format!("error training {debug_name}: {e}"))?;
+                if trees.len() != samplings.len() {
+                    return Err(format!("{debug_name}: {} trees for {} samplings", trees.len(), samplings.len()));
+                }
+                Ok(trees)
+            }).collect()
+        })
     });
     let mut trees = Vec::with_capacity(total);
     for b in bags {

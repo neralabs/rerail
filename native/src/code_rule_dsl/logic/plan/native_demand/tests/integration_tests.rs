@@ -20,7 +20,7 @@
     fn retained_semantic_results_support_sql_outputs_and_isolate_targets_and_runs() {
         let p = rr::parse_version(
             r#"
-#include "core.rr"
+#include "core.rerail"
 .decl py_call_site(d:number,report:node,call:node,ref:node)
 .input py_call_site
 .decl wanted(n:node)
@@ -86,6 +86,7 @@ posts(n,q) :- python_qualified(n,q,wanted,post_target).
                     tape: None,
                     guest: None,
                     module: None,
+                    unpackaged: false,
                 }];
                 let mut stats = Stats::empty(&lowered.program);
                 for (name, source) in syntax::with_nearest(

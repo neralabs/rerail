@@ -69,7 +69,7 @@ pub(super) fn tabulate(pp: &mut Pp, file: u32) -> Tab {
     let mut open: Vec<u32> = Vec::new();
     let mut cur = 0u32;
     loop {
-        let pt = lx.next();
+        let pt = lx.next_token();
         if pt.kind == P::Eof {
             break;
         }
@@ -193,7 +193,7 @@ fn rest_of(lx: &mut PpLexer<'static>, pp: &mut Pp, file: u32) -> Vec<Tk> {
 /// A `#pragma`'s act, by its first word, and a push's or pop's `( "name" )` (`Pp::pragma_text`'s).
 fn pragma(pp: &mut Pp, text: &[u8]) -> Act {
     let mut lx = PpLexer::new(text, pp.cfg.opts);
-    let t = lx.next();
+    let t = lx.next_token();
     if t.kind != P::Ident {
         return Act::Nothing;
     }
@@ -204,7 +204,7 @@ fn pragma(pp: &mut Pp, text: &[u8]) -> Act {
     if word != b"push_macro" && word != b"pop_macro" {
         return Act::Nothing;
     }
-    let (lp, st) = (lx.next(), lx.next());
+    let (lp, st) = (lx.next_token(), lx.next_token());
     if lp.kind != P::Punct || lp.punct != rerail_c_lean::T::LParen || st.kind != P::Str {
         return Act::Nothing;
     }

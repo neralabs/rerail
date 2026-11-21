@@ -62,7 +62,7 @@ pub enum Set {
     Reached { step: Step, named: bool, from: Box<Set> },
 }
 
-/// A walk's anchor as the device evaluates it (`label_formula`, decision 0365): `Set` in postfix over a stack of node
+/// A walk's anchor as the device evaluates it (`label_phase`, decisions 0365, 0475): `Set` in postfix over a stack of node
 /// sets, a word an operation (`op | arg << 8`), `depth` the stack's slots (an axis step's output a slot past its
 /// input), and the labels it reads (by index, past `DERIVED_CLASS_BASE`).
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
@@ -76,7 +76,7 @@ pub struct DeviceFormula {
     pub texts: Vec<String>,
 }
 
-/// `DeviceFormula`'s operations (`label_formula` in `label_passes.uglykl`). A test pushes a set; `AND` and
+/// `DeviceFormula`'s operations (`label_phase` in `label_passes.uglykl`, compiled by `phase_program`). A test pushes a set; `AND` and
 /// `OR` combine the top `arg` sets; an axis step replaces the top set (a chain the top two: through, then to); `arg`
 /// of a step is whether its nodes are named.
 pub mod device_ops {
@@ -350,7 +350,7 @@ impl Set {
     }
 
     /// This set with each text test read as every node: a superset, with no slot of the program it came from (a
-    /// slot is its program's, so another walk's anchor would read its own row there; decision 0425).
+    /// slot is its program's, so another walk's anchor would read its own row there; decision 0460).
     pub fn texts_dropped(self) -> Self {
         self.map_tests(&|test| match test {
             Set::Text(_) => Set::All,
@@ -889,7 +889,7 @@ impl Reader<'_> {
         match set {
             Set::All => {
                 let mut bits = vec![u64::MAX; words];
-                if len % 64 != 0
+                if !len.is_multiple_of(64)
                     && let Some(last) = bits.last_mut()
                 {
                     *last = (1 << (len % 64)) - 1;

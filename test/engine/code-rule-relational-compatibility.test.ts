@@ -1,5 +1,7 @@
-import { expect, it } from "vitest";
+import { expect, it, vi } from "vitest";
+import { assertCodeRuleCompiles, relationalRulesOff } from "../../src/engine/code-rule/code-rule-compile.js";
 import { codeRuleAstRuleSchema, codeRuleEvidenceQuerySchema, codeRuleQuerySchema, codeRuleSchema } from "../../src/engine/code-rule/code-rule-schema.js";
+import { experimentOffMessage } from "../../src/engine/experimental-features.js";
 
 it("keeps established relational rules available through the public authoring schema", () => {
   const policy = {
@@ -10,6 +12,22 @@ it("keeps established relational rules available through the public authoring sc
     }, violation: { code: "rows", message: "Rows", anchor: "witness.span" } }],
   };
   expect(codeRuleSchema.parse(policy).clauses[0]).toHaveProperty("relational");
+});
+
+it("refuses a relational rule's write while relational rules are off, before the engine compiles it", () => {
+  const policy = codeRuleSchema.parse({
+    format: "rerail.policy/v1", id: "relational-gated", revision: 1, mode: "log",
+    clauses: [{ id: "rows", relational: {
+      inputs: { files: { evidence: { as: "file", query: { ast: { language: "python", rule: { kind: "module" } } }, project: { path: "file.path" } } } },
+      query: "SELECT __path path,__start start_byte,__end end_byte FROM files", key: ["path"],
+    }, violation: { code: "rows", message: "Rows", anchor: "witness.span" } }],
+  });
+  vi.stubEnv("RERAIL_EXPERIMENTAL_RELATIONAL_RULES", "0");
+  expect(relationalRulesOff(policy)).toBe(experimentOffMessage("RELATIONAL_RULES"));
+  expect(() => assertCodeRuleCompiles(policy)).toThrow(experimentOffMessage("RELATIONAL_RULES"));
+  vi.stubEnv("RERAIL_EXPERIMENTAL_RELATIONAL_RULES", "1");
+  expect(relationalRulesOff(policy)).toBeUndefined();
+  vi.unstubAllEnvs();
 });
 
 it("retains the source and path gates used by existing ports", () => {

@@ -19,7 +19,7 @@ use rerail_c_lean::T;
 use rerail_c_lean::pp::{Options, P, Phase2, PpLexer, PpTok};
 use std::collections::HashMap;
 
-/// A configuration (`c/env.rr`'s rows): the dialect, the predefined macros, the answers of the
+/// A configuration (`c/env.rerail`'s rows): the dialect, the predefined macros, the answers of the
 /// `__has_*` family, and the fixed date and time.
 #[derive(Clone, Debug)]
 pub struct Config {
@@ -185,6 +185,9 @@ pub const ALT: [(&str, T); 11] = [
     ("xor_eq", T::CaretEq),
 ];
 
+/// The definitions a test looked up, in order: each symbol and the definition it had (none: not defined).
+pub(crate) type Lookups = Vec<(u32, Option<u32>)>;
+
 /// The preprocessor: its configuration, files, macros and sources.
 pub struct Pp<'a> {
     pub cfg: Config,
@@ -220,7 +223,7 @@ pub struct Pp<'a> {
     vis: Option<parallel::Vis>,
     vis_pos: u64,
     /// The parallel reading's record of the definitions a test looked up, while one is kept.
-    looked: Option<std::cell::RefCell<Vec<(u32, Option<u32>)>>>,
+    looked: Option<std::cell::RefCell<Lookups>>,
     /// The parallel reading's isolated list: its index in `stack`, and whether the reading asked
     /// past its end (a call's `(` or arguments) or met what the parallel shape does not carry.
     par: Option<parallel::Isolated>,
@@ -344,7 +347,7 @@ impl<'a> Pp<'a> {
         self.push_file(main, None);
         self.stack.push(self.file_src(builtin));
         loop {
-            let t = self.next();
+            let t = self.next_token();
             if t.kind == P::Eof {
                 break;
             }
@@ -462,7 +465,7 @@ impl<'a> Pp<'a> {
                 }
                 Some(Src::File { lx, file, .. }) => {
                     let file = *file;
-                    let pt = lx.next();
+                    let pt = lx.next_token();
                     if pt.kind == P::Eof {
                         if self.collecting > 0 {
                             // A call's arguments end with their file (clang's reading).
@@ -498,7 +501,7 @@ impl<'a> Pp<'a> {
     }
 
     /// The next token, macros expanded.
-    pub fn next(&mut self) -> Tk {
+    pub fn next_token(&mut self) -> Tk {
         loop {
             let mut t = self.lex_raw();
             if t.kind != P::Ident || t.flags & NOEXP != 0 {
@@ -564,7 +567,7 @@ impl<'a> Pp<'a> {
                 }
                 Src::File { lx, .. } => {
                     let (at, bol) = lx.state();
-                    let t = lx.next();
+                    let t = lx.next_token();
                     lx.seek(at, bol);
                     return t.is(T::LParen);
                 }
@@ -636,7 +639,7 @@ impl<'a> Pp<'a> {
         self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: true });
         let mut out = Vec::new();
         loop {
-            let t = self.next();
+            let t = self.next_token();
             if t.is_stop() {
                 break;
             }
@@ -693,7 +696,7 @@ impl<'a> Pp<'a> {
             let (call_file, call_at) = self.root_at(&name);
             let (df, da) = (def.file, self.files.get(def.file as usize).map_or(def.at, |f| f.orig(def.at)));
             let nm = self.syms.text(def.name);
-            self.sink.expansion(id, nm, df, da, call_file, call_at, name.exp);
+            self.sink.expansion(crate::sink::Expansion { id, name: nm, defined: (df, da), called: (call_file, call_at), parent: name.exp });
         }
         let body = self.defs[d as usize].body.clone();
         let mut pre: Vec<Option<Vec<Tk>>> = vec![None; args.len()];
@@ -739,10 +742,12 @@ impl<'a> Pp<'a> {
                     i += 2;
                     continue;
                 }
-                if va.is_some() && body.get(i + 1).is_some_and(|n| n.sym == self.s.va_opt) {
+                if let Some(v) = va
+                    && body.get(i + 1).is_some_and(|n| n.sym == self.s.va_opt)
+                {
                     // `#__VA_OPT__(…)`: the content, substituted and pasted, stringized.
                     let (content, end) = va_opt_content(body, i + 1);
-                    let mut c = if self.va_present(args, pre, va.unwrap()) { self.substitute(d, content, args, pre, id) } else { Vec::new() };
+                    let mut c = if self.va_present(args, pre, v) { self.substitute(d, content, args, pre, id) } else { Vec::new() };
                     self.paste_all(&mut c, id);
                     c.retain(|t| !t.is_placemarker());
                     let s = self.stringize(&c);
@@ -752,9 +757,12 @@ impl<'a> Pp<'a> {
                     continue;
                 }
             }
-            if va.is_some() && bt.sym == self.s.va_opt && bt.kind == P::Ident {
+            if let Some(v) = va
+                && bt.sym == self.s.va_opt
+                && bt.kind == P::Ident
+            {
                 let (content, end) = va_opt_content(body, i);
-                if self.va_present(args, pre, va.unwrap()) {
+                if self.va_present(args, pre, v) {
                     let mut c = self.substitute(d, content, args, pre, id);
                     if let Some(f) = c.first_mut() {
                         f.flags = (f.flags & !SPACE) | (bt.flags & SPACE);
@@ -880,7 +888,7 @@ impl<'a> Pp<'a> {
         let mut text = self.text(&l).to_vec();
         text.extend_from_slice(self.text(&r));
         let mut lx = PpLexer::new(&text, self.cfg.opts);
-        let t = lx.next();
+        let t = lx.next_token();
         let whole = t.start == 0 && t.end as usize == text.len() && t.kind != P::Eof && t.kind != P::Other;
         if !whole {
             let f = self.cur_file();
@@ -930,14 +938,14 @@ impl<'a> Pp<'a> {
             Builtin::Pragma => {
                 let args = self.builtin_operand();
                 let args = self.expand_list(args);
-                if let [s] = args.as_slice() {
-                    if s.kind == P::Str {
-                        let text = destringize(self.text(s));
-                        let f = self.cur_file();
-                        let at = self.root_at(&t).1;
-                        self.pragma_text(f, at, text);
-                        return Vec::new();
-                    }
+                if let [s] = args.as_slice()
+                    && s.kind == P::Str
+                {
+                    let text = destringize(self.text(s));
+                    let f = self.cur_file();
+                    let at = self.root_at(&t).1;
+                    self.pragma_text(f, at, text);
+                    return Vec::new();
                 }
                 let f = self.cur_file();
                 self.diag(f, t.start, Diag::Malformed, b"_Pragma");
@@ -1193,10 +1201,10 @@ impl<'a> Pp<'a> {
         let line = self.line_rest();
         let Some(def) = self.parse_define(hash, file, &line) else { return };
         let n = def.name;
-        if let Some(old) = self.def_of(n) {
-            if !self.same_def(&self.defs[old as usize], &def) {
-                self.diag(file, hash.start, Diag::Redefined, self.syms.text(n).to_vec().as_slice());
-            }
+        if let Some(old) = self.def_of(n)
+            && !self.same_def(&self.defs[old as usize], &def)
+        {
+            self.diag(file, hash.start, Diag::Redefined, self.syms.text(n).to_vec().as_slice());
         }
         self.set_def(n, def);
     }
@@ -1322,7 +1330,7 @@ impl<'a> Pp<'a> {
         loop {
             let (lx, _) = self.flx();
             let line_start = lx.state();
-            let t = lx.next();
+            let t = lx.next_token();
             if t.kind == P::Eof {
                 lx.seek(line_start.0, line_start.1);
                 self.skipped(file, start, t.start);
@@ -1384,11 +1392,11 @@ impl<'a> Pp<'a> {
                             }
                         }
                     };
-                    if let Some(Src::File { conds, .. }) = self.stack.last_mut() {
-                        if let Some(c) = conds.last_mut() {
-                            c.seen_else |= kind == Kind::Else;
-                            c.taken |= v;
-                        }
+                    if let Some(Src::File { conds, .. }) = self.stack.last_mut()
+                        && let Some(c) = conds.last_mut()
+                    {
+                        c.seen_else |= kind == Kind::Else;
+                        c.taken |= v;
                     }
                     self.sink.cond(file, self.files[file as usize].orig(t.start), v);
                     if v {
@@ -1578,7 +1586,7 @@ impl<'a> Pp<'a> {
         let Src::File { mut lx, .. } = src else { unreachable!() };
         let mut toks = Vec::new();
         loop {
-            let t = lx.next();
+            let t = lx.next_token();
             if t.kind == P::Eof {
                 break;
             }

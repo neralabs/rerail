@@ -14,9 +14,12 @@ import { dirname, join, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, test, vi } from "vitest";
 import { z } from "zod";
-import { PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { heldOffRangeFailure, languageRangeFailure, PACK_CHECKS, packedFileFailures, textFailures, validatePack, type PackCheckName, type PackValidation } from "../../../conformance/pack-validation.js";
+import { gatedToolPacks, readGatesManifest } from "../../../conformance/languages/manifest.js";
+import { coreFloor, HELD_OFF_SINCE, heldOffRules, LANGUAGE_SINCE, raisedCoreRange, shippedLanguages } from "../../../scripts/release/core.mjs";
 import { compareDeterministicStrings } from "../../../src/engine/stable-json.js";
 import { fixturesPath } from "../../support/oracles.js";
+import { removeFolderSync } from "../../support/platform/remove-folder.js";
 
 // The exemplar is a language only tests plan: the registry module lists it for this file, and the engine refuses it as a
 // planned language (test/engine/support/exemplar-registry.ts, exemplar-engine.ts).
@@ -87,7 +90,7 @@ describe("rule ids across packs", () => {
 describe("validatePack", () => {
   const temporary: string[] = [];
   afterEach(() => {
-    for (const directory of temporary.splice(0)) rmSync(directory, { recursive: true, force: true });
+    for (const directory of temporary.splice(0)) removeFolderSync(directory);
   });
 
   /** A copy of fixture pack `name`, in a directory of that name, with `change` applied to it. */
@@ -158,6 +161,17 @@ describe("validatePack", () => {
       writeFileSync(readme, readFileSync(readme, "utf8").replace(/^### `assert-used`\n[\s\S]*$/mu, ""));
       editAssertUsedPort(directory, port => ({ ...port, policy: "candidates/rules/assert-used.json", examples }));
     };
+  /** `pass-statement` made an own rule (conformance.json `own`) whose clauses set `violation.suppress`, as a port moved into own would. */
+  const ownSuppressingPassStatement = (directory: string): void => {
+    editJson(join(directory, "conformance.json"), conformance => ({ ...conformance, own: ["pass-statement"] }));
+    editJson(join(directory, "rules", "pass-statement.json"), document => ({
+      ...document,
+      clauses: z
+        .array(z.looseObject({ violation: z.record(z.string(), z.unknown()) }))
+        .parse(document.clauses)
+        .map(clause => ({ ...clause, violation: { ...clause.violation, suppress: { noqa: { codes: ["PASS1"] } } } })),
+    }));
+  };
   const pair = (caught: string, passes: string): unknown => ({ caught: { path: "src/a.py", text: caught }, passes: { path: "src/a.py", text: passes } });
 
   it("passes a candidate's example pair in conformance.json, its caught example firing and its passes example silent", async () => {
@@ -183,6 +197,35 @@ describe("validatePack", () => {
       { id: "assert-used", document: "rules/assert-used.json", status: "ok" },
       { id: "pass-statement", document: "rules/pass-statement.json", status: "ok" },
     ]);
+  });
+
+  // Check 5 reads the languages of the shipped documents only: a candidate is not published, so it holds no core back.
+  describe("with a Java rule, core at the release that first reads Java", () => {
+    const since = LANGUAGE_SINCE.get("java")!;
+    const withJavaRule =
+      (folder: string, range = ">=0.1.0-0") =>
+      (directory: string): void => {
+        mkdirSync(join(directory, folder), { recursive: true });
+        writeJson(join(directory, folder, "java-rule.json"), { clauses: [{ forbid: { ast: { language: "java" } } }] });
+        editJson(join(directory, "package.json"), manifest => ({ ...manifest, peerDependencies: { "@neralabs/rerail": range } }));
+      };
+
+    it("fails check 5 when the rule ships and the core range admits older cores", async () => {
+      const validation = await validatePack(changed("valid", withJavaRule("rules")), { coreVersion: since });
+      expect(validation.checks.package).toEqual([
+        `package.json: the core range >=0.1.0-0 admits Rerail older than ${since}, which reads no java rule; raise it to >=${since}-0`,
+      ]);
+    });
+
+    it("passes check 5 when the core range leaves older cores out", async () => {
+      const validation = await validatePack(changed("valid", withJavaRule("rules", `>=${since}-0`)), { coreVersion: since });
+      expect(validation.checks.package).toEqual([]);
+    });
+
+    it("passes check 5 when the rule is only a candidate", async () => {
+      const validation = await validatePack(changed("valid", withJavaRule(join("candidates", "rules"))), { coreVersion: since });
+      expect(validation.checks.package).toEqual([]);
+    });
   });
 
   it("passes a pack for a planned language, its rules not supported yet and their examples skipped", async () => {
@@ -245,12 +288,14 @@ describe("validatePack", () => {
       { rules: ["candidates/rules/pass.json: has id pass-statement; name it candidates/rules/pass-statement.json"] },
     ],
     [
+      // An underscore, not a namespace colon (eslint:no-alert): a Windows file name cannot hold a colon, so that file
+      // could not exist there, and the id must fail the check on every platform.
       "a candidate whose id is not lowercase letters, digits and dashes, though its file is named for it",
       directory => {
         mkdirSync(join(directory, "candidates", "rules"), { recursive: true });
-        writeJson(join(directory, "candidates", "rules", "eslint:no-alert.json"), { format: "rerail.policy/v1", id: "eslint:no-alert", description: "Avoid alert().", clauses: [] });
+        writeJson(join(directory, "candidates", "rules", "no_alert.json"), { format: "rerail.policy/v1", id: "no_alert", description: "Avoid alert().", clauses: [] });
       },
-      { rules: ["candidates/rules/eslint:no-alert.json: id eslint:no-alert is not lowercase letters, digits and dashes"] },
+      { rules: ["candidates/rules/no_alert.json: id no_alert is not lowercase letters, digits and dashes"] },
     ],
     [
       "a candidate with no id",
@@ -328,16 +373,7 @@ describe("validatePack", () => {
     ],
     [
       "an own rule whose document sets violation.suppress, as a port moved into own would",
-      directory => {
-        editJson(join(directory, "conformance.json"), conformance => ({ ...conformance, own: ["pass-statement"] }));
-        editJson(join(directory, "rules", "pass-statement.json"), document => ({
-          ...document,
-          clauses: z
-            .array(z.looseObject({ violation: z.record(z.string(), z.unknown()) }))
-            .parse(document.clauses)
-            .map(clause => ({ ...clause, violation: { ...clause.violation, suppress: { noqa: { codes: ["PASS1"] } } } })),
-        }));
-      },
+      ownSuppressingPassStatement,
       { proof: [expect.stringMatching(/^pass-statement: /u)] },
     ],
     [
@@ -553,6 +589,18 @@ describe("validatePack", () => {
     const validation = await validatePack(changed("valid", change));
     expect(failing(validation)).toEqual(expected);
     expect(validation.pass).toBe(false);
+  });
+
+  it("gives an own rule whose caught example does not fire and whose document sets violation.suppress its example failure as its reason", async () => {
+    const validation = await validatePack(
+      changed("valid", directory => {
+        ownSuppressingPassStatement(directory);
+        editPassStatement(directory, rule => ({ ...rule, examples: { caught: { path: "src/a.py", text: "x = 1\n" }, passes: { path: "src/a.py", text: "x = 2\n" } } }));
+      }),
+    );
+    const caught = "pass-statement: the caught example (src/a.py) produces no PASS violation";
+    expect(failing(validation)).toEqual({ proof: [expect.stringMatching(/^pass-statement: an own rule /u)], examples: [caught] });
+    expect(validation.rules.find(rule => rule.id === "pass-statement")).toEqual({ id: "pass-statement", document: "rules/pass-statement.json", status: "failed", reason: caught });
   });
 
   it.each([
@@ -839,6 +887,76 @@ describe("validatePack", () => {
   });
 });
 
+// The Release pull request bumps core to the release that reads heldOff; from then a pack holding a rule off must leave
+// older cores out, or they drop it whole as invalid. Before then this checkout's core has to keep loading it.
+describe("heldOffRangeFailure", () => {
+  const held = ["ruff-b009-get-attr-with-constant"];
+
+  it.each([
+    ["a core before the release that reads heldOff passes the old range", ">=0.1.0-0", held, "0.1.4", false],
+    ["the release that reads it fails a range admitting older cores", ">=0.1.0-0", held, HELD_OFF_SINCE, true],
+    ["a prerelease of it fails it too", ">=0.1.0-0", held, `${HELD_OFF_SINCE}-next.0`, true],
+    ["a later release fails it too", ">=0.1.0-0", held, "1.0.0", true],
+    ["a range starting at its prereleases passes", `>=${HELD_OFF_SINCE}-0`, held, HELD_OFF_SINCE, false],
+    ["a range starting at the release passes", `>=${HELD_OFF_SINCE}`, held, HELD_OFF_SINCE, false],
+    ["a pack holding no rule off passes", ">=0.1.0-0", [], HELD_OFF_SINCE, false],
+  ])("%s", (_, range, heldOff, core, fails) => {
+    expect(heldOffRangeFailure(range, heldOff, core) !== undefined).toBe(fails);
+  });
+
+  it("names the held-off rules and the range to raise to", () => {
+    expect(heldOffRangeFailure(">=0.1.0-0", held, HELD_OFF_SINCE)).toBe(
+      `package.json: the core range >=0.1.0-0 admits Rerail older than ${HELD_OFF_SINCE}, which refuses heldOff (ruff-b009-get-attr-with-constant); raise it to >=${HELD_OFF_SINCE}-0`,
+    );
+  });
+});
+
+// A language core first reads in a later release is the same hazard as heldOff: an older core refuses the rule document
+// and drops the pack whole, so from that release on the pack's core range leaves older cores out.
+describe("languageRangeFailure", () => {
+  const since = LANGUAGE_SINCE.get("java")!;
+
+  it.each([
+    ["a core before the release that reads Java passes the old range", ">=0.1.0-0", ["python", "java"], "0.1.4", false],
+    ["the release that reads it fails a range admitting older cores", ">=0.1.0-0", ["python", "java"], since, true],
+    ["a prerelease of it fails it too", ">=0.1.0-0", ["java"], `${since}-next.0`, true],
+    ["a later release fails it too", ">=0.1.0-0", ["java"], "1.0.0", true],
+    ["a range starting at its prereleases passes", `>=${since}-0`, ["java"], since, false],
+    ["a range starting at the release passes", `>=${since}`, ["java"], since, false],
+    ["a pack whose rules are all in languages every core reads passes", ">=0.1.0-0", ["python", "typescript", "vue"], since, false],
+  ])("%s", (_, range, languages, core, fails) => {
+    expect(languageRangeFailure(range, languages, core) !== undefined).toBe(fails);
+  });
+
+  it("names the language and the range to raise to", () => {
+    expect(languageRangeFailure(">=0.1.0-0", ["java", "python"], since)).toBe(
+      `package.json: the core range >=0.1.0-0 admits Rerail older than ${since}, which reads no java rule; raise it to >=${since}-0`,
+    );
+  });
+});
+
+// The Release pull request raises a pack's core range with the same rule check 5 judges it by (scripts/release/core.mjs): the
+// range it writes must pass both checks, for every pack an older core refuses.
+describe("the core range the release writes", () => {
+  const floors = packs.flatMap(id => {
+    const directory = join(PACKS, id);
+    const heldOff = heldOffRules(JSON.parse(readFileSync(join(directory, "pack.json"), "utf8")));
+    const languages = shippedLanguages(directory);
+    const floor = coreFloor(heldOff, languages);
+    return floor === undefined ? [] : [{ id, heldOff, languages, floor }];
+  });
+
+  it("is due for the packs holding a rule off or shipping a rule in a language added since", () => {
+    expect(floors.map(({ id }) => id)).toEqual(["complexity", "python"]);
+  });
+
+  it.each(floors)("passes check 5's range checks for pack $id at the release that first loads it", ({ heldOff, languages, floor }) => {
+    expect(heldOffRangeFailure(">=0.1.0-0", heldOff, floor) ?? languageRangeFailure(">=0.1.0-0", languages, floor)).toBeDefined();
+    expect(heldOffRangeFailure(raisedCoreRange(floor), heldOff, floor)).toBeUndefined();
+    expect(languageRangeFailure(raisedCoreRange(floor), languages, floor)).toBeUndefined();
+  });
+});
+
 describe("packedFileFailures", () => {
   const files = ["pack.json", "rules", "licenses", "LICENSE", "NOTICE", "README.md"];
 
@@ -868,5 +986,20 @@ describe("packedFileFailures", () => {
       "divergences.json: validation material, never published",
       "upstream/tool/fixtures/a.py: validation material, never published",
     ]);
+  });
+});
+
+/** The pack that measures rather than ports a linter: it counts like lizard, so it claims no equivalence. */
+const MEASURE_PACK = "complexity";
+
+describe("a pack's covers line, the dashboard's description of it", () => {
+  const ROOT = fileURLToPath(new URL("../../../", import.meta.url));
+  const gated = Map.groupBy(gatedToolPacks(ROOT), ({ pack }) => pack);
+
+  it.each([...gated.keys()])("for %s names every tool version it matches, and opens with the equivalence it claims", pack => {
+    const covers = z.object({ covers: z.string() }).parse(JSON.parse(readFileSync(join(PACKS, pack, "pack.json"), "utf8"))).covers;
+    const versions = gated.get(pack)!.map(({ tool }) => readGatesManifest(ROOT, pack, tool).upstream.version);
+    expect(versions.filter(version => !covers.includes(version)), covers).toEqual([]);
+    expect(covers.startsWith("Linter-equivalent to ")).toBe(pack !== MEASURE_PACK);
   });
 });

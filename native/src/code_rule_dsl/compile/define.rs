@@ -209,6 +209,7 @@ fn check_dialects<'u>(
             documents: documents.as_ref(),
             instances: None,
             side: *side,
+            patterns: None,
         };
         let compile = |gaps: &mut BTreeMap<&'u str, Vec<String>>| {
             utils

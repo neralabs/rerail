@@ -4,6 +4,7 @@
 //! The code-rule runtime will call this module through coarse Rust operations.
 
 pub mod atoms;
+pub mod analysis_scope;
 #[cfg(target_os = "macos")]
 mod accel_models;
 // Publication of the prefilter is wired into the scan in a later slice; until then only tests call it.
@@ -14,15 +15,18 @@ pub use compression::{decompress, decompress_chunks, decompress_head, decompress
 mod collection_guard;
 pub use collection_guard::CollectionLease;
 mod connection;
-pub use compression::{set_language_tags, set_tapes_kept_as_is};
 pub use connection::set_connection_functions;
 mod corpus_runs;
+pub use corpus_runs::process_gone;
 pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
-mod cross_rows;
+pub use connection::{flush_of, store_flush};
+pub use rerail_blocks::block::Flush;
 mod derivation;
-mod frames;
+mod document_places;
+pub use document_places::{DOCUMENT_WORDS, DocumentPlaces, PLACED_WORDS};
+mod held;
 pub mod kept_facts;
 pub mod guest_keys;
 mod object_segments;
@@ -31,7 +35,7 @@ mod facts_memo;
 mod objects;
 pub mod journal;
 pub mod observe;
-pub use objects::{ResidentFrames, SourceAndTapeFrames, TapeFrame};
+pub use objects::{ResidentFrames, TapeFrame};
 mod postings;
 /// G's positional search index (value and text streams), for G's literal anchors (O21).
 #[cfg(any(test, feature = "test-hooks"))]
@@ -45,9 +49,13 @@ pub use postings::segment_positions;
 pub mod prefilter;
 pub use prefilter::TapePrefilter;
 mod private_files;
+pub use private_files::prepare_cache_directory;
 mod publication;
 mod read_cache;
+mod archive;
+pub use archive::{ARCHIVED, place_archived_tape_at};
 mod reclamation;
+pub use reclamation::Ageing;
 pub mod record;
 mod relationships;
 mod results;
@@ -72,10 +80,10 @@ pub mod write_back;
 pub mod hazards;
 
 pub use compression::compress;
-pub use frames::forget_snapshot as forget_frames_snapshot;
+pub use held::forget_snapshot as forget_held_snapshot;
 pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
-pub use object_segments::{ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape, TapeBytes, TapeHeld};
-pub use frames::{CrossSpace as FramesCrossSpace, Unreachable as UnreachableFrames, Admitted as AdmittedFrame, Encoded as EncodedFrame, FramePlacer, Placed as PlacedFrame, Put as FramePut, Rel as FrameRel, Retag as FrameRetag, Delta as FrameDelta, Rows as FrameRows, Stored as FrameStored, local_space, MemoBlob, MemoPut, MemoRow, confirm_key as frame_confirm_key, reads_hash as frame_reads_hash};
+pub use object_segments::{copy_beside, ObjectBytes, ObjectFrame, ObjectMaps, QueuedTape, TapeBytes, TapeHeld};
+pub use held::{Rel as KeptRel, Stored as KeptStored, local_space, MemoBlob, MemoPut, MemoRow};
 pub use connection::BusyRetries;
 pub use connection::OperationDeadline;
 pub use atoms::{ProcessIds, StoreIds, Sym};
@@ -94,7 +102,6 @@ pub use connection::{
 pub use snapshots::AFTER_GIT_TREE_TRANSACTION;
 
 use connection::{ThreadConnection, retry_busy};
-use read_cache::{CachedBacking, DecompressedReadCache};
 use results::LocalResultCache;
 use rusqlite::{Connection, OpenFlags};
 use sha2::{Digest as _, Sha256};
@@ -104,7 +111,6 @@ use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::sync::atomic::{AtomicUsize, Ordering};
-use std::time::Duration;
 
 const HASH_SHA256: i64 = 1;
 const HASH_GIT_SHA1: i64 = 2;
@@ -117,14 +123,12 @@ const STRING_REPOSITORY: i64 = 2;
 const STRING_OWNER: i64 = 3;
 const STRING_PATH_COMPONENT: i64 = 4;
 const STRING_CLAUSE_KEY: i64 = 5;
-/// Fact names (`derivation.rs`): bound names and derivation outputs.
 
 const DEFAULT_COMPRESSION_LEVEL: i32 = 3;
 const MAX_PUBLICATION_BATCH: usize = 64;
 /// Largest `collect` batch: the per-statement row limit of one collection transaction.
 pub const MAX_COLLECTION_BATCH: usize = 256;
 const DEFAULT_READ_CACHE_BYTES: usize = 32 * 1024 * 1024;
-const DEFAULT_DECOMPRESSED_CACHE_TTL: Duration = Duration::from_secs(30);
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -216,8 +220,8 @@ impl HashKey {
     pub fn sha256_bytes(self) -> Option<[u8; 32]> {
         (self.algorithm == HASH_SHA256).then(|| {
             let mut digest = [0_u8; 32];
-            for (chunk, lane) in digest.chunks_exact_mut(8).zip(self.lanes) {
-                chunk.copy_from_slice(&lane.to_be_bytes());
+            for (chunk, lane) in digest.as_chunks_mut::<8>().0.iter_mut().zip(self.lanes) {
+                *chunk = lane.to_be_bytes();
             }
             digest
         })
@@ -264,8 +268,8 @@ impl HashKey {
     pub fn git_sha1_bytes(self) -> Option<[u8; 20]> {
         (self.algorithm == HASH_GIT_SHA1).then(|| {
             let mut bytes = [0_u8; 32];
-            for (chunk, lane) in bytes.chunks_exact_mut(8).zip(self.lanes) {
-                chunk.copy_from_slice(&lane.to_be_bytes());
+            for (chunk, lane) in bytes.as_chunks_mut::<8>().0.iter_mut().zip(self.lanes) {
+                *chunk = lane.to_be_bytes();
             }
             bytes[..20].try_into().expect("twenty bytes")
         })
@@ -275,8 +279,8 @@ impl HashKey {
     pub fn key_bytes(self) -> [u8; 40] {
         let mut out = [0_u8; 40];
         out[..8].copy_from_slice(&self.algorithm.to_be_bytes());
-        for (chunk, lane) in out[8..].chunks_exact_mut(8).zip(self.lanes) {
-            chunk.copy_from_slice(&lane.to_be_bytes());
+        for (chunk, lane) in out[8..].as_chunks_mut::<8>().0.iter_mut().zip(self.lanes) {
+            *chunk = lane.to_be_bytes();
         }
         out
     }
@@ -287,8 +291,8 @@ impl HashKey {
 
     fn from_padded(algorithm: i64, bytes: [u8; 32]) -> Self {
         let mut lanes = [0_i64; 4];
-        for (index, chunk) in bytes.chunks_exact(8).enumerate() {
-            lanes[index] = i64::from_be_bytes(chunk.try_into().expect("eight-byte hash lane"));
+        for (index, chunk) in bytes.as_chunks::<8>().0.iter().enumerate() {
+            lanes[index] = i64::from_be_bytes(*chunk);
         }
         Self { algorithm, lanes }
     }
@@ -369,6 +373,10 @@ pub type StoreResult<T> = std::result::Result<T, StoreError>;
 pub struct SourceId(i64);
 
 impl SourceId {
+    /// The id as a number (a key's bytes, a test's check).
+    pub fn raw(self) -> i64 {
+        self.0
+    }
     /// An id a record of this store kept (`raw`; a kept statistics blob, decision 0096 §2). A source collected since reads as absent: a lookup finds nothing.
     pub fn from_raw(id: i64) -> Self {
         SourceId(id)
@@ -391,9 +399,9 @@ pub struct UnindexedTape {
     /// The workspace's grammar id (`workspace::grammar_id`, or a derived document's
     /// `workspace::document_grammar_id`).
     pub grammar: i64,
-    pub source: Vec<u8>,
-    /// The decoded tape image.
-    pub image: Vec<u8>,
+    /// The source and the tape, read in place in their segments.
+    pub source: ObjectBytes,
+    pub image: ObjectBytes,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -513,6 +521,40 @@ pub struct DocumentPayload<'a> {
     pub tape: &'a [u8],
     pub source_map: &'a [u8],
     pub host_errors: &'a [u8],
+    /// The parent's bytes it stands at, where they are not its text's (`tape::DerivedImage::at`).
+    pub at: Option<(u32, u32)>,
+}
+
+/// A document derived from a file's, queued for the store's writer with the file's tape (decision 0431 step 6): a
+/// `DocumentPayload` that owns its bytes until written.
+#[derive(Clone, Debug)]
+pub struct QueuedDocument {
+    pub parent_ordinal: i64,
+    pub role_id: i64,
+    pub via_id: i64,
+    pub source: std::sync::Arc<String>,
+    pub grammar_id: i64,
+    pub tape: Vec<u8>,
+    pub source_map: Vec<u8>,
+    pub host_errors: Vec<u8>,
+    pub at: Option<(u32, u32)>,
+}
+
+impl QueuedDocument {
+    /// Its payload, borrowing its bytes.
+    pub fn payload(&self) -> DocumentPayload<'_> {
+        DocumentPayload {
+            parent_ordinal: self.parent_ordinal,
+            role_id: self.role_id,
+            via_id: self.via_id,
+            source: self.source.as_bytes(),
+            grammar_id: self.grammar_id,
+            tape: &self.tape,
+            source_map: &self.source_map,
+            host_errors: &self.host_errors,
+            at: self.at,
+        }
+    }
 }
 
 /// A `file_documents` row: a document derived from a stored primary tape. `source` and
@@ -529,6 +571,22 @@ pub struct StoredDocument {
     pub grammar_id: Option<i64>,
     pub source_map: Vec<u8>,
     pub host_errors: Vec<u8>,
+    pub at: Option<(u32, u32)>,
+}
+
+/// A program recorded with a file's tape (decision 0431 step 6, `TapeFrame::programs`): its row, its text, and its
+/// tape's frame.
+#[derive(Clone)]
+pub struct StoredProgram {
+    pub document: StoredDocument,
+    pub text: std::sync::Arc<CachedBytes>,
+    pub tape: TapeFrame,
+}
+
+impl std::fmt::Debug for StoredProgram {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredProgram").field("document", &self.document).field("text", &self.text.len()).finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -552,8 +610,8 @@ pub struct PublicationResult {
     pub reconciliation_passes: usize,
     pub reused_sources: usize,
     pub reused_tapes: usize,
-    pub compressed_sources: usize,
-    pub compressed_tapes: usize,
+    pub written_sources: usize,
+    pub written_tapes: usize,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -570,14 +628,15 @@ pub struct SnapshotFilePublication<'a> {
 pub struct LocalResultPublication {
     pub candidate: CandidateClause,
     pub context: HashKey,
-    pub raw_length: usize,
-    pub frame: Vec<u8>,
+    /// The result's bytes, stored as they are, in a segment (decision 0450 step 2).
+    pub bytes: Vec<u8>,
 }
 
 #[derive(Clone, Debug)]
 pub struct StoredLocalResult {
     pub candidate: CandidateClause,
-    pub bytes: Vec<u8>,
+    /// The result's bytes where its segment holds them, mapped (decision 0450 step 2).
+    pub bytes: ObjectBytes,
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -632,8 +691,9 @@ pub struct CollectionReport {
     pub sources: usize,
 }
 
+/// A stored source's or tape's bytes, read in place in their segment (`read_cache`).
 pub struct CachedBytes {
-    backing: CachedBacking,
+    bytes: SegmentBytes,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -650,14 +710,16 @@ pub struct StoreCapacity {
     pub state: CapacityState,
 }
 
+/// Facts plan sets, each its plans' digests, by the set's digest.
+type PlanSets = HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>;
+
 pub struct ContentStore {
     database_path: PathBuf,
     connection: ThreadConnection,
     compression_level: i32,
-    decompressed_cache: Mutex<DecompressedReadCache>,
     local_result_cache: Mutex<LocalResultCache>,
     /// Facts plan sets by digest (immutable once written: `facts_memo`).
-    facts_plan_sets: parking_lot::Mutex<HashMap<[u8; 32], std::sync::Arc<[[u8; 32]]>>>,
+    facts_plan_sets: parking_lot::Mutex<PlanSets>,
     /// This process's atoms of the store (atoms.rs, decision 0049), shared with the planner's symbols.
     atoms: std::sync::Arc<atoms::Atoms>,
     /// What pushes wrote, held for the waves that read it (`working_set`, decision 0024 §5).
@@ -670,6 +732,8 @@ pub struct ContentStore {
     /// This handle's shared collection lease (`hold_collection`): a file lock, which WASI has not.
     #[cfg(not(target_family = "wasm"))]
     lease: std::sync::Arc<collection_guard::SharedLease>,
+    /// How long an ended store session's data is kept (decision 0450 step 3).
+    session_ageing: reclamation::SessionAgeing,
     #[cfg(any(test, feature = "test-hooks"))]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(any(test, feature = "test-hooks"))]
@@ -707,13 +771,12 @@ impl Drop for ContentStore {
 
 impl ContentStore {
     /// The process forgets the store at `path`, closed and about to be deleted while the process goes on (a test's
-    /// own): its upkeep jobs, what it read of it to hold in memory (its frames, decision 0104) and its identity. Held
+    /// own): its upkeep jobs, what it read of it to hold in memory (its kept blocks' rows and memo entries, decision 0104) and its identity. Held
     /// past the store's life, each is memory no run reads again, and a job's connection held the deleted file open.
     pub fn forget(path: &Path) {
         // Its upkeep jobs first: one holds a read connection on the file.
         rerail_accel::upkeep::forget_file(path);
-        upkeep::forget(path);
-        frames::forget_snapshot(&path.to_string_lossy());
+        held::forget_snapshot(&path.to_string_lossy());
         atoms::forget_identity(&path.to_string_lossy());
     }
 
@@ -722,15 +785,15 @@ impl ContentStore {
     fn sibling(&self) -> ContentStore {
         ContentStore {
             database_path: self.database_path.clone(),
-            connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity()),
+            connection: ThreadConnection::new(self.database_path.clone(), self.connection.identity(), self.connection.flush()),
             compression_level: self.compression_level,
-            decompressed_cache: Mutex::new(DecompressedReadCache::new(DEFAULT_READ_CACHE_BYTES, DEFAULT_DECOMPRESSED_CACHE_TTL)),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
             atoms: std::sync::Arc::clone(&self.atoms),
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
             write_back: None,
+            session_ageing: self.session_ageing.clone(),
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -758,15 +821,16 @@ impl ContentStore {
     }
 
     fn open_with(path: &Path, models: bool) -> StoreResult<Self> {
-        // Created `0600` before SQLite opens it, in a `0700` folder, so the WAL SQLite creates beside it is private too.
+        // Create the database with mode 0600 before SQLite copies its mode to the WAL.
         private_files::prepare(path)?;
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
         let mut connection = Connection::open_with_flags(path, flags)?;
+        let flush = connection::store_flush()?;
         // Only creating or migrating the schema takes the write lock (`initialize`).
         let identity = retry_busy(&mut BusyRetries::default(), || {
-            Self::initialize(&mut connection)
+            Self::initialize(&mut connection, flush)
         })?;
         drop(connection);
         // Compiled Neural Engine models are facts of this store (decision 0098 §3).
@@ -776,22 +840,35 @@ impl ContentStore {
         }
         #[cfg(not(target_os = "macos"))]
         let _ = models;
-        Ok(Self {
-            database_path: path.to_path_buf(),
-            connection: ThreadConnection::new(path.to_path_buf(), identity),
+        // A store created again at its path has a writer of its own too.
+        Ok(Self::with_connection(
+            path.to_path_buf(), ThreadConnection::new(path.to_path_buf(), identity, flush),
+            atoms::Atoms::for_database(path, Some(identity)), Some(write_back::register_store(path, identity)),
+        ))
+    }
+
+    /// The scratch store for fact-only evaluation with the durable cache disabled.
+    pub fn open_ephemeral() -> StoreResult<Self> {
+        let mut connection = Connection::open_in_memory()?;
+        let atoms = atoms::Atoms::ephemeral();
+        atoms::Atoms::share_memory(&connection, std::sync::Arc::clone(&atoms))?;
+        let flush = connection::store_flush()?;
+        let identity = Self::initialize(&mut connection, flush)?;
+        Ok(Self::with_connection(PathBuf::from(":memory:"), ThreadConnection::memory(connection, identity, flush), atoms, None))
+    }
+
+    fn with_connection(database_path: PathBuf, connection: ThreadConnection, atoms: std::sync::Arc<atoms::Atoms>, write_back: Option<std::sync::Arc<write_back::Writer>>) -> Self {
+        Self {
+            database_path,
+            connection,
             compression_level: DEFAULT_COMPRESSION_LEVEL,
-            decompressed_cache: Mutex::new(DecompressedReadCache::new(
-                DEFAULT_READ_CACHE_BYTES,
-                DEFAULT_DECOMPRESSED_CACHE_TTL,
-            )),
             local_result_cache: Mutex::new(LocalResultCache::new(DEFAULT_READ_CACHE_BYTES)),
             facts_plan_sets: parking_lot::Mutex::new(HashMap::new()),
-            // A store created again at its path, by this process or another, has atoms of its own.
-            atoms: atoms::Atoms::for_database(path, Some(identity)),
+            atoms,
             working_set: working_set::WorkingSet::default(),
             applying: parking_lot::Mutex::new((0, None)),
-            // A store created again at its path has a writer of its own too.
-            write_back: Some(write_back::register_store(path, identity)),
+            write_back,
+            session_ageing: reclamation::SessionAgeing::default(),
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -800,7 +877,7 @@ impl ContentStore {
             git_tree_write_count: AtomicUsize::new(0),
             #[cfg(any(test, feature = "test-hooks"))]
             git_tree_transactions: AtomicUsize::new(0),
-        })
+        }
     }
 
     /// Drop process-local read caches and close every thread's idle connection to the store, with
@@ -808,10 +885,6 @@ impl ContentStore {
     /// resident documents: an active apply benefits from the caches, while an inactive one should
     /// not retain an arena or SQLite page cache. Connections reopen on the next read.
     pub fn release_memory(&self) -> StoreResult<()> {
-        self.decompressed_cache
-            .lock()
-            .expect("decompressed cache mutex poisoned")
-            .clear();
         self.local_result_cache
             .lock()
             .expect("local result cache mutex poisoned")

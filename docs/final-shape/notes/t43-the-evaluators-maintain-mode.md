@@ -190,6 +190,12 @@ build, `RERAIL_DEVICE=cpu`, on a farm host (M3 and M1 Max, otherwise idle):
 `maintain-report.py` makes the table. Its baseline is the forms' runs of 2026-11-17 (`tmp/o125/logs`, the same
 harness, `dump.sh`): `qd` (DRed forms) and `kd` (counting).
 
+**Correction (2026-11-19, step 18):** the forms' runs of steps 05-08 all panicked ("index out of bounds",
+setfix.rs:4000, "host stream strata: a job panicked") and wrote no findings. Their figures below are the cost of a
+crashed run. The baseline's fractions are of step 00's cold run (289 G); this note's are of each step's own cold run.
+Steps 01-04 of the forms are correct (their findings equal this branch's cold runs) and are the only valid
+comparison.
+
 Instructions retired, as a fraction of the same series' cold run:
 
 | Step | qd (forms, DRed) | kd (counting) | kept, now |
@@ -308,9 +314,14 @@ its probes lost its indexes (kept step 04: 231 G against 163 G). The versions no
 ## Step 4: the kinds still derived again (R3)
 
 Counted over the session replay, the strata derived again for a reason R3 does not allow:
-- **`cparam` changed without a version** (14–28 an edit sequence): `cparam` and `gbase_at` read `nearest`, which
-  the mode refuses. Derived again, each time from SQL, they are never kept, so their readers have no version and
-  are derived again in turn.
+- **`cparam` changed without a version** (28 over the session's nine steps): its readers (`tmap`, `tparg`, …) find
+  `cparam` changed but holding no version. Why `cparam` itself has none is not known yet: on the corpus path the
+  preparation pass makes `nearest(c, m, scope)` an input atom (`nearest_scope(c, m)`, `lower::transduce_nearest`),
+  so `cparam` and `gbase_at` are plain joins, and the mode's refusal of a `nearest` literal never applies to them.
+  An earlier reading here blamed that refusal. The replay's trace (mm12, after step 3's compaction fix) shows
+  `cparam` with no kept rows at every step: "nothing kept: its part's first run" on the steps whose reads change
+  little, past θ on the others (3,922 delta rows against θ × 0 kept). So the run keeps no rows of `cparam` at all,
+  and each run derives it again with no version. Why it is not kept is traced next (`RERAIL_SHAPE_TRACE not kept`).
 - **An aggregate over a changed input** (every small edit of R3's test: `width` counts `child`).
 
 **Aggregates over a changed input.** The refusal was there because an input's rows are read projected (its
@@ -319,16 +330,508 @@ arguments over whole columns, so the aggregate's own read must be whole too. An 
 rows now (`New`, given beside it with `Old`, `Minus` and `Plus`), and the add join reads the aggregate's atom from
 them. Both refusals ("…over a changed input", "…over a changed view of an input") are gone.
 
-**`nearest` (design, next).** The spec has an item for it (`JoinItem::Near`), but the engine has no step and
-refuses the spec. So a stratum that reads `nearest` runs in SQL (its tree read climbs the tape), and the engine
-keeps nothing of it. The first part is that step: climb a bound node's parents on the tape, each tested by its
-kind, as SQL's tree read does, binding the first whose kind is in the set (or, bound from above, walk down). With
-it, an add join or a recheck reads the tape as it is now, which is right. A removal join reads what was, but a changed file's
-tape is its new one: an old node of that file has no old ancestors to climb to. A file that did not change has the
-same tape, so `nearest` of its nodes is as before. So, for a stratum that reads `nearest`:
-- its removal joins evaluate `nearest` as they do now, which is exact for every node of a file that did not change;
-- and every kept row of the stratum that names a node of a changed file is a removal candidate too, read through
-  the stratum's kept rows by document (its node columns' documents, as the kept inputs' owner ranges find them).
-  The recheck then evaluates each against the tape as it is now and keeps those still derived.
-That is sound, since a candidate is only removed when the recheck derives it no more, and it costs the changed
-files' rows. Then `gbase_at` and `cparam` are kept and maintained, and their readers have versions.
+**`nearest` outside the corpus path.** A run that is not prepared (the plain `run`) keeps `nearest` literals, and
+their spec item has no engine step, so such a stratum runs in SQL. A native climb step (the tape's parents, each
+tested by its kind in `node`) is written and parked, uncompiled, in `working-data/native-nearest-step.patch`. The
+corpus path does not need it, and it is not part of 0364.
+
+## Step 5: the driver's three outcomes (R9)
+
+Each stratum the walk reaches had one of five handlings, and only two were counted. The driver's `counts` and
+`again` slots were left over from the forms and never written, so the report's "derived again" was 0 whatever ran.
+- A mode run that changed nothing was counted nowhere.
+- A stratum no changed read reaches, with no kept rows, was derived from its reads, uncounted.
+- A native operator's stratum (the reach index) was made again, uncounted.
+- The report's quiet count (`Outcome::quiet`, decision 0101 §1) counts the strata the mode took and found nothing to
+  do in, not the strata the walk skipped.
+
+Now the run's `Outcome` counts every outcome once: `walked` (reached, skipped, of all), `maintained` (and of them the
+recursive), and `again`, each stratum with its reason (`NOT_KEPT`, `NATIVE_OPERATOR` added to `FIRST_RUN`,
+`THRESHOLD`, …). The `Driver` keeps no counts, and the `walked` hook is gone. The report adds `cross_skipped`, which
+R9 reads beside `cross_maintained` and `cross_again`.
+
+## Step 6: the forms' leftovers go (R1)
+
+What the forms left in the run path, with nothing left to make it:
+- **Levels, survivors, `based`.** The native program spec's levels lines (`Line::Levels`, the `Levels` driver of
+  setfix), the quiet survivors stage of the composed run, and the `Start::Base` seeds. The compose test that built a
+  DRed program by hand to drive them (`quiet_composed_maintenance_keeps_the_same_resident_fact`) went with them.
+- **The planner's maintenance names.** `changes_with_the_delta` (`__ins`, `__redo`, `__del`), `smaller_change` and the
+  distinct-demand pricing (`__plus`, `__minus`), `reads_change` (ten suffixes), the `__old`/`__live` statistics
+  fallbacks of `prior_stats`, and the unsized-delta counter (no relation is named `r__plus` any more). Each tested a
+  name no relation has, so each was constantly false.
+- **Statistics kept by delta** (decision 0096 step 4). They were made for a relation bound as `r__old` that a form
+  maintained, and no relation is bound so: `bind_kept`'s `maintains` was false at every call. Gone: `Patched`, the
+  cell's `patched` map, `bound_old`, the input statistics a new process gave `r__old` (`input_stats`,
+  `projection_of`, `Stats::of_columns`), and the frames' statistics kind 0. The frames' statistics part is now
+  format 2, measured statistics only. A format 1 part reads as none: the relation is measured again once.
+- **`r__minus`/`r__plus` held for a stratum derived again.** Where a relation derived again cannot be made a version
+  of its kept rows (a reach index held over its source, decision 0119, in a chunk's guest rounds, 0331),
+  `kept_delta` held its diff under those names. Now it returns the rows gone and added, and its readers are given
+  them as its versions (`diffs`), beside it, under no name. The diff still copies both sides' rows to compare them:
+  0364 R2's one open case, counted by `rows_copied`.
+- **The given deltas' column names** (`r__plus_c0`) are the relation's own: the planner prices a version by its
+  relation (`delta_rows`), never by these names.
+- **The spike's form counts** (`Outcome::spike_forms`, `spike_reached`), never filled once the forms went.
+
+With these gone, `r1_the_engine_source_names_no_maintenance_relation` passes and is no longer ignored.
+
+**A view of an input, reached.** A view of an input's columns (Q37) keeps nothing, so a reached one was taken for
+its part's first run (`FIRST_RUN`, R3's allowed reason): r3's own trace showed `doc_tape`, `document` and
+`library` "derived again" at every step. In the corpus, `cparam` (`cparam(c, i, y) :- fl…_cparam(c, i, y)`, a whole
+copy of a file-local export) went past θ instead (its delta against 0 kept rows), and its readers then found no
+version of it: `tparg`, `tvar_of`, `rtvar`, `ownvar` and the 44-relation stratum were derived again ("cparam changed
+without a version"). Now a reached stratum shaped as a view (`view_shaped`, whether or not its input is bound yet;
+a file-local export is bound when its first reader runs) is held again in place and counted maintained, the mode's
+trivial case: its version is its input's, read through its columns. Its readers' `ins` gives them that: the input's
+given versions, or, for an input the engine holds with its change marked in place (the export), the input's own
+versions read through the view's columns. R3's test now allows only θ: each of its edits follows its part's first
+run.
+
+**A view by its program, not by a run's rows.** `cparam` still went past θ with 0 kept rows: it has two rules in the
+cross part, the export's copy and a cross-file rule (`gbase_at`, …) over relations empty in these runs. The native
+stratum leaves out a rule over an empty relation, and then took the copy rule left for a view of an input: held as a
+view, so never kept, so derived again at every step with no version. Now a stratum is a view only when its program's
+rules make it one (`written == 1`, before any is left out). `cparam` is derived, kept and maintained, and its
+readers are maintained (O125 steps 00–02: no stratum "changed without a version", 186 maintained against 180).
+R3's test holds the case: `defq` copies `def` and joins `lonely`, a cross-file relation that is always empty.
+Without the check it fails ("not reached, its rows not kept").
+
+## Step 7: the static check in the engine (R6)
+
+`plan/wellfounded.rs` is `wf.py` ported (decision 0364 §5). It is an analysis of the whole program's version
+(`Proofs`), made once, and a run asks it by component:
+- the session's driver gives the one made of the program the parts were split from (`Programs::program`,
+  `Maintain::proofs`);
+- a run with no split (a plain run, a chunk's guest rounds) makes it of its own version.
+
+It must read the whole program. In the cross part, a file-local helper (`attr_of`, `rasg`) is an input, and a join
+pushed into the chunks (`fl<n>_<rule>`, decision 0051) holds tree steps whose rules the part does not have. Checked
+over the cross part's version alone, every one of the corpus's nine maintained recursive components failed, `walk`,
+`qn` and `icall/vpos/vroot` included, which `wf.py` proves. The check also reads `nearest` as the engine lowers it,
+`rr_nearest_<set>(n, a)`, a step up.
+
+A proved component:
+- keeps no levels: neither its first derivation's `leveled` line nor the mode's;
+- is maintained with no levels on its kept rows;
+- gets a `measured` line in setfix in place of `leveled`. Its candidates go in a heap keyed by the measure, then the
+  relation's rank: the node's depth (`ast_depth`) ascending or descending, its document order (`node_order`)
+  descending, or the index;
+- has each candidate rechecked once, over the relations as they are (no `cap`), and a row gone is never derived
+  again: every row a candidate's derivations read is before it in that order, so already decided;
+- is counted maintained, not by levels.
+
+**Where the key cannot be read.** A part that holds no tree has neither `ast_depth` nor `node_order` bound: the
+cross part of `calls.rr`, whose tree steps were pushed into the chunks (the replay's first measured run failed on
+"no such table: main.ast_depth"). The measure's key there would be an input the part does not read, so the order is
+dropped, not the proof. Unkeyed (`measured … u`), candidates go in id order, and a candidate that stays is queued
+again when a row it may read goes. This is sound in any order:
+- a kill is final: rows only go, so a row no rule derives over the rows now, none derives at the end;
+- a stay is checked again whenever a support goes, and with no cycle that ends with every stay over rows that stay.
+
+The key buys "once each". Without it, a row is checked once per support that goes, still with no levels.
+Bringing the key to the cross part (its documents' depths, as an input of the part) was open; step 10 does it.
+
+`r6_a_component_that_cannot_cycle_keeps_no_levels` passes and is no longer ignored. With the proof forced off it
+fails (by levels: 1). Its first edit only adds rows, so it pushed no candidate and passed with a key no run could
+read. It now also shrinks the body, removes the import and puts it back, each against a fresh run (R10) and with no
+levels. R5's ring, which can cycle, is still maintained by levels.
+
+## Step 8: the recheck's order is priced (R7, Q116)
+
+The recheck took one greedy pass over its body with the head bound (`bound_head_order`), unpriced. Now it is
+planned as the other lines are (`Model::plan_rule_bound`). The search starts from one row with the head's plain
+variables bound, the state a recheck's candidate gives, and searches and prices orders from there. Such a plan is
+no line's kept plan: only `plan_rule_reused` reads or keeps those, and a recheck does not call it. The greedy order
+remains for a body none of whose priced orders has a native join, and is counted (`rechecks_unpriced`).
+`r7_the_recheck_order_is_priced` passes over the small edits and is no longer ignored.
+
+## Step 9: the data-layer scale run
+
+The data layer's own history as a replay (`scripts/profiling/o125/dl-history.sh`): 00 is the `.py` tree of one
+commit, and 01–03 are the next three commits' changes in `l2060_query_builder/`. The policy is
+`conditional-architecture.rr` reading the whole tree. Each rung runs cold and as a session; "session = cold" means
+the session's findings equal a cold run's at each step. CPU is per run, on an M3 farm host.
+
+| Files | First run | Edits (01, 02, 03) | Session = cold |
+|---|---|---|---|
+| 37 | about 10 s | 1.6–4.7 s | yes |
+| 334 | 65–72 s | 27, 24, 22 s | yes |
+| 2,410 | 508–530 s | 477–579 s | yes |
+
+At 2,410 files an edit cost as much as a first run: correct, with no saving. One edit at 334 files, profiled,
+showed why.
+
+**θ was measured against the wrong rows.** §4's share compared a stratum's changed reads' deltas with the
+stratum's own kept rows. `rr_cover41` keeps 644 rows over `child`, `docof` and `col`, the whole tree. A 2-file edit
+changes about 10,000 tree rows, so `rr_cover41` was derived again at every edit, along with 8 strata like it. That
+cost was the corpus, not the edit. A derive reads its inputs whole and the mode reads their deltas, so the share
+is now the deltas over the rows those reads hold. Where the mode's own checks still leave a stratum maintained and
+the change is past the floor, §4's second clause decides: the mode's lines, priced by the planner (`mode_costs`),
+against a derive's. These are kept plans that either path then takes as they are (`RERAIL_AGAIN_PRICE`, default 1).
+
+**A negated changed read did not lead its line.** The mode planned a line driven by `!r`'s delta with no driver
+(`first` was the positive drivers' alone), and `versioned` turned the atom positive at the place the plan had put
+it as a test. The line walked its other atoms over the whole corpus to meet a delta of a few rows: 113 removal
+joins took 10 s of the 31 s edit. Now the body is planned with the negated atom's variables bound
+(`Body::with_bound`, the planner's state with variables bound before the first step), and the atom's item, now
+reading the delta positively, goes first.
+
+After both, at 334 files, the edits take 6.4, 9.9 and 8.4 s, and the session still equals cold. O125's steps 00–02
+remain correct: 188 strata maintained, and 22 derived again where the mode was priced above a derive.
+
+After the hub's merge (Q208's head-bound recheck, 0401's kept facts), on the same M3 host, sessions:
+
+| Files | First run | Edits (01, 02, 03) | Shape |
+|---|---|---|---|
+| 334 | 65 s | 9.0, 13.2, 11.5 s | no row copied, no unled driver, no unkeyed measure |
+| 2,410 | 436 s | 55, 65, 55 s | the same |
+
+At 2,410 files the edits took 477–579 s at first. With the session memo fixed, they took 79–83 s. The memo now
+keeps each file's current entry and the one before it (`HeldEntries`); its 4,096-entry cap had wiped it partway
+through the session. After the merge they take 55–65 s. At 334 files the edits are slower than before the merge
+(6.4, 9.9, 8.4 s); the cause is not yet known. A 2,410-file edit is still about 5× a 334-file edit, at 7× the
+files.
+
+## Step 10: the measure's key in the cross part (R6)
+
+Step 7 left a gap. A proved component ordered by depth or document order reads `ast_depth` or `node_order` of
+each candidate's node, and a cross part has no tree. There its candidates went unkeyed: sound, but a stay was
+checked again each time one of its supports went, not once.
+
+Now the split names, for each proved component of the cross part, the key relation its measure reads
+(`measure_keys`). The chunks hand that relation on as an input of the part, the way they hand on a base relation
+a cross-file rule looks a node up in: a semi-join, with each file's rows kept in its memo entry. The node set is
+the cross part's own: the nodes its exports hold, and those of the base relations it holds whole. In `r6`,
+`below(a, c) :- below(a, b), child(b, c, _)` takes `c` from `child`, so the exports alone would not cover it, and no
+rule makes a node. This adds no copy: the key's rows are base rows handed on, like the part's other base inputs.
+
+A removal's candidate can stand at a node the edit took out of the tree. That node has no key now, so the
+candidate is *loose*: it goes first, and if it stays, it is checked again as a row it may read goes. If a loose row
+goes, its readers are queued again, decided or not. This is the unkeyed rule from step 7, applied only to rows
+with no key, and it is sound in any order. Every other candidate is checked once, in its measure's order.
+
+`maintain::shape` counts a proved component run without its key (`measures_unkeyed`). The R6 test asserts none
+in its cross part, through four edits, with each run's outputs equal to a fresh run's.
+
+## Step 11: after the merge, O125 again
+
+Two things stopped O125 on the merged engine.
+
+**The hub's product-demand pass refused `calls.rr`.** `pv(o, "cls", c) :- attr_of(_, o, _), builtin_ref(o,
+"object"), qv("builtins.object", "cls", c)` joins `o` and `c` through nothing. The pass pushed its demand up to
+`base`, an output, and refused the whole program. That also broke the typing oracle test
+(`python_calls_program_agrees_with_the_runtime`). By the user's choice, a node variable bound only by lookups on
+constants is now fixed, as `c = constant` is. Its product is one side times that lookup's few rows.
+
+**R6's key read was SQL inside the waves,** which `RERAIL_SQL_STRICT` refuses (decision 0104). It is now a lookup on
+the key relation's bound source, in place.
+
+O125 then ran, and step 02 copied 699 rows to state a change (R2). `cls_q` is a levelled stratum derived again past
+θ: its kept rows had levels and the derive's rows had none, and `InRel::rebased` refused to start from rows whose
+levels differed. It now takes either direction. Where the derive has no levels, the kept levels are dropped. Where
+the kept rows had none, every live row is one the derive found or added, and it takes the derive's level. R5's test
+now ends with an edit at θ 0 that derives the ring again, and asserts no row is copied.
+
+| Step | Session CPU (M3) | Session = cold |
+|---|---|---|
+| 00 | 27.0 s | yes |
+| 01 | 12.7 s | yes |
+| 02 | 10.2 s | yes |
+
+188 strata are maintained and 22 derived again past θ, as before the merge. Nothing is copied or held under a
+maintenance name, every changed read leads its line, and every measure reads its key.
+
+## Step 12: the goal, measured again
+
+O125's replay, steps 00–08 (`calls.rr`, 77 files), on the M3 farm host, the harness of step 1 ("Measurements").
+Kept and session findings equal cold at all 9 steps (R10).
+
+Instructions per kept edit, as a fraction of the same step's cold run, against the forms' figures from step 1:
+
+| Step | qd (forms, DRed) | kd (counting) | step 1 | now |
+|---|---|---|---|---|
+| 01 | 0.64 | 0.64 | 0.73 | 0.51 |
+| 02 | 0.58 | 0.58 | 0.75 | 0.47 |
+| 03 | 0.74 | 0.74 | 1.33 | 0.64 |
+| 04 | 0.55 | 0.54 | 0.63 | 0.45 |
+| 05 | 0.59 | 0.82 | 2.02 | 0.89 |
+| 06 | 0.63 | 0.64 | 0.70 | 0.51 |
+| 07 | 0.61 | 0.61 | 0.61 | 0.55 |
+| 08 | 0.71 | 0.71 | 1.44 | 0.72 |
+
+Cold runs take 361–380 G instructions. Kept edits beat both forms at 6 of 8 steps, and step 08 is level. Step 05
+is short: 0.89 against 0.59.
+
+What is kept, against step 1:
+
+| | Step 1 | Now |
+|---|---|---|
+| Rows | 1.0 M | 649,000–689,000 |
+| Values | 19.4–20.7 MB | 13.0–14.5 MB |
+| Levels | 4.7–5.4 MB | 3.5–4.8 MB |
+| Sets and indexes | 6.4–7.3 MB | 4.8–5.9 MB |
+| Maintenance relations held per edit | 800–1,400 | 0 |
+| Rows copied per edit | 15,000–110,000 | 0 |
+| Unpriced recheck lines | 430–500 | 0 |
+
+A kept edit, a new process, still reads 2,500–5,100 frame parts back, its kept part from the store. A session's
+edit reads none (R8). In the session, the first run takes 28.6 s CPU and the edits 8.9–22.8 s, 0.31–0.80 of it.
+Step 05's edit is the costliest in both kept and session.
+
+## Step 13: a session's input deltas from the changed documents' entries
+
+Profiling step 05's session edit (12.0 s of cross part) showed 2.81 s spent finding the inputs' deltas, and all
+105 of them were found by hashing every document's rows, unchanged ones too. None were read from the changed
+documents' memo entries. `input_delta::changed` looked up an entry under the whole program's plan digest
+(`memo_whole`) and the run's absolute path. The memo holds an entry under its plan's id (`memo_plan.id`, the space
+digest of 0225 §2) and the store path (`world::store_path`). So no lookup ever found one, and every session edit fell
+back to hashing. Both keys are fixed. On O125, 111 inputs are now read from the entries and 4 are hashed. Reading
+them still took 2.7 s for 180,000 rows, because `Delta` searched the entry's relations by name for every cell read.
+Each entry's rows are now found once, and the read takes 0.88 s.
+
+`maintain::shape` counts both paths (`inputs_from_entries`, `inputs_hashed`). R1/R2's test asserts that the
+entries are read (0 before). The inputs still hashed are an open item of 0364.
+
+Session CPU per step, after: 28.0 (00), 11.5, 9.8, 14.2, 8.6, 24.2, 9.8, 11.3, 15.8 s. Session = cold at every step.
+
+## Step 14: a new process hashes only the changed documents' rows of its inputs
+
+A kept CLI run (a new process) found each input's delta by hashing every row of every document
+(`retain::document_delta`): 2.6-3.1 s of O125 step 05, and so of every step, however few documents changed. A
+session reads the changed documents' memo entries (step 13). In a new process those entries are the store's: the
+old content's entry is not admitted before the first wave, and resolving a content to its source is SQL inside the
+waves (`memo.found`, refused by `RERAIL_SQL_STRICT`). So the store route was not taken. Instead:
+
+- The documents a kept run read (path, key and content, as `input_delta::Docs`) are a frame of the part's space,
+  `rerail:run_docs` under the cross program's `binds` (`retain::write_run_docs`). It is read with the cross part's
+  frames before the first wave (`retain::run_docs_rel` among `frame_rels_kept`'s identities) and set on the kept part
+  (`read_run_docs`, `Retained::set_docs`). It is written only when the list changed, not when it differs only in how
+  a content is named (by digest, then by source once stored behind the run). A run whose inputs did not change writes
+  no first record, so a warm run writes nothing.
+- A document whose content and key are the last run's has its inputs' rows as they were, except in a semi-join's
+  relation (`semijoin`, which follows other documents' exports). `retain::document_delta_except` takes those digests
+  from the frame (`was`), counts each owner's rows (`documents_of`, falling back to the whole pass when an unchanged
+  document's count differs), and hashes only the other owners' rows. A changed document's old rows are read by the
+  kept input's ranges (`Retained::input_ranges`, when the source is the one adopted), and its new rows come from
+  those already collected.
+
+`maintain::shape::inputs_hashed_whole` counts the inputs whose every row was hashed. The new test
+`r2_a_new_process_hashes_only_the_changed_documents_rows_of_its_inputs` (kept runs outside a session, with
+`run_kept`) asserts it is 0 after each small edit. Without the frame write the test fails, with 4 inputs hashed whole.
+
+O125 step 01 (a one-file edit, 75 of 77 documents unchanged), M1 Max: "input delta by document" 1.31 s, of which
+hashing is 0.10 s. The rest is reading owners: 0.37 s counting, 0.44 s for the old rows (this input's old source was
+decoded by `load`, so it has no ranges: see 0364's open item), and 0.19 s for the new rows. Step 05 (14 documents
+changed, about half the lines) took 3.1 s before the other owners' rows were hashed apart. The kept route's other
+open costs are 0364's: `load` copies and hashes the inputs it reads from the frames, and the kept-facts writer carries
+a delta's entries forward (0353 row 12).
+
+## Step 15: the goal measured again, and θ measured (0090 §4: "θ is set by measurement")
+
+O125 00-08 on the M1 Max (the M3 was loaded at 24 and short of disk). Kept instructions as a fraction of cold,
+with the forms' qd and kd beside them:
+
+| Step | Kept / cold | qd | kd |
+|---|---|---|---|
+| 01 | 0.51 | 0.64 | 0.64 |
+| 02 | 0.47 | 0.58 | 0.58 |
+| 03 | 0.64 | 0.74 | 0.74 |
+| 04 | 0.44 | 0.55 | 0.54 |
+| 05 | 0.88 | 0.59 | 0.82 |
+| 06 | 0.49 | 0.63 | 0.64 |
+| 07 | 0.53 | 0.61 | 0.61 |
+| 08 | 0.69 | 0.71 | 0.71 |
+
+Every step's findings are the cold run's, and session = cold holds at every step. Step 05 is the one short of the
+forms. Its kept run derives 39 of 121 strata again, every one past θ ("strata derived again, by reason", a new
+decision line), and those cost what the cold run's do: `vopen` 291,842 rows and 0.42 s in both.
+
+θ measured, kept instructions (G) per step:
+
+| θ | 01 | 02 | 03 | 04 | 05 | 06 | 07 | 08 |
+|---|---|---|---|---|---|---|---|---|
+| 0.25 (default) | 189 | 170 | 233 | 161 | 327 | 180 | 197 | 263 |
+| 0.5 | 186 | 169 | 231 | 160 | 333 | 185 | 203 | 269 |
+| off (`RERAIL_AGAIN=off`) | 196 | 215 | 350 | 199 | 506 | 227 | 201 | 396 |
+
+Maintaining what θ derives again costs up to 1.5 times as much (05, 08), so the threshold is right. Between 0.25
+and 0.5 the difference is within 2%, and θ stays 0.25 until the data layer's 9,010 files measure it too. Step 05's
+gap is then the kept run's own overheads, not θ:
+
+- the kept-facts writer's 2.9 s (a delta carries its predecessor's entries forward: 0353 row 12);
+- `load` copying and hashing the inputs it reads from the frames (1.7 s);
+- the input delta's owner reads (about 1.4 s, step 14).
+
+## Step 16: a wave's kept puts are one block per space
+
+Step 15's 2.9 s in the kept-facts writer was 112 jobs a run. Each input's job (`write_input_frames`) queued its own
+kept puts, so each wrote a delta of the space and carried the previous delta's entries into it: carrying took 1.5 s
+and finishing and syncing the blocks 1.0 s (new spans under "store writer: kept facts"). This is 0401 F2's
+cumulative delta, written once per input rather than once per wave.
+
+`queue_kept` now gathers the puts into the run's wave (`write_back::Gather`, as the tapes and the record are
+gathered). When the wave is sealed, each space's puts are one block. A key put twice in the wave starts a second
+block, so the puts apply in order (`a_waves_kept_puts_are_one_block_per_space`). Outside a run it is a job of its
+own, as before.
+
+O125 step 05, kept, on the M1 Max (load 13): 3 jobs and 0.115 s, against 112 jobs and 2.95 s. Kept instructions
+at 01-05 are 181, 163, 217, 152 and 323 G, against step 15's 189, 170, 233, 161 and 327 G.
+
+## Step 17: a changed input's old rows are its new rows of the unchanged documents
+
+`Retained::load` read each changed input's old rows whole from the frames: every granule decoded into columns,
+then every row hashed against its documents' digests (O125 step 05: 105 inputs; 1.0 s copying and 0.63 s
+checking). Only the changed documents' old rows differ from the run's own new rows.
+
+A changed input is now a `retain::OldInput`, a source over two parts:
+
+- the runs of the new source's rows of the unchanged documents (`same_docs`, step 14), read in place;
+- the changed documents' old rows, from their granules alone, checked against their digests and grouped by
+  document. Their ranges are what `document_delta_except` reads the old side by.
+
+It builds a column's lookup index where that column is first probed, as `Held` does. An input whose unchanged
+documents hold other row counts than the last run's, or a semi-join's, is read whole, as before
+(`shape::inputs_read_whole`). The R2 kept-path test asserts that count is 0 after each small edit.
+
+O125 step 05, kept, on the M1 Max: 103 of 105 inputs are read this way. The load is 1.43 s against 1.65 s, since
+the 14 changed documents (of 77) hold most of the rows. Kept instructions at 01-05 are 174, 157, 211, 145 and
+321 G, against step 16's 181, 163, 217, 152 and 323 G. `RERAIL_LOAD_TRACE` prints each input's granules, rows
+decoded and rows kept.
+
+## Step 18: the forms' baseline checked, and why a cold run costs more
+
+**The forms were not faster.** The forms' runs of 2026-11-17 (`tmp/o125/logs`) panicked at steps 05-08, qd and
+kd alike, and wrote no findings: their 05-08 figures (qd 05: 171.5 G, "0.59") are the cost of a crashed run. Their
+fractions were of step 00's cold run (289 G), not each step's own. Steps 01-04 are correct: their findings equal
+this branch's cold runs, all 8,796-8,802. Those four are the only like-for-like comparison, in absolute
+instructions:
+
+| Step | Forms, DRed (qd) | Forms, counting (kd) | Maintain mode now |
+|---|---|---|---|
+| 01 | 184.3 G | 184.3 G | 173.9 G |
+| 02 | 168.4 G | 168.4 G | 157.0 G |
+| 03 | 214.7 G | 214.8 G | 211.5 G |
+| 04 | 157.7 G | 157.7 G | 145.0 G |
+
+The mode is 2-8% below the forms at each step, while the cold run under it costs 14% more than the forms' engine's
+(below). Steps 05-08 have no forms figure: the forms did not finish them. Against cold, the mode's 05 is 0.87 (39
+strata past θ, derived again at a derive's cost; with the threshold off it costs 1.5 times as much, step 15).
+
+**Why cold rose.** The engine last built here on 2026-11-17 (12:29, before stages 2-6; its libraries and programs
+from b5402793b, given by `RERAIL_SOURCE_ROOT`) and this branch's, on the M1 Max, cold O125 step 00, the same
+10,475 findings: 306.7 G against 350.5 G (+14%). Profiled (which costs the old engine 54 G and this one 15 G), the
+CPU that moved:
+
+| Kind | Old | Now |
+|---|---|---|
+| an input's frames (job) | (in "other: cross") | 2.88 s |
+| export to cross: base rows for the memo | 1.10 s | 2.23 s |
+| export to cross: memo remember | 1.13 s | 1.69 s |
+| local, its own | 0.06 s | 1.33 s |
+| measuring sources | 0.40 s | 1.15 s |
+| guests | 0.92 s | 1.57 s |
+| other: cross | 3.33 s | 1.96 s |
+
+Most of it is a cold run writing what later runs read: the memo's base rows and entries (now in segments), the
+inputs' frames, and the kept facts written beside them (0401 step 6, never read: 0364's open items). The memo's
+base rows now include `ast_depth`, R6's measure key (step 10), which is this work's share; it is not measured
+apart. By the recorded runs, cold went from 307 G (2026-11-17) to 323 G at step 1 (stages 2-6, 2026-11-18) and to
+about 361 G after the hub's merge (step 12): most of the rise came with the merge.
+
+Two of it are fixed since. The chunks' sets of the values their exports and held base relations name
+(`mentioned`, `held_nodes`, R6's key) were `std` hash sets, hashed with SipHash a value at a time; they are Fx sets
+now. With step 20's change beside it, cold O125 step 00 is 343.5 G (from 350.5 G, the same 8,721 findings). The
+inputs' frames and the kept facts written beside each (0401 step 6), about 1.5 s of a cold run, go when the frames
+are retired (the branches being aligned).
+
+## Step 19: a new process's input deltas are views of ids, not copied rows
+
+A changed input's delta was rows copied into new relations: each side's rows read into hash sets of `Vec<i64>`, their
+differences sorted into a `Relation` (`delta_relation`), on the session path and the guests' rounds alike. Now
+`retain::rows_delta` names the rows added and gone by their ids, as views over the new and old sources
+(`InRel::picked`, as the session's patches are): each row is read once, with a 128-bit hash (Fx and `row_digest`),
+and the two sides are matched sorted by it. `delta_relation` is gone. R2's kept test now asserts `rows_copied == 0`
+on the new-process path too.
+
+What a new process still decodes is counted apart: `shape::rows_decoded`, the kept rows and the changed inputs' old
+rows decoded from the frames (0353's frames copy), 1,162,276 rows at O125 step 05. A test asserting it is 0 is
+ignored with its reason until the reads bind the kept blocks (0401 step 7, on the branches being aligned).
+
+O125 kept, M1 Max (loaded, 10-15): 01 171.7 G, 02 154.9, 03 209.9, 04 143.2, 05 320.9, 06 160.6, 07 173.6, 08 229.7,
+findings equal to cold at every step. Step 05's matching went from 1.60 s to 0.96 s.
+
+## Step 20: a session's base relations, patched by owner
+
+At 2,410 files a session's 2-file edit took 54-59 s (M1 Max). Profiled, 21 s of it was the cross part's base
+relations made again, whole, at every edit:
+
+| Work, step 01 | CPU |
+|---|---|
+| the keeper's counted rows copied out (`columns_each`) | 1.4 s |
+| those copied again into a block (`Held::new`) and bound | 6.1 s |
+| each digested whole, to find the last run's source (`kept_source`) | 4.9 s |
+| the semi-joins' rows measured | 2.1 s |
+| each base input's index built again over every row (34) | 6.7 s |
+
+A digest that changed (every tree relation, at any edit) found no last source, so every index was built again.
+The kept route (a new process, decision 0117 step 2) had already removed this: a kept input is its kept rows with
+its changed owners' rows laid over it (`retain::Layered`), read in place through the kept rows' index, its digest,
+documents and delta from the changed owners alone (`patch_owners`). A session never took it.
+
+Now it does. Each base relation that is not a semi-join's (whose rows follow the exports) is its last run's source
+patched by the changed files' entries, old and new (`input_delta::changed`, the session memo), through the same
+`patch_owners`. Its owners' ranges are found once, by one pass over the session's first source
+(`retain::session_ranges`); after that the source is a `Layered` and its ranges are its own (`ranges_now`). A
+second edit is laid over the same kept rows (`Layered::then`), not over the first edit's layer, so a session reads
+one layer however long it runs; the rows of owners an earlier edit changed are carried into the new appended
+block. The keeper's counted rows are no longer copied out for a patched relation. `RERAIL_SESSION_LAYERED=off`
+rebuilds them as before.
+
+Measured on the M1 Max:
+
+| Files | Step | Before | Now |
+|---|---|---|---|
+| 2,410 | 01 | 54-59 s | 44.3 s |
+| 2,410 | 02 | 65 s (M3) | 58.8 s |
+| 2,410 | 03 | 55 s (M3) | 45.9 s |
+
+At step 01 the base relations' part is 0.5 s (from 14.9 s), and the base inputs' indexes 0.6 s (from 6.7 s).
+At step 03, after three patched edits, the session's findings equal a cold run's (4,343 G). O125's session equals
+cold at every step, its CPU unchanged (its edits are of a few files over four documents'
+worth of tree).
+
+What a 2,410-file edit still costs, at step 03: `rr_agg37` and its demand stratum derived again where the mode is
+priced above a derive (§4's second clause; 98,707 against 70,337 and 252,165 against 247,433, with deltas about
+0.1% of the rows read), 16 s together with its pair statistics; a probe of a derived input's order, 4.1 s; the view
+`kind`'s rows, 2.0 s; the semi-joins' rows measured, 1.9 s.
+
+## Steps 12-20 on the sync branch (2026-11-19)
+
+The sync branch (jeremybarnes/sync-integration-hub-tape) took this line at ee692490e. There the frames are retired
+(0439, 0401 step 9): kept facts are 0456 chains, bound where they lie (`kept_read::gathered`), and a run's base
+relations come from the corpus batch with the base compare over every file's tape (0458, `OldBase`). That decides
+the steps built on the frames:
+
+- **Kept as built**: steps 12, 13, 15, 18 and 19 (`retain::rows_delta`, `document_delta_except`); the R1-R9 tests;
+  the measure's key in the cross part (step 10); the fused step's witness (`tail`, Q240).
+- **Step 14, on 0458's table**: the last run's documents are the base documents' table (`#base-documents`), not a
+  `rerail:run_docs` frame. It is written with the memo plan it was made under (`#memo-plan` among its reads,
+  `retain::memo_plan_tag`), and its documents are taken as `same_docs` only when the plan is this run's, as step
+  14's frame was under the cross program's `binds`. The table is kept for every kept part, base relations or none.
+  A run inside another's waves, which makes no compare (it reads no store there), reads it from the space its kept
+  part was bound from before the first wave (`retain::base_documents_in`). Without that, a phase's part hashed its
+  four inputs whole at every edit. `inputs_hashed_whole` is asserted 0 again.
+- **Step 16 superseded**: 0456's writer appends one file a space per wave
+  (`a_waves_kept_puts_through_the_store_are_one_file_a_space`, the port of `a_waves_kept_puts_are_one_block_per_space`).
+- **Step 17 superseded**: no input's old rows are read from frames, so there is no `OldInput`. 0458's base compare
+  states the change from the tapes, and the counter `inputs_read_whole` went with it.
+- **Step 19's `rows_decoded` dropped**: nothing decodes a kept row. The ignored in-place test is live, and asserts
+  the kept entries bound and no row copied.
+- **Step 20 superseded**: a session's base relations are the corpus batch's (0458), not patched layers
+  (`Layered::then`, `session_ranges`). 0458's open item stands: a session holds no corpus batch.
+- The frames' measure-key filter on gathered rows (`held_nodes`) is not taken. No rows are gathered, and measure
+  keys stay where 0458 puts them (`stored`, `semijoin`).
+- **Open (Q360)**: R8 and step 13's entries check fail on this line. A phase's run is in memory here (a429546488),
+  no session's, and binds its kept part from the store at each edit. At the cycle cut, no input the session asks
+  is read from the entries. Both tests are ignored with Q360.

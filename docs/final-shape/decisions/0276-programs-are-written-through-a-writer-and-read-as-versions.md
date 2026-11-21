@@ -375,6 +375,259 @@ Progress (2026-11-18):
   waves (their demand programs and the `json_rules` they join), the SQL extension's front (`sql/program.rs`), the
   planner's tree entries (`body::alone`, `Stats::empty`, `Placed::of_program`), the lowering's tree form
   (`lower_tree`, `Given`), and the tree twins of stage 2.
+- **Step 6, stage 2 so far** (2026-11-18): typing's split, hiding (`hide`, `fold_own`), the merges
+  (`merge_and_drop_repeats`, `drop_repeated_rules`) and the whole of `simplify.rs` are the version's only. Each tree
+  function's explanations moved onto its version pass, and its tests run on the version passes (the corpus-wide
+  check of dropped unreached clauses too, its Q3 property read off `congruence`). The memo's dump prints
+  `Version::show`. Since then: `magic.rs` is gone (T's `magic_sets` is `KeyDemand`, the gated adornment
+  `ProgramDemand { gate }`, their 15 golden combinations checked on the version), and so are `reach_form.rs`'s,
+  `strings`' and `matchers`' tree passes. The waves are versions: a pack's policies are one version
+  (`front::yaml::program`, the round trip read back by `yaml::documents`), the wave's rules and demand program are
+  written through the builder, rules of one shape merge by `shape` over slots, and the wave's source joins them as
+  versions (`matches::joined`, keyed by `Placed::whole`). Still to go in stage 2: `front`'s passes and
+  `lower::sources_on_request`.
+- **Stage 1, the planner** (2026-11-18): the native fixpoints (`native_fixpoint`'s lattice parts, the set
+  fixpoint's edge tables) read rules through their handles and write their parts through the builder
+  (`made_parts`); `Run::tree`, `identities_of` and `Leaves`' tree entries are gone; the version trace, the inline
+  and run dumps print versions. The findings layer reads its tables from its version.
+- **Stage 3, `program_text`** (2026-11-18): a stored program is its image only. The `.rerail` text form of 0155 and its
+  tape reader of 0162 (`print`, `read`, `program_text/from_tape.rs`) read and wrote the tree, and are gone with it,
+  as is `RERAIL_PROGRAM_IMAGE` (`off` kept texts, `require` refused them). A program a store kept as text alone (a
+  store written before images) is not read: `stored` leaves it out, the run compiles it again, and its source stays
+  named (`sources`) so collection keeps it with the run that named it. Plan choices and the combined program are
+  written by `encode_version` and opened from their images.
+- **Step 6 done** (2026-11-18): `front::Program` is gone, with its encoding (`Builder::of_program`,
+  `set_program_header`, `about_of`, `program_facts::write`/`program`), its decoder (`Version::program`,
+  `Tree::program`), `print(Program)`, the tree decoders of `rr` (`parse`, `parse_own`, `parse_file`, `lower`,
+  `lower_in`, `Library::program`, `with_cone`), `front`'s text parser and tree passes, the planner's tree keys
+  (`Versions::with`, `key`, `body`; `Placed::of_program`, `program`, `made`), the converter's tree overlay and the
+  tree's `sources_on_request` and `undo_on_request`. Each one's explanations moved onto its version twin (a field's
+  onto its `program_facts::Field` variant). Every test reads versions; `examples/versions.rs`, which measured the
+  tree against versions, went (0173 names its last commit). §6's guard is `front::tests::no_tree_program_comes_back`.
+  Left: the intermediate forms (stage 6): the clause lowering still builds `front::Rule`s for `Builder::add`, reads
+  back its helpers through `program_image::Tree::rule`, and walks `rr/from_tape.rs`'s statements.
+  The hub's merge (65e368a0b) brought the product-demand pass (`BoundProducts`), which rewrites trees: it reads its
+  version through `product_demand::Decoded` (each rule as `Tree::rule` gives it, and the fields its proofs read)
+  and writes through the builder. It is the last tree pass on the preparation path, and goes with the forms. The
+  rank form's tree entry (`rank_form::find`) went, and its tests moved onto the version's pass.
+
+- **Stage 6, the intermediate forms: the plan (user, 2026-11-18: "work through all of these").** The goal is
+  0246's: a module's tape is walked once, and the walk writes its image. The tape is read where it is, and nothing
+  builds the program in another form or decodes the image back into one. Four steps, each in commits verified
+  under Relax:
+  - **A. The walk writes the image.** A1: a file is carried as its tape (its text and nodes), never as
+    statements. Each directive writes its field through the fields API as the walk reaches it, and every reader of
+    statements (includes, the checks, testing, the type check) reads the tape's statement nodes. `from_tape`'s
+    statement types go. A2: the clause lowering reads the clause's tape nodes. A disjunction's alternatives are
+    positions in the tape, and a rule is written by walking the chosen positions. A3: each rule is written term by
+    term with the builder's rule writer, so the lowering builds no `front::Rule`.
+    - *Done (A1, two commits).* The lean image is read in place (`from_tape::Tape`). A file is an `RrFile`: its
+      text, its tape and the tape's code keys, checked once when read, and shared by the process's library cache
+      (`read_shared`). A statement is a `Stmt`, a node of its file's tape. `from_tape` is `rerail-rr`'s, below
+      the lowering. Includes, the program cache, unreached-clause dropping, the closed-library and reserved-name
+      checks, `check`, the tape type check, the token-read refusal, testing's blocks (their statements are nodes
+      of the same tape) and core's declarations all read the nodes. The lowering's walk reads each directive off its
+      node and writes it as it reaches it. Two pieces remain for A2. A clause is still read as the parser's form,
+      by `Tape::clause`, for the lowering and the clause checks. The parser's `syntax::Item` is still built for the
+      tape tests' parser comparison only. The coverage census still parses its files with the text parser.
+    - *Done (A2, the lowering).* The clause lowering reads its clause off the tape (`lower/reads.rs`). A literal
+      and a term are positions (`LitAt`, `At`), viewed as they are read (`L`, `T`); a disjunction's alternatives
+      are positions, and each combination is lowered by walking them again. What the lowering moved by rewriting a
+      clause's copy is a substitution: a hoisted aggregate, tape operation or digest, a wildcard named for a demand
+      or a count, is a fresh variable in a per-literal substitution set (`Sub`) over the node it stands for. What it
+      made is named: a value's binding (`LitAt::Eq`), a cover's atom (`LitAt::Made`). Fresh names come in the same
+      order as before, so the lowered programs are unchanged (the print-back tests). The reads are
+      `rr::clause::Reads`, a trait: the lowering supplies its substitutions, a file (`RrFile`) reads a clause as
+      written. The clause checks (`check`'s grounding, strata and undeclared reads, the tape type check, the
+      token-read refusal) read through it, and no reader takes `Tape::clause`'s parser form.
+    - *Done (A2, from_tape's forms).* `from_tape` makes no parser form: `Tape::clause` and its term readers go, and
+      so does the `Violation` holder. The lowering reads a `.violation`'s code, tag, fixes and suppressions off its
+      node and writes each as it reaches it, and a `.lattice`'s `Lub` off its value's node. The tape tests' parity
+      check compares each statement's kind, name, line and heads with the parser's (and each clause passes
+      `check_clause`) instead of converting the tape to the parser's form.
+    - *Done (A2).* The coverage census reads the shipped files' tapes (`RrFile`, `clause::Reads`), not the text
+      parser's statements: 1733 files, none unread, 165 operations. Outside `rerail-rr-syntax`, the parser's
+      `Item`/`Head`/`Lit`/`Term` are named only by the parity test, which compares with the parser.
+    - *A3's shape (decided 2026-11-18).* A rule is written while no other rule is open (the encoder writes one
+      rule's nodes at a time), and lowering a literal may write rules of its own (a context, a cover, an outlined
+      alternative, a negated conjunction's helper, a demand). So a clause is lowered in two walks over the same
+      positions, by one code path: each literal's lowering writes into a sink. The first walk's sink decides: no rule
+      is open, so it writes the helper rules and demands, and it records the fresh names in the order they are made.
+      The second walk's sink writes: for each combination of the disjunctions' alternatives it opens one rule
+      (`Builder::rule`) and writes the head, then runs each literal's lowering again. That run makes the same calls in
+      the same order, so its names are the recorded ones replayed; it writes only the chosen alternative's literals,
+      term by term, and its helper and demand writes are no-ops. An outlined literal's helper is written in the first
+      walk the same way: the literal's lowering runs once per alternative into a rule of the helper. Nothing between
+      the walks holds a body, only names in order. What reads written rules (the demand dedup, `helper_once`'s
+      template key, `.shape`'s check) reads them in the version (`RuleRef`), by the hash the encoder computes
+      (`end_rule`); a duplicate is abandoned before it ends (`RuleBuilder`'s drop).
+    - *Done (A3.1, A3.2).* The builder writes an open rule literal by literal (`Builder::open_rule`, `put_*`,
+      `close_rule`, `close_rule_once`), each write its own borrow, byte for byte what `RuleBuilder` writes. The
+      lowering writes every rule through it (no `Builder::add`): a demand once by the encoder's hash, and `.shape`'s
+      check reads the finished version's rules. The holders of written trees go (`Out::Before`, `Written::kept`).
+      Left: the lowering still builds each rule as a `front::Rule` and puts it (`put_rule`); each literal's lowering
+      moves to its own `put_*` writes, then `put_rule` goes.
+    - *A3.3's mechanics (decided 2026-11-18).* The sink is the lowerer's mode. Deciding: no rule is open; each
+      value a run makes that a later run must see again is appended to a log in the order made: a fresh name, the
+      name `helper_once` returns, a literal's count of alternatives. Writing: one rule is open; the same run reads
+      those values back from the log at a cursor (set to the run's start, so a clause's combinations, and an
+      outlined literal's alternatives, each replay the same segment); a literal writes only the alternative it is
+      told to (`pick`), and its helper, demand and declaration writes do nothing. A conjunction's combination is a
+      pick per literal, by the counts the log holds. Two rewrites of a whole body become writes: `unset` (a variable
+      bound empty, written as the empty value in the head and body) by a scanning run per combination before the
+      rule opens, which collects the chosen alternatives' `unset(v)` variables, then applied as each term is put;
+      and the merge of consecutive negated tests of one subject (`merge_negated_tests`) by holding one pending
+      negated test (its operation, its subject's position and its patterns) until the next literal is written.
+    - *Done (A3.3 stage 1, the replay).* The lowerer logs the clause's fresh names as its deciding walk makes them
+      and reads them back in a replay (`log`, `replay`); a replay's rule writes do nothing, and `helper_once` finds
+      the helper the deciding walk made by its key. Each clause is lowered twice, the second time as a replay, and
+      checked to lower to the same bodies: it does over the library and every pack (the print-back tests,
+      `library_modules_link`, `dropping_unreached` over the other packs). The second walk doubles the lowering until
+      each literal writes its picked alternative (stage 2): the eight tests took 203 s, against 115 s before.
+    - *Done (A3.3 stage 2, the pick).* The deciding walk keeps only each literal's count of alternatives
+      (`conjunction_alts`); the clause writes combination k by a replay that takes pick k of each literal (the first
+      literal's the most significant, the order the products had), then `merge_negated_tests` and `unset` over that
+      one body. No list of bodies is made. The eight tests: 131 s. Left: each literal's lowering still returns its
+      alternatives as trees, which the replay picks from; next, the literal writes only the picked alternative.
+    - *Done (A3.3 stage 3, the emit).* A clause's rule is opened with its head (`begin_rule`, `unset`'s variables,
+      found by a scan of the chosen alternatives, written empty), each literal goes in through `emit` (its `unset`
+      applied, `unset_literal`; a negated test held until the next literal shows whether it merges,
+      `merge_negated_test`), then `end_rule`. The per-literal pieces are what `unset` and `merge_negated_tests` now
+      run over a whole body for the helpers that still make one.
+    - *A3.4's order (decided 2026-11-18).* Each lowering takes the pick it is to write and returns its count of
+      alternatives; it runs every alternative (so the names it makes replay in order) and writes only the picked
+      one's literals (`alt`, `emit`). Lowerings move to this one at a time: until the helpers that read whole bodies
+      (`negate`, `outline`, `context`, `covering`, `aggregate`'s helper) write their rules by replay too, `alts_of`
+      bridges, collecting a converted lowering's alternatives by replaying it once per alternative into a sink of
+      literals. Then each helper writes its rules per combination, the analyses it makes of its bodies (`type_of`,
+      `grounds`, its key in `helper_once`) reading the rules as written in the builder; a replay skips a helper's
+      lowering by the length its deciding walk logged. Last, `alts_of` and the sink of literals go.
+    - *Done (A3.4 stage 1).* `within` writes its pick (`within_put`). The conjunction and the literal are in the
+      pick form (`conjunction_put`, `literal_put`): a conjunction logs its literals' counts (`Logged::Counts`, with
+      whether each is outlined) and a replay splits its combination by them; a disjunction writes its alternatives'
+      combinations in turn; the lowerings not yet converted are bridged (`put_alts`). A clause writes each
+      combination from one replay (`body_of`). The tests that took 131 s take 93 s. New test:
+      `a_nest_of_disjunctions_is_outlined`.
+    - *Done (A3.4 stage 2, B for helpers).* A negated conjunction's helper is written by replaying the
+      conjunction per combination (`decide_conjunction`, `write_combinations`), its column types read off what the
+      written literals say (`Scan`). A helper's key is read off the image: its rules' templates (`template_of`: the
+      nodes, the head's relation left out, variables by slot, relations named through the renames), with its stem
+      and column types (`once_key`). `helper_once` writes every helper; the walk's end merges each that equals one
+      made before into it (`merge_helpers`, through `relinked`, as `link` merges across modules). `helpers_of`'s
+      decode into trees and `rename_rules` go. New test: `equal_helpers_of_one_walk_are_one`.
+    - *Done (A3.4 stage 3, the sink of literals goes).* Every helper writes its rules by replay: contexts and covers,
+      an aggregate's helper (each rule's empty values found by a scan of its combination, `write_alternatives` with
+      `unset`), a negated node axis (`node_axis_put`, `decide`, `write_alternatives`), `within_stop_relation` (made
+      once a program; a replay skips what making it logged, `Logged::Skip`) and an outlined literal (`outline_put`:
+      each alternative scanned by replay, `scan_alternative`, for the variables it names and binds, `Scan::grounds`;
+      the choice logged, `Logged::Kept`). A clause's empty values come from a scan of its combination too. Rules of
+      fixed shape (`precedes_stop`, `climb`, `match_all`'s, the demands', `rr_core_<rel>`) are written term by term
+      (`fixed_rule`). Gone: `alts_of`, `body_of`, `put_alts`, `Sink::Trees`, `helper_once`'s rule lists, the tree
+      `type_of`, `grounds` and `unset` over bodies, `merge_negated_tests`. New test:
+      `many_within_stops_read_their_sets_relation`. Left of A: the walk's literals are still `front::Literal`
+      values handed to `emit` (S2: emit terms, `T`, straight into the open rule), and `negate`'s bodies and the
+      findings' rules (`findings_on`, which a version's edit places) are made as literals.
+    - *Done (A3 S2, the walk writes terms).* Each literal's lowering writes builder terms (`Tm`, `T` with its texts
+      interned in the builder) into the open rule: `emit_atom`, `emit_cmp`, `emit_agg`, `emit_nearest`, `emit_ast`,
+      each fed to the scan first. A clause's term is read straight into a builder term (`term_tm`: the SQL builtins,
+      `printf`'s pieces, `concat`'s folds, arithmetic, floats' keys). A context, a cover and a negated conjunction
+      are their helper's name and head terms; a test set writes its test where picked; the demands, climbs,
+      `precedes_stop`, `match_all`'s native rule and core.rerail's rewritten relations write term by term
+      (`fixed_rule_with`, `core::write_definition`). `unset` is applied per atom (`emit_atom`), and a negated test is
+      held as a term until the next literal (`merge_negated_test`). Gone: `emit(Literal)`, `fixed_rule` over
+      literals, `put_rule`, `put_literal`, `Written::write`, `Lowerer::write`, `RulesSeen::of`, `rename_literal`,
+      `widen_violation_heads` and the walk's every `front::Term`. Relax's ahead type checks fill its type interner on
+      this code, which rustc accepts (`scripts/dev/relax/README.md`, "Known limits"): its runs set
+      `RELAX_TYCK_AHEAD=0`, and each step is confirmed under cargo on a farm host too.
+    - *Done (C: the findings and the projections).* `findings_on` writes onto a derivation of the version: its
+      fields, and its rules after the program's, each through the open-rule writer (a body is a writer closure, a
+      message placeholder's read a `Reads`); `findings_write` says from the settings alone whether there are rules,
+      and without them the fields' edit is all. `projections` names the projected relations and `write_projection`
+      writes each one's rule. Neither hands `lowering_tail` a `front::Rule`.
+    - *Done (C: the rank plan, coverage, the literal roof).* `rank_form::plan` reads image rules (its shapes are
+      slots and literal indices) and `write` writes the readers and the four rank rules through the rule builder.
+      Coverage's literal census matches `program_image::Lit` over a one-rule image; the roofline's literal unit
+      measures a rewrite of image nodes (`rerail-prof` sits below the builder, so it copies the node layout).
+    - *Done (C: the product bound).* `product_demand` reads the version in place: each step (the products' guards
+      and demands, each reader's restriction, the order and present witnesses) is a derivation of the version so
+      far, a rule it rewrites written through the rule builder with its input rule as source, and a refused step
+      a dropped version, so there is no rollback. `BoundProducts` copies the rules that changed into its edit
+      (`Builder::copy_from`), and now carries a restriction's dropped `.demand` too, which the decoded copy lost.
+      `Decoded` and its `Tree::rule` decode are gone.
+  - **B. Helpers are written once, as image rules**, and readers name them by relation id. `helpers_of`'s decode
+    (`Tree::rule`) goes.
+  - **C. Passes rewrite image rules**: the rank plan, the product bound (`Decoded`), simplify, magic,
+    `lowering_tail`, text and the compose stages. Smallest first, each one's tests ported before its tree path goes.
+  - **D. The forms go**: `front::Rule`/`Literal`/`Atom`/`Term`, `Builder::add(&Rule)`, `encoder::tree_rule` and
+    `program_image::Tree`, and §6's guard refuses them.
+    - *Done (D).* The four forms, their `Display` and `Shallow` impls, `cmp_binds`, `join`, `front::template`,
+      `Builder::add`/`add_from`, `encoder::tree_rule` and `program_image::Tree` are deleted; `front::name::Lists` keeps
+      only its column and value tables (its term and literal tables and the read stacks had no reader left). The
+      decode counter (`trees_decoded`) counted nothing once `Version::program` went, and goes with them: the
+      maintained run's test now rests on the guard. `front::tests::no_tree_program_comes_back` refuses each form by
+      path, by import from `front`, or by a definition where it lived, in the engine's code (comments aside).
+- **§3, the rest of the writer: the plan (user, 2026-11-19: "implement the planned not built parts").** In order:
+  `made_from`; range copies; `rewrite_all`; `fields()`; `freeze` to `Placed` and the `pass` wrapper; §2's `Part`
+  over one shared `Lowering`; the prepared key as the linked base's digest; identities by the version's digest
+  (0173 step 6); dl1 before and after.
+  - *Done (`made_from`).* It had no caller left; deleted.
+  - *Done (range copies).* `Encoder::copy_run` copies rules of one image whose ids are the writer's as one node
+    range: their variables and hashes as the source holds them (a hash is of texts and values, so the same over the
+    same ids), a big integer to the writer's table, each rule indexed. `Builder::copy` takes it for such a rule, so
+    `keep`, `keep_into`, `copy_as_is` and `copy_from` do too; `Builder::keep_run` copies a run of consecutive rules
+    as one range, and a derivation's kept rules (`manager::drive`) go as runs, ending where a visited rule writes.
+    Locked by `a_run_of_kept_rules_is_the_rules_kept_one_by_one`.
+  - *Done (`rewrite_all`).* `Builder::rewrite_all(from, rw)` runs every rule through one `Rewrite`: `Rewrite::begin`
+    (every rule, by default) picks the rules it rewrites, and the rest are kept as ranges. The name move of a lowered
+    program (`plan::lower`), simplify's units and column projection, and the nullary relations' unit column are one
+    call each.
+  - *Done (the prepared key).* The key is the linked program's version identity (`manager::identity`: its digest,
+    size and rules' hashes in order), the language, the cross memo, factorizing and the preparing switches; not the
+    texts' digest with `{:?}` prints of the facts, inputs and outputs. A finding's words are not in the version (the
+    combine is kept under the masked texts, 0225 §3), so a message edit finds the program prepared. Locked by
+    `a_message_edit_finds_the_program_prepared_and_a_rule_edit_does_not`. The run's `front::Lists`, read by the
+    print alone, goes.
+  - *Done (shared domains).* `Lowered::domains` is an `Arc<Domains>`: a part or an edit (`with_version`) shares
+    its program's, never copies them.
+  - *Done (identities by the version, 0173 step 6).* A relation's identity is of its stratum's rules' image hashes
+    (sorted), its declaration's and facts' hashes, and its native's, lattice's and nullary fields
+    (`plan::identity_parts`), under `rerail.relation/v2`; not of the tree's `Debug` text written again from the handles
+    (`tree_text`, gone, with its frozen golden text). Every store's kept strata are cold once. Locked by
+    `a_relations_identity_is_its_versions_hashes`.
+  - *Done (`fields()`, 2026-11-19).* An edit's fields are written through one sub-writer, `Builder::fields()`
+    (`program_image::fields::FieldsW`), grouped by field: declarations, inputs and outputs, facts, and the `.about`
+    fields. `Builder`'s own setters (31 of them, across `build.rs`, `about.rs` and `fields.rs`) are private to the
+    image, so no pass can pick between two surfaces. `FieldsMut` (an edit of fields alone, which a pass generic over
+    it takes) is `FieldsW`'s, no longer `Builder`'s. The link's `Merged` holds the linked header's builder and writes
+    it through `fields()`. An earlier entry here recorded this as met by `FieldsMut` beside the setters: it was not,
+    since every pass still called the setters.
+  - *Done (`freeze` to `Placed`).* `body::Freeze` freezes a writer to a `Placed`: `freeze` as written,
+    `freeze_placed(order, whole)` with the rules in the pass's own order. A fold numbers the rules afresh, and the
+    builder now says how (`Builder::finish_placing`, from the overlay's order as the fold copies it), so the four
+    passes that kept an order (`demand::overlaid`, `keeps::inline`'s rounds, `inline::copies`, the factorized
+    store's part) read it back from the builder. `inline::renumbered` and its reconstruction from the removed and
+    added ids are gone. Locked by `a_frozen_edit_keeps_its_order_through_a_fold` (an overlay and a fold).
+  - *Done (the `pass` wrapper).* `body::pass(site, span, &p, |p| ..)` takes a pass's profile span and its version
+    trace (§6) once, for the planner's three passes: normalize (`plan.normalize`), inline or store (`plan.inline`;
+    `choose`'s own second span of the same name is gone) and the negation split (`plan.demand`). The span names stay
+    as the profile and decisions 0099 and 0178 cite them, and the sites as 0173's table names them.
+    - *Departure from the sketch:* the closure gets the program, not a writer. A pass opens its writers itself,
+      because inlining writes one edit per unfolding round over the round before (at most eight), so no single
+      writer the wrapper opened could hold it.
+    - *Not ported:* the `Pipeline`'s steps, which already take their span and trace in `Pipeline` (`Stage`); and the
+      run's notes `run.local`, `run.cross`, `session.cut` and `session.maintained`, which note a lowering or a cut,
+      not a pass over a `Placed`.
+  - *Measured (dl1, after).* At a26e71b5d, profiling build, the 44-policy batch, images required, CPU, strict, an
+    M3 farm host at load 40-50: 48 findings, as every earlier dl1 run recorded; cold 81.7 G instructions (13.9 s), warm
+    5.7 G then 3.3 G. The last number recorded before stage 6 (t36, 2026-11-15: 171-179 G cold, 4.5-5 G warm) spans
+    many other commits and another host, so the difference is not stage 6's alone. The outputs are no longer `.csv`,
+    so t36's digest of them does not carry over; the findings count is the comparison.
+- **Convergence with django-bugs (2026-11-19).** Its 0431 step 2 changed the findings writer in the tree forms this
+  branch deleted (2e9d16bc8). Its findings semantics are ported onto the writer here, so its merge keeps one writer:
+  R9's `rr_unplaced(clause)` for a finding at a node whose document is no file's, the run's refusal naming the
+  clauses (`corpus::refuse_unplaced`), `rr_unplaced` shared across a batch's programs, and a guest error reported at
+  each string holding a tape value's text (written only where the program has `tape_of` and `sub_tape`, which come
+  with that branch). Locked by `a_finding_no_file_holds_is_refused_naming_its_clause`.
 
 ## 9. Retired, not ported (the user's questions, answered 2026-11-15)
 

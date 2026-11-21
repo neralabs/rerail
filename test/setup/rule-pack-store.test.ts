@@ -1,15 +1,17 @@
-import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, utimesSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, utimesSync, writeFileSync } from "node:fs";
+import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
-import { afterEach, describe, expect, it } from "vitest";
+import { basename, dirname, join } from "node:path";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { loadRuleCatalog } from "../../src/engine/index.js";
-import type { NpmRunner } from "../../src/runtime/index.js";
+import { CommandTimeoutError, type NpmRunner } from "../../src/runtime/index.js";
 import {
   addPackSpecs,
   discoverPacks,
   installedPackagesOf,
   installedPackVersion,
   installPackVersions,
+  newerPackVersions,
   npmPackStore,
   packsLeftOutByCore,
   parsePackVersions,
@@ -19,10 +21,17 @@ import {
 import { directoryPackStore } from "../support/directory-pack-store.js";
 import { installPackDirectory, linkingPackStore, thirdPartyPack, uninstallPack } from "../support/installed-packs.js";
 import { fixturesPath, repositoryPath } from "../support/oracles.js";
+import { holdRemovals } from "../support/platform/held-removal.js";
+import { removeFolderSync } from "../support/platform/remove-folder.js";
+
+// Spied on so a test can make Windows hold a run's staging folder for a moment.
+vi.mock("node:fs/promises", { spy: true });
+const { rm: actualRm } = await vi.importActual<typeof import("node:fs/promises")>("node:fs/promises");
 
 const homes: string[] = [];
 afterEach(() => {
-  for (const home of homes.splice(0)) rmSync(home, { recursive: true, force: true });
+  vi.mocked(rm).mockReset();
+  for (const home of homes.splice(0)) removeFolderSync(home);
 });
 
 function temporaryHome(): string {
@@ -67,14 +76,28 @@ describe("npmPackStore", () => {
       { id: "typescript", directory: join(run, "typescript", "node_modules", "@neralabs", "rerail-pack-typescript") },
       { id: "complexity", directory: join(run, "complexity", "node_modules", "@neralabs", "rerail-pack-complexity") },
     ]);
-    for (const [args, id] of calls.map((args, index) => [args, ["typescript", "complexity"][index]!] as const)) {
+    // The installs run at once, and each reaches npm after its own setup, so they may call it in either order.
+    expect(calls.map(prefixOf).sort()).toEqual([join(run, "complexity"), join(run, "typescript")]);
+    for (const args of calls) {
+      const id = basename(prefixOf(args));
       expect(args[0]).toBe("install");
-      expect(prefixOf(args)).toBe(join(run, id));
       expect(args).toContain("--ignore-scripts");
       expect(specsOf(args)).toEqual([`@neralabs/rerail-pack-${id}@latest`]);
     }
     expect(existsSync(run)).toBe(true);
     await fetch.release();
+    expect(existsSync(run)).toBe(false);
+  });
+
+  it("removes the run's staging folder on release while Windows holds a file in it for a moment", async () => {
+    const { npm, calls } = fakeNpm();
+    const fetch = await npmPackStore(temporaryHome(), npm).fetch(["typescript"], "latest");
+    const run = dirname(prefixOf(calls[0]!));
+    const refused = holdRemovals(vi.mocked(rm), actualRm, 2, path => path === run);
+
+    await fetch.release();
+
+    expect(refused).toEqual([run, run]);
     expect(existsSync(run)).toBe(false);
   });
 
@@ -196,12 +219,14 @@ function copiesStore(home: string, ranges: Record<string, string>): PackStore & 
   };
 }
 
+/** The core range Rerail's own packs declare: it fits this core, whatever its version. */
+const FITS = ">=0.1.0-0";
 const VALID = fixturesPath("packs", "valid");
 
 describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
   it("puts the installed version back as npm recorded it when the one named installs but its core range leaves it out, and says why", async () => {
     const home = temporaryHome();
-    const store = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "9.0.0": ">=9.0.0" });
+    const store = copiesStore(home, { "0.1.1": FITS, "9.0.0": ">=9.0.0" });
     expect(await installPackVersions([typescriptAt("0.1.1")], store)).toBeUndefined();
 
     const problem = await installPackVersions([typescriptAt("9.0.0")], store);
@@ -223,7 +248,7 @@ describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
 
   it("installs nothing when every pack named is installed at that version", async () => {
     const home = temporaryHome();
-    const store = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" });
+    const store = copiesStore(home, { "0.1.1": FITS });
     await installPackVersions([typescriptAt("0.1.1")], store);
 
     expect(await installPackVersions([typescriptAt("0.1.1")], store)).toBeUndefined();
@@ -232,7 +257,7 @@ describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
 
   it("puts everything back when the pack named loads but pushes an installed pack out", async () => {
     const home = temporaryHome();
-    const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" });
+    const copies = copiesStore(home, { "0.1.1": FITS });
     await installPackVersions([typescriptAt("0.1.1")], copies);
     // A pack listing typescript's rules under an id that sorts first: the catalog loads it, and leaves typescript out.
     const rival = join(home, "rival");
@@ -260,7 +285,7 @@ describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
 
   it("says what failed and where to look when putting a pack back fails, rather than throwing", async () => {
     const home = temporaryHome();
-    const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "9.0.0": ">=9.0.0" });
+    const copies = copiesStore(home, { "0.1.1": FITS, "9.0.0": ">=9.0.0" });
     await installPackVersions([typescriptAt("0.1.1")], copies);
     const store: PackStore = {
       ...copies,
@@ -277,7 +302,7 @@ describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
 
   it("says nothing was changed when npm fails and leaves the packs as they were, putting nothing back", async () => {
     const home = temporaryHome();
-    const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" });
+    const copies = copiesStore(home, { "0.1.1": FITS });
     await installPackVersions([typescriptAt("0.1.1")], copies);
     const store: PackStore = { ...copies, install: async () => { throw new Error("npm error code ENOTFOUND\nnpm error network request failed"); } };
 
@@ -288,7 +313,7 @@ describe("installPackVersions", { timeout: COMPILING_TIMEOUT_MS }, () => {
 
   it("puts the packs back when npm fails partway through, having changed one", async () => {
     const home = temporaryHome();
-    const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "0.1.2": ">=0.1.0-0 <0.2.0" });
+    const copies = copiesStore(home, { "0.1.1": FITS, "0.1.2": FITS });
     await installPackVersions([typescriptAt("0.1.1")], copies);
     // npm wrote the new version, then ran out of disk before it finished.
     const store: PackStore = {
@@ -308,12 +333,12 @@ describe("addPackSpecs", { timeout: COMPILING_TIMEOUT_MS }, () => {
   it("puts back a loaded pack that the install replaced with one its core range leaves out, and says why", async () => {
     const home = temporaryHome();
     // What `rerail packs add typescript` installs once `latest` moves past this core.
-    const copies = copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0", "0.2.0": ">=0.2.0" });
+    const copies = copiesStore(home, { "0.1.1": FITS, "9.0.0": ">=9.0.0" });
     expect(await addPackSpecs(["@neralabs/rerail-pack-typescript@0.1.1"], copies)).toEqual({ installed: [typescriptAt("0.1.1")] });
 
-    const added = await addPackSpecs(["@neralabs/rerail-pack-typescript@0.2.0"], copies);
+    const added = await addPackSpecs(["@neralabs/rerail-pack-typescript@9.0.0"], copies);
 
-    expect(added).toEqual({ problem: expect.stringMatching(/^@neralabs\/rerail-pack-typescript@0\.2\.0 cannot be used: .*>=0\.2\.0.*\. Nothing was changed\.$/u) });
+    expect(added).toEqual({ problem: expect.stringMatching(/^@neralabs\/rerail-pack-typescript@9\.0\.0 cannot be used: .*>=9\.0\.0.*\. Nothing was changed\.$/u) });
     expect(loadRuleCatalog(home).packs.get("typescript")?.version).toBe("0.1.1");
   });
 
@@ -365,13 +390,156 @@ describe("packsLeftOutByCore", () => {
   // A real pack install and three catalog reads: over 4 s on a loaded CI shard, near vitest's 5 s default.
   it("names an installed pack the new core leaves out that the previous one loaded, with why, and nothing else", async () => {
     const home = temporaryHome();
-    await installPackVersions([typescriptAt("0.1.1")], copiesStore(home, { "0.1.1": ">=0.1.0-0 <0.2.0" }));
+    await installPackVersions([typescriptAt("0.1.1")], copiesStore(home, { "0.1.1": ">=0.1.0-0 <9.0.0" }));
 
-    expect(packsLeftOutByCore(home, "0.2.0", "0.1.9")).toEqual([expect.stringMatching(/^@neralabs\/rerail-pack-typescript@0\.1\.1: .*0\.2\.0/u)]);
+    expect(packsLeftOutByCore(home, "9.0.5", "8.9.9")).toEqual([expect.stringMatching(/^@neralabs\/rerail-pack-typescript@0\.1\.1: .*9\.0\.5/u)]);
     // Already left out before the change, or still fitting after it: not this change's to name.
-    expect(packsLeftOutByCore(home, "0.2.1", "0.2.0")).toEqual([]);
-    expect(packsLeftOutByCore(home, "0.1.9", "0.1.8")).toEqual([]);
+    expect(packsLeftOutByCore(home, "9.0.6", "9.0.5")).toEqual([]);
+    expect(packsLeftOutByCore(home, "8.9.9", "8.9.8")).toEqual([]);
   }, 30_000);
+});
+
+describe("newerPackVersions", () => {
+  /** Installs a bare pack package (a `package.json` only) into `home` as npm records it: `spec`, by default its version. */
+  function installBare(home: string, packageName: string, version: string, spec = version): void {
+    const directory = join(home, "copies", packageName, version);
+    mkdirSync(directory, { recursive: true });
+    writeFileSync(join(directory, "package.json"), JSON.stringify({ name: packageName, version }));
+    installPackDirectory(directory, packageName, home, spec);
+  }
+
+  /** An npm whose `view <package>@<tag>` answers from `registry`, by spec; a spec it lacks has no version under the tag. */
+  function registryNpm(registry: Record<string, unknown>): { npm: NpmRunner; calls: { args: string[]; cwd: string | undefined; timeoutMs: number | undefined }[] } {
+    const calls: { args: string[]; cwd: string | undefined; timeoutMs: number | undefined }[] = [];
+    const npm: NpmRunner = async (args, options = {}) => {
+      calls.push({ args: [...args], cwd: options.cwd, timeoutMs: options.timeoutMs });
+      const answer = registry[args[1]!];
+      if (answer instanceof Error) throw answer;
+      if (answer === undefined) throw new Error(`npm failed (1): npm error code E404\nnpm error 404 No match found for version ${args[1]!.split("@").at(-1)!}`);
+      return { stdout: JSON.stringify(answer), stderr: "" };
+    };
+    return { npm, calls };
+  }
+
+  it("names each installed pack with a newer version under the channel that fits the active core, asking npm from no project", async () => {
+    const home = temporaryHome();
+    installBare(home, "@neralabs/rerail-pack-typescript", "0.1.5");
+    installBare(home, "@neralabs/rerail-pack-python", "0.1.6");
+    installBare(home, "@acme/rerail-pack-sql", "1.0.0");
+    const { npm, calls } = registryNpm({
+      "@neralabs/rerail-pack-typescript@latest": { version: "0.1.6", peerDependencies: { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" } },
+      // npm prints the version alone when the package declares no peer dependencies.
+      "@acme/rerail-pack-sql@latest": "1.1.0",
+      "@neralabs/rerail-pack-python@latest": { version: "0.1.6", peerDependencies: { "@neralabs/rerail": ">=0.1.0-0 <0.2.0" } },
+    });
+
+    await expect(newerPackVersions(home, "latest", "0.1.5", npm)).resolves.toEqual({
+      updates: [
+        { packageName: "@acme/rerail-pack-sql", installed: "1.0.0", available: "1.1.0", tag: "latest" },
+        { packageName: "@neralabs/rerail-pack-typescript", installed: "0.1.5", available: "0.1.6", tag: "latest" },
+      ],
+      problems: [],
+    });
+    expect(calls).toHaveLength(3);
+    for (const call of calls) {
+      expect(call.args.slice(2)).toEqual(["version", "peerDependencies", "--json", "--fetch-timeout=30000"]);
+      expect(call.cwd).toBeDefined();
+      expect(call.cwd!.startsWith(home)).toBe(false);
+      expect(existsSync(join(call.cwd!, "package.json"))).toBe(false);
+      expect(call.timeoutMs).toBeGreaterThan(0);
+    }
+  });
+
+  it("offers no older version, no version the active core leaves out, nothing for a pack from a folder, and nothing npm has no version of under the tag or next", async () => {
+    const home = temporaryHome();
+    // Installed from next, newer than latest.
+    installBare(home, "@neralabs/rerail-pack-typescript", "0.1.7-next.1");
+    installBare(home, "@neralabs/rerail-pack-python", "0.1.6");
+    installBare(home, "@neralabs/rerail-pack-go", "0.1.0");
+    const folder = join(home, "copies", "folder-pack");
+    mkdirSync(folder, { recursive: true });
+    writeFileSync(join(folder, "package.json"), JSON.stringify({ name: "rerail-pack-mine", version: "0.0.1" }));
+    installPackDirectory(folder, "rerail-pack-mine", home);
+    const { npm, calls } = registryNpm({
+      "@neralabs/rerail-pack-typescript@latest": { version: "0.1.6" },
+      "@neralabs/rerail-pack-python@latest": { version: "0.2.0", peerDependencies: { "@neralabs/rerail": ">=0.2.0 <0.3.0" } },
+    });
+
+    await expect(newerPackVersions(home, "latest", "0.1.5", npm)).resolves.toEqual({ updates: [], problems: [] });
+    expect(calls.map(call => call.args[1]).sort()).toEqual([
+      "@neralabs/rerail-pack-go@latest",
+      "@neralabs/rerail-pack-go@next",
+      "@neralabs/rerail-pack-python@latest",
+      "@neralabs/rerail-pack-typescript@latest",
+    ]);
+  });
+
+  it.each([
+    ["has no version under the channel", undefined],
+    // npm prints nothing for a tag the package's dist-tags do not hold.
+    ["prints nothing for the channel", ""],
+  ])("looks a pack up under next when npm %s, where set-up installs it from", async (_why, latest) => {
+    const home = temporaryHome();
+    installBare(home, "@neralabs/rerail-pack-java", "0.1.0-next.1");
+    const registry: Record<string, unknown> = { "@neralabs/rerail-pack-java@next": { version: "0.1.0-next.3" } };
+    const { npm, calls } = registryNpm(registry);
+    const answering: NpmRunner = async (args, options) => latest === "" && args[1] === "@neralabs/rerail-pack-java@latest"
+      ? { stdout: "", stderr: "" }
+      : await npm(args, options);
+
+    await expect(newerPackVersions(home, "latest", "0.1.5", answering)).resolves.toEqual({
+      // Under next, not the channel, so the update says so.
+      updates: [{ packageName: "@neralabs/rerail-pack-java", installed: "0.1.0-next.1", available: "0.1.0-next.3", tag: "next" }],
+      problems: [],
+    });
+    expect(calls.map(call => call.args[1])).toEqual([...latest === "" ? [] : ["@neralabs/rerail-pack-java@latest"], "@neralabs/rerail-pack-java@next"]);
+  });
+
+  it("asks next once when it is the channel", async () => {
+    const home = temporaryHome();
+    installBare(home, "@neralabs/rerail-pack-java", "0.1.0-next.1");
+    const { npm, calls } = registryNpm({});
+
+    await expect(newerPackVersions(home, "next", "0.1.5", npm)).resolves.toEqual({ updates: [], problems: [] });
+    expect(calls.map(call => call.args[1])).toEqual(["@neralabs/rerail-pack-java@next"]);
+  });
+
+  it("names a pack npm could not be asked about, with why, and still checks the others", async () => {
+    const home = temporaryHome();
+    installBare(home, "@neralabs/rerail-pack-typescript", "0.1.5");
+    installBare(home, "@neralabs/rerail-pack-python", "0.1.6");
+    const { npm } = registryNpm({
+      "@neralabs/rerail-pack-typescript@latest": new Error("npm failed (1): npm error code ECONNRESET\nnpm error network request to https://registry.npmjs.org/x failed"),
+      "@neralabs/rerail-pack-python@latest": { version: "0.1.7" },
+    });
+
+    const check = await newerPackVersions(home, "latest", "0.1.5", npm);
+    expect(check.updates).toEqual([{ packageName: "@neralabs/rerail-pack-python", installed: "0.1.6", available: "0.1.7", tag: "latest" }]);
+    expect(check.problems).toEqual([expect.stringMatching(/^@neralabs\/rerail-pack-typescript: could not reach the npm registry \(https:\/\/registry\.npmjs\.org, ECONNRESET\)/u)]);
+  });
+
+  it("says a pack check npm did not finish was stopped, on one line, with the last line npm printed", async () => {
+    const home = temporaryHome();
+    installBare(home, "@neralabs/rerail-pack-typescript", "0.1.5");
+    installBare(home, "@neralabs/rerail-pack-python", "0.1.6");
+    const { npm } = registryNpm({
+      "@neralabs/rerail-pack-typescript@latest": new CommandTimeoutError("npm view", 60_000, "npm http fetch GET 200 https://registry.npmjs.org/a\nnpm http fetch GET attempt 3 failed with ETIMEDOUT"),
+      // Nothing printed, so there is no last line to name.
+      "@neralabs/rerail-pack-python@latest": new CommandTimeoutError("npm view", 60_000),
+    });
+
+    const check = await newerPackVersions(home, "latest", "0.1.5", npm);
+    expect([...check.problems].sort()).toEqual([
+      "@neralabs/rerail-pack-python: npm view did not finish within 1 min and was stopped",
+      "@neralabs/rerail-pack-typescript: npm view did not finish within 1 min and was stopped (its last output: npm http fetch GET attempt 3 failed with ETIMEDOUT)",
+    ]);
+  });
+
+  it("asks npm nothing when no pack is installed", async () => {
+    const { npm, calls } = registryNpm({});
+    await expect(newerPackVersions(temporaryHome(), "latest", "0.1.5", npm)).resolves.toEqual({ updates: [], problems: [] });
+    expect(calls).toEqual([]);
+  });
 });
 
 describe("discoverPacks", () => {
@@ -410,6 +578,50 @@ describe("discoverPacks", () => {
     const discovery = await discoverPacks(undefined, offline);
 
     expect(discovery.available.map(found => [found.pack.id, found.version, found.installed])).toEqual([["typescript", version, version]]);
+  });
+
+  it("keeps offering the installed version when the one npm gives is for a newer Rerail, and names that one with why", { timeout: COMPILING_TIMEOUT_MS }, async () => {
+    const home = temporaryHome();
+    const installing = copiesStore(home, { "0.1.1": FITS });
+    expect(await installPackVersions([typescriptAt("0.1.1")], installing)).toBeUndefined();
+    // What npm has under the channel: a version whose core range leaves this core out.
+    const newer = join(home, "copies", "9.0.0");
+    cpSync(repositoryPath("packs", "typescript"), newer, { recursive: true, filter: source => !source.includes("upstream") });
+    const manifest = JSON.parse(readFileSync(join(newer, "package.json"), "utf8")) as Record<string, unknown>;
+    writeFileSync(join(newer, "package.json"), JSON.stringify({ ...manifest, version: "9.0.0", peerDependencies: { "@neralabs/rerail": ">=9.0.0" } }));
+    const store: PackStore = { ...installing, fetch: async () => ({ fetched: [{ id: "typescript", directory: newer }], problems: [], release: async () => {} }) };
+
+    const discovery = await discoverPacks(undefined, store);
+
+    expect(discovery.available.map(found => [found.pack.id, found.version, found.installed])).toEqual([["typescript", "0.1.1", "0.1.1"]]);
+    expect(discovery.problems).toEqual([expect.stringMatching(/^@neralabs\/rerail-pack-typescript@9\.0\.0: it needs a newer Rerail \(>=9\.0\.0\) than this one \(.*\); `rerail update` installs the newest$/u) as string]);
+  });
+
+  it("names a version once when the one installed is the one npm gives and it is for a newer Rerail", { timeout: COMPILING_TIMEOUT_MS }, async () => {
+    const home = temporaryHome();
+    const installing = copiesStore(home, { "9.0.0": ">=9.0.0" });
+    // Installed straight through the store: set-up's own install refuses a version this core leaves out.
+    await installing.install(["@neralabs/rerail-pack-typescript@9.0.0"]);
+    const store: PackStore = { ...installing, fetch: async () => ({ fetched: [{ id: "typescript", directory: join(home, "copies", "9.0.0") }], problems: [], release: async () => {} }) };
+
+    const discovery = await discoverPacks(undefined, store);
+
+    expect(discovery.available).toEqual([]);
+    expect(discovery.problems).toEqual([expect.stringMatching(/^@neralabs\/rerail-pack-typescript@9\.0\.0: it needs a newer Rerail /u) as string]);
+  });
+
+  it("names a fetched version that does not load and offers nothing in its place when none is installed", { timeout: COMPILING_TIMEOUT_MS }, async () => {
+    const home = temporaryHome();
+    const newer = join(home, "copies", "9.0.0");
+    cpSync(repositoryPath("packs", "typescript"), newer, { recursive: true, filter: source => !source.includes("upstream") });
+    const manifest = JSON.parse(readFileSync(join(newer, "package.json"), "utf8")) as Record<string, unknown>;
+    writeFileSync(join(newer, "package.json"), JSON.stringify({ ...manifest, version: "9.0.0", peerDependencies: { "@neralabs/rerail": ">=9.0.0" } }));
+    const store: PackStore = { home, fetch: async () => ({ fetched: [{ id: "typescript", directory: newer }], problems: [], release: async () => {} }), install: async () => {}, remove: async () => {} };
+
+    const discovery = await discoverPacks(undefined, store);
+
+    expect(discovery.available).toEqual([]);
+    expect(discovery.problems).toEqual([expect.stringMatching(/^@neralabs\/rerail-pack-typescript@9\.0\.0: it needs a newer Rerail /u) as string]);
   });
 
   describe("when no pack fits", { timeout: COMPILING_TIMEOUT_MS }, () => {

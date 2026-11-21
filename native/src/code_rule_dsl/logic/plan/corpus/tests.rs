@@ -1,6 +1,40 @@
 //! The corpus runner's tests. The engine compiles them (its facade of `logic::plan::corpus`): they parse files, and
 //! the languages are registered by the crates above `rerail-logic` as the engine loads.
 
+#[cfg(feature = "tape-cache")]
+#[test]
+fn edits_keep_other_documents_facts_when_the_input_omits_its_owner() {
+    use crate::code_rule_dsl::logic::plan::output;
+    use crate::code_rule_dsl::typing::file_local::Binding;
+
+    let temp = tempfile::tempdir().unwrap();
+    let root = temp.path().join("sources");
+    let out = temp.path().join("out");
+    std::fs::create_dir(&root).unwrap();
+    std::fs::write(root.join("keep.py"), "keep = 1\n").unwrap();
+    std::fs::write(root.join("base.py"), "base = 1\n").unwrap();
+    let rr = r#".decl doc(d: number, path: symbol, module: symbol)
+.input doc
+.decl request(k: number)
+request(1) :- doc(_, "keep.py", _).
+request(2) :- doc(_, "remove.py", _).
+.output request
+"#;
+    let run = || {
+        super::run(rr, &root, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+        let mut rows = output::shown(&out, "request").unwrap();
+        rows.sort();
+        rows
+    };
+    let previous = super::TEST_TAPE_CACHE.with(|p| p.replace(Some(temp.path().join("kept.sqlite"))));
+    assert_eq!(run(), [["1"]]);
+    std::fs::write(root.join("remove.py"), "remove = 2\n").unwrap();
+    assert_eq!(run(), [["1"], ["2"]]);
+    std::fs::remove_file(root.join("remove.py")).unwrap();
+    assert_eq!(run(), [["1"]]);
+    super::TEST_TAPE_CACHE.with(|p| p.replace(previous));
+}
+
 /// Phase 0 alone over `RERAIL_P0_ROOT`: the corpus's files (from Git in a Git work tree, else the walk) and
 /// every Python document's digest, with the observer's counts and the CPU. Run it twice for the warm figure; the
 /// observer's store is `<RERAIL_TAPE_CACHE>.files`.
@@ -40,78 +74,83 @@ fn benchmark_phase_0() {
         super::usage().2
     );
 }
-/// Decision 0076: cross-file rows memoised per import component. b imports a; c imports nothing. An edit
-/// re-derives the edited file's component and its importers' only; `verify` derives everything again and
-/// compares; the contract refuses a relation that reads an undeclared cross-file one, and a row naming a node
-/// outside its closure.
+/// Q203 item 3 (ii): a corpus run's chunks read one normalized program, made once, not one each (each chunk's
+/// own version held every analysis of it again); the findings are those of one chunk.
 #[test]
-fn cross_file_rows_are_memoised_per_import_component() {
+fn a_runs_chunks_normalize_the_program_once() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("normal-once");
+    std::fs::create_dir_all(&dir).unwrap();
+    for (i, name) in ["a", "b", "c", "d", "e", "f", "g", "h"].iter().enumerate() {
+        std::fs::write(dir.join(format!("{name}.py")), format!("def f{i}():\n    x = {i}\n    return x\n\ndef g{i}():\n    return f{i}()\n")).unwrap();
+    }
+    let rule = dir.join("calls.rerail");
+    std::fs::write(&rule, r#"
+.decl def(n: node, x: symbol)
+def(n, x) :- kind(n, "function_definition"), field(n, "name", c), text(c, x).
+.decl calls(n: node, x: symbol)
+calls(n, x) :- kind(n, "call"), field(n, "function", c), text(c, x), def(_, x).
+.output calls
+"#).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let out = dir.join("out");
+    let run = |chunk_nodes: usize, store: &str| {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(format!("store-{store}.sqlite"))));
+        // The run's own scope, held here: what it normalized is the run's count (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        let report = super::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, chunk_nodes).unwrap();
+        let normalized = crate::code_rule_dsl::logic::plan::run_counts().normalized.load(std::sync::atomic::Ordering::Relaxed);
+        (report.chunks, normalized, crate::code_rule_dsl::logic::plan::output::shown(&out, "calls").unwrap())
+    };
+    // The process's first run of the program does more than any later one (its images made): a warm-up, then
+    // each measured run over a store of its own.
+    run(1 << 20, "warm-up");
+    let (one, once, whole) = run(1 << 20, "one");
+    let (few, fewer, chunked) = run(80, "few");
+    let (many, normalized, more_chunked) = run(4, "many");
+    assert_eq!(one, 1);
+    assert!(few >= 2 && many > few, "the chunked runs' chunks: {few}, {many}");
+    assert_eq!(chunked, whole, "the findings of one chunk");
+    assert_eq!(more_chunked, whole, "the findings of one chunk");
+    assert!(whole.len() >= 4, "{whole:?}");
+    // The same at any chunk count (the file-local part's once, the cross part's, ...), none more a chunk; one chunk's
+    // run takes a part of its own besides.
+    assert_eq!(normalized, fewer, "{normalized} normalizations for {many} chunks, {fewer} for {few}");
+    assert!(normalized <= once, "{normalized} normalizations for {many} chunks, {once} for one");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The import closure (`components.rerail`, decision 0450 §3): a program that reads `rr_cx_reach` has its rules added. b
+/// imports a; c imports nothing. The cross-file memo's pragma is refused: the memo is removed.
+#[test]
+fn a_program_reading_the_import_closure_has_its_rules() {
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
-    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("cross-memo");
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("import-closure");
     std::fs::create_dir_all(&dir).unwrap();
     let write = |file: &str, body: &str| std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
     write("a.py", "def f():\n    pass\n");
     write("b.py", "from a import f\ndef g():\n    pass\n");
     write("c.py", "def h():\n    pass\n");
-    let program = |pragma: &str, extra: &str| {
-        let rule = dir.join("uses.rr");
-        std::fs::write(&rule, format!(r#"
-.pragma "cross-memo" "{pragma}"
-.decl def(n: node, q: symbol)
-def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
-.decl imp(n: node, q: symbol)
-imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
-.decl uses(n: node, f: node)
-uses(n, f) :- imp(n, q), def(f, q).
-{extra}
-.output uses
-"#)).unwrap();
-        crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap()
+    let program = |text: &str| {
+        let rule = dir.join("uses.rerail");
+        std::fs::write(&rule, text).unwrap();
+        crate::code_rule_dsl::logic::rr::parse_file_version(&rule).map(|p| crate::code_rule_dsl::logic::rr::print_version(&p).unwrap())
     };
     let out = dir.join("out");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     let run = |text: &str| super::run(text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
-    let uses = || crate::code_rule_dsl::logic::plan::output::shown(&out, "uses").unwrap();
-    let text = program("uses", "");
-    let first = run(&text).unwrap();
-    assert_eq!(first.cross, (0, 3), "three components, none stored yet");
-    let derived = uses();
-    assert_eq!(derived.len(), 1, "{derived:?}");
-    let outputs = crate::code_rule_dsl::logic::plan::output::Outputs::open(&out).unwrap();
-    assert_eq!(outputs.rows("uses")[0].get(0).path(), Some("b.py"), "{derived:?}");
-    drop(outputs);
-    assert_eq!(run(&text).unwrap().cross, (3, 0), "unchanged: every component found");
-    assert_eq!(uses(), derived, "replayed rows are the derived ones");
-    // An edit to c, which nothing imports: c alone is derived.
-    write("c.py", "def h():\n    return 1\n");
-    assert_eq!(run(&text).unwrap().cross, (2, 1));
-    assert_eq!(uses(), derived);
-    // An edit to a: a and b, which imports it, are derived; c is found.
-    write("a.py", "def f():\n    return 2\n");
-    assert_eq!(run(&text).unwrap().cross, (1, 2));
-    assert_eq!(uses(), derived);
-    // Verify: nothing replayed, every found component's stored rows equal to those derived.
-    let switched = super::switches::set(&[("RERAIL_CROSS_MEMO", "verify")]);
-    let verified = run(&text);
-    drop(switched);
-    assert_eq!(verified.unwrap().cross, (3, 0));
-    assert_eq!(uses(), derived);
-    // The contract: a memoised relation reading a cross-file relation the pragma does not name is refused.
-    let reads = program("wide", ".decl wide(n: node)\nwide(n) :- uses(n, _).\n.output wide");
-    let err = run(&reads).err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(err.contains("wide") && err.contains("uses"), "{err}");
-    // A row about a whose other node is in b, which a does not import, is outside a's closure.
-    let back = program("uses back", ".decl back(f: node, n: node)\nback(f, n) :- uses(n, f).\n.output back");
-    let err = run(&back).err().map(|e| e.to_string()).unwrap_or_default();
-    assert!(err.contains("back") && err.contains("outside its import closure"), "{err}");
-    // A memoised relation is stored, though inlining would unfold it into its readers (decision 0099): its derived
-    // rows are read from its table to be recorded ("no such table: near" before).
-    let near = program("uses near", ".decl near(n: node, f: node)\nnear(n, f) :- uses(n, f).\n.decl far(n: node)\nfar(n) :- near(n, _).\n.output far");
-    let switched = super::switches::set(&[("RERAIL_INLINE_ONLY", "near")]);
-    let stored = run(&near);
-    drop(switched);
-    stored.unwrap();
-    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "far").unwrap().len(), 1);
+    let text = program(
+        r#"
+#include "core.rerail"
+.decl seen(p: symbol, q: symbol)
+seen(p, q) :- rr_cx_reach(d, e), d != e, doc(d, p, _), doc(e, q, _).
+.output seen
+"#,
+    )
+    .unwrap();
+    run(&text).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap(), [["b.py", "a.py"]]);
+    let err = program(".pragma \"cross-memo\" \"seen\"\n.decl seen(p: symbol)\nseen(p) :- doc(_, p, _).\n.output seen\n").err().map(|e| format!("{e:?}")).unwrap_or_default();
+    assert!(err.contains("cross-memo") && err.contains("removed"), "{err}");
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -130,7 +169,7 @@ fn an_export_handed_on_as_its_parts_finds_the_same_and_a_changed_choice_misses_t
     let body = "def f():\n    x = 1\n    y = 2\n    print(x, y)\n    def g():\n        print(x, y)\n        z = x\n    return y\n";
     std::fs::write(dir.join("a.py"), format!("{marker}{body}")).unwrap();
     std::fs::write(dir.join("b.py"), format!("{marker}{body}def h():\n    x = 3\n    print(x)\n")).unwrap();
-    let rule = dir.join("outer.rr");
+    let rule = dir.join("outer.rerail");
     // `outer`: a statement of a function's body, and a name the function assigns that some file reads. Its
     // file-local join, `encl(f, p), bound(p, x)`, meets at the function `p`, which it projects away. Its
     // cross-file filter, `named(x)`, binds only `x`: one that bound `f` and `x` both (`uses(f, x)`) would keep the
@@ -148,7 +187,7 @@ bound(p, x) :- kind(p, "function_definition"), child(p, b, _), kind(b, "block"),
 outer(f, x) :- named(x), encl(f, p), bound(p, x).
 .output outer
 "#).unwrap();
-    let program = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let store = dir.join("store.sqlite");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.clone()));
@@ -267,8 +306,8 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
     std::fs::write(src.join("other.py"), "import json\njson.loads('1')\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
-    let programs: Vec<String> = ["bandit-b301-pickle.rr", "bandit-b307-eval.rr"].iter().map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap()).collect();
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let programs: Vec<String> = ["bandit-b301-pickle.rerail", "bandit-b307-eval.rerail"].iter().map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap()).collect();
     let texts: Vec<&str> = programs.iter().map(String::as_str).collect();
     let (maintained, _) = edit(
         &texts,
@@ -286,11 +325,11 @@ fn the_cross_file_part_is_maintained_from_its_frames_in_a_new_process() {
     for (path, text) in [("a.py", "from b import x\n"), ("b.py", "from c import y\n"), ("c.py", "from a import z\n"), ("d.py", "x = 1\n")] {
         std::fs::write(src.join(path), text).unwrap();
     }
-    let rule = base.join("reach.rr");
+    let rule = base.join("reach.rerail");
     std::fs::write(
         &rule,
         ".policy \"test-import-cycle\" revision 1\n.description \"An import that closes a cycle of imports.\"\n.language python\n.mode steer\n\
-         .scope include \"**/*.py\"\n#include \"python/names.rr\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
+         .scope include \"**/*.py\"\n#include \"python/names.rerail\"\n.decl dep(a: number, b: number)\ndep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).\n\
          .decl reach(a: number, b: number) no_reach\nreach(a, b) :- dep(a, b).\nreach(a, c) :- reach(a, b), dep(b, c).\n\
          .violation CYC(at: node) code \"CYC\" \"This import closes a cycle of imports.\"\nCYC(i) :- impmod(i, m), docof(i, a), doc(b, _, m), reach(b, a).\n",
     )
@@ -314,7 +353,7 @@ pub(super) const REACH_RULE: &str = r#".policy "test-reach-index" revision 1
 .language python
 .mode steer
 .scope include "**/*.py"
-#include "python/names.rr"
+#include "python/names.rerail"
 .decl dep(a: number, b: number)
 dep(a, b) :- impmod(i, m), docof(i, a), doc(b, _, m).
 .decl own(a: number)
@@ -374,7 +413,7 @@ fn the_reach_index_is_derived_again_when_cycles_and_connections_change_in_a_new_
     for (path, text) in REACH_START {
         std::fs::write(src.join(path), text).unwrap();
     }
-    let rule = base.join("reach.rr");
+    let rule = base.join("reach.rerail");
     std::fs::write(&rule, REACH_RULE).unwrap();
     let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
     let findings = || {
@@ -448,7 +487,7 @@ fn cross_file_strata_are_kept_across_runs_in_the_tape_cache() {
     write("a.py", "def f():\n    pass\n");
     write("b.py", "from a import f\ndef g():\n    pass\n");
     write("c.py", "def h():\n    pass\n");
-    let rule = dir.join("uses.rr");
+    let rule = dir.join("uses.rerail");
     std::fs::write(&rule, r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
@@ -463,7 +502,7 @@ unused(f) :- def(f, _), !used(f).
 .output uses
 .output unused
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -500,7 +539,7 @@ fn a_finding_of_three_columns_held_cross_file_is_read_where_it_is() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "def f():\n    pass\n").unwrap();
     std::fs::write(dir.join("b.py"), "from a import f\ndef g():\n    pass\n").unwrap();
-    let rule = dir.join("finding.rr");
+    let rule = dir.join("finding.rerail");
     std::fs::write(&rule, r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
@@ -512,7 +551,7 @@ used(f) :- imp(_, q), def(f, q).
 finding("unused", q, f) :- def(f, q), !used(f).
 .output finding
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -520,6 +559,39 @@ finding("unused", q, f) :- def(f, q), !used(f).
     let names: Vec<&str> = rows.iter().map(|row| row[1].as_str()).collect();
     assert!(rows.iter().all(|row| row.len() == 3 && row[0] == "unused"), "{rows:?}");
     assert!(names.iter().any(|q| q.ends_with("g")) && !names.iter().any(|q| q.ends_with(".f")), "g is unused, f is imported: {rows:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0434 §4, step 6: a run's parses are stored with their presences after them, each tape's home as one: a
+/// tape read back from the store holds its document's kinds.
+#[test]
+fn a_runs_tapes_are_stored_with_their_presences() {
+    let marker = format!("# {:?}\n", std::time::SystemTime::now());
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("stored-presences");
+    std::fs::create_dir_all(&dir).unwrap();
+    let bodies = [("a.py", "def f():\n    pass\n"), ("b.py", "class B:\n    x = 1\n"), ("c.py", "print(1)\n")];
+    for (file, body) in bodies {
+        std::fs::write(dir.join(file), format!("{marker}{body}")).unwrap();
+    }
+    let rule = ".decl f(n: node)\nf(n) :- kind(n, \"function_definition\").\n.output f\n";
+    let out = dir.join("out");
+    let store = dir.join("stored.sqlite");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.clone()));
+    super::run(rule, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let cache = crate::content_store::ContentStore::open(&store).unwrap();
+    let python = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
+    let tag = i64::from(crate::code_rule_dsl::language::tape_tag(python).unwrap());
+    let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
+    // The kind of a `function_definition` node.
+    let function = ast_grep_language::LanguageExt::get_ts_language(&python).id_for_node_kind("function_definition", true);
+    for (file, body) in bodies {
+        let source = cache.source_by_hash(crate::content_store::HashKey::sha256(format!("{marker}{body}").as_bytes())).unwrap().expect("the source, stored");
+        let frame = cache.tape_frames_for(&[source], tag, gv, fv).unwrap().remove(0).unwrap_or_else(|| panic!("{file}'s tape, stored"));
+        let bytes = frame.bytes().unwrap();
+        let presence = crate::code_rule_dsl::tape::stored_presence(&bytes, tag as u8).unwrap_or_else(|| panic!("{file}'s presence, stored with its tape"));
+        assert_eq!(presence.has_kind(u32::MAX, function), body.starts_with("def"), "{file}: its document's kinds");
+    }
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -541,9 +613,9 @@ fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
     }
     std::fs::write(ws.join("rerail.env"), "python.typeshed = ../ts\n").unwrap();
     std::fs::write(ws.join("main.py"), "import a\n").unwrap();
-    let rule = dir.join("p.rr");
-    std::fs::write(&rule, "#include \"python/modules.rr\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let rule = dir.join("p.rerail");
+    std::fs::write(&rule, "#include \"python/modules.rerail\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -556,7 +628,7 @@ fn the_cone_of_requests_is_kept_while_its_reads_and_answers_are() {
         (report.cone_kept.expect("a run with a tape cache keeps its cone's strata"), loaded)
     };
     let ((ran, all), first) = run("kept.sqlite");
-    // The first run evaluates the cone's strata that phase 1 did not: phase 1 (`sources.rr`) resolves the same
+    // The first run evaluates the cone's strata that phase 1 did not: phase 1 (`sources.rerail`) resolves the same
     // imports first, and a relation is kept under its identity, not its program's (decision 0103).
     assert!(ran > 0 && ran <= all, "the first run evaluates the cone ({ran} of {all} strata)");
     assert_eq!(first, ["a.pyi", "builtins.pyi"]);
@@ -598,9 +670,9 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     std::fs::write(ws.join("main.py"), "import a\nimport pkg.m\n").unwrap();
     std::fs::write(ws.join("pkg/__init__.py"), "").unwrap();
     std::fs::write(ws.join("pkg/m.py"), "import b\n").unwrap();
-    let rule = dir.join("p.rr");
-    std::fs::write(&rule, "#include \"python/modules.rr\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let rule = dir.join("p.rerail");
+    std::fs::write(&rule, "#include \"python/modules.rerail\"\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n").unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let fresh = std::cell::Cell::new(0);
     let run = |store: &str| {
@@ -638,11 +710,53 @@ fn the_cone_maintained_by_rounds_loads_what_a_fresh_cone_loads() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Q224: a run whose loaded document's chunk fails ends with that chunk's error, not waits. Two loads here, one from
+/// a file's lines and one from a directory's entries. The hang needed a second load posted ahead and answered after
+/// the first's error (the full shape on Metal, 3 of 13 runs); this program's cone does not post them so, and the test
+/// passes without `Builder::next`'s stopped check too: it keeps the error's way out, not that order.
+#[test]
+fn a_load_whose_chunk_fails_ends_the_run_with_its_error() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("load-fails");
+    let _ = std::fs::remove_dir_all(&dir);
+    let (ws, lib) = (dir.join("ws"), dir.join("lib"));
+    std::fs::create_dir_all(&ws).unwrap();
+    std::fs::create_dir_all(&lib).unwrap();
+    let (fails, other) = (lib.join(super::FAILS_ITS_CHUNK), lib.join("b.pyi"));
+    std::fs::write(&fails, "def f() -> None: ...\n").unwrap();
+    std::fs::write(&other, "def b() -> None: ...\n").unwrap();
+    std::fs::write(ws.join("rerail.env"), "test.libraries = ../lib\n").unwrap();
+    std::fs::write(ws.join("main.py"), "x = 1\n").unwrap();
+    std::fs::write(ws.join("later.txt"), format!("{}\n", fails.display())).unwrap();
+    let rule = dir.join("p.rerail");
+    std::fs::write(&rule, format!(
+        "#include \"core.rerail\"\nload(p, \"f\", \"python\") :- file_line(\"later.txt\", 1, p).\nload(p, \"b\", \"python\") :- dir_entry(\"{lib}\", \"b.pyi\", 0), p = cat(\"{lib}\", \"/b.pyi\").\n.decl n_loaded(p: symbol)\nn_loaded(p) :- loaded(p, _, _).\n.output n_loaded\n",
+        lib = lib.display()
+    )).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let (out, store) = (dir.join("out"), dir.join("store.sqlite"));
+    let (tx, rx) = std::sync::mpsc::channel();
+    std::thread::spawn(move || {
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store));
+        let r = super::run(&text, &ws, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+        let _ = tx.send(r.err().map(|e| e.to_string()));
+    });
+    let err = rx.recv_timeout(std::time::Duration::from_secs(120)).expect("the run ends, not waits for ever");
+    let err = err.expect("the run fails");
+    assert!(err.contains(super::FAILS_ITS_CHUNK), "the run ends with the chunk's error: {err}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0327, mode (b): a translation unit's answer is kept while the files it read are unchanged. An edit to a
 /// header asks again for the units that read it, and for no other; a header made where a unit's search looked first
-/// is one it read (its path was looked at). The outputs are those of a run with nothing kept.
+/// is one it read (its path was looked at). The outputs are those of a run with nothing kept. The workspace is
+/// reached through a symbolic link: a unit's reads are kept under their canonical names, and the edit is named
+/// under the workspace's as given too (`Observer::changed_since`), as where the temporary directory is a link (macOS's
+/// `/var`).
 #[test]
 fn a_header_edit_asks_again_only_for_the_units_that_read_it() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not.
+    let _switches = super::switches::reading();
     crate::install_store_functions();
     // The journal names what changed (decision 0105): the engine's tests run without it, and this one turns it on
     // (after the first observer, which turns it off once a process).
@@ -652,17 +766,21 @@ fn a_header_edit_asks_again_only_for_the_units_that_read_it() {
     crate::content_store::observe::set_journal_wait_least(std::time::Duration::from_secs(2));
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("c-units-kept");
     let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("real/sys")).unwrap();
     let ws = dir.join("ws");
-    std::fs::create_dir_all(ws.join("sys")).unwrap();
+    #[cfg(unix)]
+    std::os::unix::fs::symlink(dir.join("real"), &ws).unwrap();
+    #[cfg(not(unix))]
+    let ws = dir.join("real");
     std::fs::write(ws.join("one.c"), "#include \"h.h\"\nint one = H;\n").unwrap();
     std::fs::write(ws.join("two.c"), "#include <g.h>\nint two = G;\n").unwrap();
     std::fs::write(ws.join("three.c"), "int three;\n").unwrap();
     std::fs::write(ws.join("h.h"), "#define H 1\n").unwrap();
     std::fs::write(ws.join("sys/g.h"), "#define G 2\n").unwrap();
-    let rule = dir.join("p.rr");
+    let rule = dir.join("p.rerail");
     std::fs::write(&rule, r#"
 .language c
-#include "c/preprocess.rr"
+#include "c/preprocess.rerail"
 .decl c_file(p: symbol)
 c_file(p) :- kind(n, "translation_unit"), docof(n, d), doc(d, p, _).
 c_lang("c", "c", "gnu17").
@@ -676,7 +794,7 @@ uses(t, n, p) :- c_pp_expansion(t, _, _, n, p, _, _, _, _).
 active(t, p, e) :- c_pp_active(t, _, p, _, e).
 .output entered, uses, active
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -717,7 +835,7 @@ fn a_new_process_maintains_the_cross_file_part_from_the_kept_rows() {
     write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
     write("b.py", "from a import f\ndef g():\n    pass\n");
     write("c.py", "from a import k\ndef h():\n    pass\n");
-    let rule = dir.join("uses.rr");
+    let rule = dir.join("uses.rerail");
     std::fs::write(&rule, r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
@@ -731,7 +849,7 @@ used(f) :- uses(_, f).
 unused(f) :- def(f, _), !used(f).
 .output unused
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -755,11 +873,14 @@ unused(f) :- def(f, _), !used(f).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Decision 0173 (t36 item 7): a maintained run reads its programs as versions. The maintained part is a tree of
-/// its version (`maintain::rewrite`), decoded by no reader, and the run's copy of the prepared split shares the
-/// parts' trees, copying none. The outputs are a run's with an empty store.
+/// Decision 0173 (t36 item 7): a maintained run reads its programs as versions, in place: there is no tree form to
+/// decode one into (`front::tests::no_tree_program_comes_back`). The outputs are a run's with an empty store.
 #[test]
 fn a_maintained_run_decodes_and_copies_no_tree() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let _switches = super::switches::reading();
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("no-trees");
     std::fs::create_dir_all(&dir).unwrap();
@@ -767,7 +888,7 @@ fn a_maintained_run_decodes_and_copies_no_tree() {
     write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
     write("b.py", "from a import f\ndef g():\n    pass\n");
     write("c.py", "from a import k\ndef h():\n    pass\n");
-    let rule = dir.join("uses.rr");
+    let rule = dir.join("uses.rerail");
     std::fs::write(&rule, r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
@@ -781,7 +902,7 @@ used(f) :- uses(_, f).
 unused(f) :- def(f, _), !used(f).
 .output unused
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -790,15 +911,10 @@ unused(f) :- def(f, _), !used(f).
     };
     run("kept.sqlite");
     write("c.py", "def h():\n    pass\n");
-    crate::code_rule_dsl::logic::program_image::forget_trees_decoded();
     let (maintained, rows) = run("kept.sqlite");
-    // The run's program is a version (`lower::Lowered`): no tree to copy or read beside it. A tree is made only by
-    // decoding one (`Version::program`), counted.
-    let decoded = crate::code_rule_dsl::logic::program_image::trees_decoded();
     let (_, fresh) = run("fresh.sqlite");
     assert_eq!(rows, fresh);
     assert!(maintained > 0, "a changed stratum maintained from the kept rows ({maintained})");
-    assert_eq!(decoded.0, 0, "the maintained run decoded trees from their versions, the last at {:?}", decoded.1);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -809,6 +925,8 @@ unused(f) :- def(f, _), !used(f).
 /// device's binding too.
 #[test]
 fn a_maintained_strata_pieces_run_as_one_component() {
+    // The counts are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("together");
     std::fs::create_dir_all(&dir).unwrap();
@@ -816,7 +934,7 @@ fn a_maintained_strata_pieces_run_as_one_component() {
     write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
     write("b.py", "from a import f\ndef g():\n    pass\n");
     write("c.py", "from a import k\ndef h():\n    pass\n");
-    let rule = dir.join("uses.rr");
+    let rule = dir.join("uses.rerail");
     std::fs::write(&rule, r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
@@ -833,11 +951,13 @@ lone(f) :- unused(f), !used(f), def(f, q), !imp(_, q).
 .output unused
 .output lone
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     use crate::code_rule_dsl::typing::file_local::Binding;
     let run_on = |store: &str, binding: Binding| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        // The run's own scope, held here: the maintain mode's count is the run's (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let moded = crate::code_rule_dsl::logic::plan::mode_strata();
         let report = super::run(&text, &dir, None, &out, "program", binding, 1 << 18).unwrap();
         let rows = ["unused", "lone"].map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap());
@@ -886,7 +1006,7 @@ fn a_cycle_closed_by_an_empty_relation_still_keeps_levels() {
     write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
     write("b.py", "from a import f\ndef g():\n    pass\n");
     write("c.py", "from b import g\ndef h():\n    pass\n");
-    let rule = dir.join("reach.rr");
+    let rule = dir.join("reach.rerail");
     std::fs::write(&rule, r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
@@ -905,7 +1025,7 @@ reach(a, a) :- side(a), never(a).
 .output reach
 .output side
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
@@ -930,6 +1050,8 @@ reach(a, a) :- side(a), never(a).
 /// with an empty store, and the mode maintained strata (none derived again by a form).
 #[test]
 fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
+    // The counts are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mode-aggregates");
     std::fs::create_dir_all(&dir).unwrap();
@@ -937,7 +1059,7 @@ fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
     write("a.py", "def f():\n    pass\ndef k():\n    pass\n");
     write("b.py", "from a import f\ndef g():\n    pass\n");
     write("c.py", "from a import f\nfrom b import g\ndef h():\n    pass\n");
-    let rule = dir.join("agg.rr");
+    let rule = dir.join("agg.rerail");
     std::fs::write(&rule, r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
@@ -955,10 +1077,12 @@ named(n, @dot(q, q)) :- uses(n, f), def(f, q).
 .output most
 .output named
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     let run = |store: &str| {
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join(store)));
+        // The run's own scope, held here: the maintain mode's count is the run's (decision 0442), read before it ends.
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
         let before = crate::code_rule_dsl::logic::plan::mode_strata();
         super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         let rows = ["fanout", "most", "named"].map(|r| {
@@ -1009,9 +1133,9 @@ uses(n, f) :- imp(n, q), def(f, q).
     let out = dir.join("out");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("kept.sqlite")));
     let run = |extra: &str| {
-        let rule = dir.join("p.rr");
+        let rule = dir.join("p.rerail");
         std::fs::write(&rule, format!("{shared}{extra}")).unwrap();
-        let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+        let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
         let report = super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
         report.cross_kept.expect("a run with a tape cache keeps its cross-file strata")
     };
@@ -1028,15 +1152,15 @@ uses(n, f) :- imp(n, q), def(f, q).
 }
 
 /// Decision 0089: a library is held once, and a request's cone once per distinct request. Two programs ask
-/// `compare.rr` the same, a third asks something else, a fourth asks nothing and reads the library's own copy.
+/// `compare.rerail` the same, a third asks something else, a fourth asks nothing and reads the library's own copy.
 #[test]
 fn libraries_are_held_once_and_equal_requests_share_one_cone() {
     let ask = |kind: &str, own: &str| {
         format!(
-            "#include \"python/compare.rr\"\ncmp_same_ask(a, b) :- kind(a, \"{kind}\"), kind(b, \"{kind}\"), a < b.\n.decl {own}(a: node)\n{own}(a) :- cmp_same(a, _).\n.output {own}\n"
+            "#include \"python/compare.rerail\"\ncmp_same_ask(a, b) :- kind(a, \"{kind}\"), kind(b, \"{kind}\"), a < b.\n.decl {own}(a: node)\n{own}(a) :- cmp_same(a, _).\n.output {own}\n"
         )
     };
-    let quiet = "#include \"python/compare.rr\"\n.decl quiet(a: node)\nquiet(a) :- cmp_same(a, _).\n.output quiet\n".to_owned();
+    let quiet = "#include \"python/compare.rerail\"\n.decl quiet(a: node)\nquiet(a) :- cmp_same(a, _).\n.output quiet\n".to_owned();
     let texts = [ask("call", "one"), ask("call", "two"), ask("name", "three"), quiet];
     let texts: Vec<&str> = texts.iter().map(String::as_str).collect();
     let rules = super::combine_texts(&texts).unwrap().heads_and_reads();
@@ -1058,6 +1182,133 @@ fn libraries_are_held_once_and_equal_requests_share_one_cone() {
     assert_eq!(reads("p3_quiet"), ["cmp_same"]);
 }
 
+/// A library's kind set that its own rules read only as a set (`tsx/react-class.rerail`'s `inside(c, m, keyed_kind)`) is a
+/// relation of the library held once all the same: a program that reads it as one (`kind(p, k), keyed_kind(k)`, react's
+/// no-access-state-in-setstate) finds its rows in a pack. The library linked alone dropped it, and the react pack
+/// failed on `no such table: main.keyed_kind`. PR #508's 363b91c0b (t47).
+#[test]
+fn a_librarys_kind_set_is_a_relation_its_includers_read_in_a_pack() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    let reads = ".language typescript\n#include \"tsx/react-class.rerail\"\n.decl keyed(p: node)\nkeyed(p) :- kind(p, k), keyed_kind(k).\n.output keyed\n";
+    let other = ".language typescript\n#include \"tsx/react-class.rerail\"\n.decl state(c: node)\nstate(c) :- set_state_in(c, _).\n.output state\n";
+    let v = super::combine_texts(&[reads, other]).unwrap_or_else(|e| panic!("{e}"));
+    assert!(reads_of(&v, "p0_keyed").iter().any(|r| r == "keyed_kind"), "{:?}", reads_of(&v, "p0_keyed"));
+    assert!(v.declares("keyed_kind"), "keyed_kind is no relation of the pack");
+    assert_eq!(v.fact_rows("keyed_kind").len(), 5);
+}
+
+/// A value cycle that a library relation bounds (`deparen(e, a)`: a is e or below it) is bounded in a pack too, where
+/// a program is lowered without its library's rules: typescript-eslint's no-duplicate-enum-values (`enum_number`) and
+/// vitest's expect-expect (`name_of`) failed the typescript pack as unbounded value cycles, though each is bounded
+/// alone. PR #508's 363b91c0b (t47).
+#[test]
+fn a_value_cycle_a_library_relation_bounds_is_bounded_in_a_pack() {
+    let cycle = ".language typescript\n#include \"tsx/ts-b.rerail\"\n\
+                 .decl ua(x: node, a: node)\nua(x, a) :- kind(x, \"unary_expression\"), field(x, \"argument\", e), deparen(e, a).\n\
+                 .decl num(x: node, f: float)\nnum(x, to_float(v)) :- kind(x, \"number\"), value(x, v).\n\
+                 num(x, 0.0 - f) :- ua(x, a), num(a, f).\n.output num\n";
+    let other = ".language typescript\n#include \"tsx/ts-b.rerail\"\n.decl d(e: node, a: node)\nd(e, a) :- deparen(e, a).\n.output d\n";
+    super::combine_texts(&[cycle]).unwrap_or_else(|e| panic!("alone: {e}"));
+    let v = super::combine_texts(&[cycle, other]).unwrap_or_else(|e| panic!("in a pack: {e}"));
+    assert!(v.heads_and_reads().iter().any(|(h, _)| h == "p0_num"));
+}
+
+/// A program that states facts of a library relation (`lit_repr_threshold(16384).`, an `extensible` one) asks of the
+/// library as one that derives it does (decision 0089 §3): its readers in the library (`dec_lit_repr`) are copied into
+/// its request, over its facts. Taken as the library's, they read the library's relation without them, and
+/// clippy-decimal-literal-representation found nothing in a pack. PR #508's 363b91c0b (t47).
+#[test]
+fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    let stating = ".language rust\n#include \"rust/syntax-literals.rerail\"\n.decl hit(n: node)\nhit(n) :- dec_lit_repr(n).\n.output hit\nlit_repr_threshold(16384).\n";
+    let other = ".language rust\n#include \"rust/syntax-literals.rerail\"\n.decl lit(n: node, v: number)\nlit(n, v) :- int_lit_value(n, v).\n.output lit\n";
+    let v = super::combine_texts(&[stating, other]).unwrap_or_else(|e| panic!("{e}"));
+    let read = reads_of(&v, "p0_hit");
+    let copy = read.iter().find(|r| r.starts_with('q') && r.ends_with("_dec_lit_repr")).unwrap_or_else(|| panic!("p0_hit reads {read:?}"));
+    assert!(!read.iter().any(|r| r == "dec_lit_repr"), "p0_hit reads the library's dec_lit_repr: {read:?}");
+    let threshold = copy.replace("_dec_lit_repr", "_lit_repr_threshold");
+    assert_eq!(v.fact_rows(&threshold).len(), 1, "{threshold}: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
+}
+
+/// A library's kind set that a program reads by `nearest` (ruff-n807's `nearest(f, s, scope)` over python/names.rerail's
+/// `scope`) has the library's kinds in a pack, as alone. Lowered in its library's scope, the program was seeded the
+/// set's declaration but not its facts, so it held `scope` empty, and its `nearest` climbed to nothing: ruff-n807,
+/// RUF033, AIR303 and F406 found nothing in the python pack. PR #508's afeb076e5 (t47).
+#[test]
+fn a_programs_nearest_over_a_library_kind_set_finds_in_a_pack_what_it_finds_alone() {
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
+    let near = ".language python\n#include \"python/names.rerail\"\n.decl top(x: symbol)\n\
+                top(x) :- kind(f, \"function_definition\"), field(f, \"name\", c), text(c, x), nearest(f, s, scope), kind(s, \"module\").\n.output top\n";
+    let other = ".language python\n#include \"python/names.rerail\"\nrotgt(s, \"zz\") :- kind(s, \"module\").\n\
+                 .decl bound(x: symbol)\nbound(x) :- bound_in(_, x).\n.output bound\n";
+    let (alone, together) = alone_and_together("library-kind-set", ("a.py", "def f():\n    def g():\n        pass\nclass C:\n    def m(self):\n        pass\n"), near, other, "top");
+    // Every set a rule climbs to is a set of the combined program, with its kinds.
+    let v = super::combine_texts(&[near, other]).unwrap_or_else(|e| panic!("{e}"));
+    let sets = v.kindsets();
+    for r in v.rules() {
+        let shown = v.show_rule(r);
+        for (_, rest) in shown.match_indices("nearest(").map(|(i, _)| shown.split_at(i)) {
+            let set = rest.split(')').next().and_then(|args| args.rsplit(", ").next()).unwrap_or("");
+            assert!(sets.get(set).is_some_and(|k| !k.is_empty()), "{shown}: {set} is no set of the pack: {:?}", sets.get(set));
+        }
+    }
+    assert_eq!(alone, [["f"]], "f's nearest scope is the module; g's is f, m's is C");
+    assert_eq!(together, alone);
+}
+
+/// A library relation of kinds that no library rule climbs to (eslint-a-control.rerail's `breakable_kind(k) :-
+/// loop_kind(k)`), and a program's own set over one (`stop(k) :- function_kind(k)`), hold the library's kinds where a
+/// program climbs to them in a pack, as alone: eslint's no-extra-label found nothing in a pack, no-unsafe-finally
+/// climbed past functions. PR #508's 4146acbd9 (t47).
+#[test]
+fn a_programs_nearest_over_a_library_relation_of_kinds_finds_in_a_pack_what_it_finds_alone() {
+    let near = ".language typescript\n#include \"tsx/eslint-a-control.rerail\"\n.decl left(k: symbol)\n\
+                left(k) :- kind(j, \"break_statement\"), nearest(j, s, breakable_kind), kind(s, k).\n.output left\n\
+                .decl stop(k: symbol)\nstop(\"program\").\nstop(k) :- function_kind(k).\n\
+                .decl stopped(k: symbol)\nstopped(k) :- kind(j, \"return_statement\"), nearest(j, s, stop), kind(s, k).\n.output stopped\n";
+    let other = ".language typescript\n#include \"tsx/eslint-a-control.rerail\"\n.decl j(n: node)\nj(n) :- jump(n, _).\n.output j\n";
+    let ts = "function f() { for (;;) { if (a) { break; } return 1; } }\nswitch (b) { case 1: break; }\n";
+    let (alone, together) = alone_and_together("library-kind-relation", ("a.ts", ts), near, other, "left");
+    assert_eq!(alone, [["for_statement"], ["switch_statement"]]);
+    assert_eq!(together, alone);
+    let (alone, together) = alone_and_together("library-kind-relation-own", ("a.ts", ts), near, other, "stopped");
+    assert_eq!(alone, [["function_declaration"]]);
+    assert_eq!(together, alone);
+}
+
+/// `first`'s `rel` over the one file `file` (its name and text): run alone, and in a pack with `other`.
+fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(file.0), file.1).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let run = |programs: &[&str], out: &str| {
+        let out = dir.join(out);
+        super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+        let rows = read(&format!("p0_{rel}"));
+        if rows.is_empty() { read(rel) } else { rows }
+    };
+    let alone = run(&[first], "alone");
+    let together = run(&[first, other], "together");
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    (alone, together)
+}
+
+/// A `match_all` over a library relation's node (FAST003's over `route_path`'s `s`, a string by `plain_str`) scans
+/// the spans the library's rules bind it to in a pack, as alone: the program held the library relation declared and
+/// not derived, ran no pattern, and ruff-fast003 found nothing in a pack. PR #508's 4146acbd9 (t47).
+#[test]
+fn a_match_over_a_library_relations_node_finds_in_a_pack_what_it_finds_alone() {
+    let words = ".language python\n#include \"python/ast.rerail\"\n.decl word(k: symbol)\n\
+                 word(k) :- plain_str(s, _), match_all(\"(?<K>[a-z]+)\", s), text(K, k).\n.output word\n";
+    let other = ".language python\n#include \"python/ast.rerail\"\n.decl inner(e: node)\ninner(m) :- unparen(_, m).\n.output inner\n";
+    let (alone, together) = alone_and_together("library-span", ("a.py", "x = \"ab cd\"\n"), words, other, "word");
+    assert_eq!(alone, [["ab"], ["cd"]]);
+    assert_eq!(together, alone);
+}
+
 /// Each test's store is its own: a copy of the template (the library's phase 0 in it), with an identity of its own,
 /// and closed and removed when the test ends (`test_store`). Two tests at once have two stores.
 #[test]
@@ -1076,7 +1327,7 @@ fn a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test() {
         std::thread::Builder::new().name(format!("corpus::tests::probe{n}")).spawn(move || {
             let dir = tempfile::tempdir().unwrap();
             std::fs::write(dir.path().join("a.py"), "def f():\n    return 1\n").unwrap();
-            let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
+            let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version("#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
             let out = dir.path().join("out");
             super::run(&text, dir.path(), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
             assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "defs").unwrap(), [["f"]]);
@@ -1133,6 +1384,7 @@ fn benchmark_test_store_copy() {
 #[cfg(target_vendor = "apple")]
 #[test]
 #[ignore = "a benchmark: the steps of a test's store"]
+#[cfg(target_vendor = "apple")] // `clonefile` is APFS's
 fn benchmark_test_store_copy_steps() {
     use std::os::unix::ffi::OsStrExt as _;
     let template = super::test_store::template().to_path_buf();
@@ -1200,10 +1452,10 @@ fn modules_are_named_from_their_package_roots_and_relative_imports_of_any_depth_
         std::fs::create_dir_all(p.parent().unwrap()).unwrap();
         std::fs::write(p, text).unwrap();
     }
-    let rule = base.join("names.rr");
+    let rule = base.join("names.rerail");
     std::fs::write(
         &rule,
-        ".language python\n.scope include \"**/*.py\"\n#include \"python/names.rr\"\n\
+        ".language python\n.scope include \"**/*.py\"\n#include \"python/names.rerail\"\n\
          .decl mods(p: symbol, m: symbol)\nmods(p, m) :- doc(_, p, m).\n\
          .decl subs(q: symbol)\nsubs(q) :- subclass(q, \"shop.base.Base\").\n\
          .decl syms(q: symbol)\nsyms(q) :- kind(k, \"call\"), field(k, \"function\", c), sym_of(c, q).\n\
@@ -1225,11 +1477,52 @@ fn modules_are_named_from_their_package_roots_and_relative_imports_of_any_depth_
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// `unpackaged(d)` holds for a Python file no regular package holds: one at the tree's root, or in a folder with no
+/// `__init__.py`. Ruff names such a file by its stem and resolves no relative import in it, and
+/// `python/references.rerail` does the same, from this fact alone, so its file-local part reads no other document. A
+/// folder that gains an `__init__.py` makes its files packaged in the next run (the memo keys on the folders).
+#[test]
+fn a_python_file_no_package_holds_is_unpackaged() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("unpackaged");
+    let _ = std::fs::remove_dir_all(&base);
+    let src = base.join("tree");
+    for (path, text) in [
+        ("top.py", "x = 1\n"),
+        ("loose/x.py", "x = 1\n"),
+        ("pkg/__init__.py", ""),
+        ("pkg/m.py", "x = 1\n"),
+        ("pkg/sub/n.py", "x = 1\n"),
+    ] {
+        let p = src.join(path);
+        std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+        std::fs::write(p, text).unwrap();
+    }
+    let rule = base.join("unpackaged.rerail");
+    std::fs::write(
+        &rule,
+        ".language python\n.scope include \"**/*.py\"\n\
+         .decl loose(p: symbol)\nloose(p) :- unpackaged(d), doc(d, p, _).\n.output loose\n",
+    )
+    .unwrap();
+    let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
+    let out = base.join("out");
+    let run = || {
+        let _ = std::fs::remove_dir_all(&out);
+        super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        crate::code_rule_dsl::logic::plan::output::shown(&out, "loose").unwrap_or_default()
+    };
+    assert_eq!(run(), [["loose/x.py"], ["pkg/sub/n.py"], ["top.py"]]);
+    std::fs::write(src.join("loose/__init__.py"), "").unwrap();
+    assert_eq!(run(), [["pkg/sub/n.py"], ["top.py"]]);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A request's context is every literal beside it (`rr::lower`'s `request_context`): `type_ctx(r) :- type_ctx(s),
 /// str_node(s), parsed(s, "annotation", r)` asks to parse the strings in a type context, not every string of the
 /// file. Its context was the inputs alone (`str_node`), and a module of 111k string pairs (netbox's `un_locode.py`)
 /// asked for every one: 297k parses, past 25 minutes and 33 GB.
 #[test]
+#[ignore = "Q322: python/typing's file-local `pyi_sym` and the guests answered in the fixpoint (0431 §8) make one component that negates `typing_sym`"]
 fn a_parse_request_asks_only_for_the_strings_its_rule_reads() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("request-context");
     let _ = std::fs::remove_dir_all(&base);
@@ -1238,8 +1531,8 @@ fn a_parse_request_asks_only_for_the_strings_its_rule_reads() {
     let data: String = (0..50).map(|i| format!("    ('AD-{i:03}', 'Place {i}'),\n")).collect();
     std::fs::write(src.join("data.py"), format!("CODES = (\n{data})\n")).unwrap();
     std::fs::write(src.join("types.py"), "from typing import List\nx: \"List[int]\" = []\ny = \"not a type\"\n").unwrap();
-    let rule = base.join("typing.rr");
-    std::fs::write(&rule, ".language python\n.scope include \"**/*.py\"\n#include \"python/typing.rr\"\n.decl typed(n: node)\ntyped(n) :- type_ctx(n).\n.output typed\n").unwrap();
+    let rule = base.join("typing.rerail");
+    std::fs::write(&rule, ".language python\n.scope include \"**/*.py\"\n#include \"python/typing.rerail\"\n.decl typed(n: node)\ntyped(n) :- type_ctx(n).\n.output typed\n").unwrap();
     let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
     let out = base.join("out");
     super::run(&program, &src, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -1259,7 +1552,7 @@ fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
     let depth = crate::code_rule_dsl::scope::MAX_BUILD_DEPTH as usize + 100;
     std::fs::write(src.join("deep.py"), format!("x = {}1{}\n", "[".repeat(depth), "]".repeat(depth))).unwrap();
     std::fs::write(src.join("typed.py"), "def f(a: \"int\") -> None: pass\n").unwrap();
-    let rule = base.join("annotated.rr");
+    let rule = base.join("annotated.rerail");
     std::fs::write(&rule, ".language python\n.scope include \"**/*.py\"\n.decl annotated(p: symbol)\nannotated(p) :- string_annotation(s), docof(s, d), doc(d, p, _).\n.output annotated\n").unwrap();
     let program = crate::code_rule_dsl::logic::settings::program_text(&rule).unwrap();
     let out = base.join("out");
@@ -1276,7 +1569,7 @@ fn a_file_too_deep_for_the_scope_table_leaves_the_run_going() {
 fn a_runs_output_directory_is_rerails_own() {
     let dir = tempfile::tempdir().unwrap();
     std::fs::write(dir.path().join("a.py"), "def f():\n    return 1\n").unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse("#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_version("#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n").unwrap()).unwrap();
     let out = dir.path().join("out");
     super::run(&text, dir.path(), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     // One output image, no csv (decision 0239): the run wrote its rows there.
@@ -1285,19 +1578,62 @@ fn a_runs_output_directory_is_rerails_own() {
     assert_eq!(names, ["a.py"], "the outputs are not in the listing");
 }
 
+/// `start` (a process a test starts, `switches::started`) while another thread holds `switch` through `switches::set`,
+/// as a test beside it does (`cross_file_rows_are_memoised_per_import_component`'s `RERAIL_INLINE_ONLY`, the session
+/// tests' `RERAIL_CROSS_K4`): the process waits for it, and takes none of it.
+///
+/// A test holding the switches over its runs (`switches::reading`) lets them go for this (`held`), and takes them again
+/// after: the other thread's `set` waits for every reader, the test's too, and the test waits for it to set.
+fn beside_a_switch<T>(switch: (&'static str, &'static str), held: &mut Option<super::switches::Reading>, start: impl FnOnce() -> T) -> T {
+    let reading = held.take().is_some();
+    let (held_by_other, holding) = std::sync::mpsc::channel();
+    let other = std::thread::spawn(move || {
+        let _switched = super::switches::set(&[switch]);
+        held_by_other.send(()).unwrap();
+        std::thread::sleep(std::time::Duration::from_millis(200));
+    });
+    holding.recv().unwrap();
+    let out = start();
+    other.join().unwrap();
+    if reading {
+        *held = Some(super::switches::reading());
+    }
+    out
+}
+
 /// The run after a cold one, over what the cold run read unchanged, writes nothing (`RERAIL_WARM`): it names the same
 /// sources and plans, so it records no manifest of its own, and it makes no choice the cold run did not keep. It was
 /// news three ways: the cold run named a source no later run reads (a chunk's tree counts, still written though frames
 /// carry their own statistics since); a nested run reused whole (`reuse::reused`) named none of its plans; and the
 /// cross part whose every stratum was kept, a program of no rules, kept planning choices of its own. Each run is a
-/// process of its own, as the CLI's are: this test binary again, running `one_corpus_run_for_a_parent`.
+/// process of its own, as the CLI's are: this test binary again, running `one_corpus_run_for_a_parent`. The warm one is
+/// started while another test holds `RERAIL_CROSS_K4=off` (`beside_a_switch`): started holding nothing, it took it and
+/// wrote ("a write gathered for the store in a warm run").
 #[test]
 fn the_run_after_a_cold_one_writes_nothing() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let mut switches = Some(super::switches::reading());
     let temp = tempfile::tempdir().unwrap();
     // `RERAIL_TEST_KEEP=<dir>`: the runs' store and outputs left there, to look at.
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
-    cold_then_warm(kept.as_deref().unwrap_or(temp.path()));
+    cold_then_warm(kept.as_deref().unwrap_or(temp.path()), None, PICKLE_PACKAGE, &mut switches);
 }
+
+/// The same with tape values (decision 0431): a policy that parses string annotations. The warm run reads each
+/// file's rows from its memo entry and parses no string, so the entry names the values it was made of (`memo::VALUES`)
+/// and the warm run names their sources as the cold one did, which parsed them.
+#[test]
+fn the_run_after_a_cold_one_with_tape_values_writes_nothing() {
+    let temp = tempfile::tempdir().unwrap();
+    let c408 = rerail_store::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
+    let files = [("pkg/__init__.py", ""), ("pkg/a.py", "from typing import List\n\na: \"dict()\" = {}\nb: List[\"list()\"] = []\n"), ("main.py", "c: \"tuple()\" = ()\n")];
+    cold_then_warm(temp.path(), Some(&c408), &files, &mut None);
+}
+
+/// `cold_then_warm`'s sources by default: a small Python package and a file importing it.
+const PICKLE_PACKAGE: &[(&str, &str)] = &[("pkg/__init__.py", ""), ("pkg/loader.py", "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n"), ("main.py", "from pkg.loader import load\nload(b'x')\n")];
 
 /// The same, over sources reached through a symlink, as every run under macOS's `$TMPDIR` is (`/var` is
 /// `/private/var`): the run reads its files by their canonical paths, so the corpus walk reads the real part of the
@@ -1309,16 +1645,18 @@ fn the_run_after_a_cold_one_through_a_symlink_writes_nothing() {
     let temp = tempfile::tempdir().unwrap();
     std::fs::create_dir(temp.path().join("real")).unwrap();
     std::os::unix::fs::symlink(temp.path().join("real"), temp.path().join("link")).unwrap();
-    cold_then_warm(&temp.path().join("link"));
+    cold_then_warm(&temp.path().join("link"), None, PICKLE_PACKAGE, &mut None);
 }
 
-/// A cold run over a small Python package under `base`, then a warm one under `RERAIL_WARM=list`, which writes nothing.
-fn cold_then_warm(base: &std::path::Path) {
+/// A cold run of `program` (else the pickle pack's) over `files` under `base`, then a warm one under
+/// `RERAIL_WARM=list`, which writes nothing.
+fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, files: &[(&str, &str)], switches: &mut Option<super::switches::Reading>) {
     let src = base.join("src");
-    std::fs::create_dir_all(src.join("pkg")).unwrap();
-    std::fs::write(src.join("pkg/__init__.py"), "").unwrap();
-    std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
-    std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
+    for (path, text) in files {
+        let at = src.join(path);
+        std::fs::create_dir_all(at.parent().unwrap()).unwrap();
+        std::fs::write(at, text).unwrap();
+    }
     // Past the observer's racy window: a file changed within it of its answer is hashed again by the next run, and
     // its answer recorded again (`RACY_NS`). The claim is of sources older than that; a cold run fast enough to read
     // them inside it made the warm run's writes (the answers, the manifest, the statistics).
@@ -1338,14 +1676,17 @@ fn cold_then_warm(base: &std::path::Path) {
             .env("RERAIL_TAPE_CACHE", &store)
             .env("RERAIL_CHILD_RUN", &src)
             .env("RERAIL_CHILD_OUT", base.join("out"));
+        if let Some(program) = program {
+            child.env("RERAIL_CHILD_PROGRAM", program);
+        }
         if warm {
             child.env("RERAIL_WARM", "list");
         }
-        let output = child.output().unwrap();
-        // Each fault and the line after it, which says what was written.
+        let output = super::switches::started(|| child.output()).unwrap();
+        // Each fault and the two lines after it, which say what was written and in which span.
         let stderr = String::from_utf8_lossy(&output.stderr);
         let lines: Vec<&str> = stderr.lines().collect();
-        let faults: Vec<String> = lines.iter().enumerate().filter(|(_, l)| l.starts_with("rerail: RERAIL_WARM")).map(|(i, l)| format!("{l}{}", lines.get(i + 1).map_or(String::new(), |n| format!(" ({})", n.trim())))).collect();
+        let faults: Vec<String> = lines.iter().enumerate().filter(|(_, l)| l.starts_with("rerail: RERAIL_WARM")).map(|(i, l)| format!("{l}{}", lines[i + 1..(i + 3).min(lines.len())].iter().map(|n| format!(" ({})", n.trim())).collect::<String>())).collect();
         // No fault named: the process failed some other way, and its stderr's tail says how.
         let tail = if faults.is_empty() { lines[lines.len().saturating_sub(30)..].join("\n") } else { String::new() };
         assert!(output.status.success(), "the run's process: {}; {}{tail}", output.status, faults.join("; "));
@@ -1353,7 +1694,7 @@ fn cold_then_warm(base: &std::path::Path) {
     run(false);
     let cold = manifests();
     assert!(!cold.is_empty(), "the cold run recorded its manifests");
-    run(true);
+    beside_a_switch(("RERAIL_CROSS_K4", "off"), switches, || run(true));
     let warm = manifests();
     let new: Vec<&(Vec<u8>, Vec<u8>)> = warm.iter().filter(|m| !cold.contains(m)).collect();
     assert!(new.is_empty(), "the warm run named what the cold run named: no manifest of its own ({} new)", new.len());
@@ -1367,6 +1708,10 @@ fn cold_then_warm(base: &std::path::Path) {
 /// (e70f79dab). The runs are processes of their own, as `the_run_after_a_cold_one_writes_nothing`'s are.
 #[test]
 fn a_rule_edit_over_known_files_writes_their_entries_with_no_sql_in_the_waves() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let _switches = super::switches::reading();
     let temp = tempfile::tempdir().unwrap();
     let base = temp.path();
     let src = base.join("src");
@@ -1378,10 +1723,10 @@ y = x{i} + 2
     }
     let rule = |name: &str, extra: &str| {
         let path = base.join(name);
-        std::fs::write(&path, format!("#include \"core.rr\"\n.decl idents(s: number, e: number)\nidents(s, e) :- node(_, n, \"identifier\", s, e), kind(n, \"identifier\"){extra}.\n.output idents\n")).unwrap();
+        std::fs::write(&path, format!("#include \"core.rerail\"\n.decl idents(s: number, e: number)\nidents(s, e) :- node(_, n, \"identifier\", s, e), kind(n, \"identifier\"){extra}.\n.output idents\n")).unwrap();
         path
     };
-    let (before, edited) = (rule("before.rr", ""), rule("edited.rr", ", s >= 0"));
+    let (before, edited) = (rule("before.rerail", ""), rule("edited.rerail", ", s >= 0"));
     // Past the observer's racy window, so the second run knows each file by its stat (`RACY_NS`).
     std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
     let store = base.join("store.sqlite");
@@ -1398,9 +1743,9 @@ y = x{i} + 2
         if strict {
             child.env("RERAIL_SQL_STRICT", "1");
         }
-        let output = child.output().unwrap();
+        let output = super::switches::started(|| child.output()).unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
-        let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(2).collect();
+        let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
         assert!(output.status.success(), "the run's process: {}; {}", output.status, fault.join(" "));
     };
     run(&before, false);
@@ -1412,9 +1757,9 @@ y = x{i} + 2
 #[ignore = "a parent test runs it in a process of its own"]
 fn one_corpus_run_for_a_parent() {
     let (Some(src), Some(out)) = (std::env::var_os("RERAIL_CHILD_RUN"), std::env::var_os("RERAIL_CHILD_OUT")) else { return };
-    // `RERAIL_CHILD_PROGRAM=<file.rr>`: that rule file, else the pickle pack's.
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
-    let file = std::env::var_os("RERAIL_CHILD_PROGRAM").map_or_else(|| rules.join("bandit-b301-pickle.rr"), std::path::PathBuf::from);
+    // `RERAIL_CHILD_PROGRAM=<file.rerail>`: that rule file, else the pickle pack's.
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let file = std::env::var_os("RERAIL_CHILD_PROGRAM").map_or_else(|| rules.join("bandit-b301-pickle.rerail"), std::path::PathBuf::from);
     let program = crate::code_rule_dsl::logic::settings::program_text(&file).unwrap();
     // `RERAIL_CHILD_RUNS=<n>`: n runs in this one process, as a daemon's or `repeat`'s; under `RERAIL_CHILD_SESSION`,
     // runs of one session.
@@ -1427,9 +1772,16 @@ fn one_corpus_run_for_a_parent() {
 
 /// A second run in one process names what the first named: no manifest of its own. Its process-memory answers (the
 /// planning choices kept, the groups of automata kept) skipped the store reads that named their sources, so its
-/// manifest left them out, and the next process's run, naming them again, recorded one more.
+/// manifest left them out, and the next process's run, naming them again, recorded one more. Each process is started
+/// holding the switches (`switches::started`): the process of two is started while another thread holds a switch, as
+/// `cross_file_rows_are_memoised_per_import_component` holds `RERAIL_INLINE_ONLY`, and takes none of it (it took it,
+/// ran another plan and recorded two manifests of its own).
 #[test]
 fn a_second_run_in_one_process_records_the_first_runs_manifest() {
+    // Its runs compare with each other: the switches held over all of them (`switches::reading`), or a test setting
+    // its own on another thread (`RERAIL_INLINE_ONLY`, `RERAIL_CROSS_MEMO`) gave one run a mode another had not. Its
+    // child processes take them as they start.
+    let mut switches = Some(super::switches::reading());
     let temp = tempfile::tempdir().unwrap();
     let kept = std::env::var_os("RERAIL_TEST_KEEP").map(std::path::PathBuf::from);
     let base = kept.as_deref().unwrap_or(temp.path());
@@ -1446,14 +1798,14 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
         rows
     };
     let run = |runs: usize| {
-        let output = std::process::Command::new(std::env::current_exe().unwrap())
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
             .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
             .env("RERAIL_TAPE_CACHE", &store)
             .env("RERAIL_CHILD_RUN", &src)
             .env("RERAIL_CHILD_OUT", base.join("out"))
-            .env("RERAIL_CHILD_RUNS", runs.to_string())
-            .output()
-            .unwrap();
+            .env("RERAIL_CHILD_RUNS", runs.to_string());
+        let output = super::switches::started(|| child.output()).unwrap();
         assert!(output.status.success(), "the runs' process: {}", output.status);
     };
     // A process first keeps phase 0's graphs as images (decision 0246): every later run reads them, and so names none
@@ -1463,8 +1815,8 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     // A process of one run: what a run names.
     run(1);
     let one = manifests();
-    // A process of two: the second names the same.
-    run(2);
+    // A process of two: the second names the same. Another test's switch is held as it is started.
+    beside_a_switch(("RERAIL_INLINE_ONLY", "near"), &mut switches, || run(2));
     let two = manifests();
     let new: Vec<&(Vec<u8>, Vec<u8>)> = two.iter().filter(|m| !one.contains(m)).collect();
     assert!(new.is_empty(), "each run named what a process's first run names: no manifest of its own ({} new)", new.len());
@@ -1474,7 +1826,7 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
 /// pack is: the hidden program read back is the one hiding makes, and a second combine is the store's.
 #[test]
 fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
-    let src = "#include \"core.rr\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
+    let src = "#include \"core.rerail\"\n.decl defs(s: symbol)\ndefs(x) :- kind(n, \"function_definition\"), field(n, \"name\", i), text(i, x).\n.output defs\n";
     let read = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
     let (made, hidden, kept) = super::combine_handed(&read).unwrap();
     let id = |v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| (v.size(), v.digest());
@@ -1489,14 +1841,15 @@ fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
 /// the combined program's readers; each part lowered alone made `rr_value_req` read `literal_leaf`, recursive
 /// with `value` through that negation, and the pair was refused as not stratifiable.
 #[test]
+#[ignore = "Q322: python/typing's file-local `pyi_sym` and the guests answered in the fixpoint (0431 §8) make one component that negates `typing_sym`"]
 fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = std::env::temp_dir().join(format!("rerail-pyi062-pyi059-{}", std::process::id()));
     let _ = std::fs::remove_dir_all(&dir);
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "from typing import Generic, Literal, TypeVar\nT = TypeVar('T')\nx: Literal[1, 1]\nclass C(Generic[T], int): pass\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
-    let programs: Vec<String> = ["ruff-pyi062-duplicate-literal-member.rr", "ruff-pyi059-generic-not-last-base-class.rr"]
+    let rules = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python");
+    let programs: Vec<String> = ["ruff-pyi062-duplicate-literal-member.rerail", "ruff-pyi059-generic-not-last-base-class.rerail"]
         .iter()
         .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
         .collect();
@@ -1518,8 +1871,9 @@ fn programs_hidden_alone_keep_their_attribute_copies_declared() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("token-copies");
     std::fs::create_dir_all(dir.join("src")).unwrap();
     std::fs::write(dir.join("src/a.py"), "def f(x: int) -> int:\n    if x is not None:\n        return 1\n    return 0\n").unwrap();
-    let rules = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/data-layer/packs/data-layer/candidates/datalog/authored");
-    let programs: Vec<String> = ["data-layer-schema-bootstrap-contracts.rr", "data-layer-unresolved-forward-refs.rr", "data-layer-versioned-merged-identity.rr"]
+    // Pack test data (`packs/data-layer/upstream/lint/`, not in git since 5e0b69a104): pulled, or the test says so.
+    let rules = crate::code_rule_dsl::test_support::pack_test_data("packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog/authored");
+    let programs: Vec<String> = ["data-layer-schema-bootstrap-contracts.rerail", "data-layer-unresolved-forward-refs.rerail", "data-layer-versioned-merged-identity.rerail"]
         .iter()
         .map(|r| crate::code_rule_dsl::logic::settings::program_text(&rules.join(r)).unwrap())
         .collect();
@@ -1542,7 +1896,7 @@ fn a_cross_file_text_test_is_maintained_as_a_filter() {
     write("a.py", "def f():\n    pass\ndef k():\n    return 1\n");
     write("b.py", "from a import f\ndef g():\n    pass\n");
     write("c.py", "def h():\n    pass\n");
-    let rule = dir.join("named.rr");
+    let rule = dir.join("named.rerail");
     std::fs::write(&rule, r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
@@ -1554,7 +1908,7 @@ uses(n, f) :- imp(n, q), def(f, q).
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
 .output passes
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     use crate::code_rule_dsl::typing::file_local::Binding;
     let run = |store: &str| {
@@ -1593,7 +1947,7 @@ fn a_cross_file_reader_finds_the_text_of_another_files_node() {
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "def f():\n    pass\ndef k():\n    return 1\n").unwrap();
     std::fs::write(dir.join("b.py"), "from a import f\nfrom a import k\n").unwrap();
-    let rule = dir.join("named.rr");
+    let rule = dir.join("named.rerail");
     std::fs::write(&rule, r#"
 .decl def(n: node, q: symbol)
 def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
@@ -1605,7 +1959,7 @@ uses(n, f) :- imp(n, q), def(f, q).
 passes(f) :- uses(_, f), node_text(f, t), contains("pass", t).
 .output passes
 "#).unwrap();
-    let text = crate::code_rule_dsl::logic::rr::print(&crate::code_rule_dsl::logic::rr::parse_file(&rule).unwrap()).unwrap();
+    let text = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
     let out = dir.join("out");
     super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
     super::run(&text, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
@@ -1634,6 +1988,9 @@ fn every_switch_lowering_reads_is_classified() {
         // How the combine's link is made (decision 0373): spliced into the last one, linked whole, or both and compared;
         // the program is the same (`check` asserts it).
         "RERAIL_COMBINE_LINK",
+        // How the combine's tail is run (decision 0393): kept, whole, or both and compared; the program is the same
+        // (`check` asserts it).
+        "RERAIL_COMBINE_TAIL",
         // A measurement aid: the program as the passes before lowering leave it, written to a directory.
         "RERAIL_FRONT_DUMP",
         // A measurement aid (decision 0173): each version a program takes, written to a directory; the program is the same.
@@ -1664,6 +2021,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_RR_LIB",
         // The cost model's file: its estimates steer plan choices, which keep the program's meaning (`plan::run`).
         "RERAIL_COSTS",
+        // The join model (decision 0354): its prices choose among a line's candidate orders, as the cost model's do.
+        "RERAIL_JOIN_MODEL",
         // Keyed through what it adds: the observer's facts (the source files), which the prepared key hashes.
         "RERAIL_SOURCES_PHASE",
         // Where rule images are read from and kept (decision 0246 §6): an image is keyed by its text, its scope and
@@ -1676,7 +2035,7 @@ fn every_switch_lowering_reads_is_classified() {
         // A measurement aid (decision 0173): each version written out, the program unchanged.
         "RERAIL_VERSION_TRACE",
     ];
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl");
     // Every switch named, however it is read (`var`, `var_os`, a constant, a helper's argument).
     let read = regex::Regex::new(r#""(RERAIL_[A-Z0-9_]+)""#).unwrap();
     // A file's own test module (`#[cfg(test)]`, `#[cfg(all(test, …))]`), which ends it.
@@ -1741,7 +2100,7 @@ fn every_switch_lowering_reads_is_classified() {
         corpus[a..b].to_owned()
     };
     // Combining: `combine_tail` (its link, `combine_linked_as`, and its tail, `tail_version`), what it calls that
-    // reads a switch (`scoping`, the tail's passes), and the `.rr` lowering its `rr::parse` runs
+    // reads a switch (`scoping`, the tail's passes), and the `.rerail` lowering its `rr::parse` runs
     // (`logic/rr`, `front`). The combined program is kept under `COMBINING` alone.
     let mut combining = sources(&[
         "logic/rr", "logic/front.rs", "logic/front", "logic/plan/corpus/scoping.rs", "logic/plan/corpus/preparation/whole.rs",
@@ -1749,6 +2108,7 @@ fn every_switch_lowering_reads_is_classified() {
     ]);
     combining.push(("corpus.rs, combine_tail".to_owned(), region("\nfn combine_tail(", "\n}\n")));
     combining.push(("corpus.rs, the combine's tail".to_owned(), region("\nenum Tail {", "\n/// The programs `programs` linked into one")));
+    // The link: `combine_linked_as`, its modes, `combine_linked_spliced` and the splice (`combine_spliced`).
     combining.push(("corpus.rs, combine_linked_as".to_owned(), region("\nfn combine_linked_as<", "Ok((all, Tail::Many { hide, policies, kept }))")));
     // Preparing: `run_observed` up to the prepared program, what it calls that reads a switch (`combining::FoldOwn`,
     // memo, session, profile, costs) and the passes. The prepared key holds `PREPARING` and the combined program's
@@ -1756,8 +2116,9 @@ fn every_switch_lowering_reads_is_classified() {
     // `choices::key`, which holds the switches those read (`RERAIL_INLINE`, `RERAIL_INLINE_ONLY`,
     // `RERAIL_OBSERVED_STEPS`).
     let mut preparing = sources(&[
-        "logic/simplify.rs", "logic/strings.rs", "logic/reach_form.rs", "logic/magic.rs", "logic/magic", "logic/plan/lower.rs",
-        "logic/plan/corpus/cross_memo.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
+        // The tree passes that were `logic/simplify.rs` and `logic/magic.rs` are the preparation's now (0276 step 6).
+        "logic/strings.rs", "logic/reach_form.rs", "logic/magic", "logic/plan/lower.rs",
+        "logic/plan/corpus/import_closure.rs", "logic/plan/corpus/hiding.rs", "logic/plan/corpus/memo.rs", "logic/plan/corpus/prepared.rs",
         // Its passes, on the version (`preparation`): the front's, the lowering's, `FoldOwn`'s and the merges, and
         // the combine's fact spaces.
         "logic/plan/corpus/preparation.rs", "logic/plan/corpus/preparation",
@@ -1779,7 +2140,7 @@ fn every_switch_lowering_reads_is_classified() {
     }
     assert!(unlisted.is_empty(), "switches read in combining or preparing, in neither its list nor NOT_PREPARING: {unlisted:?}");
     // And the other way: a listed switch keys what it changes, read in combining or preparing, or after them by what
-    // hangs off the prepared key (the run's extraction: `with_long_text`'s text nodes and anchors, the span
+    // hangs off the prepared key (the run's extraction: `with_long_text_parts`'s text nodes and anchors, the span
     // prefilter, both in `facts/vtab/syntax.rs`; the rest of `run_observed`). One read nowhere there keys nothing it
     // changes: a session's next run cold for nothing.
     for text in sources(&["facts/vtab/syntax.rs"]).into_iter().map(|(_, t)| t).chain([region("\nfn run_observed(", "\n}\n")]) {
@@ -1791,8 +2152,8 @@ fn every_switch_lowering_reads_is_classified() {
 
 /// Q22, a guard: a run after a rule's edit parses no file the last run read. The edit makes a new lane (the programs'
 /// texts) and plan, and the tapes are found by the root's last runs (`root_sources`), read before the first wave
-/// (decision 0104). It regressed unseen: the tapes were looked up by lane, which every edit changes. A guest's tape is
-/// not stored (Q30, `a_run_stores_no_source_of_its_guests`): its parse is cheaper than storing and reading it.
+/// (decision 0104). It regressed unseen: the tapes were looked up by lane, which every edit changes. A tape value's
+/// tape is found the same way (decision 0431 R6, `a_run_stores_its_tape_values_by_their_text`).
 #[test]
 fn an_edit_parses_no_file_the_last_run_read() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("file-tapes");
@@ -1827,135 +2188,385 @@ names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), node
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `first`'s `rel` over the one file `file` (its name and text): run alone, and in a pack with `other`. PR #508's
-/// helper (t47).
-fn alone_and_together(name: &str, file: (&str, &str), first: &str, other: &str, rel: &str) -> (Vec<Vec<String>>, Vec<Vec<String>>) {
-    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(dir.join(file.0), file.1).unwrap();
-    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
-    let run = |programs: &[&str], out: &str| {
-        let out = dir.join(out);
-        super::run_all(programs, &dir, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
-        let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
-        let rows = read(&format!("p0_{rel}"));
-        if rows.is_empty() { read(rel) } else { rows }
-    };
-    let alone = run(&[first], "alone");
-    let together = run(&[first, other], "together");
-    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
-    let _ = std::fs::remove_dir_all(&dir);
-    (alone, together)
-}
-
 /// The relations `head`'s rules read, in a combined program.
 fn reads_of(v: &crate::code_rule_dsl::logic::program_image::Version, head: &str) -> Vec<String> {
     v.heads_and_reads().into_iter().filter(|(h, _)| h == head).flat_map(|(_, reads)| reads.into_iter().map(|(_, r)| r)).collect()
 }
 
-/// A library's kind set that its own rules read only as a set (`tsx/react-class.rr`'s `inside(c, m, keyed_kind)`) is a
-/// relation of the library held once all the same: a program that reads it as one (`kind(p, k), keyed_kind(k)`, react's
-/// no-access-state-in-setstate) finds its rows in a pack. The library linked alone dropped it, and the react pack
-/// failed on `no such table: main.keyed_kind`. PR #508's 363b91c0b (t47).
-#[test]
-fn a_librarys_kind_set_is_a_relation_its_includers_read_in_a_pack() {
-    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
-    let reads = ".language typescript\n#include \"tsx/react-class.rr\"\n.decl keyed(p: node)\nkeyed(p) :- kind(p, k), keyed_kind(k).\n.output keyed\n";
-    let other = ".language typescript\n#include \"tsx/react-class.rr\"\n.decl state(c: node)\nstate(c) :- set_state_in(c, _).\n.output state\n";
-    let v = super::combine_texts(&[reads, other]).unwrap_or_else(|e| panic!("{e}"));
-    assert!(reads_of(&v, "p0_keyed").iter().any(|r| r == "keyed_kind"), "{:?}", reads_of(&v, "p0_keyed"));
-    assert!(v.declares("keyed_kind"), "keyed_kind is no relation of the pack");
-    assert_eq!(v.fact_rows("keyed_kind").len(), 5);
-}
-
-/// A value cycle that a library relation bounds (`deparen(e, a)`: a is e or below it) is bounded in a pack too, where
-/// a program is lowered without its library's rules: typescript-eslint's no-duplicate-enum-values (`enum_number`) and
-/// vitest's expect-expect (`name_of`) failed the typescript pack as unbounded value cycles, though each is bounded
-/// alone. PR #508's 363b91c0b (t47).
-#[test]
-fn a_value_cycle_a_library_relation_bounds_is_bounded_in_a_pack() {
-    let cycle = ".language typescript\n#include \"tsx/ts-b.rr\"\n\
-                 .decl ua(x: node, a: node)\nua(x, a) :- kind(x, \"unary_expression\"), field(x, \"argument\", e), deparen(e, a).\n\
-                 .decl num(x: node, f: float)\nnum(x, to_float(v)) :- kind(x, \"number\"), value(x, v).\n\
-                 num(x, 0.0 - f) :- ua(x, a), num(a, f).\n.output num\n";
-    let other = ".language typescript\n#include \"tsx/ts-b.rr\"\n.decl d(e: node, a: node)\nd(e, a) :- deparen(e, a).\n.output d\n";
-    super::combine_texts(&[cycle]).unwrap_or_else(|e| panic!("alone: {e}"));
-    let v = super::combine_texts(&[cycle, other]).unwrap_or_else(|e| panic!("in a pack: {e}"));
-    assert!(v.heads_and_reads().iter().any(|(h, _)| h == "p0_num"));
-}
-
-/// A program that states facts of a library relation (`lit_repr_threshold(16384).`, an `extensible` one) asks of the
-/// library as one that derives it does (decision 0089 §3): its readers in the library (`dec_lit_repr`) are copied into
-/// its request, over its facts. Taken as the library's, they read the library's relation without them, and
-/// clippy-decimal-literal-representation found nothing in a pack. PR #508's 363b91c0b (t47).
-#[test]
-fn a_programs_facts_of_a_library_relation_ask_of_the_library() {
-    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
-    let stating = ".language rust\n#include \"rust/syntax-literals.rr\"\n.decl hit(n: node)\nhit(n) :- dec_lit_repr(n).\n.output hit\nlit_repr_threshold(16384).\n";
-    let other = ".language rust\n#include \"rust/syntax-literals.rr\"\n.decl lit(n: node, v: number)\nlit(n, v) :- int_lit_value(n, v).\n.output lit\n";
-    let v = super::combine_texts(&[stating, other]).unwrap_or_else(|e| panic!("{e}"));
-    let read = reads_of(&v, "p0_hit");
-    let copy = read.iter().find(|r| r.starts_with('q') && r.ends_with("_dec_lit_repr")).unwrap_or_else(|| panic!("p0_hit reads {read:?}"));
-    assert!(!read.iter().any(|r| r == "dec_lit_repr"), "p0_hit reads the library's dec_lit_repr: {read:?}");
-    let threshold = copy.replace("_dec_lit_repr", "_lit_repr_threshold");
-    assert_eq!(v.fact_rows(&threshold).len(), 1, "{threshold}: {:?}", v.fact_names().into_iter().filter(|k| k.contains("threshold")).collect::<Vec<_>>());
-}
-
-/// A library's kind set that a program reads by `nearest` (ruff-n807's `nearest(f, s, scope)` over python/names.rr's
-/// `scope`) has the library's kinds in a pack, as alone. Lowered in its library's scope, the program was seeded the
-/// set's declaration but not its facts, so it held `scope` empty, and its `nearest` climbed to nothing: ruff-n807,
-/// RUF033, AIR303 and F406 found nothing in the python pack. PR #508's afeb076e5 (t47).
-#[test]
-fn a_programs_nearest_over_a_library_kind_set_finds_in_a_pack_what_it_finds_alone() {
-    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as _;
-    let near = ".language python\n#include \"python/names.rr\"\n.decl top(x: symbol)\n\
-                top(x) :- kind(f, \"function_definition\"), field(f, \"name\", c), text(c, x), nearest(f, s, scope), kind(s, \"module\").\n.output top\n";
-    let other = ".language python\n#include \"python/names.rr\"\nrotgt(s, \"zz\") :- kind(s, \"module\").\n\
-                 .decl bound(x: symbol)\nbound(x) :- bound_in(_, x).\n.output bound\n";
-    let (alone, together) = alone_and_together("library-kind-set", ("a.py", "def f():\n    def g():\n        pass\nclass C:\n    def m(self):\n        pass\n"), near, other, "top");
-    // Every set a rule climbs to is a set of the combined program, with its kinds.
-    let v = super::combine_texts(&[near, other]).unwrap_or_else(|e| panic!("{e}"));
-    let sets = v.kindsets();
-    for r in v.rules() {
-        let shown = v.show_rule(r);
-        for (_, rest) in shown.match_indices("nearest(").map(|(i, _)| shown.split_at(i)) {
-            let set = rest.split(')').next().and_then(|args| args.rsplit(", ").next()).unwrap_or("");
-            assert!(sets.get(set).is_some_and(|k| !k.is_empty()), "{shown}: {set} is no set of the pack: {:?}", sets.get(set));
-        }
+/// Decision 0431 R6's runs: a workspace, a store, and a run of `names` (the annotations' identifiers, plus `extra` in
+/// the rule's body) over it, giving the run's report.
+fn tape_value_runs(name: &str, files: &[(&str, &str)]) -> (std::path::PathBuf, impl Fn(&str) -> super::Report) {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    for (path, text) in files {
+        std::fs::write(ws.join(path), text).unwrap();
     }
-    assert_eq!(alone, [["f"]], "f's nearest scope is the module; g's is f, m's is C");
-    assert_eq!(together, alone);
+    let (d, w) = (dir.clone(), ws.clone());
+    let run = move |extra: &str| {
+        let program = format!(r#"
+.decl names(x: symbol)
+names(x) :- string_annotation(n), parsed(n, "annotation", r), within(m, r), kind(m, "identifier"), text(m, x){extra}.
+.output names
+"#);
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(d.join("store.sqlite")));
+        super::run(&program, &w, None, &d.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap()
+    };
+    (dir, run)
 }
 
-/// A `match_all` over a library relation's node (FAST003's over `route_path`'s `s`, a string by `plain_str`) scans
-/// the spans the library's rules bind it to in a pack, as alone: the program held the library relation declared and
-/// not derived, ran no pattern, and ruff-fast003 found nothing in a pack. PR #508's 4146acbd9 (t47).
-#[test]
-fn a_match_over_a_library_relations_node_finds_in_a_pack_what_it_finds_alone() {
-    let words = ".language python\n#include \"python/ast.rr\"\n.decl word(k: symbol)\n\
-                 word(k) :- plain_str(s, _), match_all(\"(?<K>[a-z]+)\", s), text(K, k).\n.output word\n";
-    let other = ".language python\n#include \"python/ast.rr\"\n.decl inner(e: node)\ninner(m) :- unparen(_, m).\n.output inner\n";
-    let (alone, together) = alone_and_together("library-span", ("a.py", "x = \"ab cd\"\n"), words, other, "word");
-    assert_eq!(alone, [["ab"], ["cd"]]);
-    assert_eq!(together, alone);
+/// Decision 0431 R7's program: a cross-file rule (`refers`) joins an annotation's identifier (a node of its tape value,
+/// `guest_of`) in one file with a class of that name in another, and `shown` reads that node's facts across files:
+/// its text, and its place in its file through the string (`guest_place`).
+const CROSS_FILE_VALUES: &str = r#"
+.decl ann_node(m: node, x: symbol)
+ann_node(m, x) :- string_annotation(n), parsed(n, "annotation", _), guest_of(m, n), kind(m, "identifier"), text(m, x).
+.decl cls(c: node, x: symbol)
+cls(c, x) :- kind(c, "class_definition"), field(c, "name", i), text(i, x).
+.decl refers(m: node, c: node)
+refers(m, c) :- ann_node(m, x), cls(c, x).
+.decl shown(x: symbol, p: symbol, l: number)
+shown(x, p, l) :- refers(m, c), text(m, x), guest_place(m, _, l, _), docof(c, d), doc(d, p, _).
+.output shown
+"#;
+
+/// A run of `CROSS_FILE_VALUES` over `ws` in the store and output of `dir`: its report and `shown`'s rows.
+fn cross_file_values_run(dir: &std::path::Path) -> (super::Report, Vec<Vec<String>>) {
+    crate::install_store_functions();
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, CROSS_FILE_VALUES).unwrap();
+    let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&program, &dir.join("ws"), None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get("shown").map(|r| r.shown()).unwrap_or_default();
+    (report, rows)
 }
 
-/// A library relation of kinds that no library rule climbs to (eslint-a-control.rr's `breakable_kind(k) :-
-/// loop_kind(k)`), and a program's own set over one (`stop(k) :- function_kind(k)`), hold the library's kinds where a
-/// program climbs to them in a pack, as alone: eslint's no-extra-label found nothing in a pack, no-unsafe-finally
-/// climbed past functions. PR #508's 4146acbd9 (t47).
+/// Decision 0431 R7: a file read from the memo has its tape values for a cross-file rule. `a.py` is not edited, so
+/// the second run reads it from the memo; its annotation's node, which `shown` reads across files, is still there,
+/// and the rows are a fresh run's.
 #[test]
-fn a_programs_nearest_over_a_library_relation_of_kinds_finds_in_a_pack_what_it_finds_alone() {
-    let near = ".language typescript\n#include \"tsx/eslint-a-control.rr\"\n.decl left(k: symbol)\n\
-                left(k) :- kind(j, \"break_statement\"), nearest(j, s, breakable_kind), kind(s, k).\n.output left\n\
-                .decl stop(k: symbol)\nstop(\"program\").\nstop(k) :- function_kind(k).\n\
-                .decl stopped(k: symbol)\nstopped(k) :- kind(j, \"return_statement\"), nearest(j, s, stop), kind(s, k).\n.output stopped\n";
-    let other = ".language typescript\n#include \"tsx/eslint-a-control.rr\"\n.decl j(n: node)\nj(n) :- jump(n, _).\n.output j\n";
-    let ts = "function f() { for (;;) { if (a) { break; } return 1; } }\nswitch (b) { case 1: break; }\n";
-    let (alone, together) = alone_and_together("library-kind-relation", ("a.ts", ts), near, other, "left");
-    assert_eq!(alone, [["for_statement"], ["switch_statement"]]);
-    assert_eq!(together, alone);
-    let (alone, together) = alone_and_together("library-kind-relation-own", ("a.ts", ts), near, other, "stopped");
-    assert_eq!(alone, [["function_declaration"]]);
-    assert_eq!(together, alone);
+fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
+    let files = [("a.py", "x: \"Foo\" = 1\n"), ("b.py", "class Foo:\n    pass\n")];
+    let make = |name: &str| {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("ws")).unwrap();
+        for (path, text) in files {
+            std::fs::write(dir.join("ws").join(path), text).unwrap();
+        }
+        dir
+    };
+    let dir = make("r7-values");
+    let (_, first) = cross_file_values_run(&dir);
+    assert_eq!(first, [["Foo", "b.py", "1"]].map(|r| r.map(str::to_owned).to_vec()).to_vec(), "a full run's rows");
+    std::fs::write(dir.join("ws/b.py"), "# an edit\nclass Foo:\n    pass\n").unwrap();
+    let (edited, rows) = cross_file_values_run(&dir);
+    assert_eq!(edited.memo.0, 1, "a.py is read from the memo: {:?}", edited.memo);
+    assert_eq!(edited.guest_parses, 0, "no text is parsed: {}", edited.guest_parses);
+    let fresh = make("r7-values-fresh");
+    std::fs::write(fresh.join("ws/b.py"), "# an edit\nclass Foo:\n    pass\n").unwrap();
+    let (_, want) = cross_file_values_run(&fresh);
+    assert_eq!(rows, want, "a.py's tape value, read from the memo, is a fresh run's");
+    let _ = std::fs::remove_dir_all(&dir);
+    let _ = std::fs::remove_dir_all(&fresh);
+}
+
+/// Decision 0431 R11 (step 6): a file's programs are made once, at its parse, and kept with its tape. A fresh run
+/// makes the HTML file's script at its parse and the batch reads it off the file's record; a run of another program
+/// (no memo hit) finds the file's tape in the store and its script with it, parsing nothing; a tape whose record is
+/// not known (stored before step 6) has its script made in the batch. The rows are the same each time.
+#[test]
+fn a_files_programs_are_kept_with_its_tape() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("programs-kept");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.html"), "<p>x</p>\n<script>f(1)</script>\n").unwrap();
+    let run = |extra: &str| -> (super::Report, Vec<Vec<String>>) {
+        crate::install_store_functions();
+        let rule = dir.join("program.rerail");
+        let text = format!(".language javascript\n.embedded on\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call_expression\"), text(c, x), docof(c, d), doc(d, p, _), line(c, l).\n.output calls\n{extra}");
+        std::fs::write(&rule, text).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let out = dir.join("out");
+        let _ = std::fs::remove_dir_all(&out);
+        let report = super::run(&program, &dir.join("ws"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let rows = super::super::output::Outputs::open(&out).unwrap().get("calls").map(|r| r.shown()).unwrap_or_default();
+        (report, rows)
+    };
+    let want = [["f(1)", "a.html", "2"]].map(|r| r.map(str::to_owned).to_vec()).to_vec();
+    let (fresh, rows) = run("");
+    assert_eq!(rows, want, "a fresh run's rows");
+    assert_eq!(fresh.programs, (1, 0), "made at the parse, read off the record: none by an embedder in the batch");
+    // Another program: no memo hit, the file's tape found by its text.
+    let (stored, rows) = run(".decl other(x: symbol)\nother(x) :- kind(c, \"identifier\"), text(c, x).\n.output other\n");
+    assert_eq!(rows, want, "a stored tape's rows");
+    assert_eq!(stored.file_tapes, (1, 0), "the file's tape is found, not parsed: {:?}", stored.file_tapes);
+    assert_eq!(stored.programs, (1, 0), "its script found with it: {:?}", stored.programs);
+    // A tape stored with no record: its script made in the batch, as before step 6.
+    rusqlite::Connection::open(dir.join("store.sqlite")).unwrap().execute("UPDATE tape_objects SET programs = -1", []).unwrap();
+    let (unknown, rows) = run(".decl third(x: symbol)\nthird(x) :- kind(c, \"number\"), text(c, x).\n.output third\n");
+    assert_eq!(rows, want, "an unrecorded tape's rows");
+    assert_eq!(unknown.programs, (0, 1), "made by its embedder in the batch: {:?}", unknown.programs);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0431 R5's run: `program` (`.rerail`, with its includes) over `files` in a store of its own, giving the report
+/// and the rows of `output`, as shown.
+fn batch_run(name: &str, files: &[(&str, &str)], program: &str, output: &str) -> (super::Report, Vec<Vec<String>>) {
+    batch_run_on(name, files, program, output, crate::code_rule_dsl::typing::file_local::Binding::Cpu)
+}
+
+/// `batch_run` under `binding`.
+fn batch_run_on(name: &str, files: &[(&str, &str)], program: &str, output: &str, binding: crate::code_rule_dsl::typing::file_local::Binding) -> (super::Report, Vec<Vec<String>>) {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    let _ = std::fs::remove_dir_all(&dir);
+    let ws = dir.join("ws");
+    std::fs::create_dir_all(&ws).unwrap();
+    for (path, text) in files {
+        std::fs::write(ws.join(path), text).unwrap();
+    }
+    let rule = dir.join("program.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let report = super::run(&flat, &ws, None, &dir.join("out"), "program", binding, 1 << 18).unwrap();
+    let rows = super::super::output::Outputs::open(&dir.join("out")).unwrap().get(output).map(|r| r.shown()).unwrap_or_default();
+    let _ = std::fs::remove_dir_all(&dir);
+    (report, rows)
+}
+
+/// Decision 0431 R5: a chunk's batch is built once: an HTML file's scripts are its grammar's programs (§4), made from
+/// its tape at its load, so the batch is built with them; no slice round asks for them, the batch never grows, and
+/// every script's calls are read.
+#[test]
+fn a_files_programs_build_no_second_batch() {
+    let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
+    let (_, calls) = batch_run("r5-programs", &[("a.html", html)], r#"
+.language html
+#include "html/embeds.rerail"
+.decl calls(x: symbol)
+calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x).
+.output calls
+"#, "calls");
+    assert_eq!(calls, [["f(1)"], ["g(2)"]].map(|r| r.map(str::to_owned).to_vec()).to_vec(), "both scripts' calls");
+}
+
+/// Decision 0431 R10: a string a rule parses is parsed in the program's fixpoint (§8). No slice round runs and the
+/// batch never grows: each value is admitted once at its first lookup, `'Foo'` (a string inside an annotation's value)
+/// in the same run, and parsed once. A scan lists no value's nodes (`flat`: a.py's identifiers alone).
+#[test]
+fn tape_values_are_read_in_the_fixpoint() {
+    let program = r#"
+.language python
+.decl ann(n: node)
+ann(r) :- string_annotation(s), parsed(s, "annotation", r).
+ann(r) :- ann(s), kind(s, "string"), parsed(s, "annotation", r).
+ann(c) :- ann(p), child(p, c, _).
+.decl names(x: symbol)
+names(x) :- ann(m), kind(m, "identifier"), text(m, x).
+.decl flat(x: symbol)
+flat(x) :- kind(m, "identifier"), text(m, x).
+.output names, flat
+"#;
+    let files = [("a.py", "x: \"List[int]\" = []\ndef f(a: \"Optional['Foo']\"): pass\n")];
+    let (report, names) = batch_run("r10-names", &files, program, "names");
+    assert_eq!(report.values_admitted, 3, "the two annotations' values and 'Foo''s, each admitted once");
+    assert_eq!(report.guest_parses, 3, "each value parsed once");
+    let set = |rows: Vec<Vec<String>>| rows.into_iter().map(|r| r.join("\t")).collect::<std::collections::BTreeSet<String>>();
+    assert_eq!(set(names), ["Foo", "List", "Optional", "int"].map(str::to_owned).into(), "both levels' values are read");
+    let (_, flat) = batch_run("r10-flat", &files, program, "flat");
+    assert_eq!(set(flat), ["a", "f", "x"].map(str::to_owned).into(), "no scan lists a value's nodes");
+}
+
+/// Decision 0431 R8: CPU and Metal give the same rows, the device reading the same tapes, with both kinds: tape values
+/// read in the fixpoint (R10's program: values, a value inside one, and a scan that lists none), and a file's programs
+/// (an HTML file's scripts), whose `docof` and lines are the file's (R1).
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[test]
+fn cpu_and_metal_read_the_same_tape_values() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let values = r#"
+.language python
+.decl ann(n: node)
+ann(r) :- string_annotation(s), parsed(s, "annotation", r).
+ann(r) :- ann(s), kind(s, "string"), parsed(s, "annotation", r).
+ann(c) :- ann(p), child(p, c, _).
+.decl names(x: symbol)
+names(x) :- ann(m), kind(m, "identifier"), text(m, x).
+.decl flat(x: symbol)
+flat(x) :- kind(m, "identifier"), text(m, x).
+.output names, flat
+"#;
+    let files = [("a.py", "x: \"List[int]\" = []\ndef f(a: \"Optional['Foo']\"): pass\n")];
+    // Every stratum the device can run is placed there (`placement::Binding::Always`), and the rows it reads, the
+    // chunk's and its values', are read where they are (copy 0353 step 6 is not taken for them): a run with values
+    // uploads no more than the same program over a file with none (whose uploads are the engine's, its empty versions
+    // and the like), but for `parsed`: the grammar its atoms give is a filter of the input, and an input a constant
+    // filters is uploaded still (Q310), its rows' three columns.
+    let q266 = |rows: u64| 8 * 3 * rows;
+    let uploaded = || rerail_prof::copies::sites().into_iter().filter(|(site, _)| site.name.contains("DevRel::upload")).map(|(_, t)| t.bytes).sum::<u64>();
+    let on_device = |name: &str, files: &[(&str, &str)], program: &str, output: &str| {
+        let bound = crate::code_rule_dsl::logic::plan::placement::set_binding(crate::code_rule_dsl::logic::plan::placement::Binding::Always);
+        let before = uploaded();
+        let got = batch_run_on(name, files, program, output, Binding::Metal);
+        drop(bound);
+        (got, uploaded() - before)
+    };
+    let none = [("a.py", "x = []\ndef f(a): pass\n")];
+    for output in ["names", "flat"] {
+        let (cpu, on_cpu) = batch_run_on(&format!("r8-{output}-cpu"), &files, values, output, Binding::Cpu);
+        let ((metal, on_metal), bytes) = on_device(&format!("r8-{output}-metal"), &files, values, output);
+        let (_, base) = on_device(&format!("r8-{output}-none"), &none, values, output);
+        // `parsed`'s rows: the three annotations' places.
+        assert!(bytes <= base + q266(3), "{output}: the values' rows are read where they lie ({bytes} bytes uploaded, {base} with no values)");
+        assert!(!on_cpu.is_empty(), "{output}: rows");
+        assert_eq!(on_metal, on_cpu, "{output}: the device's rows are the CPU's");
+        assert_eq!((metal.values_admitted, metal.guest_parses), (cpu.values_admitted, cpu.guest_parses), "{output}: the same values, read alike");
+    }
+    let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
+    let programs = r#"
+.language html
+#include "html/embeds.rerail"
+.decl calls(x: symbol, d: number, l: number)
+calls(x, d, l) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x), docof(c, d), line(c, l).
+.output calls
+"#;
+    let (_, on_cpu) = batch_run_on("r8-programs-cpu", &[("a.html", html)], programs, "calls", Binding::Cpu);
+    // The programs are the grammar's, made with the batch (§4): their rows are read where they lie, as the file's are,
+    // and a run uploads no more than over a file with no script, but for `parsed`'s rows (Q310), one a script.
+    let ((_, on_metal), bytes) = on_device("r8-programs-metal", &[("a.html", html)], programs, "calls");
+    let (_, base) = on_device("r8-programs-none", &[("a.html", "<!doctype html>\n<p>x</p>\n")], programs, "calls");
+    assert!(bytes <= base + q266(2), "a file's programs are read where they lie ({bytes} bytes uploaded, {base} with none)");
+    assert_eq!(on_cpu.len(), 2, "both scripts' calls: {on_cpu:?}");
+    assert_eq!(on_cpu[0][1], on_cpu[1][1], "both scripts are the file's: {on_cpu:?}");
+    assert_eq!(on_metal, on_cpu, "a file's programs: the device's rows are the CPU's");
+}
+
+/// Decision 0431 R6, a guard of today's: within one run, equal texts are parsed once, whichever files hold them.
+#[test]
+fn equal_texts_are_parsed_once_a_run() {
+    let (dir, run) = tape_value_runs("tv-once", &[("a.py", "x: \"List[int]\" = []\ny: \"Baz\" = 1\n"), ("b.py", "z: \"List[int]\" = []\n")]);
+    let first = run("");
+    assert_eq!(first.guest_parses, 2, "\"List[int]\" and \"Baz\", once each");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0431 R6: a text the last run parsed is not parsed again when its file is edited elsewhere. The file is
+/// evaluated again; its annotation's tape is the last run's, found by the text's key.
+#[test]
+fn an_edit_elsewhere_parses_no_text_the_last_run_parsed() {
+    let (dir, run) = tape_value_runs("tv-edit", &[("a.py", "x: \"List[int]\" = []\n")]);
+    assert_eq!(run("").guest_parses, 1);
+    std::fs::write(dir.join("ws/a.py"), "# an edit elsewhere\nx: \"List[int]\" = []\n").unwrap();
+    let edited = run("");
+    assert_eq!(edited.guest_parses, 0, "the annotation's text is the last run's");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0431 R6: a new file holding a text a run parsed before parses nothing: one text is one tape, wherever.
+#[test]
+fn a_new_file_with_a_text_parsed_before_parses_nothing() {
+    let (dir, run) = tape_value_runs("tv-new-file", &[("a.py", "x: \"List[int]\" = []\n")]);
+    assert_eq!(run("").guest_parses, 1);
+    std::fs::write(dir.join("ws/b.py"), "y: \"List[int]\" = []\n").unwrap();
+    assert_eq!(run("").guest_parses, 0, "b.py's annotation is a.py's tape");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0431 R6: an edited rule (a new program, every file evaluated again) parses no text the last run parsed,
+/// as an edit parses no file (`an_edit_parses_no_file_the_last_run_read`).
+#[test]
+fn an_edited_rule_parses_no_text_the_last_run_parsed() {
+    let (dir, run) = tape_value_runs("tv-rule-edit", &[("a.py", "x: \"List[int]\" = []\n"), ("b.py", "y: \"Optional[Foo]\" = None\n")]);
+    assert_eq!(run("").guest_parses, 2);
+    assert_eq!(run(", x != \"r6\"").guest_parses, 0, "the annotations' tapes are the last run's");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The prepared program is keyed by the linked program's version (0276 §2): an edit of a finding's words alone finds
+/// it prepared (decision 0225 §3: the words are the writer's), and an edit of a rule prepares another.
+#[test]
+fn a_message_edit_finds_the_program_prepared_and_a_rule_edit_does_not() {
+    crate::install_store_functions();
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("prepared-key");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "assert x\nwhile y:\n    pass\n").unwrap();
+    let policy = |words: &str, kind: &str| {
+        format!(".policy \"p\" revision 1\n.language python\n.violation P(at: node) \"{words}\"\nP(n) :- kind(n, \"{kind}\").\n")
+    };
+    let keys = |text: &str| {
+        super::run(text, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        super::with_prepared(|kept| kept.keys().copied().collect::<std::collections::BTreeSet<_>>())
+    };
+    super::with_prepared(|kept| kept.clear());
+    let first = keys(&policy("one", "assert_statement"));
+    assert!(!first.is_empty(), "the run kept its prepared program");
+    assert_eq!(keys(&policy("two words", "assert_statement")), first, "the words alone changed: the same key");
+    let edited = keys(&policy("one", "while_statement"));
+    assert_eq!(edited.difference(&first).count(), 1, "a rule edit prepares another program");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Decision 0431 R9 (django-bugs' 2e9d16bc8, ported): a finding's lowering derives `rr_unplaced(clause)` for a finding
+/// at a node whose document is no file's, an output; a run whose `rr_unplaced` holds rows is refused, naming the
+/// clauses. A finding at a file's node derives none, and its run is not refused.
+#[test]
+fn a_finding_no_file_holds_is_refused_naming_its_clause() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unplaced");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.py"), "assert x\n").unwrap();
+    let text = ".policy \"p\" revision 1\n.language python\n.violation Assert(at: node) \"an assert\"\nAssert(n) :- kind(n, \"assert_statement\").\n";
+    let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+    let shown = v.show();
+    assert!(shown.contains("rr_unplaced(\"Assert\") :- Assert(") && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
+    assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
+    let out = dir.join("out");
+    let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    run(text, &out).unwrap();
+    assert_eq!(crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap().len(), 1, "a file's node: found");
+    assert!(crate::code_rule_dsl::logic::plan::output::shown(&out, crate::code_rule_dsl::logic::rr::UNPLACED).unwrap().is_empty(), "and placed");
+    // A run whose `rr_unplaced` holds a row (here derived outright) is refused, naming the clause.
+    // Its rule reads `kind(_, "assert_statement")`, merged into `Assert`: an export now, the first run's output alone.
+    // The file's memo entry holds no exported rows of it, so the file is a miss, not a hit with none.
+    let second = format!("{text}rr_unplaced(\"Assert\") :- kind(_, \"assert_statement\").\n");
+    let out2 = dir.join("out2");
+    let err = run(&second, &out2).err().map(|e| e.to_string()).unwrap_or_default();
+    assert!(err.contains("Assert") && err.contains("tape value"), "{err:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A rule whose head holds no variable, over a file's nodes (`zz("A") :- kind(_, "assert_statement")`), holds its row
+/// when a node matches, as one with a variable does, in a language's run (its program split by file).
+#[test]
+fn a_constant_head_over_a_files_nodes_holds_its_row() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("constant-head");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.py"), "assert x\n").unwrap();
+    let text = "\
+.policy \"p\" revision 1
+.language python
+.violation Assert(at: node) \"an assert\"
+Assert(n) :- kind(n, \"assert_statement\").
+.decl c1(c: symbol)
+c1(\"A\") :- kind(_, \"assert_statement\").
+.decl c2(c: symbol)
+c2(c) :- kind(_, \"assert_statement\"), c = \"A\".
+.decl c3(c: symbol)
+c3(\"A\") :- kind(n, \"assert_statement\"), n = n.
+.decl v(n: node)
+v(n) :- kind(n, \"assert_statement\").
+.output c1, c2, c3, v
+";
+    let out = dir.join("out");
+    super::run(text, &dir.join("ws"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let got: Vec<(String, usize)> = ["c1", "c2", "c3", "v"].iter().map(|r| (r.to_string(), crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap().len())).collect();
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(got, [("c1".to_owned(), 1), ("c2".to_owned(), 1), ("c3".to_owned(), 1), ("v".to_owned(), 1)]);
 }

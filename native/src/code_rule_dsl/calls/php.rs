@@ -27,12 +27,12 @@
 //! Other dynamic callees (`$f()` of a parameter, `$o->$m()`, `new $class`) are unknown. `f(...)`
 //! makes a callable and calls nothing.
 
-use crate::code_rule_dsl::tree::Tree;
 use super::names::Name;
 use super::summary::{CLASS, Def, OPEN, Summary};
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::scope::php_names::{PhpNames, Resolved, builtin_function};
 use crate::code_rule_dsl::scope::{Scope, ScopeKind, ScopeTable};
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::value::{Context as ValueContext, Value, php as php_value};
 use ast_grep_core::{Doc, Node};
 use sha2::{Digest, Sha256};
@@ -258,9 +258,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
                     .is_some_and(|name| name.text() == "callback")
             })?,
         };
-        let expression = argument
-            .named_code()
-            .last()?;
+        let expression = argument.named_code().last()?;
         if expression.kind() == "variadic_unpacking"
             || argument
                 .field("name")
@@ -327,8 +325,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
             return Some(Found::Open);
         };
         let value = |element: &Node<'r, D>| {
-            let mut named = element
-                .named_code();
+            let mut named = element.named_code();
             match (named.next(), named.next()) {
                 (Some(value), None) => Some(unparenthesized(&value)),
                 _ => None,
@@ -361,8 +358,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
 
     /// `X::class`: the class `X` names.
     fn class_constant(&self, access: &Node<'r, D>) -> Class {
-        let mut named = access
-            .named_code();
+        let mut named = access.named_code();
         let (Some(scope), Some(constant), None) = (named.next(), named.next(), named.next()) else {
             return Class::Open;
         };
@@ -413,9 +409,7 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
 
     /// The class a `new` expression instantiates.
     fn created(&self, creation: &Node<'r, D>) -> Class {
-        let Some(class) = creation
-            .first_code()
-        else {
+        let Some(class) = creation.first_code() else {
             return Class::Open;
         };
         if class.kind() == "anonymous_class" {
@@ -474,7 +468,11 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
     /// binding's assigned value. `None` where a path reaches it unassigned or with a value no
     /// assignment gives (a parameter, a reference, `global`, `foreach`, a dynamic write).
     fn values(&self, variable: &Node<'r, D>) -> Option<Vec<Node<'r, D>>> {
-        let flow = self.table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of)?;
+        let flow = self
+            .table
+            .flow
+            .as_deref()
+            .and_then(crate::code_rule_dsl::scope::php::Flow::of)?;
         let read = flow.read(variable.range().start)?;
         if read.defined != crate::code_rule_dsl::scope::php::Defined::Yes
             || read.aliased
@@ -585,7 +583,12 @@ impl<'r, D: Doc> Reader<'_, 'r, D> {
         {
             return false;
         }
-        let Some(flow) = self.table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of) else {
+        let Some(flow) = self
+            .table
+            .flow
+            .as_deref()
+            .and_then(crate::code_rule_dsl::scope::php::Flow::of)
+        else {
             return false;
         };
         let name = left.text();
@@ -680,8 +683,7 @@ fn is_name<D: Doc>(node: &Node<'_, D>) -> bool {
 fn unparenthesized<'r, D: Doc>(node: &Node<'r, D>) -> Node<'r, D> {
     let mut node = node.clone();
     while node.kind() == "parenthesized_expression" {
-        let mut inner = node
-            .named_code();
+        let mut inner = node.named_code();
         let (Some(expression), None) = (inner.next(), inner.next()) else {
             break;
         };
@@ -1103,9 +1105,7 @@ fn supers<D: Doc>(extractor: &mut Extractor, node: &Node<'_, D>, class: &str, na
             continue;
         };
         for clause in list.children() {
-            let parts = clause
-                .named_code()
-                .collect::<Vec<_>>();
+            let parts = clause.named_code().collect::<Vec<_>>();
             // `T::m`: the trait and the method.
             let method_of = |part: &Node<'_, D>| -> Option<(Option<String>, String)> {
                 match part.kind().as_ref() {
@@ -1250,7 +1250,12 @@ pub(crate) fn extract_program<D: Doc>(
 ) -> crate::code_rule_dsl::calls::summary::Summary {
     // The table's flow read the program's names; build them only where no table holds them.
     let names = table
-        .and_then(|table| table.flow.as_deref().and_then(crate::code_rule_dsl::scope::php::Flow::of))
+        .and_then(|table| {
+            table
+                .flow
+                .as_deref()
+                .and_then(crate::code_rule_dsl::scope::php::Flow::of)
+        })
         .map(|flow| std::sync::Arc::clone(&flow.names))
         .or_else(|| {
             crate::code_rule_dsl::scope::php_names::PhpNames::build(

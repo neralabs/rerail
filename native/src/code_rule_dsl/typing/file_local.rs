@@ -186,7 +186,7 @@ fn solve(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) -> StoreResult<
 mod on_version;
 pub use on_version::FileLocal;
 mod passes;
-pub use passes::{FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, locate_all};
+pub use passes::{FactorCaches, FactorizeExports, Locate, MoveCrossFile, PushLocalJoins, RequestsFileLocal, factorize_intermediates, locate_all};
 pub mod export_demand;
 pub use export_demand::DemandExports;
 use crate::code_rule_dsl::logic::program_image::passes::Parts as _;
@@ -242,7 +242,8 @@ fn close_under<T: Ord + Clone>(vars: &mut std::collections::BTreeSet<T>, equal: 
     }
 }
 
-/// Whether a local join pushes its equal columns (`RERAIL_PUSH_EQUAL_COLUMNS`, on unless `off`).
+/// Whether a pushed local join exports a column bound by equality (`RERAIL_PUSH_EQUAL_COLUMNS`, on unless `off`): public, as
+/// the split's tests read it in every crate that compiles them (re-exported whole).
 pub fn push_equal_columns() -> bool {
     std::env::var("RERAIL_PUSH_EQUAL_COLUMNS").map_or(true, |value| value != "off")
 }
@@ -279,6 +280,9 @@ pub struct Programs {
     /// The parts' versions (decision 0244): each a view of the program's version, its fields overlaid. No part has a
     /// tree (decision 0281's path, step 4).
     pub versions: Parts,
+    /// The program's version the parts are views of: what preparation's analyses of the whole program read (the
+    /// static check, decision 0364 §5: a part holds only some of the rules a step reads through).
+    pub program: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
     /// Why each derived relation is cross-file (`cross_causes`), as the split found it; empty for a split read from
     /// the store (`assemble` of what a prepared program kept), which keeps no causes.
     pub causes: std::collections::BTreeMap<String, String>,
@@ -319,20 +323,19 @@ pub fn assemble(
     // Each part's inputs and outputs; its rules and other fields are a view of the program's version (below), an
     // overlay over it (decision 0244).
     let local_outputs: Vec<String> = f.outputs().filter(|o| is_local(o)).map(str::to_owned).chain(exports.iter().cloned()).collect::<std::collections::BTreeSet<_>>().into_iter().collect();
-    // The reference graph is bound for the cross-file part only (no rule reading it is file-local): no chunk has it.
-    let local_inputs: Vec<String> = f.inputs().filter(|i| !matches!(*i, "reference_edge" | "reference_open")).map(str::to_owned).collect();
+    let local_inputs: Vec<String> = f.inputs().map(str::to_owned).collect();
     let cross_outputs: Vec<String> = f.outputs().filter(|o| !is_local(o)).map(str::to_owned).collect();
     let cross_inputs: Vec<String> = base_read.into_iter().chain(exports.iter().cloned()).collect();
     let versions = {
         use crate::code_rule_dsl::logic::program_image::PartFields;
         let local_rule = |rel: &str| is_local(rel) || constants.contains(rel);
         let not_local = |rel: &str| !is_local(rel);
-        let local = version.part(&local_rule, &local_inputs, &local_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local })?;
-        let cross = version.part(&in_cross, &cross_inputs, &cross_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
+        let local = version.part(local_rule, &local_inputs, &local_outputs, PartFields { natives: &is_local, lattice: &is_local, gates: &is_local })?;
+        let cross = version.part(in_cross, &cross_inputs, &cross_outputs, PartFields { natives: &in_cross, lattice: &not_local, gates: &not_local })?;
         Parts { local, cross }
     };
-    crate::code_rule_dsl::logic::version_trace::note_versions("split.local", &version, &versions.local);
-    crate::code_rule_dsl::logic::version_trace::note_versions("split.cross", &version, &versions.cross);
+    crate::code_rule_dsl::logic::version_trace::note("split.local", &version, &versions.local);
+    crate::code_rule_dsl::logic::version_trace::note("split.cross", &version, &versions.cross);
     // The split's constants are the file-local part's own (its split's, read from its version): checked in a debug
     // build, as `corpus` reads `constants` for the part.
     #[cfg(debug_assertions)]
@@ -342,7 +345,7 @@ pub fn assemble(
             assert_eq!(part.constants.contains(r.as_str()), constants.contains(r.as_str()), "the split's constants and the file-local part's disagree on {r}");
         }
     }
-    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, causes: Default::default() })
+    Ok(Programs { exports, base, locations, same_doc, file_local: local, constants, versions, program: version, causes: Default::default() })
 }
 
 /// Whether the factorized store is on (decision 0099): it is, unless `RERAIL_FACTORIZE=off` or the run's option
@@ -453,7 +456,8 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
         let source = |a: AtomRef<'_>, tainted: &BTreeSet<String>| !a.neg() && !key.contains_key(name(a)) && (tainted.contains(name(a)) || (is_base(name(a)) && reaches_nodes(name(a))));
         for native in &natives {
             for r in native.reads.iter().map(|r| v.rel_name(*r)) {
-                if key.contains_key(r) && semi.remove(&root(r)) {
+                if key.contains_key(r) {
+                    semi.remove(&root(r));
                 }
                 if tainted.contains(r) || (is_base(r) && reaches_nodes(r)) || key.contains_key(r) {
                     tainted.insert(v.rel_name(native.rel).to_owned());
@@ -495,7 +499,8 @@ pub fn semijoin_bases(cross: &crate::code_rule_dsl::logic::program_image::Versio
                 tainted.insert(name(head).to_owned());
             }
         }
-        if outputs.iter().any(|o| tainted.contains(*o)) && semi.remove("node") {
+        if outputs.iter().any(|o| tainted.contains(*o)) {
+            semi.remove("node");
         }
         if semi.len() == semi_before && tainted.len() == tainted_before {
             break;

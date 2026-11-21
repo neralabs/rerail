@@ -118,7 +118,7 @@ Rerail uses the machine's npm configuration and authentication. Agents call the 
 rerail update check
 rerail update
 rerail update status
-rerail events          # internal testing
+rerail events          # internal testing; experimental: needs RERAIL_EXPERIMENTAL_EVENT_STREAM=1
 ```
 
 Hooks, the daemon and `rerail events` never contact a registry. A new version arrives only via `rerail update`, and applies to newly started sessions.
@@ -132,6 +132,7 @@ Hooks, the daemon and `rerail events` never contact a registry. A new version ar
 |- current -> versions/<active>/node_modules/@neralabs/rerail
 |- bin/rerail
 |- daemon.json
+|- claude-status-lines/<session id>
 |- packs/node_modules/@neralabs/rerail-pack-<id>/
 |- packs/node_modules/[@<scope>/]rerail-pack-<id>/
 `- versions/
@@ -169,6 +170,7 @@ An update:
     - An agent that cannot be registered again fails alone; the update exits non-zero with the new version active.
     - Agents whose configuration cannot be read to tell whether they are connected are named and left alone.
     - The update that introduces this step runs the previous version's updater, which lacks it: run `rerail install --refresh` once after it.
+11. Lists each installed rule pack with a newer version that fits the active core, with the `rerail packs add` command that installs it. It installs none.
 
 **Health gate:** the native entrypoint and a real `RERAIL-EVENTS/1` session-start exchange must pass, or the update is discarded without changing the active version.
 
@@ -182,7 +184,7 @@ An update:
 
 Activation binds an install to one customer deployment via a signed entitlement.
 
-Internal testing: activation profiles (`rerail activate`, `rerail activation request`, `rerail profile` and `--profile`) are not part of Rerail's latest release. See the README's [Internal testing](../README.md#internal-testing) section.
+Internal testing: activation profiles (`rerail activate`, `rerail activation request`, `rerail profile` and `--profile`) are not part of Rerail's latest release. They are experimental: `activate`, `activation request`, `profile select` and `--profile` refuse unless `RERAIL_EXPERIMENTAL_ACTIVATION_PROFILES=1`. `profile status` and `profile remove` work either way, and a profile stored earlier is enforced as below whether or not it is set. See [Internal testing](internal-testing.md).
 
 Package access authorizes download; the entitlement authorizes execution.
 

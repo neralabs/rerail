@@ -1,4 +1,5 @@
-import { EventEmitter } from "node:events";
+import { EventEmitter, once } from "node:events";
+import { setImmediate as setImmediatePromise } from "node:timers/promises";
 import { describe, expect, it, vi } from "vitest";
 import { displayWidth, menuAction, readKey, TerminalInput, type TerminalInputStream } from "../../src/cli/setup-menu.js";
 
@@ -39,44 +40,95 @@ describe("the set-up menu's keys", () => {
   });
 });
 
+/** How many turns of the event loop a typed chunk comes after the last, or after stdin starts reading: more than the drop's. */
+const TURNS_TO_TYPE = 5;
+
 /**
- * A terminal's stdin. `held` is what the terminal holds from before: keys pressed while set-up was busy, handed over
- * as soon as stdin reads. `chunks` are what the person types, one at a time while stdin reads, each after a delay
- * longer than a turn of the event loop; then the end of input when `ends`. Pausing stdin stops the reading.
+ * A terminal's stdin. `chunks` are what the person types, one at a time while stdin reads, each {@link TURNS_TO_TYPE}
+ * turns of the event loop after the last; then the end of input when `ends`. `press` types more. A key pressed while
+ * stdin is paused the terminal holds, and hands over those turns after stdin reads again, as a Windows console hands
+ * over its keys later than a turn. `unfinished` is a line typed without Enter: the terminal hands it over only to a
+ * read started in raw mode, as macOS does, which tells a read already waiting nothing when raw mode makes it readable.
+ * `late` is what a Windows console held while set-up blocked its event loop: its own thread hands it over 10 ms after a
+ * read starts in raw mode. `heldDown` is a key held down: it reaches stdin every turn while a read started in raw mode
+ * runs, until it is let go (set to "").
  */
-function fakeStdin(chunks: readonly string[], { ends = true, held = [] as string[] } = {}): TerminalInputStream & { raw: boolean[]; held: string[] } {
-  const left = [...chunks];
+function fakeStdin(chunks: readonly string[], { ends = true } = {}): TerminalInputStream & { raw: boolean[]; unfinished: string; late: string; heldDown: string; press(chunk: string): void } {
+  const keys = [...chunks];
   let reading = false;
-  let typing: NodeJS.Timeout | undefined;
-  // A real timer, not a fake clock: the drop waits real turns of the event loop (setImmediate from node:timers), and
-  // what this models is a key that comes after those turns, as a person's does.
-  const type = (): void => {
-    typing = setTimeout(() => {
-      const chunk = left.shift();
-      if (chunk !== undefined) stream.emit("data", chunk);
-      else if (ends) stream.emit("end");
-      if (reading) type();
-    }, 10);
+  let ended = false;
+  let typing: NodeJS.Immediate | undefined;
+  let repeating: NodeJS.Immediate | undefined;
+  // Turns of the event loop, not a time: the drop here waits turns (`terminalInput`), and what this models is a key
+  // that comes after them, as a person's does, however long the machine holds this process meanwhile.
+  const type = (turns = 1): void => {
+    if (!reading || ended || typing !== undefined || (keys.length === 0 && !ends)) return;
+    typing = setImmediate(() => {
+      typing = undefined;
+      if (turns < TURNS_TO_TYPE) {
+        type(turns + 1);
+        return;
+      }
+      const chunk = keys.shift();
+      if (chunk === undefined) {
+        ended = true;
+        stream.emit("end");
+        return;
+      }
+      stream.emit("data", chunk);
+      type();
+    });
+  };
+  const repeat = (): void => {
+    repeating = undefined;
+    if (!reading || stream.heldDown === "") return;
+    stream.emit("data", stream.heldDown);
+    repeating = setImmediate(repeat);
   };
   const stream = Object.assign(new EventEmitter(), {
     raw: [] as boolean[],
-    held: [...held],
-    setRawMode(raw: boolean) { stream.raw.push(raw); },
+    unfinished: "",
+    late: "",
+    heldDown: "",
+    press(chunk: string) {
+      keys.push(chunk);
+      type();
+    },
+    setRawMode(raw: boolean) {
+      stream.raw.push(raw);
+    },
     setEncoding() {},
     pause() {
       reading = false;
-      clearTimeout(typing);
+      clearImmediate(typing);
+      typing = undefined;
+      clearImmediate(repeating);
+      repeating = undefined;
     },
     resume() {
-      if (reading) return;
       reading = true;
-      queueMicrotask(() => {
-        for (const chunk of stream.held.splice(0)) stream.emit("data", chunk);
-      });
+      if (stream.raw.at(-1) === true) {
+        const { unfinished, late } = stream;
+        stream.unfinished = "";
+        stream.late = "";
+        if (unfinished !== "") queueMicrotask(() => stream.emit("data", unfinished));
+        if (late !== "") setTimeout(() => stream.emit("data", late), 10);
+        if (stream.heldDown !== "" && repeating === undefined) repeating = setImmediate(repeat);
+      }
       type();
     },
   });
   return stream;
+}
+
+/** Set-up's input on `stdin`, whose drop waits a turn of the event loop for quiet, as the stand-in types in turns. */
+function terminalInput(
+  stdin: TerminalInputStream,
+  write: (text: string) => void = () => {},
+  interrupt: () => void = () => {},
+  columns: () => number | undefined = () => undefined,
+): TerminalInput {
+  return new TerminalInput(stdin, write, interrupt, columns, async () => { await setImmediatePromise(); });
 }
 
 const menu = { count: 3, frame: (highlight: number) => [0, 1, 2].map(index => `${index === highlight ? "❯" : " "} ${index + 1}`).concat("", "> ").join("\n") };
@@ -85,7 +137,7 @@ describe("the terminal's input", () => {
   it("moves the cursor with the arrows, redrawing the menu in place, and takes the answer at Enter", async () => {
     const stdin = fakeStdin(["\u001b[B", "\u001b[B\u001b[A", "\r"]);
     const written: string[] = [];
-    const input = new TerminalInput(stdin, text => { written.push(text); });
+    const input = terminalInput(stdin, text => { written.push(text); });
     expect(await input.choose(menu)).toBe(1);
     expect(stdin.raw).toEqual([true, false]);
     // Up four lines (two rows above the last, the blank line, the prompt) to the first answer, then drawn again.
@@ -101,7 +153,7 @@ describe("the terminal's input", () => {
       count: 2,
       frame: (highlight: number) => [`${highlight === 0 ? "\u001b[36m❯\u001b[39m" : " "} 1. Yes, scan customer-portal-frontend`, `${highlight === 1 ? "❯" : " "} 2. No`, "", "> "].join("\n"),
     };
-    const input = new TerminalInput(stdin, text => { written.push(text); }, () => {}, () => 20);
+    const input = terminalInput(stdin, text => { written.push(text); }, () => {}, () => 20);
     expect(await input.choose(long)).toBe(1);
     // Up four rows from the prompt's: the blank line, the second answer, and the wrapped first answer's two.
     expect(written[1]).toBe(`\r\u001b[4A\u001b[J${long.frame(1)}`);
@@ -109,7 +161,7 @@ describe("the terminal's input", () => {
 
   it("redraws as one row per line when the terminal's width is unknown", async () => {
     const written: string[] = [];
-    const input = new TerminalInput(fakeStdin(["\u001b[B", "\r"]), text => { written.push(text); }, () => {}, () => undefined);
+    const input = terminalInput(fakeStdin(["\u001b[B", "\r"]), text => { written.push(text); });
     expect(await input.choose(menu)).toBe(1);
     expect(written[1]).toBe(`\r\u001b[4A\u001b[J${menu.frame(1)}`);
   });
@@ -122,58 +174,66 @@ describe("the terminal's input", () => {
   });
 
   it("ends a line at CR, as raw mode sends Enter, at LF, and at CRLF split across reads", async () => {
-    const input = new TerminalInput(fakeStdin(["1\r", "~/proj\r"]), () => {});
+    const input = terminalInput(fakeStdin(["1\r", "~/proj\r"]));
     expect(await input.choose(menu)).toBe(0);
     expect(await input.line("Which folder? ")).toBe("~/proj");
     expect(await input.line("Which folder? ")).toBeUndefined();
 
-    const split = new TerminalInput(fakeStdin(["~/a\r", "\n~/b\n", "\r\n"]), () => {});
+    const split = terminalInput(fakeStdin(["~/a\r", "\n~/b\n", "\r\n"]));
     expect(await split.line("Which folder? ")).toBe("~/a");
     expect(await split.line("Which folder? ")).toBe("~/b");
     expect(await split.line("Which folder? ")).toBe("");
   });
 
   it("takes no Enter for a menu from the LF of a CRLF a line ended on", async () => {
-    const input = new TerminalInput(fakeStdin(["~/a\r", "\n", "\u001b[B", "\r"]), () => {});
+    const input = terminalInput(fakeStdin(["~/a\r", "\n", "\u001b[B", "\r"]));
     expect(await input.line("Which folder? ")).toBe("~/a");
     expect(await input.choose(menu)).toBe(1);
   });
 
   it("takes a digit then Enter, then reads the next prompt's line", async () => {
-    const input = new TerminalInput(fakeStdin(["3\r", "my-app\n"]), () => {});
+    const input = terminalInput(fakeStdin(["3\r", "my-app\n"]));
     expect(await input.choose(menu)).toBe(2);
     expect(await input.line("Which folder? ")).toBe("my-app");
   });
 
   it("answers a question only with what is typed once it is on screen, not with what was left of an earlier read", async () => {
     // A second Enter in the read that answered the first question does not answer the next one.
-    const input = new TerminalInput(fakeStdin(["2\r\r", "\u001b[B", "\r", "3\rmy-app\n", "~/code/app\n"]), () => {});
+    const input = terminalInput(fakeStdin(["2\r\r", "\u001b[B", "\r", "3\rmy-app\n", "~/code/app\n"]));
     expect(await input.choose(menu)).toBe(1);
     expect(await input.choose(menu)).toBe(1);
     expect(await input.choose(menu)).toBe(2);
     expect(await input.line("Which folder? ")).toBe("~/code/app");
   });
 
-  it("drops the keys the terminal holds before a menu or prompt is drawn, with the terminal in raw mode", async () => {
-    // An Enter pressed while set-up was busy, held by the terminal until set-up reads.
-    const stdin = fakeStdin(["\u001b[B", "\r", "~/code/app\n"], { held: ["\r"] });
+  it("drops what was typed before a menu or prompt is drawn: keys pressed while set-up was busy, and a line without Enter", async () => {
+    const stdin = fakeStdin([], { ends: false });
     // What stdin read, in raw mode or not, and what was written, in order.
     const seen: string[] = [];
     stdin.on("data", (chunk: string) => { seen.push(`read ${JSON.stringify(chunk)}${stdin.raw.at(-1) === true ? " in raw mode" : ""}`); });
-    const input = new TerminalInput(stdin, text => { seen.push(`wrote ${JSON.stringify(text)}`); });
-    expect(await input.choose(menu)).toBe(1);
-    // A folder typed while set-up was busy again.
-    stdin.held.push("~/typed-early\n");
-    expect(await input.line("Which folder? ")).toBe("~/code/app");
-    // Each held key was read, and dropped, before anything of its question was drawn; the keys that answer came after.
+    const input = terminalInput(stdin, text => { seen.push(`wrote ${JSON.stringify(text)}`); });
+    // An Enter pressed while set-up is busy, as during the download, and read before set-up asks.
+    stdin.press("\r");
+    await once(stdin, "data");
+    const picked = input.choose(menu);
+    stdin.press("\u001b[B");
+    stdin.press("\r");
+    expect(await picked).toBe(1);
+    // A folder typed while set-up was busy again, without Enter.
+    stdin.unfinished = "~/typed-early";
+    const folder = input.line("Which folder? ");
+    stdin.press("~/code/app\n");
+    expect(await folder).toBe("~/code/app");
+    input.close();
+    // Each was read, and dropped, before anything of its question was drawn; the keys that answer came after.
     expect(seen).toEqual([
-      'read "\\r" in raw mode',
+      'read "\\r"',
       `wrote ${JSON.stringify(menu.frame(0))}`,
       'read "\\u001b[B" in raw mode',
       `wrote ${JSON.stringify(`\r\u001b[4A\u001b[J${menu.frame(1)}`)}`,
       'read "\\r" in raw mode',
       'wrote "\\n"',
-      'read "~/typed-early\\n" in raw mode',
+      'read "~/typed-early" in raw mode',
       'wrote "Which folder? "',
       'read "~/code/app\\n"',
     ]);
@@ -181,17 +241,68 @@ describe("the terminal's input", () => {
     expect(stdin.raw).toEqual([true, false, true, false]);
   });
 
+  it("drops keys a Windows console hands over 10 ms after raw mode starts, in set-up's own wait for quiet", async () => {
+    // set-up's own 50 ms wait, not `terminalInput`'s turn: what is checked is that its margin takes a key handed over
+    // by the console's thread later than any turn. The person answers once the menu is drawn.
+    const stdin = fakeStdin([], { ends: false });
+    const input = new TerminalInput(stdin, text => {
+      if (text !== menu.frame(0)) return;
+      stdin.press("\u001b[B");
+      stdin.press("\r");
+    }, () => {});
+    // An Enter pressed while set-up held the event loop.
+    stdin.late = "\r";
+    expect(await input.choose(menu)).toBe(1);
+    input.close();
+  });
+
+  it("draws the question after its waits for quiet even while a key held down keeps repeating", async () => {
+    const stdin = fakeStdin([], { ends: false });
+    const input = terminalInput(stdin, text => {
+      if (text !== menu.frame(0)) return;
+      stdin.heldDown = "";
+      stdin.press("\r");
+    });
+    stdin.heldDown = "x";
+    expect(await input.choose(menu)).toBe(0);
+    input.close();
+  });
+
+  it("puts the terminal back and interrupts set-up at a Ctrl-C read before a menu or prompt is drawn", async () => {
+    const stdin = fakeStdin([], { ends: false });
+    const written: string[] = [];
+    const interrupt = vi.fn(() => { expect(stdin.raw.at(-1)).toBe(false); });
+    const input = terminalInput(stdin, text => { written.push(text); }, interrupt);
+    // Ctrl-C pressed as the question was due: the drop's raw mode reads it as a byte, not a signal.
+    stdin.unfinished = "\u0003";
+    expect(await input.choose(menu)).toBeUndefined();
+    stdin.unfinished = "\u0003";
+    expect(await input.line("Which folder? ")).toBeUndefined();
+    input.close();
+    expect(interrupt).toHaveBeenCalledTimes(2);
+    expect(written).toEqual([]);
+    expect(stdin.raw.at(-1)).toBe(false);
+  });
+
+  it("cancels the next question at an end of input (Ctrl-D) typed while set-up was busy, rather than waiting on it", async () => {
+    const stdin = fakeStdin([]);
+    const input = terminalInput(stdin);
+    await once(stdin, "end");
+    expect(await input.choose(menu)).toBeUndefined();
+    expect(await input.line("Which folder? ")).toBeUndefined();
+  });
+
   it("cancels at Ctrl-D or end of input, and puts the terminal back", async () => {
     const stdin = fakeStdin(["\u001b[B\u0004"]);
-    expect(await new TerminalInput(stdin, () => {}).choose(menu)).toBeUndefined();
+    expect(await terminalInput(stdin).choose(menu)).toBeUndefined();
     expect(stdin.raw).toEqual([true, false]);
-    expect(await new TerminalInput(fakeStdin([]), () => {}).choose(menu)).toBeUndefined();
+    expect(await terminalInput(fakeStdin([])).choose(menu)).toBeUndefined();
   });
 
   it("puts the terminal back before Ctrl-C interrupts set-up", async () => {
     const stdin = fakeStdin(["\u0003"]);
     const interrupt = vi.fn(() => { expect(stdin.raw.at(-1)).toBe(false); });
-    expect(await new TerminalInput(stdin, () => {}, interrupt).choose(menu)).toBeUndefined();
+    expect(await terminalInput(stdin, () => {}, interrupt).choose(menu)).toBeUndefined();
     expect(interrupt).toHaveBeenCalledOnce();
   });
 });

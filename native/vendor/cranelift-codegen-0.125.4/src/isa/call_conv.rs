@@ -45,6 +45,12 @@ pub enum CallConv {
     /// defines no callee-save registers, and restricts the number of return
     /// registers to one integer, and one floating point.
     Winch,
+    /// A cold helper's convention (rerail's patch): the callee preserves every general
+    /// register but the returns' two (aarch64 x0, x1; x86-64 rax, rdx) and the scratch ones
+    /// (aarch64 x9, x16, x17; x86-64 r11); vectors as the platform's default. The caller's
+    /// values stay in registers across the call, as LLVM's `preserve_most`. Otherwise as
+    /// System V (arguments and returns in the same registers), with at most two returns.
+    PreserveMost,
 }
 
 impl CallConv {
@@ -123,6 +129,7 @@ impl fmt::Display for CallConv {
             Self::AppleAarch64 => "apple_aarch64",
             Self::Probestack => "probestack",
             Self::Winch => "winch",
+            Self::PreserveMost => "preserve_most",
         })
     }
 }
@@ -138,6 +145,7 @@ impl str::FromStr for CallConv {
             "windows_fastcall" => Ok(Self::WindowsFastcall),
             "apple_aarch64" => Ok(Self::AppleAarch64),
             "probestack" => Ok(Self::Probestack),
+            "preserve_most" => Ok(Self::PreserveMost),
             "winch" => Ok(Self::Winch),
             _ => Err(()),
         }

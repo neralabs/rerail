@@ -142,9 +142,9 @@ pub(super) struct Sample {
 fn holders() -> [usize; 7] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
     // Relational work's device leases exist only where the device does (macOS).
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     let (live, idle) = rerail_accel::gpu::shared::held_bytes();
-    #[cfg(not(target_os = "macos"))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     let (live, idle) = (0, 0);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
     let (host, host_free) = rerail_accel::blocks::host_held();
@@ -172,10 +172,9 @@ pub(super) struct Sampled {
     pub(super) heap_in_at: u64,
 }
 
-/// `RERAIL_HEAP_AT`'s text, read once.
-fn heap_at_text() -> Option<&'static str> {
-    static AT: std::sync::LazyLock<Option<String>> = std::sync::LazyLock::new(|| std::env::var("RERAIL_HEAP_AT").ok().filter(|t| !t.is_empty()));
-    AT.as_deref()
+/// `RERAIL_HEAP_AT`'s text, read once a run.
+fn heap_at_text() -> Option<String> {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_HEAP_AT").ok().filter(|t| !t.is_empty()))
 }
 
 pub(super) static SAMPLED: std::sync::LazyLock<std::sync::Mutex<Sampled>> = std::sync::LazyLock::new(Default::default);
@@ -187,7 +186,7 @@ pub(super) fn sample() {
         let every_ms = std::env::var("RERAIL_PROF_MEMORY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5u64).max(1);
         SAMPLED.lock().unwrap().every_ms = every_ms;
         // Relational work's device leases are sampled as the heap is, under the span that leased them.
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         if rerail_prof::heap::on() {
             rerail_accel::gpu::shared::set_lease_hook(|ptr, len| {
                 if len == 0 {
@@ -195,6 +194,30 @@ pub(super) fn sample() {
                 } else {
                     rerail_prof::heap::alloc_by(ptr, len, rerail_prof::heap::DEVICE);
                 }
+            });
+            // Q203 (c): what holds the device's budget when a lease is refused, by the span that leased it (the first
+            // few refusals of a process).
+            rerail_accel::gpu::shared::set_refusal_hook(|why| {
+                static TOLD: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                if TOLD.fetch_add(1, std::sync::atomic::Ordering::Relaxed) >= 6 {
+                    return;
+                }
+                let held: Vec<(u32, u64)> = rerail_prof::heap::snapshot().into_iter().filter(|(id, _)| id & rerail_prof::heap::DEVICE != 0).collect();
+                let all: u64 = held.iter().map(|h| h.1).sum();
+                let mut out = format!("rerail: refused, device leases by span ({} MB sampled): {why}", all >> 20);
+                for (id, bytes) in held.iter().take(12) {
+                    out.push_str(&format!("\n  {:>6.1} MB  {}", *bytes as f64 / 1048576.0, rerail_prof::heap::name(*id)));
+                }
+                // With `RERAIL_HEAP_FRAMES`, each big holding's leasing stack, for `atos -l` against the load address.
+                let frames: Vec<((u32, Vec<usize>), u64)> = rerail_prof::heap::snapshot_frames().into_iter().filter(|((id, _), b)| id & rerail_prof::heap::DEVICE != 0 && *b >= 8 << 20).collect();
+                if !frames.is_empty() {
+                    out.push_str(&format!("\n  stacks, load {:#x}:", rerail_prof::heap::load_address()));
+                    for ((_, stack), bytes) in frames.iter().take(16) {
+                        let at: Vec<String> = stack.iter().take(14).map(|a| format!("{a:#x}")).collect();
+                        out.push_str(&format!("\n  stack {:.1} MB: {}", *bytes as f64 / 1048576.0, at.join(" ")));
+                    }
+                }
+                eprintln!("{out}");
             });
         }
         let _ = rerail_accel::exec::service("profile memory", None, move || {
@@ -243,7 +266,7 @@ pub(super) fn sample() {
                 if let Some(text) = heap_at_text()
                     && rerail_prof::heap::on()
                     && now >= s.heap_in_at + (16 << 20)
-                    && sample.open.iter().any(|p| p.contains(text))
+                    && sample.open.iter().any(|p| p.contains(text.as_str()))
                 {
                     s.heap_in_at = now;
                     drop(s);

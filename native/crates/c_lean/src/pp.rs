@@ -132,31 +132,33 @@ impl<'s> Phase2<'s> {
         }
         while i < src.len() {
             let c = src[i];
-            if c == b'?' && trigraphs && src.get(i + 1) == Some(&b'?') {
-                if let Some(r) = src.get(i + 2).and_then(|&t| trigraph(t)) {
-                    if r == b'\\' {
-                        if let Some(e) = splice_at(src, i + 2) {
-                            // `??/` and a newline: a splice.
-                            gone += (e - i) as u32;
-                            removed.push((text.len() as u32, gone));
-                            i = e;
-                            continue;
-                        }
-                    }
-                    text.push(r);
-                    gone += 2;
-                    removed.push((text.len() as u32, gone));
-                    i += 3;
-                    continue;
-                }
-            }
-            if c == b'\\' {
-                if let Some(e) = splice_at(src, i) {
+            if c == b'?'
+                && trigraphs
+                && src.get(i + 1) == Some(&b'?')
+                && let Some(r) = src.get(i + 2).and_then(|&t| trigraph(t))
+            {
+                if r == b'\\'
+                    && let Some(e) = splice_at(src, i + 2)
+                {
+                    // `??/` and a newline: a splice.
                     gone += (e - i) as u32;
                     removed.push((text.len() as u32, gone));
                     i = e;
                     continue;
                 }
+                text.push(r);
+                gone += 2;
+                removed.push((text.len() as u32, gone));
+                i += 3;
+                continue;
+            }
+            if c == b'\\'
+                && let Some(e) = splice_at(src, i)
+            {
+                gone += (e - i) as u32;
+                removed.push((text.len() as u32, gone));
+                i = e;
+                continue;
             }
             text.push(c);
             i += 1;
@@ -246,7 +248,7 @@ impl<'t> PpLexer<'t> {
     }
 
     /// The next token.
-    pub fn next(&mut self) -> PpTok {
+    pub fn next_token(&mut self) -> PpTok {
         let (s, flags) = self.gap();
         let t = self.token_at(s, flags);
         self.pos = t.end as usize;
@@ -397,11 +399,9 @@ impl<'t> PpLexer<'t> {
             return None;
         }
         if raw {
-            return Some(match self.lx.raw_end(k + 1) {
-                Some(e) => PpTok { kind: P::RawStr, punct: T::Eof, flags, start: s as u32, end: self.suffix_end(e) as u32 },
-                // An unclosed raw string: its prefix is an identifier.
-                None => return None,
-            });
+            // An unclosed raw string: its prefix is an identifier.
+            let e = self.lx.raw_end(k + 1)?;
+            return Some(PpTok { kind: P::RawStr, punct: T::Eof, flags, start: s as u32, end: self.suffix_end(e) as u32 });
         }
         Some(self.quoted(s, k, if q == b'"' { P::Str } else { P::Char }, flags))
     }
@@ -495,7 +495,7 @@ impl<'t> PpLexer<'t> {
     pub fn skip_line(&mut self) {
         loop {
             let save = (self.pos, self.bol);
-            let t = self.next();
+            let t = self.next_token();
             if t.kind == P::Eof || (t.flags & BOL != 0) {
                 (self.pos, self.bol) = save;
                 // The line end ends the line: the next token is the next line's first.
@@ -508,7 +508,7 @@ impl<'t> PpLexer<'t> {
     /// Whether the next token starts a new line (or the text ends), without reading it.
     pub fn at_line_end(&mut self) -> bool {
         let save = (self.pos, self.bol);
-        let t = self.next();
+        let t = self.next_token();
         (self.pos, self.bol) = save;
         t.kind == P::Eof || t.flags & BOL != 0
     }
@@ -517,7 +517,7 @@ impl<'t> PpLexer<'t> {
     /// text ends first.
     pub fn next_on_line(&mut self) -> Option<PpTok> {
         let save = (self.pos, self.bol);
-        let t = self.next();
+        let t = self.next_token();
         if t.kind == P::Eof || t.flags & BOL != 0 {
             (self.pos, self.bol) = save;
             return None;
@@ -557,7 +557,7 @@ mod tests {
         let mut lx = PpLexer::new(&p2.text, opts);
         let mut out = Vec::new();
         loop {
-            let t = lx.next();
+            let t = lx.next_token();
             if t.kind == P::Eof {
                 break;
             }
@@ -643,13 +643,13 @@ mod tests {
         let c = Options::c(17, false);
         let src = b"include <a/b.h> \"c\\d.h\" x\n";
         let mut lx = PpLexer::new(src, c);
-        assert_eq!(lx.next().kind, P::Ident);
+        assert_eq!(lx.next_token().kind, P::Ident);
         let h = lx.header_name().unwrap();
         assert_eq!(&src[h.start as usize..h.end as usize], b"<a/b.h>");
         let h = lx.header_name().unwrap();
         assert_eq!(&src[h.start as usize..h.end as usize], b"\"c\\d.h\"");
         assert!(lx.header_name().is_none());
-        assert_eq!(lx.next().kind, P::Ident);
+        assert_eq!(lx.next_token().kind, P::Ident);
     }
 
     /// Every token by `next` against a byte-at-a-time reading of the standard's rules, over random
@@ -737,9 +737,7 @@ mod tests {
                 let mut k = i + 1;
                 loop {
                     let ch = at(k);
-                    if word(ch) || ch == b'.' {
-                        k += 1;
-                    } else if matches!(ch, b'+' | b'-') && matches!(at(k - 1), b'e' | b'E' | b'p' | b'P') {
+                    if word(ch) || ch == b'.' || matches!(ch, b'+' | b'-') && matches!(at(k - 1), b'e' | b'E' | b'p' | b'P') {
                         k += 1;
                     } else if ch == b'\'' && o.digit_separators && (at(k + 1).is_ascii_alphanumeric() || at(k + 1) == b'_') {
                         k += 2;
@@ -815,9 +813,8 @@ mod tests {
                     i + t.len()
                 } else if let Some(t) = two.iter().find(|t| rest.starts_with(t) && colons(t) && (o.cpp || **t != *b".*")) {
                     i + t.len()
-                } else if b"()[]{};,~?:.=!+-*/%^&|<>#".contains(&c) {
-                    i + 1
                 } else {
+                    // A one-byte punctuator, or any other byte: a token of its own.
                     i + 1
                 }
             };

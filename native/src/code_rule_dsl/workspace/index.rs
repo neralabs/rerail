@@ -13,6 +13,7 @@
 use super::api::{WORKSPACE_BUSY, WorkspaceApplyTask, close_poisoned, cpu_slot};
 use super::crossfile::CrossFileScheduler;
 use super::global::record_evidence;
+use super::ingest::{RepositoryContext, repository_context};
 use super::ingest::{Request, WireFile, make_file};
 use super::persisted::{candidate_catalog, file_context, restore_complete_results};
 use super::storage::StorageContext;
@@ -22,7 +23,6 @@ use super::{
 use crate::code_rule_dsl::json::{invalid, json_error};
 use crate::code_rule_dsl::language::adapter::{module_path, package_manifests};
 use crate::code_rule_dsl::model::FileInput;
-use super::ingest::{RepositoryContext, repository_context};
 use crate::content_store::{
     CandidateCatalogIdentity, DirectoryReuse, HashKey, StoredFile, StoredPathObjects,
 };
@@ -31,16 +31,29 @@ use napi::{Env, Result, Task};
 use napi_derive::napi;
 use serde_json::{Value, json};
 use std::collections::{BTreeSet, HashMap, HashSet, VecDeque};
+use std::path::Path;
 use std::sync::atomic::AtomicBool;
-use std::sync::{Arc, Mutex, MutexGuard};
+use std::sync::{Arc, Mutex, MutexGuard, OnceLock};
 
 /// Files one index chunk reads at most.
 const INDEX_BATCH_FILES: usize = 32;
+/// Names submitted to one language classification phase.
+const LANGUAGE_BATCH_FILES: usize = 4096;
 /// Source bytes after which an index chunk stops reading.
 const INDEX_BATCH_BYTES: usize = 1024 * 1024;
 /// How much of an oversized unlisted file is checked for a NUL byte (Git's binary test), as it is
 /// never read whole.
 const BINARY_PREFIX_BYTES: u64 = 8000;
+
+type SourceClassifier = fn(
+    &Path, &Path, Option<crate::content_store::analysis_scope::AnalysisOwner>,
+    &[String], &git_workspace::snapshot::SourceLanguages,
+) -> std::result::Result<HashMap<String, String>, String>;
+static SOURCE_CLASSIFIER: OnceLock<SourceClassifier> = OnceLock::new();
+
+pub fn install_source_classifier(classify: SourceClassifier) {
+    let _ = SOURCE_CLASSIFIER.set(classify);
+}
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -80,11 +93,15 @@ pub struct RepositoryIndexOptions {
     /// Whether files Git ignores (nested `.gitignore`s, `.git/info/exclude`, `core.excludesFile`;
     /// never a tracked file) are left out of the walk, as the host's own walks leave them out.
     pub follow_gitignore: bool,
+    /// Optional source paths in a historical repository scan. A directory selects its descendants.
+    pub paths: Option<Vec<String>>,
 }
 
 pub struct WorkspaceIndexTask {
     pub(super) state: Arc<Mutex<WorkspaceState>>,
     pub(super) closed: Arc<AtomicBool>,
+    /// The workspace's shared object (decision 0442): the task's run is on it.
+    pub(super) shared: Arc<crate::code_rule_dsl::logic::profile::Shared>,
     pub options: RepositoryIndexOptions,
 }
 
@@ -100,6 +117,8 @@ impl WorkspaceIndexTask {
         Self {
             state,
             closed,
+            // A test's index runs on the tests' shared object.
+            shared: crate::code_rule_dsl::logic::profile::default_shared(),
             options: RepositoryIndexOptions {
                 max_files: u32::MAX,
                 max_source_bytes: u32::MAX,
@@ -116,6 +135,7 @@ impl WorkspaceIndexTask {
                 nested_checkouts: Vec::new(),
                 source_names: None,
                 follow_gitignore: false,
+                paths: None,
             },
         }
     }
@@ -171,20 +191,20 @@ pub(super) fn reusable_directories(
             };
             let mut marker_bytes = b"rerail-package-markers-v1\0".to_vec();
             let mut ancestor = std::path::PathBuf::new();
-            marker_bytes.push(u8::from(
-                repository.worktree_root.join("__init__.py").exists(),
-            ));
+            let package_marker = |directory: &std::path::Path| {
+                let marker = repository.worktree_root.join(directory).join("__init__.py");
+                if repository.snapshot.is_some() {
+                    git_workspace::snapshot::is_file(marker)
+                } else {
+                    marker.exists()
+                }
+            };
+            marker_bytes.push(u8::from(package_marker(std::path::Path::new(""))));
             for component in std::path::Path::new(&prefix).components() {
                 ancestor.push(component);
                 marker_bytes.extend_from_slice(ancestor.to_string_lossy().as_bytes());
                 marker_bytes.push(0);
-                marker_bytes.push(u8::from(
-                    repository
-                        .worktree_root
-                        .join(&ancestor)
-                        .join("__init__.py")
-                        .exists(),
-                ));
+                marker_bytes.push(u8::from(package_marker(&ancestor)));
             }
             // A file directly in the tree inherits the manifest at or above it.
             let inherited = manifests.of_directory(&repository.worktree_root.join(&prefix));
@@ -298,27 +318,11 @@ impl WorkspaceIndexTask {
             .map_err(|error| close_poisoned(error.into_inner(), &self.state, &self.closed))
     }
 
-    /// The host's file label for `path`: its whole name where the host lists it (`.npmignore`),
-    /// else its longest extension the host lists (`.blade.php` before `.php`) with a nonempty
-    /// name before it, as the host's `sourceLanguageOfPath` reads it: a file named only `.php`
-    /// has no extension, and `.blade.php` is a `.php` file named `.blade`.
-    pub fn source_language(&self, path: &str) -> Option<String> {
-        let name = std::path::Path::new(path)
-            .file_name()?
-            .to_str()?
-            .to_ascii_lowercase();
-        if let Some(label) = self
-            .options
-            .source_names
-            .as_ref()
-            .and_then(|names| names.get(&name))
-        {
-            return Some(label.clone());
+    fn source_languages(&self) -> git_workspace::snapshot::SourceLanguages {
+        git_workspace::snapshot::SourceLanguages {
+            suffixes: self.options.source_languages.iter().map(|(k, v)| (k.clone(), v.clone())).collect(),
+            names: self.options.source_names.iter().flatten().map(|(k, v)| (k.clone(), v.clone())).collect(),
         }
-        name.match_indices('.')
-            .filter(|&(at, _)| at > 0)
-            .find_map(|(at, _)| self.options.source_languages.get(&name[at..]))
-            .cloned()
     }
 
     /// The workspace's scoped sources as the host's walk selects them: every regular file below
@@ -335,6 +339,7 @@ impl WorkspaceIndexTask {
     /// files exceed `max_files`, in which case it stops listing.
     fn walk(
         &self,
+        storage: &StorageContext,
         repository: &git_workspace::GitWorkspace,
         prefix: &str,
         scoped: impl Fn(&str, bool) -> bool,
@@ -347,18 +352,96 @@ impl WorkspaceIndexTask {
             .iter()
             .map(String::as_str)
             .collect::<HashSet<_>>();
+        let registry = self.source_languages();
+        let snapshot = repository.snapshot.as_deref().filter(|snapshot| snapshot.uses_source_languages(&registry));
+        let owner = self.lock()?.pending_analysis.as_ref().map(|(owner, _)| owner.clone());
+        let max_files = self.options.max_files as usize;
+        let batch_size = max_files.saturating_add(1).clamp(1, LANGUAGE_BATCH_FILES);
+        let mut pending = Vec::new();
+        let mut git_ignore = if repository.snapshot.is_none() && self.options.follow_gitignore {
+            // Under the Git read time limit, as every engine open of a repository.
+            let root = repository.worktree_root.clone();
+            crate::git_access::pool::run(
+                "opening Git's ignore rules",
+                &repository.worktree_root,
+                crate::git_access::pool::GIT_READ_TIME_LIMIT,
+                move || crate::git_ignore::GitIgnore::open(&root),
+            )
+            .map_err(|error| invalid(error.message))?
+            .map_err(invalid)?
+        } else {
+            None
+        };
+        let append = |pending: &mut Vec<String>, files: &mut Vec<PendingFile>, git_ignore: &mut Option<crate::git_ignore::GitIgnore>, failures: &mut Vec<Value>| -> Result<bool> {
+            if let Some(matcher) = git_ignore {
+                pending.retain(|path| match matcher.ignored(&format!("{prefix}{path}"), false) {
+                    Ok(ignored) => !ignored,
+                    Err(message) => {
+                        failures.push(read_failure(path, "source-incomplete", &message));
+                        true
+                    }
+                });
+            }
+            if pending.is_empty() {
+                return Ok(false);
+            }
+            let mut labels = if let Some(snapshot) = snapshot {
+                pending.iter().filter_map(|path| {
+                    Some((path.clone(), snapshot.host_language(&format!("{prefix}{path}"))??))
+                }).collect()
+            } else {
+                let classify = SOURCE_CLASSIFIER.get().ok_or_else(|| invalid("source language classifier is unavailable"))?;
+                let (private, public): (Vec<_>, Vec<_>) = pending.iter().cloned().partition(|path| secret(path));
+                let mut labels = classify(&repository.worktree_root, storage.store.database_path(), owner.clone(), &public, &registry).map_err(invalid)?;
+                if !private.is_empty() {
+                    labels.extend(classify(&repository.worktree_root, Path::new(":memory:"), None, &private, &registry).map_err(invalid)?);
+                }
+                labels
+            };
+            for path in pending.drain(..) {
+                let (language, unlisted) = match labels.remove(&path) {
+                    Some(language) if scoped(&path, false) => (language, false),
+                    None if !secret(&path) && scoped(&path, true) => ("text".to_owned(), true),
+                    _ => continue,
+                };
+                let repository_path = format!("{prefix}{path}");
+                if files.len() == max_files {
+                    return Ok(true);
+                }
+                files.push(PendingFile { repository_path, path, language, unlisted });
+            }
+            Ok(false)
+        };
+        if repository.snapshot.is_some() {
+            let mut files = Vec::new();
+            for entry in &repository.base_files {
+                check_closed(&self.closed)?;
+                let Some(path) = entry.path.strip_prefix(prefix) else { continue };
+                if path.rsplit_once('/').is_some_and(|(parent, _)| parent.split('/').any(|part| ignored.contains(part))) {
+                    continue;
+                }
+                if self.options.paths.as_ref().is_some_and(|paths| !paths.iter().any(|selected| {
+                    selected.is_empty() || path == selected || path.strip_prefix(selected).is_some_and(|rest| rest.starts_with('/'))
+                })) {
+                    continue;
+                }
+                if !scoped(path, false) && !scoped(path, true) {
+                    continue;
+                }
+                pending.push(path.to_owned());
+                if pending.len() == batch_size && append(&mut pending, &mut files, &mut git_ignore, failures)? {
+                    return Ok((files, Vec::new(), true));
+                }
+            }
+            let over_budget = append(&mut pending, &mut files, &mut git_ignore, failures)?;
+            return Ok((files, Vec::new(), over_budget));
+        }
         let pruned = self
             .options
             .nested_checkouts
             .iter()
             .map(String::as_str)
             .collect::<HashSet<_>>();
-        let max_files = self.options.max_files as usize;
-        let mut git_ignore = if self.options.follow_gitignore {
-            crate::git_ignore::GitIgnore::open(&repository.worktree_root).map_err(invalid)?
-        } else {
-            None
-        };
         let mut files = Vec::new();
         let mut nested_checkouts = BTreeSet::new();
         let mut over_budget = false;
@@ -394,23 +477,12 @@ impl WorkspaceIndexTask {
                     "" => name.to_string_lossy().into_owned(),
                     relative => format!("{relative}/{}", name.to_string_lossy()),
                 };
-                // A directory has no language; symlinks and other kinds are never followed.
-                let language = if kind.is_dir() {
-                    if ignored.contains(name.to_string_lossy().as_ref()) {
-                        continue;
-                    }
-                    None
-                } else if kind.is_file() {
-                    match self.source_language(&path) {
-                        Some(language) if scoped(&path, false) => Some((language, false)),
-                        // Named like a secret: no source, never read, as a binary is not.
-                        None if secret(&path) => continue,
-                        None if scoped(&path, true) => Some(("text".to_owned(), true)),
-                        _ => continue,
-                    }
-                } else {
+                if !(kind.is_dir() || kind.is_file()) || (kind.is_dir() && ignored.contains(name.to_string_lossy().as_ref())) {
                     continue;
-                };
+                }
+                if kind.is_file() && !scoped(&path, false) && !scoped(&path, true) {
+                    continue;
+                }
                 if name.to_str().is_none() {
                     // The host's walk cannot open a path it decoded lossily either.
                     failures.push(read_failure(
@@ -420,13 +492,21 @@ impl WorkspaceIndexTask {
                     ));
                     continue;
                 }
-                if language.is_none() && pruned.contains(path.as_str()) {
+                if kind.is_file() {
+                    pending.push(path);
+                    if pending.len() == batch_size && append(&mut pending, &mut files, &mut git_ignore, failures)? {
+                        over_budget = true;
+                        break 'walk;
+                    }
+                    continue;
+                }
+                if pruned.contains(path.as_str()) {
                     // A nested checkout follows its own repository's ignores, not this one's.
                     nested_checkouts.insert(path);
                     continue;
                 }
                 if let Some(git_ignore) = git_ignore.as_mut() {
-                    match git_ignore.ignored(&format!("{prefix}{path}"), language.is_none()) {
+                    match git_ignore.ignored(&format!("{prefix}{path}"), true) {
                         Ok(true) => continue,
                         Ok(false) => {}
                         // Walked as if not ignored: an unreadable `.gitignore` never hides files.
@@ -435,21 +515,10 @@ impl WorkspaceIndexTask {
                         }
                     }
                 }
-                match language {
-                    None => directories.push((entry.path(), path)),
-                    Some(_) if files.len() == max_files => {
-                        over_budget = true;
-                        break 'walk;
-                    }
-                    Some((language, unlisted)) => files.push(PendingFile {
-                        repository_path: format!("{prefix}{path}"),
-                        path,
-                        language,
-                        unlisted,
-                    }),
-                }
+                directories.push((entry.path(), path));
             }
         }
+        over_budget |= append(&mut pending, &mut files, &mut git_ignore, failures)?;
         files.sort_unstable_by(|left, right| left.path.cmp(&right.path));
         Ok((files, nested_checkouts.into_iter().collect(), over_budget))
     }
@@ -467,6 +536,7 @@ impl WorkspaceIndexTask {
         let prefix = storage.repository_prefix.as_str();
         let mut failures = Vec::new();
         let (accepted, nested_checkouts, over_budget) = self.walk(
+            storage,
             repository,
             prefix,
             |path, text| {
@@ -581,6 +651,12 @@ impl WorkspaceIndexTask {
             .store
             .local_check_results_by_key(&keys, catalog)
             .map_err(|error| invalid(error.to_string()))?;
+        let owner = self.lock()?.pending_analysis.as_ref().map(|(owner, _)| owner.clone());
+        let checked_sources = repository.snapshot.as_ref().and_then(|snapshot| {
+            let paths = prepared.iter().filter(|(_, _, _, _, key)| result_manifest.contains_key(key))
+                .map(|(file, _, _, _, _)| file.repository_path.clone()).collect::<Vec<_>>();
+            snapshot.checked_sources(storage.store.database_path(), &paths, owner.as_ref()).ok()
+        });
         // Discovery found these files clean at scan start, but a file may change after it, and a
         // checkout conversion keeps a file clean in Git while its bytes differ from the blob's
         // (whose stored source and results another worktree may have published). Restore only a
@@ -590,17 +666,40 @@ impl WorkspaceIndexTask {
             .into_iter()
             .filter_map(|(file, input, stored, length, key)| {
                 let results = result_manifest.get(&key)?;
-                repository
-                    .holds_blob_bytes(&file.repository_path, length)
-                    .then_some((input, stored, results))
+                let verified = match &checked_sources {
+                    Some(sources) => sources.get(&file.repository_path) == Some(&stored.source_hash),
+                    None if repository.snapshot.is_some() => repository.read_source(&file.repository_path, length)
+                        .is_ok_and(|bytes| HashKey::sha256(&bytes) == stored.source_hash),
+                    None => repository.holds_blob_bytes(&file.repository_path, length),
+                };
+                verified.then_some((input, stored, results))
             })
             .collect::<Vec<_>>();
         let mut state = self.lock()?;
         let mut restored = HashSet::new();
+        let mut retained = Vec::new();
         for (input, stored, results) in verified {
             let path = input.path.clone();
+            let grammar = crate::code_rule_dsl::eval::file_language(&input).map(super::persisted::grammar_id);
             if restore_prepared_file(&mut state, input, stored.clone(), results)? {
+                if !storage.withholds(&path) {
+                    retained.push((path.clone(), stored.source_hash, grammar));
+                }
                 restored.insert(path);
+            }
+        }
+        let owner = state.pending_analysis.as_ref().map(|(owner, _)| owner.clone());
+        drop(state);
+        let entries: Vec<_> = retained.iter().map(|(path, hash, grammar)| (path.as_str(), *hash, *grammar)).collect();
+        if let Err(error) = storage.store.retain_snapshot_files(
+            storage.snapshot_id,
+            &entries,
+            super::persisted::grammar_version(),
+            i64::from(crate::code_rule_dsl::tape::formats::stored_version()),
+        ) {
+            let message = format!("Cannot retain restored snapshot files. {error}");
+            if !owner.is_some_and(|owner| owner.warn(message.clone())) {
+                return Err(invalid(message));
             }
         }
         Ok(restored)
@@ -627,12 +726,15 @@ impl WorkspaceIndexTask {
                 Err(error) if error.kind() == std::io::ErrorKind::FileTooLarge => {
                     // An oversized file the host lists no language for is binary, and dropped like
                     // one in budget, where its first bytes hold a NUL.
-                    if file.unlisted
-                        && repository
-                            .read_source_prefix(&file.repository_path, BINARY_PREFIX_BYTES)
-                            .is_ok_and(|prefix| prefix.contains(&0))
-                    {
-                        continue;
+                    if file.unlisted {
+                        match repository.read_source_prefix(&file.repository_path, BINARY_PREFIX_BYTES) {
+                            Ok(prefix) if prefix.contains(&0) => continue,
+                            Ok(_) => {}
+                            Err(error) => {
+                                failures.push(read_failure(&file.path, "source-incomplete", &format!("cannot read workspace source: {error}")));
+                                continue;
+                            }
+                        }
                     }
                     failures.push(read_failure(
                         &file.path,
@@ -723,7 +825,7 @@ impl WorkspaceIndexTask {
         repository: &git_workspace::GitWorkspace,
         mut index: RepositoryIndex,
     ) -> Result<String> {
-        let Some(_slot) = cpu_slot().try_lock() else {
+        let Some(_slot) = cpu_slot().try_lock_arc() else {
             self.lock()?.repository_index = Some(index);
             return Err(invalid(WORKSPACE_BUSY));
         };
@@ -762,6 +864,7 @@ impl WorkspaceIndexTask {
             let mut apply = WorkspaceApplyTask {
                 state: Arc::clone(&self.state),
                 closed: Arc::clone(&self.closed),
+                shared: Arc::clone(&self.shared),
                 request_json: String::new(),
                 request_buffer: None,
                 request_direct: Some(Request {
@@ -789,6 +892,8 @@ impl Task for WorkspaceIndexTask {
     /// chunk keeps its plan and reports busy, so the host retries.
     fn compute(&mut self) -> Result<String> {
         crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            // The task's run, on the workspace's shared object (decision 0442).
+            let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             check_closed(&self.closed)?;
             let (storage, repository, index) = self.take_repository_index()?;
             let index = match index {
@@ -802,49 +907,5 @@ impl Task for WorkspaceIndexTask {
     fn resolve(&mut self, _env: Env, output: String) -> Result<String> {
         check_closed(&self.closed)?;
         Ok(output)
-    }
-}
-
-#[cfg(test)]
-pub mod tests {
-    use super::*;
-
-    /// The index routes a name as the host's `sourceLanguageOfPath` does: a listed whole name,
-    /// else the longest listed extension with a nonempty name before it, case-insensitively.
-    #[test]
-    fn source_language_routes_php_and_blade_as_the_host_does() {
-        let mut task = WorkspaceIndexTask::for_test(
-            Arc::new(Mutex::new(WorkspaceState::default())),
-            Arc::new(AtomicBool::new(false)),
-            u32::MAX,
-        );
-        task.options.source_languages = [(".php", "php"), (".blade.php", "blade")]
-            .into_iter()
-            .map(|(extension, label)| (extension.to_owned(), label.to_owned()))
-            .collect();
-        task.options.source_names = Some(
-            [(".npmignore".to_owned(), "text".to_owned())]
-                .into_iter()
-                .collect(),
-        );
-        for (path, expected) in [
-            ("a.php", Some("php")),
-            ("app/Http/Kernel.php", Some("php")),
-            ("A.PHP", Some("php")),
-            ("resources/views/page.blade.php", Some("blade")),
-            ("deep/nested/dir/Page.Blade.PHP", Some("blade")),
-            ("archive.v1.blade.php", Some("blade")),
-            ("blade.php", Some("php")),
-            ("x.blade.php.bak", None),
-            ("page.phtml", None),
-            (".php", None),
-            ("dir/.php", None),
-            (".blade.php", Some("php")),
-            (".npmignore", Some("text")),
-            ("pkg/.NPMIGNORE", Some("text")),
-            ("a.npmignore", None),
-        ] {
-            assert_eq!(task.source_language(path).as_deref(), expected, "{path}");
-        }
     }
 }

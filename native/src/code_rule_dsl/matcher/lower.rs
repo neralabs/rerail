@@ -8,7 +8,7 @@ use super::relation::StopBy;
 use super::{AstMatcher, GrammarMatcher};
 use ast_grep_core::MatchStrictness;
 use ast_grep_core::matcher::{Matcher, Pattern};
-use regex::Regex;
+use crate::code_rule_dsl::regexes::Regex;
 use std::sync::Arc;
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -72,7 +72,7 @@ pub struct Fact {
     pub kinds: Option<BTreeSet<u16>>,
 }
 
-/// A fact's findings on one file, in its batch's fact block (Q251): rows with their slots' targets, or (a fact with no
+/// A fact's findings on one file, in its batch's fact block (Q289): rows with their slots' targets, or (a fact with no
 /// slot) its nodes as bits. Written once where they are found (`Fact::found`), and read there by the CPU's label
 /// passes and the device's (`Pass::Fact`, the block bound whole).
 #[derive(Clone, Copy, Debug)]
@@ -155,7 +155,7 @@ impl Fact {
             let nodes = tape.transducer_len();
             if tape.path().is_some_and(|path| condition.holds(path)) {
                 bits.iter_mut().for_each(|w| *w = !0);
-                if nodes % 64 != 0
+                if !nodes.is_multiple_of(64)
                     && let Some(last) = bits.last_mut()
                 {
                     *last &= (1 << (nodes % 64)) - 1;
@@ -166,8 +166,7 @@ impl Fact {
         let AstMatcher::NthChild(nth) = &self.producer else { unreachable!("a node set is nthChild or filePath") };
         nth.bits(tape, &siblings.of(nth, tape), self.kinds.as_ref(), bits);
         // `RERAIL_SETS_CHECK`: the bits against W's rows.
-        static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SETS_CHECK").is_some());
-        if *CHECK {
+        if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SETS_CHECK").is_some()) {
             let file = ast_grep_core::AstGrep::doc(tape.clone());
             let _scopes = super::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
             let starts = (0..tape.transducer_len() as u32).filter(|&node| self.kinds.as_ref().is_none_or(|kinds| kinds.contains(&tape.transducer_kind(node))));
@@ -180,7 +179,7 @@ impl Fact {
     }
 
     /// The findings of `file` (`rows`), as bits where they are a node set (`nth_bits`), written into `block` (the
-    /// batch's fact block, Q251). A row is at most a node of the file, so its region is the file's nodes', and what is
+    /// batch's fact block, Q289). A row is at most a node of the file, so its region is the file's nodes', and what is
     /// left is given back where no other allocation came after it (the rest is address space, never written). `None` where the block cannot hold them.
     pub fn found(
         &self,

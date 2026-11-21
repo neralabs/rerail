@@ -42,7 +42,7 @@ pub struct Defs {
     bscan: Scan,
     pub pkeys: Buf,
     pub items: Buf,
-    /// Each body leaf's place in a `__VA_OPT__` (`VA_*` in `pp_expand.uglykl`; decision 0523 §2).
+    /// Each body leaf's place in a `__VA_OPT__` (`VA_*` in `pp_expand.uglykl`; decision 0527 §2).
     pub vai: Buf,
     /// Set where a store's room ran out (decision 0448 §2): the unit runs again at the next rung.
     pub room: Buf,
@@ -336,7 +336,7 @@ pub const NEEDS: usize = 8;
 pub const P1_RUNGS: u32 = 8;
 
 /// The text's rows, `once` marks and `__COUNTER__` uses room at the expansion's rung `rung`
-/// (decision 0475).
+/// (decision 0485).
 pub fn text_rows(rung: u32) -> usize {
     1024 << rung
 }
@@ -440,7 +440,7 @@ pub struct XCaps {
     pub st: usize,
     /// A round's items, and the lists it scans: the most a round makes.
     pub q: usize,
-    /// A round's scanned tokens: the most one round scans, every list's (decision 0523 §2).
+    /// A round's scanned tokens: the most one round scans, every list's (decision 0527 §2).
     pub sc: usize,
     /// The runs refused for room so far: the counters' and the text facts' rooms, and the
     /// `#line` rows', double with it.
@@ -450,7 +450,7 @@ pub struct XCaps {
 impl XCaps {
     /// Every room at rung `rung` over a top level of `top` tokens.
     ///
-    /// The shares are from the corpus's most use over its top level's tokens (decision 0478
+    /// The shares are from the corpus's most use over its top level's tokens (decision 0486
     /// §8): tokens 0.39, lists and arguments 0.02, queue items 0.05, the output 0.64, scratch
     /// bytes 0.34; a room past them grows from its own count.
     pub fn at(top: usize, rung: u32) -> XCaps {
@@ -507,14 +507,14 @@ impl XCaps {
 
 /// The rooms a unit's runs settled at: P1's, the expansion's and the definitions' rung. They
 /// carry to the unit's next run: a round's unit holds the last round's, so its rooms are a floor
-/// (decision 0478 §6), and the expansion's run starts from the last round's.
+/// (decision 0486 §6), and the expansion's run starts from the last round's.
 #[derive(Clone, Copy, Debug)]
 pub struct Sizes {
     pub p1: Caps,
     pub x: XCaps,
     pub defs: u32,
     /// What the last run's P1 used (`NEED_*`, its rooms' high water), and the first rooms of the
-    /// unit it ran on: the next round's are sized from them (decision 0478 §8).
+    /// unit it ran on: the next round's are sized from them (decision 0486 §8).
     pub used: Option<([u32; NEEDS], Caps)>,
 }
 
@@ -745,7 +745,7 @@ impl Vis {
         let (nd, ng, nb, ni) = (caps.dirs, caps.gaps, lay.builtins.len(), caps.nodes);
         // Group words: a file has a group more than its arms, so at most one more than its directives.
         let nq = nd + ni;
-        // Past the directives' and the built-ins' rows, the text's (decision 0475 §2).
+        // Past the directives' and the built-ins' rows, the text's (decision 0485 §2).
         let rows = nd + nb + text_rows(x_rung);
         // The roots, then the room for the instances the device makes.
         let mut nodes = lay.nodes.clone();
@@ -1037,9 +1037,9 @@ pub const X_ACROSS: u32 = 256;
 pub const X_VA_OPT: u32 = 512;
 pub const X_RELEX: u32 = 1024;
 pub const X_SPLICE: u32 = 2048;
-/// A grid barrier's bound reached: the grid's groups were not resident together (decision 0460 §4).
+/// A grid barrier's bound reached: the grid's groups were not resident together (decision 0468 §4).
 pub const X_BARRIER: u32 = 4096;
-/// `#` or `##` of `__COUNTER__`'s value (decision 0475 §3).
+/// `#` or `##` of `__COUNTER__`'s value (decision 0485 §3).
 pub const X_COUNTER_SPELLED: u32 = 8192;
 /// A `_Pragma` that would make a row (`once`, `push_macro`, `pop_macro`), or whose operand is a
 /// macro's.
@@ -1047,7 +1047,7 @@ pub const X_PRAGMA: u32 = 16384;
 /// A top's items past the work bound (`WORK`): not room, so no rung is larger for it.
 pub const X_WORK: u32 = 32768;
 /// A top's items at most (`RERAIL_PP_WORK` for tests): a launch's time bounded by its work, not
-/// by any room (decision 0478 §10).
+/// by any room (decision 0486 §10).
 pub const WORK: u32 = 1 << 18;
 
 /// The expansion's tries for room. A refused run stops where its first room ran out, so each try
@@ -1063,7 +1063,7 @@ const K_LITERAL: u32 = 30;
 ///   close table and its sort, its call's end, the reach's max scan, its state, the outermost
 ///   flags and their scan, its piece of the output and that piece's place;
 /// - the arena: tokens (a ref, flags, a child and a depth each), lists, arguments, the rounds'
-///   items (decision 0523);
+///   items (decision 0527);
 /// - the output (refs), and the control words (the arena's tops, the refusals).
 pub struct Exp {
     list_cap: u32,
@@ -1106,7 +1106,7 @@ pub struct Exp {
     lists: Buf,
     /// The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth and the
     /// ref `__LINE__` reads for it (+ 1; 0 its own); then the heads of the pool of blocks given
-    /// back (`POOL_HEADS`, decision 0478 §10), whose links are the first token's ref.
+    /// back (`POOL_HEADS`, decision 0486 §10), whose links are the first token's ref.
     tokens: Buf,
     args: Buf,
     slots: Buf,
@@ -1114,7 +1114,7 @@ pub struct Exp {
     pub ctl: Buf,
     // `__COUNTER__`'s uses and their room.
     cnt: Buf,
-    // The text pass's facts (decision 0475): its rows (sort key, name key, type), its `once`
+    // The text pass's facts (decision 0485): its rows (sort key, name key, type), its `once`
     // marks (file, slot), the `__COUNTER__` uses' places (the text's, then the lines'), and their
     // counts and keys.
     tr_sk: Buf,
@@ -1130,14 +1130,14 @@ pub struct Exp {
     cnt_cap: u32,
     lb_cap: u32,
     pub out: Buf,
-    /// A round's scan (decision 0523 §2): the lists (`q` of them) and their tokens (`sc_cap`).
+    /// A round's scan (decision 0527 §2): the lists (`q` of them) and their tokens (`sc_cap`).
     scans: Buf,
-    /// The lists a round substitutes (decision 0523 §2), and their `SB_COLS` columns of `q` words.
+    /// The lists a round substitutes (decision 0527 §2), and their `SB_COLS` columns of `q` words.
     subs: Buf,
     sb_l: Buf,
-    /// The calls a round reads (decision 0523 §2); their columns are `sb_l`'s.
+    /// The calls a round reads (decision 0527 §2); their columns are `sb_l`'s.
     calls: Buf,
-    /// The lists a round's walks make final and place (decision 0523 §2): two halves of `q` each.
+    /// The lists a round's walks make final and place (decision 0527 §2): two halves of `q` each.
     fins: Buf,
     places: Buf,
     sc_n: Buf,
@@ -1215,7 +1215,7 @@ impl Exp {
         // Past the tops (0, 1, 3, 4, 5) and the refusals (2): the literals' tops (6, 7), then each
         // top's high water over the passes (8 to 13: tokens, lists, args, scratch bytes and tokens,
         // queue items), the output's (14), the mark where the blocks no item reads again are given
-        // back (15: a 32nd of the tokens' room past the front, decision 0478 §10), the times they were (16) and the
+        // back (15: a 32nd of the tokens' room past the front, decision 0486 §10), the times they were (16) and the
         // drain's decision between runs (17: `PX_DRAIN`), the lists' and the arguments' entries'
         // marks (18, 19: a 32nd of each room past its front), the units each store took from its
         // pool since the last giving (20 the tokens', 21 the lists', 22 the arguments' entries':
@@ -1283,7 +1283,7 @@ impl Exp {
             lists: zeroed(lists * (LIST_WORDS + 1) + POOL_HEADS)?,
             tokens: zeroed(tok * 5 + POOL_HEADS)?,
             args: zeroed(args * (ARG_WORDS + 1) + POOL_HEADS)?,
-            // A round's items and the next's (decision 0523).
+            // A round's items and the next's (decision 0527).
             slots: zeroed(2 * q)?,
             qctl: zeroed(10)?,
             ctl: arena.from_slice(&ctl)?,
@@ -1378,7 +1378,7 @@ impl Exp {
     /// Each store's use and room (`ROOM_STORES`'s order): its top (past the room where it ran
     /// out: a top only grows) and its capacity.
     pub fn gives(&self) -> u32 {
-        // SAFETY: the device finished; `ctl` 16 counts the givings back (decision 0478 §10).
+        // SAFETY: the device finished; `ctl` 16 counts the givings back (decision 0486 §10).
         unsafe { *self.ctl.host().cast::<u32>().add(16) }
     }
 
@@ -1395,12 +1395,12 @@ impl Exp {
             let ctl = self.ctl.host().cast::<u32>();
             let w = self.words.host().cast::<u32>();
             let [a, b, c, d, e] = [(0, 1, 8), (1, 2, 9), (3, 3, 10), (4, 8, 11), (5, 9, 12)].map(|(t, c, h)| ((*ctl.add(t)).max(*ctl.add(h)), *w.add(c)));
-            // The rounds' items: a round's most (decision 0523).
+            // The rounds' items: a round's most (decision 0527).
             let qc = self.qctl.host().cast::<u32>();
             let q = ((*qc.add(1)).max(*ctl.add(13)), self.q_cap);
             // The output: the pieces' total of the text and of each top before (the lines'), as
             // `pp_check` and the places compare it with the room.
-            [a, b, c, d, e, q, ((*self.opscan.total.host().cast::<u32>()).max(*ctl.add(14)), self.out_cap as u32), (*ctl.add(24), self.sc_cap)]
+            [a, b, c, d, e, q, ((*self.opscan.total.host().cast::<u32>()).max(*ctl.add(14)), self.out_cap), (*ctl.add(24), self.sc_cap)]
         }
     }
 
@@ -1495,7 +1495,7 @@ pub struct Expanded {
     pub refused: u32,
     pub out: Vec<u32>,
     pub rung: u32,
-    /// The command buffer's launches: 2 for every unit, `pp_setup` and `pp_check` (decisions 0460 §4, 0475 §1).
+    /// The command buffer's launches: 2 for every unit, `pp_setup` and `pp_check` (decisions 0468 §4, 0485 §1).
     pub launches: usize,
     /// The groups of the grid it ran on, after any halving.
     pub groups: u64,
@@ -1517,9 +1517,9 @@ pub struct Expanded {
     pub caps: Caps,
     pub xcaps: XCaps,
     pub passes: (u32, u32),
-    /// The expansion's rounds (decision 0523 §1), every top's (a measurement).
+    /// The expansion's rounds (decision 0527 §1), every top's (a measurement).
     pub rounds: u32,
-    /// The givings back between rounds (decision 0478 §10), every top's.
+    /// The givings back between rounds (decision 0486 §10), every top's.
     pub gives: u32,
     pub def_rung: u32,
 }
@@ -1781,7 +1781,7 @@ fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), gr
     Ok(on_grid(&arena, unit, &front, &l, groups)?.map(|(_, s)| s))
 }
 
-/// One unit's answer from a batch (`rounds::run_many`, decision 0478 §7): the batch's expansion it ran in, its files
+/// One unit's answer from a batch (`rounds::run_many`, decision 0486 §7): the batch's expansion it ran in, its files
 /// there (`x.ev.bases`' and the refs' files), and its output (`x.out`'s range). Where the unit was
 /// refused, it ran alone, and `x.refused` says why.
 pub struct Part {

@@ -33,14 +33,49 @@ the UI files project.
 | `native/src/code_rule_dsl/semver/subset_cases.json` | `scripts/generate/semver/semver-subset-cases.mjs` | `node scripts/generate/semver/semver-subset-cases.mjs <tools>/node_modules/semver` (semver 7.8.5); the oracle `semver/mod.rs`'s tests check the port against |
 | `native/src/code_rule_dsl/value/ecma/builtins.generated.rs` | `scripts/generate/value/ecma-builtins.mjs` | `npx -y node@25.2.1 scripts/generate/value/ecma-builtins.mjs <tools>/node_modules` (@eslint-community/eslint-utils 4.10.1; the output records the Node.js version) |
 | `native/src/code_rule_dsl/value/ecma/entities.generated.rs` | `scripts/generate/value/ecma-entities.mjs` | `node scripts/generate/value/ecma-entities.mjs <tools>/node_modules` (@typescript-eslint/typescript-estree 8.70.1) |
-| `native/src/code_rule_dsl/value/python/words.generated.rs` | `scripts/generate/languages/python-word-ranges.py` | `python3.13 scripts/generate/languages/python-word-ranges.py` (CPython 3.13, Unicode 15.1.0) |
+| `native/src/code_rule_dsl/value/python/words.generated.rs` | `scripts/generate/languages/python_word_ranges.py` | `python3.13 scripts/generate/languages/python_word_ranges.py` (CPython 3.13, Unicode 15.1.0) |
 | `native/src/code_rule_dsl/value/names/names.bin` | `scripts/generate/value/names.py` | `python3.13 scripts/generate/value/names.py <NameAliases.txt of Unicode 15.1.0>`; read by `include_bytes!` at this path, kept in Git LFS |
 | `native/grammars/tree-sitter-sql/src/parser.generated.c.gz` | `scripts/generate/grammars/committed-parsers.mjs` | `node scripts/generate/grammars/committed-parsers.mjs` (tree-sitter-generate as Cargo.lock pins it; about 15 minutes with the release build it runs): the engine's build script generates it and writes it back; every other build refuses it when its first line names another grammar.json, grammar version or tree-sitter-generate. Kept in Git LFS |
+
+## Engine line (`native/crates/`, `tools/cratify/`)
+
+These generators stay beside the inputs they read until the engine line's layout moves them here (structure metric #6,
+exemption `engine-layout`).
+
+| Generated file | Generator | Command |
+|---|---|---|
+| `native/crates/c_lean/src/kinds.rs` | `native/crates/c_lean/gen_kinds.py` | `python3 native/crates/c_lean/gen_kinds.py` |
+| `native/crates/csharp_lean/src/kinds.rs` | `native/crates/csharp_lean/gen_kinds.py` | `python3 native/crates/csharp_lean/gen_kinds.py` |
+| `native/crates/css_lean/src/kinds.rs` | `native/crates/css_lean/gen_kinds.py` | `python3 native/crates/css_lean/gen_kinds.py` |
+| `native/crates/ecma_lean/src/kinds.rs` | `native/crates/ecma_lean/gen_kinds.py` | `python3 native/crates/ecma_lean/gen_kinds.py` |
+| `native/crates/go_lean/src/kinds.rs` | `native/crates/go_lean/gen_kinds.py` | `python3 native/crates/go_lean/gen_kinds.py` |
+| `native/crates/html_lean/src/kinds.rs` | `native/crates/html_lean/gen_kinds.py` | `python3 native/crates/html_lean/gen_kinds.py` |
+| `native/crates/java_lean/src/kinds.rs` | `native/crates/java_lean/gen_kinds.py` | `python3 native/crates/java_lean/gen_kinds.py` |
+| `native/crates/kotlin_lean/src/kinds.rs` | `native/crates/kotlin_lean/gen_kinds.py` | `python3 native/crates/kotlin_lean/gen_kinds.py kotlin` |
+| `native/crates/markdown_inline_lean/src/kinds.rs` | `native/crates/markdown_inline_lean/gen_kinds.py` | `python3 native/crates/markdown_inline_lean/gen_kinds.py` |
+| `native/crates/markdown_lean/src/kinds.rs` | `native/crates/markdown_lean/gen_kinds.py` | `python3 native/crates/markdown_lean/gen_kinds.py` |
+| `native/crates/php_lean/src/kinds.rs` | `native/crates/php_lean/gen_kinds.py` | `python3 native/crates/php_lean/gen_kinds.py` |
+| `native/crates/rust_lean/src/kinds.rs` | `native/crates/rust_lean/gen_kinds.py` | `python3 native/crates/rust_lean/gen_kinds.py` |
+| `native/crates/scala_lean/src/kinds.rs` | `native/crates/kotlin_lean/gen_kinds.py` | `python3 native/crates/kotlin_lean/gen_kinds.py scala` |
+| `native/crates/sql_lean/src/kinds.rs` | `native/crates/sql_lean/gen_kinds.py` | `python3 native/crates/sql_lean/gen_kinds.py` |
+| `native/crates/swift_lean/src/kinds.rs` | `native/crates/kotlin_lean/gen_kinds.py` | `python3 native/crates/kotlin_lean/gen_kinds.py swift` |
+| `native/crates/vue_lean/src/kinds.rs` | `native/crates/vue_lean/gen_kinds.py` | `python3 native/crates/vue_lean/gen_kinds.py` |
+| `native/crates/ukl/lib/ukl/reads/view.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these` |
+| `native/crates/ukl/lib/ukl/reads/relation.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these` |
+| `native/crates/ukl/lib/ukl/reads/ids.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these` |
+| `native/src/code_rule_dsl/language/adapter/pack.rs` | `tools/cratify/packgen.py` | one step of the crate split (`tools/cratify/regenerate.sh`) |
+| `tools/cratify/test-hosts.tsv` | `tools/cratify/hosts.py` | `tools/cratify/regenerate.sh <index dir> <work dir>` (its fixpoint loop) |
+| `tools/cratify/runtime-hosts.tsv` | `tools/cratify/runtime_hosts.py` | `python3 tools/cratify/runtime_hosts.py` over a split's test run |
 
 ## Host (`src/`, `ui/`)
 
 | Generated file | Generator | Command |
 |---|---|---|
+| `src/engine/catalog/lint-config/generated/biome-rules.generated.ts` | `scripts/generate/lint-config/biome-rules.mjs` | `node scripts/generate/lint-config/biome-rules.mjs <biome>`, `<biome>` a checkout of biomejs/biome at `@biomejs/biome@2.5.15` |
+| `src/engine/catalog/lint-config/generated/eslint-presets.generated.ts` | `scripts/generate/lint-config/eslint-presets.mjs` | `node scripts/generate/lint-config/eslint-presets.mjs <tools>`, `<tools>` with the packs' pinned ESLint plugins installed (the generator's header lists them: typescript-eslint 8.70.1, eslint-plugin-react 7.37.5, eslint-plugin-react-hooks 7.1.1, eslint-plugin-unicorn 76.0.0, eslint-plugin-n 18.4.1, @next/eslint-plugin-next and eslint-config-next 16.3.8, eslint-plugin-vue 10.11.1, @vitest/eslint-plugin 1.6.27); fetches `@eslint/js` from the ESLint 10.11.0 commit, so needs the network |
+| `src/engine/catalog/lint-config/generated/oxlint-rules.generated.ts` | `scripts/generate/lint-config/oxlint-rules.mjs` | `node scripts/generate/lint-config/oxlint-rules.mjs <tools>/node_modules/.bin/oxlint` (oxlint 1.88.0) |
+| `src/engine/catalog/lint-config/generated/phpcs-standards.generated.ts` | `scripts/generate/lint-config/phpcs-standards.ts` | `node --import tsx scripts/generate/lint-config/phpcs-standards.ts` (fetches PHP_CodeSniffer 4.0.4's rulesets at the commit `packs/php/upstream/phpcs/gates.yaml` pins; needs the network) |
+| `src/engine/catalog/lint-config/generated/ruff-rules.generated.ts` | `scripts/generate/lint-config/ruff-rules.mjs` | `node scripts/generate/lint-config/ruff-rules.mjs <ruff 0.16.9>` (the binary `uvx ruff@0.16.9` runs; fetches `rule_redirects.rs`, `registry.rs` and `ruff.schema.json`, the options table's source, at the commit `packs/python/upstream/ruff/gates.yaml` pins; needs the network) |
 | `src/engine/catalog/pack-list.generated.ts` (packs without `"private": true`) | `scripts/generate/packs/pack-list.ts` | `npm run generate:packs`; pack check 7 (`test/engine/catalog/packs.test.ts`) fails when it is stale |
 | `src/engine/code-rule/code-rule-language-registry.generated.ts` | `scripts/generate/languages/registry.ts` | `npm run generate:languages`; `test/engine/code-rule/language-registry.test.ts` fails when it is stale |
 | `src/engine/storage/schema-sql.generated.ts` | `scripts/generate/schema/schema-sql.ts` | `npm run generate:schema`; `test/engine/catalog/rule-store.test.ts` fails when it is stale |
@@ -80,3 +115,9 @@ the UI files project.
 | `packs/react/conformance.json` | `scripts/generate/packs/react-policies.mjs` | as `packs/react/rules/`; lists the specs and the `HAND_WRITTEN` ports, and `OWN` as `own` |
 | `packs/react/candidates/probes/rules/` | `scripts/generate/packs/react-probes.mjs` | `node scripts/generate/packs/react-probes.mjs`; the probe pack's `conformance.json` and `labels/` are written by hand, and the run fails when `conformance.json` does not list exactly its probes |
 | `conformance/biome-same-sources.generated.ts` | `scripts/generate/packs/biome-suppression.mjs` | as `native/src/code_rule_dsl/suppress/biome_registry.generated.rs`; the run also sets `suppress.biome` on every violation of `packs/<id>/rules/` and `packs/<id>/candidates/` that carries `suppress.eslint`, bumping a shipped document's revision when it changes |
+
+## Tests
+
+| Generated file | Generator | Command |
+|---|---|---|
+| `test/support/shards/unit-test-times.generated.ts` | `scripts/generate/tests/unit-test-times.mjs` | `node scripts/generate/tests/unit-test-times.mjs [<run id>...]`, with the GitHub CLI signed in: each unit test file's median time in CI's unit test jobs, per platform, which `test/support/shards/time-balanced-sequencer.ts` splits CI's shards by. With no run ids it reads main's five latest successful CI runs. Rerun it when the shards' times in CI drift apart; stale times only make the shards less even |

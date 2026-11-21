@@ -129,11 +129,8 @@ impl<'a> P<'a> {
     /// Whether `->` follows the effects (`async`, `throws`) next.
     fn arrow_after_effects(&mut self) -> bool {
         let mut k = 0;
-        loop {
-            match self.word_at(k) {
-                w::ASYNC | w::THROWS | w::RETHROWS => k += 1,
-                _ => break,
-            }
+        while let w::ASYNC | w::THROWS | w::RETHROWS = self.word_at(k) {
+            k += 1;
             if self.kind_at(k) == T::LParen {
                 // `throws(E)`.
                 k += 3;

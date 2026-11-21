@@ -81,7 +81,7 @@ pub fn tokens(src: &[u8], opts: Options) -> Vec<Token> {
     let mut lx = PpLexer::new(&p2.text, opts);
     let mut out = Vec::new();
     loop {
-        let t = lx.next();
+        let t = lx.next_token();
         let kind = match t.kind {
             P::Eof => break,
             P::Ident => IDENTIFIER,
@@ -160,7 +160,7 @@ pub fn image(src: &[u8], opts: Options) -> Vec<u8> {
     }
 }
 
-/// The tape as format 16 (decision 0460 §1): the same nodes as `image`'s, written in one pass
+/// The tape as format 16 (decision 0468 §1): the same nodes as `image`'s, written in one pass
 /// with the source's newline index. Every reader reads this one; `image`'s format 15 is the
 /// Bitlex grammar's comparison (0436 R4) until its tier 2 writes format 16 (0426).
 pub fn image_16(src: &[u8], opts: Options) -> Tape16 {
@@ -244,10 +244,10 @@ fn nodes(src: &[u8], opts: Options) -> Vec<Node> {
             for p in &def.params {
                 g.leaf(file(*p).0, field("param"));
             }
-            if def.variadic != Variadic::No {
-                if let Some(k) = (open..close).rev().find(|&k| g.text(k) == b"...") {
-                    g.fields[k] = field("variadic");
-                }
+            if def.variadic != Variadic::No
+                && let Some(k) = (open..close).rev().find(|&k| g.text(k) == b"...")
+            {
+                g.fields[k] = field("variadic");
             }
         }
         if !def.body.is_empty() {

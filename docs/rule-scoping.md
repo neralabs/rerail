@@ -36,7 +36,20 @@ When a checkout of a clone-keyed repository later has a remote, the remote's rep
 - **Not set up:** the two merge, and the old key becomes an alias.
 - **Set up:** only the checkouts move.
 
-A checkout whose folder is gone, or that Git no longer lists, is forgotten with its own settings.
+A checkout Git no longer lists as a checkout of its clone is forgotten with its own settings, as after
+`git worktree remove`, `git worktree prune` or `git worktree move`: the daemon looks when it starts and every hour
+after, and asks Git in a checkout of the same clone that is on disk. A checkout Git can't answer for stays, with its
+start state and settings, so it has them when it comes back: a clone's own checkout (a submodule's too) while its `.git`
+entry is there, a folder outside Git, a folder renamed away, one on a drive that is not mounted or a share that does not
+answer, and a clone with no checkout on disk. A gone folder counts as on a drive that is not mounted when nothing above
+it is there, or when the nearest folder above it still there is one drives mount in (`/Volumes` on macOS, `/mnt` and
+`/media` on Linux) or is empty and inside neither a checkout Rerail recorded nor a checkout of the same clone. A
+checkout's folder that is there without its `.git` counts the same way, as a drive mounted at the folder itself leaves
+it empty. While one checkout of a clone may be off disk that way, or its `.git` can't be read, every checkout of the
+clone stays: it may be a copy of the clone, whose worktrees Git lists there and not in the clone. Git keeps a worktree
+whose folder is gone listed until it prunes it, and so does Rerail. The checkout Git is asked in stays, so sessions
+recorded under the clone's id stay in its history. While a share has not answered a look, the daemon looks at nothing
+until it does.
 
 </details>
 
@@ -49,7 +62,7 @@ A checkout uses its own start value, else that of the nearest recorded checkout 
 | State | What happens |
 |---|---|
 | **started** | Rules run. |
-| **stopped** | Nothing is recorded, evaluated or delivered; hooks don't contact the daemon. |
+| **stopped** | Nothing is recorded, evaluated or delivered. Hooks start no daemon, but ask a running one whether Rerail is on, waiting up to 2 s while it is busy (4 s on Windows). |
 | **not-set-up** | Started, but the repository has no configuration yet: sessions are recorded, no rule runs. |
 
 - `/rerail-start` and `/rerail-stop` (or `rerail start` and `rerail stop`) act on this checkout and its nested checkouts, which follow it again.
@@ -84,37 +97,64 @@ A set-up repository runs only what is attached to it, plus each checkout's own r
 
 ### The repository's own lint config
 
-So Rerail does not steer against what a repository deliberately configured, set-up reads its lint config at the repository root. The added packs' rules get matching settings, owned by the repository.
+So Rerail runs the rules a repository's own linters run, and no others, set-up reads the lint config at the repository root. The added packs' rules get matching settings, owned by the repository: the same rules on, the same rules off.
 
-It reads ESLint, oxlint and Ruff configs as data and never runs them. A rule the config turns off for every file starts off; set-up never turns a rule on.
+It reads ESLint, oxlint, Biome, Ruff, Bandit, Clippy, PHPStan, Psalm, PHP_CodeSniffer and SQLFluff configs as data and never runs them. A linter the repository has no config for changes nothing: its ports keep the pack's values.
 
 <details>
 <summary>What is read, per linter</summary>
 
 | Linter | Read | Not read |
 |---|---|---|
-| ESLint | The config ESLint would use: the first flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`) when it is data throughout, parsed and never run; else `.eslintrc.json`, or `.eslintrc` when JSON; else `package.json`'s `eslintConfig`. JSON may have comments and trailing commas. Its own `rules` and its `overrides`' `rules`. | A flat config that runs code (a function, a statement that changes something, a namespace, a loop). A flat-config value that needs code run (an imported config such as `js.configs.recommended`, a call's result, an imported variable). `.eslintrc.{js,cjs,yaml,yml}`. An `.eslintrc`'s `extends` and plugins' presets. |
-| oxlint | `.oxlintrc.json`, top-level `rules`. Each key resolves to a built-in rule as oxlint 1.88.0 resolves it; a rule's last key applies. | `extends`, `overrides`, `categories`, `plugins` (a key for a plugin the config leaves off still counts); rule options. |
-| Ruff | `select`, `extend-select`, `ignore`, `extend-ignore`, `per-file-ignores`, `extend-per-file-ignores` (from `[lint]` where set there, else the top level). From the file Ruff uses (`.ruff.toml`, then `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`) and configs its `extend` names inside the repository. | A config `extend` names outside the repository; per-file ignores of an extended config in another folder; Bandit config. |
+| ESLint | The config ESLint would use: the first flat config (`eslint.config.{js,mjs,cjs,ts,mts,cts}`) when it is data throughout, parsed and never run; else `.eslintrc.json`, or `.eslintrc` when JSON; else `package.json`'s `eslintConfig`. JSON may have comments and trailing commas. Its own `rules`, its `overrides`' `rules`, and the shared configs of @eslint/js, typescript-eslint, eslint-plugin-react, react-hooks, unicorn, n, Next.js, vue and @vitest/eslint-plugin at the packs' versions, by import and member path (`js.configs.recommended`), by `extends` name (`plugin:react/recommended`), or by a string `extends` through the flat config's `plugins` (`"js/recommended"`). A rule under any namespace `plugins` binds its plugin to (`ts/no-explicit-any`). `globalIgnores([...])`, read as ignores alone. A `files` glob matched as ESLint matches it (a leading `./` dropped) when it uses only names, `*`, `?`, `**` and `{a,b}`. | A flat config that runs code (a function, a statement that changes something, a namespace, a loop). A flat-config value that needs code run (a call's result, an imported variable). Any other shared config (`airbnb`). `.eslintrc.{js,cjs,yaml,yml}`. An override's `extends` and nested `overrides`. A shared config's rule options. A `files` glob with a character class, an extglob, an escape or a negation (the entry is for some files, so the pack's value stands). A folder holding its own ESLint config: the pack's values stand there. |
+| oxlint | The config oxlint takes in each folder, `.oxlintrc.json` or `.oxlintrc.jsonc` (JSONC in either); the nearest one decides each file alone, as oxlint 1.88.0's nested configs do. From it: `rules` (each key resolved as oxlint resolves it; a rule's last key applies), `plugins`, `categories`, `options.typeAware`, and oxlint's default, the `correctness` category of the plugins it runs. | `oxlint.config.ts` (its folder keeps the pack's values); `extends`, `overrides`, `ignorePatterns`; type-aware rules without `options.typeAware`; `--disable-nested-config`; rule options. |
+| Biome | The first of `biome.json`, `biome.jsonc`, `.biome.json`, `.biome.jsonc` at the root (a `.json` file as plain JSON): `linter.enabled`, `linter.rules` (`recommended`, `preset`, group severities, rule entries), `linter.domains`; the configs its `extends` names inside the repository; `overrides`, `files.includes` and `linter.includes`, matched against the repository's files with Biome's own globs. Below the root, each `biome.json` or `biome.jsonc` with `"root": false` decides its folder, alone or, with `"extends": "//"`, over the root's. Which rules a preset or domain holds, from Biome 2.5.15's rule metadata. | Packages and files outside the repository in `extends`, and a nested config's bare `extends`; a glob Biome rejects (the config is read as nothing); the dependencies that turn a domain on, where there is a `package.json`; rule options. |
+| Ruff | The file Ruff uses (`.ruff.toml`, then `ruff.toml`, then `pyproject.toml`'s `[tool.ruff]`/`[tool.ruff.lint]`) and the configs its `extend` names inside the repository: `select`, `extend-select`, `ignore`, `extend-ignore`, `per-file-ignores`, `extend-per-file-ignores` (each config's patterns from its own folder), `preview`, `explicit-preview-rules` and `pydocstyle.convention` (from `[lint]` where set there, else the top level). Selectors as Ruff 0.16.9 reads them: legacy codes remapped (`TCH` is `TC`, `TRY200` is `B904`), then its default selection, docstring convention and incompatible pairs (D203/D211, D212/D213). | An `extend` outside the repository, through an environment variable, or more than 9 configs deep: the rules it may set keep the pack's values. A config below the root, which Ruff uses for its own folder: the pack's values stand there. Option values' types. |
+| Bandit | Its config as `bandit -r .` at the root reads it: the one `.bandit` in the repository (`[bandit]` `tests`, `skips`, `exclude`, `configfile`), the TOML file `configfile` names, else `pyproject.toml`'s `[tool.bandit]` `tests`, `skips`, `exclude_dirs`. An exclude skips a file when it matches its whole path (`./scripts/run.py`) or appears in it; a `.bandit` entry naming a root folder becomes `<entry>/*`, so `exclude = scripts` skips nothing and `exclude = ./scripts` skips `scripts/`. Tests match by id (`B101`); `B001` stands for every blacklist test. | YAML configs; `profile`; `targets`; an `include` that limits the files Bandit scans (the pack's values stand). |
+| Clippy | Each package Cargo lints, as Cargo 1.99 finds them: the root package and the root `[workspace]`'s members (`members` paths and `*`/`?`/`[...]` globs, less `exclude`, plus `path` dependencies). Each package's `[lints.clippy]` and `[lints.rust]`, or the root's `[workspace.lints]` only where it sets `[lints] workspace = true`; levels and `priority`, in Cargo's order. Then the rustflags in the root's `.cargo/config` or `.cargo/config.toml` `[build]`, and the crate-wide lint attributes of every crate root `cargo clippy` checks by default: the library (`[lib] path` or `src/lib.rs`), the binaries (`src/main.rs`, `src/bin/`, `[[bin]] path`) and the build script, `cfg_attr(clippy, …)` included. Clippy 0.1.99's default groups. The root package decides for every file; each member for its folder. | Members Rerail cannot read or Cargo refuses; `**` and `..` member globs; packages below the root that are no member; examples, tests, benches and module attributes; lints named by `[target.*]` rustflags or a `.cargo/config.toml` below the root, or set by a binary that may not be built (beside a `[[bin]]`, under `autobins = false`, or with `required-features`): those keep the pack's value; a Cargo config with an `include` or a flag Rerail does not read; `RUSTFLAGS` and CI command lines; `clippy.toml` options. |
+| PHPStan | The first of `.phpstan.neon`, `phpstan.neon`, `.phpstan.neon.dist`, `phpstan.neon.dist`, `.phpstan.dist.neon`, `phpstan.dist.neon`: `level` (or a level config included as `phar://phpstan.phar/conf/config.level<N>.neon`), `ignoreErrors` entries naming an identifier, for every file or a folder (a `path` that is the root, `.` or `%currentWorkingDirectory%`, is every file), and the files it includes in the repository. `rules:` and services tagged `phpstan.rules.rule` turn on the port whose rule class they register, at any level. The level each ported rule needs, from PHPStan 2.2.16. | `--level` and the rest of the command line; ignores by message or count; `paths`, `excludePaths`; extension configs and anything under `vendor/`; a rule class Rerail does not port (rules the level keeps off keep the pack's value). |
+| Psalm | The first of `psalm.xml`, `psalm.xml.dist`, `psalm.dist.xml`: `errorLevel` (2 when absent), `<issueHandlers>`, and their `<errorLevel>` directories (`.` is every file). Info counts as off. | `--show-info`; `projectFiles`, `ignoreFiles`; what plugins change. |
+| PHP_CodeSniffer | The first of `.phpcs.xml`, `phpcs.xml`, `.phpcs.xml.dist`, `phpcs.xml.dist`, with `<rule ref>`s resolved as PHP_CodeSniffer 4.0.4 resolves them run from the root: a file there is another ruleset whatever its name (`phpcs.xml.dist` too), else a standard it ships, a folder's `ruleset.xml`, a category, sniff or message code. Also `<exclude>`, `<severity>`, folder `<exclude-pattern>`s (a rule's, a ruleset's own and the `ignore` argument's), and the `exclude` and `sniffs` arguments. As in PHP_CodeSniffer, a `<rule ref>`'s settings reach the sniffs it includes only when the ref is a standard, a category, or a path with an empty part (`./phpcs.xml.dist`); on `phpcs.xml.dist` they reach none. | `--standard` and the rest of the command line; external and installed standards; properties. |
+| SQLFluff | `rules` and `exclude_rules` from `setup.cfg`, `tox.ini`, `pep8.ini`, `.sqlfluff` and `pyproject.toml`'s `[tool.sqlfluff.core]`, at the root and in each folder holding one, a folder's configs layered from the root down, a later value replacing an earlier one; `force_enable` for PG01 and PG02. Folders `.sqlfluffignore` or `ignore_paths` name by literal path are off. A reference matches a rule's code, name, alias or group, globs included. | The home-folder config; rule options; an ignore glob or negation (that folder keeps the pack's values). |
 
 </details>
 
 <details>
 <summary>What set-up does with it</summary>
 
-- **Nothing runs.** Each config is parsed as data, never run or imported. Set-up never turns a rule on.
-- **Off.** A rule the config turns off for every file (`"off"`, `0`, oxlint's `"allow"`, a Ruff ignore that wins over its selects) starts off. If one config turns a rule off and another keeps it on, it starts off and set-up says so.
+- **Nothing runs.** Each config is parsed as data, never run or imported.
+- **On and off.** A rule the config turns on for every file starts on, even where the pack starts it off; one it turns off starts off (`"off"`, `0`, oxlint's `"allow"`, a Ruff ignore that wins over its selects, a Bandit skip, Clippy's `allow`). Naming a rule's group or prefix counts (`pedantic = "warn"`, `select = ["E"]`). If one config turns a rule off and another keeps it on, it starts off and set-up says so.
+- **Rules the config does not name.** They follow what the linter itself would do with that config: on where its defaults or a shared config Rerail recognises turn them on (Ruff's default selection, Clippy's default groups, Biome's recommended rules, `js.configs.recommended`), off otherwise. Where the config takes something Rerail cannot read (an unrecognised shared config, a file outside the repository, a PHPStan extension), they keep the pack's value.
+- **Several linters.** A rule is matched in every linter it ports or mirrors. An explicit off wins, then an explicit on, then a default that turns it on; a rule one linter's default leaves off and another's config may set keeps the pack's value. Each folder settles the same way over what each linter does there, so a nested config's default off does not beat another linter's explicit on.
+- **Held off.** A rule its pack holds off (`pack.json` `heldOff`, with its reason) is never turned on from a lint config: not by a default, a preset, a prefix, a group or its own name. Where a config names it (its own name, a prefix or a group), set-up notes that, and why the pack holds it off.
+- **Only differences are written.** A rule whose outcome is the pack's own starting value gets no setting.
 - **Options.** ESLint options become the port's options (`config`) when every value maps onto an option the port declares. Otherwise the port keeps its defaults, with a note.
-- **Some files only.** An entry limited to some files (ESLint's `files: ["scripts/**"]`, a Ruff per-file ignore of `tests/**`) turns a rule off only in a folder it covers whole. For narrower files (`**/test_*.py`) the rule stays on, with a note.
-- **A flat config Rerail cannot read.** If the flat config is more than data (defines a function, runs a loop, changes something), is a symlink, or exceeds 1 MiB, every rule Rerail ports from ESLint starts off, with no options. Set-up says why first. A single entry whose value needs the config run (a call's result, an imported variable) turns only that port off. A shared config the file imports (`js.configs.recommended`) is named as not read.
+- **Some files only.** An ESLint entry limited to some files is compared with the files the rule runs on: none of them changes nothing, all of them counts as every file, whole folders set the rule there, and only some files leave the pack's value, with a note. A Ruff per-file ignore, a PHPStan ignore with a folder `path`, a PHP_CodeSniffer `<exclude-pattern>` or a Bandit exclude turns a rule off only in a folder it covers whole; narrower files (`**/test_*.py`) never turn a rule off, and are noted. Ruff's `*` crosses folders (`tests/*` is all of `tests`), and `!docs/**` turns a rule off everywhere but `docs/`. A PHP_CodeSniffer pattern matches anywhere in a path, so `src/Legacy/*` also matches `lib/src/Legacy/…`, where the rule stays on, with a note; an `<include-pattern>` keeps the pack's value. A Biome override or `includes` for some files is matched against the repository's files: a folder whose files all reach the same state takes it, one whose files differ keeps the pack's value, and so does a folder with no such files wherever such an override could change the rule.
+- **Plugins.** A rule is matched under every namespace the flat config binds its plugin to (`plugins: { ts: tseslint.plugin }` makes `ts/no-explicit-any` typescript-eslint's rule). Where Rerail cannot tell a namespace's plugin, a rule it may name keeps the pack's value wherever that key turns it on.
+- **Nested configs.** A config below the root decides its folder where Rerail reads it as the linter does: oxlint's nearest config, Biome's `"root": false` configs, Clippy's workspace members, SQLFluff's layered configs. Folders holding an ESLint or Ruff config of their own keep the pack's values.
+- **Configs a linter refuses.** A config the linter will not run with (an unknown oxlint key; an unknown Ruff option or selector, or a Ruff `extend` that fails to load; two `.bandit` files; a Biome root config below the root; a SQLFluff `force_enable` it rejects) changes nothing, and set-up says why.
+- **A flat config Rerail cannot read.** If the flat config is more than data (defines a function, runs a loop, changes something), is a symlink, or exceeds 1 MiB, every rule Rerail ports from ESLint keeps the pack's value, and set-up says why. A single entry whose value needs the config run (a call's result, an imported variable) leaves only that port to the pack.
 - **Configs not read.** An `.eslintrc.js`, `.eslintrc.cjs` or YAML config is named as not read and changes nothing.
-- **Your choices win.** A rule you already set in the dashboard's review, in that folder, keeps your setting. "Skip, I'll pick packs" takes nothing from the lint config, even for the packs you then pick.
+- **Your choices win.** A rule you already set, in that folder, keeps your setting. "Skip, I'll pick packs" takes nothing from the lint config, even for the packs you then pick.
+- **The confirm screen** lists each rule a config names, and counts the rest by reason (`87 rules start off  eslint.config.js does not turn it on`).
 
-A port matches an upstream rule by the names its document honours suppression comments for. So `custom/no-console`, another plugin's rule, leaves the port of ESLint's `no-console` alone.
+A port matches an upstream rule by the names its document honours suppression comments for. So `custom/no-console`, another plugin's rule, leaves the port of ESLint's `no-console` alone. A rule with no such names (Blade's, the complexity pack's) keeps the pack's value.
 
 </details>
 
-The exact reading rules (what counts as data in a flat config, the order ESLint applies entries in, how Ruff's selectors resolve) are in the header comments of `src/engine/catalog/lint-config/`.
+### Calibrate later
+
+`rerail packs calibrate` reads the lint config again for a repository already set up, after the config changes or a pack is added. `--dry-run` shows what would change without writing; `--json` prints it as data.
+
+<details>
+<summary>Whose settings it changes</summary>
+
+- **The lint config's.** A setting set-up or calibrating took from the lint config is marked as the lint config's. Calibrating updates it, and removes it once the config no longer gives it, so the pack's value returns.
+- **Yours.** A setting you or a coding agent made, in the dashboard, the API or MCP, is yours: calibrating keeps it, and lists it as kept wherever the lint config gives that rule otherwise in that folder, including where the config agrees with the pack's starting value. Where Rerail cannot tell what the config gives, your setting is not listed. Changing a calibrated setting in the dashboard makes it yours. Settings set-up wrote before Rerail recorded where a setting came from count as yours.
+
+</details>
+
+The exact reading rules (what counts as data in a flat config, the order each linter applies its entries in) are in the header comments of `src/engine/catalog/lint-config/`. Each table set-up decides rules by (`src/engine/catalog/lint-config/generated/`) records the upstream release it was generated at in `UPSTREAM_VERSIONS`; a test holds every entry to the version the pack pins, and an upstream bump lists the tables and their generators for regeneration. Fixtures recorded from each pinned linter (`fixtures/host/lint-config/`) check the readers against the real tools.
 
 ## Rules: attachments and settings
 
@@ -150,6 +190,7 @@ A setting's fields:
 - **`mode`**: Log, Steer or Block. Block is in [internal testing](../README.md#internal-testing) and is delivered like Steer.
 - **`suppressions`**: `honour` or `ignore` linters' suppression comments (`// eslint-disable-next-line`, `# noqa`, `# nosec`, ...). A ported rule reads the comments of the linter it ports, where its document's `suppress` names them. Under `ignore`, no linter's comment silences it.
 - **`config`**: option values of one code rule by Rerail, by option name. They replace the defaults its document's `define.options` declare, and the document is resolved again with them. It is set on a rule, not a pack, for the whole repository (folder `""`), because one compiled rule runs in every folder of a checkout. Library rules take no `config`: edit the rule instead. An option the document doesn't declare, or a value its declaration doesn't allow, is refused with `400 invalid-setting`.
+  A repository that lists its packs in `.rerail/packs.json` can set options on a pack's entry, for every rule of the pack that declares them; in internal testing, a headless scan applies them as this setting ([repository packs](repository-packs.md)).
 
 A null field leaves it to the next owner.
 
@@ -241,9 +282,9 @@ Each file is judged by the checkout that owns it, with that checkout's configura
 
 The owner is the nearest folder above the file holding a `.git` entry that Git confirms as a checkout's top level. Only checkouts that are recorded, started and set up evaluate files.
 
-A worktree of a repository where Rerail runs is recorded the first time a session looks at it, wherever it sits and whichever folder the session started in, and judges its files itself. A session looks at it when a path it names falls in it, or when it first walks the repository's other worktrees (below), so any session of the repository records every such worktree, edited or not. Its record stays, as every recorded checkout's does. Git decides what counts: `git worktree list`, run in a recorded checkout of the same clone, must name it. Another clone of the same remote doesn't count.
+A worktree of a repository where Rerail runs is recorded the first time a session looks at it, wherever it sits and whichever folder the session started in, and judges its files itself. A session looks at it when a path it names falls in it, or when it first walks the repository's other worktrees (below), so any session of the repository records every such worktree, edited or not. Its record stays until Git no longer lists it, as every recorded checkout's does. Git decides what counts: `git worktree list`, run in a recorded checkout of the same clone, must name it. Another clone of the same remote doesn't count.
 
-Shell writes are found by walking files, so each session also walks the repository's other worktrees that may run rules, behind its own folder's walk. A command doesn't wait for this. The walk can't tell who wrote a file, so what it finds is recorded under the repository, in Log, and steers no session: an agent is steered only on its own tool calls and on its own folder's shell writes. A shell write an agent makes in another worktree is therefore recorded but not steered. What Git wrote is left out, as in the session's own folder. In its own folder, a change made while none of the session's tool calls ran is another writer's and doesn't steer it ([the session's own write](reference.md#how-ai-output-scope-finds-changed-lines)).
+Shell writes are found by walking files, so each session also watches the repository's other worktrees that may run rules. One walk of them, shared by the repository's open sessions (hook sessions and the OMP and Pi sessions the daemon runs alike), runs behind their own folders' walks. A command doesn't wait for this. The walk reads a worktree again only when Rerail's engine watch reports a change in it or says it lost changes, when something no change report covers moved (the worktree folder itself, its `HEAD`, the conflicts or force-added files its index or a nested checkout's records, not a `git status` that only refreshes the index, the repository's `info/exclude`, the `core.excludesFile` file or the configuration that names it, and on Linux a filesystem mounted in it), or when its last read is 10 minutes old; that reread runs even while every session watching it is idle. A change report starts a walk of its own, so a write in another worktree reaches the Log within about a second of its report, even while every session watching that worktree is idle; a session walks at most once every 5 seconds, or after as long as its last walk took. macOS and Windows watch each worktree whole (on Windows without blocking a rename or `git worktree remove`); Linux takes one inotify watch per folder the last read walked, at most a quarter of `fs.inotify.max_user_watches`. A worktree the engine cannot watch (past that budget, on a network drive, a WSL path, or with an engine older than Rerail) is read on every walk. A write no change report tells of reaches the Log at the 10-minute reread, or at the next change in that worktree: a write through a hard link whose other name is outside the worktree, an in-place write through a memory map, and on Windows writes to a file another program holds open until it closes it. A session's close lets go of the watch of each worktree no open session watches. The walk can't tell who wrote a file, so what it finds is recorded under the repository, in Log, and steers no session: an agent is steered only on its own tool calls and on its own folder's shell writes. A shell write an agent makes in another worktree is therefore recorded but not steered. What Git wrote is left out, as in the session's own folder. In its own folder, a change made while none of the session's tool calls ran is another writer's and doesn't steer it ([the session's own write](reference.md#how-ai-output-scope-finds-changed-lines)).
 
 <details>
 <summary>Nested checkouts and symlinks</summary>
@@ -251,6 +292,12 @@ Shell writes are found by walking files, so each session also walks the reposito
 The owner is found from both the file's lexical and real paths; a symlink into another checkout or out of its owner is not evaluated.
 
 A nested checkout owns its files when it is a submodule the checkout around it declares, or a checkout Rerail has recorded (such as a worktree kept inside the main checkout). While it is stopped or not set up it runs nothing, and the checkout around it does not judge its files either. Only a nested repository Rerail never recorded and Git does not list as a worktree (an untracked `git init`, a stray `.git`, even one naming this repository's Git folder) is judged with the checkout around it.
+
+During a watch, the next file lookup uses the current checkout. Moving a nested checkout's `.git` away returns its files to the enclosing checkout.
+Restoring `.git` restores the nested boundary. An unregistered submodule owns its files while its path appears in both `.gitmodules` and the enclosing checkout's index as a gitlink.
+
+Outside Git, the nearest registered directory owns its files while its `.rerail/repository-id` matches the catalog row at that path.
+Pruning the registration releases those files. A replacement directory must establish its own registration.
 
 A session that starts in a stopped or unrecorded checkout judges nothing.
 
@@ -277,6 +324,7 @@ Anything else is refused with `403 agent-not-permitted` and the dashboard URL wh
 - Its first approval switches the original off there with a repository setting: at once for a person's write, which is approved as saved, and for a coding agent's copy when a person approves it.
 - Until then the original keeps running beside the copy, which runs in Log, so writing a copy never weakens a rule.
 - The original stays a reference to its installed pack.
+- `repository_rules_get` names the original in the copy's `copiedFromRuleId` (`null` for every other rule), so the dashboard can say that approving the copy turns the original off.
 
 </details>
 

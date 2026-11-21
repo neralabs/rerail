@@ -31,8 +31,8 @@ use cranelift_frontend::FunctionBuilder;
 /// `clif_rust`'s Rust has, and the vendored Cranelift's aarch64 lowering since 0381: `cmtst`): a
 /// class's lane is then the test itself, not its complement. On by default where the vendored
 /// Cranelift is built for aarch64 (`cranelift_clmul`, its mark); upstream's has no `cmtst`.
-pub static BIT_TEST: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(cfg!(all(cranelift_clmul, target_arch = "aarch64")));
-
+pub const BIT_TEST_DEFAULT: bool = cfg!(all(cranelift_clmul, target_arch = "aarch64"));
+/// The run's choice: `native_cpu_codegen::Options::bit_test`, `BIT_TEST_DEFAULT` unless its caller sets it.
 /// How far back a byte-local value may look: the bytes before a file (`FRONT`).
 const MAX_LAG: u8 = 16;
 
@@ -220,10 +220,11 @@ pub fn placed_pack(native: &BlockNative, places: &[Option<usize>], own_place: us
     let n_places = places.iter().flatten().max().map_or(0, |m| m + 1).max(own_place + 1);
     let mut by_place: Vec<Vec<(u16, u8)>> = vec![Vec::new(); n_places];
     for (x, p) in places.iter().enumerate() {
-        if let (Some(p), BlockInst::Class { table, bits }) = (*p, &native.insts[x]) {
-            if !paired.contains(table) && !by_place[p].contains(&(*table, *bits)) {
-                by_place[p].push((*table, *bits));
-            }
+        if let (Some(p), BlockInst::Class { table, bits }) = (*p, &native.insts[x])
+            && !paired.contains(table)
+            && !by_place[p].contains(&(*table, *bits))
+        {
+            by_place[p].push((*table, *bits));
         }
     }
     // A class is its bytes: two classes of one set (of two of the program's tables) are one
@@ -294,9 +295,9 @@ pub fn placed_pack(native: &BlockNative, places: &[Option<usize>], own_place: us
             own_tables = out.packing.tables.len();
         }
     }
-    // Each class of a set already tested: that set's test.
+    // Each class of a set already tested: that set's test, the first made of them (the map's order is not one).
     for (c, set) in later {
-        let found = out.of.iter().find(|&(&d, _)| set_of(d) == set).map(|(_, &k)| k);
+        let found = out.of.iter().filter(|&(&d, _)| set_of(d) == set).map(|(_, &k)| k).min();
         if let Some(k) = found {
             out.of.insert(c, k);
         }
@@ -973,6 +974,8 @@ pub struct Lanes<'a> {
     highs: HashMap<(usize, u8), Value>,
     /// Each pair of tables' AND at (chunk, lag), shared by the pairs of their bits.
     pairs: HashMap<(u16, u16, usize, u8), Value>,
+    /// Values read by `prev`s of one lag only (`only_prev`).
+    only_prevs: HashMap<usize, bool>,
     /// Values as bytes (`as_bytes`), at (value, chunk, lag).
     bytes_of: HashMap<(usize, usize, u8), Option<Bytes>>,
     /// Each table's lookup at (chunk, lag), shared by its classes.
@@ -995,8 +998,9 @@ pub struct Lanes<'a> {
 
 impl<'a> Lanes<'a> {
     /// `bytes`: the block's chunks at lag 0 (index 0: the 16 bytes before it), when already
-    /// loaded. `general`: the body may run on a file's first or last block.
-    pub fn new(f: &mut FunctionBuilder<'_>, native: &'a BlockNative, plan: &'a Plan, base: Value, i: Value, len: Value, general: bool, bytes: Option<[Option<Value>; 5]>, nibble: Value) -> Self {
+    /// loaded. `edge`: where the body may run on a file's first or last block, the block's index
+    /// and the file's length.
+    pub fn new(f: &mut FunctionBuilder<'_>, native: &'a BlockNative, plan: &'a Plan, base: Value, edge: Option<(Value, Value)>, bytes: Option<[Option<Value>; 5]>, nibble: Value) -> Self {
         let c = f.ins().iconst(types::I8, 0);
         let zero16 = f.ins().splat(types::I8X16, c);
         let mut loaded = HashMap::new();
@@ -1008,7 +1012,7 @@ impl<'a> Lanes<'a> {
         Lanes {
             native,
             plan,
-            position: general.then(|| (f.ins().ishl_imm(i, 6), len)),
+            position: edge.map(|(i, len)| (f.ins().ishl_imm(i, 6), len)),
             bytes: loaded,
             base,
             nibble,
@@ -1017,6 +1021,7 @@ impl<'a> Lanes<'a> {
             highs: HashMap::new(),
             pairs: HashMap::new(),
             bytes_of: HashMap::new(),
+            only_prevs: HashMap::new(),
             lookups: HashMap::new(),
             tables: vec![None; native.tables.len()],
             splats: [None; 256],
@@ -1072,6 +1077,7 @@ impl<'a> Lanes<'a> {
             highs: HashMap::new(),
             pairs: HashMap::new(),
             bytes_of: HashMap::new(),
+            only_prevs: HashMap::new(),
             lookups: HashMap::new(),
             tables: vec![None; native.tables.len()],
             splats: [None; 256],
@@ -1301,8 +1307,30 @@ impl<'a> Lanes<'a> {
     }
 
     /// The bytes with any of `bits` set in `v`. Where the backend tests bits in one instruction
-    /// (`BIT_TEST`: NEON's `vtst`, as the lean lexer's window reads its classes), the test
+    /// (`Options::bit_test`: NEON's `vtst`, as the lean lexer's window reads its classes), the test
     /// itself; else its complement, a compare with zero, the polarity free.
+    /// Whether value `x` is read by `prev(x, k)`s of one `k` only: no other value or output
+    /// reads it (`Prev`'s `lagged_only`).
+    fn only_prev(&mut self, x: usize) -> bool {
+        if let Some(&b) = self.only_prevs.get(&x) {
+            return b;
+        }
+        let mut ks = Vec::new();
+        let mut other = self.native.outputs.contains(&(x as u16));
+        for inst in &self.native.insts {
+            if inst.operands().contains(&x) {
+                match *inst {
+                    BlockInst::Prev(a, k) if usize::from(a) == x => ks.push(k),
+                    _ => other = true,
+                }
+            }
+        }
+        ks.dedup();
+        let b = !other && ks.len() == 1;
+        self.only_prevs.insert(x, b);
+        b
+    }
+
     /// A pair of tables' AND at chunk `c`, lag `lag`: the byte before's classes and this
     /// byte's, made once for every pair of their bits.
     fn pair_and(&mut self, f: &mut FunctionBuilder<'_>, before: u16, table: u16, c: usize, lag: u8) -> Value {
@@ -1381,7 +1409,7 @@ impl<'a> Lanes<'a> {
     fn none_of(&mut self, f: &mut FunctionBuilder<'_>, v: Value, bits: u8) -> Lane {
         let sel = self.splat(f, bits);
         let picked = f.ins().band(v, sel);
-        if BIT_TEST.load(std::sync::atomic::Ordering::Relaxed) {
+        if crate::native_cpu_codegen::options().bit_test.load(std::sync::atomic::Ordering::Relaxed) {
             return Lane::V(f.ins().icmp(IntCC::NotEqual, picked, self.zero16), false);
         }
         Lane::V(f.ins().icmp(IntCC::Equal, picked, self.zero16), true)
@@ -1519,7 +1547,12 @@ impl<'a> Lanes<'a> {
                 // `16 - k`, one `ext`. The first chunk's chunk before is chunk 0, the 16 bytes
                 // before the block (the previous block's last chunk, simdjson's `prev_input`),
                 // made as any chunk is; before a file they are zeros, read as no bits.
-                if c >= 2 || (c == 1 && lag == 0 && reads_here(self.native, o(a), 0)) {
+                // A value that only `prev`s of this lag read, made from its own bytes: made from
+                // the bytes `k` back instead (`bytes`, an `ext` of the chunks in registers), as
+                // simdjson makes `prev2 >= 0xe0` from `prev<2>(input)` (decision 0417). An `ext`
+                // of its values would make it on five chunks, chunk 0 the fifth.
+                let lagged_only = lag == 0 && k < 16 && self.only_prev(o(a)) && reads_here(self.native, o(a), 0);
+                if !lagged_only && (c >= 2 || (c == 1 && lag == 0 && reads_here(self.native, o(a), 0))) {
                     let (back, here) = (self.get_at(f, o(a), c - 1, lag), self.get_at(f, o(a), c, lag));
                     let v = self.ext(f, back, here, k);
                     if c == 1
@@ -1692,12 +1725,12 @@ pub fn all_ascii(f: &mut FunctionBuilder<'_>, native: &BlockNative, plan: &Plan,
     let back = reads_before(native, plan);
     let mut bytes = [None; 5];
     let mut any: Option<Value> = None;
-    for c in (if back { 0 } else { 1 })..5 {
+    for (c, slot) in bytes.iter_mut().enumerate().skip(if back { 0 } else { 1 }) {
         let b = match chunk0 {
             Some(v) if c == 0 => v,
             _ => f.ins().load(types::I8X16, MemFlags::new().with_notrap(), base, 16 * c as i32 - 16),
         };
-        bytes[c] = Some(b);
+        *slot = Some(b);
         any = Some(match any {
             None => b,
             Some(x) => f.ins().bor(x, b),

@@ -6,14 +6,18 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 |---|---|
 | `upstream/bandit/fixtures/rerail/nosec/B101.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B102.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B103.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B104.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B105.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B108.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B110.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B112.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B113.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B201.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B301.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B302.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B303.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B304.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B305.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B306.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B307.py` | written by Rerail |
@@ -43,10 +47,16 @@ The fixtures listed below were written by Rerail for the pinned tool to score, b
 | `upstream/bandit/fixtures/rerail/nosec/B502.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B505.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B507.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B508.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B509.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B606.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B609.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B610.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B612.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B614.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B615.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/nosec/B701.py` | written by Rerail |
+| `upstream/bandit/fixtures/rerail/nosec/B702.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/probes/b104-docstring-concatenation.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/probes/b108-docstring-concatenation.py` | written by Rerail |
 | `upstream/bandit/fixtures/rerail/probes/b108-parenthesized-statement.py` | written by Rerail |

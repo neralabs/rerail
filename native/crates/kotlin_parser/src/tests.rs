@@ -8,7 +8,7 @@ use super::*;
 fn compiled() -> Result<&'static Compiled, &'static str> {
     static OTHER: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock::new();
     match std::env::var("RERAIL_KOTLIN_GRAMMAR") {
-        Ok(p) => OTHER.get_or_init(|| compile_text(&std::fs::read_to_string(p).expect("the grammar file"))).as_ref().map_err(String::as_str),
+        Ok(p) => OTHER.get_or_init(|| compile_answered(&std::fs::read_to_string(p).expect("the grammar file"))).as_ref().map_err(String::as_str),
         Err(_) => super::compiled(),
     }
 }
@@ -90,6 +90,8 @@ fn statements_and_expressions_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    val a = 1 + 2 * 3\n    b.c(d, e)\n    f[g] = h\n    if (a) b else c\n    x?.y ?: z\n    !a && b || c\n    for (i in 0..10) {}\n    while (true) {}\n}\n",
         "fun f() {\n    x = 1\n    x += y\n    a.b.c = d\n    a[1][2] = 3\n    a.b().c = 4\n}\n",
+        // `/=` at the comments' reader's byte: the pair its other rule reads (the JIT read `/` alone).
+        "fun f() {\n    w /= scale\n    h = a / b // c\n    d /= 2 /* e */\n}\n",
         "fun f() {\n    if (a < b && c >= d) return\n    else throw e\n}\n",
         "fun f() {\n    a\n        .b()\n        ?.c\n    -d\n    e !in f\n    g is H\n    i++\n    j!!\n}\n",
         "fun f() = g(a = 1, b)\n",
@@ -97,6 +99,16 @@ fn statements_and_expressions_are_the_lean_parsers() {
         "fun f() {\n    do { x-- } while (x > 0)\n    a to b\n    break\n    continue\n    this.x = null\n}\n",
         "fun f() {\n    // lead\n    a() // after a\n    /* b */ b()\n    c(/* in */ 1) // after c\n}\n",
     ]);
+}
+
+/// A block comment that starts a line before a token that goes on the line before (`.`, `?:`,
+/// `as`, `+`…): where the lean parser asks for a semicolon there (`asi`, at a statement's level),
+/// the comment is lost, of no width after the token; inside brackets it is any comment
+/// (`semi`'s `loses`, decision 0451).
+#[test]
+fn lost_comments_are_the_lean_parsers() {
+    let texts = crate::lost_comment_texts();
+    same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
 /// Step 3: strings, with `$name` templates.
@@ -273,6 +285,8 @@ fn receivers_are_the_lean_parsers() {
     same(&[
         "fun String.faint(): String = this\nfun List<T>.g() {}\nval A.B.c: Int get() = 2\n",
         "class A {\n    val String.x\n        get() = 1\n    fun f() {\n        val y = a.b\n        var z: A.B = c\n    }\n}\n",
+        // Nested type arguments in the type parameters: `receiver_end` reads past them.
+        "fun <T : Comparable<T>> B.f() {}\n",
     ]);
 }
 
@@ -312,7 +326,7 @@ fn type_arguments_are_the_lean_parsers() {
     ]);
 }
 
-/// Runs that count their depths (Q287), as `type_args_end` and `lambda_params_end` do: type
+/// Runs that count their depths (Q339), as `type_args_end` and `lambda_params_end` do: type
 /// arguments to the `>` that closes the `<`, a function type inside them, a lambda's parameters
 /// with brackets and an inner `->`; `a<b>c>(d)`, whose first `>` closes, is no call.
 #[test]
@@ -417,15 +431,65 @@ fn raw_templates_are_the_lean_parsers() {
     same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+/// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
-fn what_step_35_does_not_read_is_refused() {
+fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
         // A string, a character or a backtick name in a raw string's template: its `}` would
         // open a tail; a raw string in a template, a raw tail.
         "val h = \"\"\"${f(\"a\")}\"\"\"\n",
         "val h = \"\"\"${f('a')}\"\"\"\n",
         "val h = \"${f(\"\"\"a\"\"\")}\"\n",
+        // The lean parser's `fun` leaf: a function's `fun` is implied, and the `interface`
+        // after it comes too late to keep it.
+        "fun interface A {\n    fun f()\n}\n",
+        "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
+        "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
+        "val s = \"${f(\"}\")}\"\n",
+        "val s = \"${f(\"${x}\")}\"\n",
+        "val s = \"${if (a) { 1 } else 2}\"\n",
+        "fun interface P {\n    fun f()\n}\n",
+        "fun f(g: ((Int) -> Int) -> Int) {}\n",
+        "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
+        "val <T : Any> List<T>.second: T get() = this[1]\n",
+        "val h = \"\"\"\"a\"\"\"\n",
+        "val h = \"\"\"a\"\"\"\"\n",
+        "val h = \"\"\"\\$a\"\"\"\n",
+        "val a = b to f<T>()\n",
+        "val a = x + f<T>(1)\n",
+        "val a = x < f<T>(1)\n",
+        "import a.b import c\n",
+        "val s = 'x\n",
+        "val s = \"a\nb\"\n",
+        "val s = \"${ {x} }\"\n",
+        "val s = \"${}\"\n",
+        "val s = \"open\n",
+        "/* /* nested */ */\npackage a\n",
+        "/* open\n",
+        "val f = { a, -> a }\n",
+        "val x = when (y) { else -> 1 }\n",
+        "val x = 1d\n",
+        "val x = 1.5L\n",
+        "val x = 1_\n",
+        "val x = 0x\n",
+        "class A { val x = 1 }\n",
+        "val x: Int\n    get() = 1\n",
+        "fun f(noinline: Int) {}\n",
+        "fun String?.h() = 1\n",
+        "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
+        "val a = b as java.util.List<Int>\n",
+        "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
+        // A comment lost before `catch`, `finally` or `else` (not `else ->`): not read yet.
+        "fun f() {\n    try { a() }\n    /* c */ catch (e: E) {}\n}\n",
     ]);
+}
+
+/// A visibility modifier and `constructor` on two lines after a class's name: the lean lexer
+/// reads them on one line only (`modifier_then_constructor`), and refuses (a token's `without`).
+#[test]
+fn a_constructor_off_its_modifiers_line_is_refused() {
+    refused(&["class A\nprivate\nconstructor(x: Int)\n", "class A\n@Inject private\nconstructor(x: Int)\n"]);
 }
 
 #[test]
@@ -501,10 +565,10 @@ fn annotated_expressions_are_the_lean_parsers() {
         "fun f() {\n    @Suppress(\"D\", \"E\")\n    when (a) {\n        1 -> b()\n    }\n}\n",
         "val x = when (a) {\n    B,\n    C,\n    -> d\n    else -> e\n}\n",
         "val x = when (a) {\n    B, C, -> d\n    in r -> e\n    else -> f\n}\n",
-        // The run to the `)` passes line breaks (Q272): a declaration after is still one.
+        // The run to the `)` passes line breaks (Q340): a declaration after is still one.
         "fun f() {\n    @A(x) if (y) z\n    val q = 1\n}\n",
         // An annotation before any expression, as the lean parser's `declaration_ahead` finds no
-        // declaration (Q274); and before a declaration's modifiers and keyword.
+        // declaration (Q342); and before a declaration's modifiers and keyword.
         "fun f() {\n    @A if (y) z\n}\n",
         "fun f() {\n    @A(x) foo()\n}\n",
         "fun f() {\n    @A foo()\n    val q = 1\n}\n",
@@ -529,37 +593,6 @@ fn delegates_and_names_are_the_lean_parsers() {
     same(&[
         "fun f() {\n    val state by viewModel.uiState.collectAsState()\n}\n",
         "fun g(\n    set: AttributeSet,\n    get: Int,\n) {}\n",
-    ]);
-}
-
-#[test]
-fn what_step_34_does_not_read_is_refused() {
-    refused(&[
-        // The lean parser's `fun` leaf: a function's `fun` is implied, and the `interface`
-        // after it comes too late to keep it.
-        "fun interface A {\n    fun f()\n}\n",
-    ]);
-}
-
-#[test]
-fn what_step_30_does_not_read_is_refused() {
-    refused(&[
-        "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
-        "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
-    ]);
-}
-
-/// A visibility modifier and `constructor` on two lines after a class's name: the lean lexer
-/// reads them on one line only (`modifier_then_constructor`), and refuses (a token's `without`).
-#[test]
-fn a_constructor_off_its_modifiers_line_is_refused() {
-    refused(&["class A\nprivate\nconstructor(x: Int)\n", "class A\n@Inject private\nconstructor(x: Int)\n"]);
-}
-
-#[test]
-fn what_step_27_does_not_read_is_refused() {
-    refused(&[
-        "class A {\n    private val m by lazy { m ?: getSystemService<M>()!! }\n}\n",
     ]);
 }
 
@@ -591,72 +624,6 @@ fn class_delegates_are_the_lean_parsers() {
         "class A(d: C) : C by d\n",
         "class A {\n    val b by lazy { 1 }\n}\n",
         "fun f() = object : I by itr {\n    override fun g() = 1\n}\n",
-    ]);
-}
-
-#[test]
-fn what_step_24_does_not_read_is_refused() {
-    refused(&[
-        "val s = \"${f(\"}\")}\"\n",
-        "val s = \"${f(\"${x}\")}\"\n",
-        "val s = \"${if (a) { 1 } else 2}\"\n",
-    ]);
-}
-
-#[test]
-fn what_step_23_does_not_read_is_refused() {
-    refused(&[
-        "fun interface P {\n    fun f()\n}\n",
-        "fun f(g: ((Int) -> Int) -> Int) {}\n",
-    ]);
-}
-
-#[test]
-fn what_step_22_does_not_read_is_refused() {
-    refused(&[
-        "fun f() {\n    val d = x as java.util.List<Int>\n    g(d)\n}\n",
-        "fun <T : Comparable<T>> B.f() {}\n",
-        "val <T : Any> List<T>.second: T get() = this[1]\n",
-    ]);
-}
-
-#[test]
-fn what_step_21_does_not_read_is_refused() {
-    refused(&[
-        "val h = \"\"\"\"a\"\"\"\n",
-        "val h = \"\"\"a\"\"\"\"\n",
-        "val h = \"\"\"\\$a\"\"\"\n",
-    ]);
-}
-
-#[test]
-fn what_step_20_does_not_read_is_refused() {
-    refused(&[
-        "val a = b to f<T>()\n",
-        "val a = x + f<T>(1)\n",
-        "val a = x < f<T>(1)\n",
-        "import a.b import c\n",
-        "val s = 'x\n",
-        "val s = \"a\nb\"\n",
-        "val s = \"${ {x} }\"\n",
-        "val s = \"${}\"\n",
-        "val s = \"open\n",
-        "/* /* nested */ */\npackage a\n",
-        "/* open\n",
-        "val f = { a, -> a }\n",
-        "val x = when (y) { else -> 1 }\n",
-        "val x = 1d\n",
-        "val x = 1.5L\n",
-        "val x = 1_\n",
-        "val x = 0x\n",
-        "class A { val x = 1 }\n",
-        "val x: Int\n    get() = 1\n",
-        "fun f(noinline: Int) {}\n",
-        "fun String?.h() = 1\n",
-        "fun f() {\n    loop@ for (i in a) break@loop\n}\n",
-        "val a = b as java.util.List<Int>\n",
-        "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
-        "fun f() {\n    a\n    /* c */ .b()\n}\n",
     ]);
 }
 
@@ -722,7 +689,7 @@ fn corpus() {
 }
 
 /// The lean parser's tape for each file in `RERAIL_KOTLIN_SHOW` (paths, `:`-separated), and the
-/// grammar's or why it refuses: the reference a ladder step is written against.
+/// grammar's or why it refuses: the reference the grammar is written against.
 #[test]
 #[ignore = "a tool: set RERAIL_KOTLIN_SHOW"]
 fn show() {
@@ -835,7 +802,7 @@ fn show() {
 }
 
 /// The tier 2 program's size, by its words' opcodes (`RERAIL_KOTLIN_GRAMMAR`: another grammar
-/// file than the ladder's last).
+/// file than the crate's).
 #[test]
 #[ignore = "a measurement: run by hand"]
 fn program_size() {
@@ -852,13 +819,13 @@ fn program_size() {
         }
     }
     let mut ops: Vec<_> = by_op.into_iter().collect();
-    ops.sort_by(|a, b| b.1.cmp(&a.1));
+    ops.sort_by_key(|o| std::cmp::Reverse(o.1));
     eprintln!("{} lines; by opcode: {:?}", lines.len(), &ops[..ops.len().min(12)]);
     if let Ok(out) = std::env::var("RERAIL_KOTLIN_WORDS") {
         std::fs::write(out, &c.words).expect("the words written");
     }
     if let Ok(out) = std::env::var("RERAIL_KOTLIN_MACHINE") {
-        std::fs::write(out, format!("{}", c.machine)).expect("the machine written");
+        std::fs::write(out, &c.machine).expect("the machine written");
     }
 }
 
@@ -908,15 +875,38 @@ fn fingerprint(c: &crate::Compiled) -> u64 {
     h.finish()
 }
 
-/// The answers a compile made, given to another compile of the grammar (decision 0414): it asks
-/// none of its questions again, and makes the same program.
+/// The shipped answers (`kotlin.answers`, decision 0414's seed) answer every question the grammar
+/// asks: a compile from them alone, not the machine's kept answers, proves nothing.
+/// `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again, from a cold compile's.
 #[test]
-fn known_answers_make_the_same_program() {
-    let cold = compiled().expect("compiles");
+fn the_shipped_answers_answer_the_grammar() {
+    if std::env::var_os("RERAIL_BLESS_KOTLIN_ANSWERS").is_some() {
+        let cold = compile_text(GRAMMAR).expect("the grammar compiles");
+        let path = &format!("{}/kotlin.answers", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+        std::fs::write(path, rerail_compiler::bitlex_prove::encode(&cold.proofs)).expect("kotlin.answers written");
+        return;
+    }
+    let c = crate::compile_timed(GRAMMAR, crate::shipped_answers(), &mut |_, _| {}).expect("the grammar compiles");
+    assert!(
+        c.proofs.is_empty(),
+        "{} questions the shipped answers lack (the grammar or the provers changed): RERAIL_BLESS_KOTLIN_ANSWERS=1 writes kotlin.answers",
+        c.proofs.len()
+    );
+}
+
+/// A cold compile (no answers known) makes the program the shipped answers make, and its answers,
+/// given to another compile, leave nothing to ask (decision 0414): the answers decide nothing a
+/// proof would not, and the compiler's maps hash with a fixed seed. Cold, so in nextest's slow tier.
+#[test]
+fn a_cold_compile_makes_the_shipped_answers_program() {
+    let cold = compile_text(GRAMMAR).expect("the grammar compiles");
+    let shipped = super::compiled().expect("the grammar compiles");
+    assert_eq!(fingerprint(&cold), fingerprint(shipped), "the shipped answers make another program");
+    assert!(cold.words == shipped.words && cold.program.words == shipped.program.words, "the grammar compiles to two programs");
     let known: crate::Proofs = cold.proofs.iter().cloned().collect();
-    let warm = crate::compile_timed(crate::GRAMMAR, known, &mut |_, _| {}).expect("compiles");
+    let warm = crate::compile_timed(GRAMMAR, known, &mut |_, _| {}).expect("the grammar compiles");
     assert_eq!(warm.proofs.len(), 0, "a question asked again");
-    assert_eq!(fingerprint(&warm), fingerprint(cold));
+    assert_eq!(fingerprint(&warm), fingerprint(&cold));
 }
 
 /// Tier 1 alone: `RERAIL_KOTLIN_GRAMMAR`'s, the interpreter's records against the CPU's, over
@@ -932,6 +922,17 @@ fn tier1_records() {
         let cpu = c.parser.tier1.extract(&src);
         let same = run.positions == cpu.positions && run.codes == cpu.codes && run.totals == cpu.totals;
         eprintln!("== {p}: {}", if same { "the same" } else { "DIFFERS" });
+        // `RERAIL_KOTLIN_RECORDS`: the CPU's records, each start, last, code and text, and the
+        // records' marks (`Records::marks`) and blank marks (`Records::blanks`).
+        if std::env::var_os("RERAIL_KOTLIN_RECORDS").is_some() {
+            if let Some(r) = &c.program.block_programs[0].records {
+                eprintln!("marks {:?} blanks {:?} names {:?}", r.marks, r.blanks, c.program.names.marks);
+            }
+            for (i, &code) in cpu.codes.iter().enumerate() {
+                let (s, l) = (cpu.positions[0][i] as usize, cpu.positions[1][i] as usize);
+                eprintln!("record {i}: {s}..={l} code {code:#x} marks {:#x} {:?}", code >> rerail_compiler::records::MARK_SHIFT, String::from_utf8_lossy(&src[s..=l.min(src.len() - 1)]));
+            }
+        }
         if !same {
             // The first record where they part, with the ones around it: start, last, code.
             let rec = |r: &rerail_compiler::block::BlockRun, i: usize| (r.positions[0].get(i).copied(), r.positions.get(1).and_then(|l| l.get(i)).copied(), r.codes.get(i).map(|c| format!("{c:#x}")));
@@ -996,7 +997,7 @@ fn tier1_cones() {
         *by.entry(o.as_str()).or_default() += 1;
     }
     let mut by: Vec<_> = by.into_iter().collect();
-    by.sort_by(|a, b| b.1.cmp(&a.1));
+    by.sort_by_key(|o| std::cmp::Reverse(o.1));
     for (o, k) in &by {
         eprintln!("  {k:5} made by {o}");
     }
@@ -1009,7 +1010,7 @@ fn tier1_cones() {
         *cpu.entry(o.as_str()).or_default() += 1;
     }
     let mut cpu: Vec<_> = cpu.into_iter().collect();
-    cpu.sort_by(|a, b| b.1.cmp(&a.1));
+    cpu.sort_by_key(|o| std::cmp::Reverse(o.1));
     eprintln!("the CPU body's, roughly: {} operations", kept.iter().filter(|&&k| k).count());
     for (o, k) in cpu.iter().take(40) {
         eprintln!("  {k:5} cpu, made by {o}");
@@ -1064,7 +1065,9 @@ fn token_level_probe() {
     use ::bitlex::syntax::{Arg, Expr, Stmt};
     use rerail_compiler::bitlex_masks as bitlex_compile;
     use std::collections::{HashMap, HashSet};
-    let stmts = ::bitlex::syntax::parse(crate::GRAMMAR).expect("parses");
+    // The crate's grammar, or `RERAIL_KOTLIN_GRAMMAR`'s file (a variant measured without a build).
+    let text = std::env::var("RERAIL_KOTLIN_GRAMMAR").map_or_else(|_| crate::GRAMMAR.to_owned(), |p| std::fs::read_to_string(p).expect("the grammar file"));
+    let stmts = ::bitlex::syntax::parse(&text).expect("parses");
     let mut defs: HashMap<String, Expr> = HashMap::new();
     let mut classes: HashSet<String> = HashSet::new();
     fn walk(s: &[Stmt], defs: &mut HashMap<String, Expr>, classes: &mut HashSet<String>) {
@@ -1316,4 +1319,33 @@ fn lazy_probe() {
     eprintln!("blanks: {:?} gap {:?} skip {:?} gaps {:b}", r.blanks, r.gap, r.skip, r.gaps);
     let blank_bits = rerail_compiler::native_cpu_block::blank_bits(r, &|o| bw.can(o));
     eprintln!("blank marks read by the CPU loop: {blank_bits:b}; records_made {:?}", native.records_made());
+}
+
+/// The walk lemmas (`bitlex_masks::NO_WALK_LEMMAS`: a walk's regions never overlap) change only what tier 2 is proved
+/// to need: the grammar reads each text as without them, the same tape or the same refusal.
+#[test]
+fn walk_lemmas_keep_the_tapes() {
+    let with = super::compiled().expect("the grammar compiles");
+    assert!(!with.program.block_programs[0].walks.is_empty(), "the grammar has no walk for the lemmas");
+    bitlex_compile::NO_WALK_LEMMAS.set(true);
+    let without = compile_text(GRAMMAR);
+    bitlex_compile::NO_WALK_LEMMAS.set(false);
+    let without = without.expect("the grammar compiles without the walk lemmas");
+    assert!(with.program.words.len() < without.program.words.len(), "the walk lemmas prove nothing: {} words either way", with.program.words.len());
+    let texts = [
+        "package a\n\nimport b.c\n",
+        "val s = \"a // b\" // c \"d\"\n",
+        "/* \"x\" */ val c = '\"'\n",
+        "val a = 0x1F + 1_000L - 1.5e-3f // \"\n",
+        "val s = \"\"\"raw /* x */ \"\"\"\n",
+        "val s = \"${a + \"b\"}\"\n",
+        "// only\n",
+        "/* open\n",
+        "val s = \"open\n",
+        "val c = '\\n' + '\\'' /* '\" */\n",
+        "fun f() {\n    a(\"x\") /* y */ // z\n}\n",
+    ];
+    for t in texts {
+        assert_eq!(with.parser.image(t.as_bytes()).ok(), without.parser.image(t.as_bytes()).ok(), "{t:?}");
+    }
 }

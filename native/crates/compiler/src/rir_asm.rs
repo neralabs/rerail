@@ -213,6 +213,8 @@ pub struct Line<'a> {
 }
 
 impl Line<'_> {
+    // A missing operand is an error, not the end of a sequence: no `Iterator`.
+    #[allow(clippy::should_implement_trait)]
     pub fn next(&mut self) -> Result<Token, String> {
         self.tokens.next().ok_or_else(|| "a missing operand".to_owned())
     }
@@ -461,6 +463,37 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             index(line, parts.rules.len(), "rule")?;
             parts.rules.push(line.number("@")?);
         }
+        "name" => {
+            let what = line.word()?;
+            match what.as_str() {
+                "rule" => {
+                    let r = line.number("")?;
+                    let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
+                    parts.names.rules.push((r, n));
+                }
+                "kind" => {
+                    let k = line.number("#")?;
+                    let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
+                    parts.names.kinds.push((k, n));
+                }
+                "field" => {
+                    let f = line.number("")?;
+                    let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
+                    parts.names.fields.push((f, n));
+                }
+                "token" => {
+                    let k = line.number("")?;
+                    let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
+                    parts.names.tokens.push((k, n));
+                }
+                "mark" => {
+                    let k = line.number("")?;
+                    let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
+                    parts.names.marks.push((k, n));
+                }
+                w => return Err(format!("`name {w}`: a name is a rule's, a kind's, a field's, a token's or a mark's")),
+            }
+        }
         "markword" => {
             let k: u8 = line.number("")?;
             let s: u16 = line.number("s")?;
@@ -490,11 +523,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.counts.push(line.number("")?);
         }
-        "tokenmark" => {
+        "tokenmark" | "gappattern" => {
             let order: u8 = line.number("")?;
+            let gap = keyword == "gappattern";
+            let list = if gap { &parts.gap_patterns } else { &parts.token_marks };
             // A mark's entries share its order (`program::patterns_hold`).
-            if parts.token_marks.last().is_some_and(|m| m.order > order) {
-                return Err(format!("tokenmark {order} out of order"));
+            if list.last().is_some_and(|m| m.order > order) {
+                return Err(format!("{keyword} {order} out of order"));
             }
             let mut elems: Vec<crate::program::TokenElem> = Vec::new();
             // Whose words and keywords follow: the element's (0), a run's depth's side's
@@ -549,6 +584,13 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 } else if let Some(h) = w.strip_prefix('w') {
                     let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad `without` `{w}`"))?;
                     elems.last_mut().ok_or("a `without` before its element")?.without = bits;
+                } else if let Some(h) = w.strip_prefix('h') {
+                    let bits = u32::from_str_radix(h, 16).map_err(|_| format!("a bad `with` `{w}`"))?;
+                    elems.last_mut().ok_or("a `with` before its element")?.with = bits;
+                } else if let Some(h) = w.strip_prefix('f') {
+                    let words: Vec<u64> = h.split('.').map(|x| u64::from_str_radix(x, 16)).collect::<Result<_, _>>().map_err(|_| format!("a bad `starting` `{w}`"))?;
+                    let first: [u64; 4] = words.try_into().map_err(|_| format!("a bad `starting` `{w}`"))?;
+                    elems.last_mut().ok_or("a `starting` before its element")?.first = first;
                 } else if let Some(s) = w.strip_prefix('s') {
                     let s: u16 = s.parse().map_err(|_| format!("a bad word `{w}`"))?;
                     let el = elems.last_mut().ok_or("a word before its element")?;
@@ -569,7 +611,12 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     return Err(format!("a bad token mark's part `{w}`"));
                 }
             }
-            parts.token_marks.push(crate::program::TokenMark { order, elems, refuses, unless });
+            let m = crate::program::TokenMark { order, elems, refuses, unless };
+            if gap {
+                parts.gap_patterns.push(m);
+            } else {
+                parts.token_marks.push(m);
+            }
         }
         "tokenextra" => {
             let b: u8 = line.number("b")?;
@@ -689,12 +736,14 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 program.totals.push(line.number("%")?);
             } else if first == "mask" {
                 program.masks.push(line.number("%")?);
+            } else if first == "newlines" {
+                program.newlines = Some(line.number("%")?);
             } else if first == "records" {
                 let (starts, lasts): (u16, u16) = (line.number("")?, line.number("")?);
                 let kinds = line.word()?;
                 let hex = kinds.strip_prefix("kinds=").ok_or("`records S L kinds=…`")?;
                 let kinds: Vec<u8> = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<_, _>>().map_err(|_| "a bad kind")?;
-                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, kind_rows: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, alone: 0, read: 0, blanks: Vec::new(), check_masks: Vec::new(), prefix: Vec::new(), gap: None });
+                program.records = Some(crate::records::Records { starts, lasts, kinds, words: Vec::new(), marks: Vec::new(), ends: Vec::new(), rules: Vec::new(), skip: None, gaps: 0, extra: None, kind_rows: None, untaken: Vec::new(), unless: Vec::new(), unplaced: 0, checks: Vec::new(), readers: Vec::new(), retags: Vec::new(), nexts: Vec::new(), tested_only: 0, alone: 0, read: 0, blanks: Vec::new(), own: 0, check_masks: Vec::new(), prefix: Vec::new(), gap: None });
             } else if first == "word" {
                 let r = program.records.as_mut().ok_or(format!("block {at} word before its records"))?;
                 r.words.push(line.quoted()?);
@@ -725,12 +774,19 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let r = program.records.as_mut().ok_or(format!("block {at} recnext before its records"))?;
                 let hex = line.word()?;
                 let row = (0..hex.len() / 2).map(|i| u8::from_str_radix(&hex[2 * i..2 * i + 2], 16)).collect::<Result<Vec<u8>, _>>().map_err(|_| "a bad pair row")?;
-                r.nexts.push(crate::records::PairTable { row, sets: Vec::new() });
+                r.nexts.push(crate::records::PairTable { row, sets: Vec::new(), thirds: Vec::new() });
             } else if first == "recpairs" {
                 // `recpairs W0 W1 W2 W3`: a set of the last table's (`PairTable::sets`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recpairs before its records"))?;
                 let set = [line.number("")?, line.number("")?, line.number("")?, line.number("")?];
                 r.nexts.last_mut().ok_or(format!("block {at} recpairs before its table"))?.sets.push(set);
+            } else if first == "recthird" {
+                // `recthird ABC`: a triple of the last table's (`PairTable::thirds`), in hex.
+                let r = program.records.as_mut().ok_or(format!("block {at} recthird before its records"))?;
+                let hex = line.word()?;
+                let b = |i: usize| hex.get(2 * i..2 * i + 2).and_then(|x| u8::from_str_radix(x, 16).ok()).ok_or("a bad triple");
+                let t = [b(0)?, b(1)?, b(2)?];
+                r.nexts.last_mut().ok_or(format!("block {at} recthird before its table"))?.thirds.push(t);
             } else if first == "recreader" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recreader before its records"))?;
                 let other: u8 = line.number("")?;
@@ -742,7 +798,8 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "recretag" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recretag before its records"))?;
                 let (o, kind, marks): (u16, u8, u32) = (line.number("")?, line.number("")?, line.number("")?);
-                r.retags.push(crate::records::Retag { o, kind, marks });
+                let part = matches!(line.word(), Ok(w) if w == "part");
+                r.retags.push(crate::records::Retag { o, kind, marks, part });
             } else if first == "recarm" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recarm before its records"))?;
                 let k: usize = line.number("")?;
@@ -764,16 +821,20 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recarm {k}: no such reader"))?;
                 rd.arms.push(crate::records::ReadArm { opener, closer, off, last, none, retag });
             } else if first == "recpart" {
-                // `recpart K START BYTES [last O]`: a part of reader K's region (`Reader::parts`).
+                // `recpart K START BYTES [last O] [kind K]`: a part of reader K's region (`Reader::parts`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recpart before its records"))?;
                 let k: usize = line.number("")?;
                 let (start, bytes): (u16, u8) = (line.number("")?, line.number("")?);
-                let last = match line.word() {
-                    Ok(w) if w == "last" => Some(line.number("")?),
-                    _ => None,
-                };
+                let (mut last, mut kind) = (None, None);
+                while let Ok(w) = line.word() {
+                    match w.as_str() {
+                        "last" => last = Some(line.number("")?),
+                        "kind" => kind = Some(line.number("")?),
+                        w => return Err(format!("block {at} recpart: `last` or `kind`, not {w}")),
+                    }
+                }
                 let rd = r.readers.get_mut(k).ok_or(format!("block {at} recpart {k}: no such reader"))?;
-                rd.parts.push(crate::records::ReadPart { start, bytes, last });
+                rd.parts.push(crate::records::ReadPart { start, bytes, last, kind });
             } else if first == "recquiet" {
                 // `recquiet K`: reader K's region holds no mask mark (`Reader::quiet`).
                 let r = program.records.as_mut().ok_or(format!("block {at} recquiet before its records"))?;
@@ -821,6 +882,9 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             } else if first == "recread" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recread before its records"))?;
                 r.read = line.number("")?;
+            } else if first == "recown" {
+                let r = program.records.as_mut().ok_or(format!("block {at} recown before its records"))?;
+                r.own = line.number("")?;
             } else if first == "recblank" {
                 let r = program.records.as_mut().ok_or(format!("block {at} recblank before its records"))?;
                 let k: u8 = line.number("")?;
@@ -1003,9 +1067,11 @@ pub fn head_rows(out: &mut String, program: &Words) {
     crate::rir_text::word_kind_rows(out, &program.word_kinds);
     crate::rir_text::extra_rows(out, &program.extras);
     crate::rir_text::token_mark_rows(out, &program.token_marks);
+    crate::rir_text::gap_pattern_rows(out, &program.gap_patterns);
     crate::rir_text::count_rows(out, &program.counts);
     crate::rir_text::local_check_rows(out, &program.local_checks);
     crate::rir_text::rule_rows(out, &program.rules);
+    crate::rir_text::name_rows(out, &program.names);
     for s in &program.pp.ops {
         let _ = writeln!(out, "  ppop s{s}");
     }
@@ -1084,13 +1150,14 @@ fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String
     }
     let mask: u16 = line.number("m")?;
     let delay: u8 = line.number("d")?;
+    let back: u8 = if line.peek_word().is_some_and(|w| w.len() > 1 && w.starts_with('r')) { line.number("r")? } else { 0 };
     let mut ops = Vec::new();
             while let Some(w) = line.peek_word() {
                 line.word()?;
                 let bad = || format!("a bad local op `{w}`");
                 let (tag, rest) = w.split_at(1);
-                if rest.is_empty() && (tag == "s" || tag == "l") {
-                    ops.push(if tag == "s" { LocalOp::Start } else { LocalOp::Last });
+                if rest.is_empty() && (tag == "s" || tag == "l" || tag == "e") {
+                    ops.push(match tag { "s" => LocalOp::Start, "l" => LocalOp::Last, _ => LocalOp::Ended });
                     continue;
                 }
                 let nums = |r: &str| -> Result<Vec<u64>, String> { r.split('.').map(|x| u64::from_str_radix(x, if tag == "b" || tag == "c" { 16 } else { 10 }).map_err(|_| bad())).collect() };
@@ -1110,7 +1177,7 @@ fn local_check(line: &mut Line<'_>) -> Result<crate::program::LocalCheck, String
                     _ => return Err(bad()),
                 });
             }
-            Ok(crate::program::LocalCheck { mask, delay, ops, token })
+            Ok(crate::program::LocalCheck { mask, delay, ops, token, back })
 }
 
 #[cfg(test)]

@@ -17,12 +17,15 @@
 //!   event holds the root's later work, as on Metal.
 //! - **Each thread of a threadgroup has a stack of its own** (`STACK_BYTES`, a guard page below it), from a region the
 //!   root's thread keeps across launches.
+//! - **No thread-local in a kernel library**: the running scheduler and thread are in one thread-local of the host's
+//!   (`tls`), which each launch names; the scheduler's storage is the root thread's (`SCHED_BYTES`). macOS gives each
+//!   loaded image's thread-locals a pthread key, and a process ran out of them after a few hundred libraries.
 //! - **Arguments without reflection**, as on CUDA (`rows.rs`): the shim's rows and layouts, read from the library's
 //!   symbols, and each `ARGS` structure's layout function called on the host.
 
 use crate::compute_kernel::*;
 use std::cell::RefCell;
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{c_char, c_void, CStr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
 
@@ -55,8 +58,8 @@ pub fn simd_width() -> u32 {
     match std::env::var("RERAIL_CPU_SIMD_WIDTH") {
         Err(_) => 32,
         Ok(w) => match w.parse::<u32>() {
-            Ok(n) if n.is_power_of_two() && n <= 32 => n,
-            _ => panic!("RERAIL_CPU_SIMD_WIDTH={w}: a power of two from 1 to 32"),
+            Ok(n) if n.is_power_of_two() && n <= 64 => n,
+            _ => panic!("RERAIL_CPU_SIMD_WIDTH={w}: a power of two from 1 to 64"),
         },
     }
 }
@@ -211,7 +214,7 @@ pub fn gpu_seconds_awaited() -> f64 {
 
 /// A compiled library: the shared object the host's compiler made of the source, loaded.
 pub struct CpuComputeFunctionLibrary {
-    handle: *mut c_void,
+    handle: crate::sys::Library,
     name: String,
 }
 
@@ -228,15 +231,9 @@ fn compiler_version(cxx: &str) -> &'static str {
 }
 
 /// The kernel library at `lib`, loaded.
-fn open_library(lib: &std::path::Path) -> Result<*mut c_void, String> {
-    let c = CString::new(lib.to_string_lossy().as_bytes()).unwrap();
-    // SAFETY: a shared object a compiler made from UKL; it runs no initializers of its own.
-    let handle = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    if handle.is_null() {
-        let e = unsafe { CStr::from_ptr(libc::dlerror()) }.to_string_lossy().into_owned();
-        return Err(format!("loading {}: {e}", lib.display()));
-    }
-    Ok(handle)
+fn open_library(lib: &std::path::Path) -> Result<crate::sys::Library, String> {
+    // A shared object a compiler made from UKL; it runs no initializers of its own.
+    crate::sys::Library::open(&lib.to_string_lossy())
 }
 
 impl CpuComputeFunctionLibrary {
@@ -302,12 +299,7 @@ impl CpuComputeFunctionLibrary {
     }
 
     fn symbol(&self, name: &str) -> Result<*mut c_void, String> {
-        let c = CString::new(name).unwrap();
-        let p = unsafe { libc::dlsym(self.handle, c.as_ptr()) };
-        if p.is_null() {
-            return Err(format!("{}: no {name}", self.name));
-        }
-        Ok(p)
+        self.handle.symbol(name).ok_or_else(|| format!("{}: no {name}", self.name))
     }
 
     fn string(&self, name: &str) -> Result<String, String> {
@@ -353,8 +345,25 @@ struct Launch {
     stack_bytes: u64,
     error: *mut c_char,
     error_bytes: u64,
+    sched: *mut u8,
+    sched_bytes: u64,
+    tls: extern "C" fn() -> *mut c_void,
     resident: u32,
     pad: u32,
+}
+
+/// The scheduler's storage a root's thread gives each launch: more than the shim's (`__ukl_cpu_sched`, which checks).
+const SCHED_BYTES: usize = 256 << 10;
+
+std::thread_local! {
+    /// The running launch's scheduler and thread (`__ukl_cpu_tls`): the one thread-local every kernel library uses. A
+    /// library has none of its own: macOS gives each loaded image's thread-locals a pthread key, and a process runs
+    /// out of them after a few hundred libraries.
+    static TLS: std::cell::UnsafeCell<[*mut c_void; 2]> = const { std::cell::UnsafeCell::new([std::ptr::null_mut(); 2]) };
+}
+
+extern "C" fn tls() -> *mut c_void {
+    TLS.with(|t| t.get().cast())
 }
 
 /// The threads the CPU runs at once across a launch's groups: its resident groups are these over a group's threads
@@ -403,6 +412,7 @@ struct Worker {
     stacks: *mut u8,
     stacks_len: usize,
     page: usize,
+    sched: Vec<u64>,
 }
 
 impl Worker {
@@ -411,16 +421,12 @@ impl Worker {
         let stride = STACK_BYTES + self.page;
         if self.stacks_len < n * stride {
             if !self.stacks.is_null() {
-                unsafe { libc::munmap(self.stacks.cast(), self.stacks_len) };
+                // SAFETY: the mapping made below, its stacks used no more.
+                unsafe { crate::sys::unmap(self.stacks, self.stacks_len) };
             }
             let len = n.max(64) * stride;
-            // SAFETY: anonymous memory; the guards are made inaccessible below.
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
-            assert!(p != libc::MAP_FAILED, "no memory for the CPU backend's thread stacks");
-            for k in 0..len / stride {
-                unsafe { libc::mprotect(p.cast::<u8>().add(k * stride).cast(), self.page, libc::PROT_NONE) };
-            }
-            self.stacks = p.cast();
+            let p = crate::sys::map_guarded(len, stride).expect("no memory for the CPU backend's thread stacks");
+            self.stacks = p;
             self.stacks_len = len;
         }
         (self.stacks, stride)
@@ -438,8 +444,8 @@ impl CpuQueueRoot {
             .name("rerail-cpu-queue".into())
             .stack_size(8 << 20)
             .spawn(move || {
-                let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
-                let mut w = Worker { stacks: std::ptr::null_mut(), stacks_len: 0, page };
+                let page = crate::sys::page_size();
+                let mut w = Worker { stacks: std::ptr::null_mut(), stacks_len: 0, page, sched: vec![0; SCHED_BYTES / 8] };
                 for b in rx {
                     let t = std::time::Instant::now();
                     let mut r = Ok(());
@@ -660,6 +666,9 @@ impl CpuBindContext<'_> {
                 stack_bytes: stride as u64,
                 error: error.as_mut_ptr(),
                 error_bytes: error.len() as u64,
+                sched: w.sched.as_mut_ptr().cast(),
+                sched_bytes: SCHED_BYTES as u64,
+                tls,
                 resident: resident as u32,
                 pad: 0,
             };
@@ -746,7 +755,7 @@ DEFINE_KERNEL2(t, t_divergent,
     /// Threadgroup memory, a barrier and SIMD-group shuffles give each thread what a GPU gives it.
     #[test]
     fn a_threadgroup_runs_as_on_a_gpu() {
-        let Some((device, lib)) = compile("t.ukl", KERNELS) else { return };
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_group").unwrap();
         let (grid, block) = (3u32, 64u32);
         let out = alloc_uninitialized_array_sync::<u32>(&device, (grid * block) as usize);
@@ -765,7 +774,7 @@ DEFINE_KERNEL2(t, t_divergent,
     /// A barrier no thread can pass is an error that says who waits where, not a hang.
     #[test]
     fn a_barrier_no_thread_can_pass_is_an_error() {
-        let Some((device, lib)) = compile("t.ukl", KERNELS) else { return };
+        let Some((device, lib)) = compile("t.uglykl", KERNELS) else { return };
         let f = lib.get_function(&device, "t_divergent").unwrap();
         let out = alloc_uninitialized_array_sync::<u32>(&device, 1);
         let e = run(&device, &f, &out, None, 1, 64).unwrap_err();

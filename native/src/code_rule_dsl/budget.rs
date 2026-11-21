@@ -82,7 +82,9 @@ pub fn matcher_budget_exhausted() -> bool {
 }
 
 /// Whether some poll found this thread's budget exhausted; never polls. What decides, after work
-/// ends, whether it was cut short: work that finished unpolled is complete.
+/// ends, whether it was cut short: work that finished unpolled is complete. Inlined into the
+/// matcher's crate (rerail-w), whose memo asks it of every answer it keeps.
+#[inline]
 pub fn matcher_budget_observed() -> bool {
     MATCH_BUDGET.with(|budget| {
         budget
@@ -144,7 +146,9 @@ pub fn reset_matcher_calls() {
 }
 
 /// `matcher_budget_exhausted` for matcher entry points: polls every `BUDGET_CHECK_INTERVAL`
-/// calls, so a spent budget is noticed at most that many calls late.
+/// calls, so a spent budget is noticed at most that many calls late. Inlined into the matcher's
+/// crate (rerail-w), which calls it for every matcher call.
+#[inline]
 pub fn matcher_call_budget_exhausted() -> bool {
     #[cfg(any(test, feature = "test-hooks"))]
     MATCHER_CALLS.set(MATCHER_CALLS.get() + 1);
@@ -162,6 +166,8 @@ pub fn matcher_call_budget_exhausted() -> bool {
 
 /// `matcher_budget_exhausted` for one step of a loop: polls every `STEP_CHECK_INTERVAL` steps
 /// counted across calls, so many short loops spend what one long loop of their steps does.
+/// Inlined into the matcher's crate (rerail-w), whose loops call it a step.
+#[inline]
 pub fn step_budget_exhausted() -> bool {
     let countdown = STEP_COUNTDOWN.get();
     if countdown > 0 {

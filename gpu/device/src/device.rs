@@ -32,6 +32,10 @@ mod native {
     pub type QueueRoot = metal::CommandQueue;
     pub type SharedEvent = metal::SharedEvent;
     pub const NAME: &str = "Metal";
+    /// The device's own name (the GPU's model).
+    pub fn device_name(d: &Device) -> String {
+        d.name().to_owned()
+    }
 }
 
 #[cfg(target_os = "linux")]
@@ -46,6 +50,31 @@ mod native {
         Some(b.device_address())
     }
     pub const NAME: &str = "CUDA";
+    /// The device's own name: the backend's until the driver's is read (step E).
+    pub fn device_name(_d: &Device) -> String {
+        NAME.to_owned()
+    }
+}
+
+/// Windows has no GPU interface of its own here: its GPU is OpenCL's (`OpenCL.dll`, every driver's ICD loader), which
+/// the default device opens as `Device::OpenCl`, the variant each OpenCL check matches (`shared::get`). The native
+/// variants are typed as OpenCL's so the backends' matches stay one shape, and are never made on Windows.
+#[cfg(windows)]
+mod native {
+    pub use crate::compute_kernel_opencl::{
+        alloc_uninitialized_array_sync, gpu_seconds_awaited, transfer_to_device_immutable, transfer_to_host_sync, wrap_host_memory, ClBindContext as BindContext,
+        ClBuffer as Buffer, ClComputeEvent as Event, ClComputeFunction as Function, ClComputeFunctionLibrary as Library, ClComputeQueue as Queue,
+        ClDevice as Device, ClQueueRoot as QueueRoot, ClSharedEvent as SharedEvent,
+    };
+    /// The kernels' address of a buffer's first byte.
+    pub fn device_address(b: &Buffer) -> Option<u64> {
+        b.address()
+    }
+    pub const NAME: &str = "OpenCL";
+    /// The device's own name.
+    pub fn device_name(d: &Device) -> String {
+        d.name().to_owned()
+    }
 }
 
 /// The backend `RERAIL_GPU` chooses, lower case: "cpu", "opencl", or "" for the target's GPU.
@@ -101,6 +130,16 @@ pub enum Device {
 pub type DeviceRef = Device;
 
 impl Device {
+    /// The device's name, as a machine's samples are keyed: the GPU's model on the target's GPU, its backend and
+    /// its own name on OpenCL, "CPU" on the CPU's.
+    pub fn name(&self) -> String {
+        match self {
+            Device::Native(d) => native::device_name(d),
+            Device::Cpu(_) => "CPU".to_owned(),
+            Device::OpenCl(d) => format!("OpenCL {}", d.name()),
+        }
+    }
+
     /// The Metal device, when the process's is Metal (the engine's own Metal kernels need it).
     #[cfg(target_os = "macos")]
     pub fn metal(&self) -> Option<&metal::Device> {
@@ -125,6 +164,35 @@ impl Device {
             Device::Native(_) => 32,
             Device::Cpu(_) => cpu::simd_width(),
             Device::OpenCl(_) => cl::simd_width(),
+        }
+    }
+
+    /// The memory domain its kernels read (decisions 0440 §7.2, 0491 step 4): 0 for the host's memory, read in place
+    /// (Apple's unified memory, the CPU, an OpenCL device sharing the host's memory, a CUDA device reading the host's
+    /// pages, as a GB10 does); 1 for a discrete card's own memory, whose copy of a region a mirror holds
+    /// (`rerail_blocks::region::Region::mirror_in`).
+    pub fn domain(&self) -> u32 {
+        match self {
+            #[cfg(target_os = "linux")]
+            Device::Native(d) => u32::from(!d.pageable),
+            #[cfg(not(target_os = "linux"))]
+            Device::Native(_) => 0,
+            Device::Cpu(_) | Device::OpenCl(_) => 0,
+        }
+    }
+
+    /// Whether every buffer has a kernels' address (`Buffer::device_address`), memory wrapped in place too: every
+    /// backend's but OpenCL's.
+    pub fn has_addresses(&self) -> bool {
+        !matches!(self, Device::OpenCl(_))
+    }
+
+    /// Whether the buffers it allocates have a kernels' address (not memory wrapped in place): every backend's, and
+    /// OpenCL's where it has Intel's unified shared memory (`ClDevice::allocations_have_addresses`).
+    pub fn allocations_have_addresses(&self) -> bool {
+        match self {
+            Device::OpenCl(d) => d.allocations_have_addresses(),
+            _ => true,
         }
     }
 
@@ -154,7 +222,7 @@ impl Device {
 
     /// The device's GPU cores, when it says: on a Mac, IORegistry's `gpu-core-count` of the device's entry
     /// (the `MTLDevice`'s registry ID). A persistent grid's resident groups are these times the groups a core
-    /// holds (decision 0460 §4).
+    /// holds (decision 0468 §4).
     pub fn gpu_cores(&self) -> Option<u32> {
         match self {
             #[cfg(target_os = "macos")]
@@ -173,13 +241,13 @@ impl Device {
     }
 
     /// The groups of `threads` threads, each using `local` bytes of threadgroup memory, that the device holds at
-    /// once, when it gives its cores (`gpu_cores`): a persistent grid's G (decision 0460 §4). Each core is taken at
+    /// once, when it gives its cores (`gpu_cores`): a persistent grid's G (decision 0468 §4). Each core is taken at
     /// its least: one group of the device's largest (`max_threadgroup`) and the most threadgroup memory a group may
     /// have (`max_threadgroup_memory`).
     pub fn resident_groups(&self, threads: u32, local: u64) -> Option<u64> {
         let cores = self.gpu_cores()? as u64;
         let by_threads = (self.max_threadgroup() / threads.max(1)).max(1) as u64;
-        let by_memory = if local == 0 { by_threads } else { (self.max_threadgroup_memory() / local).max(1) };
+        let by_memory = self.max_threadgroup_memory().checked_div(local).map_or(by_threads, |n| n.max(1));
         Some(cores * by_threads.min(by_memory))
     }
 
@@ -240,13 +308,14 @@ impl Buffer {
     }
 
     /// The kernels' address of the buffer's first byte, for a pointer that a buffer holds (a directory of tapes, a
-    /// view's rows): Metal's GPU address, CUDA's device pointer, the host's on the CPU. `None` on OpenCL 1.2, whose
-    /// kernels follow no pointer a buffer holds (that is SVM's, not written).
+    /// view's rows): Metal's GPU address, CUDA's device pointer, the host's on the CPU, an OpenCL host allocation's
+    /// (Intel's unified shared memory). `None` for other OpenCL buffers: memory wrapped in place, or a device without
+    /// it, whose kernels follow no pointer a buffer holds.
     pub fn device_address(&self) -> Option<u64> {
         match self {
             Buffer::Native(b) => native::device_address(b),
             Buffer::Cpu(b) => Some(b.device_address()),
-            Buffer::OpenCl(_) => None,
+            Buffer::OpenCl(b) => b.address(),
         }
     }
 
@@ -304,80 +373,113 @@ impl QueueRoot {
     }
 }
 
-/// Launches, copies and fills, in order.
-pub enum ComputeQueue {
+/// What sees every buffer a queue's work reaches, as the work is enqueued, before it can run (decision 0487 step 2):
+/// a kernel's bound and resident buffers, a copy's source and destination, a fill's. The device layer knows nothing
+/// of what memory is; the engine's watch (`rerail_accel::gpu::shared::Queue`) holds the block or pooled lease each
+/// lies in until the work completes.
+pub trait Watch: Send + Sync {
+    /// Work enqueued now reads (`write` false) or writes `buffer`'s memory, `what` the kernel or operation.
+    fn reaches(&self, buffer: &Buffer, write: bool, what: &'static str);
+}
+
+/// Launches, copies and fills, in order, each buffer they reach seen by the queue's watch (`ComputeQueue::watched`).
+pub struct ComputeQueue {
+    kind: QueueKind,
+    watch: Option<std::sync::Arc<dyn Watch>>,
+}
+
+enum QueueKind {
     Native(native::Queue),
     Cpu(cpu::CpuComputeQueue),
     OpenCl(cl::ClComputeQueue),
 }
 
 impl ComputeQueue {
+    /// A queue no watch sees: a test's or a tool's, over its own device and buffers. The engine's work on the
+    /// process's device goes through its watched queue (`rerail_accel::gpu::shared::Queue`).
     pub fn new(root: &QueueRoot) -> Self {
-        match root {
-            QueueRoot::Native(r) => ComputeQueue::Native(native::Queue::new(r)),
-            QueueRoot::Cpu(r) => ComputeQueue::Cpu(cpu::CpuComputeQueue::new(r)),
-            QueueRoot::OpenCl(r) => ComputeQueue::OpenCl(cl::ClComputeQueue::new(r)),
+        let kind = match root {
+            QueueRoot::Native(r) => QueueKind::Native(native::Queue::new(r)),
+            QueueRoot::Cpu(r) => QueueKind::Cpu(cpu::CpuComputeQueue::new(r)),
+            QueueRoot::OpenCl(r) => QueueKind::OpenCl(cl::ClComputeQueue::new(r)),
+        };
+        ComputeQueue { kind, watch: None }
+    }
+
+    /// A queue whose every reach of a buffer `watch` sees first.
+    pub fn watched(root: &QueueRoot, watch: std::sync::Arc<dyn Watch>) -> Self {
+        ComputeQueue { watch: Some(watch), ..ComputeQueue::new(root) }
+    }
+
+    fn sees(&self, buffer: &Buffer, write: bool, what: &'static str) {
+        if let Some(w) = &self.watch {
+            w.reaches(buffer, write, what);
         }
     }
 
     pub fn new_bind_context<'a>(&'a self, function: &'a ComputeFunction) -> BindContext<'a> {
-        match (self, function) {
-            (ComputeQueue::Native(q), ComputeFunction::Native(f)) => BindContext::Native(q.new_bind_context(f)),
-            (ComputeQueue::Cpu(q), ComputeFunction::Cpu(f)) => BindContext::Cpu(q.new_bind_context(f)),
-            (ComputeQueue::OpenCl(q), ComputeFunction::OpenCl(f)) => BindContext::OpenCl(q.new_bind_context(f)),
+        let kind = match (&self.kind, function) {
+            (QueueKind::Native(q), ComputeFunction::Native(f)) => BindKind::Native(q.new_bind_context(f)),
+            (QueueKind::Cpu(q), ComputeFunction::Cpu(f)) => BindKind::Cpu(q.new_bind_context(f)),
+            (QueueKind::OpenCl(q), ComputeFunction::OpenCl(f)) => BindKind::OpenCl(q.new_bind_context(f)),
             _ => other(),
-        }
+        };
+        BindContext { kind, watch: self.watch.as_deref(), args: function.get_argument_info() }
     }
 
     pub fn enqueue_copy_from_host(&self, dst: &Buffer, dst_offset: u64, bytes: &[u8]) {
-        match (self, dst) {
-            (ComputeQueue::Native(q), Buffer::Native(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
-            (ComputeQueue::Cpu(q), Buffer::Cpu(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
-            (ComputeQueue::OpenCl(q), Buffer::OpenCl(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
+        self.sees(dst, true, "a copy from the host");
+        match (&self.kind, dst) {
+            (QueueKind::Native(q), Buffer::Native(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
+            (QueueKind::Cpu(q), Buffer::Cpu(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
+            (QueueKind::OpenCl(q), Buffer::OpenCl(d)) => q.enqueue_copy_from_host(d, dst_offset, bytes),
             _ => other(),
         }
     }
 
     pub fn enqueue_fill_array<T: crate::Pod>(&self, dst: &Buffer, value: &T, offset: usize, count: Option<usize>) {
-        match (self, dst) {
-            (ComputeQueue::Native(q), Buffer::Native(d)) => q.enqueue_fill_array(d, value, offset, count),
-            (ComputeQueue::Cpu(q), Buffer::Cpu(d)) => q.enqueue_fill_array(d, value, offset, count),
-            (ComputeQueue::OpenCl(q), Buffer::OpenCl(d)) => q.enqueue_fill_array(d, value, offset, count),
+        self.sees(dst, true, "a fill");
+        match (&self.kind, dst) {
+            (QueueKind::Native(q), Buffer::Native(d)) => q.enqueue_fill_array(d, value, offset, count),
+            (QueueKind::Cpu(q), Buffer::Cpu(d)) => q.enqueue_fill_array(d, value, offset, count),
+            (QueueKind::OpenCl(q), Buffer::OpenCl(d)) => q.enqueue_fill_array(d, value, offset, count),
             _ => other(),
         }
     }
 
     pub fn enqueue_copy_between_device_regions(&self, src: &Buffer, dst: &Buffer, src_offset: u64, dst_offset: u64, length: u64) {
-        match (self, src, dst) {
-            (ComputeQueue::Native(q), Buffer::Native(s), Buffer::Native(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
-            (ComputeQueue::Cpu(q), Buffer::Cpu(s), Buffer::Cpu(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
-            (ComputeQueue::OpenCl(q), Buffer::OpenCl(s), Buffer::OpenCl(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
+        self.sees(src, false, "a copy's source");
+        self.sees(dst, true, "a copy's destination");
+        match (&self.kind, src, dst) {
+            (QueueKind::Native(q), Buffer::Native(s), Buffer::Native(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
+            (QueueKind::Cpu(q), Buffer::Cpu(s), Buffer::Cpu(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
+            (QueueKind::OpenCl(q), Buffer::OpenCl(s), Buffer::OpenCl(d)) => q.enqueue_copy_between_device_regions(s, d, src_offset, dst_offset, length),
             _ => other(),
         }
     }
 
     pub fn wait_for_event(&self, event: &SharedEvent, value: u64) {
-        match (self, event) {
-            (ComputeQueue::Native(q), SharedEvent::Native(e)) => q.wait_for_event(e, value),
-            (ComputeQueue::Cpu(q), SharedEvent::Cpu(e)) => q.wait_for_event(e, value),
-            (ComputeQueue::OpenCl(q), SharedEvent::OpenCl(e)) => q.wait_for_event(e, value),
+        match (&self.kind, event) {
+            (QueueKind::Native(q), SharedEvent::Native(e)) => q.wait_for_event(e, value),
+            (QueueKind::Cpu(q), SharedEvent::Cpu(e)) => q.wait_for_event(e, value),
+            (QueueKind::OpenCl(q), SharedEvent::OpenCl(e)) => q.wait_for_event(e, value),
             _ => other(),
         }
     }
 
     pub fn flush(&mut self) -> ComputeEvent {
-        match self {
-            ComputeQueue::Native(q) => ComputeEvent::Native(q.flush()),
-            ComputeQueue::Cpu(q) => ComputeEvent::Cpu(q.flush()),
-            ComputeQueue::OpenCl(q) => ComputeEvent::OpenCl(q.flush()),
+        match &mut self.kind {
+            QueueKind::Native(q) => ComputeEvent::Native(q.flush()),
+            QueueKind::Cpu(q) => ComputeEvent::Cpu(q.flush()),
+            QueueKind::OpenCl(q) => ComputeEvent::OpenCl(q.flush()),
         }
     }
 
     pub fn finish(self) -> Result<(), String> {
-        match self {
-            ComputeQueue::Native(q) => q.finish(),
-            ComputeQueue::Cpu(q) => q.finish(),
-            ComputeQueue::OpenCl(q) => q.finish(),
+        match self.kind {
+            QueueKind::Native(q) => q.finish(),
+            QueueKind::Cpu(q) => q.finish(),
+            QueueKind::OpenCl(q) => q.finish(),
         }
     }
 }
@@ -469,6 +571,16 @@ impl ComputeFunction {
         }
     }
 
+    /// The most threads a threadgroup of the kernel may have, as its pipeline says (Metal's); `None` where the
+    /// backend does not say.
+    pub fn max_threads_per_group(&self) -> Option<u64> {
+        match self {
+            #[cfg(target_os = "macos")]
+            ComputeFunction::Native(f) => Some(f.compute_pipeline_state.max_total_threads_per_threadgroup()),
+            _ => None,
+        }
+    }
+
     pub fn get_argument_info(&self) -> &[GridComputeFunctionArgument] {
         match self {
             ComputeFunction::Native(f) => f.get_argument_info(),
@@ -487,30 +599,50 @@ impl ComputeFunction {
     }
 }
 
-/// One launch's arguments.
-pub enum BindContext<'a> {
+/// One launch's arguments, each buffer seen by its queue's watch as it is bound: read or written as the kernel
+/// declares the row (`MemoryRegionAccess`).
+pub struct BindContext<'a> {
+    kind: BindKind<'a>,
+    watch: Option<&'a dyn Watch>,
+    args: &'a [GridComputeFunctionArgument],
+}
+
+impl BindContext<'_> {
+    fn sees(&self, arg_num: u64, buffer: &Buffer) {
+        if let Some(w) = self.watch {
+            let row = self.args.iter().find(|a| a.compute_function_arg_index == arg_num);
+            let write = row.is_none_or(|a| a.ty.access != MemoryRegionAccess::Read);
+            w.reaches(buffer, write, if row.is_some() { "a kernel's buffer row" } else { "a kernel's row it does not declare" });
+        }
+    }
+}
+
+enum BindKind<'a> {
     #[cfg(target_os = "macos")]
     Native(crate::compute_kernel_metal::MetalBindContext),
     #[cfg(target_os = "linux")]
     Native(crate::compute_kernel_cuda::CudaBindContext<'a>),
+    #[cfg(windows)]
+    Native(native::BindContext<'a>),
     Cpu(cpu::CpuBindContext<'a>),
     OpenCl(cl::ClBindContext<'a>),
 }
 
 impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
     fn set_primitive(&mut self, arg_num: u64, bytes: &[u8]) {
-        match self {
-            BindContext::Native(c) => c.set_primitive(arg_num, bytes),
-            BindContext::Cpu(c) => c.set_primitive(arg_num, bytes),
-            BindContext::OpenCl(c) => c.set_primitive(arg_num, bytes),
+        match &mut self.kind {
+            BindKind::Native(c) => c.set_primitive(arg_num, bytes),
+            BindKind::Cpu(c) => c.set_primitive(arg_num, bytes),
+            BindKind::OpenCl(c) => c.set_primitive(arg_num, bytes),
         }
     }
 
     fn set_buffer(&mut self, arg_num: u64, buffer: &BufferRef) {
-        match (self, buffer) {
-            (BindContext::Native(c), Buffer::Native(b)) => c.set_buffer(arg_num, b),
-            (BindContext::Cpu(c), Buffer::Cpu(b)) => c.set_buffer(arg_num, b),
-            (BindContext::OpenCl(c), Buffer::OpenCl(b)) => c.set_buffer(arg_num, b),
+        self.sees(arg_num, buffer);
+        match (&mut self.kind, buffer) {
+            (BindKind::Native(c), Buffer::Native(b)) => c.set_buffer(arg_num, b),
+            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.set_buffer(arg_num, b),
+            (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.set_buffer(arg_num, b),
             _ => other(),
         }
     }
@@ -519,47 +651,63 @@ impl crate::compute_kernel_grid::GridBindContext for BindContext<'_> {
         if offset > buffer.length() {
             return Err(format!("argument {arg_num} bound at byte {offset} of a {}-byte buffer", buffer.length()));
         }
-        match (self, buffer) {
-            (BindContext::Native(c), Buffer::Native(b)) => c.set_buffer_at(arg_num, b, offset),
-            (BindContext::Cpu(c), Buffer::Cpu(b)) => c.set_buffer_at(arg_num, b, offset),
-            (BindContext::OpenCl(c), Buffer::OpenCl(b)) => c.set_buffer_at(arg_num, b, offset),
+        self.sees(arg_num, buffer);
+        match (&mut self.kind, buffer) {
+            (BindKind::Native(c), Buffer::Native(b)) => c.set_buffer_at(arg_num, b, offset),
+            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.set_buffer_at(arg_num, b, offset),
+            (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.set_buffer_at(arg_num, b, offset),
             _ => other(),
         }
     }
 
     fn set_thread_group_memory(&mut self, arg_num: u64, n_bytes: u64) {
-        match self {
-            BindContext::Native(c) => c.set_thread_group_memory(arg_num, n_bytes),
-            BindContext::Cpu(c) => c.set_thread_group_memory(arg_num, n_bytes),
-            BindContext::OpenCl(c) => c.set_thread_group_memory(arg_num, n_bytes),
+        match &mut self.kind {
+            BindKind::Native(c) => c.set_thread_group_memory(arg_num, n_bytes),
+            BindKind::Cpu(c) => c.set_thread_group_memory(arg_num, n_bytes),
+            BindKind::OpenCl(c) => c.set_thread_group_memory(arg_num, n_bytes),
         }
     }
 
     fn launch(&mut self, grid: &[u64], block: &[u64]) -> Result<(), String> {
-        match self {
-            BindContext::Native(c) => c.launch(grid, block),
-            BindContext::Cpu(c) => c.launch(grid, block),
-            BindContext::OpenCl(c) => c.launch(grid, block),
+        match &mut self.kind {
+            BindKind::Native(c) => c.launch(grid, block),
+            BindKind::Cpu(c) => c.launch(grid, block),
+            BindKind::OpenCl(c) => c.launch(grid, block),
         }
     }
 
+    fn use_buffer_read(&mut self, buffer: &BufferRef) {
+        if let Some(w) = self.watch {
+            w.reaches(buffer, false, "a resident buffer read");
+        }
+        let watch = self.watch.take();
+        self.use_buffer(buffer);
+        self.watch = watch;
+    }
+
     fn use_buffer(&mut self, buffer: &BufferRef) {
-        match (self, buffer) {
-            (BindContext::Native(c), Buffer::Native(b)) => c.use_buffer(b),
-            (BindContext::Cpu(c), Buffer::Cpu(b)) => c.use_buffer(b),
-            (BindContext::OpenCl(c), Buffer::OpenCl(b)) => c.use_buffer(b),
+        if let Some(w) = self.watch {
+            w.reaches(buffer, true, "a resident buffer");
+        }
+        match (&mut self.kind, buffer) {
+            (BindKind::Native(c), Buffer::Native(b)) => c.use_buffer(b),
+            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.use_buffer(b),
+            (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.use_buffer(b),
             _ => other(),
         }
     }
 
     fn launch_indirect(&mut self, groups: &BufferRef, offset: u64, max_groups: &[u64], block: &[u64]) -> Result<(), String> {
-        if offset % 4 != 0 || offset + 12 > groups.length() {
+        if !offset.is_multiple_of(4) || offset + 12 > groups.length() {
             return Err(format!("an indirect launch's counts at byte {offset} of a {}-byte buffer", groups.length()));
         }
-        match (self, groups) {
-            (BindContext::Native(c), Buffer::Native(b)) => c.launch_indirect(b, offset, max_groups, block),
-            (BindContext::Cpu(c), Buffer::Cpu(b)) => c.launch_indirect(b, offset, max_groups, block),
-            (BindContext::OpenCl(c), Buffer::OpenCl(b)) => c.launch_indirect(b, offset, max_groups, block),
+        if let Some(w) = self.watch {
+            w.reaches(groups, false, "an indirect launch's counts");
+        }
+        match (&mut self.kind, groups) {
+            (BindKind::Native(c), Buffer::Native(b)) => c.launch_indirect(b, offset, max_groups, block),
+            (BindKind::Cpu(c), Buffer::Cpu(b)) => c.launch_indirect(b, offset, max_groups, block),
+            (BindKind::OpenCl(c), Buffer::OpenCl(b)) => c.launch_indirect(b, offset, max_groups, block),
             _ => other(),
         }
     }

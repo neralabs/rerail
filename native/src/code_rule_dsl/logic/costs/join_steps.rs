@@ -17,7 +17,9 @@ const KEPT: i64 = 400_000;
 /// The recent steps a comparison reads.
 pub const READ: i64 = 200_000;
 
-static QUEUE: Mutex<Vec<StepSample>> = Mutex::new(Vec::new());
+/// The steps queued for the machine's cost store (decision 0442: the machine's, as the learned model is).
+#[derive(Default)]
+struct StepQueue(Mutex<Vec<StepSample>>);
 
 /// Whether steps are kept: the cost statistics have a store (not `RERAIL_COSTS=off`, not a test).
 pub fn enabled() -> bool {
@@ -29,14 +31,15 @@ pub fn submit(steps: Vec<StepSample>) {
     if steps.is_empty() {
         return;
     }
-    let mut q = QUEUE.lock();
+    let queue = crate::code_rule_dsl::logic::profile::machine::<StepQueue>();
+    let mut q = queue.0.lock();
     let room = QUEUE_LIMIT.saturating_sub(q.len());
     q.extend(steps.into_iter().take(room));
 }
 
 /// The steps queued since the last write.
 pub fn take() -> Vec<StepSample> {
-    std::mem::take(&mut *QUEUE.lock())
+    std::mem::take(&mut *crate::code_rule_dsl::logic::profile::machine::<StepQueue>().0.lock())
 }
 
 pub fn create(db: &Connection) -> rusqlite::Result<()> {
@@ -122,19 +125,6 @@ pub fn category(text: &str, words: usize) -> String {
     if s.is_empty() { "none".to_owned() } else { s.join(" ") }
 }
 
-#[cfg(test)]
-mod tests {
-    #[test]
-    fn a_steps_record_reads_as_categories() {
-        assert_eq!(super::category("postings", 3), "postings");
-        assert_eq!(super::category("scan of the component", 4), "scan of the component");
-        assert_eq!(super::category("lookup on (c0, c2)", 1), "lookup");
-        assert_eq!(super::category("", 3), "none");
-        // As the search names them for a prediction (decision 0354): the same categories.
-        assert_eq!(super::category("range in document on (c1)", 1), super::category("range", 1));
-        assert_eq!(super::category("assign or test", 1), "assign");
-    }
-}
 
 /// Decision 0354, the model's choice: with `RERAIL_JOIN_MODEL=1`, a join model trained on this machine's stored
 /// steps prices every searched line's candidates (`joins::set_pricer`). Until it is trained, and without it, the
@@ -226,4 +216,18 @@ pub fn install_model(db: &Connection, machine: &str) {
 #[cfg(target_os = "macos")]
 fn rerail_forest_gpu_seconds() -> f64 {
     rerail_accel::join_model::gpu_seconds_awaited()
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn a_steps_record_reads_as_categories() {
+        assert_eq!(super::category("postings", 3), "postings");
+        assert_eq!(super::category("scan of the component", 4), "scan of the component");
+        assert_eq!(super::category("lookup on (c0, c2)", 1), "lookup");
+        assert_eq!(super::category("", 3), "none");
+        // As the search names them for a prediction (decision 0354): the same categories.
+        assert_eq!(super::category("range in document on (c1)", 1), super::category("range", 1));
+        assert_eq!(super::category("assign or test", 1), "assign");
+    }
 }

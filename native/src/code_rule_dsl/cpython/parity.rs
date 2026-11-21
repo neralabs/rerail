@@ -4,7 +4,8 @@
 //!
 //! - `RERAIL_PARITY_PYTHON`: the interpreters, `:`-separated (default `python3`); each is one oracle.
 //! - `RERAIL_PARITY_ROOTS`: the corpora, `:`-separated directories (their `.py` files, `.git`, `node_modules` and
-//!   virtualenvs left out), and `fixtures`: the files of every recorded event (`fixtures/host/data-layer-port`).
+//!   virtualenvs left out), and `fixtures`: the files of every recorded event (the data-layer port's recordings, pack
+//!   test data under `packs/data-layer/upstream/lint/`, which `npm run fixtures:pull` fetches).
 //! - `RERAIL_PARITY_SHOW`: how many differences to print per fact (default 20).
 //!
 //! `cargo test --profile profiling --lib -- cpython::parity --ignored --nocapture`
@@ -68,7 +69,14 @@ fn directory(root: &Path) -> Corpus {
 
 /// The Python files of every recorded event, each distinct (path, source) once, written under a temporary directory.
 fn fixtures() -> Corpus {
-    let port = Path::new(concat!(env!("CARGO_MANIFEST_DIR"), "/../..")).join("../gate/data-layer/fixtures/host/data-layer-port");
+    let relative = "packs/data-layer/upstream/lint/authored/fixtures/host/data-layer-port";
+    // The checkout found as the test runs, not written into the build (decision 0224).
+    let port = rerail_store::source_tree::root().expect("the checkout").join(relative);
+    assert!(
+        port.exists(),
+        "{relative} is missing: pack test data is not in git: run `npm run fixtures:pull` (each tool-pack's archive, \
+         which its test-data.lock pins, from S3) (CONTRIBUTING.md, \"Pack test data\")"
+    );
     let mut sources: BTreeSet<(String, String)> = BTreeSet::new();
     let mut names: Vec<PathBuf> = std::fs::read_dir(&port).unwrap().flatten().map(|e| e.path()).collect();
     names.sort();
@@ -144,7 +152,7 @@ pub(super) fn oracle(python: &str, mode: &str, files: &[(PathBuf, String)]) -> B
 
 /// The files the engine reads (UTF-8) and their text, in parallel.
 pub(super) fn sources(files: &[(PathBuf, String)]) -> Vec<Option<String>> {
-    files.par_iter().map(|(p, _)| std::fs::read(p).ok().and_then(|b| String::from_utf8(b).ok())).collect()
+    crate::code_rule_dsl::logic::profile::on_cores(|| files.par_iter().map(|(p, _)| std::fs::read(p).ok().and_then(|b| String::from_utf8(b).ok())).collect())
 }
 
 /// One count of agreement and its first differences.
@@ -208,11 +216,12 @@ fn syntax_error_parity() {
             let want = oracle(&python, "syntax", &corpus.files);
             let texts = sources(&corpus.files);
             let engine = |s: &str| {
-                super::syntax::syntax_error(s).unwrap_or_else(|r| Some(super::syntax::SyntaxError { line: 1, msg: r.class.to_owned() }))
+                super::syntax::syntax_error(s).unwrap_or_else(|r| Some(super::syntax::SyntaxError { line: 1, msg: r.class.to_owned(), at: None }))
             };
             let got: Vec<Option<(Option<super::syntax::SyntaxError>, bool)>> =
-                texts.par_iter().map(|s| s.as_ref().map(|s| (engine(s), tree_sitter_error(s)))).collect();
+                crate::code_rule_dsl::logic::profile::on_cores(|| texts.par_iter().map(|s| s.as_ref().map(|s| (engine(s), tree_sitter_error(s)))).collect());
             let (mut verdict, mut line, mut msg, mut tree) = (Tally::default(), Tally::default(), Tally::default(), Tally::default());
+            let mut span = Tally::default();
             for (((path, shown), source), got) in corpus.files.iter().zip(&texts).zip(&got) {
                 let (Some(source), Some((got, ts)), Some(row)) = (source, got, want.get(&path.display().to_string())) else { continue };
                 let cpython = row["e"].as_array().map(|e| (e[0].as_u64().map_or(1, |l| l as usize), e[1].as_str().unwrap_or_default().to_owned()));
@@ -222,6 +231,16 @@ fn syntax_error_parity() {
                 if let (Some((l, m)), Some(g)) = (&cpython, got) {
                     line.add(*l == g.line, || format!("{} {}", show_both(), excerpt(source, *l)));
                     msg.add(*m == g.msg, || format!("{} {}", show_both(), excerpt(source, *l)));
+                    // `offset`, `text`, `end_lineno`, `end_offset` (the module's `syntax_error`), where the line and
+                    // the message agree.
+                    if *l == g.line && *m == g.msg {
+                        let e = &row["e"];
+                        let want = (e[0].as_u64(), e[2].as_i64(), e[3].as_str().map(str::to_owned), e[4].as_u64(), e[5].as_i64());
+                        let got = g.at.as_ref().map_or((None, None, None, None, None), |a| {
+                            (Some(a.lineno as u64), Some(a.offset), Some(a.text.clone()), Some(a.end_lineno as u64), Some(a.end_offset))
+                        });
+                        span.add(want == got, || format!("{shown}: {:?}: CPython {want:?}, engine {got:?} {}", g.msg, excerpt(source, *l)));
+                    }
                 }
             }
             let rejected = want.values().filter(|r| r["e"].is_array()).count();
@@ -229,6 +248,7 @@ fn syntax_error_parity() {
             verdict.report("verdict (Ruff)");
             line.report("line, where both reject");
             msg.report("message, where both reject");
+            span.report("offset, text, end, where the line and message agree");
             tree.report("verdict (tree-sitter's ERROR/MISSING)");
         }
     }
@@ -269,19 +289,21 @@ fn string_annotation_parity() {
             let want = oracle(&python, "annotations", &corpus.files);
             let texts = sources(&corpus.files);
             type Engine = Vec<(usize, usize, bool, Vec<String>)>;
-            let got: Vec<Option<Engine>> = corpus
-                .files
-                .par_iter()
-                .zip(&texts)
-                .map(|((_, shown), s)| {
-                    let s = s.as_ref()?;
-                    let file = crate::code_rule_dsl::model::FileInput::new(shown.clone(), "python".to_owned(), std::sync::Arc::new(s.clone()), None, None, "core").ok()?;
-                    let (_, tape) = crate::code_rule_dsl::facts::core::build_with_tape(&file, true).ok()?;
-                    let tape = tape?;
-                    let found = string_annotations(&tape).ok()?;
-                    Some(found.iter().filter(|a| a.outer.is_none()).map(|a| (a.start, a.end, !a.tree.is_error(), if a.tree.is_error() { Vec::new() } else { annotation_names(&a.tree) })).collect())
-                })
-                .collect();
+            let got: Vec<Option<Engine>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+                corpus
+                    .files
+                    .par_iter()
+                    .zip(&texts)
+                    .map(|((_, shown), s)| {
+                        let s = s.as_ref()?;
+                        let file = crate::code_rule_dsl::model::FileInput::new(shown.clone(), "python".to_owned(), std::sync::Arc::new(s.clone()), None, None, "core").ok()?;
+                        let (_, tape) = crate::code_rule_dsl::facts::core::build_with_tape(&file, true).ok()?;
+                        let tape = tape?;
+                        let found = string_annotations(&tape).ok()?;
+                        Some(found.iter().filter(|a| a.outer.is_none()).map(|a| (a.start, a.end, !a.tree.is_error(), if a.tree.is_error() { Vec::new() } else { annotation_names(&a.tree) })).collect())
+                    })
+                    .collect()
+            });
             let (mut verdict, mut names, mut at_verdict, mut at_names) = (Tally::default(), Tally::default(), Tally::default(), Tally::default());
             // `unmatched`: the engine's annotations that are no str Constant; `oracle_only`: the oracle's strings at an
             // annotation that the engine does not read as type definitions. Both only listed (equal counts nothing).
@@ -370,7 +392,7 @@ fn literal_json_parity() {
         for corpus in corpora() {
             let want = oracle(&python, "literals", &corpus.files);
             let texts = sources(&corpus.files);
-            let got: Vec<Option<Vec<super::literal::Literal>>> = texts.par_iter().map(|s| s.as_deref().map(literals)).collect();
+            let got: Vec<Option<Vec<super::literal::Literal>>> = crate::code_rule_dsl::logic::profile::on_cores(|| texts.par_iter().map(|s| s.as_deref().map(literals)).collect());
             let (mut all, mut valued) = (Tally::default(), Tally::default());
             for (((path, shown), source), got) in corpus.files.iter().zip(&texts).zip(&got) {
                 let (Some(source), Some(got), Some(row)) = (source, got, want.get(&path.display().to_string())) else { continue };
@@ -429,57 +451,59 @@ fn printed_parity() {
         for corpus in corpora() {
             let want = oracle(&python, "ast", &corpus.files);
             // nodes, unparse, unparse with a text, unparse with a lone surrogate, dump_sha256, body_sha256, signature_sha256.
-            let tallies: Vec<[Tally; 7]> = corpus
-                .files
-                .par_iter()
-                .filter_map(|(path, shown)| {
-                    let source = std::fs::read(path).ok().and_then(|b| String::from_utf8(b).ok())?;
-                    let rows = want.get(&path.display().to_string())?["n"].as_array()?;
-                    let got = printed(&source, want_all);
-                    let mut engine: BTreeMap<(u32, u32, &str), &Printed> = BTreeMap::new();
-                    for p in &got {
-                        engine.entry((p.start, p.end, p.class)).or_insert(p);
-                    }
-                    let mut t: [Tally; 7] = Default::default();
-                    let mut seen = BTreeSet::new();
-                    for r in rows {
-                        let class = r[2].as_str().unwrap();
-                        let key = (r[0].as_u64().unwrap() as u32, r[1].as_u64().unwrap() as u32, class);
-                        if !seen.insert(key) {
-                            continue;
+            let tallies: Vec<[Tally; 7]> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+                corpus
+                    .files
+                    .par_iter()
+                    .filter_map(|(path, shown)| {
+                        let source = std::fs::read(path).ok().and_then(|b| String::from_utf8(b).ok())?;
+                        let rows = want.get(&path.display().to_string())?["n"].as_array()?;
+                        let got = printed(&source, want_all);
+                        let mut engine: BTreeMap<(u32, u32, &str), &Printed> = BTreeMap::new();
+                        for p in &got {
+                            engine.entry((p.start, p.end, p.class)).or_insert(p);
                         }
-                        let text = || source.get(key.0 as usize..key.1 as usize).unwrap_or("?").chars().take(160).collect::<String>();
-                        let at = || format!("{shown}@{} {class} {:?}", key.0, text());
-                        let e = engine.get(&key).copied();
-                        t[0].add(e.is_some(), || format!("{}: no engine node", at()));
-                        let Some(e) = e else { continue };
-                        let unparsed = matches!(class, "keyword" | "arg" | "alias") || super::unparse::is_expr(class);
-                        if unparsed && let Some(surrogates) = r[3].get("surrogates") {
-                            let g = e.unparse.as_deref();
-                            t[3].add(g.is_none(), || format!("{}: CPython {surrogates}, engine {g:?}", at()));
-                        } else if unparsed {
-                            let (c, g) = (r[3].as_str(), e.unparse.as_deref());
-                            let diff = || format!("{}: CPython {c:?}, engine {g:?}", at());
-                            t[1].add(c == g, diff);
-                            if c.is_some() || g.is_some() {
-                                t[2].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
+                        let mut t: [Tally; 7] = Default::default();
+                        let mut seen = BTreeSet::new();
+                        for r in rows {
+                            let class = r[2].as_str().unwrap();
+                            let key = (r[0].as_u64().unwrap() as u32, r[1].as_u64().unwrap() as u32, class);
+                            if !seen.insert(key) {
+                                continue;
+                            }
+                            let text = || source.get(key.0 as usize..key.1 as usize).unwrap_or("?").chars().take(160).collect::<String>();
+                            let at = || format!("{shown}@{} {class} {:?}", key.0, text());
+                            let e = engine.get(&key).copied();
+                            t[0].add(e.is_some(), || format!("{}: no engine node", at()));
+                            let Some(e) = e else { continue };
+                            let unparsed = matches!(class, "keyword" | "arg" | "alias") || super::unparse::is_expr(class);
+                            if unparsed && let Some(surrogates) = r[3].get("surrogates") {
+                                let g = e.unparse.as_deref();
+                                t[3].add(g.is_none(), || format!("{}: CPython {surrogates}, engine {g:?}", at()));
+                            } else if unparsed {
+                                let (c, g) = (r[3].as_str(), e.unparse.as_deref());
+                                let diff = || format!("{}: CPython {c:?}, engine {g:?}", at());
+                                t[1].add(c == g, diff);
+                                if c.is_some() || g.is_some() {
+                                    t[2].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
+                                }
+                            }
+                            let (c, g) = (r[4].as_str(), e.dump_sha256.as_deref());
+                            t[4].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
+                            if matches!(class, "FunctionDef" | "AsyncFunctionDef") {
+                                let (c, g) = (r[5].as_str(), e.body_sha256.as_deref());
+                                t[5].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
+                                let (c, g) = (r[6].as_str(), e.signature_sha256.as_deref());
+                                t[6].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
                             }
                         }
-                        let (c, g) = (r[4].as_str(), e.dump_sha256.as_deref());
-                        t[4].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
-                        if matches!(class, "FunctionDef" | "AsyncFunctionDef") {
-                            let (c, g) = (r[5].as_str(), e.body_sha256.as_deref());
-                            t[5].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
-                            let (c, g) = (r[6].as_str(), e.signature_sha256.as_deref());
-                            t[6].add(c == g, || format!("{}: CPython {c:?}, engine {g:?}", at()));
+                        for key in engine.keys().filter(|k| !seen.contains(*k)) {
+                            t[0].add(false, || format!("{shown}@{} {}: engine node at no CPython node", key.0, key.2));
                         }
-                    }
-                    for key in engine.keys().filter(|k| !seen.contains(*k)) {
-                        t[0].add(false, || format!("{shown}@{} {}: engine node at no CPython node", key.0, key.2));
-                    }
-                    Some(t)
-                })
-                .collect();
+                        Some(t)
+                    })
+                    .collect()
+            });
             let mut total: [Tally; 7] = Default::default();
             for t in tallies {
                 for (a, b) in total.iter_mut().zip(t) {

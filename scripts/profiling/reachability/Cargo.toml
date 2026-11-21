@@ -13,6 +13,8 @@ crate-type = ["cdylib", "rlib"]
 [features]
 default = ["extension"]
 extension = ["rusqlite/loadable_extension"]
+# The engine's feature that compiles the tracer's tests outside `cfg(test)`; the lab tests under `cfg(test)`.
+test-hooks = []
 
 [dependencies]
 rusqlite = { version = "=0.41.1", features = ["functions", "vtab", "modern_sqlite"] }
@@ -24,6 +26,7 @@ regex = "=1.13.1"
 libc = "0.2"
 parking_lot = "0.12"
 rusqlite = { version = "=0.41.1", features = ["bundled", "hooks"] }
+serde = "1.0"
 tempfile = "=3.27.0"
 
 [profile.release]

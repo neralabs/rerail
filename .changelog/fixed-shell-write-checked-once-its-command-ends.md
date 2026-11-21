@@ -1,0 +1,1 @@
+A file a shell command was still writing, found by a check that ran meanwhile (another command's result, or a quiet session opened again), was checked half-written as the agent's edit, or its change logged as another program's. Code rules now check such a file once its command ends, against the text from before the command.

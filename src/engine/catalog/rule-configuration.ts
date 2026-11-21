@@ -10,6 +10,7 @@ import {
   folderContains,
   normalizeFolder,
   type RuleCatalog,
+  type RrPolicySource,
   type CheckoutContext,
   type CheckoutRuleSet,
   type Decider,
@@ -54,24 +55,30 @@ function insertAttachment(db: Queries, attachment: RuleAttachment, now: number):
     .run();
 }
 
+/** Option values as a row stores them: none (`null`) for no options. */
+const storedConfig = (config: RuleConfig | null | undefined): RuleConfig | null =>
+  (config === undefined || config === null || Object.keys(config).length === 0 ? null : config);
+
+/**
+ * Writes `setting`'s row, or deletes it when every field is null. The row takes `setting.origin`, null when omitted:
+ * a write that does not say the lint config gave it (the dashboard, the API, MCP) makes the row a person's.
+ */
 function writeSetting(db: Queries, setting: RuleSetting, now: number): void {
   const { ownerKind, ownerId } = ownerColumns(setting.owner);
-  const folder = normalizeFolder(setting.folder);
-  const suppressions = setting.suppressions ?? null;
-  const config = setting.config === undefined || setting.config === null || Object.keys(setting.config).length === 0 ? null : setting.config;
-  if (setting.on === null && setting.mode === null && suppressions === null && config === null) {
+  const key = { ownerKind, ownerId, folder: normalizeFolder(setting.folder), targetKind: setting.targetKind, targetId: setting.targetId };
+  const values = { on: setting.on, mode: setting.mode, suppressions: setting.suppressions ?? null, config: storedConfig(setting.config), origin: setting.origin ?? null };
+  if (values.on === null && values.mode === null && values.suppressions === null && values.config === null) {
     db.delete(ruleSettings).where(and(
-      eq(ruleSettings.ownerKind, ownerKind),
-      eq(ruleSettings.ownerId, ownerId),
-      eq(ruleSettings.folder, folder),
-      eq(ruleSettings.targetKind, setting.targetKind),
-      eq(ruleSettings.targetId, setting.targetId),
+      eq(ruleSettings.ownerKind, key.ownerKind),
+      eq(ruleSettings.ownerId, key.ownerId),
+      eq(ruleSettings.folder, key.folder),
+      eq(ruleSettings.targetKind, key.targetKind),
+      eq(ruleSettings.targetId, key.targetId),
     )).run();
     return;
   }
-  const values = { on: setting.on, mode: setting.mode, suppressions, config };
   db.insert(ruleSettings)
-    .values({ ownerKind, ownerId, folder, targetKind: setting.targetKind, targetId: setting.targetId, ...values, updatedAt: now })
+    .values({ ...key, ...values, updatedAt: now })
     .onConflictDoUpdate({
       target: [ruleSettings.ownerKind, ruleSettings.ownerId, ruleSettings.folder, ruleSettings.targetKind, ruleSettings.targetId],
       set: { ...values, updatedAt: now },
@@ -319,9 +326,7 @@ class ConfigurationResolver {
     return present;
   }
 
-  #decide<T>(presence: Presence, path: string, field: (setting: SettingRow) => T | null): { value: T; decider: Decider } | undefined {
-    const id = presence.document.rule.id;
-    const packId = presence.source.packId;
+  #decide<T>(id: string, packId: string | null, path: string, field: (setting: SettingRow) => T | null): { value: T; decider: Decider } | undefined {
     for (const owner of this.#owners) {
       for (const setting of this.#settingsByOwner.get(`${owner.kind}\0${owner.id}`) ?? []) {
         const targets = setting.targetKind === "rule" ? setting.targetId === id : packId !== null && setting.targetId === packId;
@@ -331,6 +336,12 @@ class ConfigurationResolver {
       }
     }
     return undefined;
+  }
+
+  rrMode(policy: RrPolicySource, path: string, packId: string | null): RuleMode | null {
+    if (this.#decide(policy.id, packId, path, setting => setting.on)?.value === false) return null;
+    if (!this.#approvals.has(approvalKey(ruleSubject(policy.id, policy.payloadHash)))) return "log";
+    return this.#decide(policy.id, packId, path, setting => setting.mode)?.value ?? policy.mode;
   }
 
   /**
@@ -371,11 +382,12 @@ class ConfigurationResolver {
   #effective(presence: Presence, path: string): EffectiveRule {
     const { packRule } = presence;
     const packId = presence.source.packId;
+    const id = presence.document.rule.id;
     const start = packRule === null || packId === null ? undefined : { rule: packRule, decider: { by: "pack-start", packId } as Decider };
     const ruleDefault: Decider = { by: "rule-default" };
-    const on = this.#decide<boolean>(presence, path, setting => setting.on)
+    const on = this.#decide<boolean>(id, packId, path, setting => setting.on)
       ?? (start === undefined ? { value: true, decider: ruleDefault } : { value: start.rule.on, decider: start.decider });
-    const configuredMode = this.#decide<RuleMode>(presence, path, setting => setting.mode)
+    const configuredMode = this.#decide<RuleMode>(id, packId, path, setting => setting.mode)
       ?? (start === undefined ? { value: presence.document.rule.mode, decider: ruleDefault } : { value: start.rule.mode, decider: start.decider });
     const subject = this.#approvalSubject(presence);
     const approval = subject === undefined ? undefined : { subject, approved: this.#approvals.has(approvalKey(subject)) };
@@ -384,7 +396,7 @@ class ConfigurationResolver {
       ? { value: "log" as RuleMode, decider: { by: "awaiting-approval" } as Decider }
       : configuredMode;
     const pack = packId === null ? undefined : this.#ruleCatalog.packs.get(packId);
-    const suppressions = this.#decide<RuleSuppressions>(presence, path, setting => setting.suppressions)
+    const suppressions = this.#decide<RuleSuppressions>(id, packId, path, setting => setting.suppressions)
       ?? (start === undefined || pack === undefined
         ? { value: "honour", decider: ruleDefault }
         : { value: pack.honourSuppressionComments ? "honour" : "ignore", decider: start.decider });
@@ -417,6 +429,15 @@ function deciderOf(owner: Owner, setting: SettingRow): Decider {
 
 function ownersOf(repositoryKey: RepositoryKey, checkoutPaths: readonly string[]): Owner[] {
   return [...checkoutPaths.map((id): Owner => ({ kind: "checkout", id })), { kind: "repository", id: repositoryKey }];
+}
+
+export function resolveRrModes(db: RerailDatabase, catalog: RuleCatalog, checkout: CheckoutContext, parents: readonly string[], fromRef = false) {
+  const paths = [checkout.checkoutPath, ...parents];
+  const rows = readRows(db, catalog, checkout.repositoryKey, paths);
+  const resolver = new ConfigurationResolver(catalog, rows, ownersOf(checkout.repositoryKey, paths));
+  const folders = ["", ...new Set(rows.settings.map(setting => setting.folder))];
+  const at = (policy: RrPolicySource, path: string): RuleMode | null => resolver.rrMode(policy, normalizeFolder(path), fromRef ? null : WORKTREE_PACK_ID);
+  return { at, enabled: (policy: RrPolicySource) => folders.some(folder => at(policy, folder) !== null) };
 }
 
 /**

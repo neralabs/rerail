@@ -133,6 +133,14 @@ impl<B: GridBindContext> Launch<'_, B> {
         self
     }
 
+    /// A value row (`ARGS`) from its bytes, laid out as the kernel's struct (a value a plan keeps as bytes).
+    pub fn bytes(mut self, name: &str, bytes: &[u8]) -> Self {
+        if let Some(i) = self.index(name) {
+            self.ctx.set_primitive(i, bytes);
+        }
+        self
+    }
+
     /// Threadgroup memory for a `RWLOCAL` row.
     pub fn local(mut self, name: &str, bytes: u64) -> Self {
         if let Some(i) = self.index(name) {
@@ -144,6 +152,12 @@ impl<B: GridBindContext> Launch<'_, B> {
     /// A buffer the kernel reaches through an address another buffer holds (`Buffer::device_address`).
     pub fn uses(mut self, buffer: &BufferRef) -> Self {
         self.ctx.use_buffer(buffer);
+        self
+    }
+
+    /// `uses` of a buffer the kernel only reads through the address (a view's directory, a slab).
+    pub fn uses_read(mut self, buffer: &BufferRef) -> Self {
+        self.ctx.use_buffer_read(buffer);
         self
     }
 

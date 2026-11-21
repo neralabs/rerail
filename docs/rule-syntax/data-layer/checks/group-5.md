@@ -1,4 +1,4 @@
-# Group 5: what .rr lacks for twenty data-layer checks
+# Group 5: what .rerail lacks for twenty data-layer checks
 
 Oracle: scripts at revision 2b1504ad. Each check lists what it computes, its inputs, and its needs, tagged EXISTS / LIB / NATIVE / LANG / POLICY. Line citations are `script.py:LINE` in that revision.
 
@@ -73,7 +73,7 @@ Oracle: scripts at revision 2b1504ad. Each check lists what it computes, its inp
     against a canonical message `{"counts":…, "linter":"system-session-scope","version":1}` (sort_keys) with a fixed
     Ed25519 public key (lines 499-528, 714-751). Outcome codes `missing_baseline`, `invalid_baseline_signature`,
     `baseline_increase`, each one finding at the baseline file line 1, the last carrying a per-category diff message
-    (lines 609-629). Inline budget numbers (as swallowed-exceptions.rr does) lose the signature check; `signed_list` is a
+    (lines 609-629). Inline budget numbers (as swallowed-exceptions.rerail does) lose the signature check; `signed_list` is a
     list, not counts.
 - **Hard parts:** `SCOPE_MARKERS` is empty (line 113) and `_module_docstring_end` is never set, so "enclosing scope
   marker" is dead code: every non-exempt call counts. The `system_grant.py`/`_grants.py` exemption and source-trigger gate
@@ -106,7 +106,7 @@ Oracle: scripts at revision 2b1504ad. Each check lists what it computes, its inp
 - **Hard parts:** `ast.Constant` visits f-string literal parts, so `f"RUNNING_TESTS{x}"` matches SGB003 (lines 155-160);
   tree-sitter has `string_content` children there. `on_Name` only checks `_enable_test_mode`/`_ENFORCEMENT_MODE`, so a
   later use of `_reset_used_nonces` is not reported, only its def and import. `setattr` needs `args[1]` positional
-  (`call_arg(c, 1, "", v)`; calls.rr's posarg index quirk, OPEN-ISSUES calls #8, applies). No `system_grant.py` exists
+  (`call_arg(c, 1, "", v)`; calls.rerail's posarg index quirk, OPEN-ISSUES calls #8, applies). No `system_grant.py` exists
   at this revision, so SGB003 is currently dead.
 
 ### module_level_caches (hard-fail, 868 lines)
@@ -364,7 +364,7 @@ Oracle: scripts at revision 2b1504ad. Each check lists what it computes, its inp
   `ALLOWLISTED_CLASSES` can hide or replace the owner's count; only the CLI checks ownership (:306-320). In Datalog
   "last" needs an order over (path, offset): text order on paths (NEEDS.md assumes `<` on symbols) plus `!` on a
   later fact says it, if the engine's file order is path order. Assignments anywhere count, nested in functions
-  included; tuple targets do not. Once those grammar linters are themselves `.rr` policies whose allowlists are
+  included; tuple targets do not. Once those grammar linters are themselves `.rerail` policies whose allowlists are
   `signed_list` or `.input` files, this check becomes a count over those inputs instead of Python AST.
 
 ### polymorphic_tripwires (hard-fail, 684 lines)

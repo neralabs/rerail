@@ -1,5 +1,5 @@
 //! `clang -E`'s profile, shared by the oracle (`examples/pp_oracle.rs`) and the parallel spike's
-//! corpus test (decision 0327, "Correctness"; 0421). The profile is clang's own: its predefined
+//! corpus test (decision 0327, "Correctness"; 0482). The profile is clang's own: its predefined
 //! macros (`clang -dM -E`), its search path (`clang -E -v`), and its answers to the `__has_*` tests
 //! the pass asks (probed, and kept for the run).
 //!
@@ -49,8 +49,14 @@ pub fn clang(args: &[&str], input: Option<&[u8]>) -> (bool, Vec<u8>, Vec<u8>) {
     (o.status.success(), o.stdout, o.stderr)
 }
 
+/// What clang predefines for a language: its macros (name, body) and its search path.
+pub struct Predefined {
+    pub defs: Vec<(String, Option<String>)>,
+    pub dirs: Vec<(String, DirKind)>,
+}
+
 /// clang's predefined macros and search path.
-pub fn profile(lang: &Lang) -> (Vec<(String, Option<String>)>, Vec<(String, DirKind)>) {
+pub fn profile(lang: &Lang) -> Predefined {
     let mut a = lang.args.clone();
     a.extend(["-dM", "-E", "-"]);
     let (_, out, _) = clang(&a, Some(b""));
@@ -92,7 +98,7 @@ pub fn profile(lang: &Lang) -> (Vec<(String, Option<String>)>, Vec<(String, DirK
             }
         }
     }
-    (defs, dirs)
+    Predefined { defs, dirs }
 }
 
 /// clang's values of `tests` (`(builtin, operand)`), each line its own: a test clang does not
@@ -109,10 +115,10 @@ pub fn probe(lang: &Lang, tests: &[(String, String)]) -> Vec<i64> {
     for l in String::from_utf8_lossy(&out).lines() {
         let Some(rest) = l.trim().strip_prefix("__rr_probe_") else { continue };
         let Some((k, v)) = rest.split_once(' ') else { continue };
-        if let (Ok(k), Ok(v)) = (k.parse::<usize>(), v.trim().parse::<i64>()) {
-            if k < vals.len() {
-                vals[k] = v;
-            }
+        if let (Ok(k), Ok(v)) = (k.parse::<usize>(), v.trim().parse::<i64>())
+            && k < vals.len()
+        {
+            vals[k] = v;
         }
     }
     vals
@@ -127,7 +133,7 @@ pub fn clang_tokens(text: &[u8], opts: Options) -> Vec<Vec<u8>> {
     let mut lx = PpLexer::new(text, opts);
     let mut v = Vec::new();
     loop {
-        let t = lx.next();
+        let t = lx.next_token();
         if t.kind == P::Eof {
             break;
         }
@@ -188,7 +194,7 @@ pub struct Settled {
 
 impl Profile {
     pub fn new(lang: Lang) -> Profile {
-        let (defs, dirs) = profile(&lang);
+        let Predefined { defs, dirs } = profile(&lang);
         let stubs = std::env::temp_dir().join(format!("rerail-pp-oracle-{}", std::process::id()));
         Profile { lang, defs, dirs, features: HashMap::new(), stubs }
     }

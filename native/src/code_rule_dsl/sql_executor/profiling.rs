@@ -38,6 +38,9 @@ impl CodeRuleSqlExecutor {
         name: &str,
         f: impl FnOnce(&mut Self) -> Result<T>,
     ) -> Result<T> {
+        // In the session's run (`run`), first in and last out.
+        let run = self.run.clone();
+        let _run = run.enter();
         let _scope = scope(&self.db, name);
         let _operation = self.db.profile_scope(|| json!({"operation":name}));
         let ledger = self.db.admission();
@@ -67,6 +70,8 @@ impl CodeRuleSqlExecutor {
         name: &str,
         f: impl FnOnce(&Self) -> Result<T>,
     ) -> Result<T> {
+        let run = self.run.clone();
+        let _run = run.enter();
         let _scope = scope(&self.db, name);
         let _operation = self.db.profile_scope(|| json!({"operation":name}));
         let result = match self.db.admission().enter(name) {Ok(_admission)=>f(self),Err(e)=>Err(error(e))};

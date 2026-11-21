@@ -1102,6 +1102,7 @@ impl ABIMachineSpec for AArch64MachineDeps {
             (isa::CallConv::Winch, true) => ALL_CLOBBERS,
             (isa::CallConv::Winch, false) => WINCH_CLOBBERS,
             (isa::CallConv::SystemV, _) => DEFAULT_AAPCS_CLOBBERS,
+            (isa::CallConv::PreserveMost, false) => PRESERVE_MOST_CLOBBERS,
             (_, false) => DEFAULT_AAPCS_CLOBBERS,
             (_, true) => panic!("unimplemented clobbers for exn abi of {call_conv:?}"),
         }
@@ -1265,7 +1266,7 @@ impl AArch64MachineDeps {
 /// Is the given register saved in the prologue if clobbered, i.e., is it a
 /// callee-save?
 fn is_reg_saved_in_prologue(
-    _call_conv: isa::CallConv,
+    call_conv: isa::CallConv,
     enable_pinned_reg: bool,
     sig: &Signature,
     r: RealReg,
@@ -1286,6 +1287,10 @@ fn is_reg_saved_in_prologue(
             // callee-saved in prologues.
             if enable_pinned_reg && r.hw_enc() == PINNED_REG {
                 false
+            } else if call_conv == isa::CallConv::PreserveMost {
+                // Every general register but the returns' (x0, x1), the scratch ones
+                // (x9, x16, x17), the platform's (x18) and the frame's (x29, x30).
+                !matches!(r.hw_enc(), 0 | 1 | 9 | 16 | 17 | 18 | 29 | 30)
             } else {
                 r.hw_enc() >= 19 && r.hw_enc() <= 28
             }
@@ -1516,6 +1521,19 @@ const fn all_clobbers() -> PRegSet {
 }
 
 const DEFAULT_AAPCS_CLOBBERS: PRegSet = default_aapcs_clobbers();
+const PRESERVE_MOST_CLOBBERS: PRegSet = preserve_most_clobbers();
+
+/// `CallConv::PreserveMost`'s clobbers: the returns' registers, the scratch ones, and the
+/// vectors as AAPCS's (all, as `default_aapcs_clobbers` says why).
+const fn preserve_most_clobbers() -> PRegSet {
+    let mut s = PRegSet::empty().with(xreg_preg(0)).with(xreg_preg(1)).with(xreg_preg(9)).with(xreg_preg(16)).with(xreg_preg(17));
+    let mut v = 0;
+    while v < 32 {
+        s = s.with(vreg_preg(v));
+        v += 1;
+    }
+    s
+}
 const WINCH_CLOBBERS: PRegSet = winch_clobbers();
 const ALL_CLOBBERS: PRegSet = all_clobbers();
 

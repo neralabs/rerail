@@ -1,6 +1,6 @@
 # 0520: the expansion writes pieces that refer to its inputs, never copies of them
 
-The user, 2026-11-20, after 0478 §10's reclaiming: "you are getting the writing all wrong. We need
+The user, 2026-11-20, after 0486 §10's reclaiming: "you are getting the writing all wrong. We need
 to write out a format that's not just text but allows us to copy text from the inputs and the
 definitions too. Our input and output text formats should include two things: 1. text copied
 from an input from offset x to offset y; 2. text produced by our run (which can then be copied by
@@ -9,7 +9,7 @@ referring back to work already done."
 
 ## Intro
 
-The device preprocessor (0448, 0478) expands a top level's calls as a tree of lists. Each list
+The device preprocessor (0448, 0486) expands a top level's calls as a tree of lists. Each list
 holds its tokens as columns in the arena, a ref, flags, a depth and an origin a token, and every
 step that moves tokens copies them:
 
@@ -20,13 +20,13 @@ step that moves tokens copies them:
 - the output is every token written again, one word a token, plain text included.
 
 So what a run holds grows with what it does, not with what it reads. The rooms that ran out in
-Boost (0478) were these copies. This decision replaces them with **pieces**: a list, an
+Boost (0486) were these copies. This decision replaces them with **pieces**: a list, an
 argument's expansion and the output are each a short array of references to text that already
 exists, and nothing is copied but the references.
 
 ## The root cause, measured (before this decision)
 
-`a_chains_use_is_flat_in_its_length` (UKL's CPU backend, 2026-11-20) runs 0478's chains, a state of
+`a_chains_use_is_flat_in_its_length` (UKL's CPU backend, 2026-11-20) runs 0486's chains, a state of
 120 tokens passed down through 25, 50 and 100 levels, and reads each store's most use:
 
 | Chain | Tokens (25, 50, 100) | Lists | Arguments' entries |
@@ -37,7 +37,7 @@ exists, and nothing is copied but the references.
 
 Every store grows with the chain's length. Each level keeps its list, about 20 to 50 tokens of
 copies, and its entries until the top level is placed. Two other causes made the climb look like
-room, and are fixed with this decision's first step (0478 §10's figures):
+room, and are fixed with this decision's first step (0486 §10's figures):
 
 - **The work bound was a room.** A top's items were bounded at 4 times the queue's room and
   refused as room (`X_ROOM`). So a unit that does much but holds little needed a rung for its work.
@@ -141,7 +141,7 @@ the stack. So the lists' count is one a level, and every other store is flat.
 ### 5. What stays
 
 - The lists, the queue, the claims and the exits (0448, 0467).
-- The pools (0478 §10): the pieces' store takes and gives blocks as the tokens' did.
+- The pools (0486 §10): the pieces' store takes and gives blocks as the tokens' did.
 - The serial pass as the oracle: every eval test.
 
 ## Steps

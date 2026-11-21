@@ -16,11 +16,11 @@ Sources, with tips as surveyed:
 | Shared-structural-execution | `jeremy/shared-structural-execution` `85098ee3` | same commit as PIAT; no work of its own |
 | Typing-support | `jeremybarnes/Typing-support` `e031592d` | 14 commits, all new (`spikes/datalog-engines/`) |
 | DLRE | `jeremybarnes/Data-layer-rule-expressivity` `a1fcdeb9` | 89 commits since `d3470da2` |
-| N1562 (rerail) | `jbarnes/ner-1562-sql-rerailer` `60e7affa` | 82 commits since `16343282` |
+| N1562 (rerail) | `jbarnes/sql-rerailer` `60e7affa` | 82 commits since `16343282` |
 | SSC | `jeremy/sql-capture-demand-spikes` `b3e97cd4` | 10 commits since `c17d2e47` |
 | Moti facts | `origin/Moti-Velz/facts-engine` `5b0d63a7`, `facts-plan` `a582db97` | 19 and 8 commits since `685db3f7` |
 | Moti on main | `origin/main`, author Moti-Velz | engine-relevant commits since 2026-10-14 |
-| Tempo Metal | nera-landing-2 `jbarnes/ner-1562-scale-test-the-re-railer` `ed69e91f8` | 64 commits since `a091aa063` |
+| Tempo Metal | Landing `jbarnes/scale-test-the-re-railer` `ed69e91f8` | 64 commits since `a091aa063` |
 
 Numbers are the streams' own recorded measurements. Nothing was re-run for this review.
 
@@ -159,11 +159,11 @@ The spike asked whether facts, types and dependencies should run on an off-the-s
 The final shape should make this the incremental evaluation mode of the Datalog strata, derived from the rules instead of hand-written. His replay harness becomes the per-edit gate.
 
 **On main, from Timo,** these must be kept:
-- embedded programs as guest documents with `Origin` (tape v6, NER-1698);
-- per-clause work allowances and blind files (NER-1865);
+- embedded programs as guest documents with `Origin` (tape v6);
+- per-clause work allowances and blind files;
 - "unread" files above 50% error coverage;
 - the language adapter seam and Rust parsing;
-- per-file module system and package facts (NER-1868);
+- per-file module system and package facts;
 - suppressions and per-repository config;
 - ai-output steering scope.
 
@@ -177,7 +177,7 @@ Any per-document IR has to respect main's document model.
 - The full "cohort" conversion turned captures, utilities and alternatives into a native continuation-frame scheduler. It ran at 1.49–1.65× native, with cycles 1.64× against instructions 1.3×. It was rejected, together with a dozen frame, dispatch and arena micro-optimizations.
 - The tip is at 1.585, failing its gate.
 
-**Its new plan** (`docs/sql-structural-execution-plan.md`, proposal only):
+**Its new plan** (`docs/sql-structural-execution-plan.md`, proposal only; removed; at 7efcac9c67):
 - the unit is a `ProgramGroup` over a bounded document batch with an exact scope;
 - every stage is one of: a local program, a native fact producer, a SQL relational query, or a declared fixpoint;
 - no interpreter remainder;

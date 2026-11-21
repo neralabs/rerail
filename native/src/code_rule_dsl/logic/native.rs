@@ -19,13 +19,14 @@
 //! tree. Ancestor climbs and other file-local work run in the transducer (Phase 4 item f), whose facts arrive here
 //! as seed rows.
 pub mod setfix;
+pub mod width;
 #[cfg(any(test, feature = "test-hooks"))]
-pub use setfix::DERIVATIONS;
+pub use setfix::Derivations;
 pub use setfix::{forget_engine, forget_scope};
 pub mod aggregation;
-/// `dfs_first` and `dfs_first_memo` (`core.rr`): a relation the evaluator makes from its inputs' rows.
+/// `dfs_first` and `dfs_first_memo` (`core.rerail`): a relation the evaluator makes from its inputs' rows.
 pub mod dfs_first;
-/// `components` (`core.rr`, decision 0063): each document's import component and its Merkle key.
+/// `components` (`core.rerail`, decision 0063): each document's import component and its Merkle key.
 pub mod components;
 pub mod rank;
 /// The reach index (decision 0119): a transitive closure as one bitmap per start.
@@ -46,7 +47,7 @@ pub mod component {
     pub use super::setfix::{DeviceReport, device_report};
     pub use super::setfix::probed;
     pub use super::setfix::{CutReport, TrialRun, symbol_id, cut_counts, cut_step, keep_trial_rows, set_budgets, take_cut, thread_cpu, trial, trial_ids, trial_over, trial_own};
-    pub use super::setfix::{InRel, Ver, LIVE_BATCH, RelMark, add, cat_symbols, prime, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, held_rows, each_held_batch, hold_as, hold_empty, hold_source, hold_view, hold_view_in_place, held_source, live, give_versions, take_versions, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, maint_step_counts, driver_step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_rows, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows};
+    pub use super::setfix::{InRel, Live, Ver, LIVE_BATCH, RelMark, add, cat_symbols, prime, adopt, adopted, close, columns_source, columns_source_measured, derived, forget_derived, forget_inputs_of, held, held_rows, each_held_batch, hold_as, hold_maintained, hold_empty, hold_source, hold_view, hold_view_in_place, held_source, hold_bound, is_dead, live, give_versions, take_versions, materialize, open_spec, pending, defer, prefetch_joins, prefetch_tables, level_clear, level_counts, release, reprobe_spec, retain, run, step_counts, maint_step_counts, driver_step_counts, step_cpu, step_histograms, unindex, hold_rows, kept_rows, live_changed, table_source, tables_built, output_rows, source_rows, finding_rows, key_breaks};
 }
 use rusqlite::ffi;
 use rusqlite::functions::{Aggregate, Context, FunctionFlags};
@@ -56,7 +57,7 @@ use std::borrow::Cow;
 use std::ffi::CStr;
 use std::sync::Mutex;
 use std::os::raw::c_int;
-use std::sync::{Arc, LazyLock};
+use std::sync::Arc;
 use std::time::Instant;
 
 pub const TOP: i64 = 4611686018427387904;
@@ -138,7 +139,7 @@ impl Lattice for Min {
     fn widen(&self, old: i64, new: i64) -> i64 { if new < old { -TOP } else { new } }
 }
 
-/// `shortlex_min<symbol>`: the shortest symbol, then the least by its UTF-8 bytes (`core.rr`), over a run's atoms.
+/// `shortlex_min<symbol>`: the shortest symbol, then the least by its UTF-8 bytes (`core.rerail`), over a run's atoms.
 /// Shortlex is a well-order, so every chain of ever-smaller values is finite. A value the atoms do not hold (`TOP`)
 /// absorbs. The run declares it over its store's atoms (`declare`), as its symbols are those atoms.
 pub struct ShortlexMin(pub Arc<crate::content_store::atoms::Atoms>);
@@ -147,7 +148,13 @@ impl Lattice for ShortlexMin {
         if a == TOP || b == TOP {
             return TOP;
         }
-        let key = |v: i64| u32::try_from(v).ok().and_then(|atom| self.0.with_str(atom, |s| (s.chars().count(), s.as_bytes().to_vec())));
+        // An atom this process does not hold in memory is read from the store, as the set engine's symbols are
+        // (`Interner::known`): else a stored atom would join to the top.
+        let key = |v: i64| {
+            let atom = u32::try_from(v).ok()?;
+            let of = |s: &str| (s.chars().count(), s.as_bytes().to_vec());
+            self.0.with_str(atom, of).or_else(|| self.0.value(atom).ok().flatten().map(|s| of(&s)))
+        };
         match (key(a), key(b)) {
             (Some(x), Some(y)) => if y < x { b } else { a },
             _ => TOP,
@@ -157,21 +164,30 @@ impl Lattice for ShortlexMin {
     fn finite(&self) -> bool { true }
 }
 
-/// Declared lattices by name: the built-ins, and those the logic declares (`declare`), such as the typing's
-/// approximate type terms (Phase 10).
-static LATTICES: LazyLock<Mutex<Vec<(String, Arc<dyn Lattice>)>>> = LazyLock::new(|| {
-    Mutex::new(vec![("flat".to_owned(), Arc::new(Flat) as Arc<dyn Lattice>), ("max".to_owned(), Arc::new(Max)), ("min".to_owned(), Arc::new(Min))])
-});
+/// The lattices a run declared (`declare`), by name, such as the typing's approximate type terms (Phase 10) and
+/// `shortlex_min` over the run's store's atoms: the run's own (decision 0442).
+#[derive(Default)]
+struct Declared(Mutex<Vec<(String, Arc<dyn Lattice>)>>);
 
-/// Declares `lattice` under `name`, replacing an earlier declaration.
+/// Declares `lattice` under `name` in the run under way, replacing an earlier declaration of the run's.
 pub fn declare(name: &str, lattice: Arc<dyn Lattice>) {
-    let mut lattices = LATTICES.lock().unwrap();
+    assert!(crate::code_rule_dsl::logic::run::current().is_some(), "a lattice is declared in a run (decision 0442): {name}");
+    let declared = crate::code_rule_dsl::logic::run::local::<Declared>();
+    let mut lattices = declared.0.lock().unwrap();
     lattices.retain(|(n, _)| n != name);
     lattices.push((name.to_owned(), lattice));
 }
 
+/// The lattice named `name`: a built-in (`flat`, `max`, `min`), else one the run under way declared.
 pub(in crate::code_rule_dsl) fn lattice(name: &str) -> Result<Arc<dyn Lattice>> {
-    LATTICES.lock().unwrap().iter().find(|(n, _)| n == name).map(|(_, l)| Arc::clone(l))
+    let built_in: Option<Arc<dyn Lattice>> = match name {
+        "flat" => Some(Arc::new(Flat)),
+        "max" => Some(Arc::new(Max)),
+        "min" => Some(Arc::new(Min)),
+        _ => None,
+    };
+    built_in
+        .or_else(|| crate::code_rule_dsl::logic::run::local_if_any::<Declared>()?.0.lock().unwrap().iter().find(|(n, _)| n == name).map(|(_, l)| Arc::clone(l)))
         .ok_or_else(|| user_err(format!("no lattice named {name:?}")))
 }
 
@@ -193,7 +209,7 @@ pub(in crate::code_rule_dsl) enum Binding {
     Metal,
 }
 
-fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn Lattice, flat: bool, widen: Option<u32>, binding: Binding) -> Result<String> {
+fn lattice_fixpoint(conn: &Connection, results: &Results, p: &str, target: Option<&str>, lat: &dyn Lattice, flat: bool, widen: Option<u32>, binding: Binding) -> Result<String> {
     if !lat.finite() && widen.is_none() {
         return Err(user_err(format!("unbounded lattice for {p}: declare `widen k`")));
     }
@@ -269,7 +285,7 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
         crate::code_rule_dsl::logic::profile::device_phases("lattice_fixpoint (work queue)", solved.phases, solved.made, solved.reused);
         crate::code_rule_dsl::logic::profile::decision("lattice_fixpoint", || "on the Metal work queue (flat lattice, no widening)".into());
         // On the queue a wave is a launch: the device decides each further evaluation.
-        return finish(conn, p, target, keys, solved.values, solved.launches as u32, solved.visits, t);
+        return finish(conn, results, p, target, keys, solved.values, solved.launches as u32, solved.visits, t);
     }
     crate::code_rule_dsl::logic::profile::decision("lattice_fixpoint", || {
         if binding == Binding::Metal {
@@ -303,17 +319,17 @@ fn lattice_fixpoint(conn: &Connection, p: &str, target: Option<&str>, lat: &dyn 
         frontier = upd.iter().map(|u| u.0).collect();
         for (v, x) in upd { val[v as usize] = x; }
     }
-    finish(conn, p, target, keys, val, waves, visits, t)
+    finish(conn, results, p, target, keys, val, waves, visits, t)
 }
 
 /// The solved values written where `target` says, with the run's summary.
 /// `keys[cell]` is the key of each cell of `val`.
 #[allow(clippy::too_many_arguments)]
-fn finish(conn: &Connection, p: &str, target: Option<&str>, keys: Vec<i64>, val: Vec<i64>, waves: u32, visits: u64, t: Instant) -> Result<String> {
+fn finish(conn: &Connection, results: &Results, p: &str, target: Option<&str>, keys: Vec<i64>, val: Vec<i64>, waves: u32, visits: u64, t: Instant) -> Result<String> {
     let solve = t.elapsed();
     if let Some(name) = target.and_then(|t| t.strip_prefix('@')) {
         let rows = val.iter().filter(|&&v| v != BOT).count();
-        let mut reg = RESULTS.lock().unwrap();
+        let mut reg = results.0.lock().unwrap();
         reg.retain(|(n, _)| n != name);
         reg.push((name.to_string(), Arc::new((keys, val))));
         return Ok(format!("{rows} {waves} {visits} {:.1} {:.1}", solve.as_secs_f64() * 1e3, t.elapsed().as_secs_f64() * 1e3));
@@ -335,19 +351,21 @@ fn finish(conn: &Connection, p: &str, target: Option<&str>, keys: Vec<i64>, val:
     Ok(format!("{rows} {waves} {visits} {:.1} {:.1}", solve.as_secs_f64() * 1e3, t.elapsed().as_secs_f64() * 1e3))
 }
 
-/// Fixpoint results kept in memory, by name, for `lattice_result`: each cell's key (ascending) and value.
+/// Fixpoint results kept in memory, by name, for `lattice_result`: each cell's key (ascending) and value. The
+/// connection's own (decision 0442): `register` makes them, and its functions and module hold them.
 type Solution = Arc<(Vec<i64>, Vec<i64>)>;
-static RESULTS: Mutex<Vec<(String, Solution)>> = Mutex::new(Vec::new());
+#[derive(Default)]
+struct Results(Mutex<Vec<(String, Solution)>>);
 
 #[repr(C)]
 struct ResultTab { base: ffi::sqlite3_vtab, vals: Solution, rows: usize }
 
 unsafe impl<'vtab> VTab<'vtab> for ResultTab {
-    type Aux = ();
+    type Aux = Arc<Results>;
     type Cursor = ResultCursor;
-    fn connect(_: &mut VTabConnection, _: Option<&()>, _: &[u8], _: &[u8], _: &[u8], args: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
+    fn connect(_: &mut VTabConnection, results: Option<&Arc<Results>>, _: &[u8], _: &[u8], _: &[u8], args: &[&[u8]]) -> Result<(Cow<'static, CStr>, Self)> {
         let name = std::str::from_utf8(args.last().copied().unwrap_or(b"")).unwrap_or("").trim().to_string();
-        let vals = RESULTS.lock().unwrap().iter().find(|(n, _)| *n == name).map(|r| r.1.clone())
+        let vals = results.and_then(|r| r.0.lock().unwrap().iter().find(|(n, _)| *n == name).map(|r| r.1.clone()))
             .ok_or_else(|| Error::ModuleError(format!("no lattice result named {name:?}")))?;
         let rows = vals.1.iter().filter(|&&v| v != BOT).count();
         Ok((Cow::Borrowed(c"CREATE TABLE x(c0 INTEGER, c1 INTEGER)"), ResultTab { base: ffi::sqlite3_vtab::default(), vals, rows }))
@@ -414,8 +432,10 @@ pub fn register(db: &Connection) -> Result<()> {
     // lattice_fixpoint(p[, target[, lattice[, widen[, binding]]]]): the lattice by declared name (`flat` by
     // default), the changes after which a node widens, and where it solves (`cpu`, the default, or `metal`). A NULL
     // target is the default `<p>_out`.
+    let results: Arc<Results> = Default::default();
     for nargs in [1, 2, 3, 4, 5] {
-        db.create_scalar_function(c"lattice_fixpoint", nargs, FunctionFlags::SQLITE_UTF8, |ctx| {
+        let results = Arc::clone(&results);
+        db.create_scalar_function(c"lattice_fixpoint", nargs, FunctionFlags::SQLITE_UTF8, move |ctx| {
             let p: String = ctx.get(0)?;
             let target: Option<String> = if ctx.len() > 1 { ctx.get(1)? } else { None };
             let name = if ctx.len() > 2 { ctx.get::<Option<String>>(2)?.unwrap_or_else(|| "flat".to_owned()) } else { "flat".to_owned() };
@@ -427,7 +447,7 @@ pub fn register(db: &Connection) -> Result<()> {
                 Some(other) => return Err(user_err(format!("lattice_fixpoint: unknown binding `{other}`"))),
             };
             let conn = unsafe { ctx.get_connection()? };
-            lattice_fixpoint(&conn, &p, target.as_deref(), &*lat, name == "flat", widen.map(|k| k.max(0) as u32), binding)
+            lattice_fixpoint(&conn, &results, &p, target.as_deref(), &*lat, name == "flat", widen.map(|k| k.max(0) as u32), binding)
         })?;
     }
     db.create_scalar_function(c"set_fixpoint_open", 1, FunctionFlags::SQLITE_UTF8, |ctx| {
@@ -474,7 +494,7 @@ pub fn register(db: &Connection) -> Result<()> {
     const DERIVED: Module<setfix::DerivedTab> = Module::eponymous_only_module();
     db.create_module(c"set_derived", &DERIVED, None)?;
     const RESULT: Module<ResultTab> = Module::read_only_module();
-    db.create_module(c"lattice_result", &RESULT, None)?;
+    db.create_module(c"lattice_result", &RESULT, Some(results))?;
     Ok(())
 }
 

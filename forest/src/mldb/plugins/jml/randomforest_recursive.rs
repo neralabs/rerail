@@ -254,8 +254,7 @@ pub fn decode_rows(rows: &Rows) -> Vec<RowWeights> {
 /// Builds the tree under `root` from the splits and leaves of a partitioned training: a leaf where there is one, else
 /// a node from the split (its children recursively, or leaves from the split's sides where they cannot recurse).
 /// There is no calculating going on here, just creation of the data structure.
-#[allow(clippy::too_many_arguments)]
-pub fn extract_tree(depth: i32, max_depth: i32, tree: &mut Tree, root: PartitionIndex, splits: &BTreeMap<PartitionIndex, PartitionSplit>, leaves: &BTreeMap<PartitionIndex, Ptr>, features: &[Feature], fs: &DatasetFeatureSpace) -> Result<Ptr, String> {
+pub fn extract_tree(depth: i32, tree: &mut Tree, root: PartitionIndex, splits: &BTreeMap<PartitionIndex, PartitionSplit>, leaves: &BTreeMap<PartitionIndex, Ptr>, features: &[Feature], fs: &DatasetFeatureSpace) -> Result<Ptr, String> {
     assert_eq!(root.depth(), depth);
     // First look for a leaf.
     if let Some(&l) = leaves.get(&root) {
@@ -275,8 +274,8 @@ pub fn extract_tree(depth: i32, max_depth: i32, tree: &mut Tree, root: Partition
     if total.v[0].to_f32() == 0.0 || total.v[1].to_f32() == 0.0 {
         return Ok(Ptr::Null);
     }
-    let mut left = extract_tree(depth + 1, max_depth, tree, root.left_child(), splits, leaves, features, fs)?;
-    let mut right = extract_tree(depth + 1, max_depth, tree, root.right_child(), splits, leaves, features, fs)?;
+    let mut left = extract_tree(depth + 1, tree, root.left_child(), splits, leaves, features, fs)?;
+    let mut right = extract_tree(depth + 1, tree, root.right_child(), splits, leaves, features, fs)?;
     // Fill in from the information in the split if we can't recurse.
     if !left.is_some() {
         left = get_leaf(tree, &s.left);
@@ -300,7 +299,7 @@ pub fn test_all_cpu(depth: i32, features: &[Feature], rows: &Rows, criterion: Sp
     let do_feature = |i: usize| test_feature_number(i, features, rows.get_row_iterator(), rows.row_count(), &rows.w_all, criterion);
     let results: Vec<(f64, i32, W, W, bool, CategorySet)> = if depth < 4 || rows.row_count() as u64 * nf as u64 > 20000 {
         use rayon::prelude::*;
-        (0..nf).into_par_iter().map(do_feature).collect()
+        rerail_context::on_cores(|| (0..nf).into_par_iter().map(do_feature).collect())
     } else {
         (0..nf).map(do_feature).collect()
     };
@@ -504,7 +503,7 @@ pub fn get_partition_splits(buckets: &[W] /* [np][nab] */, num_active_buckets: u
         };
         let results: Vec<_> = if parallel {
             use rayon::prelude::*;
-            (0..active_feature_list.len()).into_par_iter().map(do_feature).collect()
+            rerail_context::on_cores(|| (0..active_feature_list.len()).into_par_iter().map(do_feature).collect())
         } else {
             (0..active_feature_list.len()).map(do_feature).collect()
         };
@@ -535,8 +534,21 @@ pub fn verify_partition_buckets(partitions: &[RowPartitionInfo], w_all: &[W]) {
     }
 }
 
+/// A subtree trained in a tree of its own: the tree and its root.
+type Subtree = Result<(Tree, Ptr), String>;
+
+/// Where each feature's buckets lie in a partition's bucket matrix: the features, those active, each one's first
+/// bucket (`bucket_offsets[f]`), and the active buckets' count.
+#[derive(Clone, Copy)]
+pub struct BucketLayout<'a> {
+    pub features: &'a [Feature],
+    pub active_features: &'a [i32],
+    pub bucket_offsets: &'a [u32],
+    pub num_active_buckets: u32,
+}
+
 /// The subtrees trained separately, each in its own tree, grafted into `tree`.
-fn graft(tree: &mut Tree, trained: Vec<(PartitionIndex, Result<(Tree, Ptr), String>)>) -> Result<BTreeMap<PartitionIndex, Ptr>, String> {
+fn graft(tree: &mut Tree, trained: Vec<(PartitionIndex, Subtree)>) -> Result<BTreeMap<PartitionIndex, Ptr>, String> {
     let mut result = BTreeMap::new();
     for (index, t) in trained {
         let (sub, root) = t?;
@@ -560,7 +572,7 @@ pub fn split_and_recurse_partitioned(depth: i32, max_depth: i32, tree: &mut Tree
     }
     let nab = num_active_buckets as usize;
     let new_data = split_partitions(features, active_features, decoded_rows, partitions, w_all, indexes);
-    let do_entry = |(i, e): (usize, &PartitionEntry)| -> Option<(PartitionIndex, Result<(Tree, Ptr), String>)> {
+    let do_entry = |(i, e): (usize, &PartitionEntry)| -> Option<(PartitionIndex, Subtree)> {
         if e.index == PartitionIndex::none() {
             return None;
         }
@@ -575,7 +587,7 @@ pub fn split_and_recurse_partitioned(depth: i32, max_depth: i32, tree: &mut Tree
     };
     let trained: Vec<_> = if depth <= 8 {
         use rayon::prelude::*;
-        new_data.par_iter().enumerate().filter_map(do_entry).collect()
+        rerail_context::on_cores(|| new_data.par_iter().enumerate().filter_map(do_entry).collect())
     } else {
         new_data.iter().enumerate().filter_map(do_entry).collect()
     };
@@ -616,7 +628,8 @@ pub struct PartitionWorkEntry {
 /// side (whose buckets are accumulated again when it is taken up). Constant memory for the bucket matrix whatever
 /// the depth, with up to 2^d splits and O(d^2) work items: much less memory than breadth-first (O(2^d)) when the
 /// width is so high that the buckets are very sparse.
-pub fn descend_small_partition(examples: &mut [PartitionExample], entry: PartitionWorkEntry, max_depth: i32, num_active_buckets: u32, features: &[Feature], active_features: &[i32], bucket_offsets: &[u32], criterion: SplitCriterion) -> BTreeMap<PartitionIndex, PartitionSplit> {
+pub fn descend_small_partition(examples: &mut [PartitionExample], entry: PartitionWorkEntry, max_depth: i32, layout: BucketLayout<'_>, criterion: SplitCriterion) -> BTreeMap<PartitionIndex, PartitionSplit> {
+    let BucketLayout { features, active_features, bucket_offsets, num_active_buckets } = layout;
     let mut splits = BTreeMap::new();
     if entry.index.depth() >= max_depth {
         return splits;
@@ -747,8 +760,8 @@ pub fn train_small_partitions(depth: i32, max_depth: i32, tree: &mut Tree, featu
         let (index, w) = if i % 2 == 0 { (s.index.left_child(), s.split.left) } else { (s.index.right_child(), s.split.right) };
         let (a, b) = (starts[i], starts[i + 1]);
         let entry = PartitionWorkEntry { index, start: 0, num_examples: b - a, w_all: w, buckets: Vec::new() };
-        let splits = descend_small_partition(&mut examples[a..b], entry, max_depth, num_active_buckets, features, active_features, bucket_offsets, SplitCriterion::of(fs));
-        let leaf = extract_tree(depth + 1, max_depth, tree, index, &splits, &BTreeMap::new(), features, fs)?;
+        let splits = descend_small_partition(&mut examples[a..b], entry, max_depth, BucketLayout { features, active_features, bucket_offsets, num_active_buckets }, SplitCriterion::of(fs));
+        let leaf = extract_tree(depth + 1, tree, index, &splits, &BTreeMap::new(), features, fs)?;
         result.insert(index, leaf);
     }
     Ok(result)
@@ -847,7 +860,7 @@ pub fn train_partitioned_recursive_cpu(mut depth: i32, max_depth: i32, tree: &mu
     let new_leaves = split_and_recurse_partitioned(depth, max_depth, tree, Some(&buckets), num_active_buckets, bucket_offsets, features, active_features, decoded_rows, &partitions, &w_all, &indexes, fs)?;
     leaves.extend(new_leaves);
     // Finally, extract a tree from the splits we've been accumulating and our leaves.
-    extract_tree(original_depth, max_depth, tree, root, &all_splits, &leaves, features, fs)
+    extract_tree(original_depth, tree, root, &all_splits, &leaves, features, fs)
 }
 
 /// `trainPartitionedRecursive`: upstream's only form is the CPU one.
@@ -880,12 +893,14 @@ pub fn train_partitioned_end_to_end_cpu(depth: i32, max_depth: i32, tree: &mut T
     let num_active_buckets = *bucket_offsets.last().unwrap();
     let decoded_rows = decode_rows(rows);
     use rayon::prelude::*;
-    let per_feature: Vec<Vec<W>> = active_features.par_iter().map(|&f| {
-        let f = f as usize;
-        let mut w = vec![W::default(); (bucket_offsets[f + 1] - bucket_offsets[f]) as usize];
-        test_feature_kernel(&decoded_rows[..], decoded_rows.len(), &features[f].buckets, &mut w);
-        w
-    }).collect();
+    let per_feature: Vec<Vec<W>> = rerail_context::on_cores(|| {
+        active_features.par_iter().map(|&f| {
+            let f = f as usize;
+            let mut w = vec![W::default(); (bucket_offsets[f + 1] - bucket_offsets[f]) as usize];
+            test_feature_kernel(&decoded_rows[..], decoded_rows.len(), &features[f].buckets, &mut w);
+            w
+        }).collect()
+    });
     let mut buckets = Vec::with_capacity(num_active_buckets as usize);
     for w in per_feature {
         buckets.extend(w);

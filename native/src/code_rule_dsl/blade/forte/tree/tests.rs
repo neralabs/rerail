@@ -382,15 +382,16 @@ fn trees_views_and_tapes_survive_random_and_truncated_templates() {
         {
             fail(format!("syntax error {range:?} outside the template"));
         }
-        let round_trip = crate::code_rule_dsl::blade::tape::encode_template(&grammar, &source, &|| false)
-            .map_err(|error| format!("{error:?}"))
-            .and_then(|image| {
-                let encoded = image.primary.to_bytes()?;
-                let decoded = image.round_trip(&grammar)?.primary.to_bytes()?;
-                (decoded == encoded)
-                    .then_some(())
-                    .ok_or_else(|| "the tape did not round-trip".to_owned())
-            });
+        let round_trip =
+            crate::code_rule_dsl::blade::tape::encode_template(&grammar, &source, &|| false)
+                .map_err(|error| format!("{error:?}"))
+                .and_then(|image| {
+                    let encoded = image.primary.to_bytes()?;
+                    let decoded = image.round_trip(&grammar)?.primary.to_bytes()?;
+                    (decoded == encoded)
+                        .then_some(())
+                        .ok_or_else(|| "the tape did not round-trip".to_owned())
+                });
         if let Err(error) = round_trip {
             fail(error);
         }

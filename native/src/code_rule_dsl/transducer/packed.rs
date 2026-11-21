@@ -1,4 +1,3 @@
-#![allow(dead_code)]
 
 use super::super::tape::TapeDoc;
 use ast_grep_core::MatchStrictness;
@@ -48,14 +47,14 @@ pub mod metal_batch_abi;
 pub mod device;
 pub use device::{RootJobs, RootsFound};
 
-#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
 pub fn reset_metal_execution_metrics() {
     if let Some(device) = device::matcher() {
         device.reset_execution_metrics();
     }
 }
 
-#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
 pub fn metal_execution_metrics() -> (usize, usize) {
     device::matcher().map_or((0, 0), |device| device.execution_metrics())
 }
@@ -133,7 +132,7 @@ pub mod regex_block;
 // cratify: `block_rows_tests` is rerail-device-metal's (it mounts it)
 #[cfg(test)]
 pub mod block_digest_tests;
-// The `.rr` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
+// The `.rerail` parser (`rerail_rr_parser`): the Bitlex grammar compiled, the engine's parser for
 // what it refuses. Nothing in the engine parses with it yet; named here for the engine's callers.
 #[allow(unused_imports)]
 pub use rerail_rr_parser as rr_parser;
@@ -3452,7 +3451,7 @@ impl Program {
         self.execute_roots_from_with_work_limit(tape, roots, initial_pc, stats, MAX_STEPS_PER_PATH)
     }
 
-    #[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
+    #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
     pub fn execute_terminal_reference_with_work_limit(
         &self,
         tape: &TapeDoc,

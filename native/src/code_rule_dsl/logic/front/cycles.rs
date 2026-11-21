@@ -182,10 +182,11 @@ impl<'v> Rule<'v> {
                 self.vars(l, &mut out);
                 self.vars(r, &mut out);
             }
-            Lit::Agg { var, over, atom, .. } => {
+            Lit::Agg { var, op, over, atom } => {
                 out = self.atom_vars(atom);
                 out.insert(self.name(var).to_owned());
                 out.extend(over.map(|o| self.name(o).to_owned()));
+                out.extend(op.bound().map(|b| self.name(b).to_owned()));
             }
             Lit::Nearest { n, a, .. } => out.extend([self.name(n).to_owned(), self.name(a).to_owned()]),
             Lit::Ast { document, node, captures, .. } => {
@@ -826,7 +827,7 @@ fn flow(rules: &[Rule<'_>], component: &BTreeSet<String>) -> Vec<(Column, Column
             }
         }
         // A head term that a variable bound outside the component is assigned (`$t = @add($l, 1), lines(d, $t, _)`
-        // and the head's `@add($l, 1)`, as `.rr` lowers a call it binds and also writes) takes that variable's
+        // and the head's `@add($l, 1)`, as `.rerail` lowers a call it binds and also writes) takes that variable's
         // finitely many values (O111: `era001`'s `era_run`).
         let finite_terms: Vec<TermRef<'_>> = rule
             .lits()

@@ -16,7 +16,7 @@ acceptable.
 
 **Corpora.** The harness holds every node in memory: 31.5 MB of source peaked at 783 MB RSS. So
 each corpus is a sample, not the whole repository:
-- the data-layer repository (`~/orca/projects/nera-data-layer-gruel-main`, without `.venv`): every
+- the data-layer repository (`~/orca/projects/data-layer-gruel-main`, without `.venv`): every
   fifth Python file (1,903 files, 31.5 MB), and all of its JavaScript, TypeScript and Rust;
 - CPython 3.15's standard library: every third file (673 files, 14 MB).
 

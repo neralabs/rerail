@@ -4,7 +4,7 @@ Read-only investigation, 2026-10-25. Sources:
 
 - SSC `jeremy/sql-capture-demand-spikes` at `b87eba3b`, plus its uncommitted fragment pivot in the worktree named after Moti's sql-set-composition branch.
 - DLRE as merged into `Pulling-it-all-together`.
-- N1562 `jbarnes/ner-1562-sql-rerailer` at `8b6576f0`.
+- N1562 `jbarnes/sql-rerailer` at `8b6576f0`.
 - Moti's `sql-dl60`, `facts-engine` and `facts-plan`.
 - The ast-index-spike decision indexes (`docs/rule-engine-direction/prior-work/`).
 

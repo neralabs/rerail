@@ -7,27 +7,30 @@ description = "The engine's Metal runtime: device, buffer budget, mapped buffers
 
 [features]
 # Per-thread buffer ledgers and buffer observations, for tests (the engine's and this crate's).
-test-hooks = ["rerail-compiler/test-hooks", "rerail-prof/test-hooks"]
+test-hooks = ["rerail-context/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-tape-format/test-hooks", "rerail-ukl/test-hooks"]
 
 [dependencies]
+rerail-context = { path = "../context" }
 # The view a document is read by (decision 0310), without the reads' IR.
 rerail-clif = { path = "../clif", default-features = false }
 rerail-accel = { path = "../../../accel" }
 rerail-blocks = { path = "../blocks" }
 rerail-compiler = { path = "../compiler" }
 rerail-prof = { path = "../prof" }
-# The preprocessor tape's format 16 placement (decision 0460 §1), and the reads' preprocessing for Metal.
+# The preprocessor tape's format 16 placement (decision 0468 §1), and the reads' preprocessing for Metal.
 rerail-tape-format = { path = "../tape_format" }
 rerail-ukl = { path = "../ukl" }
 libc = "0.2.189"
 serde = { version = "1.0", features = ["derive"] }
 sha2 = "0.10"
 
-[target.'cfg(target_os = "macos")'.dependencies]
-block = "0.1.6"
-metal = "0.33.0"
+# The device layer's targets (macOS and Linux), where this crate is (`lib.rs`).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 # A slab's buffer: the device layer's (decision 0440 step C).
 rerail-device = { path = "../../../gpu/device" }
+
+[target.'cfg(target_os = "macos")'.dependencies]
+metal = "0.33.0"
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

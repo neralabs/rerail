@@ -1,19 +1,21 @@
 /**
  * The sheet. A rule, as the v8 design reads it: the switch and "Edit with coding agent" in the header, then what
- * Rerail does on a violation (read-only here), its numbers, its description, where it came from and when, where it
+ * Rerail does on a violation (read-only here), its numbers (logged and declined in the range, logged since install),
+ * its description, where it came from and when, where it
  * applies, what the coding agent sees (Edit hands a new text to the coding agent), its recent violations, and for a
  * rule created by you a Delete in a footer at the end. A rule pack's contents render here too (`pack-panel.js`).
  */
-import { h, setAttr, setText, setContent, icon } from "../dom.js";
-import { fmt, whenLabel, clock, shortSessionId } from "../format.js";
-import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
-import { data, ui, rangeLabel, fires, allFires, isMeasured, activityAllOf, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
+import { h, setAttr, setText, setContent, icon, pendingIcon } from "../dom.js";
+import { fmt, plural, whenLabel, clock, shortSessionId } from "../format.js";
+import { ruleMode, isLog, isFromPack, packOriginName, UNKNOWN_PACK_ORIGIN, awaitingApproval, awaitingYourApproval, scopeText, conditionText, messageText, MODE_PLAIN } from "../derive.js";
+import { data, ui, rangeCaption, fires, allFires, isMeasured, ruleFindings, ruleFindingsTotal, titleOf, packOfRule, attachedPackOf, repoName } from "../state.js";
 import { renderPackPanel } from "./pack-panel.js";
+import { MODE_READ_ONLY, enforcementTag, updateEnforcementTag } from "./enforcement.js";
+import { outcomesOf } from "../history-model.js";
 import { ASK, ASK_OPEN, LOG_NOTE, askPrompt, agentSeesHint, askHint, fmtDay, canDelete, deleteConsequences, splitPath } from "./rule-sheet-model.js";
 import { sheetState, syncSheetState, askRule } from "./rule-sheet-actions.js";
 
 const kv = rows => rows.flatMap(([k, v, cls]) => [h("dt", null, k), h("dd", { class: cls }, v)]);
-const MODES = [["log", "Log", "logged"], ["steer", "Steer", "steered"], ["block", "Block", "blocked"]];
 const RECENT_SHOWN = 3;
 
 /** At most two sentences of a description; the pack copy keeps them short upstream too. */
@@ -48,11 +50,14 @@ function buildRule() {
     h("p.lbl", null, "Edit with coding agent"), el.askWhere, el.askChips,
     h("div.cmd", null, el.askText, h("button.btn.sm.solid", { "data-act": "askcopy" }, icon("copy"), "Copy")),
     el.askWhy);
-  // Read-only in this release: the buttons say why when clicked (a toast) or hovered (their title), not the description.
-  el.modes = h("div.rangectl.modes", { role: "group", "aria-label": "What Rerail does on a violation" },
-    MODES.map(([v, l, o]) => h("button", { "data-v": v, "aria-disabled": "true", "aria-pressed": "false" }, icon(o, 14), l)));
+  el.enforcement = enforcementTag();
   el.modeText = h("p");
-  el.stats = h("div.pstats", null, h("div", null, h("b.num"), h("span")), h("div", null, h("b"), h("span", null, "last logged")), h("div", null, h("b.num"), h("span", null, "since install")));
+  // Each card reads the same three lines, so their numbers and words line up: how many, what, over when.
+  const stat = (what, tip) => h("div", { title: tip }, h("b.num"), h("span", null, what), h("small"));
+  el.stats = h("div.pstats", null,
+    stat("logged", "Violations of this rule Rerail logged in the range, steered or not."),
+    stat("declined", "Violations whose steer the coding agent declined, recording why with rerail feedback."),
+    stat("logged", "Violations of this rule Rerail logged since it was installed."));
   el.statsNone = h("p.pstats-none");
   el.description = h("p.desc");
   el.source = h("dl.kv");
@@ -62,7 +67,7 @@ function buildRule() {
   el.foot = h("div.pfoot");
   el.approval = h("div");
   el.body = h("div.pbody", null, el.pask, el.approval,
-    h("div.enf", null, h("div.lbl", null, "On a violation"), el.modes, el.modeText),
+    h("div.enf", null, h("div.enfhead", null, h("div.lbl", null, "On a violation"), el.enforcement), el.modeText, h("p.enfhint", null, MODE_READ_ONLY)),
     el.stats, el.statsNone,
     h("section.psec", null, h("h3", null, "Description"), el.description),
     h("section.psec", null, h("h3", null, "Source"), el.source),
@@ -93,36 +98,68 @@ function renderAsk(stored) {
     : askHint({ fromPack: isFromPack(stored) })}`);
 }
 
-/** Why a mode button does nothing when clicked: its title and its toast. */
-const BLOCK_NOT_LIVE = "Block is not in this release";
-const MODE_READ_ONLY = "Use Edit with coding agent to change this";
-
+/** What the rule does on a violation: the tag on the "On a violation" line, and the sentence that says what that means. */
 function renderModes(stored) {
-  const mode = ruleMode(stored);
-  for (const b of p.modes.children) {
-    const pressed = b.dataset.v === mode, why = b.dataset.v === "block" ? BLOCK_NOT_LIVE : MODE_READ_ONLY;
-    setAttr(b, "aria-pressed", String(pressed));
-    setAttr(b, "title", pressed ? null : why);
-    setAttr(b, "data-act", pressed ? null : "modeinfo");
-  }
-  // What the chosen mode does; a rule on Block reads that Block is not in this release and it steers instead.
-  setText(p.modeText, MODE_PLAIN[mode] ?? "");
+  updateEnforcementTag(p.enforcement, stored);
+  setText(p.modeText, MODE_PLAIN[ruleMode(stored)] ?? "");
+}
+
+/** The three cards' count and caption: logged and declined in the range, logged since install; dashes if uncounted. */
+function statCards(id) {
+  if (!isMeasured(id)) return Array.from({ length: 3 }, () => ["–", "not counted yet"]);
+  const when = rangeCaption();
+  return [[fmt(fires(id)), when], [fmt(outcomesOf(id).declined), when], [fmt(allFires(id)), "since install"]];
 }
 
 function renderStats(stored, id) {
-  const measured = isMeasured(id), f = fires(id), all = allFires(id), lastSeen = activityAllOf(id).lastSeenAt;
   // A measured rule that never logged one says so in a line; the three cells would all read nothing.
-  const none = measured && all === 0;
+  const none = isMeasured(id) && allFires(id) === 0;
   setAttr(p.stats, "hidden", none);
   setAttr(p.statsNone, "hidden", !none);
   // Off is off in every folder: `enabled` also reads off for a rule on in only some of them.
   if (none) { setText(p.statsNone, stored.folderStates.every(state => !state.on) ? "Off. Nothing is logged or steered." : "No violations logged yet."); return; }
-  const [s1, s2, s3] = p.stats.children;
-  setText(s1.firstChild, measured ? fmt(f) : "–");
-  setText(s1.lastChild, measured ? `logged ${rangeLabel()}` : "not counted in this release");
-  setText(s2.firstChild, all && lastSeen ? whenLabel(lastSeen) : "never");
-  setText(s3.firstChild, measured ? fmt(all) : "–");
+  statCards(id).forEach(([count, caption], i) => {
+    const card = p.stats.children[i];
+    setText(card.firstChild, count);
+    setText(card.lastChild, caption);
+  });
 }
+
+/** The Approve button, which approves exactly the content this page read. */
+const approveButton = subject => h("p.acts", null,
+  h("button.btn.sm.solid", { "data-act": "approve", "data-i": subject.id, "data-kind": subject.kind, "data-digest": subject.digest }, "Approve"));
+
+/**
+ * What approving a waiting rule does: approval lifts the hold on a rule set to steer, so it steers; a rule set to Log
+ * stays on Log only.
+ */
+const onceApproved = stored => (stored.modeSource?.by === "awaiting-approval"
+  ? "then approve it, and Rerail tells your coding agent as it works, so it fixes what this rule catches."
+  : "then approve it. It’s set to Log only, so Rerail keeps recording what it catches without telling your coding agent.");
+
+/** A rule your coding agent added that waits: who added it, what it caught in Log, and Approve, here after it is read. */
+const yourRuleNotice = (stored, subject, caught) => h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
+  h("b", null, "Added by your coding agent, on Log only."),
+  h("p", null, caught === 0 ? "Nothing caught in Log yet. " : `Caught ${fmt(caught)} ${plural(caught, "violation")} in Log so far, and your coding agent wasn’t told. `,
+    `Review what it checks and what it tells the coding agent, ${onceApproved(stored)}`),
+  approveButton(subject)));
+
+/** For an edited copy of a rule Rerail ships: which rule, and that approving the copy turns it off here. */
+function copyLine(stored) {
+  const id = stored.copiedFromRuleId, original = data.rules.get(id);
+  return h("p", null, h("b", null, "This is an edited copy"),
+    ` of “${original ? titleOf(original) : id}”, a rule Rerail ships. Approving it turns the original off in ${repoName() || "this repo"}.`);
+}
+
+/** A rule or pack someone else wrote (a worktree's own rule, a pack Rerail did not publish, an edited copy) that waits. */
+const otherNotice = (stored, subject, pack) => h("div.welcome.warn", { role: "status" }, pendingIcon(), h("div", null,
+  h("b", null, subject.kind === "pack" ? `Its pack, ${pack?.name ?? subject.id}, waits for approval.` : "This rule waits for approval."),
+  h("p", null, subject.kind === "pack"
+    ? "Rerail did not publish it, so every rule in it runs in Log, steering no one, until a person approves what this version ships."
+    : "Rerail did not write it, so it runs in Log, steering no one, until a person approves what it says. An edit waits again."),
+  stored.copiedFromRuleId ? copyLine(stored) : null,
+  h("p", null, "Read what it tells the coding agent first, or ask your coding agent to audit it: ", h("span.mono", null, "/rerail-create approve the rules"), "."),
+  approveButton(subject)));
 
 /**
  * While the rule's content (or its pack's) waits for a person's approval, what that means and an Approve button that
@@ -131,14 +168,10 @@ function renderStats(stored, id) {
 function renderApproval(stored) {
   const waiting = awaitingApproval(stored), subject = stored.approval?.subject;
   const pack = subject?.kind === "pack" ? data.packs.find(x => x.approval?.subject.id === subject.id) : undefined;
-  setContent(p.approval, JSON.stringify([waiting, subject, pack?.name]), () => (!waiting ? null
-    : h("div.welcome.warn", { role: "status" }, icon("steered", 22), h("div", null,
-      h("b", null, subject.kind === "pack" ? `Its pack, ${pack?.name ?? subject.id}, waits for approval.` : "This rule waits for approval."),
-      h("p", null, subject.kind === "pack"
-        ? "Rerail did not publish it, so every rule in it runs in Log, steering no one, until a person approves what this version ships."
-        : "Rerail did not write it, so it runs in Log, steering no one, until a person approves what it says. An edit waits again."),
-      h("p", null, "Read what it tells the coding agent first, or ask your coding agent to audit it: ", h("span.mono", null, "/rerail-create approve the rules"), "."),
-      h("p.acts", null, h("button.btn.sm.solid", { "data-act": "approve", "data-i": subject.id, "data-kind": subject.kind, "data-digest": subject.digest }, "Approve"))))));
+  const yours = awaitingYourApproval(stored), caught = yours ? allFires(stored.rule.id) : 0;
+  const key = [waiting, subject, pack?.name, yours, caught, stored.modeSource?.by, stored.copiedFromRuleId];
+  setContent(p.approval, JSON.stringify(key), () => (!waiting ? null
+    : yours ? yourRuleNotice(stored, subject, caught) : otherNotice(stored, subject, pack)));
 }
 
 /** Where the rule comes from (its pack, or created by you) and when it was added here and last edited. */
@@ -257,11 +290,14 @@ export function renderPanel(root) {
   const panel = ui.panel;
   const stored = panel?.kind === "rule" ? data.rules.get(panel.id) : undefined;
   const pack = panel?.kind === "pack" ? data.packs.find(x => x.id === panel.id) : undefined;
-  const open = stored !== undefined || pack !== undefined;
+  // A browser that lost the daemon's capability still holds what it read before: the page asking to connect it shows
+  // alone. `ui.panel` stays, so the sheet opens again once the browser is connected.
+  const open = !data.accessRequired && (stored !== undefined || pack !== undefined);
   const state = open ? "open" : "";
   if (document.body.dataset.panel !== state) document.body.dataset.panel = state;
+  if (!open) return;
   if (stored) renderRule(root, stored);
-  else if (pack) renderPackPanel(root, pack);
+  else renderPackPanel(root, pack);
 }
 
 /** Scroll the body back to the top when a different rule opens. */

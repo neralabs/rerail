@@ -1,4 +1,4 @@
-"""Writes ruff-up035-deprecated-import.moves.rr, UP035's table, from the rule's JSON.
+"""Writes ruff-up035-deprecated-import.moves.rerail, UP035's table, from the rule's JSON.
     python3 docs/rule-syntax/packs/python/gen-ruff-up035-deprecated-import.py
 Each JSON clause names a module, a util listing the names it reports, a pythonVersion range and a message. A name
 listed by several clauses of one module belongs to the first (the lowest version); the JSON's `not up-to-…`
@@ -7,7 +7,7 @@ import json, os, re
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules", "ruff-up035-deprecated-import.json")
-OUT = os.path.join(HERE, "ruff-up035-deprecated-import.moves.rr")
+OUT = os.path.join(HERE, "ruff-up035-deprecated-import.moves.rerail")
 
 
 def minor(v):

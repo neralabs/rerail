@@ -1,5 +1,7 @@
 # Rerail rule pack: JavaScript
 
+**Linter-equivalent to ESLint 10.11.0 and eslint-plugin-unicorn 76.0.0.** Each rule flags what the original flags, bar declared differences. [What this means](../../docs/rule-packs.md#linter-equivalent).
+
 121 code rules for JavaScript and TypeScript source, with their default options: 118 ported from ESLint 10.11.0's core
 rules and 3 from eslint-plugin-unicorn 76.0.0, which run on `.js`, `.jsx`, `.mjs` and `.cjs` files only, as unicorn
 lints them. 36 start on; 85 start off (`"on": false`) because neither tool's `recommended` configuration turns them
@@ -149,7 +151,7 @@ Port of ESLint no-caller; the arguments object is matched through parentheses.
 
 ### `eslint-no-case-declarations`
 
-Port of ESLint no-case-declarations. using declarations, which tree-sitter-typescript 0.23.2 parses as assignments with a using token, count as lexical declarations.
+Port of ESLint no-case-declarations. `using` and `await using` declarations count as lexical declarations.
 
 ### `eslint-no-compare-neg-zero`
 
@@ -389,7 +391,7 @@ Flags an empty constructor only in a class without `extends`; otherwise a constr
 
 ### `eslint-one-var`
 
-Port of ESLint one-var with default options (`always`). var scope is the enclosing function, let/const scope the enclosing block. `using` and `await using` declarations (JavaScript files only: the TypeScript grammar has no `using_declaration`) are block-scoped kinds of their own under `always` (the default, or the `using`/`awaitUsing`/`initialized` options); their `consecutive` and `never` modes are not modelled.
+Port of ESLint one-var with default options (`always`). var scope is the enclosing function, let/const scope the enclosing block. `using` and `await using` declarations are block-scoped kinds of their own under `always` (the default, or the `using`/`awaitUsing`/`initialized` options); their `consecutive` and `never` modes are not modelled.
 
 ### `eslint-operator-assignment`
 

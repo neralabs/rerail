@@ -18,7 +18,12 @@ impl Observed {
     pub fn ledger(&self) -> Arc<Ledger> {
         self.ledger.clone()
     }
-    pub fn start(&self, statement: *mut ffi::sqlite3_stmt) {
+    /// A statement starts: its counters read, its run charged to the ledger.
+    ///
+    /// # Safety
+    /// `statement` is a live statement of the observed connection, as SQLite gives its trace callback, for the
+    /// length of the call.
+    pub(crate) unsafe fn start(&self, statement: *mut ffi::sqlite3_stmt) {
         let mut running = self.running.lock();
         if running.contains_key(&(statement as usize)) {
             return;
@@ -44,7 +49,7 @@ impl Observed {
         });
         running.insert(statement as usize, Running { receipt, vm_before });
         drop(running);
-        let first = sql.trim_start().split_whitespace().next().unwrap_or("");
+        let first = sql.split_whitespace().next().unwrap_or("");
         let recovery =
             first.eq_ignore_ascii_case("ROLLBACK") || first.eq_ignore_ascii_case("RELEASE");
         let admitted = self
@@ -56,7 +61,11 @@ impl Observed {
             unsafe { ffi::sqlite3_interrupt(self.database as *mut ffi::sqlite3) };
         }
     }
-    pub fn end(&self, statement: *mut ffi::sqlite3_stmt) {
+    /// A statement `start` saw ends: its counters' change recorded.
+    ///
+    /// # Safety
+    /// As `start`'s: a live statement of the observed connection, for the length of the call.
+    pub(crate) unsafe fn end(&self, statement: *mut ffi::sqlite3_stmt) {
         let running = self.running.lock().remove(&(statement as usize));
         if let Some(Running { receipt, vm_before }) = running {
             let mut measured_steps = None;
@@ -86,7 +95,11 @@ pub struct Observer {
     pub shared: Arc<Observed>,
 }
 impl Observer {
-    /// The observer must drop before the connection. A later profiler can adopt `shared`.
+    /// A later profiler can adopt `shared`.
+    ///
+    /// # Safety
+    ///
+    /// The observer must drop before the connection: it registers a raw pointer to itself with SQLite.
     pub unsafe fn install(
         db: &Connection,
         ledger: Arc<Ledger>,
@@ -135,8 +148,9 @@ unsafe extern "C" fn trace(
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let observer = unsafe { &*data.cast::<Observed>() };
         match code {
-            ffi::SQLITE_TRACE_STMT => observer.start(stmt.cast()),
-            ffi::SQLITE_TRACE_PROFILE => observer.end(stmt.cast()),
+            // SAFETY: SQLite gives its trace callback the live statement it traces, for the callback's length.
+            ffi::SQLITE_TRACE_STMT => unsafe { observer.start(stmt.cast()) },
+            ffi::SQLITE_TRACE_PROFILE => unsafe { observer.end(stmt.cast()) },
             _ => {}
         }
     }));

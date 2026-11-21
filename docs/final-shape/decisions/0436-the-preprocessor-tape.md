@@ -41,7 +41,7 @@ This replaces two tapes, the directive tape (`06-raw.bitlex`, 0327 mode (a)) and
 ## The tape
 
 The tape is a format 16 document (`rerail_tape_format`), with its language table and its newline
-index (decision 0460 §1; it was a v9np document, format 15, until 0460 step 2a). There is no new
+index (decision 0468 §1; it was a v9np document, format 15, until 0468 step 2a). There is no new
 format and no side column, so every tape reader works on it: the evaluator reads it through the
 CLIF reads, and `__LINE__` comes from its newline index. Its root holds the file's items in order. An item
 is a directive, a conditional group, or a text line.
@@ -143,14 +143,14 @@ host never reads a length or a verdict to decide the next step. Its passes, in o
    scatter; it stops when nothing expands.
 7. **Output:** count, prefix sum, scatter.
 
-The 0421 spike (`rerail_c_pp::stream::parallel`, host Rust) stays as a cross-check of the
+The 0482 spike (`rerail_c_pp::stream::parallel`, host Rust) stays as a cross-check of the
 passes' arrays (user, 2026-11-18). The serial pass is the reference for the output.
 
 ## Requirements, each held by a test
 
 | | Requirement | Test |
 |---|---|---|
-| R1 | The tape is a format 16 image with its newline index, which every reader reads; no new format version (0460 §1; a v9np image until 0460 step 2a). | `the_pp_tape_is_a_format_16_image`; over the corpus, `the_corpus_pp_tapes_lean` (ignored) |
+| R1 | The tape is a format 16 image with its newline index, which every reader reads; no new format version (0468 §1; a v9np image until 0468 step 2a). | `the_pp_tape_is_a_format_16_image`; over the corpus, `the_corpus_pp_tapes_lean` (ignored) |
 | R2 | The tape's tokens, their bytes and their flags are the lean lexer's, in every part of the file. | `the_pp_tape_has_the_lexers_tokens` |
 | R3 | The tape's directives, operands and groups give mode (a)'s rows, equal to the lean scan's. | `the_pp_tape_gives_mode_a_rows` |
 | R4 | The Bitlex parser's tape equals the lean parser's, or the file is refused; on the corpus, 0 differ (interpreter, Cranelift, Metal tier 1). | `the_corpus_pp_tapes` (ignored) |
@@ -180,7 +180,7 @@ passes' arrays (user, 2026-11-18). The serial pass is the reference for the outp
   conditional directive is a mark at its `#` with its word after it on its line (`dir_hash,
   before hash "if" | … without cline`), and a directive is its word, its optional tail, then its
   line's end. (This grammar first worked around three limits of the tier-2 compiler: a 16-byte
-  bound on a conditional's word, and tails that took their line's end and a token first. 0445
+  bound on a conditional's word, and tails that took their line's end and a token first. 0480
   fixed the compiler and removed them.)
   - **R4 on the corpora** (`the_corpus_pp_tapes`, ignored; 62 s under Relax): 3,073 of 3,135
     files give the lean writer's tape byte for byte on Cranelift, and Metal's tapes (tier 1 on

@@ -6,44 +6,46 @@ use super::{
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 fn input(state: &State) -> Input {
-    let mut i = Input::default();
-    i.spans = state
-        .spans
-        .iter()
-        .map(|(p, s)| Span {
-            path: p.clone(),
-            own_cpu: s.own,
-            calls: s.calls,
-        })
-        .collect();
-    i.sql = state
-        .sql
-        .iter()
-        .map(|((p, q), s)| Sql {
-            path: p.clone(),
-            text: q.clone(),
-            runs: s.runs,
-            vm: s.vm,
-            autoindex: s.autoindex,
-        })
-        .collect();
-    i.joins = state
-        .native
-        .iter()
-        .map(|((p, q), steps)| Join {
-            path: p.clone(),
-            plan: q.clone(),
-            steps: steps.clone(),
-            cpu: state.native_cpu.get(&(p.clone(), q.clone())).copied(),
-        })
-        .collect();
+    let mut i = Input {
+        spans: state
+            .spans
+            .iter()
+            .map(|(p, s)| Span {
+                path: p.clone(),
+                own_cpu: s.own,
+                calls: s.calls,
+            })
+            .collect(),
+        sql: state
+            .sql
+            .iter()
+            .map(|((p, q), s)| Sql {
+                path: p.clone(),
+                text: q.clone(),
+                runs: s.runs,
+                vm: s.vm,
+                autoindex: s.autoindex,
+            })
+            .collect(),
+        joins: state
+            .native
+            .iter()
+            .map(|((p, q), steps)| Join {
+                path: p.clone(),
+                plan: q.clone(),
+                steps: steps.clone(),
+                cpu: state.native_cpu.get(&(p.clone(), q.clone())).copied(),
+            })
+            .collect(),
+        ..Input::default()
+    };
     let reasons: Vec<_> = state
         .decisions
         .keys()
         .filter(|(topic, _)| topic == "projection provenance")
         .map(|(_, text)| text.clone())
         .collect();
-    for ((topic, text), _) in &state.decisions {
+    for (topic, text) in state.decisions.keys() {
         if let Some(attr) = topic.strip_suffix(" on request")
             && let Some(why) = text.strip_prefix("no, every node: ")
         {
@@ -63,8 +65,8 @@ fn input(state: &State) -> Input {
             "candidate spike rewrite" => i.late_candidate_rewrite = true,
             "composed input work" => {
                 let w: Vec<_> = text.split_whitespace().collect();
-                if w.len() == 10 {
-                    if let (Ok(filters), Ok(batches), Ok(rows)) = (
+                if w.len() == 10
+                    && let (Ok(filters), Ok(batches), Ok(rows)) = (
                         w[1].parse::<u64>(),
                         w[3].parse::<u64>(),
                         w[5].parse::<u64>(),
@@ -83,7 +85,6 @@ fn input(state: &State) -> Input {
                             });
                         }
                     }
-                }
             }
             "projection demand" => {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(text) {
@@ -123,34 +124,10 @@ pub fn report(state: &State) -> (String, serde_json::Value) {
     (text, json)
 }
 
-/// Explain scalar inputs using actual dependency edges, including native contracts.
-/// Keep one shortest consumer path per requested scalar relation, with cycle guards.
-/// Public for the report's tests, which sit in the crate above (`logic::profile::report`).
-pub fn projection(
-    prog: &crate::code_rule_dsl::logic::front::Program,
-    reads: &BTreeSet<String>,
-) {
-    use crate::code_rule_dsl::logic::front::Literal;
-    let mut users: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
-    for rule in &prog.rules {
-        for a in rule.body.iter().filter_map(Literal::atom) {
-            users
-                .entry(a.rel.to_string())
-                .or_default()
-                .insert(rule.head.rel.to_string());
-        }
-    }
-    for (name, native) in &prog.natives {
-        for read in native.reads() {
-            users.entry(read.into()).or_default().insert(name.clone());
-        }
-    }
-    let outputs: BTreeSet<_> = prog.outputs.iter().cloned().collect();
-    projection_of(&users, &outputs, reads);
-}
-
-/// `projection` from the relations' readers (a relation's, or a native's) and the outputs, found by its caller (over
-/// a version, `logic::plan::text_demand`).
+/// Explains each scalar input read (`reads`) by one shortest path of readers to an output, with cycle guards: the
+/// relations' readers (a relation's, or a native's, native contracts included) and the outputs found by its caller
+/// (over a version, `logic::plan::text_demand`). Public for the report's tests, which sit in the crate above
+/// (`logic::profile::report`).
 pub fn projection_of(users: &BTreeMap<String, BTreeSet<String>>, outputs: &BTreeSet<String>, reads: &BTreeSet<String>) {
     for scalar in analysis::SCALARS.iter().filter(|r| reads.contains(**r)) {
         let mut queue = VecDeque::from([vec![(*scalar).to_owned()]]);

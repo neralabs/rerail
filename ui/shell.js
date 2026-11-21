@@ -153,7 +153,8 @@ export function closePanel() {
 /**
  * Show `route` (`routes.js`; `view` set): another view closes the sheet and polls for the new view's data now; leaving
  * the catalog forgets the packs it removed. The view's `enter(route)` runs when it is entered, and again when the
- * route carries a History rule or chip, or a session.
+ * route carries a History rule or chip, a session, or a Merge Assist conflict. A conflict link polls now on Merge
+ * Assist's page too: the page brings the conflict into view only from a status read after the link.
  */
 export function go(route) {
   const moved = route.view !== ui.view || (route.view === "pack" && route.pack !== ui.pack);
@@ -165,10 +166,10 @@ export function go(route) {
     ui.removeAsk = null;
     window.scrollTo(0, 0);
   }
-  const carries = route.filterRule !== undefined || route.outcome !== undefined || route.session !== undefined || route.sessionFilter !== undefined;
+  const carries = route.filterRule !== undefined || route.outcome !== undefined || route.session !== undefined || route.sessionFilter !== undefined || route.conflict !== undefined;
   if (moved || carries) hooks.enter(route);
   invalidate();
-  if (moved) refreshNow();
+  if (moved || route.conflict !== undefined) refreshNow();
 }
 
 /** `sessionId` from the boot URL, entered once the first poll is in; `null` once consumed. */

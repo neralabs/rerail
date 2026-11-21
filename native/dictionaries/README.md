@@ -1,15 +1,20 @@
 # Store frame dictionaries
 
-These are zstd dictionaries that are compiled into the engine
-(`content_store::compression`). The store compresses each source and
-each tape as its own zstd frame. A frame under 64 KB is also
-compressed with its language's dictionary, and the store keeps
-whichever frame is smaller. Small files have little text of their own
-for zstd to copy from, and the dictionary supplies it. Note t28 has the
-measurements.
+These zstd dictionaries are no longer in the engine. The store keeps
+every source and tape uncompressed, in segments, read in place
+(decision 0295 step 5, 2026-11-19). Only the tape16 lab
+(`native/lab/tape16`) still reads them, to measure format 15's size
+at rest against the formats that replaced it.
 
-Each frame names its dictionary in the frame header by the dictionary's
-id. The list is append-only:
+They were compiled into the engine (`content_store::compression`),
+which compressed each source and each tape as its own zstd frame. A
+frame under 64 KB was also compressed with its language's dictionary,
+and the store kept whichever frame was smaller. Small files have
+little text of their own for zstd to copy from, and the dictionary
+supplies it. Note t28 has the measurements.
+
+Each frame named its dictionary in the frame header by the
+dictionary's id. The list was append-only:
 
 - A retrained dictionary gets a new id and a new file.
 - The old dictionary stays, so frames already in a store can still be

@@ -1,17 +1,37 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { mkdir, mkdtemp, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { dirname, join, win32 } from "node:path";
 import {
   codingAgentStates, connectCodingAgents, forgetSeenCodingAgents, recordSeenCodingAgents, refreshCodingAgents, seenCodingAgents, type DataAccessOptions,
 } from "../../src/setup/coding-agents.js";
 import { pinnedNodePath } from "../../src/setup/node-path.js";
-import { CODEX_HOOK_EVENTS, registerHarnesses, type Harness } from "../../src/setup/harness-registration.js";
+import { CODEX_HOOK_EVENTS, registerHarnesses, unregisterHarnesses, type Harness } from "../../src/setup/harness-registration.js";
+import { removeFolder } from "../support/platform/remove-folder.js";
+
+// Each look for a program on PATH, passed through and watched: it checks a file in each PATH entry.
+const looksOnPath = vi.hoisted(() => vi.fn<(name: string) => void>());
+vi.mock("../../src/engine/system-programs.js", async importOriginal => {
+  const actual = await importOriginal<{ programOnPath: (name: string, search?: object) => string | undefined }>();
+  return { ...actual, programOnPath: (name: string, search?: object) => (looksOnPath(name), actual.programOnPath(name, search)) };
+});
+
+/** `text` as it stands inside a JSON string: a Windows path's backslashes are written twice there. */
+const inJson = (text: string): string => JSON.stringify(text).slice(1, -1);
+
+/**
+ * Why a check of a registration made for Linux skips on Windows: set-up writes that registration's paths by POSIX rules
+ * (`pathsOf`), and on a Windows computer a dry run for Linux plans its Claude Code and Cursor hooks again, so it never
+ * reads as connected there. test/setup/harness-registration.test.ts skips its checks of the Linux forms there too. The
+ * checks that register for `win32` run everywhere.
+ */
+const POSIX_SETUP = "checks a registration made off Windows; the checks that register for win32 run everywhere";
+const WINDOWS = process.platform === "win32";
 
 const temporaryDirectories: string[] = [];
 afterEach(async () => {
   vi.unstubAllEnvs();
-  await Promise.all(temporaryDirectories.splice(0).map(path => rm(path, { recursive: true, force: true })));
+  await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
 
 /** Pi's settings, after writing `{ packages }` when given, as Pi's gallery or set-up wrote them. */
@@ -149,7 +169,7 @@ describe("connectCodingAgents", () => {
     expect(result.all).toEqual(["cursor"]);
     expect(await readFile(settings, "utf8")).toBe(commented);
     expect(await readdir(join(home, ".claude"))).toEqual(expect.not.arrayContaining([expect.stringMatching(/\.bak$/u)]));
-    expect(await readFile(join(home, ".cursor", "hooks.json"), "utf8")).toContain(join(root, "dist", "hosts", "cursor", "cursor-hook.js"));
+    expect(await readFile(join(home, ".cursor", "hooks.json"), "utf8")).toContain(inJson(join(root, "dist", "hosts", "cursor", "cursor-hook.js")));
   });
 
   it("counts an agent as connected when its registration is out of date, as after Node moved, without touching it", async () => {
@@ -157,7 +177,7 @@ describe("connectCodingAgents", () => {
     // Registered by a Node that has moved since (nvm switched, or Homebrew's versioned keg is gone).
     const settings = join(home, ".claude", "settings.json");
     const registered = await readFile(settings, "utf8");
-    const stale = registered.replaceAll(pinnedNodePath(), "/old/node-v24.0.0/bin/node");
+    const stale = registered.replaceAll(inJson(pinnedNodePath()), "/old/node-v24.0.0/bin/node");
     expect(stale).not.toBe(registered);
     await writeFile(settings, stale);
 
@@ -203,8 +223,11 @@ describe("connectCodingAgents", () => {
 });
 
 describe("whether a coding agent can read Rerail's data", () => {
-  /** A package root and a coding-agent home with `agents` connected to it; `before` runs ahead of connecting. */
-  async function connected(agents: Harness[], before: (home: string) => Promise<void> = async () => {}) {
+  /**
+   * A package root and a coding-agent home with `agents` connected to it as set-up connects them on `platform`, the
+   * platform a check of it then names; `before` runs ahead of connecting.
+   */
+  async function connected(agents: Harness[], before: (home: string) => Promise<void> = async () => {}, platform: NodeJS.Platform = "linux") {
     const base = await mkdtemp(join(tmpdir(), "rerail-data-access-"));
     temporaryDirectories.push(base);
     const root = join(base, "rerail-home", "current");
@@ -213,8 +236,20 @@ describe("whether a coding agent can read Rerail's data", () => {
     const home = join(base, "home");
     await mkdir(home);
     await before(home);
-    await registerHarnesses({ root, home, harnesses: agents });
+    await registerHarnesses({ root, home, harnesses: agents, platform });
     return { root, home, managed: join(base, "managed-settings.json") };
+  }
+
+  /**
+   * A folder of `base` whose `node.exe` is the node running this test, the recorded node of a registration that names
+   * none: that node itself on Windows, a link to it elsewhere.
+   */
+  async function folderOfThisNode(base: string): Promise<string> {
+    if (process.platform === "win32") return dirname(process.execPath);
+    const folder = join(base, "this-node");
+    await mkdir(folder);
+    await symlink(process.execPath, join(folder, "node.exe"));
+    return folder;
   }
 
   async function stateOf(root: string, home: string, id: Harness, options: DataAccessOptions) {
@@ -222,19 +257,24 @@ describe("whether a coding agent can read Rerail's data", () => {
     return { connected: state.connected, access: state.rerailData.access };
   }
 
-  it("counts Claude Code as kept out only while its sandbox is on, in its user or managed settings", async () => {
+  /** A `.cursor/cli-config.json` in `home`, which the Cursor CLI reads and set-up adds its denies to. */
+  async function cursorCliConfig(home: string): Promise<void> {
+    await mkdir(join(home, ".cursor"));
+    await writeFile(join(home, ".cursor", "cli-config.json"), "{}\n");
+  }
+
+  it("counts Claude Code as kept out only while its sandbox is on, in its user or managed settings", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
     const { root, home, managed } = await connected(["claude-code"]);
     const settings = join(home, ".claude", "settings.json");
     const registered = JSON.parse(await readFile(settings, "utf8")) as { sandbox?: Record<string, unknown> };
     const withSandbox = (enabled: boolean) => JSON.stringify({ ...registered, sandbox: { ...registered.sandbox, enabled } });
-    const claude = (platform: NodeJS.Platform = "linux") => stateOf(root, home, "claude-code", { platform, claudeManagedSettings: managed });
+    const claude = () => stateOf(root, home, "claude-code", { platform: "linux", claudeManagedSettings: managed });
 
     expect(await claude()).toEqual({ connected: true, access: "file-tools" });
 
     await writeFile(settings, withSandbox(true));
     expect(await claude()).toEqual({ connected: true, access: "kept-out" });
-    // Native Windows has no Claude Code sandbox, whatever the setting says.
-    expect(await claude("win32")).toEqual({ connected: true, access: "file-tools" });
     // Managed settings win over the user's.
     await writeFile(managed, JSON.stringify({ sandbox: { enabled: false } }));
     expect(await claude()).toEqual({ connected: true, access: "file-tools" });
@@ -252,16 +292,81 @@ describe("whether a coding agent can read Rerail's data", () => {
     expect(await claude()).toEqual({ connected: false, access: "open" });
   });
 
-  it("counts the Cursor CLI's file tools as kept out only where its cli-config.json held Rerail's denies", async () => {
-    const withConfig = await connected(["cursor"], async home => {
-      await mkdir(join(home, ".cursor"));
-      await writeFile(join(home, ".cursor", "cli-config.json"), "{}\n");
-    });
+  it("counts Claude Code on native Windows as keeping only its file tools out, whatever its sandbox setting says", async () => {
+    const { root, home, managed } = await connected(["claude-code"], async () => {}, "win32");
+    const settings = join(home, ".claude", "settings.json");
+    await writeFile(settings, JSON.stringify({ ...JSON.parse(await readFile(settings, "utf8")), sandbox: { enabled: true } }));
+    expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: managed })).toEqual({ connected: true, access: "file-tools" });
+  });
+
+  it("counts the Cursor CLI's file tools as kept out only where its cli-config.json held Rerail's denies", async ({ skip }) => {
+    skip(WINDOWS, POSIX_SETUP);
+    const withConfig = await connected(["cursor"], cursorCliConfig);
     expect(await stateOf(withConfig.root, withConfig.home, "cursor", { platform: "linux" })).toEqual({ connected: true, access: "file-tools" });
-    expect(await stateOf(withConfig.root, withConfig.home, "cursor", { platform: "win32" })).toEqual({ connected: true, access: "open" });
 
     const without = await connected(["cursor"]);
     expect(await stateOf(without.root, without.home, "cursor", { platform: "linux" })).toEqual({ connected: true, access: "open" });
+  });
+
+  it("counts the Cursor CLI's file tools as kept out on Windows too where its cli-config.json held Rerail's denies", async () => {
+    const { root, home } = await connected(["cursor"], cursorCliConfig, "win32");
+    expect(await stateOf(root, home, "cursor", { platform: "win32" })).toEqual({ connected: true, access: "file-tools" });
+  });
+
+  it("counts Claude Code on Windows as connected whatever node PATH finds first for whoever asks", async () => {
+    // Set-up writes Claude Code's Windows hooks with `node` where PATH finds the recorded node, here the one running
+    // this test, and with cmd.exe where PATH finds another. The dashboard and `rerail status` ask from the daemon and
+    // the shell, each with a PATH of its own.
+    let recorded = "";
+    const { root, home } = await connected(["claude-code"], async home => {
+      recorded = await folderOfThisNode(dirname(home));
+      vi.stubEnv("PATHEXT", ".exe");
+      vi.stubEnv("PATH", recorded);
+    }, "win32");
+    const other = join(dirname(home), "other-node");
+    await mkdir(other);
+    await writeFile(join(other, "node.exe"), "");
+    // cmd.exe at the path set-up names, on Linux too: set-up writes a cmd.exe entry only where a file is there.
+    const cmd = win32.join(process.env.SystemRoot || String.raw`C:\Windows`, "System32", "cmd.exe");
+    const fileExists = (path: string) => path === cmd;
+    const askedWith = async (path: string) => {
+      vi.stubEnv("PATH", path);
+      return stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, fileExists });
+    };
+
+    expect(await askedWith(other)).toEqual({ connected: true, access: "file-tools" });
+    await registerHarnesses({ root, home, harnesses: ["claude-code"], platform: "win32", fileExists });
+    expect(await readFile(join(home, ".claude", "settings.json"), "utf8")).toContain(inJson(cmd));
+    expect(await askedWith(recorded)).toEqual({ connected: true, access: "file-tools" });
+  });
+
+  it("reads Claude Code on Windows as connected and registered, and takes it out, without looking for node on PATH", async () => {
+    // The daemon reads whether Rerail is connected on its event loop each time the dashboard's Settings opens, and
+    // `rerail update` reads whether an agent is registered before it registers it again. A look for node on PATH checks
+    // a file in each PATH entry, which a share that does not answer holds for about 21 s: only set-up's write looks.
+    const { root, home } = await connected(["claude-code"], async () => {}, "win32");
+    const settings = join(home, ".claude", "settings.json");
+    const other = join(dirname(home), "other-node");
+    await mkdir(other);
+    await writeFile(join(other, "node.exe"), "");
+    vi.stubEnv("PATHEXT", ".exe");
+    vi.stubEnv("PATH", other);
+    const cmd = win32.join(process.env.SystemRoot || String.raw`C:\Windows`, "System32", "cmd.exe");
+    const fileExists = (path: string) => path === cmd;
+    const windows = { root, home, harnesses: ["claude-code"] as const, platform: "win32" as const, fileExists };
+    looksOnPath.mockClear();
+    await registerHarnesses(windows);
+    expect(await readFile(settings, "utf8")).toContain(inJson(cmd));
+    expect(looksOnPath).toHaveBeenCalledWith("node");
+    looksOnPath.mockClear();
+
+    expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, fileExists })).toEqual({ connected: true, access: "file-tools" });
+    // The question `rerail update` and set-up ask of each coding agent (`isRegistered`): would a removal change anything.
+    const removal = await unregisterHarnesses({ ...windows, dryRun: true });
+    expect(removal.changes.some(change => change.harness === "claude-code" && change.action !== "unchanged" && change.action !== "skipped")).toBe(true);
+    await unregisterHarnesses(windows);
+    expect(await readFile(settings, "utf8")).not.toContain("hook-launcher");
+    expect(looksOnPath).not.toHaveBeenCalled();
   });
 });
 

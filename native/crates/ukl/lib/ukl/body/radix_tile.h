@@ -48,16 +48,17 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_hist_tile)(UKL_RADIX_SPACE const UKL_RA
 }
 
 // The tile's rows at their places. `counts`: `UKL_RADIX_GROUPS * UKL_RADIX_DIGITS` threadgroup words (the round's
-// rows of each digit, by SIMD group); `before`, `base`: `UKL_RADIX_DIGITS` each (the digit's rows in the earlier
-// rounds; its offset for the tile). `t` of `lsz` threads, as the histogram's: a thread's SIMD group runs the tile's
-// SIMD groups of its threads one after another, each a SIMD-group operation of them all.
+// rows of each digit, by rank group); `before`, `base`: `UKL_RADIX_DIGITS` each (the digit's rows in the earlier
+// rounds; its offset for the tile); `digits`: `UKL_RADIX_SPILL` (each thread's digit, where a rank group is not a SIMD
+// group). `t` of `lsz` threads, as the histogram's: a thread's SIMD group runs the tile's SIMD groups of its threads
+// one after another, each a SIMD-group operation of them all (rank groups that are SIMD groups only).
 UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_RADIX_SPACE const UKL_RADIX_KEY* keys, UKL_RADIX_SPACE const uint32_t* values, UKL_RADIX_SPACE const uint32_t* offsets,
                                        UKL_RADIX_SPACE UKL_RADIX_KEY* outKeys, UKL_RADIX_SPACE uint32_t* outValues, UklRadixArgs args, UKL_LOCAL uint32_t* counts,
-                                       UKL_LOCAL uint32_t* before, UKL_LOCAL uint32_t* base, uint32_t tile, uint32_t t, uint32_t lsz __UKL_PARAMS)
+                                       UKL_LOCAL uint32_t* before, UKL_LOCAL uint32_t* base, UKL_LOCAL uint32_t* digits, uint32_t tile, uint32_t t, uint32_t lsz __UKL_PARAMS)
 {
 #if UKL_RADIX_VT_MAX == 1u
     (void)lsz;
-    uint32_t lane = t % UKL_SIMD_WIDTH, sg = t / UKL_SIMD_WIDTH;
+    uint32_t me = t % UKL_RADIX_RG, sg = t / UKL_RADIX_RG;
     base[t] = offsets[t * args.tiles + tile];
     before[t] = 0u;
     for (uint32_t k = 0u; k < UKL_RADIX_ROUNDS; k++) {
@@ -66,9 +67,22 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_RADIX_SPACE const UKL
         UKL_RADIX_KEY key = live ? keys[r] : (UKL_RADIX_KEY)0;
         // A row past the end has a digit of its own, equal to no live row's.
         uint32_t d = live ? UKL_RADIX_NAME(ukl_radix_digit)(key, args.shift) : UKL_RADIX_DIGITS;
-        uint32_t m = ukl_sg_match(d __UKL_ARGS);
-        uint32_t rank = ukl_rank32(m, lane);
-        bool last = (m >> lane) == 1u;
+#if UKL_RADIX_MATCHED
+        ukl_mask_t m = ukl_sg_match(d __UKL_ARGS);
+        uint32_t rank = ukl_mask_rank(m, me);
+        bool last = (m >> me) == 1u;
+        (void)digits;
+#else
+        digits[t] = d;
+        ukl_tg_barrier();
+        uint32_t rank = 0u;
+        bool last = true;
+        for (uint32_t j = 0u; j < UKL_RADIX_RG; j++) {
+            uint32_t dj = digits[t - me + j];
+            rank += (uint32_t)(dj == d && j < me);
+            last = last && !(dj == d && j > me);
+        }
+#endif
         for (uint32_t s = 0u; s < UKL_RADIX_GROUPS; s++)
             counts[s * UKL_RADIX_DIGITS + t] = 0u;
         ukl_tg_barrier();
@@ -93,7 +107,11 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_RADIX_SPACE const UKL
         ukl_tg_barrier();
     }
 #else
-    uint32_t lane = t % UKL_SIMD_WIDTH, nv = UKL_RADIX_THREADS / lsz;
+    uint32_t nv = UKL_RADIX_THREADS / lsz;
+#if UKL_RADIX_MATCHED
+    uint32_t lane = t % UKL_SIMD_WIDTH;
+    (void)digits;
+#endif
     for (uint32_t v = t; v < UKL_RADIX_THREADS; v += lsz) {
         base[v] = offsets[v * args.tiles + tile];
         before[v] = 0u;
@@ -108,16 +126,34 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_RADIX_SPACE const UKL
             live[m] = row[m] < args.n;
             key[m] = live[m] ? keys[row[m]] : (UKL_RADIX_KEY)0;
             d[m] = live[m] ? UKL_RADIX_NAME(ukl_radix_digit)(key[m], args.shift) : UKL_RADIX_DIGITS;
-            uint32_t mm = ukl_sg_match(d[m] __UKL_ARGS);
-            rank[m] = ukl_rank32(mm, lane);
+#if UKL_RADIX_MATCHED
+            // The tile's SIMD group of `v` is the group of this thread's own, its `m`-th: one match of them all.
+            ukl_mask_t mm = ukl_sg_match(d[m] __UKL_ARGS);
+            rank[m] = ukl_mask_rank(mm, lane);
             last[m] = (mm >> lane) == 1u;
+#else
+            digits[v] = d[m];
+#endif
             for (uint32_t s = 0u; s < UKL_RADIX_GROUPS; s++)
                 counts[s * UKL_RADIX_DIGITS + v] = 0u;
         }
         ukl_tg_barrier();
+#if !UKL_RADIX_MATCHED
+        // A rank group's digits read from threadgroup memory, as one thread a tile thread does (above).
+        for (uint32_t m = 0u; m < nv; m++) {
+            uint32_t v = t + m * lsz, me = v % UKL_RADIX_RG;
+            rank[m] = 0u;
+            last[m] = true;
+            for (uint32_t j = 0u; j < UKL_RADIX_RG; j++) {
+                uint32_t dj = digits[v - me + j];
+                rank[m] += (uint32_t)(dj == d[m] && j < me);
+                last[m] = last[m] && !(dj == d[m] && j > me);
+            }
+        }
+#endif
         for (uint32_t m = 0u; m < nv; m++)
             if (live[m] && last[m])
-                counts[((t + m * lsz) / UKL_SIMD_WIDTH) * UKL_RADIX_DIGITS + d[m]] = rank[m] + 1u;
+                counts[((t + m * lsz) / UKL_RADIX_RG) * UKL_RADIX_DIGITS + d[m]] = rank[m] + 1u;
         ukl_tg_barrier();
         for (uint32_t m = 0u; m < nv; m++) {
             uint32_t v = t + m * lsz, a = 0u;
@@ -131,7 +167,7 @@ UKL_INLINE void UKL_RADIX_NAME(ukl_radix_scatter_tile)(UKL_RADIX_SPACE const UKL
         ukl_tg_barrier();
         for (uint32_t m = 0u; m < nv; m++)
             if (live[m]) {
-                uint32_t at = base[d[m]] + before[d[m]] + counts[((t + m * lsz) / UKL_SIMD_WIDTH) * UKL_RADIX_DIGITS + d[m]] + rank[m];
+                uint32_t at = base[d[m]] + before[d[m]] + counts[((t + m * lsz) / UKL_RADIX_RG) * UKL_RADIX_DIGITS + d[m]] + rank[m];
                 outKeys[at] = key[m];
                 outValues[at] = values[row[m]];
             }

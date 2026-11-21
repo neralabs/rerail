@@ -82,6 +82,7 @@ function ruleConditions(query: RuleQuery): SQL[] {
     const matches = (column: SQL | typeof rules.id) => sql`${column} LIKE ${pattern} ESCAPE '\\'`;
     conditions.push(or(
       matches(rules.id),
+      matches(sql`coalesce(${rules.title}, '')`),
       matches(sql`coalesce(${rules.reference}, ${rules.description}, '')`),
       matches(sql`coalesce(json_extract(${rules.action}, '$.content'), ${rules.clauses}, '')`),
     )!);
@@ -118,6 +119,7 @@ function storedBody(row: RuleRow): unknown {
       id: row.id,
       revision: row.revision,
       mode: row.mode,
+      ...(row.title === null ? {} : { title: row.title }),
       ...(row.description === null ? {} : { description: row.description }),
       ...(row.codeRuleScope === null ? {} : { scope: row.codeRuleScope }),
       clauses: row.clauses,
@@ -126,6 +128,7 @@ function storedBody(row: RuleRow): unknown {
   return {
     id: row.id,
     mode: row.mode,
+    ...(row.title === null ? {} : { title: row.title }),
     ...(row.reference === null ? {} : { reference: row.reference }),
     match: row.match,
     sample: row.sample,
@@ -200,6 +203,7 @@ export class SqliteRuleStore {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       sourceDigest: options.sourceDigest === undefined ? existing?.sourceDigest ?? null : options.sourceDigest,
+      title: rule.title ?? null,
       format: rule.format,
       description: rule.description ?? null,
       codeRuleScope: rule.scope ?? null,
@@ -228,6 +232,7 @@ export class SqliteRuleStore {
       createdAt: existing?.createdAt ?? now,
       updatedAt: now,
       sourceDigest: options.sourceDigest === undefined ? existing?.sourceDigest ?? null : options.sourceDigest,
+      title: rule.title ?? null,
       ...NULL_CODE_RULE_COLUMNS,
       reference: rule.reference ?? null,
       match: rule.match,

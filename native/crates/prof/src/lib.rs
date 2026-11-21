@@ -7,15 +7,23 @@
 //! crate of its own so that the engine's crates (the Metal runtime's) count into the same stages.
 
 use std::collections::BTreeMap;
-use std::sync::{LazyLock, Mutex};
 use std::time::Duration;
 
 // The workspace profile (`RERAIL_PROFILE`) reports the stages too (its "Stages" section).
-static ON: LazyLock<bool> = LazyLock::new(|| std::env::var_os("RERAIL_PROF").is_some() || std::env::var_os("RERAIL_PROFILE").is_some());
-static STAGES: Mutex<BTreeMap<String, (Duration, usize)>> = Mutex::new(BTreeMap::new());
+/// Whether stages are timed (`RERAIL_PROF`, `RERAIL_PROFILE`): read once a run (decision 0442).
+fn stages_on() -> bool {
+    rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PROF").is_some() || std::env::var_os("RERAIL_PROFILE").is_some())
+}
+/// The run's stages (decision 0442: a run's measurement), by name: CPU time and calls.
+#[derive(Default)]
+struct Stages(std::sync::Arc<parking_lot::Mutex<BTreeMap<String, (Duration, usize)>>>);
+
+fn held() -> parking_lot::ArcMutexGuard<parking_lot::RawMutex, BTreeMap<String, (Duration, usize)>> {
+    rerail_context::local::<Stages>().0.lock_arc()
+}
 
 pub fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T {
-    if !*ON {
+    if !stages_on() {
         return f();
     }
     let start = thread_cpu();
@@ -24,7 +32,7 @@ pub fn time<T>(stage: &str, f: impl FnOnce() -> T) -> T {
     let cpu = top.then(process_cpu);
     let out = f();
     let elapsed = thread_cpu().saturating_sub(start);
-    let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut stages = held();
     if let Some(cpu) = cpu {
         let entry = stages.entry(format!("cpu_ms.{stage}")).or_default();
         entry.1 += ((process_cpu() - cpu).as_secs_f64() * 1e3) as usize;
@@ -45,7 +53,7 @@ pub fn single_thread_cpu() -> Duration {
 
 /// The process's CPU time so far (user + sys).
 #[cfg(target_family = "wasm")]
-fn process_cpu() -> Duration {
+pub fn process_cpu() -> Duration {
     single_thread_cpu()
 }
 
@@ -72,7 +80,7 @@ pub fn thread_cpu() -> Duration {
 
 /// The process's CPU time so far (user + sys).
 #[cfg(unix)]
-fn process_cpu() -> Duration {
+pub fn process_cpu() -> Duration {
     let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
     unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
     let time = |t: libc::timeval| Duration::from_secs(t.tv_sec as u64) + Duration::from_micros(t.tv_usec as u64);
@@ -81,7 +89,7 @@ fn process_cpu() -> Duration {
 
 /// The process's CPU time so far (user + kernel).
 #[cfg(windows)]
-fn process_cpu() -> Duration {
+pub fn process_cpu() -> Duration {
     let (user, kernel) = windows_cpu(false);
     user + kernel
 }
@@ -126,12 +134,11 @@ pub fn windows_peak_working_set() -> u64 {
 }
 
 /// Prints the stages' times under `title` and clears them.
-
 pub fn report(title: &str) {
-    if !*ON {
+    if !stages_on() {
         return;
     }
-    let stages = std::mem::take(&mut *STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner()));
+    let stages = std::mem::take(&mut *held());
     eprintln!("prof {title}:");
     for (stage, (elapsed, calls)) in stages {
         eprintln!("  {stage:<40} {:>10.1} ms {calls:>7} calls", elapsed.as_secs_f64() * 1e3);
@@ -143,14 +150,14 @@ pub struct Stage(Option<(&'static str, Duration, Option<Duration>)>);
 
 impl Stage {
     pub fn start(stage: &'static str) -> Self {
-        Self(ON.then(|| (stage, thread_cpu(), (stage.starts_with("labels.") || stage.starts_with("demand.") || stage == "size.texts").then(process_cpu))))
+        Self(stages_on().then(|| (stage, thread_cpu(), (stage.starts_with("labels.") || stage.starts_with("demand.") || stage == "size.texts").then(process_cpu))))
     }
 }
 
 impl Drop for Stage {
     fn drop(&mut self) {
         if let Some((stage, start, cpu)) = self.0.take() {
-            let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+            let mut stages = held();
             if let Some(cpu) = cpu {
                 stages.entry(format!("cpu_ms.{stage}")).or_default().1 += ((process_cpu() - cpu).as_secs_f64() * 1e3) as usize;
             }
@@ -163,29 +170,29 @@ impl Drop for Stage {
 
 /// Adds `amount` (bytes, records) to `stage`'s count, shown as its calls.
 pub fn count(stage: &'static str, amount: usize) {
-    if *ON {
-        let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if stages_on() {
+        let mut stages = held();
         stages.entry(stage.to_owned()).or_default().1 += amount;
     }
 }
 
 /// Whether stages are timed (`RERAIL_PROF`, or the workspace profile's `RERAIL_PROFILE`).
 pub fn on() -> bool {
-    *ON
+    stages_on()
 }
 
 /// `count` with a name made at run time.
 pub fn count_named(stage: String, amount: usize) {
-    if *ON {
-        let mut stages = STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if stages_on() {
+        let mut stages = held();
         stages.entry(stage).or_default().1 += amount;
     }
 }
 
 /// The stages, locked: for a reading of its own (the engine's memory peaks), kept as the
 /// largest seen.
-pub fn stages() -> std::sync::MutexGuard<'static, BTreeMap<String, (Duration, usize)>> {
-    STAGES.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+pub fn stages() -> parking_lot::ArcMutexGuard<parking_lot::RawMutex, BTreeMap<String, (Duration, usize)>> {
+    held()
 }
 
 /// The copies decision 0353 still lists, counted where each is made: the measure its steps drive to 0. Each site is
@@ -195,8 +202,9 @@ pub fn stages() -> std::sync::MutexGuard<'static, BTreeMap<String, (Duration, us
 /// `copies (decision 0353)` names every site that copied in the run, and a site absent from it copied nothing.
 pub mod copies {
     use std::sync::Mutex;
-    use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
+    /// A site of a copy decision 0353 lists: code, its row and step fixed where it is written. What it copied is the
+    /// run's (`Copies`, decision 0442): a run's profile names the copies that run made.
     pub struct Site {
         /// Its row in 0353's table.
         pub row: u8,
@@ -204,58 +212,64 @@ pub mod copies {
         pub step: &'static str,
         /// What is copied, and where.
         pub name: &'static str,
-        bytes: AtomicU64,
-        calls: AtomicU64,
-        cpu_ns: AtomicU64,
-        listed: AtomicBool,
     }
 
-    static SITES: Mutex<Vec<&'static Site>> = Mutex::new(Vec::new());
-
     /// A site's totals so far.
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
+    #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
     pub struct Totals {
         pub bytes: u64,
         pub calls: u64,
         pub cpu_ns: u64,
     }
 
+    /// The run's copies, by site (`rerail_context::local`; a site is its row and name, a `const` written once):
+    /// each site that copied, in the order it first did.
+    #[derive(Default)]
+    struct Copies(Mutex<Vec<(&'static Site, Totals)>>);
+
+    impl Copies {
+        fn add(&self, site: &'static Site, bytes: u64, cpu_ns: u64) {
+            let mut all = self.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+            let at = match all.iter().position(|(s, _)| (s.row, s.name) == (site.row, site.name)) {
+                Some(at) => at,
+                None => {
+                    all.push((site, Totals::default()));
+                    all.len() - 1
+                }
+            };
+            let t = &mut all[at].1;
+            t.bytes += bytes;
+            t.calls += 1;
+            t.cpu_ns += cpu_ns;
+        }
+    }
+
     impl Site {
         pub const fn new(row: u8, step: &'static str, name: &'static str) -> Self {
-            Self { row, step, name, bytes: AtomicU64::new(0), calls: AtomicU64::new(0), cpu_ns: AtomicU64::new(0), listed: AtomicBool::new(false) }
+            Self { row, step, name }
         }
 
-        fn list(&'static self) {
-            if !self.listed.load(Relaxed) && !self.listed.swap(true, Relaxed) {
-                SITES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).push(self);
-            }
+        fn count(&'static self, bytes: usize, cpu_ns: u64) {
+            rerail_context::with_local::<Copies, _>(|c| c.add(self, bytes as u64, cpu_ns));
         }
 
         /// One copy of `bytes`, its CPU not timed (a copy inside a timed one, or too small to time).
         pub fn copied(&'static self, bytes: usize) {
-            self.list();
-            self.bytes.fetch_add(bytes as u64, Relaxed);
-            self.calls.fetch_add(1, Relaxed);
+            self.count(bytes, 0);
         }
 
         /// One copy made by `f`, which gives its bytes with its value; its CPU timed when stages are.
         pub fn time<T>(&'static self, f: impl FnOnce() -> (T, usize)) -> T {
             let start = super::on().then(super::thread_cpu);
             let (out, bytes) = f();
-            if let Some(start) = start {
-                self.cpu_ns.fetch_add(super::thread_cpu().saturating_sub(start).as_nanos() as u64, Relaxed);
-            }
-            self.copied(bytes);
+            let cpu = start.map_or(0, |start| super::thread_cpu().saturating_sub(start).as_nanos() as u64);
+            self.count(bytes, cpu);
             out
         }
 
         /// A copy begun here, ended by `Copying::done` with its bytes: for a copy spread through a function.
         pub fn start(&'static self) -> Copying {
             Copying { site: self, start: super::on().then(super::thread_cpu) }
-        }
-
-        pub fn totals(&self) -> Totals {
-            Totals { bytes: self.bytes.load(Relaxed), calls: self.calls.load(Relaxed), cpu_ns: self.cpu_ns.load(Relaxed) }
         }
     }
 
@@ -268,16 +282,15 @@ pub mod copies {
 
     impl Copying {
         pub fn done(self, bytes: usize) {
-            if let Some(start) = self.start {
-                self.site.cpu_ns.fetch_add(super::thread_cpu().saturating_sub(start).as_nanos() as u64, Relaxed);
-            }
-            self.site.copied(bytes);
+            let cpu = self.start.map_or(0, |start| super::thread_cpu().saturating_sub(start).as_nanos() as u64);
+            self.site.count(bytes, cpu);
         }
     }
 
-    /// Every site that has copied, by row, with its totals.
+    /// Every site that copied in the run under way, by row, with its totals.
     pub fn sites() -> Vec<(&'static Site, Totals)> {
-        let mut sites: Vec<_> = SITES.lock().unwrap_or_else(std::sync::PoisonError::into_inner).iter().map(|site| (*site, site.totals())).collect();
+        let Some(copies) = rerail_context::local_if_any::<Copies>() else { return Vec::new() };
+        let mut sites = copies.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).clone();
         sites.sort_by_key(|(site, _)| (site.row, site.name));
         sites
     }
@@ -286,10 +299,11 @@ pub mod copies {
     mod tests {
         use super::*;
 
-        static ONE: Site = Site::new(250, "test", "a test's copy");
+        const ONE: Site = Site::new(250, "test", "a test's copy");
 
         #[test]
         fn a_sites_copies_are_counted_and_listed_once() {
+            let _run = rerail_context::test_run();
             ONE.copied(10);
             let made = ONE.time(|| ("made", 32));
             assert_eq!(made, "made");
@@ -470,7 +484,7 @@ pub mod heap {
             *by.entry(SPANS[at].load(Relaxed)).or_default() += weight;
         }
         let mut v: Vec<(u32, u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|b| std::cmp::Reverse(b.1));
         v
     }
 
@@ -490,7 +504,7 @@ pub mod heap {
             *by.entry((SPANS[at].load(Relaxed), stack)).or_default() += weight;
         }
         let mut v: Vec<((u32, Vec<usize>), u64)> = by.into_iter().map(|(k, w)| (k, w as u64)).collect();
-        v.sort_by(|a, b| b.1.cmp(&a.1));
+        v.sort_by_key(|x| std::cmp::Reverse(x.1));
         v
     }
 
@@ -540,58 +554,73 @@ pub mod heap {
             if !on() {
                 return None;
             }
-            let mut t = TABLE.load(Relaxed);
-            if t.is_null() {
-                #[cfg(unix)]
-                {
-                    let len = SLOTS * DEPTH * std::mem::size_of::<usize>();
-                    let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
-                    if p == libc::MAP_FAILED {
-                        STATE.store(1, Relaxed);
-                        return None;
-                    }
-                    let p = p.cast::<AtomicUsize>();
-                    t = match TABLE.compare_exchange(std::ptr::null_mut(), p, Relaxed, Relaxed) {
-                        Ok(_) => p,
-                        Err(other) => {
-                            unsafe { libc::munmap(p.cast(), len) };
-                            other
-                        }
-                    };
-                }
-                #[cfg(not(unix))]
+            let t = TABLE.load(Relaxed);
+            let t = if t.is_null() { made()? } else { t };
+            Some(unsafe { std::slice::from_raw_parts(t, SLOTS * DEPTH) })
+        }
+
+        /// The table, mapped by the first thread to ask (another's, where two race); `None` where it cannot be.
+        #[cfg(unix)]
+        fn made() -> Option<*mut AtomicUsize> {
+            let len = SLOTS * DEPTH * std::mem::size_of::<usize>();
+            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
+            if p == libc::MAP_FAILED {
+                STATE.store(1, Relaxed);
                 return None;
             }
-            Some(unsafe { std::slice::from_raw_parts(t, SLOTS * DEPTH) })
+            let p = p.cast::<AtomicUsize>();
+            Some(match TABLE.compare_exchange(std::ptr::null_mut(), p, Relaxed, Relaxed) {
+                Ok(_) => p,
+                Err(other) => {
+                    unsafe { libc::munmap(p.cast(), len) };
+                    other
+                }
+            })
+        }
+        #[cfg(not(unix))]
+        fn made() -> Option<*mut AtomicUsize> {
+            None
         }
 
         #[inline(never)]
         pub(super) fn record(at: usize) {
             let Some(t) = table() else { return };
             let row = &t[at * DEPTH..(at + 1) * DEPTH];
-            let mut got = [0usize; DEPTH + SKIP];
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
-                let mut fp: usize;
-                unsafe { std::arch::asm!("mov {}, x29", out(reg) fp) };
-                let start = fp;
-                for slot in got.iter_mut() {
-                    // A frame record is (the caller's frame pointer, the return address); the stack grows down, so each
-                    // caller's record is higher, and a walk out of the stack stops.
-                    if fp == 0 || fp % 8 != 0 || fp < start || fp > start + (64 << 20) {
-                        break;
-                    }
-                    let (next, ret) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };
-                    *slot = ret & 0x0000_ffff_ffff_ffff;
-                    if next <= fp {
-                        break;
-                    }
-                    fp = next;
-                }
-            }
+            let got = frames();
             for (cell, v) in row.iter().zip(got[SKIP..].iter()) {
                 cell.store(*v, Relaxed);
             }
+        }
+
+        /// The calling frames' return addresses, innermost first, by the frame pointers' chain. Inlined, so the
+        /// frames are `record`'s caller's (`SKIP` drops the profiler's own).
+        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
+        #[inline(always)]
+        fn frames() -> [usize; DEPTH + SKIP] {
+            let mut got = [0usize; DEPTH + SKIP];
+            let mut fp: usize;
+            unsafe { std::arch::asm!("mov {}, x29", out(reg) fp) };
+            let start = fp;
+            for slot in got.iter_mut() {
+                // A frame record is (the caller's frame pointer, the return address); the stack grows down, so each
+                // caller's record is higher, and a walk out of the stack stops.
+                if fp == 0 || !fp.is_multiple_of(8) || fp < start || fp > start + (64 << 20) {
+                    break;
+                }
+                let (next, ret) = unsafe { (*(fp as *const usize), *((fp + 8) as *const usize)) };
+                *slot = ret & 0x0000_ffff_ffff_ffff;
+                if next <= fp {
+                    break;
+                }
+                fp = next;
+            }
+            got
+        }
+
+        /// Elsewhere no walk: no frames.
+        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
+        fn frames() -> [usize; DEPTH + SKIP] {
+            [0; DEPTH + SKIP]
         }
 
         pub(super) fn of(at: usize) -> Option<Vec<usize>> {
@@ -661,7 +690,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
             #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, Atom, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, Literal, NEAREST, Native, OPTION_GLOB, Program, QUALIFIERS, RESERVED, Rule, SCOPE_NOT, SpanIn, Term, Value, axis, cmp_binds, globals, is_axis, is_transduced, join};
+            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
         }
         pub mod profile;
     }

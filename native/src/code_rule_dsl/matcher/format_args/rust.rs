@@ -6,10 +6,10 @@
 //! type a binary operator is one (`a as i32 + 1 < b`), as rustc reads it. A closure's parameter
 //! list written as a whole argument (`|a, b| ..`) is not told from two arguments.
 
-use crate::code_rule_dsl::value::rust::{RustValue, literal};
-use ast_grep_core::{Doc, Node};
 use super::*;
 use crate::code_rule_dsl::literal::rust_format;
+use crate::code_rule_dsl::value::rust::{RustValue, literal};
+use ast_grep_core::{Doc, Node};
 
 /// How many arguments a macro takes before its format string, by name.
 fn leading_arguments(name: &str) -> Option<usize> {
@@ -73,9 +73,21 @@ pub(crate) fn format_call<'r, D: Doc>(invocation: &Node<'r, D>) -> Option<Format
         .collect();
     // The tree's brackets, where the tape stores them: its opening one always (a choice), its
     // closing one not where the grammar implies it.
-    let bracket = |token: &Node<'r, D>, texts: &[&str]| !token.is_named() && texts.contains(&token.kind().as_ref());
-    let from = usize::from(tokens.first().is_some_and(|token| bracket(token, &["(", "[", "{"])));
-    let to = tokens.len() - usize::from(tokens.len() > from && tokens.last().is_some_and(|token| bracket(token, &[")", "]", "}"])));
+    let bracket = |token: &Node<'r, D>, texts: &[&str]| {
+        !token.is_named() && texts.contains(&token.kind().as_ref())
+    };
+    let from = usize::from(
+        tokens
+            .first()
+            .is_some_and(|token| bracket(token, &["(", "[", "{"])),
+    );
+    let to = tokens.len()
+        - usize::from(
+            tokens.len() > from
+                && tokens
+                    .last()
+                    .is_some_and(|token| bracket(token, &[")", "]", "}"])),
+        );
     let inner = tokens.get(from..to)?;
     let mut segments = split_arguments(inner)?;
     if segments.len() <= leading {
@@ -332,13 +344,31 @@ pub(super) fn prepare<'t, D: Doc>(this: &FormatArgs, env: &MetaVarEnv<'t, D>) ->
 pub struct Rust;
 
 impl super::FormatPreparer for Rust {
-    fn prepare_tape<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {
+    fn prepare_tape<'t>(
+        &self,
+        format: &super::FormatArgs,
+        env: &MetaVarEnv<'t, crate::code_rule_dsl::tape::TapeDoc>,
+    ) -> Prepared<'t, crate::code_rule_dsl::tape::TapeDoc> {
         prepare(format, env)
     }
-    fn prepare_sub<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>) -> Prepared<'t, crate::code_rule_dsl::literal::SubDoc> {
+    fn prepare_sub<'t>(
+        &self,
+        format: &super::FormatArgs,
+        env: &MetaVarEnv<'t, crate::code_rule_dsl::literal::SubDoc>,
+    ) -> Prepared<'t, crate::code_rule_dsl::literal::SubDoc> {
         prepare(format, env)
     }
-    fn prepare_str<'t>(&self, format: &super::FormatArgs, env: &MetaVarEnv<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>>) -> Prepared<'t, ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>> {
+    fn prepare_str<'t>(
+        &self,
+        format: &super::FormatArgs,
+        env: &MetaVarEnv<
+            't,
+            ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>,
+        >,
+    ) -> Prepared<
+        't,
+        ast_grep_core::tree_sitter::StrDoc<crate::code_rule_dsl::language::GrammarDialect>,
+    > {
         prepare(format, env)
     }
 }

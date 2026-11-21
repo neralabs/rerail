@@ -1,4 +1,4 @@
-//! A version's other fields (its `.about` rows, `program_facts::write_about`), read by type: the answers, the
+//! A version's other fields (its `.about` rows, `program_facts::write_field`), read by type: the answers, the
 //! natives, the lattices and the gates, each relation by its id. An analysis reads these, never the rows.
 //!
 //! Every relation an about row names has an id (`RELATION_COLUMNS`, made so by the builder), as every relation a
@@ -453,7 +453,7 @@ fn program_cell(b: &mut Builder<'_>) -> Cell {
 /// Edits of a version's other fields, by type: a pass states what it changes, and never writes an about row itself.
 impl Builder<'_> {
     /// Sets lattice relation `rel`'s key columns.
-    pub fn set_lattice_keys(&mut self, rel: &str, keys: usize) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_lattice_keys(&mut self, rel: &str, keys: usize) {
         let a = self.atom(rel);
         let mut rows = self.about_rows("lattice");
         for row in &mut rows {
@@ -487,7 +487,7 @@ impl Builder<'_> {
     }
     /// Removes relation `rel`'s native operator (`Program::natives`' entry): its rows of each native about relation,
     /// every one of which names its relation in column 1.
-    pub fn drop_native(&mut self, rel: &str) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn drop_native(&mut self, rel: &str) {
         let a = Cell::Str(self.atom(rel));
         for &(name, _) in RELATION_COLUMNS.iter().filter(|(n, _)| n.starts_with("native_")) {
             let rows = self.about_rows(name);
@@ -511,7 +511,7 @@ impl Builder<'_> {
     /// fields, as the tree's `natives`, `lattice` and `gates` retained by relation). The gates kept are numbered again
     /// in their order, as the tree's list writes them; a gate is kept by its key (`Program::gates`' first). A kind
     /// none of whose rows go is left as the parent's.
-    pub fn keep_relation_fields(&mut self, natives: &dyn Fn(&str) -> bool, lattice: &dyn Fn(&str) -> bool, gates: &dyn Fn(&str) -> bool) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn keep_relation_fields(&mut self, natives: &dyn Fn(&str) -> bool, lattice: &dyn Fn(&str) -> bool, gates: &dyn Fn(&str) -> bool) {
         let named = |b: &Self, row: &[Cell], col: usize, keep: &dyn Fn(&str) -> bool| match row.get(col) {
             Some(&Cell::Str(a)) => keep(b.text(a)),
             _ => true,
@@ -556,7 +556,7 @@ impl Builder<'_> {
     }
     /// Adds qualifiers `words` (relation, word) to the program's, kept in order of relation then word, each once, as
     /// the tree's map of sets.
-    pub fn add_qualifiers<S: AsRef<str>>(&mut self, words: &[(S, S)]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn add_qualifiers<S: AsRef<str>>(&mut self, words: &[(S, S)]) {
         if words.is_empty() {
             return;
         }
@@ -574,7 +574,7 @@ impl Builder<'_> {
     }
     /// States the qualifiers (`Program::qualifiers`): each (relation, word), in order of relation then word, each once,
     /// as the tree's map of sets. Replaces the program's.
-    pub fn set_qualifiers<S: AsRef<str>>(&mut self, words: &[(S, S)]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_qualifiers<S: AsRef<str>>(&mut self, words: &[(S, S)]) {
         let p = program_cell(self);
         let mut pairs: Vec<(&str, &str)> = words.iter().map(|(r, w)| (r.as_ref(), w.as_ref())).collect();
         pairs.sort_unstable();
@@ -584,7 +584,7 @@ impl Builder<'_> {
     }
     /// Adds the tree's gates `gates` (`Program::gates`' entries, after the program's), each with its source where it
     /// has one (`gate_src`), as `program_facts` writes them.
-    pub fn add_tree_gates(&mut self, gates: &[(String, crate::code_rule_dsl::logic::front::ast::Gate)]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn add_tree_gates(&mut self, gates: &[(String, crate::code_rule_dsl::logic::front::ast::Gate)]) {
         if gates.is_empty() {
             return;
         }
@@ -602,7 +602,7 @@ impl Builder<'_> {
     }
     /// States the answers (`Program::answers`): each request and the relations that answer it, in order. Replaces
     /// the program's.
-    pub fn set_answers(&mut self, answers: &std::collections::BTreeMap<String, Vec<String>>) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_answers(&mut self, answers: &std::collections::BTreeMap<String, Vec<String>>) {
         let p = program_cell(self);
         let rows = answers
             .iter()
@@ -627,7 +627,7 @@ impl Builder<'_> {
     }
     /// States the request record (`Program::asked_by`, `Version::asked`): each request relation's rules, in order, each
     /// with the relations whose readers it serves. Replaces the program's.
-    pub fn set_asked(&mut self, asked: &Asked) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_asked(&mut self, asked: &Asked) {
         let p = program_cell(self);
         let mut rows = Vec::new();
         for (req, by) in asked {
@@ -641,7 +641,7 @@ impl Builder<'_> {
     }
     /// Keeps the request record (`asked`) of the request relations `keep` takes: a part's, of the relations whose
     /// rules it holds.
-    pub fn keep_asked(&mut self, keep: &dyn Fn(&str) -> bool) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn keep_asked(&mut self, keep: &dyn Fn(&str) -> bool) {
         let rows = self.about_rows("asked");
         let n = rows.len();
         let kept: Vec<Vec<Cell>> = rows.into_iter().filter(|r| !matches!(r.get(1), Some(&Cell::Str(a)) if !keep(self.text(a)))).collect();
@@ -651,7 +651,7 @@ impl Builder<'_> {
     }
     /// Adds gates (`Program::gates`' entries, after the program's): each its key, relation, level, the relations
     /// that must be quiet and the gates it waits on, as `program_facts` writes them.
-    pub fn add_gates(&mut self, gates: &[(String, String, usize, Vec<String>, Vec<String>)]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn add_gates(&mut self, gates: &[super::fields::GateEntry]) {
         if gates.is_empty() {
             return;
         }
@@ -673,7 +673,7 @@ impl Builder<'_> {
         self.set_about_rows("gate_dep", deps);
     }
     /// Adds setting `key` with `text` after the program's settings (`.global library …`, written by the file reader).
-    pub fn add_setting(&mut self, key: &str, text: &str) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn add_setting(&mut self, key: &str, text: &str) {
         let p = program_cell(self);
         let mut rows = self.about_rows("setting");
         let k = rows.len() as i64;
@@ -681,7 +681,7 @@ impl Builder<'_> {
         self.set_about_rows("setting", rows);
     }
     /// Adds relations `rels` to the relations of no columns (kept in name order, each once, as the tree's set).
-    pub fn add_nullary<S: AsRef<str>>(&mut self, rels: &[S]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn add_nullary<S: AsRef<str>>(&mut self, rels: &[S]) {
         if rels.is_empty() {
             return;
         }
@@ -699,7 +699,7 @@ impl Builder<'_> {
     }
     /// States the columns declared `tape` (`Program::tapes`): each relation and column, in the program's order
     /// (relations by name, each's columns in order). Replaces the program's.
-    pub fn set_tapes<S: AsRef<str>>(&mut self, tapes: &[(S, usize)]) {
+    pub(in crate::code_rule_dsl::logic::program_image) fn set_tapes<S: AsRef<str>>(&mut self, tapes: &[(S, usize)]) {
         let p = program_cell(self);
         let rows = tapes.iter().map(|(r, c)| vec![p, Cell::Str(self.atom(r.as_ref())), Cell::Int(*c as i64)]).collect();
         self.set_about_rows("tape_column", rows);

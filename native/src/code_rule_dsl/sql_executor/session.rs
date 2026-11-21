@@ -15,7 +15,7 @@ pub struct Execution {
     /// Logical component proofs are built once, before physical helper lowering.
     pub loop_analyses: Arc<Vec<Value>>,
     /// The program as declared (pruned, before lowering), for the catalog.
-    pub program: Arc<front::Program>,
+    pub program: Arc<Version>,
     pub planning_digest: Option<String>,
     /// Relations made by SQL producers, each with the session inputs its query reads. Tuple
     /// maintenance recomputes a producer's stratum when what it reads changes.

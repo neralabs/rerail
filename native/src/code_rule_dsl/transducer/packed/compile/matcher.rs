@@ -122,7 +122,7 @@ pub enum Domain {
     Kinds(Vec<u16>),
     Label(u16),
     /// The nodes of these kinds (any kind, `None`) within a node set: where a label made inside an `all` is read, the
-    /// `all`'s demand (decision 0425). The set is read where the pass's anchor is (`anchor_bits`, `device_anchor`),
+    /// `all`'s demand (decision 0460). The set is read where the pass's anchor is (`anchor_bits`, `device_anchor`),
     /// within it; elsewhere the kinds alone, a superset.
     Within(Option<Vec<u16>>, super::compile_sets::Set),
 }
@@ -225,7 +225,7 @@ pub enum Label {
     Empty,
 }
 
-/// Each fact's rows on each tape, made before any pass: written once, where they are found, into one block (Q251), and
+/// Each fact's rows on each tape, made before any pass: written once, where they are found, into one block (Q289), and
 /// read there by the CPU's label passes and the device's (bound whole). By (fact, tape source) addresses.
 #[derive(Clone)]
 pub struct FactRows {
@@ -270,26 +270,28 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
     // which tapes in parallel would count again.
     let block = &*rows.block;
     rows.found = crate::code_rule_dsl::prof::time("labels.facts", || {
-        tapes
-            .par_iter()
-            .flat_map_iter(|tape| crate::code_rule_dsl::prof::time("fact_rows.tape", || {
-                let file = ast_grep_core::AstGrep::doc(tape.clone());
-                let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
-                // The tape's parents' gaps for its facts' gap tests, each parent's made once (Q135).
-                let _gaps = crate::code_rule_dsl::matcher::gap::GapScope::install(tape.transducer_len());
-                let source = Arc::as_ptr(tape.document_source()) as usize;
-                // The tape's sibling positions and `nthChild` answers, shared by its facts.
-                let siblings = crate::code_rule_dsl::matcher::SiblingPositions::default();
-                distinct
-                    .iter()
-                    .map(|fact| {
-                        let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
-                        let found = fact.found(&file, domain(&starts, tape, &[]), &siblings, block).expect("the fact block holds every row");
-                        ((Arc::as_ptr(fact) as usize, source), found)
-                    })
-                    .collect::<Vec<_>>()
-            }))
-            .collect()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            tapes
+                .par_iter()
+                .flat_map_iter(|tape| crate::code_rule_dsl::prof::time("fact_rows.tape", || {
+                    let file = ast_grep_core::AstGrep::doc(tape.clone());
+                    let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
+                    // The tape's parents' gaps for its facts' gap tests, each parent's made once (Q135).
+                    let _gaps = crate::code_rule_dsl::matcher::gap::GapScope::install(tape.transducer_len());
+                    let source = Arc::as_ptr(tape.document_source()) as usize;
+                    // The tape's sibling positions and `nthChild` answers, shared by its facts.
+                    let siblings = crate::code_rule_dsl::matcher::SiblingPositions::default();
+                    distinct
+                        .iter()
+                        .map(|fact| {
+                            let starts = fact.kinds.as_ref().map(|kinds| Domain::Kinds(kinds.iter().copied().collect())).unwrap_or(Domain::All);
+                            let found = fact.found(&file, domain(&starts, tape, &[]), &siblings, block).expect("the fact block holds every row");
+                            ((Arc::as_ptr(fact) as usize, source), found)
+                        })
+                        .collect::<Vec<_>>()
+                }))
+                .collect()
+        })
     });
     rows
 }
@@ -413,7 +415,7 @@ impl Labels {
         };
         let starts = |domain: &Domain| domain.labels();
         match self.def(id) {
-            // A pattern's starts read labels where it is made inside an `all` that demands them (0425): it waits for them.
+            // A pattern's starts read labels where it is made inside an `all` that demands them (0460): it waits for them.
             Label::Pattern(_, domain) => starts(domain),
             Label::Empty => Vec::new(),
             Label::Constrained(_, domain, constraints) => constraints.iter().map(|(_, label)| *label).chain(starts(domain)).collect(),
@@ -624,34 +626,36 @@ impl LoweredMatcher {
         use rayon::prelude::*;
         let walk = Micro::of(program);
         let entry = Entry::of(program);
-        views
-            .par_iter()
-            .zip(sets.par_iter())
-            .enumerate()
-            .map(crate::code_rule_dsl::logic::profile::carried("root programs (pool)", |(at, (view, sets)): (usize, (&TapeDoc, &Arc<Vec<Vec<u64>>>))| {
-                let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
-                let anchor = anchors.map(|(anchors, tapes)| {
-                    let anchor = anchors.bits(tapes[at], program, starts, walk.as_ref(), texts.as_deref(), view, sets);
-                    count_anchored(domain(starts, view, sets).filter(|&node| entry.admits(view, node)), &anchor);
-                    anchor
-                });
-                let starts = || anchored(domain(starts, view, sets).filter(|&node| entry.admits(view, node)), anchor.as_deref().map(Vec::as_slice));
-                if let Some(walk) = &walk
-                    && let Some(texts) = &texts
-                    && let Some(bits) = walked_with(label, walk, texts, view, sets, starts())
-                {
-                    return Ok(Some(bits));
-                }
-                crate::code_rule_dsl::prof::count("labels.interpreted", 1);
-                let starts: Vec<u32> = starts().collect();
-                // The micro walk was the first plan, and is not one here (or outgrew its bound): none is weighed again.
-                let Ran::Done(outputs) = run_budgeted(program, view, &starts, budget, &|| self.w_cost(view), &|_: &[u32]| None, "ast label pass")? else {
-                    return Ok(None);
-                };
-                let found = vec![outputs.iter().map(Found::of).collect()];
-                Ok(Some(from_outputs(label, std::slice::from_ref(view), found).pop().expect("one file")))
-            }))
-            .collect()
+        crate::code_rule_dsl::logic::profile::on_cores(|| {
+            views
+                .par_iter()
+                .zip(sets.par_iter())
+                .enumerate()
+                .map(crate::code_rule_dsl::logic::profile::carried("root programs (pool)", |(at, (view, sets)): (usize, (&TapeDoc, &Arc<Vec<Vec<u64>>>))| {
+                    let texts = walk.as_ref().and_then(|walk| walk.texts(program, view));
+                    let anchor = anchors.map(|(anchors, tapes)| {
+                        let anchor = anchors.bits(tapes[at], program, starts, walk.as_ref(), texts.as_deref(), view, sets);
+                        count_anchored(domain(starts, view, sets).filter(|&node| entry.admits(view, node)), &anchor);
+                        anchor
+                    });
+                    let starts = || anchored(domain(starts, view, sets).filter(|&node| entry.admits(view, node)), anchor.as_deref().map(Vec::as_slice));
+                    if let Some(walk) = &walk
+                        && let Some(texts) = &texts
+                        && let Some(bits) = walked_with(label, walk, texts, view, sets, starts())
+                    {
+                        return Ok(Some(bits));
+                    }
+                    crate::code_rule_dsl::prof::count("labels.interpreted", 1);
+                    let starts: Vec<u32> = starts().collect();
+                    // The micro walk was the first plan, and is not one here (or outgrew its bound): none is weighed again.
+                    let Ran::Done(outputs) = run_budgeted(program, view, &starts, budget, &|| self.w_cost(view), &|_: &[u32]| None, "ast label pass")? else {
+                        return Ok(None);
+                    };
+                    let found = vec![outputs.iter().map(Found::of).collect()];
+                    Ok(Some(from_outputs(label, std::slice::from_ref(view), found).pop().expect("one file")))
+                }))
+                .collect()
+        })
     }
 
     /// W's matcher's predicted steps to confirm this clause on `view`: its candidates (its domain, every node for a
@@ -693,28 +697,30 @@ impl LoweredMatcher {
                 // A file's verdicts are its own: the files run in parallel, each with bindings kept
                 // from one node to the next.
                 use rayon::prelude::*;
-                views
-                    .par_iter()
-                    .zip(sets.par_iter())
-                    .map(crate::code_rule_dsl::logic::profile::carried("label pass (pool)", |(view, sets): (&TapeDoc, &Arc<Vec<Vec<u64>>>)| {
-                        let mut bits = empty(view);
-                        let mut bindings = AstBindings::default();
-                        for node in domain(starts, view, sets) {
-                            if !pattern.matches_ast_pattern(view, node, &mut bindings)? {
-                                continue;
+                crate::code_rule_dsl::logic::profile::on_cores(|| {
+                    views
+                        .par_iter()
+                        .zip(sets.par_iter())
+                        .map(crate::code_rule_dsl::logic::profile::carried("label pass (pool)", |(view, sets): (&TapeDoc, &Arc<Vec<Vec<u64>>>)| {
+                            let mut bits = empty(view);
+                            let mut bindings = AstBindings::default();
+                            for node in domain(starts, view, sets) {
+                                if !pattern.matches_ast_pattern(view, node, &mut bindings)? {
+                                    continue;
+                                }
+                                // As W's `Constrained`: an unbound or multi-node capture is not checked.
+                                let holds = constraints.iter().all(|&(slot, label)| match bindings.bound(slot) {
+                                    Bound::Single(node) => has(sets, label, node),
+                                    _ => true,
+                                });
+                                if holds {
+                                    set(&mut bits, node);
+                                }
                             }
-                            // As W's `Constrained`: an unbound or multi-node capture is not checked.
-                            let holds = constraints.iter().all(|&(slot, label)| match bindings.bound(slot) {
-                                Bound::Single(node) => has(sets, label, node),
-                                _ => true,
-                            });
-                            if holds {
-                                set(&mut bits, node);
-                            }
-                        }
-                        Ok(bits)
-                    }))
-                    .collect()
+                            Ok(bits)
+                        }))
+                        .collect()
+                })
             }
             // At the ceiling, a stop: the caller has no W to give the clause to (`evaluate_budgeted`).
             Label::Roots(..) | Label::Targets(..) | Label::Count { .. } => self
@@ -828,9 +834,8 @@ pub struct LoweredWave {
     feeds: Vec<BTreeSet<usize>>,
     /// The level passes fused into one walk, built at their first batch (`Packs`).
     packs: Packs,
-    /// The sources of its pattern kernels on Metal, made at the first ask for a tape format (`metal_ready`): a
-    /// kernel's source reads its format's tape view (decision 0426).
-    metal_sources: std::sync::Mutex<Vec<(u32, Result<Vec<String>, Error>)>>,
+    /// The sources of its pattern kernels on Metal, made at the first ask (`metal_ready`).
+    metal_sources: [std::sync::OnceLock<Result<Vec<String>, Error>>; 2],
 }
 
 impl LoweredWave {
@@ -904,8 +909,8 @@ impl LoweredWave {
             // A label in no step (none is expected) keeps its own.
             for local in 0..labels.defs.len() {
                 let id = LABEL_BASE + labels.offset + local as u16;
-                if !map.contains_key(&id) {
-                    map.insert(id, fresh(&mut next)?);
+                if let std::collections::hash_map::Entry::Vacant(e) = map.entry(id) {
+                    e.insert(fresh(&mut next)?);
                 }
             }
             let rename = |label: u16| map.get(&label).copied().unwrap_or(label);
@@ -1193,15 +1198,8 @@ impl LoweredWave {
     /// kernels are not runs on the CPU meanwhile; they are compiled as the mode says.
     pub fn metal_ready(&self, format: u32) -> bool {
         let Some(device) = super::device::matcher() else { return true };
-        let mut made = self.metal_sources.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        let at = match made.iter().position(|(f, _)| *f == format) {
-            Some(at) => at,
-            None => {
-                made.push((format, device.wave_pattern_sources(self, format)));
-                made.len() - 1
-            }
-        };
-        match &made[at].1 {
+        // The sources by the tape view the batch's format reads (`pattern_variant`).
+        match self.metal_sources[device.pattern_variant(format)].get_or_init(|| device.wave_pattern_sources(self, format)) {
             Ok(sources) => device.patterns_ready(sources, format),
             // No Metal form of its patterns: the Metal run says why (`roots_batch`).
             Err(_) => true,
@@ -1295,7 +1293,22 @@ impl LoweredWave {
     /// the batch on its own where the whole outgrows a workspace or the launch bound (a file's labels read only that
     /// file).
     fn roots_metal_split(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
-        match super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active))) {
+        let found = super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active)));
+        // Past the device's room at one tape, in as few lanes and states as it runs in: its workspace was admitted as
+        // a stratum's tables are and refused (`label_passes`: no lease coming back makes the room, or waiting for it
+        // costs more than the cores take, `placement::admission_patience`), so the price has chosen the cores (0334).
+        // Its roots are found there, counted and named. A Metal failure of any other kind still stops the run (0382
+        // §6). The room is the pool's ledger and leases alone: the driver's figure, which counts the host pages
+        // wrapped for the device, refused 43 tapes with a third of a 2 GB budget free (t62, Q203).
+        if tapes.len() == 1 && matches!(found, Err(Error::BackendCapacity)) {
+            crate::code_rule_dsl::prof::count("wave.tape_on_cpu", 1);
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            crate::code_rule_dsl::logic::profile::decision("a matcher wave's tape not admitted to the device, its roots found on the cores (0334)", || {
+                format!("{} nodes; the device: {}", tapes[0].transducer_len(), rerail_accel::gpu::shared::describe())
+            });
+            return self.roots_batch_budgeted(Backend::Cpu, tapes, active, WorkBudget::current());
+        }
+        match found {
             Err(Error::BackendCapacity | Error::BackendLaunchLimit) if tapes.len() > 1 => {
                 let half = tapes.len() / 2;
                 let part = |range: std::ops::Range<usize>| active.iter().map(|clause| clause[range.clone()].to_vec()).collect::<Vec<_>>();
@@ -1408,19 +1421,21 @@ impl LoweredWave {
                 // (`matcher_metal`; Tim's e1e0209ae on tbelanger/final-rerail-shape-integration). Each gives back the
                 // clauses it handed to W on its file.
                 use rayon::prelude::*;
-                let handed = tapes
-                    .par_iter()
-                    .zip(sets.par_iter_mut())
-                    .enumerate()
-                    .map(crate::code_rule_dsl::logic::profile::carried("label sweep (pool)", |(at, (tape, sets)): (usize, (&TapeDoc, &mut Arc<Vec<Vec<u64>>>))| {
-                        let levels = levels
-                            .iter()
-                            .map(|level| level.iter().copied().filter(|&(clause, _)| active(clause, at)).collect::<Vec<_>>())
-                            .collect::<Vec<_>>();
-                        let to_w = levels.iter().any(|level| !level.is_empty()) && !sweep(&levels, tape, sets, indexes[at].get_or_init(Default::default), budget)?;
-                        Ok::<_, Error>(if to_w { levels.iter().flatten().map(|&(clause, _)| (index(clause), at)).collect() } else { Vec::new() })
-                    }))
-                    .collect::<Result<Vec<Vec<(usize, usize)>>, Error>>()?;
+                let handed = crate::code_rule_dsl::logic::profile::on_cores(|| {
+                    tapes
+                        .par_iter()
+                        .zip(sets.par_iter_mut())
+                        .enumerate()
+                        .map(crate::code_rule_dsl::logic::profile::carried("label sweep (pool)", |(at, (tape, sets)): (usize, (&TapeDoc, &mut Arc<Vec<Vec<u64>>>))| {
+                            let levels = levels
+                                .iter()
+                                .map(|level| level.iter().copied().filter(|&(clause, _)| active(clause, at)).collect::<Vec<_>>())
+                                .collect::<Vec<_>>();
+                            let to_w = levels.iter().any(|level| !level.is_empty()) && !sweep(&levels, tape, sets, indexes[at].get_or_init(Default::default), budget)?;
+                            Ok::<_, Error>(if to_w { levels.iter().flatten().map(|&(clause, _)| (index(clause), at)).collect() } else { Vec::new() })
+                        }))
+                        .collect::<Result<Vec<Vec<(usize, usize)>>, Error>>()
+                })?;
                 given.extend(handed.into_iter().flatten());
                 continue;
             }
@@ -1757,25 +1772,27 @@ pub fn to_sets(bits: &[u32], labels: usize, words: usize, tapes: &[TapeDoc]) -> 
             Some(at)
         })
         .collect::<Vec<_>>();
-    tapes
-        .par_iter()
-        .zip(bases)
-        .map(crate::code_rule_dsl::logic::profile::carried("label rows (pool)", |(tape, base): (&TapeDoc, usize)| {
-            let len = tape.transducer_len();
-            let sets = (0..labels)
-                .map(|label| {
-                    (0..len.div_ceil(64))
-                        .map(|k| {
-                            let value = at(label, base + 64 * k);
-                            let left = len - 64 * k;
-                            if left < 64 { value & ((1 << left) - 1) } else { value }
-                        })
-                        .collect()
-                })
-                .collect();
-            Arc::new(sets)
-        }))
-        .collect()
+    crate::code_rule_dsl::logic::profile::on_cores(|| {
+        tapes
+            .par_iter()
+            .zip(bases)
+            .map(crate::code_rule_dsl::logic::profile::carried("label rows (pool)", |(tape, base): (&TapeDoc, usize)| {
+                let len = tape.transducer_len();
+                let sets = (0..labels)
+                    .map(|label| {
+                        (0..len.div_ceil(64))
+                            .map(|k| {
+                                let value = at(label, base + 64 * k);
+                                let left = len - 64 * k;
+                                if left < 64 { value & ((1 << left) - 1) } else { value }
+                            })
+                            .collect()
+                    })
+                    .collect();
+                Arc::new(sets)
+            }))
+            .collect()
+    })
 }
 
 /// `to_sets` the other way.
@@ -1794,22 +1811,24 @@ pub fn to_words(sets: &[Arc<Vec<Vec<u64>>>], labels: usize, words: usize, tapes:
         })
         .collect::<Vec<_>>();
     // Label-major: each label's row is its own (06 S7: one thread, ~10 ms a level).
-    bits.par_chunks_mut(words).enumerate().for_each(|(label, row)| {
-        for (&base, sets) in bases.iter().zip(sets) {
-            let Some(set) = sets.get(label) else { continue };
-            for (k, &value) in set.iter().enumerate() {
-                if value == 0 {
-                    continue;
-                }
-                let bit = base + 64 * k;
-                let wide = u128::from(value) << (bit % 32);
-                for part in 0..3 {
-                    if let Some(word) = row.get_mut(bit / 32 + part) {
-                        *word |= (wide >> (32 * part)) as u32;
+    crate::code_rule_dsl::logic::profile::on_cores(|| {
+        bits.par_chunks_mut(words).enumerate().for_each(|(label, row)| {
+            for (&base, sets) in bases.iter().zip(sets) {
+                let Some(set) = sets.get(label) else { continue };
+                for (k, &value) in set.iter().enumerate() {
+                    if value == 0 {
+                        continue;
+                    }
+                    let bit = base + 64 * k;
+                    let wide = u128::from(value) << (bit % 32);
+                    for part in 0..3 {
+                        if let Some(word) = row.get_mut(bit / 32 + part) {
+                            *word |= (wide >> (32 * part)) as u32;
+                        }
                     }
                 }
             }
-        }
+        })
     });
     bits
 }
@@ -1978,42 +1997,44 @@ impl Packs {
             };
             let emit = if targets { Emit::Captures } else { Emit::Start };
             let on = (0..views.len()).filter(|&tape| members.iter().any(|&at| active(level[at].0, tape))).collect::<Vec<_>>();
-            let found = on
-                .par_iter()
-                .map(crate::code_rule_dsl::logic::profile::carried("text walk (pool)", |&tape: &usize| {
-                    let (view, sets) = (&views[tape], &sets[tape]);
-                    let texts = walk.texts(program, view)?;
-                    // A start any member's anchor holds (decision 0365): the members' anchors, each from its own walk.
-                    let anchor = anchors.map(|anchors| {
-                        let mut union = vec![0_u64; view.transducer_len().div_ceil(64)];
-                        for &at in &members {
-                            let (clause, id) = level[at];
-                            let (Label::Roots(program, starts) | Label::Targets(program, starts)) = clause.labels.def(id) else { continue };
-                            // The fused walk's rows are by its own slots: a member's anchor reads the term index's.
-                            let member = Micro::of(program);
-                            for (word, bits) in union.iter_mut().zip(anchors.bits(tape, program, starts, member.as_ref(), None, view, sets).iter()) {
-                                *word |= bits;
+            let found = crate::code_rule_dsl::logic::profile::on_cores(|| {
+                on
+                    .par_iter()
+                    .map(crate::code_rule_dsl::logic::profile::carried("text walk (pool)", |&tape: &usize| {
+                        let (view, sets) = (&views[tape], &sets[tape]);
+                        let texts = walk.texts(program, view)?;
+                        // A start any member's anchor holds (decision 0365): the members' anchors, each from its own walk.
+                        let anchor = anchors.map(|anchors| {
+                            let mut union = vec![0_u64; view.transducer_len().div_ceil(64)];
+                            for &at in &members {
+                                let (clause, id) = level[at];
+                                let (Label::Roots(program, starts) | Label::Targets(program, starts)) = clause.labels.def(id) else { continue };
+                                // The fused walk's rows are by its own slots: a member's anchor reads the term index's.
+                                let member = Micro::of(program);
+                                for (word, bits) in union.iter_mut().zip(anchors.bits(tape, program, starts, member.as_ref(), None, view, sets).iter()) {
+                                    *word |= bits;
+                                }
                             }
+                            union
+                        });
+                        if let Some(anchor) = &anchor {
+                            count_anchored(self::domain(&domain, view, sets).filter(|&start| entries.iter().any(|entry| entry.admits(view, start))), anchor);
                         }
-                        union
-                    });
-                    if let Some(anchor) = &anchor {
-                        count_anchored(self::domain(&domain, view, sets).filter(|&start| entries.iter().any(|entry| entry.admits(view, start))), anchor);
-                    }
-                    let mut bits = vec![vec![0_u64; view.transducer_len().div_ceil(64)]; members.len()];
-                    let mut frames = Frames::default();
-                    for start in anchored(self::domain(&domain, view, sets), anchor.as_deref()) {
-                        if !entries.iter().any(|entry| entry.admits(view, start)) {
-                            continue;
+                        let mut bits = vec![vec![0_u64; view.transducer_len().div_ceil(64)]; members.len()];
+                        let mut frames = Frames::default();
+                        for start in anchored(self::domain(&domain, view, sets), anchor.as_deref()) {
+                            if !entries.iter().any(|entry| entry.admits(view, start)) {
+                                continue;
+                            }
+                            walk.run_labelled(view, sets, &texts, start, emit, &mut frames, &mut |label, node| {
+                                bits[member_of[usize::from(label)]][node as usize / 64] |= 1 << (node % 64);
+                            })
+                            .ok()?;
                         }
-                        walk.run_labelled(view, sets, &texts, start, emit, &mut frames, &mut |label, node| {
-                            bits[member_of[usize::from(label)]][node as usize / 64] |= 1 << (node % 64);
-                        })
-                        .ok()?;
-                    }
-                    Some((tape, bits))
-                }))
-                .collect::<Vec<_>>();
+                        Some((tape, bits))
+                    }))
+                    .collect::<Vec<_>>()
+            });
             // A failed tape (text slots, an overflow): the group runs alone.
             let Some(found) = found.into_iter().collect::<Option<Vec<_>>>() else {
                 crate::code_rule_dsl::prof::count("labels.pack_failed", members.len());
@@ -2081,7 +2102,6 @@ fn formulas(
 ) -> Vec<Option<Vec<(usize, Vec<u64>)>>> {
     use super::compile_sets::{Index, Reader, Set};
     use rayon::prelude::*;
-    static CHECK: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var_os("RERAIL_SETS_CHECK").is_some());
     if !formulas_on() {
         return vec![None; level.len()];
     }
@@ -2114,40 +2134,42 @@ fn formulas(
     let on = level.iter().map(|&(clause, _)| (0..views.len()).map(|tape| active(clause, tape)).collect::<Vec<_>>()).collect::<Vec<_>>();
     // File-major: each tape answers every formula of the level at once (its index and texts warm),
     // as one task; a formula's answer on one small file is too little work for a task of its own.
-    let answers = (0..views.len())
-        .into_par_iter()
-        .map(crate::code_rule_dsl::logic::profile::carried("set formulas (pool)", |tape: usize| {
-            let view = &views[tape];
-            let index = indexes[tape].get_or_init(Index::default);
-            plans
-                .iter()
-                .enumerate()
-                .filter(|&(at, plan)| plan.is_some() && on[at][tape])
-                .map(|(at, plan)| {
-                    let bits = match plan.as_ref().expect("a plan") {
-                        Plan::Fact(fact) => Some(Arc::unwrap_or_clone(fact.nth_bits(view, &index.siblings).expect("a node set"))),
-                        Plan::Set { walk, program, domain, set } => walk.texts(program, view).map(|texts| {
-                            let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(set);
-                            if *CHECK {
-                                // The domain read exactly, as the formula reads it (a demand's set too).
-                                let within = Reader { tape: view, index, labels: &sets[tape], texts: &[] }.eval(&domain.set());
-                                let starts = (0..view.transducer_len() as u32).filter(|&node| within[node as usize / 64] >> (node % 64) & 1 != 0);
-                                let (clause, id) = level[at];
-                                if let Some(walked) = walked(clause.labels.def(id), walk, program, view, &sets[tape], starts)
-                                    && walked != bits
-                                {
-                                    crate::code_rule_dsl::prof::count("labels.formula_differs", 1);
-                                    eprintln!("SETS_CHECK differs on label {id}: {set:?}");
+    let answers = crate::code_rule_dsl::logic::profile::on_cores(|| {
+        (0..views.len())
+            .into_par_iter()
+            .map(crate::code_rule_dsl::logic::profile::carried("set formulas (pool)", |tape: usize| {
+                let view = &views[tape];
+                let index = indexes[tape].get_or_init(Index::default);
+                plans
+                    .iter()
+                    .enumerate()
+                    .filter(|&(at, plan)| plan.is_some() && on[at][tape])
+                    .map(|(at, plan)| {
+                        let bits = match plan.as_ref().expect("a plan") {
+                            Plan::Fact(fact) => Some(Arc::unwrap_or_clone(fact.nth_bits(view, &index.siblings).expect("a node set"))),
+                            Plan::Set { walk, program, domain, set } => walk.texts(program, view).map(|texts| {
+                                let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(set);
+                                if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SETS_CHECK").is_some()) {
+                                    // The domain read exactly, as the formula reads it (a demand's set too).
+                                    let within = Reader { tape: view, index, labels: &sets[tape], texts: &[] }.eval(&domain.set());
+                                    let starts = (0..view.transducer_len() as u32).filter(|&node| within[node as usize / 64] >> (node % 64) & 1 != 0);
+                                    let (clause, id) = level[at];
+                                    if let Some(walked) = walked(clause.labels.def(id), walk, program, view, &sets[tape], starts)
+                                        && walked != bits
+                                    {
+                                        crate::code_rule_dsl::prof::count("labels.formula_differs", 1);
+                                        eprintln!("SETS_CHECK differs on label {id}: {set:?}");
+                                    }
                                 }
-                            }
-                            bits
-                        }),
-                    };
-                    (at, bits)
-                })
-                .collect::<Vec<_>>()
-        }))
-        .collect::<Vec<_>>();
+                                bits
+                            }),
+                        };
+                        (at, bits)
+                    })
+                    .collect::<Vec<_>>()
+            }))
+            .collect::<Vec<_>>()
+    });
     // By pass: each tape's bits, in tape order; a pass with a tape it could not answer (its texts)
     // is not a formula.
     let mut found = plans.iter().map(|plan| plan.as_ref().map(|_| Vec::new())).collect::<Vec<Option<Vec<(usize, Vec<u64>)>>>>();
@@ -2221,7 +2243,7 @@ fn label_level<'a>(
             "packed" => packed_ns / packed as u128,
             _ => *wall,
         }).collect::<Vec<_>>();
-        write_census(file, level, &routes, &walls, &found, tapes, sets);
+        write_census(&file, level, &routes, &walls, &found, tapes, sets);
     }
     drop(views);
     let (mut changed, mut given) = (false, Vec::new());
@@ -2731,7 +2753,7 @@ fn from_outputs(label: &Label, views: &[TapeDoc], outputs: Vec<Vec<Found>>) -> V
 /// A label `unknown` names (a recursive group's own, Q133) is read as every node: the anchor holds whatever the label
 /// settles to, and in every round before.
 ///
-/// A pass that starts within a demand's set (`Domain::demand`, decision 0425) has it in its anchor.
+/// A pass that starts within a demand's set (`Domain::demand`, decision 0460) has it in its anchor.
 #[allow(clippy::too_many_arguments)]
 pub(in crate::code_rule_dsl) fn anchor_bits(
     program: &Program,
@@ -2890,7 +2912,7 @@ struct Builder<'a> {
 struct Demand {
     /// The kinds the node can have (`None`: any).
     kinds: Option<BTreeSet<u16>>,
-    /// A node set the node is in wherever it matters (decision 0425): an `all` with a conjunct that tests a
+    /// A node set the node is in wherever it matters (decision 0460): an `all` with a conjunct that tests a
     /// neighbor (`inside X` or `has X` by `neighbor`) holds only at X's children or parents, the image of X's set by
     /// one step (`Builder::neighbor`). A label made here starts within it: a formula its pass's anchor holds, not a
     /// label of its own, so its readers wait for no more than X.
@@ -2898,20 +2920,19 @@ struct Demand {
 }
 
 /// Whether an `all`'s labels start where the kinds allow alone (`RERAIL_DEMAND_SETS=off`, a measurement switch: as
-/// before decision 0424).
+/// before decision 0459).
 fn demand_sets_off() -> bool {
-    static OFF: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_DEMAND_SETS").is_ok_and(|mode| mode == "off"));
-    *OFF
+    crate::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_DEMAND_SETS").is_ok_and(|mode| mode == "off"))
 }
 
 /// Where the label census goes (`RERAIL_LABEL_CENSUS=<file>`): a line per label pass a host level evaluates, its
 /// route, starts and members. A measurement switch: off, nothing is noted or written.
-fn census() -> Option<&'static std::sync::Mutex<std::fs::File>> {
-    static FILE: std::sync::LazyLock<Option<std::sync::Mutex<std::fs::File>>> = std::sync::LazyLock::new(|| {
+fn census() -> Option<std::sync::Arc<std::sync::Mutex<std::fs::File>>> {
+    // The run's setting (decision 0442): opened once a run, appended to.
+    crate::code_rule_dsl::logic::profile::setting(|| {
         let path = std::env::var_os("RERAIL_LABEL_CENSUS")?;
-        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(std::sync::Mutex::new)
-    });
-    FILE.as_ref()
+        std::fs::OpenOptions::new().create(true).append(true).open(path).ok().map(|f| std::sync::Arc::new(std::sync::Mutex::new(f)))
+    })
 }
 
 /// A short form of `tree` for the census: kinds as `k145`, labels' rules nested, long ones cut.
@@ -3004,7 +3025,7 @@ impl<'a> Builder<'a> {
     /// set of the nodes where it holds: X's children (through the field, where one is named) or
     /// X's parents, the image of X's set by one step. The `all` holds only there, so its labels
     /// start there (`Demand::set`). A pass that started at every node for `inside module` (877,007
-    /// at s1000) starts at 10,274 (t45 §1). Decision 0424 made the set a label of its own (a seed),
+    /// at s1000) starts at 10,274 (t45 §1). Decision 0459 made the set a label of its own (a seed),
     /// one more level its readers waited for; here it is the formula that label's pass evaluated.
     fn neighbor(&mut self, all: &[MatchTree]) -> Result<Option<(usize, super::compile_sets::Set)>, Error> {
         if demand_sets_off() {
@@ -3194,7 +3215,8 @@ impl<'a> Builder<'a> {
                 self.strings.push(regex.as_str().as_bytes().to_vec());
                 self.predicates.push(TextPredicate::Regex {
                     source: u16::try_from(source).map_err(|_| Error::InvalidOperand(source))?,
-                    compiled: regex.clone(),
+                    // The packed predicate owns a plain regex: the shared one's (`regexes`) automata.
+                    compiled: regex::Regex::clone(regex),
                 });
                 let predicate = (self.predicates.len() - 1) as u16;
                 self.push(TEXT, 0, predicate);

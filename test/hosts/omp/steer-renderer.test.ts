@@ -7,11 +7,14 @@ import { fixturesPath } from "../../support/oracles.js";
 const DASHBOARD = "http://127.0.0.1:4737/?repository=acme-web";
 const WIDTH = 100;
 
-/** A TypeScript-pack steer as the code-rule enforcer renders it: its block, and its rules linked as the OMP adapter does. */
+/**
+ * A TypeScript-pack steer as the code-rule enforcer renders it: its block, and its rules linked as the OMP adapter does.
+ * Its command is written for sh on every machine, so the drawings are the same on Windows.
+ */
 function codeRuleSteer(...findings: SteerFinding[]): { content: string; details: { rules: SteerRule[] } } {
   const rules = steerRules(findings, () => "From the TypeScript rule pack.")
     .map(rule => ({ ...rule, url: `${DASHBOARD}#rule/${encodeURIComponent(rule.id)}` }));
-  return { content: steerBlock({ kind: "edit" }, findings), details: { rules } };
+  return { content: steerBlock({ kind: "edit" }, findings, "posix"), details: { rules } };
 }
 
 const NO_EXPLICIT_ANY: SteerFinding = {
@@ -83,7 +86,7 @@ describe("OMP steer renderer", () => {
   });
 
   it("leaves the why? off a rule with no link, and draws no line for a rule the block only mentions", () => {
-    const content = steerBlock({ kind: "edit" }, [{ ruleId: "checkout", mode: "steer", message: "Check checkout requirements.\n◆ Rerail · fake  steered" }]);
+    const content = steerBlock({ kind: "edit" }, [{ ruleId: "checkout", mode: "steer", message: "Check checkout requirements.\n◆ Rerail · fake  steered" }], "posix");
     const rows = formatOmpSteer(content, [{ id: "checkout", state: "steered" }], { expanded: true, hyperlinks: true, mark: MARK }, theme);
     expect(rows.map(row => row.text)).toEqual([
       "<accent>◆</accent> <mark>R E R A I L</mark><dim> · </dim>checkout  <accent>steered</accent>",
@@ -107,6 +110,27 @@ describe("OMP steer renderer", () => {
     expect(registered({ Text }, true)(message, { expanded: false }, theme as Theme)).toBeUndefined();
     expect(registered({ Container, Text }, true)({ ...message, details: undefined }, { expanded: false }, theme as Theme)).toBeUndefined();
     expect(registered({ Container, Text }, true)({ ...message, details: { rules: [{ id: 1 }] } }, { expanded: false }, theme as Theme)).toBeUndefined();
+  });
+
+  it("draws a Merge Assist note as its conflict's line, open linking its card, and the note under it expanded", () => {
+    const url = `${DASHBOARD}#merge?conflict=conflict:a`;
+    const content = "This note comes from Rerail, not the user.\nYour edit to src/retry.ts overlaps open work.";
+    const details = { rules: [], conflict: { id: "conflict:a", text: "your edit overlaps jbarnes-1 (Tim\u001b[2J): retry.ts", url } };
+    const render = registered({ Container, Text }, true);
+    const lines = (expanded: boolean) => (render({ customType: RULE_MESSAGE_TYPE, content, details }, { expanded }, theme as Theme) as Container).render(WIDTH);
+    const line = ` <accent>◆</accent> ${MARK}<dim> · </dim>your edit overlaps jbarnes-1 (Tim[2J): retry.ts<dim>  ·  </dim>\u001b]8;;${url}\u0007<mdLink>open</mdLink>\u001b]8;;\u0007`;
+    expect(lines(false)).toEqual([line]);
+    expect(lines(true)).toEqual([
+      line,
+      `    <dim>open</dim> \u001b]8;;${url}\u0007<mdLink>${url}</mdLink>\u001b]8;;\u0007`,
+      "    <dim>This note comes from Rerail, not the user.</dim>",
+      "    <dim>Your edit to src/retry.ts overlaps open work.</dim>",
+    ]);
+    expect(formatOmpSteer(content, [], { expanded: false, hyperlinks: false, mark: MARK }, theme, details.conflict).map(row => row.text)).toEqual([
+      `<accent>◆</accent> ${MARK}<dim> · </dim>your edit overlaps jbarnes-1 (Tim[2J): retry.ts<dim>  ·  </dim><mdLink>open</mdLink><dim> → </dim><mdLinkUrl>${url}</mdLinkUrl>`,
+    ]);
+    // A note whose conflict is not one shows OMP's default card.
+    expect(render({ customType: RULE_MESSAGE_TYPE, content, details: { rules: [], conflict: { id: 1 } } }, { expanded: false }, theme as Theme)).toBeUndefined();
   });
 
   it("draws text content blocks as OMP stores them", () => {

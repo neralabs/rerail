@@ -19,10 +19,10 @@
 //! The oracles are PHPStan 2.2.16's `variable.undefined` and Psalm 6.19.1's unused-variable
 //! reports (`fixtures/php/scope/php`).
 
-use crate::code_rule_dsl::tree::Tree;
+pub use super::flow::{Defined, Modify, Quiet, Reach, Read};
 use super::php_names::{self, PhpNames, Resolved};
-pub use super::flow::{Defined, Modify, Quiet, Read, Reach};
 use super::{Binding, BuildError, Builder, Form, NodeRef, ScopeKind, Site, VALUE};
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::value::{Context as Decoding, php as php_value};
 use ast_grep_core::{Doc, Node};
 use foldhash::{HashMap, HashMapExt};
@@ -32,11 +32,6 @@ use std::sync::Arc;
 pub mod blade;
 #[path = "php/by_reference.generated.rs"]
 pub mod by_reference;
-
-
-
-
-
 
 /// Whether a binding writes, through `global` or a closure's by-reference `use`, a variable of
 /// the global scope or of the scope the closure is written in: bits of the paths that reach it.
@@ -362,7 +357,6 @@ fn visit<D: Doc>(builder: &mut Builder, root: &Node<'_, D>, blade: bool) -> Visi
     Ok(())
 }
 
-
 /// A variable node's name, `$` included; `None` for `$$x` and `${...}`.
 fn variable<D: Doc>(node: &Node<'_, D>) -> Option<String> {
     (node.kind() == "variable_name").then(|| node.text().to_string())
@@ -377,7 +371,8 @@ fn self_reads<D: Doc>(value: &Node<'_, D>, name: &str) -> Vec<usize> {
     ];
     match value.kind().as_ref() {
         "variable_name" if value.text() == name => vec![value.range().start],
-        "parenthesized_expression" => value.named_code()
+        "parenthesized_expression" => value
+            .named_code()
             .flat_map(|inner| self_reads(&inner, name))
             .collect(),
         "binary_expression"
@@ -749,7 +744,8 @@ impl Visitor<'_, '_> {
                 Ok(None)
             }
             "break_statement" | "continue_statement" => {
-                let levels = node.named_code()
+                let levels = node
+                    .named_code()
                     .next()
                     .and_then(|level| level.text().parse::<usize>().ok())
                     .unwrap_or(1)
@@ -1077,7 +1073,8 @@ impl Visitor<'_, '_> {
         let cases: Vec<_> = node
             .field("body")
             .map(|block| {
-                block.named_code()
+                block
+                    .named_code()
                     .filter(|case| {
                         matches!(case.kind().as_ref(), "case_statement" | "default_statement")
                     })
@@ -1100,7 +1097,8 @@ impl Visitor<'_, '_> {
         let has_default = cases.iter().any(|case| case.kind() == "default_statement");
         for (case, entry) in cases.iter().zip(entries) {
             let entry = join(entry.unwrap_or_else(|| unmatched.clone()), fall.take());
-            let statements: Vec<_> = case.named_code()
+            let statements: Vec<_> = case
+                .named_code()
                 .filter(|child| {
                     case.field("value")
                         .is_none_or(|value| value.range() != child.range())
@@ -1139,7 +1137,8 @@ impl Visitor<'_, '_> {
     }
 
     fn try_statement<D: Doc>(&mut self, node: &Node<'_, D>, state: Flowing) -> Visit {
-        let finally = node.named_code()
+        let finally = node
+            .named_code()
             .find(|clause| clause.kind() == "finally_clause")
             .and_then(|clause| clause.field("body"));
         // A `finally` runs before a `break`, `continue` or `return` of the body or a catch goes
@@ -1360,7 +1359,8 @@ impl Visitor<'_, '_> {
         let Some(arguments) = node.field("arguments") else {
             return Vec::new();
         };
-        arguments.named_code()
+        arguments
+            .named_code()
             .filter(|argument| argument.kind() == "argument")
             .filter_map(|argument| {
                 let name = argument.field("name");
@@ -1745,7 +1745,9 @@ impl Visitor<'_, '_> {
             Some("compact") => {
                 for argument in Self::argument_values(node) {
                     let literal = matches!(argument.kind().as_ref(), "string" | "encapsed_string")
-                        && argument.named_code().all(|part| part.kind() == "string_content");
+                        && argument
+                            .named_code()
+                            .all(|part| part.kind() == "string_content");
                     if literal {
                         // `compact('a')` reads `$a`: a read at the string, which PHPStan reports
                         // as it does any undefined read.
@@ -2257,7 +2259,8 @@ impl Visitor<'_, '_> {
     #[allow(clippy::type_complexity)]
     fn slots<'r, D: Doc>(node: &Node<'r, D>) -> Vec<(Option<Node<'r, D>>, Option<Node<'r, D>>)> {
         if node.kind() == "array_creation_expression" {
-            return node.named_code()
+            return node
+                .named_code()
                 .map(|element| {
                     let parts: Vec<_> = element.named_code().collect();
                     match parts.as_slice() {
@@ -2362,7 +2365,9 @@ impl Visitor<'_, '_> {
                 // Property defaults, constants and enum cases are constant expressions: they read
                 // no variables, and a property's `$name` is none.
                 if member.kind() == "method_declaration" {
-                    let is_static = member.named_code().any(|child| child.kind() == "static_modifier");
+                    let is_static = member
+                        .named_code()
+                        .any(|child| child.kind() == "static_modifier");
                     self.function(
                         &member,
                         Context::Function {
@@ -2396,8 +2401,9 @@ impl Visitor<'_, '_> {
         }
         {
             // A closure's `use` variables are its own, copied (or referenced) at its creation.
-            if let Some(clause) =
-                node.named_code().find(|child| child.kind() == "anonymous_function_use_clause")
+            if let Some(clause) = node
+                .named_code()
+                .find(|child| child.kind() == "anonymous_function_use_clause")
             {
                 for part in clause.named_code() {
                     let (variable_node, by_reference) = match part.kind().as_ref() {
@@ -2470,8 +2476,9 @@ impl Visitor<'_, '_> {
     fn closure<D: Doc>(&mut self, node: &Node<'_, D>, state: &mut Flowing) -> Visit<()> {
         // The `use` clause runs where the closure is created: a by-value variable is read there,
         // a by-reference one is created there if undefined.
-        if let Some(clause) =
-            node.named_code().find(|child| child.kind() == "anonymous_function_use_clause")
+        if let Some(clause) = node
+            .named_code()
+            .find(|child| child.kind() == "anonymous_function_use_clause")
         {
             for part in clause.named_code() {
                 match part.kind().as_ref() {

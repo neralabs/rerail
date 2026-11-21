@@ -1687,8 +1687,8 @@ impl Lower<'_, '_> {
         let p = self.f.ins().iadd(base, n);
         // Eight bytes a store, then the rest one by one.
         let words = b.len() / 8;
-        for (i, w) in b.chunks_exact(8).enumerate() {
-            let c = self.f.ins().iconst(types::I64, i64::from_le_bytes(w.try_into().unwrap()));
+        for (i, &w) in b.as_chunks::<8>().0.iter().enumerate() {
+            let c = self.f.ins().iconst(types::I64, i64::from_le_bytes(w));
             self.f.ins().store(bytes_flags(), c, p, (i * 8) as i32);
         }
         for (i, &c) in b[words * 8..].iter().enumerate() {
@@ -2593,7 +2593,7 @@ impl Lower<'_, '_> {
         let lastp = self.f.ins().iadd(lp, ln);
         let c = self.f.ins().load(types::I8, bytes_flags(), lastp, -1);
         let mut e = self.f.ins().iconst(types::I8, 0);
-        for x in [b'e', b'E', b'p', b'P'] {
+        for x in *b"eEpP" {
             let q = self.f.ins().icmp_imm(IntCC::Equal, c, i64::from(x));
             e = self.f.ins().bor(e, q);
         }
@@ -6720,11 +6720,11 @@ pub fn rust_source(program: &Words) -> Result<String, String> {
     Ok(format!("{one}\n/// This source's fingerprint (`clif_rust::fingerprint` of what comes before).\npub const SOURCE: u64 = {h:#x};\n"))
 }
 
-/// The words' compiled code as MSL (`clif_msl`, decision 0348 stage 5): the JIT's functions, the
+/// The words' compiled code as UKL (`clif_ukl`, decisions 0348 stage 5, 0440 step D): the JIT's functions, the
 /// run's entry the kernel `pp_batch` over a batch of contexts, and its fingerprint.
-pub fn msl_source(program: &Words) -> Result<String, String> {
+pub fn ukl_source(program: &Words) -> Result<String, String> {
     let c = compile_kept(program, true).map_err(|e| format!("{e:?}"))?;
-    let one = crate::clif_msl::translate(&c.ir, &[(c.run_id, "pp_batch")])?;
+    let one = crate::clif_ukl::translate(&c.ir, &[(c.run_id, "pp_batch")])?;
     let h = crate::clif_rust::fingerprint(&one);
     Ok(format!("{one}\n// This source's fingerprint (`clif_rust::fingerprint` of what comes before): {h:#x}.\n"))
 }
@@ -6771,7 +6771,7 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
     let mut disasm = Vec::new();
     let mut code_kept = Vec::new();
     pp_words::validate(program)?;
-    let mut builder = JITBuilder::with_flags(&[("opt_level", "speed")], default_libcall_names()).map_err(|_| Error::BackendFailure)?;
+    let mut builder = JITBuilder::with_flags(&rerail_clif::jit::flags(&[("opt_level", "speed")]), default_libcall_names()).map_err(|_| Error::BackendFailure)?;
     // One arena for the module's code, so a call of an outlined word is a direct branch (its
     // `colocated`): JIT mappings apart can be past a branch's reach.
     builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(64 << 20).map_err(|_| Error::BackendFailure)?));
@@ -6901,10 +6901,10 @@ fn compile_kept(program: &Words, keep: bool) -> Result<CompiledPp, Error> {
         f.finalize();
     }
     // A debug aid: the verifier's errors, annotated on the function, written to this file.
-    if let Ok(path) = std::env::var("RERAIL_PP_DEBUG_CLIF") {
-        if let Err(e) = cranelift_codegen::verify_function(&context.func, module.isa()) {
-            let _ = std::fs::write(path, cranelift_codegen::print_errors::pretty_verifier_error(&context.func, None, e));
-        }
+    if let Ok(path) = std::env::var("RERAIL_PP_DEBUG_CLIF")
+        && let Err(e) = cranelift_codegen::verify_function(&context.func, module.isa())
+    {
+        let _ = std::fs::write(path, cranelift_codegen::print_errors::pretty_verifier_error(&context.func, None, e));
     }
     branch_on_tests(&mut context.func);
     crate::native_cpu_shape::check(&context.func, &heads, &own).map_err(|r| Error::RefusedShape(format!("{r:?}")))?;

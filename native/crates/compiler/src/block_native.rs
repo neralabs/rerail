@@ -22,6 +22,8 @@ pub struct BlockNative {
     pub totals: Vec<usize>,
     /// The outputs (indexes into `outputs`) tier 2 reads as masks (`block::BlockProgram::masks`).
     pub masks: Vec<usize>,
+    /// The output (an index into `outputs`) of the stream's newlines (`block::BlockProgram::newlines`).
+    pub newlines: Option<usize>,
     /// How many bytes past the stream the program runs (`block::BlockProgram::delay`).
     pub delay: u8,
     /// Each output's delay (`block::BlockProgram::output_delay`).
@@ -164,6 +166,7 @@ impl BlockNative {
             extracts: program.extract_outputs(),
             totals: program.total_outputs(),
             masks: program.mask_outputs(),
+            newlines: program.newline_output(),
             delay: program.delay,
             output_delays: (0..program.outputs.len()).map(|k| program.output_delay(k)).collect(),
             groups: crate::block::groups(&program.ops, &program.rounds).expect("a verified program"),
@@ -283,8 +286,8 @@ impl BlockNative {
                 }
             }
         }
-        for x in 0..insts.len() {
-            if keep[x] && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
+        for (x, &kept) in keep.iter().enumerate().take(insts.len()) {
+            if kept && (x < n || zero.is_some_and(|z| usize::from(z) == x)) {
                 place(x, &insts, &mut placed, &mut order);
             }
         }
@@ -311,6 +314,7 @@ impl BlockNative {
             extracts: self.extracts.clone(),
             totals: self.totals.clone(),
             masks: self.masks.clone(),
+            newlines: self.newlines,
             delay: self.delay,
             output_delays: self.output_delays.clone(),
             records: self.records.clone(),
@@ -400,7 +404,8 @@ impl BlockNative {
     /// body makes none of them. The skip, the end rules', the readers' and the tests' masks.
     pub fn read_at_tokens(&self) -> Vec<usize> {
         use crate::records::EndRule;
-        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some()) else {
+        // The token loop's (`skip`), or tier 2's where it makes the records (page 40).
+        let Some(r) = self.records.as_ref().filter(|r| r.skip.is_some() || r.fetched_in_tier2()) else {
             return Vec::new();
         };
         let bytes = crate::native_cpu_bytes::Bytewise::of(self);
@@ -427,7 +432,23 @@ impl BlockNative {
         // bytes (`native_cpu_stream::check_word`). One another mask also names stays stored.
         let others: Vec<usize> = self.masks.iter().enumerate().filter(|(i, _)| !r.check_masks.contains(&(*i as u16))).map(|(_, &o)| o).collect();
         read.extend(r.check_masks.iter().filter_map(|&m| self.masks.get(usize::from(m))).filter(|o| !others.contains(o)).map(|&o| o as u16));
-        let mut v: Vec<usize> = read.into_iter().filter(|&o| bytes.can(o) && !stored.contains(&o)).map(usize::from).collect();
+        // A region tier 2 reads as `parse_string` (`native_cpu_stream::sequential`) reads its
+        // part's start from no mask at all.
+        let unread: Vec<u16> = if r.fetched_in_tier2() {
+            r.readers
+                .iter()
+                .filter(|rd| rd.split == crate::records::Split::Tier2 && rd.arms.len() == 1)
+                .filter(|rd| {
+                    let mut parts: Vec<(u16, u8)> = rd.parts.iter().map(|p| (p.start, p.bytes)).collect();
+                    parts.sort_by_key(|&(o, n)| (n, o));
+                    crate::native_cpu_stream::sequential(self, &rd.arms[0], &parts).is_some()
+                })
+                .flat_map(|rd| rd.parts.iter().map(|p| p.start))
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let mut v: Vec<usize> = read.into_iter().filter(|&o| (bytes.can(o) || unread.contains(&o)) && !stored.contains(&o)).map(usize::from).collect();
         v.sort_unstable();
         v.dedup();
         v
@@ -535,6 +556,7 @@ impl BlockNative {
             extracts: self.extracts.clone(),
             totals: self.totals.clone(),
             masks: self.masks.clone(),
+            newlines: self.newlines,
             delay: self.delay,
             output_delays: self.output_delays.clone(),
             records: self.records.clone(),
@@ -557,6 +579,7 @@ impl BlockNative {
 
 /// A pass over a file's blocks, of a program in passes (`BlockNative::passes`).
 #[derive(Clone, Debug, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum Pass {
     /// First block to first: a body, as a program without passes runs it. Its `Load`s read the
     /// slots of passes before it. Before the last pass, output `k` is stored to slot
@@ -681,9 +704,9 @@ impl BlockNative {
                 slots += 1;
             }
         };
-        for x in 0..n {
+        for (x, inst) in self.insts.iter().enumerate() {
             for p in (0..=last).filter(|&p| made[p][x]) {
-                for o in self.insts[x].operands() {
+                for o in inst.operands() {
                     if !in_pass(o, p) {
                         give(o, &mut slot);
                     }
@@ -792,6 +815,7 @@ impl BlockNative {
                 extracts: if last { self.extracts.clone() } else { Vec::new() },
                 totals: if last { self.totals.clone() } else { Vec::new() },
                 masks: if last { self.masks.clone() } else { Vec::new() },
+                newlines: if last { self.newlines } else { None },
                 delay: self.delay,
                 groups: groups.clone(),
                 records: if last { self.records.clone() } else { None },
@@ -837,11 +861,10 @@ impl PlaneFormulas {
     fn push(&mut self, inst: BlockInst) -> u16 {
         // A carry is its group's own value, never another's, however alike their starts.
         let pure = !matches!(inst, BlockInst::Class { .. } | BlockInst::Pair { .. } | BlockInst::Carry(_));
-        if pure {
-            if let Some(&i) = self.shared.get(&inst) {
+        if pure
+            && let Some(&i) = self.shared.get(&inst) {
                 return i;
             }
-        }
         let i = self.insts.len() as u16;
         self.insts.push(inst);
         if pure {

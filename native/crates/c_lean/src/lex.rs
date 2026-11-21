@@ -669,25 +669,22 @@ impl<'s> Lexer<'s> {
         match c {
             b'a'..=b'z' | b'A'..=b'Z' | b'_' | b'$' => {
                 // A literal's prefix: `L`, `u`, `U`, `u8`, and C++'s `R`, `LR`, `uR`, `UR`, `u8R`.
-                if matches!(c, b'L' | b'u' | b'U' | b'R') {
-                    if let Some(t) = self.prefixed(s) {
-                        return t;
-                    }
+                if matches!(c, b'L' | b'u' | b'U' | b'R')
+                    && let Some(t) = self.prefixed(s)
+                {
+                    return t;
                 }
                 let end = self.name_end(s)?;
-                return Ok((Name, end, word(self.src, s, end)));
+                Ok((Name, end, word(self.src, s, end)))
             }
-            b'0'..=b'9' => return self.number(s),
-            b'.' => self.number(s),
-            b'"' => {
-                return match self.string_end(s + 1) {
-                    Some(end) => Ok((Str, end, 0)),
-                    None => refuse,
-                };
-            }
+            b'0'..=b'9' | b'.' => self.number(s),
+            b'"' => match self.string_end(s + 1) {
+                Some(end) => Ok((Str, end, 0)),
+                None => refuse,
+            },
             b'\'' => match self.char_end(s + 1) {
-                Some(end) => return Ok((Char, end, 0)),
-                None => return refuse,
+                Some(end) => Ok((Char, end, 0)),
+                None => refuse,
             },
             b'#' => {
                 let mut k = s + 1;
@@ -698,7 +695,7 @@ impl<'s> Lexer<'s> {
                 if e == k {
                     return Ok((Directive, s + 1, 0));
                 }
-                return Ok((Directive, e, word(self.src, k, e)));
+                Ok((Directive, e, word(self.src, k, e)))
             }
             c if c >= 0x80 => {
                 let end = self.name_end(s)?;
@@ -795,7 +792,7 @@ impl<'s> Lexer<'s> {
     pub fn string_end(&self, mut i: usize) -> Option<usize> {
         loop {
             // The next `"`, `\` or `\n` (stage 1's mask): the text between is passed a block at a time.
-            i = rerail_simd8::micro::first_of(self.src, i, [b'"', b'\\', b'\n']);
+            i = rerail_simd8::micro::first_of(self.src, i, *b"\"\\\n");
             match self.src.get(i)? {
                 b'"' => return Some(i + 1),
                 b'\n' => return None,
@@ -893,7 +890,7 @@ impl<'s> Lexer<'s> {
         let s = at;
         let mut i = at + 1;
         loop {
-            i = rerail_simd8::micro::first_of(self.src, i, [b'/', b'\\', b'\n']);
+            i = rerail_simd8::micro::first_of(self.src, i, *b"/\\\n");
             if i >= self.src.len() {
                 return Ok(Some((s, self.src.len())));
             }
@@ -990,8 +987,11 @@ pub fn number_end(src: &[u8], s: usize, cpp: bool) -> R<usize> {
 mod tests {
     use super::*;
 
+    /// Tokens (kind, word, start, end, newlines before) and comments (start, end).
+    type Lexed = (Vec<(T, u8, u32, u32, u32)>, Vec<(u32, u32)>);
+
     /// The tokens of `src` one `token` at a time (the scalar lexer), and the comments.
-    fn by_token(lx: &Lexer, mut at: usize) -> (Vec<(T, u8, u32, u32, u32)>, Vec<(u32, u32)>) {
+    fn by_token(lx: &Lexer, mut at: usize) -> Lexed {
         let (mut out, mut extras) = (Vec::new(), Vec::new());
         loop {
             let t = lx.token(at, &mut extras).unwrap_or_else(refused);
@@ -1005,7 +1005,7 @@ mod tests {
     }
 
     /// The same by `run`, in batches of `n`.
-    fn by_run(lx: &Lexer, mut at: usize, n: usize) -> (Vec<(T, u8, u32, u32, u32)>, Vec<(u32, u32)>) {
+    fn by_run(lx: &Lexer, mut at: usize, n: usize) -> Lexed {
         let (mut toks, mut extras) = (Vec::new(), Vec::new());
         loop {
             at = lx.run(at, &mut extras, &mut toks, n);

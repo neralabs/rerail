@@ -1,10 +1,10 @@
 //! The preprocessor's evaluator over tapes (decision 0436), UKL passes (`pp_eval.uglykl`, decision
-//! 0460 §5) launched on the process's device.
+//! 0468 §5) launched on the process's device.
 //!
 //! A unit is its files: each a source's bytes and its preprocessor tape (`rerail_c_pp::tape`,
-//! format 16, decision 0460 §1), documents of the slab residency. The evaluator reads them where
-//! they are: the unit's documents gathered into one slab (`slabs::gather`), their views listed
-//! (`Unit::of`). Writing a tape into its room is its loader's (the store's load, 0353 step 4a;
+//! format 16, decision 0468 §1), documents of the slab residency. The evaluator reads them where
+//! they are: the first document's slab bound, the others made resident and reached from it by
+//! the slabs' addresses (0353 step 4, 0471), their views listed (`Unit::of`). Nothing is copied. Writing a tape into its room is its loader's (the store's load, 0353 step 4a;
 //! a test's stand-in for it): `placement` says where the parts go and makes the view. The host
 //! then encodes the passes and waits; every size a pass needs is made on the device, and no
 //! pass's result comes back to the host to decide the next.
@@ -24,10 +24,12 @@ pub fn source() -> &'static str {
 
 pub use crate::slabs::DocView;
 
-/// A unit's files on the device: its documents, in one slab, and their views.
+/// A unit's files on the device: its documents, where the residency placed them, and their views.
 pub struct Unit {
-    /// The documents, gathered into one slab: the lease the kernels read through.
+    /// The documents, held for the unit's life. The first one's slab is the one the kernels bind.
     pub documents: Vec<Arc<Resident>>,
+    /// The unit's other slabs, which its passes make resident (`Enc::over`).
+    pub slabs: Vec<Arc<crate::slabs::Slab>>,
     /// Their views, in the unit's file order (`PpFile` in the UKL): placed in each run's arena
     /// (`Front::files`).
     pub views: Vec<DocView>,
@@ -119,35 +121,37 @@ pub fn placement<'a>(
 }
 
 impl Unit {
-    /// The unit of `documents` (in its file order): gathered into one slab, which the kernels
-    /// read, and their views listed.
+    /// The unit of `documents` (in its file order), read where they lie: each view's offset counts
+    /// from the first document's slab, by the slabs' addresses (0471). A device with no buffer
+    /// addresses reads a unit in one slab only.
     pub fn of(documents: Vec<Arc<Resident>>) -> Result<Unit, Error> {
-        let documents = crate::slabs::gather(documents)?;
-        let views: Vec<DocView> = documents.iter().map(|d| d.view).collect();
+        let block = documents.first().map(|d| Arc::clone(&d.slab));
+        let base = block.as_ref().map(|b| b.device_buffer().device_address());
+        let mut slabs: Vec<Arc<crate::slabs::Slab>> = Vec::new();
+        let mut views = Vec::with_capacity(documents.len());
+        for d in &documents {
+            let mut view = d.view;
+            if block.as_ref().is_some_and(|b| b.id != d.slab.id) {
+                let (Some(Some(base)), Some(at)) = (base, d.slab.device_buffer().device_address()) else {
+                    return Err(Error::BackendCapacity);
+                };
+                view.set_offset((at as i64).wrapping_sub(base as i64).wrapping_add(i64::from(d.view.at)));
+                if !slabs.iter().any(|s| s.id == d.slab.id) {
+                    slabs.push(Arc::clone(&d.slab));
+                }
+            }
+            views.push(view);
+        }
         let file_nodes: Vec<u32> = views.iter().map(|v| v.nodes).collect();
         let node_bound = file_nodes.iter().map(|&n| n as usize).sum::<usize>().max(1);
         let dir_bound = file_nodes.iter().map(|&n| n as usize / 2).sum::<usize>().max(1);
-        Ok(Unit { views, documents, node_bound, dir_bound, file_nodes })
+        Ok(Unit { views, documents, slabs, node_bound, dir_bound, file_nodes })
     }
 
-    /// The batch of `units`: their files in order, read in the slab they are in. `None` where
-    /// they are in more than one slab: a batch reads one, and gathering them would copy them.
+    /// The batch of `units`: their files in order, each read where it lies (as `of`). `None` where
+    /// a device with no buffer addresses has them in more than one slab.
     pub fn batch(units: &[&Unit]) -> Option<Unit> {
-        let documents: Vec<Arc<Resident>> = units.iter().flat_map(|u| u.documents.iter().cloned()).collect();
-        if let Some(first) = documents.first()
-            && documents.iter().any(|d| d.slab.id != first.slab.id)
-        {
-            return None;
-        }
-        let views: Vec<DocView> = units.iter().flat_map(|u| u.views.iter().copied()).collect();
-        let file_nodes: Vec<u32> = views.iter().map(|v| v.nodes).collect();
-        Some(Unit {
-            node_bound: units.iter().map(|u| u.node_bound).sum::<usize>().max(1),
-            dir_bound: units.iter().map(|u| u.dir_bound).sum::<usize>().max(1),
-            views,
-            documents,
-            file_nodes,
-        })
+        Unit::of(units.iter().flat_map(|u| u.documents.iter().cloned()).collect()).ok()
     }
 
     /// The unit's files.
@@ -159,7 +163,7 @@ impl Unit {
         self.views.is_empty()
     }
 
-    /// The slab the unit's documents are in, as the kernels bind it (`None`: no documents).
+    /// The first document's slab, as the kernels bind it (`None`: no documents).
     pub fn data(&self) -> Option<&Buffer> {
         self.documents.first().map(|d| d.slab.device_buffer())
     }
@@ -266,7 +270,7 @@ impl Front {
         let per_file = || arena.zeroed::<u32>(n);
         let per_node = || arena.zeroed::<u32>(unit.node_bound);
         // Each file's first node and the nodes in all: the views' counts, which the host holds
-        // (decision 0460: no scan on the device for what the layout says).
+        // (decision 0468: no scan on the device for what the layout says).
         let mut bases = Vec::with_capacity(n.max(1));
         let mut total = 0u32;
         for &k in &unit.file_nodes {
@@ -403,8 +407,13 @@ pub fn run<'a>(f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<usize, E
 
 /// `run`, and the command's time on the device, in seconds.
 pub fn run_timed<'a>(f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
+    run_timed_over(&[], f)
+}
+
+/// `run_timed`, each launch making `resident` resident: a unit's slabs past its first (0471).
+pub fn run_timed_over<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
     let scope = crate::launch::LaunchScope::enter();
-    let enc = Enc::new("Rerail pp evaluator");
+    let enc = Enc::over("Rerail pp evaluator", resident);
     f(&enc)?;
     let seconds = enc.finish()?;
     // R9 of decision 0448: every pass in this one command, so the host reads nothing between
@@ -436,12 +445,12 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
 
 /// Runs the persistent grid over the arena at `groups` groups, laid out as `l`, in one command
 /// buffer: `pp_setup` to the stage `l` names (the text pass is inside its P1 iterations,
-/// decision 0475), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and its GPU time in seconds, or
+/// decision 0485), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and its GPU time in seconds, or
 /// `None` where a barrier failed (the grid's groups were not resident together).
 pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<(usize, f64)>, Error> {
     l.write(&front.lay);
     let all = l.get("LAST") == TO_ALL;
-    let ran = run_timed(|enc| {
+    let ran = run_timed_over(&unit.slabs, |enc| {
         front.setup(enc, arena, unit, groups);
         if all {
             enc.run("pp_check", &[("arena", arena), ("lay", &front.lay)], None, 1);

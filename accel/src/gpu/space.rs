@@ -7,7 +7,7 @@
 //! at the chunk's end. When the kept bytes pass the limit, the entries least recently read go first, never one the
 //! batch being run reads.
 //!
-//! **A batch's joins** take one command buffer, whatever their number, and a second only when needed:
+//! **A batch's joins** take one submission, whatever their number, and a second only when needed:
 //!
 //! 1. The sorts of every right side not kept, then every probe and every tile join's count and scan. A sort is in
 //!    the same serial encoder as the probes that read it, so they follow it.
@@ -21,7 +21,7 @@
 //! A probe's pairs are read from the arena block by block, in left row order. A tile join's pairs come in tile order, so they are
 //! sorted into the kernel's order (left row, then right row).
 
-use super::join::{Arena, Column, Fused, Keyed, Pass, ProbeOne, commit_wait, queue};
+use super::join::{Arena, Column, Fused, Keyed, Pass, ProbeJob, ProbeOne};
 use super::tile::{Resident, TileJob};
 use crate::kernel::{JoinBy, Keys, Kernel, Output};
 use std::collections::HashMap;
@@ -126,7 +126,9 @@ fn group(keys: &Keys) -> Result<Resident, String> {
 /// One join of the batch, between its passes.
 enum Job {
     Probe { left: Vec<Column>, right: Arc<Keyed>, job: ProbeOne },
-    Tile { left: Resident, right: Arc<Resident>, job: TileJob },
+    /// A probe on a device without addresses (`Fused::can`): its own count, scan and scatter.
+    Each { left: Vec<Column>, right: Arc<Keyed>, job: ProbeJob },
+    Tile { left: Resident, right: Arc<Resident>, job: Box<TileJob> },
 }
 
 /// The distinct gates of a batch's staged columns.
@@ -135,10 +137,10 @@ fn gates(ks: &[&Kernel]) -> Vec<Arc<crate::col::Gate>> {
     for k in ks {
         if let Kernel::Join { left, right, .. } = k {
             for c in left.iter().chain(right.iter()) {
-                if let Some(g) = c.gate() {
-                    if !out.iter().any(|o| Arc::ptr_eq(o, g)) {
-                        out.push(Arc::clone(g));
-                    }
+                if let Some(g) = c.gate()
+                    && !out.iter().any(|o| Arc::ptr_eq(o, g))
+                {
+                    out.push(Arc::clone(g));
                 }
             }
         }
@@ -151,10 +153,10 @@ fn small(right: &Keys) -> bool {
     right.len() <= 3 && right.first().is_some_and(|c| c.len() <= super::join::SMALL)
 }
 
-/// Runs a batch's joins (`ks`, each a `Kernel::Join`) in one command buffer, two only when a tile join's scatter or
+/// Runs a batch's joins (`ks`, each a `Kernel::Join`) in one submission, two only when a tile join's scatter or
 /// a probe whose pairs did not fit needs one: their pairs, in `ks`' order.
 ///
-/// When the batch has staged columns whose gate is not open (`crate::col`), the command buffer waits at its head
+/// When the batch has staged columns whose gate is not open (`crate::col`), the submission waits at its head
 /// on the gates' events, and it is committed as soon as it is encoded: the host fills the columns while the commit
 /// and the system's scheduling go on. A right side that takes the radix sort is narrowed from its values, so for
 /// one that is staged the lane waits for its gate before encoding (the profile's `wait for fill`).
@@ -176,7 +178,7 @@ pub struct Started {
     set: usize,
 }
 
-/// [`run`]'s first half: the batch's first command buffer encoded and committed, and its right sides kept (a sort
+/// [`run`]'s first half: the batch's first submission encoded and committed, and its right sides kept (a sort
 /// still running is waited for by whoever reads its runs). The space is not held after: the lane's next batch may
 /// read what this one keeps.
 pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started, String> {
@@ -185,12 +187,13 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
     let set = super::join::scratch_set(0) ^ 1;
     super::join::scratch_set(set);
     space.batch += 1;
-    let queue = queue()?;
-    let command = queue.new_command_buffer();
-    let device = &crate::gpu::shared::get().ok_or("no Metal device")?.device;
+    let pass = crate::score::phase("encode", Pass::new)?;
+    let device = super::join::device()?;
     let gates = gates(ks);
-    let held: Vec<Arc<crate::col::Gate>> = crate::score::phase("encode", || gates.into_iter().filter(|g| g.hold(command, device)).collect());
-    let pass = crate::score::phase("encode", || Pass::new(command));
+    let held: Vec<Arc<crate::col::Gate>> = crate::score::phase("encode", || gates.into_iter().filter(|g| g.hold(&pass, device)).collect());
+    // The fused sorts and probes read their jobs through device addresses: a device without them takes the radix
+    // sort and each probe's own count, scan and scatter.
+    let fusing = Fused::can();
     // The arena every probe's pairs go to: two a left row expected, at least 64 a probe.
     let (mut cap, mut blocks) = (0usize, 0usize);
     for k in ks {
@@ -205,9 +208,9 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
     let mut fused = Fused::default();
     let mut tables: Vec<super::join::Held> = Vec::new();
     let mut jobs = Vec::with_capacity(ks.len());
-    // The columns the sorts read: they must outlive the first command buffer.
+    // The columns the sorts read: they must outlive the first submission.
     let mut reads: Vec<Column> = Vec::new();
-    // Built this batch: kept once the command buffer completed.
+    // Built this batch: kept once the submission completed.
     let mut built: Vec<(u64, JoinBy, usize, usize, Entry)> = Vec::new();
     let (mut small_sorts, mut radix_sorts) = (0u64, 0u64);
     for k in ks {
@@ -230,7 +233,7 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
                 let right_keyed = match kept {
                     Some(Entry::Sorted(r)) => r,
                     _ => {
-                        let (keyed, read) = if small(right) {
+                        let (keyed, read) = if fusing && small(right) {
                             small_sorts += 1;
                             let cols = crate::score::phase("upload", || right.iter().map(Column::raw).collect::<Result<Vec<_>, _>>())?;
                             crate::score::phase("encode", || fused.sort(cols))?
@@ -253,8 +256,13 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
                     }
                 };
                 let left = crate::score::phase("upload", || left.iter().map(Column::raw).collect::<Result<Vec<_>, _>>())?;
-                let job = crate::score::phase("encode", || fused.probe(&left, &right_keyed, &mut arena))?;
-                Job::Probe { left, right: right_keyed, job }
+                if fusing {
+                    let job = crate::score::phase("encode", || fused.probe(&left, &right_keyed, &mut arena))?;
+                    Job::Probe { left, right: right_keyed, job }
+                } else {
+                    let job = crate::score::phase("encode", || ProbeJob::encode(&pass, &left, &right_keyed, 0))?;
+                    Job::Each { left, right: right_keyed, job }
+                }
             }
             JoinBy::Tile => {
                 let right = match kept {
@@ -270,17 +278,16 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
                 let left = crate::score::phase("group (host)", || group(left))?;
                 let keys: Vec<usize> = (0..k_len(k)).collect();
                 let job = crate::score::phase("encode", || TileJob::count(&pass, &left, &keys, &right, &keys))?;
-                Job::Tile { left, right, job }
+                Job::Tile { left, right, job: Box::new(job) }
             }
         };
         jobs.push(job);
     }
     crate::score::phase("encode", || fused.dispatch(&pass, &arena, &mut tables))?;
-    crate::score::phase("encode", || pass.end());
     crate::score::count("small sorts (fused)", small_sorts);
     crate::score::count("radix sorts", radix_sorts);
     let committed = std::time::Instant::now();
-    let command = super::join::Submitted::commit(command)?;
+    let command = pass.commit()?;
     crate::score::phase("keep", || {
         for (id, by, rows, bytes, entry) in built {
             if let Entry::Sorted(k) = &entry {
@@ -293,7 +300,7 @@ pub fn start(space: &std::sync::Mutex<Space>, ks: &[&Kernel]) -> Result<Started,
 }
 
 impl Started {
-    /// [`run`]'s second half: waits for the first command buffer, runs the second when needed, and reads the pairs.
+    /// [`run`]'s second half: waits for the first submission, runs the second when needed, and reads the pairs.
     pub fn finish(self) -> Result<Vec<Output>, String> {
         let before = super::join::scratch_set(self.set);
         let r = self.finish_on_set();
@@ -303,7 +310,6 @@ impl Started {
 
     fn finish_on_set(self) -> Result<Vec<Output>, String> {
         let Started { command, held, committed, reads, tables, arena, jobs, .. } = self;
-        let queue = queue()?;
         command.wait();
         // How long the host filled the staged columns after the commit: the delay the early commit hid.
         for g in &held {
@@ -329,13 +335,12 @@ impl Started {
         let mut respill = Fused::default();
         let mut tables2: Vec<super::join::Held> = Vec::new();
         let mut second = false;
-        let need = overflowed || jobs.iter().any(|j| matches!(j, Job::Tile { .. }));
+        let need = overflowed || jobs.iter().any(|j| matches!(j, Job::Tile { .. }) || matches!(j, Job::Each { job, .. } if job.overflowed()));
         let mut done = Vec::with_capacity(jobs.len());
         if !need {
             done = jobs;
         } else {
-            let command = queue.new_command_buffer();
-            let pass = crate::score::phase("encode", || Pass::new(command));
+            let pass = crate::score::phase("encode", Pass::new)?;
             for (i, j) in jobs.into_iter().enumerate() {
                 done.push(match j {
                     Job::Probe { left, right, .. } if spilled[i] => {
@@ -344,13 +349,18 @@ impl Started {
                         let job = crate::score::phase("encode", || respill.probe(&left, &right, own))?;
                         Job::Probe { left, right, job }
                     }
+                    Job::Each { left, right, job } if job.overflowed() => {
+                        second = true;
+                        let job = crate::score::phase("encode", || job.rescatter(&pass, &left, &right))?;
+                        Job::Each { left, right, job }
+                    }
                     Job::Tile { left, right, job } => {
                         let keys: Vec<usize> = (0..left.columns.len()).collect();
                         let job = crate::score::phase("encode", || job.scatter(&pass, &left, &keys, &right, &keys))?;
                         // Into the kernel's order on the device, after the scatter.
                         let job = crate::score::phase("encode", || job.sort(&pass, left.rows, right.rows))?;
                         second |= job.total > 0;
-                        Job::Tile { left, right, job }
+                        Job::Tile { left, right, job: Box::new(job) }
                     }
                     other => other,
                 });
@@ -358,10 +368,9 @@ impl Started {
             if let Some(own) = &spill {
                 crate::score::phase("encode", || std::mem::take(&mut respill).dispatch(&pass, own, &mut tables2))?;
             }
-            crate::score::phase("encode", || pass.end());
             if second {
-                crate::score::count("second command buffers", 1);
-                commit_wait(command)?;
+                crate::score::count("second submissions", 1);
+                pass.commit_wait()?;
             }
         }
         // Each probe's pairs as a view of its arena: no copy (decision 0100 §9).
@@ -373,6 +382,7 @@ impl Started {
                         let from = if spilled[i] { spill.as_ref().expect("the spills' arena") } else { &arena };
                         job.view(from).map(Output::View).ok_or_else(|| format!("join {i}: its pairs did not fit their exact space"))
                     }
+                    Job::Each { job, .. } => Ok(Output::Pairs(job.pairs())),
                     Job::Tile { job, .. } => Ok(Output::Pairs(job.pairs())),
                 })
                 .collect()

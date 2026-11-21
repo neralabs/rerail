@@ -1,7 +1,6 @@
 use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::content_store::prefilter::TOO_BIG;
-use std::path::Path;
 
 pub(in crate::code_rule_dsl) use crate::code_rule_dsl::fixtures::{document, open, temp};
 
@@ -13,8 +12,11 @@ fn sweep() {
         let name = e.file_name();
         let Some(rest) = name.to_str().and_then(|n| n.strip_prefix("rerail-prefilter-")) else { continue };
         let Some(pid) = rest.split('-').next().and_then(|p| p.parse::<i32>().ok()) else { continue };
-        // SAFETY: signal 0 sends nothing; it only asks whether the process exists.
+        // SAFETY: signal 0 sends nothing; it only asks whether the process exists. Windows: never known gone.
+        #[cfg(unix)]
         let alive = pid as u32 == me || unsafe { libc::kill(pid, 0) } == 0 || std::io::Error::last_os_error().raw_os_error() != Some(libc::ESRCH);
+        #[cfg(not(unix))]
+        let alive = { let _ = (pid, me); true };
         if alive {
             continue;
         }
@@ -52,6 +54,7 @@ pub(in crate::code_rule_dsl) fn matcher(rule: &serde_json::Value, lang: GrammarD
         instances: None,
         documents: None,
         side: crate::code_rule_dsl::compile::documents::Side::Host,
+        patterns: None,
     };
     crate::code_rule_dsl::compile::compile_ast_rule(rule, lang, "test/rule", &mut Vec::new(), &utils).unwrap()
 }
@@ -186,14 +189,15 @@ fn kind_positions_are_every_preorder_of_the_kind_and_feed_kind_frequencies() {
 fn no_relation_stores_a_row_per_node() {
     let store = open(&temp());
     let mut nodes = 0_usize;
-    let here = Path::new(env!("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/prefilter");
+    let here = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/prefilter");
     let mut files = std::fs::read_dir(&here).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|e| e == "rs")).collect::<Vec<_>>();
     files.sort();
     for path in &files {
         let (_, doc) = put(&store, &std::fs::read_to_string(path).unwrap(), GrammarDialect::Rust);
         nodes += doc.transducer_len();
     }
-    for source in ["import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n"] {
+    {
+        let source = "import os\n\ndef f(a, b=1):\n    \"\"\"Doc.\"\"\"\n    return os.path.join(a, str(b))\n\nclass C:\n    x = [1, 2, 3]\n";
         nodes += put(&store, &source.repeat(300), GrammarDialect::Python).1.transducer_len();
     }
     assert!(nodes > 50_000, "{nodes}");

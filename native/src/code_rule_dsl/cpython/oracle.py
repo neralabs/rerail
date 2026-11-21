@@ -3,7 +3,8 @@
 Run as `python3 -I -S -c <this> <mode>`: stdin is one path per line, stdout one JSON object per file. Never imports or
 runs the files. Modes:
 
-- `syntax`: {"p", "e"}: e is null where `ast.parse` accepts the text, else [lineno, msg].
+- `syntax`: {"p", "e"}: e is null where `ast.parse` accepts the text, else [lineno, msg, offset, text, end_lineno,
+  end_offset].
 - `ast`: {"p", "n"}: every located node of the file's tree (none where it does not parse) but an f-string's own pieces
   (a JoinedStr's values and their format specs; the expressions of its fields are kept), each
   [start, end, type, unparse, dump_sha256, body_sha256, signature_sha256]: start and end are UTF-8 byte offsets,
@@ -84,7 +85,7 @@ def one(path):
             ast.parse(source)
             return {"p": path, "e": None}
         except SyntaxError as e:
-            return {"p": path, "e": [e.lineno, e.msg]}
+            return {"p": path, "e": [e.lineno, e.msg, e.offset, e.text, e.end_lineno, e.end_offset]}
         except (RecursionError, MemoryError, ValueError) as e:
             return {"p": path, "e": [None, type(e).__name__]}
     try:

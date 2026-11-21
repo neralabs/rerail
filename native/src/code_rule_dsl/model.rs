@@ -2,6 +2,7 @@ use super::calls::{Mode, SeedScope, TermId};
 use super::json::invalid;
 use super::matcher::{GrammarMatcher, Transform};
 use super::module_path::ModulePath;
+use crate::code_rule_dsl::language::adapter::pack as language_pack;
 use crate::code_rule_dsl::language::{GrammarDialect, PackageType};
 use ast_grep_core::replacer::TemplateFix;
 use globset::GlobSet;
@@ -11,7 +12,6 @@ use serde_json::Value;
 use std::borrow::Cow;
 use std::collections::{BTreeSet, HashMap};
 use std::sync::Arc;
-use crate::code_rule_dsl::language::adapter::pack as language_pack;
 
 /// The failure code of an output cap: a clause found more witnesses (or regex matches) than
 /// `maxWitnesses` lets it report. Apart from `budget-exceeded`, which is running out of work: the
@@ -140,6 +140,13 @@ pub struct ViolationSpec {
     pub fix_template: Option<Template>,
     /// Per dialect, the rule's regexes with named groups that test the witness node itself.
     pub node_regexes: Vec<(GrammarDialect, Vec<Regex>)>,
+    /// Per dialect, the rule's gap tests on the witness whose token regex has named groups: each
+    /// group binds its part of the token the test finds beside or in the witness, an implied
+    /// token by its place in the source (`matcher::gap::GapTest::token`).
+    pub gap_tests: Vec<(
+        GrammarDialect,
+        Vec<crate::code_rule_dsl::matcher::gap::GapTest>,
+    )>,
     /// `each`: an ast query's capture, one violation per distinct binding of it at a root.
     pub each: Option<String>,
     /// `fix.range`: the capture whose range the fix replaces, inside the witness; `None` replaces
@@ -877,8 +884,8 @@ impl FileInput {
                 ))
             })?),
             None => crate::code_rule_dsl::language::dialect_by_label(&language).and_then(|dialect| {
-                
-                { let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(dialect)); pack.scope_unpackaged_module(&path) }
+                let pack = language_pack::pack(crate::code_rule_dsl::language::Family::of(dialect));
+                pack.scope_unpackaged_module(&path)
             }),
         };
         Ok(Self {
@@ -892,7 +899,9 @@ impl FileInput {
 
     /// The `type` of the file's nearest `package.json`, which decides a `.js` file's module system.
     pub(super) fn package_type(&self) -> Option<PackageType> {
-        self.package.as_deref().map(|package| package.package_type())
+        self.package
+            .as_deref()
+            .map(|package| package.package_type())
     }
 }
 
@@ -951,7 +960,14 @@ pub(crate) fn python_module_path(
 
 /// `python_module_path` over the files on disk.
 pub fn python_module_path_on_disk(file: &std::path::Path) -> Option<Value> {
-    python_module_path(file, |directory| directory.join("__init__.py").exists())
+    python_module_path(file, |directory| {
+        let marker = directory.join("__init__.py");
+        if crate::git_workspace::snapshot::contains(file) {
+            crate::git_workspace::snapshot::is_file(marker)
+        } else {
+            marker.exists()
+        }
+    })
 }
 
 /// The directory a file set's path marks as a Python package (`pkg` for `pkg/__init__.py`, `""`
@@ -1008,13 +1024,12 @@ pub struct Metrics {
     pub(super) storage_write_nanoseconds: u64,
     pub(super) reused_sources: usize,
     pub(super) reused_tapes: usize,
-    pub(super) compressed_sources: usize,
-    pub(super) compressed_tapes: usize,
+    pub(super) written_sources: usize,
+    pub(super) written_tapes: usize,
     pub(super) restored_tapes: usize,
     pub(super) restored_candidate_files: usize,
-    pub(super) avoided_tape_decompressions: usize,
-    pub(super) tape_cache_hits: usize,
-    pub(super) tape_decompressions: usize,
+    pub(super) avoided_tape_reads: usize,
+    pub(super) tapes_from_store: usize,
     pub(super) restored_local_results: usize,
 }
 
@@ -1065,13 +1080,12 @@ impl Metrics {
         self.storage_write_nanoseconds += other.storage_write_nanoseconds;
         self.reused_sources += other.reused_sources;
         self.reused_tapes += other.reused_tapes;
-        self.compressed_sources += other.compressed_sources;
-        self.compressed_tapes += other.compressed_tapes;
+        self.written_sources += other.written_sources;
+        self.written_tapes += other.written_tapes;
         self.restored_tapes += other.restored_tapes;
         self.restored_candidate_files += other.restored_candidate_files;
-        self.avoided_tape_decompressions += other.avoided_tape_decompressions;
-        self.tape_cache_hits += other.tape_cache_hits;
-        self.tape_decompressions += other.tape_decompressions;
+        self.avoided_tape_reads += other.avoided_tape_reads;
+        self.tapes_from_store += other.tapes_from_store;
         self.restored_local_results += other.restored_local_results;
     }
 }

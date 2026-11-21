@@ -42,7 +42,9 @@ const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_RE
     // The stores a measurement keeps apart (the cost model's, the rule images'): a plan's costs and a program's stored
     // form, never the run's outputs.
     "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_EXPORT_IMAGES",
-    "RERAIL_FRAMES_TRACE"];
+    "RERAIL_FRAMES_TRACE",
+    // The memory ceiling (decision 0462): a run past it is stopped and keeps nothing; one under it outputs the same.
+    "RERAIL_MEMORY_MAX_MB"];
 
 /// Whether a switch only measures a run, never changes what it outputs: left out of the run's key.
 pub fn measures_only(name: &str) -> bool {
@@ -67,18 +69,26 @@ fn switches() -> Vec<u8> {
     out
 }
 
-fn key(programs: &[&str], added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
+fn key(given: &super::Texts<'_>, added: &super::added::Added, root: &Path, options: &serde_json::Value, modes: &str, typing: &Typing) -> String {
     let mut h = Sha256::new();
     // v4: the run's settings keyed as the rows it adds (decision 0249), the texts as the files'.
     h.update(b"rerail.run-reuse/v4\0");
-    for p in programs {
+    for p in given.programs {
         h.update((p.len() as u64).to_le_bytes());
         h.update(p.as_bytes());
+    }
+    // A handed program's plan key omits message text. These outputs contain rendered messages.
+    if let Some(read) = given.read {
+        for (_, template) in crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&**read).iter().filter(|(key, _)| key == crate::code_rule_dsl::logic::rr::lower::findings::MESSAGE) {
+            h.update(b"rendered-message\0");
+            h.update((template.len() as u64).to_le_bytes());
+            h.update(template.as_bytes());
+        }
     }
     added.hash(&mut h);
     h.update(options.to_string().as_bytes());
     h.update([0]);
-    h.update(std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
+    h.update(crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()).to_string_lossy().as_bytes());
     h.update([0]);
     h.update(modes.as_bytes());
     h.update(format!("\0{typing:?}\0").as_bytes());
@@ -151,7 +161,7 @@ fn settings(root: &Path, options: &serde_json::Value) -> Result<super::added::Ad
 /// The library files the programs include, each with its digest now: the record's `rule` entries.
 ///
 /// Read off phase 0's graphs (decision 0246): each text's includes (`Graph::digests`) and the phase programs its
-/// declarations name, with theirs (`Graph::rules`), which `bootstrap.rr` resolved as it loaded the modules. Nothing is
+/// declarations name, with theirs (`Graph::rules`), which `bootstrap.rerail` resolved as it loaded the modules. Nothing is
 /// parsed: listing them by reading every module again was 4.3 G of a one-file run, the parse the shipped bundle saves.
 /// A text phase 0 has no graph of (it includes nothing, or the run was handed it read), or a `phase_dir` the graph
 /// does not search, lists them as before (`listed`). `RERAIL_REUSE_CHECK` lists both and says where they differ.
@@ -173,7 +183,7 @@ pub fn rule_files(given: &super::Texts<'_>, options: &serde_json::Value) -> Resu
         None => listed(given, dir.as_deref())?,
     };
     let mut out = Vec::new();
-    // Phase 1's program (`sources.rr`), which every run's documents come from: its includes are core's, as the
+    // Phase 1's program (`sources.rerail`), which every run's documents come from: its includes are core's, as the
     // programs' are.
     let sources = super::phases::sources_path();
     let digest = observe(|o| o.digest(&sources)).map(|d| crate::content_store::observe::hex(&d)).unwrap_or_default();
@@ -266,10 +276,15 @@ pub fn decode_outputs(mut b: &[u8]) -> Option<Vec<(String, Vec<u8>)>> {
 
 /// The kept outputs written into `out`, when every read of the last run under this key is as it was.
 #[allow(clippy::too_many_arguments)]
-pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value) -> Result<Option<Report>> {
+pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, mut captured: Option<&mut Vec<u8>>) -> Result<Option<Report>> {
+    if crate::git_workspace::snapshot::contains(root) || super::ThreadStore::owner(root).is_some_and(|owner| owner.is_staged()) {
+        // A scoped run must publish its ownership after the run, including after
+        // a scope deletion. Its relation and document caches are independent.
+        return Ok(None);
+    }
     let programs = given.programs;
     let checking = super::thread_usage();
-    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
+    let key = key(given, &settings(root, options)?, root, options, modes, typing);
     let Some((consulted, outputs)) = observe(|o| o.run_record(&key)) else {
         miss(&format!("no record under the run's key {} (programs {}; {})", &key[..CUTOFF.len() + 12], programs.len(), key_parts(programs, root, options, typing)));
         return Ok(None);
@@ -320,13 +335,17 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         return Ok(None);
     }
     crate::code_rule_dsl::logic::profile::decision("whole-run cutoff (t23 §4)", || "every read as it was: the kept outputs written, nothing evaluated".into());
-    std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?;
+    if captured.is_none() { std::fs::create_dir_all(out).map_err(|e| Error::Plan(format!("{}: {e}", out.display())))?; }
     let mut report = Report { plans, ..Report::default() };
     for (name, bytes) in &outputs {
         if name != crate::code_rule_dsl::logic::plan::output::FILE {
             return Err(Error::Plan(format!("{name}: no output file of this run's")));
         }
-        crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        if let Some(target) = captured.as_deref_mut() {
+            target.extend_from_slice(bytes);
+        } else {
+            crate::code_rule_dsl::logic::plan::output::replace(out, &[bytes]).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
+        }
         let image = crate::code_rule_dsl::logic::plan::output::Image::one(bytes).map_err(|e| Error::Plan(format!("{name}: {e}")))?;
         for rel in image.names() {
             report.rows.insert(rel.to_owned(), image.rel(rel).expect("named").rows);
@@ -337,7 +356,7 @@ pub(super) fn reused(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     // The documents the run read: the workspace's and those its requests loaded, each once. Phase 1 loads a
     // workspace document by its absolute path, which the run lists by its path from the root: counted twice, a warm
     // run of one file reported two.
-    let base = std::fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let base = crate::git_workspace::snapshot::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     let read: std::collections::BTreeSet<std::path::PathBuf> =
         rest.iter().filter(|c| (c.0 == "doc" && !c.2.is_empty()) || c.0 == "load").map(|c| base.join(&c.1)).collect();
     report.files = read.len();
@@ -360,7 +379,10 @@ fn miss(why: &str) {
     }
 }
 
-pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report) -> Result<()> {
+pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &str, typing: &Typing, options: &serde_json::Value, report: &Report, captured: Option<&[u8]>) -> Result<()> {
+    if crate::git_workspace::snapshot::contains(root) {
+        return Ok(());
+    }
     let programs = given.programs;
     // Every phase's program is among the rule files (`rule_files`), and what each phase consulted is the record's
     // too: a phase's exports are a function of its program and what it consulted, so a run whose every read, its
@@ -370,7 +392,7 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
         miss("not recorded: nothing consulted");
         return Ok(());
     }
-    let key = key(programs, &settings(root, options)?, root, options, modes, typing);
+    let key = key(given, &settings(root, options)?, root, options, modes, typing);
     let mut consulted = rule_files(given, options)?;
     let mut read: Vec<(String, String, String)> = report.consulted.iter().cloned().chain(report.phase_runs.iter().flat_map(|r| r.report.consulted.iter().cloned())).collect();
     read.sort();
@@ -384,7 +406,11 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
     if let Some(summary) = super::Summary::of(programs, &given.graphs, given.read, root, options)?.encode().and_then(|b| String::from_utf8(b).ok()) {
         consulted.push((SUMMARY.to_owned(), String::new(), summary));
     }
-    let outputs = encode_outputs(&outputs_of(out,report.rows.keys().map(String::as_str)));
+    let files = match captured {
+        Some(bytes) => vec![(crate::code_rule_dsl::logic::plan::output::FILE.to_owned(), bytes.to_vec())],
+        None => outputs_of(out, report.rows.keys().map(String::as_str)),
+    };
+    let outputs = encode_outputs(&files);
     if std::env::var_os("RERAIL_REUSE_TRACE").is_some() {
         eprintln!("rerail: whole-run cutoff: recorded under {} ({} consulted)", &key[..CUTOFF.len() + 12], consulted.len());
     }
@@ -393,4 +419,4 @@ pub(super) fn record(given: &super::Texts<'_>, root: &Path, out: &Path, modes: &
 }
 
 // Its tests run in the engine's test binary (its facade of this module mounts `tests.rs`): they read what the
-// engine registers as it loads (the languages, their `.rr` libraries).
+// engine registers as it loads (the languages, their `.rerail` libraries).

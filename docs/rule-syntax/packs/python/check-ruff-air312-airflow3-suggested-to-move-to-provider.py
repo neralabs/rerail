@@ -1,10 +1,10 @@
-"""Checks ruff-air312-airflow3-suggested-to-move-to-provider.moved.rr against its two sources: its old names are the
+"""Checks ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail against its two sources: its old names are the
 JSON's `deprecated` list, in order, and each (old, module, name) row is an arm of Ruff 0.16.9's
 suggested_to_move_to_provider_in_3 (the commit the JSON was written from), read from the Rust source."""
 import json, os, re, sys
 HERE = os.path.dirname(os.path.abspath(__file__))
 JSON = os.path.join(HERE, "..", "..", "..", "..", "packs", "python", "rules", "ruff-air312-airflow3-suggested-to-move-to-provider.json")
-OUT = os.path.join(HERE, "ruff-air312-airflow3-suggested-to-move-to-provider.moved.rr")
+OUT = os.path.join(HERE, "ruff-air312-airflow3-suggested-to-move-to-provider.moved.rerail")
 RUST = os.environ.get("RUFF_SRC", "/Users/jeremy/orca/workspaces/rerail/wolfeel/.rerail/port-readiness/upstream/ruff/"
                       "0be08a206f9c3180afd3e93bcc792ed5cb1f4db1/crates/ruff_linter") + \
     "/src/rules/airflow/rules/suggested_to_move_to_provider_in_3.rs"

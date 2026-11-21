@@ -15,7 +15,7 @@ use rerail_metal::slabs;
 
 /// A unit of `files` (each a source and whether it is C++), as the evaluator reads it: each file's
 /// format 16 tape and its source placed in the slab residency, where the device reads them
-/// (decision 0460 §1). A document already resident (by its digest) is not placed again.
+/// (decision 0468 §1). A document already resident (by its digest) is not placed again.
 pub fn place(files: &[(&[u8], bool)]) -> Result<Unit, rerail_metal::Error> {
     use sha2::{Digest as _, Sha256};
     let tapes: Vec<_> = files.iter().map(|&(s, cpp)| rerail_c_pp::tape::image_16(s, crate::pp::options(cpp))).collect();
@@ -229,7 +229,7 @@ pub fn run<T>(cfg: &Config, io: &mut dyn Files, main: &str, cpp: bool, mut eval:
 }
 
 /// A unit its rounds settled: its last round's layout, its files, its rounds, and its expansion
-/// (the last round's run: decision 0478 §7). It holds none of the residency: its documents may
+/// (the last round's run: decision 0486 §7). It holds none of the residency: its documents may
 /// be retired once the batch's run is done.
 pub struct Settled {
     pub lay: Layout,
@@ -239,7 +239,7 @@ pub struct Settled {
 }
 
 /// The units `units` (each its files and its main file), of one configuration `cfg` (C++ where
-/// `cpp`), in rounds run as batches (decision 0478 §7): each round one run over the batch's
+/// `cpp`), in rounds run as batches (decision 0486 §7): each round one run over the batch's
 /// units, the units that request answered between rounds, and the round with no requests every
 /// unit's expansion. A batch is split in halves where its documents are in more than one slab,
 /// where the budget refuses its arena, or where the device refuses it or P1 does: a refusal is

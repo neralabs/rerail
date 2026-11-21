@@ -33,10 +33,11 @@ fn main() {
     let path = format!("/<check>/{name}");
 
     let mut devices: Vec<(&str, Device)> = Vec::new();
-    if let Some(shared) = rerail_gpu::shared::get() {
-        if !shared.device.is_cpu() && !matches!(shared.device, Device::OpenCl(_)) {
-            devices.push(("the device", shared.device.clone()));
-        }
+    if let Some(shared) = rerail_gpu::shared::get()
+        && !shared.device.is_cpu()
+        && !matches!(shared.device, Device::OpenCl(_))
+    {
+        devices.push(("the device", shared.device.clone()));
     }
     if let Some(cpu) = rerail_gpu::compute_kernel_cpu::CpuDevice::system_default() {
         devices.push(("the CPU", Device::Cpu(cpu)));

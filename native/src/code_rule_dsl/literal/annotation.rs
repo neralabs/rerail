@@ -276,7 +276,9 @@ fn breaks_line(root: &tree_sitter::Node<'_>, source: &str) -> bool {
 /// written, no token the grammar implies is kept (RER-131): the gaps between the stored children
 /// say where it was.
 fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<usize>) -> PNode {
-    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(crate::code_rule_dsl::language::GrammarDialect::Python);
+    let grammar = crate::code_rule_dsl::tape::tokens::TokenGrammar::of_dialect(
+        crate::code_rule_dsl::language::GrammarDialect::Python,
+    );
     fn node(
         cursor: &mut tree_sitter::TreeCursor<'_>,
         clamp: &dyn Fn(Range<usize>) -> Range<usize>,
@@ -299,7 +301,10 @@ fn convert(root: tree_sitter::Node<'_>, clamp: &dyn Fn(Range<usize>) -> Range<us
         if cursor.goto_first_child() {
             let mut at = 0;
             loop {
-                if stored.as_ref().is_none_or(|stored| stored.get(at).copied().unwrap_or(true)) {
+                if stored
+                    .as_ref()
+                    .is_none_or(|stored| stored.get(at).copied().unwrap_or(true))
+                {
                     built.children.push(node(cursor, clamp, grammar));
                 }
                 at += 1;
@@ -347,7 +352,10 @@ impl super::LiteralGrammar for AnnotationGrammar {
         false
     }
     fn own_kind_id(&self, kind: &str) -> Option<u16> {
-        Some(ast_grep_core::language::Language::kind_to_id(&crate::code_rule_dsl::language::GrammarDialect::Python, kind))
+        Some(ast_grep_core::language::Language::kind_to_id(
+            &crate::code_rule_dsl::language::GrammarDialect::Python,
+            kind,
+        ))
     }
     fn own_kind_name(&self, id: u16) -> Option<&'static str> {
         Some(kind_name(id))

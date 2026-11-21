@@ -4,8 +4,8 @@ impl Partitioned {
     fn allowed(&self, e: &E, block: &Select) -> bool {
         let mut valid = plain(e);
         e.visit(&mut |e| {
-            if let E::Qualified { alias, column } = e {
-                if let Some(r) = block
+            if let E::Qualified { alias, column } = e
+                && let Some(r) = block
                     .from
                     .iter()
                     .find(|i| &i.alias == alias)
@@ -17,7 +17,6 @@ impl Partitioned {
                         .and_then(|c| c.parse::<usize>().ok())
                         .is_some_and(|c| c < self.keys[r]);
                 }
-            }
         });
         valid
     }
@@ -151,11 +150,10 @@ impl Partitioned {
         }
         for mut q in queries {
             for item in &mut q.body.from {
-                if let Some(r) = item.relation.program_relation() {
-                    if let Some(name) = bindings.get(r) {
+                if let Some(r) = item.relation.program_relation()
+                    && let Some(name) = bindings.get(r) {
                         item.relation = source(name, &self.fields[r]);
                     }
-                }
             }
             w.insert(parts,&q.render(),true)?;
         }

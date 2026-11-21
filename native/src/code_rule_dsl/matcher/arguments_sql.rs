@@ -2,8 +2,8 @@
 //! `func_arg_expr`, `extract_list`, `position_list`, `substr_list`, `overlay_list`, `trim_list`)
 //! reads them, over the DerekStride grammar's `invocation`, and the signature slots they fill.
 
-use crate::code_rule_dsl::tree::Tree;
 use super::{Arguments, Passed};
+use crate::code_rule_dsl::tree::Tree;
 use crate::code_rule_dsl::value::sql;
 use ast_grep_core::{Doc, Node};
 use std::collections::BTreeSet;

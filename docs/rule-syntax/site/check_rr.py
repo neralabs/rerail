@@ -1,4 +1,4 @@
-"""Checks on the hand-written .rr files: every rule grounded, and no relation declared twice in one program
+"""Checks on the hand-written .rerail files: every rule grounded, and no relation declared twice in one program
 (a rule file plus everything it includes). Run: python3 site/check_rr.py"""
 import collections, glob, os, re, sys
 sys.path.insert(0, os.path.dirname(__file__))
@@ -24,17 +24,17 @@ def main():
     os.chdir(ROOT)
     bad = 0
     edits = set()
-    for f in glob.glob("lib/**/*.rr", recursive=True):
+    for f in glob.glob("lib/**/*.rerail", recursive=True):
         edits |= souffle.fix_relations(open(f).read())
-    for f in sorted(glob.glob("**/*.rr", recursive=True)):
+    for f in sorted(glob.glob("**/*.rerail", recursive=True)):
         if f.startswith("site/"):
             continue
         for line, vs, st in souffle.check_text(open(f).read(), edits):
             bad += 1
             print(f"{f}:{line}: unbound {', '.join(vs)}")
-    for f in sorted(glob.glob("*.rr") + glob.glob("data-layer/**/*.rr", recursive=True) + glob.glob("lib/**/*.rr", recursive=True)
-                    + [p for p in glob.glob("packs/**/*.rr", recursive=True) if not p.endswith(".facts.rr")]):
-        files = program(os.path.abspath(f)) + [os.path.join(ROOT, "lib/core.rr")]
+    for f in sorted(glob.glob("*.rerail") + glob.glob("data-layer/**/*.rerail", recursive=True) + glob.glob("lib/**/*.rerail", recursive=True)
+                    + [p for p in glob.glob("packs/**/*.rerail", recursive=True) if not p.endswith(".facts.rerail")]):
+        files = program(os.path.abspath(f)) + [os.path.join(ROOT, "lib/core.rerail")]
         texts = [open(g).read() for g in dict.fromkeys(files)]
         for line, h, d, st in souffle.check_strata(texts):
             bad += 1
@@ -52,22 +52,22 @@ def main():
                 bad += 1
                 print(f"{f}: {k} declared {len(v)} times: {', '.join(sorted(v))}")
     # Libraries of one language must combine: a rule may include any of them, so a relation name is declared in at
-    # most one of lib/<lang>/*.rr and lib/core.rr (otherwise Soufflé reports an arity clash or merges two bodies).
-    core = set(re.findall(r"^\.(?:decl|edit)\s+(\w+)\(", open("lib/core.rr").read(), re.M))
+    # most one of lib/<lang>/*.rerail and lib/core.rerail (otherwise Soufflé reports an arity clash or merges two bodies).
+    core = set(re.findall(r"^\.(?:decl|edit)\s+(\w+)\(", open("lib/core.rerail").read(), re.M))
     for lang in sorted(d for d in glob.glob("lib/*/") if os.path.isdir(d)):
         owner = collections.defaultdict(list)
-        for g in sorted(glob.glob(lang + "*.rr")):
-            if g.endswith(".facts.rr"):
+        for g in sorted(glob.glob(lang + "*.rerail")):
+            if g.endswith(".facts.rerail"):
                 continue
             for k in set(re.findall(r"^\.(?:decl|edit)\s+(\w+)\(", open(g).read(), re.M)):
                 owner[k].append(g)
         for k, v in sorted(owner.items()):
             if len(v) > 1 or k in core:
                 bad += 1
-                print(f"{lang}: {k} declared in {', '.join(v + (['lib/core.rr'] if k in core else []))}")
+                print(f"{lang}: {k} declared in {', '.join(v + (['lib/core.rerail'] if k in core else []))}")
     # Soufflé accepts only \\" \\\\ \\n \\t \\r \\' in a string, so a regex's `\\.` or `\\d` must be written `\\\\.`, `\\\\d`.
     # (The engine's reader keeps an unknown escape as written, so only Soufflé would catch it.)
-    for f in sorted(glob.glob("**/*.rr", recursive=True)):
+    for f in sorted(glob.glob("**/*.rerail", recursive=True)):
         if f.startswith("site/"):
             continue
         for i, line in enumerate(open(f), 1):

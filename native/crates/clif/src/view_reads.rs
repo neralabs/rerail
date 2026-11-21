@@ -8,6 +8,14 @@
 //! (`tape_number`, `tape_start`, `tape_end`); a kind is its code's, by the derived table of the tape's codes.
 
 use crate::ids::Run;
+#[cfg(feature = "ir")]
+use crate::reads::B;
+#[cfg(feature = "ir")]
+use cranelift_codegen::ir::{
+    InstBuilder, Value,
+    condcodes::IntCC,
+    types::{I32, I64},
+};
 
 /// A document's entry for its views' reads (`ViewDoc` in the kernels).
 #[repr(C)]
@@ -30,19 +38,21 @@ pub struct ViewDoc {
     /// Each numbered node's place among its parent's children (u32s, by local id): the walk's, derived once
     /// (`Projected::idx`, decision 0353 step 3), as the tape holds no sibling's place.
     pub places: Run,
-    /// core.rr's positions past the nodes (`Locs`), for the `Loc` views: the tokens, then where the text is the
+    /// core.rerail's positions past the nodes (`Locs`), for the `Loc` views: the tokens, then where the text is the
     /// document's own (1) the whole text and each line, then the end points (`ends`, one a node, or none).
     pub tokens: u32,
     pub own_text: u32,
     pub ends: u32,
     pub source_len: u32,
-    /// core.rr's lines (`core_rr::Lines`' words, `[ns, starts[ns], ne, ends[ne]]`), in the block: 0 items where the
+    /// core.rerail's lines (`core_rr::Lines`' words, `[ns, starts[ns], ne, ends[ne]]`), in the block: 0 items where the
     /// document has no `Loc` rows on the device. A guest's are its host's (decision 0055).
     pub lines: Run,
     /// A guest's placement in its host (`Placement`): 0 none (a file's own tree), `PLACED_COPIED` (host byte = guest
     /// byte + `delta`, clamped to `within`), `PLACED_AT` (every span at `within`).
     pub placement: u32,
-    pub pad: u32,
+    /// The key of the file the document is part of (decision 0431 §4): its own, or a program's file's. Its
+    /// `docof`; its ids keep `key`.
+    pub file: u32,
     pub delta: i64,
     pub within_lo: u32,
     pub within_hi: u32,
@@ -81,7 +91,7 @@ pub struct ViewDir {
 const _: () = assert!(std::mem::size_of::<ViewDir>() == 24);
 
 /// A view's number in a kernel's reads (`ViewDir`'s rows' and `vread`'s): `node`, `child`, `field`, `core_node`,
-/// `line`, then core.rr's places (`Loc`): `line`, `end_line`, `col`, `docof`.
+/// `line`, then core.rerail's places (`Loc`): `line`, `end_line`, `col`, `docof`.
 pub const VIEWS: [&str; 9] = ["view_node", "view_child", "view_field", "view_core", "view_line", "view_loc_line", "view_loc_end", "view_loc_col", "view_loc_docof"];
 
 /// A field's byte offset in the entry.
@@ -102,6 +112,7 @@ pub mod at {
     pub const SOURCE_LEN: i32 = offset_of!(ViewDoc, source_len) as i32;
     pub const LINES: i32 = offset_of!(ViewDoc, lines) as i32;
     pub const PLACEMENT: i32 = offset_of!(ViewDoc, placement) as i32;
+    pub const FILE: i32 = offset_of!(ViewDoc, file) as i32;
     pub const DELTA: i32 = offset_of!(ViewDoc, delta) as i32;
     pub const WITHIN_LO: i32 = offset_of!(ViewDoc, within_lo) as i32;
     pub const WITHIN_HI: i32 = offset_of!(ViewDoc, within_hi) as i32;
@@ -137,7 +148,7 @@ pub fn ukl() -> String {
         ("uint32_t", "source_len", offset_of!(ViewDoc, source_len)),
         ("Run", "lines", offset_of!(ViewDoc, lines)),
         ("uint32_t", "placement", offset_of!(ViewDoc, placement)),
-        ("uint32_t", "pad", offset_of!(ViewDoc, pad)),
+        ("uint32_t", "file", offset_of!(ViewDoc, file)),
         ("int64_t", "delta", offset_of!(ViewDoc, delta)),
         ("uint32_t", "within_lo", offset_of!(ViewDoc, within_lo)),
         ("uint32_t", "within_hi", offset_of!(ViewDoc, within_hi)),
@@ -149,9 +160,9 @@ pub fn ukl() -> String {
         std::mem::size_of::<crate::view::TapeView>() / 4,
     );
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewRow) == {}, \"ViewRow: size\");\n", std::mem::size_of::<ViewRow>());
-    s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == {}, \"ViewRow.view\");\n", std::mem::offset_of!(ViewRow, view));
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDir) == {}, \"ViewDir: size\");\n", std::mem::size_of::<ViewDir>());
-    s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
+    s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == {}, \"ViewDir.rows\");\n", std::mem::offset_of!(ViewDir, rows));
     s += "typedef struct ViewDoc {\n";
     for (ty, name, _) in fields.iter() {
         s += &format!("    {ty} {name};\n");
@@ -159,25 +170,12 @@ pub fn ukl() -> String {
     s += "} ViewDoc;\n";
     s += &format!("UKL_STATIC_ASSERT(sizeof(ViewDoc) == {}, \"ViewDoc: size\");\n", std::mem::size_of::<ViewDoc>());
     for (_, name, at) in fields.iter() {
-        s += &format!("UKL_STATIC_ASSERT(__builtin_offsetof(ViewDoc, {name}) == {at}, \"ViewDoc.{name}\");\n");
+        s += &format!("UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, {name}) == {at}, \"ViewDoc.{name}\");\n");
     }
     s
 }
 // The reads themselves, in CLIF: with the IR (`ir`) alone. The entry's layout above is the view's too, which the
 // tape crate reads without the IR.
-#[cfg(feature = "ir")]
-pub use reads_ir::*;
-
-#[cfg(feature = "ir")]
-mod reads_ir {
-use super::*;
-use crate::reads::B;
-use cranelift_codegen::ir::{
-    InstBuilder, Value,
-    condcodes::IntCC,
-    types::{I32, I64},
-};
-
 #[cfg(feature = "ir")]
 impl B<'_, '_> {
     /// The entry's u32 at `offset`, widened.
@@ -232,14 +230,14 @@ impl B<'_, '_> {
     }
 }
 
-/// `view_node(l, col)`: column `col` of the `node` view's row of numbered node `l`: the document, the id, the kind
-/// atom, the start, the end (`Viewed::value_of`).
+/// `view_node(l, col)`: column `col` of the `node` view's row of numbered node `l`: the document (a program's file,
+/// decision 0431 §4), the id, the kind atom, the start, the end (`Viewed::value_of`).
 #[cfg(feature = "ir")]
 pub fn node(b: &mut B<'_, '_>) -> Value {
     let (l, col) = (b.arg(0), b.arg(1));
     let is = |b: &mut B<'_, '_>, k: i64| b.f.ins().icmp_imm(IntCC::Equal, col, k);
     let c = is(b, 0);
-    b.either(I64, c, |b| b.entry_u32(at::KEY), |b| {
+    b.either(I64, c, |b| b.entry_u32(at::FILE), |b| {
         let c = is(b, 1);
         b.either(I64, c, |b| b.node_id(l), |b| {
             let x = b.tape_node(l);
@@ -386,7 +384,7 @@ impl B<'_, '_> {
         let low = self.f.ins().uextend(I64, low);
         self.f.ins().bor(high, low)
     }
-    /// A word of core.rr's lines (`ViewDoc::lines`) at index `i`.
+    /// A word of core.rerail's lines (`ViewDoc::lines`) at index `i`.
     fn loc_word(&mut self, i: Value) -> Value {
         let lines = self.follow(self.tape, at::LINES);
         let p = self.item(lines, i, 4);
@@ -489,7 +487,7 @@ impl B<'_, '_> {
         let e = self.f.ins().uextend(I64, e);
         self.f.ins().bor(s, e)
     }
-    /// The 1-based line of core.rr's lines holding byte `at` (`core_rr::Lines::line`).
+    /// The 1-based line of core.rerail's lines holding byte `at` (`core_rr::Lines::line`).
     fn loc_line(&mut self, at_: Value) -> Value {
         let lines = self.follow(self.tape, at::LINES);
         let n = self.call_at("loc_line", lines, &[at_]);
@@ -502,7 +500,7 @@ impl B<'_, '_> {
         let c = self.f.ins().icmp_imm(IntCC::Equal, col, 0);
         self.either(I64, c, |b| b.loc_id(l), |b| {
             if place == Place::Docof {
-                return b.entry_u32(at::KEY);
+                return b.entry_u32(at::FILE);
             }
             let span = b.loc_span(l);
             let span = b.placed(span);
@@ -531,7 +529,7 @@ impl B<'_, '_> {
     }
 }
 
-/// `view_loc_line(l, col)`, `view_loc_end`, `view_loc_col`, `view_loc_docof`: column `col` of core.rr's `line`,
+/// `view_loc_line(l, col)`, `view_loc_end`, `view_loc_col`, `view_loc_docof`: column `col` of core.rerail's `line`,
 /// `end_line`, `col` and `docof` rows of position `l` (a node, a token, the whole text, a line, an end point).
 #[cfg(feature = "ir")]
 pub fn loc_line(b: &mut B<'_, '_>) -> Value {
@@ -553,10 +551,11 @@ pub fn loc_docof(b: &mut B<'_, '_>) -> Value {
 /// No row: a parent probe's end (`view_child_first`, `view_child_next`, `view_number`).
 pub const NO_ROW: u32 = u32::MAX;
 
+#[cfg(feature = "ir")]
 impl B<'_, '_> {
     /// The `child` row of the first numbered node from tape node `c` on, `c` and each sibling after it within
     /// `end` (`tape_next_in`), or `NO_ROW`: numbered node `l`'s row is `l - 1`. The loop ends: each sibling is past
-    /// the last, and `tape_next_in` gives none at `end` (decision 0427's reads stay within the tape).
+    /// the last, and `tape_next_in` gives none at `end` (decision 0463's reads stay within the tape).
     fn numbered_from(&mut self, c: Value, end: Value) -> Value {
         let (head, test, step, found, done) = (self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block(), self.f.create_block());
         self.f.append_block_param(head, I32);
@@ -592,6 +591,7 @@ impl B<'_, '_> {
 /// For a node other than the root: a numbered node's parent is its tape parent where that is numbered, so its
 /// children are its numbered tape children. The root's are also the nodes under unnumbered ones (a narrowed
 /// projection): a probe of the root scans its document's rows instead.
+#[cfg(feature = "ir")]
 pub fn child_first(b: &mut B<'_, '_>) -> Value {
     let l = b.arg(0);
     let x = b.tape_node(l);
@@ -602,6 +602,7 @@ pub fn child_first(b: &mut B<'_, '_>) -> Value {
 
 /// `view_child_next(i)`: the `child` row of the next child of the parent of `child` row `i` (numbered node `i +
 /// 1`'s next numbered tape sibling), or `NO_ROW`. For a child of a parent other than the root (`view_child_first`).
+#[cfg(feature = "ir")]
 pub fn child_next(b: &mut B<'_, '_>) -> Value {
     let i = b.arg(0);
     let l = b.f.ins().iadd_imm(i, 1);
@@ -618,6 +619,7 @@ pub fn child_next(b: &mut B<'_, '_>) -> Value {
 /// `view_number(low)`: the numbered node whose id's low 32 bits are `low` (its document's: the key is the caller's
 /// to match), or `NO_ROW`: `low` itself where ids are local ids, else the numbering's inverse (`num_number_of`,
 /// a node's, not a token's).
+#[cfg(feature = "ir")]
 pub fn number(b: &mut B<'_, '_>) -> Value {
     let low = b.arg(0);
     let preorder = b.word_at(I32, b.tape, at::PREORDER);
@@ -636,5 +638,4 @@ pub fn number(b: &mut B<'_, '_>) -> Value {
     let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, l, n);
     let no = b.c32(i64::from(NO_ROW));
     b.f.ins().select(inside, l, no)
-}
 }
