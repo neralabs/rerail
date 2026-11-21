@@ -77,6 +77,7 @@ pub mod code_rule_dsl {
         /// root (`rr.rs`: reading, lowering's tail, the libraries) is `rerail-logic`'s.
         pub mod rr {
             pub use rerail_rr::code_rule_dsl::logic::rr::lower;
+            pub use rerail_rr::code_rule_dsl::logic::rr::lower::{FILE_SYSTEM, WORLD};
             pub use rerail_rr::code_rule_dsl::logic::rr::print::{self, print_version};
             pub use rerail_rr_syntax::syntax::quote;
             /// The shipped images and their export (decision 0264), which `program_text` keeps.

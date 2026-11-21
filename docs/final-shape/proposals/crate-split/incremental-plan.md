@@ -578,3 +578,31 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on typing,
     the planner and `rerail-logic`): on a Linux host, every typing test of typing, `rerail-logic`, tests_logic and
     boot (47), and the corpus's Git, phase, analysis-history and source-language tests (15), pass.
+- **Step 5e** (2026-11-21): `rerail-corpus-memo` (`native/crates/corpus_memo`): the corpus's `memo` (with
+  `memo::image`), `guests`, `hiding`, `exports`, `keptstats`, `matchers`, `scoping`, `owner`, `sizing`, `added`,
+  `texts`, `shape`, `maintain`, `typing`, and the new `own`, 5.8k lines, over typing. Its crate mounts them under a
+  facade of `plan::corpus` that repeats the root's imports, so their `use super::*` resolve as before. The root
+  (`corpus.rs`) re-exports each, and mounts the tests of `added`, `memo`, `memo::image` and `owner`, which read it
+  or the language's root.
+  - **The layering differs from the table above.** The corpus's modules were measured with the root left out (by
+    path, with `use` braces expanded, and the root's own items a glob reaches by name). They are three layers, not
+    two under the root:
+    - the memo's, which read nothing of the corpus above them;
+    - the preparation's (`preparation`, `product_demand`, `link`, `kept_link`), which read the memo and the guests
+      and nothing of the root;
+    - the root's, the rest: the run's world (`world`, `git`, `git_content`, `phases`, `phase0`, `constants`,
+      `reuse`, `analysis_history`, `test_store`, one cycle, which reads the root's `observe`, `ThreadStore` and
+      tape cache), and `retain`, `kept_strata`, `input_delta`, `maintained`, `inputs`, `session`, `cone_rounds`
+      and `prepared`.
+
+    `retain` reads the preparation, so it cannot be under it, as the table had it. `combined` and `import_closure`
+    read the language's root (`rr::parse_version`, `rr::library`) and stay with the root.
+  - **What the memo read of the root moved down.** A chunk's own statistics (`Own`, its `OWN_*` rows, the sample's
+    row budget, `constants_tested_in` and `tested_through`) are `corpus::own`. The queued write's sources (`Late`) are
+    `guests`'. The root re-exports both. The language's lowering's file-system relations (`rr::{FILE_SYSTEM,
+    WORLD}`) are `rerail-rr`'s, which the planner's `rr` facade now re-exports. `memo::image::encode`, which only
+    tests call, is `cfg(any(test, feature = "test-hooks"))`.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on the memo
+    crate and `rerail-logic`): on a Linux host, the memo crate's 17, and the memo layer's, the root's, the
+    statistics' and `combined`'s tests in `rerail-logic` and tests_logic: 144 of 145. The one that failed is 5c's,
+    which needs pack test data.

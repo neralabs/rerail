@@ -12,26 +12,26 @@ use crate::code_rule_dsl::facts::vtab::Source;
 use std::sync::Arc;
 
 /// The part as a run evaluates it, and how its strata were evaluated.
-pub(in crate::code_rule_dsl) struct Maintained {
-    pub(in crate::code_rule_dsl) program: lower::Lowered,
+pub struct Maintained {
+    pub program: lower::Lowered,
     /// The changed inputs' rows gone and added, by input (`super::driven_part`): the maintain mode's versions of
     /// them, read in place (`Maintain::given`). Not relations of the run (0364 R1).
-    pub(in crate::code_rule_dsl) given: Given,
+    pub given: Given,
     /// Strata maintained from deltas, and derived again.
-    pub(in crate::code_rule_dsl) maintained: usize,
-    pub(in crate::code_rule_dsl) derived_again: usize,
+    pub maintained: usize,
+    pub derived_again: usize,
     /// Of those maintained, strata that are recursive.
-    pub(in crate::code_rule_dsl) recursive: usize,
+    pub recursive: usize,
     /// Each stratum derived again, by one of its relations, and why.
-    pub(in crate::code_rule_dsl) again: Vec<(String, &'static str)>,
+    pub again: Vec<(String, &'static str)>,
 }
 
 /// The changed inputs' rows gone and added (`Maintained::given`), by input: `[minus, plus]`.
-pub(in crate::code_rule_dsl) type Given = std::collections::HashMap<String, [Arc<dyn Source>; 2]>;
+pub type Given = std::collections::HashMap<String, [Arc<dyn Source>; 2]>;
 
 impl Maintained {
     /// A part whose strata the cut runs are all derived again (no kept part to drive, or gates): `NOT_WALKED`.
-    pub(in crate::code_rule_dsl) fn again(program: lower::Lowered, strata: usize) -> Maintained {
+    pub fn again(program: lower::Lowered, strata: usize) -> Maintained {
         Maintained { program, given: Given::new(), maintained: 0, derived_again: strata, recursive: 0, again: vec![("*".to_owned(), NOT_WALKED); strata] }
     }
 }
@@ -40,7 +40,7 @@ impl Maintained {
 pub use crate::code_rule_dsl::logic::plan::again::*;
 
 /// Whether recursive relations keep a level per row (decision 0090), so that the next run maintains them by levels.
-pub(in crate::code_rule_dsl) fn levels_wanted() -> bool {
+pub fn levels_wanted() -> bool {
     true
 }
 
