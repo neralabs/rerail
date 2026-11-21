@@ -49,6 +49,14 @@ impl Life {
 /// Room a block keeps past a new relation's: what its other relations' tails may take meanwhile.
 const MARGIN: usize = 1 << 20;
 
+/// A shared block's reservation over the bytes its new relations fill (its fill line, `Facts::fill`): the room past
+/// the line is for the growth and the indexes of the relations already in it (decision 0353 step 6), so a probe's
+/// index finds bytes in its relation's block. Address space: a block's memory is what is written in it, and the
+/// device wraps its used extent alone (`Block::device_buffer`). Packed to its end, a block refused a later index and
+/// the relation was copied (`DevIndex::moved`: 497.2 MB in 81 copies on the M3's 300-file run, ab116, every one a
+/// plain relation in a shared block with no bytes left, ab115).
+const HEADROOM: usize = 4;
+
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {
     pub block: Block,
@@ -57,11 +65,29 @@ pub struct Facts {
     /// The count of bytes given back of the run that leased it (`given_back`): a relation's last holder may drop it
     /// on any thread.
     given: Arc<GivenBack>,
+    /// The bytes new relations fill it to (`HEADROOM`): all of it for a block of one relation's.
+    fill: usize,
 }
 
 impl Facts {
     fn new(block: Block) -> Facts {
-        Facts { block, ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>() }
+        Facts { block, ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), fill: usize::MAX }
+    }
+
+    /// A block shared by relations made in it until it holds `fill` bytes (`HEADROOM`).
+    fn shared(block: Block, fill: usize) -> Facts {
+        Facts { fill, ..Facts::new(block) }
+    }
+
+    /// The bytes new relations fill it to.
+    fn fill(&self) -> usize {
+        self.fill.min(self.block.reserved())
+    }
+
+    /// Whether a new relation (or a new structure) of `need` bytes is made in it: below its fill line, past its others'
+    /// margin.
+    fn admits(&self, need: usize) -> bool {
+        self.block.used() + need + MARGIN <= self.fill()
     }
 }
 
@@ -179,7 +205,8 @@ pub struct Chunk {
 impl Chunk {
     /// Notes what it holds now (`most`).
     fn note(&self) {
-        let blocks: usize = self.made.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(std::sync::Weak::upgrade).map(|f| f.block.reserved()).sum();
+        // A shared block counted to its fill line (`HEADROOM`): the room past it is for its relations' indexes.
+        let blocks: usize = self.made.lock().unwrap_or_else(|e| e.into_inner()).iter().filter_map(std::sync::Weak::upgrade).map(|f| f.fill()).sum();
         let heap = self.heap.load(std::sync::atomic::Ordering::Relaxed).max(0) as usize;
         self.most.fetch_max(blocks + heap, std::sync::atomic::Ordering::Relaxed);
     }
@@ -311,7 +338,11 @@ pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
 /// A new block for relations of `life` with room for `need` bytes and its others' margin: the chunk's, if a chunk's
 /// evaluation runs, counted while it lives.
 fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<Facts>, String> {
-    let f = Arc::new(Facts::new(lease(2 * need + MARGIN, life)?));
+    let fill = (2 * need + MARGIN).max(life.block_bytes());
+    // A run's and a batch's sources' blocks (the ones whose relations the device probes); a kept relation's block is
+    // as its relations fill it.
+    let room = if matches!(life, Life::Run | Life::Source) { HEADROOM } else { 1 };
+    let f = Arc::new(Facts::shared(lease(room * fill, life)?, fill));
     if let Some(c) = chunk {
         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
         c.note();
@@ -332,7 +363,7 @@ fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usi
     let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
     let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
-        && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN
+        && f.admits(need)
         && let Some(c) = f.block.try_alloc_chunk_fit(need, align)
     {
         return Ok((f.clone(), c));
@@ -853,7 +884,7 @@ impl Part {
                     }
                     f
                 }
-                Some(f) if !fresh && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN => f.clone(),
+                Some(f) if !fresh && f.admits(need) => f.clone(),
                 _ => {
                     let f = new_open(&chunk, life, need)?;
                     *open = Some(f.clone());
@@ -2471,6 +2502,38 @@ mod tests {
 
     /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of
     /// its size takes them, so the block's used bytes grow by the descriptors alone.
+    /// Relations made in a shared block until the next goes in another leave its room past the fill line
+    /// (`HEADROOM`): an index of every one of them is made in its block (decision 0353 step 6), none copied for it.
+    #[test]
+    fn a_full_shared_block_has_room_for_its_relations_indexes() {
+        in_chunk(|| {
+            let fill = |base: i64| {
+                let mut r = Rows::new(2);
+                // copy: not block data (a test's literal rows)
+                r.extend_from_slice(&(0..2 * 100_000).map(|v| base + v).collect::<Vec<i64>>());
+                r
+            };
+            let first = fill(0);
+            let facts = block_of(&first);
+            let mut held = vec![first];
+            while Arc::ptr_eq(&facts, &block_of(held.last().unwrap())) {
+                held.push(fill(held.len() as i64));
+                assert!(held.len() < 1000, "a block holds them all");
+            }
+            held.pop();
+            assert!(held.len() > 10, "{} relations in the block", held.len());
+            for r in &held {
+                let part = r.parts().next().expect("one part");
+                let n = part.len();
+                for key in [&[0u16][..], &[1]] {
+                    // SAFETY: no other thread adds an index; its rows are written.
+                    let room = unsafe { part.rel().try_reserve_index(&facts.block, key, n) };
+                    assert!(room.is_some(), "an index on {key:?} of {n} rows in its block ({} of {} used)", facts.block.used(), facts.block.reserved());
+                }
+            }
+        });
+    }
+
     #[test]
     fn a_dropped_relations_chunks_are_taken_by_the_next() {
         in_chunk(|| {
