@@ -47,14 +47,21 @@ function startedRepository(count: number): { root: string; checkouts: string[]; 
   return { root, checkouts: [main, ...worktrees], databasePath };
 }
 
+/** The null device as Rerail names it to Git (`--git-dir`) to ask it outside any repository. */
+const NULL_DEVICE = process.platform === "win32" ? "nul" : "/dev/null";
+
 const isGit = ([file]: readonly unknown[]): boolean => /^git(\.exe)?$/iu.test(basename(String(file)));
 
-/** The arguments of each Git process the caller's thread waited on (`spawnSync`) while `act` ran. */
+/**
+ * The arguments of each Git process the caller's thread waited on (`spawnSync`) while `act` ran, but for Git asked
+ * outside any repository (`--git-dir` the null device): a process reads its Git's installation that way once, at its
+ * first in-process Git read, two Git processes for the life of a daemon whatever its sessions, and reads no checkout.
+ */
 async function blockingGitStarts(act: () => Promise<unknown>): Promise<string[][]> {
   const calls = vi.mocked(childProcess.spawnSync).mock.calls;
   const before = calls.length;
   await act();
-  return calls.slice(before).filter(isGit).map(([, args]) => (args as string[]).filter((arg, i, all) => arg !== "-c" && all[i - 1] !== "-c"));
+  return calls.slice(before).filter(call => isGit(call) && !(call[1] as string[]).includes(`--git-dir=${NULL_DEVICE}`)).map(([, args]) => (args as string[]).filter((arg, i, all) => arg !== "-c" && all[i - 1] !== "-c"));
 }
 
 describe("a repository's first events in a daemon", () => {
