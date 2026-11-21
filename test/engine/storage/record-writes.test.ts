@@ -197,6 +197,28 @@ describe("record writes while another process holds the write lock", () => {
     expect(rows(path, "SELECT status FROM audits")).toEqual([["completed"]]);
   }, 30_000);
 
+  it("tell who listens for this process's record writes as each commits, at once or once the lock is given back", async () => {
+    const { path, sessions } = await stores();
+    const { onRecordsWritten } = await recordWrites();
+    const told: string[] = [];
+    const stop = onRecordsWritten(path, () => { told.push(rows(path, "SELECT session_id FROM sessions").length === 0 ? "before" : "committed"); });
+    closers.push(stop);
+    sessions.openSession(session, 1_000);
+    expect(told).toEqual(["committed"]);
+
+    const holder = await lockHolder(path);
+    await holder.hold();
+    sessions.append({ sessionId: session.sessionId, eventId: "edit-call", kind: "call", payload: {} }, session);
+    expect(told).toEqual(["committed"]);
+    await holder.release();
+    await settled(path);
+    expect(told).toEqual(["committed", "committed"]);
+
+    stop();
+    sessions.append({ sessionId: session.sessionId, eventId: "edit-result", kind: "result", payload: {} }, session);
+    expect(told).toHaveLength(2);
+  }, 30_000);
+
   it("keep each write's own time, not the time the lock was given back", async () => {
     const { path, sessions, audits } = await stores();
     sessions.openSession(session, 1_000);

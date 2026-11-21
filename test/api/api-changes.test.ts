@@ -169,7 +169,9 @@ describe("the daemon's change stream (GET /api/changes)", () => {
     }
   });
 
-  it("sends a new token when another connection of the daemon's process commits, as a hook's records do", async () => {
+  it("sends a new token when another connection of the daemon's process commits a record, as a hook's records do", async () => {
+    // The record writer tells the feed itself: on Windows the folder's watch hears nothing of a commit that does not wait
+    // for the disk.
     const stream = await open();
     const first = await stream.next();
     const other = new SqliteSessionStore(databasePath);

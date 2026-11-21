@@ -17,7 +17,10 @@ export type ChangeNotice = "data" | "files" | "conflicts" | "beat";
 export interface ChangeFeed {
   /** Hear each notice, several in one turn of the event loop as one; returns the call that stops it. */
   listen(listener: (notice: ChangeNotice) => void): () => void;
-  /** A change this process knows of without a file notice: a write through the API's stores, a conflict event. */
+  /**
+   * A change this process knows of without a file notice: a write through the API's stores, a commit of this process's
+   * record writer (`onRecordsWritten`), a conflict event.
+   */
   notify(notice: "data" | "conflicts"): void;
   /** Stop watching and beating; nobody hears anything after. */
   close(): void;
