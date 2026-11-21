@@ -387,8 +387,10 @@ export class RemoteOutbox {
   }
 
   /**
-   * Drops the outbox's state for a removed remote (by {@link remoteStateKey}). A sync still running for it writes
-   * nothing more: every write checks the remote is still configured under that key first.
+   * Drops the outbox's state for a removed remote (by {@link remoteStateKey}). A sync still running for it records
+   * nothing more of the remote's answers: each such write checks the remote is still configured under that key first.
+   * The record of a batch about to go out (`#markPosted`) is kept on purpose, with no such check: the batch still goes
+   * out to that URL, so its event numbers stay taken (`keepEventNumbersPastRemotes`).
    */
   forget(key: string): void {
     const state = openState(this.#home);

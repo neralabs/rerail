@@ -500,6 +500,33 @@ describe("event numbers a remote has taken", () => {
     expect(sequenceOf(databasePath(), "steering-delivered:r1")).toBe(1);
   });
 
+  it("reads the outbox at a store's first session open only", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
+    vi.mocked(existsSync).mockClear();
+    store.openSession({ ...session, sessionId: "second" });
+    store.close();
+    expect(vi.mocked(existsSync).mock.calls.filter(([path]) => String(path).endsWith("remote-outbox.sqlite"))).toEqual([]);
+  });
+
+  // A batch with no event (a queued scan) has no number to keep taken: its sync makes no commit that waits for the disk.
+  it("records no event number for a batch that carries no event", async () => {
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    const report = { schema: "rerail.scan/1", scanId: "scan-1", repository: { key: REPOSITORY, displayName: "app" }, checkout: { path: home }, rules: [], violations: [] };
+    expect(outbox().queueScan(report)).toBe(true);
+    await outbox().sync({ force: true });
+    expect(storedRecords(sink)).toEqual([expect.objectContaining({ type: "scan", id: "scan-1" })]);
+    const state = new Database(join(home, "remote-outbox.sqlite"), { readonly: true });
+    try {
+      expect(state.prepare("SELECT value FROM cursors WHERE stream = 'event-posted'").all()).toEqual([]);
+    } finally {
+      state.close();
+    }
+  });
+
   it("leaves the numbering of a database the outbox does not read as it is", async () => {
     seed();
     addRemote({ url: sink.url, token: "test-token", content: true }, home);
