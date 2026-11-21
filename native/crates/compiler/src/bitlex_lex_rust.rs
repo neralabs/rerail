@@ -118,6 +118,15 @@ struct LoopFill {
     rows: Vec<(usize, String, String)>,
 }
 
+/// How a region token ends, for what is before a byte outside the regions (`in_region_of`'s
+/// shifts and fills): its kind; where its closer is after it, the closer's first bytes (the
+/// byte after the token); the bytes its last bytes may be (`last[m]`: `m` bytes before the last).
+struct End {
+    k: usize,
+    after: Option<[bool; 256]>,
+    last: [[bool; 256]; 4],
+}
+
 /// A region token's last byte `l`, as one of its closers leaves it: the closer's first byte `c`
 /// is `ext` bytes before `l` (`-1`: the closer is after the token, `outside`), the walk hides `h`
 /// bytes from `c` (none for `outside`), and `closer` holds at `c`; the `body` bytes before `c`
@@ -466,6 +475,10 @@ struct Gen<'a> {
     skipped: [bool; 256],
     /// The fills the loop keeps (`LoopFill`).
     fills: Vec<LoopFill>,
+    /// How each region token may end (`End`), and the bytes its first bytes may be: what a
+    /// byte outside the regions may have before and after it in a region.
+    ends: Option<Vec<End>>,
+    opener_at: [[bool; 256]; 4],
     /// The escapes tested at each token's start; at the file's end, of a fill the loop keeps.
     start_checks: Vec<(String, String)>,
     end_checks: Vec<(String, usize)>,
@@ -1238,6 +1251,16 @@ impl Gen<'_> {
     fn in_region_of(&self, e: &Expr, k: Option<usize>, part: u8, ctx: &[bool; 256], memo: &mut ByteMemo) -> Option<Expr> {
         let all = || Expr::Not(Box::new(Expr::Empty));
         let opens = self.opens.as_ref()?;
+        // A region's start is its opener's first byte.
+        let start_ctx: [bool; 256];
+        let ctx = match (k, part) {
+            (Some(k), 0) if k < self.kinds.len() => {
+                let ob = self.bytes_at(&self.kinds[k].opener, 0, memo);
+                start_ctx = std::array::from_fn(|i| ctx[i] && ob[i]);
+                &start_ctx
+            }
+            _ => ctx,
+        };
         let here = self.bytes_at(e, 0, memo);
         if !(0..256).any(|i| here[i] && ctx[i]) {
             return Some(Expr::Empty);
@@ -1245,6 +1268,15 @@ impl Gen<'_> {
         // A fill the loop keeps, outside the regions: itself.
         if k.is_none() && self.loop_read(e) {
             return Some(e.clone());
+        }
+        // Outside the regions, a shift or a fill of masks made of them: of their values outside,
+        // where what is in a region before or after the byte can not change it.
+        if k.is_none()
+            && self.regional(e)
+            && let Expr::Call(f, args) = e
+            && (f == "prev" || f == "next" || f == "fill")
+        {
+            return self.outside_shift(f, args, ctx, memo);
         }
         Some(match e {
             // Assumed at a region token's last byte: none outside one, nor before its closer.
@@ -1289,6 +1321,137 @@ impl Gen<'_> {
         })
     }
 
+    /// `prev`, `next` or `fill` (`f` of `args`) at a byte outside the regions that is one of
+    /// `ctx`, as of the masks' values outside (`in_region_of`): `prev(a, j)` where the `j` bytes
+    /// before, where they are in a region token at its end, are none `a` holds at, in it or
+    /// out; `next(a, j)` likewise at a region token's start; `fill(s, e)` where `e` stops it at
+    /// a region token's last byte (or at its closer after it), and `s` does not start it there.
+    fn outside_shift(&self, f: &str, args: &[Arg], ctx: &[bool; 256], memo: &mut ByteMemo) -> Option<Expr> {
+        let ends = self.ends.as_ref()?;
+        let all = [true; 256];
+        let meets = |x: &[bool; 256], y: &[bool; 256]| (0..256).any(|i| x[i] && y[i]);
+        // Whether some way `e` may hold at a byte of `ctx` fits the bytes `at(o)` the place
+        // leaves `o` bytes on.
+        let fits = |e: &Expr, at: &dyn Fn(i64) -> [bool; 256], memo: &mut ByteMemo| {
+            self.cubes(e, memo).iter().any(|c| {
+                let here = c.get(&0).copied().unwrap_or(all);
+                let here: [bool; 256] = std::array::from_fn(|i| here[i] && ctx[i]);
+                meets(&here, &at(0)) && c.iter().all(|(o, b)| meets(b, &at(*o)))
+            })
+        };
+        match (f, args) {
+            ("prev" | "next", [Arg::E(a), rest @ ..]) => {
+                let j = match rest {
+                    [] => 1i64,
+                    [Arg::N(j)] => *j as i64,
+                    _ => return None,
+                };
+                let a0 = self.in_region_of(a, None, 0, &all, memo)?;
+                if self.regional(&a0) {
+                    return None;
+                }
+                let shifted = |x: &Expr| Expr::Call(f.to_owned(), std::iter::once(Arg::E(x.clone())).chain(rest.iter().cloned()).collect());
+                let (e, e0) = (shifted(a), shifted(&a0));
+                // The `j` bytes before (after) in a region token at its end (start): `a` there,
+                // in it or as outside, holds in no way the bytes there fit.
+                for m in 0..j {
+                    let ok = if f == "prev" {
+                        ends.iter().all(|end| {
+                            // `o` bytes on from the byte is `m - j - o` before the token's last.
+                            let at = |o: i64| match m - j - o {
+                                d @ 0..=3 => end.last[d as usize],
+                                -1 => end.after.unwrap_or(all),
+                                _ => all,
+                            };
+                            !fits(&e, &at, memo) && !fits(&e0, &at, memo)
+                        })
+                    } else {
+                        // `o` bytes on is `o - j + m` after the token's first.
+                        let at = |o: i64| match o - j + m {
+                            d @ 0..=3 => self.opener_at[d as usize],
+                            _ => all,
+                        };
+                        !fits(&e, &at, memo) && !fits(&e0, &at, memo)
+                    };
+                    if !ok {
+                        return None;
+                    }
+                }
+                Some(e0)
+            }
+            ("fill", [Arg::E(st), Arg::E(stop)]) => {
+                let (s0, e0) = (self.in_region_of(st, None, 0, &all, memo)?, self.in_region_of(stop, None, 0, &all, memo)?);
+                if self.regional(&s0) || self.regional(&e0) {
+                    return None;
+                }
+                let stops = |s: &Expr, e: &Expr, yb: &[bool; 256], memo: &mut ByteMemo| {
+                    !meets(&self.bytes_at(s, 0, memo), yb) && self.exact_bytes(e).is_some_and(|x| (0..256).all(|i| !yb[i] || x[i]))
+                };
+                for end in ends {
+                    // `s` (anywhere) does not start it there.
+                    let ok = match &end.after {
+                        // At the closer after the token, outside: `e` stops the fill there.
+                        Some(b) => stops(st, &e0, b, memo),
+                        // At the token's last byte, in its region.
+                        None => match self.in_region(stop, Some(end.k), 2) {
+                            Some(ei) if !self.regional(&ei) => stops(st, &ei, &end.last[0], memo),
+                            _ => false,
+                        },
+                    };
+                    if !ok {
+                        return None;
+                    }
+                }
+                Some(Expr::Call("fill".to_owned(), vec![Arg::E(s0), Arg::E(e0)]))
+            }
+            _ => None,
+        }
+    }
+
+    /// How the region tokens end (`End`), from each row that reads a region and its closers
+    /// (`row_geos`), and the bytes their openers' first bytes may be.
+    fn find_ends(&mut self, rows: &[(usize, &Stmt)]) -> Result<(), String> {
+        let n = self.opens.as_ref().map_or(0, Vec::len);
+        let mut ends = Vec::new();
+        let mut seen = vec![false; n];
+        for (_, st) in rows {
+            let Stmt::Token { start, rule, .. } = st else { continue };
+            let regions: Vec<(Region, Vec<(String, Expr, u8)>)> = match rule {
+                Some(TokenRule::Read(rs)) => rs.iter().map(|r| (r.clone(), Vec::new())).collect(),
+                Some(TokenRule::ReadParts(rs, parts)) => match Self::row_region(start, rs) {
+                    Some(r) => vec![(r.clone(), parts.closes.clone())],
+                    None => return Ok(()),
+                },
+                _ => continue,
+            };
+            for (r, closes) in regions {
+                let Some(geos) = self.row_geos(&r, &closes)? else { return Ok(()) };
+                for (_, g) in geos {
+                    let mut memo = HashMap::new();
+                    let last = std::array::from_fn(|m| self.bytes_at(&g.closer, g.ext - m as i64, &mut memo));
+                    let after = (g.ext < 0).then(|| self.bytes_at(&g.closer, 0, &mut memo));
+                    seen[g.k] = true;
+                    ends.push(End { k: g.k, after, last });
+                }
+            }
+        }
+        // A region no row reads: it may end at any byte.
+        if seen.iter().any(|s| !s) {
+            return Ok(());
+        }
+        let mut memo = HashMap::new();
+        let mut opener_at = [[false; 256]; 4];
+        for r in &self.kinds {
+            for (m, at) in opener_at.iter_mut().enumerate() {
+                let b = self.bytes_at(&r.opener, m as i64, &mut memo);
+                (0..256).for_each(|i| at[i] |= b[i]);
+            }
+        }
+        self.opener_at = opener_at;
+        self.ends = Some(ends);
+        Ok(())
+    }
+
     /// The bytes `e` can hold at, `d` bytes on from where it holds (`d` < 0: before): the
     /// bytes of each way it may hold (its `Cubes`) there, together. Every byte where it says nothing.
     fn bytes_at(&self, e: &Expr, d: i64, memo: &mut ByteMemo) -> [bool; 256] {
@@ -1317,6 +1480,11 @@ impl Gen<'_> {
                 }
                 if let Some(r) = memo.get(n) {
                     return r.clone();
+                }
+                // A region's opener mark holds where its opener does.
+                if let Some(r) = self.kinds.iter().find(|r| *n == format!("o_{}", r.kind)) {
+                    let opener = r.opener.clone();
+                    return self.cubes(&opener, memo);
                 }
                 // A name being read (a cycle) says nothing.
                 memo.insert(n.clone(), all());
@@ -1381,6 +1549,19 @@ impl Gen<'_> {
             },
             Expr::Call(..) | Expr::Test { .. } => all(),
         }
+    }
+
+    /// Mask `e` as code over the bytes of a row's token: over a token of code, its value outside
+    /// the regions, where that is stage 1's.
+    fn row_val(&mut self, e: &Expr, rule: &Option<TokenRule>) -> Result<String, String> {
+        if self.regional(e)
+            && !matches!(rule, Some(TokenRule::Read(_) | TokenRule::ReadParts(..)))
+            && let Some(o) = self.in_region(e, None, 0)
+            && !self.regional(&o)
+        {
+            return self.val(&o);
+        }
+        self.val(e)
     }
 
     /// The bytes a token of a code row may have after its start: its run's (as its kind's
@@ -2205,6 +2386,7 @@ impl Gen<'_> {
                 fills_in(e, &mut inner);
                 exprs.extend(inner.into_iter().map(|f| (None, f)));
             }
+            self.find_ends(&rows)?;
             self.find_loop_fills(&rows, &exprs)?;
         }
         let mut refuse = Vec::new();
@@ -2268,7 +2450,7 @@ impl Gen<'_> {
         self.skipped = skipped;
         let mut gaps: Vec<Gap> = Vec::new();
         // Each mark's token tests: the kind, `after`, the test, the mask, the least, the bit.
-        let mut tests: Vec<(String, bool, TokenTest, String, u32, u8)> = Vec::new();
+        let mut tests: Vec<(String, bool, TokenTest, Expr, u32, u8)> = Vec::new();
         for (m, s) in marks.iter().enumerate() {
             let Stmt::Mark { kind, at, unless, unplaced, checks, .. } = s else { continue };
             let Some(bit) = x.mark_bits.get(m).copied().flatten() else { continue };
@@ -2333,8 +2515,7 @@ impl Gen<'_> {
                 .map(|w| x.words.iter().position(|x| x == w).map(|i| i as u32 + 1).ok_or_else(|| format!("tier 1 as Rust: mark {kind}: `unless after` a word no code names")))
                 .collect::<Result<_, _>>()?;
             for c in checks {
-                let v = self.val(&c.expr)?;
-                tests.push((c.kind.clone(), c.after, c.test, v, c.least, bit));
+                tests.push((c.kind.clone(), c.after, c.test, c.expr.clone(), c.least, bit));
             }
             gaps.push(Gap { bit, mask, unless, name: kind.clone(), acc });
         }
@@ -2485,6 +2666,7 @@ impl Gen<'_> {
                 if tk != kind {
                     continue;
                 }
+                let v = self.row_val(v, rule)?;
                 let holds = match test {
                     TokenTest::Count => format!("count_in(&{v}, s, l) >= {least}"),
                     TokenTest::Run => format!("l + 1 - s >= {least} && first_clear(&{v}, s, s + {least}).is_none()"),
@@ -2551,7 +2733,7 @@ impl Gen<'_> {
                 if tk != kind {
                     continue;
                 }
-                let v = self.val(expr)?;
+                let v = self.row_val(expr, rule)?;
                 let holds = match test {
                     TokenTest::Count => format!("count_in(&{v}, s, l) >= {least}"),
                     TokenTest::Run => format!("l + 1 - s >= {least} && first_clear(&{v}, s, s + {least}).is_none()"),
@@ -2599,9 +2781,16 @@ impl Gen<'_> {
                         Some(g) => Expr::And(Box::new(e), Box::new(g)),
                         None => e,
                     };
-                    Some(format!("bit(&{}, s)", self.val(&e)?))
+                    Some(match self.at_start(&e)? {
+                        Some(t) => t,
+                        None => format!("bit(&{}, s)", self.val(&e)?),
+                    })
                 }
             };
+            if at.as_deref() == Some("false") {
+                continue;
+            }
+            let at = at.filter(|t| t != "true");
             let test = [at, (!word.is_empty()).then_some(word)].into_iter().flatten().collect::<Vec<_>>().join(" && ");
             if test.is_empty() {
                 return Err(format!("tier 1 as Rust: token mark bit {bit} holds at every record"));
@@ -3091,5 +3280,5 @@ fn set(v: &mut [u64], a: usize, b: usize) {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), spans: Vec::new(), skipped: [false; 256], fills: Vec::new(), start_checks: Vec::new(), end_checks: Vec::new() }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), code_checks: Vec::new(), class_bytes: HashMap::new(), kinds: Vec::new(), hidden: String::new(), spans: Vec::new(), skipped: [false; 256], fills: Vec::new(), ends: None, opener_at: [[true; 256]; 4], start_checks: Vec::new(), end_checks: Vec::new() }.source()
 }
