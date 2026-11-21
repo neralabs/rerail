@@ -593,6 +593,18 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 52, done: a return two ways (decision 0548)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A container's return | `scope_end`: `d == 0` ends the walk, else `object[d]` | `match ret { 0, 1, 2, _ => refuse }`, and `keep_ret(0)` at the document's calls | `if s.depth == 0 { … } else if ret == 1 { … } else { … }`, no number kept for the document |
+
+## Step 51, done: a close that cannot fail (decision 0547)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A node closed | `close`: two stores, no failure | `s.close::<…>(…)?`, the writer testing for an open node, the bounds and the room | `s.close::<…>(…);`, the writer asserting them |
+
 ## Step 50, done: the end the stream's count, tested once (decision 0546)
 
 | | the lean parser | before | now |
