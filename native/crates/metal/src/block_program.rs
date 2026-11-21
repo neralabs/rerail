@@ -18,12 +18,9 @@
 //!
 //! Carried operations (`prev`, `toggle`, `escaped`, `fill`) follow `06-block-parallel.md` §2
 //! and §5. A lane's carry is combined across its SIMD group by SIMD-group operations, and across a
-//! file's groups by decoupled look-back (`13-tape-on-the-gpu.md` §5.3), each predecessor's word read
-//! once. Groups take their numbers in launch order from persistent workers. A group that finds a
-//! predecessor's word not yet published parks, and its worker takes other work; the predecessor's
-//! next publication pushes it onto the launch's queue, and whoever takes it runs it again from its
-//! start (`BlockWake` in `block_common.uglykl`, decision 0540 step 7). No group waits for another, and
-//! a batch is one launch.
+//! file's groups by decoupled look-back with bounded polls (`13-tape-on-the-gpu.md` §5.3). Groups
+//! take their numbers in launch order from persistent workers; a group waits only on earlier groups
+//! of its file. A poll that runs out leaves the group unfinished, and the host launches again.
 #[allow(unused_imports)]
 use crate::Error;
 use crate::lane;
@@ -203,38 +200,38 @@ pub enum Executor {
 }
 
 
-/// A batch's results: each file's outputs and extract positions, the launches it took, their GPU
-/// seconds, and its groups' parks (`parks`: a predecessor's word read before it was published), of
-/// them `again` run again at once (a publication came while the group ran).
+/// A batch's results: each file's outputs and extract positions, the launches it took, and their
+/// GPU seconds.
 pub struct BatchRun {
     pub files: Vec<BlockRun>,
     pub launches: usize,
     pub seconds: f64,
-    pub parks: usize,
-    pub again: usize,
 }
 
-/// Workers of the persistent dispatch: SIMD groups that take the batch's groups, parked ones pushed
-/// back first, then the next in launch order. No worker waits on another, so how many run at once is
-/// not the kernel's concern: a worker that finds nothing to take ends. On an M5 Max (40 GPU cores)
-/// JSON's tier 1 ran fastest at 768 (step 15) and 1,024 (step 14), and fell off a cliff past 1,024
-/// (doc 22), when a group waited by polling.
+/// Workers of the persistent dispatch: SIMD groups that take the batch's tickets in order. Every
+/// worker must be resident: a worker waiting on a ticket held by one that is not polls until its
+/// budget runs out and the launch is repeated. On an M5 Max (40 GPU cores) JSON's tier 1 ran
+/// fastest at 768 (step 15) and 1,024 (step 14), and fell off a cliff past 1,024 (doc 22).
 const WORKERS: usize = 768;
 
 /// `run_batch`, split while the device refuses it for capacity (lessons ledger #26: a batch over
 /// a budget is split, never refused). Halves run one after another, in the files' order; a file
-/// alone that does not fit is the error. `launches`, `seconds`, `parks` and `again` are the halves' sums.
-pub fn run_split(programs: &[&BlockNative], files: &[BatchFile<'_>], width: LaneWidth, executor: Executor) -> Result<BatchRun, Error> {
-    match run_batch(programs, files, width, executor) {
+/// alone that does not fit is the error. `launches` and `seconds` are the halves' sums.
+pub fn run_split(
+    programs: &[&BlockNative],
+    files: &[BatchFile<'_>],
+    width: LaneWidth,
+    executor: Executor,
+    spins: u32,
+) -> Result<BatchRun, Error> {
+    match run_batch(programs, files, width, executor, spins) {
         Err(Error::BackendCapacity) if files.len() > 1 => {
             let (a, b) = files.split_at(files.len() / 2);
-            let mut first = run_split(programs, a, width, executor)?;
-            let second = run_split(programs, b, width, executor)?;
+            let mut first = run_split(programs, a, width, executor, spins)?;
+            let second = run_split(programs, b, width, executor, spins)?;
             first.files.extend(second.files);
             first.launches += second.launches;
             first.seconds += second.seconds;
-            first.parks += second.parks;
-            first.again += second.again;
             Ok(first)
         }
         other => other,
@@ -250,6 +247,10 @@ pub fn generated_ready(programs: &[&BlockNative], width: LaneWidth) -> bool {
 
 /// The rows of a batch's slabs (`MAX_SLABS`), in every kernel that reads a file's bytes.
 const SLAB_BUFFERS: [&str; crate::slabs::MAX_SLABS] = ["s0", "s1", "s2", "s3"];
+
+/// Launches repeated because a look-back ran out of polls: the run's count (decision 0442).
+#[derive(Default)]
+pub struct RepeatedLaunches(pub std::sync::atomic::AtomicUsize);
 
 /// What `program` needs that generated UKL lacks (decision 0202's `metal-form` list), if any: a
 /// `run_batch` of it is refused. A fixed point (`rounds`) is the CPU's for now: each lane would run
@@ -267,8 +268,15 @@ pub fn missing_form(program: &BlockNative) -> Option<&'static str> {
     }
 }
 
-/// Run `files` in one launch, each under `programs[file.program]` (decision 0066).
-pub fn run_batch(programs: &[&BlockNative], files: &[BatchFile<'_>], width: LaneWidth, executor: Executor) -> Result<BatchRun, Error> {
+/// Run `files` in one launch, each under `programs[file.program]` (decision 0066). `spins` is the
+/// polls of a predecessor after the first; 0 tests the repeated launch.
+pub fn run_batch(
+    programs: &[&BlockNative],
+    files: &[BatchFile<'_>],
+    width: LaneWidth,
+    executor: Executor,
+    spins: u32,
+) -> Result<BatchRun, Error> {
     if let Some(reason) = programs.iter().find_map(|p| missing_form(p)) {
         rerail_accel::forms::missing("metal-form", "block program", "block program", reason, files.len() as u64);
         return Err(Error::UnsupportedBackend);
@@ -293,14 +301,10 @@ pub fn run_batch(programs: &[&BlockNative], files: &[BatchFile<'_>], width: Lane
     let sources = crate::slabs::admit_sources(&bytes)?;
     let (slabs, slab_of) = crate::slabs::source_slabs(&sources).ok_or(Error::BackendCapacity)?;
     if files.is_empty() {
-        return Ok(BatchRun { files: Vec::new(), launches: 0, seconds: 0.0, parks: 0, again: 0 });
+        return Ok(BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 });
     }
     // The file table, and each base after the files before.
     let (mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base, mut tot_base) = (0, 0, 0, 0, 0, 0, 0);
-    // The publications that change a word (`block_publish`), the most of all groups: each state or record word
-    // changes twice (an aggregate, an inclusive prefix), each halo once. A park is cleared by one, so they bound the
-    // pushes.
-    let mut publications = 0_usize;
     let counted: Vec<Vec<usize>> = forms.iter().map(rerail_compiler::native_cpu_block::counted).collect();
     let mut rows = Vec::with_capacity(files.len());
     let mut group_file: Vec<u32> = Vec::new();
@@ -338,7 +342,6 @@ pub fn run_batch(programs: &[&BlockNative], files: &[BatchFile<'_>], width: Lane
         ext_base += counted[file.program].len() * groups;
         pos_base += n.extracts.len() * len.max(1);
         tot_base += counted[file.program].len();
-        publications += 2 * (records[file.program] + carried[file.program] + counted[file.program].len()) * groups;
     }
     let total = group0;
     let table = crate::pool::upload(&rows)?;
@@ -354,22 +357,11 @@ pub fn run_batch(programs: &[&BlockNative], files: &[BatchFile<'_>], width: Lane
     let ext_states = crate::pool::zeroed::<u32>(ext_base.max(1))?;
     let counts = crate::pool::zeroed::<u32>(tot_base.max(1))?;
     let positions = crate::pool::zeroed::<u32>(pos_base.max(1))?;
+    let tickets = crate::pool::zeroed::<u32>(2)?;
+    let done = crate::pool::zeroed::<u32>(total)?;
     let workers = workers(total);
-    // The launch's queue (`block_common.uglykl`'s `BLOCK_QUEUE_*`): its control and counts, a wake word and a resume
-    // record a group, its slots, and the workers' save slots' words. A slot is pushed at most once a publication; a
-    // take may give one up (it found it not yet written) at most once a group it runs, and a worker's last take one
-    // more.
-    let capacity = fit(2 * publications + total + workers)?;
-    let queue = crate::pool::zeroed::<u32>(QUEUE_WAKE + 2 * total + capacity as usize + workers * SAVES)?;
     let most = forms.iter().map(|n| n.insts.len()).max().unwrap_or(0);
-    // Generated UKL's source, and the lane words a save slot holds (`stitch`): `SAVES` slots a worker.
-    let generated = match executor {
-        Executor::Interpreter => None,
-        Executor::Generated(_) => Some(generated_forms(&forms.iter().collect::<Vec<_>>(), width)),
-    };
-    let live = generated.as_ref().map_or(0, |(_, live)| *live);
-    let saves = crate::pool::zeroed::<u8>((workers * SAVES * live * GROUP * word).max(1))?;
-    let params = [fit(total)?, capacity, fit(most)?, fit(live)?];
+    let params = [fit(total)?, spins, fit(most)?, 0];
     let mut buffers: Vec<(&'static str, Buffer)> = vec![
         ("out", out.device_buffer().clone()),
         ("files", table.device_buffer().clone()),
@@ -379,8 +371,8 @@ pub fn run_batch(programs: &[&BlockNative], files: &[BatchFile<'_>], width: Lane
         ("ext_states", ext_states.device_buffer().clone()),
         ("positions", positions.device_buffer().clone()),
         ("counts", counts.device_buffer().clone()),
-        ("queue", queue.device_buffer().clone()),
-        ("saves", saves.device_buffer().clone()),
+        ("tickets", tickets.device_buffer().clone()),
+        ("done", done.device_buffer().clone()),
     ];
     // The slabs, each bound as it is (no copy); unused bindings repeat the first.
     for (k, name) in SLAB_BUFFERS.iter().enumerate() {
@@ -430,22 +422,28 @@ pub fn run_batch(programs: &[&BlockNative], files: &[BatchFile<'_>], width: Lane
             }
             ("block_batch", lane::kernel_fixed(&INTERPRETER[width.index()], "block_batch", None))
         }
-        Executor::Generated(_) => ("tempo_batch", lane::kernel(&generated.as_ref().expect("generated UKL").0, "tempo_batch", None)),
+        Executor::Generated(_) => {
+            let refs: Vec<&BlockNative> = forms.iter().collect();
+            ("tempo_batch", lane::kernel(&generate_forms(&refs, width), "tempo_batch", None))
+        }
     };
     let pass = Pass { name, kernel, buffers, args: vec![("p", params)], groups: workers, threads: GROUP };
-    let seconds = encode_passes(std::slice::from_ref(&pass))?;
-    // Every group finished in the launch: a park is always cleared, by the parker or by a push, and the file's first
-    // unfinished group reads only finished ones. A queue that ran out of slots is the batch's capacity (it is split).
-    let control = queue.read::<u32>(QUEUE_WAKE);
-    if control[3] != 0 {
-        return Err(Error::BackendCapacity);
-    }
-    if control[QUEUE_DONE] as usize != total || control[2] != 0 {
-        return Err(Error::BackendFailure);
-    }
-    let (parks, again) = (control[QUEUE_PARKS] as usize, control[QUEUE_AGAIN] as usize);
-    if std::env::var_os("RERAIL_BLOCK_PARKS").is_some() {
-        eprintln!("PARKS {name} groups {total} parks {parks} again {again} pushes {} seconds {seconds:.6}", control[1]);
+    // Each launch finishes at least the first unfinished group, whose predecessors are all done.
+    let (mut seconds, mut launches) = (0.0, 0);
+    loop {
+        if launches == total {
+            return Err(Error::BackendFailure);
+        }
+        if launches > 0 {
+            rerail_context::with_local::<RepeatedLaunches, _>(|r| r.0.fetch_add(1, std::sync::atomic::Ordering::Relaxed));
+            // SAFETY: two words, written between launches, when no kernel runs.
+            unsafe { std::ptr::write_bytes(tickets.host().cast::<u32>(), 0, 2) };
+        }
+        seconds += encode_passes(std::slice::from_ref(&pass))?;
+        launches += 1;
+        if tickets.read::<u32>(2)[1] == 0 {
+            break;
+        }
     }
     let lanes_bytes = out.read::<u8>(out_base * word);
     let counts = counts.read::<u32>(tot_base);
@@ -476,7 +474,7 @@ pub fn run_batch(programs: &[&BlockNative], files: &[BatchFile<'_>], width: Lane
         // This executor has no record pass: a program with records runs on the serial one.
         results.push(BlockRun { outputs, positions, totals, codes: Vec::new() });
     }
-    Ok(BatchRun { files: results, launches: 1, seconds, parks, again })
+    Ok(BatchRun { files: results, launches, seconds })
 }
 
 /// The interpreter: every output's words over `bytes`, as 64-bit words of the stream.
@@ -495,7 +493,7 @@ pub fn interpret_extract(
     width: LaneWidth,
 ) -> Result<BlockRun, Error> {
     let native = BlockNative::lower(program);
-    let mut run = run_batch(&[&native], &[BatchFile { bytes, program: 0 }], width, Executor::Interpreter)?;
+    let mut run = run_batch(&[&native], &[BatchFile { bytes, program: 0 }], width, Executor::Interpreter, SPINS)?;
     Ok(run.files.remove(0))
 }
 
@@ -600,13 +598,7 @@ pub fn generate_with(native: &BlockNative, width: LaneWidth, strategy: ClassStra
 /// each carried one, and writes the file's outputs and extracts; and persistent workers that take
 /// the batch's groups in order and call their file's program (decision 0066).
 fn generate_forms(programs: &[&BlockNative], width: LaneWidth) -> String {
-    generated_forms(programs, width).0
-}
-
-/// `generate_forms`, and the most values a park of any program keeps (`stitch`): a save slot's lane words.
-fn generated_forms(programs: &[&BlockNative], width: LaneWidth) -> (String, usize) {
     let mut out = head(width);
-    let mut live = 0;
     for (p, native) in programs.iter().enumerate() {
         if native.insts.iter().any(|i| matches!(i, BlockInst::Class { .. } | BlockInst::Pair { .. })) {
             for (t, table) in native.tables.iter().enumerate() {
@@ -614,102 +606,84 @@ fn generated_forms(programs: &[&BlockNative], width: LaneWidth) -> (String, usiz
             }
         }
         let plan = Plan::new(native).at(native, width);
-        let (function, kept) = program_function(p, native, &plan, width);
-        out.push_str(&function);
-        live = live.max(kept);
+        out.push_str(&program_function(p, native, &plan, width));
     }
     let cases: String = (0..programs.len())
         .map(|p| {
             format!(
-                "        case {p}u: ok = program_{p}(bytes, f, g, l, k, s, out, states, halos, ext_states, positions, counts __UKL_ARGS); break;\n"
+                "      case {p}u: ok = program_{p}(bytes, f, fg1, l, p.spins, out, states, halos, ext_states, positions, counts __UKL_ARGS); break;\n"
             )
         })
         .collect();
     out.push_str(&format!(
-        "// A launch's parameters: the batch's groups, its queue's capacity, the lane words of a save slot.\n\
-         typedef struct BatchP {{ uint32_t groups, capacity, most, live; }} BatchP;\n\
-         UKL_REFLECT_STRUCT(BatchP, groups, capacity, most, live)\n\
-         // Persistent workers (decision 0027): each takes a group, a parked group pushed back first\n\
-         // (`BlockWake`), else the next in launch order, and runs its file's program over it, from the\n\
-         // exchange it parked at where its values were kept (`BlockSave`). A threadgroup is a worker: one\n\
-         // group of 32 lanes. A worker that finds nothing to take ends.\n\
+        "// A launch's parameters: the batch's groups, the polls after the first.\n\
+         typedef struct BatchP {{ uint32_t groups, spins, most, pad; }} BatchP;\n\
+         UKL_REFLECT_STRUCT(BatchP, groups, spins, most, pad)\n\
+         // Persistent workers (decision 0027): each takes group numbers in launch order and runs its\n\
+         // file's program over the group. A threadgroup is a worker: one group of 32 lanes.\n\
          DEFINE_KERNEL2(block, tempo_batch,\n\
          \x20   ROBUFFER, uint32_t, s0, \"[slab]\", RWBUFFER, BM, out, \"[outputs]\", ROBUFFER, FileRow, files, \"[files]\",\n\
-         \x20   ROBUFFER, uint32_t, group_file, \"[3 * groups]\", RWBUFFER, uint32_t, states, \"[states]\",\n\
+         \x20   ROBUFFER, uint32_t, group_file, \"[2 * groups]\", RWBUFFER, uint32_t, states, \"[states]\",\n\
          \x20   RWBUFFER, uint32_t, halos, \"[halos]\", RWBUFFER, uint32_t, ext_states, \"[ext_states]\",\n\
-         \x20   RWBUFFER, uint32_t, positions, \"[positions]\", RWBUFFER, uint32_t, counts, \"[counts]\",\n\
-         \x20   RWBUFFER, uint32_t, queue, \"[BLOCK_QUEUE_WAKE + 2 * groups + capacity + workers * BLOCK_SAVES]\",\n\
-         \x20   RWBUFFER, BM, saves, \"[workers * BLOCK_SAVES * live * 32]\", ROBUFFER, uint32_t, s1, \"[slab]\",\n\
-         \x20   ROBUFFER, uint32_t, s2, \"[slab]\", ROBUFFER, uint32_t, s3, \"[slab]\", ARGS, BatchP, p, ,\n\
-         \x20   TGID0, uint32_t, w, , LANE, uint32_t, l, )\n\
+         \x20   RWBUFFER, uint32_t, positions, \"[positions]\", RWBUFFER, uint32_t, counts, \"[counts]\", RWBUFFER, uint32_t, tickets, \"[2]\",\n\
+         \x20   RWBUFFER, uint32_t, done, \"[groups]\", ROBUFFER, uint32_t, s1, \"[slab]\",\n\
+         \x20   ROBUFFER, uint32_t, s2, \"[slab]\", ROBUFFER, uint32_t, s3, \"[slab]\", ARGS, BatchP, p, , LANE, uint32_t, l, )\n\
          {{\n\
-         \x20 BlockWake k = block_wake(queue, p.groups, p.capacity);\n\
-         \x20 BlockCounts counted = {{0u, 0u, 0u}};\n\
-         \x20 for (uint32_t t = 0u, from = 0u; block_take(queue, k.q, p.groups, l, &t, &from __UKL_ARGS);) {{\n\
-         \x20   // Its (file, group) pair and its successor's ticket (`ticket_order`).\n\
-         \x20   const FileRow f = files[group_file[3u * t]];\n\
-         \x20   const uint32_t g = group_file[3u * t + 1u];\n\
-         \x20   k.next = group_file[3u * t + 2u];\n\
-         \x20   BlockSave s = block_save(queue, saves, p.groups, p.capacity, p.live, w, t, from, l __UKL_ARGS);\n\
+         \x20 for (uint32_t round = 0u; round < p.groups; round++) {{\n\
+         \x20   // Lane 0 takes the ticket and reads whether its group is done (`block_batch`: lanes need not run\n\
+         \x20   // in lockstep).\n\
+         \x20   uint32_t ticket = 0u;\n\
+         \x20   if (l == 0u) {{\n\
+         \x20     ticket = ukl_atomic_add(&tickets[0], 1u);\n\
+         \x20     if (ticket < p.groups && done[ticket] != 0u) ticket |= 0x80000000u;\n\
+         \x20   }}\n\
+         \x20   const uint32_t taken = ukl_sg_shuffle(ticket, 0u __UKL_ARGS);\n\
+         \x20   const uint32_t t = taken & 0x7fffffffu;\n\
+         \x20   if (t >= p.groups) return;\n\
+         \x20   if ((taken >> 31) != 0u) continue;\n\
+         \x20   // Its (file, group) pair (`ticket_order`).\n\
+         \x20   const uint32_t fg0 = group_file[2u * t], fg1 = group_file[2u * t + 1u];\n\
+         \x20   const FileRow f = files[fg0];\n\
          \x20   // The slab the file's bytes are in (decision 0067): the same in every lane.\n\
          \x20   Bytes bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3;\n\
          \x20   bool ok = false;\n\
-         \x20   for (bool again = true; again;) {{\n\
-         \x20     const uint32_t seen = block_seen(k, t, l __UKL_ARGS);\n\
-         \x20     // The same program in every lane: the group holds one file.\n\
-         \x20     switch (f.program) {{\n{cases}\
-         \x20       default: break;\n\
-         \x20     }}\n\
-         \x20     again = block_end(k, t, l, ok, seen, &counted __UKL_ARGS);\n\
-         \x20     if (again) s = block_reload(s, l __UKL_ARGS);\n\
+         \x20   // The same program in every lane: the group holds one file.\n\
+         \x20   switch (f.program) {{\n{cases}\
+         \x20     default: break;\n\
          \x20   }}\n\
-         \x20   if (ok) block_release(s, l);\n\
-         \x20   if (l == 0u && from == 2u) ukl_wq_done(k.q);\n\
+         \x20   if (l == 0u && ok) done[t] = 1u;\n\
+         \x20   if (l == 0u && !ok) ukl_atomic_add(&tickets[1], 1u);\n\
          \x20 }}\n\
-         \x20 block_counted(queue, counted, l);\n\
          }}\n"
     ));
-    (out, live)
+    out
 }
 
 /// Generated UKL's order of the groups of files of `groups` groups each: round robin, the first
-/// group of every file, then the second of each that has one, and so on, as (file, group, the
-/// ticket of the file's next group or `NO_GROUP`) words. A group reads the one before it in its
-/// file, which took its ticket a round earlier. Given in file order, the groups in flight would be
-/// mostly a file's next ones, each parked on the one before.
-fn ticket_order(groups: &[usize]) -> Vec<[u32; 3]> {
+/// group of every file, then the second of each that has one, and so on, as (file, group) words.
+/// A group waits on the one before it in its file, which took its ticket a round earlier. Given
+/// in file order, the groups in flight would be mostly a file's next ones, each waiting on the
+/// one before.
+fn ticket_order(groups: &[usize]) -> Vec<[u32; 2]> {
     let most = groups.iter().copied().max().unwrap_or(0);
     let mut order = Vec::with_capacity(groups.iter().sum());
     for g in 0..most {
         for (file, &n) in groups.iter().enumerate() {
             if g < n {
-                order.push([file as u32, g as u32, NO_GROUP]);
+                order.push([file as u32, g as u32]);
             }
         }
-    }
-    // Each group's successor's ticket: a file's groups' tickets in order, each the next's predecessor.
-    let mut last = vec![None::<usize>; groups.len()];
-    for ticket in 0..order.len() {
-        let file = order[ticket][0] as usize;
-        if let Some(before) = last[file] {
-            order[before][2] = ticket as u32;
-        }
-        last[file] = Some(ticket);
     }
     order
 }
 
-/// No successor (`BLOCK_NONE` in `block_common.uglykl`): a file's last group.
-const NO_GROUP: u32 = u32::MAX;
-
-/// The queue buffer's words (`BLOCK_QUEUE_*` in `block_common.uglykl`): the groups finished, the parks, those run
-/// again at once, and where the wake words start.
-const QUEUE_DONE: usize = 5;
-const QUEUE_PARKS: usize = 6;
-const QUEUE_AGAIN: usize = 7;
-const QUEUE_WAKE: usize = 8;
-/// A worker's save slots (`BLOCK_SAVES`).
-const SAVES: usize = 4;
+/// Polls of a predecessor's state after the first: bounded, so a launch whose predecessors never
+/// publish ends and is repeated. 64 polls ran out on full batches: the launch was repeated while
+/// the predecessor was only slow.
+pub const SPINS: u32 = 65536;
+/// The extract look-back's polls per predecessor, as a multiple of the carries'.
+#[allow(dead_code)]
+const EXTRACT_POLLS: u32 = 64;
 
 
 /// How generated UKL treats each carried instruction.
@@ -915,11 +889,10 @@ fn table_helpers(m: usize) -> String {
 /// Program `p` as a function over group `g` (lane `l`) of file `f`: every instruction in order,
 /// each once, then the outputs and the extracts. A look-back or a halo that is not published yet
 /// returns false: the group is unfinished.
-/// Program `p`'s function, and the most values a park of its keeps (`stitch`).
-fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidth) -> (String, usize) {
+fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidth) -> String {
     let w = width.bytes();
     let mut out = format!(
-        "UKL_INLINE bool program_{p}(Bytes bytes, FileRow f, uint32_t g, uint32_t l, BlockWake k, BlockSave s, UKL_GLOBAL BM* out,\n\
+        "UKL_INLINE bool program_{p}(Bytes bytes, FileRow f, uint32_t g, uint32_t l, uint32_t spins, UKL_GLOBAL BM* out,\n\
          \x20                              UKL_GLOBAL uint32_t* states, UKL_GLOBAL uint32_t* halos, UKL_GLOBAL uint32_t* ext_states,\n\
          \x20                              UKL_GLOBAL uint32_t* positions, UKL_GLOBAL uint32_t* counts __UKL_PARAMS) {{\n\
          \x20 // The group's first {h} lanes warm up (`warm_lanes`): they make the bytes before its\n\
@@ -942,28 +915,28 @@ fn program_function(p: usize, native: &BlockNative, plan: &Plan, width: LaneWidt
     let ascii = ascii_form(native);
     let chunks = w / 16;
     let loads = (1..=chunks).fold(format!("load16(bytes, f, gl * {chunks}u - 1u)"), |a, c| format!("b4_or({a}, load16(bytes, f, gl * {chunks}u + {c}u - 1u))"));
-    let (ascii, full, general) = (levels(p, native, &ascii, plan, width), levels(p, native, &full, plan, width), levels(p, native, native, plan, width));
     out.push_str(&format!(
         "  if (g > 0u && (g + 1u) * {span}u <= len) {{\n    const B4 high = {};\n    const bool ascii = (b4_any(high) & 0x80808080u) == 0u;\n    if (sg_all(ascii __UKL_ARGS)) {{\n{}    return true;\n    }}\n{}  return true;\n  }}\n",
-        loads, ascii.0, full.0
+        loads,
+        levels(p, native, &ascii, plan, width),
+        levels(p, native, &full, plan, width)
     ));
-    out.push_str(&general.0);
+    out.push_str(&levels(p, native, native, plan, width));
     out.push_str("  return true;\n}\n\n");
-    (out, ascii.1.max(full.1).max(general.1))
+    out
 }
 
 /// An exchange of `words` (UKL expressions, the same in every lane) at word `offset` of the
 /// group's record of `record` words: the first `halo_words` are halo words, the rest scan
 /// tables. Gives each word's result as an expression read by every lane.
 #[allow(dead_code)]
-fn exchange(out: &mut String, name: &str, words: &[String], halo_words: usize, offset: usize, record: usize, park: &str) -> Vec<String> {
-    exchange_kinds(out, name, words, |j| if j < halo_words { "0u".to_owned() } else { "1u".to_owned() }, offset, record, park)
+fn exchange(out: &mut String, name: &str, words: &[String], halo_words: usize, offset: usize, record: usize) -> Vec<String> {
+    exchange_kinds(out, name, words, |j| if j < halo_words { "0u".to_owned() } else { "1u".to_owned() }, offset, record)
 }
 
 /// `exchange` with each word's kind (`exchange_word`): lane `j` of a pass owns word `32 * pass +
-/// j`. A group that finds a predecessor's word not yet published parks (`park`, the code that
-/// keeps its values and returns unfinished: `stitch`).
-fn exchange_kinds(out: &mut String, name: &str, words: &[String], kind: impl Fn(usize) -> String, offset: usize, record: usize, park: &str) -> Vec<String> {
+/// j`. A group that a predecessor keeps waiting returns unfinished.
+fn exchange_kinds(out: &mut String, name: &str, words: &[String], kind: impl Fn(usize) -> String, offset: usize, record: usize) -> Vec<String> {
     let mut got = Vec::with_capacity(words.len());
     for (pass, chunk) in words.chunks(GROUP).enumerate() {
         let base = pass * GROUP;
@@ -974,7 +947,7 @@ fn exchange_kinds(out: &mut String, name: &str, words: &[String], kind: impl Fn(
             kinds = format!("SEL({kinds}, {}, l == {j}u)", kind(base + j));
         }
         out.push_str(&format!(
-            "  uint32_t {name}_{pass} = 0u, {name}_{pass}_new = 0u;\n  const bool {name}_{pass}_waits = !exchange_word(states + f.state_base + {}u + l, g, {record}u, {kinds}, {mine}, l < {}u, &{name}_{pass}, &{name}_{pass}_new);\n  block_notify_any(k, {name}_{pass}_new != 0u, l __UKL_ARGS);\n  if (sg_any({name}_{pass}_waits __UKL_ARGS)) {{\n{park}  }}\n",
+            "  uint32_t {name}_{pass} = 0u;\n  const bool {name}_{pass}_waits = !exchange_word(states + f.state_base + {}u + l, g, {record}u, {kinds}, {mine}, spins, l < {}u, &{name}_{pass});\n  if (sg_any({name}_{pass}_waits __UKL_ARGS)) return false;\n",
             offset + base,
             chunk.len(),
         ));
@@ -987,11 +960,9 @@ fn exchange_kinds(out: &mut String, name: &str, words: &[String], kind: impl Fn(
 
 /// A program's levels and sinks (`program_function`), its values from `values`: the program
 /// itself, or its full groups' form (`full_form`), whose exchanges are the same words.
-fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, width: LaneWidth) -> (String, usize) {
+fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, width: LaneWidth) -> String {
     let chunks = width.bytes() / 16;
     let w = width.bytes();
-    // A block a stage (`stitch`): the first level, then each exchange with the level after it.
-    let mut blocks = Vec::new();
     let mut out = String::new();
     // Level by level (`Plan::level`): the instructions of a level, then the exchange that resolves
     // the carried ones of the next; last, the counts' exchange.
@@ -1008,7 +979,6 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
             _ => unreachable!("only windowed prevs are emitted in a level"),
         }));
         let Some((halos, scans)) = exchanges.get(level) else { break };
-        blocks.push(std::mem::take(&mut out));
         // Each value's words, the same in every lane: the halos' newest bits, packed
         // (`halo_words`), then a scan's aggregate table each.
         let packed = halo_words(native, halos);
@@ -1041,7 +1011,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
         // A halo word whose halos are all known in this body is published, for a general group
         // after, and not waited on.
         let known = |j: usize| j < halo_count && packed[j].iter().all(|p| !matches!(values.insts[p.at], BlockInst::Prev(..)));
-        let got = exchange_kinds(&mut out, &format!("x{level}"), &words, |j| if known(j) { "3u" } else if j < halo_count { "0u" } else { "1u" }.to_owned(), offset, record, &park_marker(level));
+        let got = exchange_kinds(&mut out, &format!("x{level}"), &words, |j| if known(j) { "3u" } else if j < halo_count { "0u" } else { "1u" }.to_owned(), offset, record);
         for &at in halos {
             let BlockInst::Prev(a, k) = native.insts[at] else { unreachable!() };
             if !matches!(values.insts[at], BlockInst::Prev(..)) {
@@ -1088,7 +1058,6 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
         out.push_str(&format!("  totals_or(SEL(BMC(0), stream_cut(v{}, gl, len, {}u), keep), l, counts + f.tot_base + {extracts}u __UKL_ARGS);\n", native.outputs[k], native.output_delays[k]));
     }
     if extracts > 0 {
-        blocks.push(std::mem::take(&mut out));
         let mut words = Vec::new();
         for (c, &k) in native.extracts.iter().enumerate() {
             out.push_str(&format!(
@@ -1097,7 +1066,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
             ));
             words.push(format!("ca{c}"));
         }
-        let got = exchange_kinds(&mut out, "xc", &words, |_| "2u".to_owned(), offset, record, &park_marker(exchanges.len()));
+        let got = exchange_kinds(&mut out, "xc", &words, |_| "2u".to_owned(), offset, record);
         for (c, &k) in native.extracts.iter().enumerate() {
             out.push_str(&format!(
                 "  count_finish(cw{c}, cn{c}, ca{c}, {}, gl, g, l, f.groups, {}u, positions + f.pos_base + {c}u * ukl_max(len, 1u), ukl_max(len, 1u), true, counts + f.tot_base + {c}u __UKL_ARGS);\n",
@@ -1106,111 +1075,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
             ));
         }
     }
-    blocks.push(out);
-    stitch(blocks)
-}
-
-/// Where a park at exchange `j` goes in a body's code (`levels`), replaced by `stitch`.
-fn park_marker(j: usize) -> String {
-    format!("@@park{j}@@\n")
-}
-
-/// A body's blocks (`levels`) as its code, with the values it keeps at each park: block 0 the first
-/// level, block `b` exchange `b - 1` with the level after it. A group runs from its stage
-/// (`BlockSave`, decision 0540 step 7): from its start at 0, else from the exchange it parked at,
-/// `stage - 1`, the blocks before skipped and the values they made that the rest reads taken back
-/// from its save slot. So a value a block makes is a variable of the body's (its `const BM vN`
-/// becomes an assignment, and a group loop's `BM vN` moves to the top), and each park keeps the
-/// values made before its exchange that its block or a later one reads. Returns the most values a
-/// park keeps.
-fn stitch(blocks: Vec<String>) -> (String, usize) {
-    let mut declared = std::collections::BTreeSet::new();
-    let mut assigned = Vec::with_capacity(blocks.len());
-    let mut texts = Vec::with_capacity(blocks.len());
-    for block in &blocks {
-        let (mut text, mut made) = (String::new(), std::collections::BTreeSet::new());
-        for line in block.lines() {
-            let trimmed = line.trim_start();
-            let indent = &line[..line.len() - trimmed.len()];
-            if let Some(n) = trimmed.strip_prefix("BM v").and_then(|rest| rest.strip_suffix(" = BMC(0);")).and_then(|n| n.parse::<usize>().ok()) {
-                declared.insert(n);
-                continue;
-            }
-            let line = match trimmed.strip_prefix("const BM v").and_then(|rest| rest.split_once(" = ")).and_then(|(n, rhs)| Some((n.parse::<usize>().ok()?, rhs))) {
-                Some((n, rhs)) => {
-                    declared.insert(n);
-                    format!("{indent}v{n} = {rhs}")
-                }
-                None => line.to_owned(),
-            };
-            assert!(!line.trim_start().starts_with("const uint64_t v"), "a 64-bit value in a body: {line}");
-            if let Some(n) = line.trim_start().strip_prefix('v').and_then(|rest| rest.split_once(" = ")).and_then(|(n, _)| n.parse::<usize>().ok()) {
-                made.insert(n);
-            }
-            text.push_str("  ");
-            text.push_str(&line);
-            text.push('\n');
-        }
-        assigned.push(made);
-        texts.push(text);
-    }
-    let read: Vec<std::collections::BTreeSet<usize>> = texts.iter().map(|t| value_reads(t)).collect();
-    let mut out: String = declared.iter().map(|n| format!("  BM v{n} = BMC(0);\n")).collect();
-    let mut most = 0;
-    for (b, text) in texts.into_iter().enumerate() {
-        if b == 0 {
-            out.push_str(&format!("  if (s.stage == 0u) {{\n{text}  }}\n"));
-            continue;
-        }
-        let before: std::collections::BTreeSet<usize> = assigned[..b].iter().flatten().copied().collect();
-        let after: std::collections::BTreeSet<usize> = read[b..].iter().flatten().copied().collect();
-        let kept: Vec<usize> = before.intersection(&after).copied().collect();
-        most = most.max(kept.len());
-        // A park that keeps nothing needs no slot: it keeps the one it came with, if any.
-        let park = if kept.is_empty() {
-            format!("      return block_parked(s, {b}u, s.slot, 0u, l __UKL_ARGS);\n")
-        } else {
-            let mut park = String::from("      const uint32_t saved = block_claim(s, l __UKL_ARGS);\n");
-            for (i, x) in kept.iter().enumerate() {
-                park.push_str(&format!("      block_put(s, saved, {i}u, l, v{x});\n"));
-            }
-            park.push_str(&format!("      return block_parked(s, {b}u, saved, {}u, l __UKL_ARGS);\n", kept.len()));
-            park
-        };
-        let text = text.replace(&format!("  {}", park_marker(b - 1)), &park);
-        out.push_str(&format!("  if (s.stage <= {b}u) {{\n"));
-        if !kept.is_empty() {
-            out.push_str(&format!("    if (s.stage == {b}u) {{\n"));
-            for (i, x) in kept.iter().enumerate() {
-                out.push_str(&format!("      v{x} = block_get(s, {i}u, l);\n"));
-            }
-            out.push_str("    }\n");
-        }
-        out.push_str(&text);
-        out.push_str("  }\n");
-    }
-    assert!(!out.contains("@@park"), "a park without its exchange's block");
-    (out, most)
-}
-
-/// The values (`vN`) code reads or writes: each `v` and digits, alone as a word.
-fn value_reads(text: &str) -> std::collections::BTreeSet<usize> {
-    let bytes = text.as_bytes();
-    let word = |b: u8| b.is_ascii_alphanumeric() || b == b'_';
-    let mut found = std::collections::BTreeSet::new();
-    let mut at = 0;
-    while at < bytes.len() {
-        if bytes[at] == b'v' && (at == 0 || !word(bytes[at - 1])) {
-            let end = (at + 1..bytes.len()).find(|&e| !bytes[e].is_ascii_digit()).unwrap_or(bytes.len());
-            if end > at + 1 && (end == bytes.len() || !word(bytes[end])) {
-                found.insert(text[at + 1..end].parse().expect("digits"));
-            }
-            at = end.max(at + 1);
-        } else {
-            at += 1;
-        }
-    }
-    found
+    out
 }
 
 /// A program's form in a full group: one past the file's first and inside the file, so that
@@ -1562,7 +1427,7 @@ pub fn run_generated_extract(
     width: LaneWidth,
     strategy: ClassStrategy,
 ) -> Result<(BlockRun, f64), Error> {
-    let mut run = run_batch(&[native], &[BatchFile { bytes, program: 0 }], width, Executor::Generated(strategy))?;
+    let mut run = run_batch(&[native], &[BatchFile { bytes, program: 0 }], width, Executor::Generated(strategy), SPINS)?;
     Ok((run.files.remove(0), run.seconds))
 }
 

@@ -14,13 +14,13 @@ typedef struct BlockStep { uint32_t op, a, b, imm; } BlockStep;
 // A program of the batch: its steps, its outputs (value slots, at `outs[out0..]`) and its extracts (output indices,
 // at `outs[ext0..]`, each with its output's delay in the top byte).
 typedef struct ProgramRow { uint32_t step0, steps, out0, outs, ext0, exts, pad0, pad1; } ProgramRow;
-// A launch's parameters: the batch's groups, its queue's capacity, the most steps of any program.
-typedef struct BatchP { uint32_t groups, capacity, most, pad; } BatchP;
-UKL_REFLECT_STRUCT(BatchP, groups, capacity, most, pad)
+// A launch's parameters: the batch's groups, the polls after the first, the most steps of any program.
+typedef struct BatchP { uint32_t groups, spins, most, pad; } BatchP;
+UKL_REFLECT_STRUCT(BatchP, groups, spins, most, pad)
 
-// Group g of file f (lane l): every step of its program, then its outputs and extracts. False when a look-back found
-// a predecessor's word not published yet: the group parks (`block_run`).
-UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, BlockWake k, UKL_GLOBAL const ProgramRow* programs,
+// Group g of file f (lane l): every step of its program, then its outputs and extracts. False when a look-back has
+// to wait for another launch.
+UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, uint32_t spins, UKL_GLOBAL const ProgramRow* programs,
                                UKL_GLOBAL const BlockStep* steps, UKL_GLOBAL const uint32_t* outs, UKL_GLOBAL BM* slots, UKL_GLOBAL BM* out,
                                UKL_GLOBAL uint32_t* states, UKL_GLOBAL uint32_t* halos, UKL_GLOBAL uint32_t* ext_states,
                                UKL_GLOBAL uint32_t* positions, UKL_GLOBAL uint32_t* counts __UKL_PARAMS)
@@ -51,21 +51,21 @@ UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, B
             case 11u: v = BMC((plane_file(bytes, f, gl * chunks, s.imm) << 1) | BMC((file_byte_before(bytes, f, gl * chunks) >> s.imm) & 1u)); break;
             case 8u: {
                 uint64_t h = 0ul;
-                if (!halo_exchange(halos + f.halo_base + s.b * f.groups * 3u, g, l, halo_last(a __UKL_ARGS), k, &h __UKL_ARGS)) return false;
+                if (!halo_exchange(halos + f.halo_base + s.b * f.groups * 3u, g, l, halo_last(a __UKL_ARGS), spins, &h __UKL_ARGS)) return false;
                 v = apply_prev(a, s.imm, halo_before(a, l, h __UKL_ARGS));
                 break;
             }
             case 9u: {
                 uint32_t t = summary_toggle(a);
                 uint32_t cin = 0u;
-                if (!look_back(state, g, l, t | ((1u ^ t) << 1), k, &cin __UKL_ARGS)) return false;
+                if (!look_back(state, g, l, t | ((1u ^ t) << 1), spins, &cin __UKL_ARGS)) return false;
                 v = apply_toggle(a, cin);
                 break;
             }
             case 10u: {
                 uint32_t o0 = 0u, o1 = 0u, cin = 0u;
                 BM f0 = escaped(a, BMC(0), &o0), f1 = escaped(a, BMC(1), &o1);
-                if (!look_back(state, g, l, (o0 & 1u) | ((o1 & 1u) << 1), k, &cin __UKL_ARGS)) return false;
+                if (!look_back(state, g, l, (o0 & 1u) | ((o1 & 1u) << 1), spins, &cin __UKL_ARGS)) return false;
                 v = SEL(f0, f1, cin != 0u);
                 break;
             }
@@ -74,7 +74,7 @@ UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, B
                 BM e = slots[ukl_min(s.imm, at) * 32u + l];
                 uint32_t o0 = 0u, o1 = 0u, cin = 0u;
                 BM f0 = fill_word(a, e, BMC(0), &o0), f1 = fill_word(a, e, BMC(1), &o1);
-                if (!look_back(state, g, l, (o0 & 1u) | ((o1 & 1u) << 1), k, &cin __UKL_ARGS)) return false;
+                if (!look_back(state, g, l, (o0 & 1u) | ((o1 & 1u) << 1), spins, &cin __UKL_ARGS)) return false;
                 v = SEL(f0, f1, cin != 0u);
                 break;
             }
@@ -117,15 +117,14 @@ UKL_INLINE bool interpret_file(Bytes bytes, FileRow f, uint32_t g, uint32_t l, B
         uint32_t e = (x >> 16) & 0xffu;
         BM v = slots[(outs[pr.out0 + (x & 0xffffu)] & 0xffffffu) * 32u + l];
         if (!count_sink(v, gl, g, l, f.groups, f.len, x >> 24, ext_states + f.ext_base + c * f.groups, positions + f.pos_base + e * capacity,
-                        capacity, e != 0xffu, counts + f.tot_base + c, k __UKL_ARGS))
+                        capacity, e != 0xffu, counts + f.tot_base + c, spins * 64u __UKL_ARGS))
             return false;
     }
     return true;
 }
 
-// Persistent workers (decision 0027): each takes a group, a parked group pushed back first (`BlockWake`), else the next
-// in launch order, and interprets its file's program over it, reading the file in its slab (decision 0067). A
-// threadgroup is a worker: one group of 32 lanes. A worker that finds nothing to take ends.
+// Persistent workers (decision 0027): each takes group numbers in launch order and interprets its file's program
+// over the group, reading the file in its slab (decision 0067). A threadgroup is a worker: one group of 32 lanes.
 DEFINE_KERNEL2(block, block_batch,
                ROBUFFER, uint32_t,   s0,         "[slab]",
                RWBUFFER, BM,         out,        "[outputs]",
@@ -136,7 +135,8 @@ DEFINE_KERNEL2(block, block_batch,
                RWBUFFER, uint32_t,   ext_states, "[ext_states]",
                RWBUFFER, uint32_t,   positions,  "[positions]",
                RWBUFFER, uint32_t,   counts,     "[counts]",
-               RWBUFFER, uint32_t,   queue,      "[BLOCK_QUEUE_WAKE + groups + capacity]",
+               RWBUFFER, uint32_t,   tickets,    "[2]",
+               RWBUFFER, uint32_t,   done,       "[groups]",
                ROBUFFER, ProgramRow, programs,   "[programs]",
                ROBUFFER, BlockStep,  steps,      "[steps]",
                ROBUFFER, uint32_t,   outs,       "[outs]",
@@ -149,19 +149,23 @@ DEFINE_KERNEL2(block, block_batch,
                LANE,     uint32_t,   l,          )
 {
     UKL_GLOBAL BM* slots = scratch + (uint64_t)w * p.most * 32u;
-    BlockWake k = block_wake(queue, p.groups, p.capacity);
-    BlockCounts counted = {0u, 0u, 0u};
-    for (uint32_t t = 0u, from = 0u; block_take(queue, k.q, p.groups, l, &t, &from __UKL_ARGS);) {
+    for (uint32_t round = 0u; round < p.groups; round++) {
+        // Lane 0 takes the ticket and reads whether its group is done, and the group takes both from it: lanes need
+        // not run in lockstep (the CPU's threads, CUDA's), and a lane that read `done` after lane 0 had finished the
+        // group would skip it.
+        uint32_t ticket = 0u;
+        if (l == 0u) {
+            ticket = ukl_atomic_add(&tickets[0], 1u);
+            if (ticket < p.groups && done[ticket] != 0u) ticket |= 0x80000000u;
+        }
+        uint32_t taken = ukl_sg_shuffle(ticket, 0u __UKL_ARGS);
+        uint32_t t = taken & 0x7fffffffu;
+        if (t >= p.groups) return;
+        if ((taken >> 31) != 0u) continue;
         FileRow f = files[group_file[t]];
         Bytes bytes = f.slab == 0u ? s0 : f.slab == 1u ? s1 : f.slab == 2u ? s2 : s3;
-        uint32_t g = t - f.group0;
-        k.next = g + 1u < f.groups ? t + 1u : BLOCK_NONE;
-        for (bool again = true; again;) {
-            uint32_t seen = block_seen(k, t, l __UKL_ARGS);
-            bool ok = interpret_file(bytes, f, g, l, k, programs, steps, outs, slots, out, states, halos, ext_states, positions, counts __UKL_ARGS);
-            again = block_end(k, t, l, ok, seen, &counted __UKL_ARGS);
-        }
-        if (l == 0u && from == 2u) ukl_wq_done(k.q);
+        bool ok = interpret_file(bytes, f, t - f.group0, l, p.spins, programs, steps, outs, slots, out, states, halos, ext_states, positions, counts __UKL_ARGS);
+        if (l == 0u && ok) done[t] = 1u;
+        if (l == 0u && !ok) ukl_atomic_add(&tickets[1], 1u);
     }
-    block_counted(queue, counted, l);
 }

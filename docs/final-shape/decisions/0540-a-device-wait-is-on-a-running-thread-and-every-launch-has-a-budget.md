@@ -298,3 +298,15 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      launch where their rows fit the formulas' scratch (`run_leaf_tests`, `leaves_fit`), and did before; the plan
      counted a leaf launch at each level with formulas. It now counts the run's one (the wave's plan: 49 leaves
      were 48 launches that never ran).
+   - **Measured, not taken yet: the block programs' look-back as parks** (branch `jeremybarnes/block-lookback-parks`,
+     commit 4cf62550d7). A group reads each predecessor's word once; where one is not published yet it parks and its
+     worker takes other work. Its predecessor counts each publication that changes a word (states only grow, so a
+     group run again changes nothing) in the group's wake word, and pushes the group where it is parked. Generated
+     UKL keeps a parked group's values in a save slot (a few a worker), its body a block a stage, so the group goes on
+     from its exchange. One launch a batch, and every block-program test equal on the Mac mini's Metal. But on one
+     3.8 MB file (`stage1_cost_per_block`, the M1 Max quiet, ns a 64-byte block, before and after): masks 3.2 and
+     6.5 (Planes, 64-byte lanes), with the extract 4.7 and 41.0, and 6.5 and 154.6 by lookups. The groups in flight
+     reach each exchange together, so nearly every one finds its predecessor's word not there yet: 1 to 2.5 parks a
+     group. Without the fences that order only atomics it was no faster. The block programs keep their look-back
+     (polls on a group that took its ticket earlier, bounded, and a launch again where they run out) until the
+     user chooses.
