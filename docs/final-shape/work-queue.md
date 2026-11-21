@@ -6900,7 +6900,7 @@ Open:
   lowered rule would be re-based on text. A seeded store (an explicit export and import keyed by the rules' text) is
   0472's open item, not built. Closed.
 
-### Q292. (Q186 on cost-classifier-metal-rf) The node-product rewrite on the version (0461)
+### Q292. (Q186 on cost-classifier-metal-rf; Q297 on Typing-support until 2026-11-20) (done) The node-product rewrite on the version (0461)
 
 - **Found** (2026-11-18, while porting Release-debugging's product demand): `product_demand::rewrite` and its
   `upstream`/`nullable` passes edit the front tree. On the version path (0281) it runs as a `Pipeline::made` step
@@ -7496,7 +7496,7 @@ object.
   `-no_keep_dwarf_unwind`). If the binary is simply this large, the cause is its size at opt-level 0.
 - **Done when**: the link gives no warning, or the cause is shown to be the binary's size and the choice (a smaller
   test binary, or the warning accepted with its reason) is the user's.
-### Q330. (Q188 on cost-classifier-metal-rf) A key a derived relation declares is checked where its rows are written (0361 step 6)
+### Q330. (Q188 on cost-classifier-metal-rf; Q299 on Typing-support until 2026-11-20) (done) A key a derived relation declares is checked where its rows are written (0361 step 6)
 - **Found** (2026-11-19, 0361 step 6): the step's checks are built at the probes (`Model::layout_broken`): a key or
   fan-out a probe is bounded by, against the executors' counts. A key is also to be checked where the rows are
   written, as the decision says: dedup probes the whole row, and a key needs one more probe. No program has a subject
