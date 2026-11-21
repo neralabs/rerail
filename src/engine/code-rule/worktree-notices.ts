@@ -847,9 +847,10 @@ export class SessionNotices {
    * `info/exclude`, `core.excludesFile` and the configuration naming it), since no notice in the folder tells of a change
    * to those; undefined, Git did not name them now. Once Git names them after no whole pass knew them (its read failed,
    * or the folder was in no repository), they moved: none can vouch for what they were. Git names none only when it
-   * was asked, which is when their text is not what it named last (`WorktreeLook.ignores`): none after a pass it named
-   * them for is a move, and none after a pass it named none for tells nothing new, since that pass read whole or came
-   * after one that did. So a Git that keeps failing costs one whole pass, not one per result.
+   * was asked, which is when it never named them or their text is not what it named last (`WorktreeLook.ignores`): none
+   * after a pass it named them for is a move, and none after a pass it named none for tells nothing new, since that
+   * pass read whole or came after one that did. So a Git that keeps failing costs one whole pass, not one per result,
+   * and a change to those files while it fails waits for the next whole pass, the turn's end at the latest.
    */
   #ignoresMoved(ignores: string | undefined): boolean {
     return ignores === undefined ? !this.#ignoresUnnamed : ignores !== this.#ignores;
