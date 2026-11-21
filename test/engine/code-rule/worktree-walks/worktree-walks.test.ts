@@ -844,8 +844,13 @@ describe("a walk of the other worktrees with change notices", () => {
     await turn(watching);
     // The walk the command asked for took the notices before this one came.
     expect(audited(watching)).toEqual([]);
+    // No event of the session asks for a walk from here on: the notice pump asks for the walk that records the write,
+    // which waits as long as the walk before it took (the walks' gap) and then reads, so the case waits for the
+    // session's next audit, not for a set time.
+    const delivered = nextAudit(watching);
     watch.release(w3);
-    await vi.waitFor(() => expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]), { timeout: 5_000 });
+    await delivered;
+    expect(audited(watching)).toEqual([[["written ../w3/src/a.py"], "log"]]);
   });
 
   it("reads a worktree removed and added again at its path after a walk while its folder was gone, and records a write there, with no later event of the session", async () => {
