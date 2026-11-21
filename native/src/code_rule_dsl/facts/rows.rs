@@ -78,12 +78,23 @@ const MARGIN: usize = 1 << 20;
 /// column), a third key copied it (`DevIndex::moved`). The room is address space, memory as an index is written.
 pub const AXIS_KEYS: usize = 4;
 
+/// An index the device builds into a relation of a block (`Facts::ix`), its builder's work committed: the relation's
+/// descriptor's offset in the block, the index's room, and its builder's submission, for a taker to wait on (a builder
+/// the device failed fails its takers' batches too).
+pub struct InFlight {
+    pub at: usize,
+    pub room: rerail_blocks::relation::IndexRoom,
+    pub done: rerail_accel::gpu::join::Submitted,
+}
+
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {
     /// Held by handle (decision 0491 step 3): a region of it keeps it as its relations do.
     pub block: Arc<Block>,
-    /// Held while an index is added to one of its relations (`Relation::try_reserve_index`, decision 0325 step 5).
-    pub ix: Mutex<()>,
+    /// Held while an index is added to one of its relations (`Relation::try_reserve_index`, decision 0325 step 5): the
+    /// indexes the device builds in it, their work committed and not yet marked built (`Building`), which another
+    /// batch's probe takes instead of building its own (its work, committed after, runs after on the one queue).
+    pub ix: Mutex<Vec<InFlight>>,
     /// The count of bytes given back of the run that leased it (`given_back`): a relation's last holder may drop it
     /// on any thread.
     given: Arc<GivenBack>,
@@ -108,7 +119,7 @@ impl Facts {
 
     fn with_sharing(block: Block, life: Life, shared: bool) -> Facts {
         let tally = current_chunk().map(|c| Arc::clone(&c.tally));
-        Facts { block: Arc::new(block), ix: Mutex::new(()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life, shared }
+        Facts { block: Arc::new(block), ix: Mutex::new(Vec::new()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life, shared }
     }
 
     /// Whether relations are made in it while it has room (`shared`), not one alone in it.

@@ -285,7 +285,7 @@ pub fn add_timeline(command: &metal::CommandBufferRef, committed: f64, returned:
 
 impl Submitted {
     /// Another wait for a committed submission: what a sort encoded into it waits for (`Keyed::settle`).
-    pub(super) fn watch(&self) -> Submitted {
+    pub fn watch(&self) -> Submitted {
         Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true }
     }
 
