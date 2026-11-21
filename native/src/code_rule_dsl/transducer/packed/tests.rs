@@ -659,6 +659,8 @@
             }
         }
 
+        // The stress is bounded by its work, not by wall time (which the machine's load decides): its states, its
+        // pending paths and what it holds. The times are printed.
         let started = Instant::now();
         let (stress_output, stats) = program.execute_with_stats(&stress_tape).unwrap();
         let elapsed = started.elapsed();
@@ -666,9 +668,6 @@
         assert!(stats.explored_states < 100_000, "{stats:?}");
         assert!(stats.max_pending_paths < 512, "{stats:?}");
         assert!(stats.peak_retained_bytes < 2 * 1024 * 1024, "{stats:?}");
-        assert!(elapsed < Duration::from_secs(5), "{elapsed:?} {stats:?}");
-        assert!(plain_elapsed < Duration::from_secs(2), "{plain_elapsed:?}");
-        assert!(jit_elapsed < Duration::from_secs(2), "{jit_elapsed:?}");
         eprintln!(
             "128-comment quantifier stress: interpreter={plain_elapsed:?} jitCompile={jit_compile_elapsed:?} jit={jit_elapsed:?} instrumented={elapsed:?} {stats:?}"
         );

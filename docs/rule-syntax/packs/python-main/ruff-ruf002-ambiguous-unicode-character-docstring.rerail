@@ -1,5 +1,4 @@
 .policy "ruff-ruf002-ambiguous-unicode-character-docstring" revision 1
-.guests off
 .description "Avoid look-alike Unicode characters in docstrings; they read like ASCII letters or punctuation but are different characters."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-ret502-implicit-return-value" revision 1
-.guests off
 .description "Use return None instead of a bare return in Python functions that also return a value; make the None result explicit."
 .language python
 .mode steer

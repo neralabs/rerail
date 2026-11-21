@@ -1,4 +1,4 @@
-//! The `.rerail` parser: the Bitlex grammar of `.rerail` (the last step of `rr_syntax/bitlex_ladder/`), compiled
+//! The `.rerail` parser: the Bitlex grammar of `.rerail` (`rr.bitlex`), compiled
 //! once per process through the Bitlex compiler to tier 1 and tier 2 on Cranelift, and shared by
 //! every thread.
 //!
@@ -19,7 +19,7 @@ use std::cell::RefCell;
 use std::collections::HashMap;
 
 /// The grammar: the ladder's last step.
-const GRAMMAR: &str = include_str!("../../rr_syntax/bitlex_ladder/22-test-blocks.bitlex");
+const GRAMMAR: &str = include_str!("../rr.bitlex");
 
 /// Sample documents, for the profile tier 2 is cut by when the grammar compiles
 /// (docs/parser-generators/28-tier-2-in-clusters.md): 12 of the repository's `.rerail`
@@ -2474,7 +2474,7 @@ pub mod tests {
             cases.push((format!("{head}a(1.{}.5).\n", "7".repeat(80)), false));
             cases.push((format!("{head}a(1.2.3).\n"), false));
         }
-        #[cfg_attr(not(target_os = "macos"), allow(unused_variables))]
+        #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(unused_variables))]
         let refs: Vec<&[u8]> = cases.iter().map(|(s, _)| s.as_bytes()).collect();
         for (src, taken) in &cases {
             let interp = rerail_compiler::stream::run(&c.program, src.as_bytes(), &c.program.block_programs[0].run(src.as_bytes()));
@@ -2497,7 +2497,7 @@ pub mod tests {
         }
     }
 
-    /// No Metal off macOS.
+    /// No device lane off macOS and Linux.
     #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     fn metal_refuses_as_the_cpu(_: &crate::Compiled, _: &[&[u8]], _: &[(String, bool)]) {}
 
@@ -3291,7 +3291,7 @@ mod json_probe {
     #[ignore = "a probe: run by hand"]
     fn json_loop_against_step_14() {
         let new = program(include_str!("../../json_parser/json.bitlex")).unwrap_or_else(|e| panic!("json.bitlex: {e}"));
-        let old = program(include_str!("../../compiler/bitlex_ladder/14-json.bitlex")).unwrap_or_else(|e| panic!("14-json: {e}"));
+        let old = program(include_str!("../../json_parser/json-rfc.bitlex")).unwrap_or_else(|e| panic!("json-rfc: {e}"));
         let r = new.block_programs[0].records.as_ref().expect("records");
         eprintln!("rules {:?}\nreaders {:?}", r.rules, r.readers);
         let inputs: Vec<&[u8]> = vec![
@@ -3415,7 +3415,7 @@ mod json_probe {
     }
 
     /// The split tier 1 stores a block's word only where a reader reads it from the rows (decision
-    /// 0347): tier 2's masks and the marks. Its totals are its refusals' flags, each one running
+    /// 0347): tier 2's masks, the marks, and the newlines the line index is made from (decision 0529). Its totals are its refusals' flags, each one running
     /// word (simdjson's `error` register), no row: the token loop makes the rest from the bytes.
     #[test]
     fn json_split_stores_only_what_rows_are_read_for() {
@@ -3428,7 +3428,7 @@ mod json_probe {
         let stored: Vec<usize> = (0..p.outputs.len()).filter(|k| !unstored.contains(k)).collect();
         assert!(!p.totals.is_empty(), "the refusals' totals");
         for k in &stored {
-            assert!(p.masks.contains(k) || marks.contains(k), "output {k} stored a block, read by no row's reader");
+            assert!(p.masks.contains(k) || marks.contains(k) || p.newlines == Some(*k), "output {k} stored a block, read by no row's reader");
         }
         for t in &p.totals {
             assert!(!stored.contains(t) || p.masks.contains(t) || marks.contains(t), "total {t} stored a block");
@@ -3461,6 +3461,8 @@ mod json_probe {
     /// `RR_ROUNDS`, against simdjson's stage 1 on the same files. `RERAIL_JSON_RUST=<path>`:
     /// tier 1 written as Rust there (`clif_rust`, the ahead-of-time form), to read its shape;
     /// `RERAIL_JSON_ASM=<path>`, its machine code.
+    // simdjson's kernels are not built with MSVC (rerail-simdjson-native).
+    #[cfg(not(all(windows, target_env = "msvc")))]
     #[test]
     #[ignore = "a benchmark: run by hand"]
     fn json_tier1_by_pass() {

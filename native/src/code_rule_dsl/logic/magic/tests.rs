@@ -14,6 +14,20 @@ fn strings(items: &[String]) -> String {
     format!("[{}]", items.iter().map(|s| serde_json::to_string(s).unwrap()).collect::<Vec<_>>().join(", "))
 }
 
+/// A nullary atom in a demanded body is an existence test: it is ready with nothing bound, and adorning the program
+/// keeps it in the body (it read the first argument of an atom with none; ported from cost-classifier-metal-rf's
+/// test of the tree magic, which is gone here).
+#[test]
+fn a_nullary_guard_is_ready_in_a_demanded_body() {
+    let src = ".decl rows(x: number)\n.input rows\n.decl ready()\n.input ready\n.decl answer(x: number)\n.output answer\nanswer(x) :- rows(x), ready().\n";
+    for mode in ["adorn", "demand"] {
+        let v = transformed(src, mode).unwrap_or_else(|e| panic!("{mode}: {e}"));
+        let rules: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+        // A nullary relation is lowered to one unit column (`ready(1)`), shown so.
+        assert!(rules.iter().any(|r| r.starts_with("answer(") && (r.contains("ready()") || r.contains("ready(1)"))), "{mode}: {rules:?}");
+    }
+}
+
 /// T's `rdl.py sql` front over `src`: prune, demand (`mode`: `demand` is `.demand`'s magic sets, `adorn` the
 /// adornment of every derived relation, `gate` that with gated negations), prune.
 fn transformed(src: &str, mode: &str) -> Result<Arc<Version>, String> {
@@ -33,16 +47,6 @@ fn transformed(src: &str, mode: &str) -> Result<Arc<Version>, String> {
         return Err(e);
     }
     Ok(v)
-}
-
-/// A nullary atom is an existence test: in a body the adornment orders, it is ready with no bindings, and the rule
-/// keeps it.
-#[test]
-fn a_nullary_guard_is_ready_in_a_demanded_body() {
-    let src = ".decl rows(x: number)\n.input rows\n.decl ready()\n.input ready\n.decl answer(x: number)\n.output answer\nanswer(x) :- ready(), rows(x).\n";
-    let v = transformed(src, "adorn").unwrap();
-    let kept = v.rules().any(|r| v.rel_name(r.head().rel()) == "answer" && r.reads().any(|a| v.rel_name(a.rel()) == "ready"));
-    assert!(kept, "answer reads ready");
 }
 
 /// The program as the goldens print it (T's repr, and `json.dumps` with sorted keys for gates and the report).

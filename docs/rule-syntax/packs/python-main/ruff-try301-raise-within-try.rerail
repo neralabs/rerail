@@ -1,5 +1,4 @@
 .policy "ruff-try301-raise-within-try" revision 1
-.guests off
 .description "Avoid raising an exception inside a try block that catches it; move the raise into a helper function or restructure so it needs no handler."
 .language python
 .mode steer

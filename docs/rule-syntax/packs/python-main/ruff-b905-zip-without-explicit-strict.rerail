@@ -1,5 +1,4 @@
 .policy "ruff-b905-zip-without-explicit-strict" revision 2
-.guests off
 .description "Pass strict= explicitly to zip() over two or more iterables on Python 3.10+; otherwise mismatched lengths are truncated silently."
 .language python
 .mode steer

@@ -28,7 +28,7 @@ pub use crate::slabs::DocView;
 pub struct Unit {
     /// The documents, held for the unit's life. The first one's slab is the one the kernels bind.
     pub documents: Vec<Arc<Resident>>,
-    /// The unit's other slabs, which its launches make resident (`Enc::new`).
+    /// The unit's other slabs, which its passes make resident (`Enc::over`).
     pub slabs: Vec<Arc<crate::slabs::Slab>>,
     /// Their views, in the unit's file order (`PpFile` in the UKL): placed in each run's arena
     /// (`Front::files`).
@@ -163,7 +163,7 @@ impl Unit {
         self.views.is_empty()
     }
 
-    /// The slab the unit's documents are in, as the kernels bind it (`None`: no documents).
+    /// The first document's slab, as the kernels bind it (`None`: no documents).
     pub fn data(&self) -> Option<&Buffer> {
         self.documents.first().map(|d| d.slab.device_buffer())
     }
@@ -402,18 +402,18 @@ impl Front {
 
 /// Encodes `f`'s launches in one command, commits it and waits: the launches it made.
 pub fn run<'a>(f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<usize, Error> {
-    run_timed(&[], f).map(|(launches, _)| launches)
+    run_timed(f).map(|(launches, _)| launches)
 }
 
-/// `run` over `unit`: each launch makes the unit's other slabs resident.
-pub fn run_over<'a>(unit: &'a Unit, f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<usize, Error> {
-    run_timed(&unit.slabs, f).map(|(launches, _)| launches)
+/// `run`, and the command's time on the device, in seconds.
+pub fn run_timed<'a>(f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
+    run_timed_over(&[], f)
 }
 
-/// `run`, each launch making `resident` resident, and the command's time on the device, in seconds.
-pub fn run_timed<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
+/// `run_timed`, each launch making `resident` resident: a unit's slabs past its first (0471).
+pub fn run_timed_over<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnce(&Enc<'a>) -> Result<(), Error>) -> Result<(usize, f64), Error> {
     let scope = crate::launch::LaunchScope::enter();
-    let enc = Enc::new("Rerail pp evaluator", resident);
+    let enc = Enc::over("Rerail pp evaluator", resident);
     f(&enc)?;
     let seconds = enc.finish()?;
     // R9 of decision 0448: every pass in this one command, so the host reads nothing between
@@ -450,7 +450,7 @@ pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
 pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<(usize, f64)>, Error> {
     l.write(&front.lay);
     let all = l.get("LAST") == TO_ALL;
-    let ran = run_timed(&unit.slabs, |enc| {
+    let ran = run_timed_over(&unit.slabs, |enc| {
         front.setup(enc, arena, unit, groups);
         if all {
             enc.run("pp_check", &[("arena", arena), ("lay", &front.lay)], None, 1);

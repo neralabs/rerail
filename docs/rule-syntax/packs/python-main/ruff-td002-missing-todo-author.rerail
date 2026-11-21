@@ -1,5 +1,4 @@
 .policy "ruff-td002-missing-todo-author" revision 1
-.guests off
 .description "Name an author on every TODO comment so readers know who has the context for the work."
 .language python
 .mode steer

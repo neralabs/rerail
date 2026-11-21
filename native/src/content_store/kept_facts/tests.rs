@@ -326,6 +326,55 @@ fn kept_facts_are_a_virtual_table() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// K3 (decision 0456), over decision 0384 steps 7 and 8: a continuation is kept with every row it reads down its
+/// chain, its base's first, and not the rows its bases' writers put past where it forked; the run's dead bits are of
+/// its ids down the chain. (Once `packed::pack_open` packed a continuation's own rows only.)
+#[test]
+fn a_continuation_is_kept_with_every_row_it_reads() {
+    let block = Block::anon(kind::FACTS, 16 << 20).with_free_list();
+    let spec = Spec { widths: vec![8, 8], order: Vec::new(), indexes: Vec::new(), min_log: 4 };
+    let fill = |r: &Relation, from: u32, n: u32, tag: i64| {
+        assert!(r.rows.try_reserve(&block, u64::from(r.rows.len() + n)));
+        let at = r.rows.len();
+        // SAFETY: rows reserved just now, written before anything reads them.
+        unsafe {
+            r.rows.claim_reserved(n);
+            for i in 0..n {
+                r.rows.put(at + i, 0, i64::from((from + i) % 10));
+                r.rows.put(at + i, 1, tag + i64::from(from + i));
+            }
+        }
+    };
+    let base = Relation::try_create(&block, &spec, None).unwrap();
+    fill(base, 0, 100, 1000);
+    let fork = Relation::try_continue(&block, &spec, base, 100).expect("room in the base's block");
+    fill(fork, 100, 50, 2000);
+    // The base's writer goes on past the fork's start: rows the fork does not read.
+    fill(base, 100, 30, 9000);
+    let fork2 = Relation::try_continue(&block, &spec, fork, 120).expect("a continuation of a continuation");
+    fill(fork2, 120, 40, 3000);
+    fill(fork, 150, 5, 8000);
+    let at = block.offset_of(std::ptr::from_ref(fork2));
+    // The run killed a base row (3), one of the middle's (110) and one of its own (130).
+    let mut dead = vec![0u64; 3];
+    for id in [3u32, 110, 130] {
+        dead[id as usize / 64] |= 1 << (id % 64);
+    }
+    let (path, c) = store("continuation");
+    write(&path, &c, vec![put("p", 0, 1, KeptWhat::Rows(Box::new(Lent { block, at, dead })))]);
+    let mut want: Vec<Vec<i64>> = (0..160i64)
+        .filter(|id| ![3, 110, 130].contains(id))
+        .map(|id| vec![id % 10, if id < 100 { 1000 } else if id < 120 { 2000 } else { 3000 } + id])
+        .collect();
+    want.sort();
+    let got = read(&path, &c);
+    assert_eq!(got.len(), 1);
+    let mut rows = got[0].3.clone();
+    rows.sort();
+    assert_eq!(rows, want, "every live row down the chain, and none its bases' writers put past it");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// Decision 0456's open question, over a real store (`RERAIL_KEPT_STORE`): what each column of the chain would take
 /// under the candidate encodings. Leading columns and the rest apart; GROUPS' group widths; sample values. Run with
 /// `--ignored --nocapture`; prints its report.

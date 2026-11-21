@@ -596,6 +596,13 @@ fn delegates_and_names_are_the_lean_parsers() {
     ]);
 }
 
+/// A visibility modifier and `constructor` on two lines after a class's name: the lean lexer
+/// reads them on one line only (`modifier_then_constructor`), and refuses (a token's `without`).
+#[test]
+fn a_constructor_off_its_modifiers_line_is_refused() {
+    refused(&["class A\nprivate\nconstructor(x: Int)\n", "class A\n@Inject private\nconstructor(x: Int)\n"]);
+}
+
 #[test]
 fn variance_and_accessors_are_the_lean_parsers() {
     same(&[

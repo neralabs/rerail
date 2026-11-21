@@ -455,7 +455,7 @@ pub mod code_rule_dsl {
             #[cfg(any(target_os = "macos", target_os = "linux"))]
             #[path = "verify/bounded_repeat_proof.rs"]
             pub mod bounded_repeat_proof;
-            #[cfg_attr(any(target_os = "macos", target_os = "linux"), path = "compile")]
+            #[path = "compile"]
             pub mod compile_matcher {
                 pub use rerail_transducer::code_rule_dsl::transducer::packed::compile_matcher::*;
                 #[cfg(any(target_os = "macos", target_os = "linux"))]
@@ -640,6 +640,7 @@ pub(crate) fn test_languages() {
     use crate::code_rule_dsl::language::{self, Family, adapter::pack::{Pack, register}};
     use crate::code_rule_dsl::language::adapter::rr::Rr;
     use rerail_lang_python::code_rule_dsl::language::adapter::python::Python;
+    // Once, as the binary loads (`test_load`) and again where a test asks: the embedders are installed once.
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
         register(Family::Python, &Pack::<Python>::NEW);

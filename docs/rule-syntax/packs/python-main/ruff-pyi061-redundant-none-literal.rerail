@@ -1,5 +1,4 @@
 .policy "ruff-pyi061-redundant-none-literal" revision 1
-.guests off
 .description "Write None as plain None or in a union with None, not inside a Literal type; the meaning is the same and the union reads more clearly."
 .language python
 .mode steer

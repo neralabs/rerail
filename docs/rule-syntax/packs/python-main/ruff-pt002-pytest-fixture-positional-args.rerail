@@ -1,5 +1,4 @@
 .policy "ruff-pt002-pytest-fixture-positional-args" revision 1
-.guests off
 .description "Pass pytest fixture configuration such as scope or params as keyword arguments, not positionally, for clarity."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-pth121-os-path-samefile" revision 1
-.guests off
 .description "Use the samefile method of a Path object instead of os.path.samefile; pathlib reads better than string-based os.path functions."
 .language python
 .mode steer

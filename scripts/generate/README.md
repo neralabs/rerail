@@ -60,14 +60,9 @@ exemption `engine-layout`).
 | `native/crates/sql_lean/src/kinds.rs` | `native/crates/sql_lean/gen_kinds.py` | `python3 native/crates/sql_lean/gen_kinds.py` |
 | `native/crates/swift_lean/src/kinds.rs` | `native/crates/kotlin_lean/gen_kinds.py` | `python3 native/crates/kotlin_lean/gen_kinds.py swift` |
 | `native/crates/vue_lean/src/kinds.rs` | `native/crates/vue_lean/gen_kinds.py` | `python3 native/crates/vue_lean/gen_kinds.py` |
-| `native/crates/tape_format/src/generated_reads.rs` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_tape_crates_reads_are_these` |
-| `native/crates/ukl/lib/ukl/reads/tape.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_kernels_reads_are_these` |
 | `native/crates/ukl/lib/ukl/reads/view.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_view_kernels_reads_are_these` |
-| `native/crates/ukl/lib/ukl/reads/tape_z.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_16z_kernels_reads_are_these` |
-| `native/crates/blocks/src/generated_reads.rs` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_reads_are_these` |
 | `native/crates/ukl/lib/ukl/reads/relation.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_blocks_kernels_reads_are_these` |
 | `native/crates/ukl/lib/ukl/reads/ids.h` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_kernels_reads_are_these` |
-| `native/src/code_rule_dsl/facts/vtab/syntax/id_reads.rs` | `native/crates/clif/src/reads.rs` | `RERAIL_WRITE_READS=1 cargo test -p rerail-clif the_facts_id_reads_are_these` |
 | `native/src/code_rule_dsl/language/adapter/pack.rs` | `tools/cratify/packgen.py` | one step of the crate split (`tools/cratify/regenerate.sh`) |
 | `tools/cratify/test-hosts.tsv` | `tools/cratify/hosts.py` | `tools/cratify/regenerate.sh <index dir> <work dir>` (its fixpoint loop) |
 | `tools/cratify/runtime-hosts.tsv` | `tools/cratify/runtime_hosts.py` | `python3 tools/cratify/runtime_hosts.py` over a split's test run |

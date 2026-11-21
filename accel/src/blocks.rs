@@ -112,7 +112,7 @@ mod tests {
         let may = policy(&need(Writes::Churn, Device::May)).unwrap();
         assert!(may.has_free_list());
         assert!(!may.in_slab(), "host memory, though the budget has room");
-        // The process's device, whatever its backend (decision 0440 step C), where the GPU lane is (step E).
+        // The process's device, whatever its backend (decision 0440 steps C and E).
         #[cfg(gpu_lane)]
         if let Some(layer) = crate::gpu::shared::layer() {
             assert!(must.unwrap().in_slab(), "a device block is a slab");

@@ -1,5 +1,4 @@
 .policy "ruff-f822-undefined-export" revision 1
-.guests off
 .description "List only names the module actually defines in its __all__ (outside __init__.py); an undefined entry breaks star imports."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-pie800-unnecessary-spread" revision 1
-.guests off
 .description "Write the entries directly instead of spreading a dict literal into another Python dict literal."
 .language python
 .mode steer

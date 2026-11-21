@@ -653,7 +653,7 @@ edge2(v, t, l) :- known(v, t, l).
 
 sect("Code inside code", [
     "Code often holds other code: SQL in a Python string, a script in an HTML page, a type annotation written as a string. A rule reaches such text through <code>parsed(s, grammar, root)</code>: the root of the code at node <code>s</code>, read in that grammar, whose kinds the rule then names in it.",
-    "A string a rule parses is a value: one tree per text and grammar, whichever strings hold it, parsed only because a rule asked. A program the file's grammar holds (an HTML page's scripts and styles, a Vue component's view, a Markdown file's inline text) is part of its file: its language declares it, it is read as the file is, and its nodes have the file's lines. A policy that should see only real files says <code>.guests off</code>.",
+    "A string a rule parses is a value: one tree per text and grammar, whichever strings hold it, parsed only because a rule asked. A program the file's grammar holds (an HTML page's scripts and styles, a Vue component's view, a Markdown file's inline text) is part of its file: its language declares it, it is read as the file is, and its nodes have the file's lines. A run reads another language's files for the programs they hold in its own only when it says <code>.embedded on</code>.",
 ], [
  ("rr", """
 // The SQL a Python call passes to execute(): asked for by the rule that reads it.

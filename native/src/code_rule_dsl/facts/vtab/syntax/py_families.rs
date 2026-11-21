@@ -81,7 +81,7 @@ pub struct Py {
 impl Py {
     /// `p`'s place in `batch` (documents are in key order).
     pub(crate) fn at(batch: &Batch, p: &Projected) -> usize {
-        batch.docs.binary_search_by_key(&p.key, |q| q.key).expect("a document of the batch")
+        batch.docs.position(p.key).expect("a document of the batch")
     }
 
     /// Document `p`'s imports' screen, made on its first read.
@@ -93,6 +93,9 @@ impl Py {
 }
 
 impl BoundFamilies for Py {
+    fn is_made(&self, family: usize) -> bool {
+        if family == 3 { self.argument_rows.get().is_some() } else { self.rows.get().is_some() }
+    }
     fn rows<'b>(&'b self, batch: &'b Batch, family: usize) -> &'b Relation {
         if family == 3 {
             self.arguments(batch)

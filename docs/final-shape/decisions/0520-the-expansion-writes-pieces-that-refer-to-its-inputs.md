@@ -153,7 +153,21 @@ the stack. So the lists' count is one a level, and every other store is flat.
    passes.
 2. Lists, argument expansions and joins as pieces (§1, §2). `tok`, `tflag`, `tchild`, `tdepth`
    and `texp` go. The flat test passes on tokens (now pieces) and arguments.
-3. The output as pieces (§3), `pp_if` and the host's read through them.
+3. The output as pieces (§3), `pp_if` and the host's read through them. Done:
+   - the output is five columns as the tokens' store is (`OUT`, `OUT_CAP` pieces), each piece at
+     its tokens' place;
+   - a top call's list is walked into it as an argument's expansion is into its block (`base` its
+     pieces, `tat` its tokens), from a second scan of the top level, its pieces a token
+     (`OPV`, `OPBASE`, `OPTOTAL`);
+   - a run of top tokens no call covers is one `P_TOP` piece from its first, its length set once
+     every piece is placed (`PF_RUN`, `px_out_run`: to the next piece's place);
+   - `pp_if`'s readers (`#include` and `__has_include`'s names, `#if`, `#line`) read token `k`
+     through one accessor (`ov_tok`, a search of the places and the pieces' one decode,
+     `pc_tok_in`);
+   - the host makes refs from the pieces only for a caller that asks for tokens (`Exp::read`).
+
+   `the_output_is_pieces_that_refer_to_the_text`: 2,016 tokens are 20 pieces, where they were
+   2,016 words.
 4. A pending level's record is all that stays of it (§4). Done.
 
    | Chain (25, 50, 100 levels) | Tokens (pieces) | Lists | Arguments' entries |

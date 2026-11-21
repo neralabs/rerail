@@ -1,5 +1,4 @@
 .policy "ruff-d411-no-blank-line-before-section" revision 1
-.guests off
 .description "Put a blank line before each docstring section header, such as Args or Returns, to separate it from the text above."
 .language python
 .mode steer

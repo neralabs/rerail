@@ -1155,6 +1155,18 @@ pub(in crate::code_rule_dsl) fn enter_observed(to: SharedObserved) -> impl Drop 
     Entered(Some(to), OWN_OBSERVED.with(|o| std::mem::replace(&mut *o.borrow_mut(), own)))
 }
 
+/// While the guard lives, the run reads and observes into `chunk`'s observations (`chunk_observed`, Q88): bound in
+/// the run's context for the extent, so its jobs do too, and this thread's own added to them as it ends.
+pub(in crate::code_rule_dsl) fn enter_chunk_observed(chunk: SharedObserved) -> impl Sized {
+    // The thread's own observations end first, inside the binding (fields drop in order).
+    struct In<E> {
+        _own: E,
+        _bound: crate::code_rule_dsl::logic::profile::Bound,
+    }
+    let bound = crate::code_rule_dsl::logic::profile::bind(ObservedAt(chunk.clone()));
+    In { _own: enter_observed(chunk), _bound: bound }
+}
+
 /// Observed join work and relations, each with the corpus nodes of the runs that observed it (summed), so a later
 /// chunk reads a rate per node: per rule (`obs_rule`: its head and body), the rows into and out of every step of every
 /// probe of it (the planner's units of work: `native.tsv`'s `steps_in_out`); per relation, its rows when its stratum

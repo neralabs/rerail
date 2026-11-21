@@ -1,5 +1,4 @@
 .policy "ruff-sim212-if-expr-with-twisted-arms" revision 1
-.guests off
 .description "Swap the arms of a conditional expression that tests not x and falls back to x, so the test reads x without the negation."
 .language python
 .mode steer

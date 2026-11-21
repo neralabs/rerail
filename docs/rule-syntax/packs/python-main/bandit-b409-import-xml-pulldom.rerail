@@ -1,5 +1,4 @@
 .policy "bandit-b409-import-xml-pulldom" revision 1
-.guests off
 .description "Avoid importing xml.dom.pulldom to parse XML; it is open to XML attacks, so use defusedxml."
 .language python
 .mode steer

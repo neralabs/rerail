@@ -1,5 +1,4 @@
 .policy "ruff-ruf016-invalid-index-type" revision 1
-.guests off
 .description "Index list, tuple, string and bytes literals only with integers or slices; any other index type fails at runtime."
 .language python
 .mode steer

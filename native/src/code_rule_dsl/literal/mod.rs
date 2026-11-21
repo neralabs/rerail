@@ -14,6 +14,8 @@ pub mod offsets;
 // cratify: `printf` is rerail-lang-php's (it mounts it)
 // cratify: `python_fstring` is rerail-lang-python's (it mounts it)
 // cratify: `python_string` is rerail-lang-python's (it mounts it)
+// `regex` is this crate's: the rule-file language's regexes (decision 0495 §2), whose host no language crate holds
+pub mod regex;
 // cratify: `rust_format` is rerail-lang-rust's (it mounts it)
 // cratify: `scanf` is rerail-lang-php's (it mounts it)
 // cratify: `semantic` is rerail-lang-python's (it mounts it)

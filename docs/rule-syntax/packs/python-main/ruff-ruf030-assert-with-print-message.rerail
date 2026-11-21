@@ -1,5 +1,4 @@
 .policy "ruff-ruf030-assert-with-print-message" revision 1
-.guests off
 .description "Pass the message itself as the assert message instead of a print call; print returns None, so the assertion error is empty."
 .language python
 .mode steer

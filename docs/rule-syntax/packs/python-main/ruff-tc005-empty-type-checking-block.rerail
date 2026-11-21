@@ -1,5 +1,4 @@
 .policy "ruff-tc005-empty-type-checking-block" revision 1
-.guests off
 .description "Remove type-checking blocks that contain only a pass statement; an empty block does nothing and confuses readers."
 .language python
 .mode steer

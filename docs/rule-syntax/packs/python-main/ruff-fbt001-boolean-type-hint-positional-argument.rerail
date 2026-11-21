@@ -1,5 +1,4 @@
 .policy "ruff-fbt001-boolean-type-hint-positional-argument" revision 1
-.guests off
 .description "Make Python function parameters annotated as bool keyword-only; a bare True or False passed by position hides what it switches."
 .language python
 .mode steer

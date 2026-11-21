@@ -68,6 +68,10 @@ pub struct CompiledBlock {
     /// them out.
     pub pad: usize,
     pub extracts: Vec<usize>,
+    /// The output of the stream's newlines (`BlockNative::newlines`), where the body stores its rows: the format 16
+    /// tape's newline index is made from its words. None where the CPU's body makes no row of it (`cpu_unstored`):
+    /// a token loop's tier 1 (0177), which makes no mask, as the lean lexer makes none; its index is the scan's.
+    pub newlines: Option<usize>,
     totals: Vec<usize>,
     /// The outputs with a running count, extracts' and totals' together.
     counted: Vec<usize>,
@@ -1161,14 +1165,14 @@ fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, g
     let n = native.insts.len();
     let known = ascii_known(native, plan);
     let output: Vec<bool> = (0..n).map(|x| native.outputs.contains(&(x as u16))).collect();
-    // A gated region's values, its members and its own values on the vectors, are made in its
-    // branch (decision 0423), never in this one.
-    let mut gated: Vec<bool> = plan.region_of.iter().map(Option::is_some).collect();
+    // A gated region's values, its members and its values on the vectors, are made in its branch (decision 0423), not
+    // in this one: a class of non-ASCII bytes only a region reads (a `\w` past ASCII) was made on every non-ASCII block.
+    let mut regional: Vec<bool> = (0..n).map(|x| plan.region_of[x].is_some()).collect();
     for x in plan.regions.iter().flat_map(|r| &r.vectors) {
-        gated[*x] = true;
+        regional[*x] = true;
     }
     let inside: Vec<bool> = (0..n)
-        .map(|x| e.live[x] && known[x].is_some() && !matches!(native.insts[x], BlockInst::Const(_)) && plan.full[x].is_none() && !gated[x] && grouped[x].is_none())
+        .map(|x| e.live[x] && known[x].is_some() && !matches!(native.insts[x], BlockInst::Const(_)) && plan.full[x].is_none() && !regional[x] && grouped[x].is_none())
         .collect();
     // A value on the vectors is made from its operands' vectors, again in each reader
     // (`Lanes`): one past the branch that reads a known value there would make it on every
@@ -1191,7 +1195,10 @@ fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, g
         }
         for o in inst.operands() {
             let on_vectors = plan.lanes[o] && plan.lanes[x] && !words[x];
-            if inside[o] && !inside[x] && !on_vectors {
+            // A region's value on the vectors leaves for no member of it: the region makes it in its own branch
+            // (decision 0423), and this way runs on blocks the region skips.
+            let regions_own = plan.region_of[x].is_some_and(|r| plan.regions[r].vectors.contains(&o));
+            if inside[o] && !inside[x] && !on_vectors && !regions_own {
                 exit[o] = true;
             }
             if inside[x] && !inside[o] && !(plan.lanes[o] && plan.lanes[x]) {
@@ -1958,8 +1965,9 @@ impl Emit<'_, '_> {
         }
         // Its values on the vectors that a member reads as words (one made from words,
         // `Emit::as_words`): their masks made here, never in a block that skips the region
-        // (decision 0423), and so is one made from words itself (the ASCII split's reader of a
-        // word it gives, `ascii_split`). The others are made on the vectors where read.
+        // (decision 0423); and those made from words themselves (bit logic over a word the ASCII
+        // split gives, `ascii_split`'s `words`), which no reader makes on the vectors: unmade, a
+        // member read them as 0. The others are made on the vectors where read.
         let as_words: Vec<usize> = reg.vectors.iter().copied().filter(|&v| self.live[v] && (self.masked[v] || self.as_words[v])).collect();
         for v in as_words {
             self.emit(&mut *f, v);
@@ -2787,6 +2795,7 @@ pub fn compile(native: &BlockNative) -> Result<CompiledBlock, Error> {
         delay: native.delay,
         pad: usize::from(native.pad),
         extracts: native.extracts.clone(),
+        newlines: native.newlines.filter(|o| !native.cpu_unstored().contains(o)),
         totals: native.totals.clone(),
         counted: counted(native),
         ascii_branch: last.ascii_branch,
@@ -4272,6 +4281,14 @@ pub(crate) fn tables_consts(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (V
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
     let slots = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.slots as i64);
+    (tables, mult, slots)
+}
+
+/// `tables_consts` in tier 2's code: the addresses as its tables' symbol's (`native_cpu_stream::table_address`).
+pub(crate) fn tables_symbols(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (Value, Value, Value) {
+    let tables = crate::native_cpu_stream::table_address(f, t.words.as_ptr());
+    let mult = f.ins().iconst(types::I64, t.table.mult as i64);
+    let slots = crate::native_cpu_stream::table_address(f, t.words.as_ptr().wrapping_byte_add(t.slots));
     (tables, mult, slots)
 }
 

@@ -593,6 +593,248 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 44, done: a string's place its argument, a dispatch's value named (decision 0526)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A string's place | `self.string(sink, v, field)`: an argument | `s.part_at`, set by the `"` arm, read by `string` | `s.string(s.start + 1)?`, `fn string(&mut self, mut at: u32)`; no field |
+| Where a dispatch goes on to | `Label::ObjectBegin`, … | `d = 3;`, `3 => {` | `d = L::Close41;`, `L::Close41 => {`: one enum, each named for its place |
+
+Left, set beside the lean parser's `walk` (0526, "Left"): three dispatch loops and arms that only pass a value on
+where it has one `match label`; names of places, not of the grammar's meaning; the token's state in `S`'s fields
+where it keeps locals; `token_all`'s clamp and end test per token where `take!()` is one load; a writer call per node
+that can fail; empty containers through the general path; the end tested at each token.
+
+## Step 43, done: a token's end made only where a word reads it (decision 0538)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A punctuation's end | none kept; an end computed where it is written | `s.rec_end = s.start + 1;` in every one-byte arm | only where a word reads it (`end_read`): `}` and `]`, not `,`, `:`, `{`, `[`, `"` |
+| The last token's end in a string | none | copied at the loop's head and after each content | only where a word after the closer reads it: in JSON, nowhere |
+
+Left: `s.part_at`, a field where the lean parser passes an argument (0538, "Left").
+
+## Step 42, done: each word once, one room check, coded refusals, the source laid out (decision 0537)
+
+These close the five gaps found when the generated JSON Rust was set beside simdjson's and the lean parser's:
+
+| | simdjson / the lean parser | before | now |
+|---|---|---|---|
+| A string, an atom, a number | `parse_string`, `is_valid_*_atom`, `parse_number`; `string`, `primitive`: one each, called from each place | the loop and the tests written again at each place (four string loops) | `fn string`, `fn atom`, `fn number`, one each, called from each place |
+| The stack's room | sized once from the input | `open_node` tests `open_cap` every node | reserved for the grammar's bound (`open_bound`), tested once at the start |
+| The tests' language | — | the files' keys: a word no file reached refused | every key a direct run writes (`direct_entries`), then the files' |
+| An error | a `Code`, after `cold_path()` | `Err(false)` | `refuse(why::…)`, `#[cold]`, its reason returned and named by the host |
+| The source's form | indented, labels named by state | flat, `'b21`, `'m129` | indented, `'token_130: loop`, `break 'to_close_22;` |
+
+The bound's formula, the reasons and the label scheme are the implementer's; 0537 lists what the tests hold and
+what they do not. Every run's calls are limited to 1,024 nested, the JIT's and the interpreter's too (the user; 0537).
+
+## Step 41, done: the kinds' numbers constants (D7, decision 0535); the tape's reads written directly (0534)
+
+**D7.** A direct run's node numbers are literals at their words, as the lean parser writes a kind's constant and
+simdjson a container's character. The generator takes the language whose numbers it writes
+(`rust_source_16(…, lang)`). Each `OPEN` is then `s.open16(12)?`, each `LEAF` `s.leaf16(4, s.rec_end)?`, and a
+keyword leaf a `match` of its word to its number, as the lean lexer's keyword `match`. A word whose node the language
+has no number for refuses the file there (`UNNUMBERED`), as the JIT's run does at `fail::NUMBER`. The source states
+its language (`LANG`, the table's fingerprint), and its runs take that language:
+
+- rr's AOT build is generated for rr's shipped table (`f16::lang(13)`), the language production writes rr with;
+- the tests generate for one language a grammar, every key its documents' format 15 tapes hold, made before the
+  Rust is written, in place of one table a file.
+
+| | simdjson / the lean parser | before | now |
+|---|---|---|---|
+| D7. A kind's code | a constant (`'['`, `'t'`) | `number16`: `numbers[k]` loaded every node, from the language given at run time | a literal at the word; a keyword's by a `match` of its word |
+
+**The tape's reads** (`tape_format/src/reads.rs`, 0534) are a hand-written reader of format 16 and 15. They are no
+longer the reads' CLIF translated, and a test holds them equal to the JIT's. The relations' and the numbering's Rust
+reads are still translated, and are next.
+
+## Step 40, done: one writer in Rust written directly, one stack (decision 0533)
+
+Order items 2, 3 and 5 of step 38, and D2. The writer is one Rust source written directly,
+`tape_format/src/writer16.rs`, in simdjson's `tape_builder` and `tape_writer` shape:
+
+- its state's named fields;
+- the block switch, the side lists, `settle`, `finish` and 16z's pieces and LZ4 as plain functions;
+- each cell a store at its column's offset.
+
+The host's writer runs it, and a generated tier 2 holds the same text as its module `w`. No Rust is translated
+from the writer's CLIF any more; the CLIF is the JIT's and the device's.
+
+A direct run has one stack of open nodes, the writer's frames, as simdjson has `open_containers`. The walk's slot
+for a call's number is the frame's free word, and `close` and `accept` read the writer's counts. Next to the
+references:
+
+| | simdjson / the lean parser | before | now |
+|---|---|---|---|
+| D2. The open nodes | one stack | tier 2's (`S::open`, `nopen`, `nodes`) and the writer's frames | the writer's frames; the walk's slot at byte 12 |
+| D5. Calls | `allocate` out of line | the cold paths through the translated ops | the cold paths plain Rust functions, `#[cold] #[inline(never)]` at their calls |
+| D8. The source's form | named fields, expressions | the translation's `let mut vN`, offsets from `desc` | named fields, expressions, everywhere in the writer |
+
+Left: D7, the kinds' numbers as constants. A number is the language's code table's, given at run time (the tests
+make one per file from format 15's first-use table), so constants need one table per language, known when the
+Rust is generated. Done in step 41 (decision 0535).
+
+## Step 39, done: the writer's per-node work written directly (decision 0532)
+
+Order item 1 of step 38. `rust_stream` writes `W16`, a direct run's writer, in the lean parser's `Walk` shape. Its
+state is a field of the walk, and `open16`, `leaf16`, `close` and `accept` call its methods. Next to the two
+references:
+
+| | simdjson / the lean parser | the generated Rust, before | now |
+|---|---|---|---|
+| The writer's state | fields of a local struct (`tape_builder`, `Walk`) | the ops' `State` behind `desc`, loaded and stored every op | `S::wr`, a `W16`: read once at the start, stored only before a cold call and at the end |
+| A node's place | a cursor (`next_tape_loc`), a cursor a column | `(b, j)`, the block's room from the table, every op | the current block's room kept; a cell at `room + at[r] + j * w[r]` |
+| The calls a node | none | `w_open` + `w_commit`, `w_leaf` + `w_commit`, `w_close`, out of line | `open`, `leaf`, `close` inline; no commit |
+| The cold paths | `allocate`, out of line | inside each op | a block's room, a side list, `settle`, a failure: `#[cold] #[inline(never)]`, still the ops |
+| The source's form | named fields, expressions | SSA values as `let mut vN`, offsets as literals | named fields, expressions, in the per-node work |
+
+Left of step 38's order: the cold paths and the document's end written directly, so that the `w` module leaves the
+source (items 2 and 3); one stack of open nodes, not tier 2's beside the writer's frames (D2); the kinds' numbers
+constants (D7); the host's writer (item 5).
+
+## Step 38: the writer's ops next to simdjson's tape builder and the lean parser's `Walk`
+
+**Why this step.** Steps 35–37 picked and kept their cuts by profiles and instructions a byte. The user (2026-11-20):
+"no decisions on cycle counts, instruction counts, time, or anything like that. I want you to make the GENERATED RUST
+CODE MORE LIKE THE SIMDJSON AND LEAN PARSER CODE." This step reads the generated Rust of the simdjson form's format 16
+run (`json_tests::simdjson_forms_rust_trees_are_the_jits`, kept with `RERAIL_KEEP_AOT=1`) beside:
+
+- simdjson's stage 2: `json_iterator::walk_document`, `tape_builder` and `tape_writer`;
+- the lean parser's stage 2: `json_lean/src/stage2.rs`, `Walk::open`, `close` and `leaf`.
+
+The walk itself (`r0`) already has `walk_document`'s shape (the table above). What differs is what each node's word
+calls: `open16`, `leaf16` and `close`, which call the writer's ops `w_open`, `w_leaf`, `w_close` and `w_commit` in the
+module `w`. The module is the ops in CLIF (`clif/src/writer.rs`), translated to Rust.
+
+**The differences, as source shape.**
+
+| | simdjson | the lean parser | the generated Rust |
+|---|---|---|---|
+| D1. Where the writer's state is | `tape_builder` is a local of `parse_document`. `tape.next_tape_loc` and `current_string_buf_loc` are its fields, and every visit is inline, so they stay in registers for the whole walk | `Walk` is a local struct: the columns' cursors, `n`, `block_base`, `last_start` | the writer's `State`, behind `desc`. Every op loads what it needs from it (`n`, `prev_start`, `source_len`, `open_len`, the parts' offsets) and stores `n`, `prev_start` and `open_len` back |
+| D2. The open nodes | one stack, `open_containers[depth]` (`tape_index`, `count`), and `is_array[depth]` | `open` gives back `ord`, and `close(ord, end)` takes it: the walk's own state | two stacks and two node counts: tier 2's (`S::open`, `nopen`, `nodes`) and the writer's (the `OPEN` part, 24 bytes a frame: node, children, last child, start; `State::n`, `open_len`) |
+| D3. A node's place | `*next_tape_loc++ = …`: one cursor | `self.code.add(n).write_unaligned(c)`: a cursor a column; `block_base` set where `n % STRIDE == 0` | each op works out `(b, j) = (n >> 10, n & 1023)`, then the block's room from the table (`room_of`) and its side area (`area_of`), then each cell's address from the column's offset |
+| D4. Checks | the depth, once a container, in the walk; the tape's room once, at `allocate` | none: the columns are reserved for the bound once (`reserve_columns`) | the depth in the walk and the open part's room in `w_open`; in every op, the start's and end's bounds (`start < prev`, `start > len`, `n + 1 >= MAX_NODES`), a node outside the root, a close with none open; tier 2's `number16` checks for `u32::MAX` |
+| D5. Calls | every visit `simdjson_inline`; nothing called a node | every method `#[inline(always)]`; `reserve_columns` alone `#[inline(never)]` | `w_open`, `w_close`, `w_leaf` are `#[inline(never)]` and called at every node; inside them, calls for the first node of a block (`w_new_block`), the slot of a block's first node (`w_put`), a block that is final (`w_settle`) and a failure |
+| D6. A node made final | written final, but for a container's start word, patched at `end_container` | written final | `w_commit` after every `w_open` and `w_leaf`: the frontier moved to `n`, though in a direct run every node but the open ones is final as it is made |
+| D7. A kind's code | a constant (`'['`, `'t'`) | `code_of`: a table the walk keeps, its first use cold | `number16`: `numbers[k]` loaded every node, from the language given at run time |
+| D8. The source's form | named fields, expressions | named fields, expressions | the CLIF's SSA values as `let mut vN` declared at the top (hundreds an op), each phi as an assignment before a `break`, each field as an offset from `desc` (`v0 + 128`) |
+
+**The order, by what unblocks what.** Corrected the same day (the user: "we should not be translating Rust from
+CLIF. We should be generating it directly. I already told you to do that."): the order first planned these as edits
+of the ops' CLIF, whose Rust is a translation. As tier 1's Rust is written directly (`rust_block`, 0451), so is the
+writer's:
+
+1. **`rust_stream` writes the writer's per-node work directly**, as methods of the walk's state, in the lean
+   parser's `Walk` shape: the node count, the last start, one stack of open nodes (tier 2's, its frames the
+   writer's), the current block's room. Each cell is a store at its column's offset from the block, its width and
+   escape constants of the generation (D1, D2, D3, D5, D8). The rules are the reference writer's
+   (`f16/reference.rs`): `open`, `close`, `leaf`, `put`, `put_code`.
+2. **The block switch and the side lists are cold**, as simdjson's `allocate` is: a block's room once every 1,024
+   nodes, the room checked there for its nodes (D4, R14 kept), an escaped value's side-list entry, a block made
+   final (`settle`, its presence). No commit a node in a direct run (D6).
+3. **The document's end written directly**: `finish` (the last block moved down, the tail laid) and 16z's
+   compression, so the `w` module is no longer in the generated source.
+4. **The kinds' numbers constants** where the language is known at generation (D7).
+5. **The host's writer** (`f16::Writer`, R16) the same direct Rust, not the translation; the ops' CLIF stays the
+   JIT's and the device's (R15), checked against the reference as now (R13).
+
+Each step is judged on the generated Rust beside `Walk` and `tape_builder`, and kept by the tests that compare
+the tape with the JIT's and the reference's byte for byte (`aot_tests`, `tier2_writes_format_16_by_the_ops`).
+
+**Steps 35–37 re-decided by shape.**
+
+- **Step 35 (0528), one writer kept from one document to the next:** kept. simdjson keeps its `parser`, its
+  buffers allocated once; the lean parser reserves its columns once (`reserve_columns`).
+- **Step 36 (0529), the newline index from tier 1's bits:** kept. Neither reference has a newline index, but
+  simdjson's stage 1 makes, in its one pass over the bytes, every mask stage 2 needs. The amendment (0529 §5) is
+  the lean lexer's shape: a token loop's tier 1 makes no mask, and its index is the scan's.
+- **Step 37 (0530), the per-node ops:** `w_leaf` as one op is kept: it is the lean parser's `leaf`, `open` and then
+  its two writes. The other cuts (`settle` only where needed, `w_commit` hot, a node's block once an op) are steps
+  inside the ops whose shape items 1–4 replace. They are superseded by this order (the ops' CLIF is no longer the generated Rust's source), not kept as reasons.
+- Their counts tables are withdrawn as reasons.
+
+## Step 37, in progress: the writer's per-node ops (decision 0530)
+
+The third of step 34's three changes. About two thirds of what was left was the writer's ops, called at every node:
+about 300 instructions a node, where simdjson writes one tape word a value. The cuts so far:
+- `w_leaf` is one op, not `w_open` then `w_close`;
+- `w_close` makes no call to `w_settle` unless the block can be final;
+- `w_commit`'s common case is inlined;
+- each op works out its node's block (room, side area) once, not at each cell;
+- a cell's mask is its array's escape, already loaded;
+- a side-list entry past the list's last is placed with no search.
+
+| | `twitter.json`, instr/byte | `numbers.json` |
+|---|---:|---:|
+| Before | 48.7 | 45.0 |
+| Now | 38.4 | 34.6 |
+| simdjson | 5.8 | 14.2 |
+
+## Step 36, done: the newline index from tier 1's bits (decision 0529)
+
+The second of step 34's three changes. Tier 1 now outputs the stream's `\n` bytes (`BlockProgram::newlines`), and the
+format 16 writer makes the newline index from those words (`newlines::index_of`, through `Writer::begin_with`), not by
+scanning the source again. The index is the scan's, byte for byte.
+
+Instructions a byte are unchanged (`twitter.json` 48.7, `numbers.json` 45.0): `memchr` cost few instructions, but its
+pass over the source cost time. In a `twitter.json` profile the index went from about 13% of the parse to about 4%.
+Tier 1 went from 4.35 to 4.58 instructions a byte, for the one output more.
+
+Left from step 34: the writer's ops, which are most of what remains, against simdjson's tape writes.
+
+## Step 35, done: one writer from one document to the next (decision 0528)
+
+The first of step 34's three changes. Tier 2's format 16 run now writes into a writer the caller keeps, as simdjson's
+caller keeps its parser (`Parser::image16_in`). `Writer::begin` keeps each part's buffer and zeroes no room. Only the
+presence's words, and in 16z the buckets and the LZ4 tables, are set for each document. A tape given back
+(`Writer::recycle`) is the next one's room.
+
+| File | A writer a document | One writer | simdjson |
+|---|---:|---:|---:|
+| `twitter.json`, instructions a byte | 59.9 | 48.7 | 5.8 |
+| `numbers.json` | 56.2 | 44.6 | 14.2 |
+
+Ours against simdjson's time: 13.5× → 9.4× on `twitter.json`. Of what is left on `twitter.json`, in a profile: the
+writer's ops about 66%, the walk (`r0`) 16%, the newline index 13%. The zeroing is gone.
+
+## Step 34, measured: the simdjson form end to end against simdjson (order item 4)
+
+`json_tests::simdjson_form_against_simdjson` times both on simdjson's own inputs:
+- ours: tier 1 on Cranelift, then tier 2 as the generated Rust (rustc, `-C opt-level=3`), writing
+  format 16 (`image16`);
+- simdjson's: its DOM parser, stage 1 and stage 2 to its tape (`rerail_simdjson_native::structurals`).
+
+Measured with `--profile profiling` (debug gives the same counts), arm64, one thread, load about 20,
+the median of 50 runs:
+
+| File | Ours, instr/byte | simdjson, instr/byte | Instructions | Time |
+|---|---:|---:|---:|---:|
+| `twitter.json` (631 KB) | 60.6 | 5.8 | 10.4× | 13.5× |
+| `numbers.json` (150 KB) | 56.9 | 14.2 | 4.0× | 4.1× |
+
+Tier 1 alone is 4.35 instructions a byte on `twitter.json` (0.20 ns a byte). The rest is 55, about
+640 instructions per simdjson structural.
+
+Where the rest goes (`RERAIL_SPIN` and `sample`, `twitter.json`, about 4,300 samples):
+
+| Where | Share |
+|---|---:|
+| zeroing the format 16 writer's room (`Writer::reserve_run`, `reserve_final`, `Writer::new`) | ~30% |
+| the writer's ops, in the generated Rust (`w::f…`) | ~45% |
+| the walk, `r0` (`walk_document`'s counterpart) | ~11% |
+| format 16's newline index of the source (`newlines::index`, in `Writer::new`) | ~9% |
+| tier 1 | ~5% |
+
+So the walk is not the gap. The gap is around it, in format 16's writer:
+- **A writer per document.** `write16` makes a new `Writer` for each file. Its room is reserved for
+  the worst case, every block made final at once: `LAID_MAX`, about 37 KB a block. `Vec::resize`
+  zeroes it all, about 3 MB for `twitter.json`. simdjson allocates its tape once per parser and
+  reuses it.
+- **The newline index is a pass of its own** over the source. Tier 1 already reads every byte.
+- **The writer's ops cost four times the walk.** simdjson writes a tape word per value.
+
 ## Step 33, done: Kotlin's steps compile in seconds, not minutes (decision 0484)
 
 Step 29 ran Kotlin's ladder, but each step took 5 to 7 minutes to compile, almost all of it in
@@ -905,7 +1147,7 @@ it out (merged from the hub's tape branch, 664c1f8411), has no such copy: its ta
 writer moves only the last block's columns down and lays the side lists (`w_finish`).
 
 0434's writer is a set of ops written once in CLIF (`w_open`, `w_leaf`, `w_close`, `w_commit`,
-…), with Rust generated from them (`tape_format`'s `generated_writer`). The JIT's tier 2 writes
+…), with Rust generated from them (`tape_format`'s `generated_writer`; since step 40, decision 0533, the writer's Rust is written directly, `writer16.rs`). The JIT's tier 2 writes
 format 16 through them (0434's R17), but from its working rows: at each top-level close, a pass
 over the nodes since the last one opens each in the ops (`native_cpu_tape::pass`). That is a
 second walk over every node.

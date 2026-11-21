@@ -1,5 +1,4 @@
 .policy "ruff-n814-camelcase-imported-as-constant" revision 1
-.guests off
 .description "Keep the alias of an imported CamelCase name in CamelCase; an UPPER_CASE alias makes readers mistake a class for a constant."
 .language python
 .mode steer

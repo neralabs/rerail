@@ -129,19 +129,29 @@ fn demand_body(
 }
 
 /// A demand's rule `install` writes: of rule `rule`'s read at literal `read` (its key at the columns), its parts.
-struct Proof {
-    rule: RuleId,
-    read: usize,
+pub(super) struct Proof {
+    pub(super) rule: RuleId,
+    pub(super) read: usize,
     own: bool,
-    parts: Vec<Part>,
+    pub(super) parts: Vec<Part>,
 }
 
 fn install(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTreeSet<String>, require_anchor: bool) -> Result<bool, String> {
-    install_named(program, rel, cols, products, require_anchor, PREFIX)
+    install_named(program, rel, cols, products, require_anchor, PREFIX, &|_, _| true)
 }
 
-/// `install` with the demand relation named `prefix` then `rel`: the deferred joins pass's (`DEFERRED_PAIRS`) too.
-pub(super) fn install_named(program: &mut Program<'_>, rel: &str, cols: &[usize], products: &BTreeSet<String>, require_anchor: bool, prefix: &str) -> Result<bool, String> {
+/// `install` under another prefix: the deferred joins' pair relations (`DEFERRED_PAIRS`, decision 0488). None is
+/// installed unless `restricts` finds the demand's rules restrict the relation (a request that asks for every key
+/// costs a join of its own and restricts nothing).
+pub(super) fn install_named(
+    program: &mut Program<'_>,
+    rel: &str,
+    cols: &[usize],
+    products: &BTreeSet<String>,
+    require_anchor: bool,
+    prefix: &str,
+    restricts: &dyn Fn(&Version, &[Proof]) -> bool,
+) -> Result<bool, String> {
     let name = format!("{prefix}{rel}");
     if program.columns(&name).is_some() {
         return Ok(false);
@@ -206,7 +216,7 @@ pub(super) fn install_named(program: &mut Program<'_>, rel: &str, cols: &[usize]
             proofs.push(Proof { rule: rule.id(), read: i, own, parts });
         }
     }
-    if producers.is_empty() || readers == 0 || (require_anchor && !anchored) {
+    if producers.is_empty() || readers == 0 || (require_anchor && !anchored) || !restricts(v, &proofs) {
         return Ok(false);
     }
     let columns: Vec<(String, String)> = {

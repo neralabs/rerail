@@ -529,7 +529,7 @@ fn the_backends_find_the_same_keys_on_real_files() {
     let dir = temp("phase4");
     let (paths, _) = sample_of(&dir, 4, 0);
     assert!(paths.len() == 4 || std::env::var_os("RERAIL_S7_FIXTURES").is_some() || std::env::var_os("RERAIL_S7_FILES").is_some(), "{} files", paths.len());
-    #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
+    #[cfg_attr(not(any(target_os = "macos", target_os = "linux")), allow(unused_mut))]
     let mut stores = vec![dir.clone()];
     // The device's backends where there is one (the device layer's targets, decision 0440 step E).
     let device = if cfg!(any(target_os = "macos", target_os = "linux")) { &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)][..] } else { &[] };

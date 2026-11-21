@@ -32,3 +32,5 @@ libc = "0.2.189"
 [target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
 # The block programs' Metal backend, for the Metal checks (`metal_tests`).
 rerail-metal = { path = "../metal", features = ["test-hooks"] }
+# simdjson itself, the measure the simdjson form is timed against (`simdjson_form_against_simdjson`).
+rerail-simdjson-native = { path = "../simdjson_native" }

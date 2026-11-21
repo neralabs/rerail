@@ -438,8 +438,21 @@ impl Model {
                         let symbol = pf.column_type(rel, c) == Some("sym");
                         (col(&al, &self.col(rel, c)), symbol)
                     };
+                    // A bounded aggregate's values are those on its bound's side (decision 0511).
+                    if let (AggRef::Bounded { max, bound, strict }, Some(o)) = (op, over) {
+                        let at = env.get(bound).ok_or_else(|| Error::Plan(format!("${} is unbound in SQL", b.var(bound))))?.clone();
+                        let side = match (max, strict) {
+                            (true, true) => Op::Less,
+                            (true, false) => Op::LessOrEqual,
+                            (false, true) => Op::Greater,
+                            (false, false) => Op::GreaterOrEqual,
+                        };
+                        conds.push(Expr::Binary { operator: side, left: Box::new(column(o).0), right: Box::new(at) });
+                    }
                     let what = match (op, over) {
                         (AggRef::Count, _) | (_, None) => call("count", vec![Expr::All]),
+                        (AggRef::Bounded { max: false, .. }, Some(o)) => call("min", vec![column(o).0]),
+                        (AggRef::Bounded { max: true, .. }, Some(o)) => call("max", vec![column(o).0]),
                         (AggRef::Min, Some(o)) => call("min", vec![column(o).0]),
                         (AggRef::Max, Some(o)) => call("max", vec![column(o).0]),
                         // Soufflé's sum is 0 over no rows.
@@ -467,7 +480,7 @@ impl Model {
                     if let Some(bound) = env.get(var) {
                         wh.push(eq(bound.clone(), value));
                     } else {
-                        if matches!(op, AggRef::Min | AggRef::Max) {
+                        if matches!(op, AggRef::Min | AggRef::Max | AggRef::Bounded { .. }) {
                             wh.push(Expr::Unary { operator: SqlUnaryOperator::IsNotNull, input: Box::new(value.clone()) });
                         }
                         env.set(var, value);

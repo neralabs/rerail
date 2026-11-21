@@ -1,5 +1,4 @@
 .policy "ruff-pth120-os-path-dirname" revision 1
-.guests off
 .description "Use the parent property of a Path object instead of os.path.dirname; pathlib reads better than string-based os.path functions."
 .language python
 .mode steer

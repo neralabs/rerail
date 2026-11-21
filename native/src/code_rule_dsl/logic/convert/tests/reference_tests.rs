@@ -173,7 +173,7 @@ fn reference_edge_is_ws_reference_graph_on_the_fixtures() {
 /// name and a class's own, `self`, `cls`, `super()`, a constructor field (`_conn` from parameter `conn: Conn`), a
 /// parameter's declared type, both sibling links, a star import, a module member no definition gives, and a file
 /// that does not parse.
-const PACKAGE: [(&str, &str); 8] = [
+pub(super) const PACKAGE: [(&str, &str); 8] = [
     ("pkg/__init__.py", "from .base import Base\nfrom .store import Store\n__all__ = [\"Base\", \"Store\"]\n"),
     ("pkg/conn.py", "class Conn:\n    def execute(self, q):\n        return q\n\n    def close(self):\n        pass\n"),
     ("pkg/base.py", "class Base:\n    def setup(self):\n        return self.prepare()\n\n    def prepare(self):\n        return 1\n"),

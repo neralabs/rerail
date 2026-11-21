@@ -66,10 +66,16 @@ modname(m, q) :- modnode(d, m), doc(d, _, q).
 // any `name` field (the name of a def/class or the keyword in `f(k=1)`), which are not reads.
 .decl nameref(n: node, x: symbol)
 nameref(n, x) :- kind(n, "identifier"), text(n, x), !field(_, "attribute", n), !field(_, "name", n),
-    !kwpat_key(n).
+    !kwpat_key(n), !pat_tail(n).
 // kwpat_key(n): the attribute name `x` in the class pattern `case Point(x=px)`, which is not a name read.
 .decl kwpat_key(n: node)
 kwpat_key(n) :- kind(k, "keyword_pattern"), child(k, n, 0).
+// pat_tail(n): a later part of a dotted class or value pattern, `PathLike` in `case os.PathLike()` and `sep` in
+// `case os.sep`: an attribute of the first name, not a name read.
+.decl pat_tail(n: node)
+pat_tail(n) :- kind(d, "dotted_name"), child(d, n, i), i > 0, child(p, d, _),
+    (kind(p, "case_pattern") ; kind(p, "class_pattern") ; kind(p, "dict_pattern") ; kind(p, "keyword_pattern") ;
+     kind(p, "union_pattern")).
 // rdefn(s, x, f): `def x(...)` or `class x:` statement f sits directly in scope s, so it binds x there.
 // e.g. in `def outer(): def inner(): ...`, rdefn(outer, "inner", <inner's def>).
 .decl rdefn(s: node, x: symbol, f: node)
@@ -144,10 +150,19 @@ star(s) :- kind(i, "import_from_statement"), child(i, w, _), kind(w, "wildcard_i
 // `global x` / `nonlocal x`: the scope's bindings of x are the module's / the enclosing function's.
 // decl(s, x, t): scope s declares x global (t = the module node) or nonlocal (t = nearest enclosing function or
 // module scope, skipping classes). e.g. `def f(): global n; n = 1` assigns the module's n, not a local.
-// Simplification: nonlocal takes the nearest enclosing fscope, not the nearest one that actually binds x.
 .decl decl(s: node, x: symbol, t: node)
 decl(s, x, m) :- kind(g, "global_statement"), child(g, i, _), text(i, x), nearest(g, s, scope), docof(g, d), modnode(d, m).
-decl(s, x, p) :- kind(g, "nonlocal_statement"), child(g, i, _), text(i, x), nearest(g, s, scope), nearest(s, p, fscope).
+// nonlocal: the nearest enclosing function that binds x itself, past one that declares x `nonlocal` too.
+decl(s, x, t) :- nl_try(s, x, t), nl_owns(t, x).
+.decl rnl(s: node, x: symbol)
+rnl(s, x) :- kind(g, "nonlocal_statement"), child(g, i, _), text(i, x), nearest(g, s, scope).
+.decl nl_try(s: node, x: symbol, p: node)
+nl_try(s, x, p) :- rnl(s, x), nearest(s, p, fscope), !kind(p, "module").
+nl_try(s, x, q) :- nl_try(s, x, p), !nl_owns(p, x), nearest(p, q, fscope), !kind(q, "module").
+// nl_owns(p, x): function p binds x as its own (a raw binding or a parameter, with no `nonlocal x` in p).
+.decl nl_owns(p: node, x: symbol)
+nl_owns(p, x) :- rbound(p, x), !rnl(p, x).
+nl_owns(p, x) :- param(p, x, _), !rnl(p, x).
 // rbound(s, x): some raw binding of x sits syntactically in s (parameters are excluded: they cannot be global).
 .decl rbound(s: node, x: symbol)
 rbound(s, x) :- rdefn(s, x, _).
@@ -194,17 +209,44 @@ bound_in(c, x) :- kind(c, "class_definition"), (x = "__qualname__" ; x = "__modu
 // assignment" check), which is why bound_in ignores statement order.
 .decl walk(n: node, x: symbol, s: node)
 walk(n, x, s) :- nameref(n, x), wstart(n, s), !tp_ref(n, x).
-walk(n, x, p) :- walk(n, x, s), !bound_in(s, x), nearest(s, p, lfscope).
+walk(n, x, p) :- walk(n, x, s), !bound_in(s, x), !gbefore(n, x, s), nearest(s, p, lfscope).
+walk(n, x, p) :- walk(n, x, s), cls_late(n, x, s), nearest(s, p, lfscope).
+// gbefore(n, x, s): s declares x `global` and binds it before read n. Ruff records that binding in s too (flagged
+// global), and a read after it stops there: the walk ends at s (look below), as W's does. A read before any such
+// binding sees only the `global` statement and continues in the module. A read in an assignment's own value is
+// before that assignment.
+.decl gbefore(n: node, x: symbol, s: node)
+gbefore(n, x, s) :- gbind(s, x, b), nameref(n, x), b < n, !within(n, b).
+.decl gbind(s: node, x: symbol, b: node)
+gbind(s, x, b) :- decl(s, x, m), kind(m, "module"), rasg(s, x, _, b).
+gbind(s, x, b) :- decl(s, x, m), kind(m, "module"), rdefn(s, x, b).
+gbind(s, x, t) :- decl(s, x, m), kind(m, "module"), tgt(t), kind(t, "identifier"), text(t, x), tscope(t, s).
+// cls_late(n, x, s): read n in class body s, which binds x only after n (`f = f`: the class's f is not made yet). A
+// class body runs in order, so the read is looked up outside. A binding with no node (a `for` target, an import)
+// counts as early.
+.decl cls_late(n: node, x: symbol, s: node)
+cls_late(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), bound_in(s, x), !cls_early(n, x, s),
+    !otgt(s, x), !ibind(s, x, _), x != "__qualname__", x != "__module__".
+.decl cls_early(n: node, x: symbol, s: node)
+cls_early(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), defn(s, x, f), f < n.
+cls_early(n, x, s) :- wstart(n, s), kind(s, "class_definition"), nameref(n, x), asg(s, x, _, a), a < n, !within(n, a).
 // wstart(n, s): where the lookup of n starts: its nearest scope or comprehension, except that a comprehension's
 // first iterable is looked up from the scope around the comprehension. (One level: an iterable nested in another
 // comprehension's first iterable starts at the outer comprehension.) A name parsed from a string annotation starts
 // where the string sits.
 .decl wstart(n: node, s: node)
-wstart(n, s) :- nameref(n, _), nearest(n, s, lscope), kind(s, k), scope(k).
+wstart(n, s) :- nameref(n, _), nearest(n, s, lscope), kind(s, k), scope(k), !def_outside(n, _).
 wstart(n, c) :- nameref(n, _), nearest(n, c, lscope), kind(c, k), comp_scope(k), !in_first_iter(n, c).
+wstart(n, s) :- def_outside(n, f), nearest(f, s, lscope).
 wstart(n, s) :- in_first_iter(n, c), nearest(c, s, lscope).
 wstart(n, s) :- nameref(n, _), parsed_in(n, h), nearest(h, s, lscope), kind(s, k), scope(k).
 wstart(n, c) :- nameref(n, _), parsed_in(n, h), nearest(h, c, lscope), kind(c, k), comp_scope(k).
+// def_outside(n, f): read n sits in function or lambda f's parameters (an annotation, a default) or its return
+// annotation, which run where the definition does: the lookup starts in the scope around f. One level: a lambda
+// default inside another definition's parameters starts at that definition.
+.decl def_outside(n: node, f: node)
+def_outside(n, f) :- nameref(n, _), !bind_only(n), nearest(n, f, lscope), (kind(f, "function_definition") ; kind(f, "lambda")),
+    (field(f, "parameters", p) ; field(f, "return_type", p)), within(n, p).
 .decl in_first_iter(n: node, c: node)
 in_first_iter(n, c) :- nameref(n, _), nearest(n, c, lscope), comp_scope(k), kind(c, k), first_for(c, fc),
     field(fc, "right", e), (n = e ; within(n, e)).
@@ -218,6 +260,9 @@ tp_name(o, x) :- kind(o, "type_alias_statement"), field(o, "left", l), child(l, 
     child(g, tp, _), kind(tp, "type_parameter"), tp_list(tp, x).
 .decl tp_list(tp: node, x: symbol)
 tp_list(tp, x) :- kind(tp, "type_parameter"), child(tp, ty, _), kind(ty, "type"), child(ty, d, 0), tp_decl(d, x).
+// PEP 696's default, `T: int = int`: the declaration is the `type_default`'s name.
+tp_list(tp, x) :- kind(tp, "type_parameter"), child(tp, td, _), kind(td, "type_default"), field(td, "name", ty),
+    child(ty, d, 0), tp_decl(d, x).
 .decl tp_decl(d: node, x: symbol)
 tp_decl(d, x) :- kind(d, "identifier"), text(d, x).
 tp_decl(d, x) :- kind(d, "splat_type"), child(d, i, _), kind(i, "identifier"), text(i, x).
@@ -231,7 +276,8 @@ tp_ref(n, x) :- tp_doc(d), docof(n, d), nameref(n, x), tp_name(o, x), docof(o, d
 tp_doc(d) :- tp_name(o, _), docof(o, d).
 // look(n, x, s): the lookup of reference n stops at scope s, which binds x. At most one s per reference.
 .decl look(n: node, x: symbol, s: node)
-look(n, x, s) :- walk(n, x, s), bound_in(s, x).
+look(n, x, s) :- walk(n, x, s), bound_in(s, x), !cls_late(n, x, s).
+look(n, x, s) :- walk(n, x, s), !bound_in(s, x), gbefore(n, x, s).
 // Bound nowhere: a builtin, or (a star import, `globals()`) unknown.
 // miss(n, x): the walk reached the module and the module does not bind x either.
 .decl miss(n: node, x: symbol)
@@ -390,6 +436,8 @@ tp_site(o, d) :- kind(o, "type_alias_statement"), field(o, "left", l), child(l, 
     child(g, tp, _), kind(tp, "type_parameter"), tp_ident(tp, d).
 .decl tp_ident(tp: node, i: node)
 tp_ident(tp, i) :- kind(tp, "type_parameter"), child(tp, ty, _), kind(ty, "type"), child(ty, d, 0), tp_decl_id(d, i).
+tp_ident(tp, i) :- kind(tp, "type_parameter"), child(tp, td, _), kind(td, "type_default"), field(td, "name", ty),
+    child(ty, d, 0), tp_decl_id(d, i).
 // tp_decl_id(d, i): the identifier i of tp_decl's d, rule for rule.
 .decl tp_decl_id(d: node, i: node)
 tp_decl_id(d, d) :- kind(d, "identifier").
@@ -439,6 +487,21 @@ ref_site(r, site) :- look(r, x, s), binding(s, x, site, _), !bind_only(r).
 bind_only(l) :- kind(a, "assignment"), field(a, "left", l), kind(l, "identifier").
 bind_only(t) :- tgt(t), kind(t, "identifier"), !aug_target(t).
 bind_only(id) :- field(f, "parameters", ps), child(ps, p, _), (id = p ; child(p, id, 0)), kind(id, "identifier").
+// A typed splat's name, `*x: int` and `**x: int` (param's third rule), sits under the splat.
+bind_only(id) :- field(f, "parameters", ps), child(ps, p, _), kind(p, "typed_parameter"), child(p, sp, 0),
+    child(sp, id, 0), kind(id, "identifier").
+// A type parameter's name, `T` in `def f[T]` and `class K[T: B]`, declares it (tp_site; a subscript's arguments in an
+// annotation, `dict[str, T]`, are `type_parameter` nodes too, and are reads).
+bind_only(i) :- tp_site(_, i).
+// A type alias's left side declares: `type A[T] = ...`. tree-sitter's grammar (and the tape's) also parses a statement
+// `type(self).x = v` as a type alias, whose left side W's walk reads nothing of. A type parameter's bound and default
+// (`type A[T: B = D] = ...`) are reads, as a `def`'s and a `class`'s are (W's scope table reads them lazily).
+bind_only(i) :- kind(t, "type_alias_statement"), field(t, "left", l), within(i, l), kind(i, "identifier"),
+    !tp_alias_read(i).
+// tp_alias_read(i): identifier i is in a type parameter of a type alias, and is not the parameter's name.
+.decl tp_alias_read(i: node)
+tp_alias_read(i) :- kind(t, "type_alias_statement"), field(t, "left", l), child(l, g, 0), kind(g, "generic_type"),
+    child(g, tp, _), kind(tp, "type_parameter"), within(i, tp), kind(i, "identifier"), !tp_site(t, i).
 bind_only(n) :- (kind(i, "import_statement") ; kind(i, "import_from_statement") ; kind(i, "future_import_statement")),
     within(n, i), kind(n, "identifier").
 bind_only(n) :- (kind(g, "global_statement") ; kind(g, "nonlocal_statement")), child(g, n, _), kind(n, "identifier").
@@ -467,16 +530,14 @@ sym_of(n, q) :- builtin_ref(n, x), q = @dot("builtins", x).
 .decl global_ref(n: node, x: symbol)
 global_ref(n, x) :- builtin_ref(n, x).
 
-// A program that says `.guests off` sees files only: its names are not resolved inside string annotations either
-// (no parse is asked for; guest_policy("library", "off"), decision 0055).
 // annotation(n): n is (inside) a type annotation: parameter types, return types, `x: T = ...`, and the parsed
 // contents of string annotations such as `def f() -> "Foo[int]"`. Rules use it to ignore type-only uses of a name.
 .decl annotation(n: node)
 annotation(t) :- ann_root(t).
 annotation(n) :- ann_root(t), within(n, t).                            // every node below an annotation root
 annotation(n) :- parsed_in(n, _).                                      // and the trees parsed from its strings
-annotation(r) :- !guest_policy("library", "off"), string_annotation(s), parsed(s, "annotation", r).   // native sub-grammar parse of "Foo[int]"
-annotation(n) :- !guest_policy("library", "off"), string_annotation(s), parsed(s, "annotation", r), within(n, r).
+annotation(r) :- string_annotation(s), parsed(s, "annotation", r).   // native sub-grammar parse of "Foo[int]"
+annotation(n) :- string_annotation(s), parsed(s, "annotation", r), within(n, r).
 // ann_root(t): the root of an annotation: a parameter's, a return's, an annotated assignment's.
 //   def f(x: int) -> str: ...      ann_root(<int>), ann_root(<str>)
 .decl ann_root(t: node)
@@ -491,12 +552,12 @@ ann_root(t) :- kind(a, "assignment"), field(a, "type", t).
 .decl parsed_in(e: node, s: node)
 .decl ann_ctx(s: node)  // s is an annotation root or inside one: where a string annotation can stand
 ann_ctx(s) :- ann_root(a), (s = a ; within(s, a)).
-parsed_in(e, s) :- !guest_policy("library", "off"), ann_ctx(s), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+parsed_in(e, s) :- ann_ctx(s), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
 // s is a string inside a parsed annotation: only those are asked to be parsed again. parsed_in binds s inside a
 // parsed tree, so s is in a parsed string already; a test of its document's role (`d = @doc(s)` and the role
 // relation decision 0431 removed, once frag_str) was planned before the fragments existed and crossed each with
 // every string of the chunk (4.2 M rows on 859 posthog files, none kept).
-parsed_in(e, s0) :- !guest_policy("library", "off"), parsed_in(s, s0), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
+parsed_in(e, s0) :- parsed_in(s, s0), ann_str(s), parsed(s, "annotation", r), (e = r ; within(e, r)).
 .decl str_node(s: node)  // a string or an implicit concatenation: what a parse request may name
 str_node(s) :- kind(s, "string").
 str_node(s) :- kind(s, "concatenated_string").

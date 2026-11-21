@@ -204,7 +204,8 @@ fn inner_needs(f: &RrFile, lits: &[LitAt], bound: &BTreeSet<String>) -> BTreeSet
 }
 
 /// Clause `c`'s body, read off its tape.
-fn body_of(f: &RrFile, c: u32) -> Vec<LitAt> {
+/// Clause `c`'s body literals.
+pub fn clause_body(f: &RrFile, c: u32) -> Vec<LitAt> {
     f.tape().get(c, Field::Body).map_or_else(Vec::new, |b| f.body_at(b, 0))
 }
 
@@ -212,7 +213,7 @@ fn body_of(f: &RrFile, c: u32) -> Vec<LitAt> {
 /// outside (fix relations and edits).
 pub(super) fn unbound(f: &RrFile, c: u32, given: &BTreeSet<String>) -> Vec<String> {
     let heads = f.heads_at(c);
-    let body = body_of(f, c);
+    let body = clause_body(f, c);
     let head_vars: BTreeSet<String> = heads.iter().flat_map(|h| h.args.iter().flat_map(|a| vars_of(f, a))).collect();
     // `top` no literal binds is the lattice's top, not a variable (`lower`'s `top_is_var`): bound from the start, so
     // `a = top` binds `a`.
@@ -400,8 +401,8 @@ fn tarjan(nodes: &BTreeSet<String>, graph: &BTreeMap<String, BTreeSet<String>>) 
     out
 }
 
-/// Relations in a clause's literals `lits` of file `f`, including nested groups and aggregate bodies.
-fn clause_reads(f: &RrFile, lits: &[LitAt], out: &mut Vec<String>) {
+/// The relations a clause body reads, aggregates' and groups' bodies included (in order, with repeats).
+pub fn clause_reads(f: &RrFile, lits: &[LitAt], out: &mut Vec<String>) {
     fn term(f: &RrFile, t: &At, out: &mut Vec<String>) {
         match f.tv(t) {
             T::Agg { body, .. } => clause_reads(f, &body, out),
@@ -429,21 +430,6 @@ fn clause_reads(f: &RrFile, lits: &[LitAt], out: &mut Vec<String>) {
     }
 }
 
-/// The relations rule `s` reads, or None where `s` is not a rule (a fact, a declaration) or does not check.
-pub fn rule_reads(s: &Stmt) -> Option<Vec<String>> {
-    if s.what() != Some(S::Clause) {
-        return None;
-    }
-    let (f, n) = (s.file(), s.node());
-    let body = body_of(f, n);
-    if body.is_empty() || f.check_clause(n).is_err() {
-        return None;
-    }
-    let mut read = Vec::new();
-    clause_reads(f, &body, &mut read);
-    Some(read)
-}
-
 /// Relations a program's rules read that none of its files declares, nor the lowering makes (its built-ins): the
 /// syntax-level form of `lowering_tail::Declared`, which a run and check-rr apply to the lowered program.
 pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
@@ -459,8 +445,13 @@ pub fn undeclared(statements: &[&Stmt]) -> Vec<String> {
         TESTS.iter().any(|(t, _)| *t == rel) || RELATION_ARG.iter().any(|(r, _)| *r == rel) || super::lower::BUILT_INS.contains(&rel) || rel.starts_with("rr_cx_")
     };
     let mut out = BTreeSet::new();
-    for s in statements {
-        let Some(read) = rule_reads(s) else { continue };
+    for s in statements.iter().filter(|s| s.what() == Some(S::Clause)) {
+        let (f, n) = (s.file(), s.node());
+        if f.check_clause(n).is_err() {
+            continue;
+        }
+        let mut read = Vec::new();
+        clause_reads(f, &clause_body(f, n), &mut read);
         let head = s.heads().first().map_or("", |h| *h).to_owned();
         for rel in read.into_iter().filter(|r| !declared.contains(r) && !built_in(r)) {
             out.insert(format!("line {}: relation {rel} is read by the rule for {head} and not declared", s.line()));
@@ -490,7 +481,7 @@ pub fn strata(statements: &[&Stmt]) -> Vec<String> {
                 if f.check_clause(n).is_err() {
                     continue;
                 }
-                let (heads, body) = (f.heads_at(n), body_of(f, n));
+                let (heads, body) = (f.heads_at(n), clause_body(f, n));
                 let mut scopes = vec![Scope::new()];
                 binary_atoms(f, &body, &mut scopes[0]);
                 let mut ds = Vec::new();

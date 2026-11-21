@@ -74,3 +74,15 @@ default-filter = "all()"
 
 [profile.gate.junit]
 path = "junit.xml"
+
+# The preprocessor's evaluation tests, each stopped at 1 s and failed (the user, 2026-11-20: "you
+# may not run tests over 1 second; none of these cases should take more than a few milliseconds").
+#   cargo nextest run -p rerail-c-directives --lib --profile second
+[profile.second]
+default-filter = "package(rerail-c-directives) & test(/^eval::tests::/)"
+slow-timeout = { period = "1s", terminate-after = 1 }
+failure-output = "final"
+# Past the default profile's override for the package (which every profile takes), the second's.
+[[profile.second.overrides]]
+filter = "package(rerail-c-directives)"
+slow-timeout = { period = "1s", terminate-after = 1 }

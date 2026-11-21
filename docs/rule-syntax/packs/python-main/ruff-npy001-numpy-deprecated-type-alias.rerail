@@ -1,5 +1,4 @@
 .policy "ruff-npy001-numpy-deprecated-type-alias" revision 1
-.guests off
 .description "Use the builtin int, float, complex, object or str instead of NumPy's removed aliases for them."
 .language python
 .mode steer

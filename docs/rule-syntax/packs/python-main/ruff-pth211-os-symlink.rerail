@@ -1,5 +1,4 @@
 .policy "ruff-pth211-os-symlink" revision 1
-.guests off
 .description "Use Path.symlink_to() instead of os.symlink(); path objects read better than string-based os calls."
 .language python
 .mode steer

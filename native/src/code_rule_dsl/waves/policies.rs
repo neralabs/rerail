@@ -212,10 +212,11 @@ fn lit_vars(l: LitRef<'_>) -> BTreeSet<Slot> {
             term_vars(r, &mut out);
             out
         }
-        Lit::Agg { var, over, atom, .. } => {
+        Lit::Agg { var, op, over, atom } => {
             let mut out = atom_vars(atom);
             out.insert(var);
             out.extend(over);
+            out.extend(op.bound());
             out
         }
         Lit::Nearest { n, a, .. } => [n, a].into(),
@@ -275,6 +276,8 @@ fn shape(v: &Version, r: RuleRef<'_>) -> (String, Vec<Value>) {
             Lit::Agg { var, op, over, atom: a } => {
                 let op = match op {
                     crate::code_rule_dsl::logic::program_image::AggRef::Join { by, sep } => format!("join[{:?}]({})", v.text(sep), by.map(|s| s.0.to_string()).collect::<Vec<_>>().join(",")),
+                    // A bounded aggregate's bound is a slot and its side (decision 0511): rules bounded otherwise differ.
+                    crate::code_rule_dsl::logic::program_image::AggRef::Bounded { max, bound, strict } => format!("bounded[{max},{strict},V{}]", bound.0),
                     other => format!("{:?}", std::mem::discriminant(&other)),
                 };
                 _ = write!(out, "V{} = {op} V{:?} : ", var.0, over.map(|s| s.0));

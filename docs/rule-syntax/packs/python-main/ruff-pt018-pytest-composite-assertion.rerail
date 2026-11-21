@@ -1,5 +1,4 @@
 .policy "ruff-pt018-pytest-composite-assertion" revision 1
-.guests off
 .description "Split an assert that joins conditions with and, or negates conditions joined with or, into one assert per condition; a failure then names the one that failed."
 .language python
 .mode steer

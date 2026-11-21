@@ -1,5 +1,4 @@
 .policy "ruff-d300-triple-single-quotes" revision 1
-.guests off
 .description "Use triple double quotes for docstrings, or triple single quotes when the text itself contains triple double quotes."
 .language python
 .mode steer

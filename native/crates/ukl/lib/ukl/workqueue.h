@@ -45,7 +45,7 @@ typedef struct UklWorkQueue {
 } UklWorkQueue;
 
 // The positions' end: a push takes positions below it.
-UKL_INLINE uint32_t ukl_wq_end(UklWorkQueue q) { return q.ring != 0u ? ukl_atomic_load(&q.control[4]) + q.capacity : q.capacity; }
+UKL_INLINE uint32_t ukl_wq_end(UklWorkQueue q) { return q.ring != 0u ? ukl_atomic_poll(&q.control[4]) + q.capacity : q.capacity; }
 
 // Position `p`'s slot.
 UKL_INLINE uint32_t ukl_wq_slot(UklWorkQueue q, uint32_t p) { return q.ring != 0u ? p % q.capacity : p; }
@@ -72,10 +72,10 @@ UKL_INLINE bool ukl_wq_push(UklWorkQueue q, uint32_t item)
 // Takes an item into `item`; false when there was none to take now.
 UKL_INLINE bool ukl_wq_take(UklWorkQueue q, UKL_PRIVATE uint32_t* item)
 {
-    uint32_t head = ukl_atomic_load(&q.control[0]);
+    uint32_t head = ukl_atomic_poll(&q.control[0]);
     bool claimed = false;
     for (uint32_t attempt = 0u; attempt < UKL_WQ_TURNS && !claimed; attempt++) {
-        uint32_t tail = ukl_atomic_load(&q.control[1]), end = ukl_wq_end(q);
+        uint32_t tail = ukl_atomic_poll(&q.control[1]), end = ukl_wq_end(q);
         tail = tail < end ? tail : end;
         if (head >= tail)
             return false;
@@ -98,9 +98,9 @@ UKL_INLINE bool ukl_wq_take_sg(UklWorkQueue q, uint32_t lane, UKL_PRIVATE uint32
     // Lane 0 claims `count` items from `head` at once.
     uint32_t head = 0u, count = 0u;
     if (lane == 0u) {
-        head = ukl_atomic_load(&q.control[0]);
+        head = ukl_atomic_poll(&q.control[0]);
         for (uint32_t attempt = 0u; attempt < UKL_WQ_TURNS; attempt++) {
-            uint32_t tail = ukl_atomic_load(&q.control[1]), end = ukl_wq_end(q);
+            uint32_t tail = ukl_atomic_poll(&q.control[1]), end = ukl_wq_end(q);
             tail = tail < end ? tail : end;
             if (head >= tail)
                 break;
@@ -130,7 +130,7 @@ UKL_INLINE void ukl_wq_done(UklWorkQueue q) { ukl_atomic_sub(&q.control[2], 1u);
 // Whether a worker that found nothing should stop: nothing is active, or it has polled `limit` times.
 UKL_INLINE bool ukl_wq_idle(UklWorkQueue q, UKL_PRIVATE uint32_t* polls, uint32_t limit)
 {
-    if (ukl_atomic_load(&q.control[2]) == 0u)
+    if (ukl_atomic_poll(&q.control[2]) == 0u)
         return true;
     ukl_poll_yield();
     return ++*polls >= limit;
@@ -144,7 +144,7 @@ UKL_INLINE bool ukl_wq_idle_sg(UklWorkQueue q, bool got, UKL_PRIVATE uint32_t* p
         *polls = 0u;
         return false;
     }
-    if (ukl_sg_broadcast(ukl_atomic_load(&q.control[2]), 0u __UKL_ARGS) == 0u)
+    if (ukl_sg_broadcast(ukl_atomic_poll(&q.control[2]), 0u __UKL_ARGS) == 0u)
         return true;
     ukl_poll_yield();
     return ++*polls >= limit;
@@ -152,14 +152,14 @@ UKL_INLINE bool ukl_wq_idle_sg(UklWorkQueue q, bool got, UKL_PRIVATE uint32_t* p
 
 // A ring's pause, first step (every thread, `k` from 0 below `ukl_wq_taken(q)`): the slot of the `k`th position taken
 // since the base emptied.
-UKL_INLINE uint32_t ukl_wq_taken(UklWorkQueue q) { return ukl_atomic_load(&q.control[0]) - ukl_atomic_load(&q.control[4]); }
+UKL_INLINE uint32_t ukl_wq_taken(UklWorkQueue q) { return ukl_atomic_poll(&q.control[0]) - ukl_atomic_poll(&q.control[4]); }
 UKL_INLINE void ukl_wq_rebase_clear(UklWorkQueue q, uint32_t k)
 {
-    ukl_atomic_store(&q.slots[ukl_wq_slot(q, ukl_atomic_load(&q.control[4]) + k)], UKL_WQ_EMPTY);
+    ukl_atomic_store(&q.slots[ukl_wq_slot(q, ukl_atomic_poll(&q.control[4]) + k)], UKL_WQ_EMPTY);
 }
 
 // A ring's pause, second step (one thread, after a barrier): the base at the head.
-UKL_INLINE void ukl_wq_rebase(UklWorkQueue q) { ukl_atomic_store(&q.control[4], ukl_atomic_load(&q.control[0])); }
+UKL_INLINE void ukl_wq_rebase(UklWorkQueue q) { ukl_atomic_store(&q.control[4], ukl_atomic_poll(&q.control[0])); }
 
 // The positions queued past the base: the room a ring's run used (past `capacity`: it ran out).
-UKL_INLINE uint32_t ukl_wq_used(UklWorkQueue q) { return ukl_atomic_load(&q.control[1]) - ukl_atomic_load(&q.control[4]); }
+UKL_INLINE uint32_t ukl_wq_used(UklWorkQueue q) { return ukl_atomic_poll(&q.control[1]) - ukl_atomic_poll(&q.control[4]); }

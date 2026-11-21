@@ -273,6 +273,8 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "HeldPhaseOne"),
     ("code_rule_dsl/logic/plan/corpus/phases.rs", "Phases"),
     ("code_rule_dsl/logic/profile.rs", "Dir"),
+    // The invocation's rule sources (decision 0488's report of authored joins), bound while a run profiles them.
+    ("code_rule_dsl/logic/profile/author_joins.rs", "Held"),
     // Ended threads' CPU accounts and their CPU outside spans, summed for the report; no reusable results.
     ("code_rule_dsl/logic/profile.rs", "EXITED"),
     ("code_rule_dsl/logic/profile.rs", "EXITED_GAPS"),
@@ -427,7 +429,7 @@ fn maps() -> BTreeSet<(String, String)> {
     let tuple = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Z][A-Za-z0-9]*)\((.*)\);").unwrap();
     // A record (named fields) holds more than a number or a flag.
     let record = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?struct\s+([A-Z][A-Za-z0-9]*)\s*\{").unwrap();
-    let flat = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(bool|u8|u16|u32|u64|usize|i32|i64|f64|&'static str|Option<\s*(usize|u64|i64|bool|f64)\s*>)\s*$").unwrap();
+    let flat = regex::Regex::new(r"^\s*(?:pub(?:\([^)]*\))?\s+)?(bool|u8|u16|u32|u64|usize|i32|i64|f64|&'static str|Option<\s*(usize|u64|i64|bool|f64|&'static str)\s*>)\s*$").unwrap();
     let texts: Vec<(std::path::PathBuf, String)> = fs.iter().map(|f| (f.clone(), std::fs::read_to_string(f).unwrap_or_default())).collect();
     for (f, text) in &texts {
         let bound: BTreeSet<&str> = binds.captures_iter(text).filter_map(|c| c.iter().skip(1).flatten().next().map(|m| m.as_str())).collect();

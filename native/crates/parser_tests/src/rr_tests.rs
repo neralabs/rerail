@@ -1,29 +1,26 @@
-//! The `.rerail` ladder (docs/parser-generators/24-rr-and-bitlex-plan.md §3): `.rerail`, the rule
-//! language, built a construct at a time, parsed with no Rust between the bytes and the nodes. The
-//! tree keeps its last step, `rr_syntax/bitlex_ladder/22-test-blocks.bitlex`, the `.rerail` parser's
-//! grammar; git's history keeps the steps before it (decision 0422).
+//! `.rerail`'s grammar (`rr_parser/rr.bitlex`, docs/parser-generators/24-rr-and-bitlex-plan.md §3), parsed with no Rust
+//! between the bytes and the nodes.
 //!
-//! Each step is checked as the ladder's are (`bitlex_ladder_tests::check_ladder`): the reference
-//! evaluator, the interpreters and Cranelift give the same nodes on every document, and each
-//! step has the compiler's shape. And each document a step parses is parsed by the engine's
-//! own `.rerail` parser too (`rerail_rr_syntax::tape`): the two trees must be equal, node for node (kind,
-//! field, span, size), and the engine's must have no `ERROR`. A step's kinds and fields are named
-//! as the engine's tape names them (`rerail_rr_syntax::tape`).
+//! It is checked as JSON's grammars are (`ladder::check_ladder`): the reference evaluator, the interpreters and
+//! Cranelift give the same nodes on every document, and it has the compiler's shape. And each document it parses is
+//! parsed by the engine's own `.rerail` parser too (`rerail_rr_syntax::tape`): the two trees must be equal, node for node
+//! (kind, field, span, size), and the engine's must have no `ERROR`. Its kinds and fields are named as the engine's
+//! tape names them (`rerail_rr_syntax::tape`).
 //!
-//! A step refuses what it does not have yet, so a document the engine parses and the step
-//! refuses is no difference: it is counted.
+//! A document the engine parses and the grammar refuses (it goes to the engine) is no difference: it is counted.
 
-use rerail_compiler::ladder::{Compiled, IdNode, check_ladder, steps_in};
+use rerail_compiler::ladder::{Compiled, IdNode, check_ladder};
 use rerail_rr_syntax as rr;
 
-// The rr ladder's directory, found as the test runs: not written into its build (decision 0224).
-static DIR: std::sync::LazyLock<String> =
-    std::sync::LazyLock::new(|| format!("{}/../rr_syntax/bitlex_ladder", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
+/// The grammar, by name.
+fn grammar() -> Vec<(String, String)> {
+    vec![("rr".to_owned(), include_str!("../../rr_parser/rr.bitlex").to_owned())]
+}
 
 /// The bytes a mutation writes: `.rerail`'s punctuation, quotes, comment openers and words.
 const ALPHABET: &[u8] = b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\";
 
-/// Sample texts of the token kinds the steps' grammars name, with the edge cases of each.
+/// Sample texts of the token kinds the grammar names, with the edge cases of each.
 const SAMPLES: &[(&str, &[&str])] = &[(
     "string",
     &["\"a\"", "\"\"", "\"x/y.rerail\"", "\"a \\\" b\"", "\"\\\\\"", "\"two\nlines\"", "\"// not a comment\"", "\"é\"", "\"\\u{e9}\""],
@@ -35,67 +32,66 @@ const SAMPLES: &[(&str, &[&str])] = &[(
     &["`a`", "``", "` `", "`\"`", "`//`", "`/*`", "`` a`b ``", "``x``", "``` a `` b ```", "`\\`", "`é`"],
 )];
 
-/// Documents for the rules a random sentence rarely meets, each with the first step that parses
-/// it. Every step checks each one as it checks its sentences: the reference, the interpreters,
-/// Cranelift and the engine agree, and each step from the one named on must parse it.
+/// Documents for the rules a random sentence rarely meets, each marked `parses` or `never` (refused, so it goes to
+/// the engine). Each is checked as a sentence is: the reference, the interpreters, Cranelift and the engine agree,
+/// and one marked `parses` must parse.
 const CASES: &[(&str, &str)] = &[
-    ("#include \"a\" // c\n#include \"b\"", "01"),
+    ("#include \"a\" // c\n#include \"b\"", "parses"),
     // A setting: its words to the end of its line.
-    (".mode block\n.scope tests false\n", "02"),
-    (".mode", "02"),
-    (".mode x", "02"),
+    (".mode block\n.scope tests false\n", "parses"),
+    (".mode", "parses"),
+    (".mode x", "parses"),
     // A line that ends in `,` goes on; at the end of the file, a `,` ends it.
-    (".scope dirs \"a\",\n  \"b\",\n\n  \"c\"\n.mode x", "02"),
-    (".scope a,", "02"),
-    (".scope a, // why\n b\n", "02"),
+    (".scope dirs \"a\",\n  \"b\",\n\n  \"c\"\n.mode x", "parses"),
+    (".scope a,", "parses"),
+    (".scope a, // why\n b\n", "parses"),
     // A comment at a line's end: in the setting when the line goes on, after it when not.
-    (".mode x // c\n.scope y", "02"),
-    (".mode x // c\n// d\n", "02"),
+    (".mode x // c\n.scope y", "parses"),
+    (".mode x // c\n// d\n", "parses"),
     // A string may span lines; the token after it, on its last line, is on a new line.
-    (".description \"two\nlines\"\n.mode x", "02"),
+    (".description \"two\nlines\"\n.mode x", "parses"),
     // The `,` after it is on a new line: a statement of its own, which the engine refuses.
     (".scope \"a\nb\", \"c\"", "never"),
     // The name on a line after the `.`: no arguments.
-    (".\nmode\n.scope y", "02"),
+    (".\nmode\n.scope y", "parses"),
     // Punctuation, the two-byte spellings from the left; numbers and identifiers.
-    (".a :-> <=> =>= !=! <:- -> * ; ( ) [ ] @ | % ~ ^ & + / . :", "02"),
-    (".a 1a 12 007 a1 _b #include \"x\"", "02"),
-    ("#include \"a\" .mode x\n", "02"),
+    (".a :-> <=> =>= !=! <:- -> * ; ( ) [ ] @ | % ~ ^ & + / . :", "parses"),
+    (".a 1a 12 007 a1 _b #include \"x\"", "parses"),
+    ("#include \"a\" .mode x\n", "parses"),
     // A declaration: `.decl`, one leaf; its columns and types; its tail to its `)`'s line's end.
-    (".decl r(a: number, b: flat<x>) inline\n.decl s()\n", "03"),
-    (".decl r(a: t<>) eqrel, b\n.mode x", "03"),
-    (".decl r(\n  a: t,\n  b: u\n) x\n.mode z", "03"),
+    (".decl r(a: number, b: flat<x>) inline\n.decl s()\n", "parses"),
+    (".decl r(a: t<>) eqrel, b\n.mode x", "parses"),
+    (".decl r(\n  a: t,\n  b: u\n) x\n.mode z", "parses"),
     // `decl` after a line break, or a comment (the leaf's text), after the `.`.
-    (".\ndecl r(a: t)", "03"),
-    (". // c\n decl r(a: t)", "03"),
+    (".\ndecl r(a: t)", "parses"),
+    (". // c\n decl r(a: t)", "parses"),
     // A soft keyword: a word wherever the grammar does not take the keyword.
-    (".mode decl\n.decl decl(decl: decl)", "03"),
-    // A word a step reserves (a directive it does not parse yet) refuses the file; one that
-    // only begins with it does not. `violation` is 9 bytes: two 8-byte compares.
-    (".mode violations", "02"),
-    (".mode violation", "10"),
+    (".mode decl\n.decl decl(decl: decl)", "parses"),
+    // A reserved word refuses the file; one that only begins with it does not. `violation` is 9 bytes: two 8-byte compares.
+    (".mode violations", "parses"),
+    (".mode violation", "parses"),
     // Clauses: heads, a body of atoms; terms: numbers, strings, wildcards, variables, calls,
     // named arguments.
-    ("r(x).\ns(1, \"a\", _) :- t(x), u().", "04"),
-    ("r(x, y), s(y) :- t(x, f(y, g(z)), k: z, n: m(1)).", "04"),
-    ("r() :- s(a: b: c).\n.mode x\nt(x) :- u(x).", "04"),
+    ("r(x).\ns(1, \"a\", _) :- t(x), u().", "parses"),
+    ("r(x, y), s(y) :- t(x, f(y, g(z)), k: z, n: m(1)).", "parses"),
+    ("r() :- s(a: b: c).\n.mode x\nt(x) :- u(x).", "parses"),
     // `_` is a word where no term can be: a head's relation. In a term it is a wildcard, so
     // `_(y)` is no call, and at a literal's start no atom: the engine refuses both.
-    ("_(x) :- r(_, _z).", "04"),
+    ("_(x) :- r(_, _z).", "parses"),
     ("r(x) :- r(_(y)).", "never"),
     ("r(x) :- _(y).", "never"),
     // Comparisons: of a variable, a number, a string, a wildcard; and a call, on the right.
-    ("r(x) :- s(x), x != 1, 2 < x, \"a\" = y, _ >= f(x), x <= y, z > w.", "04"),
+    ("r(x) :- s(x), x != 1, 2 < x, \"a\" = y, _ >= f(x), x <= y, z > w.", "parses"),
     // A word whose next token decides it, across a comment and a line break.
-    ("r(f // c\n (x), k\n: v, w // d\n).", "04"),
+    ("r(f // c\n (x), k\n: v, w // d\n).", "parses"),
     // Regions, each hiding the others' openers; the first opener wins. `/*/` is a whole block
     // comment, as the engine reads it.
-    ("r(x). /*/ s(y).", "05"),
-    ("r(x) /* a \" b\n // c */ :- s(\"/* x\", \"// y\").", "05"),
-    ("r(x). // a \" b /* c\ns(y).", "05"),
-    ("r(`a`, `` b`c ``, ``` d `` e ```) :- s(`//`, `\"`, `/*`).", "05"),
+    ("r(x). /*/ s(y).", "parses"),
+    ("r(x) /* a \" b\n // c */ :- s(\"/* x\", \"// y\").", "parses"),
+    ("r(x). // a \" b /* c\ns(y).", "parses"),
+    ("r(`a`, `` b`c ``, ``` d `` e ```) :- s(`//`, `\"`, `/*`).", "parses"),
     // A `` closes at the next ``, whatever is between.
-    ("r(o) :- s(o, ``), t(o, ``).", "05"),
+    ("r(o) :- s(o, ``), t(o, ``).", "parses"),
     // Open at the end of the file: the engine refuses it.
     ("r(x). /* x", "never"),
     ("r(\"x).", "never"),
@@ -104,46 +100,46 @@ const CASES: &[(&str, &str)] = &[
     // end: the file goes to the engine.
     ("r(``).", "never"),
     // Negation, patterns: `!` before an atom, a pattern or a negation, never a comparison.
-    ("r(x) :- !s(x), !!t(x), x ~ `a*`, !y ~ `b`, `c` ~ `d`, \"e\" ~ `f`.", "05"),
+    ("r(x) :- !s(x), !!t(x), x ~ `a*`, !y ~ `b`, `c` ~ `d`, \"e\" ~ `f`.", "parses"),
     ("r(x) :- !x = 1.", "never"),
     // A head's modal: before a word; before a `(` it is the relation.
-    ("must r(x) :- s(x).", "05"),
-    ("must r(x), may s(x) :- t(x).\nmust(x).\nmay (x) :- must(x).", "05"),
-    ("must // c\n(x).\nmay /* d */ r(x).", "05"),
+    ("must r(x) :- s(x).", "parses"),
+    ("must r(x), may s(x) :- t(x).\nmust(x).\nmay (x) :- must(x).", "parses"),
+    ("must // c\n(x).\nmay /* d */ r(x).", "parses"),
     // An extra between a word and the `(` that wraps it: never the node the wrap moves.
-    ("r(x) :- s // c\n(x), t /* d */ (x).", "05"),
-    ("r(n) :- n = count : { s(_) }.", "08"),
+    ("r(x) :- s // c\n(x), t /* d */ (x).", "parses"),
+    ("r(n) :- n = count : { s(_) }.", "parses"),
     // Aggregates: values, keys, separators; at a literal's start; the words as names elsewhere.
-    ("r(n) :- n = sum v by k sep \",\" : { t(k, v) }, m = max x + 1 : { u(x); w(x) }.", "08"),
-    ("r(n) :- count : { s(_) } = 1, min(a, b) > 1, sum x : { t(x) } > 2, n = join s by (k, j) : { u(s, k, j) }.", "08"),
-    (".decl r(max: number, count: t)\nr(count, min) :- s(sum), count = 1, mean(x), max - 1 > join.", "08"),
-    ("r(n) :- n = sum strlen(x) - strlen(a) : { t(x, a), !u(a) }.", "08"),
+    ("r(n) :- n = sum v by k sep \",\" : { t(k, v) }, m = max x + 1 : { u(x); w(x) }.", "parses"),
+    ("r(n) :- count : { s(_) } = 1, min(a, b) > 1, sum x : { t(x) } > 2, n = join s by (k, j) : { u(s, k, j) }.", "parses"),
+    (".decl r(max: number, count: t)\nr(count, min) :- s(sum), count = 1, mean(x), max - 1 > join.", "parses"),
+    ("r(n) :- n = sum strlen(x) - strlen(a) : { t(x, a), !u(a) }.", "parses"),
     // `count` in a value takes its `:`; a named argument in a value is no value.
-    ("r(n) :- n = sum count : { s(_) } : { t(_) }.", "08"),
+    ("r(n) :- n = sum count : { s(_) } : { t(_) }.", "parses"),
     ("r(n) :- n = sum f(k: v) : { s(_) }.", "never"),
     // `min (…) : { … }`, an aggregate the engine tells from a call after its `)`: to the engine.
     // `min (…) : {…}`: the call read again as the aggregate's value in parentheses.
-    ("r(n) :- n = min (a + b) : { s(a, b) }.", "18"),
-    ("r(n) :- n = max(a) : { s(a) }, m = sum(1, 2), k = join (f(a)) : { s(a) } + min(b).", "18"),
-    ("r(n) :- n = sum (a) : { s(a) ; t(a) }, min(n).", "18"),
+    ("r(n) :- n = min (a + b) : { s(a, b) }.", "parses"),
+    ("r(n) :- n = max(a) : { s(a) }, m = sum(1, 2), k = join (f(a)) : { s(a) } + min(b).", "parses"),
+    ("r(n) :- n = sum (a) : { s(a) ; t(a) }, min(n).", "parses"),
     // Two terms, none, a named argument: the engine refuses them.
     ("r(n) :- n = min (a, b) : { s(a, b) }.", "never"),
     ("r(n) :- n = min() : { s(a) }.", "never"),
     ("r(n) :- n = min(x: 1) : { s(a) }.", "never"),
     // An aggregate as another's value: the inner one takes its `:` first. At a literal's start,
     // `min (…) : {…}`: the atom read again as the aggregate's value.
-    ("r(n) :- n = sum min x : { s(x) } : { t(n) }, m = max sum x : { s(x) } + 1 : { t(m) }.", "19"),
-    ("r(n) :- n = sum min (x) : { s(x) } : { t(n) }, m = min min x by k : { s(x, k) } : { t(m) }.", "19"),
-    ("r(n) :- n = sum min min x : { a(x) } : { b(n) } : { c(n) }, k = sum join x sep \",\" : { s(x) } : { t(k) }.", "19"),
-    ("r(n) :- n = sum min(x) + 1 : { t(x) }, m = sum min() + 1 : { t(m) }, k = sum min - 1 : { t(k) }.", "19"),
-    ("r(n) :- min (x) : { s(x) } = n, max(y) : { s(y) } * 2 < n; mean (x + 1) : { s(x) } >= n, min(n).", "19"),
-    ("r(n) :- n = count : { mean (x) : { s(x) } > 1 }.", "19"),
+    ("r(n) :- n = sum min x : { s(x) } : { t(n) }, m = max sum x : { s(x) } + 1 : { t(m) }.", "parses"),
+    ("r(n) :- n = sum min (x) : { s(x) } : { t(n) }, m = min min x by k : { s(x, k) } : { t(m) }.", "parses"),
+    ("r(n) :- n = sum min min x : { a(x) } : { b(n) } : { c(n) }, k = sum join x sep \",\" : { s(x) } : { t(k) }.", "parses"),
+    ("r(n) :- n = sum min(x) + 1 : { t(x) }, m = sum min() + 1 : { t(m) }, k = sum min - 1 : { t(k) }.", "parses"),
+    ("r(n) :- min (x) : { s(x) } = n, max(y) : { s(y) } * 2 < n; mean (x + 1) : { s(x) } >= n, min(n).", "parses"),
+    ("r(n) :- n = count : { mean (x) : { s(x) } > 1 }.", "parses"),
     // Fences of four backticks or more: pathological, so they go to the engine, which reads
     // them; inside a comment or a string they are text.
     ("r(x) :- x ~ ````a ``` b````, y ~ `````a````b`````, z ~ `c`.", "never"),
     ("r(x) :- x ~ ```` \"a // b ````, y = \"c\", z ~ ````a``` /* ``` */ ````.", "never"),
     ("r(x) :- x ~ ```````````a```````````.", "never"),
-    ("r(x) :- x = 1. // ````\nr(y) :- y = \"````\". /* ````` */", "05"),
+    ("r(x) :- x = 1. // ````\nr(y) :- y = \"````\". /* ````` */", "parses"),
     ("r(x) :- x ~ ````a`````, y = 1.", "never"),
     ("r(x) :- x ~ ```a```````b````.", "never"),
     ("r(x) :- x ~ ````a`````` `b`.", "never"),
@@ -155,61 +151,61 @@ const CASES: &[(&str, &str)] = &[
     ("r(n) :- min(a: x) : { s(x) } = n.", "never"),
     ("r(n) :- !min (x) : { s(x) } = n.", "never"),
     ("r(n) :- min (x) : { s(x) }.", "never"),
-    ("r(-1).", "06"),
+    ("r(-1).", "parses"),
     // Arithmetic: precedence, left to right; `-` and a number one leaf, across an extra too;
     // unary minus over a primary; parentheses; functor calls.
-    ("r(x) :- s(y), x = y * 2 + -1, z = -(y - @f(x)) % 3.", "06"),
-    ("r(x) :- x = a - b - c, y = a + b * c - d / e % f, z = (a + b) * (c - d).", "06"),
-    ("r(- 1, - // c\n 2, -x, --1, -(1), - - x, -@f(1)).", "06"),
-    ("r(x) :- x + 1 > y, -x < 2, @f(x, -2) = 1, 1 + 2 ~ `a`, !x * 2 ~ `b`.", "06"),
-    ("r(k: v + 1, a * b: c) :- s(f(x) + g(y) * 2).", "06"),
+    ("r(x) :- s(y), x = y * 2 + -1, z = -(y - @f(x)) % 3.", "parses"),
+    ("r(x) :- x = a - b - c, y = a + b * c - d / e % f, z = (a + b) * (c - d).", "parses"),
+    ("r(- 1, - // c\n 2, -x, --1, -(1), - - x, -@f(1)).", "parses"),
+    ("r(x) :- x + 1 > y, -x < 2, @f(x, -2) = 1, 1 + 2 ~ `a`, !x * 2 ~ `b`.", "parses"),
+    ("r(k: v + 1, a * b: c) :- s(f(x) + g(y) * 2).", "parses"),
     // Disjunctions and groups; an atom or a call, by the token after it.
-    ("r(x) :- s(x); t(x), u(x); v(x).", "07"),
-    ("r(x) :- s(x), (t(x); !(u(x), x > f(x) + 1)), !(v(x)).", "07"),
-    ("r(x) :- f(x) > 1, g(x) * 2 + 1 = h(y), k(x) ~ `a`, !m(x) ~ `b`, n(x).", "07"),
-    ("r(x) :- ((s(x); t(x)); (u(x))).", "07"),
+    ("r(x) :- s(x); t(x), u(x); v(x).", "parses"),
+    ("r(x) :- s(x), (t(x); !(u(x), x > f(x) + 1)), !(v(x)).", "parses"),
+    ("r(x) :- f(x) > 1, g(x) * 2 + 1 = h(y), k(x) ~ `a`, !m(x) ~ `b`, n(x).", "parses"),
+    ("r(x) :- ((s(x); t(x)); (u(x))).", "parses"),
     // A parenthesized term at a literal's start: the engine tells it from a group by going
     // back after its `)`. The file goes to the engine.
     ("r(x) :- (x + 1) > 1.", "never"),
     // `.violation`: parts in any order, continuation lines, the words as names elsewhere.
-    (".violation v(at: loc, c: symbol) code {c} in \"E[0-9]+\" tag {at} \"m {c}\"\nfix safe v_fix \"a fix\"\nsuppress ruff \"E501\", \"W291\" over {at}\noptions { \"a\": [1, {\"b\": 2}] }\nr(x) :- s(x).", "09"),
-    (".violation v(at: loc) code \"X1\" \"m\"\n.violation w(at: loc) \"n\" fix safe \"d\" fix f \"e\"\n.decl code(fix: number, tag: t)", "09"),
-    ("r(code, tag, fix, safe, suppress, over, options, in, violation) :- code(x), fix = 1.", "09"),
-    (".violation\nv(at: loc) tag { t } code { c } \"m\" // c\n/* d */ suppress t \"r\"", "09"),
+    (".violation v(at: loc, c: symbol) code {c} in \"E[0-9]+\" tag {at} \"m {c}\"\nfix safe v_fix \"a fix\"\nsuppress ruff \"E501\", \"W291\" over {at}\noptions { \"a\": [1, {\"b\": 2}] }\nr(x) :- s(x).", "parses"),
+    (".violation v(at: loc) code \"X1\" \"m\"\n.violation w(at: loc) \"n\" fix safe \"d\" fix f \"e\"\n.decl code(fix: number, tag: t)", "parses"),
+    ("r(code, tag, fix, safe, suppress, over, options, in, violation) :- code(x), fix = 1.", "parses"),
+    (".violation\nv(at: loc) tag { t } code { c } \"m\" // c\n/* d */ suppress t \"r\"", "parses"),
     // `fix`, `suppress`, `options` starting a clause right after a `.violation`, and `over` a
     // fact after a `suppress` line: the engine reads the word only before what follows it.
-    (".violation v(at: loc) \"m\"\nfix(x) :- s(x).", "15"),
-    (".violation v(at: loc) \"m\"\nsuppress(x) :- s(x).\n.violation w(at: loc) \"m\"\noptions(x).", "15"),
+    (".violation v(at: loc) \"m\"\nfix(x) :- s(x).", "parses"),
+    (".violation v(at: loc) \"m\"\nsuppress(x) :- s(x).\n.violation w(at: loc) \"m\"\noptions(x).", "parses"),
     (".violation v(at: loc) \"m\"\nsuppress t(x) :- s(x).", "never"),
-    (".violation v(at: loc) \"m\"\nsuppress t \"r\"\nover(x).\nfix(1).", "15"),
-    (".violation v(at: loc) \"m\" fix /* c */ f // d\n \"e\" suppress t /* c */ \"r\" over /* c */ {at}\noptions // c\n{}\nfix(y).", "15"),
+    (".violation v(at: loc) \"m\"\nsuppress t \"r\"\nover(x).\nfix(1).", "parses"),
+    (".violation v(at: loc) \"m\" fix /* c */ f // d\n \"e\" suppress t /* c */ \"r\" over /* c */ {at}\noptions // c\n{}\nfix(y).", "parses"),
     (".violation v(at: loc) \"m\"\nfix safe \"d\"\nfix safe s \"e\"\nfix \"x\".", "never"),
     (".violation v(at: loc) \"m\"\noptions = 1.", "never"),
     // A column in braces that is no single name: one `raw_text` leaf, nested braces counted.
-    (".violation v(at: loc) code {at.code} tag { } \"m\"", "16"),
-    (".violation v(at: loc) code { /* c */ at } tag {a {b} c} \"m\" suppress t \"r\" over {x y}\n.violation w(at: loc) code {at} \"m\" suppress t \"r\" over { at }", "16"),
+    (".violation v(at: loc) code {at.code} tag { } \"m\"", "parses"),
+    (".violation v(at: loc) code { /* c */ at } tag {a {b} c} \"m\" suppress t \"r\" over {x y}\n.violation w(at: loc) code {at} \"m\" suppress t \"r\" over { at }", "parses"),
     (".violation v(at: loc) code {at \"m\"", "never"),
     // A `` `` `` with none after it in the file's bytes: the empty literal, read on after it.
-    ("r(x) :- x = replace(c, ``).", "17"),
-    ("r(x) :- y = ``a``, z = `b`, x = replace(c, ``). // c", "17"),
+    ("r(x) :- x = replace(c, ``).", "parses"),
+    ("r(x) :- y = ``a``, z = `b`, x = replace(c, ``). // c", "parses"),
     // One after it, in a comment or a string: the literal runs to it, as the engine reads it.
     ("r(x) :- x = ``. // `` later", "never"),
     ("r(x) :- x = ``, y = \"``\".", "never"),
     // JSON objects: terms, setting arguments; edits.
-    ("r({\"a\": {\"b\": [1, 2]}}) :- s(x, {}), {\"c\": 1} = x => e(x, \"y\"), f({}).", "09"),
-    (".budget * by code { \"A\": 3, \"B\": 4 }\n.budget * {\n  \"total\": 0\n}\nr(x).", "09"),
-    ("r(n) :- n = sum {\"a\": 1} : { s(_) }, !{} ~ `x`.", "09"),
+    ("r({\"a\": {\"b\": [1, 2]}}) :- s(x, {}), {\"c\": 1} = x => e(x, \"y\"), f({}).", "parses"),
+    (".budget * by code { \"A\": 3, \"B\": 4 }\n.budget * {\n  \"total\": 0\n}\nr(x).", "parses"),
+    ("r(n) :- n = sum {\"a\": 1} : { s(_) }, !{} ~ `x`.", "parses"),
     // A JSON object over lines ends its setting's line: the engine reads lines from its `{`.
     (".s {\n} x\nr(x).", "never"),
     // An atom before `=>`: the atom's level takes `=` (a call's comparison), not `=>`, which
     // its caller takes when the level ends.
-    ("m(s) :- f(s) => r(a, `$sp`).\nm(s) :- f(s), g(s) => r(a) , q(b).", "09"),
+    ("m(s) :- f(s) => r(a, `$sp`).\nm(s) :- f(s), g(s) => r(a) , q(b).", "parses"),
     // A comment after a setting's JSON object, before its line's end.
-    (".budget * { \"total\": 0 }    // c\n.mode block", "09"),
+    (".budget * { \"total\": 0 }    // c\n.mode block", "parses"),
     // Policy documents: JSON, as the engine's reader takes it; else `.policy` is a setting.
-    (".policy {\"format\": \"v1\", \"id\": \"p\", \"revision\": 2, \"rules\": [{\"a\": -1, \"b\": [true, false, null, 0, -0]}, []], \"e\": {}}\n.policy \"id\" revision 1\nr(x).", "10"),
-    (".policy {\n  \"a\": \"x\\\\y \\/ \\b\\f\\n\\r\\t\\\"\"\n} // c\n.\npolicy {} r(x).", "10"),
-    (".policy\n.policy x {\"a\": 1}\n.policy [1]", "10"),
+    (".policy {\"format\": \"v1\", \"id\": \"p\", \"revision\": 2, \"rules\": [{\"a\": -1, \"b\": [true, false, null, 0, -0]}, []], \"e\": {}}\n.policy \"id\" revision 1\nr(x).", "parses"),
+    (".policy {\n  \"a\": \"x\\\\y \\/ \\b\\f\\n\\r\\t\\\"\"\n} // c\n.\npolicy {} r(x).", "parses"),
+    (".policy\n.policy x {\"a\": 1}\n.policy [1]", "parses"),
     // What JSON refuses: the engine makes the document an error; to it.
     (".policy {{POLICY}}", "never"),
     (".policy {\"a\": 01}", "never"),
@@ -225,18 +221,18 @@ const CASES: &[(&str, &str)] = &[
     (".policy {\"a\": tru}", "never"),
     (".policy /* c */ {\"a\": 1}", "never"),
     // The other directives: all of `.rerail`.
-    (".type t = /* c */ a\n.input r(IO=x /* d */, f=\"y\")\n.functor f(x: number): symbol stateful // e\n.edit e(a: node)\n.pragma \"a\" \"b\"\n.lattice l<> { A -> @f, B -> 1 + x }\n.input a, b(x)\n.output c", "11"),
+    (".type t = /* c */ a\n.input r(IO=x /* d */, f=\"y\")\n.functor f(x: number): symbol stateful // e\n.edit e(a: node)\n.pragma \"a\" \"b\"\n.lattice l<> { A -> @f, B -> 1 + x }\n.input a, b(x)\n.output c", "parses"),
     // An empty raw text: no leaf, and its field on the node made last.
-    (".type t\n.input r()\n.decl x(a: t)", "11"),
-    (".output\n.decl a(x: t)\n.input must(x), b\n.input r((a), b(c)), s(())", "11"),
-    (".type a = \"x\ny\"\nr(x).\n.type s <: number // c\n.pragma\n.pragma \"a\"", "11"),
+    (".type t\n.input r()\n.decl x(a: t)", "parses"),
+    (".output\n.decl a(x: t)\n.input must(x), b\n.input r((a), b(c)), s(())", "parses"),
+    (".type a = \"x\ny\"\nr(x).\n.type s <: number // c\n.pragma\n.pragma \"a\"", "parses"),
     // The rest of a `.type`'s line is the line its name ends on: a token after a string over
     // two lines starts the next statement.
     (".type a = \"x\ny\" z\nr(x).", "never"),
-    (".lattice l<b> { }\n.lattice m<> { A -> @f(x) + 1, B -> -2 * x, C -> count : { s(_) } }", "11"),
-    (".functor f(x: number): t<u> stateful\n.functor g(): t<> x `y`\n.decl r(x: t) `lit` 1", "11"),
+    (".lattice l<b> { }\n.lattice m<> { A -> @f(x) + 1, B -> -2 * x, C -> count : { s(_) } }", "parses"),
+    (".functor f(x: number): t<u> stateful\n.functor g(): t<> x `y`\n.decl r(x: t) `lit` 1", "parses"),
     // A line's end met in a nested level that ends there (a return type): its caller's.
-    (".functor dot(a: symbol): symbol    // c\n.functor e(a: symbol): t<u> // d\nr(x).", "11"),
+    (".functor dot(a: symbol): symbol    // c\n.functor e(a: symbol): t<u> // d\nr(x).", "parses"),
     // What the engine refuses by the token after it: an I/O directive with no relation and no
     // `.` after it; a functor named, not called, but before a `,` or a `}`; a `<` after a
     // return type that is not its own.
@@ -247,10 +243,10 @@ const CASES: &[(&str, &str)] = &[
     (".functor g(): t < 3", "never"),
     // A `(` at a literal's start: a group, or a term that an operator, a comparison or a `~`
     // after its `)` shows it was; groups in it terms too, an atom a call.
-    ("a(x) :- b(o), (o - n) * 10 > o.\np(x) :- ((a(x))) + 1 > 2.\np(x) :- ((o)) ~ `p`, (b(x) ; c(x)), !(d(x)), ((a(x))).", "12"),
-    ("p(x) :- (o) > 1, (a(x)) = b, (count : { s(_) }) > 2, !(o) - 1 ~ `p`, ((o - n) > 1), ((a(x)) + 1 > 2).", "12"),
-    ("p(x) :- ( // c\n o - n) * 2 > 1, (a(x) /* d */) + 1 > 2, (-o) < 2, ((o)) * (n) > 1.", "12"),
-    ("p(x) :- count : { (o - 1) > 2 } = n, max x : { (s(x)) } > 1, !((a(x))).", "12"),
+    ("a(x) :- b(o), (o - n) * 10 > o.\np(x) :- ((a(x))) + 1 > 2.\np(x) :- ((o)) ~ `p`, (b(x) ; c(x)), !(d(x)), ((a(x))).", "parses"),
+    ("p(x) :- (o) > 1, (a(x)) = b, (count : { s(_) }) > 2, !(o) - 1 ~ `p`, ((o - n) > 1), ((a(x)) + 1 > 2).", "parses"),
+    ("p(x) :- ( // c\n o - n) * 2 > 1, (a(x) /* d */) + 1 > 2, (-o) < 2, ((o)) * (n) > 1.", "parses"),
+    ("p(x) :- count : { (o - 1) > 2 } = n, max x : { (s(x)) } > 1, !((a(x))).", "parses"),
     // What the engine refuses: a term where a literal goes; a group of more than one literal, a
     // disjunction or an atom before what only a term takes; a negated comparison.
     ("p(x) :- (o).", "never"),
@@ -262,27 +258,31 @@ const CASES: &[(&str, &str)] = &[
     ("p(x) :- !(o) > 1.", "never"),
     // Floats: a `.` between digits, the digits after it the fraction; a `.` after a fraction
     // is no float's.
-    (".mode 1.5\nr(x) :- s(x, y), y > 0.10, x = -2.5 * y, z = - 3.25.", "13"),
-    (".scope 1.2.3\n.mode 1.2.3.4\nr(x) :- x = 1.2.", "13"),
-    ("r(x) :- x = 1.05, y = 007.5, z = 12345678901234567890.5, (a - 1.5) * 2.0 > b, c = -0.5.", "13"),
-    (".scope 1.2.3.4.5\n.mode 10.25.5 x\nr(x) :- x = 1.25.", "13"),
-    (".policy {\"a\": 1.5, \"b\": -0.25, \"c\": [1.0]}", "13"),
-    (".lattice l<b> { A -> 1.5 * x }\n.functor f(x: number): t 2.5\nr(x) :- count : { s(_) } > 1.5, max v : { t(v) } < -2.25.", "13"),
+    (".mode 1.5\nr(x) :- s(x, y), y > 0.10, x = -2.5 * y, z = - 3.25.", "parses"),
+    (".scope 1.2.3\n.mode 1.2.3.4\nr(x) :- x = 1.2.", "parses"),
+    ("r(x) :- x = 1.05, y = 007.5, z = 12345678901234567890.5, (a - 1.5) * 2.0 > b, c = -0.5.", "parses"),
+    (".scope 1.2.3.4.5\n.mode 10.25.5 x\nr(x) :- x = 1.25.", "parses"),
+    // The same, short of what goes to the engine (`TO_THE_ENGINE`).
+    (".scope 1.2\n.mode 1.2\nr(x) :- x = 1.2.", "parses"),
+    ("r(x) :- x = 12345678901234567890, y = 1.5.", "parses"),
+    ("r(x) :- x = 1.05, y = 007.5, z = 123456789012345678, (a - 1.5) * 2.0 > b, c = -0.5.", "parses"),
+    (".policy {\"a\": 1.5, \"b\": -0.25, \"c\": [1.0]}", "parses"),
+    (".lattice l<b> { A -> 1.5 * x }\n.functor f(x: number): t 2.5\nr(x) :- count : { s(_) } > 1.5, max v : { t(v) } < -2.25.", "parses"),
     ("r(x) :- x = 1..5.", "never"),
     ("r(x) :- a = 1.2.3.4.", "never"),
     ("r(x) :- w = 1.5e3.", "never"),
     // `\u` in a string: the forms that are code points by their bytes.
-    ("r(x) :- x = \"\\u212a\", y = \"\\u{1F600}\", z = \"\\u{41}\", w = \"a\\u017fb\\u0130\", v = \"\\u{10FFFF}\", u = \"\\u{FFFFF}\", t = \"\\\\u1234\".", "14"),
-    (".policy {\"a\": \"\\u00e9\", \"b\": \"x\"}", "14"),
+    ("r(x) :- x = \"\\u212a\", y = \"\\u{1F600}\", z = \"\\u{41}\", w = \"a\\u017fb\\u0130\", v = \"\\u{10FFFF}\", u = \"\\u{FFFFF}\", t = \"\\\\u1234\".", "parses"),
+    (".policy {\"a\": \"\\u00e9\", \"b\": \"x\"}", "parses"),
     ("r(x) :- x = \"\\uD800\".", "never"),
     ("r(x) :- x = \"\\u{D800}\", y = \"\\u{110000}\".", "never"),
     (".policy {\"a\": \"\\u{41}\"}", "never"),
     // The same bytes outside JSON: no refusal.
-    ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "06"),
+    ("r(x) :- x = a -b, s(\"a\\qb\", \"two\nlines\", 007) // c\n.", "parses"),
     // A rule file's tests (decision 0130): a fixture set, a test that uses it, with `exactly`, its
     // statements a file's; `.end` past a comment; `exactly` and `uses` as names.
-    (".fixtures app\n  .fixture \"a.py\" ```\n    x = 1\n    ```\n.end\n.test t exactly uses app, b\n  #include \"c.rerail\"\n  seen(1).\n  r(x) :- seen(x).\n  .expect B101 at \"a.py\":1\n.end\nr(x) :- s(x).", "22"),
-    (".test exactly\n.end\n.test uses uses a\n. // c\n end\n.fixtures f exactly(1).\n.end", "22"),
+    (".fixtures app\n  .fixture \"a.py\" ```\n    x = 1\n    ```\n.end\n.test t exactly uses app, b\n  #include \"c.rerail\"\n  seen(1).\n  r(x) :- seen(x).\n  .expect B101 at \"a.py\":1\n.end\nr(x) :- s(x).", "parses"),
+    (".test exactly\n.end\n.test uses uses a\n. // c\n end\n.fixtures f exactly(1).\n.end", "parses"),
     // Blocks do not nest; a `.end` outside a block; a block with no `.end`.
     (".test a\n.test b\n.end\n.end", "never"),
     (".fixtures a\n.fixtures b\n.end\n.end", "never"),
@@ -318,7 +318,7 @@ fn engine(src: &str) -> (Vec<Named>, bool) {
     (named, error)
 }
 
-/// A step's nodes by names: its ids back to the names they were made from.
+/// The grammar's nodes by names: its ids back to the names they were made from.
 fn named(c: &Compiled, nodes: &[IdNode]) -> Vec<Named> {
     let (kinds, fields) = c.ids.names();
     nodes
@@ -330,91 +330,65 @@ fn named(c: &Compiled, nodes: &[IdNode]) -> Vec<Named> {
         .collect()
 }
 
-/// The first step whose tape is named-only, as the engine's is: it leaves out the tokens the
-/// grammar implies (`implied`, `drop`; docs/parser-generators/32-named-only-rr-tapes.md).
-const NAMED_ONLY: &str = "21";
-
-/// `nodes` without their anonymous tokens (an ERROR aside) and comments, each node's size less
-/// those in it: a tree's named structure, which the steps before `NAMED_ONLY` share with the
-/// engine's. Comments go too: in those steps one between a directive's `.` and its word is the
-/// `.decl` leaf's text, where the engine's tape, with no such leaf, holds it.
-fn without_tokens(nodes: Vec<Named>) -> Vec<Named> {
-    let anonymous = |k: &str| k == "comment" || rr::tape::KIND_NAMES[usize::from(rr::tape::FIRST_ANONYMOUS)..].contains(&k);
-    let mut before = vec![0usize; nodes.len() + 1];
-    for (i, n) in nodes.iter().enumerate() {
-        before[i + 1] = before[i] + usize::from(anonymous(&n.0));
-    }
-    nodes
-        .iter()
-        .enumerate()
-        .filter(|(_, n)| !anonymous(&n.0))
-        .map(|(i, n)| (n.0.clone(), n.1.clone(), n.2, n.3, n.4 - (before[(i + n.4).min(nodes.len())] - before[i])))
-        .collect()
-}
-
-/// The engine's tree against the step's, for a document the step parses.
-/// The step that reads a rule file's tests (decision 0130).
-const TEST_BLOCKS: &str = "22";
-
-/// Whether a line of `src` starts with `.test`, `.fixtures` or `.end`, the lines of a test block.
-fn has_block_lines(src: &str) -> bool {
-    src.lines().any(|l| {
-        let l = l.trim_start();
-        [".test", ".fixtures", ".end"].iter().any(|w| l.strip_prefix(w).is_some_and(|rest| !rest.starts_with(|c: char| c.is_ascii_alphanumeric() || c == '_')))
-    })
-}
-
-fn against_the_engine(step: &str, c: &Compiled, bytes: &[u8], want: &Option<Vec<IdNode>>) -> Option<String> {
+/// The engine's tree against the grammar's, for a document the grammar parses.
+fn against_the_engine(_: &str, c: &Compiled, bytes: &[u8], want: &Option<Vec<IdNode>>) -> Option<String> {
     let nodes = want.as_ref()?;
     // A `.rerail` file is text: the engine reads only UTF-8.
     let src = std::str::from_utf8(bytes).ok()?;
-    // A step before the test blocks reads a block's lines as settings, as the engine did then: a document with
-    // them is the engine's from that step on.
-    if step < TEST_BLOCKS && has_block_lines(src) {
-        return None;
-    }
     let (theirs, error) = engine(src);
     let ours = named(c, nodes);
-    // A step before the named-only one writes every token: its named structure is the engine's.
-    let (ours, theirs) = if step < NAMED_ONLY { (without_tokens(ours), without_tokens(theirs)) } else { (ours, theirs) };
     if error {
-        return Some(format!("the step parses what the engine does not:\n  engine {theirs:?}\n  step {ours:?}"));
+        return Some(format!("the grammar parses what the engine does not:\n  engine {theirs:?}\n  grammar {ours:?}"));
     }
     if ours == theirs {
         return None;
     }
     let at = ours.iter().zip(&theirs).position(|(a, b)| a != b).unwrap_or(ours.len().min(theirs.len()));
     Some(format!(
-        "the trees differ at node {at}: step {:?}, engine {:?}\n  engine {theirs:?}\n  step {ours:?}",
+        "the trees differ at node {at}: grammar {:?}, engine {:?}\n  engine {theirs:?}\n  grammar {ours:?}",
         ours.get(at),
         theirs.get(at)
     ))
 }
 
-/// Every step of the `.rerail` ladder: the ladder's checks, and the engine's tree on every document
-/// the step parses.
+/// The grammar: the checks of `ladder`, and the engine's tree on every document it parses.
 #[test]
-fn rr_steps_parse_as_the_reference_and_the_engine() {
-    let steps = steps_in(&DIR);
-    assert!(!steps.is_empty(), "no steps in {}", *DIR);
+fn rr_parses_as_the_reference_and_the_engine() {
+    let grammar = grammar();
     let fixed: Vec<&str> = CASES.iter().map(|c| c.0).collect();
-    let differ = check_ladder(&steps, ALPHABET, SAMPLES, &fixed, &|step, c, bytes, want| against_the_engine(step, c, bytes, want));
-    assert!(differ.is_empty(), "{} steps differ:\n{}", differ.len(), differ.join("\n"));
+    let differ = check_ladder(&grammar, ALPHABET, SAMPLES, &fixed, &|name, c, bytes, want| against_the_engine(name, c, bytes, want));
+    assert!(differ.is_empty(), "{} documents differ:\n{}", differ.len(), differ.join("\n"));
 }
 
-/// Each case parses from the step that names it on, and the engine's tree has no `ERROR`.
+/// Cases the grammar sends to the engine, and the escape that sends it: an integer of 19 digits or more, its leading
+/// zeros aside (the engine checks its i64). A float's chain of dots (`1.2.3`) and a float's digits, however many, are
+/// read in tier 1, as a lexer reads them (decision 0400, Q40). The engine's tape is the file's either way.
+const TO_THE_ENGINE: &[(&str, &str)] = &[("r(x) :- x = 12345678901234567890, y = 1.5.", "escape: a number of 19 digits or more")];
+
+/// Each case marked `parses` parses, and the engine's tree has no `ERROR`; a case sent to the engine
+/// (`TO_THE_ENGINE`) is refused by its escape alone.
 #[test]
-fn rr_cases_parse_from_their_steps() {
+fn rr_cases_parse() {
     let mut missing = Vec::new();
-    for (name, source) in steps_in(&DIR) {
+    for (name, source) in grammar() {
         let c = rerail_compiler::ladder::compile_step(&name, &source);
-        for &(doc, from) in CASES {
-            if name.as_str() >= from && rerail_compiler::ladder::reference(&c, doc.as_bytes()).is_none() {
-                missing.push(format!("{name}: {doc:?}: {}", rerail_compiler::ladder::refusal(&c, doc.as_bytes())));
+        for &(doc, mark) in CASES {
+            let engine = TO_THE_ENGINE.iter().find(|e| e.0 == doc);
+            let parsed = rerail_compiler::ladder::reference(&c, doc.as_bytes()).is_some();
+            match engine {
+                Some(&(_, why)) => {
+                    let refusal = rerail_compiler::ladder::refusal(&c, doc.as_bytes());
+                    if parsed || !refusal.starts_with(why) {
+                        missing.push(format!("{name}: {doc:?}: not sent to the engine by {why:?}: {}", if parsed { "parsed" } else { &refusal }));
+                    }
+                }
+                None if mark == "parses" && !parsed => missing.push(format!("{name}: {doc:?}: {}", rerail_compiler::ladder::refusal(&c, doc.as_bytes()))),
+                None => {}
             }
         }
     }
-    assert!(missing.is_empty(), "cases a step refuses:\n{}", missing.join("\n"));
+    assert!(TO_THE_ENGINE.iter().all(|e| CASES.iter().any(|c| c.0 == e.0)), "a case sent to the engine that is no case");
+    assert!(missing.is_empty(), "cases the grammar refuses:\n{}", missing.join("\n"));
 }
 
 /// `refuse M in L`: the compiler takes it only where a refused mark is refused between the
@@ -422,14 +396,14 @@ fn rr_cases_parse_from_their_steps() {
 /// each level they call refusing it too, no level that may end and go on.
 #[test]
 fn a_refused_mark_is_checked() {
-    let source = std::fs::read_to_string(format!("{}/22-test-blocks.bitlex", *DIR)).expect("the grammar");
+    let source = grammar().remove(0).1;
     assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
     let refuse = "refuse json_bad in json_document json_inner_object json_inner_array";
     for (from, to, why) in [
         (refuse, "refuse json_bad in json_document json_inner_object", "calls one that does not"),
         (refuse, "refuse json_bad in json_document json_member json_inner_object json_inner_array", "no nested level"),
         (refuse, "refuse json_bad in source_file json_document json_inner_object json_inner_array", "the root"),
-        ("newline policy_on json_bad fix_on", "newline policy_on fix_on", "no hidden mark"),
+        ("hidden float_after line newline policy_on json_bad fix_on", "hidden float_after line newline policy_on fix_on", "no hidden mark"),
         ("merge json_object ']'", "merge json_object ']' [merge json_object '.']", "may end only after its last token"),
     ] {
         assert_eq!(source.matches(from).count(), 1, "{from}");
@@ -442,7 +416,7 @@ fn a_refused_mark_is_checked() {
 /// the program (`RETAG m=3` names one; `provisional` fields the program checks at `ACCEPT`).
 #[test]
 fn a_reading_is_checked() {
-    let source = std::fs::read_to_string(format!("{}/22-test-blocks.bitlex", *DIR)).expect("the grammar");
+    let source = grammar().remove(0).1;
     assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
     for (from, to, why) in [
         ("reread parenthesized_strict pattern_tail\n  provisional", "reread nowhere pattern_tail\n  provisional", "no reading of that name"),
@@ -453,25 +427,24 @@ fn a_reading_is_checked() {
         let e = rerail_compiler::ladder::compile_error(&source.replace(from, to));
         assert!(e.as_deref().is_some_and(|e| e.contains(why)), "{to}: {e:?}");
     }
-    let c = rerail_compiler::ladder::compile_step("22", &source);
+    let c = rerail_compiler::ladder::compile_step("rr", &source);
     assert_eq!(c.program.readings.maps.len(), source.lines().filter(|l| l.trim_start().starts_with("reading ")).count());
     assert_eq!(c.program.readings.provisional, [c.ids.of("field bare")]);
     let rereads = c.native.structural.iter().filter(|b| matches!(b.operation, rerail_compiler::native_ir::StructuralOperation::Reread { .. })).count();
     assert!(rereads > 0, "the words reread");
 }
 
-/// A document's tokens and parse at a step, for a look by hand: `RERAIL_RR_STEP` (a step's name,
-/// or part of it) and `RERAIL_RR_DOC` (the document, with `\n` for a line break).
+/// A document's tokens and parse, for a look by hand: `RERAIL_RR_DOC` (the document, with `\n` for a line break).
 #[test]
-#[ignore = "a look by hand: run by name with RERAIL_RR_STEP and RERAIL_RR_DOC"]
+#[ignore = "a look by hand: run by name with RERAIL_RR_DOC"]
 fn rr_look() {
-    let (Ok(step), Ok(doc)) = (std::env::var("RERAIL_RR_STEP"), std::env::var("RERAIL_RR_DOC")) else { return };
+    let Ok(doc) = std::env::var("RERAIL_RR_DOC") else { return };
     // `@path`: the document is that file.
     let doc = match doc.strip_prefix('@') {
         Some(path) => std::fs::read_to_string(path).expect("reads the file"),
         None => doc.replace("\\n", "\n"),
     };
-    for (name, source) in steps_in(&DIR).into_iter().filter(|s| s.0.contains(&step)) {
+    for (name, source) in grammar() {
         let c = rerail_compiler::ladder::compile_step(&name, &source);
         let out = ::bitlex::eval::Ev::run(&c.stmts, doc.as_bytes(), &std::collections::HashMap::new()).expect("runs");
         eprintln!("{name}: errors {:?}", out.errors);
@@ -512,17 +485,14 @@ fn rr_look() {
     }
 }
 
-/// Every `.rerail` file of the repository through a step's compiled path (`RERAIL_RR_STEP`, the
-/// last step by default), against the engine's tree: the files it parses as the engine does,
+/// Every `.rerail` file of the repository through the grammar's compiled path, against the engine's tree: the files it parses as the engine does,
 /// those it parses differently or the engine refuses (each a bug), and those it sends to the
 /// engine, by the reference's reason. Run by name.
 #[test]
 #[ignore = "the corpus: run by name"]
 fn rr_corpus() {
-    let steps = steps_in(&DIR);
-    let want = std::env::var("RERAIL_RR_STEP").ok();
-    let (name, source) = steps.iter().rev().find(|s| want.as_ref().is_none_or(|w| s.0.contains(w.as_str()))).expect("a step");
-    let c = rerail_compiler::ladder::compile_step(name, source);
+    let (name, source) = grammar().remove(0);
+    let c = rerail_compiler::ladder::compile_step(&name, &source);
     let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let mut files = Vec::new();
     let mut work = vec![root];
@@ -557,7 +527,7 @@ fn rr_corpus() {
                     bytes_parsed += bytes.len();
                 } else {
                     let at = ours.iter().zip(&theirs).position(|(a, b)| a != b).unwrap_or(ours.len().min(theirs.len()));
-                    differ.push(format!("{}: node {at}: step {:?}, engine {:?}", f.display(), ours.get(at), theirs.get(at)));
+                    differ.push(format!("{}: node {at}: grammar {:?}, engine {:?}", f.display(), ours.get(at), theirs.get(at)));
                 }
             }
             Err(_) => {

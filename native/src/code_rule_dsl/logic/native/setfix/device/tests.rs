@@ -510,7 +510,7 @@
         let read = |fns: u32, sym: u32| -> Option<String> {
             // SAFETY: the store's cache, in its live block; an entry found is complete.
             unsafe {
-                let r = rerail_blocks::generated_reads::text_find(kept.cache(), fns, sym);
+                let r = rerail_clif::view::cache::text_find(kept.cache(), fns, sym);
                 (r & 3 == 0).then(|| {
                     let e = (r & !3) as *const u8;
                     let len = e.add(12).cast::<u32>().read() as usize - 16;
@@ -597,6 +597,10 @@
         let rule = format!("pos {n} v0 v1\ntest prefix v0 x:{} 1\nhead v0 v1", hex("foo"));
         db.execute_batch("CREATE TEMP TABLE h0 (c0, c1);").unwrap();
         let spec = ["name dev_verdicts".to_owned(), "device".into(), "rel h0 si empty".into(), format!("seed 0 {}", hex(&rule))].join("\n");
+        // The cache's statistics mode on, so a failure says how it lost a verdict (`view::cache`'s counts).
+        let counted = std::sync::Arc::clone(super::super::symbols(&db).unwrap().read().unwrap().atoms());
+        counted.kept().count_statistics();
+        let kept_counts = move || counted.kept().counts();
         super::super::open(&db, &spec).unwrap();
         super::super::run(&db, "dev_verdicts", 0).unwrap();
         let report = super::take_report();
@@ -609,7 +613,7 @@
         let runs = atoms.runs();
         let verdicts = atoms.kept();
         use crate::content_store::atoms::{FAILS, PASSES, UNKNOWN};
-        let mut wrong = Vec::new();
+        let (mut wrong, mut wrong_ids) = (Vec::new(), Vec::new());
         let mut seen = std::collections::HashSet::new();
         for name in &names {
             let id = u32::try_from(syms.write().unwrap().id(name)).unwrap();
@@ -621,6 +625,7 @@
             if got != want {
                 let run = runs.iter().position(|(r, _)| r.first <= id && id < r.end);
                 let block = run.map(|k| (runs[k].0.first, runs[k].0.end, runs[k].0.from, runs[k].1.reserved(), runs[k].1.in_slab(), runs[k].1.mapped_file().is_some()));
+                wrong_ids.push(id);
                 wrong.push(format!("{name:?} id {id} got {got} (UNKNOWN {UNKNOWN}) want {want}, run {run:?} {block:?}"));
             }
         }
@@ -630,7 +635,7 @@
         let want: Vec<(i64, i64)> = names.iter().enumerate().filter(|(_, s)| m.is_match(s)).map(|(k, s)| (syms.write().unwrap().id(s), k as i64)).collect();
         assert_eq!(heads, want, "the rows that pass, their names kept");
         let all: Vec<_> = runs.iter().map(|(r, b)| (r.first, r.end, r.from, b.reserved(), b.in_slab(), b.mapped_file().is_some())).collect();
-        assert!(wrong.is_empty(), "{} of {} symbols wrong; runs {all:?}; first: {:#?}", wrong.len(), seen.len(), &wrong[..wrong.len().min(12)]);
+        assert!(wrong.is_empty(), "{} of {} symbols wrong; the cache: {}; ids {wrong_ids:?}; runs {all:?}; first: {:#?}", wrong.len(), seen.len(), kept_counts(), &wrong[..wrong.len().min(12)]);
     }
 
     /// Strata placed on the device, when their driver can wait, go out in one wave: each encodes its joins into the
@@ -1005,11 +1010,11 @@
         assert_eq!((dev.rows, dev.cols), (n, 3));
         assert_eq!(place, [0, 1, 2], "each column at its own place");
         let cols = [StatColumn::Rel(&rel, 1), StatColumn::Rel(&rel, 2)];
-        let (read, in_place) = super::column_stats(&cols, 8, 0).expect("the device");
+        let (read, in_place) = super::column_stats(&cols, 8).expect("the device");
         assert_eq!(in_place, 2);
         for (c, got) in [1, 2].into_iter().zip(&read) {
             let values: Vec<i64> = (0..n).map(|i| src.value(i, c)).collect();
-            let (host, _) = super::column_stats(&[StatColumn::Values(&values)], 8, 0).expect("the device");
+            let (host, _) = super::column_stats(&[StatColumn::Values(&values)], 8).expect("the device");
             assert_eq!(*got, host[0], "column {c}");
         }
     }
@@ -1036,22 +1041,15 @@
         assert!(rel.in_block().is_some(), "a flat relation's rows lie in a block");
         let cols = [StatColumn::Rel(&rel, 0), StatColumn::Rel(&rel, 1)];
         // Decision 0478 step 1: a relation in its block is read where it lies, with nothing made resident first.
-        let (read, in_place) = super::column_stats(&cols, 16, 64).expect("the device");
+        let (read, in_place) = super::column_stats(&cols, 16).expect("the device");
         assert_eq!(in_place, 2);
         assert_eq!(std::sync::Arc::strong_count(&rel), 1, "the read keeps no handle to the relation (decision 0478 R1)");
-        // The same statistics, and the same filters, as the columns' values gathered on the host.
+        // The same statistics as the columns' values gathered on the host.
         let (c0, c1): (Vec<i64>, Vec<i64>) = (rows.iter().step_by(2).copied().collect(), rows.iter().skip(1).step_by(2).copied().collect());
-        let (of_values, in_place) = super::column_stats(&[StatColumn::Values(&c0), StatColumn::Values(&c1)], 16, 64).expect("the device");
+        let (of_values, in_place) = super::column_stats(&[StatColumn::Values(&c0), StatColumn::Values(&c1)], 16).expect("the device");
         assert_eq!(in_place, 0);
         assert_eq!(read, of_values);
         assert_eq!(read[1].ndv, 18);
-        // Each column's filter (decision 0488), the second's base the span's on the device, 64 bits wide: the
-        // host's filter of the same values, word for word.
-        for (c, got) in read.iter().enumerate() {
-            let mut cpu = crate::code_rule_dsl::logic::bloom::Filter::new(64);
-            rows.iter().skip(c).step_by(2).for_each(|&v| cpu.add(v));
-            assert_eq!(*got.keys, *cpu.words, "column {c}'s filter");
-        }
     }
 
     /// Decision 0221 §4, through the device interface: the device's batch makes the CPU's heavy values.
@@ -1075,9 +1073,8 @@
             // The same top counts (ties may take other values of the same count).
             let counts_of = |h: &table::HeavyCol| { let mut c: Vec<u64> = h.top.iter().map(|t| t.1 as u64).collect(); c.sort_unstable(); c };
             assert_eq!(counts_of(&g), counts_of(&cpu));
-            assert!((table::heavy_fan(&g, &[&g, &g]).unwrap() / table::heavy_fan(&cpu, &[&cpu, &cpu]).unwrap() - 1.0).abs() < 1e-6);
-            // The device's filter is the host's, word for word (decision 0488).
-            assert_eq!(g.keys, cpu.keys, "the column's filter");
+            let fan = |h: &table::HeavyCol| table::heavy_fan(table::PricedCol::new(h, None), &[table::PricedCol::new(h, None); 2]).unwrap();
+            assert!((fan(&g) / fan(&cpu) - 1.0).abs() < 1e-6);
         }
     }
     /// The CPU's and the GPU's batch on columns of 1 M and 8 M rows, warm (a measure: `--ignored`).
@@ -1370,6 +1367,7 @@
                 let host: std::collections::HashSet<i64> = (0..host.len()).filter(|&r| host.value(r, 1) == 7).map(|r| host.value(r, 0)).collect();
                 let guest: Vec<usize> = (0..docof.len()).filter(|&r| docof.value(r, 1) == 7 && !host.contains(&docof.value(r, 0))).collect();
                 assert!(!guest.is_empty(), "the guest's places are rows");
+                assert!(guest.iter().all(|&r| docof.value(r, 1) == 7), "the guest's places are its host's file's");
                 assert!(guest.iter().all(|&r| line.value(r, 1) == 2), "the guest's places are its host's lines");
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's

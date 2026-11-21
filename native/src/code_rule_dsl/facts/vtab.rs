@@ -161,6 +161,14 @@ pub trait Source: Send + Sync {
             }
         }
     }
+    /// The rows whose `column` holds one of `keys`, each with its values of `columns`, in row order, until `each`
+    /// returns false; `false` (nothing given) where the source has no such read. A view of a batch's documents walks
+    /// the documents the keys name, reading each row's own column and the other columns of the rows kept alone:
+    /// the walk carries a node's depth and place, where a lookup a key computes them again (a semi-join's rows,
+    /// decision 0458).
+    fn for_rows_keyed(&self, _column: usize, _keys: &rustc_hash::FxHashSet<i64>, _columns: &[usize], _each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
+        false
+    }
     /// Each row's document: the high 32 bits of the id in `column` (a value below `1 << 32` is its own document), row
     /// after row with the row's number. A view of a batch's documents gives each document's rows its key, reading no
     /// row's id.
@@ -208,6 +216,17 @@ pub trait Source: Send + Sync {
     /// The rows whose columns equal the values (`(column, value)` by column, at least two), from one sorted
     /// order over them; `None` probes one column and filters the rest.
     fn lookup_all(&self, _equal: &[(usize, i64)]) -> Option<Vec<usize>> {
+        None
+    }
+    /// The rows of the documents `docs` (by key), ascending, where the source knows where they lie (decision 0494: a
+    /// batch's, by group or by offset); `None` where it does not, and they are found by a read of its rows.
+    fn rows_of_documents(&self, _docs: &std::collections::BTreeSet<u32>) -> Option<Vec<usize>> {
+        None
+    }
+    /// Whether the relation holds the row of these values, every column given (`(column, value)`), answered by a
+    /// test and not by its rows: a join step that reads no column of the row asks only this (`within(n, a)` with
+    /// both bound is an interval test on the tape, t50 step 4). `None`: the source has no such test; `lookup_all`.
+    fn holds(&self, _equal: &[(usize, i64)]) -> Option<bool> {
         None
     }
     /// The column holding a row's document, where a lookup can be kept to one document (`lookup_in`).

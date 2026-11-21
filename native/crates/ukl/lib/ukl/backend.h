@@ -75,6 +75,10 @@ UKL_INLINE void ukl_tg_barrier_device() { threadgroup_barrier(mem_flags::mem_dev
 
 // Relaxed atomics on a device word, and a device-wide fence.
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return atomic_load_explicit((device atomic_uint*)p, memory_order_relaxed); }
+// A poll of a word another group writes (a grid barrier's generation, a queue's counts): a read-modify-write that
+// changes nothing, so it is served where the word's writes meet. On an M1 Max (Apple7) a relaxed atomic load polled
+// in a loop read the value before another group's write for 10^6 polls, while a compare-and-swap saw the new one.
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_GLOBAL uint32_t* p) { return atomic_fetch_or_explicit((device atomic_uint*)p, 0u, memory_order_relaxed); }
 UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { atomic_store_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
 UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_fetch_add_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
 UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomic_fetch_sub_explicit((device atomic_uint*)p, v, memory_order_relaxed); }
@@ -96,6 +100,21 @@ UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t 
     }
     return ~e;
 }
+// The same atomics on a coherent word (`UKL_COHERENT`): an atomic is served where the word's writes meet already.
+#define __UKL_COHERENT_ATOMIC(op)                                                                                     \
+    UKL_INLINE uint32_t ukl_atomic_##op(UKL_COHERENT uint32_t* p, uint32_t v) { return ukl_atomic_##op((UKL_GLOBAL uint32_t*)p, v); }
+__UKL_COHERENT_ATOMIC(add)
+__UKL_COHERENT_ATOMIC(sub)
+__UKL_COHERENT_ATOMIC(or)
+__UKL_COHERENT_ATOMIC(and)
+__UKL_COHERENT_ATOMIC(exchange)
+__UKL_COHERENT_ATOMIC(min)
+__UKL_COHERENT_ATOMIC(max)
+#undef __UKL_COHERENT_ATOMIC
+UKL_INLINE uint32_t ukl_atomic_load(UKL_COHERENT uint32_t* p) { return ukl_atomic_load((UKL_GLOBAL uint32_t*)p); }
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_COHERENT uint32_t* p) { return ukl_atomic_poll((UKL_GLOBAL uint32_t*)p); }
+UKL_INLINE void ukl_atomic_store(UKL_COHERENT uint32_t* p, uint32_t v) { ukl_atomic_store((UKL_GLOBAL uint32_t*)p, v); }
+UKL_INLINE uint32_t ukl_atomic_cas(UKL_COHERENT uint32_t* p, uint32_t e, uint32_t n) { return ukl_atomic_cas((UKL_GLOBAL uint32_t*)p, e, n); }
 UKL_INLINE void ukl_fence_device() { atomic_thread_fence(mem_flags::mem_device, memory_order_seq_cst, thread_scope_device); }
 // A relaxed add on a threadgroup word.
 UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { return atomic_fetch_add_explicit((threadgroup atomic_uint*)p, v, memory_order_relaxed); }
@@ -149,6 +168,8 @@ UKL_INLINE void ukl_tg_barrier() { __syncthreads(); }
 UKL_INLINE void ukl_tg_barrier_device() { __syncthreads(); }
 
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return *(volatile uint32_t*)p; }
+// A poll of a word another group writes (Metal's comment): a volatile load reaches L2 here.
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_GLOBAL uint32_t* p) { return *(volatile uint32_t*)p; }
 UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { *(volatile uint32_t*)p = v; }
 UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicAdd(p, v); }
 UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return atomicSub(p, v); }
@@ -214,6 +235,16 @@ UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
 }
 UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return (uint32_t)__ukl_cpu_exchange(v, __ukl_self->lane ^ m); }
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return (ukl_mask_t)__ukl_cpu_ballot(b); }
+// Native forms: a reduction or a scan is one wait of the SIMD group, not a shuffle's per step.
+#define UKL_NATIVE_SG_REDUCE 1
+UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_reduce(v, 0u); }
+UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_reduce(v, 1u); }
+UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_reduce(v, 2u); }
+#define UKL_NATIVE_SG_SCAN 1
+UKL_INLINE uint32_t ukl_sg_inclusive_sum_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_prefix(v, true); }
+UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { return __ukl_cpu_prefix(v, false); }
+#define UKL_NATIVE_SG_SEG 1
+UKL_INLINE uint32_t ukl_sg_seg_inclusive_native(bool add, uint32_t f, uint32_t v, uint32_t* fin __UKL_PARAMS) { return __ukl_cpu_seg(add, f, v, fin); }
 
 UKL_INLINE void ukl_sg_barrier() { __ukl_cpu_wait(__UKL_AT_SG); }
 UKL_INLINE void ukl_tg_barrier() { __ukl_cpu_wait(__UKL_AT_TG); }
@@ -227,6 +258,8 @@ UKL_INLINE void ukl_tg_barrier_device() { __ukl_cpu_wait(__UKL_AT_TG); }
 #endif
 
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
+// A poll of a word another group writes (Metal's comment): the host's loads are coherent.
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_GLOBAL uint32_t* p) { return __atomic_load_n(p, __ATOMIC_RELAXED); }
 UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { __atomic_store_n(p, v, __ATOMIC_RELAXED); }
 UKL_INLINE uint32_t ukl_atomic_add(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_fetch_add(p, v, __ATOMIC_RELAXED); }
 UKL_INLINE uint32_t ukl_atomic_sub(UKL_GLOBAL uint32_t* p, uint32_t v) { return __atomic_fetch_sub(p, v, __ATOMIC_RELAXED); }
@@ -361,6 +394,8 @@ UKL_INLINE void ukl_sg_barrier() { mem_fence(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_ME
 // reached (Apple's). So an atomic load is an atomic read-modify-write that changes nothing, an atomic store an
 // exchange, and a coherent load (`ukl_ldc_*`, ukl/memory.h) reads its words' halves so.
 UKL_INLINE uint32_t ukl_atomic_load(UKL_GLOBAL uint32_t* p) { return atomic_or((volatile __global uint32_t*)p, 0u); }
+// A poll of a word another group writes (Metal's comment): every atomic load here is already one.
+UKL_INLINE uint32_t ukl_atomic_poll(UKL_GLOBAL uint32_t* p) { return ukl_atomic_load(p); }
 UKL_INLINE void ukl_atomic_store(UKL_GLOBAL uint32_t* p, uint32_t v) { (void)atomic_xchg((volatile __global uint32_t*)p, v); }
 UKL_INLINE uint64_t __ukl_cl_coherent_load64(volatile __global const uint64_t* p)
 {

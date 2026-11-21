@@ -405,6 +405,7 @@ impl<'p> Builder<'p> {
             AggOp::Sum => 3,
             AggOp::Product => 4,
             AggOp::Join { .. } => 5,
+            AggOp::Bounded { .. } => 6,
         };
         let a = self.enc.atom(var);
         let s = self.enc.slot_of(a);
@@ -419,6 +420,11 @@ impl<'p> Builder<'p> {
             }
             let a = self.enc.atom(sep);
             self.enc.leaf(kind::STR, a);
+        }
+        // A bounded aggregate's bound, then its flags: 1 a max, 2 strict (decision 0511, `AggRef::Bounded`).
+        if let AggOp::Bounded { max, bound, strict } = op {
+            self.enc.var(bound);
+            self.enc.leaf(kind::INT, u32::from(*max) | u32::from(*strict) << 1);
         }
         self.put_atom_node(rel.into(), args, 0);
         self.enc.close(at);
@@ -960,7 +966,8 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
         self
     }
     /// An aggregate `var = op over : { rel(args) }`, written as the encoder writes a tree's (`over` `None` for a
-    /// count); `var` a variable. A join's keys follow `over`, a variable each, then its separator.
+    /// count); `var` a variable. A join's keys follow `over`, a variable each, then its separator; a bounded one's bound
+    /// and its flags.
     pub fn agg(mut self, var: T<'_>, op: &crate::code_rule_dsl::logic::front::ast::AggOp, over: Option<T<'_>>, rel: impl Into<Rel<'b>>, args: &[T<'_>]) -> Self {
         use crate::code_rule_dsl::logic::front::ast::AggOp;
         self.body();
@@ -971,6 +978,7 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
             AggOp::Sum => 3,
             AggOp::Product => 4,
             AggOp::Join { .. } => 5,
+            AggOp::Bounded { .. } => 6,
         };
         let s = match var {
             T::Var(v) => {
@@ -994,6 +1002,11 @@ impl<'b, 'p> RuleBuilder<'b, 'p> {
             }
             let a = self.b.enc.atom(sep);
             self.b.enc.leaf(kind::STR, a);
+        }
+        // A bounded aggregate's bound, then its flags: 1 a max, 2 strict (decision 0511, `AggRef::Bounded`).
+        if let AggOp::Bounded { max, bound, strict } = op {
+            self.term(&T::Var(bound));
+            self.b.enc.leaf(kind::INT, u32::from(*max) | u32::from(*strict) << 1);
         }
         self.atom_node(rel.into(), args, 0);
         self.b.enc.close(at);

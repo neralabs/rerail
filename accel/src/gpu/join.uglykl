@@ -133,16 +133,18 @@ typedef struct ProbeJob {
   UKL_GLOBAL const uint32_t* perm;
   UKL_GLOBAL const uint64_t* l[3];
   UKL_GLOBAL const uint8_t* r[2];
+  // The sort's screen (`Keyed::screen`): a `bloom::Bloom` at byte `screen_at`; `screen_at` NO_SCREEN for none.
+  UKL_GLOBAL const uint8_t* screen;
   int64_t lbase[3];
   int64_t kbase;
   int64_t rbase[2];
-  uint32_t nl, k, kw, pad;
+  uint32_t nl, k, kw, screen_at;
   uint32_t rw[2];
   uint32_t pad2[2];
 } ProbeJob;
 
 UKL_STATIC_ASSERT(sizeof(SortJob) == 88, "SortJob: size");
-UKL_STATIC_ASSERT(sizeof(ProbeJob) == 152, "ProbeJob: size");
+UKL_STATIC_ASSERT(sizeof(ProbeJob) == 160, "ProbeJob: size");
 
 // Value `i` of `w` bytes at `p`.
 UKL_INLINE uint64_t ld(UKL_GLOBAL const uint8_t* p, uint32_t w, uint32_t i)
@@ -261,7 +263,8 @@ DEFINE_KERNEL2(join, probe_all,
     c[i] = 0u;
     run[i] = 0xFFFFFFFFu;
     uint32_t lo = 0u;
-    if (r < nl && fused_find(j->l[0][r] + (uint64_t)j->lbase[0], j, runs, &lo)) {
+    uint64_t key = r < nl ? j->l[0][r] + (uint64_t)j->lbase[0] : 0ul;
+    if (r < nl && join_may_hold(j->screen, j->screen_at, key) && fused_find(key, j, runs, &lo)) {
       run[i] = lo;
       for (uint32_t q = j->starts[lo]; q < j->starts[lo + 1u]; q++) c[i] += (uint32_t)fused_same(j, r, q);
     }

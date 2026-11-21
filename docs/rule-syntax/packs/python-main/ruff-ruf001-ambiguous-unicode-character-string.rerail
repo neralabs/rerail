@@ -1,5 +1,4 @@
 .policy "ruff-ruf001-ambiguous-unicode-character-string" revision 1
-.guests off
 .description "Avoid look-alike Unicode characters in string literals; they read like ASCII letters or punctuation but are different characters."
 .language python
 .mode steer

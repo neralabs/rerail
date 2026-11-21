@@ -225,6 +225,8 @@ mod watchman {
         /// Against a stand-in for Watchman that answers as its protocol documents: a cursor's first ask is lost and
         /// gives a clock; a query since a clock names the files relative to the root's `relative_root`; a fresh
         /// instance is lost.
+        // Its stand-in watchman is a shell script.
+        #[cfg(unix)]
         #[test]
         fn watchman_answers_are_read_as_its_protocol_says() {
             let base = std::env::temp_dir().join(format!("rerail-watchman-{}", std::process::id()));

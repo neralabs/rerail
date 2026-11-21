@@ -9,6 +9,7 @@ See README.md beside this file. Two entry points use this module:
 """
 import concurrent.futures
 import fcntl
+import glob
 import hashlib
 import json
 import os
@@ -23,7 +24,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 42
+VERSION = 52
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -288,6 +289,15 @@ class Lock:
             fcntl.flock(self.f, fcntl.LOCK_EX | (0 if blocking else fcntl.LOCK_NB))
         except BlockingIOError:
             self.held = False
+        self.path = path
+
+    def used(self):
+        """Stamps the lock's time: a slot taken for a job (not one taken to count the free ones). A
+        guest's watcher (guest.py) reads its slots' times to see a job that ran between its looks."""
+        try:
+            os.utime(self.path)
+        except OSError:
+            pass
 
     def release(self):
         if self.held:
@@ -1012,8 +1022,7 @@ DEFAULTS = {
     "hosts": [],
     # Under `min_free_gb` free, the farm frees its own data on a host at once (`free_host`), and says
     # so when that is not enough; the host stays in use down to `floor_free_gb`, which is left to the
-    # host's own work. A host is used only while its round trip is this short and the link carries
-    # this much: a host that dropped to WiFi or a busy network is no faster than here.
+    # host's own work.
     "min_free_gb": 40,
     "floor_free_gb": 20,
     # This Mac's floor: under it, Rerail's builds here go, least recently built first (free-local).
@@ -1021,16 +1030,16 @@ DEFAULTS = {
     # The most a host's test targets hold together (GB): over it, the least recently used that no
     # command holds go (farm-agent, `keep_to_budget`).
     "max_target_gb": 150,
-    "max_rtt_ms": 150,
-    "min_mbps": 8,
 }
 # How long a host's health is believed: an answer that it is usable, and the first wait after it was
 # not (doubled each time it is still not, up to the last). The last was 30 minutes: hosts that
 # had failed all evening at home stayed "unreachable" for half an hour at the office, while ssh
-# reached them, and agents ran everything here (2026-11-18). A change of this Mac's network ends a
-# back-off at once too (`network_now`).
+# reached them, and agents ran everything here (2026-11-18). Then it was 5 minutes, and a host that
+# missed probes while this Mac was booting stayed out for minutes after it answered (2026-11-20):
+# now 2. A change of this Mac's network ends a back-off at once too (`network_now`). A host is down
+# only when two connections in a row fail (`probe`), never on one slow or lost probe.
 HEALTHY_SECONDS = 30
-DOWN_SECONDS = (30, 300)
+DOWN_SECONDS = (30, 120)
 # A host that answers, but over another link than its own (it fell back to WiFi), is tried again
 # this often, not backed off: its own link may be back at any time (`recover`).
 OFF_LINK_SECONDS = 60
@@ -1038,6 +1047,8 @@ OFF_LINK_SECONDS = 60
 # round trip is taken off its time: at 4 MB a session's start alone halved the rate seen.
 PROBE_BYTES = 32 << 20
 PROBE_SECONDS = 600
+# How long a throughput measurement counts toward the link's best figure (`mbps_best`).
+MBPS_MEMORY_SECONDS = 3600
 
 
 def config_path():
@@ -1121,15 +1132,15 @@ def network_now():
 
 
 def mark_down(name, why):
-    """Records that `name` failed in use (its agent stopped, a file could not be written there): it
-    is not used until its back-off ends, and the next health check asks again."""
+    """Records that `name` failed in use (a test run's connection lost, its agent stopped, a file
+    not written there): its health record is stale, so the next health check probes it at once, and
+    it is down only if that probe fails too (`probe`: two connections). One lost connection on a
+    host at a load of 127 had taken it out for a back-off while it answered (until farm 50)."""
     path = state("health", name)
     h = read_json(path, {})
-    failures = h.get("failures", 0) + 1
-    wait = min(DOWN_SECONDS[0] * 2 ** (failures - 1), DOWN_SECONDS[1])
-    h.update(ok=False, why=why, failures=failures, checked=time.time(), down_until=time.time() + wait, net=network_now())
+    h.update(checked=0, down_until=0, suspect=why)
     write_json(path, h)
-    log(f"{name}: down for {wait} s: {why}")
+    log(f"{name}: checked again at once: {why}")
 
 
 # Prints the host's interface an ssh connection came in on: the one holding the address it was
@@ -1159,9 +1170,10 @@ def probe(host, cfg, fell_back=False, recovered=False):
     name = host["name"]
     previous = read_json(state("health", name), {})
     h = {"checked": time.time(), "ok": False, "failures": previous.get("failures", 0),
-         "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0)}
+         "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0),
+         "mbps_seen": [s for s in previous.get("mbps_seen", []) if time.time() - s[0] < MBPS_MEMORY_SECONDS]}
     if previous.get("route") != route(name):
-        h["mbps"], h["mbps_at"] = None, 0  # another path: its throughput is not known
+        h["mbps"], h["mbps_at"], h["mbps_seen"] = None, 0, []  # another path: its throughput is not known
     # Free disk: what macOS gives an important write (AVAILABLE_JS), then statvfs's, in KB.
     available = shlex.quote(AVAILABLE_JS)
     # Linux: df alone (no purgeable space), no input to idle on (a server: never attended), the
@@ -1180,10 +1192,19 @@ def probe(host, cfg, fell_back=False, recovered=False):
         # Counted first; docker may be outside a plain ssh command's PATH on a Mac.
         script = ('echo "fleet $(PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin '
                   'docker ps -q --filter label=fleet.job 2>/dev/null | wc -l)"; ' + script)
-    try:
-        out = subprocess.run(ssh(name, script, "health"), capture_output=True, text=True, timeout=10)
-    except subprocess.TimeoutExpired:
-        out = None
+    # Asked twice before it counts as down, the second time with longer to answer: one lost or slow
+    # connection (this Mac at a load of 90 can take seconds to start ssh) is not a host gone.
+    for timeout in (10, 20):
+        command = ssh(name, script, "health")
+        if timeout > 10:
+            # (ssh keeps an option's first value: this one, over ssh()'s 3 s)
+            command = command[:1] + ["-o", "ConnectTimeout=10"] + command[1:]
+        try:
+            out = subprocess.run(command, capture_output=True, text=True, timeout=timeout)
+        except subprocess.TimeoutExpired:
+            out = None
+        if out is not None and out.returncode == 0 and len(out.stdout.splitlines()) >= 5:
+            break
     if out is None or out.returncode != 0 or len(out.stdout.splitlines()) < 5:
         if route(name) and not fell_back:
             # The address that reached it over its link is gone (it was renumbered, or the link
@@ -1230,9 +1251,7 @@ def probe(host, cfg, fell_back=False, recovered=False):
             break
     h["rtt_ms"] = min(rtts)
     link = link_of(host)
-    # A host's own floor (`min_mbps` in its entry: a slower link it is still worth using over), else the farm's.
-    min_mbps = host.get("min_mbps", cfg["min_mbps"])
-    if time.time() - h["mbps_at"] > PROBE_SECONDS or (h["mbps"] or 0) < min_mbps:
+    if time.time() - h["mbps_at"] > PROBE_SECONDS:
         data = os.urandom(PROBE_BYTES)  # made before the clock starts: 70 ms on a loaded Mac
         # A plain pipe: `run(input=, capture_output=True)` writes stdin 512 bytes at a time while
         # it reads, and measured itself (57 MB/s where the pipe does 270).
@@ -1250,6 +1269,11 @@ def probe(host, cfg, fell_back=False, recovered=False):
         timer.cancel()
         h["mbps"] = 0 if killed else round(PROBE_BYTES / (1 << 20) / max(time.time() - started - h["rtt_ms"] / 1000, 0.01), 1)
         h["mbps_at"] = time.time()
+        h["mbps_seen"].append([h["mbps_at"], h["mbps"]])
+    # The link's figure for ordering hosts: the best of the last hour's. Load on either machine only
+    # ever lowers a measurement (a PC's 10 MB/s link read 4.6 to 10.5 in one afternoon), so one low
+    # sample put a host behind every other until the next probe.
+    h["mbps_best"] = max([s[1] for s in h["mbps_seen"]] + [h["mbps"] or 0])
     if link and arrival != link and not recovered and recover(host, arrival):
         return probe(host, cfg, fell_back=fell_back, recovered=True)
     h["route"] = route(name)
@@ -1260,14 +1284,10 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = f"not on its link: reached over its {arrival or '?'}, not {link}"
     elif h["free_gb"] < cfg["floor_free_gb"]:
         h["why"] = f"{h['free_gb']} GB free, under {cfg['floor_free_gb']}: {short_of_disk(host, h, cfg)}"
-    # The round trip and throughput stand in for the link when none is configured (a host that fell
-    # back to WiFi is slow). With `link` confirmed they are only reported: an ssh command's round
-    # trip measures how fast both machines schedule ssh, and a loaded build machine (a load of 70
-    # and more) pushed it past the limits on the fast link, taking healthy hosts out mid-build.
-    elif not link and h["rtt_ms"] > cfg["max_rtt_ms"]:
-        h["why"] = f"a {h['rtt_ms']} ms round trip, over {cfg['max_rtt_ms']}"
-    elif not link and (h["mbps"] or 0) < min_mbps:
-        h["why"] = f"{h['mbps']} MB/s, under {min_mbps}"
+    # The round trip and throughput are never a refusal, only an order (test-remote puts the
+    # faster links first). One sample of either is how busy both machines were scheduling ssh as
+    # much as how fast the link is: a refusal on one took reachable hosts out for minutes, so
+    # commands queued here at a load of 90 while those hosts sat idle (until farm 50).
     else:
         h["ok"], h["why"], h["failures"] = True, "", 0
         if h["free_gb"] < cfg["min_free_gb"]:
@@ -1364,6 +1384,15 @@ def health(host, fresh=False):
     path = state("health", name)
     h = read_json(path, None)
     now = time.time()
+    if shared_base(host).get("guest"):
+        # A guest that is not running (guest.py): not usable, without a probe or a back-off; a
+        # command that needs it starts it (`guest.request_start`).
+        g = read_json(state("guests", shared_base(host)["name"] + ".json"), {})
+        if g.get("state") in ("stopped", "starting", "stopping"):
+            why = {"stopped": "a guest, stopped: it starts when a command needs it",
+                   "starting": "a guest, starting", "stopping": "a guest, stopping"}[g["state"]]
+            return dict(h or {}, ok=False, why=why + (f" ({g['why']})" if g.get("why") and g["state"] == "stopped" else ""),
+                        guest=g["state"])
     if h is not None and not fresh:
         if h.get("ok") and now - h.get("checked", 0) < HEALTHY_SECONDS:
             return h
@@ -1410,6 +1439,9 @@ def usable(kind=None):
     for host in hosts():
         if not host.get("enabled", True) or (kind and not host.get(kind, True)):
             continue
+        # `by_name`: a host only a command naming it takes (`--host`; a billed cloud GPU, say).
+        if host.get("by_name"):
+            continue
         if health(host).get("ok"):
             out.append(host)
     return sorted(out, key=lambda h: -spare(h))
@@ -1421,6 +1453,15 @@ def test_slots(host):
     command at a time left a 16-core host mostly idle while others queued behind it for 25 minutes
     (2026-11-16)."""
     return max(1, int(host.get("test_slots") or host.get("cores", 3) // 3))
+
+
+def cpu_share(host):
+    """The jobs one test command may run at once on `host`: twice its cores over its test slots
+    (at least 2). Each command's cargo and test runner get it (test-remote: CARGO_BUILD_JOBS,
+    NEXTEST_TEST_THREADS, RUST_TEST_THREADS; rustc's codegen threads take cargo's job tokens), so
+    a host full of commands runs about twice its cores, not each command's own: five commands on
+    the 16-core M3 had run a load of 88 (2026-11-20)."""
+    return max(2, 2 * host.get("cores", 4) // test_slots(host))
 
 
 def free_test_slots(host):
@@ -1632,6 +1673,10 @@ def agent_exec(job):
     text = cleaner()
     if text:
         job = dict(job, cleaner=text)
+    guard = os.path.join(os.path.dirname(os.path.realpath(__file__)), "gpu-guard")
+    if os.path.isfile(guard):
+        # A Mac host's GPU watchdog: the agent starts it (farm-agent, `ensure_gpu_guard`).
+        job = dict(job, gpu_guard=open(guard).read())
     job.setdefault("max_target_gb", config()["max_target_gb"])
     return on_host("farm-agent") + " exec " + shlex.quote(json.dumps(job))
 
@@ -1671,6 +1716,7 @@ def remote_slot(args=(), rustc=""):
                 lock = Lock(state("slots", f"{host['name']}.{i}"), blocking=False)
                 if lock.held:
                     CHANNEL[0] = str(i)
+                    lock.used()
                     return host, lock
                 lock.release()
     return None, None
@@ -1801,14 +1847,33 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
                 o = rec["env"].get("OUT_DIR")
                 if o and os.path.isdir(o):
                     roots.append([o, "tree"])
+    # (a staged output a compile that was given up left behind: never put in place)
+    for o in run["outputs"]:
+        for left in glob.glob(glob.escape(o) + ".farm-*"):
+            try:
+                os.unlink(left)
+            except OSError:
+                pass
     reply = mirror.compile({"host": host["name"], "since": since, "roots": roots, "files": files, "run": run})
     if reply is None:
         return give_up("the mirror daemon did not answer")
+    # Its outputs wait beside their places (mirror.py, `staged`): moved in only once all of them came
+    # and what it read is as it is here; else removed, and the compile runs here. A missing `.rmeta`
+    # left the last compile's beside a new `.rlib`, and a compile above it failed with E0463 (Q377).
+    staged = reply.get("staged") or {}
+
+    def unstage():
+        for to in staged.values():
+            try:
+                os.unlink(to)
+            except OSError:
+                pass
     t = reply.get("times", {})
     lap(f"sync {t.get('sync')} ({t.get('files')} files), compile {t.get('compile')}, mirror")
     if reply["code"] == 71:
         open(leak, "w").close()
     if reply["code"] != 0:
+        unstage()
         return give_up(f"the compile failed ({reply['code']}): {reply.get('why', '')} {reply['stderr'][-400:]!r}")
 
     def here(path):
@@ -1819,7 +1884,15 @@ def run_mirror(host, rustc, args, env, cwd, out_dir, crate, since, lap, give_up,
             return None
     stale = [p for p, seen in reply["read"].items() if seen != "inplace" and seen != here(p)]
     if stale:
+        unstage()
         return give_up(f"it read files that are not as they are here: {stale[:3]}")
+    missing = [o for o in run["outputs"] if o not in staged]
+    if missing:
+        unstage()
+        return give_up(f"not every output came back: {[os.path.basename(o) for o in missing]}")
+    # The `.rmeta` last: cargo starts the crates above on it, and its `.rlib` is in place by then.
+    for o in sorted(run["outputs"], key=lambda o: o.endswith(".rmeta")):
+        os.replace(staged[o], o)
     sys.stdout.buffer.write(reply["stdout"].encode("latin-1"))
     sys.stderr.buffer.write(reply["stderr"].encode("latin-1"))
     log(f"{crate}: compiled on {host['name']}, mirror ({t.get('sync')} s sync, {t.get('compile')} s compile, {len(reply['read'])} read)")

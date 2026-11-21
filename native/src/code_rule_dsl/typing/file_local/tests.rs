@@ -353,6 +353,37 @@ named(n) :- node(_, n, "identifier", _, _), text(n, x), side(x).
     assert!(!split.causes.contains_key("under"), "{:?}", split.causes);
 }
 
+/// A relation stated with no rows is a constant, as one with rows is: reading it, or its negation, joins no document
+/// (t50 step 1). The `.references` setting's relations, which the lowering states empty when the program has no
+/// setting, are such. Declared and not stated, a relation has no location, and its readers are cross-file.
+#[test]
+fn a_relation_stated_empty_is_a_constant() {
+    let v = read(r#"
+.decl node(d: number, n: node, kind: symbol, start: number, end: number)
+.decl doc(d: number, p: symbol, m: symbol)
+.input node, doc
+.decl setting_given(k: number)
+.decl setting_glob(g: symbol)
+.decl pydoc(d: number, p: symbol)
+pydoc(d, p) :- doc(d, p, _), !setting_given(1).
+pydoc(d, p) :- doc(d, p, _), setting_given(1), setting_glob(g), glob(g, p).
+.decl module(d: number, m: symbol)
+module(d, m) :- pydoc(d, p), doc(d, p, m).
+.decl named(n: node, m: symbol)
+named(n, m) :- node(d, n, "identifier", _, _), module(d, m).
+.output named
+"#);
+    let unstated = split_of(&v);
+    assert!(unstated.causes.contains_key("pydoc"), "{:?}", unstated.causes);
+    let mut b = Builder::on(&v);
+    b.fields().set_facts("setting_given", &[]);
+    b.fields().set_facts("setting_glob", &[]);
+    let (v, _) = b.finish().unwrap();
+    let split = split_of(&v);
+    assert!(split.local.contains("pydoc") && split.local.contains("module") && split.local.contains("named"), "{:?} {:?}", split.local, split.causes);
+    assert!(split.causes.is_empty(), "{:?}", split.causes);
+}
+
 #[test]
 fn the_cross_part_takes_node_attributes_as_a_semi_join_only_when_each_lookup_is_of_a_held_node() {
     let source = |extra: &str| format!(r#"
@@ -674,14 +705,23 @@ outer2(f) :- uses(f, _), fl_outer(f, y), y != "self".
     assert_eq!(pass.lines.len(), 1, "{:?}", pass.lines);
     assert!(pass.lines[0].starts_with("fl_outer: handed on as parts"), "{:?}", pass.lines);
     assert!(rules_of(&out, "fl_outer").is_empty(), "the product is gone:\n{}", out.show());
-    // Each part and its key are named from the part's content: `fz<h>_` and `fzk<h>_`, one hash.
+    // Each part and its key are named from the part's content: `fz<h>_` and `fzk<h>_`, one hash. The first part is
+    // one atom (`encl`), so it is its own key, probed by the other part, and stores none (decision 0488): two parts,
+    // one key, and the key's rule reads `encl`.
     let shown = out.show();
     let parts: std::collections::BTreeSet<&str> = shown.split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| w.starts_with("fz") && w.ends_with("_fl_outer")).collect();
-    assert_eq!(parts.len(), 4, "{parts:?}");
+    assert_eq!(parts.len(), 3, "{parts:?}");
+    let mut keyed = Vec::new();
     for p in parts.iter().filter(|p| !p.starts_with("fzk")) {
         assert!(p["fz".len()..p.len() - "_fl_outer".len()].bytes().all(|b| b.is_ascii_digit()), "{p}");
-        assert!(parts.contains(format!("fzk{}", &p["fz".len()..]).as_str()), "{parts:?}");
+        let key = format!("fzk{}", &p["fz".len()..]);
+        if parts.contains(key.as_str()) {
+            keyed.push(key);
+        }
     }
+    assert_eq!(keyed.len(), 1, "{parts:?}");
+    let key_rules: Vec<_> = shown.lines().filter(|l| l.starts_with(&format!("{}(", keyed[0]))).collect();
+    assert!(!key_rules.is_empty() && key_rules.iter().all(|l| l.contains("encl(")), "{key_rules:?}\n{shown}");
 }
 
 /// The file-local joins of cross-file rules are pushed on a version: helpers named from their content
@@ -742,7 +782,7 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
         assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
     }
     let helpers: Vec<_> = made.iter().filter(|name| name.ends_with("_observed")).collect();
-    assert_eq!(helpers.len(), usize::from(push_equal_columns()), "{}", result.show());
+    assert_eq!(helpers.len(), usize::from(equal_columns), "{}", result.show());
     if let [helper] = helpers.as_slice() {
         assert!(result.show().contains(&format!("observed($answer) :- {helper}(")));
     }

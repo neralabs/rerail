@@ -10,9 +10,10 @@
 //! - **The driver** is the system's OpenCL library, loaded when the device is first asked for (macOS's framework,
 //!   else `libOpenCL.so.1`): no link dependency, and without it no OpenCL device.
 //! - **The device** is the first GPU of the first platform that has one (`RERAIL_OPENCL_DEVICE=k`: the k-th GPU
-//!   over all platforms). It must share the host's memory (`CL_DEVICE_HOST_UNIFIED_MEMORY`): a buffer is host
-//!   memory the device reads in place (`CL_MEM_USE_HOST_PTR`), never a copy (decision 0353). A discrete device
-//!   would stage it, so it needs SVM, which is not written; it is refused.
+//!   over all platforms). A buffer is host memory the device reads in place (`CL_MEM_USE_HOST_PTR`). A driver
+//!   that holds its own image of it (a discrete device's memory, or NVIDIA's on a GB10) is made current at each
+//!   submission's edges by a map and unmap (`DeviceInner::synced`): the device's memory holding what it reads
+//!   while it computes is not a copy (decision 0353).
 //! - **Addresses:** with `RERAIL_OPENCL_USM=1`, where the device has Intel's unified shared memory, a buffer it
 //!   allocates is a host allocation of it (`clHostMemAllocINTEL`), whose address kernels follow from a table
 //!   (`ClBuffer::address`; the fused sorts and probes). It is bound and copied as itself
@@ -68,6 +69,8 @@ const CL_PROFILING_COMMAND_END: ClUint = 0x1283;
 const CL_EVENT_COMMAND_EXECUTION_STATUS: ClUint = 0x11D3;
 const CL_COMPLETE: ClInt = 0;
 const CL_FALSE: ClUint = 0;
+const CL_MAP_READ: u64 = 1;
+const CL_MAP_WRITE_INVALIDATE_REGION: u64 = 1 << 2;
 
 /// The OpenCL entry points this runtime calls, from the system's library.
 #[allow(clippy::type_complexity)]
@@ -94,6 +97,8 @@ struct Api {
     enqueue_write_buffer: unsafe extern "C" fn(Ptr, Ptr, ClUint, usize, usize, *const c_void, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_read_buffer: unsafe extern "C" fn(Ptr, Ptr, ClUint, usize, usize, *mut c_void, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_copy_buffer: unsafe extern "C" fn(Ptr, Ptr, Ptr, usize, usize, usize, ClUint, *const Ptr, *mut Ptr) -> ClInt,
+    enqueue_map_buffer: unsafe extern "C" fn(Ptr, Ptr, ClUint, u64, usize, usize, ClUint, *const Ptr, *mut Ptr, *mut ClInt) -> Ptr,
+    enqueue_unmap_mem_object: unsafe extern "C" fn(Ptr, Ptr, Ptr, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     enqueue_marker_with_wait_list: unsafe extern "C" fn(Ptr, ClUint, *const Ptr, *mut Ptr) -> ClInt,
     wait_for_events: unsafe extern "C" fn(ClUint, *const Ptr) -> ClInt,
     get_event_info: unsafe extern "C" fn(Ptr, ClUint, usize, Ptr, *mut usize) -> ClInt,
@@ -159,22 +164,19 @@ fn api() -> Result<&'static Api, String> {
     API.get_or_init(|| {
         let paths: &[&str] = if cfg!(target_os = "macos") {
             &["/System/Library/Frameworks/OpenCL.framework/OpenCL"]
+        } else if cfg!(windows) {
+            // The ICD loader the GPU drivers install, in System32.
+            &["OpenCL.dll"]
         } else {
             &["libOpenCL.so.1", "libOpenCL.so"]
         };
+        // The system's OpenCL loader.
         let handle = paths
             .iter()
-            .map(|p| {
-                let c = CString::new(*p).unwrap();
-                // SAFETY: the system's OpenCL loader.
-                unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) }
-            })
-            .find(|h| !h.is_null())
+            .find_map(|p| crate::sys::Library::open(p).ok())
             .ok_or_else(|| format!("no OpenCL library ({})", paths.join(", ")))?;
         let sym = |name: &str| -> Result<Ptr, String> {
-            let c = CString::new(name).unwrap();
-            let p = unsafe { libc::dlsym(handle, c.as_ptr()) };
-            if p.is_null() { Err(format!("the OpenCL library has no {name}")) } else { Ok(p) }
+            handle.symbol(name).ok_or_else(|| format!("the OpenCL library has no {name}"))
         };
         /// The symbol at `p` as the function type `F` its field declares (a function pointer: its size is checked).
         ///
@@ -214,6 +216,8 @@ fn api() -> Result<&'static Api, String> {
             enqueue_write_buffer: f!("clEnqueueWriteBuffer"),
             enqueue_read_buffer: f!("clEnqueueReadBuffer"),
             enqueue_copy_buffer: f!("clEnqueueCopyBuffer"),
+            enqueue_map_buffer: f!("clEnqueueMapBuffer"),
+            enqueue_unmap_mem_object: f!("clEnqueueUnmapMemObject"),
             enqueue_marker_with_wait_list: f!("clEnqueueMarkerWithWaitList"),
             wait_for_events: f!("clWaitForEvents"),
             get_event_info: f!("clGetEventInfo"),
@@ -324,6 +328,10 @@ struct DeviceInner {
     max_alloc: u64,
     /// Where its buffers are host allocations with an address (`usm`).
     usm: Option<Usm>,
+    /// Whether the driver holds its own image of a buffer over host pages (device memory, or NVIDIA's on a GB10,
+    /// whose memory is the host's), which a map and unmap make current: then a submission's buffers are made the
+    /// host's at its start and the device's back into the host's at its end (`ClComputeQueue::flush`).
+    synced: bool,
 }
 
 unsafe impl Send for DeviceInner {}
@@ -361,9 +369,7 @@ impl ClDevice {
         let (platform, device) = *gpus.get(k).ok_or_else(|| format!("no OpenCL GPU {k} ({} found)", gpus.len()))?;
         let name = format!("{} ({})", device_info_string(a, device, CL_DEVICE_NAME), device_info_string(a, device, CL_DEVICE_VERSION));
         let unified = device_info_bytes(a, device, CL_DEVICE_HOST_UNIFIED_MEMORY);
-        if unified.len() < 4 || u32::from_ne_bytes(unified[..4].try_into().unwrap()) == 0 {
-            return Err(format!("OpenCL device {name} does not share the host's memory: its buffers would be copies (decision 0353)"));
-        }
+        let unified = unified.len() >= 4 && u32::from_ne_bytes(unified[..4].try_into().unwrap()) != 0;
         let mg = device_info_bytes(a, device, CL_DEVICE_MAX_WORK_GROUP_SIZE);
         let max_group = usize::from_ne_bytes(mg[..8].try_into().unwrap());
         let mut e = 0;
@@ -375,10 +381,18 @@ impl ClDevice {
         let max_alloc = u64::from_ne_bytes(ma[..8].try_into().unwrap());
         let subgroups = native_subgroups(a, device);
         // Heap buffers first: memory wrapped in place (a block, a mapped tape) is read through one.
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, usm: None }));
-        d.reads_host_pages_in_place()?;
+        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, usm: None, synced: false }));
+        // A driver whose kernels' writes reach the host's pages only through a map is made current at each
+        // submission's edges (`synced`); a device's own memory holding a buffer while it computes is not a copy (0353).
+        // `RERAIL_OPENCL_SYNCED=1` takes this path on any device (its tests on a driver that needs no map).
+        let synced = !unified || std::env::var_os("RERAIL_OPENCL_SYNCED").is_some() || probe.reads_host_pages_in_place().is_err();
+        drop(probe);
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, subgroups, base_align, max_alloc, usm: None, synced }));
+        if synced {
+            return Ok(d);
+        }
         let Some(usm) = usm(a, platform, device) else { return Ok(d) };
-        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, base_align, max_alloc, usm: Some(usm) }));
+        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, subgroups, base_align, max_alloc, usm: Some(usm), synced }));
         // Without the check's pass its buffers stay the heap's, with no address (one context; nothing releases it).
         if let Err(e) = with.follows_addresses() {
             eprintln!("rerail-device: {e}: OpenCL buffers without addresses");
@@ -388,9 +402,8 @@ impl ClDevice {
     }
 
     /// Whether a kernel's write into a buffer over host pages is in those pages once it completes, with no map: a
-    /// driver may say it shares the host's memory and still keep a copy of a `CL_MEM_USE_HOST_PTR` buffer, made
-    /// visible only by a map (NVIDIA's on a GB10, whose memory is the host's: the reflection kernels' words read
-    /// 0). Such a buffer is a copy (decision 0353), so the device is refused.
+    /// driver may say it shares the host's memory and still keep its own image of a `CL_MEM_USE_HOST_PTR` buffer,
+    /// made current only by a map (NVIDIA's on a GB10, whose memory is the host's). Such a device is `synced`.
     fn reads_host_pages_in_place(&self) -> Result<(), String> {
         const SEEN: u32 = 0x5EED_0353;
         let lib = ClComputeFunctionLibrary::compile_from_source(self, "__kernel void ukl_in_place(__global uint* o) { o[0] = 0x5EED0353u; }", "the in-place probe")?;
@@ -411,10 +424,7 @@ impl ClDevice {
         // SAFETY: the buffer's host pages, which no kernel uses now.
         let seen = unsafe { std::ptr::read_volatile(out.0.ptr.cast::<u32>()) };
         if seen != SEEN {
-            return Err(format!(
-                "OpenCL device {} keeps a copy of host memory (a kernel's write is not in the host's pages without a map): its buffers would be copies (decision 0353)",
-                self.0.name
-            ));
+            return Err(format!("OpenCL device {}: a kernel's write is not in the host's pages without a map", self.0.name));
         }
         Ok(())
     }
@@ -580,7 +590,7 @@ impl ClBuffer {
 /// the buffer over it is that allocation, not a copy (`ClDevice::follows_addresses`).
 pub fn alloc_uninitialized_array_sync<T>(device: &ClDevice, length: usize) -> ClBuffer {
     let len = (length * std::mem::size_of::<T>()).max(16);
-    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
+    let page = crate::sys::page_size();
     let layout = std::alloc::Layout::from_size_align(len.next_multiple_of(64), page).unwrap();
     let (ptr, owner) = match &device.0.usm {
         Some(u) => {
@@ -622,7 +632,7 @@ pub fn alloc_uninitialized_array_sync<T>(device: &ClDevice, length: usize) -> Cl
 /// # Safety
 /// The memory outlives the buffer and its clones, and every use of them by queued work.
 pub unsafe fn wrap_host_memory(device: &ClDevice, ptr: *mut u8, len: usize) -> Result<ClBuffer, String> {
-    let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
+    let page = crate::sys::page_size();
     if !(ptr as usize).is_multiple_of(page) || !len.is_multiple_of(64) || len == 0 {
         return Err(format!("OpenCL: host memory at {ptr:p} ({len} bytes) is not page-aligned and a whole number of cache lines: a driver would copy it"));
     }
@@ -792,6 +802,13 @@ impl ClComputeFunctionLibrary {
             check("clSetKernelArg", unsafe { set_buffer_arg(a, device.0.usm.as_ref(), k.0, 0, out.mem()) })?;
             let one = 1usize;
             check(name, unsafe { (a.enqueue_nd_range_kernel)(q, k.0, 1, std::ptr::null(), &one, &one, 0, std::ptr::null(), std::ptr::null_mut()) })?;
+            // A `synced` device's write reaches the host's pages through a map (`DeviceInner::synced`).
+            if device.0.synced
+                && let Mem::Cl(m) = out.mem()
+            {
+                let mut c = Enqueue { a, usm: None, q, kernels: Vec::new() };
+                c.sync(&[(m, out.length() as usize)], CL_MAP_READ)?;
+            }
             check("clFinish", unsafe { (a.finish)(q) })
         })();
         unsafe { (a.release_command_queue)(q) };
@@ -978,7 +995,14 @@ struct Enqueue<'a> {
     /// The device's host allocations' entry points (`usm`).
     usm: Option<&'a Usm>,
     q: Ptr,
-    kernels: Vec<Event>,
+    kernels: Vec<Launched>,
+}
+
+/// A command of a submission (a kernel's launch, a copy, a fill): its event (its device time, and its status when
+/// the work fails) and what it is.
+struct Launched {
+    event: Event,
+    name: String,
 }
 
 /// Work a queue enqueues when its turn comes.
@@ -992,6 +1016,28 @@ enum Op {
 
 /// A flush's work not yet enqueued, with what its event will hold.
 impl Enqueue<'_> {
+    /// A command `enqueue` makes, its event kept as `what` (a failed submission names the command that failed).
+    fn command(&mut self, what: String, call: &str, enqueue: impl FnOnce(&Api, Ptr, *mut Ptr) -> ClInt) -> Result<(), String> {
+        let mut ev = std::ptr::null_mut();
+        check(call, enqueue(self.a, self.q, &mut ev))?;
+        if !ev.is_null() {
+            self.kernels.push(Launched { event: Event(ev), name: what });
+        }
+        Ok(())
+    }
+
+    /// A map and unmap of each of `buffers` (an OpenCL buffer and its length), in the queue's order: with
+    /// `CL_MAP_WRITE_INVALIDATE_REGION` the driver's image takes the host's pages, with `CL_MAP_READ` they take it.
+    fn sync(&mut self, buffers: &[(usize, usize)], flags: u64) -> Result<(), String> {
+        for &(m, n) in buffers {
+            let mut e = 0;
+            let p = unsafe { (self.a.enqueue_map_buffer)(self.q, m as Ptr, CL_FALSE, flags, 0, n, 0, std::ptr::null(), std::ptr::null_mut(), &mut e) };
+            check("clEnqueueMapBuffer", e)?;
+            self.command(format!("a sync of {n} bytes"), "clEnqueueUnmapMemObject", |a, q, ev| unsafe { (a.enqueue_unmap_mem_object)(q, m as Ptr, p, 0, std::ptr::null(), ev) })?;
+        }
+        Ok(())
+    }
+
     /// A copy of `n` bytes at `src` to `dst`, one a host allocation, in the queue's order.
     fn memcpy(&self, dst: usize, src: usize, n: usize) -> Result<(), String> {
         let u = self.usm.ok_or("OpenCL: a host allocation's copy on a device without them")?;
@@ -1001,7 +1047,7 @@ impl Enqueue<'_> {
 
 struct Pending {
     ops: std::collections::VecDeque<Op>,
-    kernels: Vec<Event>,
+    kernels: Vec<Launched>,
     error: Option<String>,
     done: Arc<Done>,
 }
@@ -1012,7 +1058,7 @@ struct Pending {
 struct DoneState {
     enqueued: bool,
     marker: Option<Event>,
-    kernels: Vec<Event>,
+    kernels: Vec<Launched>,
     error: Option<String>,
     keep: Vec<Box<dyn std::any::Any + Send>>,
     seconds: Option<f64>,
@@ -1028,8 +1074,12 @@ impl Drop for Done {
     fn drop(&mut self) {
         // The kept buffers go with the last holder: not before the work that reads them has completed.
         let d = self.state.get_mut().unwrap();
-        if let (Some(m), Ok(a)) = (&d.marker, api()) {
-            unsafe { (a.wait_for_events)(1, &m.0) };
+        if let (Some(m), Ok(a)) = (&d.marker, api())
+            && unsafe { (a.wait_for_events)(1, &m.0) } != CL_SUCCESS
+        {
+            // Work no one awaited failed: said here, as no caller will see it (the commands after it then fail).
+            let what = failed_kernel(a, &d.kernels).unwrap_or_else(|| format!("none of its {} commands says it failed", d.kernels.len()));
+            eprintln!("rerail: OpenCL work dropped before it was awaited failed: {what}");
         }
     }
 }
@@ -1040,11 +1090,13 @@ pub struct ClComputeQueue {
     root: ClQueueRoot,
     ops: RefCell<Vec<Op>>,
     keep: RefCell<Vec<Box<dyn std::any::Any + Send>>>,
+    /// The OpenCL buffers its work names, with their lengths: what a `synced` device's map makes current.
+    touched: RefCell<Vec<(usize, usize)>>,
 }
 
 impl ClComputeQueue {
     pub fn new(root: &ClQueueRoot) -> Self {
-        ClComputeQueue { root: root.clone(), ops: Default::default(), keep: Default::default() }
+        ClComputeQueue { root: root.clone(), ops: Default::default(), keep: Default::default(), touched: Default::default() }
     }
 
     pub fn new_bind_context<'a>(&'a self, function: &'a ClComputeFunction) -> ClBindContext<'a> {
@@ -1064,16 +1116,24 @@ impl ClComputeQueue {
         self.keep.borrow_mut().push(Box::new(v));
     }
 
+    /// `keep`s a buffer the work names, and notes it for a `synced` device's maps.
+    fn keep_buffer(&self, b: &ClBuffer) {
+        if let Mem::Cl(m) = b.mem() {
+            self.touched.borrow_mut().push((m, b.length() as usize));
+        }
+        self.keep(b.clone());
+    }
+
     /// `enqueueCopyFromHost`: the bytes are taken now, and copied into `dst` at `dst_offset` in queue order.
     pub fn enqueue_copy_from_host(&self, dst: &ClBuffer, dst_offset: u64, bytes: &[u8]) {
         assert!(dst_offset + bytes.len() as u64 <= dst.length(), "a copy past its buffer's end");
         let bytes = Arc::new(bytes.to_vec());
         let (d, b) = (dst.mem(), bytes.clone());
-        self.keep(dst.clone());
+        self.keep_buffer(dst);
         self.keep(bytes);
         self.push(move |c| match d {
-            Mem::Cl(d) => check("clEnqueueWriteBuffer", unsafe {
-                (c.a.enqueue_write_buffer)(c.q, d as Ptr, CL_FALSE, dst_offset as usize, b.len(), b.as_ptr().cast(), 0, std::ptr::null(), std::ptr::null_mut())
+            Mem::Cl(d) => c.command(format!("a write of {} bytes from the host", b.len()), "clEnqueueWriteBuffer", |a, q, ev| unsafe {
+                (a.enqueue_write_buffer)(q, d as Ptr, CL_FALSE, dst_offset as usize, b.len(), b.as_ptr().cast(), 0, std::ptr::null(), ev)
             }),
             Mem::Usm(d) => c.memcpy(d + dst_offset as usize, b.as_ptr() as usize, b.len()),
         });
@@ -1107,7 +1167,7 @@ impl ClComputeQueue {
                 let mut args = vec![(start / 4) as u32, (bytes / 4) as u32, words.len() as u32];
                 args.extend_from_slice(&w);
                 let d = dst.mem();
-                self.keep(dst.clone());
+                self.keep_buffer(dst);
                 self.push(move |c| {
                     let k = kernel.lock().unwrap();
                     check("clSetKernelArg", unsafe { set_buffer_arg(c.a, c.usm, k.0, 0, d) })?;
@@ -1115,8 +1175,8 @@ impl ClComputeQueue {
                         check("clSetKernelArg", unsafe { (c.a.set_kernel_arg)(k.0, 1 + i as ClUint, 4, (v as *const u32).cast()) })?;
                     }
                     let global = args[1] as usize;
-                    check("the fill kernel", unsafe {
-                        (c.a.enqueue_nd_range_kernel)(c.q, k.0, 1, std::ptr::null(), &global, std::ptr::null(), 0, std::ptr::null(), std::ptr::null_mut())
+                    c.command(format!("the fill kernel ({} words)", args[1]), "the fill kernel", |a, q, ev| unsafe {
+                        (a.enqueue_nd_range_kernel)(q, k.0, 1, std::ptr::null(), &global, std::ptr::null(), 0, std::ptr::null(), ev)
                     })
                 });
             }
@@ -1134,20 +1194,20 @@ impl ClComputeQueue {
             return;
         }
         let (s, d) = (src.mem(), dst.mem());
-        self.keep(src.clone());
-        self.keep(dst.clone());
+        self.keep_buffer(src);
+        self.keep_buffer(dst);
         let (so, dof, n) = (src_offset as usize, dst_offset as usize, length as usize);
         self.push(move |c| match (s, d) {
-            (Mem::Cl(s), Mem::Cl(d)) => check("clEnqueueCopyBuffer", unsafe {
-                (c.a.enqueue_copy_buffer)(c.q, s as Ptr, d as Ptr, so, dof, n, 0, std::ptr::null(), std::ptr::null_mut())
+            (Mem::Cl(s), Mem::Cl(d)) => c.command(format!("a copy of {n} bytes"), "clEnqueueCopyBuffer", |a, q, ev| unsafe {
+                (a.enqueue_copy_buffer)(q, s as Ptr, d as Ptr, so, dof, n, 0, std::ptr::null(), ev)
             }),
             (Mem::Usm(s), Mem::Usm(d)) => c.memcpy(d + dof, s + so, n),
             // A host allocation's pages are host memory: the buffer's own write or read of them, in the queue's order.
-            (Mem::Usm(s), Mem::Cl(d)) => check("clEnqueueWriteBuffer", unsafe {
-                (c.a.enqueue_write_buffer)(c.q, d as Ptr, CL_FALSE, dof, n, (s + so) as *const c_void, 0, std::ptr::null(), std::ptr::null_mut())
+            (Mem::Usm(s), Mem::Cl(d)) => c.command(format!("a write of {n} bytes from a host allocation"), "clEnqueueWriteBuffer", |a, q, ev| unsafe {
+                (a.enqueue_write_buffer)(q, d as Ptr, CL_FALSE, dof, n, (s + so) as *const c_void, 0, std::ptr::null(), ev)
             }),
-            (Mem::Cl(s), Mem::Usm(d)) => check("clEnqueueReadBuffer", unsafe {
-                (c.a.enqueue_read_buffer)(c.q, s as Ptr, CL_FALSE, so, n, (d + dof) as *mut c_void, 0, std::ptr::null(), std::ptr::null_mut())
+            (Mem::Cl(s), Mem::Usm(d)) => c.command(format!("a read of {n} bytes into a host allocation"), "clEnqueueReadBuffer", |a, q, ev| unsafe {
+                (a.enqueue_read_buffer)(q, s as Ptr, CL_FALSE, so, n, (d + dof) as *mut c_void, 0, std::ptr::null(), ev)
             }),
         });
     }
@@ -1162,7 +1222,17 @@ impl ClComputeQueue {
     pub fn flush(&mut self) -> ClComputeEvent {
         let done = Arc::new(Done::default());
         done.state.lock().unwrap().keep = std::mem::take(&mut *self.keep.borrow_mut());
-        let ops = std::mem::take(&mut *self.ops.borrow_mut()).into();
+        let mut ops: std::collections::VecDeque<Op> = std::mem::take(&mut *self.ops.borrow_mut()).into();
+        let mut touched = std::mem::take(&mut *self.touched.borrow_mut());
+        if self.root.0.lock().unwrap().device.0.synced && !touched.is_empty() {
+            touched.sort_unstable();
+            touched.dedup();
+            // The host's pages into the driver's image first (a host write since the last submission), and the
+            // device's writes back into them last, as the work's last commands, before its marker.
+            let first = touched.clone();
+            ops.push_front(Op::Run(Box::new(move |c| c.sync(&first, CL_MAP_WRITE_INVALIDATE_REGION))));
+            ops.push_back(Op::Run(Box::new(move |c| c.sync(&touched, CL_MAP_READ))));
+        }
         self.root.0.lock().unwrap().backlog.push_back(Pending { ops, kernels: Vec::new(), error: None, done: done.clone() });
         self.root.drive();
         ClComputeEvent { done }
@@ -1178,14 +1248,23 @@ pub struct ClComputeEvent {
     done: Arc<Done>,
 }
 
-fn kernel_seconds(kernels: &[Event]) -> f64 {
+fn kernel_seconds(kernels: &[Launched]) -> f64 {
     let Ok(a) = api() else { return 0.0 };
     let at = |e: &Event, p| {
         let mut t = 0u64;
         unsafe { (a.get_event_profiling_info)(e.0, p, 8, (&mut t as *mut u64).cast(), std::ptr::null_mut()) };
         t
     };
-    kernels.iter().map(|k| at(k, CL_PROFILING_COMMAND_END).saturating_sub(at(k, CL_PROFILING_COMMAND_START))).sum::<u64>() as f64 * 1e-9
+    kernels.iter().map(|k| at(&k.event, CL_PROFILING_COMMAND_END).saturating_sub(at(&k.event, CL_PROFILING_COMMAND_START))).sum::<u64>() as f64 * 1e-9
+}
+
+/// The first of `kernels` whose command failed, with its status: the command a failed submission names.
+fn failed_kernel(a: &Api, kernels: &[Launched]) -> Option<String> {
+    kernels.iter().find_map(|k| {
+        let mut status: ClInt = CL_COMPLETE;
+        unsafe { (a.get_event_info)(k.event.0, CL_EVENT_COMMAND_EXECUTION_STATUS, 4, (&mut status as *mut ClInt).cast(), std::ptr::null_mut()) };
+        (status < 0).then(|| format!("{} failed ({status})", k.name))
+    })
 }
 
 impl ClComputeEvent {
@@ -1196,8 +1275,14 @@ impl ClComputeEvent {
         while !d.enqueued {
             d = self.done.cv.wait(d).unwrap();
         }
-        if let Some(m) = &d.marker {
-            check("clWaitForEvents", unsafe { (a.wait_for_events)(1, &m.0) })?;
+        if let Some(m) = &d.marker
+            && let Err(e) = check("clWaitForEvents", unsafe { (a.wait_for_events)(1, &m.0) })
+        {
+            // The command that failed, of the submission's: what the error names.
+            return Err(match failed_kernel(a, &d.kernels) {
+                Some(k) => format!("{e}: {k}"),
+                None => format!("{e}: none of its {} commands says it failed", d.kernels.len()),
+            });
         }
         d.keep.clear();
         if d.seconds.is_none() {
@@ -1295,7 +1380,7 @@ impl ClBindContext<'_> {
     /// A buffer the launch reaches through an address another holds: kept until the work completes, and a host
     /// allocation named to the driver (`CL_KERNEL_EXEC_INFO_USM_PTRS_INTEL`), which makes it the launch's.
     pub fn use_buffer(&mut self, buffer: &ClBuffer) {
-        self.queue.keep(buffer.clone());
+        self.queue.keep_buffer(buffer);
         self.used.extend(buffer.address());
     }
 
@@ -1326,7 +1411,7 @@ impl ClBindContext<'_> {
         let params: Vec<Param> = self.params.iter_mut().map(|p| p.take().unwrap()).collect();
         for p in &params {
             if let Param::Buffer(b) = p {
-                self.queue.keep(b.clone());
+                self.queue.keep_buffer(b);
             }
         }
         let global = [grid[0] * block[0], grid[1] * block[1], grid[2] * block[2]];
@@ -1354,7 +1439,7 @@ impl ClBindContext<'_> {
             check(&format!("{name}: launch"), unsafe {
                 (c.a.enqueue_nd_range_kernel)(c.q, k.0, 3, std::ptr::null(), global.as_ptr(), block.as_ptr(), 0, std::ptr::null(), &mut ev)
             })?;
-            c.kernels.push(Event(ev));
+            c.kernels.push(Launched { event: Event(ev), name: name.clone() });
             Ok(())
         });
         Ok(())

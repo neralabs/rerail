@@ -1,6 +1,7 @@
 # 0485: The text in P1's iterations: `_Pragma` rows, and `__COUNTER__` in directives
 
-(Was 0475 on Go-C-and-C-support; renumbered at its roll-up into the hub, roll-up 21, past 0484.)
+(Was 0475 on Go-C-and-C-support; renumbered at its roll-up into the hub, roll-up 21, past 0484. 0488 on rr-align
+at its roll-up 21, 0502 on investigate-bend-vs-datalog.)
 
 Status: accepted (the user, 2026-11-19: "please implement these two": "A `_Pragma` that changes
 macro state (`once`, `push_macro`, `pop_macro`, or one whose operand is a macro)", and
@@ -121,6 +122,6 @@ so iterating both to a common fixpoint gives the serial reading.
 
 ## Built
 
-- Commit "0485: the text in P1's iterations, `_Pragma`'s rows, `__COUNTER__` in directives".
+- Commit "0475: the text in P1's iterations, `_Pragma`'s rows, `__COUNTER__` in directives" (0475 there, 0485 here).
   Every test of R1–R5 passes under Relax. The corpus slices give 3,135 units equal to the serial
   pass, none refused, 2 launches a round.

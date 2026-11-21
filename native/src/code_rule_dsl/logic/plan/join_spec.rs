@@ -357,7 +357,7 @@ impl<'a> Run<'a, '_> {
                                 .and_then(|c| pf.column_type(b.rel(l), c).map(str::to_owned)),
                             Lit::Agg { var, op: AggRef::Count | AggRef::Sum | AggRef::Product, .. } if var == n => Some("int".to_owned()),
                             // An extremum has its column's type (`v = min l : { line_of(f, l) }`).
-                            Lit::Agg { var, op: AggRef::Min | AggRef::Max, over: Some(o), atom: a } if var == n => b
+                            Lit::Agg { var, op: AggRef::Min | AggRef::Max | AggRef::Bounded { .. }, over: Some(o), atom: a } if var == n => b
                                 .args(s.at)
                                 .iter()
                                 .position(|x| x.var() == Some(o))
@@ -570,7 +570,7 @@ impl<'a> Run<'a, '_> {
                     let a = tok(b, x, &mut slots)?;
                     lines.push(JoinItem::Lt { a, b: tok(b, y, &mut slots)?, or_eq: !matches!(op, CmpOp::Lt | CmpOp::Gt) });
                 }
-                Lit::Agg { var, op: op @ (AggRef::Count | AggRef::Sum | AggRef::Min | AggRef::Max), over, atom: a } => {
+                Lit::Agg { var, op: op @ (AggRef::Count | AggRef::Sum | AggRef::Min | AggRef::Max | AggRef::Bounded { .. }), over, atom: a } => {
                     let rel = b.rel(a);
                     let mut args: Vec<TermRef<'_>> = b.args(s.at).to_vec();
                     // The over-variable belongs to the bag even if an outer step bound the same name.
@@ -616,18 +616,25 @@ impl<'a> Run<'a, '_> {
                         }
                     }
                     let out = var_tok(var, &mut slots);
+                    // A bounded aggregate's bound is bound before it (`Body::ready`): a key, as the atom's are.
+                    let bound = match op {
+                        AggRef::Bounded { bound, strict, .. } if slots.has(Key::Var(bound)) => Some((var_tok(bound, &mut slots), strict)),
+                        AggRef::Bounded { .. } => return None,
+                        _ => None,
+                    };
                     lines.push(match op {
                         AggRef::Count => JoinItem::Count { src, args: toks, out },
                         _ => JoinItem::Extreme {
                             op: match op {
                                 AggRef::Sum => Extreme::Sum,
-                                AggRef::Min => Extreme::Min,
+                                AggRef::Min | AggRef::Bounded { max: false, .. } => Extreme::Min,
                                 _ => Extreme::Max,
                             },
                             src,
                             args: toks,
                             col: value_col?,
                             out,
+                            bound,
                         },
                     });
                 }

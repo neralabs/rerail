@@ -1091,14 +1091,14 @@ pub(in crate::code_rule_dsl) fn overlay(converted: &Arc<Version>, authored: &Arc
             }
             // An earlier phase's export (`<phase>__<export>`, which python/points-to reads) is the runner's to give; so
             // are decision 0055's settings (`guest_policy`, the lowering's facts, empty where the program sets none),
-            // which the library reads (`python/names.rerail`), the `.references` setting's (decision 0483), which
-            // `python/references.rerail` reads, the run's settings (`env`, core.rerail's) and the file system's answers
-            // (`file_line`, `dir_entry`), which python/conditions and python/env read.
+            // which the library reads (`python/names.rerail`), the run's settings (`env`, core.rerail's) and the file system's
+            // answers (`file_line`, `dir_entry`), which python/conditions and python/env read; and the `.references`
+            // setting's (decision 0483), which `python/references.rerail` reads.
             if !(derived.contains(rel) || base_types(rel).is_some() || GIVEN.contains(&rel) || a_inputs.iter().any(|i| i == rel)
                 || super::plan::corpus::phases::is_phased(rel)
                 || rel == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY || rel == "env"
-                || crate::code_rule_dsl::logic::rr::lower::findings::REFERENCE_SETTING.contains(&rel)
-                || crate::code_rule_dsl::logic::rr::FILE_SYSTEM.iter().any(|(answer, _)| *answer == rel)) {
+                || crate::code_rule_dsl::logic::rr::FILE_SYSTEM.iter().any(|(answer, _)| *answer == rel)
+                || crate::code_rule_dsl::logic::rr::lower::findings::REFERENCE_SETTING.contains(&rel)) {
                 return err(format!("{rel} is read, and nothing derives or inputs it"));
             }
         }

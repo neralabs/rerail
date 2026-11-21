@@ -48,6 +48,7 @@ instead, and only that run's output is shown.
 | `farm.py` | all of them |
 | `mirror.py` | the live mirror's daemon here, and the call a compile makes to it |
 | `farm-agent` | the live mirror's end on each host, and (`exec`) a test command there |
+| `gpu-guard` | a Mac host's GPU watchdog: kills the farm's GPU users when the GPU or WindowServer stalls ("The GPU watchdog") |
 | `cargo-linux` | cargo for the Linux hosts' target, from this Mac ("Building for the Linux hosts here") |
 | `linux-sysroot` | copies a Linux host's headers and libraries for `cargo-linux` |
 | `test-mirror` | a test of the mirror against an agent run here: a file the checkout deleted goes from the host's copy |
@@ -230,14 +231,13 @@ hosts, and everything compiles and tests here, as without the farm.
 | `name` | what ssh connects to (a `Host` entry of `~/.ssh/config`) |
 | `enabled` | `false` leaves a host out (default `true`) |
 | `tests` | whether `scripts/dev/test-remote` runs there (default `true`) |
+| `by_name` | `true`: only a command that names the host (`--host`) runs there, and only such a command starts it (a guest). Nothing else picks it, compiles included: a billed cloud GPU VM, kept for the work that needs it |
 | `test_slots` | how many `test-remote` commands the host runs at once (default: a third of its cores). One at a time left a 16-core host mostly idle while commands queued for 25 minutes; a command waits only when every slot of every host is taken, and goes to whichever frees first. A checkout's second command goes to another host when one has a slot (its commands on one host share a target directory, which cargo builds in one at a time) |
 | `link` | the host's network interface the farm's traffic must arrive on (its fast link); unset: any |
 | `min_free_gb` | under this much free disk, the farm frees its own data on the host and says so (default 40) |
 | `local_min_free_gb` | this Mac's floor: under it, `free-local` removes Rerail's least recently built builds here (default 200) |
 | `floor_free_gb` | the free disk left to the host's own work: under it the host is not used (default 20) |
 | `max_target_gb` | the most a host's test target directories hold together (default 150 GB; per host too) |
-| `max_rtt_ms` | the slowest round trip a host may have (default 150), for a host without `link` |
-| `min_mbps` | the least throughput to it, MB/s (default 8; a host's entry may set its own, for a slow link still worth using), for a host without `link`: with one, the link check catches a fall back to WiFi, and both are only reported. Both are measured through ssh: the round trip is the least of three (each starts an ssh process, which a loaded Mac delays), and the throughput is 32 MB written through a plain pipe (Python's `run(input=)` writes 512 bytes at a time and read 57 MB/s on a Thunderbolt link that does 270 through ssh and 800 raw). They still fall when either Mac is busy: a low figure is no proof of a slow link |
 | `tcp` | `false` keeps the live mirror's data on ssh (default `true`; also `RERAIL_FARM_TCP=0`) |
 
 A host takes a compile per core while nobody has touched its keyboard or mouse for 5 minutes, and
@@ -258,9 +258,20 @@ linux`): the installed version's `bin/relax-linux`, which `scripts/dev/relax/bui
 `cargo-linux` once the sysroot below is here (scripts/dev/relax/README.md, fork change 10; a body edit's verdict 2.6 s after the save there). It is
 a Linux run of the tests, as a `test-remote` one is.
 
-`test-remote` gives a command to a Mac first, and to a Linux host when every Mac slot is taken.
-A command that names Metal, or sends a `--tree` (a program built here is a macOS one), runs on a
-Mac only; `--os` chooses (`macos`, `linux`, `any`). The host's line says it is Linux, so a result
+`test-remote` gives a command to a Linux host as readily as to a Mac (farm 48; before, Macs went
+first, and two Macs ran loads of 44 and 88 while the Linux hosts' 150 cores sat idle). Hosts on a
+link of 8 MB/s or more through ssh go first (a slower one, such as a remote site's tunnel, costs
+minutes a send), then slower links, then VMs on this Mac; within those, the
+most free slots, then the most spare cores. A slow link only puts a host later; it never takes it
+out ("Health"). Both figures are measured through ssh: the round trip is the least of three (each
+starts an ssh process, which a loaded Mac delays), and the throughput 32 MB through a plain pipe,
+every 10 minutes. They fall when either machine is busy, so a low one is no proof of a slow link:
+the order uses the best throughput of the last hour (`mbps_best`). A PC's 10 MB/s link read 4.6
+to 10.5 in one afternoon, and on its latest figure it fell behind every Mac at each low one. Each command gets its share of its host
+(`farm.cpu_share`: twice the cores over the test slots) as CARGO_BUILD_JOBS, NEXTEST_TEST_THREADS
+and RUST_TEST_THREADS. A command that names Metal, sends a `--tree` (a program built here is a macOS
+one) or fetches a program back (`--fetch`, a build for this Mac) runs on a Mac only; `--os` chooses
+(`macos`, `linux`, `any`). The host's line says it is Linux, so a result
 is never taken for a macOS one.
 
 There the farm's directory is `~/.cache/rerail-farm` (XDG's), the mirror's attribute is
@@ -295,8 +306,9 @@ Linux hosts are. Nothing of the farm runs on Windows itself. Set up once, as an 
 - In the account's `.wslconfig`: `networkingMode=mirrored` (WSL has the PC's address), `memory`,
   `processors`, `vmIdleTimeout=-1`, and `instanceIdleTimeout=-1` under `[general]`. The Hyper-V
   firewall lets WSL's VMs take connections in (`Set-NetFirewallHyperVVMSetting` for WSL's creator
-  id, a rule for the port), and a task at startup, as the account (S4U), runs
-  `wsl.exe -d Ubuntu-24.04 -u root -- sleep infinity`, so WSL runs from boot with no one signed in.
+  id, a rule for the port), and a task with no trigger, as the account (S4U), runs
+  `wsl.exe -d Ubuntu-24.04 -u root -- sleep infinity`: the farm starts it when a command needs the
+  PC, with no one signed in, and ends the distribution once it idles ("Guests").
 - In Ubuntu: systemd (`/etc/wsl.conf`), the packages a Linux host has (build-essential, cmake,
   clang, libclang-dev, libssl-dev, pkg-config, git, zstd, python3, docker.io), a `farm` user in
   `docker` with this Mac's key, and sshd on a port of its own (Windows' sshd has 22), password
@@ -310,10 +322,17 @@ A Mac host can run a Linux host beside itself: an Ubuntu 24.04 ARM VM made with 
 Virtualization framework, no licence; Parallels needs a valid one to start a VM), reached by ssh
 through the Mac (`ProxyJump`, Lima's forwarded ssh port). Its configuration: `cpus`, `memory`,
 `disk` (sparse), no mounts, a provision script with the Linux host's packages and a `farm` user in
-`docker` holding the build machine's key; `limactl start-at-login` starts it with the Mac. Then
+`docker` holding the build machine's key; not started with the Mac (a guest: "Guests"). Then
 rustup and cargo-nextest as above, its entry in `farm.json`, `setup`. An ARM VM gave
 `test-mac-compiles`' 42 outputs as this Mac's bytes (2026-11-19), so it takes this Mac's compiles
 too. Its CPU is the Mac's when it idles: a VM's vCPUs take nothing while no command runs.
+
+A Mac with OrbStack can use an OrbStack machine instead (`orb create ubuntu:noble NAME`, its
+limits by `orb config set machine.NAME.cpu` and `.memory_mib`, inside OrbStack's own memory
+limit): the same packages and `farm` user, sshd on a port of its own, reached at the machine's
+`.orb.local` name. On the build machine itself such a host takes Linux tests only
+(`"mac_compiles": false`): this Mac's compiles sent to its own VM would gain nothing. Linux on a
+Mac is a guest of macOS directly, never nested inside a Windows VM.
 
 ### Windows hosts
 
@@ -321,7 +340,10 @@ The same PC's Windows side is a host of its own (`"os": "windows"`), for Windows
 of the tests: `scripts/dev/test-remote --os windows -- cargo nextest run ...` (or `--host`). Its
 entry names the machine's Linux entry (`"shares"`) and its farm directory on the Windows drive as
 WSL mounts it (`"windows_dir": "/mnt/c/rf"`); ssh reaches it through the same WSL (a second ssh
-name for it). Then:
+name for it), and Windows itself through its own sshd (`"windows_ssh"`: the dashboard's sampler,
+and a WSL guest's start and stop). Name the machine after its Windows entry (`pc1`) and its WSL
+after it (`pc1-linux`): the PC is the host, its WSL a VM on it. When the WSL is a guest, a
+Windows job starts it first (about 10 s). Then:
 
 - One copy of a checkout per machine: the mirror sends to the Linux side's (WSL's own disk), and
   before a Windows command the agent brings the Windows drive's copy up to it: the files changed
@@ -335,13 +357,121 @@ name for it). Then:
   ended by their command line (`taskkill /T`).
 - Linux and Windows share the machine's test slots, so what is queued decides how many of each
   run; the CPU is the scheduler's, and WSL hands memory back as it idles (`autoMemoryReclaim`).
-  The dashboard shows Windows' view of the whole machine on the machine's card.
+  The machine's card on the dashboard is Windows' (`sampler.ps1`, in Windows' own PowerShell over
+  `windows_ssh`), and its WSL's card is that of a VM on it.
 
 On Windows, once, as an administrator: Visual Studio Build Tools 2022 (the C++ workload, x64 and
 ARM64 tools, the Windows 11 SDK, CMake, Clang), long paths on (`LongPathsEnabled`), the farm's
 directory left out of Defender's scanning (`Add-MpPreference -ExclusionPath`), and in the farm's
 account rustup with the pinned toolchain (`x86_64-pc-windows-msvc`, and the ARM64 target) and
 cargo-nextest's Windows build in `%USERPROFILE%\.cargo\bin`.
+
+### A Windows VM on a Mac
+
+A Windows 11 ARM VM in Parallels is a Windows host for `aarch64-pc-windows-msvc` builds and
+runs. Windows' boot manager panicked in the VM with nested virtualisation on (Parallels 27.1 on an
+M5 Max, 2026-11-20), so the VM has no WSL2: WSL1 carries the agent instead. WSL1 needs no
+virtualisation, runs Windows' programs, and shares Windows' network (its sshd, on a port of its
+own, has the VM's address). WSL1 is not a Linux host to run jobs on: a slow file system over NTFS,
+no containers. So the Linux entry takes none (`"tests": false, "mirror": false`; `setup` says
+"takes no jobs") and holds only the checkout's copy for the Windows entry that `shares` it.
+
+Set up once, from the Mac (`prlctl exec VM ...` runs as SYSTEM, until Windows' sshd is up; its
+command line is short, so a longer script goes in by chunks):
+
+- The VM: nested virtualisation off, no autostart (a guest, sized as it starts: "Guests").
+- In Windows, the farm account, OpenSSH, long paths, the farm directory out of Defender's
+  scanning, no sleep, as on a PC; the WSL feature only (not `VirtualMachinePlatform`), Microsoft's
+  WSL MSI (arm64), `wsl --set-default-version 1`. `wsl --install` turns
+  `VirtualMachinePlatform` on again, so Ubuntu's ARM64 `.wsl` image (its URL and SHA-256 in WSL's
+  `DistributionInfo.json`) goes in by `wsl --import ... --version 1`, its directory out of
+  Defender's scanning too.
+- In Ubuntu: openssh-server, rsync, python3, zstd, git; the `farm` user with the key; sshd on its
+  port, password logins off; `/etc/wsl.conf` with the default user and no Windows PATH. WSL1 has no
+  systemd: the startup task (as the account, S4U) runs `sshd -D` itself.
+- Windows' toolchain as on a PC, for ARM64: rustup-init's `aarch64-pc-windows-msvc` build,
+  nextest's `windows-arm` build, and VS Build Tools with the ARM64 tools.
+
+The VM's disk is this Mac's: its entries' `max_target_gb` keeps the targets in it small.
+
+### Guests
+
+A host that is a VM on another machine is a guest (`guest.py`): a Linux VM on a Mac (Lima,
+OrbStack), a Windows VM on a Mac (Parallels), WSL on a Windows PC, a cloud VM (Google Compute
+Engine). A VM holds the memory it was
+given while it runs, and gives little of it back as it idles (Apple's Virtualization framework and
+Parallels keep what the guest has touched), so a guest runs only while the farm uses it:
+
+- **Started when a command needs it.** `test-remote` starts a stopped guest of the command's OS
+  when it would otherwise wait (no running host of that OS has a free test slot, or there is none),
+  in the background, and takes the first slot that frees, a running host's or the guest's once it
+  answers. One guest a command (another machine's before this Mac's, then the most cores): a
+  second command that would wait starts the next. `--host GUEST` starts it and waits for it. A start that fails is not tried again for 10
+  minutes. Compiles (`mac_compiles`) use a guest only while it runs: a compile is too short to boot
+  a VM for.
+- **Sized as it starts**, from what its machine has then: all its machine's cores (a VM's idle
+  vCPUs take nothing, and the scheduler shares busy ones; half on this Mac), and its share of the
+  memory (`memory_fraction`, 0.5, a quarter on this Mac; or `memory_gb`), never more than the
+  machine has available less 4 GB. Under 8 GB available it does not start.
+- **Stopped once idle, if the farm started it**: `guests watch`, this Mac's LaunchAgent (`setup` installs it when the
+  configuration has a guest), looks every minute, and stops a guest none of whose test slots,
+  compile slots or checkout copies (a Relax session's) has been held for `idle_minutes` (10). It
+  holds them all while it stops it, so nothing starts there meanwhile. WSL: the distribution ends,
+  then WSL's VM (`wsl --shutdown`, the farm account's own VM; the PC's user's WSL is apart). A
+  guest found running that the farm did not start (by hand, with `gcloud`, from another session)
+  is left running: it is whoever started it's to stop, and the farm takes commands there meanwhile.
+
+Its entry: `"guest": {"on": "local" or the ssh name of its machine, "kind": "lima" | "orb" |
+"parallels" | "wsl" | "gce", "vm": its name}`, and the optional `cpus`, `memory_gb`, `memory_fraction`,
+`idle_minutes`. A Windows host on it (`shares`) is the same guest. `farm.health` takes a stopped
+guest as not usable without probing it, and with no back-off. Nothing starts a guest at boot (no
+Lima start-at-login, no Parallels autostart, no trigger on a PC's WSL task).
+
+**A cloud VM** (`"kind": "gce"`, with `"project"` and `"zone"`; `"on": "local"`, as this Mac's
+`gcloud` runs it) is started and stopped with `gcloud compute instances start` / `stop`, keeps its
+disk (its checkout copy and targets) while stopped, and is sized by its machine type (`cpus`,
+`memory_gb` say what it has). ssh reaches it through Google's IAP tunnel, a `ProxyCommand` in
+`~/.ssh/config` (`gcloud compute start-iap-tunnel VM 22 --listen-on-stdin`), so it needs no
+external address; its host key is gcloud's (`HostKeyAlias compute.ID` in
+`google_compute_known_hosts`). It bills while it runs, so its entry has `"by_name": true` (below):
+it runs only what names it. A GPU VM with a V100 (2026-11-20): started by `test-remote --host` in
+about 70 s (31 s for the start, then ssh); the first checkout sent through the tunnel in 79 s,
+then about 1 s; a command 3 s warm. When `gcloud`'s sign-in has expired its state is unknown and
+nothing starts it: `gcloud auth login` brings it back.
+
+#### Cloud cost
+
+A cloud guest bills while it runs, so four things keep that known and bounded (2026-11-20):
+
+- **A ledger and budgets.** Each cloud guest's entry gives its price (`"cost_per_hour"`, US$). Every
+  start and stop the farm makes or sees goes in `guests/cost.jsonl` in the farm's state directory,
+  a hand start or stop included (the watcher sees it within a minute). A start is refused once
+  today's or this month's spend reaches its budget, and a guest the farm started is stopped when
+  either is reached. The limits are the configuration's `"cloud"`: `budget_day_usd` (20),
+  `budget_month_usd` (200), `max_hours` (4) and `deadman_minutes` (30).
+- **The provider's own limit.** Before each start the farm sets the VM's scheduling (`gcloud
+  compute instances set-scheduling`): stopped `max_hours` after a start (`--max-run-duration`,
+  `--instance-termination-action=STOP`), and never restarted by the provider after a host's
+  maintenance or failure (`--no-restart-on-failure`). These hold however the VM is started, by
+  hand included, and whatever happens on the Mac or the VM. The farm also stops a guest that has
+  run `max_hours`.
+- **A drop-dead switch on the VM.** At each start the farm installs `cloud-deadman` on the VM with
+  a systemd timer, run every minute. The VM powers itself off (a stop: the machine's billing ends,
+  its disk stays) once the farm's heartbeat file has not been touched for `deadman_minutes`. The
+  watcher touches it every minute, so a VM outlives the Mac that runs it (a crash, a closed lid,
+  the network gone) by half an hour at most. Tested on 2026-11-20: fired by hand, the VM stopped,
+  the provider reported it stopped, and the watcher closed the ledger and said so.
+- **The user told.** A notification on this Mac at every cloud start and stop, the farm's own or
+  not, and each hour a guest started outside the farm runs over budget. The dashboard's header
+  shows today's and this month's spend against the budgets, and a cloud guest's line shows its
+  price, its cost so far and its hard stop.
+
+The disk of a stopped VM still bills (about US$4 a month for 100 GB of standard disk); the ledger
+counts only the running time.
+
+`scripts/build/farm/guests` lists them (state, size, when each stops); `guests start NAME` and
+`guests stop NAME` do it by hand. The dashboard shows each guest on its machine's card, and its own
+card after it, with its state, size and when it stops.
 
 ### Mac compiles on a Linux host
 
@@ -456,17 +586,25 @@ copies cleaned. Nothing waits on one for long, and anything a host cannot do run
   down) the host is not used, and is tried again every 60 s, not backed off. A route that stops
   answering is dropped, and the host is reached by name, then recovered again.
 - **Cache and back-off.** A healthy record holds 30 s, shared by every worktree (one caller probes,
-  the others read). A host that does not answer is not probed again for 30 s, doubling to 5
-  minutes, so a sleeping host costs little. A back-off ends at once when this Mac's network
+  the others read). A host is down only when two connections in a row fail, the second with
+  10 s to connect and 20 s to answer: one lost or slow probe (this Mac at a load of 90 can take
+  seconds to start ssh) is not a host gone. A host that is down is not probed again for 30 s,
+  doubling to 2 minutes, so a sleeping host costs little. A slow round trip or link never makes a
+  host unusable: it only orders the hosts (`test-remote`, "Linux hosts"). Until farm 50 one
+  probe over 150 ms or under 8 MB/s took a reachable host out, with the back-off up to 5 minutes,
+  while commands queued here. A back-off ends at once when this Mac's network
   changes (its addresses, `scutil --nwi`), and when `test-remote` finds no usable host it asks
   every backed-off host again, together, before it runs the command here. `status` probes every
   host now, whatever its back-off. Until farm 33 the back-off doubled to 30 minutes and outlived
   a move: hosts that had failed all evening at home showed "unreachable" for half an hour at the
   office while ssh reached them, and agents ran their tests here (2026-11-18).
-- **Lost mid-job.** A compile whose send or run fails there runs here, and the host is marked down
-  when its connection or agent is gone, or a file could not be written there (its disk full:
-  agent code 70; the daemon then drops the agent and forgets what it sent). A test run whose ssh
-  connection drops (exit 255) runs again here.
+- **Lost mid-job.** A compile whose send or run fails there runs here. When its connection or agent
+  is gone, or a file could not be written there (its disk full: agent code 70; the daemon then
+  drops the agent and forgets what it sent), the host's record goes stale (`mark_down`): the next
+  health check probes it at once, and it is down only if that probe fails too. A test run whose
+  ssh connection drops (exit 255) chooses a host again, once, and runs here only if that one is
+  lost too. Until farm 51, one lost connection (a host at a load of 127 missing its keep-alives)
+  took the host out for a back-off and ran the command here, the busiest machine of the farm.
 - **One tree per copy.** A host holds one copy of a checkout, at the checkout's path (its warm
   target directory's paths point there), so two commands of one checkout on one host share it.
   A command finds it idle and sends its tree, or finds it running from the very tree it has (the
@@ -517,6 +655,39 @@ and macOS's background work, and an M3 about a third idle showed a load 31 over 
 farm 33 `status` printed "cores to spare" (cores less the load average), and an agent read a
 negative figure as a full machine and waited 9 minutes before giving up on a run (2026-11-18).
 
+## The GPU watchdog
+
+macOS restarts a Mac whose WindowServer has not checked in for 120 s (a kernel panic: "userspace
+watchdog timeout: no successful checkins from WindowServer"). Farm commands' Metal work did that to
+this Mac and to a farm Mac on 2026-11-20: WindowServer's main thread waited in the GPU driver,
+first behind one test's command buffers of minutes, then behind seven test processes of three
+checkouts at once. Nothing on a command line says whether it uses the GPU (the engine opens Metal
+from many places, without `metal` in the command), so no rule about which commands go where keeps
+a Mac safe. The watch is on the machine instead.
+
+Each Mac host runs `gpu-guard` while it has farm commands: farm-agent starts it with a command
+(its text is sent with each one, as the cleaner's is), and it stops 15 minutes after the last. A
+probe it compiles there (the Xcode's `swiftc`) checks every 2 s that the GPU finishes a one-thread
+compute dispatch and that WindowServer answers a client (the window list), timing each from a
+thread of its own, so a step that blocks in the driver counts too. When either has not finished for
+15 s, every process holding the GPU (ioreg's `AGXDeviceUserClient`) that is the farm's is killed,
+and again every 10 s while the stall lasts: its program is under the farm's directory (a test
+binary in a farm target directory, a program `--tree` sent), or it runs under a farm-agent's
+command. No other process is ever touched. The command's output then names what was killed and
+why (`farm-agent: the farm's GPU watchdog killed ...`), and the host's
+`~/Library/Caches/rerail-farm/gpu-guard/` keeps `guard.log` (stalls, checks over 2 s, kills) and
+`kills.log`.
+
+A busy GPU alone trips neither check: macOS time-slices the GPU between processes, and a dispatch
+of 2^18 spinning threads filling an M3 MacBook Pro's GPU for 10 s did not delay the probe's
+(2026-11-20). So the watchdog acts on the stall that precedes the panic, not on load.
+
+What a kill does and does not do: the killed processes submit no more work, which ends a pile-up
+of many processes' work. A command buffer already on the GPU may run on: on 2026-11-20 a test's
+persistent grid was killed with its process, and WindowServer stopped 6 s later and the Mac
+restarted. Against one launch that runs for minutes the watchdog may only name the program;
+bounding each launch's GPU time is the tests' work.
+
 ## This Mac's disk floor
 
 `clean-target` removes what no current build uses (about 540 GB a day here on 2026-11-18), but
@@ -546,6 +717,14 @@ scripts/build/farm/dashboard [--port 8740] [--open]      # then http://127.0.0.1
 
 A live page of each enabled host and this Mac, with five minutes of history:
 
+- A card per machine or VM, each with its one system: a chip (macOS, Linux or Windows) and the
+  system's name, version and architecture. A VM (a guest, or a PC's WSL) names the machine it
+  runs on, and is listed on that machine's card. A Windows card is Windows' own view, from
+  `sampler.ps1` over its `windows_ssh` (Windows has no Python): live while its WSL is stopped. It
+  runs in sshd's PowerShell, which keeps its input, so it has no pings (its round trip is the
+  probe's) and ends itself every 10 minutes for the next. Memory is in GiB, as the systems'
+  settings count it; a VM's is its limit, and a machine's says what the firmware keeps (an
+  integrated GPU's share).
 - CPU, split by who uses it: the farm (the trees under its agents: test commands, Relax
   sessions, the mirror; on a Linux host also the Mac-compile container; on this Mac, Rerail's
   builds), the fleet's jobs (their containers), the machine's own load, and idle. The split
@@ -595,7 +774,16 @@ host over ssh. For each compile it scans what the compile may read from here (th
 directory and native library directories; `test-remote` and `live-test-remote` send a checkout's
 files the same way; one scan serves every compile that started before it), sends each file whose size or mtime differs from what it last sent, then the
 compile, on the same stream: the agent writes the files before it runs the compile. The outputs
-come back on the stream.
+come back on the stream, staged beside their places (`.farm-PID-JOB`): the compile moves them in,
+the `.rmeta` last, only once every output it asked for came and what the compile read is as it is
+here; otherwise it removes them and compiles here. An output the host's compile did not write
+fails it there (code 72), and the files of a compile no one waits for any more are dropped. Before,
+a remote compile's outputs went straight into place as they came, any one missing was skipped,
+and a late file of a compile given up could land beside a newer compile's: an `.rmeta` that was
+not its `.rlib`'s, which sccache then keeps as one entry. A crate above it failed with E0463
+("can't find crate") with the `.rmeta` present and compiled against the `.rlib` (Q377,
+2026-11-20; the cache's 554 Cranelift entries were all consistent, so the pair formed in the
+target directory). `SCCACHE_RECACHE=1` (with `RERAIL_FARM_ANY_ENV=1`) rewrites such a pair.
 
 The stream starts on ssh, then moves to plain TCP: the daemon listens on a port of its own,
 sends the agent the port and a one-time token over ssh, and the agent connects back to the
@@ -609,6 +797,15 @@ on ssh. Every file the compile read (its dep-info, and each `--extern` crate, wh
 out and the host is asked for again before each compile) must have the size and mtime
 it has here, or the compile runs here. The agent refuses to write when its root is under a network
 mount.
+
+The daemon keeps a log, `mirror.log` in the farm's state directory (`~/Library/Caches/rerail-farm`
+on a Mac): its start and end, how each host's stream is carried (TCP, or ssh and why), and a line
+per job: the host, the crate (or the command), its result, how many files went and how long the
+sync and the run took, how many outputs came back (and which ones did not), the reads it could not
+match, and the end of a failed compile's stderr; then each agent dropped and why, and each late
+file thrown away. It rotates at 5 MB and keeps 4 old ones (`mirror.log.1` the newest, 25 MB in
+all). Each agent's own stderr (`mirror/HOST.err`) keeps its last 5 MB in `HOST.err.1` once over
+5 MB, as the guests' log (`guests/log`, at 2 MB) does.
 
 `RERAIL_FARM_LOG=file` logs each decision (hot, hit: nothing logged, here, or which host) with
 where a remote compile's time went, and why a compile did not go remote. `RERAIL_FARM_LOCAL=1`

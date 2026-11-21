@@ -158,6 +158,9 @@ pub mod z {
 /// for no thread: two that miss one key both compute it. Every loop is bounded; a lookup that finds no room
 /// counts a failure (`FAILED`) and reads the dead entry, so a caller that shares the cache refuses its work.
 pub mod cache {
+    mod lookup;
+    pub use lookup::{FAILS, NO, PASSES, UNKNOWN, YES, done, text_find, text_open, verdict_get, verdict_put};
+
     /// The header's u32s, from the cache's first byte.
     pub const EPOCH: i32 = 0;
     pub const GENS: i32 = 4;

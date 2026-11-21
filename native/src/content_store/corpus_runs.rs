@@ -137,7 +137,8 @@ fn orphaned_holds(connection: &rusqlite::Connection) -> StoreResult<Vec<String>>
     Ok(owners.into_iter().filter(|o| o.split(':').nth(1).and_then(|p| p.parse::<i32>().ok()).is_some_and(process_gone)).collect())
 }
 
-/// Whether no process `pid` exists on this host.
+/// Whether no process `pid` exists on this host: never this process, and on Windows when the system knows no
+/// running process of that id.
 pub fn process_gone(pid: i32) -> bool {
     if pid <= 0 || pid as u32 == std::process::id() {
         return false;

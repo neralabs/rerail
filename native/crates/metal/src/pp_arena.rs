@@ -154,7 +154,7 @@ impl Bound for Buffer {
 pub fn source() -> &'static str {
     static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "#include <ukl/backend.h>\n#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n#include <ukl/pool.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "#include <ukl/backend.h>\n{PP_GLOBAL}#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n#include <ukl/pool.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}",
             rerail_clif::view::ukl(),
             SLOTS.iter().enumerate().map(|(k, s)| format!("#define S_{s} {k}u\n")).collect::<String>(),
             include_str!("pp_eval.uglykl"),
@@ -169,12 +169,24 @@ pub fn source() -> &'static str {
     &SOURCE
 }
 
-/// The kernel `name` of the evaluator's source, made once a process (a failed compile is fatal).
-pub fn kernel(name: &str) -> &'static lane::Kernel {
-    static MADE: std::sync::OnceLock<std::sync::Mutex<std::collections::HashMap<String, &'static lane::Kernel>>> = std::sync::OnceLock::new();
-    let mut made = MADE.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner());
-    made.entry(name.to_owned()).or_insert_with(|| Box::leak(Box::new(lane::kernel_fixed(source(), name, None))))
+/// The passes' space for the stores they write (`PP_GLOBAL`): a phase reads what other groups wrote before the grid's
+/// barrier, so on a GPU it is coherent memory (`UKL_COHERENT`, `ukl/grid.h`'s rule). On an M1 Max a plain device read
+/// of another group's write came back stale every time once the grid spanned more than 8 groups, and a coherent one
+/// never did (Q367). The CPU's caches are coherent, so there it is a plain pointer. CUDA's
+/// `UKL_COHERENT` is `volatile`, from which C++ copies no struct, and the passes copy theirs: a plain pointer there
+/// too (not run on CUDA yet).
+const PP_GLOBAL: &str = "#if defined(UKL_METAL) || defined(UKL_OPENCL)\n#define PP_GLOBAL UKL_COHERENT\n#else\n#define PP_GLOBAL UKL_GLOBAL\n#endif\n";
+
+/// The kernel `name` of the evaluator's source, made once a machine (a failed compile is fatal).
+pub fn kernel(name: &str) -> lane::Kernel {
+    let made = rerail_context::machine::<Kernels>();
+    let mut made = made.0.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+    std::sync::Arc::clone(made.entry(name.to_owned()).or_insert_with(|| lane::kernel_fixed(source(), name, None)))
 }
+
+/// The machine's kernels of the evaluator, by name (`kernel`): a machine object (decision 0442), as its device is.
+#[derive(Default)]
+struct Kernels(std::sync::Mutex<std::collections::HashMap<String, lane::Kernel>>);
 
 /// The threads of a group.
 pub const TG: u64 = 256;
@@ -193,7 +205,12 @@ pub struct Enc<'a> {
 }
 
 impl<'a> Enc<'a> {
-    pub fn new(label: &str, resident: &'a [std::sync::Arc<crate::slabs::Slab>]) -> Enc<'a> {
+    pub fn new(label: &str) -> Enc<'a> {
+        Enc::over(label, &[])
+    }
+
+    /// An `Enc` whose launches make `resident` resident.
+    pub fn over(label: &str, resident: &'a [std::sync::Arc<crate::slabs::Slab>]) -> Enc<'a> {
         Enc { command: RefCell::new(lane::Command::new(label)), resident }
     }
 
@@ -201,13 +218,13 @@ impl<'a> Enc<'a> {
     /// name and what it binds), and its `args` where it has them.
     pub fn run(&self, name: &str, rows: &[(&'a str, &'a dyn Bound)], args: Option<ProbeArgs>, groups: u64) {
         let mut command = self.command.borrow_mut();
-        let mut launch = command.launch(kernel(name), name);
+        let mut launch = command.launch(&kernel(name), name);
         for &(row, b) in rows {
             let (buffer, offset) = b.bound();
             launch = launch.buffer_at(row, buffer, offset);
         }
         for slab in self.resident {
-            launch = launch.uses(slab.device_buffer());
+            launch = launch.uses_read(slab.device_buffer());
         }
         if let Some(a) = args {
             launch = launch.value("args", &a);
@@ -280,16 +297,24 @@ pub const GROUPS_MOST: u64 = 32;
 /// The groups of the persistent grid (decision 0468 §4): the device's resident count at the grid
 /// kernels' threadgroup memory (`Device::resident_groups`: its GPU cores, IORegistry's
 /// `gpu-core-count` on a Mac, times the groups a core holds), at most `GROUPS_MOST`; `GROUPS_UNKNOWN`
-/// with no count. A run
+/// with no count; 1 on the CPU. A run
 /// whose barrier fails runs again with half as many.
 pub fn groups() -> u64 {
-    static G: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
-    *G.get_or_init(|| {
+    *rerail_context::machine::<Groups>().0.get_or_init(|| {
         let Ok(device) = lane::device() else { return GROUPS_UNKNOWN };
+        // The CPU runs a launch's groups as coroutines on one host thread: past one group, a group
+        // adds work to no core, only its threads' switches at every barrier.
+        if matches!(device, lane::Device::Cpu(_)) {
+            return 1;
+        }
         let local = kernel("pp_setup").threadgroup_bytes();
         device.resident_groups(TG as u32, local).map_or(GROUPS_UNKNOWN, |g| g.min(GROUPS_MOST))
     })
 }
+
+/// The machine's grid groups (`groups`), found once: a machine object (decision 0442), as its device is.
+#[derive(Default)]
+struct Groups(std::sync::OnceLock<u64>);
 
 /// The arena's stores the persistent kernels read, by slot: `pp_grid.uglykl`'s `S_*`, made from
 /// this list (`source`), and a run's offsets (`Lay`). A word slot holds a value, not an offset.
@@ -312,7 +337,8 @@ pub const SLOTS: &[&str] = &[
     "RSTART", "RUNX", "RUNTOT", "RUN_END", "CNT", "CNT_CAP", "TR_SK", "TR_NK", "TR_TY", "TO_F", "TO_S", "CU_SLOT", "CU_SUB", "CU_UNIT", "TRN", "LREAD", "LB_CAP", "LDELTA", "LKEY", "LVAL", "LVALN", "LHEAD", "LATEST", "LATESTN", "ILINE", "ILINEN", "SLINE", "SLINEN", "LCTL", "IF_COUNT", "IF_FIRST", "IF_KIND", "IF_INST", "SINST", "P1_RNAMES", "P1_RNTOP", "RNC", "RQC", "IF_AT", "IF_TOTAL", "IF_NODES", "IF_OPS", "IF_VAL", "IF_KEYS", "IF_TRUE", "N_IFOP", "IF_OPKEYS", "IF_OPKINDS", "N_FEAT", "IF_FEATKEYS", "IF_FEATVALS",
     "THEADS", "DELTA", "DEPTH", "CLOSE", "CLOSE_AT", "CLOSE_TOTAL", "CLOSE_KEYS", "CSORT_KB", "CSORT_VA", "CSORT_VB", "CSORT_HIST",
     "CLOSE_BITS", "CEND", "EHEADS", "REACH", "STATE", "OFLAG", "OID", "OTOTAL", "LISTS", "SLOTS", "CTL", "QCTL", "XFLAG", "XAT",
-    "XTOTAL", "XPOS", "XCOVER", "V", "OBASE", "VTOTAL", "OUT", "TOKENS", "ARGS", "WORDS", "SCRATCH", "LIST_CAP", "OUT_CAP", "Q_CAP",
+    "XTOTAL", "XPOS", "XCOVER", "V", "OBASE", "VTOTAL", "OPV", "OPBASE", "OPTOTAL", "OUT", "SCANS", "FINS", "PLACES", "SC_N", "SC_BASE", "SC_XJ", "SC_TOTAL", "SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT",
+    "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK", "SC_CTOTAL", "SC_LTOTAL", "SC_CKEYS", "SC_FIRST", "SC_KB", "SC_VA", "SC_VB", "SC_HIST", "SC_CAP", "TOKENS", "ARGS", "WORDS", "SCRATCH", "LIST_CAP", "OUT_CAP", "Q_CAP",
 ];
 
 fn slot(name: &str) -> usize {

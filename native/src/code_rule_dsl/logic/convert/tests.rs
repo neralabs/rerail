@@ -7,6 +7,7 @@ use crate::code_rule_dsl::test_support::{CAPABILITIES, pack_test_data};
 use std::path::{Path, PathBuf};
 
 mod reference_tests;
+mod reference_stage_tests;
 
 /// The rules converted: the pack as rewritten by Pulling-it-all-together (`rules-ast`, decision 0037 step 1).
 const RULES: &str = "rules-ast";
@@ -1905,6 +1906,15 @@ fn check_baseline(now: &Baseline, ran: &BTreeSet<String>, counted: &dyn Fn(&(Str
     );
 }
 
+/// A measurement's binding: `RERAIL_MEASURE_BINDING=metal` puts the file-local FIX on the process's GPU (Metal,
+/// CUDA or OpenCL), by price, or wherever it can with `RERAIL_DEVICE=always`; else the CPU.
+fn measure_binding() -> crate::code_rule_dsl::typing::file_local::Binding {
+    match std::env::var("RERAIL_MEASURE_BINDING").as_deref() {
+        Ok("metal") => crate::code_rule_dsl::typing::file_local::Binding::Metal,
+        _ => crate::code_rule_dsl::typing::file_local::Binding::Cpu,
+    }
+}
+
 /// The rules `rules` (comma-separated ids, or `*`), each check's hand-written rule replacing its converted one, as in
 /// the replay. A run binds one shape of base relations (`core.rerail`'s for the hand-written rules, T's for the converted
 /// ones), so the two sets are two runs: the converted rules of the checks with no hand-written rule, then the
@@ -1984,7 +1994,7 @@ fn measure_shape(corpus: &Path, rules: &str, mode: &str, label: &str) -> (usize,
         println!("MEASURE {label}: no programs");
         return (0, 0, 0.0, 0.0);
     }
-    let r = super::super::plan::corpus::run_all(&programs, corpus, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+    let r = super::super::plan::corpus::run_all(&programs, corpus, &out, "program", measure_binding(), 1 << 18).unwrap();
     let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
     let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
     println!(
@@ -2047,12 +2057,7 @@ fn measure_converted_rules() {
         if let Some(dir) = std::env::var_os("RERAIL_PROFILE") {
             crate::code_rule_dsl::logic::profile::set_directory(&PathBuf::from(dir).join(id));
         }
-        // `RERAIL_MEASURE_BINDING=metal`: the file-local FIX on the device work queue.
-        let binding = match std::env::var("RERAIL_MEASURE_BINDING").as_deref() {
-            Ok("metal") => crate::code_rule_dsl::typing::file_local::Binding::Metal,
-            _ => crate::code_rule_dsl::typing::file_local::Binding::Cpu,
-        };
-        let r = super::super::plan::corpus::run(&program, &corpus, None, &out, "program", binding, 1 << 18).unwrap();
+        let r = super::super::plan::corpus::run(&program, &corpus, None, &out, "program", measure_binding(), 1 << 18).unwrap();
         let cpu: f64 = r.phases.iter().map(|p| p.1 + p.2).sum();
         let rss = r.phases.iter().map(|p| p.3).fold(0.0, f64::max);
         println!(

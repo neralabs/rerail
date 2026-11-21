@@ -1,5 +1,4 @@
 .policy "ruff-up015-redundant-open-modes" revision 1
-.guests off
 .description "Drop redundant flags from the mode passed to open(); text reading is the default, so t, U and a bare r add nothing."
 .language python
 .mode steer

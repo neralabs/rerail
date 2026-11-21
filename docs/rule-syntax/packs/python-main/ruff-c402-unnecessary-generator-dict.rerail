@@ -1,5 +1,4 @@
 .policy "ruff-c402-unnecessary-generator-dict" revision 1
-.guests off
 .description "Use a dict comprehension instead of passing a generator of key-value pairs to dict; it reads more directly and skips building a tuple per item."
 .language python
 .mode steer

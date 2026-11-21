@@ -1,5 +1,4 @@
 .policy "ruff-async222-wait-for-process-in-async-function" revision 2
-.guests off
 .description "Don't call os.wait, os.waitpid or the other blocking os.wait functions inside async functions; they block the event loop."
 .language python
 .mode steer

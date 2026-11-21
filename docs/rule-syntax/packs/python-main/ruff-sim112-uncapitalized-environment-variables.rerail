@@ -1,5 +1,4 @@
 .policy "ruff-sim112-uncapitalized-environment-variables" revision 2
-.guests off
 .description "Use uppercase names when reading environment variables through os.environ or os.getenv; the lowercase proxy variables are exempt."
 .language python
 .mode steer

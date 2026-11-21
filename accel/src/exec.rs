@@ -1219,7 +1219,7 @@ impl Executor {
         // SME and the Neural Engine are macOS's; the GPU lane is any device's (decision 0440 step E).
         #[cfg_attr(not(any(target_os = "macos", gpu_lane)), allow(unused_mut))]
         let mut backends: Vec<Arc<dyn Backend>> = vec![Arc::new(CpuBackend::default()), Arc::new(crate::sql::SqlBackend)];
-        #[cfg(all(feature = "sme", target_os = "macos", target_arch = "aarch64"))]
+        #[cfg(sme_lane)]
         if present[Lane::Sme.index()] {
             backends.extend(crate::sme::backend());
         }
@@ -1497,8 +1497,13 @@ impl Executor {
                         let (claims, backend) = (Arc::clone(&claims), Arc::clone(b));
                         // The launches run in their submitter's run, on whichever pool thread takes them.
                         let run = rerail_context::job_run();
+                        // `in_run`: the claims (the batch's kernels, their columns and device leases) may be the last
+                        // holder's, and a lease goes back to its pool in the run (Q337).
                         rerail_context::cores_spawn_fifo(move || {
                             let _run = rerail_context::enter(run);
+                            // Moved in after the run is entered, so they drop before it is left: the last claims
+                            // drop their kernels' buffers into the machine's pool (decision 0442).
+                            let (claims, backend) = (claims, backend);
                             as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend))
                         });
                     }

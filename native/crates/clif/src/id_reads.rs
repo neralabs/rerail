@@ -1,6 +1,6 @@
 //! A projection's numbering's reads as CLIF functions, written once (decision 0353 step 2): what the host's `Ranks`
-//! and `granules::Table` answer, for the host (the Rust backend: the facts crate's `id_reads.rs`), the kernels (the
-//! UKL backend: `<ukl/reads/ids.h>`) and the JIT.
+//! and `granules::Table` answer, for the kernels (the UKL backend: `<ukl/reads/ids.h>`) and the JIT. The host's are
+//! written directly (`ids::Numbering::is`, …; decision 0536), held equal to these by the facts crate's tests.
 //!
 //! A read takes the descriptor's address (`ids::Numbering`) and reaches each column through its run, `off` bytes from
 //! the run's own address (a relation's reads' family: every load aligned, a word of the block). An item is a numbered

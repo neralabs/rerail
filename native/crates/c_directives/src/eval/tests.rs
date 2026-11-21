@@ -365,7 +365,11 @@ type SettledUnit = Result<(super::rounds::Settled, Vec<Vec<u8>>), &'static str>;
 fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::files::Files + '_>, String)], ran: &mut Ran) -> Vec<SettledUnit> {
     let cpp = cfg.opts.cpp;
     let r = super::rounds::run_many(cfg, cpp, units, |u, l, s| {
+        let t0 = std::time::Instant::now();
         let x = rerail_metal::pp_expand::expand_sized(u, l, s, rerail_metal::pp_arena::groups());
+        if std::env::var_os("RERAIL_PP_TIME").is_some() {
+            eprintln!("TIME expand {:.3} ms (device {:.3} ms, {} rounds)", t0.elapsed().as_secs_f64() * 1e3, x.as_ref().map_or(0.0, |x| x.gpu_seconds * 1e3), x.as_ref().map_or(0, |x| x.rounds));
+        }
         if let Ok(x) = &x {
             ran.runs += 1;
             ran.gpu_seconds += x.gpu_seconds;
@@ -1032,7 +1036,6 @@ fn show(v: &[Vec<u8>]) -> String {
 /// function-like name with no `(` after it (in its list, or after its list's end in a parent),
 /// redefinitions between stretches, names from an included header, and a doubling chain.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn object_like_expansion_is_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define A 1\nA B A\n")],
@@ -1097,7 +1100,6 @@ fn shapes_agree(shapes: &[&[(&str, &str)]]) -> (usize, usize) {
 /// variadic part left out, empty, or many), a name painted in an argument, and a function-like
 /// name at an argument's end that its substitution calls.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn calls_with_arguments_are_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define F(x) x x\nF(1) F((a,b)) F() F( )\n")],
@@ -1124,7 +1126,6 @@ fn calls_with_arguments_are_the_serial_passes() {
 /// token's left out), a literal's `"` and `\` escaped; an empty argument's `""`; spacing kept through
 /// a body (a parameter's space, the call's name's space), and the string rescanned in its list.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn stringizing_is_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define S(x) #x\nS(a) S(  a  +  b  ) S() S(\"s\\n\" 'c') S(a\n b)\n")],
@@ -1143,7 +1144,6 @@ fn stringizing_is_the_serial_passes() {
 /// it), pastes that make names (rescanned), numbers, punctuators and digraphs, `#` beside `##`,
 /// and GNU's `, ## __VA_ARGS__` (the comma gone with no variadic arguments, kept with some).
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn pasting_is_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define C(a, b) a ## b\nC(x, y) C(1, 2) C(+, =) C(<, :) C(, b) C(a, ) C(,) C(x y, z w)\n")],
@@ -1168,7 +1168,6 @@ fn pasting_is_the_serial_passes() {
 /// placemarker (so `##` beside it pastes with nothing); its content's parameters and pastes, and
 /// its space given to its content's first token.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn va_opt_is_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "#define F(a, ...) f(a __VA_OPT__(,) __VA_ARGS__)\nF(1) F(1, 2) F(1, 2, 3) F(1,)\n")],
@@ -1431,7 +1430,6 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
 /// Chains of such calls, exits through two lists, exits inside a macro's list and inside an
 /// argument's, the fence an argument's end makes, C17 §6.10.3.5's example 3, and DEFER/OBSTRUCT.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn calls_past_an_end_are_the_serial_passes() {
     let example3 = "#define x 3\n#define f(a) f(x * (a))\n#undef x\n#define x 2\n#define g f\n#define z z[0]\n#define h g(~\n#define m(a) a(w)\n#define w 0,1\n#define t(a) a\n#define p() int\n#define q(x) x\n#define r(x,y) x ## y\n#define str(x) # x\nf(y+1) + f(f(z)) % t(t(g)(0) + t)(1);\ng(x+(3,4)-w) | h 5) & m\n(f)^m(m);\np() i[q()] = { q(1), r(2,3), r(4,), r(,5), r(,) };\nchar c[2][6] = { str(hello), str() };\n";
     let shapes: &[&[(&str, &str)]] = &[
@@ -1459,7 +1457,6 @@ fn calls_past_an_end_are_the_serial_passes() {
 /// 64 KB: the device refuses (`X_ROOM`), the unit runs again at the next rung, and it gives the
 /// serial pass's tokens there. So does an `#if` line past its room that decides an include.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn a_unit_past_its_room_runs_again_larger() {
     let fan = "#define A0 x x x x x x x x\n#define A1 A0 A0 A0 A0 A0 A0 A0 A0\n#define A2 A1 A1 A1 A1 A1 A1 A1 A1\n#define A3 A2 A2 A2 A2 A2 A2 A2 A2\n";
     let tokens = format!("{fan}A3 A3 A3\n");
@@ -1613,6 +1610,24 @@ fn a_chains_use_is_flat_in_its_length() {
 /// A unit expanded with its run's own figures (`expanded_x`): its output spelled, or its refusal bits; the serial
 /// pass's output; each room's use.
 type RoomsRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS]);
+/// §3 of decision 0520: the output is pieces. A top level's run of tokens no call covers is one
+/// piece, and a call's expansion its pieces: a text of 2,000 plain tokens on 200 lines, with a call
+/// after each 500 (`G`: `[`, `g`, `]`, `g`, each its own piece of `F`'s body or `G`'s), is its 5 runs
+/// and the calls' 4 pieces each, not a word a token, and equals the serial pass.
+#[test]
+fn the_output_is_pieces_that_refer_to_the_text() {
+    let line = (0..10).map(|i| format!("t{i}")).collect::<Vec<_>>().join(" ");
+    let mut text = String::from("#define F(x) [x] x\n#define G F(g)\n");
+    for k in 0..200 {
+        text += &line;
+        text += if k % 50 == 49 { " G\n" } else { "\n" };
+    }
+    let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+    let got = got.unwrap_or_else(|why| panic!("refused {why}"));
+    same(show(&got), show(&want), "the text");
+    let out = rerail_metal::pp_expand::ROOM_STORES.iter().position(|s| *s == "output").unwrap();
+    assert!(want.len() > 2000 && room[out].0 <= 5 + 4 * 4, "{} tokens in {} pieces", want.len(), room[out].0);
+}
 
 /// `expanded`, with the run's own figures (its rooms' use).
 fn expanded_x(files: &[(&str, &str)], cpp: bool) -> RoomsRun {
@@ -1637,7 +1652,6 @@ fn expanded_x(files: &[(&str, &str)], cpp: bool) -> RoomsRun {
 /// over many lines, in an exit's call, and in an included file; `__DATE__`, `__TIME__` and
 /// `__TIMESTAMP__` (the configuration's), and `__has_include` and its kin as plain names in text.
 #[test]
-#[ignore = "Q367: the device's expansion differs from the serial passes on the M1 Max, as at Go-C-and-C-support's own 0cc2adf6d2 and ce2c4019c83; run with --ignored on an M3 or M5"]
 fn line_and_file_are_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
         &[("main.c", "__LINE__ __FILE__\n\n  __LINE__\n#define L __LINE__\nL\n#define F __FILE__\nF\n")],

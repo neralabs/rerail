@@ -1057,7 +1057,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
             p.program(&mut lowering_tail::Declared);
         }
         p.program(&mut lowering_tail::ThreeValued { three: three.clone(), modal: modal.clone() });
-        p.program(&mut lowering_tail::Findings { pending: findings.clone() });
+        p.program(&mut lowering_tail::Findings { pending: findings.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) });
         p.program(&mut lowering_tail::CoreDecls { docof_of_locs }).program(&mut lowering_tail::SpanPatterns { library: library.map(|l| (l.spans(), l.version.digest())) }).program(&mut lowering_tail::GrammarNames).program(&mut lowering_tail::BuiltinsOut { rewritten: rewritten.clone() });
         p.program(&mut lowering_tail::KindSets { sets: sets.clone(), library: library.map(|l| std::sync::Arc::clone(&l.version)) }).program(&mut lowering_tail::Unit);
         p.program(&mut lowering_tail::BooleanRelations).program(&mut lowering_tail::ScopeGlobs);
@@ -1741,7 +1741,7 @@ pub struct GuestAsks {
     /// Its `.guests` settings: `guest_policy`'s facts, which a pack's programs share.
     pub settings: Vec<String>,
     /// `None` when no rule it reaches reads a guest: alone it makes none (`corpus`'s guest requests are no outputs).
-    /// Else the library files whose clauses ask (`asks`, or an `embed`): an included file's asking clauses are kept
+    /// Else the library files whose clauses ask (`asks`): an included file's asking clauses are kept
     /// whatever reads them (`reached_statements`), so these files' clauses are what it asks for.
     pub files: Option<Vec<PathBuf>>,
     /// Its own clauses ask too: what it asks for is its own.
@@ -1760,8 +1760,8 @@ pub fn guest_asks(src: &str) -> Result<GuestAsks, Error> {
         Some(S::Setting { key: "guests", text }) => Some(text.to_owned()),
         _ => None,
     }).collect();
-    // What a clause reads, off its tape, and whether it makes a guest request (a read `lower` makes a demand of, or an
-    // `embed`): its heads' arguments', its body's and its edits' names.
+    // What a clause reads, off its tape, and whether it makes a guest request (a read `lower` makes a demand of): its
+    // heads' arguments', its body's and its edits' names.
     let read = |st: &Stmt| -> BTreeSet<String> {
         let (t, n) = st.tape();
         let mut out = BTreeSet::new();
@@ -2069,16 +2069,19 @@ pub fn profile_join_sources(paths: &[&Path]) -> Option<super::profile::author_jo
         let files = program_order(&own).map(|(order, _)| order).unwrap_or_else(|_| vec![own.clone()]);
         for file in files {
             if file != own && !indexed.insert(file.clone()) { continue; }
-            let Ok((statements, _)) = read_shared(&file) else { continue };
-            for s in statements.statements() {
-                let Some(reads) = check::rule_reads(&s) else { continue };
+            let Ok((rr_file, _)) = read_shared(&file) else { continue };
+            for s in rr_file.statements() {
+                if s.what() != Some(S::Clause) || !s.has_body() { continue; }
                 let line = s.line();
+                let mut reads = Vec::new();
+                check::clause_reads(&rr_file, &check::clause_body(&rr_file, s.node()), &mut reads);
                 for name in s.heads() {
-                    let key = if file == own && paths.len() > 1 { format!("p{i}_{name}") } else { name.to_owned() };
+                    let name = &name.to_owned();
+                    let key = if file == own && paths.len() > 1 { format!("p{i}_{name}") } else { name.clone() };
                     for read in &reads {
                         locations.reads.entry((key.clone(), read.clone())).or_default().insert((file.clone(), line));
                     }
-                    locations.definitions.entry(key).or_insert_with(|| (name.to_owned(), BTreeSet::new())).1.insert((file.clone(), line));
+                    locations.definitions.entry(key).or_insert_with(|| (name.clone(), BTreeSet::new())).1.insert((file.clone(), line));
                 }
             }
         }

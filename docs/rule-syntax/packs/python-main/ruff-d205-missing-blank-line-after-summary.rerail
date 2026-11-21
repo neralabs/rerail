@@ -1,5 +1,4 @@
 .policy "ruff-d205-missing-blank-line-after-summary" revision 1
-.guests off
 .description "Separate a multi-line docstring's summary line from the description below it with exactly one blank line."
 .language python
 .mode steer

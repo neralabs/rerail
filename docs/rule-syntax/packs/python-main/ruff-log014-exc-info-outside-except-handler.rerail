@@ -1,5 +1,4 @@
 .policy "ruff-log014-exc-info-outside-except-handler" revision 1
-.guests off
 .description "Remove exc_info from logging calls made outside an except handler; with no active exception it only logs a meaningless None traceback."
 .language python
 .mode steer

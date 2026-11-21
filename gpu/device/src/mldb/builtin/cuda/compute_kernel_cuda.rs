@@ -83,6 +83,8 @@ const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR: i32 = 75;
 const CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR: i32 = 76;
 const CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN: i32 = 97;
 const CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES: i32 = 100;
+const CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM: i32 = 91;
+const CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED: CUresult = 712;
 const CU_MEMHOSTREGISTER_PORTABLE: u32 = 0x01;
 const CU_MEMHOSTREGISTER_DEVICEMAP: u32 = 0x02;
 const CU_FUNC_ATTRIBUTE_SHARED_SIZE_BYTES: i32 = 1;
@@ -205,6 +207,9 @@ pub struct CudaDevice {
     /// Whether the device reads the host's pageable memory through the host's page tables (a GB10's ATS): then
     /// memory wrapped in place (`wrap_host_memory`) is read at the host's address, nothing registered.
     pub pageable: bool,
+    /// Whether registered host memory is the device's at the host's address (`CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM`):
+    /// then a wrap may span several registrations (`Registered`).
+    host_pointer: bool,
 }
 
 unsafe impl Send for CudaDevice {}
@@ -245,9 +250,10 @@ impl CudaDevice {
             let sm = (attr(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MAJOR)? * 10 + attr(CU_DEVICE_ATTRIBUTE_COMPUTE_CAPABILITY_MINOR)?) as u32;
             let max_shared_per_block = attr(CU_DEVICE_ATTRIBUTE_MAX_SHARED_MEMORY_PER_BLOCK_OPTIN)? as u32;
             let pageable = attr(CU_DEVICE_ATTRIBUTE_PAGEABLE_MEMORY_ACCESS_USES_HOST_PAGE_TABLES).unwrap_or(0) != 0;
+            let host_pointer = attr(CU_DEVICE_ATTRIBUTE_CAN_USE_HOST_POINTER_FOR_REGISTERED_MEM).unwrap_or(0) != 0;
             let mut ctx = std::ptr::null_mut();
             ck((a.cu_device_primary_ctx_retain)(&mut ctx, dev), "cuDevicePrimaryCtxRetain")?;
-            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable })
+            Ok(CudaDevice { ctx, sm, max_shared_per_block, pageable, host_pointer })
         }
     }
 
@@ -279,8 +285,15 @@ struct Allocation {
     len: u64,
     /// The block's size class: the bytes it holds. 0: memory wrapped in place (`wrap_host_memory`), its owner's.
     class: u64,
-    /// Wrapped memory registered with the driver (`cuMemHostRegister`), unregistered when the buffer goes.
-    registered: bool,
+    /// Wrapped memory's registration with the driver: none (read where it lies), the wrap's own (`cuMemHostRegister`
+    /// of exactly its bytes), or its share of the page runs registered (`Registered`); released when the buffer goes.
+    registered: Registration,
+}
+
+enum Registration {
+    None,
+    Own,
+    Runs(Vec<u64>),
 }
 
 unsafe impl Send for Allocation {}
@@ -292,10 +305,14 @@ impl Drop for Allocation {
     /// freeing. The pool keeps a process's peak of each class (0440 E1: the pool's slabs are `cuMemHostAlloc`'s).
     fn drop(&mut self) {
         if self.class == 0 {
-            if self.registered
-                && let Ok(a) = api()
-            {
-                unsafe { (a.cu_mem_host_unregister)(self.host.cast()) };
+            match std::mem::replace(&mut self.registered, Registration::None) {
+                Registration::None => {}
+                Registration::Own => {
+                    if let Ok(a) = api() {
+                        unsafe { (a.cu_mem_host_unregister)(self.host.cast()) };
+                    }
+                }
+                Registration::Runs(runs) => release_runs(&runs),
             }
             return;
         }
@@ -383,19 +400,28 @@ pub fn alloc_uninitialized_array_sync<T>(device: &CudaDevice, length: usize) -> 
         must(unsafe { (a.cu_mem_host_get_device_pointer)(&mut dev, host, 0) }, "cuMemHostGetDevicePointer");
         Block { host: host.cast(), dev }
     });
-    CudaBuffer(Arc::new(Allocation { host, dev, len, class, registered: false }))
+    CudaBuffer(Arc::new(Allocation { host, dev, len, class, registered: Registration::None }))
 }
 
 /// A buffer over `len` bytes of the host's memory at `ptr`, read in place (decision 0353): at the host's address
-/// where the device reads pageable memory (`CudaDevice::pageable`), else registered with the driver and mapped.
+/// where the device reads pageable memory (`CudaDevice::pageable`); else its pages registered with the driver and
+/// mapped. The driver registers whole pages and refuses a page registered already (error 712), and wraps share
+/// pages (two small ones in a page, a view inside a block wrapped whole): where registered memory is the device's at
+/// the host's address, the pages are registered once, in runs a wrap shares (`Registered`); elsewhere a wrap's own
+/// registration.
 ///
 /// # Safety
 /// The memory outlives the buffer and its clones, and every use of them by queued work.
 pub unsafe fn wrap_host_memory(device: &CudaDevice, ptr: *mut u8, len: usize) -> Result<CudaBuffer, String> {
+    let wrap = |dev: DevPtr, registered: Registration| Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev, len: len as u64, class: 0, registered })));
     if device.pageable {
-        return Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev: ptr as DevPtr, len: len as u64, class: 0, registered: false })));
+        return wrap(ptr as DevPtr, Registration::None);
     }
     let a = device.current();
+    if device.host_pointer {
+        let runs = register_runs(a, ptr as u64, len as u64)?;
+        return wrap(ptr as DevPtr, Registration::Runs(runs));
+    }
     unsafe {
         ck((a.cu_mem_host_register)(ptr.cast(), len, CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP), "cuMemHostRegister")?;
         let mut dev = 0;
@@ -403,7 +429,108 @@ pub unsafe fn wrap_host_memory(device: &CudaDevice, ptr: *mut u8, len: usize) ->
             (a.cu_mem_host_unregister)(ptr.cast());
             return Err(e);
         }
-        Ok(CudaBuffer(Arc::new(Allocation { host: ptr, dev, len: len as u64, class: 0, registered: true })))
+        wrap(dev, Registration::Own)
+    }
+}
+
+/// A run of pages registered with the driver for wraps (`wrap_host_memory`): its end, and how many wraps hold it.
+struct Run {
+    end: u64,
+    holders: usize,
+}
+
+/// The runs registered, by their first byte; they never overlap. Pages pinned otherwise (the pool's blocks,
+/// `cuMemHostAlloc`) are in none: they are mapped already, and their owner keeps them.
+static REGISTERED: std::sync::Mutex<std::collections::BTreeMap<u64, Run>> = std::sync::Mutex::new(std::collections::BTreeMap::new());
+
+fn page_bytes() -> u64 {
+    static PAGE: OnceLock<u64> = OnceLock::new();
+    *PAGE.get_or_init(|| (unsafe { libc::sysconf(libc::_SC_PAGESIZE) }).max(4096) as u64)
+}
+
+/// Registers the pages of `[at, at + len)` that no run holds, as runs, and holds every run in it: the runs' starts.
+fn register_runs(a: &Api, at: u64, len: u64) -> Result<Vec<u64>, String> {
+    let page = page_bytes();
+    let (lo, hi) = (at / page * page, (at + len.max(1)).div_ceil(page) * page);
+    let mut runs = REGISTERED.lock().unwrap_or_else(|p| p.into_inner());
+    // The gaps between the runs in [lo, hi).
+    let mut held: Vec<(u64, u64)> = runs.range(..hi).rev().take_while(|(_, r)| r.end > lo).map(|(&s, r)| (s, r.end)).collect();
+    held.reverse();
+    let mut gaps = Vec::new();
+    let mut from = lo;
+    for &(s, e) in &held {
+        if s > from {
+            gaps.push((from, s));
+        }
+        from = from.max(e);
+    }
+    if from < hi {
+        gaps.push((from, hi));
+    }
+    let mut made = Vec::new();
+    for (s, e) in gaps {
+        if let Err(err) = register_gap(a, s, e, page, &mut made) {
+            for (s, _) in made {
+                unsafe { (a.cu_mem_host_unregister)(s as Ptr) };
+            }
+            return Err(err);
+        }
+    }
+    for (s, e) in made {
+        runs.insert(s, Run { end: e, holders: 0 });
+    }
+    let starts: Vec<u64> = runs.range(..hi).rev().take_while(|(_, r)| r.end > lo).map(|(&s, _)| s).collect();
+    for s in &starts {
+        runs.get_mut(s).expect("a run").holders += 1;
+    }
+    Ok(starts)
+}
+
+/// Registers `[s, e)` (pages) as a run; where some of its pages are pinned otherwise (error 712), the pages that are
+/// not, each stretch a run of its own.
+fn register_gap(a: &Api, s: u64, e: u64, page: u64, made: &mut Vec<(u64, u64)>) -> Result<(), String> {
+    let flags = CU_MEMHOSTREGISTER_PORTABLE | CU_MEMHOSTREGISTER_DEVICEMAP;
+    let r = unsafe { (a.cu_mem_host_register)(s as Ptr, (e - s) as usize, flags) };
+    if r == 0 {
+        made.push((s, e));
+        return Ok(());
+    }
+    if r != CUDA_ERROR_HOST_MEMORY_ALREADY_REGISTERED {
+        return ck(r, "cuMemHostRegister");
+    }
+    let mapped = |p: u64| {
+        let mut dev = 0;
+        unsafe { (a.cu_mem_host_get_device_pointer)(&mut dev, p as Ptr, 0) == 0 }
+    };
+    let mut p = s;
+    while p < e {
+        if mapped(p) {
+            p += page;
+            continue;
+        }
+        let mut q = p + page;
+        while q < e && !mapped(q) {
+            q += page;
+        }
+        ck(unsafe { (a.cu_mem_host_register)(p as Ptr, (q - p) as usize, flags) }, "cuMemHostRegister")?;
+        made.push((p, q));
+        p = q;
+    }
+    Ok(())
+}
+
+/// Lets go of a wrap's runs: a run no wrap holds is unregistered.
+fn release_runs(starts: &[u64]) {
+    let mut runs = REGISTERED.lock().unwrap_or_else(|p| p.into_inner());
+    for s in starts {
+        let Some(r) = runs.get_mut(s) else { continue };
+        r.holders -= 1;
+        if r.holders == 0 {
+            runs.remove(s);
+            if let Ok(a) = api() {
+                unsafe { (a.cu_mem_host_unregister)(*s as Ptr) };
+            }
+        }
     }
 }
 
@@ -621,6 +748,12 @@ pub struct CudaComputeQueue {
     /// The buffers the work since the last flush uses that nothing else may hold (staging): kept to the event.
     keep: RefCell<Vec<CudaBuffer>>,
 }
+
+// SAFETY: the stream is its root's (which is `Send` and `Sync`), and the functions its launches name are the device's;
+// the driver is called only in `flush`, on the thread that flushes, after `CudaDevice::current` makes the device's
+// context current there. The queue moves between threads (a forest's scratch behind its mutex); it is not `Sync`:
+// its cells are its owner's.
+unsafe impl Send for CudaComputeQueue {}
 
 /// The bytes a staging buffer holds (a larger copy gets its own).
 const STAGING_BYTES: u64 = 64 << 10;

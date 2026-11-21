@@ -10,7 +10,7 @@
 //!
 //! - **Rules:** `rule(p, r, head)` and `body(p, r, k, lit)`: rule `r`'s head atom and its `k`-th body literal.
 //! - **Literals:** `lit_atom(p, l, a)`, `lit_cmp(p, l, left, op, right)`, `lit_agg(p, l, var, op, a)` (with
-//!   `agg_over`, `agg_join`, `agg_by`), `lit_nearest(p, l, n, a, set)`, `lit_ast(p, l, doc, node, matcher)` (with
+//!   `agg_over`, `agg_join`, `agg_by`, `agg_bound`), `lit_nearest(p, l, n, a, set)`, `lit_ast(p, l, doc, node, matcher)` (with
 //!   `ast_capture`).
 //! - **Atoms and terms:** `atom(p, a, rel, neg, gated)`, `arg(p, a, i, t)`, `term(p, t, kind, n, s)` (kind `var`,
 //!   `wild`, `int`, `str`, `top` or `call`) and `call_arg(p, t, i, u)`.
@@ -84,6 +84,7 @@ pub fn schema() -> BTreeMap<Name, crate::code_rule_dsl::logic::front::name::List
         ("lit_agg", &["p:sym", "l:int", "var:sym", "op:sym", "a:int"]),
         ("agg_over", &["p:sym", "l:int", "var:sym"]),
         ("agg_join", &["p:sym", "l:int", "sep:sym"]),
+        ("agg_bound", &["p:sym", "l:int", "bound:sym", "op:sym"]),
         ("agg_by", &["p:sym", "l:int", "i:int", "var:sym"]),
         ("lit_nearest", &["p:sym", "l:int", "n:sym", "a:sym", "set:sym"]),
         ("lit_ast", &["p:sym", "l:int", "doc:sym", "node:sym", "matcher:sym"]),
@@ -552,6 +553,8 @@ pub fn write_version(facts: &mut Facts, p: &str, v: &super::program_image::Versi
                         AggRef::Sum => "sum",
                         AggRef::Product => "product",
                         AggRef::Join { .. } => "join",
+                        AggRef::Bounded { max: true, .. } => "max",
+                        AggRef::Bounded { max: false, .. } => "min",
                     };
                     w.row("lit_agg", vec![n(l), s(&name(var)), s(op_name), n(a)]);
                     if let Some(over) = over {
@@ -562,6 +565,10 @@ pub fn write_version(facts: &mut Facts, p: &str, v: &super::program_image::Versi
                         for (j, x) in by.enumerate() {
                             w.row("agg_by", vec![n(l), n(j), s(&name(x))]);
                         }
+                    }
+                    // A bounded min or max (decision 0511): its bound and the comparison its value passes.
+                    if let AggRef::Bounded { max, bound, strict } = op {
+                        w.row("agg_bound", vec![n(l), s(&name(bound)), s(crate::code_rule_dsl::logic::front::ast::AggOp::bound_cmp(max, strict))]);
                     }
                 }
                 Lit::Nearest { n: node, a, kindset } => w.row("lit_nearest", vec![n(l), s(&name(node)), s(&name(a)), s(v.text(kindset))]),

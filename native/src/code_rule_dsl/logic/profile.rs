@@ -410,6 +410,8 @@ pub struct GpuTotal {
     pub arena_reruns: u64,
     /// Stages whose grids the device sized.
     pub sized: u64,
+    /// Stages screened by their relation's kept filter (decision 0488).
+    pub screened: u64,
 }
 
 impl GpuTotal {
@@ -443,6 +445,7 @@ impl GpuTotal {
         self.waved += o.waved;
         self.arena_reruns += o.arena_reruns;
         self.sized += o.sized;
+        self.screened += o.screened;
     }
 
     /// The host's CPU on the device's work: encoding, uploads, waiting, reading back.
@@ -2201,8 +2204,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
     let ms = |s: f64| s * 1e3;
     let _ = writeln!(r, "Strata run on the GPU: {} strata, {} runs, {} rules in {} stages; those runs' CPU {:.2} s (the whole run: planning its replans, the store, the device's host part); the same strata's other {} runs, on the CPU: {:.2} s",
         ran.len(), sum.runs, sum.rules, sum.stages, cpu, all_runs - sum.runs, elsewhere);
-    let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave; {} stages' grids sized on the device",
-        ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized);
+    let _ = writeln!(r, "  GPU {:.1} ms (command buffers' timestamps) in {} submissions, {} dispatches ({} stages run again after an overflow, {} after the text arena filled); {} runs sent in their level's wave; {} stages' grids sized on the device; {} stages screened by their relation's kept filter",
+        ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized, sum.screened);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, uploads {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.upload), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
     let _ = writeln!(r, "  relations uploaded {} ({:.1} MB), read in place {}; sorts made {}, found in their blocks {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
@@ -3032,6 +3035,7 @@ pub mod tests {
         }
         // Another thread, stopped inside a span with a statement running, while this one dumps.
         let (opened, release) = (std::sync::mpsc::channel(), std::sync::mpsc::channel::<()>());
+        // The test's run with its context (`job_run`: the switch `set` bound), as a job carries it.
         let run = job_run();
         let holder = std::thread::Builder::new()
             .name("holder".into())
@@ -3080,6 +3084,8 @@ pub struct Report {
     pub arena_reruns: u32,
     /// Stages whose grids were sized on the device, from the rows before them (not the host's guess of their space).
     pub sized: u32,
+    /// Stages screened by their relation's kept filter (decision 0488).
+    pub screened: u32,
     /// Text functions made once per distinct symbol (`mapped_text`, chunked), and the names they made.
     pub per_symbol: u32,
     pub per_symbol_names: u64,

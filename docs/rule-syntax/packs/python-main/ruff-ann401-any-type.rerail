@@ -1,5 +1,4 @@
 .policy "ruff-ann401-any-type" revision 1
-.guests off
 .description "Use a specific type instead of Any in function signatures; Any switches off type checking for every value that passes through it."
 .language python
 .mode steer

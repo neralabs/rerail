@@ -144,6 +144,8 @@ pub const STREAM_START: &str = "stream start";
 pub const STREAM_LAST: &str = "stream last";
 /// A mark's bits at the token starts (`MARK`), one output a mark.
 pub const STREAM_MARK: &str = "stream mark";
+/// The output of the stream's `\n` bytes (`BlockProgram::newlines`).
+pub const STREAM_NEWLINE: &str = "stream newline";
 
 /// The output name for the fallback bit: set somewhere when the file goes to tree-sitter.
 pub const FALLBACK: &str = "fallback";
@@ -593,6 +595,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     // The records tier 2 reads (`records`): every token's first byte and every token's last
     // byte, two extracts zipped by index, as simdjson's structural indexes.
     let mut stream = None;
+    let mut newline_at = None;
     if let Some((_, _, _, mark_masks, records)) = &tier2 {
         // The rows tier 1 records (page 40): every row, but where tier 2 reads a region in parts
         // (`Split::Tier2`), its parts' rows (`Inside`) are tier 2's, found from the region's
@@ -613,6 +616,11 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         for &m in mark_masks {
             vals.push((STREAM_MARK.to_owned(), m));
         }
+        // The stream's newlines, for the tape's newline index (`BlockProgram::newlines`).
+        let mut nl = [0u64; 4];
+        nl[0] = 1 << b'\n';
+        vals.push((STREAM_NEWLINE.to_owned(), low.class_set(nl)));
+        newline_at = Some(vals.len() - 1);
     }
     let mut delay = vals.iter().map(|x| x.1.d).max().unwrap_or(0);
     // Each output once, at one delay: its value's (`outputs`, the masks and the records find an
@@ -623,7 +631,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     for (label, x) in &vals {
         // Outputs hold no bits past the end: a file falls back on a bit of its own. The stream's
         // need not: the extract pass reads only the file's bytes, on every executor.
-        let stream_out = label == STREAM_START || label == STREAM_LAST || label == STREAM_MARK;
+        let stream_out = label == STREAM_START || label == STREAM_LAST || label == STREAM_MARK || label == STREAM_NEWLINE;
         let x = if x.dirty && !stream_out {
             let inside = low.within_val(x.d)?;
             low.and(*x, inside)?
@@ -658,6 +666,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     if let Some((text, lowered, _, mark_masks, records)) = tier2 {
         let (s, l) = stream.expect("a tree section's stream");
         low.program.extracts = vec![at[s], at[l]];
+        low.program.newlines = newline_at.map(|k| at[k]);
         low.program.records = Some(records);
         // Each mark's mask: `MARK`'s operand.
         low.program.masks = (0..mark_masks.len()).map(|k| at[l + 1 + k]).collect();
@@ -2837,6 +2846,7 @@ pub fn live_of(program: &BlockProgram, keep: &[bool]) -> BlockProgram {
     out.extracts = program.extracts.iter().map(|&v| n(v)).collect();
     out.totals = program.totals.iter().map(|&v| n(v)).collect();
     out.masks = program.masks.iter().map(|&v| n(v)).collect();
+    out.newlines = program.newlines.map(n);
     let kept_groups: Vec<usize> = (0..program.rounds.len()).filter(|&g| keep[usize::from(program.rounds[g][0].0)]).collect();
     out.rounds = kept_groups.iter().map(|&g| program.rounds[g].iter().map(|&(c, x)| (n(c), n(x))).collect()).collect();
     out.walks = program

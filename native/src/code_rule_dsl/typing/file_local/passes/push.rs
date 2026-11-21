@@ -322,7 +322,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
             return Ok(None);
         }
         program.extend(helpers);
-        let round = Round::of(decls, Vec::new(), program, Vec::new());
+        let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new(), nullary: Vec::new() };
         let (candidate, split) = super::candidate(v, &round)?;
         let now = split.local.clone();
         let failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();
@@ -335,9 +335,12 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
     }
 }
 
-/// Whether a rule outside the chunks (`local`) reads a base relation.
-fn cross_reads_base(v: &Version, inputs: &BTreeSet<&str>, local: &BTreeSet<String>) -> bool {
-    v.rules().filter(|r| !local.contains(v.rel_name(r.head().rel()))).any(|r| r.body().any(|l| l.atom().is_some_and(|a| inputs.contains(v.rel_name(a.rel())))))
+/// The rules outside the chunks (`local`) that read a base relation, each with the relation.
+fn cross_reads_base(v: &Version, inputs: &BTreeSet<&str>, local: &BTreeSet<String>) -> Vec<(String, String)> {
+    v.rules()
+        .filter(|r| !local.contains(v.rel_name(r.head().rel())))
+        .filter_map(|r| r.body().find_map(|l| l.atom().map(|a| v.rel_name(a.rel())).filter(|rel| inputs.contains(rel))).map(|rel| (v.show_rule(r), rel.to_owned())))
+        .collect()
 }
 
 impl ProgramPass for PushLocalJoins {
@@ -353,6 +356,13 @@ impl ProgramPass for PushLocalJoins {
             Some(p) => cross_reads_base(&p.candidate, &inputs, &p.local),
             None => cross_reads_base(v, &inputs, &split.local),
         };
+        if !reads_base.is_empty() {
+            crate::code_rule_dsl::logic::profile::decision("file-local joins pushed into the chunks", || {
+                let first: Vec<String> = reads_base.iter().take(4).map(|(rule, rel)| format!("{rule} reads {rel}")).collect();
+                format!("the cross-file part reads base relations after the first push, {} rules ({}): a finding's location lookups are read there, not pushed", reads_base.len(), first.join("; "))
+            });
+        }
+        let reads_base = !reads_base.is_empty();
         self.reads_base = reads_base;
         // A part pushes in the run's mode (decision 0345 stage 2): every part's reads together decide it.
         use crate::code_rule_dsl::logic::plan::fields::{PART_WHOLE, PUSH_BASE, PUSH_DECIDED};

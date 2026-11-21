@@ -21,7 +21,10 @@
     "formatArgs": "supported"
   },
   "suppressions": ["noqa", "nosec"],
-  "fragments": [{ "name": "annotation", "dialect": "python", "start": "type", "tapeTag": 30 }],
+  "fragments": [
+    { "name": "annotation", "dialect": "python", "start": "type", "tapeTag": 30 },
+    { "name": "python-pattern", "dialect": "python", "start": "pattern_module", "tapeTag": 34 }
+  ],
   "embeds": [
     {
       "language": "html",

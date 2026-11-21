@@ -621,8 +621,11 @@ pub fn failure(path: &str, raised: &str) -> crate::content_store::StoreError {
 /// it misses what tree-sitter accepts and CPython does not (Python 2's `print "x"`). `Err`: `ast.parse` raises no
 /// `SyntaxError` but another exception, which fails the batch (`python_syntax::failure`).
 pub(super) fn verdict(f: &Facts, dialect: &Dialect) -> Result<Option<(u32, String)>, String> {
-    // A family's own verdict: Python's CPython's, a `.rerail` file's the one running it gives.
-    if let Some(own) = dialect_facts(dialect.family).and_then(|facts| facts.verdict(f)) {
+    // A family's own verdict: Python's CPython's, a `.rerail` file's the one running it gives. A program no file of
+    // its language is (a rule's pattern, decision 0495 §3) has its tape's.
+    if !f.tape_verdict
+        && let Some(own) = dialect_facts(dialect.family).and_then(|facts| facts.verdict(f))
+    {
         return own;
     }
     Ok(first_error(f, &Lines::apart(std::sync::Arc::clone(&f.source), dialect.family == Family::Python), &|id| dialect.name(f, id)))

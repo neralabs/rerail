@@ -196,7 +196,7 @@ fn build_views(batch: &Batch, chunk: &Chunk) -> Option<ViewsInPlace> {
 /// One document of a views' directory: its projection, its dialect, and its first row in each view (`VIEWS`).
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 struct DirDoc<'a> {
-    p: &'a Arc<super::Projected>,
+    p: &'a super::Projected,
     dialect: &'a super::Dialect,
     rows: [u32; 9],
 }
@@ -452,9 +452,9 @@ fn build_in(batch: &Batch) -> Chunk {
             (*d).file = p.file;
             (*d).tag = u32::from(p.tag);
             (*d).nodes = p.len();
-            (*d).node_row = batch.nodes[i] as u32;
-            (*d).child_row = batch.children[i] as u32;
-            (*d).field_row = batch.fields[i] as u32;
+            (*d).node_row = batch.nodes()[i] as u32;
+            (*d).child_row = batch.offsets(View::Child)[i] as u32;
+            (*d).field_row = batch.offsets(View::Field)[i] as u32;
             (*d).nfielded = p.fielded();
             (*d).preorder = u32::from(p.defs.is_none());
             // The tape node and the parent of each local id, made from the rank index and the tape (the host reads
@@ -496,9 +496,9 @@ fn build_in(batch: &Batch) -> Chunk {
     // SAFETY: the root, just allocated; its spans point into `b`.
     unsafe {
         (*root).ndocs = batch.docs.len() as u32;
-        (*root).nodes = *batch.nodes.last().unwrap_or(&0) as u32;
-        (*root).children = *batch.children.last().unwrap_or(&0) as u32;
-        (*root).fields = *batch.fields.last().unwrap_or(&0) as u32;
+        (*root).nodes = *batch.nodes().last().unwrap_or(&0) as u32;
+        (*root).children = *batch.offsets(View::Child).last().unwrap_or(&0) as u32;
+        (*root).fields = *batch.offsets(View::Field).last().unwrap_or(&0) as u32;
         Span::set(&raw const (*root).docs, docs, batch.docs.len());
     }
     let at = b.offset_of(root);

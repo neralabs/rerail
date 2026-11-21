@@ -686,12 +686,13 @@ fn grid_ctl() -> crate::device::Buffer {
 /// R6 of decision 0468: 10,000 grid barriers in a row, at 1, 8 and 32 groups and the device's resident count, each round's reads seeing every
 /// group's writes before it, and no barrier failed.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
 fn grid_barriers_see_every_groups_writes() {
     let Some((p, mut q)) = setup() else { return };
     let lsz = 256u32.min(crate::device::max_threadgroup());
     for groups in grid_sizes(p.function("t_grid_barrier").unwrap(), lsz) {
-        let rounds = 5_000u32;
+        // The CPU backend's groups take turns in a fixed order (coroutines), so a few rounds test all its orders do;
+        // a GPU's many rounds are for the races its groups run.
+        let rounds = if crate::device::backend() == "CPU" { 100 } else { 5_000u32 };
         let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
         launch(&q, p.function("t_grid_barrier").unwrap())
             .value("args", &TestArgs { n: rounds, w: groups })
@@ -703,7 +704,7 @@ fn grid_barriers_see_every_groups_writes() {
         q.flush().await_().unwrap();
         let c: Vec<u32> = read(&ctl, 3);
         let wrong: Vec<u32> = read(&out, groups as usize);
-        assert_eq!(c[2], 0, "{}: {groups} groups: a barrier failed", crate::device::backend());
+        assert_eq!(c[2], 0, "{}: {groups} groups: a barrier failed, at generation {} of {}", crate::device::backend(), c[1], 4 * rounds);
         assert_eq!(c[1], 4 * rounds, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
         assert!(wrong.iter().all(|&w| w == 0), "{}: {groups} groups: reads before the barrier's writes: {wrong:?}", crate::device::backend());
     }
@@ -734,7 +735,6 @@ fn a_grid_past_residency_fails_its_barrier() {
 /// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
 /// boundaries, at 1, 8 and 32 groups and the device's resident count, its count read on the device.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
 fn the_grid_scan_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(41);
@@ -773,7 +773,6 @@ fn the_grid_scan_equals_the_host() {
 /// R5: the grid's segmented scans (add and max) equal the host's from 0 to 10^6 values, heads dense and sparse, at
 /// 1, 8 and 32 groups.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
 fn the_grid_segmented_scans_equal_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(43);
@@ -811,7 +810,6 @@ fn the_grid_segmented_scans_equal_the_host() {
 /// R5: the grid's sort is stable and equals the host's from 0 to 10^6 keys, at 8 to 64 bits, at 1, 8 and 32 groups and the device's resident count;
 /// the few rows' path (ranks over the grid) at 1 to 32 groups; and a sort told its rows' low bits are in order.
 #[test]
-#[ignore = "Q367: a grid barrier fails at 8 groups on the M1 Max, as at Go-C-and-C-support's own ce2c4019c83; run with --ignored on an M3 or M5"]
 fn the_grid_sort_is_stable_and_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     if crate::device::max_threadgroup() < 256 {
@@ -824,6 +822,11 @@ fn the_grid_sort_is_stable_and_equals_the_host() {
         // where an even count of digits leaves the rows.
         // `low`: keys whose low bits are their index (in order already), a random part above.
         for (n, low, bits) in [(0u32, 0u32, 8u32), (1, 0, 8), (200, 0, 64), (1023, 0, 16), (1025, 0, 24), (4099, 0, 64), (4101, 0, 64), (70_001, 0, 40), (1_000_000, 0, 64), (900, 32, 64), (70_001, 24, 40)] {
+            // The CPU backend runs each thread as a coroutine: a million keys at every grid take minutes there, and
+            // 70,001 already crosses every tile and group boundary the million does.
+            if n > 100_000 && crate::device::backend() == "CPU" {
+                continue;
+            }
             let narrow = |k: u64| match n {
                 4099 => 0x5a5a_0000_0000_0000 | (k & 0xff) | (k & 1 << 40),
                 4101 => 0x5a5a_0000_0000_0000 | (k & 0xff),
@@ -856,4 +859,91 @@ fn the_grid_sort_is_stable_and_equals_the_host() {
             assert!(gk.iter().zip(&want).all(|(k, &i)| *k == keys[i as usize]), "{}: {groups} groups, {n}: the keys", crate::device::backend());
         }
     }
+}
+
+/// A measurement of a machine's GPU and CPU on one workload, the same on every backend: the library's sort (32-bit
+/// keys with their rows), exclusive scan and hash join (build, then a probe of every key) of 4 Mi keys, each the median
+/// of 9 device times after a warm run; and the host's sorts of the same keys, on one core and on every core at once
+/// (one sort each, of their own copy). A line a size, for comparing machines: 256 Ki, 1 Mi, then 4 Mi keys, so a device
+/// not yet measured meets the larger sizes last, or `RERAIL_BENCH_N` keys alone.
+#[test]
+#[ignore = "a measurement: run by name with --nocapture, on a profiling build"]
+fn bench_device_and_host() {
+    let Some((_, mut q)) = setup() else { return };
+    let sizes = std::env::var("RERAIL_BENCH_N").ok().and_then(|v| v.parse().ok()).map_or(vec![256 << 10, 1 << 20, 4 << 20], |n| vec![n]);
+    for n in sizes {
+        bench_at(&mut q, n);
+    }
+}
+
+fn bench_at(q: &mut ComputeQueue, n: usize) {
+    // Each stage said as it ends: a device that stops shows where.
+    let said = |what: &str, ms: f64| eprintln!("bench: {what} {ms:.2} ms");
+    let mut rng = Rng(47);
+    let keys: Vec<u32> = (0..n).map(|_| rng.next() as u32).collect();
+    let rows: Vec<u32> = (0..n as u32).collect();
+    let median = |mut v: Vec<f64>| {
+        v.sort_by(f64::total_cmp);
+        v[v.len() / 2]
+    };
+    let time = |q: &mut ComputeQueue, f: &dyn Fn(&mut ComputeQueue)| {
+        let mut t = Vec::new();
+        for i in 0..10 {
+            f(q);
+            let e = q.flush();
+            e.await_().unwrap();
+            if i > 0 {
+                t.push(e.gpu_seconds() * 1e3);
+            }
+        }
+        median(t)
+    };
+    let (kb, vb) = (buffer_of(&keys).unwrap(), buffer_of(&rows).unwrap());
+    let (tk, tv) = (alloc::<u32>(n).unwrap(), alloc::<u32>(n).unwrap());
+    // Each run sorts the keys as written: the sort's passes leave them sorted in place (four passes of 8 bits).
+    let fresh = buffer_of(&keys).unwrap();
+    let sort = time(q, &|q| {
+        q.enqueue_copy_between_device_regions(&fresh, &kb, 0, 0, 4 * n as u64);
+        radix_sort_pairs::<u32>(q, &kb, &vb, &tk, &tv, n as u32, 32).unwrap();
+    });
+    said("sort and copy", sort);
+    let copy = time(q, &|q| q.enqueue_copy_between_device_regions(&fresh, &kb, 0, 0, 4 * n as u64));
+    said("copy", copy);
+    let ones = buffer_of(&vec![1u32; n]).unwrap();
+    // The scan writes `n + 1` values: the last is the total.
+    let scanned = alloc::<u32>(n + 1).unwrap();
+    let scan = time(q, &|q| scan_exclusive_u32(q, &ones, &scanned, n as u32).unwrap());
+    said("scan", scan);
+    let table = HashTable::new((2 * n as u32).next_power_of_two()).unwrap();
+    let out = alloc::<u32>(n).unwrap();
+    let join = time(q, &|q| {
+        table.build(q, &fresh, n as u32).unwrap();
+        table.probe(q, &fresh, n as u32, &table.counts, &out).unwrap();
+    });
+    said("hash build+probe", join);
+    let host_sort = |keys: &[u32]| {
+        let mut k = keys.to_vec();
+        let t = std::time::Instant::now();
+        k.sort_unstable();
+        t.elapsed().as_secs_f64() * 1e3
+    };
+    let one = median((0..5).map(|_| host_sort(&keys)).collect());
+    let cores = std::thread::available_parallelism().map_or(1, |c| c.get());
+    let t = std::time::Instant::now();
+    std::thread::scope(|s| {
+        for _ in 0..cores {
+            s.spawn(|| host_sort(&keys));
+        }
+    });
+    let all = t.elapsed().as_secs_f64() * 1e3;
+    let mkeys = |ms: f64| n as f64 / ms / 1e3;
+    println!(
+        "BENCH {} ({}) | {n} rows | device ms: sort {:.2} ({:.0} Mkeys/s), copy {copy:.2}, scan {scan:.2}, hash build+probe {join:.2} | host: sort one core {one:.1} ms ({:.0} Mkeys/s), {cores} cores at once {all:.1} ms ({:.0} Mkeys/s)",
+        crate::device::backend(),
+        crate::shared::get().map_or_else(String::new, |s| s.device.name()),
+        sort - copy,
+        mkeys(sort - copy),
+        mkeys(one),
+        mkeys(all / cores as f64),
+    );
 }

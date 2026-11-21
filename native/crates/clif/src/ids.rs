@@ -1,7 +1,8 @@
 //! A projection's numbering as its reads are told where it lies (decision 0353 step 2): the rank index of the tape
 //! nodes it numbers, and its granule table. Each column is a run in the block the descriptor is in, `off` bytes from
 //! the run's own address (`rerail_blocks::refs::Span`'s layout). One definition: the host's `Ranks` and
-//! `granules::Table` fill it, the reads (`id_reads`) read it in every backend, and its MSL is written from it.
+//! `granules::Table` fill it, its reads read it (`Numbering::is`, …, on the host; `id_reads` in CLIF for the JIT and
+//! the kernels), and its MSL is written from it.
 //!
 //! The rank index is groups of 64 tape nodes, `WORDS` u64s each: one word of bits per item (a numbered node, a token,
 //! a node under a field, a node after a sibling), then the nodes before the group (low 32 bits) and the tokens (high
@@ -103,6 +104,311 @@ pub struct Numbering {
     pub jumps: [Run; 2],
 }
 const _: () = assert!(std::mem::size_of::<Numbering>() == 32 + 16 * 23);
+
+/// No number, no node, no granule: a read's answer for none (the CLIF's `NONE`).
+pub const NONE: u32 = u32::MAX;
+
+/// The position of `m`'s set bit `k` (`k` below its popcount): the byte by the bytes' running popcounts, then the bit
+/// within it (the CLIF's `select64`).
+#[inline]
+pub fn select64(m: u64, k: u32) -> u32 {
+    const ONES: u64 = 0x0101_0101_0101_0101;
+    const HIGH: u64 = 0x8080_8080_8080_8080;
+    let x = m - ((m >> 1) & 0x5555_5555_5555_5555);
+    let x = (x & 0x3333_3333_3333_3333) + ((x >> 2) & 0x3333_3333_3333_3333);
+    let x = (x + (x >> 4)) & 0x0f0f_0f0f_0f0f_0f0f;
+    // Byte b of `sums`: the set bits of bytes 0..=b.
+    let sums = x.wrapping_mul(ONES);
+    // The bytes whose running count is at most `k` come before the bit's byte: one high bit for each.
+    let byte = ((u64::from(k).wrapping_mul(ONES) | HIGH).wrapping_sub(sums) & HIGH).count_ones();
+    let before = if byte == 0 { 0 } else { (sums >> (8 * (byte - 1))) & 0xff };
+    let mut bits = (m >> (8 * byte)) & 0xff;
+    // Clear the byte's lower set bits: at most 7.
+    for _ in 0..u64::from(k) - before {
+        bits &= bits - 1;
+    }
+    8 * byte + bits.trailing_zeros()
+}
+
+/// The first `i` in `lo..hi` for which `below(i)` is false, `below` true before it and false from it (`hi` where
+/// none is; the CLIF's `bisect_in`).
+#[inline]
+fn bisect(mut lo: u32, mut hi: u32, below: impl Fn(u32) -> bool) -> u32 {
+    while lo < hi {
+        let middle = lo.wrapping_add(hi) >> 1;
+        if below(middle) {
+            lo = middle + 1;
+        } else {
+            hi = middle;
+        }
+    }
+    lo
+}
+
+/// The numbering's reads (decision 0536): written directly, the same reads as the CLIF's (`id_reads`, the JIT's
+/// and the kernels' MSL), held equal to them by the facts crate's tests. An item is a numbered node (0), a token
+/// (1), a node under a field (2) or a node after a sibling (3); a number is an item's rank among its kind.
+///
+/// # Safety
+/// Every read: the descriptor's runs were set (`Run::set`) to items that are still there.
+impl Numbering {
+    /// Run `run`'s items.
+    #[inline(always)]
+    unsafe fn of<T>(run: &Run) -> &[T] {
+        // SAFETY: the caller's (the reads').
+        unsafe { run.as_slice() }
+    }
+
+    /// Group `g`'s words.
+    #[inline(always)]
+    unsafe fn group(&self, g: u32) -> &[u64; WORDS as usize] {
+        // SAFETY: the caller's.
+        let groups = unsafe { Self::of::<[u64; WORDS as usize]>(&self.groups) };
+        &groups[g as usize]
+    }
+
+    /// `item`'s count before group `g`: word 4's low or high half (nodes, tokens), word 5's (fielded, siblings).
+    #[inline(always)]
+    unsafe fn before(&self, g: u32, item: u32) -> u32 {
+        // SAFETY: the caller's.
+        let word = unsafe { self.group(g) }[(ITEMS + item / 2) as usize];
+        (word >> (32 * (item & 1))) as u32
+    }
+
+    /// Granule `g`'s u32 in the column `run`.
+    #[inline(always)]
+    unsafe fn u32_at(run: &Run, g: u32) -> u32 {
+        // SAFETY: the caller's.
+        let column = unsafe { Self::of::<u32>(run) };
+        column[g as usize]
+    }
+
+    /// Whether tape node `x` is a numbered `item` (`num_is`).
+    ///
+    /// # Safety
+    /// As every read's (the impl's).
+    #[inline]
+    pub unsafe fn is(&self, item: u32, x: u32) -> bool {
+        let g = (x >> 6).wrapping_sub(self.first);
+        if x >> 6 < self.first || g >= self.groups.len as u32 {
+            return false;
+        }
+        // SAFETY: the caller's; `g` is a group.
+        let bits = unsafe { self.group(g) }[item as usize];
+        bits >> (x & 63) & 1 != 0
+    }
+
+    /// The numbered `item`s before tape node `x` (`num_rank`).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn rank(&self, item: u32, x: u32) -> u32 {
+        if x >> 6 < self.first {
+            return 0;
+        }
+        let g = (x >> 6) - self.first;
+        if g >= self.groups.len as u32 {
+            return self.count[item as usize];
+        }
+        // SAFETY: the caller's; `g` is a group.
+        let (before, bits) = unsafe { (self.before(g, item), self.group(g)[item as usize]) };
+        before + (bits & ((1u64 << (x & 63)) - 1)).count_ones()
+    }
+
+    /// The tape node of `item` number `r` (`NONE` past the last): its sample's group, forward (`num_select`).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn select(&self, item: u32, r: u32) -> u32 {
+        if r >= self.count[item as usize] {
+            return NONE;
+        }
+        // SAFETY: the caller's; an item's sample of every `SAMPLE`th number, and `r` a number.
+        let mut g = unsafe { Self::u32_at(&self.samples[item as usize], r >> 6) };
+        loop {
+            // SAFETY: the caller's; number `r` lies in a group from its sample's on.
+            let (m, before) = unsafe { (self.group(g)[item as usize], self.before(g, item)) };
+            let k = r.wrapping_sub(before);
+            if k < m.count_ones() {
+                return (self.first + g) * 64 + select64(m, k);
+            }
+            g += 1;
+        }
+    }
+
+    /// The innermost granule holding `item` number `k` (0 or 1), and the last granule starting at or before it, as
+    /// `(g, j)`: a bisection of the starts' ranks between the jumps either side of `k`, then up the parents
+    /// (`num_granule`).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn granule(&self, item: u32, k: u32) -> Option<(u32, u32)> {
+        const _: () = assert!(JUMP.is_power_of_two());
+        // SAFETY: the caller's.
+        let (starts, ends, jumps, parents) = unsafe {
+            let i = item as usize;
+            (Self::of::<u32>(&self.rank_starts[i]), Self::of::<u32>(&self.rank_ends[i]), Self::of::<u32>(&self.jumps[i]), Self::of::<u32>(&self.parents))
+        };
+        let q = (k >> JUMP.trailing_zeros()) as usize;
+        let lo = jumps.get(q).copied().unwrap_or(0);
+        let hi = jumps.get(q + 1).map_or(self.granules, |&j| (j + 1).min(self.granules));
+        let after = bisect(lo, hi, |i| starts[i as usize] <= k);
+        let j = after.checked_sub(1)?;
+        let mut g = j;
+        while k >= ends[g as usize] {
+            g = parents[g as usize];
+            if g == NONE {
+                return None;
+            }
+        }
+        Some((g, j))
+    }
+
+    /// `item` number `k`'s index in granule `g` (`j` the last granule starting at or before it).
+    #[inline(always)]
+    unsafe fn index_in(&self, item: u32, k: u32, g: u32, j: u32) -> u32 {
+        // SAFETY: the caller's.
+        let (starts, nodes, tokens) = unsafe { (Self::of::<u32>(&self.rank_starts[item as usize]), Self::of::<u32>(&self.nodes), Self::of::<u32>(&self.tokens)) };
+        let (g, j) = (g as usize, j as usize);
+        let own = k.wrapping_sub(starts[g]);
+        if item == 0 {
+            own.wrapping_sub(nodes[j + 1].wrapping_sub(nodes[g + 1]))
+        } else {
+            nodes[g + 1].wrapping_sub(nodes[g]).wrapping_add(own).wrapping_sub(tokens[j + 1].wrapping_sub(tokens[g + 1]))
+        }
+    }
+
+    /// The low 32 bits of `item` number `k`'s id (a node, 0, or a token, 1), `NONE` for none (`num_low_of`): its
+    /// granule's slot (`slots[at[g] + index >> INDEX_BITS]`), then its index's low bits.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn low_of(&self, item: u32, k: u32) -> u32 {
+        // SAFETY: the caller's.
+        unsafe {
+            let Some((g, j)) = self.granule(item, k) else { return NONE };
+            let index = self.index_in(item, k, g, j);
+            let slot = Self::u32_at(&self.slots, Self::u32_at(&self.at, g).wrapping_add(index >> INDEX_BITS));
+            slot << INDEX_BITS | index & ((1 << INDEX_BITS) - 1)
+        }
+    }
+
+    /// Granule `g`'s child granule entries: `[granule, nodes before, tokens before]`.
+    #[inline(always)]
+    unsafe fn kids(&self, g: u32) -> &[[u32; 3]] {
+        // SAFETY: the caller's.
+        let (first, kids) = unsafe { (Self::of::<u32>(&self.first_kid), Self::of::<[u32; 3]>(&self.kids)) };
+        &kids[first[g as usize] as usize..first[g as usize + 1] as usize]
+    }
+
+    /// The number of granule `g`'s own `item` `k` (its `k`-th, in order), `NONE` when `stretch` is some and the item
+    /// does not lie in that stretch of `g` (after `stretch` of its child granules; `num_number_in`).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn number_in(&self, g: u32, item: u32, k: u32, stretch: Option<u32>) -> u32 {
+        // SAFETY: the caller's.
+        let kids = unsafe { self.kids(g) };
+        let w = item as usize + 1;
+        let i = bisect(0, kids.len() as u32, |t| kids[t as usize][w] <= k);
+        if stretch.is_some_and(|s| s != i) {
+            return NONE;
+        }
+        // SAFETY: the caller's.
+        unsafe {
+            match i.checked_sub(1) {
+                None => Self::u32_at(&self.rank_starts[item as usize], g).wrapping_add(k),
+                Some(e) => {
+                    let [kid, ..] = kids[e as usize];
+                    Self::u32_at(&self.rank_ends[item as usize], kid).wrapping_add(k).wrapping_sub(kids[e as usize][w])
+                }
+            }
+        }
+    }
+
+    /// The item whose id's low 32 bits are `low`, as `(item, number)` (`num_number_of`): the slot's entry, then its
+    /// index among the granule's nodes or tokens. The slots are hashes, about evenly spread: the entry is near
+    /// `slot`'s share of them, a few steps from a guess there; a run of clashes past `STEPS` is bisected.
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn number_of(&self, low: u32) -> Option<(u32, u32)> {
+        const STEPS: u32 = 8;
+        let slot = low >> INDEX_BITS;
+        // SAFETY: the caller's.
+        let (by_slot, nodes, tokens) = unsafe { (Self::of::<[u32; 3]>(&self.by_slot), Self::of::<u32>(&self.nodes), Self::of::<u32>(&self.tokens)) };
+        let n = by_slot.len() as u32;
+        // The guess: `slot`'s share of the entries, the last one at most.
+        let mut at = (((u64::from(slot) * u64::from(n)) >> SLOT_BITS) as u32).min(n.saturating_sub(1));
+        // Forward while the entry is below the slot, then back while the one before is not, `STEPS` in all.
+        let mut steps = 0;
+        while at < n && steps < STEPS && by_slot[at as usize][0] < slot {
+            (at, steps) = (at + 1, steps + 1);
+        }
+        while at != 0 && steps < STEPS && by_slot[at as usize - 1][0] >= slot {
+            (at, steps) = (at - 1, steps + 1);
+        }
+        if steps == STEPS {
+            at = bisect(0, n, |i| by_slot[i as usize][0] < slot);
+        }
+        let &[s, g, c] = by_slot.get(at as usize)?;
+        if s != slot {
+            return None;
+        }
+        let index = c << INDEX_BITS | low & ((1 << INDEX_BITS) - 1);
+        let g1 = g as usize + 1;
+        let own = nodes[g1].wrapping_sub(nodes[g as usize]);
+        let (item, k, all) = if index < own { (0, index, own) } else { (1, index - own, tokens[g1].wrapping_sub(tokens[g as usize])) };
+        // SAFETY: the caller's.
+        (k < all).then(|| (item, unsafe { self.number_in(g, item, k, None) }))
+    }
+
+    /// Node number `l`'s order key: its stretch's run rank, then its index in its granule (its number itself where
+    /// the keys are preorder indexes); `NONE` for none (`num_order_of`).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn order_of(&self, l: u32) -> u32 {
+        if self.preorder_keys != 0 {
+            return l;
+        }
+        // SAFETY: the caller's.
+        unsafe {
+            let Some((g, j)) = self.granule(0, l) else { return NONE };
+            let index = self.index_in(0, l, g, j);
+            let kids = self.kids(g);
+            let starts = Self::of::<u32>(&self.rank_starts[0]);
+            let s = bisect(0, kids.len() as u32, |t| starts[kids[t as usize][0] as usize] < l);
+            let first = Self::u32_at(&self.first_kid, g);
+            Self::u32_at(&self.runs, first.wrapping_add(g).wrapping_add(s)) << ORDER_INDEX_BITS | index
+        }
+    }
+
+    /// The node number whose order key is `key` (`order_of`'s inverse), `NONE` for none (`num_number_of_order`).
+    ///
+    /// # Safety
+    /// As every read's.
+    #[inline]
+    pub unsafe fn number_of_order(&self, key: u32) -> u32 {
+        if self.preorder_keys != 0 {
+            return if key < self.count[0] { key } else { NONE };
+        }
+        // SAFETY: the caller's.
+        unsafe {
+            let (run_at, nodes) = (Self::of::<[u32; 2]>(&self.run_at), Self::of::<u32>(&self.nodes));
+            let Some(&[g, s]) = run_at.get((key >> ORDER_INDEX_BITS) as usize) else { return NONE };
+            let k = key & ((1 << ORDER_INDEX_BITS) - 1);
+            if k < nodes[g as usize + 1].wrapping_sub(nodes[g as usize]) { self.number_in(g, 0, k, Some(s)) } else { NONE }
+        }
+    }
+}
 
 /// A field's byte offset in the descriptor.
 pub mod at {

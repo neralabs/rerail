@@ -267,8 +267,8 @@ pub fn on_device(program: &Words, files: &[File], env: &pp_words::Env, bounds: &
     on_device_batch(&[(program, files, env, bounds)]).pop().expect("one result")
 }
 
-/// The words on the process's device over a batch of TUs' rounds, a TU a thread (0408, L3): the batch runner of
-/// `expand_tus_with`.
+/// The words on the device over a batch of TUs' rounds, a TU a thread (0408, L3): the batch
+/// runner of `expand_tus_with`.
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub fn on_device_batch(jobs: &[Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> {
     let refused = |why: &'static str| jobs.iter().map(|_| Err(pp_words::Refused { pc: 0, why })).collect();

@@ -1462,12 +1462,19 @@ impl ProgramPass for CoreDecls {
 /// findings, which the lowerer hands on.
 pub struct Findings {
     pub pending: crate::code_rule_dsl::logic::rr::lower::PendingFindings,
+    /// The linked library of a module lowered in its scope (`rr::Library::version`): its rules may read the guests a
+    /// finding of this module's is at (`RulesSeen::reads_guests`).
+    pub library: Option<std::sync::Arc<Version>>,
 }
 
 impl ProgramPass for Findings {
     const NAME: &'static str = "findings";
     fn settings(&self) -> Vec<u8> {
-        self.pending.key()
+        let mut key = self.pending.key();
+        if let Some(library) = &self.library {
+            key.extend_from_slice(&library.digest().to_le_bytes());
+        }
+        key
     }
     fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
         use crate::code_rule_dsl::logic::rr::lower::{RulesSeen, findings::{findings_on, findings_write}, is_place_call};
@@ -1487,12 +1494,21 @@ impl ProgramPass for Findings {
                         _ => false,
                     })
             }),
-            reads_guest_policy: v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), L::Atom(a) | L::Agg { atom: a, .. } if v.rel_name(a.rel()) == crate::code_rule_dsl::facts::vtab::syntax::GUEST_POLICY)),
             reads_tool_call: v.rules().flat_map(|r| r.body()).find_map(|l| match l.view() {
                 L::Atom(a) => crate::code_rule_dsl::logic::rr::lower::TOOL_CALLS.into_iter().find(|t| v.rel_name(a.rel()) == *t),
                 _ => None,
             }),
             heads: v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect(),
+            reads_guests: {
+                let reads = |v: &Version| {
+                    v.rules().flat_map(|r| r.body()).any(|l| match l.view() {
+                        L::Atom(a) | L::Agg { atom: a, .. } => super::super::guests::READS.contains(&v.rel_name(a.rel())),
+                        _ => false,
+                    })
+                };
+                let declared = |rel: &str| v.declares(rel) || self.library.as_ref().is_some_and(|l| l.declares(rel));
+                (reads(v) || self.library.as_deref().is_some_and(reads)) && declared("guest_place") && declared("tape_of")
+            },
         };
         let input = std::sync::Arc::clone(w.input());
         if !findings_write(&*input, &self.pending) {

@@ -1757,6 +1757,9 @@ pub(crate) mod logic {
             // Decision 0458 (R1–R5): the cross part reads the base relations off every file's tape.
             #[cfg(test)]
             pub mod cross_views_tests;
+            // Decision 0494: a batch makes a document when first read.
+            #[cfg(test)]
+            pub mod made_batch_tests;
             #[cfg(test)]
             pub mod cache_tests;
             // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
@@ -1842,6 +1845,8 @@ pub(crate) mod logic {
         pub mod tests;
         #[cfg(test)]
         pub mod coverage;
+        #[cfg(test)]
+        pub mod first_tests;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::front::{AggOp, Value};
         #[allow(unused_imports)]
@@ -4686,6 +4691,12 @@ pub(crate) fn install_languages() {
         (language::Via::CallArgument, &embed::call_argument::CallArgument),
         #[cfg(feature = "lang-markdown")]
         (language::Via::InlineContent, &embed::inline_content::InlineContent),
+        #[cfg(all(feature = "lang-rr", feature = "lang-json"))]
+        (language::Via::JsonObject, &embed::json_object::JsonObject),
+        #[cfg(feature = "lang-rr")]
+        (language::Via::MatchRegex, &embed::match_regex::MatchRegex),
+        #[cfg(feature = "lang-rr")]
+        (language::Via::Pattern, &embed::rule_pattern::RulePattern),
         #[cfg(feature = "lang-vue")]
         (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
         #[cfg(any(test, feature = "test-hooks"))]
@@ -4798,6 +4809,7 @@ pub(crate) fn install_languages() {
         literal::scanf::GRAMMAR,
         literal::phpdoc::GRAMMAR,
         literal::rust_format::GRAMMAR,
+        literal::regex::GRAMMAR,
         #[cfg(test)]
         literal::CHARS,
     ]);
@@ -4821,6 +4833,9 @@ pub(crate) fn install_languages() {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::PercentFormat, name: "percent-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::PercentFormat); &P } });
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::BraceFormat, name: "brace-format strings (Ruff's parser ported)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::BraceFormat); &P } });
         }
+        // Regular expressions in the engine's dialect (decision 0495 §2): a rule file's `match` regexes, and any
+        // string a rule parses as one.
+        parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Regex, name: "regexes (the Rust dialect, hand-written)", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::Regex); &P } });
         // ESLint's directive comments (decision 0194): guests only, parsed by main's directive parser.
         if cfg!(feature = "lang-typescript") {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::EslintDirective, name: "ESLint directive comments", rank: 0, runs: true, parser: { static P: literal::format_tape::FormatStrings = literal::format_tape::FormatStrings::new(language::GrammarDialect::EslintDirective); &P } });
@@ -4910,9 +4925,9 @@ pub(crate) fn install_languages() {
             parsers.push(tape::ParserImpl { dialect: language::GrammarDialect::Vue, name: "lean Vue parser", rank: 0, runs: true, parser: &tape::vue_lean::Lean });
         }
         if cfg!(feature = "lang-json") {
-            // simdjson where it builds (not wasm: tree-sitter-json there); the Bitlex parser
+            // simdjson where it builds (not wasm or MSVC: tree-sitter-json there); the Bitlex parser
             // (`json_parser::tape::Bitlex`) is not yet the product's.
-            #[cfg(not(target_family = "wasm"))]
+            #[cfg(not(any(target_family = "wasm", all(windows, target_env = "msvc"))))]
             parsers.extend(transducer::packed::json_parser::simdjson::registrations());
         }
         tape::install_parsers(parsers);

@@ -11,8 +11,12 @@
 // work. The host then runs the work again with fewer groups (G/2): a choice made for the next run, never between
 // phases.
 //
-// `UklGrid.ctl`: three words, zero before the dispatch: 0 the groups arrived at the current barrier; 1 its
-// generation, twice over, with the failure bit (bit 0); 2 the failure word, for a phase's quick test. A barrier's
+// `UklGrid.ctl`: three words, zero before the dispatch: 0 the groups' arrivals at every barrier so far, never reset
+// (barrier `n`, counting from 0, is complete when it reaches `G * (n + 1)`, modulo 2^32); 1 the generation, twice
+// the barriers passed, with the failure bit (bit 0); 2 the failure word, for a phase's quick test. The count is never
+// reset: a reset is a second write of the last arrival's besides the generation's step, and a GPU that showed the
+// step first would let a group pass, arrive at the next barrier, and have its arrival wiped, so that barrier never
+// fills. A barrier's
 // outcome is one for every group: the last to arrive steps the generation only by a compare-and-swap that finds no
 // failure bit, and a group past its bound sets the bit only by a compare-and-swap that finds the generation it waited
 // on. So either every group passes a barrier or none does. One form on every backend (CUDA's too, until the device
@@ -36,7 +40,7 @@ typedef struct UklGrid {
 } UklGrid;
 
 // Whether the grid has failed a barrier (in every thread alike after a barrier).
-UKL_INLINE bool ukl_grid_failed(UklGrid g) { return ukl_atomic_load(&g.ctl[2]) != 0u; }
+UKL_INLINE bool ukl_grid_failed(UklGrid g) { return ukl_atomic_poll(&g.ctl[2]) != 0u; }
 
 // Waits for every group of the grid: true when all arrived, false when the bound was reached (here or in another
 // group) or the grid failed before; the same answer in every group. Every thread of every group calls it, the same
@@ -47,19 +51,19 @@ UKL_INLINE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
     ukl_tg_barrier_device();
     if (g.lid == 0u) {
         // The generation before this group arrives: it cannot step until every group, this one too, has.
-        uint32_t gen = ukl_atomic_load(&g.ctl[1]);
+        uint32_t gen = ukl_atomic_poll(&g.ctl[1]);
         uint32_t failed = gen & 1u;
         if (failed == 0u) {
             ukl_fence_device();
-            if (ukl_atomic_add(&g.ctl[0], 1u) + 1u == g.groups) {
-                ukl_atomic_store(&g.ctl[0], 0u);
+            // This barrier's last arrival makes the count `G` times the barriers passed with it (`gen / 2 + 1`).
+            if (ukl_atomic_add(&g.ctl[0], 1u) + 1u == g.groups * ((gen >> 1) + 1u)) {
                 ukl_fence_device();
                 failed = ukl_atomic_cas(&g.ctl[1], gen, gen + 2u) == gen ? 0u : 1u;
             } else {
                 uint32_t now = gen, spins = 0u;
                 while (now == gen && spins < UKL_GRID_SPINS) {
                     ukl_poll_yield();
-                    now = ukl_atomic_load(&g.ctl[1]);
+                    now = ukl_atomic_poll(&g.ctl[1]);
                     spins++;
                 }
                 if (now == gen) {
@@ -195,6 +199,18 @@ UKL_INLINE bool ukl_grid_scan_exclusive_u32(UklGrid g, UKL_GLOBAL const uint32_t
     return ukl_grid_scan_n(g, n, in, out, out + n, sums, scratch, flag __UKL_ARGS);
 }
 
+// `ukl_grid_scan_n` by one group alone (its threads, `g.lid` of `g.lsz`; the other groups call nothing): its tiles in
+// order, the total into `*total`, then the group's barrier (device memory). For phases whose elements a group holds
+// (decision 0527): no grid barrier.
+UKL_INLINE void ukl_group_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT uint32_t* out,
+                                 UKL_COHERENT uint32_t* total, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
+{
+    uint32_t run = ukl_grid_scan_tiles(g, 0u, n, 0u, in, out, scratch __UKL_ARGS);
+    if (g.lid == 0u)
+        *total = run;
+    ukl_tg_barrier_device();
+}
+
 // --- The segmented scan ------------------------------------------------------------------------------------------
 
 // The segmented scans' operators.
@@ -207,36 +223,73 @@ UKL_INLINE uint32_t ukl_seg_op(uint32_t op, uint32_t a, uint32_t b) { return op 
 // `(fa, va)` then `(fb, vb)`: `vb` alone where `b` starts a segment.
 UKL_INLINE uint32_t ukl_seg_join(uint32_t op, uint32_t va, uint32_t fb, uint32_t vb) { return fb != 0u ? vb : ukl_seg_op(op, va, vb); }
 
-// The inclusive segmented scan of `(f, v)` over the group's threads, in order (Hillis–Steele over `sv` and `sf`,
-// `lsz` words each of threadgroup memory); in `*fin` whether a head is at or before this thread, and in every
-// thread the group's whole aggregate in `*tv`, `*tf`.
-UKL_INLINE uint32_t ukl_tg_seg_inclusive(uint32_t op, uint32_t f, uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* sv,
-                                         UKL_LOCAL uint32_t* sf, UKL_PRIVATE uint32_t* fin, UKL_PRIVATE uint32_t* tv, UKL_PRIVATE uint32_t* tf)
+// The inclusive segmented scan of `(f, v)` over the SIMD group's lanes, in order; in `*fin` whether a head is at or
+// before this lane. The backend's in one operation (`UKL_NATIVE_SG_SEG`), else Hillis–Steele over shuffles.
+UKL_INLINE uint32_t ukl_sg_seg_inclusive(uint32_t op, uint32_t f, uint32_t v, uint32_t lane, UKL_PRIVATE uint32_t* fin __UKL_PARAMS)
 {
-    sv[lid] = v;
-    sf[lid] = f;
-    ukl_tg_barrier();
-    for (uint32_t d = 1u; d < lsz; d <<= 1u) {
-        uint32_t pv = 0u, pf = 0u;
-        bool has = lid >= d;
-        if (has) {
-            pv = sv[lid - d];
-            pf = sf[lid - d];
-        }
-        ukl_tg_barrier();
-        if (has) {
+#if defined(UKL_NATIVE_SG_SEG)
+    (void)lane;
+    return ukl_sg_seg_inclusive_native(op == UKL_SEG_ADD, f, v, fin __UKL_ARGS);
+#else
+    for (uint32_t d = 1u; d < UKL_SIMD_WIDTH; d <<= 1u) {
+        uint32_t pv = ukl_sg_shuffle_up(v, d __UKL_ARGS), pf = ukl_sg_shuffle_up(f, d __UKL_ARGS);
+        if (lane >= d) {
             v = ukl_seg_join(op, pv, f, v);
             f = f | pf;
-            sv[lid] = v;
-            sf[lid] = f;
         }
-        ukl_tg_barrier();
     }
     *fin = f;
-    *tv = sv[lsz - 1u];
-    *tf = sf[lsz - 1u];
-    ukl_tg_barrier();
     return v;
+#endif
+}
+
+// The inclusive segmented scan of `(f, v)` over the group's threads, in order: each SIMD group's scan, then each
+// thread's carry from the SIMD groups before it (their aggregates in `sv` and `sf`, a word a SIMD group of
+// threadgroup memory). In `*fin` whether a head is at or before this thread, and in every thread the group's whole
+// aggregate in `*tv`, `*tf`. Three waits of the group, whatever its size.
+UKL_INLINE uint32_t ukl_tg_seg_inclusive(uint32_t op, uint32_t f, uint32_t v, uint32_t lid, uint32_t lsz, UKL_LOCAL uint32_t* sv,
+                                         UKL_LOCAL uint32_t* sf, UKL_PRIVATE uint32_t* fin, UKL_PRIVATE uint32_t* tv, UKL_PRIVATE uint32_t* tf __UKL_PARAMS)
+{
+    uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, groups = (lsz + UKL_SIMD_WIDTH - 1u) / UKL_SIMD_WIDTH;
+    uint32_t fi = 0u;
+    uint32_t x = ukl_sg_seg_inclusive(op, f, v, lane, &fi __UKL_ARGS);
+    if (lane == UKL_SIMD_WIDTH - 1u || lid == lsz - 1u) {
+        sv[sg] = x;
+        sf[sg] = fi;
+    }
+    ukl_tg_barrier();
+    uint32_t cv = 0u, cf = 0u, av = 0u, af = 0u;
+    for (uint32_t k = 0u; k < groups; k++) {
+        if (k == sg) {
+            cv = av;
+            cf = af;
+        }
+        av = ukl_seg_join(op, av, sf[k], sv[k]);
+        af |= sf[k];
+    }
+    *fin = fi | cf;
+    *tv = av;
+    *tf = af;
+    ukl_tg_barrier();
+    return fi != 0u ? x : ukl_seg_op(op, cv, x);
+}
+
+// `ukl_grid_seg_scan_n` by one group alone (as `ukl_group_scan_n`): its tiles in order, each from the carry of
+// those before it, then the group's barrier (device memory).
+UKL_INLINE void ukl_group_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT const uint32_t* heads,
+                                     UKL_COHERENT uint32_t* out, UKL_LOCAL uint32_t* sv, UKL_LOCAL uint32_t* sf __UKL_PARAMS)
+{
+    uint32_t carry = 0u;
+    for (uint32_t base = 0u; base < n; base += g.lsz) {
+        uint32_t i = base + g.lid;
+        bool live = i < n;
+        uint32_t f = live && heads[i] != 0u ? 1u : 0u, fin, tv, tf;
+        uint32_t x = ukl_tg_seg_inclusive(op, f, live ? in[i] : 0u, g.lid, g.lsz, sv, sf, &fin, &tv, &tf __UKL_ARGS);
+        if (live)
+            out[i] = fin != 0u ? x : ukl_seg_op(op, carry, x);
+        carry = ukl_seg_join(op, carry, tf, tv);
+    }
+    ukl_tg_barrier_device();
 }
 
 // The inclusive segmented scan (`op`: `UKL_SEG_ADD` or `UKL_SEG_MAX`) of `in`'s first `n` values into `out`, a
@@ -245,7 +298,7 @@ UKL_INLINE uint32_t ukl_tg_seg_inclusive(uint32_t op, uint32_t f, uint32_t v, ui
 // each of threadgroup memory. Three phases, as the scan's. Ends with a barrier.
 UKL_INLINE bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT const uint32_t* heads,
                                     UKL_COHERENT uint32_t* out, UKL_COHERENT uint32_t* sums, UKL_LOCAL uint32_t* sv,
-                                    UKL_LOCAL uint32_t* sf, UKL_LOCAL uint32_t* flag)
+                                    UKL_LOCAL uint32_t* sf, UKL_LOCAL uint32_t* flag __UKL_PARAMS)
 {
     if (n <= UKL_GRID_SMALL) {
         // Group 0's alone: its tiles in order, each from the carry of those before it.
@@ -255,7 +308,7 @@ UKL_INLINE bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHE
                 uint32_t i = base + g.lid;
                 bool live = i < n;
                 uint32_t f = live && heads[i] != 0u ? 1u : 0u, fin, tv, tf;
-                uint32_t x = ukl_tg_seg_inclusive(op, f, live ? in[i] : 0u, g.lid, g.lsz, sv, sf, &fin, &tv, &tf);
+                uint32_t x = ukl_tg_seg_inclusive(op, f, live ? in[i] : 0u, g.lid, g.lsz, sv, sf, &fin, &tv, &tf __UKL_ARGS);
                 if (live)
                     out[i] = fin != 0u ? x : ukl_seg_op(op, carry, x);
                 carry = ukl_seg_join(op, carry, tf, tv);
@@ -270,7 +323,7 @@ UKL_INLINE bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHE
         uint32_t i = base + g.lid;
         bool live = i < end;
         uint32_t fin, tv, tf;
-        ukl_tg_seg_inclusive(op, live && heads[i] != 0u ? 1u : 0u, live ? in[i] : 0u, g.lid, g.lsz, sv, sf, &fin, &tv, &tf);
+        ukl_tg_seg_inclusive(op, live && heads[i] != 0u ? 1u : 0u, live ? in[i] : 0u, g.lid, g.lsz, sv, sf, &fin, &tv, &tf __UKL_ARGS);
         av = ukl_seg_join(op, av, tf, tv);
         af |= tf;
     }
@@ -300,7 +353,7 @@ UKL_INLINE bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHE
         bool live = i < end;
         uint32_t f = live && heads[i] != 0u ? 1u : 0u, fin, tv, tf;
         // A thread's prefix within the tile; the carry joins it where no head is at or before it in the tile.
-        uint32_t x = ukl_tg_seg_inclusive(op, f, live ? in[i] : 0u, g.lid, g.lsz, sv, sf, &fin, &tv, &tf);
+        uint32_t x = ukl_tg_seg_inclusive(op, f, live ? in[i] : 0u, g.lid, g.lsz, sv, sf, &fin, &tv, &tf __UKL_ARGS);
         if (live)
             out[i] = fin != 0u ? x : ukl_seg_op(op, carry, x);
         carry = ukl_seg_join(op, carry, tf, tv);
@@ -321,9 +374,15 @@ UKL_INLINE bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHE
 // Where a grid sort's rows end: in its first buffers when its digits (`bits` in bytes) are even.
 UKL_INLINE bool ukl_grid_sort_in_input(uint32_t bits) { return ((bits + 7u) / 8u) % 2u == 0u; }
 
-// The threadgroup memory a grid sort takes: `h`, `counts`, `before`, `base`, `digits` (`ukl_radix_*_tile`'s), and `tile`,
-// `UKL_GRID_SORT_TILE_WORDS` words (a tile's keys and values, for the sort of one tile).
+// The threadgroup memory a grid sort takes: `h`, `counts`, `before`, `base`, `digits` (`ukl_radix_*_tile`'s;
+// `digits` is `UKL_RADIX_SPILL` words), and `tile`, `UKL_GRID_SORT_TILE_WORDS` words (a tile's keys and values, for
+// the sort of one tile).
 #define UKL_GRID_SORT_TILE_WORDS (3u * UKL_RADIX_TILE)
+// The words of `counts`, `h`, `before`, `base` and `digits` laid end to end (where one block holds them, and `tile`
+// aliases it: no phase uses both).
+#define UKL_GRID_SORT_RADIX_WORDS (UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS + UKL_RADIX_SPILL)
+// The larger of the two.
+#define UKL_GRID_SORT_WORDS (UKL_GRID_SORT_TILE_WORDS > UKL_GRID_SORT_RADIX_WORDS ? UKL_GRID_SORT_TILE_WORDS : UKL_GRID_SORT_RADIX_WORDS)
 typedef struct UklGridSortLocal {
     UKL_LOCAL uint32_t* h;
     UKL_LOCAL uint32_t* counts;
@@ -346,7 +405,7 @@ UKL_INLINE bool ukl_sort_before(uint32_t ah, uint32_t al, uint32_t ai, uint32_t 
 // says, else in `keys2`, `values2`. `low` (a multiple of 8, at most `bits`): the rows are already in the order of
 // their low `low` bits, so only the digits above are passed (0: none is known).
 // - few rows (`n <= UKL_RADIX_TILE`, and at most a row a thread of the grid): each group holds every row in
-//   threadgroup memory; each SIMD group ranks a row at a time among them all, its lanes taking a share each;
+//   threadgroup memory; each thread of the grid ranks its row among them all;
 //   the rows go to their places after a barrier where they are sorted in place;
 // - more: the digits that vary among the rows (a reduction), and only those passed, three barriers each.
 UKL_INLINE bool ukl_grid_sort_u64_from(UklGrid g, uint32_t n, uint32_t low, uint32_t bits, bool iota, UKL_COHERENT uint64_t* keys,
@@ -367,22 +426,12 @@ UKL_INLINE bool ukl_grid_sort_u64_from(UklGrid g, uint32_t n, uint32_t low, uint
             lo[r] = (uint32_t)key;
         }
         ukl_tg_barrier();
-        // SIMD group `sg` of the grid ranks rows `sg`, `sg + sgs`, …: at most a row a lane, which lane `k` keeps.
-        uint32_t lane = g.lid % UKL_SIMD_WIDTH, per = g.lsz / UKL_SIMD_WIDTH;
-        uint32_t sg = g.group * per + g.lid / UKL_SIMD_WIDTH, sgs = g.groups * per;
-        uint32_t row = n, rank = 0u;
-        for (uint32_t k = 0u; k < UKL_SIMD_WIDTH; k++) {
-            uint32_t r = sg + k * sgs;
-            if (r >= n)
-                break;
-            uint32_t rh = hi[r], rl = lo[r], at = 0u;
-            for (uint32_t o = lane; o < n; o += UKL_SIMD_WIDTH)
-                at += ukl_sort_before(hi[o], lo[o], o, rh, rl, r) ? 1u : 0u;
-            at = ukl_sg_sum(at __UKL_ARGS);
-            if (lane == k) {
-                row = r;
-                rank = at;
-            }
+        // Thread `row` of the grid ranks row `row` among them all: no wait between.
+        uint32_t row = g.group * g.lsz + g.lid, rank = 0u;
+        if (row < n) {
+            uint32_t rh = hi[row], rl = lo[row];
+            for (uint32_t o = 0u; o < n; o++)
+                rank += ukl_sort_before(hi[o], lo[o], o, rh, rl, row) ? 1u : 0u;
         }
         uint64_t key = row < n ? keys[row] : 0u;
         uint32_t value = row < n ? (iota ? row : values[row]) : 0u;

@@ -1,5 +1,4 @@
 .policy "ruff-pd002-pandas-use-of-inplace-argument" revision 1
-.guests off
 .description "Avoid passing True for the inplace argument of pandas methods; assign the returned object instead, which keeps chaining and avoids hidden mutation."
 .language python
 .mode steer

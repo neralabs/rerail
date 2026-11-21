@@ -2642,6 +2642,25 @@ fn within_read_from_its_container_is_priced_by_subtree_size() {
     assert!((work - (10.0 + 10.0 * 50.0)).abs() < 1e-6, "work {work}");
 }
 
+/// t50 step 4: `within(n, b)` read from a part of a node of known kind (`field($g, "body", $b)` of a function) is
+/// priced at that kind's size: the part's subtree is at most its parent's. As a node with children it was a few nodes,
+/// and `rf_in` enumerated every function's body from it before checking the read's own function.
+#[test]
+fn within_read_from_a_part_is_priced_by_its_parents_size() {
+    let src = ".decl kind(n: number, k: symbol)\n.decl field(p: number, f: symbol, c: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- kind(g, \"fdef\"), field(g, \"body\", b), within(n, b).\n.output r\n";
+    let p = parse(src).unwrap();
+    let mut model = bare_model(&p);
+    // 10 functions of 400 nodes, 2,000 nodes of 3: a node with children is about 5 nodes.
+    model.stats.size = std::sync::Arc::new(HashMap::from([("fdef".to_owned(), 400.0), ("x".to_owned(), 3.0)]));
+    model.stats.kfreq = std::sync::Arc::new([("fdef".to_owned(), 10), ("x".to_owned(), 2_000)].into_iter().collect());
+    model.stats.nodes = 6_010.0;
+    assert!(model.stats.subtree_fan().is_some_and(|f| f < 6.0));
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
+    // The body's descendants, each function's: 10 × 400, not 10 × 5.
+    assert!(work >= 10.0 * 400.0, "work {work}: {order:?}");
+}
+
 /// Decision 0299: a relation of the program's facts alone has its rows, distinct values and counts before it is
 /// made, not the default size.
 #[test]
@@ -2789,7 +2808,7 @@ fn a_probe_on_several_columns_reads_a_combinations_rows() {
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse_version(".decl a(x:number,y:number)\n").unwrap();
     let mut model=Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: Default::default()};
-    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))]};
+    let sample=|key| LiveRel {n:10,delta:2,ndv:vec![10,1],sq:vec![10,100],freq:vec![(1,HashMap::from([(Constant::Int(key),10)]))],keys:Vec::new(),counts:Vec::new()};
     assert_eq!(live_stats(&mut model,"a",sample(1)),vec![0,1,2]);
     assert!(live_stats(&mut model,"a",sample(1)).is_empty());
     assert_eq!(live_stats(&mut model,"a",sample(2)),vec![2],"equal counts and fanouts with new keys must invalidate");
@@ -3095,6 +3114,35 @@ fn a_demanded_rule_may_be_led_by_a_constant_restricted_atom() {
     let rels: Vec<&str> = order.iter().filter_map(|s| lits[s.at].atom()).map(|a| p.rel_name(a.rel())).collect();
     assert_eq!(rels[0], "k", "led by the restricted atom: {rels:?}");
     assert!(model.valid_live_driver(&order, &b, None), "a kept order led by it is kept");
+}
+
+/// A deferred join's request (`rr_deferred_pairs_x`, decision 0488) bounds its producer as a demand does (Q59): an
+/// atom a constant restricts may lead it, as corpus0's `lambda_arg` led by its lambdas (229), not its 14,360
+/// requested calls; an unrestricted atom may not.
+#[test]
+fn a_deferred_joins_producer_may_be_led_by_a_constant_restricted_atom() {
+    let program = |body: &str| parse(&format!(
+        ".decl x(v: number)\n.decl rr_deferred_pairs_x(v: number)\n.decl k(n: number, c: number)\n.decl col(n: number, c: number)\n\
+         rr_deferred_pairs_x(1). k(1, 7). col(1, 2).\n\
+         x(v) :- rr_deferred_pairs_x(v), {body}.\n.output x\n"
+    )).unwrap();
+    let lead = |body: &str| {
+        let p = program(body);
+        let db = Connection::open_in_memory().unwrap();
+        let mut stats = Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap());
+        stats.card.insert("rr_deferred_pairs_x", 5_000_000.0);
+        stats.card.insert("k", 10.0);
+        stats.card.insert("col", 10.0);
+        let mut inputs = Inputs::file();
+        inputs.facts.clear();
+        inputs.given = Some(stats);
+        let model = make_plan(&body::Placed::whole(p.clone()), &db, inputs).unwrap();
+        let (order, _, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap();
+        let rule = p.rules().next().unwrap();
+        rule.body().nth(order[0].at).and_then(|l| l.atom()).map(|a| p.rel_name(a.rel()).to_owned()).unwrap()
+    };
+    assert_eq!(lead("k(v, 7)"), "k", "led by the restricted atom");
+    assert_eq!(lead("col(v, c)"), "rr_deferred_pairs_x", "an unrestricted atom does not lead");
 }
 
 /// A demanded relation's rule (decision 0048's split: `x` computed for `demand_x`'s keys) is driven by its demand,
@@ -3656,8 +3704,7 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
                    .decl w(c: node)\n.output w\nw(c) :- u(c), kind2(c, _).\n\
                    .decl anc(a: node, b: node)\nanc(a, b) :- child2(a, b, _).\nanc(a, c) :- anc(a, b), child2(b, c, _).\n\
                    .decl z(a: node)\n.output z\nz(a) :- anc(a, b), kind2(b, _).\n";
-    let p = parse(text).unwrap();
-    let v = p;
+    let v = parse(text).unwrap();
     let placed = body::Placed::whole(std::sync::Arc::clone(&v));
     let prep = prepared::Prepared::of_version(&v);
     let line = |head: &str, nth: usize, first: Option<usize>| {
@@ -3674,15 +3721,77 @@ fn a_rule_over_a_derived_relation_is_prepared_once_its_rules_size_it() {
     // is planned at run time (0361, Q297), and `r` is prepared, as `o`'s facts (inferred from its rule) size it.
     // (Another program: a version of the same digest holds the prepared plans made above.)
     drop(_on);
-    let p = parse(&format!("{text}.decl apart(x: number)\n")).unwrap();
-    let v = p;
+    let v = parse(&format!("{text}.decl apart(x: number)\n")).unwrap();
     let placed = body::Placed::whole(std::sync::Arc::clone(&v));
     let prep = prepared::Prepared::of_version(&v);
     let line = |head: &str, nth: usize, first: Option<usize>| {
         let k = bodies_by_head(&placed).into_iter().filter(|(h, _)| h == head).nth(nth).unwrap().1;
         crate::code_rule_dsl::logic::plan::line_key(&placed.body(k), first)
     };
-    assert!(!prep.0.contains_key(&line("o", 0, None)), "`o` tests a constant on a `values` column: planned at run time");
+    assert!(!prep.0.contains_key(&line("o", 0, None)), "`o` tests a constant a `values` fact answers: planned at run time");
     assert!(prep.0.contains_key(&line("r", 0, None)), "`o`'s inferred facts size it");
     assert!(!prep.0.contains_key(&line("z", 0, None)), "`anc` is not sized: `z` is not prepared");
+}
+
+/// Decision 0488: where both columns' keys are kept, a probe hits as often as the keys they share say. Containment
+/// takes the probed column's values as all present where it has as many distinct values as the binding (1,000
+/// each here), so a join of disjoint values was priced as if each probe hit; their filters say none does.
+#[test]
+fn kept_keys_price_a_probe_by_the_keys_two_columns_share() {
+    use crate::code_rule_dsl::logic::bloom::Keys;
+    let p = parse_version(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl c(z:number,w:number)\n.decl out(x:number,w:number)\nout(x,w) :- a(x,y), b(y,z), c(z,w).\n.output out\n").unwrap();
+    let derived: HashSet<String> = ["a", "b", "c", "out"].into_iter().map(str::to_owned).collect();
+    let work = |keys: Option<(Keys, Keys)>| {
+        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.clone().into()};
+        for (rel, rows, ndv, fan) in [("a", 10_000.0, [10_000.0, 1_000.0], [1.0, 10.0]), ("b", 1_000.0, [1_000.0, 1_000.0], [1.0, 1.0]), ("c", 1_000.0, [1_000.0, 1_000.0], [1.0, 1.0])] {
+            model.stats.card.insert(rel, rows);
+            for (c, (ndv, fan)) in ndv.into_iter().zip(fan).enumerate() {
+                model.ndv.insert((rel, c), ndv);
+                model.stats.fan.insert((rel, c), fan);
+            }
+        }
+        if let Some((a, b)) = keys {
+            model.stats.keys.insert(("a", 1), a);
+            model.stats.keys.insert(("b", 0), b);
+        }
+        let ((_, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap();
+        work
+    };
+    let containment = work(None);
+    let same = work(Some((Keys::of(0..1_000), Keys::of(0..1_000))));
+    let apart = work(Some((Keys::of(0..1_000), Keys::of(5_000..6_000))));
+    assert!((same / containment - 1.0).abs() < 0.1, "the same keys price as containment does: {same} against {containment}");
+    assert!(apart < 0.5 * containment, "keys two columns do not share are probes that miss: {apart} against {containment}");
+}
+
+/// Decision 0488: a join of two columns skewed on the same few keys, priced by their sketches' counters (`join_size`):
+/// the rows the two columns join, whichever is probed. Their fanouts and distinct values price a probe of `b` by `a`'s
+/// rows at a tenth of what it makes (the keys both hold heavy are 1% of `a`'s distinct values, and most of its rows).
+#[test]
+fn join_counts_price_a_join_of_two_skewed_columns_by_its_rows() {
+    use crate::code_rule_dsl::logic::join_size::JoinCounts;
+    let p = parse_version(".decl a(x:number,y:number)\n.decl b(y:number,z:number)\n.decl out(x:number,z:number)\nout(x,z) :- a(x,y), b(y,z).\n.output out\n").unwrap();
+    let derived: HashSet<String> = ["a", "b", "out"].into_iter().map(str::to_owned).collect();
+    // `a.y`: 1,000 rows of each of 5 keys and 5,000 of one each; `b.y`: 100 of each of the 5, and 500 others.
+    let ay: Vec<i64> = (0..5_000).map(|i| i % 5).chain(1_000..6_000).collect();
+    let by: Vec<i64> = (0..500).map(|i| i % 5).chain(10_000..10_500).collect();
+    let joined = 5.0 * 1_000.0 * 100.0;
+    let last = |counts: bool| {
+        let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: Inputs::file().into(),derived: derived.clone().into()};
+        for (rel, ys, y) in [("a", &ay, 1), ("b", &by, 0)] {
+            let c = JoinCounts::of(ys.iter().copied());
+            model.stats.card.insert(rel, c.rows);
+            model.ndv.insert((rel, y), 5.0 + (ys.len() / 2) as f64);
+            model.stats.fan.insert((rel, y), c.f2 / c.rows);
+            model.ndv.insert((rel, 1 - y), c.rows);
+            model.stats.fan.insert((rel, 1 - y), 1.0);
+            if counts {
+                model.stats.counts.insert((rel, y), std::sync::Arc::new(c));
+            }
+        }
+        *model.plan_rule_step_rows(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), None).unwrap().1.last().unwrap()
+    };
+    let (with, without) = (last(true), last(false));
+    assert!((with / joined - 1.0).abs() < 0.25, "priced by the counters: {with} rows against {joined}");
+    eprintln!("a join of skewed columns: {with} rows priced by the counters, {without} without, {joined} made");
 }

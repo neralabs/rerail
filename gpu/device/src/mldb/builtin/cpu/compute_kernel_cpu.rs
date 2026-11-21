@@ -25,7 +25,7 @@
 
 use crate::compute_kernel::*;
 use std::cell::RefCell;
-use std::ffi::{c_char, c_void, CStr, CString};
+use std::ffi::{c_char, c_void, CStr};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{mpsc, Arc, Condvar, Mutex, OnceLock};
 
@@ -214,7 +214,7 @@ pub fn gpu_seconds_awaited() -> f64 {
 
 /// A compiled library: the shared object the host's compiler made of the source, loaded.
 pub struct CpuComputeFunctionLibrary {
-    handle: *mut c_void,
+    handle: crate::sys::Library,
     name: String,
 }
 
@@ -231,15 +231,9 @@ fn compiler_version(cxx: &str) -> &'static str {
 }
 
 /// The kernel library at `lib`, loaded.
-fn open_library(lib: &std::path::Path) -> Result<*mut c_void, String> {
-    let c = CString::new(lib.to_string_lossy().as_bytes()).unwrap();
-    // SAFETY: a shared object a compiler made from UKL; it runs no initializers of its own.
-    let handle = unsafe { libc::dlopen(c.as_ptr(), libc::RTLD_NOW | libc::RTLD_LOCAL) };
-    if handle.is_null() {
-        let e = unsafe { CStr::from_ptr(libc::dlerror()) }.to_string_lossy().into_owned();
-        return Err(format!("loading {}: {e}", lib.display()));
-    }
-    Ok(handle)
+fn open_library(lib: &std::path::Path) -> Result<crate::sys::Library, String> {
+    // A shared object a compiler made from UKL; it runs no initializers of its own.
+    crate::sys::Library::open(&lib.to_string_lossy())
 }
 
 impl CpuComputeFunctionLibrary {
@@ -305,12 +299,7 @@ impl CpuComputeFunctionLibrary {
     }
 
     fn symbol(&self, name: &str) -> Result<*mut c_void, String> {
-        let c = CString::new(name).unwrap();
-        let p = unsafe { libc::dlsym(self.handle, c.as_ptr()) };
-        if p.is_null() {
-            return Err(format!("{}: no {name}", self.name));
-        }
-        Ok(p)
+        self.handle.symbol(name).ok_or_else(|| format!("{}: no {name}", self.name))
     }
 
     fn string(&self, name: &str) -> Result<String, String> {
@@ -363,15 +352,6 @@ struct Launch {
     pad: u32,
 }
 
-/// The threads the CPU runs at once across a launch's groups: its resident groups are these over a group's threads
-/// (at most 64), so a persistent grid of up to that many groups meets its barriers (`ukl_cpu_shim.h`).
-const RESIDENT_THREADS: usize = 8192;
-
-/// The groups of `threads` threads the CPU runs at once.
-pub fn resident_groups(threads: usize) -> usize {
-    (RESIDENT_THREADS / threads.max(1)).clamp(1, 64)
-}
-
 /// The scheduler's storage a root's thread gives each launch: more than the shim's (`__ukl_cpu_sched`, which checks).
 const SCHED_BYTES: usize = 256 << 10;
 
@@ -384,6 +364,15 @@ std::thread_local! {
 
 extern "C" fn tls() -> *mut c_void {
     TLS.with(|t| t.get().cast())
+}
+
+/// The threads the CPU runs at once across a launch's groups: its resident groups are these over a group's threads
+/// (at most 64), so a persistent grid of up to that many groups meets its barriers (`ukl_cpu_shim.h`).
+const RESIDENT_THREADS: usize = 8192;
+
+/// The groups of `threads` threads the CPU runs at once.
+pub fn resident_groups(threads: usize) -> usize {
+    (RESIDENT_THREADS / threads.max(1)).clamp(1, 64)
 }
 
 /// A kernel's entry: a pointer to each argument's bytes, and the launch; 0, or 1 with the launch's error written.
@@ -432,16 +421,12 @@ impl Worker {
         let stride = STACK_BYTES + self.page;
         if self.stacks_len < n * stride {
             if !self.stacks.is_null() {
-                unsafe { libc::munmap(self.stacks.cast(), self.stacks_len) };
+                // SAFETY: the mapping made below, its stacks used no more.
+                unsafe { crate::sys::unmap(self.stacks, self.stacks_len) };
             }
             let len = n.max(64) * stride;
-            // SAFETY: anonymous memory; the guards are made inaccessible below.
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_PRIVATE | libc::MAP_ANON, -1, 0) };
-            assert!(p != libc::MAP_FAILED, "no memory for the CPU backend's thread stacks");
-            for k in 0..len / stride {
-                unsafe { libc::mprotect(p.cast::<u8>().add(k * stride).cast(), self.page, libc::PROT_NONE) };
-            }
-            self.stacks = p.cast();
+            let p = crate::sys::map_guarded(len, stride).expect("no memory for the CPU backend's thread stacks");
+            self.stacks = p;
             self.stacks_len = len;
         }
         (self.stacks, stride)
@@ -459,7 +444,7 @@ impl CpuQueueRoot {
             .name("rerail-cpu-queue".into())
             .stack_size(8 << 20)
             .spawn(move || {
-                let page = unsafe { libc::sysconf(libc::_SC_PAGESIZE) }.max(4096) as usize;
+                let page = crate::sys::page_size();
                 let mut w = Worker { stacks: std::ptr::null_mut(), stacks_len: 0, page, sched: vec![0; SCHED_BYTES / 8] };
                 for b in rx {
                     let t = std::time::Instant::now();

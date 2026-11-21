@@ -77,6 +77,16 @@ today" is the inventory, and "The plan" removes it step by step.
      is read.
    - **An index**, in the block of the relation it indexes (0325 step 5). It is built from the relation, not from a
      copy of it.
+   - **The memory hierarchy.** Registers, caches, TLBs, paging, a GPU's own memory and caches, and a driver that
+     holds a device's image of a buffer and makes it current by a map, a sync or a migration: each holds the data
+     the processor is computing on now. None of them is a second home that readers read instead, and none is the
+     engine's layout. They are how hardware reads memory.
+6. **What this rule is about: the engine's data design.** It forbids the engine making a second data structure
+   (another layout, another home) for a reader. It is not about hardware or drivers. Never use it to refuse a
+   device, a backend, a driver or a platform. A device whose memory is not the host's is used, and the backend
+   moves the bytes as that device needs (the OpenCL backend's `synced`, 0440). When in doubt, ask one question:
+   does the engine's code now keep the data in a second structure of its own that readers read instead? If not,
+   it is not a copy.
 4. **Named exceptions, each removed by a step below:** the copies listed in "The copies today". Every one carries a
    comment naming this record and its step (`copy (0353 step N)`). The list only shrinks.
 5. **A block that outgrows its space** moves once to a larger one (`facts::rows`'s tail, as a vector grows). It is

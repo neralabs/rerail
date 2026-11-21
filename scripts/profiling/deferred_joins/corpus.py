@@ -196,7 +196,7 @@ def native(
     out.mkdir()
     if policy is None:
         policy = (
-            ROOT / "docs/rule-syntax/packs/python/ruff-slf001-private-member-access.rr"
+            ROOT / "docs/rule-syntax/packs/python/ruff-slf001-private-member-access.rerail"
         )
     env = {k: v for k, v in os.environ.items() if not k.startswith("RERAIL_")}
     env.update(
@@ -214,7 +214,7 @@ def native(
     if cache_rows is not None:
         env["RERAIL_JOIN_CACHE_ROWS"] = str(cache_rows)
     if plan:
-        env["RERAIL_DUMP_CROSS"] = str(out / "cross.rr")
+        env["RERAIL_DUMP_CROSS"] = str(out / "cross.rerail")
     if profile:
         env["RERAIL_PROFILE"] = str(out / "profile")
     if capture:
@@ -373,7 +373,7 @@ def main():
             sample=args.sample,
         )
         if args.check_plan:
-            rules = (out / "baseline/cross.rr").read_text().splitlines()
+            rules = (out / "baseline/cross.rerail").read_text().splitlines()
             head = [r for r in rules if r.startswith("slf_class_head(")]
             if not head or not all(
                 "rr_product_demand_slf_class_head(" in r for r in head

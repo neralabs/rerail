@@ -1,6 +1,7 @@
 # 0486: the preprocessor's rooms sized from what a refused run used
 
-(Was 0478 on Go-C-and-C-support; renumbered at its roll-up into the hub, roll-up 21, past 0484.)
+(Was 0478 on Go-C-and-C-support; renumbered at its roll-up into the hub, roll-up 21, past 0484. 0489 on rr-align
+at its roll-up 21, 0503 on investigate-bend-vs-datalog.)
 
 The user, 2026-11-19, after 0485: "test on boost::preprocessor and ensure that we are accurate on
 those files. Also profile on them and address any inefficiencies."

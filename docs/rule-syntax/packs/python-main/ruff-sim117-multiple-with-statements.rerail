@@ -1,5 +1,4 @@
 .policy "ruff-sim117-multiple-with-statements" revision 1
-.guests off
 .description "Merge directly nested with statements into one with holding several context managers, except around asyncio, anyio or trio timeout scopes."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "bandit-b113-request-without-timeout" revision 1
-.guests off
 .description "Pass a timeout to requests calls, and never set it to None on requests or httpx calls; without one, a slow server can hang the program indefinitely."
 .language python
 .mode steer

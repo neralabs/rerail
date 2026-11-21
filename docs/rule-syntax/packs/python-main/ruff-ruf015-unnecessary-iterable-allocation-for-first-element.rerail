@@ -1,5 +1,4 @@
 .policy "ruff-ruf015-unnecessary-iterable-allocation-for-first-element" revision 1
-.guests off
 .description "Take the first item with next and iter instead of building a whole list or tuple only to index it; the full collection is allocated for one element."
 .language python
 .mode steer

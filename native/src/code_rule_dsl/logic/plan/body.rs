@@ -99,11 +99,14 @@ pub fn lit_vars(l: LitRef<'_>) -> VarSet {
             term_vars(r, &mut out);
             out
         }
-        Lit::Agg { var, over, atom, .. } => {
+        Lit::Agg { var, op, over, atom } => {
             let mut out = atom_vars(atom);
             out.insert(var);
             if let Some(o) = over {
                 out.insert(o);
+            }
+            if let Some(b) = op.bound() {
+                out.insert(b);
             }
             out
         }
@@ -261,26 +264,33 @@ impl<'v> Body<'v> {
     }
     /// The demand that drives its rule whatever the statistics say: a demand-restricted aggregate's
     /// (`rr_demand_agg_…`, a positive atom), whose witnesses are enumerated from its requested keys, or the tuple
-    /// demand that bounds a Cartesian product (`product_demand::PREFIX`): the product's only bound, so it leads; or a
-    /// deferred join's requests and a pair cache's guard, the same. Not a demanded relation's own demand (decision
-    /// 0048's `demand_x`): an atom a constant restricts may lead it (`demand_bounds_lead`, Q59).
+    /// demand that bounds a Cartesian product (`product_demand::PREFIX`): the product's only bound, so it leads.
     pub fn demand_first(&self) -> Option<usize> {
+        let head = self.rel(self.head());
+        (0..self.len()).find(|&i| {
+            self.plain_atom(i).is_some_and(|a| {
+                let rel = self.rel(a);
+                !a.neg() && (rel.contains("rr_demand_agg_")
+                    || rel.strip_prefix("rr_pair_cache_").and_then(|s| s.strip_suffix("_small")).is_some_and(|base|
+                        head.strip_prefix("rr_pair_cache_")
+                            .and_then(|s| s.strip_suffix("_pairs")) == Some(base))
+                    // A demanded relation's own demand (`demand_x`) is not one: its rule may be led by an atom a
+                    // constant restricts (Q59, `demand_bounds_lead`, which `plan_inner` keeps).
+                    || rel.strip_prefix(super::corpus::product_demand::PREFIX) == Some(head))
+            })
+        })
+    }
+    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads; or a
+    /// deferred join's request (`rr_deferred_pairs_x`, decision 0488), of its producer or of the support heads
+    /// maintenance gives its rules (`wide__sup0`). Not forced to lead (Q59, `demand_bounds_lead`): forced, corpus0's
+    /// `lambda_arg` walked the arguments of 14,360 requested calls (171 k rows) where `kind($g, "lambda")` reads 229.
+    pub fn own_demand(&self) -> Option<usize> {
         let head = self.rel(self.head());
         (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
             let rel = self.rel(a);
-            // A pair cache's pairs are made only past its guard (`rr_pair_cache_…_small`), and a join the deferred
-            // joins pass bounds by its readers' requests (`product_demand::DEFERRED_PAIRS`) starts from them.
-            let cache = |base: &str| head.strip_prefix("rr_pair_cache_").and_then(|s| s.strip_suffix("_pairs")) == Some(base);
-            !a.neg()
-                && (rel.contains("rr_demand_agg_")
-                    || rel.strip_prefix("rr_pair_cache_").and_then(|s| s.strip_suffix("_small")).is_some_and(cache)
-                    || [super::corpus::product_demand::PREFIX, super::corpus::product_demand::DEFERRED_PAIRS].iter().any(|&p| rel.strip_prefix(p) == Some(head)))
+            !a.neg() && (rel.strip_prefix("demand_").is_some_and(|r| r == head)
+                || rel.strip_prefix(super::corpus::product_demand::DEFERRED_PAIRS).is_some_and(|p| p == head))
         }))
-    }
-    /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
-    pub fn own_demand(&self) -> Option<usize> {
-        let head = self.rel(self.head());
-        (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| !a.neg() && self.rel(a).strip_prefix("demand_").is_some_and(|r| r == head)))
     }
     /// Whether an order led by literal `lead` keeps a demanded relation's rule to what its demand bounds (Q59): led
     /// by the demand, or by an atom a constant restricts (a column a constant names, or a variable an equality binds
@@ -444,6 +454,9 @@ impl<'v> Body<'v> {
                 if let AggRef::Join { by, .. } = op {
                     by.for_each(|b| need.remove(b));
                 }
+                if let Some(b) = op.bound() {
+                    need.insert(b);
+                }
                 need.is_subset(bound)
             }
             Lit::Nearest { n, a, .. } => bound.contains(n) || bound.contains(a),
@@ -577,6 +590,11 @@ impl<'v> Body<'v> {
                     AggRef::Max => d.u64(2),
                     AggRef::Sum => d.u64(3),
                     AggRef::Product => d.u64(5),
+                    AggRef::Bounded { max, bound, strict } => {
+                        d.u64(6);
+                        d.u64(u64::from(max) | u64::from(strict) << 1);
+                        d.str(self.var(bound));
+                    }
                 }
                 d.str(over.map_or("\u{0}", |o| self.var(o)));
                 self.digest_atom(d, atom);

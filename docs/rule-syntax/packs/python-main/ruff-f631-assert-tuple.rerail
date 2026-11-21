@@ -1,5 +1,4 @@
 .policy "ruff-f631-assert-tuple" revision 2
-.guests off
 .description "Don't use a tuple as an assert's condition; a non-empty tuple is always true, so the assert never fails."
 .language python
 .mode steer

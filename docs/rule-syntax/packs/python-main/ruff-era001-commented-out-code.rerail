@@ -1,5 +1,4 @@
 .policy "ruff-era001-commented-out-code" revision 1
-.guests off
 .description "Remove commented-out code; version control keeps the history, and dead code left in comments goes stale."
 .language python
 .mode steer

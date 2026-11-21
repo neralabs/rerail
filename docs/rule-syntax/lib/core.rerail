@@ -29,7 +29,9 @@
 // Facts about documents. A document is one parsed source file; `d` is its integer id.
 // doc(d, "src/app/main.py", "app.main"): the module name is derived from the path; "" when the file has none.
 .decl doc(d: number, path: symbol, module: symbol)  // one row per document; module is the dotted module name, or ""
-.layout doc key(d) key(path) size(per document) values(module, many)
+// Keyed by d alone: a guest document's path is its host file's (decision 0055), so a path is no key (0361 step 6's
+// check at the writes found it broken on corpus0, 2026-11-20).
+.layout doc key(d) size(per document) values(module, many)
 // pkg(d, "app") for src/app/main.py: the dotted Python package holding the document.
 .decl pkg(d: number, p: symbol)                          // the package a document belongs to (Python)
 // unpackaged(d): no regular package holds Python document d: it is a file of the root, or its folder has no
@@ -293,13 +295,13 @@
 .decl sub_tape(at: node, grammar: symbol, t: tape)       // the tape (content key) of the guest at `at`
 .decl tape_of(d: number, t: tape)                        // document d places tape t; equal texts share a tape
 .decl doc_grammar(d: number, grammar: symbol)           // the grammar file d was parsed with
-.decl guest_policy(k: symbol, v: symbol)                 // the program's `.guests` and `.on guest_error` settings
+.decl guest_policy(k: symbol, v: symbol)                 // the program's `.on guest_error` settings
 .decl host_node(n: node, h: node)                        // h is the innermost host node over guest node n
 .decl guest_of(n: node, s: node)                         // n is a node of the code parsed at s (decision 0431); a
                                                          // tape value's node has a row for each string of its text
 .decl guest_place(n: node, s: node, l: number, c: number) // n, parsed at s, stands at line l, column c of s's file
 .input sub_tape, tape_of, doc_grammar, host_node, guest_of, guest_place
-// What a rule sees (decision 0058): files, and guests in the run's language unless `.guests off`. A rule that
+// What a rule sees (decisions 0058, 0523): files, and guests in the run's language. A rule that
 // reaches a guest through one of the relations above sees it whatever its grammar, and names its kinds in that
 // grammar: parsed(s, "sql", r), within(n, r), kind(n, "object_reference") is SQL's object_reference ("sql:…" also
 // names one). A guest made from a string is parsed from its str: the decoded text, placed through the escapes.
@@ -685,8 +687,8 @@
 // Code inside code: built as decisions 0055, 0058 and 0431 (the guests section above). A string a rule parses is a
 // tape value, `parsed(s, g, root)`; a program a file's grammar holds is the file's, declared by its language, at the
 // file's lines, reached by `parsed` at its host node; `host_node(n, h)` gives the host node a guest node stands for;
-// `@parse(grammar, text)`, `@splice` and `@unparse` make and read tapes as values. `.guests off` keeps a policy to
-// files.
+// `@parse(grammar, text)`, `@splice` and `@unparse` make and read tapes as values. `.embedded on` also reads other
+// languages' files for their programs in the run's (decision 0470); `.guests` is retired (decision 0523).
 
 // ---- edits (native applier) -----------------------------------------------------------------------------------
 // Addition 4. A fix is a set of edits. Rules derive edits like any other rows: a rule ending in `=> e1, e2`
@@ -742,9 +744,8 @@
 // .on syntax_error report CODE [at line 1]    also report each syntax error as a finding. Either way the document
 //                                              is withheld (no facts) and its outcome is Unknown(parse).
 // .on input_error report CODE                 a repository input that is missing or malformed is a finding.
-// .guests on | off                            whether the run language's guests are shown to rules that do not
-//                                              reach them through a guest relation (on by default); embeds are
-//                                              made either way (decision 0058).
+// .guests on | off                            retired (decision 0523): refused; `.embedded` says what a run reads
+//                                              of other languages' files, and a guest relation reaches the rest.
 // .embedded on | off                          on: the run also reads the files of other languages that hold
 //                                              programs in its own (an HTML page's scripts for a JavaScript run, a
 //                                              Python string at a declared place for an HTML run), seeing only those

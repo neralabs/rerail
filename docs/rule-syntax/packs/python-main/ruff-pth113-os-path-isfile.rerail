@@ -1,5 +1,4 @@
 .policy "ruff-pth113-os-path-isfile" revision 1
-.guests off
 .description "Use Path.is_file() instead of os.path.isfile(); path objects read better than string-based os.path calls."
 .language python
 .mode steer
