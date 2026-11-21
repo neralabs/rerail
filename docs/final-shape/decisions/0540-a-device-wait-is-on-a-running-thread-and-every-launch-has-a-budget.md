@@ -158,3 +158,11 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
          M1 Max macOS 26.2 (Metal 4), and both run the same instrumented kernel cleanly: 7 claims, 7 numbers. Metal
          compiles the source on the device, so the M3's compiler and driver differ from theirs, as well as its GPU.
          A runtime compile cannot turn Metal's optimizer off, so the M3 itself on macOS 26 is what separates the two.
+       - *Not the compiler (2026-11-21).* Each Mac's own runtime compile of the kernel's source (kept by
+         `RERAIL_METAL_SOURCE_DIR`), in a binary archive: its AIR, from macOS 15.7.7 and from macOS 27.2.1, is the
+         same instruction for instruction, but for the operand Metal 4 adds to each atomic. The claim is one relaxed
+         device-scope swap. And the M3's AIR compiled for G15 by Xcode 26's back end (`metal-tt`), run on the M3
+         from that archive (`RERAIL_METAL_BINARY_ARCHIVE`, the archive's code confirmed), loses the same 4 claims.
+         So neither front end nor back end makes the difference: G15 runs this code otherwise than G13, or macOS
+         15's driver does. A user on an M3, whatever their Metal version, may meet it. Apple's tools have no
+         disassembler for G15 code ("no instruction printer for target agx3").
