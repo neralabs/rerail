@@ -65,8 +65,9 @@ const commit = ({ git }, message) => {
  */
 const NPM_RUNS = process.platform !== "win32";
 
+/** Runs release-version.mjs in `root`. No released core is installed: the check's result is handed in as none refusing. */
 function releaseVersion({ root }) {
-  execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe" });
+  execFileSync("node", ["scripts/release/release-version.mjs", join(root, "body.md")], { cwd: root, stdio: "pipe", env: { ...process.env, RELEASE_CORE_REFUSALS: "{}" } });
 }
 
 describe.runIf(NPM_RUNS)("release-version.mjs, the pull request's description", () => {
@@ -78,10 +79,30 @@ describe.runIf(NPM_RUNS)("release-version.mjs, the pull request's description", 
     const body = readFileSync(join(repo.root, "body.md"), "utf8");
     const checklist = body.slice(body.indexOf("## Before merging"));
     expect(body.indexOf(`\`${packName("fresh")}\``)).toBeLessThan(body.indexOf("## Before merging"));
-    expect(checklist.match(/^- \[ \] \*\*.+$/gmu)).toHaveLength(7);
-    for (const item of ["End-user testing", "Release notes", "Documentation", "`context7.json`", "`docs/internal-testing.md`", "Scrub", "npm package pages"]) {
+    expect(checklist.match(/^- \[ \] \*\*.+$/gmu)).toHaveLength(6);
+    for (const item of ["Release notes", "Documentation", "`context7.json`", "`docs/internal-testing.md`", "Scrub", "npm package pages"]) {
       expect(checklist).toContain(`- [ ] **${item}.**`);
     }
+  });
+
+  it("leaves testing the release to after merging, on next, before it is promoted", () => {
+    const repo = repository();
+    writePack(repo, "fresh", ["fresh-one"]);
+    commit(repo, "the pack");
+    releaseVersion(repo);
+    const checklist = readFileSync(join(repo.root, "body.md"), "utf8").split("## Before merging")[1];
+    expect(checklist).not.toContain("End-user testing");
+    expect(checklist).toContain('After merging, test the release on `next`, then promote it (docs/release.md, "Before promoting").');
+  });
+
+  it("tells whoever merges that it publishes to next, where the release waits to be promoted", () => {
+    const repo = repository();
+    writePack(repo, "fresh", ["fresh-one"]);
+    commit(repo, "the pack");
+    releaseVersion(repo);
+    const body = readFileSync(join(repo.root, "body.md"), "utf8");
+    expect(body).toContain("Merging this pull request releases these packages to npm under `next`, where they wait to be promoted to `latest`");
+    expect(body).not.toContain("under `latest`");
   });
 });
 
@@ -158,6 +179,18 @@ describe.runIf(NPM_RUNS)("release-version.mjs, a released pack's core range", ()
     expect(body).not.toContain(`- \`${packName("plain")}\`: `);
     expect(body).not.toContain("Not released by this pull request");
     expect(body).not.toContain("Do not merge yet");
+  });
+
+  it("raises it for a pack whose ast rule uses a key added since, and not for one with a utility named like it", () => {
+    const repo = repository();
+    const rule = (ast) => ({ mode: "steer", description: "A Python rule.", clauses: [{ forbid: { ast: { language: "python", ...ast } } }] });
+    writeRangedPack(repo, "storing", ">=0.1.0-0", { "storing-one": rule({ rule: { kind: "tuple", has: { regex: "^,$", stored: "the tape keeps the comma" } } }) });
+    writeRangedPack(repo, "naming", ">=0.1.0-0", { "naming-one": rule({ rule: { matches: "stored" }, utils: { stored: { kind: "assignment" } } }) });
+    writeLock(repo, ["storing", "naming"], ">=0.1.0-0");
+    commit(repo, "the packs");
+    releaseVersion(repo);
+    expect([rangeOf(repo, "storing"), lockedRangeOf(repo, "storing")]).toEqual([">=0.2.0-0", ">=0.2.0-0"]);
+    expect([rangeOf(repo, "naming"), lockedRangeOf(repo, "naming")]).toEqual([">=0.1.0-0", ">=0.1.0-0"]);
   });
 
   it("changes nothing but the range in the package.json it raises", () => {

@@ -1,0 +1,48 @@
+#!/usr/bin/python3
+"""Runs COMMAND at once, as any other command: on a farm host through `scripts/dev/test-remote`, or
+here with `--here`. Kept so existing scripts still work; it no longer leases a machine, queues,
+drains the farm's work or times the run (removed 2026-11-16: the turns and waits stalled every
+agent). Run benchmarks like any other command, and say in the result how loaded the machine was.
+
+    scripts/dev/quiet-run [--host NAME | --here] [--dir native] [--tree DIR]... -- COMMAND...
+
+`--minutes`, `--max-wait` and `--label` are accepted and ignored. The exit status is COMMAND's.
+"""
+import os
+import subprocess
+import sys
+
+# The checkout whose command this is: an older checkout's quiet-run is handed here by the installed
+# farm (farm.py), with its checkout in RERAIL_QUIET_RUN_CHECKOUT.
+CHECKOUT = os.environ.pop("RERAIL_QUIET_RUN_CHECKOUT", None) or \
+    os.path.realpath(os.path.join(os.path.dirname(os.path.realpath(__file__)), "../.."))
+
+
+def main(argv):
+    remote, here, directory = [], False, "native"
+    while argv and argv[0] != "--":
+        a = argv.pop(0)
+        if a in ("-h", "--help"):
+            print(__doc__.strip())
+            return 0
+        if a == "--here":
+            here = True
+        elif a in ("--minutes", "--max-wait", "--label") and argv:
+            argv.pop(0)
+        elif a in ("--host", "--tree") and argv:
+            remote += [a, argv.pop(0)]
+        elif a == "--dir" and argv:
+            directory = argv.pop(0)
+        else:
+            sys.exit(f"quiet-run: unknown option {a} (--help)")
+    command = argv[1:]
+    if not command:
+        sys.exit("quiet-run: no COMMAND (--help)")
+    if here:
+        return subprocess.run(command, cwd=os.path.join(CHECKOUT, directory)).returncode
+    test_remote = os.path.join(CHECKOUT, "scripts/dev/test-remote")
+    os.execv(test_remote, [test_remote] + remote + ["--dir", directory, "--"] + command)
+
+
+if __name__ == "__main__":
+    sys.exit(main(sys.argv[1:]))

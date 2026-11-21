@@ -14,6 +14,7 @@ Set-up copies Rerail out of npm's ephemeral `npx` cache into a durable install i
 ├── bin/rerail                                         launcher shim → current/dist/cli/cli.js
 ├── update-state.json                                  active + previous version, channel
 ├── daemon.json / daemon.log                           the running daemon
+├── claude-status-lines/<session id>                   each Claude Code session's status line, kept by the daemon
 ├── daemon-port.json                                   the port the daemon comes back on after a restart
 ├── coding-agents.json                                 the coding agents set-up and rerail install have seen
 ├── packs/node_modules/@neralabs/rerail-pack-<id>/     Rerail's rule packs you installed (rerail packs)
@@ -184,7 +185,7 @@ Agents run commands as you, so only their own sandbox can keep them out.
   `current` and `versions` in the Rerail home, so commands can read the installed package but no data.
 - `permissions.deny` covers the file tools, which the sandbox does not: `Edit(...)` for both folders; `Read(...)` for
   the whole cache and the Rerail home's data files (`*.json*`, `*.sqlite*`, `*.log*`, `*.lock`, `access-token*`,
-  `active-profile*`, `device-secrets/`, `profiles/`). The installed package, `bin/` and `packs/` stay readable:
+  `active-profile*`, `device-secrets/`, `profiles/`, `claude-status-lines/`). The installed package, `bin/` and `packs/` stay readable:
   `/rerail-create` reads its skill there, and a deny cannot be reopened for one folder.
 - `sandbox.excludedCommands` holds Rerail's CLI as Rerail commands run it (`<node> <root>/dist/cli/cli.js *`), the
   launcher (`~/.rerail/bin/rerail *`) and `rerail *`. These run unsandboxed under your normal permission rules: what a
@@ -387,8 +388,10 @@ Xcode installed.
 
 Set-up records the Node that ran it for the launcher, the hooks and the Claude Code status line. Homebrew's is
 recorded by the link `brew upgrade` keeps (`/opt/homebrew/bin/node`), not its versioned `Cellar` folder. Once the
-recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line does so on
-Windows too: Claude Code runs it through Git Bash there, so its `sh -c` fallback works as on macOS and Linux. Where
+recorded Node is gone (after `nvm uninstall`, say), each falls back to `node` on `PATH`. The status line starts Node
+only on Windows and where you had a status line of your own, which Node runs first
+([how Claude Code draws it](in-session-surfaces.md#how-claude-code-draws-it)). On Windows Claude Code runs it through
+Git Bash, so its `sh -c` fallback works there. Where
 set-up found another `node` first on `PATH`, or none, Claude Code's hooks on Windows start through `cmd.exe`, which
 runs the recorded Node itself while it exists and `node.exe` from `PATH` once it is gone, so each hook event runs one
 Node rather than two. Set-up writes the `node` entry instead where it finds no `cmd.exe` by its full System32 path, or
@@ -407,8 +410,8 @@ its set-up adds its own entry beside each `cmd.exe` one, so every hook runs twic
 on). If that has happened, delete from `~/.claude/settings.json` each hook entry whose `command` ends in `cmd.exe`
 and whose `args` name `hook-launcher.js`.
 
-On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and the status line
-says `needs Node 24 or newer`.
+On a Node older than 24, the CLI and the daemon stop with set-up's message, the hooks do nothing, and a status line
+that starts Node says `needs Node 24 or newer`.
 
 </details>
 
@@ -511,21 +514,25 @@ database before the now-active version, to put back by hand (see [Database compa
 
 Policy evaluation caches parsed files and results in a content store; where the package lives, not a flag, picks which one.
 
-The managed installation uses `~/.cache/rerail/content-v1.sqlite`, and on Windows `%USERPROFILE%\AppData\Local\rerail\content-v1.sqlite`, out of
+The managed installation uses `~/.cache/rerail/content-v5.sqlite`, and on Windows `%USERPROFILE%\AppData\Local\rerail\content-v5.sqlite`, out of
 a roaming profile's reach (earlier releases kept it in `~/.cache/rerail` there too; the uninstall removes that copy); a
-build from a Git checkout uses `<checkout>/.rerail/content-v1.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
+build from a Git checkout uses `<checkout>/.rerail/content-v5.sqlite`. `RERAIL_CONTENT_STORE_PATH` overrides either location.
+
+Rerail 0.2.0 moved the store from `content-v1.sqlite` to `content-v5.sqlite`, so the first run after updating from an
+earlier version rebuilds it. The old file (with its `-wal` and `-shm`) is no longer read and stays beside the new one
+until you delete it; the managed installation's goes when `rerail install --remove` deletes the content cache folder.
 
 <details>
 <summary>Which store a build uses</summary>
 
 - **Managed installation** (a package under `~/.rerail/versions/<version>/` or `$RERAIL_HOME/versions/`, normally
-  loaded through `current`): owns the machine-wide `~/.cache/rerail/content-v1.sqlite`.
+  loaded through `current`): owns the machine-wide `~/.cache/rerail/content-v5.sqlite`.
 - **Any build from a Git checkout** (source, `dist/`, tests, benchmarks, every worktree):
-  `<checkout>/.rerail/content-v1.sqlite` (`.rerail/` is gitignored), so a checkout on a newer store schema never
+  `<checkout>/.rerail/content-v5.sqlite` (`.rerail/` is gitignored), so a checkout on a newer store schema never
   changes the store the installed version reads.
 - **Neither** (say, an `npx` copy): no store, reported on its first scan.
 
-The file name follows the store's compatibility floor (`v1` today) and changes when the floor rises.
+The file name follows the store's compatibility floor (`v5` today) and changes when the floor rises.
 
 </details>
 

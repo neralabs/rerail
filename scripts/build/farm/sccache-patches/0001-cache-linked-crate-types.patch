@@ -1,0 +1,249 @@
+From 9c2ed7ae58f7c6ae13386d0a2e98f97159bd09ed Mon Sep 17 00:00:00 2001
+From: rerail farm <noreply@example.invalid>
+Subject: [PATCH] rerail-farm: cache crate types that link and test harnesses
+ (SCCACHE_CACHE_LINKED), path-less sysroot --extern, keep SOURCE_DATE_EPOCH;
+ debug key logging
+
+---
+ src/cmdline.rs       |   4 +-
+ src/compiler/rust.rs | 115 +++++++++++++++++++++++++++++++++++++++++++++------
+ 2 files changed, 106 insertions(+), 13 deletions(-)
+
+diff --git a/src/cmdline.rs b/src/cmdline.rs
+index f639396..e43d2c4 100644
+--- a/src/cmdline.rs
++++ b/src/cmdline.rs
+@@ -308,7 +308,9 @@ pub fn try_parse() -> Result<Command> {
+                         && k != "PWD"
+                         && k != "HOST"
+                         && k != "RPM_BUILD_ROOT"
+-                        && k != "SOURCE_DATE_EPOCH"
++                        // SOURCE_DATE_EPOCH is kept: a build that sets it makes `__DATE__` and
++                        // `__TIME__` expand the same each time, and a C compile's key hashes its
++                        // preprocessed text, so a source that uses them is cached at all.
+                         && k != "RPM_PACKAGE_RELEASE"
+                         && k != "MINICOM"
+                         && k != "DESTDIR"
+diff --git a/src/compiler/rust.rs b/src/compiler/rust.rs
+index a6aface..b51db63 100644
+--- a/src/compiler/rust.rs
++++ b/src/compiler/rust.rs
+@@ -427,6 +427,54 @@ pub struct RustCompilation {
+ pub struct CrateTypes {
+     rlib: bool,
+     staticlib: bool,
++    /// A crate type rustc links (cdylib, dylib, proc-macro, bin), cached only with
++    /// `SCCACHE_CACHE_LINKED` (`cache_linked`).
++    linked: bool,
++}
++
++/// Crate types that rustc links with the system linker (and a test harness, `--test`). sccache does not know all of a link's
++/// inputs, so it never caches them, unless `SCCACHE_CACHE_LINKED` is set in the server's environment:
++/// then their inputs are taken to be what it hashes for an rlib (the sources, every `--extern`, the
++/// static libraries) plus the linker's and the SDK's versions (`linker_identity`). A system library
++/// that changes without either version changing is the one input not covered.
++const LINKED_CRATE_TYPES: &[&str] = &["cdylib", "dylib", "proc-macro", "bin"];
++
++fn cache_linked() -> bool {
++    std::env::var_os("SCCACHE_CACHE_LINKED").is_some_and(|v| !v.is_empty() && v != "0")
++}
++
++/// The linker's and the SDK's versions, the deployment target and the SDK root: hashed into the key
++/// of a linked crate type (`LINKED_CRATE_TYPES`). Read once per server.
++fn linker_identity(env_vars: &[(OsString, OsString)]) -> Vec<u8> {
++    static IDENTITY: LazyLock<Vec<u8>> = LazyLock::new(|| {
++        let mut out = Vec::new();
++        // Only what each prints as its answer: an error (xcrun without an SDK) carries a time and a pid.
++        // `ld -v` answers on stderr.
++        for (program, args, stderr) in [
++            ("cc", &["--version"][..], false),
++            ("ld", &["-v"][..], true),
++            ("xcrun", &["--show-sdk-version"][..], false),
++            ("xcrun", &["--show-sdk-build-version"][..], false),
++        ] {
++            out.extend_from_slice(program.as_bytes());
++            if let Ok(o) = std::process::Command::new(program).args(args).output() {
++                out.extend_from_slice(if stderr { &o.stderr } else { &o.stdout });
++                out.push(o.status.success() as u8);
++            }
++            out.push(0);
++        }
++        out
++    });
++    let mut out = IDENTITY.clone();
++    for (k, v) in env_vars {
++        if k == "MACOSX_DEPLOYMENT_TARGET" || k == "SDKROOT" || k == "IPHONEOS_DEPLOYMENT_TARGET" {
++            out.extend_from_slice(k.as_encoded_bytes());
++            out.push(b'=');
++            out.extend_from_slice(v.as_encoded_bytes());
++            out.push(0);
++        }
++    }
++    out
+ }
+ 
+ /// Emit types that we will cache.
+@@ -1361,28 +1409,42 @@ impl IntoArg for ArgUnstable {
+ #[derive(Clone, Debug, PartialEq)]
+ struct ArgExtern {
+     name: String,
+-    path: PathBuf,
++    /// None for a sysroot crate named without a path (cargo gives every proc macro
++    /// `--extern proc_macro`): the compiler's own digests cover it.
++    path: Option<PathBuf>,
+ }
++
++/// The sysroot's crates, which `--extern` may name without a path.
++const SYSROOT_EXTERNS: &[&str] = &["proc_macro", "std", "core", "alloc", "test"];
++
+ impl FromArg for ArgExtern {
+     fn process(arg: OsString) -> ArgParseResult<Self> {
+-        if let (name, Some(path)) = split_os_string_arg(arg, "=")? {
+-            Ok(ArgExtern {
++        match split_os_string_arg(arg, "=")? {
++            (name, Some(path)) => Ok(ArgExtern {
+                 name,
+-                path: path.into(),
+-            })
+-        } else {
+-            Err(ArgParseError::Other("no path for extern"))
++                path: Some(path.into()),
++            }),
++            (name, None) if SYSROOT_EXTERNS.contains(&name.as_str()) => {
++                Ok(ArgExtern { name, path: None })
++            }
++            _ => Err(ArgParseError::Other("no path for extern")),
+         }
+     }
+ }
+ impl IntoArg for ArgExtern {
+     fn into_arg_os_string(self) -> OsString {
+         let ArgExtern { name, path } = self;
+-        make_os_string!(name, "=", path)
++        match path {
++            Some(path) => make_os_string!(name, "=", path),
++            None => name.into(),
++        }
+     }
+     fn into_arg_string(self, transformer: PathTransformerFn<'_>) -> ArgToStringResult {
+         let ArgExtern { name, path } = self;
+-        Ok(format!("{}={}", name, path.into_arg_string(transformer)?))
++        Ok(match path {
++            Some(path) => format!("{}={}", name, path.into_arg_string(transformer)?),
++            None => name,
++        })
+     }
+ }
+ 
+@@ -1668,6 +1730,7 @@ fn parse_arguments(arguments: &[OsString], cwd: &Path) -> CompilerArguments<Pars
+     let mut crate_types = CrateTypes {
+         rlib: false,
+         staticlib: false,
++        linked: false,
+     };
+     let mut extra_filename = None;
+     let mut externs = vec![];
+@@ -1722,7 +1785,12 @@ fn parse_arguments(arguments: &[OsString], cwd: &Path) -> CompilerArguments<Pars
+             })) => {
+                 // We can't cache non-rlib/staticlib crates, because rustc invokes the
+                 // system linker to link them, and we don't know about all the linker inputs.
+-                if !others.is_empty() {
++                let linked = !others.is_empty()
++                    && cache_linked()
++                    && others.iter().all(|t| LINKED_CRATE_TYPES.contains(&t.as_str()));
++                if linked {
++                    crate_types.linked = true;
++                } else if !others.is_empty() {
+                     let mut others: Vec<&str> = others.iter().map(String::as_str).collect();
+                     others.sort_unstable();
+                     let others_string = others.join(",");
+@@ -1733,7 +1801,7 @@ fn parse_arguments(arguments: &[OsString], cwd: &Path) -> CompilerArguments<Pars
+             }
+             Some(CrateName(value)) => crate_name = Some(value.clone()),
+             Some(OutDir(value)) => output_dir = Some(value.clone()),
+-            Some(Extern(ArgExtern { path, .. })) => externs.push(path.clone()),
++            Some(Extern(ArgExtern { path, .. })) => externs.extend(path.clone()),
+             Some(CodeGen(ArgCodegen { opt, value })) => {
+                 match (opt.as_ref(), value) {
+                     ("extra-filename", Some(value)) => extra_filename = Some(value.to_owned()),
+@@ -1794,7 +1862,13 @@ fn parse_arguments(arguments: &[OsString], cwd: &Path) -> CompilerArguments<Pars
+                         }
+                         input = Some(val.clone());
+                     }
+-                    Argument::UnknownFlag(_) => {}
++                    // A test harness (`--test`) is an executable rustc links, as a `bin` is: cached
++                    // with the linked crate types (`cache_linked`).
++                    Argument::UnknownFlag(ref flag) => {
++                        if flag == "--test" && cache_linked() {
++                            crate_types.linked = true;
++                        }
++                    }
+                     _ => unreachable!(),
+                 }
+             }
+@@ -1835,6 +1909,7 @@ fn parse_arguments(arguments: &[OsString], cwd: &Path) -> CompilerArguments<Pars
+     if let CrateTypes {
+         rlib: false,
+         staticlib: false,
++        linked: false,
+     } = crate_types
+     {
+         cannot_cache!("crate-type", NO_CRATE_TYPE_PASSED.to_owned())
+@@ -2299,6 +2374,13 @@ where
+                 })
+         };
+         args.hash(&mut HashToDigest { digest: &mut m });
++        if std::env::var_os("SCCACHE_DEBUG_KEY").is_some() {
++            debug!("[{}]: key args {:?} sources {:?} externs {:?} statics {:?} cwd {:?}", self.parsed_args.crate_name, args, source_hashes, extern_hashes, staticlib_hashes, strip_basedirs_os(cwd.as_os_str(), basedirs));
++            for (k, v) in env_vars.iter().filter(|(k, _)| k.to_string_lossy().starts_with("CARGO_")) {
++                debug!("[{}]: key env {:?}={:?}", self.parsed_args.crate_name, k, strip_basedirs_os(v, basedirs));
++            }
++            debug!("[{}]: key env_deps {:?}", self.parsed_args.crate_name, env_deps);
++        }
+         // 4. The digest of all source files (this includes src file from cmdline).
+         // 5. The digest of all files listed on the commandline (self.externs).
+         // 6. The digest of all static libraries listed on the commandline (self.staticlibs).
+@@ -2363,6 +2445,11 @@ where
+             .hash(&mut HashToDigest { digest: &mut m });
+         // 10. The version of the compiler.
+         self.version.hash(&mut HashToDigest { digest: &mut m });
++        // 11. For a crate type that links, the linker and the SDK.
++        if self.parsed_args.crate_types.linked {
++            m.update(b"linked");
++            m.update(&linker_identity(&env_vars));
++        }
+ 
+         // metadata / dep-info don't ever generate binaries, but
+         // rustc still makes them appear in the --print
+@@ -3092,6 +3179,7 @@ impl pkg::InputsPackager for RustInputsPackager {
+             CrateTypes {
+                 rlib: true,
+                 staticlib: false,
++                linked: false,
+             }
+         );
+ 
+@@ -4533,6 +4621,7 @@ hash 42fac6f0 stable_crate_id StableCrateId(12206970385906972588)
+                 crate_types: CrateTypes {
+                     rlib: true,
+                     staticlib: false,
++                    linked: false,
+                 },
+                 dep_info: None,
+                 emit,
+@@ -4638,6 +4727,7 @@ hash 42fac6f0 stable_crate_id StableCrateId(12206970385906972588)
+                     crate_types: CrateTypes {
+                         rlib: true,
+                         staticlib: false,
++                        linked: false,
+                     },
+                     dep_info: None,
+                     emit: ["link".to_string()].into_iter().collect(),
+@@ -4728,6 +4818,7 @@ hash 42fac6f0 stable_crate_id StableCrateId(12206970385906972588)
+                 crate_types: CrateTypes {
+                     rlib: true,
+                     staticlib: false,
++                    linked: false,
+                 },
+                 dep_info: Some("foo-abc.d".into()),
+                 emit,

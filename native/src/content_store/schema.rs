@@ -2,7 +2,9 @@
 
 use super::connection::configure_connection;
 use super::{ContentStore, StoreError, StoreResult};
-use rusqlite::{Connection, TransactionBehavior};
+#[allow(unused_imports)]
+use crate::content_store::connection::Cached as _;
+use rusqlite::{Connection, OptionalExtension, TransactionBehavior, params};
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -21,12 +23,15 @@ use std::sync::LazyLock;
 // run against it. It is safe to delete by hand once no older binary runs; the CHANGELOG entry of
 // each floor raise names the file (with its -wal and -shm). STORE_FILE_FLOOR pins the pairing, so
 // raising SCHEMA_VERSION alone does not compile.
-pub(super) const SCHEMA_VERSION: i64 = 1;
+pub(super) const SCHEMA_VERSION: i64 = 5;
 
 /// File name of every content store, managed or checkout-private, renamed whenever the floor rises.
-pub const STORE_FILE_NAME: &str = "content-v1.sqlite";
-/// The floor `STORE_FILE_NAME` was introduced at.
-const STORE_FILE_FLOOR: i64 = 1;
+pub const STORE_FILE_NAME: &str = "content-v5.sqlite";
+/// The floor `STORE_FILE_NAME` was introduced at. 5: a frame's row points at its bytes in a segment beside the store
+/// (decision 0295 §4: `frames.seg`), which an older binary would read as an empty frame; 4: a corpus manifest's lane is a column of it
+/// (`corpus_manifests.lane`), not a table of its own (decision 0104); 3 was atoms stored as segments
+/// of the arena (decision 0049); 2 the prefilter vocabulary keyed by atom.
+const STORE_FILE_FLOOR: i64 = 5;
 const _: () = assert!(
     SCHEMA_VERSION == STORE_FILE_FLOOR,
     "raising the floor requires a new STORE_FILE_NAME"
@@ -63,7 +68,10 @@ CREATE TABLE IF NOT EXISTS source_objects (
     raw_length INTEGER NOT NULL,
     codec_id INTEGER NOT NULL,
     frame BLOB NOT NULL,
-    created_generation INTEGER NOT NULL
+    created_generation INTEGER NOT NULL,
+    seg INTEGER NOT NULL DEFAULT 0,
+    seg_at INTEGER NOT NULL DEFAULT 0,
+    seg_len INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 CREATE TABLE IF NOT EXISTS source_aliases (
     alias_hash_id INTEGER PRIMARY KEY REFERENCES hashes(hash_id),
@@ -81,8 +89,15 @@ CREATE TABLE IF NOT EXISTS tape_objects (
     raw_length INTEGER NOT NULL,
     frame BLOB NOT NULL,
     created_generation INTEGER NOT NULL,
+    seg INTEGER NOT NULL DEFAULT 0,
+    seg_at INTEGER NOT NULL DEFAULT 0,
+    seg_len INTEGER NOT NULL DEFAULT 0,
     UNIQUE (source_id, grammar_id, grammar_version, tape_format_version)
 ) STRICT;
+-- The segments sources and tapes are in (decision 0295 step 5: `<store>.objects/<seg>.seg`, mapped, uncompressed): a
+-- row of codec 0 names its range (`seg`, `seg_at`, `seg_len`) and holds no frame; `seg` 0 is a row whose bytes are its
+-- `frame` (zstd), and -1 one whose segment went missing (absent until stored again).
+CREATE TABLE IF NOT EXISTS object_segments(seg INTEGER PRIMARY KEY);
 CREATE INDEX IF NOT EXISTS tape_objects_by_hash ON tape_objects(canonical_hash_id);
 -- The documents a file derives from its own (an embedded program, a generated one), keyed by the
 -- primary document's tape: documents are a function of source, grammar version and tape format,
@@ -179,6 +194,16 @@ CREATE TABLE IF NOT EXISTS store_state (
 ) STRICT;
 INSERT OR IGNORE INTO store_state(singleton, generation) VALUES (1, 1);
 
+-- Which store this file is: random when it is created. What a process holds of a store by its path (its atoms,
+-- atoms.rs; its threads' connections, connection.rs) belongs to the store of this identity only, so a store
+-- deleted and created again at the same path, by any process, is not read with the old one's. Additive: older
+-- binaries never read it.
+CREATE TABLE IF NOT EXISTS store_identity (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    id INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random());
+
 CREATE TABLE IF NOT EXISTS candidate_catalogs (
     catalog_id INTEGER PRIMARY KEY,
     identity_hash_id INTEGER NOT NULL UNIQUE REFERENCES hashes(hash_id)
@@ -252,33 +277,566 @@ CREATE TABLE IF NOT EXISTS search_index_sets (
 CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_fts USING fts5(
     token, content='', contentless_delete=1, detail=full, tokenize='ascii'
 );
+-- Physical rule planning reads exact term frequencies from SQL instead of estimating them in Rust.
+CREATE VIRTUAL TABLE IF NOT EXISTS search_kind_vocab USING fts5vocab(search_kind_fts, 'row');
 CREATE TRIGGER IF NOT EXISTS delete_tape_search_index BEFORE DELETE ON tape_objects BEGIN
     DELETE FROM search_kind_fts WHERE rowid=OLD.tape_id;
 END;
+
+-- The facts engine's memo (facts_memo.rs): per-file clause results keyed by content (a source),
+-- fact schema version, plan digest and, for a clause that reads the path, the path ('' for a
+-- content-pure one). Additive: every row cascades from its source and names no other shared row
+-- (hashes, strings, paths), so an older binary's collection can delete sources under it without
+-- orphaning or misreading a row, and the floor stays.
+CREATE TABLE IF NOT EXISTS facts_plan_sets (
+    set_digest BLOB NOT NULL CHECK(length(set_digest) = 32),
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    PRIMARY KEY (set_digest, ordinal)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS facts_results (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    fact_schema INTEGER NOT NULL CHECK(fact_schema >= 0),
+    path TEXT NOT NULL,
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    codec_id INTEGER NOT NULL,
+    raw_length INTEGER NOT NULL,
+    frame BLOB NOT NULL,
+    PRIMARY KEY (source_id, fact_schema, path, plan_digest)
+) STRICT, WITHOUT ROWID;
+-- Neural Engine models compiled on this machine (decision 0098 §3): a compiled model's archive under the digest of
+-- its template and its fixed relation. A JIT-compiled model is a fact of the store, read back by later runs; an AOT
+-- one is part of the executable. Additive and referencing nothing, so the floor stays.
+CREATE TABLE IF NOT EXISTS accel_models (
+    model_key BLOB NOT NULL PRIMARY KEY CHECK(length(model_key) = 32),
+    archive BLOB NOT NULL
+) STRICT, WITHOUT ROWID;
+-- Bit i of `words` (little-endian u64s): the set's clause i ran with nothing to report; its
+-- counts are in the `counts` frame. A clear bit is unknown, never absent.
+CREATE TABLE IF NOT EXISTS facts_completions (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    fact_schema INTEGER NOT NULL CHECK(fact_schema >= 0),
+    path TEXT NOT NULL,
+    set_digest BLOB NOT NULL CHECK(length(set_digest) = 32),
+    words BLOB NOT NULL,
+    codec_id INTEGER NOT NULL,
+    raw_length INTEGER NOT NULL,
+    counts BLOB NOT NULL,
+    PRIMARY KEY (source_id, fact_schema, path, set_digest)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
+
+-- The cross-file memo's stored rows (decision 0076, cross_rows.rs). `cross_components` maps a component's digest
+-- (its plan, key and documents' keys) to a source holding that descriptor; `cross_rows` holds its rows of each
+-- memoised relation, clustered by (source, relation), so a run's lookup and its replay are one query each. Additive:
+-- every row cascades from its source, which a run's manifest names (decision 0053).
+CREATE TABLE IF NOT EXISTS cross_components (
+    digest TEXT PRIMARY KEY,
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS cross_components_by_source ON cross_components(source_id);
+CREATE TABLE IF NOT EXISTS cross_rows (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    rel TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    c0 INTEGER, c1 INTEGER, c2 INTEGER, c3 INTEGER, c4 INTEGER, c5 INTEGER, c6 INTEGER, c7 INTEGER,
+    PRIMARY KEY (source_id, rel, seq)
+) STRICT, WITHOUT ROWID;
+-- The rows as blocks (cross_rows.rs): a component's rows of one relation, its columns delta-coded, one row each.
+-- `cross_rows` is what older binaries write and read; components stored as blocks are named apart from theirs.
+CREATE TABLE IF NOT EXISTS cross_blocks (
+    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
+    rel TEXT NOT NULL,
+    width INTEGER NOT NULL,
+    rows INTEGER NOT NULL,
+    data BLOB NOT NULL,
+    PRIMARY KEY (source_id, rel)
+) STRICT, WITHOUT ROWID;
+
+-- Corpus runs' roots (decision 0053, corpus_runs.rs). Each run of a root records a manifest: the sources it read
+-- (delta-varint ids, sorted), the grammar version and tape format of their tapes, and its memo plan. A run whose
+-- manifest matches an earlier one of its root only moves that one's `last_run`. `corpus_live` is the union of the
+-- kept manifests' (source, grammar version, tape format): collection keeps those sources and tapes. A plan in
+-- `corpus_plans` that no kept manifest names (`live` 0) has its memo rows collected. Additive: an older binary's
+-- collection ignores these tables, which costs a corpus run a cache miss, never a wrong result.
+CREATE TABLE IF NOT EXISTS corpus_roots (
+    root_id INTEGER PRIMARY KEY,
+    path TEXT NOT NULL UNIQUE
+) STRICT;
+CREATE TABLE IF NOT EXISTS corpus_manifests (
+    manifest_id INTEGER PRIMARY KEY,
+    root_id INTEGER NOT NULL REFERENCES corpus_roots(root_id),
+    last_run INTEGER NOT NULL,
+    last_time INTEGER NOT NULL,
+    grammar_version INTEGER NOT NULL,
+    tape_format INTEGER NOT NULL,
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    sources BLOB NOT NULL,
+    -- What the run was of (`record_corpus_run_lane`): a root's last runs are protected by lane. NULL: the root's one
+    -- lane.
+    lane BLOB CHECK(lane IS NULL OR length(lane) = 32),
+    -- The lane's policy set (`record_corpus_run_policy`, decision 0302): a set's newer lane supersedes its older. NULL:
+    -- a lane of no set. Additive (`ADDED_COLUMNS`): an older binary ignores it.
+    policy BLOB CHECK(policy IS NULL OR length(policy) = 32),
+    UNIQUE (root_id, digest)
+) STRICT;
+CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
+CREATE TABLE IF NOT EXISTS corpus_live (
+    source_id INTEGER NOT NULL,
+    grammar_version INTEGER NOT NULL,
+    tape_format INTEGER NOT NULL,
+    PRIMARY KEY (source_id, grammar_version, tape_format)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS corpus_plans (
+    plan_digest BLOB PRIMARY KEY CHECK(length(plan_digest) = 32),
+    live INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+-- Per memo plan, the relations its entries hold rows of, with their declared columns as a JSON array of
+-- [name, type] (docs/sql-access/01-design.md §2): a session reads a run's frames by name. Collected with the plan.
+CREATE TABLE IF NOT EXISTS corpus_plan_relations (
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    relation TEXT NOT NULL,
+    columns TEXT NOT NULL,
+    PRIMARY KEY (plan_digest, relation)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS corpus_state (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    run INTEGER NOT NULL,
+    history_bytes INTEGER NOT NULL,
+    due INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO corpus_state(singleton, run, history_bytes, due) VALUES (1, 0, 0, 0);
+-- The last keep decision: the run counter and unix second it was made at. A new manifest makes a decision due, but
+-- a pass makes one only when it can change something (`CorpusPolicy`): a root past its protected runs since, or
+-- enough runs or seconds since. A new root's first runs are protected, so a run of fresh roots decides rarely.
+-- Additive: an older binary ignores it. `swept`: the decision whose unreachable frames were last collected (decision
+-- 0227); the `frames` upkeep job is due while `run` is past it (`ADDED_COLUMNS` adds it to an older store).
+CREATE TABLE IF NOT EXISTS corpus_decided (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    run INTEGER NOT NULL,
+    time INTEGER NOT NULL,
+    swept INTEGER NOT NULL DEFAULT 0
+) STRICT;
+INSERT OR IGNORE INTO corpus_decided(singleton, run, time) VALUES (1, 0, 0);
+-- A root's stat index (corpus_runs.rs), as git's: a file's size, mtime and inode when its source was last read, and
+-- the source. A run trusts an entry whose stat matches and whose mtime is over two seconds before `recorded_ns` (an
+-- edit in the same tick as the recording could otherwise keep its stat), and then neither reads nor hashes the file.
+-- An entry whose source was collected is not trusted. Additive: an older binary ignores it.
+CREATE TABLE IF NOT EXISTS corpus_stats (
+    root_id INTEGER NOT NULL REFERENCES corpus_roots(root_id),
+    path TEXT NOT NULL,
+    size INTEGER NOT NULL,
+    mtime_ns INTEGER NOT NULL,
+    inode INTEGER NOT NULL,
+    source_id INTEGER NOT NULL,
+    recorded_ns INTEGER NOT NULL,
+    PRIMARY KEY (root_id, path)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS facts_results_by_plan ON facts_results(plan_digest);
+-- The other memo plans a manifest names (`record_corpus_run_naming`): a prepared program's (decision 0073). They are
+-- live while a kept manifest names them. Additive: an older binary ignores it, and collects nothing by it.
+CREATE TABLE IF NOT EXISTS corpus_manifest_plans (
+    manifest_id INTEGER NOT NULL,
+    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
+    PRIMARY KEY (manifest_id, plan_digest)
+) STRICT, WITHOUT ROWID;
+-- The sweep of the corpus memo's retired schemas (`RETIRED_CORPUS_MEMO_SCHEMAS`): done once a pass finds no more.
+CREATE TABLE IF NOT EXISTS corpus_swept (
+    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
+    done INTEGER NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO corpus_swept(singleton, done) VALUES (1, 0);
+
+-- The single interner (atoms.rs, decision 0049): dense, append-only; atom 0 is the empty string.
+-- Each row is a run of consecutive atoms from `first`: their end offsets (u32, little-endian,
+-- relative to the row's bytes) and their bytes. SQL reads atoms through the `atoms` virtual table
+-- over the process's arena; a row that names an atom commits with or after its segment.
+CREATE TABLE IF NOT EXISTS atom_segment (
+    first INTEGER PRIMARY KEY CHECK(first >= 0),
+    ends BLOB NOT NULL,
+    bytes BLOB NOT NULL
+) STRICT;
+INSERT OR IGNORE INTO atom_segment(first,ends,bytes) VALUES (0,x'00000000',x'');
+
+-- The derivation graph (derivation.rs): fact names (atoms) bound to digests, and each
+-- derivation's inputs with the digest it read. A derivation's output is a name too, so an
+-- unchanged output rebinds nothing (early cutoff). Additive: older binaries never read these tables.
+CREATE TABLE IF NOT EXISTS name_bindings (
+    name_atom INTEGER PRIMARY KEY,
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    revision INTEGER NOT NULL CHECK(revision >= 0)
+) STRICT;
+CREATE TABLE IF NOT EXISTS derivations (
+    output_atom INTEGER PRIMARY KEY,
+    producer BLOB NOT NULL CHECK(length(producer) = 32),
+    status INTEGER NOT NULL,
+    cost INTEGER NOT NULL CHECK(cost >= 0)
+) STRICT;
+CREATE TABLE IF NOT EXISTS derivation_inputs (
+    output_atom INTEGER NOT NULL REFERENCES derivations(output_atom) ON DELETE CASCADE,
+    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
+    name_atom INTEGER,
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    PRIMARY KEY (output_atom, ordinal)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS derivation_inputs_by_name ON derivation_inputs(name_atom);
+-- A push in progress (open-items O1): the row is committed before a push writes anything and
+-- deleted after its last write reaches SQLite, so a store that holds it may hold a prefix of a
+-- push's writes and is recovered before the next push.
+CREATE TABLE IF NOT EXISTS push_pending (
+    pending INTEGER PRIMARY KEY CHECK(pending = 1)
+) STRICT;
+-- Collection keeps pages some binding names (tree_pages.rs).
+CREATE INDEX IF NOT EXISTS name_bindings_by_digest ON name_bindings(digest);
+
+-- Per-directory result pages (tree_pages.rs), keyed by what the
+-- directory's result depends on; `digest` is the page derivation's output digest.
+CREATE TABLE IF NOT EXISTS tree_pages (
+    page_key BLOB NOT NULL CHECK(length(page_key) = 32),
+    page_index INTEGER NOT NULL CHECK(page_index >= 0),
+    page_count INTEGER NOT NULL CHECK(page_count > 0),
+    digest BLOB NOT NULL CHECK(length(digest) = 32),
+    codec_id INTEGER NOT NULL,
+    raw_length INTEGER NOT NULL CHECK(raw_length >= 0),
+    file_count INTEGER NOT NULL CHECK(file_count >= 0 AND file_count <= 64),
+    frame BLOB NOT NULL,
+    PRIMARY KEY (page_key, page_index)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS tree_pages_by_digest ON tree_pages(digest);
+
+-- The prefilter's per-tape access paths (prefilter.rs, from PIAT's anchor
+-- store): kind positions, case-exact term postings and the nodes terms do not cover, each keyed by
+-- tape and dying with it. Kinds are atoms (tape tag * 1024 + kind code). Postings are delta-varint
+-- preorder lists (`nera_postings`). The frequency tables count over every tape that has a set.
+CREATE TABLE IF NOT EXISTS prefilter_sets (
+    tape_id INTEGER PRIMARY KEY REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
+    version INTEGER NOT NULL CHECK(version >= 0),
+    nodes INTEGER NOT NULL CHECK(nodes >= 0),
+    edges BLOB NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS tape_kind_counts (
+    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
+    kind INTEGER NOT NULL,
+    n INTEGER NOT NULL CHECK(n > 0),
+    size INTEGER NOT NULL CHECK(size >= 0),
+    postings BLOB NOT NULL,
+    PRIMARY KEY (tape_id, kind)
+) STRICT, WITHOUT ROWID;
+-- Ingestion statistics (stats/ingest.rs, from Typing-support's `stats.py`): nodes of each kind
+-- and the sum of their descendants, and direct edges by (parent kind, child kind, field; 0 is
+-- none). A tape's own edges are its set's `edges` segment (`nera_edges`), subtracted when it goes.
+CREATE TABLE IF NOT EXISTS kind_size (
+    kind INTEGER PRIMARY KEY,
+    n INTEGER NOT NULL,
+    size INTEGER NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS edge_freq (
+    pkind INTEGER NOT NULL,
+    ckind INTEGER NOT NULL,
+    field INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    PRIMARY KEY (pkind, ckind, field)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS edge_freq_by_child ON edge_freq(ckind);
+-- Fact relations' column statistics, merged per batch of documents (`ingest::merge_facts`):
+-- per column, rows, distinct values, the sum of squared value counts corpus-wide (`sq`) and
+-- within a document (`sqd`); per value of a value column, its count, documents and `sqd`.
+CREATE TABLE IF NOT EXISTS fact_stats (
+    tbl TEXT NOT NULL,
+    col TEXT NOT NULL,
+    rows INTEGER NOT NULL,
+    ndv INTEGER NOT NULL,
+    sq INTEGER NOT NULL,
+    sqd INTEGER NOT NULL,
+    PRIMARY KEY (tbl, col)
+) STRICT, WITHOUT ROWID;
+-- Compiled plans (stats/plans.rs): decisions and programs under the plan's identity, each
+-- statistic a decision read with the interval over which the decision stays valid, and the
+-- observed selectivity and cost per root of each plan per backend.
+CREATE TABLE IF NOT EXISTS compiled_plans (
+    plan BLOB PRIMARY KEY CHECK(length(plan) = 32),
+    compiler INTEGER NOT NULL,
+    decisions TEXT NOT NULL,
+    program BLOB NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS compiled_plan_reads (
+    plan BLOB NOT NULL REFERENCES compiled_plans(plan) ON DELETE CASCADE,
+    stat TEXT NOT NULL,
+    lo INTEGER NOT NULL,
+    hi INTEGER NOT NULL,
+    PRIMARY KEY (plan, stat)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS plan_feedback (
+    plan BLOB NOT NULL,
+    backend TEXT NOT NULL,
+    selectivity REAL NOT NULL,
+    ns_per_root REAL NOT NULL,
+    samples INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL,
+    PRIMARY KEY (plan, backend)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS fact_value_stats (
+    tbl TEXT NOT NULL,
+    col TEXT NOT NULL,
+    val ANY,
+    n INTEGER NOT NULL,
+    docs INTEGER NOT NULL,
+    sqd INTEGER NOT NULL,
+    PRIMARY KEY (tbl, col, val)
+) STRICT, WITHOUT ROWID;
+-- Every `term` column below is the term's atom (`atoms`): its text is stored once.
+CREATE TABLE IF NOT EXISTS term_postings (
+    lang INTEGER NOT NULL,
+    term INTEGER NOT NULL,
+    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
+    kind INTEGER NOT NULL,
+    n INTEGER NOT NULL CHECK(n > 0),
+    postings BLOB NOT NULL,
+    PRIMARY KEY (lang, term, tape_id, kind)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS term_postings_by_tape ON term_postings(tape_id);
+CREATE TABLE IF NOT EXISTS term_freq (
+    lang INTEGER NOT NULL,
+    term INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    PRIMARY KEY (lang, term)
+) STRICT, WITHOUT ROWID;
+-- Planner statistics (stats/inputs.rs, from Data-layer-rule-expressivity's `value_frequency`
+-- and `value_kind_frequency`): nodes per (term, kind) and covered nodes per kind, over every
+-- tape with a set. A kind's uncovered nodes are `kind_size.n - term_kind_freq.n`.
+CREATE TABLE IF NOT EXISTS term_node_freq (
+    lang INTEGER NOT NULL,
+    term INTEGER NOT NULL,
+    kind INTEGER NOT NULL,
+    n INTEGER NOT NULL,
+    PRIMARY KEY (lang, term, kind)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS term_kind_freq (
+    kind INTEGER PRIMARY KEY,
+    n INTEGER NOT NULL
+) STRICT;
+CREATE TABLE IF NOT EXISTS term_coverage (
+    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
+    kind INTEGER NOT NULL,
+    bad INTEGER NOT NULL,
+    residue INTEGER NOT NULL,
+    missing BLOB NOT NULL,
+    PRIMARY KEY (tape_id, kind)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS term_coverage_residue ON term_coverage(kind) WHERE residue > 0;
+-- Publication adds the counts in one statement per table; removal, including a cascade from a
+-- collected tape, counts down here.
+CREATE TRIGGER IF NOT EXISTS tape_kind_count_delete AFTER DELETE ON tape_kind_counts BEGIN
+    UPDATE kind_size SET n=n-OLD.n, size=size-OLD.size WHERE kind=OLD.kind;
+    DELETE FROM kind_size WHERE kind=OLD.kind AND n<=0;
+END;
+CREATE TRIGGER IF NOT EXISTS prefilter_set_delete AFTER DELETE ON prefilter_sets BEGIN
+    UPDATE edge_freq SET n=edge_freq.n-e.n FROM nera_edges(OLD.edges) e
+        WHERE edge_freq.pkind=e.pkind AND edge_freq.ckind=e.ckind AND edge_freq.field=e.field;
+    DELETE FROM edge_freq WHERE n<=0;
+END;
+CREATE TRIGGER IF NOT EXISTS term_posting_delete AFTER DELETE ON term_postings BEGIN
+    UPDATE term_freq SET n=n-1 WHERE lang=OLD.lang AND term=OLD.term;
+    DELETE FROM term_freq WHERE lang=OLD.lang AND term=OLD.term AND n<=0;
+    UPDATE term_node_freq SET n=n-OLD.n WHERE lang=OLD.lang AND term=OLD.term AND kind=OLD.kind;
+    DELETE FROM term_node_freq WHERE lang=OLD.lang AND term=OLD.term AND kind=OLD.kind AND n<=0;
+    UPDATE term_kind_freq SET n=n-OLD.n WHERE kind=OLD.kind;
+    DELETE FROM term_kind_freq WHERE kind=OLD.kind AND n<=0;
+END;
+
+-- The prefilter's regex vocabulary (vocabulary.rs, from PIAT's
+-- `vocabulary.sql`): each registered predicate's matching terms, filled in SQL when a candidate
+-- statement first names it and kept current by the terms each publication adds. A term that
+-- leaves `term_freq` leaves every predicate's set by cascade.
+CREATE TABLE IF NOT EXISTS vocabulary_predicate (
+    lang INTEGER NOT NULL,
+    expression TEXT NOT NULL,
+    ready INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (lang, expression)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS vocabulary_term (
+    lang INTEGER NOT NULL,
+    expression TEXT NOT NULL,
+    term INTEGER NOT NULL,
+    PRIMARY KEY (lang, expression, term),
+    FOREIGN KEY (lang, expression) REFERENCES vocabulary_predicate(lang, expression) ON DELETE CASCADE,
+    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS vocabulary_term_deleted ON vocabulary_term(lang, term);
+-- An exact literal set (`^(?:a|b)$`) matches exactly its literals: a join, not a regex per term.
+-- A literal is text: it need not be a term (or an atom) yet.
+CREATE TABLE IF NOT EXISTS vocabulary_literal (
+    lang INTEGER NOT NULL,
+    expression TEXT NOT NULL,
+    term TEXT NOT NULL,
+    PRIMARY KEY (lang, term, expression),
+    FOREIGN KEY (lang, expression) REFERENCES vocabulary_predicate(lang, expression) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS vocabulary_literal_expression ON vocabulary_literal(lang, expression);
+CREATE TABLE IF NOT EXISTS vocabulary_pending (
+    lang INTEGER NOT NULL,
+    term INTEGER NOT NULL,
+    PRIMARY KEY (lang, term),
+    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+-- An upsert that only counts an existing term up is an UPDATE: only new terms are pending.
+CREATE TRIGGER IF NOT EXISTS vocabulary_added AFTER INSERT ON term_freq BEGIN
+    INSERT OR IGNORE INTO vocabulary_pending VALUES(NEW.lang, NEW.term);
+END;
+-- The text layer's vocabulary (code_rule_dsl/text, decision 0042): each kept plan's matching
+-- terms by the plan's key. A key is filled over the whole vocabulary when first seen, then over
+-- the terms added since: `text_pending` is a log of added terms in order, and `upto` the last
+-- entry a key has read. Entries every key has read are dropped.
+CREATE TABLE IF NOT EXISTS text_matcher (
+    lang INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    plan TEXT NOT NULL,
+    upto INTEGER NOT NULL,
+    PRIMARY KEY (lang, key)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS text_term (
+    lang INTEGER NOT NULL,
+    key TEXT NOT NULL,
+    term INTEGER NOT NULL,
+    PRIMARY KEY (lang, key, term),
+    FOREIGN KEY (lang, key) REFERENCES text_matcher(lang, key) ON DELETE CASCADE,
+    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS text_term_deleted ON text_term(lang, term);
+CREATE TABLE IF NOT EXISTS text_pending (
+    seq INTEGER PRIMARY KEY AUTOINCREMENT,
+    lang INTEGER NOT NULL,
+    term INTEGER NOT NULL
+) STRICT;
+CREATE TRIGGER IF NOT EXISTS text_vocabulary_added AFTER INSERT ON term_freq BEGIN
+    INSERT INTO text_pending(lang, term) VALUES(NEW.lang, NEW.term);
+END;
+-- A run's relations as stored frames (decision 0104, `frames`), by space, relation, identity and part.
+CREATE TABLE IF NOT EXISTS frames(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
+    part INTEGER NOT NULL, digest INTEGER NOT NULL, reads BLOB NOT NULL, width INTEGER NOT NULL, rows INTEGER NOT NULL,
+    types BLOB NOT NULL, data BLOB NOT NULL, used INTEGER NOT NULL, seg INTEGER NOT NULL DEFAULT 0,
+    seg_at INTEGER NOT NULL DEFAULT 0, seg_len INTEGER NOT NULL DEFAULT 0, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+-- The segments frames are in (decision 0295 §4: `<store>.frames/<seg>.seg`, mapped): a frame's row names its range
+-- (`seg`, `seg_at`, `seg_len`) and holds no bytes; `seg` 0 is a frame whose bytes are its `data` (a forked process's,
+-- whose symbols the writer renumbers, or one written at once by `keep_frames`).
+CREATE TABLE IF NOT EXISTS frame_segments(seg INTEGER PRIMARY KEY);
+-- A memo frame's digest is its document's key, a function of its path (`memo::doc_keys`): a path's contents are found
+-- by it, without reading every frame of the relation (each a page, its rows inline).
+CREATE INDEX IF NOT EXISTS frames_by_digest ON frames(space, rel, digest);
+-- The run each frame was last used by (decision 0138): apart from `frames`, whose records hold the frame's encoded
+-- rows, since SQLite rewrites a whole record (its overflow pages too) to change one column, and reads past `data`
+-- to read `used`. Every frame has its row here: put with it, forgotten with it. `frames.used` is the run that put
+-- the frame, for an older binary. A store made before this table gets its rows from `frames.used`, once: SCHEMA is
+-- applied when an object is missing, and the rows are then all there (`OR IGNORE`).
+CREATE TABLE IF NOT EXISTS frame_part_used(space BLOB NOT NULL, rel TEXT NOT NULL, ident BLOB NOT NULL,
+    part INTEGER NOT NULL, used INTEGER NOT NULL, PRIMARY KEY (space, rel, ident, part)) WITHOUT ROWID;
+INSERT OR IGNORE INTO frame_part_used(space, rel, ident, part, used) SELECT space, rel, ident, part, used FROM frames;
+-- How many runs each space has counted.
+CREATE TABLE IF NOT EXISTS frame_spaces(space BLOB PRIMARY KEY, runs INTEGER NOT NULL) WITHOUT ROWID;
+-- The spaces' confirmations (decision 0117 step 5): each frame found unchanged under other reads than it names.
+CREATE TABLE IF NOT EXISTS frame_confirmed(space BLOB PRIMARY KEY, data BLOB NOT NULL) WITHOUT ROWID;
+-- Each run's use of a space (decision 0117 step 5): the relations its programs used, as sorted keys, one row a
+-- run, the last four runs'. A frame is collected once the run that put it is that old and no run since
+-- used its relation.
+CREATE TABLE IF NOT EXISTS frame_used(space BLOB NOT NULL, run INTEGER NOT NULL, rels BLOB NOT NULL,
+    PRIMARY KEY (space, run)) WITHOUT ROWID;
+-- What each program derives in a space (decision 0227): its relations, as sorted keys, one row a program (`run` 0),
+-- written when it first puts there. A relation's frames are kept while a live program's row names it
+-- (`frames::collect_unreachable_frames`); rows of a run (`run` > 0) are an older binary's, and go at the next collection.
+CREATE TABLE IF NOT EXISTS frame_program_used(space BLOB NOT NULL, program BLOB NOT NULL, run INTEGER NOT NULL,
+    rels BLOB NOT NULL, PRIMARY KEY (space, program, run)) WITHOUT ROWID;
+-- The per-file memo's entries (decision 0240 §4, 0295 §4): where each one's image is in the segments beside the
+-- store (`<store>.memo/<pack>.seg`, `framed` 1: offset and length in the segment's block), by its plan's space and
+-- its part (its content's and path's), with its path, its content's SHA-256 and its document key. A path's contents
+-- are ordered by where they were written. `over_*`: what a later run kept over the entry, its identities (decision
+-- 0280), in a segment too; `over_len` 0 is nothing. `framed` 0: an entry of the packs before (`<pack>.pack`,
+-- compressed), not read (`ADDED_COLUMNS` adds these columns to an older store; an older binary reads a segment's row
+-- as a pack's that is not there, a miss).
+CREATE TABLE IF NOT EXISTS memo_entries(space BLOB NOT NULL, part INTEGER NOT NULL, path TEXT NOT NULL,
+    digest BLOB NOT NULL, doc INTEGER NOT NULL, pack INTEGER NOT NULL, at INTEGER NOT NULL, len INTEGER NOT NULL,
+    raw INTEGER NOT NULL, over_pack INTEGER NOT NULL DEFAULT 0, over_at INTEGER NOT NULL DEFAULT 0,
+    over_len INTEGER NOT NULL DEFAULT 0, over_raw INTEGER NOT NULL DEFAULT 0, framed INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY (space, part)) WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS memo_entries_by_path ON memo_entries(space, path, pack, at);
+-- The segments (and packs before) the entries are in.
+CREATE TABLE IF NOT EXISTS memo_packs(pack INTEGER PRIMARY KEY);
 "#;
 
 impl ContentStore {
     /// Configures `connection` and brings its store up to SCHEMA. A store at this floor that holds
     /// every SCHEMA object is only read, so opening it never waits for another process's writer;
     /// creation, a floor raise or a missing object (an index this build added) takes the
-    /// exclusive lock and applies SCHEMA.
-    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<()> {
+    /// exclusive lock and applies SCHEMA. Returns the store's identity (`store_identity`).
+    pub(super) fn initialize(connection: &mut Connection) -> StoreResult<i64> {
         configure_connection(connection)?;
-        if compatible_version(connection)? == SCHEMA_VERSION && holds_schema_objects(connection)? {
-            return Ok(());
+        if compatible_version(connection)? != SCHEMA_VERSION || !holds_schema_objects(connection)? {
+            // A store made here is made by a writer's thread (decision 0104: a run's own threads only read): once,
+            // before anything reads it.
+            rerail_accel::exec::scoped(|scope| {
+                scope
+                    .spawn(|| -> StoreResult<()> {
+                        super::hazards::behind_the_run();
+                        let transaction =
+                            connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
+                        // Another open may have created the store since the read above.
+                        let version = compatible_version(&transaction)?;
+                        for (table, column, declaration) in missing_columns(&transaction)? {
+                            transaction.execute_batch(&format!(
+                                "ALTER TABLE {table} ADD COLUMN {column} {declaration}"
+                            ))?;
+                        }
+                        transaction.execute_batch(SCHEMA)?;
+                        if version != SCHEMA_VERSION {
+                            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+                        }
+                        transaction.commit()?;
+                        Ok(())
+                    })
+                    .join()
+                    .unwrap_or_else(|p| std::panic::resume_unwind(p))
+            })?;
+            if let Some(path) = connection.path() {
+                super::atoms::forget_identity(path);
+                super::frames::forget_snapshot(path);
+            }
         }
-        let transaction = connection.transaction_with_behavior(TransactionBehavior::Exclusive)?;
-        // Another open may have created the store since the read above.
-        let version = compatible_version(&transaction)?;
-        if version == 0 {
-            transaction.pragma_update(None, "auto_vacuum", "INCREMENTAL")?;
+        let id: Option<i64> = connection
+            .query_row_cached(
+                "SELECT id FROM store_identity WHERE singleton = 1",
+                [],
+                |row| row.get(0),
+            )
+            .optional()?;
+        if let Some(id) = id {
+            return Ok(id);
         }
-        transaction.execute_batch(SCHEMA)?;
-        if version != SCHEMA_VERSION {
-            transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
+        // A copy of a store published without an identity (the tests' template, `corpus::test_store`): it becomes a
+        // store of its own at its first open, as a store made here does, by a writer's thread.
+        rerail_accel::exec::scoped(|scope| {
+            scope
+                .spawn(|| -> StoreResult<()> {
+                    super::hazards::behind_the_run();
+                    let transaction =
+                        connection.transaction_with_behavior(TransactionBehavior::Immediate)?;
+                    transaction.execute_cached(
+                        "INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random())",
+                        [],
+                    )?;
+                    transaction.commit()?;
+                    Ok(())
+                })
+                .join()
+                .unwrap_or_else(|p| std::panic::resume_unwind(p))
+        })?;
+        if let Some(path) = connection.path() {
+            super::atoms::forget_identity(path);
         }
-        transaction.commit()?;
-        Ok(())
+        Ok(connection.query_row_cached(
+            "SELECT id FROM store_identity WHERE singleton = 1",
+            [],
+            |row| row.get(0),
+        )?)
     }
 }
 
@@ -288,6 +846,13 @@ fn compatible_version(connection: &Connection) -> StoreResult<i64> {
     if version > SCHEMA_VERSION {
         return Err(StoreError::Invalid(format!(
             "database schema version {version} is newer than supported version {SCHEMA_VERSION}: update Rerail"
+        )));
+    }
+    // A store is never upgraded (STORE_FILE_NAME): an older floor's `atoms` table would hide the
+    // `atoms` virtual table (decision 0049).
+    if version != 0 && version < STORE_FILE_FLOOR {
+        return Err(StoreError::Invalid(format!(
+            "database schema version {version} is older than this build's floor {STORE_FILE_FLOOR}: the store is a cache; delete it"
         )));
     }
     Ok(version)
@@ -301,18 +866,113 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
     let expected = SCHEMA_OBJECTS
         .as_ref()
         .map_err(|error| StoreError::Corrupt(format!("the schema does not apply: {error}")))?;
-    Ok(expected.iter().all(|object| present.contains(object)))
+    Ok(expected.iter().all(|object| present.contains(object))
+        && missing_columns(connection)?.is_empty())
 }
 
-/// Every object SCHEMA creates, as `(type, name)`: read once from SCHEMA applied to an in-memory
-/// database, so it cannot drift from SCHEMA.
-static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> = LazyLock::new(|| {
-    let connection = Connection::open_in_memory().map_err(|error| error.to_string())?;
-    connection
-        .execute_batch(SCHEMA)
-        .map_err(|error| error.to_string())?;
-    schema_object_names(&connection).map_err(|error| error.to_string())
-});
+/// Columns SCHEMA's tables gained after stores were made with them, as `(table, column, declaration)`: `CREATE
+/// TABLE IF NOT EXISTS` leaves an older store's table as it was, so applying SCHEMA adds these (`ALTER TABLE`).
+/// Each has a default, so an older binary's inserts, which do not name it, still apply.
+const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
+    (
+        "corpus_manifests",
+        "policy",
+        "BLOB CHECK(policy IS NULL OR length(policy) = 32)",
+    ),
+    ("memo_entries", "over_pack", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "over_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "over_len", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "over_raw", "INTEGER NOT NULL DEFAULT 0"),
+    ("memo_entries", "framed", "INTEGER NOT NULL DEFAULT 0"),
+    ("source_objects", "seg", "INTEGER NOT NULL DEFAULT 0"),
+    ("source_objects", "seg_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("source_objects", "seg_len", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "seg", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "seg_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("tape_objects", "seg_len", "INTEGER NOT NULL DEFAULT 0"),
+];
+
+/// The `ADDED_COLUMNS` a store's tables lack (of the tables it has).
+fn missing_columns(
+    connection: &Connection,
+) -> StoreResult<Vec<&'static (&'static str, &'static str, &'static str)>> {
+    let mut missing = Vec::new();
+    for added in ADDED_COLUMNS {
+        let (table, column, _) = added;
+        let (tables, columns): (i64, i64) = connection.query_row(
+            "SELECT (SELECT count(*) FROM sqlite_master WHERE type='table' AND name=?1), (SELECT count(*) FROM pragma_table_info(?1) WHERE name=?2)",
+            params![table, column],
+            |r| Ok((r.get(0)?, r.get(1)?)),
+        )?;
+        if tables > 0 && columns == 0 {
+            missing.push(added);
+        }
+    }
+    Ok(missing)
+}
+
+/// Every object SCHEMA creates, as `(type, name)`, read from its `CREATE … IF NOT EXISTS` statements. Its text is
+/// the whole of it, so this cannot drift from SCHEMA (`schema_objects_are_what_schema_creates` applies SCHEMA and
+/// compares). It was SCHEMA applied to an in-memory database, once a process: 124 statements written on every
+/// open, which a warm run's check refuses (`RERAIL_WARM`). An object SQLite makes along with one of these (a
+/// table's `sqlite_autoindex_*`, a full-text table's shadow tables) comes and goes with it.
+static SCHEMA_OBJECTS: LazyLock<Result<Vec<(String, String)>, String>> =
+    LazyLock::new(|| Ok(schema_objects(SCHEMA)));
+
+fn schema_objects(schema: &str) -> Vec<(String, String)> {
+    let text: String = schema
+        .lines()
+        .map(|l| l.split("--").next().unwrap_or(""))
+        .collect::<Vec<_>>()
+        .join("\n");
+    let words: Vec<&str> = text
+        .split(|c: char| c.is_whitespace() || c == '(' || c == ';')
+        .filter(|w| !w.is_empty())
+        .collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < words.len() {
+        if words[i].eq_ignore_ascii_case("CREATE") {
+            let rest = &words[i + 1..];
+            let (kind, at) = match rest {
+                [t, ..] if t.eq_ignore_ascii_case("TABLE") => ("table", 1),
+                [v, t, ..]
+                    if v.eq_ignore_ascii_case("VIRTUAL") && t.eq_ignore_ascii_case("TABLE") =>
+                {
+                    ("table", 2)
+                }
+                [u, t, ..]
+                    if u.eq_ignore_ascii_case("UNIQUE") && t.eq_ignore_ascii_case("INDEX") =>
+                {
+                    ("index", 2)
+                }
+                [t, ..] if t.eq_ignore_ascii_case("INDEX") => ("index", 1),
+                [t, ..] if t.eq_ignore_ascii_case("TRIGGER") => ("trigger", 1),
+                [t, ..] if t.eq_ignore_ascii_case("VIEW") => ("view", 1),
+                _ => {
+                    i += 1;
+                    continue;
+                }
+            };
+            let rest = &rest[at..];
+            let name = match rest {
+                [a, b, c, name, ..]
+                    if a.eq_ignore_ascii_case("IF")
+                        && b.eq_ignore_ascii_case("NOT")
+                        && c.eq_ignore_ascii_case("EXISTS") =>
+                {
+                    name
+                }
+                [name, ..] => name,
+                [] => break,
+            };
+            out.push((kind.to_owned(), name.to_string()));
+        }
+        i += 1;
+    }
+    out
+}
 
 fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, String)>> {
     connection
@@ -320,4 +980,68 @@ fn schema_object_names(connection: &Connection) -> StoreResult<Vec<(String, Stri
         .query_map([], |row| Ok((row.get(0)?, row.get(1)?)))?
         .collect::<Result<Vec<_>, _>>()
         .map_err(StoreError::from)
+}
+
+#[cfg(test)]
+mod schema_object_tests {
+    use super::*;
+
+    /// A store made before a column of `ADDED_COLUMNS` (here `corpus_decided.swept`, decision 0227) gains it when
+    /// opened, its rows keeping their values.
+    #[test]
+    fn an_older_store_gains_the_added_columns() {
+        let dir = std::env::temp_dir().join(format!("rerail-added-columns-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("store.sqlite");
+        let _ = std::fs::remove_file(&path);
+        drop(ContentStore::open(&path).unwrap());
+        {
+            let c = Connection::open(&path).unwrap();
+            // The table as an older binary made it.
+            c.execute_batch(
+                "DROP TABLE corpus_decided; \
+                 CREATE TABLE corpus_decided (singleton INTEGER PRIMARY KEY CHECK (singleton = 1), run INTEGER NOT NULL, time INTEGER NOT NULL) STRICT; \
+                 INSERT INTO corpus_decided VALUES (1, 7, 0)",
+            )
+            .unwrap();
+            assert_eq!(missing_columns(&c).unwrap().len(), 1);
+        }
+        drop(ContentStore::open(&path).unwrap());
+        let c = Connection::open(&path).unwrap();
+        assert!(missing_columns(&c).unwrap().is_empty());
+        assert_eq!(
+            c.query_row("SELECT run, swept FROM corpus_decided", [], |r| Ok((
+                r.get::<_, i64>(0)?,
+                r.get::<_, i64>(1)?
+            )))
+            .unwrap(),
+            (7, 0)
+        );
+        drop(c);
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The objects read from SCHEMA's text are those SCHEMA creates, less what SQLite makes along with them.
+    #[test]
+    fn schema_objects_are_what_schema_creates() {
+        let connection = Connection::open_in_memory().unwrap();
+        connection.execute_batch(SCHEMA).unwrap();
+        let fts: Vec<String> = schema_objects(SCHEMA)
+            .into_iter()
+            .filter(|(_, n)| n.ends_with("_fts"))
+            .map(|(_, n)| n)
+            .collect();
+        let mut applied: Vec<(String, String)> = schema_object_names(&connection)
+            .unwrap()
+            .into_iter()
+            .filter(|(_, n)| {
+                !n.starts_with("sqlite_") && !fts.iter().any(|f| n.starts_with(&format!("{f}_")))
+            })
+            .collect();
+        let mut read = schema_objects(SCHEMA);
+        applied.sort();
+        read.sort();
+        assert_eq!(read, applied);
+        assert!(read.len() > 100, "{} objects", read.len());
+    }
 }

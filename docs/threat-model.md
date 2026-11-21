@@ -31,7 +31,7 @@ flowchart TD
     Tok[access-token / daemon.json]
     Ver[versions/, packs/]
   end
-  Cache[(~/.cache/rerail<br/>content-v1.sqlite)]
+  Cache[(~/.cache/rerail<br/>content-v5.sqlite)]
   Ledger[(repo/.rerail/sessions)]
   D[Daemon :4737<br/>HTTP API · MCP · dashboard]
   E[Native engine<br/>parsers · rules · model]
@@ -61,7 +61,7 @@ What Rerail holds that is worth attacking, and where it lives.
 | --- | --- | --- |
 | Session history: prompts, replies, tool inputs, **raw tool outputs** | `rerail.sqlite` (`RerailRuntime.persistEvent`) | Whatever the agent saw, secrets included, unredacted. |
 | Pre-edit source text and session ledgers | `<repo>/.rerail/sessions/<sha256(session)>/events.jsonl` | Source and prompt text in the working tree; `rewind` restores from it. |
-| Source copies, syntax trees, check results | `~/.cache/rerail/content-v1.sqlite` (Windows: `%USERPROFILE%\AppData\Local\rerail\content-v1.sqlite`) | A second copy of every file the engine read. |
+| Source copies, syntax trees, check results | `~/.cache/rerail/content-v5.sqlite` (Windows: `%USERPROFILE%\AppData\Local\rerail\content-v5.sqlite`) | A second copy of every file the engine read. |
 | Rule catalog: rules, packs, settings, start state | `rerail.sqlite` | Decides what reaches every future session, and whether Rerail is armed. |
 | Daemon access capability | `~/.rerail/access-token`, `daemon.json` (0600) | Full `person` API: all repositories, unredacted transcripts, every write. |
 | Executable code Rerail launches | `~/.rerail/versions/<v>/`, `current`, `bin/rerail`, `update-state.json`, `RERAIL_ENGINE_PATH` | Runs on every hook, daemon start and CLI call. |
@@ -239,7 +239,7 @@ without hooks or network.
     `git diff`, the session walk's `git ls-files --modified`) first lists the config with its scopes, and sets each
     filter driver a repository's own config defines (its `config`, `config.worktree` and the files they include) as
     the person's own config (system, global, command line) defines it, or to no program
-    (`src/engine/git-filter-drivers.ts`). A driver the person installed, such as Git LFS, still runs. A file under a
+    (`src/engine/git-guard/filter-drivers.ts`). A driver the person installed, such as Git LFS, still runs. A file under a
     driver only a repository defines is compared as it is on disk: its stat changing alone lists it as changed where
     that program would have mapped it to the index's bytes. The audit's and the scan's `git diff --name-only` run
     through `runGitWithoutBlocking`, with `--ignore-submodules=dirty`, so Git opens no submodule's Git folder for it,
@@ -251,7 +251,7 @@ without hooks or network.
     When the listing shows no config of the repository's own, Rerail reads the folder again in process and lists that
     one config file with Git (`git config --list --file`): a repository whose config file is absent or holds no entry
     to Git is asked, and any other submodule is listed as changed with no Git started in it, so a Git folder that held
-    no config at the listing and holds some by then is never opened (`src/engine/git-submodule-state.ts`).
+    no config at the listing and holds some by then is never opened (`src/engine/git-guard/submodule-state.ts`).
     A call whose config Git cannot list is not made. With a Git older than 2.31 every call runs as it would without
     these overrides, and the process says so once. `runGitAsync` and `streamGit` set no filter drivers: of their calls,
     only Merge Assist's diff of its base against the working files ([internal testing](internal-testing.md)) reads
@@ -328,7 +328,8 @@ Code from npm installs without install scripts and is checked before it runs. Pa
 
 ### B6: Data at rest
 
-Rerail's files are private to the person's OS user: folders 0700, files 0600, ledgers never written through a symlink.
+Rerail's files are private to the person's OS user: folders 0700, files 0600 (except the session records `.gitignore`,
+`0644`, which holds only `*`), ledgers never written through a symlink.
 
 <details>
 <summary>Controls</summary>
@@ -340,13 +341,17 @@ Rerail's files are private to the person's OS user: folders 0700, files 0600, le
 - Session directories are created 0700 and explicitly chmod 0700; ledgers append 0600 (`src/runtime/runtime.ts`).
 - Windows ignores modes. A Rerail home or `.rerail\sessions` folder made outside the profile folder, whose ACL would
   let every local user read it, gets a protected ACL granting the person, SYSTEM and Administrators alone, which
-  everything written in it inherits; a home an earlier release made gets it at the next daemon launch
-  (`src/engine/storage/windows-acl.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
+  everything written in it inherits; a home an earlier release made gets it at the next daemon launch, and a
+  `.rerail\sessions` folder Rerail did not make (Git, a person, Rerail 0.1.4) when the daemon first opens a session
+  there, the records already in it included but those of another account sharing the checkout, which keep the ACL
+  they had, each session's folder first (`src/engine/storage/windows-acl.ts`,
+  `src/engine/storage/ledger-paths.ts`). A daemon TLS key whose ACL lets anyone else read it, or that has no DACL
   (everyone has full control), is never served with: when this account reads it as a private key, the daemon then
   serves this computer alone, on loopback, on T9's three conditions.
 - The repository identity file is read without following a symlink (`openNoFollowSync`) plus size and format checks,
   and created with `wx` (`src/engine/catalog/repository-identity.ts`).
-- A ledger root in `.rerail/` gets a `.gitignore` of `*`, rewritten whenever it differs, and nothing in it is written
+- The default ledger root, `<checkout>/.rerail/sessions`, gets a `.gitignore` of `*`, rewritten whenever it differs
+  unless another account's Rerail keeps it (T8), and nothing in a ledger root in `.rerail/` is written
   through a symlink (`src/engine/storage/ledger-paths.ts`).
 
 </details>
@@ -559,7 +564,18 @@ boundary judges paths by secret-like name and, where a checkout is known, by sym
 - **Symlink targets count** wherever a checkout root is known (`checkoutPathBoundary`): a tracked
   `docs/a.md -> ../.env` is secret-like. Targets are judged by secret-like name only, so a pnpm `node_modules/<pkg>`
   link into `.pnpm/` passes. Only path-shaped words (a `/` or `\`, a leading `.` or `~`, or a dot-extension) are
-  looked up on disk; every word is still judged by name.
+  looked up on disk, and not a word that may be a URL's host and path where the lookup would reach another machine:
+  on Windows a share on another machine written with `//` right after a `:`, unless `file` or `smb` stands before it
+  (`//host/api` in `https://host/api` or `${SCHEME}://host/api`), and on Linux and macOS a web URL's host and path
+  under the automount root `/net` (`/NET` too on macOS) on another machine, written with `//`. Every other
+  path-shaped word is looked up: a `file:` or `smb:` URL's host and path, a URL's with no host
+  (`unix:///run/app.sock`), on Linux and macOS a `//` word as a local path, and on Windows a share written with
+  backslashes after a `:` (`/LOG:\\host\share\run.txt`), a device path (`\\?\...`, `\\.\...`) that does not go on
+  to the network redirector and a share on the loopback host wherever they stand, and a drive path written with
+  doubled backslashes (`"C:\\Users\\me"` in JSON) as `C:\Users\me` is. A word is read as its lookup opens it, so `.`
+  and `..` names do not hide the redirector, and the loopback host in any spelling the address parser reads
+  (`127.1`, `2130706433`) is this machine, as is the name the system gives it (`os.hostname()`, in any letter case).
+  Every word is still judged by name.
 
 </details>
 
@@ -568,8 +584,10 @@ boundary judges paths by secret-like name and, where a checkout is known, by sym
 
 - Names cannot see `printenv`, or a path the shell builds at run time such as `base64 -d <<< LmVudg== | xargs cat`.
 - User prompts and assistant messages pass whole.
-- `violations_list`, `audits_list`, `repository_audit_entries_list` and `rerail rules evidence` judge findings by name
-  only, not symlink target.
+- `violations_list`, `audits_list` and `repository_audit_entries_list` judge a finding's file by where it links from
+  the folder it was recorded in, for the first 256 paths of an answer, past those by name only. A finding recorded in a
+  folder outside the agent's own checkout, such as a worktree beside it, is judged by name only.
+  `rerail rules evidence` judges findings by name only.
 - A link named without a separator, leading dot or extension (`notes -> .env`, read as `cat notes`) is not looked up
   on disk, so its target is not judged.
 
@@ -604,16 +622,24 @@ audit errors, and Rerail's `daemon.log` lines. Rule matching and steers use the 
 - **Secret-like files.** A tool result for a call naming a secret-like path is stored without its output
   (`callNamesSecretPath` in `persistEvent`, `src/runtime/runtime.ts`). The judgment goes to the session ledger
   (`secret-call`, `secret-result`), so a result arriving after a daemon restart or host reconnect is withheld too.
-  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size. A finding in a
-  secret-like file that a session still owes its agent when its memory is freed, or when the daemon stops or restarts,
-  is kept in the ledger without its message or fix, as its steer withholds them. Each steer and finding it owes then
-  keeps the SHA-256 of each file it names, as a preimage does, so a file changed meanwhile drops it.
+  Preimages of a secret-like file, or one whose text holds a secret, keep only a hash and size. A file is secret-like
+  there by the path the tool named or by its real path in its checkout, so a file reached through a link to a folder
+  (`conf -> .aws`) or by a Windows short name of a folder or a file (`AWS~1`, `WP-CON~1.PHP`) is judged as the file it
+  is. As with text that holds a secret, the session keeps in memory the text of a file secret-like only by its real
+  path, so at the runtime `rewind` can still put back a write that names the link path, unless the daemon restarts
+  first, since the ledger keeps only the hash and size. A finding in a secret-like file that a session still owes its
+  agent when its memory is freed, or when the daemon stops or restarts, is kept in the ledger without its message or
+  fix, as its steer withholds them. Each steer and finding it owes then keeps the SHA-256 of each file it names, as a
+  preimage does, so a file changed meanwhile drops it.
 - **Erasure.** Database writers use `secure_delete`. `rerail reset` checkpoints the WAL, runs `VACUUM`, and checkpoints
   again, so deleted history cannot be read back from the file.
 - **History stored by older versions.** `rerail scrub` redacts the database, its pre-update copy, every recorded
-  checkout's ledgers and held steers, and `daemon.log`, then rewrites the database file. Daemon and sessions keep
-  running: ledgers and `daemon.log` are rewritten in place, never through a symlink, without losing concurrent
-  appends, and held steers under their hook's lock. A failing step (`VACUUM` included) is reported, the rest still run, and the command exits 1.
+  checkout's ledgers and held steers, and `daemon.log`, then rewrites the database file. In a records folder or
+  held-steer folder this account may not list (one another account shares), it scrubs those of the sessions the
+  database records and names the folder in its summary; what a session it does not record left there stays. Daemon
+  and sessions keep running: ledgers and `daemon.log` are rewritten in place, never through a symlink, without losing
+  concurrent appends, and held steers under their hook's lock. A failing step (`VACUUM` included) is reported, the
+  rest still run, and the command exits 1.
   `rerail update` suggests it once.
 - **Removing everything.** `rerail install --remove --delete-data` deletes the databases, every `~/.rerail-clean-*`
   backup, the content cache and every recorded checkout's `.rerail/sessions`, rather than backing them up, then
@@ -669,8 +695,9 @@ code runs. No Nera-held signature is verified ([distribution-model.md](distribut
 
 ### T8: Repo-planted `.rerail/` redirects or exposes ledgers
 
-A repository could commit a `.rerail/` folder to redirect or expose session ledgers. Rerail refuses symlinks there
-and keeps its own `.gitignore`.
+A repository could commit a `.rerail/` folder to redirect or expose session ledgers. Rerail refuses symlinks there,
+keeps its own `.gitignore`, and on Windows gives a records folder it did not make an ACL under which each record is its
+maker's alone.
 
 <details>
 <summary>Mitigations and what remains</summary>
@@ -680,10 +707,29 @@ and keeps its own `.gitignore`.
 - Every folder from the innermost `.rerail` down is checked with `lstat`; a symlink or non-folder is refused. Ledger
   and pending-steer files open without following a symlink (`openNoFollow`).
 - A refusal names the path in the daemon log, and the hook fails open.
-- `ignoreInGit` rewrites `.gitignore` whenever it is not Rerail's own `*` file, so a planted `!*` cannot expose ledgers
-  to `git add -A`.
+- `ignoreInGit` rewrites `.gitignore` in the default root whenever it is not Rerail's own `*` file, so a planted `!*`
+  cannot expose ledgers to `git add -A`; a rewrite that fails fails the session. It writes it `0644` whatever the
+  umask, so every account's Git reads it. It keeps one only when it is another account's to write: a file this account
+  may not read whose owner and records folder's owner are both another account (a folder's owner rewrites it; on
+  Windows, where no owner is read, one this account may also not add a file beside), or none at all where this account
+  may not add a file, as in a records folder another account repaired. A refused write left to that account is named
+  in the daemon log.
+- A `.rerail/sessions` the repository's own commit makes, which on Windows outside the profile folder takes its
+  parent's ACL, is given one of its own when the daemon first opens a session there: each file and folder in it, those
+  already there included, grants its maker, SYSTEM and Administrators alone, and an account an entry the folder
+  inherits let add a folder there may still add one, never list it (an allow entry set on the folder itself for such
+  an account stays, with that right added; an account a deny entry set there names is given nothing). Every `icacls`
+  on the records folder or a folder in it runs with `/l`, so a junction swapped in
+  for one cannot redirect a grant to a folder this user owns. That session's own folder is private before the session
+  writes (`makeLedgerFolder` with `repair`). Elsewhere it loses the group's and others' read, and gets the sticky bit
+  while they may still add to it (`2775` becomes `3731`, `0777` `1733`, `0755` `0711`): no other account lists it, one
+  that shares it still makes its own `0700` session folder there, and none of them can rename or remove this account's
+  entries (its session folders, its `.gitignore`). On Windows, one
+  whose ACL Rerail cannot read or change is named in the daemon log. Only the checkout's default records folder is
+  repaired: a `RERAIL_STORAGE_ROOT` below a `.rerail` folder is checked for symlinks but keeps its mode and ACL.
 
-**What remains:** a `RERAIL_STORAGE_ROOT` outside any `.rerail` folder is not checked. Replayed ledgers are still
+**What remains:** a `RERAIL_STORAGE_ROOT` outside any `.rerail` folder is not checked; one inside a `.rerail` folder is
+checked for symlinks but neither repaired nor given a `.gitignore`. Replayed ledgers are still
 trusted state; planting one needs the session id, whose hash names the folder.
 
 </details>
@@ -735,7 +781,8 @@ capability.
 ### T10: Files and directories not kept private
 
 On Unix, Rerail creates its files private and tightens existing ones. On Windows, which ignores modes, a Rerail home or
-`.rerail\sessions` folder made outside the profile folder gets an ACL for the person, SYSTEM and Administrators alone
+`.rerail\sessions` folder Rerail makes outside the profile folder gets an ACL for the person, SYSTEM and Administrators
+alone, and a records folder another program made one under which each record is its maker's alone
 ([B6](#b6-data-at-rest)).
 
 <details>
@@ -745,8 +792,8 @@ On Unix, Rerail creates its files private and tightens existing ones. On Windows
 
 - The content store's folder is created 0700 and its database 0600; SQLite gives `-wal` and `-shm` the same mode.
 - On open, Rerail tightens the home and these files if other users could read them and the person owns them:
-  `rerail.sqlite*`, `harness.sqlite*`, `daemon.json*`, `access-token*`, `daemon.log*`, `*.pre-update`. It never
-  follows a symlink to do so.
+  `rerail.sqlite*`, `harness.sqlite*`, `daemon.json*`, `access-token*`, `daemon.log*`, `claude-status-lines/`, `*.pre-update`. It
+  never follows a symlink to do so.
 - The rule-pack staging folder is created 0700.
 
 **Mitigated on every system** (`src/daemon/daemon.ts:loadDaemonTls`): a daemon TLS key other accounts can read, by its
@@ -801,6 +848,11 @@ should not widen it.
 - The Claude status-line wrapper runs an inherited `statusLine` command, re-read from the working directory's
   `.claude/settings*.json`, through a shell: `shell: true`, or Git Bash's `bash -c` on Windows when Rerail finds one
   (`src/hosts/claude/claude-status.ts`, `src/setup/claude-status-store.ts`).
+- Claude Code's status command on macOS and Linux has its shell read `claude-status.sh` from the installed package and
+  print `<Rerail home>/claude-status-lines/<session id>`, which the daemon writes (0600, in a 0700 folder). The session id comes
+  from Claude Code's JSON on stdin; the script takes only `[A-Za-z0-9_-]`, so an id cannot name a file outside the
+  folder. The lines hold terminal escapes (colour, OSC 8 links); the daemon strips control characters from every
+  label and address it puts in them (`src/presentation/claude-status-files.ts`).
 - `hooks/cursor.json` uses the relative path `./dist/hosts/cursor/cursor-hook.js`. [INFERENCE: exposed only if Cursor
   runs plugin hooks with the project as working directory. `rerail setup` writes absolute paths.]
 

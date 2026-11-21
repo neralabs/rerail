@@ -95,6 +95,18 @@ describe("#24 harnesses in CI", () => {
     expect(paths(result)).toEqual(["scripts/b.test.mjs", "test/slow/c.test.ts"]);
   });
 
+  it("reads a filter the shell expands as possibly none, and the package's vitest bin as vitest", () => {
+    const result = harnessesInCi(
+      memoryRepo({
+        ".github/workflows/ci.yml": ci('read -ra tests <<< "$TESTS"\nnode_modules/.bin/vitest run --dir test --shard=1/2 "${tests[@]}"'),
+        "test/a.test.ts": "",
+        "test/b/c.test.ts": "",
+        "other/d.test.ts": "",
+      }),
+    );
+    expect(paths(result)).toEqual(["other/d.test.ts"]);
+  });
+
   it("counts a test file run directly as an entry point", () => {
     const result = harnessesInCi(
       memoryRepo({
@@ -103,6 +115,18 @@ describe("#24 harnesses in CI", () => {
       }),
     );
     expect(result.findings).toEqual([]);
+  });
+
+  it("reads an interpreter named by its absolute path as the interpreter, and leaves the explorer's samples out", () => {
+    const result = harnessesInCi(
+      memoryRepo({
+        ".github/workflows/ci.yml": ci("/usr/bin/python3 test/scripts/test_native.py"),
+        "test/scripts/test_native.py": "",
+        "docs/rule-syntax/site/explorer/scenarios/pytest-raises-broad/test_parse.py": "",
+        "docs/rule-syntax/site/explorer/test_other.py": "",
+      }),
+    );
+    expect(paths(result)).toEqual(["docs/rule-syntax/site/explorer/test_other.py"]);
   });
 
   it("counts the specs under the Playwright config's testDir, and only those, as run by playwright test", () => {

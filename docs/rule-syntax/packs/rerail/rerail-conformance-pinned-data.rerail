@@ -1,0 +1,88 @@
+.policy "rerail-conformance-pinned-data" revision 2
+.description "Read only pinned test data and samples in conformance; avoid network calls and programs that download or install."
+.language typescript
+.mode log
+.scope include "conformance/**/*.ts", "conformance/**/*.mts", "conformance/**/*.cts", "conformance/**/*.tsx", "conformance/**/*.js", "conformance/**/*.mjs", "conformance/**/*.cjs", "conformance/**/*.jsx"
+.scope exclude "conformance/process.ts", "conformance/**/*.generated.ts"
+// Conformance reads only pinned data, through scripts/s3/pack-fixtures.mjs; reaching the network, or running a
+// program that downloads or installs, belongs to scripts/upstream/ or scripts/pack-data/. Three clauses, as the JSON's:
+//   await fetch(cell.url)   https.get(url, …)           NETWORK_IN_CONFORMANCE
+//   import { request } from "undici";                   NETWORK_MODULE_IN_CONFORMANCE (also require(), import())
+//   ["curl", "-L", url]   ["git", "clone", repo]   ["npm", "ci"]   ("remote", "add", …)   execFile("aws", …)
+//                                                       DOWNLOAD_PROGRAM_IN_CONFORMANCE
+//   samplesTree({ root, pack, tool })                   not reported
+// The JSON's `regex` tests a node's text, as ast-grep's do (a search; `^`/`$` anchor the whole text); its `inside`
+// without `stopBy` is the parent.
+#include "tsx/rerail-module-loads.rerail"   // module_literal(n, s), loads_types_only(n)
+
+.violation NETWORK_IN_CONFORMANCE(at: node) "Conformance reads only pinned data, through scripts/s3/pack-fixtures.mjs. Code that must reach the network (release checks, recording, installs) belongs in scripts/upstream/ or scripts/pack-data/."
+// fetch(…) or x.fetch(…); http.get, https.request, http2.get (by those names).
+NETWORK_IN_CONFORMANCE(c) :- kind(c, "call_expression"), match("(?:[\\w$]+\\.)?fetch\\s*\\((?s:.*)", c).
+NETWORK_IN_CONFORMANCE(c) :- kind(c, "call_expression"), match("(?:https?|http2)\\s*\\.\\s*(?:get|request)\\s*\\((?s:.*)", c).
+
+.violation NETWORK_MODULE_IN_CONFORMANCE(at: node) "Conformance reads only pinned data, through scripts/s3/pack-fixtures.mjs. Code that must reach the network (release checks, recording, installs) belongs in scripts/upstream/ or scripts/pack-data/."
+// http, https, http2, net, tls, dgram (node: or not), undici, node-fetch, axios, got, cross-fetch, @octokit/….
+NETWORK_MODULE_IN_CONFORMANCE(n) :- module_literal(n, s), match("[\\\"'`](?:(?:node:)?(?:https?|http2|net|tls|dgram)|undici|node-fetch|axios|got|cross-fetch|@octokit/[^\\\"'`]+)[\\\"'`]", s), !loads_types_only(n).
+
+.violation DOWNLOAD_PROGRAM_IN_CONFORMANCE(at: node) "Conformance reads only pinned data, through scripts/s3/pack-fixtures.mjs. Code that must reach the network (release checks, recording, installs) belongs in scripts/upstream/ or scripts/pack-data/."
+// A command list that starts with a download tool and has an argument (not a list of the tools' names alone), that
+// clones or lists a git remote, or that installs packages.
+DOWNLOAD_PROGRAM_IN_CONFORMANCE(a) :- kind(a, "array"), match("\\[\\s*[\\\"'`](?:aws|curl|wget|gh|gsutil|az)[\\\"'`]\\s*,\\s*(?:[\\\"'`]|\\.\\.\\.)(?s:.*)", a), !match("\\[\\s*(?:[\\\"'`](?:aws|curl|wget|gh|gsutil|az)[\\\"'`]\\s*,?\\s*)+\\]", a).
+DOWNLOAD_PROGRAM_IN_CONFORMANCE(a) :- kind(a, "array"), match("\\[\\s*[\\\"'`]git[\\\"'`]\\s*,(?:[^\\]]*,)?\\s*[\\\"'`](?:clone|ls-remote)[\\\"'`](?s:.*)", a).
+DOWNLOAD_PROGRAM_IN_CONFORMANCE(a) :- kind(a, "array"), match("\\[\\s*[\\\"'`](?:npm|pnpm|yarn|uv|pip|pip3|composer|cargo)[\\\"'`]\\s*,\\s*[\\\"'`](?:install|ci|add|sync|update|require|download|fetch)[\\\"'`](?s:.*)", a).
+// Arguments ("remote", "add", …), or a download tool's name first in arguments of exec, execFile, spawn or their
+// Sync forms.
+DOWNLOAD_PROGRAM_IN_CONFORMANCE(a) :- kind(a, "arguments"), match("\\(\\s*[\\\"'`]remote[\\\"'`]\\s*,\\s*[\\\"'`]add[\\\"'`](?s:.*)", a).
+DOWNLOAD_PROGRAM_IN_CONFORMANCE(a) :- kind(a, "arguments"), match("\\(\\s*[\\\"'`](?:aws|curl|wget|gh|gsutil|az)\\b(?s:.*)", a), child(c, a, _),
+    kind(c, "call_expression"), match("(?:[\\w$]+\\.)*(?:execFile|execFileSync|spawn|spawnSync|exec|execSync)\\s*\\((?s:.*)", c).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_fetch_is_reported exactly
+    .fixture "conformance/port-readiness/corpus.ts" ```
+        export async function download(cell: { url: string }): Promise<Buffer> {
+          const response = await fetch(cell.url);
+          return Buffer.from(await response.arrayBuffer());
+        }
+        ```
+    .expect NETWORK_IN_CONFORMANCE at "conformance/port-readiness/corpus.ts":2
+.end
+
+.test network_modules_and_downloads_are_reported exactly
+    .fixture "conformance/languages/fetch.mjs" ```
+        import { request } from "undici";
+        const https = require("node:https");
+        export { Octokit } from "@octokit/rest";
+        https.get(url, onResponse);
+        await runner.run(["curl", "-L", url]);
+        await runner.run(["git", "--no-pager", "clone", repo]);
+        await runner.run(["npm", "ci"]);
+        git("remote", "add", "origin", url);
+        execFileSync("aws", ["s3", "cp", src, dst]);
+        ```
+    .expect NETWORK_MODULE_IN_CONFORMANCE at "conformance/languages/fetch.mjs":1
+    .expect NETWORK_MODULE_IN_CONFORMANCE at "conformance/languages/fetch.mjs":2
+    .expect NETWORK_MODULE_IN_CONFORMANCE at "conformance/languages/fetch.mjs":3
+    .expect NETWORK_IN_CONFORMANCE at "conformance/languages/fetch.mjs":4
+    .expect DOWNLOAD_PROGRAM_IN_CONFORMANCE at "conformance/languages/fetch.mjs":5
+    .expect DOWNLOAD_PROGRAM_IN_CONFORMANCE at "conformance/languages/fetch.mjs":6
+    .expect DOWNLOAD_PROGRAM_IN_CONFORMANCE at "conformance/languages/fetch.mjs":7
+    .expect DOWNLOAD_PROGRAM_IN_CONFORMANCE at "conformance/languages/fetch.mjs":8
+    .expect DOWNLOAD_PROGRAM_IN_CONFORMANCE at "conformance/languages/fetch.mjs":9
+.end
+
+// The pack's passing example, a list of tool names, a type-only import, and the runner itself.
+.test pinned_data_passes exactly
+    .fixture "conformance/languages/runner.ts" ```
+        import { samplesTree } from "../../scripts/s3/pack-fixtures.mjs";
+
+        export const samples = (root: string, pack: string, tool: string) => samplesTree({ root, pack, tool });
+        ```
+    .fixture "conformance/languages/tools.ts" ```
+        const NETWORK_TOOLS = ["curl", "wget"];
+        import type { Agent } from "node:https";
+        await runner.run(["git", "log", "-1"]);
+        ```
+    .fixture "conformance/process.ts" ```
+        const response = await fetch(url);
+        ```
+.end

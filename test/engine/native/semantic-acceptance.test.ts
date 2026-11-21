@@ -17,7 +17,8 @@ const SECRET_NAMES = { files: SENSITIVE_FILE_NAMES, folders: SENSITIVE_FOLDER_NA
 
 /** The reference binary intentionally retains these reviewed defects. */
 const REFERENCE_BUGS: Record<string, true> = { B1: true, B2: true, B3: true, B5: true, B6: true, B7: true, B11: true, B12: true, B13: true, B14: true, B15: true, B19: true };
-const USING_REFERENCE_ADDON = process.env.RERAIL_ENGINE_PATH?.includes("jeff-baseline") === true;
+/** Whether RERAIL_ENGINE_PATH names the reference binary: set RERAIL_REFERENCE_ADDON=1 beside it. */
+const USING_REFERENCE_ADDON = process.env.RERAIL_REFERENCE_ADDON === "1";
 
 const capabilities = JSON.stringify({
   format: "rerail.policy-capabilities/v1",
@@ -286,7 +287,7 @@ describe("semantic acceptance", () => {
           writeFileSync(join(root, file.path), file.source);
         }
         execFileSync("git", ["init", "--quiet"], { cwd: root });
-        execFileSync("git", ["add", "."], { cwd: root });
+        execFileSync("git", ["add", "--", ...files.map(file => file.path)], { cwd: root });
         execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "seed"], { cwd: root });
         await native.enableStorageAsync(root, contentStorePath(), SECRET_NAMES);
         native.addCodeRule(packageCodeRule());
@@ -322,11 +323,11 @@ describe("semantic acceptance", () => {
         mkdirSync(join(root, "pkg"));
         writeFileSync(join(root, "pkg", "a.py"), "value = 1\n");
         execFileSync("git", ["init", "--quiet"], { cwd: root });
-        execFileSync("git", ["add", "."], { cwd: root });
+        execFileSync("git", ["add", "--", "pkg/a.py"], { cwd: root });
         execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "first"], { cwd: root });
         await first.enableStorageAsync(root, contentStorePath(), SECRET_NAMES);
         writeFileSync(join(root, "pkg", "a.py"), "value = 2\n");
-        execFileSync("git", ["add", "."], { cwd: root });
+        execFileSync("git", ["add", "--", "pkg/a.py"], { cwd: root });
         execFileSync("git", ["-c", "user.name=Rerail", "-c", "user.email=rerail@local", "commit", "--quiet", "-m", "second"], { cwd: root });
         await second.enableStorageAsync(root, contentStorePath(), SECRET_NAMES);
         second.addCodeRule(compile([clause("fresh", { regex: "2" })]));

@@ -19,6 +19,7 @@ import {
   parentCheckouts,
   pruneCheckouts,
   recordCheckout,
+  recordedCheckoutsReader,
 } from "../../../src/engine/catalog/repository-registry.js";
 import { repositoryIdentityLocation } from "../../../src/engine/catalog/repository-identity.js";
 import { setUpRepository } from "../../../src/engine/catalog/rule-configuration.js";
@@ -337,6 +338,73 @@ function comparedWithMain(database: RerailDatabase, seed: number, tree: RandomTr
   };
 }
 
+/** A checkout's repository, clone id, on/off, set-up, what decided the on/off, and every containing checkout, nearest first. */
+function fullAnswerOf(repositoryKey: string, cloneId: string, status: RepositoryStatus, parents: readonly string[]): string {
+  return JSON.stringify([repositoryKey, cloneId, status.started, status.setUp, status.startedBy, parents]);
+}
+
+/** Each recorded checkout's full answer, as the runtime's readers give it for one checkout at a time. */
+function aloneAnswers(database: RerailDatabase): Map<string, string> {
+  return new Map(database.select().from(checkouts).all().map(row => [
+    row.checkoutPath,
+    fullAnswerOf(row.repositoryKey, row.cloneId, checkoutStatus(database, { ...row, git: true, main: true }), parentCheckouts(database, row).map(parent => parent.checkoutPath)),
+  ]));
+}
+
+type Reader = ReturnType<typeof recordedCheckoutsReader>;
+
+/** Each of `asked` that a read of all of them together answers, with its full answer. */
+function togetherAnswers(reader: Reader, asked: readonly string[]): Map<string, string> {
+  const read = reader.read(asked);
+  return new Map([...read].map(([path, state]) => [path, fullAnswerOf(state.repositoryKey, state.cloneId, state.status, state.parents)]));
+}
+
+/** Each recorded path, and each folder above one: the checkouts a session asks after, recorded or not. */
+function askedPaths(database: RerailDatabase): string[] {
+  const recorded = database.select().from(checkouts).all().map(row => row.checkoutPath);
+  const above = recorded.flatMap(path => {
+    const folders: string[] = [];
+    for (let folder = resolve(path); parse(folder).root !== folder; folder = resolve(folder, "..")) folders.push(resolve(folder, ".."));
+    return folders;
+  });
+  return [...new Set([...recorded, ...above])];
+}
+
+/** Each of `asked` that the reader, asked them again, answers otherwise than the readers of one checkout do. */
+function askedAgainDiffers(database: RerailDatabase, reader: Reader, asked: readonly string[], label: string): string[] {
+  const alone = aloneAnswers(database);
+  const together = togetherAnswers(reader, asked);
+  return asked
+    .filter(path => together.get(path) !== alone.get(path))
+    .map(path => `${label}, ${path}: read together ${together.get(path)}, alone ${alone.get(path)}`);
+}
+
+/** The recorded checkouts strictly inside `root`, as a read of every row and `withinCheckout` give them. */
+function insideAlone(database: RerailDatabase, root: string): string[] {
+  return database.select().from(checkouts).all().map(row => row.checkoutPath)
+    .filter(path => path !== root && withinCheckout(root, path))
+    .sort();
+}
+
+/**
+ * Each checkout of the database that one read of every checkout and folder a session asks after answers otherwise than
+ * the readers of one checkout do, and each folder whose recorded checkouts inside it the reader names otherwise.
+ */
+function togetherDiffersFromAlone(database: RerailDatabase, label: string, reader: Reader = recordedCheckoutsReader(database)): string[] {
+  const asked = askedPaths(database);
+  const alone = aloneAnswers(database);
+  const together = togetherAnswers(reader, asked);
+  const differing = [...new Set([...alone.keys(), ...together.keys()])]
+    .filter(path => alone.get(path) !== together.get(path))
+    .map(path => `${label}, ${path}: read together ${together.get(path)}, alone ${alone.get(path)}`);
+  for (const root of asked) {
+    const inside = reader.within(root);
+    const expected = insideAlone(database, root);
+    if (JSON.stringify(inside) !== JSON.stringify(expected)) differing.push(`${label}, inside ${root}: ${JSON.stringify(inside)}, alone ${JSON.stringify(expected)}`);
+  }
+  return differing;
+}
+
 /** Rows for checkouts of `clone` at `paths` that could not be recorded now, as their folders are not there, seen long ago. */
 function recordRows(database: RerailDatabase, clone: { readonly repositoryKey: string; readonly cloneId: string }, paths: readonly string[]): void {
   const insert = database.$client.prepare(
@@ -493,6 +561,84 @@ describe("the repository registry", () => {
     // The trees hold such rows, so the order by folder is what this compares.
     expect(byFolder).toBeGreaterThan(0);
   }, 30_000);
+
+  it("reads many checkouts in one statement as it reads each alone, with every containing checkout and the checkouts inside each folder, in whatever spelling a folder was recorded", async () => {
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const farther = `${join(base, "b")}${sep}.`;
+    // The shapes of the tests above: the filesystem's root, a trailing separator, a `.` segment before or after a name,
+    // letter case, a share root without its separator, and two containing folders whose recorded paths are one length.
+    const shapes: Array<ReadonlyArray<readonly [string, boolean | null]>> = [
+      [
+        [parse(base).root, null], [`${join(base, "a")}${sep}`, true], [join(base, "a", "inner"), null],
+        [farther, true], [join(base, "b", "inner"), null], [join(base, "beside"), null],
+        [join(base, "CASE"), true], [join(base, "case", "inner"), null],
+        ...process.platform === "win32" ? [["\\\\server\\share", true], ["\\\\server\\share\\inner", null]] as const : [],
+      ],
+      [[`${base}${sep}.${sep}wt`, false], [`${base}${sep}wt${sep}.`, true], [join(base, "wt", "inner"), null]],
+      [[join(base, "WT"), false], [join(base, "wt"), true], [join(base, "wt", "inner"), null]],
+      [[farther, false], [join(base, "b", "x"), true], [join(base, "b", "x", "inner"), null]],
+      [[join(base, "b", "x"), true], [farther, false], [join(base, "b", "x", "inner"), null]],
+    ];
+    const differing: string[] = [];
+    for (const [index, rows] of shapes.entries()) {
+      const { database } = await recordedRows(rows);
+      differing.push(...togetherDiffersFromAlone(database, `shape ${index + 1}`));
+    }
+    const database = open(join(await temporary("rerail-registry-together-"), "rerail.sqlite"));
+    database.$client.pragma("synchronous = OFF");
+    const roots = process.platform === "win32" ? [base, base, "\\\\server\\share"] : [base];
+    for (let seed = 1; seed <= 200; seed += 1) {
+      recordTree(database, randomTree(seed, roots));
+      differing.push(...togetherDiffersFromAlone(database, `seed ${seed}`));
+    }
+    expect(differing).toEqual([]);
+  }, 60_000);
+
+  it("keeps reading many checkouts as it reads each alone while checkouts are recorded, recorded again, forgotten, started and stopped", async () => {
+    const database = open(join(await temporary("rerail-registry-changes-"), "rerail.sqlite"));
+    database.$client.pragma("synchronous = OFF");
+    const base = join(parse(tmpdir()).root, "rerail-listed");
+    const roots = process.platform === "win32" ? [base, base, "\\\\server\\share"] : [base];
+    const differing: string[] = [];
+    for (let seed = 1; seed <= 20; seed += 1) {
+      const tree = randomTree(seed, roots);
+      recordTree(database, tree);
+      // One reader over the whole run, as a runtime keeps one: it must follow every change below.
+      const reader = recordedCheckoutsReader(database);
+      // The same checkouts asked at every step, as a session asks its own again at each event, across the changes:
+      // a checkout recorded in a folder above one of them must reach the next answer.
+      const fixed = askedPaths(database);
+      reader.read(fixed);
+      const next = seeded(seed * 7_919);
+      const pick = <T>(items: readonly T[]): T => items[Math.floor(next() * items.length)]!;
+      const spare = randomTree(seed + 1_000, roots).checkouts.map(row => row.checkoutPath);
+      let now = 2_000_000;
+      for (let step = 0; step < 30; step += 1) {
+        for (let change = 1 + Math.floor(next() * 3); change > 0; change -= 1) {
+          now += 1;
+          const recorded = database.select().from(checkouts).all();
+          const row = recorded.length === 0 ? undefined : pick(recorded);
+          const kind = pick(["record", "record", "again", "forget", "turn", "turn", "repository"] as const);
+          if (kind === "record") {
+            database.insert(checkouts).values({ checkoutPath: pick(spare), repositoryKey: pick(["k1", "k2"]), cloneId: "clone", started: pick(ON_OFF), createdAt: now, lastSeenAt: now }).onConflictDoNothing().run();
+          } else if (row !== undefined && kind === "again") {
+            database.delete(checkouts).where(eq(checkouts.checkoutPath, row.checkoutPath)).run();
+            database.insert(checkouts).values({ ...row, cloneId: "other", started: null, createdAt: now }).run();
+          } else if (row !== undefined && kind === "forget") {
+            database.delete(checkouts).where(eq(checkouts.checkoutPath, row.checkoutPath)).run();
+          } else if (row !== undefined && kind === "turn") {
+            database.update(checkouts).set({ started: pick(ON_OFF) }).where(eq(checkouts.checkoutPath, row.checkoutPath)).run();
+          } else {
+            database.update(repositories).set({ started: pick(ON_OFF), configuredAt: pick([1, null]) }).where(eq(repositories.repositoryKey, pick(["k1", "k2"]))).run();
+          }
+        }
+        differing.push(...askedAgainDiffers(database, reader, fixed, `seed ${seed}, step ${step}, asked again`));
+        differing.push(...togetherDiffersFromAlone(database, `seed ${seed}, step ${step}`, reader));
+        reader.read(fixed);
+      }
+    }
+    expect(differing).toEqual([]);
+  }, 60_000);
 
   it("puts a submodule checked out under two worktrees of its parent in one repository", async () => {
     const root = await temporary("rerail-registry-submodule-");

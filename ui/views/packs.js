@@ -41,18 +41,19 @@ function catalogState(pack) {
   return { status: null, action: packAction(pack, { quiet: true }) };
 }
 
+/** A pack as a card of the catalog's card view: its name and kind, where it stands, what it covers, and its action. */
+const catalogCard = (pack, status, action, question) => h("div.pcard", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
+  h("div.pc-top", null, packIcon(pack), h("div.pc-name", null, h("b", null, pack.name), h("span.kind", null, packKind(pack))),
+    status ? h("span.pstatus", null, status) : null),
+  h("span.sub", { title: pack.covers }, pack.covers),
+  question,
+  h("div.pc-foot", null, h("span.meta", null, packMeta(pack)), action));
+
 function catalogItem(pack) {
   const asking = ui.removeAsk === pack.id;
   const { status, action } = asking ? { status: null, action: null } : catalogState(pack);
   const question = asking ? h("div.rmline", null, removePackControl(pack)) : null;
-  if (ui.catView === "cards") {
-    return h("div.pcard", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
-      h("div.pc-top", null, packIcon(pack), h("div.pc-name", null, h("b", null, pack.name), h("span.kind", null, packKind(pack))),
-        status ? h("span.pstatus", null, status) : null),
-      h("span.sub", null, pack.covers),
-      question,
-      h("div.pc-foot", null, h("span.meta", null, packMeta(pack)), action));
-  }
+  if (ui.catView === "cards") return catalogCard(pack, status, action, question);
   return h("div.prow2", { "data-act": "viewpack", "data-i": pack.id, role: "button", tabindex: "0" },
     packIcon(pack), h("div.pt2", null, h("b", null, pack.name), h("span.sub", { title: pack.covers }, pack.covers),
       h("span.meta", null, isRerailPack(pack) ? packMeta(pack) : `${packMeta(pack)} · ${publisherLabel(pack)}`)),

@@ -26,6 +26,8 @@ export const EXPERIMENTAL_FEATURES = {
   ACTIVATION_PROFILES: { name: "Activation profiles", plural: true },
   EVENT_STREAM: { name: "The event stream", plural: false },
   REMOTE_SINK: { name: "The remote sink", plural: false },
+  ENGINE_TOOLS: { name: "The engine tools", plural: true },
+  RELATIONAL_RULES: { name: "Relational rules", plural: true },
 } as const satisfies Record<string, { name: string; plural: boolean }>;
 
 export type ExperimentalFeature = keyof typeof EXPERIMENTAL_FEATURES;

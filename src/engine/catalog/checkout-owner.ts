@@ -29,6 +29,15 @@ function holdsGitEntry(directory: string): boolean {
   }
 }
 
+/** Whether `directory` may hold an entry called `name`: true when it does, or when the lstat cannot tell. */
+function holdsEntry(directory: string, name: string): boolean {
+  try {
+    return lstatSync(join(directory, name), { throwIfNoEntry: false }) !== undefined;
+  } catch {
+    return true;
+  }
+}
+
 /** A `.git` entry as it was on disk when Git was asked about it. */
 interface GitEntry {
   /** The Git folder a `.git` file names; undefined for a `.git` folder, or a file that names none. */
@@ -195,9 +204,11 @@ export class CheckoutOwners {
 
   /**
    * The submodules the checkout at `root` declares that are checked out: each `.gitmodules` path that its index holds
-   * as a gitlink and that Git confirms as a checkout top level. Physical roots.
+   * as a gitlink and that Git confirms as a checkout top level. Physical roots. A checkout with no `.gitmodules` entry
+   * declares none, which Git would answer by reading nothing, so Git is not started to say so.
    */
   declaredSubmodules(root: string): string[] {
+    if (!holdsEntry(root, ".gitmodules")) return [];
     const configured = runGit(root, ["config", "--file", ".gitmodules", "--null", "--get-regexp", String.raw`^submodule\..*\.path$`]);
     if (configured.status !== 0) return [];
     const paths = configured.stdout.split("\0").filter(Boolean).map(entry => entry.slice(entry.indexOf("\n") + 1));
