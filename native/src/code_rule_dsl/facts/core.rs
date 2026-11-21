@@ -1,5 +1,5 @@
 //! Core node facts from the tape (docs/final-shape/03-architecture.md §1, §5; 05 Phase 2), adapted
-//! from facts-a's per-content syntactic facts (Moti-Velz/facts-engine `spikes/facts-a/src/facts.rs`):
+//! from facts-a's per-content syntactic facts (the facts-engine branch, `spikes/facts-a/src/facts.rs`):
 //! columns indexed by preorder node id, built from Rerail's own tape so ids, kinds, fields and
 //! spans equal the matcher's (preorder transducer ids over every tree-sitter node, named and
 //! anonymous).

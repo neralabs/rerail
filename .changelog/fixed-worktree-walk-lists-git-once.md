@@ -1,1 +1,0 @@
-With agent sessions in several worktrees of one repository, the walk of the other worktrees no longer asks Git again for a worktree's changed files while a session is still taking the walk that first showed it that worktree: each walk that began meanwhile ran one more Git process per such worktree.

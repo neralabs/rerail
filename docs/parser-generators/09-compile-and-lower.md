@@ -428,8 +428,8 @@ time is measured when each executor exists.
 
 ## 9. Prior work and the decisions it bears on
 
-The prior-work indexes of the ast-index-spike (`prior-work/ast-index-spike-design-index.md`,
-`prior-work/ast-index-spike-history-index.md`) were searched for JIT, code generation, Metal, SIMD
+The prior-work indexes of the SQL index prototype (`prior-work/sql-index-prototype-design-index.md`,
+`prior-work/sql-index-prototype-history-index.md`) were searched for JIT, code generation, Metal, SIMD
 and transducers.
 
 - **Compile cost must amortise.**

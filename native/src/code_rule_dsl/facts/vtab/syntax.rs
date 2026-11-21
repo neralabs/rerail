@@ -33,7 +33,7 @@ use crate::code_rule_dsl::language::{KindCatalog, from_tape_tag};
 use crate::content_store::{ContentStore, StoreError, StoreResult};
 use rusqlite::Connection;
 use crate::code_rule_dsl::logic::front::ast::Value;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeSet, HashMap};
 use std::sync::{Arc, OnceLock};
 use cells::{Block, Cells};
 
@@ -207,11 +207,11 @@ impl Projection {
     /// (`demand`), and its phase's node anchors (`anchors`): found by its caller over its version
     /// (`logic::plan::text_demand::projection`).
     pub fn with_long_text_parts(mut self, demand: TextDemand, anchors: Result<BTreeSet<String>, String>) -> Self {
-        let TextDemand { long, any, read, wide } = demand;
+        let TextDemand { long, any, negated_any, read, wide } = demand;
         self.long_text = long;
-        self.long_text_any = !any.is_empty();
+        self.long_text_any = any.len() + negated_any > 0;
         crate::code_rule_dsl::logic::profile::decision("text past the inline bound", || {
-            if self.long_text_any { format!("every node ({} rules read the text of a node of any kind)", any.len()) } else { format!("{} kinds: {}", self.long_text.len(), self.long_text.iter().take(12).cloned().collect::<Vec<_>>().join(", ")) }
+            if self.long_text_any { format!("every node ({} rules read the text of a node of any kind)", any.len() + negated_any) } else { format!("{} kinds: {}", self.long_text.len(), self.long_text.iter().take(12).cloned().collect::<Vec<_>>().join(", ")) }
         });
         crate::code_rule_dsl::logic::profile::decision("nodes with text", || match &read {
             None => format!("every node ({} reads the text of a node it does not narrow)", wide.as_deref().unwrap_or("a rule")),
@@ -285,8 +285,11 @@ impl TextNodes {
 pub struct TextDemand {
     /// The kinds whose text is read at any length.
     pub long: BTreeSet<String>,
-    /// The text atoms (rule, body position) of a node of any kind, no twin reading its long text.
+    /// The positive text atoms (rule, body position) of a node of any kind, no twin reading its long text.
     pub any: Vec<(usize, usize)>,
+    /// The negated text atoms of a node of any kind that is not compared with a constant within the bound: no twin
+    /// stands in for a negation, so every node's text is made at any length.
+    pub negated_any: usize,
     /// The nodes whose text (within the bound) is read; `None` every node.
     pub read: Option<TextNodes>,
     /// Where `read` is every node: the first rule that reads the text of a node it does not narrow.

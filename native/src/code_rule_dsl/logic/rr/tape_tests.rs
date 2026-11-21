@@ -375,6 +375,41 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
     assert!(any(&w1, "rules/a.rerail"), "{w1:?}");
 }
 
+/// A policy's findings are its run alone's whatever else shares its pack (RUF060 beside C417). `anns` reads
+/// `list_like` from a string annotation, so hiding copies it for the annotation, and folding the copy widened
+/// `list_like` to take the annotations in (`hiding::fold_own`). `cmps` reads it through `empty_literal` from the file:
+/// beside `anns` it found the annotation's `1 in []` as well, which it does not alone. It reads it as hiding left it.
+#[test]
+fn a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("corun-annotations");
+    let (src, rules) = (root.join("src"), root.join("rules"));
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(src.join("x.py"), "a = 1 in []\nx: \"1 in []\" = 1\n").unwrap();
+    // Both include the same library, which asks for the annotations' trees: they ask the same guests, one pack.
+    let policy = |name: &str, body: &str| {
+        let path = rules.join(format!("{name}.rerail"));
+        std::fs::write(&path, format!(".policy \"t:{name}\" revision 1\n.language python\n#include \"python/ruff.rerail\"\n{body}\n")).unwrap();
+        path
+    };
+    let cmps = policy("cmps", ".violation Cmp(at: node) code \"cmp\" \"in an empty list\"\nCmp(c) :- cmp(c, \"in\", _, r), empty_literal(r, _).");
+    let anns = policy("anns", ".violation Ann(at: node) code \"ann\" \"a list in an annotation\"\nAnn(e) :- annotation(e), list_like(e, _).");
+    let found = |report: &serde_json::Value, policy: &str| -> Vec<(u64, String)> {
+        let rows = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["policy"] == policy);
+        let mut found: Vec<(u64, String)> = rows.map(|d| (d["line"].as_u64().unwrap_or(0), d["code"].as_str().unwrap_or("").to_owned())).collect();
+        found.sort();
+        found
+    };
+    let run = |paths: &[PathBuf], out: &str| crate::code_rule_dsl::tools::run_policies(paths, &src, &root.join(out), &serde_json::Value::Null).unwrap();
+    let (alone, beside) = (run(std::slice::from_ref(&cmps), "alone"), run(&[cmps, anns], "beside"));
+    let _ = std::fs::remove_dir_all(&root);
+    let together: Vec<u64> = beside["runs"].as_array().unwrap().iter().map(|r| r["together"].as_u64().unwrap_or(0)).collect();
+    assert_eq!(together, [2, 2], "one pack: {beside:#}");
+    assert_eq!(found(&beside, "t:anns"), [(2, "ann".to_owned())], "the annotation's list is read: {beside:#}");
+    assert_eq!(found(&alone, "t:cmps"), [(1, "cmp".to_owned())], "{alone:#}");
+    assert_eq!(found(&beside, "t:cmps"), found(&alone, "t:cmps"), "{beside:#}");
+}
+
 /// A batch's policies of a language of several dialects (`.language typescript`) run as one pack a dialect, as a
 /// policy alone runs once a dialect (`tools::run_program`): each policy's findings are its run alone's, from every
 /// dialect, and a policy whose scope gives other dialects runs in a pack of its own. Before, such policies ran alone.

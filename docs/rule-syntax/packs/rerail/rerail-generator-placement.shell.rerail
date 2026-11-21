@@ -1,0 +1,55 @@
+.policy "rerail-generator-placement" revision 2
+.description "Keep scripts in packs or the engine sources that write committed files under scripts/generate, not beside their output; fixtures, upstream oracles and tests are exempt."
+.mode steer
+.scope include "packs/**/*.sh", "native/src/**/*.sh"
+.scope text "packs/**/*.sh", "native/src/**/*.sh"
+.scope exclude "packs/*/upstream/**", "**/fixtures/**", "**/*.test.*", "**/*.spec.*"
+// rerail-generator-placement for shell scripts (the JavaScript policy, rerail-generator-placement.rerail, says
+// why), read as text: no grammar reads shell. In a file starting with a sh, bash, zsh, dash or ksh shebang, the
+// first command that writes a file is reported, at the command (one search over the file, the JSON's regex):
+//   cp "$tmp" rules/next.json;  … && mv a b;  rsync -a out/ dist/      GENERATOR_BESIDE_OUTPUT
+//   generate | tee table.txt                                           GENERATOR_BESIDE_OUTPUT
+//   echo "$row" >> "$OUT_DIR/table.txt"                                GENERATOR_BESIDE_OUTPUT
+//   echo done > /dev/null; # cp a b                                    not reported
+
+.violation GENERATOR_BESIDE_OUTPUT(at: span) "If what it writes is committed, move this script to scripts/generate/<area>/, re-root its paths and imports, and add its row to scripts/generate/README.md. Leave temporary output."
+GENERATOR_BESIDE_OUTPUT(w) :- source(_, sp), match_group("(?s)\\A#![^\\n]*\\b(?:ba|z|da|k)?sh\\b.*?(?P<W>(?m:^)[ \\t]*(?:[^#\\n]*?(?:&&|\\|\\||;|\\bthen\\b|\\bdo\\b)[ \\t]*)?(?:cp|mv|rsync)[ \\t]+[^\\n]+|(?m:^)[^#\\n]*?\\btee[ \\t]+(?:-a[ \\t]+)?[^\\s/-][^\\n]*|(?m:^)[^#\\n]*?>>?[ \\t]*\\\"?\\$\\{?[A-Za-z_]\\w*\\}?\\\"?/[^\\s;&|)]*[A-Za-z_.])", sp, _, "W", w).
+
+.test the_first_write_is_reported exactly
+    .fixture "native/src/tools/regen.sh" ```
+        #!/usr/bin/env bash
+        set -e
+        # cp a b
+        out=$(mktemp)
+        generate > "$out" && cp "$out" table.txt
+        echo done | tee log.txt
+        ```
+    .expect GENERATOR_BESIDE_OUTPUT at "native/src/tools/regen.sh":5
+.end
+
+.test tee_and_redirects_are_reported exactly
+    .fixture "packs/a/tee.sh" ```
+        #!/bin/sh
+        generate | tee table.txt
+        ```
+    .fixture "packs/a/redirect.sh" ```
+        #!/bin/zsh
+        echo "$row" >> "$OUT_DIR/table.txt"
+        ```
+    .expect GENERATOR_BESIDE_OUTPUT at "packs/a/tee.sh":2
+    .expect GENERATOR_BESIDE_OUTPUT at "packs/a/redirect.sh":2
+.end
+
+.test no_shebang_no_write_and_fixtures_pass exactly
+    .fixture "packs/a/plain.sh" ```
+        cp a b
+        ```
+    .fixture "packs/a/quiet.sh" ```
+        #!/bin/bash
+        echo done > /dev/null
+        ```
+    .fixture "packs/a/fixtures/copy.sh" ```
+        #!/bin/bash
+        cp a b
+        ```
+.end

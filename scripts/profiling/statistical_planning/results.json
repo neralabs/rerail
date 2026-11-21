@@ -4,7 +4,7 @@
   "python": "3.15.0",
   "seeds": 32,
   "unit": "indexed lookups + examined rows + ready guard evaluations; not native VM instructions",
-  "rawReport": "/Users/jeremy/orca/artifacts/async-family-comparison/regression-fixes-d1dc128bb/probing-qualified.json",
+  "rawReport": "probing-qualified.json (kept on the machine that ran the spike, not in git)",
   "prepareCpuMs": 418.263,
   "inputs": {
     "synthetic": [

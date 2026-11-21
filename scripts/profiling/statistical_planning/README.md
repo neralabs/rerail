@@ -106,7 +106,6 @@ The spike's scripts (`capture.py`, `spike.py`, `test_spike.py`) were removed onc
 the merge into investigate-bend-vs-datalog (2026-11-12): random probing is rejected and nothing of it runs in the
 engine. They are in git at `fc3e8c4f9` to run it again.
 
-Raw local artifacts reside under:
-`/Users/jeremy/orca/artifacts/async-family-comparison/regression-fixes-d1dc128bb/`.
-They include `probing-capture`, `probing-qualified.json`, and the red/green test logs.
+The raw artifacts (`probing-capture`, `probing-qualified.json` and the red/green test logs) were kept on the machine
+that ran the spike, not in git.
 The compact checked-in result records source revisions without committing captured facts.

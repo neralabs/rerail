@@ -9682,6 +9682,33 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
   `rerail-device`, `-c-directives`, `-metal`, `-gpu`, `-forest` or `-accel`; tests `rerail-ukl` 9, `-gpu` 25, `-metal`
   24, `-device` 6, `-forest` 40, `-accel` 88, and the engine's lattice, work queue, label pass and 16z tests 22.
 
+### Q450. Roll-up 35 (main onto Pulling-it-all-together): what the merge chose
+
+- **Merged** (2026-11-21): main at 21f86868e9. Main's scrub is taken where it reached ours: `TEMPO_` switches are
+  `RERAIL_` (`RERAIL_PACKED_BATCH_PROFILE` and the rest, in the Metal and packed files too), `tempo_batch` is
+  `rerail_batch`, the content store's comments name "the predecessor", relax is "a private fork of makepad/relax", and
+  0305's shared path is `<shared data>/`.
+- **Ported onto ours**: negated `text` reads demand long text (`TextDemand::negated_any`; a negation of a short
+  constant adds nothing); #923's narrow copies onto `FoldOwn` (a rule that reaches no annotation reads the original
+  narrow, `rr_narrow_<head>`; ours' partial-hit test now asks that of `ids`, rows still a full run's); the corpus
+  listing that skips only the host's ignored directories (`corpus_listing`, `corpus_paths`, with ours' sort and
+  `RERAIL_SAMPLE_EVERY` kept); main's decomposed `SelectBuilder` with ours' `shell_unquote` and bounded aggregates;
+  main's `Beside` thread and `in_a_job` (a pool's own thread helps instead of waiting); the decomposed
+  `git_workspace` with ours' canonical paths and `snapshot`; the router's `gitIgnoreMatchers` beside ours' analysis
+  options. Main's new Windows router test reads the plain root as ours' owners do, from the database.
+- **Not ported**: main's decomposition of `block_program.rs`, `runtime.rs` and `metal_program_backend.rs` (ours whole,
+  renamed: no Metal work while Metal is off), and main's `MAIN` thread record (`is_main_thread` stays false on
+  Windows). Main's `CROSS_FILE` registry is gone here (0450 §3), so its STATE entry is cut.
+- **Fixed on the way**: the well-founded check multiplied its measures before comparing them with the bound and
+  overflowed on python/calls with the typing run (two threads, `a_run_on_two_threads_ends`): now stopped at 4,000 as
+  it multiplies (`a_component_of_many_measures_is_refused`). The choices key took out the settings' hash but not the
+  program's own `.about` row, which a version holds once it has any about row, so a program whose only setting was a
+  `.message` keyed apart from one with none (`a_message_setting_is_not_in_the_choices_key`): taken out too, key v3.
+- **Checked**, CPU only, on a Linux DGX Spark: clippy has no finding in `rerail-engine`, `-logic` or `-facts`; tests
+  `rerail-logic` 568, `-facts` 109, `-accel` 88, and the engine's corpus, partial-hit, threads, `git_workspace`,
+  `ast_rule`, syntax, packed and two-thread run tests (352 and 13); the executor-coverage table re-blessed for main's
+  packs. TypeScript type-checks apart from packages not installed for the check.
+
 ---
 
 > **Read this first. This queue is not a place to put work.** Recording something here as open is almost never

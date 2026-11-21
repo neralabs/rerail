@@ -807,8 +807,8 @@ fn execute_packed_once(
     }
     // The tasks with no node records: the device reads the documents in the slabs (`DocTable`).
     let mut batch = PackedBatch::new_in_place(programs, files, anchors).map_err(|error| {
-        if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-            eprintln!("TEMPO_PACKED_BATCH_ERROR stage=pack error={error:?}");
+        if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+            eprintln!("RERAIL_PACKED_BATCH_ERROR stage=pack error={error:?}");
         }
         error
     })?;
@@ -825,14 +825,14 @@ fn execute_packed_once(
         let totals = batch
             .assign_workspace_with_result_limits_and_lanes(programs, result_limits, lanes)
             .map_err(|error| {
-                if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
-                    eprintln!("TEMPO_PACKED_BATCH_ERROR stage=workspace error={error:?}");
+                if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+                    eprintln!("RERAIL_PACKED_BATCH_ERROR stage=workspace error={error:?}");
                 }
                 error
             })?;
-        if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+        if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
             eprintln!(
-                "TEMPO_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} lanes={lanes} workspaceBytes={} totals={totals:?}",
+                "RERAIL_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} lanes={lanes} workspaceBytes={} totals={totals:?}",
                 programs.len(),
                 batch.tasks.len(),
                 batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
@@ -902,16 +902,16 @@ fn execute_packed_once(
     let final_capture_buffer = &workspace.final_captures;
     let output_storage_buffer = &workspace.output_storage;
     let allocation_elapsed = allocation_started.elapsed();
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_METAL_WORKSPACE reused={} generation={}",
+            "RERAIL_METAL_WORKSPACE reused={} generation={}",
             workspace.reused, workspace.generation,
         );
     }
     // The rows by name (`run_batch`'s): the block stands for the node records, children, source and line starts.
     let lanes = batch.evaluation_lanes.len() as u64;
-    let mut command = lane::Command::new("Tempo packed transducer batch");
-    let mut launch = command.launch(engine.kernel(), "Tempo packed transducer kernel");
+    let mut command = lane::Command::new("Rerail packed transducer batch");
+    let mut launch = command.launch(engine.kernel(), "Rerail packed transducer kernel");
     for (name, buffer) in [
         ("tasks", task_buffer.buffer()),
         ("header", header_buffer.buffer()),
@@ -960,9 +960,9 @@ fn execute_packed_once(
     let execution_started = std::time::Instant::now();
     command.run()?;
     let execution_elapsed = execution_started.elapsed();
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         eprintln!(
-            "TEMPO_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
+            "RERAIL_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
             allocation_elapsed.as_nanos(),
             execution_elapsed.as_nanos(),
         );
@@ -978,7 +978,7 @@ fn execute_packed_once(
             batch.tasks.len(),
         )
     };
-    if std::env::var_os("TEMPO_PACKED_BATCH_PROFILE").is_some() {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
         let mut work = BTreeMap::<u32, (u64, u32)>::new();
         for (task, status) in batch.tasks.iter().zip(statuses) {
             let entry = work.entry(task.program).or_default();
@@ -988,7 +988,7 @@ fn execute_packed_once(
         let mut work = work.into_iter().collect::<Vec<_>>();
         work.sort_by_key(|(_, (total, _))| std::cmp::Reverse(*total));
         eprintln!(
-            "TEMPO_PACKED_TASK_WORK {:?}",
+            "RERAIL_PACKED_TASK_WORK {:?}",
             work.into_iter().take(12).collect::<Vec<_>>()
         );
     }

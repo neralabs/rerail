@@ -5,9 +5,9 @@ Research track T11. Read-only notes; nothing was built, run, or benchmarked.
 ## Conventions
 
 - Worktree roots (all paths below are relative to these):
-  - **DLRE** = `/Users/jeremy/orca/workspaces/rerail/Data-layer-rule-expressivity` (HEAD `b1d36739` "test: require schema reuse, scope isolation and bounded completed rows").
-  - **N1562** = `/Users/jeremy/orca/workspaces/rerail/scale-test-the-re-railer` (HEAD `e481c192` "TDD-RED: packetize expanded relational navigation").
-  - **SSC** = `/Users/jeremy/orca/workspaces/rerail/https-github.com-neralabs-rerail-tree-Moti-Velz-sql-set-composition` (HEAD `b3e97cd4` "Define transition from matcher continuations to shared execution plans").
+  - **DLRE** = the `Data-layer-rule-expressivity` worktree (HEAD `b1d36739` "test: require schema reuse, scope isolation and bounded completed rows").
+  - **N1562** = a worktree of this repository (HEAD `e481c192` "TDD-RED: packetize expanded relational navigation").
+  - **SSC** = the `sql-set-composition` worktree (HEAD `b3e97cd4` "Define transition from matcher continuations to shared execution plans").
 - Citations are `file:line` (line numbers of the files at those HEADs).
 - Tags: **M** = a measured number reported by the source; **D** = a decision the source records (keep/reject/selected); **A** = an assertion, proposal, or design requirement that the source does not claim to have measured or implemented.
 - Journal citations for DLRE use the current line numbers of `docs/data-layer-performance-journal.md` (removed; at 7efcac9c67). The `d3470da2..HEAD` diff adds two blocks: lines 3695–4253 and 4261–5056 (verified with `git diff -U0`; the hunks are `+3695,559` and `+4261,796`). Lines 4254–4260 ("Future entries") predate the range.
@@ -157,7 +157,7 @@ Earlier history inside the diff range, in order:
 - Each variant keeps the production positional FTS declaration and complete value-posting bytes, and passes statistics, rollback, replacement, and pinned-SQLite-reader checks (`:151-153`).
 - The 32-file trace shows 7 host submissions and 46 SQLite internal completions. Per-file shows 224 host submissions and 295 internal completions. The 2,336 trigger entries are not host submissions. FTS still maintains per-document metadata inside a host batch (`:168-171`) **M**.
 - **D** (`:173-174`): publish 32-file packets with the existing triggers, positional index, and 1-MiB cache. Do not promote grouped statistics (the gain overlaps trial variance and adds maintenance) or larger caches (they raise residency without a consistent win). The replicated tiny file cannot predict the repository gain (`:166`).
-- WP4 constraints (`recovery-plan:159-170`): keep the ast-index-spike positional FTS layout and exact value postings; keep deletion, replacement, pinned old versions, rollback, and retry. "Retain SQL ownership of statistics. Do not replace indexed values with an always-resident Rust index." "No per-rule index rebuild."
+- WP4 constraints (`recovery-plan:159-170`): keep the SQL index prototype positional FTS layout and exact value postings; keep deletion, replacement, pinned old versions, rollback, and retry. "Retain SQL ownership of statistics. Do not replace indexed values with an always-resident Rust index." "No per-rule index rebuild."
 
 ### 1.9 Spike S5: schema fan-out and template reuse
 
@@ -306,7 +306,7 @@ Rules: `ConsumerState` owns no private SQLite schema and no connection per file.
 
 **Finite kind alternatives** (`docs/performance-decisions/finite-kind-alternatives.md`):
 - Evidence: Q224 spent 1.247 CPU s and 50,792,117 VM instructions partitioning and reuniting one candidate scope over nested finite kind alternatives (`:7-9`) **M**.
-- Prior work: ast-index S066 (lines 3855–3874) kept a single SQL integer `IN` list after a bitmap alternative lost, 123 versus 110 ms. "The shared indexes contain no directly measured finite-kind Boolean folding experiment" (`:20-22`).
+- Prior work: the SQL index prototype's S066 (lines 3855–3874) kept a single SQL integer `IN` list after a bitmap alternative lost, 123 versus 110 ms. "The shared indexes contain no directly measured finite-kind Boolean folding experiment" (`:20-22`).
 - **D** (`:26-31`): recognize exact finite kind alternatives before emitting individual SQL branches. Union their kind sets, intersect any enclosing restriction, emit one filter over the original scope. Memoize utility references. Approximate or non-kind conditions stay on the conservative path. "Negation remains caller SQL and may subtract only an exact result. No scope is widened."
 - Result: 1,516 DSL tests, 42 shape tests, 2,350 originals, and 120 controls pass. The three-run median ingestion CPU on the 128-file/60-rule control fell **25.675→21.827 s (−15.0%)**; wall 33.310→24.824 s; RSS effectively unchanged (`:43-45`; journal 4146-4158) **M**. One-file SQL CPU fell 6.369→4.977 s; VM 301,856,025→259,876,714; full-scan steps 8,450,565→4,280,207 (journal 4134-4135) **M**.
 
@@ -380,7 +380,7 @@ In journal order:
 
 ---
 
-## Source 2: N1562 (scale-test-the-re-railer)
+## Source 2: N1562 (a worktree of this repository)
 
 ### 2.1 Design doc: `docs/sql-scope-and-operational-semantics-design.md` (776 lines)
 
@@ -556,7 +556,7 @@ Ordering is not independently verified: I checked that rows are produced file-ma
 
 ### 3.1 `docs/sql-structural-execution-plan.md` (proposed, 2026-10-26; baseline `c6ff8110`; removed; at 7efcac9c67)
 
-Status: "proposed transition plan … changes no engine behavior" (`:3`). The integration reference is `Pulling-it-all-together` at `0b941fb4` (`:5`).
+Status: "proposed transition plan … changes no engine behavior" (`:3`). The integration reference is `PIAT` at `0b941fb4` (`:5`).
 - **Thesis** (`:7-9`): "The target compiler emits a graph of local pattern groups, shared facts, and relational operators. The unit of execution is a producer or a compiled group over a bounded document batch. The cohort interpreter remains a migration oracle. It is absent from the final production execution path."
 
 **Evidence and governing decisions** (`:11-35`):

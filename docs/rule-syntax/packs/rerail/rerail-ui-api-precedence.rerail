@@ -1,0 +1,121 @@
+.policy "rerail-ui-api-precedence" revision 2
+.description "Show what the rules API says decides each rule setting in the dashboard, rather than ranking or building those deciders in the page; the engine owns precedence."
+.language javascript
+.mode log
+.scope include "ui/**/*.js"
+// The rules API returns, for each rule setting, the decider that holds it (`…Source`: by checkout, repository, rule
+// or pack, at a folder). The dashboard shows it; it does not rank owners, folder depth or rule over pack itself, nor
+// build a decider of its own. Two clauses, as the JSON's:
+//   const ownerRank = owner === "repository" ? 2 : 0;           UI_RANKS_SETTINGS (a rank, by name)
+//   state.folder.length > source.folder.length                  UI_RANKS_SETTINGS (folder depth)
+//   source?.by !== "checkout"                                   UI_RANKS_SETTINGS (a decider's owner, compared)
+//   ({ by: "checkout", folder: state.folder, target })          UI_BUILDS_DECIDER
+//   label = source.by === "checkout" ? "this checkout" : …      not reported (shown as text)
+// Each test reads a node's text with the JSON's regex: a whole match where the JSON anchors both ends, else a
+// search inside the text.
+
+// ranks(n): one of the JSON's ways to rank settings, reported at n.
+.decl ranks(n: node)
+// A variable or function named for a rank: ownerRank, source_order, rankOf, outranks.
+ranks(n) :- kind(n, "variable_declarator"), field(n, "name", x),
+    match("(?i:(?:owner|source|decider|setting)_?(?:rank|order)|rank(?:Of)?)", x).
+ranks(n) :- kind(n, "function_declaration"), field(n, "name", x),
+    match("(?i:(?:owner|source|decider|setting)?_?rank(?:Of)?|.*outranks?.*)", x).
+// Folder depth: a.folder.length > b.folder.length, folder.startsWith(b.folder), folderContains(…), and the deepest
+// of a sort, `(… b.folder.length - a.folder.length)[0]`.
+ranks(n) :- kind(n, "binary_expression"),
+    match("[\\w$.?]*\\bfolder\\??\\.length\\s*(?:[!=]==?|[<>]=?)\\s*\\(?[\\w$]+\\??\\.folder\\??\\.length\\b(?s:.*)", n).
+ranks(n) :- kind(n, "call_expression"),
+    match("(?s:.*)\\bfolder\\??\\.startsWith\\(\\s*[\\w$]+\\??\\.folder\\b(?s:.*)|folderContains\\((?s:.*)", n).
+ranks(n) :- kind(n, "subscript_expression"),
+    match("(?s:.*)folder\\??\\.length\\s*-\\s*[\\w$]+\\??\\.folder\\??\\.length\\s*\\)\\s*\\[\\s*0\\s*\\]", n).
+// A decider's owner or target compared with an owner's name, unless the comparison picks a text to show.
+ranks(n) :- owner_test(n), !shown(n).
+// Owners mapped to numbers: switch (x.by) { case "checkout": return 0; … }, list.indexOf(x.by), and
+// { checkout: 0, repository: 1 }.
+ranks(n) :- kind(n, "switch_statement"), field(n, "value", v), match("(?s:.*)\\.by\\)?", v),
+    child(n, b, _), kind(b, "switch_body"), child(b, k, _), kind(k, "switch_case"), child(k, r, _),
+    kind(r, "return_statement"), match("return\\s+-?\\d(?s:.*)", r).
+ranks(n) :- kind(n, "call_expression"), match("(?s:.*)\\.indexOf\\(\\s*[\\w$.?]+\\.by\\s*\\)", n).
+ranks(n) :- kind(n, "object"), child(n, a, _), kind(a, "pair"), match("[\"']?checkout[\"']?\\s*:\\s*-?\\d(?s:.*)", a),
+    child(n, b, _), kind(b, "pair"), match("[\"']?repository[\"']?\\s*:\\s*-?\\d(?s:.*)", b).
+
+// owner_test(n): `xSource.by === "checkout"`, `decider[i].target !== 'rule'`, `d.by == "pack"`, either way round.
+.decl owner_test(n: node)
+owner_test(n) :- kind(n, "binary_expression"), match("(?:[\\w$.?]*?(?:\\b[\\w$]*Source|\\bsource|\\b[\\w$]*[dD]ecider|\\bd)(?:\\??\\.?\\[[^\\]\\n]*\\])?\\??\\.(?:by|target)|target)\\s*[!=]==?\\s*[\"'`](?:checkout|repository|rule|pack)[\"'`]|[\"'`](?:checkout|repository|rule|pack)[\"'`]\\s*[!=]==?\\s*(?:[\\w$.?]*?(?:\\b[\\w$]*Source|\\bsource|\\b[\\w$]*[dD]ecider|\\bd)(?:\\??\\.?\\[[^\\]\\n]*\\])?\\??\\.(?:by|target)|target)", n).
+// shown(n): n is the condition of a `? "text" : …` (its direct parent's consequence is a string or template).
+.decl shown(n: node)
+shown(n) :- child(t, n, _), kind(t, "ternary_expression"), field(t, "consequence", c),
+    (kind(c, "string") ; kind(c, "template_string")).
+
+.violation UI_RANKS_SETTINGS(at: node) "Take what decides this from the API's `…Source` deciders, not by ranking owners, folder depth or rule over pack here. Showing a decider as text is fine; if the API lacks the answer, add it there."
+UI_RANKS_SETTINGS(n) :- ranks(n).
+
+// builds_decider(o): an object literal shaped like the API's decider: `by` with `folder` or `packId` (as pairs or
+// shorthand), or `by: "pack-start"` / `by: "rule-default"`.
+.decl builds_decider(o: node)
+builds_decider(o) :- kind(o, "object"), member(o, "by"), (member(o, "folder") ; member(o, "packId")).
+builds_decider(o) :- kind(o, "object"), child(o, p, _), kind(p, "pair"), field(p, "key", k), text(k, "by"),
+    field(p, "value", v), match("[\"'`](?:pack-start|rule-default)[\"'`]", v).
+// member(o, x): object o has a property x written `x: …` or as shorthand `{ x }`.
+.decl member(o: node, x: symbol)
+member(o, x) :- kind(o, "object"), child(o, p, _), kind(p, "pair"), field(p, "key", k), text(k, x).
+member(o, x) :- kind(o, "object"), child(o, p, _), kind(p, "shorthand_property_identifier"), text(p, x).
+
+.violation UI_BUILDS_DECIDER(at: node) "Show the decider the API returns instead of building one here. Where a second click must weigh the first before the page refreshes, keep it until the settings write returns deciders."
+UI_BUILDS_DECIDER(o) :- builds_decider(o).
+
+// The pack's example (packs/rerail/pack.json).
+.test building_a_decider_is_reported exactly
+    .fixture "ui/settings-writes.js" ```
+        const decider = (owner, target) => state => (owner === "checkout"
+          ? { by: "checkout", checkoutPath: data.checkout?.checkoutPath, folder: state.folder, target }
+          : { by: "repository", folder: state.folder, target });
+        ```
+    .expect UI_BUILDS_DECIDER at "ui/settings-writes.js":2
+    .expect UI_BUILDS_DECIDER at "ui/settings-writes.js":3
+.end
+
+.test ranking_is_reported exactly
+    .fixture "ui/derive.js" ```
+        export function packSettingDecides(state, owner, checkoutPath) {
+          const source = state.suppressionsSource;
+          if (source?.by !== "checkout" && source?.by !== "repository") return true;
+          const ownerRank = owner === "repository" ? 2 : 0;
+          if (state.folder.length !== source.folder.length) return state.folder.length > source.folder.length;
+          return source.target === "pack";
+        }
+        function outranks(a, b) { return a.folder.startsWith(b.folder); }
+        const deepest = (list) => list.sort((a, b) => b.folder.length - a.folder.length)[0];
+        const ORDER = { checkout: 0, repository: 1 };
+        const at = ["checkout", "repository"].indexOf(entry.by);
+        function weight(d) {
+          switch (d.by) {
+            case "checkout": return 0;
+            default: return 2;
+          }
+        }
+        const start = { by: "pack-start" };
+        ```
+    .expect UI_RANKS_SETTINGS at "ui/derive.js":3
+    .expect UI_RANKS_SETTINGS at "ui/derive.js":4
+    .expect UI_RANKS_SETTINGS at "ui/derive.js":5
+    .expect UI_RANKS_SETTINGS at "ui/derive.js":6
+    .expect UI_RANKS_SETTINGS at "ui/derive.js":8
+    .expect UI_RANKS_SETTINGS at "ui/derive.js":9
+    .expect UI_RANKS_SETTINGS at "ui/derive.js":10
+    .expect UI_RANKS_SETTINGS at "ui/derive.js":11
+    .expect UI_RANKS_SETTINGS at "ui/derive.js":13
+    .expect UI_BUILDS_DECIDER at "ui/derive.js":18
+.end
+
+// The pack's passing example, and a decider shown as text.
+.test showing_deciders_passes exactly
+    .fixture "ui/poll.js" ```
+        const folderState = entry => ({
+          folder: entry.folder, on: entry.on, mode: entry.mode, suppressions: entry.suppressions, suppressionsSource: entry.suppressionsSource,
+          source: entry.source,
+        });
+        const label = source.by === "checkout" ? "this checkout" : "the repository";
+        ```
+.end

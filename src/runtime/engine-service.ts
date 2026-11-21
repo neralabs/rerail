@@ -23,6 +23,7 @@ import { isNamedPipe } from "./daemon/engine-pipe.js";
 import { checkoutStatus } from "./repository-start.js";
 import { nativeTreeWatch, type TreeWatch } from "../engine/code-rule/tree-watch.js";
 import { RepositoryWorktreeWalks } from "../engine/code-rule/worktree-walks.js";
+import { GitIgnoreMatchers } from "../engine/native/git-ignore-matchers.js";
 import {
   endSuspendedSessions, failQueuedScans, RerailRuntime, type RerailRuntimeOptions, type SessionSuspension, type SuspendedSessions,
 } from "./runtime.js";
@@ -262,6 +263,8 @@ interface EngineRoutingState {
    * worktree for itself held every file of every worktree once per session.
    */
   worktreeWalks: RepositoryWorktreeWalks;
+  /** Git's ignore rules of each checkout, one matcher shared by the sessions of every runtime (`GitIgnoreMatchers`). */
+  gitIgnoreMatchers: GitIgnoreMatchers;
 }
 
 /**
@@ -450,7 +453,7 @@ function runtimeFor(
   if (open !== undefined) return open;
   if (runtimeOptions === undefined) throw new Error(`Kernel runtime is unavailable for session ${sessionId}`);
   const runtime = new RerailRuntime({
-    ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks,
+    ...runtimeOptions, autostart: false, startGate: true, worktreeWalks: state.worktreeWalks, gitIgnoreMatchers: state.gitIgnoreMatchers,
     suspendedSessions: suspendedSessions(state, runtimeKey), ownerLockId: ownerLockFor(state, runtimeOptions.databasePath),
   });
   state.runtimes.set(runtimeKey, runtime);
@@ -1102,6 +1105,7 @@ export async function startEngineService(options: EngineServiceOptions): Promise
     ownerLockId: ownerLock.id,
     databasePath,
     worktreeWalks: options.worktreeWalks ?? engineWorktreeWalks(),
+    gitIgnoreMatchers: new GitIgnoreMatchers(),
   };
   // Walks a caller gave are the caller's to close.
   const closeWalks = options.worktreeWalks === undefined ? () => routing.worktreeWalks.close() : () => undefined;

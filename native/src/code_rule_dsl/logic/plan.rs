@@ -370,7 +370,7 @@ impl FromIterator<((String, String), [i64; 4])> for ColStats {
     }
 }
 
-/// (`stat_*` in the facts database) in one statement. Nothing is counted at plan time (ast-index-spike S174, S178).
+/// (`stat_*` in the facts database) in one statement. Nothing is counted at plan time (SQL index prototype S174, S178).
 /// Statistics whose fingerprint (row counts) does not match the facts are refused.
 /// The climbs `Stats::steps` priced, by kind and set: each a function of the tree's statistics alone, so a model's
 /// plans made on several threads (`keeps::estimate`) share them.

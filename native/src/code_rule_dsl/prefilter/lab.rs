@@ -11,7 +11,7 @@
 //!     the tape through `nera_tree`)
 //!   cargo test --release --lib -- --ignored anchor_lab --nocapture
 //!
-//! From Pulling-it-all-together's `matcher/anchors/sql/lab.rs`, pointed at the content store: a
+//! From PIAT's `matcher/anchors/sql/lab.rs`, pointed at the content store: a
 //! capture is a store holding one batch's prefilter rows (`capture`), opened as a `ContentStore`,
 //! statements are lowered with the capture's statistics (`stats::inputs`) and run on its
 //! connection. Gone with decoding: clearing `decoded_*` tables and the structural fill.

@@ -100,7 +100,7 @@ export const OwedEntrySchema = z.object({
   })),
   findings: z.array(z.object({
     violation: OwedViolationSchema,
-    source: z.object({ kind: z.enum(RULE_SOURCE_KINDS), packId: z.string().nullable() }).nullable(),
+    source: z.object({ kind: z.enum(RULE_SOURCE_KINDS), packId: z.string().nullable(), title: z.string().optional() }).nullable(),
     scope: z.array(z.string()),
     digests: FileDigestsSchema,
   })),

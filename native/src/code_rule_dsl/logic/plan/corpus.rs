@@ -11565,79 +11565,69 @@ pub(in crate::code_rule_dsl) fn package_root_modules(root: &Path, paths: &[Strin
     (out, unpackaged)
 }
 
-/// The corpus's files under `root`, relative and in path order: Python's (`.py`), Rust's (`.rs`) and rule files
-/// (`.rerail`), skipping hidden directories and `target`.
-pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
-    let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
-    let mut classify = |relative: String, grammar: Option<&'static str>| match grammar {
-        Some(label) => by_label.entry(label).or_default().push(relative),
-        // A hidden file (`.env`, `.hidden.md`) is no text document, as in W.
-        None if !relative.rsplit('/').next().is_some_and(|name| name.starts_with('.')) => text.push(relative),
-        None => {}
-    };
-    // In a Git work tree, the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it
-    // does not ignore), with no walk; the same directories skipped. Outside one, or where Git cannot read it, the walk.
-    // A root Git sees no file under (one it ignores, such as fetched fixtures) is not described by Git: walked.
+/// Whether the corpus lists files under a directory of this name: every one but those the host's walk never enters
+/// (`git_workspace::ignored_directories`), hidden ones (`.github`) included.
+fn listed_directory(name: &str) -> bool {
+    !crate::git_workspace::ignored_directory(name)
+}
+
+/// Whether `root` is a site directory (`site-packages`): it holds an installed distribution's `*.dist-info`, which
+/// `typing::deps::Installed::scan` reads. The host's ignored directories are a repository's; a site directory's
+/// packages are what Python imports, whatever their names (`vendor`, `build`, `coverage`), so none is skipped there.
+fn site_directory(root: &Path) -> bool {
+    observe(|o| o.listing(root)).is_some_and(|listing| listing.iter().any(|(name, is_dir)| *is_dir && name.ends_with(".dist-info")))
+}
+
+
+/// The files under `root` the corpus lists, relative, each with its grammar's label where the listing knows it. In a
+/// Git work tree, the files Git sees under the root (HEAD's, less deleted, plus staged and untracked ones it does not
+/// ignore), with no walk: from the inventory (`git_workspace::snapshot::scan_files`, with each file's grammar), else
+/// Git's listing (`git_files`). Outside one, or where Git cannot read it, or where it sees no file under the root (one
+/// it ignores, such as fetched fixtures), the walk. None lists a file under a directory `listed_directory` refuses, but
+/// in a site directory (`site_directory`).
+fn corpus_listing(root: &Path) -> Result<Vec<(String, Option<&'static str>)>> {
+    let enters: fn(&str) -> bool = if site_directory(root) { |_| true } else { listed_directory };
+    let entered = |relative: &str| relative.rsplit_once('/').is_none_or(|(dirs, _)| dirs.split('/').all(enters));
     install_git_inventory();
     if let Some(files) = crate::git_workspace::snapshot::scan_files(root, ThreadStore::git_reads().as_deref()) {
         use crate::git_workspace::snapshot::InventoryError;
-        for (relative, grammar) in files.map_err(|error| match error {
+        let files = files.map_err(|error| match error {
             InventoryError::Source(reason) => Error::Plan(reason),
             InventoryError::Cache(error) => Error::Cache(error),
-        })? {
-            if relative.rsplit_once('/').is_some_and(|(dirs, _)| dirs.split('/').any(|d| d.starts_with('.') || d == "target")) {
-                continue;
-            }
-            classify(relative, grammar.as_deref().and_then(crate::code_rule_dsl::language::label_named));
-        }
-        return Ok(CorpusFiles { by_label, text, embedded: false, root: root.to_path_buf() });
+        })?;
+        return Ok(files.into_iter().filter(|(relative, _)| entered(relative)).map(|(relative, grammar)| (relative, grammar.as_deref().and_then(crate::code_rule_dsl::language::label_named))).collect());
     }
-    let git = git_files(root);
-    if let Some((under, overlays)) = git {
-        let mut listed = 0;
-        for relative in &under {
-            let relative = relative.as_str();
-            let dirs: Vec<&str> = relative.split('/').collect();
-            if dirs[..dirs.len() - 1].iter().any(|d| d.starts_with('.') || *d == "target") {
-                continue;
-            }
-            listed += 1;
-            classify(relative.to_owned(), crate::code_rule_dsl::language::label_of_path(relative));
+    let paths = match git_files(root) {
+        Some((under, overlays)) => {
+            let listed: Vec<String> = under.into_iter().filter(|p| entered(p)).collect();
+            crate::code_rule_dsl::logic::profile::decision("phase 0: corpus files", || format!("{} files from Git ({overlays} overlays: changed, staged or untracked), no walk", listed.len()));
+            listed
         }
-        crate::code_rule_dsl::logic::profile::decision("phase 0: corpus files", || format!("{listed} files from Git ({overlays} overlays: changed, staged or untracked), no walk"));
-    } else {
-    // Phase 0's observer lists each directory: again only when its stat changed (t23).
-    let mut pending = vec![root.to_path_buf()];
-    // The run reads its files by their canonical paths too (`Observer::canonical`): a root reached through a symlink
-    // (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is asked.
-    observe(|o| {
-        o.preload(root);
-        if let Ok(real) = dunce::canonicalize(root)
-            && real != root
-        {
-            o.preload(&real);
+        None => walked(root, enters)?,
+    };
+    // The language registry's suffixes (`languages/<id>.json`): Python's include stubs (`.pyi`).
+    Ok(paths.into_iter().map(|p| {
+        let label = crate::code_rule_dsl::language::label_of_path(&p);
+        (p, label)
+    }).collect())
+}
+
+/// The files under `root` the corpus lists (`corpus_listing`), relative.
+pub(super) fn corpus_paths(root: &Path) -> Result<Vec<String>> {
+    Ok(corpus_listing(root)?.into_iter().map(|(p, _)| p).collect())
+}
+
+/// The corpus's files under `root` (`corpus_listing`), relative and in path order: each grammar's, by the language
+/// registry's suffixes (`languages/<id>.json`: Python's include stubs, `.pyi`), and the others as text.
+pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
+    let (mut by_label, mut text): (BTreeMap<&'static str, Vec<String>>, Vec<String>) = (BTreeMap::new(), Vec::new());
+    for (relative, grammar) in corpus_listing(root)? {
+        match grammar {
+            Some(label) => by_label.entry(label).or_default().push(relative),
+            // A hidden file (`.env`, `.hidden.md`) is no text document, as in W.
+            None if !relative.rsplit('/').next().is_some_and(|name| name.starts_with('.')) => text.push(relative),
+            None => {}
         }
-    });
-    while let Some(dir) = pending.pop() {
-        let listing = observe(|o| o.listing(&dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
-        for (name, is_dir) in listing.iter() {
-            let path = dir.join(name);
-            if *is_dir {
-                if !name.starts_with('.') && name != "target" {
-                    pending.push(path);
-                }
-                continue;
-            }
-            if !path.is_file() {
-                continue;
-            }
-            // A document is named by its path in the repository, with `/` on Windows too: scopes' globs and findings read it.
-            let relative = path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
-            // The language registry's suffixes (`languages/<id>.json`): Python's include stubs (`.pyi`).
-            let grammar = crate::code_rule_dsl::language::label_of_path(&relative);
-            classify(relative, grammar);
-        }
-    }
     }
     by_label.values_mut().for_each(|files| files.sort());
     text.sort();
@@ -11650,6 +11640,43 @@ pub fn corpus_files(root: &Path) -> Result<CorpusFiles> {
         }
     }
     Ok(CorpusFiles { by_label, text, embedded: false, root: root.to_path_buf() })
+}
+
+/// The walk, into the directories `enters` allows: phase 0's observer lists each directory, again only when its stat
+/// changed (t23). The run reads its files by their canonical paths too (`Observer::canonical`): a root reached through
+/// a symlink (macOS's `/var` is `/private/var`) has its real part read before the waves as well, where no store is
+/// asked.
+fn walked(root: &Path, enters: fn(&str) -> bool) -> Result<Vec<String>> {
+    observe(|o| {
+        o.preload(root);
+        if let Ok(real) = dunce::canonicalize(root)
+            && real != root
+        {
+            o.preload(&real);
+        }
+    });
+    let (mut pending, mut out) = (vec![root.to_path_buf()], Vec::new());
+    while let Some(dir) = pending.pop() {
+        let listing = observe(|o| o.listing(&dir)).ok_or_else(|| Error::Plan(format!("{}: not a readable directory", dir.display())))?;
+        for (name, is_dir) in listing.iter() {
+            let path = dir.join(name);
+            if *is_dir {
+                pending.extend(enters(name).then_some(path));
+            } else if path.is_file() {
+                // A document is named by its path in the repository, with `/` on Windows too: scopes' globs and
+                // findings read it.
+                out.push(slashed(&path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy(), std::path::MAIN_SEPARATOR));
+            }
+        }
+    }
+    Ok(out)
+}
+
+/// A relative path whose parts `separator` divides (the platform's: `\` on Windows), with `/` between them, as every
+/// reader of the corpus's paths takes them (scope globs, artifact digests, Git's listing). Elsewhere a `\` is a
+/// character of a name, and is kept.
+fn slashed(relative: &str, separator: char) -> String {
+    relative.split(separator).collect::<Vec<_>>().join("/")
 }
 
 /// A relation's column statistics (`syntax::statistics`: rows, ndv, sq, sqd) measured over `first` rows, scaled to
@@ -12043,6 +12070,53 @@ pub mod tests {
         assert!((ndv - 500).abs() <= 25, "a column of many: its distinct values sketched, {ndv} for 500");
         assert!(sq * 2 > 500 * 16 && sq < 500 * 16 * 2, "its squared postings sketched, {sq} for {}", 500 * 16);
         assert_eq!(col("c1")[..3], [2000, 3, 668 * 668 + 2 * 666 * 666], "a column of few, exact: (2·334)² + 2·(2·333)²");
+    }
+
+    /// The corpus lists the files a host's walk reads: under every directory but the host's ignored directories (at
+    /// any depth), hidden ones (`.github`) included, from Git's listing and from the walk alike. A site directory
+    /// (one holding a `*.dist-info`) is no repository: its packages are listed whatever their names.
+    #[test]
+    fn the_corpus_skips_the_hosts_ignored_directories_only() {
+        let listed = [".github/workflows/a.yml", ".vscode/b.yml", "wf/a.yml"];
+        let skipped: Vec<String> = crate::git_workspace::ignored_directories().iter().flat_map(|d| [format!("{d}/a.yml"), format!("src/{d}/b.yml")]).collect();
+        let make = |root: &std::path::Path| {
+            for path in listed.iter().copied().chain(skipped.iter().map(String::as_str)) {
+                let path = root.join(path);
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(path, "uses: ./.github/actions/php\n").unwrap();
+            }
+        };
+        let files = |root: &std::path::Path| {
+            let found = super::corpus_files(root).unwrap();
+            let mut all: Vec<String> = found.by_label.into_values().flatten().chain(found.text).collect();
+            all.sort();
+            all
+        };
+        let walked = tempfile::tempdir().unwrap();
+        make(walked.path());
+        assert_eq!(files(walked.path()), listed, "the walk");
+        let work = tempfile::tempdir().unwrap();
+        let git = |args: &[&str]| assert!(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(work.path()).args(args).output().unwrap().status.success(), "git {args:?}");
+        git(&["init", "-q"]);
+        make(work.path());
+        git(&["add", "-A"]);
+        git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "every directory committed"]);
+        assert_eq!(files(work.path()), listed, "Git's listing");
+        let site = tempfile::tempdir().unwrap();
+        make(site.path());
+        std::fs::create_dir(site.path().join("vendor-1.0.dist-info")).unwrap();
+        std::fs::write(site.path().join("vendor-1.0.dist-info/RECORD"), "vendor/a.yml,,\n").unwrap();
+        let mut every: Vec<String> = listed.iter().map(|p| p.to_string()).chain(skipped).chain(["vendor-1.0.dist-info/RECORD".to_owned()]).collect();
+        every.sort();
+        assert_eq!(files(site.path()), every, "a site directory");
+    }
+
+    /// A walked path is named with `/` on every platform, as Git's listing names it: Windows' `\` divides its parts,
+    /// elsewhere it is a character of a name.
+    #[test]
+    fn a_walked_path_is_named_with_slashes() {
+        assert_eq!(super::slashed(r"pkg\sub\a.py", '\\'), "pkg/sub/a.py");
+        assert_eq!(super::slashed(r"pkg/odd\name.py", '/'), r"pkg/odd\name.py");
     }
 
     /// A corpus in a directory Git ignores has no file Git sees, and that answer is kept too (`git_files`'s record):
