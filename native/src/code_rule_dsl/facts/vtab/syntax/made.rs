@@ -785,7 +785,11 @@ impl MadeRows {
             profile::decision("a batch's every document made by a read of a relation no document routes (decision 0494)", || format!("{} column {column} (document column {:?})", self.batch.rows.names[self.rel], by.column()));
             return None;
         };
+        let before = self.batch.rows.groups();
         let groups = self.batch.groups_of(keys);
+        if self.batch.rows.groups() > before {
+            profile::decision("a batch's documents made by a probe (decision 0494)", || format!("{} column {column}", self.batch.rows.names[self.rel]));
+        }
         let r = self.batch.made_so_far(self.rel);
         let mut rows = Vec::new();
         for g in groups {
