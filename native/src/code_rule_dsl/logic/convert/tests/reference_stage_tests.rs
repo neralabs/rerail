@@ -156,36 +156,36 @@ const PROGRAM: &str = r#"
 .language python
 .scope include "**/*.py", "**/*.pyi"
 #include "python/references.rr"
-.decl st_pos(n: node, p: symbol, s: number, e: number)
-st_pos(n, p, s, e) :- node(d, n, _, s, e), doc(d, p, _).
+// A node's (path, start, end) is read from the tape where a rule needs it (`node` keyed by the node, then `doc`),
+// not made as a relation of every node: a view's rows are never made (decision 0353).
 // A load: a name read of a primary document (a string annotation's names are another document's), no `del` target.
 .decl st_read(n: node, x: symbol)
 st_read(n, x) :- nameref(n, x), !bind_only(n), !rf_deleted(n), docof(n, d), doc_role(d, "primary").
 .decl st_load(p: symbol, s: number, e: number)
-st_load(p, s, e) :- st_read(n, _), st_pos(n, p, s, e).
+st_load(p, s, e) :- st_read(n, _), node(d_n, n, _, s, e), doc(d_n, p, _).
 .decl st_look(p: symbol, s: number, e: number, ss: number, se: number)
-st_look(p, s, e, ss, se) :- st_read(n, x), look(n, x, c), st_pos(n, p, s, e), st_pos(c, _, ss, se).
-st_look(p, s, e, -1, -1) :- st_read(n, x), !look(n, x, _), st_pos(n, p, s, e).
+st_look(p, s, e, ss, se) :- st_read(n, x), look(n, x, c), node(d_n, n, _, s, e), doc(d_n, p, _), node(d_c, c, _, ss, se), doc(d_c, _, _).
+st_look(p, s, e, -1, -1) :- st_read(n, x), !look(n, x, _), node(d_n, n, _, s, e), doc(d_n, p, _).
 .decl st_def(p: symbol, s: number, e: number, q: symbol, k: symbol)
-st_def(p, s, e, q, k) :- rf_qn(f, q), kind(f, k), st_pos(f, p, s, e).
+st_def(p, s, e, q, k) :- rf_qn(f, q), kind(f, k), node(d_f, f, _, s, e), doc(d_f, p, _).
 .decl st_ref(p: symbol, s: number, e: number, name: symbol)
-st_ref(p, s, e, q) :- rf_ref(t, "name", q, _, _), st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(m, ".<bare>.", x, "=>", q)) :- rf_ref(t, "bare", m, x, q), st_pos(t, p, s, e).
+st_ref(p, s, e, q) :- rf_ref(t, "name", q, _, _), node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(m, ".<bare>.", x, "=>", q)) :- rf_ref(t, "bare", m, x, q), node(d_t, t, _, s, e), doc(d_t, p, _).
 st_ref(p, s, e, @concat(c, ".<unqualified>.", x, "=>", m, ".<bare>.", x, "=>", q)) :- rf_ref(t, "unq", c, x, q),
-    rf_unq_bare(t, c, x, m), m != "", st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(c, ".<unqualified>.", x, "=>", q)) :- rf_ref(t, "unq", c, x, q), rf_unq_bare(t, c, x, ""), st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(c, ".<self>.", f)) :- rf_ref(t, "self", c, f, _), st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(c, ".<super>.", f)) :- rf_ref(t, "super", c, f, _), st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(c, ".<field>.", x, ".", f)) :- rf_ref(t, "field", c, x, f), st_pos(t, p, s, e).
-st_ref(p, s, e, @concat(m, ".<type>.", ty, ".", f)) :- rf_ref(t, "type", m, ty, f), st_pos(t, p, s, e).
+    rf_unq_bare(t, c, x, m), m != "", node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(c, ".<unqualified>.", x, "=>", q)) :- rf_ref(t, "unq", c, x, q), rf_unq_bare(t, c, x, ""), node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(c, ".<self>.", f)) :- rf_ref(t, "self", c, f, _), node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(c, ".<super>.", f)) :- rf_ref(t, "super", c, f, _), node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(c, ".<field>.", x, ".", f)) :- rf_ref(t, "field", c, x, f), node(d_t, t, _, s, e), doc(d_t, p, _).
+st_ref(p, s, e, @concat(m, ".<type>.", ty, ".", f)) :- rf_ref(t, "type", m, ty, f), node(d_t, t, _, s, e), doc(d_t, p, _).
 .decl st_link(q: symbol, p: symbol, s: number)
-st_link(q, p, s) :- rf_ref(_, "name", q, _, _), rf_link(q, d), st_pos(d, p, s, _).
+st_link(q, p, s) :- rf_ref(_, "name", q, _, _), rf_link(q, d), node(d_d, d, _, s, _), doc(d_d, p, _).
 .decl st_open_name(q: symbol)
 st_open_name(q) :- rf_ref(_, "name", q, _, _), rf_open_name(q).
 .decl st_edge(sp: symbol, ss: number, tp: symbol, ts: number, via: symbol)
-st_edge(sp, ss, tp, ts, v) :- reference_edge(s, t, v), st_pos(s, sp, ss, _), st_pos(t, tp, ts, _).
+st_edge(sp, ss, tp, ts, v) :- reference_edge(s, t, v), node(d_s, s, _, ss, _), doc(d_s, sp, _), node(d_t, t, _, ts, _), doc(d_t, tp, _).
 .decl st_open(p: symbol, s: number)
-st_open(p, s) :- reference_open(n), st_pos(n, p, s, _).
+st_open(p, s) :- reference_open(n), node(d_n, n, _, s, _), doc(d_n, p, _).
 .output st_load, st_look, st_def, st_ref, st_link, st_open_name, st_edge, st_open
 "#;
 

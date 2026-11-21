@@ -529,6 +529,13 @@ at 90–140 ns a row: the cost is the executor's per row, spread over every rule
 And by size: `st_pos` (a position for every node of every document, from `node` and `doc`) is 70 M rows of work,
 4.97 s, the largest rule.
 
+**`st_pos` read in place.** `st_pos` is the stage harness's, not the graph's: its outputs put each row at (path,
+start, end) to compare with W's. It made a row for every node, a view's rows made (decision 0353). Each output rule
+now reads `node` keyed by the node it holds, then `doc`. On `all`, same host: `st_pos` (4.97 s) and `st_open` (1.20 s
+for 23 K rows, the index over `st_pos` built on its first probe) are gone, the outputs 13.1 → 8.3 s; 3.382 →
+3.264 T instructions, user 293.5 → 284.8 s, peak 12.3 → 10.0 GB. The rows that differ are the ones listed below,
+unchanged.
+
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
 `RERAIL_STAGE_DIFFS=1` listed every differing row. Each kind was cut down to a case of a few lines
