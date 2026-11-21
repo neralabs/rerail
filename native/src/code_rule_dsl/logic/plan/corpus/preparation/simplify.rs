@@ -1012,7 +1012,7 @@ impl ProgramPass for InlineNodeTests {
                 _ => None,
             };
             match one {
-                Some(h) if !kept(&f, rel) => bodies.entry(rel).or_default().push((r, h)),
+                Some(h) if !kept(&f, rel) && !f.qualified(rel, "no_inline") => bodies.entry(rel).or_default().push((r, h)),
                 _ => {
                     refused.insert(rel);
                 }
@@ -1228,7 +1228,9 @@ impl ProgramPass for InlineFilters {
             .iter()
             .filter(|(rel, rules)| {
                 // A request the engine reads (a guest's `embed`, the demand a `parsed` read makes) stays a relation.
+                // `.decl r(…) no_inline` (Soufflé's qualifier) keeps a relation's rows: a small one a join starts from.
                 !kept(&f, rel)
+                    && !f.qualified(rel, "no_inline")
                     && !crate::code_rule_dsl::logic::plan::corpus::guests::REQUESTS.contains(rel)
                     && !core.contains(**rel)
                     && rules.len() <= FILTER_RULES
