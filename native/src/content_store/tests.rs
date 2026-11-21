@@ -2810,6 +2810,7 @@ fn derived_documents_live_and_die_with_their_primary_tape() {
         tape: b"derived tape",
         source_map: b"map",
         host_errors: b"",
+        at: None,
     };
     let stored = store
         .publish_overlay_file(

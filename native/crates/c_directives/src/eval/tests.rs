@@ -362,7 +362,11 @@ struct Ran {
 fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::files::Files + '_>, String)], ran: &mut Ran) -> Vec<Result<(super::rounds::Settled, Vec<Vec<u8>>), &'static str>> {
     let cpp = cfg.opts.cpp;
     let r = super::rounds::run_many(cfg, cpp, units, |u, l, s| {
+        let t0 = std::time::Instant::now();
         let x = rerail_metal::pp_expand::expand_sized(u, l, s, rerail_metal::pp_arena::groups());
+        if std::env::var_os("RERAIL_PP_TIME").is_some() {
+            eprintln!("TIME expand {:.3} ms (device {:.3} ms, {} rounds)", t0.elapsed().as_secs_f64() * 1e3, x.as_ref().map_or(0.0, |x| x.gpu_seconds * 1e3), x.as_ref().map_or(0, |x| x.rounds));
+        }
         if let Ok(x) = &x {
             ran.runs += 1;
             ran.gpu_seconds += x.gpu_seconds;
@@ -1147,6 +1151,10 @@ fn pasting_is_the_serial_passes() {
         &[("main.c", "#define G(...) g(0, ## __VA_ARGS__)\nG() G(a) G(a, b)\n")],
         &[("main.c", "#define P(x) x ## _t\n#define Q(x) P(x)\n#define N 9\nP(N) Q(N) P(int)\n")],
         &[("main.c", "#define L(x) x ## L\n#define U(x) u ## x\nL(1) L(0x1) U(8) U(\"s\")\n")],
+        // A paste that spells a definition's name takes that name's ref (decision 0503 §10): it
+        // expands, `__LINE__` in it is the call's; one no definition has, a chain whose middle no
+        // definition has, one defined after it, a left that is no identifier.
+        &[("main.c", "#define C(a, b) a ## b\n#define C3(a, b, c) a ## b ## c\n#define W_1 one __LINE__\n#define W_ two\nC(W_, 1) C(W_, 2) C3(W, _, 1)\nC(\nW_,\n1) C(W, _) C(V_, 1) C(1, W_)\n#define V_1 three\nC(V_, 1)\n")],
     ];
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
@@ -1273,6 +1281,7 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
         (X_PRAGMA, "a _Pragma that makes a row"),
         (X_COUNTER_SPELLED, "# or ## of __COUNTER__'s value"),
         (X_BARRIER, "a grid barrier"),
+        (X_WORK, "the work bound"),
     ];
     let (mut same_units, mut tokens, mut launches, mut rounds) = (0, 0, 0, 0);
     let mut ran = Ran::default();
@@ -1539,6 +1548,98 @@ fn reclaimed_tokens_keep_a_chain_at_rung_0() {
     }
 }
 
+/// R1 of decision 0520: what a chain holds at once is flat in its length. The chains of
+/// `reclaimed_tokens_keep_a_chain_at_rung_0` at 25, 50 and 100 levels, each store's most use
+/// (`Exp::room`, as the serial pass's), the blocks no item reads again given back every 16 of a
+/// store's growth (`RERAIL_PP_GIVE_GAP`): a store whose use grows with the chain's length holds what
+/// no item reads again, which is what made Boost's units climb the rungs. A pending level keeps its
+/// list, as the serial pass keeps its frame (its macro is disabled until its result is read): the
+/// lists grow by at most one a level.
+#[test]
+fn a_chains_use_is_flat_in_its_length() {
+    // SAFETY: the variable is read when a run is sized; another test reading it then gives back
+    // more often, which changes no result.
+    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
+    use rerail_metal::pp_expand::ROOM_STORES;
+    let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
+    let chain = |levels: usize, body: &dyn Fn(usize) -> String| {
+        let mut t = String::from("#define ID(x) x\n#define CAT(a, b) a ## b\n#define L0(s) [s]\n");
+        for k in 1..=levels {
+            t += &format!("#define L{k}(s) {}\n", body(k));
+        }
+        t += &format!("L{levels}({state})\nend\n");
+        t
+    };
+    let shapes: [(&str, &dyn Fn(usize) -> String); 3] = [
+        ("plain", &|k| format!("L{}(s)", k - 1)),
+        ("an argument scanned", &|k| format!("L{}(ID(s))", k - 1)),
+        ("an exit", &|k| format!("CAT(L, {})(s)", k - 1)),
+    ];
+    let mut flat = true;
+    for (what, body) in &shapes {
+        let uses: Vec<Vec<u32>> = [25, 50, 100]
+            .iter()
+            .map(|&n| {
+                let text = chain(n, body);
+                let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+                let got = got.unwrap_or_else(|why| panic!("{what}, {n} levels: refused {why}"));
+                same(show(&got), show(&want), what);
+                room.iter().map(|&(used, _)| used).collect()
+            })
+            .collect();
+        for (s, name) in ROOM_STORES.iter().enumerate() {
+            // The output and the scratch grow with the input (the state written out once, the
+            // literals and the `#line` rows' room, two tokens a directive), and the queue's ring is
+            // used to half its room between pauses; every other store's use at 100 levels is at
+            // most its use at 25 and a 16th more.
+            let (a, b, c) = (uses[0][s], uses[1][s], uses[2][s]);
+            eprintln!("{what}: {name}: {a} {b} {c}");
+            let grows = ["output", "scratch bytes", "scratch tokens", "queue items"].contains(name);
+            let bound = if *name == "lists" { a + 75 + 16 } else { a + a / 16 + 64 };
+            if !grows && c > bound {
+                flat = false;
+            }
+        }
+    }
+    assert!(flat, "a store's use grows with the chain's length (above)");
+}
+
+/// §3 of decision 0520: the output is pieces. A top level's run of tokens no call covers is one
+/// piece, and a call's expansion its pieces: a text of 2,000 plain tokens on 200 lines, with a call
+/// after each 500 (`G`: `[`, `g`, `]`, `g`, each its own piece of `F`'s body or `G`'s), is its 5 runs
+/// and the calls' 4 pieces each, not a word a token, and equals the serial pass.
+#[test]
+fn the_output_is_pieces_that_refer_to_the_text() {
+    let line = (0..10).map(|i| format!("t{i}")).collect::<Vec<_>>().join(" ");
+    let mut text = String::from("#define F(x) [x] x\n#define G F(g)\n");
+    for k in 0..200 {
+        text += &line;
+        text += if k % 50 == 49 { " G\n" } else { "\n" };
+    }
+    let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+    let got = got.unwrap_or_else(|why| panic!("refused {why}"));
+    same(show(&got), show(&want), "the text");
+    let out = rerail_metal::pp_expand::ROOM_STORES.iter().position(|s| *s == "output").unwrap();
+    assert!(want.len() > 2000 && room[out].0 <= 5 + 4 * 4, "{} tokens in {} pieces", want.len(), room[out].0);
+}
+
+/// `expanded`, with the run's own figures (its rooms' use).
+fn expanded_x(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS]) {
+    use rerail_c_pp::files::Search;
+    let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
+    let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
+    let mut serial = Spelled::default();
+    let m2 = m.clone();
+    let mut io = Search::new(Vec::new(), move |p: &str| m2.get(p).cloned());
+    let mut pp = rerail_c_pp::Pp::new(cfg.clone(), &mut io, &mut serial);
+    assert!(pp.run("main.c"));
+    drop(pp);
+    let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
+    let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
+    let got = if s.part.x.refused != 0 { Err(s.part.x.refused) } else { Ok(part_tokens(&s.part, &s.loaded.files, &tapes)) };
+    (got, serial.0, s.part.x.room)
+}
+
 /// Plan step 11 of decision 0448 (the built-ins): `__LINE__` is the line of the outermost call's
 /// end (the serial pass's: a token's origin climbed through each expansion's end), `__FILE__` the
 /// file the stretch is in. In text, in a body, in an argument (expanded and raw, `#`), in a call
@@ -1554,6 +1655,8 @@ fn line_and_file_are_the_serial_passes() {
         &[("main.c", "#include \"i.h\"\n__FILE__ __LINE__ H\n"), ("i.h", "\n#define H __FILE__ __LINE__\n__FILE__ __LINE__ H\n")],
         &[("main.c", "// a line\n/* two\nlines */ __LINE__ \\\n __LINE__\n#define C(a, b) a ## b\nC(__LI, NE__) C(__FILE, __)\n")],
         &[("main.c", "__DATE__ __TIME__ __TIMESTAMP__\n#define D __DATE__ x\nD __has_include __has_include(<a.h>) __has_embed(\"e\") __has_include_next\n")],
+        // An empty file included: its root has no children (its text map's owner is itself).
+        &[("main.c", "#include \"e.h\"\n__FILE__ __LINE__\n#include \"e.h\"\nx __LINE__\n"), ("e.h", "")],
     ];
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);

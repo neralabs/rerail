@@ -1,5 +1,4 @@
 .policy "ruff-try002-raise-vanilla-class" revision 1
-.guests off
 .description "Raise a specific built-in or custom exception instead of the generic base exception classes; callers can then catch it without capturing unrelated errors."
 .language python
 .mode steer

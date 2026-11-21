@@ -1,5 +1,4 @@
 .policy "bandit-b405-import-xml-etree" revision 1
-.guests off
 .description "Avoid importing xml.etree.ElementTree or cElementTree; use defusedxml instead, since the standard parsers are open to XML attacks on untrusted input."
 .language python
 .mode steer

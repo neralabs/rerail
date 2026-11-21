@@ -588,6 +588,9 @@ pub(in crate::code_rule_dsl) fn compile(j: &JoinRule, spec: &str, own_texts: &[(
                 stages.push(PStage { first: i, span, kind, desc: d, npassed });
                 i += span;
             }
+            // A min or max bounded by its probe (decision 0511): the device has no fold that reads the bound, so the
+            // stratum stays on the CPU. Folding it as a plain min or max gave the group's extreme past the bound.
+            Step::Scalar { bound: Some(_), .. } => return Err("an aggregate bounded by its probe (decision 0511)".into()),
             Step::Scalar { src, keys, tests, col, kind, out, bind, .. } => {
                 // An aggregate: each binding's matching rows folded where they lie, in the relation's sort by the
                 // keys (one row out per binding with a value). A sum past 64 bits is refused at run time.
@@ -1252,7 +1255,6 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
     // Rows in a block are read where they lie (decision 0325 step 3).
     if let Some((b, ncols)) = placed(rel) {
         let dev = Rc::new(mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a relation in its block"))?);
-        batch.keeps(dev.clone());
         rep.in_place += 1;
         // Every column of the owner, at its own place.
         let place: Vec<u32> = (0..rel.k).map(|c| owner_col(rel, c) as u32).collect();
@@ -1357,7 +1359,6 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
         }
     };
     let dev = Rc::new(dev);
-    batch.keeps(dev.clone());
     let place: Vec<u32> = (0..rel.k).map(|c| held.iter().position(|&w| w == owner_col(rel, c)).map_or(mj::NONE, |p| p as u32)).collect();
     if cols.is_empty() {
         return Ok((dev, None, place));
@@ -1866,9 +1867,10 @@ fn submit_(rules: &[(&Plan, &JoinRule, usize)], names: &Interner) -> Result<Opti
     })?;
     let (wave, runs) = encoded;
     if runs.len() < rules.len() {
-        // Encoded work it will not wait for: the wave runs it and nothing reads it, but it writes the runs' buffers,
-        // which the wave keeps until it is done (back in the pool, another job's would be written).
-        with_open::<Wave, _>(|w| w.as_mut().expect("the open wave").1.hold(Box::new(runs)));
+        // Encoded work it will not wait for: the wave runs it and nothing reads it, but it writes the runs' buffers.
+        // They go now: the wave's submissions' fences hold them until that work completes (decision 0491 step 2), so
+        // none goes back to the pool while the GPU writes it.
+        drop(runs);
         return Ok(None);
     }
     rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;
@@ -1945,15 +1947,12 @@ fn encode_runs_bounded(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batc
         }
         let mut r = match Run::new(plan) {
             Ok(r) => r,
-            Err(e) => {
-                batch.hold(Box::new(runs));
-                return Err(e);
-            }
+            // The runs encoded so far go: the passes that bind their buffers hold them until their work completes
+            // (decision 0491 step 2).
+            Err(e) => return Err(e),
         };
         if let Err(e) = r.encode(0, batch, rep, &mut Own::default(), names) {
-            // The runs encoded so far (and this one's stages before the refusal) are in the batch: their buffers stay
-            // with it until it is done.
-            batch.hold(Box::new((runs, r)));
+            // The runs encoded so far, and this one's stages before the refusal: their passes hold their buffers.
             return Err(e);
         }
         bytes += r.bytes();

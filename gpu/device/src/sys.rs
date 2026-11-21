@@ -36,6 +36,21 @@ pub fn page_size() -> usize {
     imp::page_size().max(4096)
 }
 
+/// The process's CPU seconds, user and system, every thread's.
+pub fn process_cpu_seconds() -> f64 {
+    imp::process_cpu_seconds()
+}
+
+/// The calling thread's CPU seconds, user and system.
+pub fn thread_cpu_seconds() -> f64 {
+    imp::thread_cpu_seconds()
+}
+
+/// A monotonic clock's seconds, from an arbitrary start: only differences mean anything.
+pub fn monotonic_seconds() -> f64 {
+    imp::monotonic_seconds()
+}
+
 /// `len` bytes of fresh, zeroed memory, readable and writable, with the page at each `stride` (from 0) made
 /// inaccessible: a guard below each of the stacks it holds. `None` when the system has no memory for it.
 pub fn map_guarded(len: usize, stride: usize) -> Option<*mut u8> {
@@ -86,6 +101,25 @@ mod imp {
     pub unsafe fn unmap(p: *mut u8, len: usize) {
         unsafe { libc::munmap(p.cast(), len) };
     }
+    pub fn process_cpu_seconds() -> f64 {
+        // SAFETY: fills the struct.
+        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
+        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
+        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
+        s(u.ru_utime) + s(u.ru_stime)
+    }
+    pub fn thread_cpu_seconds() -> f64 {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: fills the struct.
+        unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    }
+    pub fn monotonic_seconds() -> f64 {
+        let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+        // SAFETY: fills the struct.
+        unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut t) };
+        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    }
 }
 
 #[cfg(windows)]
@@ -122,6 +156,12 @@ mod imp {
         fn VirtualAlloc(address: *mut c_void, size: usize, kind: u32, protect: u32) -> *mut c_void;
         fn VirtualProtect(address: *mut c_void, size: usize, protect: u32, old: *mut u32) -> i32;
         fn VirtualFree(address: *mut c_void, size: usize, kind: u32) -> i32;
+        fn GetCurrentProcess() -> *mut c_void;
+        fn GetCurrentThread() -> *mut c_void;
+        fn GetThreadTimes(thread: *mut c_void, creation: *mut u64, exit: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
+        fn GetProcessTimes(process: *mut c_void, creation: *mut u64, exit: *mut u64, kernel: *mut u64, user: *mut u64) -> i32;
+        fn QueryPerformanceCounter(count: *mut i64) -> i32;
+        fn QueryPerformanceFrequency(frequency: *mut i64) -> i32;
     }
 
     pub unsafe fn open(path: *const c_char) -> *mut c_void {
@@ -150,5 +190,24 @@ mod imp {
     }
     pub unsafe fn unmap(p: *mut u8, _len: usize) {
         unsafe { VirtualFree(p.cast(), 0, MEM_RELEASE) };
+    }
+    pub fn process_cpu_seconds() -> f64 {
+        // FILETIMEs: 100 ns units (two 32-bit halves, little-endian, read as one u64).
+        let (mut c, mut e, mut k, mut u) = (0u64, 0u64, 0u64, 0u64);
+        // SAFETY: the process's own times, into four locals.
+        unsafe { GetProcessTimes(GetCurrentProcess(), &mut c, &mut e, &mut k, &mut u) };
+        (k + u) as f64 * 1e-7
+    }
+    pub fn thread_cpu_seconds() -> f64 {
+        let (mut c, mut e, mut k, mut u) = (0u64, 0u64, 0u64, 0u64);
+        // SAFETY: the calling thread's own times, into four locals.
+        unsafe { GetThreadTimes(GetCurrentThread(), &mut c, &mut e, &mut k, &mut u) };
+        (k + u) as f64 * 1e-7
+    }
+    pub fn monotonic_seconds() -> f64 {
+        let (mut n, mut f) = (0i64, 1i64);
+        // SAFETY: two locals filled.
+        unsafe { (QueryPerformanceCounter(&mut n), QueryPerformanceFrequency(&mut f)) };
+        n as f64 / f.max(1) as f64
     }
 }

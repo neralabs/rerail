@@ -29,7 +29,7 @@
 use super::shared;
 use crate::rows::{bits, span};
 use rerail_device::compute_kernel::GridComputeFunctionArgumentDisposition;
-use rerail_device::device::{Buffer, BufferRef, ComputeEvent, ComputeFunction, ComputeQueue, SharedEvent};
+use rerail_device::device::{Buffer, BufferRef, ComputeFunction, ComputeQueue, SharedEvent};
 use rerail_gpu::library::{radix_sort_pairs_in, scan_exclusive_u32_in, scan_sized, RadixSpace, ScanSpace, SCAN_SIZES};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
@@ -144,6 +144,11 @@ pub fn scratch_set(set: usize) -> usize {
 pub struct Pipe {
     function: Arc<ComputeFunction>,
     buffers: Vec<String>,
+    /// Whether the kernel may write each buffer, as it declares it (`ROBUFFER` is read-only, decision 0491 step 5):
+    /// how a launch pins what it binds.
+    writes: Vec<bool>,
+    /// Its name, as a pin names its operation.
+    op: &'static str,
     /// Whether it takes the parameter block `a`.
     args: bool,
     name: String,
@@ -170,8 +175,12 @@ pub fn pipeline(variant: &str, name: &str, source: impl FnOnce() -> String) -> R
     let function = crate::score::phase("compile", || super::kernels::function_fixed(&source(), name, None));
     let mut args: Vec<_> = function.get_argument_info().to_vec();
     args.sort_by_key(|a| a.compute_function_arg_index);
-    let buffers = args.iter().filter(|a| a.disposition == GridComputeFunctionArgumentDisposition::Buffer && a.name != "a").map(|a| a.name.clone()).collect();
-    let pipe = Arc::new(Pipe { args: args.iter().any(|a| a.name == "a"), function, buffers, name: name.to_owned() });
+    let bound: Vec<_> = args.iter().filter(|a| a.disposition == GridComputeFunctionArgumentDisposition::Buffer && a.name != "a").collect();
+    let buffers = bound.iter().map(|a| a.name.clone()).collect();
+    let writes = bound.iter().map(|a| a.ty.access != rerail_device::compute_kernel::MemoryRegionAccess::Read).collect();
+    // One a kernel for the process (the pipes are the machine's, decision 0442): a pin's operation names it.
+    let op: &'static str = Box::leak(name.to_owned().into_boxed_str());
+    let pipe = Arc::new(Pipe { args: args.iter().any(|a| a.name == "a"), function, buffers, writes, op, name: name.to_owned() });
     Ok(Arc::clone(pipes().0.lock().unwrap_or_else(std::sync::PoisonError::into_inner).entry(key).or_insert(pipe)))
 }
 
@@ -187,7 +196,7 @@ fn sort_pipes(width: Width) -> Result<[Arc<Pipe>; 3], String> {
 /// `pass`: the rows end in `pair` after an even number of passes, else in `tmp`.
 fn radix_sort(pass: &Pass, key: Width, pair: [&Buffer; 2], tmp: [&Buffer; 2], n: usize, bits: u32, space: &RadixSpace) {
     let (pair, tmp): ([&BufferRef; 2], [&BufferRef; 2]) = ([pair[0], pair[1]], [tmp[0], tmp[1]]);
-    pass.library(|q| {
+    pass.library(pair.iter().chain(&tmp).copied().chain(space.buffers()), |q| {
         let sorted = if key == Width::W64 { radix_sort_pairs_in::<u64>(q, pair, tmp, n as u32, bits, space) } else { radix_sort_pairs_in::<u32>(q, pair, tmp, n as u32, bits, space) };
         sorted.map(|(_, made)| made)
     });
@@ -206,25 +215,24 @@ pub fn fixed(name: &str) -> Result<Arc<Pipe>, String> {
 /// written by the host when handed out again, and no host write is ordered after a device read, so they return to
 /// the pool only once it completes.
 pub struct Submitted {
-    event: Arc<ComputeEvent>,
+    /// Its committed work, shared with its watchers (`watch`). Its fence (decision 0487) holds what the work reaches
+    /// until the work completes: at the first wait that sees it complete, or when the last of them is dropped, which
+    /// waits for it first.
+    event: Arc<shared::Flushed>,
     reads: Vec<Column>,
     /// The host clock at its commit (`host_clock`); NaN for a second watcher of a submission another waits for
     /// (`watch`), which adds no timeline.
     committed: f64,
     /// Whether this one only watches (`watch`): it waits only while the owner has not.
     watcher: bool,
-    /// The blocks its work uses (decision 0487), the owner's alone: completed once its work has (`wait_ok`, `drop`).
-    fence: Option<Arc<rerail_blocks::ledger::Fence>>,
 }
 
 impl Drop for Submitted {
-    /// Its blocks are held until its work completes: a submission let go unawaited waits for it here first.
+    /// What it reads and reaches is held until its work completes: the owner let go unawaited waits for it here first,
+    /// before its `reads` go back to the pool, whoever else watches it.
     fn drop(&mut self) {
-        if let Some(f) = self.fence.take()
-            && !f.is_complete()
-        {
+        if !self.watcher && !self.event.fence().is_complete() {
             let _ = self.event.await_();
-            f.complete();
         }
     }
 }
@@ -255,10 +263,7 @@ pub fn host_clock() -> f64 {
 /// The host's monotonic clock in seconds (elsewhere than macOS no device timestamp shares it).
 #[cfg(not(target_os = "macos"))]
 pub fn host_clock() -> f64 {
-    let mut t = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    // SAFETY: fills the struct.
-    unsafe { libc::clock_gettime(libc::CLOCK_MONOTONIC, &mut t) };
-    t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
+    rerail_device::monotonic_seconds()
 }
 
 /// A completed Metal command buffer's timeline, as wall-only phases of the job (`crate::score`): commit to the
@@ -281,7 +286,7 @@ pub fn add_timeline(command: &metal::CommandBufferRef, committed: f64, returned:
 impl Submitted {
     /// Another wait for a committed submission: what a sort encoded into it waits for (`Keyed::settle`).
     pub(super) fn watch(&self) -> Submitted {
-        Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true, fence: None }
+        Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true }
     }
 
     /// Keeps `columns` (what the submission reads) until it completes.
@@ -302,9 +307,6 @@ impl Submitted {
             return (self.event.gpu_seconds(), true);
         }
         let done = crate::score::phase("gpu wait", || self.event.await_());
-        if let Some(f) = &self.fence {
-            f.complete();
-        }
         if let Err(why) = &done {
             say_failure(why);
         }
@@ -312,7 +314,7 @@ impl Submitted {
             let returned = host_clock();
             // Metal's command buffers give each part of the timeline.
             #[cfg(target_os = "macos")]
-            let parts = self.event.metal().map(|command| add_timeline(command, self.committed, returned)).is_some();
+            let parts = self.event.event().metal().map(|command| add_timeline(command, self.committed, returned)).is_some();
             #[cfg(not(target_os = "macos"))]
             let parts = false;
             // Another backend's event gives only the device's seconds: the run, and the rest of the span as the wake.
@@ -346,11 +348,10 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
             s.resize_with(slot + 1, || None);
         }
         if s[slot].as_ref().is_none_or(|b| (b.length() as usize) < bytes) {
-            // A submission not yet completed may read the shorter one: it is released, held by the device's
-            // commands until they complete, not returned to the pool, whose next lease may be written by the host at
-            // once.
-            if let Some(old) = s[slot].take() {
-                old.release();
+            // The shorter one goes to Metal, not the pool: callers hold its buffer by handle (`scratch` hands out
+            // clones) and may bind it again, and Metal keeps it while one does. Its ledger holds it for the queued work.
+            if let Some(mut old) = s[slot].take() {
+                old.released();
             }
             s[slot] = Some(shared::lease_for_join(bytes.max(64), true)?);
         }
@@ -360,8 +361,9 @@ pub fn scratch(slot: usize, bytes: usize) -> Result<Buffer, String> {
 
 /// A device buffer of the one manager's pool (decision 0100 §2): a free one of its size class when there is one,
 /// returned when dropped. A buffer the device has seen is resident already: a new one costs its creation and its
-/// mapping at its first use, a pooled one neither. Its holder drops it only once every submission that reads it has
-/// completed (`Submitted::reads`, `Keyed`'s drop): the next lease's host writes are not ordered after a device read.
+/// mapping at its first use, a pooled one neither. Its lease is held as a block's memory is (decision 0487 step 3, by
+/// the lease's own ledger): a pass that binds it holds it, so dropped while queued work reads it, it goes back to the
+/// pool only once that work completes, and the next lease's host writes are never ordered before it.
 pub struct Held {
     _lease: Lease,
     pub buffer: Buffer,
@@ -382,20 +384,29 @@ impl Held {
         Held { _lease: Lease::Kept(keep), buffer }
     }
 
+    /// `kept`, holding the block by its own region too (`rerail_blocks::region::whole`, decision 0491 step 3): a
+    /// kernel's bind of `buffer` pins that region, read or written as the kernel declares, so the block's frozenness
+    /// and versions are its regions'.
+    pub fn of_block(buffer: Buffer, region: rerail_blocks::region::Shared<u8>, keep: Box<dyn std::any::Any + Send + Sync>) -> Held {
+        Held { _lease: Lease::Kept(Box::new((keep, region))), buffer }
+    }
+
     /// A buffer of at least `bytes` (its contents are a previous user's: every reader writes first).
     pub fn new(bytes: usize) -> Result<Held, String> {
         device()?;
-        let lease = shared::lease_for_join(bytes, false)?;
-        let buffer = lease.device_buffer().clone();
-        Ok(Held { _lease: Lease::Pooled(lease), buffer })
+        Ok(Held::pooled(shared::lease_for_join(bytes, false)?))
     }
 
     /// A buffer of at least `bytes`, its first `bytes` zero.
     pub fn zeroed(bytes: usize) -> Result<Held, String> {
         device()?;
-        let lease = shared::lease_for_join(bytes, true)?;
+        Ok(Held::pooled(shared::lease_for_join(bytes, true)?))
+    }
+
+    /// `lease`, held by its own ledger while it lives (`shared::Pooled`).
+    fn pooled(lease: shared::Pooled) -> Held {
         let buffer = lease.device_buffer().clone();
-        Ok(Held { _lease: Lease::Pooled(lease), buffer })
+        Held { _lease: Lease::Pooled(lease), buffer }
     }
 
     /// A buffer holding `values`, written by the host.
@@ -421,23 +432,20 @@ enum Grid<'a> {
 /// The launches of one submission on the process's queue, in order: each sees the last's writes. Committed by
 /// `commit`; dropped without it, nothing it holds runs.
 pub struct Pass {
-    queue: ComputeQueue,
+    /// The process's queue (`shared::Queue`): its fence holds every buffer the launches reach (decision 0487).
+    queue: shared::Queue,
     /// The launches so far (a submission's launch budget counts them).
     dispatches: Cell<usize>,
-    /// Buffers the launches after reach by address (`use_read`), bound by none.
-    resident: RefCell<Vec<Buffer>>,
+    /// Buffers the launches after reach by address (`use_read`, `use_read_write`), bound by none, each with whether
+    /// the launches write it.
+    resident: RefCell<Vec<(Buffer, bool)>>,
     /// The first launch that could not be made: the commit's error.
     error: RefCell<Option<String>>,
-    /// Its submission's uses of blocks (decision 0487): every buffer it binds or makes resident that lies in a block
-    /// holds that block's chunks and memory until the submission completes (its `Submitted`'s wait, or drop), or the
-    /// pass is dropped uncommitted.
-    fence: Arc<rerail_blocks::ledger::Fence>,
 }
 
 impl Pass {
     pub fn new() -> Result<Pass, String> {
-        let layer = shared::layer().ok_or("no device")?;
-        Ok(Pass { queue: ComputeQueue::new(layer.queue), dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None), fence: rerail_blocks::ledger::Fence::new() })
+        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None) })
     }
 
     /// The launches made so far.
@@ -454,8 +462,8 @@ impl Pass {
         if self.error.borrow().is_some() {
             return;
         }
-        for (b, _) in buffers {
-            self.holds(b);
+        for (i, (b, _)) in buffers.iter().enumerate() {
+            self.holds(b, pipe.op, i, pipe.writes.get(i).copied().unwrap_or(true));
         }
         let made = (|| {
             if buffers.len() != pipe.buffers.len() {
@@ -468,8 +476,8 @@ impl Pass {
             if pipe.args {
                 l = l.bytes("a", bytes);
             }
-            for b in self.resident.borrow().iter() {
-                l = l.uses(b);
+            for (b, write) in self.resident.borrow().iter() {
+                l = if *write { l.uses(b) } else { l.uses_read(b) };
             }
             match grid {
                 Grid::Groups(groups, threads) => l.run(&[groups.max(1) as u64, 1, 1], &[threads, 1, 1]),
@@ -529,10 +537,15 @@ impl Pass {
 
     /// Launches of the UKL library's (`rerail_gpu::library`) on this pass's queue, in order with its own: `call`
     /// returns the launches it made, which count to the submission's budget. The library's kernels read only what
-    /// they bind. An error is the commit's, as a launch's is.
-    pub fn library(&self, call: impl FnOnce(&ComputeQueue) -> Result<usize, String>) {
+    /// they bind, `binds`: held until the work completes, as a launch's buffers are (decision 0491 step 2). An error
+    /// is the commit's, as a launch's is.
+    pub fn library<'b>(&self, binds: impl IntoIterator<Item = &'b Buffer>, call: impl FnOnce(&ComputeQueue) -> Result<usize, String>) {
         if self.error.borrow().is_some() {
             return;
+        }
+        for (i, b) in binds.into_iter().enumerate() {
+            // The library's kernels write their outputs and scratch: each held as written.
+            self.holds(b, "a UKL library launch", i, true);
         }
         match call(&self.queue) {
             Ok(made) => self.dispatches.set(self.dispatches.get() + made),
@@ -544,16 +557,16 @@ impl Pass {
     /// and tapes, decision 0353 step 4d), bound by none.
     pub fn use_read(&self, buffers: &[&Buffer]) {
         for b in buffers {
-            self.holds(b);
+            self.holds(b, "a resident read", 0, false);
         }
-        self.resident.borrow_mut().extend(buffers.iter().map(|b| (*b).clone()));
+        self.resident.borrow_mut().extend(buffers.iter().map(|b| ((*b).clone(), false)));
     }
 
     /// Makes `buffer` resident for the launches after it, to be read and written: a cache a kernel's reads keep (a
     /// 16z batch's blocks, decision 0353 step 4b), reached by address.
     pub fn use_read_write(&self, buffer: &Buffer) {
-        self.holds(buffer);
-        self.resident.borrow_mut().push(buffer.clone());
+        self.holds(buffer, "a resident write", 0, true);
+        self.resident.borrow_mut().push((buffer.clone(), true));
     }
 
     /// Holds the launches after it until the host signals `event` with `value` or more (a gate's, `crate::col`).
@@ -561,23 +574,25 @@ impl Pass {
         self.queue.wait_for_event(event, value);
     }
 
-    /// The block `b` lies in (by its contents' address), held by this submission's fence.
-    fn holds(&self, b: &Buffer) {
+    /// The block or pooled lease `b` lies in (by its contents' address), held by this submission's fence until its
+    /// work completes (decision 0491 step 2): what drops it meanwhile keeps it from the pool until then. A block's
+    /// own region, while a handle holds it, is pinned as the kernel declares the argument, read or written (step 5). Every mapped
+    /// buffer a kernel binds is one: a test build fails on one that is not, which nothing would keep.
+    fn holds(&self, b: &Buffer, kernel: &'static str, arg: usize, write: bool) {
         let at = b.contents() as usize;
-        if at != 0 {
-            self.fence.uses_address(at);
-        }
+        let known = at == 0 || rerail_blocks::region::bind_address(self.queue.fence(), at, write, kernel);
+        #[cfg(any(test, feature = "test-hooks"))]
+        assert!(known, "{kernel}'s buffer {arg} ({} bytes) lies in no block or pooled lease the ledger knows: nothing holds it while the work runs (decision 0491 step 2)", b.length());
+        let _ = (known, kernel, arg);
     }
 
     /// Commits the launches (checked against the launch budget): what to wait for.
-    pub fn commit(mut self) -> Result<Submitted, String> {
+    pub fn commit(self) -> Result<Submitted, String> {
         if let Some(e) = self.error.take() {
             return Err(e);
         }
         crate::score::phase("gpu commit", shared::guard)?;
-        let event = self.queue.flush();
-        self.fence.mark_committed();
-        Ok(Submitted { event: Arc::new(event), reads: Vec::new(), committed: host_clock(), watcher: false, fence: Some(self.fence.clone()) })
+        Ok(Submitted { event: Arc::new(self.queue.flush()), reads: Vec::new(), committed: host_clock(), watcher: false })
     }
 
     /// Commits the launches and waits for them: their device seconds.
@@ -684,7 +699,7 @@ impl Scan {
 
     /// The scan of `input`'s `count` values into `output` (`count + 1` values, the total last).
     pub fn encode_into(&self, pass: &Pass, input: &Buffer, output: &Buffer) -> Result<(), String> {
-        pass.library(|q| scan_exclusive_u32_in(q, input, output, self.count as u32, false, &self.space));
+        pass.library([input, output].into_iter().chain(self.space.buffers()), |q| scan_exclusive_u32_in(q, input, output, self.count as u32, false, &self.space));
         Ok(())
     }
 
@@ -694,13 +709,13 @@ impl Scan {
     /// `SCAN_OUTPUT_GRID`, `GROUP` threads a group).
     pub fn size(&self, pass: &Pass, totals: &Buffer, slot: usize, cap: usize) -> Result<Held, String> {
         let sizes = Held::new(4 * SCAN_SIZES)?;
-        pass.library(|q| self.space.size(q, totals, slot as u32, cap as u32, GROUP as u32, &sizes.buffer));
+        pass.library([totals, &sizes.buffer].into_iter().chain(self.space.buffers()), |q| self.space.size(q, totals, slot as u32, cap as u32, GROUP as u32, &sizes.buffer));
         Ok(sizes)
     }
 
     /// `encode`, of `size`'s count, on its grids.
     pub fn encode_sized(&self, pass: &Pass, data: &Buffer, sizes: &Held) -> Result<(), String> {
-        pass.library(|q| scan_sized(q, data, &sizes.buffer, &self.space));
+        pass.library([data, &sizes.buffer].into_iter().chain(self.space.buffers()), |q| scan_sized(q, data, &sizes.buffer, &self.space));
         Ok(())
     }
 }
@@ -1862,7 +1877,10 @@ mod tests {
             let pass = Pass::new().unwrap();
             let mut fused = Fused::default();
             let mut arena = Arena::new(2 * left.len(), probe_blocks(left.len())).unwrap();
-            let one = fused.probe(&[Column::raw(&raw).unwrap()], right, &mut arena).unwrap();
+            // The probed column is held until the dispatch binds it (decision 0491 step 2: the tables hold its
+            // address alone, so a column dropped here would give its lease back while the kernel reads it).
+            let probed = [Column::raw(&raw).unwrap()];
+            let one = fused.probe(&probed, right, &mut arena).unwrap();
             let mut keep = Vec::new();
             fused.dispatch(&pass, &arena, &mut keep).unwrap();
             pass.commit_wait().unwrap();
@@ -1948,11 +1966,7 @@ mod host_costs {
 
     /// The process's CPU, user and system: the device layer's own threads' too.
     fn cpu() -> f64 {
-        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-        // SAFETY: a valid rusage out.
-        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-        let t = |v: libc::timeval| v.tv_sec as f64 + v.tv_usec as f64 / 1e6;
-        t(u.ru_utime) + t(u.ru_stime)
+        rerail_device::process_cpu_seconds()
     }
 
     /// Microseconds of this thread's CPU per run of `f`, over `n` runs.

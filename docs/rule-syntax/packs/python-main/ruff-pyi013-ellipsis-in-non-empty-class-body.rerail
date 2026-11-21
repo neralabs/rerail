@@ -1,5 +1,4 @@
 .policy "ruff-pyi013-ellipsis-in-non-empty-class-body" revision 1
-.guests off
 .description "Remove an ellipsis statement from a class body that has other statements; it is only needed when the body would otherwise be empty."
 .language python
 .mode steer

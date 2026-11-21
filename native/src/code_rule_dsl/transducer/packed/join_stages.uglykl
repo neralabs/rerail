@@ -915,7 +915,23 @@ DEFINE_KERNEL2(join, row_text,
             bool has = row < n;
             int64_t v = has ? key_value(s, L, row, 0) : -1;
             bool sym = has && v >= 0 && v <= (int64_t)0xffffffffu;
-            uint32_t got = sym ? clif_verdict_get(VC, 0ul, test, (uint32_t)v) : 1u;
+            // An entry holds 64 symbols of the test, and a lookup that misses makes it. Lanes whose symbols share
+            // one would wait on each other's making it, in their own group, which makes no progress while they
+            // spin: they run out of spins, and each takes a second entry of the key, splitting its verdicts. So one
+            // lane an entry looks first, its entry made and complete, and the lanes that share it look after.
+            uint32_t entry = sym ? (uint32_t)v >> 6 : 0xffffffffu;
+            uint32_t got = 1u;
+            uint32_t todo = ukl_sg_ballot(sym __UKL_ARGS);
+            while (todo != 0u) {
+                uint32_t first = ukl_ctz32(todo);
+                uint32_t its = ukl_sg_shuffle(entry, first __UKL_ARGS);
+                uint32_t sharing = ukl_sg_ballot(sym && entry == its __UKL_ARGS);
+                todo &= ~sharing;
+                if (lane == first) got = clif_verdict_get(VC, 0ul, test, (uint32_t)v);
+                // The entry's making, seen by the group (`todo` is the group's, so every lane is here).
+                ukl_sg_barrier();
+                if (lane != first && sym && entry == its) got = clif_verdict_get(VC, 0ul, test, (uint32_t)v);
+            }
             uint32_t miss = ukl_sg_ballot(sym && got == 0u __UKL_ARGS);
             while (miss != 0u) {
                 uint32_t l = ukl_ctz32(miss);
@@ -967,8 +983,10 @@ DEFINE_KERNEL2(join, row_text,
             if (lane == 0) r = clif_text_find(VC, 0ul, P[5], ksym);
             r = (uint64_t)ukl_sg_shuffle((uint32_t)r, 0u __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle((uint32_t)(r >> 32), 0u __UKL_ARGS) << 32);
             if ((r & 3ul) == 0ul) {
-                UKL_GLOBAL const uint8_t* e = VC + (r & ~3ul);
-                uint32_t len = *(UKL_GLOBAL const uint32_t*)(e + 12) - 16u;
+                // Another group's writes: read coherently (`ukl/grid.h`'s rule; Q367: a plain load of them can be
+                // stale, and the text read short, zeros past what was seen).
+                UKL_COHERENT const uint8_t* e = (UKL_COHERENT const uint8_t*)(VC + (r & ~3ul));
+                uint32_t len = *(UKL_COHERENT const uint32_t*)(e + 12) - 16u;
                 uint32_t off = 0;
                 if (lane == 0) off = ukl_atomic_add(A, len);
                 off = ukl_sg_shuffle(off, 0u __UKL_ARGS);
@@ -1061,7 +1079,8 @@ DEFINE_KERNEL2(join, row_text,
             if (lane == 0) r = clif_text_open(VC, 0ul, P[5], ksym, len);
             r = (uint64_t)ukl_sg_shuffle((uint32_t)r, 0u __UKL_ARGS) | ((uint64_t)ukl_sg_shuffle((uint32_t)(r >> 32), 0u __UKL_ARGS) << 32);
             if ((r & 3ul) == 1ul) {
-                UKL_GLOBAL uint8_t* e = VC + (r & ~3ul);
+                // Read by other groups: written coherently, as they read it.
+                UKL_COHERENT uint8_t* e = (UKL_COHERENT uint8_t*)(VC + (r & ~3ul));
                 UKL_GLOBAL const uint8_t* o = (UKL_GLOBAL const uint8_t*)A + 16 + off;
                 for (uint32_t i = lane; i < len; i += SGW) e[16 + i] = o[i];
                 ukl_sg_barrier();

@@ -1,5 +1,4 @@
 .policy "ruff-pth205-os-path-getctime" revision 1
-.guests off
 .description "Use Path.stat().st_ctime instead of os.path.getctime(); path objects read better than string-based os.path calls."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-f525-string-dot-format-mixing-automatic" revision 1
-.guests off
 .description "Don't mix automatic and manually numbered fields in one str.format() string; Python raises ValueError at runtime."
 .language python
 .mode steer

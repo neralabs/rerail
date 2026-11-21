@@ -20,5 +20,19 @@
     "calls": "refused",
     "formatArgs": "refused"
   },
-  "suppressions": []
+  "suppressions": [],
+  "embeds": [
+    {
+      "language": "json",
+      "via": "json-object"
+    },
+    {
+      "language": "regex",
+      "via": "match-regex"
+    },
+    {
+      "language": "python",
+      "via": "pattern"
+    }
+  ]
 }

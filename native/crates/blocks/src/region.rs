@@ -29,13 +29,33 @@ struct Access {
     reads: Vec<(u64, &'static Location<'static>)>,
     write: Option<&'static Location<'static>>,
     gpu_reads: Vec<(u64, &'static str)>,
-    gpu_writes: Vec<(u64, &'static str, std::sync::Weak<Fence>)>,
+    /// Each with the domain it writes in (0: the host's memory, which a unified GPU reads in place).
+    gpu_writes: Vec<(u64, &'static str, std::sync::Weak<Fence>, u32)>,
     next: u64,
     /// The version the host's bytes hold (the block's), and the device's copy's when it has its own (`Mirror`):
     /// `None` before its first upload. With unified memory there is one copy, and both are the latest once the
     /// GPU's writes complete.
     host: u64,
-    device: Option<u64>,
+    /// The version each device domain's copy holds (decision 0440 §7.2): one entry a domain that holds a copy.
+    devices: Vec<(u32, u64)>,
+}
+
+impl Access {
+    fn held_in(&self, domain: u32) -> Option<u64> {
+        self.devices.iter().find(|(d, _)| *d == domain).map(|(_, v)| *v)
+    }
+
+    fn set_in(&mut self, domain: u32, version: u64) {
+        match self.devices.iter_mut().find(|(d, _)| *d == domain) {
+            Some(e) => e.1 = version,
+            None => self.devices.push((domain, version)),
+        }
+    }
+
+    /// The domain that holds `latest`: the host's (0) when its bytes do, else the device's whose copy does.
+    fn owner(&self, latest: u64) -> u32 {
+        if self.host >= latest { 0 } else { self.devices.iter().find(|(_, v)| *v >= latest).map_or(0, |(d, _)| *d) }
+    }
 }
 
 impl Access {
@@ -51,7 +71,7 @@ impl Access {
         }
         v.extend(self.reads.iter().map(|(_, l)| format!("a CPU read from {l}")));
         v.extend(self.gpu_reads.iter().map(|(_, op)| format!("a GPU read by {op}")));
-        v.extend(self.gpu_writes.iter().map(|(_, op, _)| format!("a GPU write by {op}")));
+        v.extend(self.gpu_writes.iter().map(|(_, op, _, _)| format!("a GPU write by {op}")));
         v.join(", ")
     }
 }
@@ -81,7 +101,11 @@ pub struct Region {
     frozen: AtomicBool,
     version: AtomicU64,
     access: Mutex<Access>,
-    mirror: std::sync::OnceLock<Box<dyn Mirror>>,
+    /// Its device domains' copies (decision 0440 §7.2), each by its domain (1 and up; 0 is the host's memory).
+    mirrors: Mutex<Vec<(u32, Arc<dyn Mirror>)>>,
+    /// The whole block (`whole`): its pins hold the block, not a chunk of it, whose CPU writers (a relation's rows)
+    /// write other chunks meanwhile.
+    whole: bool,
 }
 
 fn fail(r: &Region, what: String) -> ! {
@@ -142,22 +166,55 @@ impl Region {
             frozen: AtomicBool::new(false),
             version: AtomicU64::new(0),
             access: Mutex::default(),
-            mirror: std::sync::OnceLock::new(),
+            mirrors: Mutex::new(Vec::new()),
+            whole: false,
         })
     }
 
-    /// Places it on a device with memory of its own: `mirror` holds the device's copy, uploaded before a kernel reads
-    /// a version it lacks, downloaded by `sync_host` after one writes it. A region's, not a range's; once.
+    /// Places it on a device with memory of its own, domain 1: `mirror_in`.
     pub fn mirror_on(&self, mirror: Box<dyn Mirror>) {
-        if self.root.is_some() || self.top().mirror.set(mirror).is_err() {
-            fail(self, "a second device copy, or one of a range (place the region it is part of)".into());
+        self.mirror_in(1, mirror);
+    }
+
+    /// Places it in memory domain `domain` (a discrete GPU's, 1 and up: decision 0440 §7.2): `mirror` holds that
+    /// domain's copy, uploaded before a kernel there reads a version it lacks, downloaded by `sync_host` after one
+    /// writes it. A region's, not a range's; once a domain.
+    pub fn mirror_in(&self, domain: u32, mirror: Box<dyn Mirror>) {
+        let mut m = self.top().mirrors.lock().unwrap_or_else(|e| e.into_inner());
+        if self.root.is_some() || domain == 0 || m.iter().any(|(d, _)| *d == domain) {
+            drop(m);
+            fail(self, format!("a second copy in domain {domain}, one in the host's (0), or one of a range (place the region it is part of)"));
         }
+        m.push((domain, Arc::from(mirror)));
+    }
+
+    fn mirror(&self, domain: u32) -> Option<Arc<dyn Mirror>> {
+        self.top().mirrors.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|(d, _)| *d == domain).map(|(_, m)| m.clone())
+    }
+
+    /// The domain a bind names none for: its one device domain, or the host's memory (0) with none. Fails with two.
+    fn default_domain(&self) -> u32 {
+        let m = self.top().mirrors.lock().unwrap_or_else(|e| e.into_inner());
+        match m.as_slice() {
+            [] => 0,
+            [(d, _)] => *d,
+            _ => {
+                let n = m.len();
+                drop(m);
+                fail(self, format!("a bind naming no domain of a region in {n} (bind_read_on, bind_write_on)"));
+            }
+        }
+    }
+
+    /// The domain whose copy holds its latest version (0: the host's): the one a write may begin in without moving it.
+    pub fn owner(&self) -> u32 {
+        self.lock().owner(self.top().version.load(Acquire))
     }
 
     /// Brings the host's bytes up to its latest version: waits for the GPU's queued writes, then (with a device
     /// copy) transfers it back. A queued write whose work was never committed fails: the wait would never end.
     pub fn sync_host(&self) {
-        let writers: Vec<_> = self.lock().gpu_writes.iter().map(|(_, op, f)| (*op, f.clone())).collect();
+        let writers: Vec<_> = self.lock().gpu_writes.iter().map(|(_, op, f, _)| (*op, f.clone())).collect();
         for (op, f) in writers {
             let Some(f) = f.upgrade() else { continue };
             if !f.is_committed() {
@@ -169,7 +226,8 @@ impl Region {
         let mut a = self.lock();
         let latest = top.version.load(Acquire);
         if a.host < latest {
-            let m = top.mirror.get().expect("a host behind its latest version has a device copy");
+            let owner = a.owner(latest);
+            let m = self.mirror(owner).expect("a host behind its latest version has a device copy that holds it");
             // SAFETY: no CPU use is live (the host's bytes are behind, so none could begin) and the GPU's writes
             // completed; the region's bytes are its block's.
             m.download(unsafe { std::slice::from_raw_parts_mut(top.bytes(), top.len) });
@@ -181,7 +239,7 @@ impl Region {
     /// queued: what a CPU use must wait for (`sync_host`).
     fn host_behind(&self, a: &Access) -> Option<String> {
         let latest = self.top().version.load(Acquire);
-        if let Some((_, op, _)) = a.gpu_writes.first() {
+        if let Some((_, op, _, _)) = a.gpu_writes.first() {
             Some(format!("a GPU write by {op} is queued (sync_host first)"))
         } else if a.host < latest {
             Some(format!("its host bytes hold version {} of {latest} (sync_host first)", a.host))
@@ -235,8 +293,19 @@ impl Region {
         a.host = self.top().version.fetch_add(1, AcqRel) + 1;
     }
 
-    /// A GPU use of it by `op`, pinned on `fence` until it completes (the region kept alive with it).
+    /// A GPU use of it by `op`, pinned on `fence` until it completes (the region kept alive with it), in its one
+    /// domain (`default_domain`).
     fn pin(self: &Arc<Region>, fence: &Arc<Fence>, op: &'static str, write: bool) -> usize {
+        let domain = self.default_domain();
+        self.pin_in(fence, op, write, domain)
+    }
+
+    /// `pin`, by a kernel in memory domain `domain` (0: the host's memory, read in place). Its copy there is made the
+    /// latest first: uploaded from the host, which takes the latest from the domain that holds it when another
+    /// does (ownership moves through the host). A write while another domain's write is queued fails: two domains
+    /// never write one region.
+    fn pin_in(self: &Arc<Region>, fence: &Arc<Fence>, op: &'static str, write: bool, domain: u32) -> usize {
+        let mirror = if domain == 0 { None } else { Some(self.mirror(domain).unwrap_or_else(|| fail(self, format!("a bind in domain {domain}, where it has no copy (mirror_in)")))) };
         {
             let mut a = self.lock();
             let bad = if write {
@@ -252,6 +321,8 @@ impl Region {
             } else {
                 None
             };
+            let elsewhere = a.gpu_writes.iter().find(|w| w.3 != domain).map(|w| (w.1, w.3));
+            let bad = bad.or_else(|| elsewhere.map(|(other, d)| format!("a GPU {} by {op} in domain {domain} while {other} writes it in domain {d} (one owner domain: 0440 §7.2)", if write { "write" } else { "read" })));
             if let Some(b) = bad {
                 drop(a);
                 fail(self, b);
@@ -259,23 +330,33 @@ impl Region {
             let id = a.id();
             let top = self.top();
             let latest = top.version.load(Acquire);
-            if let Some(m) = top.mirror.get()
-                && a.device.is_none_or(|d| d < latest)
+            if let Some(m) = &mirror
+                && a.held_in(domain).is_none_or(|d| d < latest)
             {
-                // The device's copy is behind: the transfer runs first on the same command buffer. A queued GPU
-                // write of it would be ahead of the host (its version is the device's), so there is none here.
+                if a.host < latest {
+                    // Another domain owns the latest: it comes to the host first (that domain's writes completed, as
+                    // its version moved when they did).
+                    let owner = a.owner(latest);
+                    let from = self.mirror(owner).expect("the owner domain's copy");
+                    // SAFETY: no CPU use is live (the host is behind, so none could begin); the bytes are the region's.
+                    from.download(unsafe { std::slice::from_raw_parts_mut(top.bytes(), top.len) });
+                    a.host = latest;
+                }
+                // The domain's copy is behind: the transfer runs first on the same command buffer.
                 // SAFETY: no CPU write is live (checked above); the bytes are the region's.
                 m.upload(unsafe { std::slice::from_raw_parts(top.bytes(), top.len) }, fence);
-                a.device = Some(latest);
+                a.set_in(domain, latest);
             }
             if write {
-                a.gpu_writes.push((id, op, Arc::downgrade(fence)));
+                a.gpu_writes.push((id, op, Arc::downgrade(fence), domain));
             } else {
                 a.gpu_reads.push((id, op));
             }
-            // Its block's ledger holds the chunk too (0487 R4, one place): a writer by raw offset is checked there.
+            // Its block's ledger holds the chunk too (0487 R4, one place): a writer by raw offset is checked there. A
+            // whole block's pin holds the block (below), as a by-address use does.
             let bytes = self.len.max(1);
-            if write {
+            if self.whole {
+            } else if write {
                 fence.writes_chunk(&self.block, self.at, bytes);
             } else {
                 fence.reads_chunk(&self.block, self.at, bytes);
@@ -284,13 +365,13 @@ impl Region {
             fence.on_complete(Box::new(move || {
                 let mut a = held.lock();
                 if write {
-                    a.gpu_writes.retain(|(i, _, _)| *i != id);
+                    a.gpu_writes.retain(|(i, _, _, _)| *i != id);
                     let v = held.top().version.fetch_add(1, AcqRel) + 1;
-                    // With a device copy only the device has it; with unified memory there is one copy.
-                    if held.top().mirror.get().is_some() {
-                        a.device = Some(v);
-                    } else {
+                    // In a device domain only its copy has it (the owner now); in the host's memory there is one copy.
+                    if domain == 0 {
                         a.host = v;
+                    } else {
+                        a.set_in(domain, v);
                     }
                 } else {
                     a.gpu_reads.retain(|(i, _)| *i != id);
@@ -307,7 +388,7 @@ impl Region {
     }
 
     /// The device buffer to bind it with, and its offset in it.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn buffer(&self, device: &rerail_device::device::Device) -> Result<(rerail_device::device::Buffer, u64), String> {
         Ok((self.block.device_buffer(device)?, self.at as u64))
     }
@@ -315,6 +396,46 @@ impl Region {
     fn bytes(&self) -> *mut u8 {
         self.block.ptr(self.at)
     }
+}
+
+/// The block's own region (decision 0491 step 3), as a const handle: its frozenness, versions, placement and pins, in
+/// the same place as its regions'. One a block while any handle holds it; a kernel's bind of the block's buffer,
+/// found by address, pins it (`bind_address`). A frozen block's refuses a GPU write.
+pub fn whole(block: &Arc<Block>) -> Shared<u8> {
+    let mut slot = block.ledger().root.lock().unwrap_or_else(|e| e.into_inner());
+    if let Some(r) = slot.upgrade() {
+        return Shared { r, _t: PhantomData };
+    }
+    let r = Arc::new(Region {
+        block: block.clone(),
+        at: 0,
+        len: block.reserved(),
+        kept: 0,
+        root: None,
+        name: "a block",
+        frozen: AtomicBool::new(!block.is_writable()),
+        version: AtomicU64::new(0),
+        access: Mutex::default(),
+        mirrors: Mutex::new(Vec::new()),
+        whole: true,
+    });
+    *slot = Arc::downgrade(&r);
+    Shared { r, _t: PhantomData }
+}
+
+/// A kernel's bind of the bytes at `addr`, until `fence` completes, by `op`, writing them or not (its argument's
+/// access, as the kernel declares it): the block or lease holding them is held (`Fence::uses_address`), and a block's
+/// own region, while a handle holds it, is pinned (once a fence and access). Whether a ledger knows the address.
+pub fn bind_address(fence: &Arc<Fence>, addr: usize, write: bool, op: &'static str) -> bool {
+    let Some(l) = crate::ledger::of_address(addr) else { return false };
+    fence.uses_address(addr);
+    let root = l.root.lock().unwrap_or_else(|e| e.into_inner()).upgrade();
+    if let Some(r) = root
+        && fence.first_pin(Arc::as_ptr(&r) as usize, write)
+    {
+        r.pin(fence, op, write);
+    }
+    true
 }
 
 impl Drop for Region {
@@ -352,8 +473,13 @@ macro_rules! common {
                 self.r.pin(fence, op, false)
             }
 
+            /// `bind_read` by a kernel in memory domain `domain` (0: the host's memory).
+            pub fn bind_read_on(&self, fence: &Arc<Fence>, op: &'static str, domain: u32) -> usize {
+                self.r.pin_in(fence, op, false, domain)
+            }
+
             /// `bind_read`, with the buffer to bind and its offset.
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub fn buffer_read(&self, fence: &Arc<Fence>, op: &'static str, device: &rerail_device::device::Device) -> Result<(rerail_device::device::Buffer, u64), String> {
                 self.r.pin(fence, op, false);
                 self.r.buffer(device)
@@ -417,7 +543,8 @@ impl<T: crate::Pod> Mutable<T> {
             frozen: AtomicBool::new(false),
             version: AtomicU64::new(0),
             access: Mutex::default(),
-            mirror: std::sync::OnceLock::new(),
+            mirrors: Mutex::new(Vec::new()),
+            whole: false,
         };
         Some(Mutable { r: Arc::new(r), _t: PhantomData })
     }
@@ -440,7 +567,8 @@ impl<T: crate::Pod> Mutable<T> {
             frozen: AtomicBool::new(false),
             version: AtomicU64::new(0),
             access: Mutex::default(),
-            mirror: std::sync::OnceLock::new(),
+            mirrors: Mutex::new(Vec::new()),
+            whole: false,
         };
         Mutable { r: Arc::new(r), _t: PhantomData }
     }
@@ -496,8 +624,14 @@ impl<T: crate::Pod> Mutable<T> {
         self.r.pin(fence, op, true)
     }
 
+    /// `bind_write` by a kernel in memory domain `domain` (0: the host's memory): that domain owns it once the write
+    /// completes.
+    pub fn bind_write_on(&self, fence: &Arc<Fence>, op: &'static str, domain: u32) -> usize {
+        self.r.pin_in(fence, op, true, domain)
+    }
+
     /// `bind_write`, with the buffer to bind and its offset.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn buffer_write(&self, fence: &Arc<Fence>, op: &'static str, device: &rerail_device::device::Device) -> Result<(rerail_device::device::Buffer, u64), String> {
         self.r.pin(fence, op, true);
         self.r.buffer(device)
@@ -829,6 +963,45 @@ mod tests {
         b.free_chunk_fit(at2, kept2);
     }
 
+    /// Decision 0491 step 3: a block's own region is one while a handle holds it; a kernel's bind of the block found by
+    /// address pins it, by the kernel's access, once a fence: a CPU read through it fails while a GPU write is queued,
+    /// and the version moves when the write completes. A chunk of the block is not held by the pin: its CPU writers
+    /// write other chunks meanwhile.
+    #[test]
+    fn a_blocks_bind_by_address_pins_its_own_region() {
+        let b = block();
+        let at = b.try_alloc_chunk(4096, 64).unwrap();
+        let root = whole(&b);
+        assert!(Arc::ptr_eq(&root.r, &whole(&b).r), "one a block");
+        assert!(!root.region().is_frozen());
+        let f = Fence::new();
+        assert!(bind_address(&f, b.ptr::<u8>(at) as usize + 8, true, "a kernel"));
+        assert!(bind_address(&f, b.ptr::<u8>(at) as usize, true, "a kernel"), "a second bind, pinned once");
+        assert_eq!(root.r.lock().gpu_writes.len(), 1);
+        assert!(fails(|| drop(root.read())), "a CPU read of the block through its region under a GPU write");
+        b.ledger().cpu_write(at, 8);
+        f.complete();
+        assert_eq!(root.region().version(), 1, "the GPU's write moved it");
+        drop(root.read());
+        assert!(!bind_address(&Fence::new(), 8, false, "a kernel"), "an address no ledger knows");
+    }
+
+    /// A frozen block's own region is frozen: a kernel's write bind of it fails, a read bind passes.
+    #[test]
+    fn a_frozen_blocks_region_refuses_a_gpu_write() {
+        let b = Block::anon(kind::FACTS, 1 << 20);
+        let at = b.try_alloc(64, 8).unwrap();
+        let frozen = b.freeze();
+        let arc = frozen.arc().clone();
+        let root = whole(&arc);
+        assert!(root.region().is_frozen());
+        let addr = arc.ptr::<u8>(at) as usize;
+        let f = Fence::new();
+        assert!(bind_address(&f, addr, false, "a reader"));
+        assert!(fails(|| { bind_address(&Fence::new(), addr, true, "a writer"); }));
+        f.complete();
+    }
+
     /// A device with memory of its own (a discrete GPU's), simulated: its copy, and what crossed the bus.
     #[derive(Default)]
     struct Discrete {
@@ -888,6 +1061,42 @@ mod tests {
         k.mark_committed();
         k.complete();
         assert!(fails(move || drop(m.freeze())), "frozen with its host bytes behind");
+    }
+
+    /// Decision 0491 step 4 (0440 §7.2): a region in two device domains besides the host's. A write in one makes it the
+    /// owner and the other behind; a read in the other takes the latest through the host (a download from the owner,
+    /// an upload to it); a write in one while the other's write is queued fails, and a bind naming no domain fails.
+    #[test]
+    fn two_domains_hold_one_owner_and_the_other_catches_up_through_the_host() {
+        let b = block();
+        let mut m = Mutable::<u64>::alloc(&b, 8, "rows").unwrap();
+        let (one, two) = (Arc::new(Discrete::default()), Arc::new(Discrete::default()));
+        m.region().mirror_in(1, Box::new(OnDiscrete(one.clone())));
+        m.region().mirror_in(2, Box::new(OnDiscrete(two.clone())));
+        assert!(fails(|| m.region().mirror_in(2, Box::new(OnDiscrete(two.clone())))), "a second copy in one domain");
+        m.write()[0] = 7;
+        assert_eq!(m.region().owner(), 0, "the host's write: the host owns it");
+        assert!(fails(|| { m.bind_read(&Fence::new(), "unnamed"); }), "two domains: a bind names one");
+        let w = Fence::new();
+        m.bind_write_on(&w, "build", 1);
+        assert_eq!(one.ups.load(SeqCst), 1, "domain 1 brought up to date before it writes");
+        assert!(fails(|| { m.bind_write_on(&Fence::new(), "rival", 2); }), "two domains never write one region");
+        assert!(fails(|| { m.bind_read_on(&Fence::new(), "stale", 2); }), "nor read it while another writes it");
+        one.mem.lock().unwrap()[0] = 9; // domain 1's kernel writes its copy
+        w.mark_committed();
+        w.complete();
+        assert_eq!(m.region().owner(), 1, "the writer's domain owns the latest");
+        let r = Fence::new();
+        m.bind_read_on(&r, "probe", 2);
+        assert_eq!(one.downs.load(SeqCst), 1, "the owner's copy came to the host");
+        assert_eq!(two.ups.load(SeqCst), 1, "and from there to domain 2");
+        assert_eq!(two.mem.lock().unwrap()[0], 9);
+        r.complete();
+        assert_eq!(m.read()[0], 9, "the host holds the latest too");
+        let r1 = Fence::new();
+        m.bind_read_on(&r1, "probe", 1);
+        assert_eq!(one.ups.load(SeqCst), 1, "domain 1 holds the latest: nothing moves");
+        r1.complete();
     }
 
     /// With unified memory there is one copy: a host sync is a wait for the GPU's queued writes, and nothing moves.

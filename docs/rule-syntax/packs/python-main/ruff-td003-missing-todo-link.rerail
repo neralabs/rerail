@@ -1,5 +1,4 @@
 .policy "ruff-td003-missing-todo-link" revision 1
-.guests off
 .description "Link every TODO comment to an issue or ticket, on the same line or in the comment lines right after it, so the work can be tracked."
 .language python
 .mode steer

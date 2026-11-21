@@ -1,6 +1,6 @@
-# Step 14: JSON as simdjson accepts it: RFC 8259, every byte valid UTF-8.
+# JSON as simdjson accepts it: RFC 8259, every byte valid UTF-8.
 #
-# After the made-up languages, the same constructs for a real one. It accepts what simdjson's
+# It accepts what simdjson's
 # parser accepts and refuses what it refuses (a refused file goes to tree-sitter), and writes
 # tree-sitter-json's named nodes, as the engine's named-only tapes hold them: the tokens
 #   '{' '}' '[' ']' ',' ':' '"'

@@ -1,5 +1,4 @@
 .policy "ruff-sim222-expr-or-true" revision 1
-.guests off
 .description "Simplify an or expression holding an always-truthy value such as True or a non-empty literal; the operands after it never run."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-b016-raise-literal" revision 1
-.guests off
 .description "Raise an exception instance instead of a literal like a string or number; raising a literal fails with a TypeError."
 .language python
 .mode steer

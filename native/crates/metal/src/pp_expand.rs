@@ -433,8 +433,10 @@ pub struct XCaps {
     pub out: usize,
     pub sb: usize,
     pub st: usize,
-    /// The queue's items: the most the work pushes (it is linear, no slot used twice).
+    /// A round's items, and the lists it scans: the most a round makes.
     pub q: usize,
+    /// A round's scanned tokens: the most one round scans, every list's (decision 0527 §2).
+    pub sc: usize,
     /// The runs refused for room so far: the counters' and the text facts' rooms, and the
     /// `#line` rows', double with it.
     pub rung: u32,
@@ -449,11 +451,11 @@ impl XCaps {
     pub fn at(top: usize, rung: u32) -> XCaps {
         let tok = (top + 4096) << (rung + 1);
         let lists = tok / 16 + 1024;
-        XCaps { tok, lists, args: tok / 16 + 1024, out: top + tok / 4 + 4096, sb: ((64usize << 10) << rung).max(tok / 2), st: tok / 4 + 256, q: 2 * lists + 64, rung }
+        XCaps { tok, lists, args: tok / 16 + 1024, out: top + tok / 4 + 4096, sb: ((64usize << 10) << rung).max(tok / 2), st: tok / 4 + 256, q: 2 * lists + 64, sc: tok / 4 + 4096, rung }
     }
 
     fn max(self, a: XCaps) -> XCaps {
-        XCaps { tok: self.tok.max(a.tok), lists: self.lists.max(a.lists), args: self.args.max(a.args), out: self.out.max(a.out), sb: self.sb.max(a.sb), st: self.st.max(a.st), q: self.q.max(a.q), rung: self.rung.max(a.rung) }
+        XCaps { tok: self.tok.max(a.tok), lists: self.lists.max(a.lists), args: self.args.max(a.args), out: self.out.max(a.out), sb: self.sb.max(a.sb), st: self.st.max(a.st), q: self.q.max(a.q), sc: self.sc.max(a.sc), rung: self.rung.max(a.rung) }
     }
 
     /// At least the first run's rooms of a top level of `top` tokens (P1's grew).
@@ -481,7 +483,7 @@ impl XCaps {
         };
         let mut c = self;
         c.rung += 1;
-        let [tok, lists, args, sb, st, q, out] = room;
+        let [tok, lists, args, sb, st, q, out, sc] = room;
         c.tok = up(tok, c.tok);
         c.lists = up(lists, c.lists);
         c.args = up(args, c.args);
@@ -489,7 +491,8 @@ impl XCaps {
         c.st = up(st, c.st);
         c.q = up(q, c.q);
         c.out = up(out, c.out);
-        if c.tok == self.tok && c.lists == self.lists && c.args == self.args && c.sb == self.sb && c.st == self.st && c.q == self.q && c.out == self.out {
+        c.sc = up(sc, c.sc);
+        if c.tok == self.tok && c.lists == self.lists && c.args == self.args && c.sb == self.sb && c.st == self.st && c.q == self.q && c.out == self.out && c.sc == self.sc {
             let a = XCaps::at(top, self.rung + 1);
             return XCaps { rung: a.rung, ..self.fit(top) }.max(a);
         }
@@ -1007,8 +1010,8 @@ impl Vis {
 /// The tokens' pool's heads (`<ukl/pool.h>`'s `UKL_POOL_CLASSES`, rounded up).
 const POOL_HEADS: usize = 128;
 
-/// A list (`PxList` in the UKL): 33 words; an argument (`PxArg`): 3.
-const LIST_WORDS: usize = 33;
+/// A list (`PxList` in the UKL): 37 words; an argument (`PxArg`): 3.
+const LIST_WORDS: usize = 37;
 const ARG_WORDS: usize = 3;
 
 /// Why a unit is refused (`pp_expand.uglykl`'s `X_*`). `X_ROOM` reruns it at the next rung.
@@ -1018,6 +1021,12 @@ pub const X_PASTE: u32 = 8;
 pub const X_DEPTH: u32 = 16;
 pub const X_ROOM: u32 = 32;
 pub const X_QUEUE: u32 = 64;
+
+/// A piece's source kind (decision 0520 §1: `P_KIND`'s bits of its first column), its length.
+const P_TOP: u32 = 0;
+const P_BODY: u32 = 1 << 30;
+const P_KIND: u32 = 3 << 30;
+const PN_LEN: u32 = 0xff_ffff;
 pub const X_HASH: u32 = 128;
 pub const X_ACROSS: u32 = 256;
 pub const X_VA_OPT: u32 = 512;
@@ -1030,6 +1039,11 @@ pub const X_COUNTER_SPELLED: u32 = 8192;
 /// A `_Pragma` that would make a row (`once`, `push_macro`, `pop_macro`), or whose operand is a
 /// macro's.
 pub const X_PRAGMA: u32 = 16384;
+/// A top's items past the work bound (`WORK`): not room, so no rung is larger for it.
+pub const X_WORK: u32 = 32768;
+/// A top's items at most (`RERAIL_PP_WORK` for tests): a launch's time bounded by its work, not
+/// by any room (decision 0503 §10).
+pub const WORK: u32 = 1 << 18;
 
 /// The expansion's tries for room. A refused run stops where its first room ran out, so each try
 /// uncovers about one room's need (seven rooms); the budget's lease bounds the sizes.
@@ -1080,9 +1094,13 @@ pub struct Exp {
     xpos: Buf,
     xcover: Buf,
     vscan: Scan,
+    /// The output's pieces (decision 0520 §3): each top token's count, their scan.
+    opv: Buf,
+    opbase: Buf,
+    opscan: Scan,
     lists: Buf,
     /// The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth and the
-    /// origin (the list whose substitution wrote it); then the heads of the pool of blocks given
+    /// ref `__LINE__` reads for it (+ 1; 0 its own); then the heads of the pool of blocks given
     /// back (`POOL_HEADS`, decision 0503 §10), whose links are the first token's ref.
     tokens: Buf,
     args: Buf,
@@ -1107,7 +1125,26 @@ pub struct Exp {
     cnt_cap: u32,
     lb_cap: u32,
     pub out: Buf,
+    /// A round's scan (decision 0527 §2): the lists (`q` of them) and their tokens (`sc_cap`).
+    scans: Buf,
+    /// The lists a round's walks make final and place (decision 0527 §2): two halves of `q` each.
+    fins: Buf,
+    places: Buf,
+    sc_n: Buf,
+    sc_base: Buf,
+    sc_xj: Buf,
+    sc_scan: Scan,
+    sc_tok: [Buf; 12],
+    sc_cscan: Scan,
+    sc_lscan: Scan,
+    sc_ckeys: Buf,
+    sc_sort: Sort,
+    sc_first: Buf,
+    sc_cap: u32,
 }
+
+/// A round's scan's stores a token (`Exp::sc_tok`), by slot.
+const SC_TOK: [&str; 12] = ["SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT", "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK"];
 
 impl Exp {
     pub fn new(arena: &Arena, unit: &Unit, lay: &Layout, x: XCaps, caps: Caps) -> Result<Exp, Error> {
@@ -1149,15 +1186,35 @@ impl Exp {
         // top's high water over the passes (8 to 13: tokens, lists, args, scratch bytes and tokens,
         // queue items), the output's (14), the mark where the blocks no item reads again are given
         // back (15: a 32nd of the tokens' room past the front, decision 0503 §10), the times they were (16) and the
-        // drain's decision between runs (17: `PX_DRAIN`).
+        // drain's decision between runs (17: `PX_DRAIN`), the lists' and the arguments' entries'
+        // marks (18, 19: a 32nd of each room past its front), the units each store took from its
+        // pool since the last giving (20 the tokens', 21 the lists', 22 the arguments' entries':
+        // counted toward the marks), and the givings those takes may bring on (23).
         // The tokens' front between two givings: a 32nd of the room (at most 32 givings from the
-        // front's growth, within `PX_GIVES`); less to test them.
+        // front's growth); less to test them.
         let gap = std::env::var("RERAIL_PP_GIVE_GAP").ok().and_then(|v| v.parse::<usize>().ok()).map_or(tok / 32, |g| g.min(tok)).max(1);
-        let mut ctl = [0u32; 18];
+        let mut ctl = [0u32; 32];
         ctl[4] = lit_bytes as u32;
         ctl[15] = gap as u32;
+
         ctl[5] = nf as u32;
-        let words = [unit.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options, gap as u32];
+        // The lists' and the arguments' entries' fronts between two givings: a 32nd of each room.
+        // The work bound, and the givings' bound: each store's room over its gap (its mark passed
+        // once a gap of growth), and the ring's pauses (half its room of items each) within the work.
+        let work = std::env::var("RERAIL_PP_WORK").ok().and_then(|v| v.parse::<u32>().ok()).unwrap_or(WORK);
+        // A test's gap (`RERAIL_PP_GIVE_GAP`) is each store's.
+        let test_gap = std::env::var("RERAIL_PP_GIVE_GAP").ok().and_then(|v| v.parse::<usize>().ok());
+        let (lgap, agap) = (test_gap.map_or(lists / 32, |g| g.min(lists)).max(1), test_gap.map_or(args / 32, |g| g.min(args)).max(1));
+        // A take from a pool counts toward its store's mark as the front's growth does (decision 0520
+        // step 4): the givings a run's churn brings on, twice those of the fronts' growth; past them
+        // the marks count the fronts alone (as before: the room may run out, and the unit runs a
+        // rung up), so no unit is refused for its pauses.
+        let grows = tok.div_ceil(gap) + lists.div_ceil(lgap) + args.div_ceil(agap);
+        let gives = 3 * grows + 2 * work as usize / (q / 2).max(1) + 8;
+        ctl[23] = (2 * grows) as u32;
+        ctl[18] = lgap as u32;
+        ctl[19] = agap as u32;
+        let words = [unit.len() as u32, tok as u32, lists as u32, args as u32, out as u32, q as u32, va_opt as u32, (va_opt >> 32) as u32, sb as u32, st as u32, lay.relex_options, gap as u32, lgap as u32, agap as u32, work, gives as u32];
         Ok(Exp {
             list_cap: lists as u32,
             out_cap: out as u32,
@@ -1189,11 +1246,16 @@ impl Exp {
             xpos: zeroed(top)?,
             xcover: zeroed(top)?,
             vscan: Scan::new(arena)?,
-            lists: zeroed(lists * LIST_WORDS)?,
+            opv: zeroed(top)?,
+            opbase: zeroed(top)?,
+            opscan: Scan::new(arena)?,
+            // Past the records: the pools of ids given back, a link an id, then their heads.
+            lists: zeroed(lists * (LIST_WORDS + 1) + POOL_HEADS)?,
             tokens: zeroed(tok * 5 + POOL_HEADS)?,
-            args: zeroed(args * ARG_WORDS)?,
-            slots: zeroed(q)?,
-            qctl: zeroed(5)?,
+            args: zeroed(args * (ARG_WORDS + 1) + POOL_HEADS)?,
+            // A round's items and the next's (decision 0527).
+            slots: zeroed(2 * q)?,
+            qctl: zeroed(6)?,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
             tr_sk: arena.zeroed::<u64>(cnt_cap)?,
@@ -1209,7 +1271,22 @@ impl Exp {
             cnt_cap: cnt_cap as u32,
             lb_cap: lb_cap as u32,
             // The refs, then each one's space flag.
-            out: zeroed(2 * out)?,
+            // The output's pieces: five columns, `out` words each (decision 0520 §3).
+            out: zeroed(5 * out)?,
+            scans: zeroed(q)?,
+            fins: zeroed(2 * q)?,
+            places: zeroed(2 * q)?,
+            sc_n: zeroed(q)?,
+            sc_base: zeroed(q)?,
+            sc_xj: zeroed(q)?,
+            sc_scan: Scan::new(arena)?,
+            sc_tok: [(); 12].map(|()| zeroed(x.sc)).into_iter().collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| Error::BackendFailure)?,
+            sc_cscan: Scan::new(arena)?,
+            sc_lscan: Scan::new(arena)?,
+            sc_ckeys: arena.zeroed::<u64>(x.sc.max(1))?,
+            sc_sort: Sort::new(arena, x.sc.max(1))?,
+            sc_first: zeroed(1)?,
+            sc_cap: x.sc as u32,
         })
     }
 
@@ -1225,11 +1302,18 @@ impl Exp {
         l.at("OFLAG", &self.oflag).at("OID", &self.oid).at("OTOTAL", &self.oscan.total).at("LISTS", &self.lists).at("SLOTS", &self.slots);
         l.at("CTL", &self.ctl).at("QCTL", &self.qctl).at("XFLAG", &self.xflag).at("XAT", &self.xat).at("XTOTAL", &self.xscan.total);
         l.at("XPOS", &self.xpos).at("XCOVER", &self.xcover).at("V", &self.v).at("OBASE", &self.obase).at("VTOTAL", &self.vscan.total);
+        l.at("OPV", &self.opv).at("OPBASE", &self.opbase).at("OPTOTAL", &self.opscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("ARGS", &self.args).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
         l.word("LIST_CAP", self.list_cap).word("OUT_CAP", self.out_cap).word("Q_CAP", self.q_cap);
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
         l.at("CU_SLOT", &self.cu_slot).at("CU_SUB", &self.cu_sub).at("CU_UNIT", &self.cu_unit).at("TRN", &self.trn).at("LREAD", &self.lread);
+        l.at("SCANS", &self.scans).at("FINS", &self.fins).at("PLACES", &self.places).at("SC_N", &self.sc_n).at("SC_BASE", &self.sc_base).at("SC_XJ", &self.sc_xj).at("SC_TOTAL", &self.sc_scan.total);
+        for (name, b) in SC_TOK.iter().zip(&self.sc_tok) {
+            l.at(name, b);
+        }
+        l.at("SC_CTOTAL", &self.sc_cscan.total).at("SC_LTOTAL", &self.sc_lscan.total).at("SC_CKEYS", &self.sc_ckeys).at("SC_FIRST", &self.sc_first);
+        l.at("SC_KB", &self.sc_sort.keys_b).at("SC_VA", &self.sc_sort.vals_a).at("SC_VB", &self.sc_sort.vals_b).at("SC_HIST", &self.sc_sort.hist).word("SC_CAP", self.sc_cap);
     }
 
     /// The scratch tokens' bytes and (start, end, kind) (after the command buffer).
@@ -1248,20 +1332,25 @@ impl Exp {
     /// The refusals, and the output's refs where there are none (after the command buffer).
     /// Each store's use and room (`ROOM_STORES`'s order): its top (past the room where it ran
     /// out: a top only grows) and its capacity.
+    pub fn rounds(&self) -> u32 {
+        // SAFETY: the device finished; `ctl` 25 counts the rounds.
+        unsafe { *self.ctl.host().cast::<u32>().add(25) }
+    }
+
     pub fn room(&self) -> [(u32, u32); ROOMS] {
         // SAFETY: the device finished; `ctl` and `words` are the control and capacity words, and
-        // `qctl` the queue's (its tail past its ring's base the items queued since its last pause,
-        // past the room where it ran out).
+        // `qctl` the rounds' (the next round's items, past the room where it ran out; `ctl` 13 each
+        // round's high water).
         unsafe {
             let ctl = self.ctl.host().cast::<u32>();
             let w = self.words.host().cast::<u32>();
             let [a, b, c, d, e] = [(0, 1, 8), (1, 2, 9), (3, 3, 10), (4, 8, 11), (5, 9, 12)].map(|(t, c, h)| ((*ctl.add(t)).max(*ctl.add(h)), *w.add(c)));
             // The queue's ring: its positions past its base (decision 0503 §10).
             let qc = self.qctl.host().cast::<u32>();
-            let q = ((*qc.add(1)).wrapping_sub(*qc.add(4)).max(*ctl.add(13)), self.q_cap);
+            let q = ((*qc.add(1)).max(*ctl.add(13)), self.q_cap);
             // The output: the pieces' total of the text and of each top before (the lines'), as
             // `pp_check` and the places compare it with the room.
-            [a, b, c, d, e, q, ((*self.vscan.total.host().cast::<u32>()).max(*ctl.add(14)), self.out_cap as u32)]
+            [a, b, c, d, e, q, ((*self.opscan.total.host().cast::<u32>()).max(*ctl.add(14)), self.out_cap as u32), (*ctl.add(24), self.sc_cap)]
         }
     }
 
@@ -1309,15 +1398,42 @@ impl Exp {
         unsafe { *self.trn.host().cast::<u32>().add(9) }
     }
 
-    pub fn read(&self) -> (u32, Vec<u32>) {
-        // SAFETY: the device finished; `out` holds at least `n_out` words where no room ran out.
+    /// The output's refs, made from its pieces (decision 0520 §3) for a caller that asks for
+    /// tokens: a top level's run each top token's node (the text's stretches, `top_ref`), a
+    /// definition's body item its ref, a produced token its own.
+    pub fn read(&self, front: &crate::pp_eval::Front, vis: &Vis, defs: &Defs) -> (u32, Vec<u32>) {
+        // SAFETY: the device finished; `out` holds `out_cap` words a column and its pieces' total
+        // where no room ran out; the text's stretches and the definitions are the same run's.
         unsafe {
             let refused = *self.ctl.host().cast::<u32>().add(2);
             if refused != 0 {
                 return (refused, Vec::new());
             }
             let n = *self.vscan.total.host().cast::<u32>() as usize;
-            (0, std::slice::from_raw_parts(self.out.host().cast::<u32>(), n).to_vec())
+            let cap = self.out_cap as usize;
+            let np = (*self.opscan.total.host().cast::<u32>() as usize).min(cap);
+            let o = self.out.host().cast::<u32>();
+            let n_gaps = *vis.n_gaps.host().cast::<u32>() as usize;
+            let gat = std::slice::from_raw_parts(vis.gat.host().cast::<u32>(), n_gaps);
+            let firsts = vis.gfirsts.host().cast::<u32>();
+            let nodes = front.text_nodes.host().cast::<u32>();
+            let d = defs.defs.host().cast::<PpDef>();
+            let mut out = Vec::with_capacity(n);
+            for i in 0..np {
+                let (src, len, st) = (*o.add(i), *o.add(cap + i) & PN_LEN, *o.add(2 * cap + i));
+                for k in st..st + len {
+                    out.push(match src & P_KIND {
+                        P_TOP => {
+                            let j = gat.partition_point(|&g| g <= k).max(1) - 1;
+                            *nodes.add((*firsts.add(j) + (k - gat[j])) as usize)
+                        }
+                        P_BODY => (*d.add((src & !P_KIND) as usize)).body + k,
+                        _ => k,
+                    });
+                }
+            }
+            debug_assert_eq!(out.len(), n, "the output's pieces hold its tokens");
+            (0, out)
         }
     }
 }
@@ -1351,13 +1467,15 @@ pub struct Expanded {
     pub caps: Caps,
     pub xcaps: XCaps,
     pub passes: (u32, u32),
+    /// The expansion's rounds (decision 0527 §1), every top's (a measurement).
+    pub rounds: u32,
     pub def_rung: u32,
 }
 
 /// The arena's stores, as `Expanded::room` lists them.
-pub const ROOM_STORES: [&str; ROOMS] = ["tokens", "lists", "arguments", "scratch bytes", "scratch tokens", "queue items", "output"];
+pub const ROOM_STORES: [&str; ROOMS] = ["tokens", "lists", "arguments", "scratch bytes", "scratch tokens", "queue items", "output", "scan tokens"];
 /// The expansion's rooms a run reports (`Exp::room`).
-pub const ROOMS: usize = 7;
+pub const ROOMS: usize = 8;
 
 /// A ref to a scratch token, not a tape node.
 pub const SCRATCH: u32 = 0x8000_0000;
@@ -1442,10 +1560,10 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let requests = vis.requests();
         if p1_flags != 0 || !requests.is_empty() {
-            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), def_rung });
+            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
         }
         vis.read()?;
-        let (refused, out) = exp.read();
+        let (refused, out) = exp.read(&front, &vis, &defs);
         // A run out of room runs again larger whatever else it refused: past the room that ran
         // out, its items read what was never written (a list cut short reads as a call past its
         // end), so its other refusals are the larger run's to give.
@@ -1455,7 +1573,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
             }
             x = x.grown(p1.top, exp.room());
             x_tries += 1;
-            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), def_rung });
+            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
             continue;
         }
         if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
@@ -1463,7 +1581,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let (scratch, stoks) = exp.scratch();
         let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, lay.units(), out.len()) };
-        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), def_rung });
+        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), def_rung });
     }
 }
 

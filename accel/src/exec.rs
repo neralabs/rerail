@@ -1500,7 +1500,11 @@ impl Executor {
                         // `in_run`: the claims (the batch's kernels, their columns and device leases) may be the last
                         // holder's, and a lease goes back to its pool in the run (Q337).
                         rerail_context::cores_spawn_fifo(move || {
-                            rerail_context::in_run(run, move || as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend)))
+                            let _run = rerail_context::enter(run);
+                            // Moved in after the run is entered, so they drop before it is left: the last claims
+                            // drop their kernels' buffers into the machine's pool (decision 0442).
+                            let (claims, backend) = (claims, backend);
+                            as_job(if lane == Lane::Sql { "SQL launches" } else { "the cores' launches" }, || claims.serve_host(&*backend))
                         });
                     }
                 }

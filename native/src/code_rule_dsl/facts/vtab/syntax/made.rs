@@ -211,6 +211,8 @@ impl Docs {
         // A guest's file is made before it (`file_lines`), so its own lines are never built ahead of it (decision 0470 step 2:
         // the eager batch hands a file the lines a program of it built first).
         let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, None, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
+        // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
+        p.file = Guest::file_key(d.guest.as_deref(), d.key);
         drop(new_span);
         // A program that reads `end_point` has each node's end point among the positions, after the lines.
         let nodes = p.len();
@@ -330,6 +332,11 @@ pub(super) struct Group {
 /// in, in the order made, so the CPU and the device read one relation in one block; a group's rows a range of it.
 pub(super) struct Rows {
     state: parking_lot::Mutex<State>,
+    /// Woken when a group goes on in the relations or its claims are given up (`Batch::ensure`).
+    made: parking_lot::Condvar,
+    /// The groups made, those another read's made first and so set aside too: `State::groups`' length, unless two
+    /// reads made one document.
+    makes: std::sync::atomic::AtomicUsize,
     /// The relations a group makes, by name: what an empty group makes, before any document is (`Batch::new`).
     pub(super) names: Vec<String>,
     /// An empty group's relations, which answer what a relation is (its columns, its indexes) before its rows are
@@ -355,6 +362,35 @@ struct State {
     of: Vec<Option<u32>>,
     /// Each relation as the last group left it: every group's rows, in the order made.
     rels: Vec<Arc<Relation>>,
+    /// Each document's maker while a group of it is being made (`Batch::ensure`): another read waits for it rather
+    /// than make it again.
+    claimed: Vec<Option<std::thread::ThreadId>>,
+    /// The threads making a group of this batch now, once a group: a thread on this list makes what it reads itself,
+    /// never waits (its own group is beneath it on its stack).
+    makers: Vec<std::thread::ThreadId>,
+}
+
+/// A group's claims on its documents (`State::claimed`), given up as it ends, made or not (a panic too).
+struct Claim<'a> {
+    rows: &'a Rows,
+    me: std::thread::ThreadId,
+    docs: Vec<usize>,
+}
+
+impl Drop for Claim<'_> {
+    fn drop(&mut self) {
+        let mut s = self.rows.state.lock();
+        for &i in &self.docs {
+            if s.claimed[i] == Some(self.me) {
+                s.claimed[i] = None;
+            }
+        }
+        if let Some(at) = s.makers.iter().position(|t| *t == self.me) {
+            s.makers.swap_remove(at);
+        }
+        drop(s);
+        self.rows.made.notify_all();
+    }
 }
 
 /// How a relation's row names its document: by its first column, as the rule library's declarations type it
@@ -411,7 +447,7 @@ impl Rows {
     /// it grows from (decision 0431 §6), complete, by name, whose documents (`prior_docs`, indexes in this batch) are
     /// its first group: each relation goes on from that one's.
     pub(super) fn new(documents: usize, names: Vec<String>, template: Vec<Arc<Relation>>, statics: Vec<&'static str>, prior: Option<(&HashMap<String, Arc<Relation>>, Vec<usize>)>) -> Self {
-        let mut state = State { groups: Vec::new(), of: vec![None; documents], rels: template.clone() };
+        let mut state = State { groups: Vec::new(), of: vec![None; documents], rels: template.clone(), claimed: vec![None; documents], makers: Vec::new() };
         if let Some((rels, docs)) = prior {
             let mut ranges = Vec::with_capacity(names.len());
             for (rel, name) in names.iter().enumerate() {
@@ -426,11 +462,15 @@ impl Rows {
             state.groups.push(Arc::new(Group { docs, ranges }));
         }
         let by = template.iter().map(|t| ByDocument::of(&Source::columns(t.as_ref()))).collect();
-        Self { state: parking_lot::Mutex::new(state), names, template, by, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new() }
+        Self { state: parking_lot::Mutex::new(state), made: parking_lot::Condvar::new(), makes: Default::default(), names, template, by, relations: statics.len(), statics, complete: OnceLock::new(), counted: OnceLock::new() }
     }
     /// The groups made.
     pub(super) fn groups(&self) -> usize {
         self.state.lock().groups.len()
+    }
+    /// The groups made, those set aside too (`makes`).
+    pub(super) fn makes(&self) -> usize {
+        self.makes.load(std::sync::atomic::Ordering::Relaxed)
     }
     /// Whether no group has rows yet: the next is written into its block relations, not staged.
     pub(super) fn first(&self) -> bool {
@@ -448,21 +488,63 @@ impl Batch {
     /// on with in its block relation. A group is made unlocked (its prefilter and matchers run on the pool, where a
     /// waiting thread runs other jobs, one of which may read this batch), and goes on in the relations only if no other
     /// read made one of its documents meanwhile; else it is made again of those still unmade.
+    ///
+    /// Its documents are claimed while it is made, so reads side by side make each document once: a read finding a
+    /// document another thread is making waits for it, running the pool's jobs meanwhile, rather than make it too
+    /// (the base relations counted on the pool made the whole batch once each, Q396: four times its work and its
+    /// memory on 901 files). A thread making a group of this batch never waits: a read under it (a job it ran while
+    /// it waited) makes what it reads, as before, so no two makers wait on each other.
     pub(super) fn ensure(&self, want: &[usize]) {
+        let me = std::thread::current().id();
         loop {
-            let need: Vec<usize> = {
+            let (need, waits) = {
                 let s = self.rows.state.lock();
-                let mut need: Vec<usize> = want.iter().copied().filter(|&i| s.of[i].is_none()).collect();
+                let making = s.makers.contains(&me);
+                let mut need: Vec<usize> = Vec::new();
+                let mut waits = false;
+                for &i in want {
+                    if s.of[i].is_some() {
+                        continue;
+                    }
+                    match s.claimed[i] {
+                        Some(t) if t != me && !making => waits = true,
+                        _ => need.push(i),
+                    }
+                }
                 need.sort_unstable();
                 need.dedup();
-                need
+                if need.is_empty() && waits {
+                    // Another thread's group: the pool's next job, else a wait for a group to end.
+                    drop(s);
+                    if rayon::yield_now() != Some(rayon::Yield::Executed) {
+                        let mut s = self.rows.state.lock();
+                        if want.iter().any(|&i| s.of[i].is_none() && s.claimed[i].is_some_and(|t| t != me)) {
+                            self.rows.made.wait_for(&mut s, std::time::Duration::from_millis(1));
+                        }
+                    }
+                    continue;
+                }
+                (need, waits)
             };
             if need.is_empty() {
+                debug_assert!(!waits);
                 return;
             }
+            let claim = {
+                let mut s = self.rows.state.lock();
+                let docs: Vec<usize> = need.iter().copied().filter(|&i| s.claimed[i].is_none()).collect();
+                for &i in &docs {
+                    s.claimed[i] = Some(me);
+                }
+                s.makers.push(me);
+                Claim { rows: &self.rows, me, docs }
+            };
             let made = self.make_rows(&need, self.rows.first(), &[]).and_then(|m| self.group_rels(m, &need));
+            self.rows.makes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let mut s = self.rows.state.lock();
             if need.iter().any(|&i| s.of[i].is_some()) {
+                drop(s);
+                drop(claim);
                 continue;
             }
             let rels = match made {
@@ -485,7 +567,11 @@ impl Batch {
             }
             profile::decision("a batch's documents made by group (decision 0494)", || format!("{} of {} documents", need.len(), self.docs.len()));
             s.groups.push(Arc::new(Group { docs: need, ranges }));
-            return;
+            drop(s);
+            drop(claim);
+            if !waits {
+                return;
+            }
         }
     }
 

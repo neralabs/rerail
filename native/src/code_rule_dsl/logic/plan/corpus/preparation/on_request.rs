@@ -85,10 +85,11 @@ fn lit_vars(l: LitRef<'_>) -> BTreeSet<Slot> {
             term_vars(l, &mut out);
             term_vars(r, &mut out);
         }
-        Lit::Agg { var, over, atom, .. } => {
+        Lit::Agg { var, op, over, atom } => {
             atom.args().for_each(|t| term_vars(t, &mut out));
             out.insert(var);
             out.extend(over);
+            out.extend(op.bound());
         }
         Lit::Nearest { n, a, .. } => out.extend([n, a]),
         Lit::Ast { document, node, captures, .. } => {

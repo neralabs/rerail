@@ -131,7 +131,7 @@ That reading refuses a second literal (`(a(x), b(x)) + 1`) only because it sees 
 So those `,` are written, then dropped.
 They have rules of their own (`group_body`, `group_conjunction`, `agg_argument_list`).
 
-The `.rr` grammar was `native/crates/rr_syntax/bitlex_ladder/21-named-only.bitlex`; step 22 (`22-test-blocks.bitlex`) adds a rule file's tests to it.
+The `.rr` grammar was `native/crates/rr_syntax/bitlex_ladder/21-named-only.bitlex`; step 22 (`22-test-blocks.bitlex`) adds a rule file's tests to it. Step 22 is now `native/crates/rr_parser/rr.bitlex`, the steps before it removed (0531).
 JSON's is `implied` on `object`, `pair`, `array` and `string`,
 in `14-json.bitlex`, `15-jsonc.bitlex` and `lexers/json.bitlex`.
 

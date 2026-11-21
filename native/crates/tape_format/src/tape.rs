@@ -14,7 +14,7 @@
 //! (`crate::f16::F16`). A caller dispatches once a document (`with_tape!`), so the per-node reads are compiled
 //! for each format.
 
-use crate::generated_reads::f15 as reads;
+use crate::reads::f15 as reads;
 use crate::{CHECKPOINT_STRIDE, HEADER_BYTES, MAGIC, FORMAT_VERSION, TAIL_FROM_START, header, padded};
 
 /// What a code is: the grammar's kind and field, the flags (`CODE_EXTRA`, `CODE_ERROR`, `CODE_MISSING`), a
@@ -349,8 +349,8 @@ pub struct F15Columns<'a> {
     pub source_len: u64,
 }
 
-/// Format 15, read where its columns lie, through the tape's reads (decision 0310's Rust backend,
-/// `generated_reads`) over its view. Its codes are the tape's own table (numbered by first use); its parent is not
+/// Format 15, read where its columns lie, through the tape's reads (`crate::reads`, written directly,
+/// decision 0534) over its view. Its codes are the tape's own table (numbered by first use); its parent is not
 /// stored, so it is found back over the nodes before (the format's cost: 0156 §1.7).
 #[derive(Clone, Copy)]
 pub struct F15<'a> {
@@ -400,17 +400,17 @@ impl Tape for F15<'_> {
     }
     #[inline(always)]
     fn code(&self, i: usize) -> u32 {
-        reads::tape_number(self.bytes, &self.view, i as u32)
+        reads::number(self.bytes, &self.view, i as u32)
     }
     #[inline(always)]
     fn subtree_end(&self, i: usize) -> usize {
-        i + reads::tape_size(self.bytes, &self.view, i as u32) as usize
+        i + reads::size(self.bytes, &self.view, i as u32) as usize
     }
     /// Not stored: the nearest node before `i` whose subtree holds it, searched back over at most 64 nodes, else
     /// found by descending from the root over the siblings' subtree ends (`Tape::path`): a search is never longer
     /// than the path's siblings.
     fn parent(&self, i: usize) -> Option<usize> {
-        let p = reads::tape_parent(self.bytes, &self.view, i as u32);
+        let p = reads::parent(self.bytes, &self.view, i as u32);
         (p != u32::MAX).then_some(p as usize)
     }
     /// The node before when it holds `i` (a first child), else a descent from `a` over the siblings' subtree ends:
@@ -444,18 +444,18 @@ impl Tape for F15<'_> {
     }
     #[inline(always)]
     fn start(&self, i: usize) -> u64 {
-        u64::from(reads::tape_start(self.bytes, &self.view, i as u32))
+        u64::from(reads::start(self.bytes, &self.view, i as u32))
     }
     #[inline(always)]
     fn end(&self, i: usize) -> u64 {
-        u64::from(reads::tape_end(self.bytes, &self.view, i as u32))
+        u64::from(reads::end(self.bytes, &self.view, i as u32))
     }
     /// A scan's span is the tape's as stated (decision 0463: what its check reads; its slices are checked).
     fn start_next(&self, i: usize, _prev_start: u64) -> u64 {
-        u64::from(reads::tape_start_stated(self.bytes, &self.view, i as u32))
+        u64::from(reads::start_stated(self.bytes, &self.view, i as u32))
     }
     fn end_with_start(&self, i: usize, _start: u64) -> u64 {
-        u64::from(reads::tape_end_stated(self.bytes, &self.view, i as u32))
+        u64::from(reads::end_stated(self.bytes, &self.view, i as u32))
     }
 }
 

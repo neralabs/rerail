@@ -1,5 +1,4 @@
 .policy "ruff-log002-invalid-get-logger-argument" revision 1
-.guests off
 .description "Pass __name__ to logging.getLogger() instead of __file__ or __cached__; logger names should be dotted module names, not file paths."
 .language python
 .mode steer

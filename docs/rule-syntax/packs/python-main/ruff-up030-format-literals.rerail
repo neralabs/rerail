@@ -1,5 +1,4 @@
 .policy "ruff-up030-format-literals" revision 1
-.guests off
 .description "Use automatic field numbering in str.format() strings instead of explicit positional indices."
 .language python
 .mode steer

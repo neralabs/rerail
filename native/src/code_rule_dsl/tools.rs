@@ -1085,12 +1085,7 @@ fn csv_command(args: &[String]) -> Result<String, String> {
 /// Each engine command prints one line to stderr: its CPU (user + sys) and the process's footprint, now and at most.
 #[cfg(not(target_family = "wasm"))]
 fn repeat_command(script: &str) -> Result<String, String> {
-    let cpu = || {
-        let mut usage = unsafe { std::mem::zeroed::<libc::rusage>() };
-        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut usage) };
-        let time = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 / 1e6;
-        (time(usage.ru_utime), time(usage.ru_stime))
-    };
+    let cpu = crate::code_rule_dsl::prof::process_usage;
     let mut out = String::new();
     // The session the script's commands keep (`RERAIL_SESSION`), from its first command to its last.
     let mut kept = crate::code_rule_dsl::logic::plan::corpus::session::Kept::default();

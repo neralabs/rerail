@@ -99,11 +99,14 @@ pub fn lit_vars(l: LitRef<'_>) -> VarSet {
             term_vars(r, &mut out);
             out
         }
-        Lit::Agg { var, over, atom, .. } => {
+        Lit::Agg { var, op, over, atom } => {
             let mut out = atom_vars(atom);
             out.insert(var);
             if let Some(o) = over {
                 out.insert(o);
+            }
+            if let Some(b) = op.bound() {
+                out.insert(b);
             }
             out
         }
@@ -451,6 +454,9 @@ impl<'v> Body<'v> {
                 if let AggRef::Join { by, .. } = op {
                     by.for_each(|b| need.remove(b));
                 }
+                if let Some(b) = op.bound() {
+                    need.insert(b);
+                }
                 need.is_subset(bound)
             }
             Lit::Nearest { n, a, .. } => bound.contains(n) || bound.contains(a),
@@ -579,6 +585,11 @@ impl<'v> Body<'v> {
                     AggRef::Max => d.u64(2),
                     AggRef::Sum => d.u64(3),
                     AggRef::Product => d.u64(5),
+                    AggRef::Bounded { max, bound, strict } => {
+                        d.u64(6);
+                        d.u64(u64::from(max) | u64::from(strict) << 1);
+                        d.str(self.var(bound));
+                    }
                 }
                 d.str(over.map_or("\u{0}", |o| self.var(o)));
                 self.digest_atom(d, atom);

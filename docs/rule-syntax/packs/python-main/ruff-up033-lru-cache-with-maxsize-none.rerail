@@ -1,5 +1,4 @@
 .policy "ruff-up033-lru-cache-with-maxsize-none" revision 1
-.guests off
 .description "Use functools.cache instead of functools.lru_cache with maxsize=None; it is the same unbounded cache without the call."
 .language python
 .mode steer

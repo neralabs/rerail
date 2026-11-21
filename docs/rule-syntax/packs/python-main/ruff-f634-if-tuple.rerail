@@ -1,5 +1,4 @@
 .policy "ruff-f634-if-tuple" revision 2
-.guests off
 .description "Don't use a tuple as an if or elif condition; a non-empty tuple is always true, so the branch always runs."
 .language python
 .mode steer

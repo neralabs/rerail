@@ -1,5 +1,4 @@
 .policy "ruff-pth116-os-stat" revision 1
-.guests off
 .description "Use Path.stat(), Path.owner() or Path.group() instead of os.stat(); path objects read better than string-based os calls."
 .language python
 .mode steer

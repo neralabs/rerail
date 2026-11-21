@@ -1,5 +1,4 @@
 .policy "ruff-ruf028-invalid-formatter-suppression-comment" revision 1
-.guests off
 .description "Place formatter suppression comments between statements, not inside expressions or after decorators, keeping skip comments at a line's end and on comments on their own line."
 .language python
 .mode steer

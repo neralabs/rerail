@@ -1,5 +1,4 @@
 .policy "ruff-ruf005-collection-literal-concatenation" revision 1
-.guests off
 .description "Prefer iterable unpacking over adding a list or tuple literal to another collection with the plus operator; it reads better and accepts any iterable."
 .language python
 .mode steer

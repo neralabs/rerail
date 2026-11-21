@@ -1,5 +1,4 @@
 .policy "ruff-n818-error-suffix-on-exception-name" revision 1
-.guests off
 .description "Name custom exception classes with an Error suffix, as PEP 8 recommends, unless the exception does not signal an error."
 .language python
 .mode steer

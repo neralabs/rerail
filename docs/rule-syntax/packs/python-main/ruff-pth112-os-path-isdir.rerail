@@ -1,5 +1,4 @@
 .policy "ruff-pth112-os-path-isdir" revision 1
-.guests off
 .description "Use Path.is_dir() instead of os.path.isdir(); path objects read better than string-based os.path calls."
 .language python
 .mode steer

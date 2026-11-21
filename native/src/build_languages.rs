@@ -25,6 +25,7 @@ const NATIVE_GRAMMARS: &[&str] = &[
     "percent-format",
     "brace-format",
     "eslint-directive",
+    "regex",
 ];
 /// The vendored grammars' dialects whose patterns take `$` as it stands, as ast-grep's own
 /// grammars of these languages do: `$` is an identifier character there. ast-grep is built without

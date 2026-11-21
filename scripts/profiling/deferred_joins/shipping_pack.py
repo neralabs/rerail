@@ -57,10 +57,10 @@ def main():
     spec = manifest["corpora"][manifest["packs"]["python"]]
     root = args.corpus.resolve()
     verify_sources(root, spec)
-    policies = [ROOT / "docs/rule-syntax/packs/python" / (p.stem + ".rr")
+    policies = [ROOT / "docs/rule-syntax/packs/python" / (p.stem + ".rerail")
                 for p in sorted((ROOT / "packs/python/rules").glob("*.json"))]
     if not policies or any(not p.is_file() for p in policies):
-        raise ValueError("the full shipped Python pack requires an .rr file for every rule")
+        raise ValueError("the full shipped Python pack requires a .rerail file for every rule")
     out = args.out.resolve()
     out.mkdir(parents=True, exist_ok=False)
     summary = dict(corpus=spec["sha256"], files=spec["files"], rules=len(policies),

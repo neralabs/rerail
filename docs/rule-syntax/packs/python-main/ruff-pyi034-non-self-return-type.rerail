@@ -1,5 +1,4 @@
 .policy "ruff-pyi034-non-self-return-type" revision 1
-.guests off
 .description "Annotate methods that return their own instance, such as in-place operators, context-manager entry and an iterator's iter method, with Self instead of the class or a broad iterator type."
 .language python
 .mode steer

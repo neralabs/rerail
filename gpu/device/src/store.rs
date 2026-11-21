@@ -5,6 +5,7 @@
 //! ```text
 //! RERAIL_GPU_KERNELS=<dir>|off    the store: ~/Library/Caches/rerail/gpu-kernels (macOS),
 //!                                 $XDG_CACHE_HOME/rerail/gpu-kernels or ~/.cache/rerail/gpu-kernels (Linux)
+//!                                 %LOCALAPPDATA%\rerail\gpu-kernels (Windows)
 //! ```
 //!
 //! Each backend keeps its own form, in a directory of its own: CUDA the cubin NVRTC wrote (`cuda/<key>.cubin`),
@@ -35,7 +36,10 @@ pub fn dir() -> Option<&'static Path> {
             _ => {}
         }
         let home = std::env::var_os("HOME").map(PathBuf::from);
-        let cache = if cfg!(target_os = "macos") {
+        let cache = if cfg!(windows) {
+            // Windows sets no HOME: its per-user cache is under %LOCALAPPDATA%.
+            std::env::var_os("LOCALAPPDATA").filter(|v| !v.is_empty()).map(PathBuf::from)?
+        } else if cfg!(target_os = "macos") {
             home?.join("Library/Caches")
         } else {
             std::env::var_os("XDG_CACHE_HOME").filter(|v| !v.is_empty()).map(PathBuf::from).or_else(|| home.map(|h| h.join(".cache")))?

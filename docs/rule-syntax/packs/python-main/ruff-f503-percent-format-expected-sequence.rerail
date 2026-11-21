@@ -1,5 +1,4 @@
 .policy "ruff-f503-percent-format-expected-sequence" revision 1
-.guests off
 .description "Pass a tuple, not a dict, to a %-format string with several positional placeholders; the call fails at run time."
 .language python
 .mode steer

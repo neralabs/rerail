@@ -3658,6 +3658,29 @@ impl Model {
                 });
             }
         }
+        // var → the kind of the node it is a part of: `field($p, f, $c)` or `child($p, $c, i)` with $p's kind known and
+        // $c's not. A part's subtree is at most its parent's, so `within($n, $c)` read from $c is priced at the
+        // parent's size (t50 step 4: a function's body, `field($g, "body", $b)`, was priced as a node with children,
+        // 3 to 5 nodes, and the plan enumerated every function's body from it).
+        let mut part_of: HashMap<VarSlot, String> = HashMap::new();
+        for l in 0..b.len() {
+            if let Some(a) = b.plain_atom(l)
+                && !a.neg()
+            {
+                let args = b.args(l);
+                let (p, c) = match (b.rel(a), args.len()) {
+                    ("field", 3) => (args[0], args[2]),
+                    ("child", 3) => (args[0], args[1]),
+                    _ => continue,
+                };
+                if let (TermRef::Var(p), TermRef::Var(c)) = (p, c)
+                    && !kinds.contains_key(&c)
+                    && let Some(k) = kinds.get(&p)
+                {
+                    part_of.insert(c, k.clone());
+                }
+            }
+        }
         // The same binding domains are used by many candidate prefixes. Read the existing statistics once
         // per search, with no input recount and no additional SQL.
         let binding_domains: Vec<_> = (0..b.len()).filter(|&i| b.plain_atom(i).is_some_and(|a| !a.neg()))
@@ -3873,7 +3896,7 @@ impl Model {
                 && cols == [1]
                 && stats.nodes > 0.0
                 && let Some(size) = match args[1] {
-                    TermRef::Var(v) => kinds.get(&v).and_then(|k| stats.size.get(k)).copied().or_else(|| stats.subtree_fan()),
+                    TermRef::Var(v) => kinds.get(&v).or_else(|| part_of.get(&v)).and_then(|k| stats.size.get(k)).copied().or_else(|| stats.subtree_fan()),
                     _ => stats.subtree_fan(),
                 }
             {
@@ -5348,7 +5371,7 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "tree_digest" | "def_digest" => &[&["n"], &["s", "n"]],
         "rx_span" => &[&["c"], &["m"]],
         "ast_match" => &[&["n"], &["c"]],
-        "intval" | "op" | "op_t" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" | "reference_open" | "rr_long_text_node" => &[&["n"]],
+        "intval" | "op" | "op_t" | "tape" | "line" | "end_line" | "col" | "docof" | "visit_index" | "ast_depth" | "spread" | "rr_long_text_node" => &[&["n"]],
         "node_order" => &[&["n"], &["k"]],
         "first_token" | "last_token" => &[&["n"]],
         "token_before" | "token_after" => &[&["x"]],
@@ -5356,12 +5379,11 @@ fn vtab_indexes(rel: &str) -> Vec<Vec<String>> {
         "next_sibling" => &[&["a"], &["b"]],
         "split_line" | "lf_line" => &[&["d"]],
         "str_part" | "str_part_start" | "str_part_word" => &[&["lit"]],
-        "reference_edge" => &[&["src"], &["dst"]],
         "core_node" => &[&["n"], &["t"], &["d"]],
         // Containment, made per node looked up either way (`facts::vtab::syntax::within`, decision 0050).
         "within" => &[&["n"], &["a"]],
         "span_within" => &[&["inner"], &["outer"]],
-        "doc" | "pkg" | "unpackaged" | "syntax_error" | "source" | "line_count" => &[&["d"]],
+        "doc" | "pkg" | "unpackaged" | "tape_error" | "syntax_error" | "source" | "line_count" => &[&["d"]],
         "src_line" | "src_line_lf" | "tape_line" => &[&["d", "l"], &["sp"]],
         "op_at" | "prev_token" => &[&["n"], &["s", "n"]],
         "token" | "rr_token_anon" => &[&["p", "i"], &["start"]],
@@ -7105,6 +7127,7 @@ fn decline_class(b: &Body<'_>, i: usize, f: Fields<'_>, native: &BTreeSet<String
                 super::program_image::AggRef::Sum => "sum",
                 super::program_image::AggRef::Product => "product",
                 super::program_image::AggRef::Join { .. } => "join (string concatenation)",
+                super::program_image::AggRef::Bounded { .. } => "bounded min or max (an as-of search)",
             }
         ),
         Lit::Atom(a) if f.is_input(b.rel(a)) => format!("{}read of input {}", neg(a), b.rel(a)),

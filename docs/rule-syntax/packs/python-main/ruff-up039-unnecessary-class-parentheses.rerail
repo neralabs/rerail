@@ -1,5 +1,4 @@
 .policy "ruff-up039-unnecessary-class-parentheses" revision 1
-.guests off
 .description "Remove empty parentheses after a class name; they are unnecessary when the class has no base classes or keywords."
 .language python
 .mode steer

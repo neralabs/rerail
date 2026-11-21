@@ -1,5 +1,4 @@
 .policy "ruff-ruf064-non-octal-permissions" revision 1
-.guests off
 .description "Write file permission modes passed to os, dbm and pathlib functions as octal literals with a 0o prefix; a plain integer such as 644 is decimal and sets different permissions."
 .language python
 .mode steer

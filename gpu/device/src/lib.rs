@@ -27,6 +27,8 @@ pub mod device;
 mod rows;
 pub mod store;
 mod sys;
+/// The system's page size (the unit drivers use host memory in place by).
+pub use sys::{monotonic_seconds, page_size, process_cpu_seconds, thread_cpu_seconds};
 
 /// A plain value a buffer can be viewed as: any bit pattern is a value, no padding read as data, no pointers.
 ///

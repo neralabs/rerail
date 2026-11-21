@@ -510,7 +510,7 @@
         let read = |fns: u32, sym: u32| -> Option<String> {
             // SAFETY: the store's cache, in its live block; an entry found is complete.
             unsafe {
-                let r = rerail_blocks::generated_reads::text_find(kept.cache(), fns, sym);
+                let r = rerail_clif::view::cache::text_find(kept.cache(), fns, sym);
                 (r & 3 == 0).then(|| {
                     let e = (r & !3) as *const u8;
                     let len = e.add(12).cast::<u32>().read() as usize - 16;
@@ -597,6 +597,10 @@
         let rule = format!("pos {n} v0 v1\ntest prefix v0 x:{} 1\nhead v0 v1", hex("foo"));
         db.execute_batch("CREATE TEMP TABLE h0 (c0, c1);").unwrap();
         let spec = ["name dev_verdicts".to_owned(), "device".into(), "rel h0 si empty".into(), format!("seed 0 {}", hex(&rule))].join("\n");
+        // The cache's statistics mode on, so a failure says how it lost a verdict (`view::cache`'s counts).
+        let counted = std::sync::Arc::clone(super::super::symbols(&db).unwrap().read().unwrap().atoms());
+        counted.kept().count_statistics();
+        let kept_counts = move || counted.kept().counts();
         super::super::open(&db, &spec).unwrap();
         super::super::run(&db, "dev_verdicts", 0).unwrap();
         let report = super::take_report();
@@ -609,7 +613,7 @@
         let runs = atoms.runs();
         let verdicts = atoms.kept();
         use crate::content_store::atoms::{FAILS, PASSES, UNKNOWN};
-        let mut wrong = Vec::new();
+        let (mut wrong, mut wrong_ids) = (Vec::new(), Vec::new());
         let mut seen = std::collections::HashSet::new();
         for name in &names {
             let id = u32::try_from(syms.write().unwrap().id(name)).unwrap();
@@ -621,6 +625,7 @@
             if got != want {
                 let run = runs.iter().position(|(r, _)| r.first <= id && id < r.end);
                 let block = run.map(|k| (runs[k].0.first, runs[k].0.end, runs[k].0.from, runs[k].1.reserved(), runs[k].1.in_slab(), runs[k].1.mapped_file().is_some()));
+                wrong_ids.push(id);
                 wrong.push(format!("{name:?} id {id} got {got} (UNKNOWN {UNKNOWN}) want {want}, run {run:?} {block:?}"));
             }
         }
@@ -630,7 +635,7 @@
         let want: Vec<(i64, i64)> = names.iter().enumerate().filter(|(_, s)| m.is_match(s)).map(|(k, s)| (syms.write().unwrap().id(s), k as i64)).collect();
         assert_eq!(heads, want, "the rows that pass, their names kept");
         let all: Vec<_> = runs.iter().map(|(r, b)| (r.first, r.end, r.from, b.reserved(), b.in_slab(), b.mapped_file().is_some())).collect();
-        assert!(wrong.is_empty(), "{} of {} symbols wrong; runs {all:?}; first: {:#?}", wrong.len(), seen.len(), &wrong[..wrong.len().min(12)]);
+        assert!(wrong.is_empty(), "{} of {} symbols wrong; the cache: {}; ids {wrong_ids:?}; runs {all:?}; first: {:#?}", wrong.len(), seen.len(), kept_counts(), &wrong[..wrong.len().min(12)]);
     }
 
     /// Strata placed on the device, when their driver can wait, go out in one wave: each encodes its joins into the

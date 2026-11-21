@@ -1,5 +1,4 @@
 .policy "ruff-sim210-if-expr-with-true-false" revision 1
-.guests off
 .description "Use bool() on the condition instead of a conditional expression that yields True when it holds and False otherwise."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "bandit-b509-snmp-weak-cryptography" revision 1
-.guests off
 .description "Pass authentication and privacy keys to pysnmp UsmUserData; without them SNMPv3 runs with no authentication or encryption."
 .language python
 .mode steer

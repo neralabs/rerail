@@ -1,5 +1,4 @@
 .policy "ruff-b025-duplicate-try-block-exception" revision 1
-.guests off
 .description "Remove exception types repeated across handlers of the same try block; only the first handler that names one can ever run."
 .language python
 .mode steer

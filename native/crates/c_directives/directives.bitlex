@@ -1,14 +1,9 @@
-# C's and C++'s directives, step 6: step 5 and raw strings with no delimiter (`R"(…)"`, its
-# prefixes `u8R`, `uR`, `UR`, `LR` too): a region from its `"(` to the first `)"`, line breaks
-# inside it too. One with a delimiter (`R"x(…)x"`) is still refused. Step 5: step 4 over files with `\r\n` line ends too: a `\r` before a
-# `\n` is a blank, and a `\` before `\r\n` a splice, as phase 2 reads them. A `\r` alone is still
-# refused. Step 4: what the engine's mode (a) answers need, steps 1 to 3 and
-# a `code` leaf where code outside the directives starts after a directive (or the file's
-# start), so that a file's include guard is known: no code before its `#ifndef`, none after its
-# `#endif`. Step 3: each directive's kind, its bytes, its operands and its
-# conditional group (decision 0327, mode (a)). A group is a node from its `#if`, `#ifdef` or
-# `#ifndef` to its `#endif`: its chain is its own directives (`c_cond_next`), and a directive's
-# parent is the chain's directive before it (`c_cond_parent`). An `#elif`, `#else` or `#endif`
+# C's and C++'s directives (decision 0327, mode (a)): each directive's kind, its bytes, its operands and its
+# conditional group, and a `code` leaf where code outside the directives starts after a directive (or the file's
+# start), so that a file's include guard is known: no code before its `#ifndef`, none after its `#endif`. A group
+# is a node from its `#if`, `#ifdef` or `#ifndef` to its `#endif`: its chain is its own directives
+# (`c_cond_next`), and a directive's parent is the chain's directive before it (`c_cond_parent`). An `#elif`,
+# `#else` or `#endif`
 # no group is open for is a directive of the level it is at, as the lean scan records it. The
 # operands: a `#define`'s name, parameters and body; an include's header, as spelled; a
 # conditional's expression; a `#pragma`'s first two words and text; a `#line`'s number, file and
@@ -22,8 +17,12 @@
 # word after the `#` (`null` for none, `line_marker` for a number, `unknown` for anything else).
 # Every directive is recorded, in every group: no configuration is read here.
 #
-# What the step does not read goes to the lean scan, so no row is wrong: a carriage return, a
-# trigraph, a digraph `%:`, a raw string, a digit separator the regions do not read, a string or a
+# Files with `\r\n` line ends are read too: a `\r` before a `\n` is a blank, and a `\` before `\r\n` a splice, as
+# phase 2 reads them. A raw string with no delimiter (`R"(…)"`, its prefixes `u8R`, `uR`, `UR`, `LR` too) is a
+# region from its `"(` to the first `)"`, line breaks inside it too.
+#
+# What the grammar does not read goes to the lean scan, so no row is wrong: a `\r` alone, a
+# trigraph, a digraph `%:`, a raw string with a delimiter (`R"x(…)x"`), a digit separator the regions do not read, a string or a
 # character constant open at a line's end, a splice inside a word or a comment's opener, and a
 # block comment open at the file's end.
 
@@ -60,7 +59,7 @@ class wordc     = 'a'..'z' 'A'..'Z' '0'..'9' '_' '$' 0x80..0xff
 mask last_byte  = ~next(~empty)
 mask first_byte = ~prev(~empty)
 
-# --- What the step hands over ------------------------------------------------------------------
+# --- What the grammar hands over ------------------------------------------------------------------
 
 escape "a carriage return not before a line break" when cr & ~next(lf)
 escape "a trigraph" when qmark & next(qmark) & next(tri, 2)
@@ -76,7 +75,7 @@ mask splice_lf  = lf & (prev(backslash) | (prev(cr) & prev(backslash, 2)))
 mask splice     = splice_bs | splice_cr | splice_lf
 # A line's end: a line break no `\` splices.
 mask nl         = lf & ~splice_lf
-# A `\`, blanks, then a line break: clang's and GCC's splice too, which this step does not read.
+# A `\`, blanks, then a line break: clang's and GCC's splice too, which this grammar does not read.
 mask bs_blanks  = fill(backslash & next(blankc), blankc)
 escape "a splice with blanks before its line break" when (lf & prev(bs_blanks) & prev(blankc)) | (lf & prev(cr) & prev(bs_blanks, 2) & prev(blankc, 2))
 escape "a splice inside a word" when splice_bs & prev(wordc) & (next(wordc, 2) | (next(cr) & next(wordc, 3)))

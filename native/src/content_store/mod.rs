@@ -16,7 +16,7 @@ pub use collection_guard::CollectionLease;
 mod connection;
 pub use connection::set_connection_functions;
 mod corpus_runs;
-pub use corpus_runs::{CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
+pub use corpus_runs::{process_gone, CorpusKept, CorpusPass, CorpusPolicy, FileStat, RACY_NS, RETIRED_CORPUS_MEMO_SCHEMAS, StatIndex, live_fact_schema, stat_blob_key};
 #[cfg(not(any(windows, target_family = "wasm")))]
 pub use connection::sqlite_on_jemalloc;
 pub use connection::{flush_of, store_flush};
@@ -518,6 +518,40 @@ pub struct DocumentPayload<'a> {
     pub tape: &'a [u8],
     pub source_map: &'a [u8],
     pub host_errors: &'a [u8],
+    /// The parent's bytes it stands at, where they are not its text's (`tape::DerivedImage::at`).
+    pub at: Option<(u32, u32)>,
+}
+
+/// A document derived from a file's, queued for the store's writer with the file's tape (decision 0431 step 6): a
+/// `DocumentPayload` that owns its bytes until written.
+#[derive(Clone, Debug)]
+pub struct QueuedDocument {
+    pub parent_ordinal: i64,
+    pub role_id: i64,
+    pub via_id: i64,
+    pub source: std::sync::Arc<String>,
+    pub grammar_id: i64,
+    pub tape: Vec<u8>,
+    pub source_map: Vec<u8>,
+    pub host_errors: Vec<u8>,
+    pub at: Option<(u32, u32)>,
+}
+
+impl QueuedDocument {
+    /// Its payload, borrowing its bytes.
+    pub fn payload(&self) -> DocumentPayload<'_> {
+        DocumentPayload {
+            parent_ordinal: self.parent_ordinal,
+            role_id: self.role_id,
+            via_id: self.via_id,
+            source: self.source.as_bytes(),
+            grammar_id: self.grammar_id,
+            tape: &self.tape,
+            source_map: &self.source_map,
+            host_errors: &self.host_errors,
+            at: self.at,
+        }
+    }
 }
 
 /// A `file_documents` row: a document derived from a stored primary tape. `source` and
@@ -534,6 +568,22 @@ pub struct StoredDocument {
     pub grammar_id: Option<i64>,
     pub source_map: Vec<u8>,
     pub host_errors: Vec<u8>,
+    pub at: Option<(u32, u32)>,
+}
+
+/// A program recorded with a file's tape (decision 0431 step 6, `TapeFrame::programs`): its row, its text, and its
+/// tape's frame.
+#[derive(Clone)]
+pub struct StoredProgram {
+    pub document: StoredDocument,
+    pub text: std::sync::Arc<CachedBytes>,
+    pub tape: TapeFrame,
+}
+
+impl std::fmt::Debug for StoredProgram {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("StoredProgram").field("document", &self.document).field("text", &self.text.len()).finish()
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]

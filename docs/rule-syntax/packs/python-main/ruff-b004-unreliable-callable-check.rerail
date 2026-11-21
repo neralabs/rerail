@@ -1,5 +1,4 @@
 .policy "ruff-b004-unreliable-callable-check" revision 1
-.guests off
 .description "Use callable() instead of checking hasattr() or getattr() for __call__; the attribute check gives wrong answers for some objects."
 .language python
 .mode steer

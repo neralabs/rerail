@@ -1,5 +1,4 @@
 .policy "ruff-pyi035-unassigned-special-variable-in-stub" revision 1
-.guests off
 .description "Assign a value to the module-level exports list and the class slot and match-argument lists in stub files; they mean the same there as at runtime."
 .language python
 .mode steer

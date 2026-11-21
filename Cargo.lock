@@ -3247,6 +3247,7 @@ dependencies = [
  "rerail-context",
  "rerail-tape-format",
  "rustc-hash",
+ "sha2 0.11.1",
 ]
 
 [[package]]
@@ -4301,6 +4302,7 @@ dependencies = [
  "rerail-metal",
  "rerail-parser-tests",
  "rerail-rr-syntax",
+ "rerail-simdjson-native",
  "rerail-tape-format",
  "tree-sitter",
  "tree-sitter-json",

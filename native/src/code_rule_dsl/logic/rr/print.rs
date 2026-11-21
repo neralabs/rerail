@@ -207,6 +207,7 @@ impl<'v> Printer<'v> {
             Lit::Cmp { l, op, r: rt } => format!("{} {} {}", self.term(r, l)?, op.as_str(), self.term(r, rt)?),
             Lit::Agg { var: v, op, over, atom: a } => {
                 let over = || over.map_or_else(|| "_".to_owned(), |s| self.var(r, s));
+                let op_ref = op;
                 let op = match op {
                     AggRef::Count => "count".to_owned(),
                     AggRef::Min => format!("min {}", over()),
@@ -218,8 +219,17 @@ impl<'v> Printer<'v> {
                         let by = if by.is_empty() { String::new() } else { format!(" by ({})", by.join(", ")) };
                         format!("join {}{by} sep {}", over(), quote(self.v.text(sep)))
                     }
+                    AggRef::Bounded { max, .. } => format!("{} {}", if max { "max" } else { "min" }, over()),
                 };
-                format!("{} = {op} : {{ {} }}", self.var(r, v), self.atom(r, a)?)
+                // A bounded aggregate's bound is the comparison it was written with, which lowering recognizes again
+                // (decision 0511).
+                let bound = match op_ref {
+                    AggRef::Bounded { max, bound, strict } => {
+                        format!(", {} {} {}", over(), crate::code_rule_dsl::logic::front::ast::AggOp::bound_cmp(max, strict), self.var(r, bound))
+                    }
+                    _ => String::new(),
+                };
+                format!("{} = {op} : {{ {}{bound} }}", self.var(r, v), self.atom(r, a)?)
             }
             Lit::Nearest { n, a, kindset } => format!("nearest({}, {}, {})", self.var(r, n), self.var(r, a), self.v.text(kindset)),
             Lit::Ast { document, node, matcher, captures } => {

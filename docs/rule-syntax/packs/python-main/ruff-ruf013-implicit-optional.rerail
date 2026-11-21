@@ -1,5 +1,4 @@
 .policy "ruff-ruf013-implicit-optional" revision 1
-.guests off
 .description "Spell out Optional or a union with None in the annotation of a parameter whose default is None; leaving None out of the type is an implicit Optional."
 .language python
 .mode steer

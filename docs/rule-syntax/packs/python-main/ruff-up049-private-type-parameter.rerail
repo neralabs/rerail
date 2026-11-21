@@ -1,5 +1,4 @@
 .policy "ruff-up049-private-type-parameter" revision 1
-.guests off
 .description "Avoid leading underscores in the type parameter names of generic classes and functions; each parameter is already local to its declaration, so the underscore adds nothing."
 .language python
 .mode steer

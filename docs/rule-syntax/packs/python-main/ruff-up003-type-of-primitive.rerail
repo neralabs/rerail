@@ -1,5 +1,4 @@
 .policy "ruff-up003-type-of-primitive" revision 1
-.guests off
 .description "Use the builtin type name directly instead of calling type() on a literal; the type of a literal is known in advance."
 .language python
 .mode steer

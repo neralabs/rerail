@@ -2222,7 +2222,7 @@ impl Runner<'_> {
             launch = launch.slot(slot, &block, 0);
         }
         for slab in &self.tapes.table.slabs {
-            launch = launch.uses(slab.device_buffer());
+            launch = launch.uses_read(slab.device_buffer());
         }
         if let Some(cache) = &self.tapes.table.cache {
             launch = launch.uses(cache);

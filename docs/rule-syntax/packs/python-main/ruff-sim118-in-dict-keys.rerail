@@ -1,5 +1,4 @@
 .policy "ruff-sim118-in-dict-keys" revision 1
-.guests off
 .description "Test membership in or iterate over a dict directly instead of calling .keys() on it; the keys view adds nothing."
 .language python
 .mode steer

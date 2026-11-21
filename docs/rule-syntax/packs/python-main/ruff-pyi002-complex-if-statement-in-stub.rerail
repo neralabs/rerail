@@ -1,5 +1,4 @@
 .policy "ruff-pyi002-complex-if-statement-in-stub" revision 1
-.guests off
 .description "Use only simple comparisons of sys.version_info or sys.platform as if tests in stub files; type checkers cannot evaluate other conditions."
 .language python
 .mode steer

@@ -1351,6 +1351,27 @@ impl Observer {
         if named.is_empty() && aged && now.iter().all(Option::is_some) {
             self.refresh_record(record, &now.into_iter().flatten().collect::<Vec<_>>());
         }
+        // A path named under one name of a root is named under its other (the root as given and its canonical form:
+        // `/var/…` and `/private/var/…` on macOS). An answer is kept under the name it was asked by, and a caller
+        // matches what it read, in either name, against these: one only, and a file changed under the other was
+        // taken as unchanged.
+        let forms: Vec<(PathBuf, PathBuf)> = roots
+            .iter()
+            .filter_map(|r| {
+                let at = self.abs(r);
+                let real = self.roots.iter().find(|x| x.path == at).map(|x| x.real.clone()).or_else(|| std::fs::canonicalize(&at).ok())?;
+                (real != at).then_some((at, real))
+            })
+            .collect();
+        let other: Vec<PathBuf> = named
+            .iter()
+            .flat_map(|n| forms.iter().filter_map(move |(at, real)| n.strip_prefix(real).map(|rest| at.join(rest)).or_else(|_| n.strip_prefix(at).map(|rest| real.join(rest))).ok()))
+            .collect();
+        for p in other {
+            if !named.contains(&p) {
+                named.push(p);
+            }
+        }
         Some(named)
     }
 
@@ -2131,9 +2152,9 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
     }
     let mut db = Connection::open(path)?;
     db.busy_timeout(std::time::Duration::from_secs(10))?;
-    // The roots: (key, volume, root, its directory's real path, cursor, the cursor's text).
-    type Root = (String, String, PathBuf, Option<PathBuf>, Option<u64>, Option<String>);
-    let mut roots: Vec<Root> = {
+    // The roots, by volume: (key, root, its directory's real path, cursor: its kind, 0 an FSEvents id, 1 a listing
+    // generation, and its number).
+    let mut roots: Vec<(String, String, PathBuf, Option<PathBuf>, Option<(u8, u64)>)> = {
         let mut st = db.prepare("SELECT key, value FROM observer_meta WHERE key LIKE 'journal:%'")?;
         st.query_map([], |r| Ok((r.get::<_, String>(0)?, r.get::<_, rusqlite::types::Value>(1)?)))?
             .flatten()
@@ -2141,22 +2162,22 @@ pub fn collect(path: &Path, live: impl Fn(&[u8; 32]) -> bool) -> rusqlite::Resul
                 let mut parts = key.splitn(3, ':');
                 let (_, volume, root) = (parts.next()?, parts.next()?.to_owned(), PathBuf::from(parts.next()?));
                 let real = plain(&root).then(|| std::fs::canonicalize(&root).ok()).flatten();
-                let text = text_cursor(&value);
-                let cursor = text.as_deref().and_then(|c| c.parse().ok());
-                Some((key, volume, root, real, cursor, text))
+                let cursor = text_cursor(&value).and_then(|c| c.parse().ok().map(|n| (0, n)).or_else(|| listing_cursor(&c).map(|g| (1, g))));
+                Some((key, volume, root, real, cursor))
             })
             .collect()
     };
-    // Newest cursor first: of two names of one directory, the first is kept.
-    roots.sort_by_key(|r| std::cmp::Reverse(r.4));
-    // Two names with the same cursor were asked by one run (a root reached through a symlink, its files read by
-    // their canonical paths too, `Observer::canonical`): both are in use, each with its own answers, and both are
-    // kept. Dropped, the next run asked the other name again and wrote its first cursor back (Q243).
-    let mut kept: Vec<(String, PathBuf, PathBuf, Option<String>)> = Vec::new();
+    // Newest cursor first: of two names of one directory, one whose cursor is older than the other's is no longer
+    // asked, and is dropped. Two asked by one run (a root as given and through a symlink, as `/var` and
+    // `/private/var` on macOS, its files read by their canonical paths too, `Observer::canonical`) have the same cursor
+    // and are both kept: dropped, the next run that asks it stores its cursor again, a write in a warm run (Q243).
+    roots.sort_by(|a, b| b.4.cmp(&a.4));
+    let mut kept: Vec<(String, PathBuf, PathBuf, Option<(u8, u64)>)> = Vec::new();
     let mut dropped: Vec<String> = Vec::new();
-    for (key, volume, root, real, _, text) in &roots {
+    for (key, volume, root, real, cursor) in &roots {
+        let older = |c: &Option<(u8, u64)>| matches!((c, cursor), (Some((k, n)), Some((kc, nc))) if k == kc && nc < n);
         match real {
-            Some(real) if !kept.iter().any(|(v, _, r, t)| v == volume && r == real && (t.is_none() || t != text)) => kept.push((volume.clone(), root.clone(), real.clone(), text.clone())),
+            Some(real) if !kept.iter().any(|(v, _, r, c)| v == volume && r == real && older(c)) => kept.push((volume.clone(), root.clone(), real.clone(), *cursor)),
             _ => dropped.push(key.clone()),
         }
     }
@@ -3367,6 +3388,17 @@ mod tests {
         if let Some(a) = &alias {
             meta(a, "20");
         }
+        // Two names of one directory one run asked, with the same listing cursor, are both kept; a third name with an
+        // older generation is dropped.
+        std::fs::create_dir_all(real.join("listed")).unwrap();
+        let (same, older) = (real.join("same"), real.join("older"));
+        #[cfg(unix)]
+        for link in [&same, &older] {
+            std::os::unix::fs::symlink(real.join("listed"), link).unwrap();
+        }
+        meta(&real.join("listed"), "L3");
+        meta(&same, "L3");
+        meta(&older, "L1");
         let answer = |p: &Path| db.execute("INSERT INTO observed VALUES (?1, 1, 0, 0, 0, 0, 0, x'', NULL, 0)", [s(p)]).unwrap();
         answer(&root.join("a.py"));
         answer(&real.join("elsewhere/b.py"));
@@ -3402,7 +3434,11 @@ mod tests {
         let swept = collect(&store, |plan| *plan == live).unwrap();
         let db = Connection::open(&store).unwrap();
         let keys = |sql: &str| -> Vec<String> { db.prepare(sql).unwrap().query_map([], |r| r.get(0)).unwrap().flatten().collect() };
-        assert_eq!(keys("SELECT key FROM observer_meta WHERE key LIKE 'journal:%'"), [cursor_key_text("aa", &root)], "one root: inner is under it, gone is gone, dotted and the alias are other names");
+        let mut roots = keys("SELECT key FROM observer_meta WHERE key LIKE 'journal:%'");
+        roots.sort();
+        let mut want = vec![cursor_key_text("aa", &real.join("listed")), cursor_key_text("aa", &root), cursor_key_text("aa", &same)];
+        want.sort();
+        assert_eq!(roots, want, "root: inner is under it, gone is gone, dotted and the alias are other names with older cursors; listed and same: one directory's two names of one run");
         let mut answers = keys("SELECT path FROM observed");
         answers.sort();
         assert_eq!(answers, [s(&fresh.join("d.py")), s(&root.join("a.py"))]);
@@ -3411,7 +3447,7 @@ mod tests {
         assert_eq!(records, [format!("{CANONICAL}{}", s(&fresh)), format!("{CANONICAL}{}", s(&root.join("a.py"))), "cone-rounds:live".to_owned(), "constants:live".to_owned(), "cutoff:kept".to_owned()]);
         let n = usize::from(alias.is_some());
         assert_eq!(keys(&format!("SELECT key FROM observer_meta WHERE key LIKE '{OWN_OUTPUT}%'")), [format!("{OWN_OUTPUT}{}", s(&inner))]);
-        assert_eq!(swept, Swept { cursors: 3 + n, answers: 2 + n, records: 6, outputs: 1, changes: 0 });
+        assert_eq!(swept, Swept { cursors: 4 + n, answers: 2 + n, records: 6, outputs: 1, changes: 0 });
         assert_eq!(std::fs::metadata(real.join("store.files-wal")).map_or(0, |m| m.len()), 0, "the WAL folded in");
         drop(db);
         let _ = std::fs::remove_dir_all(&given);
@@ -3423,6 +3459,15 @@ mod tests {
         assert_eq!(decode_listing(&encode_listing(&l).unwrap()).unwrap(), l);
         assert_eq!(decode_listing(&encode_listing(&[]).unwrap()).unwrap(), Vec::<(String, bool)>::new());
         assert!(encode_listing(&[("a\nb".to_owned(), false)]).is_none());
+    }
+
+    /// What `changed_since` names for `paths`: each under both names of its root, as given and canonical, where they
+    /// differ (a temporary directory under macOS's `/var`), sorted.
+    fn named(paths: &[&PathBuf]) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = paths.iter().flat_map(|p| spellings(p)).collect();
+        out.sort();
+        out.dedup();
+        out
     }
 
     /// A tree for the listing tests (decision 0400): `root/pkg/m0.py` … `m4.py`, each past the racy window.
@@ -3645,11 +3690,11 @@ mod tests {
         let (c1, _) = run(None, &[]);
         assert!(listing_cursor(&c1).is_some(), "the root's cursor is the observer's own: {c1}");
         let (c2, told) = run(Some(&files[1]), std::slice::from_ref(&c1));
-        assert_eq!(told, [Some(vec![files[1].clone()])]);
+        assert_eq!(told, [Some(named(&[&files[1]]))]);
         let (_, told) = run(Some(&files[3]), &[c1.clone(), c2.clone()]);
-        assert_eq!(told, [Some(vec![files[1].clone(), files[3].clone()]), Some(vec![files[3].clone()])]);
+        assert_eq!(told, [Some(named(&[&files[1], &files[3]])), Some(named(&[&files[3]]))]);
         let (c4, told) = run(None, &[c2]);
-        assert_eq!(told, [Some(vec![files[3].clone()])], "nothing changed since: the same answer");
+        assert_eq!(told, [Some(named(&[&files[3]]))], "nothing changed since: the same answer");
         let (_, told) = run(None, &[c4]);
         assert_eq!(told, [Some(vec![])]);
         let _ = std::fs::remove_dir_all(&base);
@@ -3683,13 +3728,13 @@ mod tests {
         let (c1, _, _) = run(&[]);
         std::fs::write(pkg.join("new.py"), "y = 1\n").unwrap();
         let (c2, told, counts) = run(std::slice::from_ref(&c1));
-        assert_eq!(told, [Some(vec![pkg.join("new.py")])], "the entry added, not its directory");
+        assert_eq!(told, [Some(named(&[&pkg.join("new.py")]))], "the entry added, not its directory");
         assert_eq!(counts.checked_named, 1, "the directory's answer is forgotten: {counts}");
         // Written now: the next run records its answer inside the window; the one after reads it again and names
         // nothing, its bytes unchanged.
         std::fs::write(&files[1], "x = 7\n").unwrap();
         let (c3, told, _) = run(std::slice::from_ref(&c2));
-        assert_eq!(told, [Some(vec![files[1].clone()])]);
+        assert_eq!(told, [Some(named(&[&files[1]]))]);
         let (_, told, counts) = run(std::slice::from_ref(&c3));
         assert_eq!(told, [Some(vec![])], "the racy answer's bytes are still the file's: {counts}");
         let _ = std::fs::remove_dir_all(&base);

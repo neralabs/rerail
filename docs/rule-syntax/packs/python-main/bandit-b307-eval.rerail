@@ -1,5 +1,4 @@
 .policy "bandit-b307-eval" revision 2
-.guests off
 .description "Avoid eval() calls in Python, including through import aliases; use ast.literal_eval() when you only need to parse literal values."
 .language python
 .mode steer

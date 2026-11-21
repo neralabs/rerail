@@ -82,6 +82,10 @@ mod cut_tests;
 #[cfg(test)]
 mod key_tests;
 #[cfg(test)]
+mod index_order_tests;
+#[cfg(test)]
+mod bounded_tests;
+#[cfg(test)]
 mod view_tests;
 #[cfg(test)]
 mod base_probe;
@@ -6687,8 +6691,10 @@ pub enum Step {
     Eq { a: Key, b: Key },
     Lt { a: Key, b: Key, or_eq: bool },
     /// Direct non-null scalar. The shared logical proof selects a bag; the source owns versioned summaries.
+    /// `bound`: a bounded min or max (decision 0511), the bound and whether it is strict: only the values on its
+    /// side (under it for a max, over it for a min) count, and no summary of the group alone holds them.
     Scalar { src: Src, keys: Vec<(usize, Key)>, tests: Vec<(usize, usize)>, col: Option<usize>,
-        kind: ScalarKind, out: usize, bind: bool, bag: Option<Arc<scalars::Bag>> },
+        kind: ScalarKind, out: usize, bind: bool, bag: Option<Arc<scalars::Bag>>, bound: Option<(Key, bool)> },
     Let { a: usize, b: Key },
     Ne { a: Key, b: Key },
     /// `out = @f(args)` for a `strings::functions` function: text arguments are symbols' names, a text result is
@@ -7118,21 +7124,38 @@ fn join_rule_bound(conn: impl Scoped, spec: &JoinSpec, syms: &mut Interner, inde
                         Src::In(rel, ix)
                     }
                 };
+                // An input's index is kept by its set of key columns (`InRel::index`), in the column order of the join
+                // that asked for it first. A probe reads its key in that order (the index's lead, its table, the
+                // order's columns, `candidates`): the step's keys go in it. In the step's own order, a second join on
+                // the same columns looked a node up in a constant's chain and found nothing (t50 step 1: `rf_ref` by
+                // `[0, 1, 2, 3]` through an index made for `[1, 0, 2, 3]`, a handoff's replacement that derived none
+                // of its 295 rows).
+                if let Src::In(_, ix) = &src && ix.cols.len() == keys.len() && ix.cols.iter().zip(&keys).any(|(&c, &(k, _))| c != k) {
+                    keys.sort_by_key(|&(c, _)| ix.cols.iter().position(|&x| x == c).unwrap_or(usize::MAX));
+                }
                 match item {
                     JoinItem::StrJoin { x, by, sep, out: o, .. } => {
                         let Some(Key::Const(sep)) = tok(sep, syms) else { return Err(err("a strjoin's separator is a constant")) };
                         let (o, bind) = out_slot(o, "strjoin", &mut bound, syms)?;
                         steps.push(Step::StrJoin { src, keys, tests, x: *x, by: by.clone(), sep, out: o, bind });
                     }
-                    JoinItem::Extreme { op, col, out: o, .. } => {
+                    JoinItem::Extreme { op, col, out: o, bound: limit, .. } => {
                         if *col >= atoks.len() { return Err(err("native scalar value column is out of range")); }
+                        let limit = match limit {
+                            Some((b, strict)) => match tok(b, syms) {
+                                Some(Key::Slot(s)) if bound.get(s).copied().unwrap_or(false) => Some((Key::Slot(s), *strict)),
+                                Some(Key::Const(c)) => Some((Key::Const(c), *strict)),
+                                _ => return Err(err("a bounded min or max reads its bound before it binds")),
+                            },
+                            None => None,
+                        };
                         let (o, bind) = out_slot(o, "min or max", &mut bound, syms)?;
                         let kind = match op { spec::Extreme::Sum => ScalarKind::Sum, spec::Extreme::Min => ScalarKind::Min, spec::Extreme::Max => ScalarKind::Max };
-                        steps.push(Step::Scalar { src, keys, tests, col: Some(*col), out: o, bind, kind, bag: None });
+                        steps.push(Step::Scalar { src, keys, tests, col: Some(*col), out: o, bind, kind, bag: None, bound: limit });
                     }
                     JoinItem::Count { out: o, .. } => {
                         let (o, bind) = out_slot(o, "count", &mut bound, syms)?;
-                        steps.push(Step::Scalar { src, keys, tests, col: None, out: o, bind, kind: ScalarKind::Count, bag: None });
+                        steps.push(Step::Scalar { src, keys, tests, col: None, out: o, bind, kind: ScalarKind::Count, bag: None, bound: None });
                     }
                     _ => steps.push(Step::Atom { src, neg, keys, binds, tests }),
                 }
@@ -7705,6 +7728,15 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                     else if ix.composite && let Some(v) = &rel.view {
                         let mut eq = [(0usize, 0i64); MAX_KEY];
                         for (j, &c) in ix.cols.iter().enumerate() { eq[j] = (v.cols[c], key[j]); }
+                        // A step that reads no column of the row (every key exact, `need` 0) asks only whether it is
+                        // there: a source's test where it has one (`Source::holds`, `within` with both bound). The
+                        // candidate it gives is never read.
+                        // `RERAIL_WITHIN_TEST=off` (a measurement aid) probes such a step's rows as before: the
+                        // run's setting (decision 0442), not the process's.
+                        let test = || rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_WITHIN_TEST").map_or(true, |v| v != "off"));
+                        if need == 0 && test() && let Some(h) = v.src.holds(&eq[..ix.cols.len()]) {
+                            return (Rows::Source(v), Cands::Range(0, u32::from(h)));
+                        }
                         let rows = v.src.lookup_all(&eq[..ix.cols.len()]).unwrap_or_default();
                         (Rows::Source(v), Cands::Owned(rows.into_iter().map(|r| r as u32).collect()))
                     }
@@ -7954,7 +7986,38 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 if reads_delta { cx.only = only; }
                 if exists && found != *neg { go(cx, i + 1, slots); }
             }
-            Step::Scalar { src, keys, tests, col, kind, out, bind, bag } => {
+            Step::Scalar { src, keys, tests, col, kind, out, bind, bound: Some((limit, strict)), .. } => {
+                // A bounded min or max (decision 0511): the group's values on the bound's side, folded as the group
+                // is read. Nothing is made per probe.
+                cx.key.clear();
+                cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
+                let (limit, max) = (val(slots, *limit), *kind == ScalarKind::Max);
+                let Some(c) = *col else { return };
+                let (rows, cands) = candidates(src, store, &cx.key, keys, &mut cx.hints[i], &mut cx.last[i], 0, None);
+                let mut best: Option<i64> = None;
+                let mut inspected = 0;
+                cands.any(|id| {
+                    inspected += 1;
+                    if rows.dead(id) { return false; }
+                    let row = rows.row(id);
+                    if keys.iter().all(|&(k, v)| row.at(k) == val(slots, v)) && tests.iter().all(|&(a, b)| row.at(a) == row.at(b)) {
+                        let v = row.at(c);
+                        let inside = match (max, *strict) {
+                            (true, true) => v < limit,
+                            (true, false) => v <= limit,
+                            (false, true) => v > limit,
+                            (false, false) => v >= limit,
+                        };
+                        if inside && best.is_none_or(|b| if max { v > b } else { v < b }) { best = Some(v); }
+                    }
+                    false
+                });
+                charge(Unit::Value, inspected);
+                let Some(v) = best else { return };
+                if *bind { slots[*out] = v } else if slots[*out] != v { return }
+                go(cx, i + 1, slots);
+            }
+            Step::Scalar { src, keys, tests, col, kind, out, bind, bag, bound: None } => {
                 cx.key.clear();
                 cx.key.extend(keys.iter().map(|&(_, k)| val(slots, k)));
                 // A count from the step's count table, once it has one (`table`, decision 0098 §1).

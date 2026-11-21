@@ -1,5 +1,11 @@
 # Work queue
 
+> **Read this first. This queue is not a place to put work.** Recording something here as open is almost never
+> allowed. Work you find — a red test, a flaky test, a gap, a leftover from a merge, a "next step" — is work to
+> complete now, and once it is complete it is not recorded here at all: the commit says what was done. An "Open:",
+> "Next:" or "left for later" line written instead of doing the work is a failure, not a record. The only things that
+> may go here are items the user has decided to defer, or a choice that is the user's to make, with the evidence.
+
 ## Intro
 
 This is the list of open work from the merges of 2026-11-15, kept so that nobody has to remember it. The agent doing
@@ -5703,6 +5709,12 @@ down). The CPU runs it; Metal refuses the batch (`metal-form`, "an early start")
 
 - **Done when**: generated MSL shifts a file's first lane as the CPU does, and `every_step_on_metal_equals_the_interpreter`
   runs every step, none refused.
+- **Found 2026-11-20** (the ladders cut to their grammars, 0531): both JSON forms now run on Metal (0 refused, since
+  5670277876's early start), and `every_grammar_on_metal_equals_the_interpreter` (the test's new name) fails: on 42
+  of 378 `jsonc` files, all with comments, the outputs are equal and extract 4 (a comment's last bytes) differs, e.g.
+  `"// /* x\nfalse"`: Metal `[6]`, the interpreter `[2, 12]`. The same with the old seeds (`15-jsonc`: 39 files) and
+  with the newline output (0529) taken out, so neither change causes it. `json-rfc` is equal. **Done when** this
+  test passes.
 
 
 ### Q197. Tier 1 with no general body (0383) differs from the interpreter on 14 corpus programs
@@ -6201,6 +6213,23 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   bundle as the seed): the encoded answers are one entry. No map of its own (0092, 0103).
 - **Done when**: a second process's compile of an unchanged or edited grammar makes no proofs it
   made before, measured.
+- **Done for Kotlin** (2026-11-20, roll-up 20; the user: "why can't we cache the proofs?", then "make the proof
+  vastly smaller. We shouldn't dump random giant files in LFS"):
+  - **Keys are digests.** A question is kept by the first 16 bytes of its text's SHA-256 (`bitlex_prove::Key`,
+    `key_of`, taken in `Proofs::ask`). The text, the question's whole cone, was 4.7 KB a key: Kotlin's 2,974 answers
+    were 14 MB. They are now 52 KB (`RRANSWER`, 17 bytes a yes or no), so no zstd and no LFS.
+  - **The seed** is `kotlin_parser/kotlin.answers`, a tracked file. Its test (`the_shipped_answers_answer_the_grammar`)
+    says when it lacks an answer, and `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes it again.
+  - **The machine's answers** are `answers::answered` (rerail-compiler): one file a grammar family in the
+    temporary directory's `rerail-prover-answers/`, written whole. Its `.done` mark names the text the file answers
+    all of: a compile of that text takes no lock; a compile of another takes the family's lock, so compiles that
+    start together on an edit prove its new questions once, and the others compile from the answers.
+    `kotlin_parser::compile_answered` uses it, as do `compiled()`, the tests' grammar variants and `kotlin_aot`'s
+    build script.
+  - **Measured** (a Linux DGX Spark): the suite on an edited `hex_digit` class took 53.6 s at its first run (one
+    process proved; 378 s when each did) and 13.5 s at its second.
+  - **Not yet**: the engine build's content store, as asked above. `kotlin_parser` has none, and nothing bounds the
+    machine's file: about 52 KB an edit that asks everything again. `rerail_rr_parser::compiled` is not on it yet.
 
 ### Q235. (Q220 on Swift-Kotlin-Scala-support) Bitlex's reference does not implement a mark's `, settles`
 
@@ -6794,6 +6823,9 @@ Open:
 - 2026-11-20, roll-up 19 (after rr-align's merge): all four pass on Linux (spark2), run with `--run-ignored only`,
   and their ignores are gone. Not run on macOS this time: no engine tests on a Mac while the Metal crashes are
   open, as an executor there may take the device.
+- **Done** (2026-11-20, Native-and-GPU-strata after the merge of phased-facts 002bc11ff0): the four pass here
+  (macOS, M-series, `RERAIL_GPU=cpu`) three runs in a row, with phased-facts' tape-values twin; their ignores are gone,
+  as the hub's 490760b164 did on Linux.
 
 ### Q293. (Q262 on benchmarks-on-integration) The settle-window test's first leg can no longer miss an edit
 
@@ -7173,6 +7205,8 @@ and real. hogql cold, profiling builds, runs interleaved (2026-11-18), 1,629 fin
   passed none): chunk size is the whole rise. With the Metal budget at 4 GB, 262,144-node chunks retire 71-72 B on
   Metal, against 86-87 B at the default sizing and 69-70 B before oscar's merge. They peak at 2.2-2.5 GB against 0.9 GB.
 - **Do**: Q314, which lets chunks be large without a guess.
+- **Seen** (2026-11-20, CPU binding): hogql cold now runs as 6 chunks, so the small chunks are not what its wall time
+  is today (Q396's "Wall time").
 
 ### Q313. (Q260 on CUDA-support) A Metal buffer refused by the driver's count, with idle buffers holding the room, stopped hogql
 
@@ -7311,7 +7345,8 @@ object.
      two chunks' growth is not taken as one's?
   2. The device has two LZ4 decoders. The library's `ukl/lz4.h` (a whole block decoded by a group) sits beside the
      reads' `z_lz4`, which is 0353 step 4b's one decoder. Should the library's go, or be the reads'?
-  3. `<ukl/writer.h>` is 249 KB, every op `UKL_INLINE`; the MSL source it replaces was 192 KB. Measure its compile.
+  3. ~~`<ukl/writer.h>` is 249 KB, every op `UKL_INLINE`; the MSL source it replaces was 192 KB. Measure its compile.~~
+     Written by hand since 2026-11-20 (decision 0524): 60 KB.
 
 ### Q316. `open_tuple` grows faster than its chunk: 0435's bigger chunks cost ep2's cold run 35%
 
@@ -7363,6 +7398,22 @@ object.
 - **Decided** (2026-11-19, the user: "pick a for the decision"): the guest relations name a program by its file and
   place (`parsed(at, grammar, root)`), so `node`'s `d` is the file (0431 §4).
 - **Done when**: `docof` of a program's node is its file in a T program too, with a test.
+- **Done** (2026-11-20): `node`'s document column is a program's file in T's shape too. The batch dropped a
+  program's guest in T's shape (it takes the program's whole tree, not its root's subtree), and with it the file
+  key, so a projection's `file` was the program's own key. The file key is now one rule, `Guest::file_key`, that
+  both shapes' projections take. Test: `a_t_programs_docof_of_a_programs_node_is_its_file` (a T program in a
+  JavaScript run with `.embedded on`, over an HTML file's script). `doc` still has a row for the program's own key
+  (the document underneath), so a test that joins `doc` by path alone does not see the difference; the test checks
+  that the key is not the node id's.
+
+### Q389. (Q271 on django-bugs) A wildcard node in a rule is not bounded by hiding
+
+- **Seen** (2026-11-20, Q324's probe): `zo(k, d) :- node(d, _, k, _, _).`, in a T program in a JavaScript run with
+  `.embedded on`, gives the hidden HTML host's own kinds (`document`, `element`, …). Hiding bounds a node by its
+  variable (0058 §1), and a wildcard has none. `kind(_, k)` in core.rr's shape is the same case, by its place.
+- **Do**: check the case in core's shape too; bound a wildcard node column as a variable is bounded (a fresh
+  variable for it, in the hiding pass).
+- **Done when**: a rule with a wildcard node column sees no hidden document's rows, with a test in each shape.
 
 ### Q325. (Q268 on django-bugs) 0431's leftovers after step 3
 
@@ -7381,6 +7432,54 @@ object.
     (`combined_programs_see_guests_by_their_own_policy`).
 - **Done when**: no round outside the fixpoint; a file's programs read from its stored tape; the setting's meaning
   decided.
+- **Programs kept with the tape, done** (2026-11-20, 0431 step 6, R11): a file's programs are made at its parse,
+  carried in its facts, stored with its tape and read back with it; the batch runs an embedder only for a tape whose
+  record is not known (stored before step 6). Test: `a_files_programs_are_kept_with_its_tape`.
+- **No round outside the fixpoint, done** (2026-11-20, 0431 step 7, R12): `@parse` and `@splice` values are asked
+  inside the fixpoint; the embed slice and its rounds are gone. The demand split no longer cuts a relation above a
+  value's answer.
+- **Setting decided, done** (2026-11-20, decision 0523): `.guests` is retired; `.embedded` is the one setting.
+- **The rule-file language's embeds, done** (2026-11-20, decision 0495): JSON objects, `match` regexes (a new
+  `regex` grammar) and Python patterns (`python-pattern`) are a rule file's programs. Found on the way: Q385.
+- **Older than this item** (each fails at 3aeaf9336e, before 0431 step 6):
+  `maintain_tests::r7_the_recheck_order_is_priced` ("after a use added, every recheck line is priced") and
+  `corpus::tests::a_header_edit_asks_again_only_for_the_units_that_read_it` ("a file no unit looked at asks for
+  none"). `the_run_after_a_cold_one_writes_nothing` flakes under load (2026-11-18, above).
+- **Seen on the way**: `value::eslint_rules::no_dupe_keys_through_key_nodes` (3 of 16 lines found) and
+  `typing::oracle_tests::a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered` ("unbounded
+  node Cartesian product in `base`") fail at 11d32e9f0 too, before step 7 (Q249's kind for the second).
+
+### Q385. (done) A host file's own nodes are shown under `.embedded on`
+
+- **Seen** (2026-11-20, decision 0495 step 3): a JSON run under `.embedded on` sees a rule file's own nodes
+  (`source_file`, `clause`), and an HTML run a Python file's `module`. 0470 step 2 meant them hidden: a host file takes
+  a hidden key. But hiding runs only for a program that makes guests (`corpus.rs`, `guests_of`), and a program that
+  only says `.embedded on` makes none. 0470's tests ask only for kinds a host file has none of, so they pass.
+- **Tried, and taken back**: running hiding for `.embedded on` too hides the host's nodes, and its programs with
+  them. A program's node's document is its host file's (Q324), whose key is hidden, so `docof(n, d), doc(d, p, _)`
+  fails the document bound. Leaving a node's document unbounded (the node's bound deciding) shows Python's
+  annotations to rules that do not name them (`a_partial_hit_makes_only_the_guests_its_cone_can_see`): an
+  annotation's nodes have ids under their file's key, and only the document bound keeps them out.
+- **To decide**: one key range cannot both show a host file's document and hide its nodes. A likely shape: a host
+  file takes a shown document key, and its own nodes ids under a hidden key, as an annotation's are the other way
+  round. That changes how a file's nodes are numbered: the user's call.
+- **Test**: `a_host_files_own_nodes_are_not_shown` (ignored, naming this item).
+- **Done** (2026-11-20, decision 0512, the user: "go ahead"): a host file keeps its own key as its text's document
+  (`doc`, `source`, `src_line` shown: the user, "rules need to know line numbers and text in the host so that they can
+  report properly"), and its tree is a guest of it (`Made::File`) under the hidden key, the host of its programs.
+  Hiding runs for `.embedded on`. The test runs, and asks for the host's lines and text too.
+
+### Q272. The store crate's tests: five fail on a farm host, one flakes
+
+- **Seen** (2026-11-20, 0431 step 6): `cargo nextest run -p rerail-store` did not compile (`journal.rs`: two test
+  calls to `fsevents::since` lacked `settle`, from the hub merge 667386cfe). With `SETTLE` passed it compiles, and
+  246 of 251 pass on the M3 and the M1 Max. Fail there: `git_workspace::tests::discovers_current_repository_without_a_git_process`
+  (the farm's copy of the checkout has no `.git`) and four `observe` tests on the journal
+  (`a_listing_names_an_edited_file_and_no_other`: 7 stats where 2 are expected, and three like it). Flaky:
+  `write_back::tests::a_batch_run_again_after_a_fork_keeps_every_wait_queued_meanwhile` fails 2 runs in 3.
+- **Do**: run the five here, where the checkout has its `.git` and the journal its usual roots, to tell the host's
+  environment from a fault; find the fork test's race.
+- **Done when**: the crate's tests pass where they are meant to run, and the fork test every time.
 
 ### Q326. (Q269 on django-bugs) A fragment is parsed from a node kind (decision 0466)
 
@@ -7684,7 +7783,7 @@ object.
   count into `used` and the plan bound reads the ledger, so the batch is split before it runs.
 - **Done when**: both cases are equal on Metal, and the retry loop's plan bound is the ledger's.
 
-### Q337. (Q262 on Native-GPU-strata) On Metal a hogql run can lose a whole chunk's findings — one cause fixed (a freeze's pages); format 16 open
+### Q337. (Q262 on Native-GPU-strata) On Metal a hogql run can lose a whole chunk's findings — done (a freeze's pages; then 20 of 20 at format 16 under the ledger)
 
 - **Seen** (2026-11-19, decision 0478 5b-5e): a cold hogql run under the Metal binding, profiling build, format 15,
   sometimes gives fewer than its 1,629 findings (1,358, 1,375 and 1,487 seen), with no error and exit 0. The files
@@ -7739,6 +7838,21 @@ object.
   differ, the device read stale bytes; if they agree, the index build read them early.
 - **Also seen:** `bound_in` gives 60,278-60,281 rows between good runs (the findings the same): a smaller
   nondeterminism, not looked into.
+- **Measured under the ledger** (2026-11-20, after Q378 and 0491 steps 2-5: every lease and bound block is held
+  until its command buffer completes, and the GPU's queued uses are checked by the CPU's writers): format 16 (the
+  default), profiling build, an M-series Mac at load 20-57, 20 cold runs of hogql: 1,629 findings each, 91-97 B
+  instructions. Not shown: that these runs made the `line` view on the device (the trace patch was not applied), so
+  the made view's own cause is closed by these runs, not by a run caught failing. Each run printed at most a few
+  device budget refusals ("a lease past the Metal budget of 512 MB"), which go to the CPU (`BackendFailure`).
+  The probe now includes `python/names.rerail` (the rule files were renamed); its rules changed with #898 (sym_of
+  names an attribute of a class of the run), so the instruction counts are not comparable with the 75-78 B above.
+- **Two crashes found on the way, fixed:**
+  - With `RERAIL_PROFILE` set, `look_up`'s stat and read loops opened profile spans on pool threads that held no
+    run (decision 0442's check aborts there). Each item now enters the run (`run_state::Carry`).
+  - 1 run in 20 aborted: the cores' launch job dropped its captured `Claims` (the batch's kernels, their columns
+    and device leases) after its run's guard. A lease going back to its pool read the Metal runtime's ledger
+    outside any run, under the pool's lock: a panic, the lock poisoned, an abort. `rerail_context::in_run` runs a
+    job and ends its captures inside the run (`a_jobs_captures_are_dropped_inside_its_run`).
 
 ### Q378. (Q264 on Native-GPU-strata) One ledger owns a block's memory, for the CPU and the GPU (decision 0487) — steps 1-2 built
 
@@ -7747,18 +7861,147 @@ object.
 - **Built:** step 1 (`rerail_blocks::ledger`: every chunk of a free-listed block tracked, frees and pages through it,
   `Fence`, R1-R8) and step 2's first part: accel's `Pass`, where the device joins bind every buffer, registers the
   block each bound buffer lies in on a fence its command buffer's completion handler ends.
-- **Next, step 2's rest:** the other encoders (the syntax side's `metal_*` passes, `crates/metal`, `blocks::gpu`) made
-  through one constructor that registers its bindings, so none binds unregistered; then `Batch::keep`, `read`, `held`
-  and `Held::kept` go where what they hold is a block's.
-- **Next, step 3:** the pool's buffers (`Pooled`, `Pooled::after`), `Scratch` resets, the residency slabs' `retire`
-  and the deferrable slabs under a ledger of their own.
-- **Next, step 4:** a chunk's CPU writers (BlockVec, a relation's rows) check the ledger at each write's start (R4).
-- **Then:** Q337's format-16 runs again, 20 at 1,629.
+- **Done, steps 2-4** (2026-11-20; decision 0487's "Built"): every queue on the process's device is made by
+  `rerail_accel::gpu::shared::Queue`, whose watch (the device layer's `Watch`) holds every buffer bound, resident,
+  copied or filled; every pooled lease is its own ledger's, and goes back to the pool after the work that bound it;
+  `Scratch` and the deferrable slabs refuse a reset or a seal under queued work; a relation's rows refuse a CPU write
+  into room lent to the device. Tests R9-R11; on a Linux host (CPU backend) rerail-blocks 67, rerail-accel 65,
+  rerail-metal 20 (its five `pp_blocks` tests now skip off Metal: the passes are Metal's library); on a farm Mac
+  (Metal) rerail-blocks 69, rerail-accel 90, rerail-metal 21 and the engine's 33 GPU, residency and slab tests.
+- **Q337's runs under it** (a profiling build, an M3 of the farm, format 16 (the default), cold hogql, each its own
+  store, load 9-10): 16 of 16 gave 1,629 findings, 66-78 B instructions, 3.1-35 s (the first a cold launch; runs 6-10
+  10-14 s), one device budget refusal in all, no panic. The host's link then dropped (it went unreachable), before the
+  last four. It had restarted (its boot time is when the link dropped): GPU processes with infinite loops brought
+  it down (the user, 2026-11-20), not these runs.
+- **Validated again, then finished** (2026-11-20, cf497c6219's engine, each run capped at 120 s): on the M1 Max,
+  rerail-blocks 69, rerail-accel 90, rerail-metal 21, the engine's 22 GPU, residency and slab tests and
+  rerail-device-metal's 30 setfix-device and Metal-join tests pass; cold hogql on Metal, 4 runs on the M1 Max and 3
+  on the M1 mini, 1,629 findings each, 64-73 B instructions, 3.9-6.6 s after the first launch, no refusal or panic.
+  Then the last four on the M3: 1,629 findings each, 65.8-68.0 B, 2.5-6.1 s. Q337's runs: 20 of 20.
 - **Then (decision 0491, the user, 2026-11-20):** region handles over blocks, MLDB's shape (`rerail_blocks::region`:
   `Mutable` / `Shared` / `Frozen`, pins, versions, implicit freeing), built. The owners move to them one at a time:
-  `Cells` (done, 2026-11-20: a frozen region), a relation's arrays (done: `BlockVec` owns a `Mutable`), its rows (nothing to move: a `Part` is the handle), the device's handles (`DevRel`, `Held::kept`), after the
-  pool's buffers are blocks (0491 step 2, "What holds the lists": a pooled lease is reused the moment it is dropped,
-  so `Batch`'s lists hold it until the GPU is done); then the block itself as the root region.
+  `Cells` (done, 2026-11-20: a frozen region), a relation's arrays (done: `BlockVec` owns a `Mutable`), its rows (nothing to move: a `Part` is the handle), the device's buffers (done: every pooled lease is held by
+  the ledger, `Tracked`; every bind, library calls too, is held by its pass; `Batch`'s lists are gone); the block
+  itself as the root region, binds pinned by the kernels' declared access, and memory domains (0491 steps 3 to 5,
+  done 2026-11-20). Left: a pooled lease as a region of a slab block (0491 step 3 says why it waits).
+- **Fixed on the way** (2026-11-20, failures that came with the hub merge):
+  - `regex_block::tests::a_patterns_block_program_runs_alike_on_every_executor`: the CPU JIT refused its own output
+    ("region 0's value %87 on the vectors made outside its branch", decision 0423). The ASCII split
+    (`ascii_split`) kept gated regions' members out of the values it makes behind its branch, but not their values
+    on the vectors (`Region::vectors`). So a value on the vectors only region 0 reads was made on every non-ASCII
+    block (33 instructions, in `[\p{Alphabetic}\p{N}]+`'s program), left the split as a word nothing read, and was
+    made again in the region's branch. Now the split takes neither.
+  - `a_copy_of_an_inputs_columns_is_a_view_of_it` read the plan's counts outside a run, where 0442 batch 1 made them
+    a run's: it now holds a run that the corpus runs join, as the policy-run test does.
+  - `every_switch_lowering_reads_is_classified` ended its region of `corpus.rs` at `merge_and_drop_repeats`, which
+    #508 removed; it now ends at the runner's `GIVEN`.
+- **Seen after the first hub merge, since settled** (2026-11-20):
+  - `a_partial_hit_makes_only_the_guests_its_cone_can_see` (Q77) failed, an edit of `ids` not seeing the
+    annotations' identifiers (`Bar`), with or without this branch's change. It passes after the second hub merge
+    (51ddaaeaaa), whose 84f329973a changed the partial hits' cones.
+  - `programs_hidden_alone_keep_their_attribute_copies_declared` read the data-layer pack's rule files, not in git:
+    placed from a checkout whose canonical archive is the one `test-data.lock` pins; it passes.
+  - `wave0_a_negation_gain_inside_recursion` aborted 2 runs in 10 (a run's last handle dropped on a pool thread
+    holding no run, its store's drop reading the run's shared object): fixed in 6b5d8525c0.
+  - `scm_quantified_runs_preserve_each_distinct_middle_capture` bounded the JIT's run at 2 s of wall time, and
+    failed at load 40 and over. Its bounds are now its work alone (states, pending paths, bytes); the JIT's speed
+    is Q412. The Linux failures of accel's
+  tests (they came with the CUDA merge) are fixed: two device-block tests were gated on macOS where the pool is the
+  GPU lane's (CUDA's too), and the GPU tests failed on a host whose device was absent; off macOS they now skip
+  without one, as the blocks tests do (64 of 64 on a Linux host with a device and on one without).
+
+### Q396. (Q265 on Native-GPU-strata) A cold hogql run takes 99.7 B instructions, against 81 B before the hub merge: the cross part's base relations (0458), not the rules
+
+- **Asked** (the user, 2026-11-20): Q337's runs took 91-97 B instructions, against 75-80 B before; get to the
+  bottom of it.
+- **Measured** (this Mac, CPU binding with `RERAIL_GPU=cpu` and no Metal, cold stores, load 13): this morning's
+  engine with this morning's rules (97afb09273), 81.0 and 81.9 B instructions, 4.8 s of spans' CPU, 1.75 s wall;
+  the merged engine (51ddaaeaaa) with its rules, 99.7 and 99.7 B, 6.2 s CPU, 3.1 s wall. Both give 1,629
+  findings. Neither engine runs the other's rules (each library reads relations its own engine's core declares), so
+  the split is by span (`tmp/gpu/q36/spandiff.py`, the two runs' `spans.tsv`):
+  - **+0.90 s:** `stats/measure the base rows held/a base relation measured`, two relations of 1.24 M and 1.51 M
+    rows, on the main thread. New with 0261fb5375 (0458 steps 1-3): the cross part's base relations are read off
+    the corpus batch, and with no kept statistics (a cold store) `syntax::measured` measures them whole.
+  - **+0.28 s:** `local/export to cross/base rows for the memo` (0.000 s before), and +0.07 s in `memo remember`:
+    each memoised chunk's entries now keep the base rows of the corpus views, read a value at a time
+    (`source.value(r, c)`), though the cross part reads none of them (0458).
+  - **The rules (#898):** the strata's joins differ by +0.02 s once the two spans above are out (+0.4 s in the
+    first pair of runs, at a higher load): new strata (`pre_65`, `pre_75`, `parsed`) cost about what `param` and
+    `tp_decl` no longer do.
+- **Done** (2026-11-20): `measured` read every value by its row, three times a column (the documents, the key
+  test, the pairs): each read locates its row in the batch (`Batch::locate`) and decodes its node, the hot frames of
+  the earlier sample (`generated_reads::f16`, `Viewed::value_at`, `Projected::span`). It now reads through the
+  source's walk (`for_rows`). The 1.24 M-row measure went from 0.58 s to 0.25-0.28 s; the 1.51 M-row one stays
+  0.32-0.40 s, as its cost is the sort of each column's (value, document) pairs. Test:
+  `a_views_measured_statistics_are_its_per_row_reads`.
+- **The cause, found** (2026-11-20, the user: "get the work back to" 81 B): the measured relations are the
+  semi-join's (`ast_depth`, `col`, `line`, `node`). The cross part reads them only as lookups of the nodes its
+  exports hold, 291,775 of them; the old engine bound and measured just those rows. 0458 binds the whole view, and
+  every row of `line`, `col` and `ast_depth` is computed from the tape (`ast_depth` walks to the root), so reading
+  1.24-1.51 M rows costs about 1 s however it is read: a hashed count in place of the sort was slower (1.0 s), and
+  the sample has the time in `Viewed::value_of`, not in the counting.
+- **Done:** the semi-join's statistics are counted where the run already reads its rows
+  (`keptstats::SemijoinCounts`): each chunk's rows at the nodes its exports hold (the memo's base rows), each hit's
+  entry's, a node's row once, exactly as `measured` would give them over those rows (its test). The memo's loop
+  finds those rows by their node (`key_row`, `lookup_read`, else `lookup`), not by walking every row, and hands a
+  document's rows to its owners once. A chunk whose rows are not attributed turns the counts off, and every row is
+  measured as before. Key-like statistics with no rows read were tried and are worse (92-94 B): the planner needs
+  the values' statistics.
+- **Measured** (cold, CPU binding, 1,629 findings each): 83.7 and 84.0 B at load 15 (from 99.7 B), against this
+  morning's 81.0 and 81.9 B at load 13. Wall 2.25-2.48 s, against 1.75-1.78 s.
+- **The rest is the rules', not the engine's** (found 2026-11-20): this morning's run's cross part read the base
+  relations `doc` and `tape_of`; today's reads `doc`, `node`, `line`, `col` and `ast_depth`, so the semi-join, its
+  memo rows and its statistics exist at all only with today's rules. The cause is 0431 R9's `rr_unplaced`
+  (`<finding>(n), node(d, n, …), !doc(d, …)`, merged with django-bugs' findings): `project_existentials` makes it
+  `exists_2(d) :- P(n), node(d, n, …)`, a cross-file read of `node`, and with the cross part on a base relation
+  `PushLocalJoins` keeps every finding's location lookups (`rr_diagnostic`, `violation`) in the cross part as well.
+  Pushing them anyway (an experiment: held-node lookups not counted) pushes 7 rules as this morning did and drops
+  `line` and `col`, but the pushed strata cost 0.25 s in the chunks against 0.12 s saved: no gain. The memo loop now
+  walks a semi-join's documents (`Source::for_rows_keyed`, through `Layered` too) where it looked each node up:
+  `ast_depth` 0.19 to 0.085 s, the loop 0.55 to 0.34-0.44 s. Measured 84.3-84.5 B (load 13-18).
+- **Done** (2026-11-20, the merge of phased-facts 002bc11ff0): 0458 step 4's copy 2 was built there
+  (54a3670004, no memo entry keeps a base relation's rows). With it the memo loop and its 0.34 s go, and `export
+  to cross` is 0.12 s (from 0.50 s). The semi-join's statistics are counted once, at the measure, of its rows at
+  every value the exports hold (the chunks' and the hits'), read off the corpus batch by `for_rows_keyed`: 0.35 s,
+  some of it the lazy batch (0494) making its documents there. Measured: 79.6 and 81.4 B (82.7 B first, load 18),
+  1,629 findings; this morning's 81.0 and 81.9 B. Closed.
+- The narrowed push (`node(d, n, …), !doc(d, …)` pushed whole) is gone: on a run with tape values it exports
+  every value's node from the chunks, and the warm run after a cold one recomputed
+  (`the_run_after_a_cold_one_with_tape_values_writes_nothing`, red with it on Linux, green without). They are what the counts and a hit's statistics read. They go with 0458 step
+  4's rest, once a hit's statistics come from somewhere else (its document's rows at its exports' nodes, or kept
+  statistics). The rules' changes (#898) about cancel out: `pre_75`, `pre_65` and `parsed` +0.42 s, `param`,
+  `tp_decl`, `pre_76` and others -0.66 s. The corpus batch's projection (0.34 s) is the chunks' guests' projection
+  (0.34 s) moved.
+- **Wall time** (2026-11-20, the user: 2.1-2.45 s against this morning's 1.75 s at similar load): not Q312's chunk
+  sizing, as hogql now runs as 6 chunks. The gap was the `stats` phase, 0.62 s on the run's thread (this morning
+  0.007 s): the semi-join's counts (`col`, `line`, `node`, `ast_depth`, 0.06-0.08 s each, with the lazy batch's
+  projection inside them), the node rows (0.14 s) and the string annotations (0.09 s), one relation after another.
+  Each base relation read off the corpus batch is now counted on the pool (`Count`, `base_counted`); the results are
+  applied in the relations' order, as before. `stats` is 0.08 s wall (0.65 s CPU). Measured (cold, CPU binding,
+  load 9): 1.80 and 1.89 s wall, 79.4 and 79.8 B, 1,629 findings. The corpus tests on a Linux host with no GPU
+  then showed four panics ("a view's index home of 14 rows: no device"): a device life's block asked the device for
+  memory where none was opened. It is anonymous memory there now (`lease_exact`); the 162 corpus tests pass.
+
+### Q412. (Q266 on Native-GPU-strata, Q397 on it after its merge of the hub) The CPU JIT runs a quantified query 6-10 times slower than the interpreter, and more so as its runs grow
+
+- **Asked** (the user, 2026-11-20, on `scm_quantified_runs_preserve_each_distinct_middle_capture`): no wall clock,
+  and the speed improved; perhaps compilation.
+- **Measured** (a test build on this Mac, CPU only): `(module (comment)+ (comment) @middle (comment)+)` over n
+  comments. The interpreter: 2, 4, 15-19, 81-93 ms at n = 16, 32, 64, 128 (1,090 to 66,050 explored states, about
+  4n²). The JIT: 10-14, 59-73, 440-580 ms at n = 32, 64, 128, every execution alike: about n³. At n = 256 it refuses
+  (`BackendCapacity`).
+- **Not compilation:** lowering takes 0.1 ms and the straight-line compile 90-110 ms, once (`compile_cached`); a
+  sample of repeated executions has 1,996 of 2,031 samples of the working thread in the jitted code.
+- **Not the state queue's tombstones:** after each task its table (8 k-65 k records, zeroed per task) is about 90%
+  empty, with at most 6,158 tombstones, so a probe stays short.
+- **Not a different state identity:** the interpreter admits a state by (pc, node, cursors, active repeats,
+  sibling requirement) and its exact capture set; the JIT's queue and admit tables compare the same.
+- **Seen:** the largest task (the module root, n = 128) charges 2.5 M steps and holds 128 repeat records, 127
+  captures and 57,920 query members; each smaller root's task grows with the comments after it. The JIT's charged
+  steps count other work than the interpreter's explored states, so the two are not compared yet.
+- **Next:** count, in both, the states admitted and the comparisons each admission makes (capture sets, repeat
+  chains: the JIT compares chains, `capture_contains` and `repeat_equal`, where the interpreter compares interned
+  `Arc`s). An admission that walks a chain of length n is the n³.
 
 ### Q338. (Q263 on Native-GPU-strata) A relation's statistics kept by delta are on the heap (0478 R5) — done (0478 step 6f)
 
@@ -8066,6 +8309,20 @@ on an M3 or M5:
   - 2026-11-20: it passes on Linux (131 s on spark2), so it was slow, never red. It is no longer ignored. It is in
     nextest's slow tier (`.config/nextest.toml`): the gate runs it, with 8 minutes allowed, and the quick tier leaves
     it out. Still open: the compile's time, three compiles of 44 s on spark2.
+  - 2026-11-20, roll-up 20 (the user: "kotlin tests should have a few second budget"): the crate's quick tier took
+    378 s on a Linux DGX Spark, for tests whose own parses take microseconds. Each test's process compiled the grammar
+    cold: 41.3 s, 40.5 s of it the provers (3,452 answers). With those answers known, the compile is 1.5 s and makes
+    the same program (`compile_time`). The answers are now shipped beside the grammar, as 0414 and Q234 ask for a
+    seed: `kotlin_parser/kotlin.answers` (52 KB, keyed by digest; Q234), given to `compiled()` and to `kotlin_aot`'s
+    build script and test (the AOT test takes no Kotlin on the hub: 0531). What an edit asks anew
+    is proved once on a machine and kept there (`answers::answered`, Q234).
+    - The quick tier: 44 tests in 14.1 s.
+    - `the_shipped_answers_answer_the_grammar` (1.6 s) fails when an edit asks a question they lack;
+      `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again.
+    - The cold compiles (`a_cold_compile_makes_the_shipped_answers_program`, 45 s, and `walk_lemmas_keep_the_tapes`,
+      53 s) are the slow tier's.
+    - Still open: about 1.5 s of warm compile in each test's process (0.8 s the Bitlex compiler, the rest Cranelift),
+      and the cold compile's 40 s of proofs for an edited grammar's new questions.
 
 ### Q349. Cranelift refuses corpus program `0565-mix-seed_205` by 0423's check
 
@@ -8736,3 +8993,135 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
     assertion states 0361 now: `o` is not prepared, and `r` is, as `o`'s inferred facts size it.
   - The plan module's tests pass (90). Along the way: `gate/executor-coverage/packs.tsv` was stale since the merge's
     `lib/python/references.rr` became `.rerail` and the library's programs counted one more. Blessed.
+
+### Q413. On Metal at the default 512 MB, the reference graph's rules leave the ast matcher wave no room (0483)
+- **Seen** (2026-11-20, 565dbba02, all, `--metal`): with `python/references.rerail` on the run's path, the run panics:
+  "the ast matcher wave failed on Metal: BackendCapacity". 966 device joins ran on the CPU instead ("a lease of N MB
+  past the Metal budget of 512 MB (509 MB leased, 0 MB idle)"). With `--metal-mb 2048` it passes, and its rows are the
+  before run's (plus `rr_embed_req`), at 76 s of CPU and 26 s of wall against the before run's 37 s and 32 s. Even
+  2 GB was leased to 2,031 MB at two moments.
+- **Cause**: the run's derived relations' row blocks are leased from the one Metal budget (0266 §16). The profile at
+  2 GB: "rows' blocks: a run's 28 (546 MB written of 1119 MB)", 1.1–1.4 GB leased. The rules derive about 80 M head
+  rows where W's Rust derived none, and half of each block reserved is not written. The wave's ledger counts those
+  leases, and `make_room` can free only idle buffers and residency slabs.
+- **Not the fix**: a wait in the ledger for leases to be dropped (`tmp/refs/room-wait.patch`; its test passed). The
+  blocks are held for the run, not for a submission: the run waited and then failed all the same, and each split
+  level would wait again.
+- **Do**: row blocks that pass the budget spill to the deferrable tier (mmap slabs) rather than hold device leases;
+  reserve a block's written extent, not twice it.
+
+### Q414. (Q383 on rr-align) Roll-up 22 (final-rerail-shape-phased-facts onto rr-align): what the merge chose
+
+- **Here** (the hub's merge of rr-align at 48ce04a06b): this record keeps the numbers of its time. Its 0513 is
+  0500 here, its Q379-Q382 are Q386-Q389, and the second copies it calls Q384 and Q385 keep Q354 and Q353 (the
+  first copies are Q383 and Q382).
+
+- **Merged** (2026-11-20): final-rerail-shape-phased-facts at 4b093e78ea, its own lazy batch (0504) and its merge of
+  the hub (6868107a33). The hub carries older commits of cost-classifier and CUDA-support than rr-align has, so
+  rr-align's side was taken in their files (the pp batch, the Metal runtime, the plan's checks, the deferred joins).
+- **Numbers.** The hub had renumbered rr-align's decisions and items; the merged tree takes the hub's numbers:
+  - decisions (rr-align's → here): 0464 → 0473, 0465 → 0474, 0466 → 0482, 0467 → 0479, 0472 → 0477,
+    0476 → 0483, 0479 → 0484, 0480 → 0464, 0482 → 0466, 0483 → 0475, 0484 → 0465, 0485 → 0476, 0486 → 0472.
+    rr-align's 0477 (joins deferred to their readers) collides with the hub's 0477 (the serial phases' locks) and is
+    0513, past the highest number on any branch (0512). 0487-0489 keep theirs.
+  - items: rr-align's Q329, Q330, Q345 and Q346 are Q370, Q367, Q329 and Q330 here (the hub's), and rr-align's own
+    Q347-Q350 are Q379-Q382 (the hub uses Q347-Q350). Q190 keeps its number. The roll-up records Q380-Q382 keep the
+    numbers of their time; this list maps them.
+  - our side's citations in code and docs were rewritten by these maps: only lines of ours alone (in rr-align's file,
+    not in theirs), and never a number named as another branch's ("0466 on X", "was 0466").
+  - rule files are `.rerail` (theirs' rename): our tests and the deferred-joins scripts name them so.
+- **Resolved by hand**: the chunk scope is theirs' (`ChunkScope`, `InChunk`, `setfix::carried`; rr-align's
+  `RunChunk` gone); `factorize::round` keeps rr-align's form with theirs' key chaining; metal_join's `row_stage`
+  takes the test's id at P[5] and the library scan's n + 1 counts; the label passes' `whole` check reads the
+  backend-neutral `ComputeFunction::max_threads_per_group`; `idle_room` reads its own memory's reservations;
+  `shape_base` is gone with theirs' maintenance forms, so the deferred pairs match their head as written; 0361's
+  step 6 is rr-align's text once (the merge had left theirs' older copy after it).
+- **Found and fixed** (red at the merge, and at theirs' own tip on the m1max):
+  - `every_verdict_the_device_keeps_is_the_cpus` lost 11-35 of 1,157 verdicts in 2 runs of 4 here, and in every run
+    at 4b093e78ea. The kernel's lanes looked their rows' verdicts up at once; lanes whose symbols share an entry (64
+    symbols of a test) waited on another lane of their own SIMD group making it, which does not progress while they
+    spin, so they ran out of spins and each took a second entry of the key, and the verdicts ORed into the copies
+    were split between them. Now one lane an entry looks first and the group's others after it (`join_stages`'s
+    verdict stage, a SIMD-group barrier between).
+  - `parity_random_mixed` gave a `sql_upper` text with 26 zero bytes past its own: a kept text read with plain loads
+    of another group's writes (Q367's second cause). The kept texts are read and written through `UKL_COHERENT`.
+  - On Linux (all roll-up 19-21's widenings): `blocks_compare_tests` uses macOS's malloc zones and is macOS's again;
+    two accel tests used Metal's `get()` for the portable `layer()`; the blocks examples' and c_directives' gates.
+  - `run_state::STATE` listed six thread-locals no file declares (test_pool's `MEASURED`, `WORKING_SET`; setfix
+    device's `AUTOMATA`, `GROWTH`, `RESIDENT`, `TESTS`): cut.
+- **Tested**: Linux, the engine and the merged crates checked with every target, no warnings; rerail-logic's run
+  state, plan, factorize, deferred, product demand, shapes and bloom tests (291 pass, 3 ignored as before);
+  rerail-store's kept facts (8); rerail-device-metal on the CPU backend (70). macOS: the same check on the m3; on the
+  m1max rerail-c-directives (47; the 16 ignored are corpus, data and measurement tests), rerail-metal (22), and
+  rerail-device-metal (71) in 16 full runs after the fixes, 7 more on the m3.
+- **Then fixed**: the same test still lost 7-17 verdicts in 2 runs of 24 on the m1max, with the cache's counts
+  showing 30 misses for 19 keys and no duplicate counted: a reader saw a slot's number (a relaxed atomic) with an
+  older entry offset, key or completion, took the entry for another key's, and made a second entry. The cache's
+  lookup and take now fence after a numbered slot before reading its entry (the half of the pair the writer's
+  fence before the number lacked); 24 of 24 runs pass on the m1max, and rerail-device-metal on Linux (70). Theirs'
+  items Q353 and Q354, each twice, are Q384 and Q385 for their second copies.
+
+### Q415. (Q392 on Typing-support) The forest's classification level on the CPU backend decodes weights 5× (Linux)
+
+- **Found** (2026-11-20, testing the Windows port): `randomforest_kernels_grid::tests::one_level_on_the_device_matches_the_host_kernels`
+  fails with `RERAIL_GPU=cpu` on Linux: decodeRows gives each row a weight of 5/1024 where the host's is 1/1024
+  (the encoder's `weight_bits` is 5). It fails so at 221c95be00, before the port, and passes on CUDA and on OpenCL
+  (the GB10's and an Intel Arc's); the regression variant passes on the CPU backend. So the CPU backend binds or
+  runs the classification decode otherwise than the GPUs: its argument rows (`rows.rs`) or the shim.
+- **Done when** the test passes on the CPU backend, by the backend's fix, not the test's.
+
+### Q416. (Q393 on Typing-support) test-remote: a Windows command past a length fails in ssh's multiplexer
+
+- **Found** (2026-11-20): to win1, a command of `cargo --config "env.RERAIL_OPENCL_SUBGROUPS='0'" test --features
+  test-hooks --lib -- gpu::join --nocapture` fails every time with `mm_send_fd: sendmsg: Message too long` and the
+  connection "lost"; the same with a 9-character `--config` passes, as does the long one with shorter flags. A
+  Windows job also passes no environment (`RERAIL_GPU`, the OpenCL switches): only cargo's `--config env.K='V'`.
+- **Done when** a Windows job takes a long command, and an environment as a Linux one does.
+
+### Q395. A `@parse` value's finding is placed at its own text's line, under its asker's path
+
+- **Seen** (2026-11-20, merging the hub, 0431 R9): `Inner(n) :- …, t = @parse("python", "y = 2"), tape_of(d, t),
+  node(d, n, "identifier", _, _)` as a `.violation` in `a.py`'s run gives `a.py:1:0`. A value document has a `doc`
+  row in each file whose rules asked for it (0058 §4, `askers`), so `node(d, n), doc(d, p, _), line(n, l)` places
+  the finding at the value's own text, line 1, column 0, with the file's path: no place in that file. 0431 §3 says
+  `doc` has no row for a tape, so R9 cannot refuse it.
+- **Do**: decide what a value's finding is. Either a value's document has no `doc` row (0431 §3, and the askers kept
+  apart from `doc`), so R9 refuses it as it refuses a string inside a value, or it is placed at the asking rule's
+  place.
+- **Done when**: a finding at a `@parse` value's node is refused or placed in its file, with a test either way.
+
+### Q399. Four block tests hang on a Mac's Metal executors, and pass in 0.04 s without them (done)
+
+- **Seen** (2026-11-20, after merging the hub to 236ea95371): `rerail-parser-tests`'
+  `block_tests::prev_equals_reference_on_every_executor`, `stage1_utf8_equals_std_on_every_executor`,
+  `binary_operators_equal_reference_on_every_executor` and `within_and_delay_equal_reference_on_every_executor` run
+  past their 240 s on an M1 Max host, alone as with other tests, and are terminated. On a Linux host, where
+  `Executors::run` has no Metal executors (`run_generated_with`, the forward carry `run_serial_split`), the first two
+  pass in 0.04 s. So the time is on a Metal path: an MSL compile, or a command buffer that does not end.
+- **Why it matters**: a command buffer that runs for minutes is what rebooted a Mac twice on 2026-11-20 (the pp
+  grid's Boost test); a hung test's GPU work may outlive the test's kill. Not run again on a Mac until bounded.
+- **Not the cause**: `bee578718a`'s ASCII-split change is in the Cranelift block compiler, and these programs have
+  no gated region, so their code is the same.
+- **Next**: on a farm Mac, the first executor `every` reaches that does not return (a print per executor), and whether
+  it is the MSL compile or the wait; then bound the launch's GPU time.
+- **Found** (2026-11-20, on an M3): no hang. `prev_equals_reference_on_every_executor` ran 7,290 Metal launches in its
+  240 s, each 25 to 58 ms whatever its input's size, of which the GPU took 0.02 to 0.04 ms. The rest was the kernel
+  store's key (`rerail_accel::gpu::kernels::Key::of`): `rerail_ukl::fingerprint()` hashed the 1.2 MB of carried UKL
+  headers byte by byte at every lookup, 17 ms in a debug build, twice for a fixed kernel (`function_fixed`). It is now
+  computed once by `rerail-ukl`'s build script (`carried.rs`, one list for the crate and the script), to the same value
+  (`the_fingerprint_is_fnv_over_the_carried_files`). A launch takes 0.5 to 1 ms; the 46 block tests pass on the M3 in
+  35 s, the slowest in 21 s.
+- **Found on the way**, in the same crate's tests:
+  - `corpus_cranelift_equals_the_interpreter`: `bee578718a` kept a gated region's vectors out of the ASCII split, and a
+    region vector made from the split's words (`as_words`: 0565's `%48 = %47 & ~%46`, `%46` the non-ASCII class) was
+    then made by no one, so its reader read 0. The region makes such vectors at its start, as it makes the masked ones.
+  - `a_files_start_on_metal_is_the_interpreters`: the serial executor refused a prefix (0335) again (`starts_late`),
+    which Q215 (5670277876) had made it run; a hub merge brought the refusal back. Removed; the test passes on the M3.
+
+---
+
+> **Read this first. This queue is not a place to put work.** Recording something here as open is almost never
+> allowed. Work you find — a red test, a flaky test, a gap, a leftover from a merge, a "next step" — is work to
+> complete now, and once it is complete it is not recorded here at all: the commit says what was done. An "Open:",
+> "Next:" or "left for later" line written instead of doing the work is a failure, not a record. The only things that
+> may go here are items the user has decided to defer, or a choice that is the user's to make, with the evidence.

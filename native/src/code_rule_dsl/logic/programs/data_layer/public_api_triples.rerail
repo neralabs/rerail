@@ -396,9 +396,7 @@ group_first(sc, o, b, f) :- slots(sc, o, b, _, _, f), !group_after_first(sc, o, 
 group_after_first(sc, o, b, t) :- slots(sc, o, b, _, _, t), slots(sc, o, b, _, _, q), q < t.
 .decl group_exemplar(scope: symbol, owner: symbol, base_name: symbol, symbol: symbol)
 group_exemplar(sc, o, b, id) :- slots(sc, o, b, _, id, f), group_first(sc, o, b, f).
-// max(CASE WHEN slot = … THEN symbol END): NULL where the slot is absent (`group_slot`); the last symbol by its text.
-.decl slot_symbol_earlier(scope: symbol, owner: symbol, base_name: symbol, slot: symbol, symbol: symbol)
-slot_symbol_earlier(sc, o, b, sl, s) :- slot_symbol(sc, o, b, sl, s), slot_symbol(sc, o, b, sl, q), s < q.
+// max(CASE WHEN slot = … THEN symbol END): NULL where the slot is absent (`group_slot`).
 .decl group_sync(scope: symbol, owner: symbol, base_name: symbol, symbol: symbol)
 group_sync(sc, o, b, id) :- slot_symbol(sc, o, b, "sync", id), !slot_symbol_below(sc, o, b, "sync", id).
 // A slot's symbols another of its follows by text (a max over a symbol has no order).

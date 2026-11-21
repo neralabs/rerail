@@ -1,5 +1,4 @@
 .policy "ruff-e721-type-comparison" revision 1
-.guests off
 .description "Use isinstance(), or is and is not, instead of == or != to compare types; equality on types misses subclasses and can be overridden."
 .language python
 .mode steer

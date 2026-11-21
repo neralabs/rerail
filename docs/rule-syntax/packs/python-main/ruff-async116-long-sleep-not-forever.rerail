@@ -1,5 +1,4 @@
 .policy "ruff-async116-long-sleep-not-forever" revision 1
-.guests off
 .description "Use sleep_forever() instead of trio or anyio sleep calls longer than 24 hours; a sleep that long is almost always meant to never end."
 .language python
 .mode steer
