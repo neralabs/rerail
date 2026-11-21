@@ -2191,6 +2191,48 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     })
                     .collect();
                 assert_eq!(jitted, want, "{at}: the JIT's rows");
+                // The Rust reads (`rerail_tape_format::view_reads`, written directly), over the same entry, tape and
+                // lines; a 16z tape's blocks through the reader's cache, the one the JIT's reads above share.
+                {
+                    use rerail_tape_format::view_reads::{Doc, Tape};
+                    // SAFETY: the reader's view (its cache after it, `READER_CACHE` bytes on), the tape's bytes, the
+                    // entry in its block, which the projection holds.
+                    let (rv, cache) = unsafe { (&*v, v.cast::<u8>().add(128)) };
+                    let doc = Doc { entry: unsafe { &*e.cast::<rerail_clif::view_reads::ViewDoc>() }, tape: Tape::new(tape, rv, cache), lines: &words };
+                    let rust: Vec<i64> = (0..n)
+                        .flat_map(|l| {
+                            let mut row: Vec<i64> = (0..5).map(|c| doc.node(l, c)).collect();
+                            row.extend((0..3).map(|c| if l + 1 < n { doc.child(l, c) } else { 0 }));
+                            row.extend((0..3).map(|c| if l < nf { doc.field(l, c) } else { 0 }));
+                            row.extend((0..3).map(|c| doc.core(l, c)));
+                            row.extend((0..2).map(|c| doc.line(l, c)));
+                            row
+                        })
+                        .collect();
+                    assert_eq!(rust, want, "{at}: the Rust reads' rows");
+                    // A parent's first child, a child's next, a node by its id's low bits: the JIT's.
+                    // SAFETY: each read's signature: the entry, the tape's base, its view, the lines' base, its argument.
+                    let probe_of = |name: &str| -> extern "C" fn(*const u8, *const u8, *const TapeView, *const u8, u32) -> u32 { unsafe { std::mem::transmute(jit.function(name)) } };
+                    let (first, next, number) = (probe_of("view_child_first"), probe_of("view_child_next"), probe_of("view_number"));
+                    for l in 0..n {
+                        assert_eq!(doc.child_first(l), first(e, t, v, ll, l), "{at}: node {l}'s first child");
+                        if l + 1 < n {
+                            assert_eq!(doc.child_next(l), next(e, t, v, ll, l), "{at}: child row {l}'s next");
+                        }
+                        let low = (p.global(l) & 0xffff_ffff) as u32;
+                        assert_eq!(doc.number(low), number(e, t, v, ll, low), "{at}: node {l} by its id");
+                        assert_eq!(doc.number(low), l, "{at}: node {l} by its id");
+                        // The views no CLIF reads: the host's rows.
+                        assert_eq!(doc.size(l), p.size(l as usize), "{at}: node {l}'s size");
+                        assert_eq!(doc.depth(l), p.depth(l as usize), "{at}: node {l}'s depth");
+                        assert_eq!(doc.order_row(l, 1), i64::from(p.key) << 32 | i64::from(p.order(l)), "{at}: node {l}'s order");
+                    }
+                    for i in 0..p.after_siblings() {
+                        let (l, _) = doc.after_sibling(i);
+                        assert_eq!(doc.sibling(i, 0), p.prev_sibling(l).map_or(-1, |a| p.global(a)), "{at}: sibling row {i}'s before");
+                        assert_eq!(doc.sibling(i, 1), p.global(l), "{at}: sibling row {i}'s node");
+                    }
+                }
                 if let Some((shared, probe)) = probe {
                     let d = block.offset_of(entry.desc()) as u64;
                     // The tape where the device reads it: a test's buffer of its bytes, a word of room past them.

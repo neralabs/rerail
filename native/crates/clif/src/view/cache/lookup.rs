@@ -470,6 +470,47 @@ pub unsafe fn verdict_put(cache: *const u8, test: u32, sym: u32, v: u32) -> bool
     true
 }
 
+/// The entry of `key` (`reads::cache_get`): found, waited for, or on a miss an entry of `size` bytes taken and
+/// `fill`ed (it gives whether the payload fits); the dead entry where none was kept (a failure counted). A 16z tape's
+/// block is read so (`tape_z_block`, `rerail_tape_format::reads::f16z`).
+///
+/// # Safety
+/// `cache` is a live cache, and `fill` writes only its entry's `size` bytes.
+pub unsafe fn get(cache: *const u8, key: u64, size: u32, fill: &dyn Fn(*mut u8) -> bool) -> *mut u8 {
+    // SAFETY: the caller's.
+    unsafe { lookup(cache.cast_mut(), key, size, Some(fill)) as *mut u8 }
+}
+
+/// The dead entry, a failure counted (`FAILED`): what a read with no entry of its own reads (its zeros).
+///
+/// # Safety
+/// `cache` is a live cache.
+pub unsafe fn failed(cache: *const u8) -> *mut u8 {
+    // SAFETY: the caller's: the header's words.
+    unsafe {
+        word(cache, FAILED).fetch_add(1, SeqCst);
+        cache.cast_mut().wrapping_add(word(cache, DEAD).load(SeqCst) as usize)
+    }
+}
+
+/// An entry's completion (`READY`): its epoch, `WRITING` while it is written, 0 given back.
+///
+/// # Safety
+/// `e` is an entry of a live cache.
+pub unsafe fn ready(e: *const u8) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { word(e, READY).load(SeqCst) }
+}
+
+/// An entry's key.
+///
+/// # Safety
+/// `e` is an entry of a live cache.
+pub unsafe fn key(e: *const u8) -> u64 {
+    // SAFETY: the caller's.
+    unsafe { key_of(e).load(SeqCst) }
+}
+
 /// A text's key: bit 63 set (no verdict's key has it), the functions' id plus one, the symbol.
 fn text_key(fns: u32, sym: u32) -> u64 {
     ((u64::from(fns) + 1) << 32) | (1 << 63) | u64::from(sym)
