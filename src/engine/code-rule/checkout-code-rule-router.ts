@@ -502,6 +502,10 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
     return this.#settings.scope === "repository";
   }
 
+  turnEnded(): void {
+    for (const lane of this.#lanes.values()) lane.enforcer.turnEnded();
+  }
+
   async settle(): Promise<void> {
     await this.#settleLanes(lane => lane.enforcer.settle());
   }

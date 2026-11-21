@@ -14,7 +14,8 @@ import type { RuleCatalog, SkippedRulePack } from "./repository-model.js";
 import { catalogDigest } from "./rule-catalog.js";
 import { parseRuleDocument, readJsonDocument } from "./rule-documents.js";
 import { compareRulePacks, type LoadedRulePack, type RulePack, type RulePackRule } from "./rule-packs.js";
-import type { RuleDocument } from "./rule-store.js";
+import { RERAIL_DOCUMENT_EXTENSION } from "./rerail-rules/rerail-rule.js";
+import { ruleKindOf, type RuleDocument } from "./rule-store.js";
 
 /** Where a checkout keeps its own rules, relative to its top level. */
 export const WORKTREE_RULES_FOLDER = ".rerail/rules";
@@ -48,8 +49,8 @@ interface RuleFile {
 }
 
 /**
- * The `.json` entries directly in the checkout's rules folder, by name; undefined when there is no such folder. A
- * symbolic link is never followed, for the folder or a file, so the rules a checkout runs are files inside it.
+ * The `.json` and `.rerail` entries directly in the checkout's rules folder, by name; undefined when there is no such
+ * folder. A symbolic link is never followed, for the folder or a file, so the rules a checkout runs are files inside it.
  */
 function ruleFiles(checkoutRoot: string): readonly RuleFile[] | undefined {
   const parent = join(checkoutRoot, ".rerail");
@@ -57,7 +58,7 @@ function ruleFiles(checkoutRoot: string): readonly RuleFile[] | undefined {
   try {
     if (!lstatSync(parent).isDirectory() || !lstatSync(directory).isDirectory()) return undefined;
     return readdirSync(directory)
-      .filter(name => name.endsWith(".json"))
+      .filter(name => name.endsWith(".json") || name.endsWith(RERAIL_DOCUMENT_EXTENSION))
       .sort(compareDeterministicStrings)
       .map(name => {
         const path = join(directory, name);
@@ -80,9 +81,17 @@ function documentProblem(error: unknown): string {
 
 /** The pack's entry for one of its rules: titled by its title, else its description, else its id; on, in its document's mode. */
 function packRuleOf(document: RuleDocument): RulePackRule {
-  const described = document.kind === "code" ? document.rule.description?.trim() : undefined;
-  const title = document.rule.title?.trim() || described || document.rule.id;
-  return { id: document.rule.id, kind: document.kind, title, group: "This worktree", mode: document.rule.mode, on: true };
+  const described = document.kind === "conversation" ? undefined : document.rule.description?.trim();
+  const titled = document.kind === "rerail" ? undefined : document.rule.title?.trim();
+  const title = titled || described || document.rule.id;
+  return { id: document.rule.id, kind: ruleKindOf(document), title, group: "This worktree", mode: document.rule.mode, on: true };
+}
+
+/** Each `.rerail` file among `files`, left out: a rule written in `.rerail` runs only from a rule pack for now. */
+function leftOutRerailFiles(files: readonly RuleFile[]): SkippedRulePack[] {
+  return files
+    .filter(file => file.name.endsWith(RERAIL_DOCUMENT_EXTENSION))
+    .map(file => ({ path: file.path, packageName: null, version: null, reason: `a rule written in .rerail is not supported yet in ${WORKTREE_RULES_FOLDER}; it runs from a rule pack` }));
 }
 
 /**
@@ -203,8 +212,8 @@ export function worktreeRuleCatalog(installed: RuleCatalog, checkoutRoot: string
   const stamp = files.map(file => `${file.name}\0${file.stamp}`).join("\n");
   const cached = worktreeCatalogs.get(checkoutRoot);
   if (cached !== undefined && cached.installed === installed && cached.stamp === stamp) return cached.catalog;
-  const { loaded, skipped } = readWorktreePack(installed, worktreeRulesDirectory(checkoutRoot), files);
-  const catalog = withWorktreePack(installed, loaded, skipped);
+  const { loaded, skipped } = readWorktreePack(installed, worktreeRulesDirectory(checkoutRoot), files.filter(file => file.name.endsWith(".json")));
+  const catalog = withWorktreePack(installed, loaded, [...skipped, ...leftOutRerailFiles(files)]);
   worktreeCatalogs.set(checkoutRoot, { installed, stamp, catalog });
   return catalog;
 }

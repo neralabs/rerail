@@ -10,6 +10,9 @@ import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { basename, dirname, join, resolve } from "node:path";
 import semver from "semver";
 import { CodeRuleCompileError, EngineUnavailableError, readsLeftOutToken, relationalRulesOff, storableCodeRule } from "../code-rule/code-rule-compile.js";
+import type { CodeRule } from "../code-rule/code-rule-schema.js";
+import { describeRerailRules } from "./rerail-rules/rerail-rule.js";
+import { sha256Of } from "./rerail-rules/kept-rerail-descriptions.js";
 import { PACKAGE_ROOT, RERAIL_PACKAGE_NAME } from "../package-root.js";
 import { compareDeterministicStrings, ruleDocumentDigest, stableJsonText } from "../stable-json.js";
 import { CURRENT_LINK, defaultRerailHome } from "../storage/rerail-home.js";
@@ -26,6 +29,7 @@ import {
 } from "./rule-packs.js";
 import { packCompileChecks, type PackCompileChecks } from "./pack-compile-checks.js";
 import { engineRegexIssues } from "./rule-regexes.js";
+import type { ConversationRule } from "./rule-schema.js";
 import type { RuleDocument } from "./rule-store.js";
 
 /** In the Rerail home: the npm prefix rule packs are installed into. */
@@ -231,27 +235,41 @@ function comparePackPrecedence(left: LoadedRulePack, right: LoadedRulePack): num
   return rank(left) - rank(right) || compareDeterministicStrings(left.pack.packageName ?? "", right.pack.packageName ?? "");
 }
 
+/** Why the engine refuses conversation rule `rule`'s patterns, or undefined. */
+function conversationRefusal(rule: ConversationRule): string | undefined {
+  // Internal testing: conversation rules in a pack, as every conversation rule (docs/internal-testing.md).
+  const [issue] = engineRegexIssues(rule);
+  return issue === undefined ? undefined : `${issue.path.join(".")} ${issue.message}`;
+}
+
 /**
- * Why the engine rejects `document`, in its own words, or undefined; throws `EngineUnavailableError` without the
- * engine. A code rule must compile; a conversation rule's patterns must be ones the engine accepts, so a bad pattern
- * leaves the pack out here rather than failing a session when it loads the rule.
- * Two refusals are no problem of the pack: a code rule reading a token a tape may leave out (`readsLeftOutToken`) is an
- * older pack's form this engine no longer answers, and a `relational` clause waits for its experiment
- * (`relationalRulesOff`). Its pack loads, and the live catalog skips that rule alone and reports it with the reason, as
- * it does every rule that fails to compile when it loads.
+ * Why the engine refuses to compile code rule `rule`, or undefined. Two refusals are no problem of the pack: a code
+ * rule reading a token a tape may leave out (`readsLeftOutToken`) is an older pack's form this engine no longer
+ * answers, and a `relational` clause waits for its experiment (`relationalRulesOff`). Its pack loads, and the live
+ * catalog skips that rule alone and reports it with the reason, as it does every rule that fails to compile when it
+ * loads.
  */
-function engineRefusal(document: RuleDocument): string | undefined {
-  if (document.kind === "conversation") {
-    // Internal testing: conversation rules in a pack, as every conversation rule (docs/internal-testing.md).
-    const [issue] = engineRegexIssues(document.rule);
-    return issue === undefined ? undefined : `${issue.path.join(".")} ${issue.message}`;
-  }
+function codeRuleRefusal(rule: CodeRule): string | undefined {
   try {
-    storableCodeRule(document.rule);
+    storableCodeRule(rule);
     return undefined;
   } catch (error) {
     if (!(error instanceof CodeRuleCompileError)) throw error;
-    return readsLeftOutToken(error.reason) || error.reason === relationalRulesOff(document.rule) ? undefined : error.reason;
+    return readsLeftOutToken(error.reason) || error.reason === relationalRulesOff(rule) ? undefined : error.reason;
+  }
+}
+
+/**
+ * Why the engine rejects `document`, in its own words, or undefined; throws `EngineUnavailableError` without the
+ * engine. A code rule must compile; a conversation rule's patterns must be ones the engine accepts, so a bad pattern
+ * leaves the pack out here rather than failing a session when it loads the rule. A `.rerail` rule was read and checked
+ * by the engine when its pack was read (`readRulePack`), which fails for one the engine refuses.
+ */
+function engineRefusal(document: RuleDocument): string | undefined {
+  switch (document.kind) {
+    case "conversation": return conversationRefusal(document.rule);
+    case "code": return codeRuleRefusal(document.rule);
+    case "rerail": return undefined;
   }
 }
 
@@ -373,7 +391,7 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
   };
   packDirectories.forEach((directory, at) => {
     try {
-      const loaded = readRulePack(directory);
+      const loaded = readRulePack(directory, options.compileChecks?.describe ?? describeRerailRules);
       const localSource = options.localSources?.get(directory);
       read.push({ at, directory, loaded: localSource === undefined ? loaded : { ...loaded, pack: { ...loaded.pack, localSource } } });
     } catch (error) {
@@ -408,31 +426,61 @@ export function readRuleCatalog(packDirectories: readonly string[], options: Rul
   };
 }
 
+/** A file's modification time and size, or `-` when it cannot be read. */
+function fileStamp(path: string): string {
+  try {
+    const info = statSync(path);
+    return `${info.mtimeMs}:${info.size}`;
+  } catch {
+    return "-";
+  }
+}
+
 /**
  * A cheap stamp of what is installed and what checks it: changes when npm installs, removes or updates a pack, a pack's
  * files move, or another core version becomes active (its range decides which packs load). It does not see an edit to
- * a rule document inside a pack linked from a folder (`rerail packs add <folder>`); touch its `pack.json` to reload.
+ * a JSON rule document inside a pack linked from a folder (`rerail packs add <folder>`); touch its `pack.json` to
+ * reload. An edit to a `.rerail` rule's files is seen by `rerailFilesStamp`.
  */
 function installedStamp(home: string, directories: readonly string[], coreVersion: string): string {
-  const stamp = (path: string): string => {
-    try {
-      const info = statSync(path);
-      return `${info.mtimeMs}:${info.size}`;
-    } catch {
-      return "-";
-    }
-  };
   const prefix = installedPacksPrefix(home);
   const lock = join(prefix, "node_modules", ".package-lock.json");
-  return [home, coreVersion, stamp(lock), stamp(join(prefix, "package.json")), ...directories.flatMap(directory => [directory, stamp(join(directory, "package.json")), stamp(join(directory, "pack.json"))])].join("\0");
+  return [home, coreVersion, fileStamp(lock), fileStamp(join(prefix, "package.json")), ...directories.flatMap(directory => [directory, fileStamp(join(directory, "package.json")), fileStamp(join(directory, "pack.json"))])].join("\0");
 }
 
-let installed: { readonly stamp: string; readonly catalog: RuleCatalog } | undefined;
+/**
+ * A stamp of every file the catalog's `.rerail` rules were read from: each rule file and each file it includes. The
+ * `.rerail` runner reads them from disk, so an edit to any of them reloads the catalog, which gives the rule, and its
+ * pack's approval, a new digest: an edit someone has not approved runs in Log, as a JSON rule's would.
+ */
+function rerailFilesStamp(catalog: RuleCatalog): string {
+  const paths = new Set([...catalog.documents.values()].flatMap(document => (document.kind === "rerail" ? [document.rule.path, ...document.rule.includes.map(file => file.path)] : [])));
+  return [...paths].map(path => `${path}\0${fileStamp(path)}`).join("\0");
+}
+
+/** Whether every `.rerail` rule file of `catalog`, and every file it includes, still has the bytes the engine read. */
+function rerailFilesAsRead(catalog: RuleCatalog): boolean {
+  return [...catalog.documents.values()].every(document => document.kind !== "rerail"
+    || [{ path: document.rule.path, sha256: document.rule.sha256 }, ...document.rule.includes].every(file => sha256Of(file.path) === file.sha256));
+}
+
+/**
+ * The `.rerail` files' stamp for a catalog just read: taken first, then the files checked against the bytes the engine
+ * read. A file edited between the engine's read and the stamp would otherwise pin the older reading under the newer
+ * stamp; then no stamp is kept (empty), and the next load reads the packs again.
+ */
+function readRerailFilesStamp(catalog: RuleCatalog): string {
+  const stamp = rerailFilesStamp(catalog);
+  return rerailFilesAsRead(catalog) ? stamp : "";
+}
+
+let installed: { readonly stamp: string; readonly rerailFiles: string; readonly catalog: RuleCatalog } | undefined;
 
 /**
  * The catalog of the packs installed in the Rerail home `home`, checked against its active core and the engine. It is
- * read again whenever the installed packs or the active core change (`rerail packs add`, `remove`, set-up installing
- * them, `rerail update`), so a running daemon and every catalog built on it follow an install without a restart;
+ * read again whenever the installed packs, a `.rerail` rule's files or the active core change (`rerail packs add`,
+ * `remove`, set-up installing them, `rerail update`), so a running daemon and every catalog built on it follow an
+ * install without a restart;
  * otherwise each call returns the same one. A pack on disk the person did not install is left out with why
  * (`unrecordedPacks`), after those the catalog read. The engine's verdict on each pack is kept in the home
  * (`packCompileChecks`), so only a pack it has not seen under this engine is compiled.
@@ -441,11 +489,11 @@ export function loadRuleCatalog(home: string = defaultRerailHome()): RuleCatalog
   const directories = installedPackDirectories(home);
   const coreVersion = activeCoreVersion(home);
   const stamp = installedStamp(home, packDirectoriesOnDisk(home), coreVersion);
-  if (installed?.stamp !== stamp) {
+  if (installed?.stamp !== stamp || installed.rerailFiles !== rerailFilesStamp(installed.catalog)) {
     const compileChecks = packCompileChecks(home);
     const catalog = readRuleCatalog(directories, { coreVersion, compile: true, compileChecks, localSources: localSources(home, directories) });
     compileChecks.save();
-    installed = { stamp, catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
+    installed = { stamp, rerailFiles: readRerailFilesStamp(catalog), catalog: { ...catalog, skipped: [...catalog.skipped, ...unrecordedPacks(home)] } };
   }
   return installed.catalog;
 }

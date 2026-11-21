@@ -3949,6 +3949,8 @@ pub(crate) fn path_tape_tag(path: &str) -> Option<u8> {
 pub use rerail_facts::code_rule_dsl::text;
 #[cfg(test)]
 mod test_support;
+// The addon's `.rerail` entry points (`CodeRuleDslRuntime.describeRr`, `runRr`) over `tools`.
+mod rr_host;
 pub mod tools;
 #[cfg_attr(test, path = "transducer")]
 mod transducer {
@@ -4674,23 +4676,18 @@ impl CodeRuleDslRuntime {
     /// The tests the `.rerail` files under `paths_json` (a JSON array of files and directories) carry, each run (decision
     /// 0130, `rerail-engine test-rr`): `[{file, test, line, status, failures, findings}]` as JSON. `rerail rules test`
     /// calls it for a `.rerail` file. The runs read the engine's own `.rerail` programs (`typing/programs`) and the rule
-    /// library (`logic::rr::library`) from a checkout (`source_tree`), which the package does not ship: without them,
-    /// an error that says so.
+    /// library (`logic::rr::library`) under the engine's root (`source_tree`: a checkout, or the installed package,
+    /// which ships them): without them, an error that names the file missing.
     #[napi(catch_unwind)]
     pub fn test_rr(paths_json: String, filter: Option<String>) -> Result<String> {
         let paths: Vec<std::path::PathBuf> =
             serde_json::from_str(&paths_json).map_err(json::json_error)?;
-        let programs =
-            rerail_store::source_tree::native().join("src/code_rule_dsl/typing/programs");
-        if !programs.join("sources.rerail").is_file()
-            || !logic::rr::library().join("core.rerail").is_file()
-        {
-            return Err(json::invalid(
-                "a .rerail file's tests read the engine's .rerail programs and rule library from a Rerail checkout \
-                 (native/src/code_rule_dsl/typing/programs, docs/rule-syntax/lib), which Rerail's package does not \
-                 ship: run them from a Rerail checkout, or set RERAIL_SOURCE_ROOT to one"
-                    .to_owned(),
-            ));
+        if let Some(missing) = missing_rr_engine_file() {
+            return Err(json::invalid(format!(
+                "{} is missing: a .rerail file's tests read the engine's .rerail programs and rule library, which \
+                 Rerail's package ships beside the engine: reinstall Rerail",
+                missing.display()
+            )));
         }
         let report =
             logic::rr::testing::report(&paths, filter.as_deref()).map_err(json::invalid)?;
@@ -4726,6 +4723,15 @@ impl CodeRuleDslRuntime {
             }),
         })
     }
+}
+
+/// The first of the files every `.rerail` test run reads that is not there: phase 1's program (`sources.rerail`) and
+/// the library's `core.rerail`. A checkout holds them, and Rerail's package ships them beside the engine.
+fn missing_rr_engine_file() -> Option<std::path::PathBuf> {
+    let sources = rerail_store::source_tree::native()
+        .join("src/code_rule_dsl/typing/programs/sources.rerail");
+    let core = logic::rr::library().join("core.rerail");
+    [sources, core].into_iter().find(|file| !file.is_file())
 }
 
 /// The module a file's `module` carries, from the package markers on disk, for the file at

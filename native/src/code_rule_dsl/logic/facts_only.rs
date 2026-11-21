@@ -217,6 +217,9 @@ const STATE: &[(&str, &str)] = &[
     // The SQL lane's executor, and the work a thread's device wave runs when flushed (`lanes::wave`).
     ("code_rule_dsl/logic/lanes.rs", "SQL"),
     ("code_rule_dsl/logic/lanes.rs", "DEFERRED"),
+    // Where each job running on this thread begins its part of the wave (`lanes::wave::fence`): state of the jobs in
+    // progress, not a result kept.
+    ("code_rule_dsl/logic/lanes.rs", "FENCES"),
     // The device's wave on this thread (decision 0113 §3): its open command buffer, the waves flushed, the strata
     // waiting for theirs; and the rule being compiled's arena-text slots. State of the run, not a result kept.
     ("code_rule_dsl/logic/native/setfix/device.rs", "WAVE"),

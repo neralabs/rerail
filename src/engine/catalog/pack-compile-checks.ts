@@ -4,7 +4,8 @@
  * `compile`): for the Node, TypeScript, JavaScript, Python and complexity packs that is 767 rules, 14 s of CPU and
  * 1.7 GB on a Windows laptop, paid by every command that reads the catalog and at every daemon start. A verdict holds for
  * one pack's content and core version (the key the catalog gives) and one engine build: the native addon and the
- * capabilities rules compile against. Any change to either asks the engine again.
+ * capabilities rules compile against. Any change to either asks the engine again. Beside the verdicts it keeps the
+ * engine's reading of each `.rerail` pack rule (`kept-rerail-descriptions.ts`).
  */
 import { createHash } from "node:crypto";
 import { readFileSync, statSync } from "node:fs";
@@ -13,6 +14,8 @@ import { z } from "zod";
 import { bundledCodeRuleDslDirectory } from "../code-rule/code-rule-compile.js";
 import { replaceFileSync } from "../file-replace.js";
 import { resolveNativeBindingPath } from "../native/native.js";
+import { keptDescriptionSchema, keptRerailDescriber } from "./rerail-rules/kept-rerail-descriptions.js";
+import { describeRerailRules, type RerailDescriber, type RerailDescription } from "./rerail-rules/rerail-rule.js";
 
 /** In the Rerail home: the verdicts of the last catalog read, per engine build. */
 export const PACK_COMPILE_CHECKS_FILE = "pack-compile-checks.json";
@@ -23,15 +26,24 @@ export const PACK_COMPILE_CHECKS_FILE = "pack-compile-checks.json";
  */
 const KEPT_BUILDS = 4;
 
-/** Per engine build, each pack's verdict: null when every rule compiled, else why the pack is left out. */
-const KeptChecksSchema = z.array(z.object({ build: z.string(), verdicts: z.record(z.string(), z.string().nullable()) }));
+/**
+ * Per engine build, each pack's verdict: null when every rule compiled, else why the pack is left out; and the
+ * engine's reading of each `.rerail` rule file, by its path.
+ */
+const KeptChecksSchema = z.array(z.object({
+  build: z.string(),
+  verdicts: z.record(z.string(), z.string().nullable()),
+  descriptions: z.record(z.string(), keptDescriptionSchema).optional(),
+}));
 type KeptChecks = z.infer<typeof KeptChecksSchema>;
 
 export interface PackCompileChecks {
   /** The verdict kept on the pack `packKey` names, or undefined when the engine was never asked under this build. */
   verdict(packKey: string): string | null | undefined;
   record(packKey: string, problem: string | null): void;
-  /** Writes back the verdicts this read used or made, dropping this build's others, when they differ from the file's. */
+  /** Reads `.rerail` rules as `describeRerailRules` does, from the readings kept under this build where their files are unchanged. */
+  readonly describe: RerailDescriber;
+  /** Writes back the verdicts and readings this read used or made, dropping this build's others, when they differ from the file's. */
   save(): void;
 }
 
@@ -70,9 +82,16 @@ export function packCompileChecks(home: string): PackCompileChecks {
   const path = join(home, PACK_COMPILE_CHECKS_FILE);
   const build = engineBuild();
   const all = readKept(path);
-  const kept = new Map(Object.entries(all.find(checks => checks.build === build)?.verdicts ?? {}));
+  const mine = all.find(checks => checks.build === build);
+  const kept = new Map(Object.entries(mine?.verdicts ?? {}));
+  const keptDescriptions = new Map(Object.entries(mine?.descriptions ?? {}));
   const used = new Map<string, string | null>();
+  const usedDescriptions = new Map<string, RerailDescription>();
   let recorded = false;
+  const keep = (rule: string, description: RerailDescription): void => {
+    usedDescriptions.set(rule, description);
+    recorded ||= keptDescriptions.get(rule) !== description;
+  };
   return {
     verdict(packKey) {
       const verdict = build === undefined ? undefined : kept.get(packKey);
@@ -84,10 +103,11 @@ export function packCompileChecks(home: string): PackCompileChecks {
       used.set(packKey, problem);
       recorded = true;
     },
+    describe: build === undefined ? describeRerailRules : keptRerailDescriber(keptDescriptions, keep),
     save() {
-      if (build === undefined || (!recorded && used.size === kept.size)) return;
+      if (build === undefined || (!recorded && used.size === kept.size && usedDescriptions.size === keptDescriptions.size)) return;
       const others = all.filter(checks => checks.build !== build).slice(0, KEPT_BUILDS - 1);
-      writeKept(path, [{ build, verdicts: Object.fromEntries(used) }, ...others]);
+      writeKept(path, [{ build, verdicts: Object.fromEntries(used), descriptions: Object.fromEntries(usedDescriptions) }, ...others]);
     },
   };
 }

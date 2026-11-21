@@ -4,6 +4,7 @@ import { join, resolve } from "node:path";
 import { PACKAGE_ROOT } from "../package-root.js";
 import type { MatchOperator, SampleBoundary, SampleSource } from "../catalog/rule-schema.js";
 import type { EngineGitExit, EngineGitRun, EngineStartedGit } from "../git-start.js";
+import type { CodeRuleSourceSpan } from "../code-rule/code-rule.js";
 
 export interface NativeHealth {
   ok: boolean;
@@ -343,6 +344,67 @@ export interface NativeCodeRuleDslRuntimeConstructor {
    * `NativeRrTestResult` (`rerail-engine test-rr`).
    */
   testRr(pathsJson: string, filter?: string | null): string;
+  /**
+   * Each `.rerail` file of `pathsJson` (a JSON array of paths) read with its includes and checked, nothing run: a JSON
+   * array of `RrDescription`. A file that does not read or check is a row with its error; it never throws for one.
+   */
+  describeRr(pathsJson: string): string;
+  /** The policies of `requestJson` (a JSON `RrRunRequest`) run over its root, off the JavaScript thread: a JSON `RrRunResult`. */
+  runRr(requestJson: string): Promise<string>;
+}
+
+/** What a `.rerail` rule file states of itself, as the engine reads it (`describeRr`). */
+export type RrDescription =
+  | {
+      path: string;
+      ok: true;
+      id: string;
+      revision: number;
+      description: string | null;
+      mode: "block" | "steer" | "log";
+      language: string | null;
+      scope: { include: string[]; exclude: string[]; toolCalls: boolean };
+      /** The codes its findings can have, sorted. */
+      codes: string[];
+      /** How many `.test` blocks it holds. */
+      tests: number;
+      /** Whether a `.violation` carries a `suppress` line. */
+      suppresses: boolean;
+      /** Whether a `.violation` carries a `fix` line. */
+      fixes: boolean;
+      /** The rule file, then each file it includes: canonical path and the SHA-256 (hex) of its bytes. */
+      files: { path: string; sha256: string }[];
+    }
+  | { path: string; ok: false; error: string };
+
+/** A `runRr` request: the policies (absolute paths) over the corpus at `root`, written into the empty directory `out`. */
+export interface RrRunRequest {
+  root: string;
+  policies: string[];
+  out: string;
+  /** Root-relative files the run reads alone; omitted: the whole corpus. */
+  inputFiles?: string[];
+}
+
+/** A finding of a `.rerail` run. `span` has `CodeRuleViolation.span`'s bases; null only for a finding in no file. */
+export interface RrFinding {
+  policy: string;
+  clause: string;
+  code: string;
+  message: string;
+  path: string;
+  line: number;
+  span: CodeRuleSourceSpan | null;
+  tag: string | null;
+  parameters: Record<string, string>;
+}
+
+/** A `runRr` result. A failure's `policy` is the path of the policy whose run failed; the others ran without it. */
+export interface RrRunResult {
+  findings: RrFinding[];
+  failures: { policy: string | null; message: string }[];
+  /** The files the largest of the run's runs read. */
+  files: number;
 }
 
 /** One test of a `.rerail` file, as `testRr` reports it. */

@@ -40,6 +40,7 @@ import {
 import { loadCheckoutRuleSet, ruleConfigurationSignature, ruleConfigurationVersionReader } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
+import type { RerailRule } from "../catalog/rerail-rules/rerail-rule.js";
 import { ruleAttachments, ruleSettings } from "../storage/schema.js";
 import { compareDeterministicStrings, ruleSourceText, stableJsonText } from "../stable-json.js";
 
@@ -135,17 +136,41 @@ export interface CompiledCodeRuleDslEntry {
   readonly title?: string | undefined;
 }
 
+/**
+ * A rule written in `.rerail` that the checkout runs, placed per folder as a compiled rule is. The `.rerail` runner
+ * runs it over the files on disk (`src/engine/rr/`); the native workspace never holds it.
+ */
+export interface RerailRuleEntry {
+  readonly id: string;
+  /** The rule's file, installed in its pack. */
+  readonly path: string;
+  /** The files the rule reads, as its `.scope` says: some include glob (every file when none), and no exclude glob. */
+  readonly scope: { readonly include: readonly string[]; readonly exclude: readonly string[] };
+  /** The language its `.language` names, or null. */
+  readonly language: string | null;
+  /**
+   * The rule file, then every file it includes, each with the SHA-256 of the bytes the catalog read: a run checks
+   * them first, since the runner reads the files from disk.
+   */
+  readonly files: readonly { readonly path: string; readonly sha256: string }[];
+  readonly placement: CodeRulePlacement;
+  readonly provenance: RepositoryAuditRuleProvenance;
+}
+
 /** Immutable provenance and executables used to construct one native evaluation workspace. */
 export interface CompiledCodeRuleDslSnapshot {
   readonly version: string;
   readonly codeRules: readonly CompiledCodeRuleDslEntry[];
+  /** The provenance of `codeRules`. */
   readonly provenance: readonly AuditRuleProvenance[];
+  /** The rules written in `.rerail` the checkout runs, each with its own provenance. */
+  readonly rerailRules: readonly RerailRuleEntry[];
 }
 
 export interface CodeRuleDslCatalogStatus {
-  /** Code rules compiled and placed somewhere in the checkout. */
+  /** Code rules placed somewhere in the checkout: those compiled, and those written in `.rerail`. */
   readonly ruleCount: number;
-  /** Digest of the compiled set: capabilities, and each code rule's id, source, source digest and placement. */
+  /** Digest of the placed set: capabilities, and each code rule's id, source, source digest and placement. */
   readonly version: string;
   /** Source identity captured before loading; never advanced by presentation reads or failed compilation. */
   readonly sourceSignature: string;
@@ -277,22 +302,28 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
   #build(loaded: LoadedCheckoutRules, sourceSignature: string): CatalogState {
     const quarantined = [...loaded.quarantined];
     const built: BuiltRule[] = [];
+    const rerail: BuiltRerailRule[] = [];
     const placed = loaded.ruleSet === undefined ? new Map<string, PlacedRule>() : placedRules(loaded.ruleSet, loaded.folders);
     for (const id of [...placed.keys()].sort(compareDeterministicStrings)) {
       const compiled = this.#compiled(id, placed.get(id)!, loaded);
       if (compiled === undefined) continue;
       if ("quarantined" in compiled) quarantined.push(compiled.quarantined);
+      else if ("rerail" in compiled) rerail.push(compiled);
       else built.push(compiled);
     }
-    return catalogState({ capabilitiesDigest: this.#capabilities.digest, label: this.#source.label, sourceSignature }, built, quarantined);
+    return catalogState({ capabilitiesDigest: this.#capabilities.digest, label: this.#source.label, sourceSignature }, { built, rerail }, quarantined);
   }
 
-  /** One placed rule compiled: its entry, provenance and version line; why it is quarantined; undefined where it is placed nowhere. */
-  #compiled(id: string, { rule, decisions }: PlacedRule, loaded: LoadedCheckoutRules): BuiltRule | { readonly quarantined: QuarantinedRule } | undefined {
+  /**
+   * One placed rule compiled: its entry, provenance and version line; a rule written in `.rerail`, kept for its runner;
+   * why it is quarantined; undefined where it is placed nowhere.
+   */
+  #compiled(id: string, { rule, decisions }: PlacedRule, loaded: LoadedCheckoutRules): BuiltRule | BuiltRerailRule | { readonly quarantined: QuarantinedRule } | undefined {
     const placement = placementOf(decisions, loaded.folders);
     if (placement.length === 0) return undefined;
     const refused = refusedBeforeCompile(id, rule);
     if (refused !== undefined) return { quarantined: refused };
+    if (rule.document.kind === "rerail") return rerailBuilt(loaded.ruleSet!, { id, rule, decisions, placement }, rule.document.rule);
     const source = ruleSourceText(rule.document.rule);
     if (source === undefined) throw new Error(`Policy ${id} is not JSON representable`);
     const outcome = compiledRules.compile(this.#capabilities, id, source.text, source.digest, stableJsonText(rule.config) ?? "");
@@ -314,6 +345,29 @@ interface BuiltRule {
   readonly entry: CompiledCodeRuleDslEntry;
   readonly provenance: RepositoryAuditRuleProvenance;
   readonly versioned: unknown;
+}
+
+/** A rule written in `.rerail` the catalog keeps for the `.rerail` runner, and its line of the catalog's version. */
+interface BuiltRerailRule {
+  readonly rerail: RerailRuleEntry;
+  readonly versioned: unknown;
+}
+
+/** A placed rule written in `.rerail`, kept with its placement; its line of the version digests its content. */
+function rerailBuilt(
+  ruleSet: CheckoutRuleSet,
+  { id, rule, decisions, placement }: { readonly id: string; readonly rule: EffectiveRule; readonly decisions: RulePlacementDecision[]; readonly placement: CodeRulePlacement },
+  document: RerailRule,
+): BuiltRerailRule {
+  const { repositoryKey, checkoutPath } = ruleSet.checkout;
+  return {
+    rerail: {
+      id, path: document.path, scope: document.scope, language: document.language, placement,
+      files: [{ path: document.path, sha256: document.sha256 }, ...document.includes],
+      provenance: { ruleId: id, revision: rule.revision, payloadHash: rule.payloadHash, source: { ...rule.source }, repositoryKey, checkoutPath, placement: decisions },
+    },
+    versioned: { id, kind: "rerail", sourceDigest: rule.payloadHash, placement, source: rule.source },
+  };
 }
 
 /**
@@ -344,17 +398,18 @@ function refusedRule(id: string, rule: EffectiveRule, reason: string): Quarantin
 /** The catalog's state from the rules it built and those it quarantined, each quarantined one without a code reported. */
 function catalogState(
   catalog: { readonly capabilitiesDigest: string; readonly label: string; readonly sourceSignature: string },
-  built: readonly BuiltRule[],
+  { built, rerail }: { readonly built: readonly BuiltRule[]; readonly rerail: readonly BuiltRerailRule[] },
   quarantined: readonly QuarantinedRule[],
 ): CatalogState {
   for (const entry of quarantined) if (entry.code === undefined) reportQuarantinedRule(catalog.label, entry);
-  const policies = built.map(rule => rule.versioned);
+  const policies = [...built.map(rule => rule.versioned), ...rerail.map(rule => rule.versioned)];
   const canonical = stableJsonText({ capabilitiesDigest: catalog.capabilitiesDigest, format: "rerail.policy-dsl-catalog/v3", policies });
   if (canonical === undefined) throw new Error("Policy catalog version is not JSON representable");
   const codeRules = built.map(rule => rule.entry);
+  const rerailRules = rerail.map(rule => rule.rerail);
   return {
-    status: { ruleCount: codeRules.length, version: digest(canonical), sourceSignature: catalog.sourceSignature },
-    snapshot: { version: digest(canonical), codeRules, provenance: built.map(rule => rule.provenance) },
+    status: { ruleCount: codeRules.length + rerailRules.length, version: digest(canonical), sourceSignature: catalog.sourceSignature },
+    snapshot: { version: digest(canonical), codeRules, provenance: built.map(rule => rule.provenance), rerailRules },
     quarantined,
   };
 }
