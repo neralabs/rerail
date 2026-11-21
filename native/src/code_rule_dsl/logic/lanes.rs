@@ -109,6 +109,27 @@ pub mod wave {
         /// What else the wave runs when it is flushed, after its launches: a form's own submission (the device
         /// joins' open command buffer, `setfix::device`), once.
         static DEFERRED: RefCell<Vec<Box<dyn FnOnce() -> Result<(), String>>>> = RefCell::new(Vec::new());
+        /// Where the wave stood when this thread began each job it runs while waiting (`fence`), innermost last.
+        static FENCES: RefCell<Vec<Mark>> = const { RefCell::new(Vec::new()) };
+    }
+
+    /// A job another waits for may run on the waiter's thread (`rerail_accel::exec::help_once`): from here until
+    /// `unfence`, a `flush` on this thread runs only what that job queued, not the launches and submissions the
+    /// waiter left for its own wave. Without it the job ran them into its own outputs, and the waiter's stratum,
+    /// resumed on another thread, found none ("launch has not run").
+    pub fn fence() {
+        let at = mark();
+        FENCES.with_borrow_mut(|f| f.push(at));
+    }
+
+    /// Ends the innermost `fence`: what is queued above it is the waiter's again.
+    pub fn unfence() {
+        FENCES.with_borrow_mut(|f| f.pop());
+    }
+
+    /// Where this thread's current job's part of the wave begins: the innermost fence, else the start.
+    fn fenced() -> Mark {
+        FENCES.with_borrow(|f| f.last().copied()).unwrap_or(Mark(0, 0))
     }
 
     /// Runs `f` when the wave is flushed (a form that encoded its work into a submission of its own, shared by the
@@ -213,11 +234,12 @@ pub mod wave {
         })
     }
 
-    /// Runs every queued launch as one batch (`strata`: how many strata wait on it, for the profile). Returns how
-    /// many launches it ran.
+    /// Runs every launch this thread's current job queued as one batch (`strata`: how many strata wait on it, for the
+    /// profile), not those of a job it is fenced from (`fence`). Returns how many launches it ran.
     pub fn flush(strata: usize) -> Result<usize, String> {
-        let q = QUEUED.with_borrow_mut(std::mem::take);
-        let deferred = DEFERRED.with_borrow_mut(std::mem::take);
+        let from = fenced();
+        let q = QUEUED.with_borrow_mut(|q| q.split_off(from.0.min(q.len())));
+        let deferred = DEFERRED.with_borrow_mut(|d| d.split_off(from.1.min(d.len())));
         let ran = deferred.len();
         if q.is_empty() {
             if ran > 0 {
@@ -325,6 +347,35 @@ mod wave_tests {
         .join()
         .unwrap();
         assert_eq!(wave::flushed().0 - before.0, 1, "another thread's wave is not the run's");
+    }
+
+    /// A job a waiting thread runs for the pool (`rerail_accel::exec::help_once`) is fenced off the wave the waiter
+    /// left on that thread: the job's flush runs only what the job queued, and the waiter's submission waits for the
+    /// waiter's own flush. Without the fence the job's flush ran the waiter's too, and the waiter's stratum, resumed
+    /// on another thread, found no output ("launch has not run: its wave was not flushed", 1 run in 8 of the Django
+    /// pack over linkding at 4 threads).
+    #[test]
+    fn a_flush_inside_a_fence_runs_only_what_was_queued_inside_it() {
+        std::thread::spawn(|| {
+            let ran = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+            let (waiter, helped) = (std::rc::Rc::clone(&ran), std::rc::Rc::clone(&ran));
+            wave::defer(Box::new(move || {
+                waiter.borrow_mut().push("waiter");
+                Ok(())
+            }));
+            wave::fence();
+            wave::defer(Box::new(move || {
+                helped.borrow_mut().push("helped");
+                Ok(())
+            }));
+            assert_eq!(wave::flush(1).unwrap(), 1, "the helped job's flush runs its own submission alone");
+            assert_eq!(*ran.borrow(), ["helped"]);
+            wave::unfence();
+            assert_eq!(wave::flush(1).unwrap(), 1, "the waiter's stays for its own flush");
+            assert_eq!(*ran.borrow(), ["helped", "waiter"]);
+        })
+        .join()
+        .unwrap();
     }
 }
 
