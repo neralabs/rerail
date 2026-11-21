@@ -3,7 +3,7 @@
 // the base to the coherent memory a cache's reads and writes go through (decision 0353 step 4b).
 //
 // The reads: the tape's, written by hand to the CLIF's functions and held to them by tests (`<ukl/reads/tape.h>`,
-// `tape_z.h`, both `tape_body.h`; decision 0524), and the rest generated (`rerail_clif::ukl`: `view.h`, `ids.h`,
+// `tape_z.h`, each format's reads once; decisions 0524, 0576), and the rest generated (`rerail_clif::ukl`: `view.h`, `ids.h`,
 // `relation.h`).
 
 #pragma once
