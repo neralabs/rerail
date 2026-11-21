@@ -180,8 +180,6 @@ interface NamedGitFolder {
   readonly gitFolder: string;
   readonly stamp: string;
   readonly file: boolean;
-  /** The path a `.git` file names its Git folder by, as written. */
-  readonly written?: string;
 }
 
 interface FoundGitFolder extends NamedGitFolder {
@@ -191,14 +189,24 @@ interface FoundGitFolder extends NamedGitFolder {
 
 const GITDIR = "gitdir: ";
 
-/** The Git folder a `.git` entry is, or the one a `.git` file names, as Git reads the file. */
+/**
+ * The Git folder a `.git` entry is, or the one a `.git` file names, as Git reads the file and reaches that folder
+ * ({@link gitFolderReached}); undefined when the file names none, or the folder cannot be reached.
+ */
 function gitFolderOf(folder: string, entry: Stats): NamedGitFolder | undefined {
   const at = join(folder, ".git");
   if (entry.isDirectory()) return { gitFolder: at, stamp: `d:${entry.ino}`, file: false };
+  const named = gitFileNames(at, entry);
+  const gitFolder = named === undefined ? undefined : gitFolderReached(folder, named.written);
+  return named === undefined || gitFolder === undefined ? undefined : { gitFolder, stamp: `f:${named.text}`, file: true };
+}
+
+/** The `.git` file `entry` at `at`, read as Git reads it: its text, and the path it names its Git folder by, as written. */
+function gitFileNames(at: string, entry: Stats): { readonly text: string; readonly written: string } | undefined {
   const read = entry.isFile() ? fileText(at) : undefined;
   if (!isText(read) || !read.text.startsWith(GITDIR)) return undefined;
-  const named = readPath(read.text.slice(GITDIR.length));
-  return named === undefined ? undefined : { gitFolder: resolve(folder, named), stamp: `f:${read.text}`, file: true, written: named };
+  const written = readPath(read.text.slice(GITDIR.length));
+  return written === undefined ? undefined : { text: read.text, written };
 }
 
 /**
@@ -271,27 +279,41 @@ export function filePlacementInputs(folder: string): PlacementInputs | undefined
  * deleted or moved away, or Git pruned the worktree's entry, and the clone's id file, kept in the common Git folder, may
  * have gone too; Git, asked about the folder, reads the `.git` file first and refuses it. A `.git` that is no regular
  * file is never opened. False while the environment moves Git's lookup, and wherever the disk cannot tell. Two lstats
- * and one read of a small file, and on Windows one real path.
+ * and one read of a small file, and for a relative path on Windows one real path. The `worktrees` name is read on the
+ * path cleaned, where a `.` names no folder, and the lstat is made on the path as Git reaches it.
  */
 export function worktreeGitFolderGone(folder: string): boolean {
   if (environmentMovesLookup()) return false;
-  const entry = look(join(folder, ".git"));
-  const written = isEntry(entry) ? gitFolderOf(folder, entry)?.written : undefined;
+  const at = join(folder, ".git");
+  const entry = look(at);
+  const written = isEntry(entry) ? gitFileNames(at, entry)?.written : undefined;
   const reached = written === undefined ? undefined : reachedGitFolder(folder, written);
-  return reached !== undefined && basename(dirname(reached)) === "worktrees" && look(reached) === "none";
+  return reached !== undefined && basename(dirname(resolve(reached))) === "worktrees" && look(reached) === "none";
 }
 
 /**
- * The Git folder a `.git` file in `folder` names by `written`, spelled as Git reaches it: Git joins a relative path to
- * the folder it changed into, read by its real path. On Linux and macOS the joined text is never cleaned, so the system
- * follows each link before the `..` after it, as for `commondir` ({@link commonFolderOf}), where `resolve` would cancel
- * a link and the `..` after it as text. Windows takes each `..` off the path as written before it follows a junction or
- * a link, so there the path is joined to the folder's real path. Undefined when that real path cannot be read.
+ * The Git folder a `.git` file in `folder` names by `written`, spelled as Git reaches it. An absolute path is that path,
+ * with no real path read on any system. Git joins a relative path to the folder it changed into, read by its real path.
+ * On Linux and macOS the joined text is never cleaned, so the system follows each link before the `..` after it, as for
+ * `commondir` ({@link commonFolderOf}), where `resolve` would cancel a link and the `..` after it as text. Windows takes
+ * each `..` off the path as written before it follows a junction or a link, so there the path is joined to the folder's
+ * real path. Undefined when that real path cannot be read.
  */
 function reachedGitFolder(folder: string, written: string): string | undefined {
-  if (process.platform !== "win32") return isAbsolute(written) ? written : `${folder}/${written}`;
+  if (isAbsolute(written)) return resolve(folder, written);
+  if (process.platform !== "win32") return `${folder}/${written}`;
   const real = realOf(folder);
   return real === undefined ? undefined : resolve(real, written);
+}
+
+/**
+ * {@link reachedGitFolder}, spelled with no `..` left, so a name joined to it as text reaches what Git reaches: on Linux
+ * and macOS a relative path's join is read by its real path, as `commondir`'s is ({@link commonFolderOf}); an absolute
+ * path, and the join on Windows, are clean already. Undefined when it cannot be read, as where the Git folder is gone.
+ */
+function gitFolderReached(folder: string, written: string): string | undefined {
+  if (isAbsolute(written) || process.platform === "win32") return reachedGitFolder(folder, written);
+  return commonFolderOf(folder, written);
 }
 
 function withCommon(folder: string, entry: FoundGitFolder, common: CommonFolder): PlacementInputs | undefined {

@@ -1,5 +1,5 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
-import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync, writeFileSync, type PathLike } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve, sep } from "node:path";
@@ -19,7 +19,8 @@ vi.mock("../../../src/engine/git.js", async importOriginal => {
 
 vi.mock("node:fs", async importOriginal => {
   const actual = await importOriginal<typeof import("node:fs")>();
-  return { ...actual, lstatSync: vi.fn(actual.lstatSync), mkdirSync: vi.fn(actual.mkdirSync) };
+  const realpathSync = Object.assign(vi.fn(actual.realpathSync), { native: vi.fn(actual.realpathSync.native) });
+  return { ...actual, lstatSync: vi.fn(actual.lstatSync), mkdirSync: vi.fn(actual.mkdirSync), realpathSync };
 });
 
 const temporaryDirectories: string[] = [];
@@ -28,6 +29,8 @@ afterEach(async () => {
   vi.unstubAllEnvs();
   vi.mocked(lstatSync).mockReset();
   vi.mocked(mkdirSync).mockReset();
+  vi.mocked(realpathSync).mockReset();
+  vi.mocked(realpathSync.native).mockReset();
   for (const database of openDatabases.splice(0)) database.$client.close();
   await Promise.all(temporaryDirectories.splice(0).map(path => removeFolder(path)));
 });
@@ -193,6 +196,45 @@ describe("a linked worktree whose main checkout was deleted", () => {
 
     expect(recordCheckout(db, worktree).cloneId).toBe(recorded.cloneId);
   });
+
+  it("keeps its recorded clone id with no Git process where its .git file's relative path holds a . name", async () => {
+    const root = await plainRoot();
+    const main = checkout(root, "main");
+    const worktree = join(root, "feature");
+    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
+    writeGitFile(worktree, "../main/.git/worktrees/feature/.");
+    const db = database(root);
+    const recorded = recordCheckout(db, worktree);
+    expect(recorded.git, "Git places the worktree").toBe(true);
+    await removeFolder(main);
+    vi.mocked(runGit).mockClear();
+
+    expect(recordCheckout(db, worktree).cloneId).toBe(recorded.cloneId);
+    expect(locateCalls(worktree)).toBe(0);
+  });
+
+  it("starts no Git where its real path cannot be read, as its .git file names its Git folder by an absolute path", async () => {
+    const root = await plainRoot();
+    const worktree = goneMainWorktree(root);
+    const { realpathSync: actual } = await vi.importActual<typeof import("node:fs")>("node:fs");
+    const refuse = (path: PathLike): void => {
+      // Windows refuses the real path of a folder the user is denied, or of one whose delete is pending.
+      if (resolve(String(path)) === worktree) throw Object.assign(new Error(`EPERM: realpath '${String(path)}'`), { code: "EPERM" });
+    };
+    const js = (...args: Parameters<typeof realpathSync>): ReturnType<typeof realpathSync> => {
+      refuse(args[0]);
+      return actual(...args);
+    };
+    const native = (...args: Parameters<typeof realpathSync.native>): ReturnType<typeof realpathSync.native> => {
+      refuse(args[0]);
+      return actual.native(...args);
+    };
+    vi.mocked(realpathSync).mockImplementation(js as typeof realpathSync);
+    vi.mocked(realpathSync.native).mockImplementation(native as typeof realpathSync.native);
+
+    expect(repositoryIdentityLocation(worktree)).toMatchObject({ git: false, gitFolderGone: true });
+    expect(locateCalls(worktree)).toBe(0);
+  });
 });
 
 describe("a linked worktree whose .git file names its Git folder by a relative path", () => {
@@ -206,6 +248,15 @@ describe("a linked worktree whose .git file names its Git folder by a relative p
     expect(repositoryIdentityLocation(link)).toMatchObject({ git: true, workspaceRoot: gitTop(link) });
     expect(recordCheckout(database(root), link).git).toBe(true);
     expect(existsSync(join(worktree, ".rerail")), "the id file of a folder outside Git").toBe(false);
+  });
+
+  it("starts Git once however often it is placed through that link, as when it is placed by its own path", async () => {
+    const root = await plainRoot();
+    const link = relativeWorktreeByLink(root);
+    vi.mocked(runGit).mockClear();
+
+    for (let ask = 0; ask < 4; ask += 1) expect(repositoryIdentityLocation(link).git).toBe(true);
+    expect(locateCalls(link)).toBe(1);
   });
 });
 
@@ -274,10 +325,15 @@ function goneMainWorktree(root: string): string {
 function relativeWorktreeByLink(root: string): string {
   const worktree = join(root, "wts", "feature");
   git(checkout(root, "main"), "worktree", "add", "-q", "-b", "feature", worktree);
+  writeGitFile(worktree, "../../main/.git/worktrees/feature");
+  return linkAt(worktree, join(folderAt(root, "links", "x"), "current"));
+}
+
+/** Writes `worktree`'s `.git` file to name its Git folder by `gitdir`. */
+function writeGitFile(worktree: string, gitdir: string): void {
   // Written anew: Git for Windows marks the .git file hidden, and Windows refuses to open a hidden file to replace it.
   unlinkSync(join(worktree, ".git"));
-  writeFileSync(join(worktree, ".git"), "gitdir: ../../main/.git/worktrees/feature\n");
-  return linkAt(worktree, join(folderAt(root, "links", "x"), "current"));
+  writeFileSync(join(worktree, ".git"), `gitdir: ${gitdir}\n`);
 }
 
 /** `folder`, once `deleted` (the Git folder its `.git` file names, or a folder holding it) was deleted. */

@@ -123,7 +123,7 @@ function placedFromInputs(requested: string, inputs: PlacementInputs, lastAnswer
   const held = heldTopLevels.get(requested);
   if (held?.stamp === inputs.stamp && (inputs.owned || lastAnswer)) return { ...held.location };
   const fromFiles = linkedLocation(inputs);
-  const located = fromFiles === undefined ? locatedByGit(requested) : { location: fromFiles, byGit: false, searched: [] };
+  const located = fromFiles === undefined ? locatedByGit(requested, true) : { location: fromFiles, byGit: false, searched: [] };
   holdTopLevel(requested, inputs, located);
   return { ...located.location };
 }
@@ -136,9 +136,10 @@ interface Located {
   readonly searched: readonly Searched[];
 }
 
-function locatedByGit(requested: string): Located {
+/** Git's answer for `requested`; `gitFolderThere` as {@link gitFindsNone} takes it. */
+function locatedByGit(requested: string, gitFolderThere: boolean): Located {
   const searched = searchedUp(requested);
-  const none = gitFindsNone(requested);
+  const none = gitFindsNone(requested, gitFolderThere);
   const result = none === undefined ? locateInGit(requested) : undefined;
   const location = result === undefined || result.status !== 0 ? nonGitLocation(requested, none === "gone") : gitLocation(requested, result.stdout);
   return { location, byGit: true, searched };
@@ -260,11 +261,13 @@ function locateInGit(requested: string): ReturnType<typeof runGit> | undefined {
  * Why Git, asked where `requested`'s repository is, would answer none, read from the disk without starting Git, so a
  * folder asked about on every hook event of a session working in it starts no Git process: `outside`, the folder is
  * outside Git ({@link outsideGit}); `gone`, it is a linked worktree whose Git folder is gone, which Git refuses (exit
- * 128) as it reads the worktree's `.git` file ({@link worktreeGitFolderGone}). Undefined where Git is to be asked.
+ * 128) as it reads the worktree's `.git` file ({@link worktreeGitFolderGone}). Undefined where Git is to be asked. With
+ * `gitFolderThere` the placement inputs were just read, so the Git folder was there where Git reaches it, and that
+ * check, which reads the same path, is not made again.
  */
-function gitFindsNone(requested: string): "outside" | "gone" | undefined {
+function gitFindsNone(requested: string, gitFolderThere = false): "outside" | "gone" | undefined {
   if (outsideGit(requested)) return "outside";
-  return worktreeGitFolderGone(requested) ? "gone" : undefined;
+  return !gitFolderThere && worktreeGitFolderGone(requested) ? "gone" : undefined;
 }
 
 /**
@@ -540,7 +543,7 @@ function stampOf(facts: string | undefined, searched: readonly string[]): string
 function acceptedByGit(requested: string): RepositoryIdentityLocation {
   heldTopLevels.delete(requested);
   const facts = ownFacts(requested);
-  const located = locatedByGit(requested);
+  const located = locatedByGit(requested, false);
   keepAcceptance(requested, facts, located);
   return { ...located.location };
 }
