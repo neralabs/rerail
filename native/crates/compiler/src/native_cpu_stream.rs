@@ -33,7 +33,7 @@ pub struct Ctx {
     /// The file's first byte. One readable byte before it and 64 after its end.
     bytes: *const u8,
     len: u64,
-    /// The extract `TOKEN` names, and its count; two readable slots past the count.
+    /// The extract `TOKEN` names, and its count; two entries past the count, each the file's length.
     starts: *const u32,
     nstarts: u64,
     /// The records' other columns (`records`): each token's last byte and its code, zipped
@@ -4223,7 +4223,8 @@ pub(crate) fn supertype_classes(native: &Structure) -> Result<Vec<u16>, Error> {
 }
 
 impl TableFns {
-    fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock], x: crate::native_cpu_tape::Image<'_>, sixteen: bool) -> Result<Self, Error> {
+    /// `near`: the module's code in one arena (`Cut::near`), so the writer's ops call each other directly.
+    fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock], x: crate::native_cpu_tape::Image<'_>, sixteen: bool, near: bool) -> Result<Self, Error> {
         let w = x.widths;
         let inner = words.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }));
         let wraps = words.iter().any(|b| matches!(b.operation, Op::Wrap { .. }));
@@ -4235,7 +4236,7 @@ impl TableFns {
         let uncode = outline(module, "tempo_tape_uncode", 5, 1, false, &[], crate::native_cpu_tape::uncode)?;
         let finish = outline(module, "tempo_tape_finish", 10, 1, false, &[], |f, p, heads| crate::native_cpu_tape::finish(f, p, x, heads))?;
         let sixteen = if sixteen {
-            let ids = rerail_clif::writer::define_ops(module, cranelift_module::Linkage::Local).map_err(|e| {
+            let ids = rerail_clif::writer::define_ops(module, cranelift_module::Linkage::Local, near).map_err(|e| {
                 if std::env::var_os("RERAIL_DEBUG_STREAM").is_some() {
                     eprintln!("the writer's ops: {e}");
                 }
@@ -4867,7 +4868,8 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     // The node words' rare loops, outlined (`TableFns`).
     let classes = supertype_classes(native)?;
     let image = crate::native_cpu_tape::Image { tag: widths_tag.1, widths: widths_tag.0, extras: &native.readings.extras, classes: &classes };
-    let table_fns = TableFns::make(&mut module, &native.structural, image, sixteen)?;
+    // A format 16 module is one arena (above), so its ops call each other directly.
+    let table_fns = TableFns::make(&mut module, &native.structural, image, sixteen, cut.near || sixteen)?;
     // A region `TOKEN` splits (decision 0323, lowering B).
     let split = split_parts(native)?;
     // The records `TOKEN` makes from each start (page 40).
@@ -8194,7 +8196,8 @@ fn framed(words: &[crate::native_ir::StructuralBlock]) -> bool {
 }
 
 /// Tier 1's buffers as tier 2 reads them, where tier 1 wrote them (the CPU's batch, or the
-/// device's buffers in shared memory): the starts (two readable slots past `nstarts`); the
+/// device's buffers in shared memory): the starts (two entries past `nstarts`, each the file's length, as
+/// simdjson's stage 1 ends its index: `Batch::end_streams`); the
 /// mask's words, word `i` at `lasts + i * lasts_stride` bytes, `nlasts` of them; output `o`'s
 /// words from `outputs + o * output_stride` bytes, a word every `lasts_stride`; total `t` the
 /// bits `totals_mask` of the 8 readable bytes at `totals + t * totals_stride`.
@@ -8585,10 +8588,11 @@ impl CompiledStream {
     fn run_raw(&self, bytes: &[u8], tier1: &crate::block::BlockRun, tape: &mut Tape) -> u64 {
         let mut padded = vec![0u8; bytes.len() + 65];
         padded[1..=bytes.len()].copy_from_slice(bytes);
+        // Each stream ended in two entries of the file's length, as the batch's (`Batch::end_streams`).
         let stream = |e: Option<usize>| -> (Vec<u32>, usize) {
             let mut v = e.map_or_else(Vec::new, |e| tier1.positions[e].clone());
             let n = v.len();
-            v.extend([0, 0]);
+            v.extend([bytes.len() as u32; 2]);
             (v, n)
         };
         let starts = stream(self.starts);

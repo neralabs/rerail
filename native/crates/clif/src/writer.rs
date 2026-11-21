@@ -300,18 +300,21 @@ mod ops {
 
     /// Every op declared in `module` with `linkage` and defined there, each calling the others by its id there (as
     /// `declare_func_in_func`): the JIT's (`jit::Writer`), and a module whose own code calls the ops (tier 2's,
-    /// decision 0434 §6, R17). Each op's id and signature, by name.
-    pub fn define_ops<M: cranelift_module::Module>(module: &mut M, linkage: cranelift_module::Linkage) -> Result<std::collections::HashMap<&'static str, (cranelift_module::FuncId, Signature)>, String> {
+    /// decision 0434 §6, R17). Each op's id and signature, by name. `near`: the module's code is in one arena, so a
+    /// call between the ops is a direct branch (`colocated`); else each is long-range, as a module's code can be
+    /// mapped farther apart than a branch reaches.
+    pub fn define_ops<M: cranelift_module::Module>(module: &mut M, linkage: cranelift_module::Linkage, near: bool) -> Result<std::collections::HashMap<&'static str, (cranelift_module::FuncId, Signature)>, String> {
         use cranelift_module::FuncId;
         // An op's call of another: the module's function of that name, by its id.
         struct ByName<'m> {
             ids: &'m std::collections::HashMap<&'static str, (FuncId, Signature)>,
+            near: bool,
         }
         impl Callee for ByName<'_> {
             fn func_ref(&mut self, name: &str, signature: &Signature, func: &mut Function) -> ir::FuncRef {
                 let name = func.declare_imported_user_function(ir::UserExternalName::new(0, self.ids[name].0.as_u32()));
                 let signature = func.import_signature(signature.clone());
-                func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: true })
+                func.import_function(ir::ExtFuncData { name: ir::ExternalName::User(name), signature, colocated: self.near })
             }
         }
         let cc = module.isa().default_call_conv();
@@ -323,7 +326,7 @@ mod ops {
         }
         for op in OPS {
             let id = ids[op.name].0;
-            let func = build(op, cc, UserFuncName::user(0, id.as_u32()), &mut ByName { ids: &ids });
+            let func = build(op, cc, UserFuncName::user(0, id.as_u32()), &mut ByName { ids: &ids, near });
             let mut context = module.make_context();
             context.func = func;
             module.define_function(id, &mut context).map_err(|e| format!("{}: {e:?}", op.name))?;

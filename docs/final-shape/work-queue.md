@@ -9561,6 +9561,48 @@ Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one
     not rewritten while it fails.
   - rerail-forest's five predict and procedure tests take 60-78 s each on the CPU backend.
 
+### Q446. Roll-ups 27-31 (five branches onto Pulling-it-all-together): what the merges chose, and what stays open
+
+- **Merged** (2026-11-21), each its pinned commit, smallest first:
+  - 27, cost-classifier-metal-rf at 9f451c11b2: its one commit was here already; the merge records it.
+  - 28, build-and-test-loop-time at c23de8f728: the farm dashboard's Windows card (farm 53), scripts only.
+  - 29, final-rerail-shape at 72464e680e: t50 step 5's index-probe spike (`setfix/runs/index_spike.rs`). The
+    join-lines log keeps ours' run-owned file (0442) under theirs' doc; the lab's device pass keeps ours' Linux gate
+    with theirs' `RERAIL_RELATIONAL_LAB_HOST_ONLY`.
+  - 30, final-rerail-shape-phased-facts at 12a217061f: 0494 step 6, 0342 amended (the blocks' free lists in the
+    ledger, buddies merged). 0494 keeps theirs' step 6 in its list, then ours' section on reads side by side.
+  - 31, Parser-generators-final-shape at 396842f60c: 0541-0546 (free numbers here; their text cites only 0526,
+    the same decision in both).
+- **Parser-generators, one shape from two**:
+  - The token's state is theirs' `T` (0542), a local of the one rule or passed from the entry. Ours' additions
+    from Swift-Kotlin-Scala (0431, 0451) read it there: the gap patterns (`gap_N`, `gaps_N`) and the token marks'
+    patterns (`pattern_N`, `patterns_N`) take the token or its `next`; `settle_before` and `lose` take the token;
+    a lost extra is made again with theirs' four-argument `leaf`.
+  - The grammar's names are one set, ours' `Names` (`name … ` rows). Theirs' `kindname` and `fieldname` rows
+    and `Words::kind_names`/`field_names` are gone; `Names` gained `fields` (`name field F "N"`), and theirs'
+    dispatch labels read `Structure::names`.
+  - Ours' named functions, words and kinds (`x.function`, `x.word`, `x.kind_field`), else-chains (`or_else`) and
+    `deeper()` stay. A call passes the token reborrowed (`&mut *t`), so the closure moves nothing.
+  - The writer's module is ours' `ops` (`w` is the words'): theirs' reserved-room ops (0544) and `fits` name it.
+  - Theirs' `near` for the writer's ops: a format 16 module is always one arena here, so it passes `near` there.
+  - `clif`'s `Writer` keeps ours' `builder()` reservation, with theirs' `near`.
+  - `rust.rs`'s graph triple is a named type (`Graph`), for clippy's `type_complexity` (its allow is gone too).
+- **Fixed on the way**: `rerail-kotlin-parser`'s tests did not compile. A merge had left
+  `a_constructor_off_its_modifiers_line_is_refused` in twice, the same test both times; one is gone.
+- **Checked**, held to the CPU (`RERAIL_GPU=cpu`, `RERAIL_DEVICE=cpu`; no Metal), on a Linux DGX Spark: clippy has no
+  finding in `rerail-compiler`, `-clif`, `-parser-tests`, `-blocks`, `-accel`, `-engine`, `-kotlin-aot` or `-kotlin-parser`. Tests:
+  `rerail-blocks` 72, `-accel` 88, `-clif` 17, `-compiler` 146, `-kotlin-parser` 44, the engine's plan tests 264
+  of 265 (the coverage gate, Q445), `-parser-tests` 89 of 93 at first, then the json test fixed.
+- **Open**, all on the CPU backend's device executors (the user, 2026-11-21: "we will address the CPU failures
+  later"):
+  - parser_tests' `extract_equals_reference_on_every_executor` (the Metal interpreter, 32-byte lanes, 768 bytes)
+    and `stage1_equals_simdjson_on_every_executor` (`edges.json`, the generated MSL, 16-byte lanes: the count
+    right, the indexes not). They fail the same way twice. Their positions are wrong where the file has several
+    groups, as in Q445's `a_files_start_on_metal_is_the_interpreters`, which still fails. No run showed whether
+    they passed before these merges.
+  - Q445's c_directives device reads and the coverage gate's `replace/3`.
+  - `aot_tests::grammars_rust_tapes_are_the_jits` takes 54-62 s.
+
 ---
 
 > **Read this first. This queue is not a place to put work.** Recording something here as open is almost never
