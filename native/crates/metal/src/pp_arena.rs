@@ -305,8 +305,9 @@ pub const GROUPS_MOST: u64 = 32;
 /// The groups of the persistent grid (decision 0468 §4): the device's resident count at the grid
 /// kernels' threadgroup memory (`Device::resident_groups`: its GPU cores, IORegistry's
 /// `gpu-core-count` on a Mac, times the groups a core holds), at most `GROUPS_MOST`; `GROUPS_UNKNOWN`
-/// with no count; 1 on the CPU. A run
-/// whose barrier fails runs again with half as many.
+/// with no count; 1 on the CPU. The groups dispatched: the grid is those of them that join it
+/// (`ukl_grid_join`, decision 0540 §3), so a count past residency costs groups that end at once,
+/// not a failed barrier.
 pub fn groups() -> u64 {
     *rerail_context::machine::<Groups>().0.get_or_init(|| {
         let Ok(device) = lane::device() else { return GROUPS_UNKNOWN };

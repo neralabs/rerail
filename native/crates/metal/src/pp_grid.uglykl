@@ -889,15 +889,17 @@
 #define PP_TG_BIG UKL_GRID_SORT_WORDS
 typedef struct PpTg {
     uint32_t flag;
+    // The group's ticket and the grid's count (`ukl_grid_join`).
+    uint32_t join[2];
     uint32_t scratch[UKL_TG_SCRATCH];
     uint32_t big[PP_TG_BIG];
 } PpTg;
 
-// The stage word of `GRID` (after the barrier's three): 0 the rounds, 1 the places' rounds,
-// 2 done.
-#define PG_STAGE (3u)
+// The stage word of `GRID` (after the grid's four: the barrier's three and the join's tickets,
+// `ukl/grid.h`): 0 the rounds, 1 the places' rounds, 2 done.
+#define PG_STAGE (4u)
 // Set where P1 ends the round before the expansion (requests, or a refusal: decision 0467 §1).
-#define PG_STOP (4u)
+#define PG_STOP (5u)
 
 // The rows of every grid kernel: the arena, the slab, the layout, the group's memory, and where
 // the thread is.
@@ -987,6 +989,8 @@ UKL_CALLED bool px_drain(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFF
 DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
 {
     PP_GRID_BEGIN
+    // The grid is the groups that run (decision 0540 §3): a group past the count's close ends here.
+    if (!ukl_grid_join(&g, gsz / lsz, tg->join)) return;
     stop = W(STOP);
     if (ukl_grid_failed(g)) return;
     uint32_t last = W(LAST);
@@ -1369,8 +1373,8 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
 }
 
 // The refusals, one thread: the rounds' (work left, or their bound reached: `X_QUEUE`), the
-// output's room, and a
-// failed barrier (the grid was not resident together: the host runs it again with fewer groups).
+// output's room, and a failed barrier (a wait past its bound, among the groups that joined the
+// grid: the host's run is `BackendFailure`).
 DEFINE_KERNEL2(pp, pp_check,
                RWBUFFER, uint8_t,  arena, "[arena]",
                ROBUFFER, uint32_t, lay,   "[slots]",

@@ -202,8 +202,8 @@ pub struct PpDir {
     pub chain: u32,
 }
 
-/// The front passes' stores, and the grid's own: its control words (`GRID`: the barrier's and
-/// the expansion's stage), the groups' sums its scans share (`SUMS`), and the run's layout.
+/// The front passes' stores, and the grid's own: its control words (`GRID`: the barrier's, the
+/// join's tickets and the expansion's stage), the groups' sums its scans share (`SUMS`), and the run's layout.
 pub struct Front {
     n: usize,
     nodes: bool,
@@ -369,7 +369,14 @@ impl Front {
         unsafe { *self.grid.host().cast::<u32>().add(2) != 0 }
     }
 
-    /// `pp_setup` over the arena, `groups` groups.
+    /// The groups that joined the run's grid (after it): the join's count, `GRID[3]` less its
+    /// closed bit (`UKL_GRID_CLOSED`).
+    pub fn joined(&self) -> u64 {
+        // SAFETY: the device finished writing the grid's words.
+        u64::from(unsafe { *self.grid.host().cast::<u32>().add(3) } & 0x7fff_ffff)
+    }
+
+    /// `pp_setup` over the arena, `groups` groups dispatched.
     pub fn setup<'a>(&'a self, enc: &Enc<'a>, arena: &'a Arena, unit: &'a Unit, groups: u64) {
         enc.run("pp_setup", &[("arena", arena), ("data", self.data(unit)), ("lay", &self.lay)], None, groups);
     }
@@ -428,26 +435,23 @@ pub fn run_timed_over<'a>(resident: &'a [Arc<crate::slabs::Slab>], f: impl FnOnc
 
 /// The front passes over `unit`, read back (`nodes`: each node as the device's reader gives it).
 pub fn evaluate(unit: &Unit, nodes: bool) -> Result<Evaluated, Error> {
-    let mut groups = crate::pp_arena::groups();
-    loop {
-        let arena = Arena::new();
-        let front = Front::new(&arena, unit, nodes, groups)?;
-        arena.lease()?;
-        let mut l = Lay::new();
-        front.lay(&mut l, TO_FRONT);
-        if on_grid(&arena, unit, &front, &l, groups)?.is_none() {
-            groups = fewer(groups)?;
-            continue;
-        }
-        return front.read();
-    }
+    let groups = crate::pp_arena::groups();
+    let arena = Arena::new();
+    let front = Front::new(&arena, unit, nodes, groups)?;
+    arena.lease()?;
+    let mut l = Lay::new();
+    front.lay(&mut l, TO_FRONT);
+    on_grid(&arena, unit, &front, &l, groups)?;
+    front.read()
 }
 
-/// Runs the persistent grid over the arena at `groups` groups, laid out as `l`, in one command
-/// buffer: `pp_setup` to the stage `l` names (the text pass is inside its P1 iterations,
-/// decision 0485), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and its GPU time in seconds, or
-/// `None` where a barrier failed (the grid's groups were not resident together).
-pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<Option<(usize, f64)>, Error> {
+/// Runs the persistent grid over the arena, `groups` groups dispatched, laid out as `l`, in one
+/// command buffer: `pp_setup` to the stage `l` names (the text pass is inside its P1 iterations,
+/// decision 0485), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and
+/// its GPU time in seconds. The grid is the groups that joined it (`ukl_grid_join`, decision 0540
+/// §3), so a barrier waits only for groups that run: one that fails ran out of its bound, and is
+/// `BackendFailure`, not a guess of residency to halve.
+pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) -> Result<(usize, f64), Error> {
     l.write(&front.lay);
     let all = l.get("LAST") == TO_ALL;
     let ran = run_timed_over(&unit.slabs, |enc| {
@@ -457,12 +461,7 @@ pub fn on_grid(arena: &Arena, unit: &Unit, front: &Front, l: &Lay, groups: u64) 
         }
         Ok(())
     })?;
-    Ok(if front.barrier_failed() { None } else { Some(ran) })
-}
-
-/// The groups of the next run after a barrier failed: half, and none past one.
-pub fn fewer(groups: u64) -> Result<u64, Error> {
-    if groups <= 1 { Err(Error::BackendFailure) } else { Ok(groups / 2) }
+    if front.barrier_failed() { Err(Error::BackendFailure) } else { Ok(ran) }
 }
 
 /// A name's key, as `pp_eval.uglykl`'s `name_key` makes it: its bytes 8 at a time, line splices
