@@ -43,6 +43,7 @@ import {
   startingDaemonNotice,
   STOP_ANSWERS,
   stopDaemon,
+  type DaemonLookup,
   type DaemonMachine,
   type DaemonState,
   type StopDaemonResult,
@@ -996,14 +997,23 @@ async function activeDaemon(context: SetupContext, port: number | undefined): Pr
   // The version directory, not the current link: the daemon and its SQLite binding belong to this install.
   const packageRoot = await realpath(registrationRoot(context));
   const lookup = await lookupDaemon(context.home);
-  if (lookup.status === "running" && await daemonUsesPackageRoot(lookup.state, packageRoot) && (port === undefined || lookup.state.port === port)) {
-    return lookup.state;
-  }
+  const kept = await keptDaemon(lookup, packageRoot, port);
+  if (kept !== undefined) return kept;
   if (autostartOff()) throw new Error(`RERAIL_AUTOSTART=${process.env.RERAIL_AUTOSTART} keeps set-up from starting it`);
   if (lookup.status === "running") await stopDaemon(context.home);
-  const listen = port ?? (lookup.status === "running" ? lookup.state.port : undefined);
-  const onWaiting = (pid: number): void => void process.stderr.write(`${startingDaemonNotice(pid, context.home)}\n`);
-  return (await startDaemon({ home: context.home, packageRoot, onWaiting }, { dev: false, ...(listen === undefined ? {} : { port: listen }) })).daemon.state;
+  return await startActiveDaemon(context.home, packageRoot, port ?? (lookup.status === "running" ? lookup.state.port : undefined));
+}
+
+/** The daemon `lookup` found, when set-up keeps it: running from `packageRoot`, and on `port` when one is named. */
+async function keptDaemon(lookup: DaemonLookup, packageRoot: string, port: number | undefined): Promise<DaemonState | undefined> {
+  if (lookup.status !== "running" || (port !== undefined && lookup.state.port !== port)) return undefined;
+  return await daemonUsesPackageRoot(lookup.state, packageRoot) ? lookup.state : undefined;
+}
+
+/** Starts the daemon of `packageRoot` in `home`, on `port` when one is named, saying so while it waits for one still in its start. */
+async function startActiveDaemon(home: string, packageRoot: string, port: number | undefined): Promise<DaemonState> {
+  const onWaiting = (pid: number): void => void process.stderr.write(`${startingDaemonNotice(pid, home)}\n`);
+  return (await startDaemon({ home, packageRoot, onWaiting }, { dev: false, ...(port === undefined ? {} : { port }) })).daemon.state;
 }
 
 /** `<origin>/?repository=<key>&checkout=<path>#<page>`: the page, scoped to the repository and checkout set-up ran for. */
