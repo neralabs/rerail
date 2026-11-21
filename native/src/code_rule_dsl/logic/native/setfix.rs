@@ -1968,6 +1968,33 @@ struct Spent { work: u64, left: Option<Option<Rows0>>, done: u64, led: bool }
 /// did under it, handed back.
 struct Limited { limit: Option<Limit>, spent: Option<Spent> }
 
+impl Limited {
+    /// Decision 0206: probe `p`'s limit for a run of its join `j`: its budget, and where the run goes on from a cut,
+    /// the rows the cut left (`left`, with the step it named), read at the step of `j` that reads them now
+    /// (`restricted`). `None` where neither holds.
+    fn of(p: &ProbeRule, j: &JoinRule, left: Option<(Option<usize>, Rows0)>) -> Option<Limited> {
+        let only = left.and_then(|(named, l)| match restricted(j, l.of, named) {
+            Some(i) => { run_counts().cuts[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed); Some((i, l)) }
+            // At a step no longer known: the run reads all its rows.
+            None => { run_counts().cuts[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed); None }
+        });
+        let budget = p.budget.get();
+        (budget.is_some() || only.is_some()).then(|| Limited { limit: Some(Limit { budget: budget.unwrap_or(u64::MAX), only }), spent: None })
+    }
+
+    /// After probe `pi`'s run under `limited` (`of`): its budget less the work it spent, and where it spent it all,
+    /// its cut: the rows of its first step it left, and the cut's report (`left` is filled in by the caller).
+    fn cut(limited: Option<Limited>, p: &ProbeRule, pi: usize, whole: bool) -> Option<(Option<Rows0>, CutReport)> {
+        let b = p.budget.get()?;
+        let spent = limited?.spent?;
+        p.budget.set(Some(b.saturating_sub(spent.work)));
+        let left = spent.left?;
+        p.budget.set(None);
+        run_counts().cuts[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        Some((left, CutReport { probe: pi, work: spent.work, done: spent.done, left: 0, led: spent.led, whole }))
+    }
+}
+
 /// A gated negation's `done` relation, fed from `src` (its demand) once `quiet` is: `passed` src rows so far.
 struct Gate { done: usize, src: Option<usize>, quiet: Vec<usize>, after: Vec<usize>, passed: usize }
 
@@ -2488,17 +2515,41 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         closure_ran = Some(closure::finish(&cl, prep, outs, &mut guard));
         drop(guard);
         comp.closure = Some(cl);
-    } else if !seeded && comp.cut.is_none() && let Some(cl) = comp.closure.take() {
+    } else if !seeded && let Some(cl) = comp.closure.take() {
+        // Its seeds first, each under its budget as any seed is (decision 0206): one that spends it is cut, and the
+        // run returns `5`; the next goes on from the rows it left, then runs the closure. Run unlimited, a seed that
+        // read 41 M rows a stratum (corpus0's `open_tuple`, 2026-11-21) was never checked against its price.
+        let resume = comp.cut.take();
+        let start = resume.as_ref().map_or(0, |c| c.next);
+        let mut resume_left = resume.as_ref().and_then(|c| c.left.clone().map(|l| (c.step, l)));
+        let mut fresh: Vec<Fresh> = match resume { Some(c) => c.fresh, None => vec![Fresh::default(); nrels] };
         let mut guard = comp.store.write().unwrap();
         let store = &mut *guard;
         let syms = &mut cursor;
-        let mut fresh: Vec<Fresh> = vec![Fresh::default(); nrels];
+        let mut cut_at: Option<(usize, Option<Rows0>, CutReport)> = None;
         for (pi, p) in comp.probes.iter().enumerate() {
             let (Body::Join(j), SEED) = (&p.body, p.delta) else { continue };
+            if pi < start { continue; }
             runs += 1;
-            let n = run_seed(j, p.head, store, syms, &mut fresh, None)?;
+            let mut limited = Limited::of(p, j, if pi == start { resume_left.take() } else { None });
+            let n = run_seed(j, p.head, store, syms, &mut fresh, limited.as_mut())?;
             visits += n;
             per[pi].1 += n;
+            if let Some((left, report)) = Limited::cut(limited, p, pi, false) {
+                cut_at = Some((pi, left, report));
+                break;
+            }
+        }
+        if let Some((next, left, mut report)) = cut_at {
+            report.left = left.as_ref().map_or(0, |l| l.n);
+            drop(guard);
+            comp.cut = Some(Cut { fresh, next, left, step: Some(0), on_device: false, whole: false });
+            comp.last_cut = Some(report);
+            comp.trial_rows = None;
+            comp.closure = Some(cl);
+            let per: Vec<String> = per.iter().map(|(t, n, c)| format!("{:.1}:{n}:{:.3}", t * 1e3, c * 1e3)).collect();
+            let ms = t0.elapsed().as_secs_f64() * 1e3;
+            return Ok(format!("0 0 {visits} {runs} {skips} {ms:.1} {ms:.1} {} 5", per.join(",")));
         }
         let k = store.rels[0].k;
         store.rels[0].reserve(fresh[0].n);
@@ -2758,13 +2809,7 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             let c0 = cpu_now();
             // Decision 0206: a probe's budget (a seed's, a delta probe's or its whole plan's, O168), and the rows it
             // has left after a cut.
-            let budget = p.budget.get();
-            let only = if pi == start { resume_left.take().and_then(|(named, l)| match restricted(j, l.of, named) {
-                Some(i) => { run_counts().cuts[1].fetch_add(1, std::sync::atomic::Ordering::Relaxed); Some((i, l)) }
-                // At a step no longer known: the run reads all its rows.
-                None => { run_counts().cuts[2].fetch_add(1, std::sync::atomic::Ordering::Relaxed); None }
-            }) } else { None };
-            let mut limited = (budget.is_some() || only.is_some()).then(|| Limited { limit: Some(Limit { budget: budget.unwrap_or(u64::MAX), only }), spent: None });
+            let mut limited = Limited::of(p, j, if pi == start { resume_left.take() } else { None });
             let ran = if p.delta == SEED { run_seed(j, p.head, store, syms, &mut fresh, limited.as_mut()) } else { run_join_limited(j, p.head, store, syms, &mut fresh, limited.as_mut()) };
             // Decision 0462: a head at the width cap. Cut, the probe keeps what it made and derives no more; else the
             // run stops, its error naming the relation and the probe (the driver adds its rule).
@@ -2778,13 +2823,8 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
                 }
                 Err(e) => return Err(e),
             };
-            if let Some(b) = budget && let Some(spent) = limited.and_then(|l| l.spent) {
-                p.budget.set(Some(b.saturating_sub(spent.work)));
-                if let Some(left) = spent.left {
-                    p.budget.set(None);
-                    run_counts().cuts[0].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                    cut_at = Some((pi, left, CutReport { probe: pi, work: spent.work, done: spent.done, left: 0, led: spent.led, whole }));
-                }
+            if let Some((left, report)) = Limited::cut(limited, p, pi, whole) {
+                cut_at = Some((pi, left, report));
             }
             visits += n;
             per[pi].0 += tp.elapsed().as_secs_f64();
