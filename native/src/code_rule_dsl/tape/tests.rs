@@ -2308,7 +2308,6 @@ fn json_tapes_from_the_bitlex_parser_are_tree_sitters() {
 
 /// A JSON file's tape from simdjson, and from tree-sitter-json: `Err` with simdjson's reason where it
 /// refuses the file (`Ok` of each tape's bytes otherwise).
-#[cfg(not(all(windows, target_env = "msvc")))]
 fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     let grammar = Grammar::new(GrammarDialect::Json).unwrap();
     let ours = crate::code_rule_dsl::transducer::packed::json_parser::simdjson::encode(
@@ -2327,9 +2326,7 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
     // A trailing comma is passed over (JSONC, as TypeScript reads it): tree-sitter-json's tape of the text
     // without it, which is as long.
     let text =
-        crate::code_rule_dsl::transducer::packed::json_parser::fallback::without_trailing_commas(
-            source,
-        );
+        without_trailing_commas(source);
     let tree = parser.parse(&text, None).unwrap();
     let theirs = TapeImage::encode(tree.root_node(), &grammar, &text, &|| false)
         .unwrap()
@@ -2342,7 +2339,6 @@ fn simdjson_tapes(source: &str) -> Result<(Vec<u8>, Vec<u8>), String> {
 /// The product reads JSON with simdjson: a JSON file's image through the engine's parse
 /// (`TapeImage::parse`, the parsers the library installs as it loads) is simdjson's, its digest the
 /// one simdjson's stage 1 computed (the source's SHA-256); a file simdjson refuses goes to tree-sitter-json.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 fn the_product_reads_json_with_simdjson() {
     format_15();
@@ -2417,7 +2413,6 @@ fn the_lean_parsers_are_their_languages_top_tier() {
 /// The parser router takes, for each dialect, the best implementation this host runs: for JSON the first
 /// kernel `Kernel::ALL` lists that this CPU runs; each other implementation this CPU runs writes the same
 /// tape, the DOM parser and the index writer included.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 fn the_router_takes_the_best_json_parser_this_cpu_runs() {
     let routes: Vec<_> = parser_routes()
@@ -2476,7 +2471,6 @@ fn the_router_takes_the_best_json_parser_this_cpu_runs() {
 /// fields, spans and the `_value` supertype, on hand-written cases and on every `.json` file of the
 /// repository simdjson accepts. What it refuses (comments, a trailing comma, invalid JSON) goes to
 /// tree-sitter-json; the refused files are only counted.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 fn json_tapes_from_simdjson_are_tree_sitters() {
     format_15();
@@ -2610,110 +2604,53 @@ fn json_tapes_from_simdjson_are_tree_sitters() {
     assert!(equal > 1000, "{equal} files");
 }
 
-/// MSVC's JSON parser (`json_parser::fallback`: the Bitlex parser, then tree-sitter-json past trailing commas, then
-/// tree-sitter-json) reads every file as simdjson's route does where simdjson builds: the same image, byte for byte,
-/// and the same digest, or the same refusal. Over the cases `json_tapes_from_simdjson_are_tree_sitters` reads, every
-/// `.json` file of the repository, and the files `RERAIL_JSON_FILES` lists (one path a line), when set.
-#[cfg(not(all(windows, target_env = "msvc")))]
-#[test]
-fn the_msvc_json_fallback_reads_as_simdjson_does() {
-    use crate::code_rule_dsl::transducer::packed::json_parser::fallback::Fallback;
-    assert!(
-        tree_parser(GrammarDialect::Json).is_some(),
-        "JSON's parser is installed"
-    );
-    let grammar = Grammar::new(GrammarDialect::Json).unwrap();
-    let image = |parsed: Option<Result<FileImage, String>>| {
-        parsed.map(|r| r.map(|f| (f.primary.to_bytes().unwrap(), f.primary.source_digest)))
-    };
-    let fallback = |source: &str| match Fallback.parse(&grammar, source, &|| false) {
-        Some(Ok(image)) => Some(Ok(image)),
-        Some(Err(TemplateError::Parser(_))) => None,
-        Some(Err(TemplateError::Encode(error))) => Some(Err(error)),
-        // tree-sitter-json, as the router leaves the file to it.
-        None => {
-            let mut parser = tree_sitter::Parser::new();
-            parser
-                .set_language(&GrammarDialect::Json.get_ts_language())
-                .unwrap();
-            let tree = parser.parse(source, None)?;
-            Some(TapeImage::encode(
-                tree.root_node(),
-                &grammar,
-                source,
-                &|| false,
-            ))
+/// `source` with a space for each trailing comma (a `,` after a value and before `]` or `}`, comments between),
+/// outside strings and comments: the text whose tree-sitter-json tape a JSONC file's simdjson tape is (decision
+/// 0158). A comma with no value before it (`{,}`, `[1,,]`) stays: simdjson refuses the file.
+fn without_trailing_commas(source: &str) -> String {
+    let b = source.as_bytes();
+    let mut out = b.to_vec();
+    // The last byte outside strings, comments and whitespace (a string's closing quote for a string).
+    let mut last = None;
+    // The end of the string, comment or whitespace run at `i`, or `i` where none starts there.
+    let skip = |i: usize| -> usize {
+        match (b[i], b.get(i + 1)) {
+            (b'/', Some(b'/')) => b[i..].iter().position(|&c| c == b'\n').map_or(b.len(), |n| i + n),
+            (b'/', Some(b'*')) => source[i + 2..].find("*/").map_or(b.len(), |n| i + 2 + n + 2),
+            (c, _) if c.is_ascii_whitespace() => i + 1,
+            _ => i,
         }
     };
-    let mut sources: Vec<(String, String)> = [
-        "{}", "[]", "null\n", "true", " -0.5e-3 ", "\"\"", "{\"a\": 1, \"b\": [true, false, null], \"c\": {\"d\": \"e\\n\\u00e9\"}}\n",
-        "[1, -2.5e10, 0, 3.0E-2]", "\u{feff}{\"bom\": true}", "{\"nested\": [[[{\"x\": [1, {\"y\": []}]}]]]}", "  \n\t{ \"spaced\" :\t[ 1 ,2 ] }  \n",
-        "[\"\\\\\", \"\\\\\\\"\", \"a\\tb\\u0041c\", \"\\ud83d\\ude00\", \"é \\/ ü\", \"  \"]", "{\"\": {\"\": []}, \"k\\\"\": \"v\"}", "[[],{},[{}],{\"a\":[]}]\r\n",
-        "// c\n{}", "// a\n{ /*b*/ \"k\" /*c*/ : /*d*/ 1 /*e*/ , /*f*/ \"j\": [ /*g*/ 2 /*h*/ , 3 /*i*/ ] /*j*/ } // k\n",
-        "{\"a\": {} /*x*/, \"b\": [ /*y*/ ], \"c\": { /*z*/ }}", "{\"a\": 1 // c\r\n}", "/* a **/ /** b */1", "\u{feff}// x\n{}", "1 // eof",
-        "[\"/*x*/\", 1] /* a \" quote */", "{\n  // The compiler's options.\n  \"compilerOptions\": {\n    \"strict\": true, // always\n    /* \"lib\": [\"dom\"], */\n    \"target\": \"es2022\"\n  }\n}\n",
-        "[1,]", "{\"a\": 1,}", "// c\n{\"a\": 1,}", "[[1,],]", "{\"a\": {\"b\": 1,},}", "[{\"a\": 1},\n]", "[\"x\", // c\n]",
-        "{\"a\": [1, 2,], \"b\": 3, /* last */ }", "{\n  \"compilerOptions\": {\n    \"strict\": true,\n    \"lib\": [\"es2022\", \"dom\",],\n  },\n}\n",
-        "{", "{\"a\" 1}", "tru", "", "[1,,]", "[,1]", "{,}", "// c\n{\"a\": 1,,}", "[1 / 2]", "/* open", "1e+2", "[1.5E+3]",
-    ]
-    .into_iter()
-    .map(|s| (format!("{s:?}"), s.to_owned()))
-    .collect();
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
-    let mut work = vec![root];
-    while let Some(dir) = work.pop() {
-        let Ok(entries) = std::fs::read_dir(&dir) else {
+    let mut i = 0;
+    while i < b.len() {
+        if b[i] == b'"' {
+            i += 1;
+            while i < b.len() && b[i] != b'"' {
+                i += if b[i] == b'\\' { 2 } else { 1 };
+            }
+            i += 1;
+            last = Some(b'"');
             continue;
-        };
-        for e in entries.flatten() {
-            let p = e.path();
-            let skip = p.file_name().is_some_and(|n| {
-                [".git", "target", "node_modules"].contains(&n.to_string_lossy().as_ref())
-            });
-            if p.is_dir() && !skip {
-                work.push(p);
-            } else if p.extension().is_some_and(|x| x == "json")
-                && e.metadata().is_ok_and(|m| m.len() <= 1 << 20)
-            {
-                sources.extend(
-                    std::fs::read_to_string(&p)
-                        .ok()
-                        .map(|s| (p.display().to_string(), s)),
-                );
+        }
+        let after = skip(i);
+        if after != i {
+            i = after;
+            continue;
+        }
+        if b[i] == b',' {
+            let mut j = i + 1;
+            while j < b.len() && skip(j) != j {
+                j = skip(j);
+            }
+            if j < b.len() && matches!(b[j], b']' | b'}') && last.is_some_and(|c| !matches!(c, b'{' | b'[' | b',')) {
+                out[i] = b' ';
             }
         }
+        last = Some(b[i]);
+        i += 1;
     }
-    if let Some(list) = std::env::var_os("RERAIL_JSON_FILES") {
-        for path in std::fs::read_to_string(list)
-            .unwrap()
-            .lines()
-            .filter(|l| !l.is_empty())
-        {
-            sources.extend(
-                std::fs::read_to_string(path)
-                    .ok()
-                    .map(|s| (path.to_owned(), s)),
-            );
-        }
-    }
-    let mut differ = Vec::new();
-    for (name, source) in &sources {
-        if image(TapeImage::parse(&grammar, source, &|| false)) != image(fallback(source)) {
-            differ.push(name.clone());
-        }
-    }
-    eprintln!(
-        "{} sources: {} read alike, {} differ",
-        sources.len(),
-        sources.len() - differ.len(),
-        differ.len()
-    );
-    assert!(sources.len() > 1000, "{} sources", sources.len());
-    assert!(
-        differ.is_empty(),
-        "MSVC's JSON parser reads these unlike simdjson's route:\n{}",
-        differ.join("\n")
-    );
+    // Only an ASCII comma became a space: the bytes are still the source's UTF-8.
+    String::from_utf8(out).expect("UTF-8")
 }
 
 /// [`json_tapes_from_the_bitlex_parser_are_tree_sitters`] over files: `RERAIL_JSON_FILES`, a file
@@ -2769,7 +2706,6 @@ fn json_tapes_over_files() {
 /// a line (say a `node_modules`' `.json` files, its `tsconfig.json`s with comments). Each file simdjson
 /// reads, strictly or as JSONC, has tree-sitter-json's tape; what it refuses is counted, by whether it
 /// has a comment.
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 #[ignore = "needs files: run by name with RERAIL_JSON_FILES"]
 fn simdjson_tapes_over_files() {
@@ -2896,7 +2832,6 @@ fn direct_facts_reject_corruption_through_the_shared_admission_contract() {
 /// What reading the repository's JSON costs, in instructions retired and thread CPU time, over the files
 /// both simdjson and the Bitlex parser accept: each parser's parse, and its tape (the product's path).
 /// With `RERAIL_JSON_COST_LOOP` set to a step's name, runs that step alone for 20 s (for a profiler).
-#[cfg(not(all(windows, target_env = "msvc")))]
 #[test]
 #[ignore = "a measurement: run by name with --nocapture"]
 fn json_parse_costs() {
@@ -7673,8 +7608,7 @@ fn a_file_stored_in_each_format_reads_back_as_format_15() {
 #[test]
 fn the_lean_parsers_write_each_format_directly() {
     use super::formats::{Format, as_run};
-    #[cfg(not(all(windows, target_env = "msvc")))]
-    use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
+        use crate::code_rule_dsl::transducer::packed::json_parser::simdjson as json_simdjson;
     use rerail_tape_format::tape::Tape;
     type Encode = fn(&Grammar, &str) -> Result<TapeImage, String>;
     fn lean<R: std::fmt::Debug>(
@@ -7707,8 +7641,7 @@ fn the_lean_parsers_write_each_format_directly() {
     ];
     // simdjson's kernel (decision 0434): strict JSON, and JSONC with its comments and a trailing comma. Not on MSVC,
     // which builds no simdjson.
-    #[cfg(not(all(windows, target_env = "msvc")))]
-    cases.extend::<[(GrammarDialect, String, Encode); 2]>([
+        cases.extend::<[(GrammarDialect, String, Encode); 2]>([
         (GrammarDialect::Json, format!("[{}{{}}]", many("{\"k{i}\": [{i}, \"s\\n{i}\", true, null, {}, []], \"\": \"\"},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
         (GrammarDialect::Json, format!("// head\n[{}1,]", many("/* {i} */ {\"k\": {i}, // c\n\"v\": {/* in */}},\n")), |g, s| lean(json_simdjson::encode(g, s, &|| false))),
     ]);

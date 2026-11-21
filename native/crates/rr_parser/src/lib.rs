@@ -3397,8 +3397,6 @@ mod json_probe {
     /// `RERAIL_JSON_ASM=<path>`, its machine code.
     #[test]
     #[ignore = "a benchmark: run by hand"]
-    // Against simdjson, which does not build on MSVC (`rerail-simdjson`).
-    #[cfg(not(all(windows, target_env = "msvc")))]
     fn json_tier1_by_pass() {
         use rerail_compiler::records::Split;
         let retired = rerail_compiler::native_cpu_codegen::retired;
