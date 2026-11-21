@@ -114,16 +114,17 @@ const PROBER = `
 const { engineCapabilityProof } = await import(process.argv[1]);
 process.stdout.write(JSON.stringify({ answer: await engineCapabilityProof(process.argv[2], "capability", 1000) }) + "\\n");`;
 /**
- * {@link PROBER} whose proof's limit never runs out, so its answer is the listener's however late the listener writes
- * it: the one timer the proof sets is its limit, and this process keeps it from being set. It prints `asked` as the
- * proof sets it, once the proof has connected and made its request, and then the answer and how many timers the proof
- * set.
+ * {@link PROBER} whose proof's limit is `process.argv[3]` ms, so its answer is the listener's however late, within that,
+ * the listener writes it. The one timer the proof sets is its limit: this process counts the timers it sets, still
+ * setting each, and prints `asked` as the proof sets it, once the proof has connected and made its request; then the
+ * answer and how many timers the proof set. A limit the proof left pending after its verdict keeps the process alive.
  */
 const HELD_LIMIT_PROBER = `
 const { engineCapabilityProof } = await import(process.argv[1]);
+const set = globalThis.setTimeout;
 let limits = 0;
-globalThis.setTimeout = () => { limits += 1; process.stdout.write("asked\\n"); };
-const answer = await engineCapabilityProof(process.argv[2], "capability", 1000);
+globalThis.setTimeout = (...args) => { limits += 1; process.stdout.write("asked\\n"); return set(...args); };
+const answer = await engineCapabilityProof(process.argv[2], "capability", Number(process.argv[3]));
 process.stdout.write(JSON.stringify({ answer, limits }) + "\\n");`;
 /**
  * A process that asks the engine on a pipe for one proof with a 2 s limit, and prints the answer, how many tries the
@@ -289,6 +290,8 @@ async function holderThatNeverReads(name: string, answer?: string): Promise<{ an
     stdio: ["pipe", "pipe", "inherit"], windowsHide: true,
   });
   children.push(holder);
+  // A holder that has exited takes no input: the write in `answer()` then fails with EPIPE, and `line()` says it ended.
+  holder.stdin!.on("error", () => undefined);
   const line = linesOf(holder);
   expect(await line()).toMatch(/^listening/u);
   return {
@@ -317,7 +320,7 @@ async function proveInAnotherProcess(path: string): Promise<{ answer: unknown; r
  * printed, and how long its process ran on after it answered, up to {@link HELD_MS}.
  */
 async function proveOnceAsked(path: string, holder: { answer: () => Promise<void> }): Promise<{ printed: unknown; ranOnMs: number }> {
-  const prober = startNode(HELD_LIMIT_PROBER, [PROOF_MODULE, path], true);
+  const prober = startNode(HELD_LIMIT_PROBER, [PROOF_MODULE, path, String(HELD_LIMIT_MS)], true);
   const closed = once(prober, "close");
   const line = linesOf(prober);
   expect(await line(), "the prober's word once its proof has asked").toBe("asked");
@@ -440,10 +443,10 @@ describe.runIf(process.platform === "win32")("the engine proof, against a pipe's
     expect(ranOnMs).toBeLessThan(SLACK_MS);
   }, 45_000);
 
-  // A holder that answers leaves the request's write pending: only destroying the request at the verdict cancels it.
-  // The holder answers only once the proof has asked, and the proof's limit never runs out, so the verdict is the
-  // holder's answer however long PowerShell takes to write it: a limit running beside the holder would answer silent
-  // whenever PowerShell wrote after it.
+  // A holder that answers leaves the request's write pending: only destroying the request at the verdict cancels it,
+  // and only clearing the limit at the verdict leaves no timer to hold the process. The holder answers only once the
+  // proof has asked, within a limit no case reaches, so the verdict is the holder's answer however long PowerShell
+  // takes to write it: a 1 s limit running beside the holder would answer silent whenever PowerShell wrote after it.
   it("leaves its process free to end once it has a verdict, also when the holder answers before it reads the request", async () => {
     const name = pipeName("answered");
     const holder = await holderThatNeverReads(name, "HTTP/1.1 403 Forbidden\r\ncontent-length: 0\r\n\r\n");
