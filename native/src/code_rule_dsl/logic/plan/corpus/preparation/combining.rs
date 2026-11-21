@@ -587,8 +587,17 @@ impl ProgramPass for FoldOwn<'_> {
         let narrowing = Narrowing { widened: &originals, asking: asking(v) };
         let read = narrowing.reads(v, &folded);
         let (narrow, wide) = (i64::from(RUN_VALUE_KEYS), i64::from(HIDDEN_KEYS));
+        let within = one_document(v, &f, &read, &narrowing, &folded, [narrow, narrow << 32])?;
+        // Each such copy's columns and the node columns it bounds.
+        let filters: Vec<(String, usize, Vec<usize>)> = within
+            .iter()
+            .filter_map(|rel| {
+                let cols = f.columns(rel)?;
+                Some((rel.clone(), cols.len(), (0..cols.len()).filter(|&c| cols[c].1 == "node").collect()))
+            })
+            .collect();
         let plain = format!("{label}:");
-        let mut rules = Folding { folded: &folded, axes: &axes, sets: &sets, originals: &originals, narrowing: &narrowing, read: &read, narrow, wide, plain: &plain };
+        let mut rules = Folding { folded: &folded, axes: &axes, sets: &sets, originals: &originals, narrowing: &narrowing, read: &read, within: &within, filters, narrow, wide, plain: &plain };
         w.derive()?;
         w.apply(cx, &mut rules, &crate::code_rule_dsl::logic::program_image::manager::Select::All)?;
         // The fields edited in the same derivation.
@@ -623,7 +632,7 @@ impl ProgramPass for FoldOwn<'_> {
             .collect();
         qualifiers.extend(narrowed);
         b.fields().set_about_rows("qualifier", qualifiers);
-        declare_narrow(v, b, &read, &narrowing)?;
+        declare_narrow(v, b, &read, &within, &narrowing)?;
         // The request record's readers (`hiding::fold_own`'s `rename_readers`, decision 0331).
         b.rename_asked_readers(&|r| folded.get(r).cloned());
         for about in ["kindset", "kindset_kind"] {
@@ -690,6 +699,10 @@ struct Folding<'a> {
     narrowing: &'a Narrowing<'a>,
     /// The originals kept narrow for the rules that read them narrow (`Narrowing::reads`).
     read: &'a BTreeSet<String>,
+    /// Those whose narrow copy is their rows under the narrow bound (`one_document`), not their rules again.
+    within: &'a BTreeSet<String>,
+    /// Each of `within`'s columns' count, and its node columns, bounded in its copy.
+    filters: Vec<(String, usize, Vec<usize>)>,
     narrow: i64,
     wide: i64,
     plain: &'a str,
@@ -718,7 +731,7 @@ impl RulePass for Folding<'_> {
                 _ => {}
             }
         }
-        let copy = self.read.contains(head);
+        let copy = self.read.contains(head) && !self.within.contains(head);
         if !rw.changed && !copy {
             return Ok(Step::Keep);
         }
@@ -738,6 +751,21 @@ impl RulePass for Folding<'_> {
         }
         Ok(step)
     }
+    /// The narrow copy of each original within one document (`one_document`): its rows whose nodes are under the narrow
+    /// bound, `rr_narrow_<orig>(c0, …) :- <orig>(c0, …), $c < RUN_VALUE_KEYS << 32` for each node column `c`.
+    fn finish(&mut self, _cx: &Cx<'_>, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>) -> Result<()> {
+        for (rel, width, nodes) in &self.filters {
+            let names: Vec<String> = (0..*width).map(|c| format!("rr_c{c}")).collect();
+            let args: Vec<T<'_>> = names.iter().map(|n| T::Var(n)).collect();
+            let head = narrow_name(rel);
+            let mut rule = b.rule().head(head.as_str(), &args).atom(rel.as_str(), &args);
+            for &c in nodes {
+                rule = rule.cmp(T::Var(&names[c]), CmpOp::Lt, T::Int(self.narrow << 32));
+            }
+            rule.finish()?;
+        }
+        Ok(())
+    }
 }
 
 /// The name of `orig` as hiding left it, for the rules that read it and are not its own (`Narrowing`).
@@ -754,6 +782,162 @@ fn annotated(folded: &HashMap<String, String>) -> BTreeSet<String> {
         mid.starts_with("annotation_") || mid.contains("_annotation_")
     };
     folded.iter().filter(|(copy, orig)| for_annotation(copy, orig)).map(|(_, orig)| orig.clone()).collect()
+}
+
+/// The originals kept narrow (`read`) whose narrow copy is the widened original's rows under the narrow bound, not its
+/// rules made again. Every row of such an original is of one document and made from that document's rows alone: for
+/// each rule,
+/// - its head has a node column, and every location it holds is of one document, joined through positive atoms whose
+///   rows are each of one document (a base relation's locations, `hide::located`, but a guest's, which join documents;
+///   a relation found so; `nearest`; an equality);
+/// - each bound of its own (`$x < RUN_VALUE_KEYS`, a node's or a document's) is of that document;
+/// - each read of an original kept narrow (positive, negated or aggregated) is of one found so, at a location of that
+///   document.
+///
+/// Widened, such a rule makes in a document under the narrow bound the rows it made there before: its bounds hold
+/// there, the originals it reads hold there what they held, and every other relation is the same in both. Its copy
+/// holds no row of a document over the bound, which a rule that reads no annotation would not see alone. A row joined
+/// to another document by a value (`pair(n) :- e(n), text(n, t), asg(m), text(m, t)`), or bounded in another one, is
+/// made again (#923's RUF060 beside C417); so is one whose original would read its own copy once the fold is done (a
+/// cycle through the copy), and a native operator's, a lattice's or one with facts, which its copy repeats
+/// (`declare_narrow`).
+fn one_document(v: &Version, f: &Fields<'_>, read: &BTreeSet<String>, narrowing: &Narrowing<'_>, folded: &HashMap<String, String>, bounds: [i64; 2]) -> Result<BTreeSet<String>> {
+    if read.is_empty() {
+        return Ok(BTreeSet::new());
+    }
+    let natives = v.native_map()?;
+    let lattice = v.lattice_decls()?;
+    let (_, base) = super::hide::bases(v);
+    let name = |a: AtomRef<'_>| -> &str {
+        let r = v.rel_name(a.rel());
+        folded.get(r).map_or(r, String::as_str)
+    };
+    let mut rules_of: BTreeMap<&str, Vec<RuleRef<'_>>> = BTreeMap::new();
+    for r in v.rules() {
+        let head = v.rel_name(r.head().rel());
+        if !folded.contains_key(head) {
+            rules_of.entry(head).or_default().push(r);
+        }
+    }
+    let node = |rel: &str, c: usize| f.column_type(rel, c) == Some("node");
+    let place = |rel: &str, c: usize| matches!(f.column_type(rel, c), Some("node" | "loc"));
+    let var = |t: TermRef<'_>| match t {
+        TermRef::Var(s) => Some(s.0 as usize),
+        _ => None,
+    };
+    fn find(uf: &mut [usize], x: usize) -> usize {
+        let mut x = x;
+        while uf[x] != x {
+            uf[x] = uf[uf[x]];
+            x = uf[x];
+        }
+        x
+    }
+    fn join(uf: &mut [usize], vars: &[usize]) {
+        for w in vars.windows(2) {
+            let (x, y) = (find(uf, w[0]), find(uf, w[1]));
+            uf[x] = y;
+        }
+    }
+    // Whether rule `r` keeps each row in one document (and, `narrowed`, makes it from that document's rows, bounded
+    // there), where the relations in `ok` keep theirs.
+    let holds = |r: RuleRef<'_>, narrowed: bool, ok: &BTreeSet<&str>| -> bool {
+        let mut uf: Vec<usize> = (0..r.var_count()).collect();
+        for l in r.body() {
+            match l.view() {
+                Lit::Atom(a) if !a.neg() => {
+                    let rel = name(a);
+                    let args: Vec<TermRef<'_>> = a.args().collect();
+                    let vars: Vec<usize> = if rules_of.contains_key(rel) {
+                        if !ok.contains(rel) {
+                            continue;
+                        }
+                        (0..args.len()).filter(|&c| place(rel, c)).filter_map(|c| var(args[c])).collect()
+                    } else {
+                        if super::super::guests::READS.contains(&rel) || natives.contains_key(rel) {
+                            continue;
+                        }
+                        let (cols, document) = super::hide::located(rel, &base);
+                        cols.iter().copied().chain(document).filter_map(|c| args.get(c).copied().and_then(var)).collect()
+                    };
+                    join(&mut uf, &vars);
+                }
+                Lit::Nearest { n, a, .. } => join(&mut uf, &[n.0 as usize, a.0 as usize]),
+                Lit::Cmp { op: CmpOp::Eq, l: TermRef::Var(x), r: TermRef::Var(y) } => join(&mut uf, &[x.0 as usize, y.0 as usize]),
+                _ => {}
+            }
+        }
+        let head = r.head();
+        let hrel = v.rel_name(head.rel());
+        // A node column to bound its copy's rows by; every location it holds of one document.
+        if !(0..head.args().count()).any(|c| node(hrel, c)) {
+            return false;
+        }
+        let mut doc = None;
+        for (_, t) in head.args().enumerate().filter(|&(c, _)| place(hrel, c)) {
+            let Some(x) = var(t) else { return false };
+            let x = find(&mut uf, x);
+            if doc.is_some_and(|d| d != x) {
+                return false;
+            }
+            doc = Some(x);
+        }
+        let Some(doc) = doc else { return false };
+        if !narrowed {
+            return true;
+        }
+        r.body().all(|l| match l.view() {
+            Lit::Cmp { op: CmpOp::Lt, l: left, r: TermRef::Int(b) } if bounds.contains(&b) => var(left).is_some_and(|x| find(&mut uf, x) == doc),
+            Lit::Atom(a) | Lit::Agg { atom: a, .. } => {
+                let rel = name(a);
+                !read.contains(rel) || ok.contains(rel) && a.args().enumerate().any(|(c, t)| place(rel, c) && var(t).is_some_and(|x| find(&mut uf, x) == doc))
+            }
+            _ => true,
+        })
+    };
+    // The greatest set: each relation is taken to keep its rows in one document until one of its rules does not.
+    let mut ok: BTreeSet<&str> = rules_of.keys().copied().filter(|r| !natives.contains_key(*r)).collect();
+    loop {
+        let kept: BTreeSet<&str> = ok.iter().copied().filter(|rel| rules_of[rel].iter().all(|&r| holds(r, read.contains(*rel), &ok))).collect();
+        if kept.len() == ok.len() {
+            break;
+        }
+        ok = kept;
+    }
+    let mut within: BTreeSet<&str> = read.iter().map(String::as_str).filter(|rel| ok.contains(rel) && !lattice.contains_key(*rel) && v.fact_values(rel, &Default::default()).is_none()).collect();
+    // The program once folded: each rule's reads (a narrow copy's where it reads narrow, `Narrowing::sees`; a native
+    // operator's as `declare_narrow` renames them), and each narrow copy's: its original's where it is within one
+    // document, else its original's rules made narrow. A copy in a cycle with its original is made again.
+    let reads_of = |rel: &str| -> Vec<&str> {
+        let mut out: Vec<&str> = rules_of.get(rel).into_iter().flatten().flat_map(|r| r.body().filter_map(|l| l.atom()).map(name)).collect();
+        if let Some(n) = natives.get(rel) {
+            out.extend(n.reads().iter().map(|r| folded.get(*r).map_or(*r, String::as_str)));
+        }
+        out
+    };
+    let narrowed = |r: &str| if read.contains(r) { narrow_name(r) } else { r.to_owned() };
+    let mut nodes: BTreeSet<String> = rules_of.keys().map(|r| (*r).to_owned()).chain(natives.keys().cloned()).collect();
+    nodes.extend(read.iter().map(|r| narrow_name(r)));
+    loop {
+        let mut edges: front::Edges = BTreeMap::new();
+        for n in &nodes {
+            let to: BTreeSet<(String, bool)> = match n.strip_prefix("rr_narrow_").filter(|o| read.contains(*o)) {
+                Some(orig) if within.contains(orig) => BTreeSet::from([(orig.to_owned(), false)]),
+                Some(orig) => reads_of(orig).into_iter().map(|r| (narrowed(r), false)).collect(),
+                None if narrowing.sees(n) => reads_of(n).into_iter().map(|r| (narrowed(r), false)).collect(),
+                None => reads_of(n).into_iter().map(|r| (r.to_owned(), false)).collect(),
+            };
+            edges.insert(n.clone(), to.into_iter().filter(|(t, _)| nodes.contains(t)).collect());
+        }
+        let cyclic: Vec<&str> = front::tarjan(&nodes, &edges).into_iter().flat_map(|c| within.iter().copied().filter(|r| c.contains(*r) && c.contains(&narrow_name(r))).collect::<Vec<_>>()).collect();
+        if cyclic.is_empty() {
+            break;
+        }
+        for r in cyclic {
+            within.remove(r);
+        }
+    }
+    Ok(within.into_iter().map(str::to_owned).collect())
 }
 
 /// The guest demand and the contexts only it reads, transitively (`hide::asking`, over the version).
@@ -844,7 +1028,7 @@ impl Narrowing<'_> {
 /// declaration, facts, tape columns, lattice, nullary encoding, join shapes and native operator (its qualifiers, demand
 /// and the request rules that serve its readers are `FoldOwn`'s). A native operator whose rule reads narrow reads the
 /// narrow copies: its rows are made from the relations its fields name, its rule only orders it after them.
-fn declare_narrow(v: &Version, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, read: &BTreeSet<String>, narrowing: &Narrowing<'_>) -> Result<()> {
+fn declare_narrow(v: &Version, b: &mut crate::code_rule_dsl::logic::program_image::Builder<'_>, read: &BTreeSet<String>, within: &BTreeSet<String>, narrowing: &Narrowing<'_>) -> Result<()> {
     use crate::code_rule_dsl::logic::program_facts::Field;
     if read.is_empty() {
         return Ok(());
@@ -876,7 +1060,8 @@ fn declare_narrow(v: &Version, b: &mut crate::code_rule_dsl::logic::program_imag
         b.fields().add_nullary(&nullary);
     }
     let mut shapes = v.shape_list()?;
-    let extra: Vec<_> = shapes.iter().filter_map(|s| copy(&s.head).map(|n| front::Shape { head: n, ..s.clone() })).collect();
+    // A copy within one document reads its original (`one_document`): its rule is not the original's.
+    let extra: Vec<_> = shapes.iter().filter(|s| !within.contains(&s.head)).filter_map(|s| copy(&s.head).map(|n| front::Shape { head: n, ..s.clone() })).collect();
     if !extra.is_empty() {
         shapes.extend(extra);
         b.fields().set_field(Field::Shapes(&shapes));
