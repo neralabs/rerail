@@ -119,6 +119,14 @@ impl Facts {
 
     fn with_sharing(block: Block, life: Life, shared: bool) -> Facts {
         let tally = current_chunk().map(|c| Arc::clone(&c.tally));
+        // Where it was made, for the profile's account of the blocks at the footprint's peak (`held_by_span`).
+        if rerail_prof::heap::on() {
+            let made = crate::code_rule_dsl::logic::profile::machine::<Made>();
+            let mut m = made.0.lock().unwrap_or_else(|e| e.into_inner());
+            m.retain(|(e, _, _)| e.strong_count() > 0);
+            m.push((block.meter(), rerail_prof::heap::span(), life as u8));
+            let _ = crate::code_rule_dsl::logic::profile::machine::<crate::code_rule_dsl::logic::profile::memory::BlocksBySpan>().0.set(held_by_span);
+        }
         Facts { block: Arc::new(block), ix: Mutex::new(Vec::new()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life, shared }
     }
 
@@ -207,6 +215,30 @@ fn open_blocks() -> Arc<Open> {
 /// machine's, as the memory it counts is).
 #[derive(Default)]
 struct Live(Mutex<[Vec<std::sync::Weak<Facts>>; 3]>);
+
+/// The relations' blocks made while heap sampling is on (`RERAIL_HEAP_SAMPLE`), as they live: each one's extent, the
+/// span open where it was made (`rerail_prof::heap::span`) and its `Life`.
+#[derive(Default)]
+struct Made(Mutex<Vec<(std::sync::Weak<rerail_blocks::block::Extent>, u32, u8)>>);
+
+/// The relations' blocks live now, by the span that made them and their `Life`: their bytes used (written up to
+/// their top, less what their free lists hold), most first. Empty unless heap sampling is on.
+pub fn held_by_span() -> Vec<(u32, u8, usize, usize)> {
+    let made = crate::code_rule_dsl::logic::profile::machine::<Made>();
+    let m = made.0.lock().unwrap_or_else(|e| e.into_inner());
+    let mut by: std::collections::HashMap<(u32, u8), (usize, usize)> = std::collections::HashMap::new();
+    for (e, span, life) in m.iter() {
+        if let Some(e) = e.upgrade() {
+            use std::sync::atomic::Ordering::Relaxed;
+            let v = by.entry((*span, *life)).or_default();
+            v.0 += e.top.load(Relaxed).saturating_sub(e.free.load(Relaxed));
+            v.1 += 1;
+        }
+    }
+    let mut out: Vec<(u32, u8, usize, usize)> = by.into_iter().map(|((s, l), (b, n))| (s, l, b, n)).collect();
+    out.sort_by_key(|o| std::cmp::Reverse(o.2));
+    out
+}
 
 /// Per `Life`, the blocks held now, their bytes written and their bytes reserved: a profile's account of the rows
 /// outside the heap.

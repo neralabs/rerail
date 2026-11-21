@@ -151,6 +151,11 @@ fn holders() -> [usize; 7] {
     [driver, reserved, live >> 20, idle >> 20, sqlite >> 20, host >> 20, host_free >> 20]
 }
 
+/// The relations' blocks live now by the span that made them (span, life, bytes used, blocks), as the facts crate
+/// reads them (`rows::held_by_span`), which sets it at its first block: the sampler takes it at the peak.
+#[derive(Default)]
+pub struct BlocksBySpan(pub std::sync::OnceLock<fn() -> Vec<(u32, u8, usize, usize)>>);
+
 #[derive(Default)]
 pub(super) struct Sampled {
     pub(super) every_ms: u64,
@@ -165,6 +170,9 @@ pub(super) struct Sampled {
     pub(super) heap: Vec<(u32, u64)>,
     /// The same by allocating call stack (`RERAIL_HEAP_FRAMES`).
     pub(super) heap_frames: Vec<((u32, Vec<usize>), u64)>,
+    /// The relations' blocks live then, by the span that made them and their life (`rows::held_by_span`): span,
+    /// life, bytes used, blocks.
+    pub(super) blocks: Vec<(u32, u8, usize, usize)>,
     pub(super) heap_at: u64,
     /// `RERAIL_HEAP_AT=<text>`: the live heap by allocating span at the most footprint seen while a thread had a
     /// span open whose path holds the text (a phase that is not the peak's), and that footprint.
@@ -260,9 +268,11 @@ pub(super) fn sample() {
                         drop(s);
                         let heap = rerail_prof::heap::snapshot();
                         let heap_frames = rerail_prof::heap::snapshot_frames();
+                        let blocks = super::machine::<BlocksBySpan>().0.get().map_or_else(Vec::new, |f| f());
                         s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         s.heap = heap;
                         s.heap_frames = heap_frames;
+                        s.blocks = blocks;
                     }
                 }
                 if let Some(text) = heap_at_text()
@@ -353,6 +363,15 @@ pub(super) fn sampled_report(r: &mut String) {
             mb(s.heap_at as f64), rerail_prof::heap::INTERVAL >> 10, mb(total as f64), rerail_prof::heap::DROPPED.load(std::sync::atomic::Ordering::Relaxed));
         for (id, bytes) in s.heap.iter().take(30) {
             let _ = writeln!(r, "{:>10} MB  {}", mb(*bytes as f64), super::short(&rerail_prof::heap::name(*id), 150));
+        }
+    }
+    if !s.blocks.is_empty() {
+        let total: usize = s.blocks.iter().map(|b| b.2).sum();
+        let _ = writeln!(r, "Relations' blocks live then, by the span that made them (at {} MB footprint; {} MB used in all, of {} blocks):",
+            mb(s.heap_at as f64), total >> 20, s.blocks.iter().map(|b| b.3).sum::<usize>());
+        let lives = ["a run's", "sources'", "kept", "a device run's own"];
+        for (id, life, bytes, n) in s.blocks.iter().take(30) {
+            let _ = writeln!(r, "{:>10} MB  {:>5} blocks, {}, made in {}", bytes >> 20, n, lives.get(*life as usize).unwrap_or(&"?"), super::short(&rerail_prof::heap::name(*id), 140));
         }
     }
     if let Some(text) = heap_at_text()
