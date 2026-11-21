@@ -58,6 +58,7 @@ def main(argv):
         local = os.statvfs(farm.HOME)
         print(f"this Mac: {local.f_bavail * local.f_frsize / 1e9:.0f} GB free; under {cfg.get('local_min_free_gb', 200)} GB, "
               "Rerail's least recently built builds go (free-local)")
+        print(f"  this Mac's cpu: {farm.local_cpu().get('model')}; vector: {farm.vector_summary(farm.local_cpu()) or '-'} (features)")
         if speed("local", base):
             print(f"  this Mac's {speed('local', base)}")
         print(f"farm sccache: {'installed' if os.path.exists(farm.SCCACHE) else 'not installed (setup)'}; mirror daemon: {daemon}")
@@ -75,6 +76,9 @@ def main(argv):
             state = "usable" if h.get("ok") else f"not usable: {h.get('why')}"
             hw = " ".join(x for x in (farm.host_arch(host), f"{farm.host_memory_gb(host)} GB" if farm.host_memory_gb(host) else None) if x)
             print(f"  {host['name']}: {state} ({host.get('cores')} cores{', ' + hw if hw else ''}; {uses}{'; ' + facts if facts else ''})")
+            cpu = farm.host_cpu(host)
+            if cpu:
+                print(f"    cpu: {cpu.get('model') or 'a VM (model not shown)'}; vector: {farm.vector_summary(cpu) or '-'} (features)")
             if speed(host["name"], base):
                 print(f"    {speed(host['name'], base)}")
             if h.get("arrival") and not farm.link_of(host):

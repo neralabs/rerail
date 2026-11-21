@@ -82,7 +82,9 @@ A command that does not need macOS may go to a Linux host, as a Linux build and 
 `--os macos` keeps one on a Mac when its result must be macOS's. `--os linux` alone takes any Linux
 host, x86_64 PCs and a 6 GB VM included: say what the command needs with `--arch arm64` (or
 `x86_64`) and `--memory GB` (what a command there gets; `status` shows each host's), not by naming a
-host. Each command gets a share of its host (twice its cores over its test slots) as its cargo jobs
+host. `--cpu-feature F` takes only hosts whose CPU has F (`sve2`, `sme2`, `i8mm`, `avx2`, ...), and
+the command is told its machine's CPU (RERAIL_FARM_CPU_FEATURES and the like);
+`scripts/build/farm/features` shows which host has what. Each command gets a share of its host (twice its cores over its test slots) as its cargo jobs
 and test threads.
 
 A test that takes 20 s or more belongs in the slow tier (the default profile's
@@ -101,6 +103,7 @@ the file there are no hosts, and every command below runs here instead.
 ```
 scripts/build/farm/status                          # which hosts are usable now, and why not; each one's compile speed
 scripts/build/farm/bench [HOST...]                 # measure compile speed again (a clean gix build at 1, 4 and 8 jobs)
+scripts/build/farm/features [FEATURE...]           # each host's CPU and vector units; who has FEATURE
 scripts/build/farm/bench --table                   # every host's saved figures, against this Mac
 scripts/build/farm/dashboard --open                # a live page: each host's CPU, GPU, memory, disk, jobs, links
 scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds miss the shared cache

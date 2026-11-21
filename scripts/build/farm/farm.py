@@ -24,7 +24,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 56
+VERSION = 57
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1103,6 +1103,84 @@ def host_memory_gb(host):
     return read_json(state("health", host["name"]), {}).get("memory_gb") or host.get("memory_gb")
 
 
+# ---- a host's CPU: its model, its features under one set of names, its vector lengths
+#
+# Each health probe asks (`CPU_SCRIPT`), so a guest restarted on other hardware is seen at once; a
+# stopped guest keeps what its last run found. test-remote's `--cpu-feature`, `features` and
+# `status` read it, and a test-remote command gets it as RERAIL_FARM_CPU_* (`cpu_env`).
+
+# One line: "cpu MODEL|FEATURES|SVE BYTES|SME BYTES". macOS: the hw.optional flags set to 1 (arm64's
+# under `arm.`), the SME streaming length; Linux (and a Windows host, through its WSL): cpuinfo's
+# flags or Features, each core type's model (big.LITTLE: "Cortex-X925+Cortex-A725"), the kernel's
+# default SVE and SME lengths.
+CPU_SCRIPT = {
+    "macos": "echo \"cpu $(sysctl -n machdep.cpu.brand_string)|$(sysctl hw.optional 2>/dev/null | awk -F': ' '$2 == 1 {print $1}' | tr '\\n' ' ')||$(sysctl -n hw.optional.arm.sme_max_svl_b 2>/dev/null)\"",
+    "linux": "echo \"cpu $(lscpu 2>/dev/null | awk -F': *' '/^Model name/ {print $2}' | grep -v '^-$' | paste -sd+ -)|$(grep -m1 -E '^(flags|Features)' /proc/cpuinfo | cut -d: -f2)|$(cat /proc/sys/abi/sve_default_vector_length 2>/dev/null)|$(cat /proc/sys/abi/sme_default_vector_length 2>/dev/null)\"",
+}
+# Linux's and macOS's names for one feature, as the farm names it (Linux x86's names otherwise).
+CPU_ALIASES = {"asimd": "neon", "advsimd": "neon", "asimdhp": "fp16", "asimddp": "dotprod", "asimdfhm": "fhm",
+               "asimdrdm": "rdm", "fphp": "fp16", "advsimd_hpfpcvt": "fp16_cvt"}
+# The vector units, in the order `vector_summary` names them.
+VECTOR_FEATURES = ["sse4_2", "avx", "avx2", "fma", "f16c", "avx_vnni", "avx512f", "avx512bw", "avx512vl",
+                   "avx512_vnni", "avx512_bf16", "avx512_fp16", "amx_tile", "neon", "fp16", "dotprod", "fhm",
+                   "bf16", "i8mm", "sve", "sve2", "sme", "sme2"]
+
+
+def parse_cpu(line):
+    """The record of a CPU_SCRIPT line: {"model", "features", "sve_bytes", "sme_bytes"}, or None."""
+    if not line.startswith("cpu "):
+        return None
+    parts = (line[4:].split("|") + ["", "", ""])[:4]
+    features = set()
+    for w in parts[1].split():
+        if w.startswith("hw.optional."):
+            w = w[len("hw.optional."):]
+            if not w.startswith("arm."):
+                continue  # macOS's older names (armv8_*, neon_*): the arm.* ones say the same
+            w = w[4:]
+            w = w[5:] if w.startswith("FEAT_") else w
+        w = w.lower()
+        features.add(CPU_ALIASES.get(w, w))
+    return {"model": parts[0].strip() or None, "features": sorted(features),
+            "sve_bytes": int(parts[2]) if parts[2].strip().isdigit() else None,
+            "sme_bytes": int(parts[3]) if parts[3].strip().isdigit() else None}
+
+
+def local_cpu():
+    """This Mac's CPU record (as a host's), read once a day."""
+    path = state("cpu-local.json")
+    c = read_json(path, None)
+    if c is None or time.time() - c.get("at", 0) > 86400:
+        out = subprocess.run(["sh", "-c", CPU_SCRIPT["macos" if sys.platform == "darwin" else "linux"]],
+                             capture_output=True, text=True, timeout=20).stdout.strip()
+        c = dict(parse_cpu(out) or {}, at=time.time())
+        write_json(path, c)
+    return c
+
+
+def host_cpu(host):
+    """`host`'s CPU record (`parse_cpu`) from its last health probe (`cpu` in the configuration for
+    one never probed), or {}."""
+    return read_json(state("health", host["name"]), {}).get("cpu") or host.get("cpu") or {}
+
+
+def vector_summary(cpu):
+    """`cpu`'s vector units, in a few words: "neon, bf16, i8mm, sve2 (SVE 128-bit)"."""
+    have = set(cpu.get("features") or [])
+    words = [f for f in VECTOR_FEATURES if f in have]
+    lengths = [f"{k} {cpu[k + '_bytes'] * 8}-bit" for k in ("sve", "sme") if cpu.get(k + "_bytes")]
+    return ", ".join(words) + (f" ({', '.join(x.upper() for x in lengths).replace('-BIT', '-bit')})" if lengths else "") if words else ""
+
+
+def cpu_env(cpu):
+    """What a command is told of the CPU it runs on: RERAIL_FARM_CPU_MODEL, RERAIL_FARM_CPU_FEATURES
+    (space-separated, the farm's names), RERAIL_FARM_SVE_BITS and RERAIL_FARM_SME_BITS (0: none)."""
+    return {"RERAIL_FARM_CPU_MODEL": cpu.get("model") or "",
+            "RERAIL_FARM_CPU_FEATURES": " ".join(cpu.get("features") or []),
+            "RERAIL_FARM_SVE_BITS": str((cpu.get("sve_bytes") or 0) * 8),
+            "RERAIL_FARM_SME_BITS": str((cpu.get("sme_bytes") or 0) * 8)}
+
+
 def entry(name):
     """`name`'s configuration entry, or {} (a name ssh knows that the farm does not)."""
     return next((h for h in hosts() if h["name"] == name), {})
@@ -1190,7 +1268,7 @@ def probe(host, cfg, fell_back=False, recovered=False):
     h = {"checked": time.time(), "ok": False, "failures": previous.get("failures", 0),
          "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0),
          "mbps_seen": [s for s in previous.get("mbps_seen", []) if time.time() - s[0] < MBPS_MEMORY_SECONDS],
-         "arch": previous.get("arch"), "memory_gb": previous.get("memory_gb")}
+         "arch": previous.get("arch"), "memory_gb": previous.get("memory_gb"), "cpu": previous.get("cpu")}
     if previous.get("route") != route(name):
         h["mbps"], h["mbps_at"], h["mbps_seen"] = None, 0, []  # another path: its throughput is not known
     # Free disk: what macOS gives an important write (AVAILABLE_JS), then statvfs's, in KB.
@@ -1214,7 +1292,7 @@ def probe(host, cfg, fell_back=False, recovered=False):
     # Its CPU architecture and memory (`host_arch`, `host_memory_gb`; test-remote's --arch and
     # --memory), first: a VM's own, which is what a command there gets.
     memory = "$(($(sysctl -n hw.memsize) / 1024))" if host_os(host) == "macos" else "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
-    script = f'echo "hw $(uname -m) {memory}"; ' + script
+    script = f'echo "hw $(uname -m) {memory}"; {CPU_SCRIPT["macos" if host_os(host) == "macos" else "linux"]}; ' + script
     # Asked twice before it counts as down, the second time with longer to answer: one lost or slow
     # connection (this Mac at a load of 90 can take seconds to start ssh) is not a host gone.
     for timeout in (10, 20):
@@ -1243,6 +1321,8 @@ def probe(host, cfg, fell_back=False, recovered=False):
         if len(words) == 3 and words[2].isdigit():
             h["arch"] = ARCHES.get(words[1], words[1])
             h["memory_gb"] = round(int(words[2]) / (1 << 20))
+    if lines and lines[0].startswith("cpu "):
+        h["cpu"] = parse_cpu(lines.pop(0)) or h.get("cpu")
     fleet_jobs = None
     if lines and lines[0].startswith("fleet "):
         fleet_jobs = h["fleet_jobs"] = int(lines.pop(0).split()[1] or 0)

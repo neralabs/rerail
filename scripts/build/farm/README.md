@@ -54,6 +54,7 @@ instead, and only that run's output is shown.
 | `test-mirror` | a test of the mirror against an agent run here: a file the checkout deleted goes from the host's copy |
 | `test-mac-compiles HOST` | a test of this Mac's compiles on HOST: a small crate's library compiles (proc-macros, `OUT_DIR`, bundled C) go there through the farm, and each output must be this Mac's bytes |
 | `status` | what the farm can use now: each host probed, and why one is not usable; each host's compile benchmark |
+| `features` | each host's CPU: its model, vector units and lengths, every feature by one set of names; which hosts have given features ("CPU features") |
 | `bench` | the compile benchmark: a clean `gix` build at 1, 4 and 8 jobs on each host, kept in the farm's state for `status` ("How fast each host compiles") |
 | `dashboard` | a live page of every host and this Mac: CPU (farm, fleet, the machine's own, idle), GPU, memory, disk, jobs, reachability, round trip, traffic ("Dashboard") |
 | `sampler` | the dashboard's end on each machine: one JSON line of its state every 3 seconds |
@@ -759,6 +760,31 @@ sample); `ioreg` or `nvidia-smi` every 6 seconds, docker every 15. Each line rep
 sampler used, shown under each card: 0.3 to 2% of one core (2026-11-19). The dashboard adds no
 health probe: it reads the farm's records. The page and its data stay on 127.0.0.1; the hosts'
 names come from the configuration at run time.
+
+## CPU features
+
+Each health probe records the host's CPU (farm 57): its model, every feature its kernel reports, and
+the SVE and SME vector lengths. A VM's are what the VM passes on, which is less than its machine's
+(the Linux VMs on Macs show no bf16, i8mm or SME), so a VM's record is its own. The names are one
+set for macOS and Linux: x86 Linux's flags (`avx2`, `avx512f`, `avx_vnni`, `amx_tile`); on arm64,
+Linux's (`sve`, `sve2`, `sme`, `bf16`, `i8mm`), with `neon`, `fp16`, `dotprod`, `fhm` and `rdm` for
+the asimd ones, and macOS's FEAT_X as `x`.
+
+```
+scripts/build/farm/features                 # each host: model, vector units, lengths
+scripts/build/farm/features sve2 i8mm       # who has these, and what the rest lack
+scripts/build/farm/features --host NAME     # one host's every feature (`local`: this Mac)
+scripts/build/farm/features --json
+scripts/dev/test-remote --cpu-feature sve2 -- cargo nextest run ...
+```
+
+`test-remote --cpu-feature F` (repeatable) takes only hosts that have F; with none, COMMAND runs
+here only if this Mac has F. COMMAND is told its machine's CPU, on a host or here:
+RERAIL_FARM_CPU_MODEL, RERAIL_FARM_CPU_FEATURES (space-separated), RERAIL_FARM_SVE_BITS and
+RERAIL_FARM_SME_BITS (0: none). A stopped guest's record is from its last run (none before its
+first, so `--cpu-feature` leaves it out until then). As of 2026-11-21 no host has AVX-512 (both
+PCs stop at AVX2), SVE2 is on the Sparks alone (at 128 bits), and SME2 on this Mac alone (512-bit
+streaming vectors).
 
 ## How fast each host compiles
 
