@@ -98,10 +98,8 @@ pub struct Writer {
 impl Writer {
     #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
-        let mut builder = cranelift_jit::JITBuilder::new(cranelift_module::default_libcall_names()).unwrap();
-        // One arena, so a call between the ops stays in a `bl`'s reach (as `Reads`).
-        builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(16 << 20).unwrap()));
-        let mut module = cranelift_jit::JITModule::new(builder);
+        // Its code in one reservation, so a call between the ops stays in a `bl`'s reach (`builder`).
+        let mut module = cranelift_jit::JITModule::new(builder().unwrap());
         let ids = crate::writer::define_ops(&mut module, cranelift_module::Linkage::Export).unwrap();
         module.finalize_definitions().unwrap();
         let fns = ids.into_iter().map(|(name, (id, _))| (name, module.get_finalized_function(id))).collect();

@@ -162,6 +162,22 @@ pub fn sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<So
     Ok(out)
 }
 
+/// Whether the next process can read the program sha256 `digest` names from its image: a current image under its
+/// alias is the bytes of that digest, a shipped one is checked by its bytes' digest, and any other must open.
+pub fn available(store: &ContentStore, digest: &[u8; 32]) -> StoreResult<bool> {
+    let key = image_key(digest);
+    if let Some(source) = store.source_by_alias(key)? {
+        if store.source_by_hash(HashKey::from_sha256_digest(*digest))? == Some(source) {
+            return Ok(true);
+        }
+    } else if let Some(bytes) = crate::code_rule_dsl::logic::rr::images::shipped().and_then(|bundle| bundle.get(key))
+        && Sha256::digest(bytes).as_slice() == digest
+    {
+        return Ok(true);
+    }
+    Ok(load_image(store, digest)?.is_some())
+}
+
 /// The version of the program `store` keeps of sha256 `digest`, opened from its image, and the sources it is kept as;
 /// `None` when the store has lost it, keeps it as text alone, or its image does not open.
 pub fn load_image(store: &ContentStore, digest: &[u8; 32]) -> StoreResult<Option<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Vec<SourceId>)>> {

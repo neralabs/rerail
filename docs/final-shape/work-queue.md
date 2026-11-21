@@ -5149,6 +5149,21 @@ Found 2026-11-18, the 57 data-layer rules over corpus0's first 50 files, the pro
   (`input_delta::Before`). R4 passes for the chain; 275 of 277 corpus tests on a Linux host (Q286's two), and on
   the M5 the warm-run, cycle, new-process and 0458 tests. Next: the memo entries' base rows (copy 2), then R4 over the
   memo too.
+- **0458 step 4, the memo entries' base rows gone** (2026-11-19): no entry keeps a base relation's rows (a guard in
+  the memo writer's path fails a run whose entry would); the keeper counts the exports alone. A base relation's
+  statistics are kept beside its documents' table, read before the first wave, and patched by the changed documents'
+  old and new rows, read where they lie (`RelStats::documents_read`). Tests: `cross_views_tests` R1–R5 and the
+  statistics' (counted cold, kept warm, patched by an edit), the warm-run, maintain and keeper tests; all 140 corpus
+  tests on the M3. Next: step 5, R6 measured over the 50 files.
+- **0458 step 5, measured** (2026-11-19, M5 at load 40–70, profiling build; against the 0439 runs, `tmp/r50-q285`):
+  589 outputs equal across the edit, the warm run after it and the edited tree's cold run. Chain values 17.9 MB to
+  10.6 MB (granules 13.9 to 6.3 MB): no base relation's granule is left. Instructions: cold 198.9 G to 212.3 G (the
+  edited tree's cold 197.2 G to 195.2 G), the edit 37.3 G to 35.2 G, warm 0.8 G both; peak memory cold 888 to 724
+  MB, the edit 525 to 472 MB. On the way, two costs found and fixed: the base relations' old version answered no
+  lookup (every stratum hashed all its rows: the edit's cross part 46.1 G, now 8.8 G), and the corpus batch made
+  what the cross part does not read (tree digests). Left: the edit still makes every document of the corpus batch
+  (0.45 s, most of `stats`' 9.6 G against 1.6 G before): 0458's "a document is made when first read" is not built.
+  Next: that; Q421 (`kind`'s rows kept after an edit).
 
 ### Q284. (Q243 here before the hub merge 535cc2c8b) A strict run over 300 files ends at the writer's back-pressure: one input's kept facts are one 49 MB job (done)
 
@@ -8529,3 +8544,105 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
     filter tests. rerail-accel: the 2 column statistics tests.
 - **Open**: Q417 (a loop's stolen halves across two runs in one pool) and Q418 (the deferred joins priced, so that
   they are on by default) are theirs, as they left them.
+
+### Q420. (Q362 on sync-integration-hub-tape) A partial hit's cone that sees annotations only through `FoldOwn` admits none of them (not here)
+
+- **Found** (2026-11-20, on the sync branch after the merges of 2026-11-19 and 2026-11-20): Q77's test
+  `a_partial_hit_makes_only_the_guests_its_cone_can_see` fails at its third edit. `ids(m, x) :- idents(m, x), …`
+  names no guest, but hiding folded `idents`' copies for the annotations back into it (`FoldOwn`, its bound widened
+  to `HIDDEN_KEYS`), so a full run's `ids` holds the annotations' identifiers (`Bar`). The chunk of partial hits
+  runs the cone `{ids}`, which `guests::guests_seen` rightly reads as `Seen::Annotations`, yet its rows lack them.
+- **What was found**: the program has no embed slice (`embed_slice` is `None`: `parsed` asks inside the fixpoint,
+  decision 0431 §8), so no chunk replays the entries' guest requests (`replay` needs a slice) and `seeing` is never
+  applied. A tape value is admitted only when a rule of the cone asks for its parse, and the cone of `ids` asks for
+  none: the request rules come into a cone only through a produced relation it reads (`wanted_cone`'s `requests`),
+  and it reads no `parsed`. Adding `string_annotation` and `parsed` to the cone's batch projection
+  (`cone_projection`) is not enough: the annotations are still never asked for.
+- **Next**: a cone whose `guests_seen` is `Annotations` or more holds the requests that make those guests in a full
+  run (the request rules of `rr_embed_req` for the annotation grammar, with what their bodies read), and its
+  admission is bounded by `seeing`. Then see whether 0431 §8's answer (`kept_guests`, made only in the slice's
+  branch now) is reached in a chunk with no slice. The sync branch ignored the test with this item.
+- **Here** (roll-up 25, Q422): the test is not ignored, and it passes (`rerail-engine`'s `plan::corpus` tests on a
+  Linux DGX Spark, held to the CPU). Its third edit's rows are a full run's.
+
+### Q421. (Q287 on final-rerail-shape-phased-facts; Q361 on sync-integration-hub-tape) An edit keeps the rows of the cross part's `kind`, a view of `node` (open)
+
+Found 2026-11-19 in 0458 step 5's chain report (50 data-layer files, after a one-file edit).
+- **What.** The data-layer prelude's `kind(n, k) :- node(_, n, k, _, _)` is a view of an input's columns (Q37). The
+  split derives it in the cross part (`on_version::crossing`'s `projected`), and a cold run holds it as a view
+  (`input_view`: held in place, or read into flat rows, `viewed`), which the writer skips. Yet the chain keeps it as
+  rows: 2 entries, 255,598 rows, 0.55 MB, as before 0458 (255,610 then): a view's rows made into a relation (0353).
+- **Likely why.** The edit's maintain mode derives `kind` from `node`'s versions as a maintained relation, not as a
+  view, and `retain::after` keeps a derived relation that is neither `view` nor `viewed`. `Retained::views` and the
+  `maintain::held_views` its comment names are gone: nothing records the views any more.
+- **Next.** Confirm on the 50 files which run writes the entries (`RERAIL_PROFILE`'s "the kept part" decisions);
+  then hold a view of a base relation as a view in the maintain mode too (its `Old`, `Minus` and `Plus` its input's
+  versions read through its columns), and a guard in `retain::after` that refuses to keep an input view's rows.
+
+### Q422. Roll-up 25 (sync-integration-hub-tape onto Pulling-it-all-together): what the merge chose, and what stays open
+
+- **Merged** (2026-11-21): sync-integration-hub-tape at 0d2e62b954, 259 commits past their merge base cc919c3055 (245
+  of them not merges). It brings git-commit-tree-metadata to 3119f67c1 and final-rerail-shape-phased-facts to
+  428940385. Its decision numbers are ours' where both name one decision (0424 is 0459 here, 0425 0460, 0426 0434,
+  0427 0463, 0459 0473, 0463 0475). Its 0473, a node product bounded by its readers' demand, is ours' 0461, whose
+  file this branch had not linked from the README. Its Q362 is Q420, its Q287 and Q361 are Q421, and its Q363 is
+  ours' Q377.
+- **Taken from theirs**:
+  - git-commit-tree-metadata: Git revision scans and snapshots read through gix, analysis scopes with their schema
+    and receipts, source-language facts, document provenance, `@git_commit_location` findings, bound families
+    (`.pragma "bound-family"`), and the Git evaluation bound in the run's context (decision 0442).
+  - phased-facts: 0458 step 4 (no memo entry keeps a base relation's rows), and a base relation's statistics kept
+    beside its documents' table. That table names a run's unchanged documents (`old_base`).
+  - The checkout owners' points (`CheckoutOwners::lookAgain`, from 625d193878) and plain roots from the catalog.
+  - The Windows work: phase 0's path spelling, the store's process check, and the store and Git tests' hooks.
+  - The journal's per-event flag trace (`RERAIL_JOURNAL_TRACE`). It is the sync branch's Q359 diagnostic, for a
+    file whose times were set and that the journal once named under load.
+- **Kept from ours, theirs' change ported into it**:
+  - The merge commits on the sync branch carry its own numbering and older forms of ours' code. Each changed file
+    that none of theirs' own commits touched was read hunk by hunk. A renumbering or a revert of ours went back to
+    ours; a fix was kept.
+  - **A file theirs' commits did touch was rebuilt as ours plus those commits.** The merge had dropped ours'
+    changes from `observe.rs` and `journal.rs`: the late count (`Counts::late`, `journal::late`), `settle_one`,
+    and the journal tests' budget and `journal_answered`. Both files are now ours with theirs' commits applied.
+    The constants-owner check in `collect` and the Windows test hooks were applied by hand. The canonical-path
+    test stays macOS-only, as on ours.
+  - Ours' format 15 for `a_placed_tape_reads_as_one_held_in_its_own_bytes`, ours' store floor comments, and ours'
+    Q292 in 0461 went back to ours.
+  - The scan's native call takes one `RrScanTarget` (paths, root, store, output, the source paths), so it is under
+    clippy's argument count. `scanRrPoliciesAsync` and its 22 test calls follow it.
+  - The scope audit: ours' split methods (`#completeScopeAuditRequest`, `#recordScopeAuditResult`) take theirs'
+    repository-only reuse and the analysis scope kept after a completed audit. The recording is now async.
+  - The code rule bridge is ours, its two `refreshOwners` calls theirs' form (no paths). The owners' test is
+    theirs'. `git-placement.test.ts`, which is ours only, builds its owners on a catalog.
+  - `vitest.config.ts`: one `globalSetup`, ours' run folder and theirs' Windows store cleanup.
+- **Found and fixed on the way**:
+  - **R8 and the session's entries check.** A phase's run captures its outputs (gctm's `Some(&mut image)`). The
+    filter `!in_memory` then left every phase run out of the session, so its kept part was bound from the store at
+    every edit (10 frames). It also made the import cycle's edit find no input delta in the entries. A captured run
+    is the session's again, with its cross scratch in memory (`run_observed_within`). R8 passes, and so does R2's
+    entries check, which is back in `r1_r2_an_edit_holds_no_maintenance_relation_and_copies_no_rows`. The sync
+    branch had ignored both with its Q360.
+  - The run documents' frame (`write_run_docs`) was written and never read: 0458's documents' table names the
+    unchanged documents now. The frame and its reader are gone. `documents_table` loses its `held` switch.
+  - `plan::body::demand_first` named the prefix `demand_`, from cost-classifier (Q419). That broke
+    `demand_bounds_lead`, so the prefix is gone.
+  - The syntax views have `ast_depth` in both shapes (R6's `measures_unkeyed`).
+  - A workspace's analysis scope begins after its storage attaches, except for a pinned snapshot (4 storage tests).
+  - The context guards in `corpus.rs` dropped out of order (0442's panic, 5 tests).
+  - The executor coverage ledger has the new `@ascii_lower/1` row. The packs' table is rewritten from the test's
+    rows.
+  - Clippy, in the involved crates: collapsed ifs, `is_multiple_of`, `as_chunks`, type aliases for two tuples.
+- **Checked**, every run held to the CPU (`RERAIL_GPU=cpu`, `RERAIL_DEVICE=cpu`; no Metal):
+  - Clippy is clean on 11 crates on a Linux DGX Spark and an M1 Max: `rerail-engine`, `-logic`, `-rr`, `-facts`,
+    `-store`, `-accel`, `-clif`, `-tape-format`, `-w`, `-sessions` and `-context`.
+  - `rerail-store`: 277 on the Spark, 288 on the M1 Max. `rerail-accel` 83 and `rerail-clif` 21 on the Spark.
+  - rerail-engine on the Spark: the `plan::corpus` tests (161), the maintain mode's R tests (12), the sessions,
+    phases, headless scans, Git revisions and analysis scopes (149), and the workspace and thread tests (220).
+    `sql_sessions_use_shared_explain_profiles_including_errors_and_native_work` starts `node`, which the Spark does
+    not have: it passes on the M1 Max.
+  - The TypeScript was type-checked with TypeScript 6.0.3, `@types/node` and vitest alone (the rest of the
+    packages unresolved), over the 49 changed files. That found the three merge errors above (the scope audit,
+    the duplicate `globalSetup`, an optional `sourcePaths`). The vitest suites were not run: no farm host has the
+    project's packages installed.
+- **Open**: Q421 is theirs, as they left it. `r2_a_new_process_reads_its_kept_rows_in_place` stays ignored, as on
+  ours (19 kept rows decoded: 0401 step 7).

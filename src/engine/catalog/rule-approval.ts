@@ -98,6 +98,8 @@ export function readApprovals(db: Pick<RerailDatabase, "select">): ReadonlySet<s
 export function currentSubject(db: Pick<RerailDatabase, "select">, catalog: RuleCatalog, name: string): RuleApprovalSubject | undefined {
   const library = db.select({ payloadHash: libraryRules.payloadHash }).from(libraryRules).where(eq(libraryRules.ruleId, name)).get();
   if (library !== undefined) return ruleSubject(name, library.payloadHash);
+  const rr = catalog.rrPolicies?.find(policy => policy.id === name);
+  if (rr !== undefined) return ruleSubject(name, rr.payloadHash);
   const pack = [...catalog.packs.values()].find(candidate => candidate.packageName === name || candidate.id === name)
     ?? catalog.packs.get(catalog.packOf.get(name) ?? "");
   if (pack === undefined) return undefined;

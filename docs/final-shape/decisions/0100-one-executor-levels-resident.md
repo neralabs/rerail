@@ -374,9 +374,10 @@ job is a job:
 - **The windows are resolved one at a time**, each a job started when the last ends. A window's statements may
   run a parallel loop, whose wait may run another job: if that job resolved a window too, it would wait for a
   lock its own thread holds.
-- **The cone of requests** takes turns with the main thread: it asks, the main thread answers. It runs on
-  another of the pool's threads, and the main thread runs no job until it has started, so it never runs inside
-  the main thread's wait. With one thread, it gets a thread of its own: one thread cannot hold both stacks.
+- **The cone of requests** takes turns with its caller. It asks and the caller answers. Each needs its own stack.
+  With two or more workers, the caller offers the cone to the pool and waits up to one millisecond for a claim.
+  If it can still claim the job, it starts the cone on a service thread. With one worker it uses a service thread immediately.
+  Simultaneous callers can then answer requests even when every pool thread started a scan.
 
 **What stays a thread of its own.** None of these runs a run's work on the cores:
 

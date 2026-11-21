@@ -159,6 +159,29 @@ jobs:
         if: matrix.target != 'aarch64-pc-windows-msvc'
         run: ./node_modules/.bin/vitest run test/engine/native/native-health.test.ts
 
+      - name: Compare native message selectors with Git
+        if: matrix.target != 'aarch64-pc-windows-msvc'
+        run: |
+          git version --build-options
+          node -p "process.platform + ' ' + process.arch + ' ' + process.version"
+          ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "compares Git message selectors" --reporter=verbose
+
+      - name: Check Git object invalidation, source reads, and path spelling on Windows
+        if: matrix.windows_runtime_smoke
+        shell: pwsh
+        run: |
+          $drive = [System.IO.Path]::GetPathRoot([System.IO.Path]::GetTempPath())
+          $format = [System.IO.DriveInfo]::new($drive).DriveFormat
+          Write-Output "Temporary directory filesystem: $format"
+          if ($format -ne 'NTFS') { throw "This object-invalidation check requires NTFS." }
+          ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "same-size rewrite|distinguishes a missing source path|uses the filesystem spelling" --reporter=verbose
+
+      - name: Check directory scope identity and concurrent Git evaluations on Linux
+        if: runner.os == 'Linux'
+        env:
+          RERAIL_THREADS: "2"
+        run: ./node_modules/.bin/vitest run test/cli/headless-scan.test.ts -t "two symlink targets differ in raw bytes|isolates concurrent evaluations" --reporter=verbose
+
       - name: Smoke Windows junction lifecycle
         if: matrix.windows_runtime_smoke
         run: ./node_modules/.bin/vitest run test/setup/updater.test.ts test/setup/harness-registration.test.ts -t "Windows.*junction"

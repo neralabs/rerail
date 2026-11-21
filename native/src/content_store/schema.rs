@@ -191,6 +191,121 @@ CREATE TABLE IF NOT EXISTS store_sessions (
     PRIMARY KEY (kind, key)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS store_sessions_by_ended ON store_sessions(kind, ended) WHERE ended IS NOT NULL;
+CREATE TABLE IF NOT EXISTS analysis_scope_snapshot (
+    scope TEXT NOT NULL,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
+    acquired_at INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(scope, snapshot_id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_snapshot_by_snapshot ON analysis_scope_snapshot(snapshot_id);
+CREATE TABLE IF NOT EXISTS analysis_scope_generation (
+    scope TEXT PRIMARY KEY,
+    generation INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+-- Only a fully observed directory generation has a known maximum control generation.
+-- The separate table preserves the two-column INSERT used by older writers.
+CREATE TABLE IF NOT EXISTS analysis_directory_acquisition (
+    scope TEXT PRIMARY KEY REFERENCES analysis_scope_generation(scope) ON DELETE CASCADE,
+    max_control_generation INTEGER NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TRIGGER IF NOT EXISTS analysis_directory_acquisition_unknown BEFORE INSERT ON analysis_scope_generation
+WHEN NEW.scope GLOB 'cwd:*' BEGIN
+    DELETE FROM analysis_directory_acquisition WHERE scope=NEW.scope;
+END;
+CREATE TABLE IF NOT EXISTS analysis_scope_workspace_snapshot (
+    scope TEXT NOT NULL,
+    workspace TEXT NOT NULL,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
+    acquired_at INTEGER NOT NULL DEFAULT 0,
+    acquisition INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(scope, workspace)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_workspace_snapshot_by_snapshot ON analysis_scope_workspace_snapshot(snapshot_id);
+CREATE TABLE IF NOT EXISTS analysis_scope_collect (
+    snapshot_id INTEGER PRIMARY KEY REFERENCES snapshots(snapshot_id) ON DELETE CASCADE
+) STRICT;
+CREATE TABLE IF NOT EXISTS analysis_scope_pending (
+    id TEXT PRIMARY KEY
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS analysis_scope_release (
+    id TEXT PRIMARY KEY,
+    scope TEXT NOT NULL DEFAULT '',
+    before INTEGER NOT NULL DEFAULT 0,
+    legacy_scope TEXT,
+    legacy_acquisition INTEGER
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_release_by_scope ON analysis_scope_release(scope,before);
+CREATE INDEX IF NOT EXISTS analysis_scope_release_legacy ON analysis_scope_release(legacy_scope,before) WHERE legacy_scope IS NOT NULL;
+-- A compacted child receipt can still arrive through an older writer. Ignore its insert before
+-- its delivery captures a new acquisition number or releases memberships. Probe the cutoff
+-- index at each path boundary, including a root that ends in the separator.
+CREATE TRIGGER IF NOT EXISTS analysis_skip_covered_directory_stop BEFORE INSERT ON analysis_scope_release
+WHEN NEW.scope<>'' AND EXISTS (
+    SELECT 1 FROM analysis_scope_release WHERE before>=NEW.before AND scope IN (RR_NEW_DIRECTORY_ANCESTORS)
+) BEGIN SELECT RAISE(IGNORE); END;
+-- A previous writer deletes a lower exact cutoff before inserting its replacement. If an
+-- ancestor will suppress the insert, retain any later acquisition boundary the child carries.
+CREATE TRIGGER IF NOT EXISTS analysis_keep_legacy_directory_fence BEFORE DELETE ON analysis_scope_release
+WHEN OLD.legacy_acquisition > (
+    SELECT max(legacy_acquisition) FROM analysis_scope_release WHERE id<>OLD.id AND before>=OLD.before
+        AND scope IN (RR_OLD_DIRECTORY_ANCESTORS)
+) BEGIN SELECT RAISE(IGNORE); END;
+CREATE TABLE IF NOT EXISTS analysis_history_scope (
+    scope TEXT PRIMARY KEY,
+    value TEXT NOT NULL,
+    stop_scopes TEXT NOT NULL
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS analysis_history_ancestor (
+    ancestor TEXT NOT NULL,
+    scope TEXT NOT NULL REFERENCES analysis_history_scope(scope) ON DELETE CASCADE,
+    PRIMARY KEY(ancestor,scope)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_history_ancestor_by_scope ON analysis_history_ancestor(scope);
+INSERT OR IGNORE INTO analysis_history_ancestor(ancestor,scope)
+    SELECT a.value,h.scope FROM analysis_history_scope h, json_each(h.stop_scopes) a;
+CREATE TRIGGER IF NOT EXISTS analysis_history_index_scope AFTER INSERT ON analysis_history_scope BEGIN
+    INSERT OR IGNORE INTO analysis_history_ancestor(ancestor,scope) SELECT value,NEW.scope FROM json_each(NEW.stop_scopes);
+END;
+CREATE TABLE IF NOT EXISTS analysis_scope_run (
+    scope TEXT NOT NULL REFERENCES analysis_history_scope(scope),
+    acquisition INTEGER NOT NULL,
+    acquired_at INTEGER NOT NULL,
+    scan_id TEXT NOT NULL,
+    directory TEXT,
+    repository TEXT,
+    tree TEXT,
+    git_commit TEXT,
+    PRIMARY KEY(scope,acquisition)
+) STRICT, WITHOUT ROWID;
+CREATE TABLE IF NOT EXISTS analysis_run_workspace_snapshot (
+    scope TEXT NOT NULL,
+    acquisition INTEGER NOT NULL,
+    snapshot_id INTEGER NOT NULL REFERENCES snapshots(snapshot_id) ON DELETE CASCADE,
+    PRIMARY KEY(scope,acquisition,snapshot_id),
+    FOREIGN KEY(scope,acquisition) REFERENCES analysis_scope_run(scope,acquisition) ON DELETE CASCADE
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_run_workspace_by_snapshot ON analysis_run_workspace_snapshot(snapshot_id);
+-- These triggers also run when an older binary delivers a stop.
+CREATE TRIGGER IF NOT EXISTS analysis_runs_end_generation AFTER UPDATE OF generation ON analysis_scope_generation
+WHEN NEW.generation != OLD.generation BEGIN
+    DELETE FROM analysis_scope_run WHERE scope=NEW.scope;
+END;
+-- Reinstall this trigger on upgrade. Earlier stores enumerated all scopes for each delivery.
+DROP TRIGGER IF EXISTS analysis_runs_stop_directory;
+CREATE TRIGGER IF NOT EXISTS analysis_runs_stop_directory AFTER INSERT ON analysis_scope_release
+WHEN NEW.scope != '' BEGIN
+    DELETE FROM analysis_scope_run WHERE acquired_at<=NEW.before AND scope IN (
+        SELECT scope FROM analysis_history_ancestor WHERE ancestor=NEW.scope
+        UNION ALL
+        SELECT a.scope FROM analysis_history_ancestor a JOIN analysis_history_scope h USING(scope)
+        WHERE a.ancestor='cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':'))
+            AND instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0 AND h.scope='cwd:'||h.value
+    );
+END;
+CREATE TRIGGER IF NOT EXISTS analysis_history_forget_empty AFTER DELETE ON analysis_scope_run BEGIN
+    DELETE FROM analysis_history_scope WHERE scope=OLD.scope
+        AND NOT EXISTS (SELECT 1 FROM analysis_scope_run WHERE scope=OLD.scope);
+END;
 CREATE TABLE IF NOT EXISTS workspace_overlay (
     workspace_id INTEGER NOT NULL REFERENCES workspaces(workspace_id),
     path_id INTEGER NOT NULL REFERENCES paths(path_id),
@@ -213,9 +328,51 @@ CREATE INDEX IF NOT EXISTS object_pins_by_lease ON object_pins(lease_until);
 CREATE INDEX IF NOT EXISTS object_pins_by_owner ON object_pins(owner_string_id);
 CREATE TABLE IF NOT EXISTS store_state (
     singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    generation INTEGER NOT NULL
+    generation INTEGER NOT NULL,
+    analysis_acquisitions INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 INSERT OR IGNORE INTO store_state(singleton, generation) VALUES (1, 1);
+
+-- Older writers also insert zero then read back the generation. Keep the trigger names
+-- they expect, and seed both named and directory scopes from the store-wide sequence.
+DROP TRIGGER IF EXISTS analysis_named_generation_begin;
+CREATE TRIGGER IF NOT EXISTS analysis_named_generation_begin AFTER INSERT ON analysis_scope_generation
+WHEN (NEW.scope GLOB 'named:*' OR NEW.scope GLOB 'cwd:*') AND NEW.generation=0 BEGIN
+    UPDATE store_state SET analysis_acquisitions=analysis_acquisitions+1 WHERE singleton=1;
+    UPDATE analysis_scope_generation SET generation=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1) WHERE scope=NEW.scope;
+END;
+DROP TRIGGER IF EXISTS analysis_named_generation_end;
+CREATE TRIGGER IF NOT EXISTS analysis_named_generation_end BEFORE DELETE ON analysis_scope_generation
+WHEN OLD.scope GLOB 'named:*' OR OLD.scope GLOB 'cwd:*' BEGIN
+    UPDATE store_state SET analysis_acquisitions=max(analysis_acquisitions,OLD.generation) WHERE singleton=1;
+END;
+
+-- A home-qualified stop also covers unqualified owners acquired by the time it reaches this store.
+-- Capture that boundary for deliveries from older binaries too. Replays do not insert a receipt.
+CREATE TRIGGER IF NOT EXISTS analysis_scope_legacy_stop AFTER INSERT ON analysis_scope_release
+WHEN NEW.scope<>'' AND instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0 BEGIN
+    UPDATE analysis_scope_release SET legacy_scope='cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':')),
+        legacy_acquisition=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1) WHERE id=NEW.id;
+END;
+-- Reclaim directory generations at first delivery, including deliveries by an older binary.
+-- Replaying a home stop must leave a later, unqualified writer with its original generation.
+CREATE TRIGGER IF NOT EXISTS analysis_release_directory_generation AFTER INSERT ON analysis_scope_release
+WHEN NEW.scope<>'' BEGIN
+    DELETE FROM analysis_scope_generation WHERE scope IN (
+        WITH stops(root) AS (
+            SELECT NEW.scope UNION ALL SELECT 'cwd:'||substr(NEW.scope,5+instr(substr(NEW.scope,5),':'))
+            WHERE instr(substr(NEW.id,instr(NEW.id,':')+1),':')>0
+        ), bounds(root,prefix) AS (
+            SELECT root,CASE WHEN substr(root,-1)='RR_PATH_SEPARATOR' THEN root ELSE root||'RR_PATH_SEPARATOR' END FROM stops
+        )
+        SELECT a.scope FROM bounds b JOIN analysis_directory_acquisition a
+            ON a.scope=b.root OR (a.scope>=b.prefix AND a.scope<(substr(b.prefix,1,length(b.prefix)-1)||char(unicode(substr(b.prefix,-1))+1)))
+            WHERE a.max_control_generation<=NEW.before
+    );
+END;
+UPDATE analysis_scope_release SET legacy_scope='cwd:'||substr(scope,5+instr(substr(scope,5),':')),
+    legacy_acquisition=(SELECT analysis_acquisitions FROM store_state WHERE singleton=1)
+    WHERE legacy_acquisition IS NULL AND scope<>'' AND instr(substr(id,instr(id,':')+1),':')>0;
 
 -- Which store this file is: random when it is created. What a process holds of a store by its path (its atoms,
 -- atoms.rs; its threads' connections, connection.rs) belongs to the store of this identity only, so a store
@@ -377,6 +534,15 @@ CREATE TABLE IF NOT EXISTS corpus_manifests (
     UNIQUE (root_id, digest)
 ) STRICT;
 CREATE INDEX IF NOT EXISTS corpus_manifests_by_run ON corpus_manifests(last_run);
+CREATE TABLE IF NOT EXISTS analysis_scope_manifest (
+    scope TEXT NOT NULL,
+    manifest_id INTEGER NOT NULL REFERENCES corpus_manifests(manifest_id) ON DELETE CASCADE,
+    acquired_at INTEGER NOT NULL DEFAULT 0,
+    acquisition INTEGER NOT NULL DEFAULT 0,
+    recorded_run INTEGER NOT NULL DEFAULT 0,
+    PRIMARY KEY(scope, manifest_id)
+) STRICT, WITHOUT ROWID;
+CREATE INDEX IF NOT EXISTS analysis_scope_manifest_by_manifest ON analysis_scope_manifest(manifest_id);
 CREATE TABLE IF NOT EXISTS corpus_live (
     source_id INTEGER NOT NULL,
     grammar_version INTEGER NOT NULL,
@@ -778,11 +944,14 @@ impl ContentStore {
                         // Another open may have created the store since the read above.
                         let version = compatible_version(&transaction)?;
                         for (table, column, declaration) in missing_columns(&transaction)? {
-                            transaction.execute_batch(&format!(
-                                "ALTER TABLE {table} ADD COLUMN {column} {declaration}"
-                            ))?;
+                            transaction.execute_batch(&format!("ALTER TABLE {table} ADD COLUMN {column} {declaration}"))?;
+                            if (*table, *column) == ("analysis_scope_manifest", "recorded_run") {
+                                transaction.execute_batch("UPDATE analysis_scope_manifest SET recorded_run=(
+                                    SELECT last_run FROM corpus_manifests m WHERE m.manifest_id=analysis_scope_manifest.manifest_id)")?;
+                            }
                         }
-                        transaction.execute_batch(SCHEMA)?;
+                        apply_schema(&transaction)?;
+                        super::analysis_scope::compact_existing_directory_receipts(&transaction)?;
                         for table in RETIRED_TABLES {
                             transaction.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;
                         }
@@ -843,6 +1012,22 @@ impl ContentStore {
     }
 }
 
+fn apply_schema(connection: &Connection) -> rusqlite::Result<()> {
+    // The trigger also runs in connections from earlier binaries. Embed the same path
+    // boundaries as analysis_scope::receipt_scopes using only SQLite's own functions.
+    let ancestors = "WITH RECURSIVE boundaries(pos) AS (
+        VALUES(0) UNION ALL
+        SELECT pos+instr(substr(INPUT_SCOPE,pos+1),'PATH_SEP') FROM boundaries
+        WHERE instr(substr(INPUT_SCOPE,pos+1),'PATH_SEP')>0
+    ) SELECT INPUT_SCOPE UNION ALL SELECT substr(INPUT_SCOPE,1,pos-1) FROM boundaries WHERE pos>0
+      UNION ALL SELECT substr(INPUT_SCOPE,1,pos) FROM boundaries WHERE pos>0"
+        .replace("PATH_SEP", std::path::MAIN_SEPARATOR_STR);
+    connection.execute_batch(&SCHEMA
+        .replace("RR_PATH_SEPARATOR", std::path::MAIN_SEPARATOR_STR)
+        .replace("RR_NEW_DIRECTORY_ANCESTORS", &ancestors.replace("INPUT_SCOPE", "NEW.scope"))
+        .replace("RR_OLD_DIRECTORY_ANCESTORS", &ancestors.replace("INPUT_SCOPE", "OLD.scope")))
+}
+
 /// The store's floor, refused when it is newer than this build's.
 fn compatible_version(connection: &Connection) -> StoreResult<i64> {
     let version: i64 = connection.pragma_query_value(None, "user_version", |row| row.get(0))?;
@@ -892,6 +1077,17 @@ fn holds_retired(connection: &Connection) -> StoreResult<bool> {
 /// TABLE IF NOT EXISTS` leaves an older store's table as it was, so applying SCHEMA adds these (`ALTER TABLE`).
 /// Each has a default, so an older binary's inserts, which do not name it, still apply.
 const ADDED_COLUMNS: &[(&str, &str, &str)] = &[
+    ("store_state", "analysis_acquisitions", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_workspace_snapshot", "acquisition", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_snapshot", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_workspace_snapshot", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_manifest", "acquired_at", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_manifest", "acquisition", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_manifest", "recorded_run", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_release", "scope", "TEXT NOT NULL DEFAULT ''"),
+    ("analysis_scope_release", "before", "INTEGER NOT NULL DEFAULT 0"),
+    ("analysis_scope_release", "legacy_scope", "TEXT"),
+    ("analysis_scope_release", "legacy_acquisition", "INTEGER"),
     ("corpus_decided", "swept", "INTEGER NOT NULL DEFAULT 0"),
     ("corpus_state", "archive_due", "INTEGER NOT NULL DEFAULT 0"),
     ("corpus_manifests", "policy", "BLOB CHECK(policy IS NULL OR length(policy) = 32)"),
@@ -1063,7 +1259,7 @@ mod schema_object_tests {
     #[test]
     fn schema_objects_are_what_schema_creates() {
         let connection = Connection::open_in_memory().unwrap();
-        connection.execute_batch(SCHEMA).unwrap();
+        apply_schema(&connection).unwrap();
         let fts: Vec<String> = schema_objects(SCHEMA)
             .into_iter()
             .filter(|(_, n)| n.ends_with("_fts"))

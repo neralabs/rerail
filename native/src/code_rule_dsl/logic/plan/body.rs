@@ -262,7 +262,8 @@ impl<'v> Body<'v> {
     /// The demand that drives its rule whatever the statistics say: a demand-restricted aggregate's
     /// (`rr_demand_agg_…`, a positive atom), whose witnesses are enumerated from its requested keys, or the tuple
     /// demand that bounds a Cartesian product (`product_demand::PREFIX`): the product's only bound, so it leads; or a
-    /// deferred join's requests and a pair cache's guard, the same.
+    /// deferred join's requests and a pair cache's guard, the same. Not a demanded relation's own demand (decision
+    /// 0048's `demand_x`): an atom a constant restricts may lead it (`demand_bounds_lead`, Q59).
     pub fn demand_first(&self) -> Option<usize> {
         let head = self.rel(self.head());
         (0..self.len()).find(|&i| self.plain_atom(i).is_some_and(|a| {
@@ -273,7 +274,7 @@ impl<'v> Body<'v> {
             !a.neg()
                 && (rel.contains("rr_demand_agg_")
                     || rel.strip_prefix("rr_pair_cache_").and_then(|s| s.strip_suffix("_small")).is_some_and(cache)
-                    || [super::corpus::product_demand::PREFIX, super::corpus::product_demand::DEFERRED_PAIRS, "demand_"].iter().any(|&p| rel.strip_prefix(p) == Some(head)))
+                    || [super::corpus::product_demand::PREFIX, super::corpus::product_demand::DEFERRED_PAIRS].iter().any(|&p| rel.strip_prefix(p) == Some(head)))
         }))
     }
     /// A demanded relation's own demand (decision 0048's `x :- demand_x, …`), which bounds what its rule reads.
@@ -477,7 +478,17 @@ impl<'v> Body<'v> {
     /// The rule written into a derived value's inputs (`logic::derived`), field by field: its head and body, the same
     /// pieces in the same order as its text, without making the text.
     pub(in crate::code_rule_dsl) fn digest(&self, d: &mut super::super::derived::Inputs) {
-        // A recheck's order is not the rule's: kept apart (Q208); nor a line's planned from given variables bound.
+        self.digest_pre(d);
+        self.digest_atom(d, self.head());
+        d.u64(self.lits.len() as u64);
+        for &l in &self.lits {
+            self.digest_lit(d, l);
+        }
+    }
+
+    /// What is bound before its first step, written into a derived value's inputs: a recheck's order is not the
+    /// rule's, kept apart (Q208); nor a line's planned from given variables bound (0364 R4).
+    pub(in crate::code_rule_dsl) fn digest_pre(&self, d: &mut super::super::derived::Inputs) {
         match &self.pre {
             None => {}
             Some(Pre::Head) => d.str("head bound"),
@@ -488,11 +499,6 @@ impl<'v> Body<'v> {
                     d.u64(*w);
                 }
             }
-        }
-        self.digest_atom(d, self.head());
-        d.u64(self.lits.len() as u64);
-        for &l in &self.lits {
-            self.digest_lit(d, l);
         }
     }
     /// The rule's digest (`digest`), made once: what every key of the rule writes (`plan_key`, `line_key`,

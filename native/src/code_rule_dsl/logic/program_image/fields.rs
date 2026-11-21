@@ -356,7 +356,17 @@ impl Version {
     pub fn about_kept(&self, keep: &dyn Fn(&str) -> bool) -> Facts {
         let names: Vec<String> = self.about_facts().iter().map(|f| self.text(f.name()).to_owned()).filter(|n| keep(n)).collect();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        ProgramFields::about(self, &names)
+        self.about_held(&names)
+    }
+    /// The `.about` rows of `names` the version holds, to be written: `about`'s, but the program's own row only where
+    /// the version holds one (its readers are given it, held or not; a write of it would state a row the version
+    /// lacks, and so another image than a run from scratch's).
+    fn about_held(&self, names: &[&str]) -> Facts {
+        let mut about = ProgramFields::about(self, names);
+        if !self.about_facts().iter().any(|f| self.text(f.name()) == "program") {
+            about.remove("program");
+        }
+        about
     }
 }
 
@@ -432,8 +442,8 @@ impl Builder<'_> {
         }
         let names: BTreeSet<String> = [was, now].iter().flat_map(|v| v.about_facts().into_iter().map(|f| v.text(f.name()).to_owned()).collect::<Vec<_>>()).collect();
         let names: Vec<&str> = names.iter().map(String::as_str).collect();
-        let about = now.about(&names);
-        if was.about(&names) != about {
+        let about = now.about_held(&names);
+        if was.about_held(&names) != about {
             self.set_about(&about);
         }
     }

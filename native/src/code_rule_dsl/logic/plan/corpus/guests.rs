@@ -80,7 +80,7 @@ pub(super) const SPLICE: &str = "rr_splice_req";
 pub(super) const DEMANDS: [&str; 3] = [DEMAND, PARSE, SPLICE];
 /// The relations a rule reads guests and values through (`rr::lower`'s guest relations): a program none of whose
 /// needed rules reads one makes no guest.
-pub(in crate::code_rule_dsl) const READS: [&str; 10] = ["parsed", "sub_tape", "rr_program", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
+pub(in crate::code_rule_dsl) const READS: [&str; 11] = ["parsed", "sub_tape", "rr_program", "doc_grammar", "tape_of", "host_node", "guest_of", "guest_place", "parse_of", "unparse_of", "splice_of"];
 /// Every relation a request is read from: a run with a rule deriving one makes guests.
 pub(in crate::code_rule_dsl) const REQUESTS: [&str; 3] = DEMANDS;
 /// The engine's relations a combined run shares across its programs (`corpus::combine` prefixes no program's): the

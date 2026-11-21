@@ -561,6 +561,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with RERAIL_TAPE_RUN"]
+    #[cfg(target_os = "macos")]
     fn tape_cost() {
         let jsonc_run = std::env::var("RERAIL_TAPE_RUN").is_ok_and(|r| r.starts_with("jsonc"));
         let kinds0 = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
@@ -770,6 +771,7 @@ mod tests {
     #[cfg(target_os = "macos")]
     #[test]
     #[ignore = "a measurement: run by name with --nocapture"]
+    #[cfg(target_os = "macos")]
     fn shape_costs() {
         let kinds = Kinds { document: 1, object: 2, pair: 3, array: 4, string: 5, string_content: 6, escape_sequence: 7, number: 8, true_: 9, false_: 10, null: 11, comment: 12, key_field: 1, value_field: 2 };
         let kernel = kernel_under_test();

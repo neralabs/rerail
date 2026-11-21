@@ -2092,7 +2092,7 @@ impl Batch {
         let pplaces = (2 * n).next_power_of_two().max(16);
         let mut p = LatParams { top: lat.top, n: n as u32, had: had as u32, nkeys: nkeys as u32, code: lat.code, after: lat.after.unwrap_or(NONE), pmask: (pplaces - 1) as u32,
                                 hmask: (map.places - 1) as u32, level: level.unwrap_or(0), omask: 0, pad: 0, r_at: r.at, r_rows_at: r.rows_at(), h_at: map.at as u64, h0_at: 0 };
-        // Its rows written through the bounded writer, checked after the work (decision 0463).
+        // Its rows are written by the fold, through the writer (decision 0463): checked when the batch is done.
         self.writes(r, "a lattice's held rows");
         // The map's block as it is now (reaching its slots), kept until the work completes.
         let hb = bound(map.home)?;

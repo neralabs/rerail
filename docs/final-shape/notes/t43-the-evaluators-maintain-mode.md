@@ -805,3 +805,33 @@ What a 2,410-file edit still costs, at step 03: `rr_agg37` and its demand stratu
 priced above a derive (§4's second clause; 98,707 against 70,337 and 252,165 against 247,433, with deltas about
 0.1% of the rows read), 16 s together with its pair statistics; a probe of a derived input's order, 4.1 s; the view
 `kind`'s rows, 2.0 s; the semi-joins' rows measured, 1.9 s.
+
+## Steps 12-20 on the sync branch (2026-11-19)
+
+The sync branch (jeremybarnes/sync-integration-hub-tape) took this line at ee692490e. There the frames are retired
+(0439, 0401 step 9): kept facts are 0456 chains, bound where they lie (`kept_read::gathered`), and a run's base
+relations come from the corpus batch with the base compare over every file's tape (0458, `OldBase`). That decides
+the steps built on the frames:
+
+- **Kept as built**: steps 12, 13, 15, 18 and 19 (`retain::rows_delta`, `document_delta_except`); the R1-R9 tests;
+  the measure's key in the cross part (step 10); the fused step's witness (`tail`, Q240).
+- **Step 14, on 0458's table**: the last run's documents are the base documents' table (`#base-documents`), not a
+  `rerail:run_docs` frame. It is written with the memo plan it was made under (`#memo-plan` among its reads,
+  `retain::memo_plan_tag`), and its documents are taken as `same_docs` only when the plan is this run's, as step
+  14's frame was under the cross program's `binds`. The table is kept for every kept part, base relations or none.
+  A run inside another's waves, which makes no compare (it reads no store there), reads it from the space its kept
+  part was bound from before the first wave (`retain::base_documents_in`). Without that, a phase's part hashed its
+  four inputs whole at every edit. `inputs_hashed_whole` is asserted 0 again.
+- **Step 16 superseded**: 0456's writer appends one file a space per wave
+  (`a_waves_kept_puts_through_the_store_are_one_file_a_space`, the port of `a_waves_kept_puts_are_one_block_per_space`).
+- **Step 17 superseded**: no input's old rows are read from frames, so there is no `OldInput`. 0458's base compare
+  states the change from the tapes, and the counter `inputs_read_whole` went with it.
+- **Step 19's `rows_decoded` dropped**: nothing decodes a kept row. The ignored in-place test is live, and asserts
+  the kept entries bound and no row copied.
+- **Step 20 superseded**: a session's base relations are the corpus batch's (0458), not patched layers
+  (`Layered::then`, `session_ranges`). 0458's open item stands: a session holds no corpus batch.
+- The frames' measure-key filter on gathered rows (`held_nodes`) is not taken. No rows are gathered, and measure
+  keys stay where 0458 puts them (`stored`, `semijoin`).
+- **Open (Q360)**: R8 and step 13's entries check fail on this line. A phase's run is in memory here (a429546488),
+  no session's, and binds its kept part from the store at each edit. At the cycle cut, no input the session asks
+  is read from the entries. Both tests are ignored with Q360.

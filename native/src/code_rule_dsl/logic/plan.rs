@@ -41,6 +41,7 @@ use std::path::Path;
 pub enum Error {
     Front(super::front::Error),
     Sql(rusqlite::Error),
+    Cache(crate::content_store::StoreError),
     /// The facts have no planner statistics, or statistics of other data.
     Statistics(String),
     /// A rule the planner cannot order or lower.
@@ -52,8 +53,15 @@ impl fmt::Display for Error {
         match self {
             Error::Front(e) => write!(f, "{e}"),
             Error::Sql(e) => write!(f, "{e}"),
+            Error::Cache(e) => write!(f, "{e}"),
             Error::Statistics(m) | Error::Plan(m) => f.write_str(m),
         }
+    }
+}
+
+impl From<crate::content_store::StoreError> for Error {
+    fn from(error: crate::content_store::StoreError) -> Self {
+        Self::Cache(error)
     }
 }
 
@@ -1179,7 +1187,7 @@ thread_local! {
 /// The plan kept for `key` (`RunPlans::find`), this thread's job's first: `None` outside a corpus run.
 fn plans_find(key: &PlanKey, len: usize, nodes: f64) -> Option<Option<Kept>> {
     with_plans(|p| {
-                let shared = p.as_ref()?;
+        let shared = p.as_ref()?;
         if let Some(k) = OWN_PLANS.with(|o| o.borrow().as_ref().and_then(|m| m.get(key).cloned())) {
             return Some(Some(k));
         }
@@ -1454,6 +1462,7 @@ impl OrderedPlans {
 pub fn in_view<R>(view: &Arc<ChunkView>, f: impl FnOnce() -> R) -> (R, ChunkPlans) {
     let Some(run) = share_plans() else { return (f(), ChunkPlans::default()) };
     let shared = SharedPlans { run: Arc::clone(&run.run), view: Some(Arc::clone(view)) };
+    // The view is the plans its extent binds (its jobs carry it), and its own (`enter_plans`) go back to it.
     let r = {
         // The chunk's plans are the run's context's while `f` runs (and its jobs', which carry the context), and
         // what it plans is put into the view as the job's own end (`enter_plans`), before the binding goes.
@@ -10886,9 +10895,9 @@ fn retainable_stratum(f: Fields<'_>, vs: &body::Versions, scc: &BTreeSet<String>
         && !rules.iter().any(|&r| vs.rule_at(r).1.body().any(|l| matches!(l.view(), Lit::Ast { .. })))
 }
 
-/// What a stratum read names a native step's answers for `p` by: `answer:<p>`.
+/// Old frames could record a nonempty answer digest beside an unmaterialized, empty payload.
 fn answer_read(p: &str) -> String {
-    format!("answer:{p}")
+    format!("answer:v2:{p}")
 }
 
 /// A set of answered rows' digest (`rows_digest`, of no rows when none), of relation `p`'s content (`Cells`).
@@ -10900,7 +10909,7 @@ fn answers_digest(f: Fields<'_>, db: &Connection, p: &str, rows: Option<&BTreeSe
     rows_digest(&Cells::new(&atoms, &stored_types(f, p, vec![b'i'; width])), &flat, rows.len())
 }
 
-/// A stratum's reads with its native step's answers (`answer:<p>` for each relation its requests produce), when
+/// A stratum's reads with its native step's answers (one digest per produced relation), when
 /// it makes requests of its own.
 fn with_answers(f: Fields<'_>, db: &Connection, scc: &BTreeSet<String>, reads: Option<Vec<(String, u64)>>, log: Option<BTreeMap<String, BTreeSet<Vec<i64>>>>) -> Option<Vec<(String, u64)>> {
     let mut reads = reads?;
@@ -10922,13 +10931,16 @@ fn with_answers(f: Fields<'_>, db: &Connection, scc: &BTreeSet<String>, reads: O
 /// After a stratum ran: each of its relations' digest and rows, given to `ks` with what the stratum read
 /// (`reads`, each with its digest then), and its digest to this run's `fresh`.
 fn kept_strata_ran(ks: &mut dyn KeptStrata, db: &Connection, run: &Run, scc: &BTreeSet<String>, reads: Option<&Vec<(String, u64)>>, fresh: &mut HashMap<String, Option<u64>>) {
+    if scc.contains("source_language_classification") {
+        crate::code_rule_dsl::prof::count("source_language.evaluations", 1);
+    }
     let mut members = Vec::new();
     let f = run.fields();
     for r in scc.iter().filter(|r| !run.views.contains(*r)) {
         let got = if run.native_rels.contains(r) {
             super::native::component::kept_rows(db, r)
         } else if f.produced(r) && !f.is_input(r) {
-            // A produced relation's answers, in its table (none when no rule reads it).
+            // SQL holds the answers when the relation is outside the native component.
             produced_rows(db, run, r)
         } else {
             None
@@ -12309,6 +12321,9 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 }
                 for (j, rules, moved) in reached_strata {
                     let scc = &sccs[j];
+                    if scc.contains("source_language_classification") {
+                        crate::code_rule_dsl::prof::count("source_language.evaluations", 1);
+                    }
                     let key = stratum_key(scc);
                     reached += 1;
                     // A view of an input's columns (Q37) keeps nothing: it is held again in place, which is no work,
@@ -12488,7 +12503,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
             // A stratum the engine makes otherwise (a native operator, a lattice, a view, a produced request, a
             // tree pattern read off the documents) always runs.
             // A request this stratum makes and answers inside its fixpoint (decision 0065 §2a) is its native step:
-            // its answers are among what it reads (`answer:<p>`), so it is clean while they are as they were.
+            // Its reads include the observed answers. A changed answer invalidates the stratum.
             // (A request whose answers are all above the stratum is answered there, once its rows are whole.)
             let asks: Vec<&String> = scc.iter().filter(|r| f0.answers_of(r).iter().any(|p| scc.contains(*p))).collect();
             // A stratum of produced relations above their requests is their native step: their rows are the answers.
@@ -12638,8 +12653,14 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                 if let Some(at) = run.logging {
                     run.answer_logs.entry(at).or_default().entry(rel.clone()).or_default().extend(rows.iter().cloned());
                 }
-                // An input's rows are the caller's to bind; a relation no rule reads has no table.
-                if f0.is_input(rel) || rows.is_empty() || !body::Versions::keys(0, p0.len()).any(|r| reads_of(&run.versions, r).any(|a| a == rel.as_str())) {
+                // A later program can reuse this producer even when the current cone has no local reader.
+                // Retain its actual answers alongside their observed digest whenever this stratum publishes frames.
+                if f0.is_input(rel) || rows.is_empty() {
+                    continue;
+                }
+                if strata_kept.is_none()
+                    && !body::Versions::keys(0, p0.len()).any(|r| reads_of(&run.versions, r).any(|a| a == rel.as_str()))
+                {
                     continue;
                 }
                 // Held by the native engine, as a component's own answers are (`answer_pending`): a native stratum above

@@ -140,12 +140,17 @@ pub static jemalloc_conf: Option<&'static std::ffi::c_char> = Some(unsafe {
 pub(crate) fn install_store_functions() {
     static ONCE: std::sync::Once = std::sync::Once::new();
     ONCE.call_once(|| {
-        code_rule_dsl::build_ids::set(
-            env!("RERAIL_ENGINE_BUILD_ID"),
-            env!("RERAIL_GRAMMAR_BUILD_ID"),
-        );
+        let grammar = env!("RERAIL_GRAMMAR_BUILD_ID");
+        // A test can name another grammar build (32 hex digits), as a store written by another engine build has.
+        #[cfg(feature = "test-hooks")]
+        let grammar = std::env::var("RERAIL_TEST_GRAMMAR_BUILD_ID")
+            .ok()
+            .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
+            .map_or(grammar, |id| Box::leak(id.into_boxed_str()));
+        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), grammar);
         code_rule_dsl::install_devices();
         code_rule_dsl::install_languages();
+        code_rule_dsl::logic::plan::corpus::install_git_inventory();
         content_store::set_connection_functions(|db| {
             code_rule_dsl::text::install(db)?;
             code_rule_dsl::prefilter::tapes::install(db)
@@ -281,6 +286,461 @@ pub fn validate_regex(pattern: String) -> Result<()> {
 #[napi]
 pub fn content_store_file_name() -> &'static str {
     content_store::STORE_FILE_NAME
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+    code_rule_dsl::logic::plan::corpus::combined::inspect_separately(||
+        LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), None)?.inspection())
+}
+
+#[cfg(not(feature = "headless"))]
+#[derive(Clone)]
+enum PolicyLocation {
+    Worktree { path: std::path::PathBuf, library: std::path::PathBuf },
+    Git { snapshot: std::sync::Arc<git_workspace::snapshot::Snapshot>, inputs: Option<code_rule_dsl::logic::rr::GitPolicyInputs> },
+}
+
+#[cfg(not(feature = "headless"))]
+#[derive(Clone)]
+struct LoadedRrPolicy {
+    location: PolicyLocation,
+    program: std::sync::Arc<code_rule_dsl::logic::program_image::Version>,
+    files: Vec<code_rule_dsl::logic::rr::LibraryFile>,
+}
+
+#[cfg(not(feature = "headless"))]
+impl LoadedRrPolicy {
+    fn read(path: &str, snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>, inspected: Option<&[code_rule_dsl::logic::rr::LibraryFile]>) -> Result<Self> {
+        let path = rr_policy_path(path, snapshot.as_deref())?;
+        let code_rule_dsl::logic::rr::ReadProgram { program, files, git } = tools::inspect_policy_after(&path, inspected).map_err(Error::from_reason)?;
+        let location = match snapshot {
+            Some(snapshot) => PolicyLocation::Git { snapshot, inputs: git },
+            None => PolicyLocation::Worktree { path: path.clone(), library: code_rule_dsl::logic::rr::library_root() },
+        };
+        Ok(Self { location, program, files })
+    }
+
+    fn inspection(&self) -> Result<String> {
+        let metadata = code_rule_dsl::logic::rr::metadata(&*self.program).map_err(|e| Error::from_reason(e.to_string()))?;
+        Ok(serde_json::json!({ "metadata": metadata, "programInputs": tools::policy_inputs(&self.files) }).to_string())
+    }
+}
+
+/// The programs and includes inspected during one scan's policy selection.
+#[cfg(not(feature = "headless"))]
+#[napi]
+#[derive(Default)]
+pub struct LoadedRrPolicies {
+    store: Option<std::path::PathBuf>,
+    programs: std::sync::Mutex<std::collections::HashMap<std::path::PathBuf, PolicyVersions>>,
+}
+
+#[cfg(not(feature = "headless"))]
+type PolicyVersions = std::collections::HashMap<Option<git_workspace::snapshot::SnapshotKey>, LoadedRrPolicy>;
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+impl LoadedRrPolicies {
+    #[napi(constructor)]
+    pub fn new(store: Option<String>) -> Self {
+        Self { store: store.map(Into::into), ..Self::default() }
+    }
+
+    #[napi]
+    pub fn load(&self, path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+        let key = policy_file_path(&path)?;
+        let read = || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(|| {
+            let inspected = if source.is_none() && self.store.is_some() {
+                self.programs.lock().unwrap_or_else(|err| err.into_inner()).get(key)
+                    .and_then(|versions| versions.get(&None)).map(|policy| policy.files.clone())
+            } else { None };
+            let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), inspected.as_deref())?;
+            let inspection = policy.inspection()?;
+            let origin = match &policy.location {
+                PolicyLocation::Git { snapshot, .. } => Some(snapshot.source_key()),
+                PolicyLocation::Worktree { .. } => None,
+            };
+            self.programs.lock().unwrap_or_else(|err| err.into_inner()).entry(key.to_owned()).or_default().insert(origin, policy);
+            Ok(inspection)
+        });
+        match &self.store {
+            Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, read),
+            None => read(),
+        }
+    }
+}
+
+#[cfg(not(feature = "headless"))]
+fn policy_file_path(path: &str) -> Result<&Path> {
+    let path = Path::new(path);
+    if git_workspace::snapshot::requires_directory(path) {
+        return Err(Error::from_reason(format!("Expected a policy file at {}", path.display())));
+    }
+    Ok(path.strip_prefix(".").unwrap_or(path))
+}
+
+#[cfg(not(feature = "headless"))]
+fn rr_policy_path(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Result<std::path::PathBuf> {
+    let path = policy_file_path(path)?;
+    match snapshot {
+        None => path.canonicalize().map_err(|error| Error::from_reason(format!("{}: {error}", path.display()))),
+        Some(snapshot) if path.is_relative() && path.components().all(|part| matches!(part, std::path::Component::Normal(_))) => Ok(snapshot.root().join(path)),
+        Some(_) => Err(Error::from_reason("Expected a repository-relative policy path")),
+    }
+}
+
+/// What a policy scan reads and where it writes: the policy files, the checkout's root, the content store, the output
+/// directory, and the source paths it is held to.
+#[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct RrScanTarget {
+    pub paths: Vec<String>,
+    pub root: String,
+    pub store: String,
+    pub output: String,
+    pub source_paths: Option<Vec<String>>,
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn scan_rr_policies_async(
+    target: RrScanTarget,
+    analysis: Option<&rerail_w::code_rule_dsl::workspace::api::AnalysisScopeRun>,
+    source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
+    policy_source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
+    loaded: Option<&LoadedRrPolicies>,
+) -> Result<napi::bindgen_prelude::AsyncTask<ScanRrPolicies>> {
+    let RrScanTarget { paths, root, store, output, source_paths } = target;
+    let policy_snapshot = policy_source.map(|source| source.pinned_snapshot());
+    let policies = loaded.map(|loaded| {
+        let programs = loaded.programs.lock().unwrap_or_else(|error| error.into_inner());
+        let origin = policy_snapshot.as_ref().map(|snapshot| snapshot.source_key());
+        paths.iter().map(|path| {
+            let key = policy_file_path(path).map_err(|error| error.to_string())?;
+            let versions = programs.get(key).ok_or_else(|| format!("{path}: policy was not loaded"))?;
+            if let Some(policy) = versions.get(&origin) { return Ok(policy.clone()); }
+            if origin.is_some() { return Err(format!("{path}: policy was not loaded from the selected Git source")); }
+            if versions.len() == 1 { return Ok(versions.values().next().expect("one inspected policy").clone()); }
+            Err(format!("{path}: select a policy source for this path inspected in multiple revisions"))
+        }).collect()
+    });
+    let owner = analysis.map(|run| run.owner_for(Path::new(&store), Path::new(&root), source)).transpose()?;
+    Ok(napi::bindgen_prelude::AsyncTask::new(ScanRrPolicies {
+        paths, root, store, output, owner, source_paths,
+        snapshot: source.map(|source| source.pinned_snapshot()),
+        policy_snapshot,
+        policies,
+    }))
+}
+
+#[cfg(not(feature = "headless"))]
+pub struct ScanRrPolicies {
+    paths: Vec<String>,
+    root: String,
+    store: String,
+    output: String,
+    owner: Option<content_store::analysis_scope::AnalysisOwner>,
+    source_paths: Option<Vec<String>>,
+    snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>,
+    policy_snapshot: Option<std::sync::Arc<git_workspace::snapshot::Snapshot>>,
+    policies: Option<Vec<std::result::Result<LoadedRrPolicy, String>>>,
+}
+
+#[cfg(not(feature = "headless"))]
+impl napi::Task for ScanRrPolicies {
+    type Output = String;
+    type JsValue = String;
+
+    fn compute(&mut self) -> Result<String> {
+        use content_store::analysis_scope::{self, AnalysisRun, RunSource};
+        use code_rule_dsl::logic::plan::corpus;
+        let path = Path::new(&self.store);
+        let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
+        let mut warning = None;
+        let mut run = None;
+        if self.owner.is_none() && path != Path::new(":memory:") && !self.paths.is_empty() {
+            let scope = git_workspace::snapshot::analysis_scope(root).unwrap_or_else(|| analysis_scope::directory(root));
+            let source = self.snapshot.as_ref().map_or_else(|| RunSource::directory(root), |view| view.run_source());
+            match content_store::ContentStore::open(path).and_then(|store| AnalysisRun::begin_batch(store, &scope, source)) {
+                Ok(batch) => run = Some(batch),
+                Err(error) => warning = Some(error.to_string()),
+            }
+        }
+        let path = if warning.is_some() { Path::new(":memory:") } else { path };
+        let owner = self.owner.as_ref().or_else(|| run.as_ref().map(|run| &run.owner)).cloned();
+        let ownership = owner.clone().map(|owner| (root.to_owned(), owner));
+        let (mut reports, source_complete) = corpus::with_tape_cache_path(path, ownership, || {
+            let options = serde_json::json!({ "sourcePaths": self.source_paths, "scanSpans": true, "reuse": path != Path::new(":memory:") });
+            let preloaded = self.policies.is_some();
+            let policies = self.policies.take().unwrap_or_else(|| self.paths.iter().map(|path|
+                LoadedRrPolicy::read(path, self.policy_snapshot.clone(), None).map_err(|error| error.to_string())
+            ).collect());
+            let mut counts = std::collections::HashMap::new();
+            let policies: Vec<_> = policies.into_iter().map(|policy| {
+                let policy = policy?;
+                let metadata = code_rule_dsl::logic::rr::metadata(&*policy.program).map_err(|err| err.to_string())?;
+                let declared = metadata["policies"].as_array().filter(|ids| !ids.is_empty()).ok_or(".policy declaration required")?;
+                let mut ids = Vec::new();
+                for entry in declared {
+                    let id = entry["id"].as_str().filter(|id| !id.trim().is_empty()).ok_or(".policy ID must not be empty")?;
+                    ids.push(id.to_owned());
+                    *counts.entry(id.to_owned()).or_insert(0usize) += 1;
+                }
+                Ok::<_, String>((policy, ids))
+            }).collect();
+            let mut reports = Vec::new();
+            let mut ephemeral = path == Path::new(":memory:");
+            for (i, policy) in policies.into_iter().enumerate() {
+                let (LoadedRrPolicy { program, files, location }, ids) = match policy {
+                    Ok(policy) => policy,
+                    Err(error) => {
+                        reports.push(serde_json::json!({"error": error, "ruleId": null}));
+                        continue;
+                    }
+                };
+                if let Some(id) = ids.iter().find(|id| counts[*id] > 1) {
+                    reports.push(serde_json::json!({"error": format!("duplicate .rerail policy ID {id:?}"), "ruleId": id}));
+                    continue;
+                }
+                let out = if self.output.is_empty() { std::path::PathBuf::new() } else { Path::new(&self.output).join(i.to_string()) };
+                let report = if ephemeral {
+                    None
+                } else {
+                    if preloaded {
+                        match &location {
+                            PolicyLocation::Worktree { path, library } => code_rule_dsl::logic::rr::retain_read_program(path, library, &files, &program),
+                            PolicyLocation::Git { snapshot, inputs: Some(inputs) } => inputs.retain(snapshot.root(), &files, &program),
+                            PolicyLocation::Git { inputs: None, .. } => {}
+                        }
+                    }
+                    match tools::run_program_checked(program.clone(), &files, root, &out, &options) {
+                        Ok(report) => Some(Ok(report)),
+                        Err(tools::ProgramRunError::Cache(error)) => {
+                            if let Some(owner) = &owner { owner.warn(error.to_string()); }
+                            ephemeral = true;
+                            None
+                        }
+                        Err(error) => Some(Err(error)),
+                    }
+                };
+                let report = match report {
+                    Some(report) => report,
+                    None => {
+                        let mut options = options.clone();
+                        options["reuse"] = serde_json::Value::Bool(false);
+                        code_rule_dsl::logic::plan::corpus::with_tape_cache_path(Path::new(":memory:"), None, ||
+                            tools::run_program_checked(program, &files, root, &out, &options)
+                        )
+                    }
+                };
+                reports.push(report.unwrap_or_else(|error| serde_json::json!({
+                    "error": error.to_string(), "ruleId": ids.first().filter(|_| ids.len() == 1),
+                })));
+            }
+            (reports, corpus::git_source_reads_complete())
+        });
+        if let Some(mut run) = run {
+            let succeeded = source_complete && reports.iter().all(|report| report.get("error").is_none());
+            warning = match run.finish(succeeded) {
+                Ok(()) => run.publication_warning(),
+                Err(error) => Some(error.to_string()),
+            };
+        }
+        if let Some(warning) = warning {
+            for report in &mut reports { report["cacheWarnings"] = serde_json::json!([warning]); }
+        }
+        serde_json::to_string(&reports).map_err(|e| Error::from_reason(e.to_string()))
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: String) -> Result<String> {
+        Ok(output)
+    }
+}
+
+#[napi]
+pub fn prepare_analysis_store_async(store_path: String) -> napi::bindgen_prelude::AsyncTask<PrepareAnalysisStore> {
+    napi::bindgen_prelude::AsyncTask::new(PrepareAnalysisStore(store_path))
+}
+
+pub struct PrepareAnalysisStore(String);
+
+impl napi::Task for PrepareAnalysisStore {
+    type Output = ();
+    type JsValue = ();
+
+    fn compute(&mut self) -> Result<()> {
+        content_store::ContentStore::open(Path::new(&self.0))
+            .map(drop)
+            .map_err(|error| Error::from_reason(error.to_string()))
+    }
+
+    fn resolve(&mut self, _env: napi::Env, _: ()) -> Result<()> { Ok(()) }
+}
+
+#[napi]
+pub fn prepare_directory_analysis_store_async(store: String, directory: String, home: String) -> napi::bindgen_prelude::AsyncTask<PrepareDirectoryAnalysisStore> {
+    napi::bindgen_prelude::AsyncTask::new(PrepareDirectoryAnalysisStore { store, directory, home, recorded: false })
+}
+
+pub struct PrepareDirectoryAnalysisStore { store: String, directory: String, home: String, recorded: bool }
+
+#[napi(object)]
+pub struct AnalysisStoreRegistration {
+    pub identity: String,
+    pub cutoff: Option<f64>,
+}
+
+impl PrepareDirectoryAnalysisStore {
+    fn registration(&self) -> Result<AnalysisStoreRegistration> {
+        let store = content_store::ContentStore::open(Path::new(&self.store)).map_err(|error| Error::from_reason(error.to_string()))?;
+        let cutoff = if self.recorded { store.recorded_directory_release_cutoff(&self.directory, &self.home) }
+            else { store.directory_release_cutoff(Path::new(&self.directory), &self.home) }
+            .map_err(|error| Error::from_reason(error.to_string()))?;
+        Ok(AnalysisStoreRegistration { identity: store.identity().to_string(), cutoff: cutoff.map(|n| n as f64) })
+    }
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn prepare_analysis_store_registration_async(store: String, directory: String, home: String, recorded: Option<bool>) -> napi::bindgen_prelude::AsyncTask<PrepareRegistration> {
+    napi::bindgen_prelude::AsyncTask::new(PrepareRegistration(PrepareDirectoryAnalysisStore { store, directory, home, recorded: recorded == Some(true) }))
+}
+
+#[cfg(not(feature = "headless"))]
+pub struct PrepareRegistration(PrepareDirectoryAnalysisStore);
+
+#[cfg(not(feature = "headless"))]
+impl napi::Task for PrepareRegistration {
+    type Output = AnalysisStoreRegistration;
+    type JsValue = AnalysisStoreRegistration;
+    fn compute(&mut self) -> Result<Self::Output> { self.0.registration() }
+    fn resolve(&mut self, _env: napi::Env, registration: Self::Output) -> Result<Self::JsValue> { Ok(registration) }
+}
+
+impl napi::Task for PrepareDirectoryAnalysisStore {
+    type Output = Option<f64>;
+    type JsValue = Option<f64>;
+
+    fn compute(&mut self) -> Result<Self::Output> {
+        Ok(self.registration()?.cutoff)
+    }
+
+    fn resolve(&mut self, _env: napi::Env, cutoff: Self::Output) -> Result<Self::JsValue> {
+        Ok(cutoff)
+    }
+}
+
+#[napi]
+pub fn collect_analysis_cache_async(store_path: String, identities: Option<Vec<String>>) -> napi::bindgen_prelude::AsyncTask<CollectAnalysisCache> {
+    napi::bindgen_prelude::AsyncTask::new(CollectAnalysisCache(store_path, identities.unwrap_or_default()))
+}
+
+pub struct CollectAnalysisCache(String, Vec<String>);
+
+impl napi::Task for CollectAnalysisCache {
+    type Output = ();
+    type JsValue = ();
+
+    fn compute(&mut self) -> Result<()> {
+        let path = Path::new(&self.0);
+        if self.1.is_empty() && !path.try_exists().map_err(|error| Error::from_reason(error.to_string()))? { return Ok(()); }
+        let expected = self.1.iter().map(|id| id.parse::<i64>()).collect::<std::result::Result<Vec<_>, _>>()
+            .map_err(|_| Error::new(Status::InvalidArg, "invalid analysis store identity"))?;
+        let collect = || -> content_store::StoreResult<()> {
+            let store = content_store::ContentStore::open_for_collection(path, &expected)?;
+            let policy = content_store::CorpusPolicy::default();
+            let now = content_store::unix_seconds()?;
+            if store.corpus_pass_wanted(&policy, now)? {
+                let started = std::time::Instant::now();
+                for _ in 0..8 {
+                    if !store.collect_corpus_pass(&policy, now)?.did_work() || started.elapsed().as_millis() >= 200 { break; }
+                }
+            }
+            Ok(())
+        };
+        collect().map_err(|error| Error::from_reason(error.to_string()))
+    }
+
+    fn resolve(&mut self, _env: napi::Env, _: ()) -> Result<()> { Ok(()) }
+}
+
+#[napi]
+pub fn existing_directory_analysis_ownership(store_path: String, directory: String, home: String) -> Result<bool> {
+    content_store::analysis_scope::existing_directory_ownership(Path::new(&store_path), Path::new(&directory), &home)
+        .map_err(|error| Error::from_reason(error.to_string()))
+}
+
+#[napi]
+pub fn owning_directory_analysis_store(store_path: String, directory: String, home: String, recorded: Option<bool>) -> Result<Option<String>> {
+    use content_store::analysis_scope::{owning_directory_store, owning_recorded_directory_store};
+    let lookup = if recorded == Some(true) { owning_recorded_directory_store } else { owning_directory_store };
+    lookup(Path::new(&store_path), Path::new(&directory), &home)
+        .map(|owner| owner.map(|identity| identity.map_or_else(String::new, |id| id.to_string())))
+        .map_err(|error| Error::from_reason(error.to_string()))
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+#[napi]
+pub fn retire_upkeep_under(directory: String) {
+    let path = Path::new(&directory);
+    let root = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    rerail_accel::upkeep::retire_files_under(&root);
+}
+
+#[napi]
+pub fn delete_analysis_scope(store_path: String, value: String, directory: bool, release: Option<String>, expected_store: Option<String>, recorded: Option<bool>) -> Result<()> {
+    use content_store::analysis_scope;
+    let path = std::path::Path::new(&store_path);
+    let receipt = directory.then(|| analysis_scope::DirectoryRelease::parse(release.as_deref())).transpose()
+        .map_err(|error| Error::new(Status::InvalidArg, error.to_string()))?;
+    if !path.try_exists().map_err(|error| Error::from_reason(error.to_string()))?
+        && !(directory && release.is_some()) {
+        return Ok(());
+    }
+    if let Some(receipt) = receipt {
+        let expected = expected_store.as_deref().map(str::parse::<i64>).transpose().map_err(|_| Error::new(Status::InvalidArg, "invalid analysis store identity"))?;
+        if recorded == Some(true) { receipt.deliver_recorded(path, Path::new(&value), expected) }
+        else { receipt.deliver(path, Path::new(&value), expected) }
+    } else {
+        let scope = analysis_scope::named(&value).ok_or_else(|| Error::new(Status::InvalidArg, "analysis scope name must not be empty"))?;
+        let store = content_store::ContentStore::open(path).map_err(|err| Error::new(Status::GenericFailure, err.to_string()))?;
+        store.delete_analysis_scope(&scope)
+    }.map_err(|err| Error::new(Status::GenericFailure, err.to_string()))?;
+    Ok(())
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi(object)]
+pub struct NamedScopeRelease { pub identity: String, pub had_members: bool }
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn named_analysis_acquisition_state(store: String, name: String, identity: String, acquisition: String, scan: String) -> Result<String> {
+    let number = |value: &str| value.parse::<i64>().map_err(|_| Error::new(Status::InvalidArg, "invalid analysis acquisition identity"));
+    content_store::analysis_scope::named_acquisition_state(Path::new(&store), &name, number(&identity)?, number(&acquisition)?, &scan)
+        .map(str::to_owned).map_err(|e| Error::from_reason(e.to_string()))
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn legacy_named_analysis_route_state(store: String, name: String, identity: String) -> Result<String> {
+    let identity = identity.parse().map_err(|_| Error::new(Status::InvalidArg, "invalid analysis store identity"))?;
+    content_store::analysis_scope::legacy_named_route_state(Path::new(&store), &name, identity)
+        .map(str::to_owned).map_err(|e| Error::from_reason(e.to_string()))
+}
+
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn release_named_analysis_scope(store: String, name: String, identities: Vec<String>) -> Result<Option<NamedScopeRelease>> {
+    let file = Path::new(&store);
+    if identities.is_empty() && !file.try_exists().map_err(|e| Error::from_reason(e.to_string()))? { return Ok(None); }
+    let expected = identities.iter().map(|id| id.parse::<i64>()).collect::<std::result::Result<Vec<_>, _>>()
+        .map_err(|_| Error::new(Status::InvalidArg, "invalid analysis store identity"))?;
+    let (identity, had_members) = content_store::analysis_scope::release_named_scope(file, &name, &expected)
+        .map_err(|e| Error::from_reason(format!("could not release scope {name} in {store}: {e}")))?;
+    Ok(Some(NamedScopeRelease { identity: identity.to_string(), had_members }))
 }
 
 /// Inspect real POSIX session identity; allocator-backed ps tokens are not ownership.

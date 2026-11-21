@@ -2,7 +2,7 @@
 //! handles (decision 0173, t36 item 4): the rule's `Body` and its steps, in plan order, each step a `JoinItem` over
 //! numbered slots, then the head. A literal with no native step (an aggregate other than `count`, `sum`, `min`, `max`
 //! and `join`, a descent, a document range, top) has no spec: that rule stays SQL.
-use super::body::Body;
+use super::body::{Body, VarSet};
 use super::{Mode, Run, Step, sym_char};
 use super::super::native::component::spec::{Arg, Extreme, HeadTok, InputKey, JoinItem, JoinSpec, Source as JoinSource, Tok};
 use super::super::program_image::{AggRef, CmpOp, Lit, Slot, TermRef};
@@ -222,8 +222,9 @@ impl<'a> Run<'a, '_> {
     ) -> Option<Arc<JoinSpec>> {
         let pf = self.fields();
         let inputs = |d: &mut super::super::derived::Inputs| {
-            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`): another spec.
-            d.u64(u64::from(b.head_bound()));
+            // A recheck's spec starts from its head's variables bound (`Body::with_head_bound`), a mode line's from
+            // the variables its delta binds (`Body::with_bound`): another spec each.
+            b.digest_pre(d);
             if bare {
                 // A head of no terms, as `Body::digest_atom` writes it.
                 d.str(b.rel(b.head()));

@@ -877,6 +877,8 @@ unused(f) :- def(f, _), !used(f).
 /// device's binding too.
 #[test]
 fn a_maintained_strata_pieces_run_as_one_component() {
+    // The counts are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("together");
     std::fs::create_dir_all(&dir).unwrap();
@@ -1000,6 +1002,8 @@ reach(a, a) :- side(a), never(a).
 /// with an empty store, and the mode maintained strata (none derived again by a form).
 #[test]
 fn the_maintain_mode_keeps_aggregates_by_their_groups_and_computed_heads() {
+    // The counts are the run's (decision 0442): the test holds the run they are read in, which each run joins.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let marker = format!("# {:?}\n", std::time::SystemTime::now());
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("mode-aggregates");
     std::fs::create_dir_all(&dir).unwrap();

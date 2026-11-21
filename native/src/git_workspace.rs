@@ -5,6 +5,9 @@ use crate::content_store::{
     ContentStore, GitTree, GitTreeEntry, HashKey, SnapshotId, SourceId, StoreResult, WorkspaceId,
     WorkspaceRegistration,
 };
+#[path = "git_snapshot.rs"]
+pub mod snapshot;
+
 use gix::bstr::ByteSlice;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::fmt;
@@ -104,6 +107,7 @@ pub enum GitHashAlgorithm {
 
 #[derive(Clone, Debug)]
 pub struct GitWorkspace {
+    pub snapshot: Option<std::sync::Arc<snapshot::Snapshot>>,
     pub worktree_root: PathBuf,
     pub common_directory: PathBuf,
     pub hash_algorithm: GitHashAlgorithm,
@@ -328,6 +332,20 @@ fn load_ignore(
     worktree: &Path,
     case: gix::ignore::glob::pattern::Case,
 ) -> Result<IgnoreRules, DiscoveryError> {
+    let path = worktree.join(".rerailignore");
+    let bytes = match std::fs::read(&path) {
+        Ok(bytes) => bytes,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Vec::new(),
+        Err(error) => return Err(discovery_error("cannot read .rerailignore", error)),
+    };
+    ignore_patterns(worktree, case, &bytes)
+}
+
+fn ignore_patterns(
+    worktree: &Path,
+    case: gix::ignore::glob::pattern::Case,
+    bytes: &[u8],
+) -> Result<IgnoreRules, DiscoveryError> {
     let mut mandatory = gix::ignore::Search::default();
     mandatory
         .add_patterns_buffer(
@@ -338,19 +356,14 @@ fn load_ignore(
         )
         .map_err(|error| discovery_error("cannot load the built-in ignore rules", error))?;
     let mut workspace = gix::ignore::Search::default();
-    let path = worktree.join(".rerailignore");
-    match std::fs::read(&path) {
-        Ok(bytes) => workspace
-            .add_patterns_buffer(
-                &bytes,
-                path,
-                Some(worktree),
-                gix::ignore::search::Ignore::default(),
-            )
-            .map_err(|error| discovery_error("cannot load .rerailignore", error))?,
-        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
-        Err(error) => return Err(discovery_error("cannot read .rerailignore", error)),
-    }
+    workspace
+        .add_patterns_buffer(
+            bytes,
+            worktree.join(".rerailignore"),
+            Some(worktree),
+            gix::ignore::search::Ignore::default(),
+        )
+        .map_err(|error| discovery_error("cannot load .rerailignore", error))?;
     Ok(IgnoreRules {
         mandatory,
         workspace,
@@ -363,7 +376,15 @@ fn search_ignored(
     path: &str,
     case: gix::ignore::glob::pattern::Case,
 ) -> bool {
-    let bytes = path.as_bytes();
+    search_ignored_path(search, path.as_bytes(), case, false)
+}
+
+fn search_ignored_path(
+    search: &gix::ignore::Search,
+    bytes: &[u8],
+    case: gix::ignore::glob::pattern::Case,
+    directory: bool,
+) -> bool {
     let mut ignored = false;
     for (index, byte) in bytes.iter().enumerate() {
         if *byte != b'/' {
@@ -374,7 +395,7 @@ fn search_ignored(
             ignored = !found.pattern.is_negative();
         }
     }
-    if let Some(found) = search.pattern_matching_relative_path(bytes.as_bstr(), Some(false), case) {
+    if let Some(found) = search.pattern_matching_relative_path(bytes.as_bstr(), Some(directory), case) {
         ignored = !found.pattern.is_negative();
     }
     ignored
@@ -552,6 +573,9 @@ impl GitWorkspace {
     /// changed since discovery, and a checkout conversion (`core.autocrlf`, a filter driver) keeps
     /// a file clean in Git while its bytes differ from the blob's.
     pub fn holds_blob_bytes(&self, relative_path: &str, blob_length: u64) -> bool {
+        if let Some(snapshot) = &self.snapshot {
+            return snapshot.owns_blob(relative_path, blob_length);
+        }
         let Ok(index) = self
             .base_files
             .binary_search_by(|file| file.path.as_str().cmp(relative_path))
@@ -656,6 +680,9 @@ impl GitWorkspace {
     /// against the committed blob only when the path is clean (`source_alias`).
     pub fn read_source(&self, relative_path: &str, max_bytes: u64) -> std::io::Result<Vec<u8>> {
         check_source_path(relative_path)?;
+        if let Some(snapshot) = &self.snapshot {
+            return snapshot.read_source(relative_path, max_bytes);
+        }
         read_anchored(&self.worktree_root, relative_path, max_bytes)
     }
 
@@ -667,6 +694,9 @@ impl GitWorkspace {
         prefix_bytes: u64,
     ) -> std::io::Result<Vec<u8>> {
         check_source_path(relative_path)?;
+        if let Some(snapshot) = &self.snapshot {
+            return snapshot.read_source_prefix(relative_path, prefix_bytes);
+        }
         read_anchored_prefix(&self.worktree_root, relative_path, prefix_bytes)
     }
 }
@@ -991,6 +1021,7 @@ fn discover_in(root: &Path, scoped: bool) -> Result<GitWorkspace, DiscoveryError
     base_files.sort_by(|left, right| left.path.cmp(&right.path));
 
     Ok(GitWorkspace {
+        snapshot: None,
         worktree_root: worktree,
         common_directory,
         hash_algorithm: repository_hash_algorithm,
@@ -1012,16 +1043,18 @@ mod tests {
     /// snapshot published once. Over a repository of its own: the checkout the test was built in need not be one (a
     /// farm host's copy of the tree has no `.git`).
     #[test]
-    fn discovers_a_repository_from_inside_it_without_a_git_process() {
-        let root = fixture_directory("discovery");
-        initialize_repository(
-            &root,
-            &[(".gitignore", b"tmp/\n"), ("native/src/lib.rs", b"pub fn f() {}\n"), ("native/build.rs", b"fn main() {}\n"), ("native/src/edited.rs", b"pub fn g() {}\n")],
-        );
-        std::fs::create_dir_all(root.join("tmp")).unwrap();
-        std::fs::write(root.join("tmp/scratch.rs"), b"ignored\n").unwrap();
-        std::fs::write(root.join("native/src/edited.rs"), b"pub fn g() { let _ = 1; }\n").unwrap();
-        let workspace = discover(&root.join("native")).unwrap();
+    fn discovers_current_repository_without_a_git_process() {
+        let fixture = tempfile::tempdir().unwrap();
+        let root = fixture.path();
+        std::fs::create_dir_all(root.join("native/src")).unwrap();
+        initialize_repository(root, &[
+            ("native/build.rs", b"fn main() {}\n"), ("native/src/lib.rs", b"pub fn run() {}\n"),
+            (".gitignore", b"tmp/\n"),
+        ]);
+        std::fs::write(root.join("native/src/lib.rs"), b"pub fn edited() {}\n").unwrap();
+        std::fs::create_dir(root.join("tmp")).unwrap();
+        std::fs::write(root.join("tmp/ignored"), b"ignored").unwrap();
+        let workspace = discover(&root.join("native/src")).unwrap();
         assert!(workspace.worktree_root.is_absolute());
         assert!(workspace.common_directory.is_absolute());
         assert!(!workspace.trees.is_empty());
@@ -1086,8 +1119,8 @@ mod tests {
         );
         let source_id = workspace.store_source(&store, "native/build.rs").unwrap();
         assert_eq!(store.source_by_alias(alias).unwrap(), Some(source_id));
-        assert!(workspace.overlays.iter().any(|overlay| overlay.path == "native/src/edited.rs"), "the edit is an overlay");
-        let _ = std::fs::remove_dir_all(&root);
+        assert!(workspace.overlays.iter().any(|overlay| overlay.path == "native/src/lib.rs"), "the edit is an overlay");
+        let _ = std::fs::remove_dir_all(root);
     }
 
     fn run_git(directory: &Path, arguments: &[&str]) {
@@ -1457,6 +1490,7 @@ mod tests {
         std::fs::write(outside.join("source.py"), b"print('escaped')\n").unwrap();
         symlink(&outside, root.join("escape")).unwrap();
         let workspace = GitWorkspace {
+            snapshot: None,
             worktree_root: root.clone(),
             common_directory: root.clone(),
             hash_algorithm: GitHashAlgorithm::Sha1,
@@ -1483,6 +1517,7 @@ mod tests {
         let path = std::ffi::CString::new(path.as_os_str().as_bytes()).unwrap();
         assert_eq!(unsafe { libc::mkfifo(path.as_ptr(), 0o600) }, 0);
         let workspace = GitWorkspace {
+            snapshot: None,
             worktree_root: root.clone(),
             common_directory: root.clone(),
             hash_algorithm: GitHashAlgorithm::Sha1,
@@ -1543,6 +1578,7 @@ mod tests {
     fn clean_trees_comparisons_are_linear_for_many_trees_and_overlays() {
         let count = 2_000;
         let workspace = GitWorkspace {
+            snapshot: None,
             worktree_root: PathBuf::new(),
             common_directory: PathBuf::new(),
             hash_algorithm: GitHashAlgorithm::Sha1,
@@ -1589,6 +1625,7 @@ mod tests {
             entries: Vec::new(),
         };
         let workspace = GitWorkspace {
+            snapshot: None,
             worktree_root: PathBuf::new(),
             common_directory: PathBuf::new(),
             hash_algorithm: GitHashAlgorithm::Sha1,
@@ -1648,6 +1685,7 @@ mod tests {
     /// A workspace over `trees` in publication (post-) order, the root last.
     fn tree_workspace(trees: Vec<GitTree>) -> GitWorkspace {
         GitWorkspace {
+            snapshot: None,
             worktree_root: PathBuf::new(),
             common_directory: PathBuf::new(),
             hash_algorithm: GitHashAlgorithm::Sha1,

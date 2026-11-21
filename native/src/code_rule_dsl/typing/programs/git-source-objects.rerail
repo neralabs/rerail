@@ -1,0 +1,17 @@
+// The consumer supplies selected paths and their blob IDs from the pinned inventory.
+.decl git_selected_source_blob(path: symbol, blob: symbol)
+.input git_selected_source_blob
+
+git_object_request(r, oid) :- git_root_repo(r), git_selected_source_blob(_, oid).
+
+.decl git_selected_source_readable(path: symbol, repo: symbol, blob: symbol, digest: symbol, storage: symbol)
+git_selected_source_readable(path, r, oid, digest, stamp) :-
+    git_selected_source_blob(path, oid), git_blob_digest(r, oid, digest),
+    git_object_of(r, oid, "storage", _, stamp, _, _, _).
+
+.decl git_selected_source_error(path: symbol, reason: symbol)
+git_selected_source_error(path, reason) :- git_selected_source_blob(path, oid), git_object_error(_, oid, reason).
+git_selected_source_error(path, "not a blob") :- git_selected_source_blob(path, oid), git_object_kind(_, oid, kind), kind != "blob".
+
+.output git_selected_source_readable
+.output git_selected_source_error

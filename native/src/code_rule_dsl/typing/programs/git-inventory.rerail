@@ -1,0 +1,32 @@
+// The engine embeds the selected-tree library before this program.
+.decl inventory_file(path: symbol, mode: number, blob: symbol)
+inventory_file(p, m, b) :- git_inventory_file(_, _, p, m, b).
+source_language_request(path) :- inventory_file(path, _, _).
+
+.decl inventory_language(path: symbol, language: symbol)
+inventory_language(p, g) :- source_language(p, g).
+
+.decl inventory_error(path: symbol, tree: symbol, reason: symbol)
+inventory_error(p, t, "cycle") :-
+    inventory_step(r, parent, p, t), !inventory_ancestor_clear(r, parent, t).
+inventory_error(p, t, reason) :- inventory_directory(r, p, t), git_object_of(r, t, "error", _, reason, "", _, _).
+inventory_error(p, t, detail) :- inventory_directory(r, p, t), git_object_of(r, t, "error", _, _, detail, _, _), detail != "".
+inventory_error(p, t, "not-a-tree") :-
+    inventory_directory(r, p, t), git_object_kind(r, t, kind), kind != "tree".
+.decl inventory_readable_directory(path: symbol, tree: symbol)
+inventory_readable_directory(p, t) :- inventory_directory(r, p, t), git_object_kind(r, t, "tree").
+.decl inventory_path_error(directory: symbol, hex_name: symbol)
+inventory_path_error(d, n) :- git_inventory_child_of(_, _, d, n, _, "bytes", _).
+
+.output inventory_readable_directory
+.output git_inventory_selection
+.output inventory_file
+.output git_tree_entry
+.output git_tree_entry_bytes
+.decl inventory_tree_observation(tree: symbol, stamp: symbol)
+inventory_tree_observation(t, stamp) :-
+    inventory_directory(r, _, t), git_object_of(r, t, "storage", _, stamp, _, _, _).
+.output inventory_tree_observation
+.output inventory_error
+.output inventory_path_error
+.output inventory_language

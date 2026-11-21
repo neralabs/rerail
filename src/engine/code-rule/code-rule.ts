@@ -1502,6 +1502,8 @@ export interface CodeRuleViolation {
   message: string;
   path?: string | undefined; // NOSONAR - exactOptionalPropertyTypes: zod-parsed native violations carry `path: undefined`
   span?: CodeRuleSourceSpan | undefined; // NOSONAR - as `path`
+  /** The fingerprint of the evaluated source span in a headless scan. */
+  fingerprint?: string | undefined;
   captures: Record<string, CodeRuleSourceSpan[]>;
   variables: Record<string, boolean | number | string>;
   fix?: CodeRuleViolationFix | undefined; // NOSONAR - exactOptionalPropertyTypes: zod-parsed native violations carry `fix: undefined`
@@ -1590,11 +1592,11 @@ export interface CodeRuleAuditor {
   /** Refresh live rules before filtering paths for a tool's preimages; `acceptsPath` reflects them on return. */
   refreshCodeRules?(): void;
   /**
-   * Before a tool call's files are filtered, at its start and at its result: `paths` (as for `acceptsPath`) are found
-   * again in the checkout that owns them now, where a folder above one became a checkout after a lookup passed it.
-   * Absent: a file's checkout does not change while a session runs.
+   * Before a tool call's files are filtered, at its start and at its result: the point after which every file's
+   * checkout is the one that owns it now, until the next point (a folder that became a checkout, a nested checkout's
+   * `.git` moved away, a gitlink staged). Absent: a file's checkout does not change while a session runs.
    */
-  refreshOwners?(paths: readonly string[]): void;
+  refreshOwners?(): void;
   /** Activates defaults at the next event boundary; work already queued keeps its snapshot. */
   updateSettings?(settings: Required<AuditSettings>): void;
   /** `path` is relative to the session folder and may lead out of it (`../`) into another checkout. */

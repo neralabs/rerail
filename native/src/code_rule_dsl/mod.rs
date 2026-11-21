@@ -4771,6 +4771,10 @@ pub(crate) fn install_languages() {
     facts::families::install_prefilter_image(|tape, doc, interrupted| prefilter::image(tape, doc, &interrupted));
     // An owned connection's demand module.
     waves::owner::database::install_connection_setup(demand::vtab::set_up_connection);
+    workspace::index::install_source_classifier(|root, store, owner, paths, registry| {
+        logic::plan::corpus::source_languages::classify(root, store, owner, paths, registry)
+            .map_err(|error| error.to_string())
+    });
     // A snapshot's files, as an SQL session binds them.
     sql_executor::documents::install_snapshot_files(|json| {
         let (snapshot, _) = eval::parse_snapshot(json, false)?;

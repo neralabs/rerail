@@ -129,6 +129,31 @@ describe("clone identity files", () => {
     expect(resolveCloneId(root).cloneId).toBe(cloneId);
   });
 
+  it("checks the complete identity file at the byte limit", () => {
+    const root = folder();
+    mkdirSync(join(root, ".rerail"));
+    const path = join(root, ".rerail", "repository-id");
+    const id = "short-id".padEnd(128, " ");
+    writeFileSync(path, id);
+    expect(resolveCloneId(root).cloneId).toBe("short-id");
+    for (const suffix of [" ", "trailing-content"]) {
+      writeFileSync(path, id + suffix);
+      expect(() => resolveCloneId(root)).toThrow(/malformed/u);
+    }
+  });
+
+  it.skipIf(process.platform === "win32")("rejects a pipe without waiting for a writer", () => {
+    const root = folder();
+    mkdirSync(join(root, ".rerail"));
+    execFileSync("mkfifo", [join(root, ".rerail", "repository-id")]);
+    const reader = new URL("../../../src/engine/catalog/repository-identity.ts", import.meta.url);
+    const out = execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-e", `
+      const {resolveCloneId} = await import(process.argv[1]);
+      try { resolveCloneId(process.argv[2]); } catch (error) { process.stdout.write(error.message); }
+    `, reader.href, root], { encoding: "utf8", timeout: 4000 });
+    expect(out).toMatch(/not a regular file/u);
+  });
+
   it("creates a well-formed id once and reads the same id back", () => {
     const root = folder();
     const { cloneId } = resolveCloneId(root);

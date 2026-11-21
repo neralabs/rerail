@@ -1492,6 +1492,7 @@ impl ProgramPass for Findings {
                 L::Atom(a) => crate::code_rule_dsl::logic::rr::lower::TOOL_CALLS.into_iter().find(|t| v.rel_name(a.rel()) == *t),
                 _ => None,
             }),
+            heads: v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect(),
         };
         let input = std::sync::Arc::clone(w.input());
         if !findings_write(&*input, &self.pending) {

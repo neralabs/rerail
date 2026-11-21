@@ -557,6 +557,22 @@ fn memory() -> Arc<Atoms> {
     rerail_prof::code_rule_dsl::logic::profile::with_shared::<MemoryAtoms, _>(|m| Arc::clone(&m.0))
 }
 
+/// The in-memory connections that borrow a store's atoms (`share_memory`), by handle: the shared object's
+/// (decision 0442), as the connections are.
+#[derive(Default)]
+struct MemoryArenas(Mutex<HashMap<usize, Weak<Atoms>>>);
+
+fn arenas() -> Arc<MemoryArenas> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<MemoryArenas>()
+}
+
+struct MemoryArena(usize, Arc<Atoms>);
+impl Drop for MemoryArena {
+    fn drop(&mut self) {
+        arenas().0.lock().remove(&self.0);
+    }
+}
+
 /// A path's registry key: its canonical form, resolved once per path (a `realpath` per stratum was 2.5% of a corpus
 /// run's main thread). A path that does not resolve yet is not remembered.
 pub(super) fn key(path: &Path) -> PathBuf {
@@ -599,6 +615,10 @@ fn suffixed(path: &Path, suffix: &str) -> PathBuf {
 use stored::database_end;
 
 impl Atoms {
+    pub(super) fn ephemeral() -> Arc<Self> {
+        Arc::new(Self::new(None, None))
+    }
+
     fn new(path: Option<PathBuf>, identity: Option<i64>) -> Self {
         let atoms = Interner::over(path.as_deref());
         Atoms {
@@ -720,8 +740,20 @@ impl Atoms {
     pub fn for_connection(connection: &Connection) -> Arc<Atoms> {
         match connection.path().filter(|path| !path.is_empty()) {
             Some(path) => Atoms::for_path(Path::new(path)),
-            None => memory(),
+            None => arenas().0.lock().get(&(unsafe { connection.handle() } as usize))
+                .and_then(std::sync::Weak::upgrade).unwrap_or_else(memory),
         }
+    }
+
+    /// Borrow the store's atoms for the life of an in-memory SQL connection.
+    pub fn share_memory(connection: &Connection, atoms: Arc<Self>) -> rusqlite::Result<()> {
+        let lease = MemoryArena(unsafe { connection.handle() } as usize, atoms);
+        arenas().0.lock().insert(lease.0, Arc::downgrade(&lease.1));
+        // SQLite drops the closure when this connection closes.
+        connection.create_scalar_function(c"rr_memory_arena", 0, rusqlite::functions::FunctionFlags::SQLITE_UTF8, move |_| {
+            let _lease = &lease;
+            Ok(0)
+        })
     }
 
     /// Shared scratch databases borrow the arena; only its owner stores atoms.
@@ -776,7 +808,7 @@ impl Atoms {
     pub fn attach(connection: &Connection) -> rusqlite::Result<Arc<Atoms>> {
         let atoms = match connection.path().filter(|path| !path.is_empty()) {
             Some(path) => Atoms::for_database(Path::new(path), Atoms::identity(connection)?),
-            None => memory(),
+            None => Atoms::for_connection(connection),
         };
         vtab::install(connection, &atoms)?;
         // The kept facts beside them (decisions 0456 K8, 0439), on a store's connection.
