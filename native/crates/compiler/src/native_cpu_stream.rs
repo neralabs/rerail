@@ -1151,6 +1151,26 @@ enum WordFn {
 
 /// What a word's body reads and writes, wherever it is made (`WordFn`): in its rule's function,
 /// or in a function of its own that each place of the word calls.
+/// The name of the symbol a table's address is read from (`table_address`): placed at address 0, so that its
+/// relocation, `0 + addend`, writes the table's address itself.
+const TABLES: &str = "rerail_tier2_tables";
+/// `TABLES`'s data, the first the module declares.
+const TABLES_DATA: u32 = 0;
+
+/// A table's address, as a symbol's (`TABLES`, the table's address its offset): one instruction of the same form
+/// wherever the table is. An address as a constant is moved in as many instructions as it has halfwords not zero, so
+/// the code, and regalloc2's choices round it, changed with where the heap put the table.
+pub(crate) fn table_address<T>(f: &mut FunctionBuilder<'_>, at: *const T) -> Value {
+    let name = f.func.declare_imported_user_function(cranelift_codegen::ir::UserExternalName::new(1, TABLES_DATA));
+    let gv = f.create_global_value(cranelift_codegen::ir::GlobalValueData::Symbol {
+        name: cranelift_codegen::ir::ExternalName::user(name),
+        offset: cranelift_codegen::ir::immediates::Imm64::new(at as i64),
+        colocated: false,
+        tls: false,
+    });
+    f.ins().symbol_value(types::I64, gv)
+}
+
 struct WordEnv<'a> {
     get: &'a dyn Fn(&mut FunctionBuilder<'_>, Mem) -> Value,
     set: &'a dyn Fn(&mut FunctionBuilder<'_>, Mem, Value),
@@ -2629,11 +2649,11 @@ fn emit_rule(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, ft: &Fetch, bw: &crat
         EndRule::Next(i) => {
             let (row, sets) = &ft.nexts[usize::from(i)];
             let ro = MemFlags::trusted().with_readonly();
-            let rows = f.ins().iconst(types::I64, row.as_ptr() as i64);
+            let rows = table_address(f, row.as_ptr());
             let ra = f.ins().iadd(rows, b);
             let r = f.ins().uload8(types::I64, ro, ra, 0);
             let next = f.ins().uload8(types::I64, MemFlags::trusted(), at, 1);
-            let base = f.ins().iconst(types::I64, sets.as_ptr() as i64);
+            let base = table_address(f, sets.as_ptr());
             let off = f.ins().ishl_imm(r, 5);
             let set = f.ins().iadd(base, off);
             let q = f.ins().ushr_imm(next, 6);
@@ -2662,7 +2682,7 @@ fn fetch_last(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, ft: &Fetch, bw: &cra
     let bytes = (e.ctx)(f, BYTES);
     let at = f.ins().iadd(bytes, s);
     let b = f.ins().uload8(types::I64, MemFlags::trusted(), at, 0);
-    let ends = f.ins().iconst(types::I64, ft.ends.as_ptr() as i64);
+    let ends = table_address(f, ft.ends.as_ptr());
     let ka = f.ins().iadd(ends, b);
     let k = f.ins().uload8(types::I32, MemFlags::trusted().with_readonly(), ka, 0);
     let join = f.create_block();
@@ -3405,7 +3425,7 @@ fn split_token(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, s:
     let read: Option<Vec<u8>> = read.map(|r| r.iter().copied().filter(|x| kinds_of.as_ref().is_none_or(|ks| ks.contains(x))).collect());
     let read = read.as_deref();
     let whole = |f: &mut FunctionBuilder<'_>| {
-        let k = crate::native_cpu_block::tables_consts(f, &sp.tables);
+        let k = crate::native_cpu_block::tables_symbols(f, &sp.tables);
         let n = f.ins().isub(l, s);
         let len = f.ins().iadd_imm(n, 1);
         crate::native_cpu_block::plain_code(f, &sp.tables, k, bytes, s, len)
@@ -3420,7 +3440,7 @@ fn split_token(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts, s:
                 _ => {
                     let at = f.ins().iadd(bytes, s);
                     let b = f.ins().uload8(types::I64, MemFlags::trusted(), at, 0);
-                    let kind_table = crate::native_cpu_block::tables_consts(f, &sp.tables).0;
+                    let kind_table = crate::native_cpu_block::tables_symbols(f, &sp.tables).0;
                     let ka = f.ins().iadd(kind_table, b);
                     f.ins().uload8(types::I64, MemFlags::trusted().with_readonly(), ka, 0)
                 }
@@ -3614,7 +3634,7 @@ fn split_next_seq(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, sp: &SplitParts,
         Some(t) => {
             let at2 = f.ins().iadd(file.bytes, l);
             let b = f.ins().uload8(types::I64, MemFlags::trusted(), at2, 0);
-            let base = f.ins().iconst(types::I64, t.as_ptr() as i64);
+            let base = table_address(f, t.as_ptr());
             let off = f.ins().ishl_imm(b, 2);
             let a = f.ins().iadd(base, off);
             let code = f.ins().uload32(MemFlags::trusted().with_readonly(), a, 0);
@@ -4535,7 +4555,11 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
         // `Cut::near`: the module's code in one arena, well within a direct branch's 128 MB.
         builder.memory_provider(Box::new(cranelift_jit::ArenaMemoryProvider::new_with_size(64 << 20).map_err(|_| Error::BackendFailure)?));
     }
+    builder.symbol(TABLES, std::ptr::null());
     let mut module = JITModule::new(builder);
+    if module.declare_data(TABLES, Linkage::Import, false, false).map_err(|_| Error::BackendFailure)?.as_u32() != TABLES_DATA {
+        return Err(Error::BackendFailure);
+    }
     let pointer = module.target_config().pointer_type();
     let mut signature = module.make_signature();
     signature.params.push(AbiParam::new(pointer));
@@ -5528,7 +5552,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                             f.ins().jump(refuse, &[BlockArg::from(at)]);
                             f.switch_to_block(ok);
                             let bytes_v = (env.ctx)(&mut f, BYTES);
-                            let k = crate::native_cpu_block::tables_consts(&mut f, &ft.tables);
+                            let k = crate::native_cpu_block::tables_symbols(&mut f, &ft.tables);
                             let n = f.ins().isub(l, s);
                             let len1 = f.ins().iadd_imm(n, 1);
                             let c = crate::native_cpu_block::plain_code(&mut f, &ft.tables, k, bytes_v, s, len1);
@@ -5559,7 +5583,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                                         let b = f.ins().uload8(types::I64, MemFlags::trusted(), at, 0);
                                         let q = f.ins().ushr_imm(b, 6);
                                         let q = f.ins().ishl_imm(q, 3);
-                                        let base = f.ins().iconst(types::I64, ft.seq_bytes.as_ptr() as i64);
+                                        let base = table_address(&mut f, ft.seq_bytes.as_ptr());
                                         let wa = f.ins().iadd(base, q);
                                         let w = f.ins().load(types::I64, MemFlags::trusted().with_readonly(), wa, 0);
                                         let sh = f.ins().band_imm(b, 63);
@@ -5742,7 +5766,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                                 if !cands.is_empty() {
                                     let at = f.ins().iadd(bytes, start);
                                     let raw = f.ins().load(types::I64, flags, at, 0);
-                                    let ctab = f.ins().iconst(types::I64, class.as_ptr() as i64);
+                                    let ctab = table_address(&mut f, class.as_ptr());
                                     for (x, (w, code)) in cands {
                                         let n = w.len();
                                         let mask = if n == 8 { -1i64 } else { ((1u64 << (8 * n)) - 1) as i64 };
@@ -5877,14 +5901,14 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                             let code = if !worded {
                                 f.ins().iconst(types::I64, i64::from(k))
                             } else if one_b {
-                                let base = f.ins().iconst(types::I64, ft.codes1.as_ptr() as i64);
+                                let base = table_address(&mut f, ft.codes1.as_ptr());
                                 let at = f.ins().iadd(bytes, start);
                                 let b = f.ins().uload8(types::I64, flags, at, 0);
                                 let o = f.ins().ishl_imm(b, 2);
                                 let a = f.ins().iadd(base, o);
                                 f.ins().uload32(MemFlags::trusted().with_readonly(), a, 0)
                             } else {
-                                let kc = crate::native_cpu_block::tables_consts(&mut f, &ft.tables);
+                                let kc = crate::native_cpu_block::tables_symbols(&mut f, &ft.tables);
                                 let n = f.ins().isub(l, start);
                                 let len1 = f.ins().iadd_imm(n, 1);
                                 crate::native_cpu_block::plain_code(&mut f, &ft.tables, kc, bytes, start, len1)

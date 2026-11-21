@@ -294,9 +294,9 @@ pub fn placed_pack(native: &BlockNative, places: &[Option<usize>], own_place: us
             own_tables = out.packing.tables.len();
         }
     }
-    // Each class of a set already tested: that set's test.
+    // Each class of a set already tested: that set's test, the first made of them (the map's order is not one).
     for (c, set) in later {
-        let found = out.of.iter().find(|&(&d, _)| set_of(d) == set).map(|(_, &k)| k);
+        let found = out.of.iter().filter(|&(&d, _)| set_of(d) == set).map(|(_, &k)| k).min();
         if let Some(k) = found {
             out.of.insert(c, k);
         }

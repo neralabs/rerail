@@ -1183,7 +1183,10 @@ fn ascii_split(e: &mut Emit<'_, '_>, f: &mut FunctionBuilder<'_>, flag: Value, g
         }
         for o in inst.operands() {
             let on_vectors = plan.lanes[o] && plan.lanes[x] && !words[x];
-            if inside[o] && !inside[x] && !on_vectors {
+            // A region's value on the vectors leaves for no member of it: the region makes it in its own branch
+            // (decision 0423), and this way runs on blocks the region skips.
+            let regions_own = plan.region_of[x].is_some_and(|r| plan.regions[r].vectors.contains(&o));
+            if inside[o] && !inside[x] && !on_vectors && !regions_own {
                 exit[o] = true;
             }
             if inside[x] && !inside[o] && !(plan.lanes[o] && plan.lanes[x]) {
@@ -4232,6 +4235,14 @@ pub(crate) fn tables_consts(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (V
     let tables = f.ins().iconst(types::I64, t.words.as_ptr() as i64);
     let mult = f.ins().iconst(types::I64, t.table.mult as i64);
     let slots = f.ins().iconst(types::I64, t.words.as_ptr() as i64 + t.slots as i64);
+    (tables, mult, slots)
+}
+
+/// `tables_consts` in tier 2's code: the addresses as its tables' symbol's (`native_cpu_stream::table_address`).
+pub(crate) fn tables_symbols(f: &mut FunctionBuilder<'_>, t: &RecordTables) -> (Value, Value, Value) {
+    let tables = crate::native_cpu_stream::table_address(f, t.words.as_ptr());
+    let mult = f.ins().iconst(types::I64, t.table.mult as i64);
+    let slots = crate::native_cpu_stream::table_address(f, t.words.as_ptr().wrapping_byte_add(t.slots));
     (tables, mult, slots)
 }
 
@@ -8765,7 +8776,7 @@ fn hoist_constants(func: &mut cranelift_codegen::ir::Function, body: cranelift_c
 /// a block that skips it (decision 0423): the first instruction made for one (its source
 /// location, `Emit::emit`) in a warm block its branch block does not dominate, by region and
 /// value. Cold blocks (the edge part) make values without the regions.
-fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::native_cpu_lanes::Plan, entered: &[(usize, cranelift_codegen::ir::Block)]) -> Option<(usize, usize)> {
+fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::native_cpu_lanes::Plan, entered: &[(usize, cranelift_codegen::ir::Block)]) -> Option<(usize, usize, String)> {
     if entered.is_empty() {
         return None;
     }
@@ -8780,7 +8791,7 @@ fn region_vectors_outside(func: &cranelift_codegen::ir::Function, plan: &crate::
             let v = loc.bits() as usize - 1;
             for &(r, active) in entered {
                 if plan.regions.get(r).is_some_and(|reg| reg.vectors.contains(&v)) && !domtree.block_dominates(active, b) {
-                    return Some((r, v));
+                    return Some((r, v, func.dfg.display_inst(i).to_string()));
                 }
             }
         }
@@ -9534,8 +9545,8 @@ fn forward(context: &mut Context, general_context: &mut Context, outlined: (cran
         if let Some(&body) = hot.first() {
             sink_extracts(&mut context.func, body);
         }
-        if let Some((r, v)) = region_vectors_outside(&context.func, &lp.state.plan, &lp.entered.borrow()) {
-            return Err(Error::RefusedShape(format!("region {r}'s value %{v} on the vectors made outside its branch (decision 0423)")));
+        if let Some((r, v, inst)) = region_vectors_outside(&context.func, &lp.state.plan, &lp.entered.borrow()) {
+            return Err(Error::RefusedShape(format!("region {r}'s value %{v} on the vectors made outside its branch (decision 0423): `{inst}`")));
         }
         let mut owns = vec![own.clone()];
         owns.extend(calls.ids.iter().map(|id| cranelift_codegen::ir::UserExternalName::new(0, id.as_u32())));
