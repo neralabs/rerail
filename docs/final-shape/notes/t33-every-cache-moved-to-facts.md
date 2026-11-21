@@ -57,6 +57,36 @@ checks, and what needs a decision.
 With K4, the whole-run cutoff is not a mechanism of its own: when every leaf delta is empty, no stratum runs,
 and every output is as stored.
 
+### K2 in detail (2026-11-21, Typing-support)
+
+The observer (`content_store/observe.rs`) keeps its answers in a SQLite file of its own beside the store
+(`<store>.files`): `observed` (a path's kind, stat, digest, listing, when recorded), `observer_meta` (the journal's
+cursors per root and volume), `run_record` (each path's canonical form, the git listings, the whole-run cutoff,
+the run constants), `observed_changes` and `git_alias`. It reads a root's part at a time, as a run first watches or
+reads under it (`load_under`, a range of paths), and writes what changed behind the run (`write_dirty`). K2 keeps
+the same answers as relations of one kept space, in K1's form (`kept_facts`, 0456), and changes nothing in how
+they are answered (the journal, the racy rule, validation, Git's blobs):
+
+| Relation | Columns | Partition |
+|---|---|---|
+| `file_stat` | path, kind, dev, ino, size, mtime_ns, ctime_ns, recorded_ns, digest (a `digest`, t32 1.4) | the root it is under (`load_under`'s unit) |
+| `dir_entry` | dir, name, is_dir | the root its directory is under |
+| `canonical` | path, canonical path | the root |
+| `observer_cursor` | root, volume, cursor | one partition |
+
+A partition is one put (`KeptWhat::Flat`) and one read, as a root's range of rows is now. `git_alias` and
+`observed_changes` stay: the first is a name of bytes (a fact store table), the second the observer's journal
+(decision 0433, listed as a fact store table). The whole-run cutoff's and the constants' records move with step 1's
+other entries (below), not with K2.
+
+What has to be built first: paths as atoms of the content store. The observer is opened on its own, one per store
+path in the shared object (`observe::with`, decision 0442), the first time a run asks it, and its file has no atoms;
+the kept space needs the store's. So the order is (1) the observer opens with the content store whose atoms it
+uses, (2) `file_stat`, `dir_entry` and `canonical` written and read as the space's
+partitions in place of the three tables, (3) `observer_cursor`, and `observer_meta` and `observed` go from
+`facts_only`'s and `cache_architecture`'s lists. Measured at each step: a warm unchanged run and a one-file edit
+over the 84-file corpus (the observer's `stat`s and reads, its load time, CPU).
+
 **A relation's identity.** A relation of a program is stored under the digest of the rules it is derived from,
 the identities of what they read, and the engine (`plan::identities`). A rule edit makes it another relation,
 empty, so it is derived again and its readers see the delta; a relation two programs derive alike is one frame.
