@@ -3026,9 +3026,11 @@ impl Batch {
                 let full = r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize >= rerail_blocks::relation::ADDED_INDEXES;
                 let free = home.block.reserved().saturating_sub(home.block.used());
                 let why = format!(
-                    "device.moved in a block: {}, {}, {} of {} MB left",
+                    "device.moved in a block: {}, {}, {} indexes there ({} of other rows), {} of {} MB left",
                     if full { "its directory full" } else { "no bytes for it" },
                     if r.continues() { "a continuation" } else if rel.dead != 0 { "with dead rows" } else { "a relation" },
+                    r.nindex.load(std::sync::atomic::Ordering::Relaxed).min(9),
+                    (0..r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize).filter(|&i| r.indexes.as_slice().get(i).is_some_and(|ix| ix.rows.len() != rel.rows)).count().min(9),
                     if free < 1 << 20 { "< 1" } else if free < 16 << 20 { "1-16" } else { ">= 16" },
                     (home.block.reserved() >> 20).next_power_of_two(),
                 );

@@ -633,9 +633,6 @@ fn index_room(indexes: usize, rows: u64) -> usize {
     indexes * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64
 }
 
-/// The rows from which a relation of a run or of a batch's sources is alone in a block with room for its indexes
-/// (`Part::try_new`, `Part::alone_indexed`).
-pub const ALONE_ROWS: usize = 4096;
 
 /// A block of the device's own of at least `bytes`: a relation alone in it, from the block policy (decision 0342) as
 /// every block is (Q205). Exact, and counted as a device join's buffers are (bounded inside the join's budget, a
@@ -812,13 +809,6 @@ impl Part {
 
     /// `new`, or why no block could be had (a device block past the device's budget).
     fn try_new(life: Life, k: usize, rows: usize) -> Result<Part, String> {
-        // A large relation of a run's or of a batch's sources is alone in a block with room past its rows for it to
-        // double and for an index of each column and one more (decision 0353 step 6): packed into a shared block,
-        // a later probe's index found no bytes there and copied it (`DevIndex::moved`: 501.5 MB in 98 copies on the
-        // M3's 300-file run, ab112, every one a relation in a shared block of 16 or 64 MB with no bytes left).
-        if matches!(life, Life::Run | Life::Source) && rows >= ALONE_ROWS {
-            return Part::alone_indexed(life, k, rows, (k + 1).min(rerail_blocks::relation::ADDED_INDEXES));
-        }
         Part::try_new_with(life, k, rows, 0, false)
     }
 
@@ -2458,13 +2448,12 @@ mod tests {
         assert_ne!(Arc::as_ptr(&block_of(&kept)) as usize, run);
     }
 
-    /// Pushed a batch at a time far past the rows it was made for (moved as it grows), a large relation still has
-    /// room in its block for an index of each column and one more (decision 0353 step 6): its growth never takes
-    /// their bytes.
+    /// Pushed a batch at a time far past the rows it was made for (moved as it grows), a relation given room for its
+    /// indexes (`Rows::with_index_room`) still has room in its block for them (decision 0353 step 6): its growth
+    /// never takes their bytes.
     #[test]
     fn a_large_relations_growth_keeps_room_for_its_indexes() {
-        let mut r = Rows::new(2);
-        r.reserve(2 * ALONE_ROWS);
+        let mut r = Rows::with_index_room(2, Life::Run, 8192, 3);
         for b in 0..40i64 {
             // copy: not block data (a test's literal rows)
             r.extend_from_slice(&(0..2 * 3000).map(|v| b * 6000 + v).collect::<Vec<i64>>());
@@ -2481,34 +2470,24 @@ mod tests {
     }
 
     /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of
-    /// its size takes them, so the block's used bytes grow by the descriptors alone. A large one (`ALONE_ROWS`) is
-    /// alone in a block of its own, with room for its indexes (decision 0353 step 6), which goes with it.
+    /// its size takes them, so the block's used bytes grow by the descriptors alone.
     #[test]
     fn a_dropped_relations_chunks_are_taken_by_the_next() {
         in_chunk(|| {
-            let fill = |base: i64, rows: i64| {
+            let fill = |base: i64| {
                 let mut r = Rows::new(3);
                 // copy: not block data (a test's literal rows)
-                r.extend_from_slice(&(0..3 * rows).map(|v| base + v).collect::<Vec<i64>>());
+                r.extend_from_slice(&(0..90_000).map(|v| base + v).collect::<Vec<i64>>());
                 r
             };
-            let small = (ALONE_ROWS / 2) as i64;
-            let first = fill(0, small);
+            let first = fill(0);
             let facts = block_of(&first);
             drop(first);
             let used = facts.block.used();
-            let next = fill(1_000_000, small);
+            let next = fill(1_000_000);
             assert!(Arc::ptr_eq(&facts, &block_of(&next)), "the same block");
             assert!(facts.block.used() - used < 64 << 10, "grew {} bytes: the chunks were taken again", facts.block.used() - used);
-            let last = 3 * (small - 1);
-            assert_eq!(*next.row((small - 1) as u32, 3), [1_000_000 + last, 1_000_001 + last, 1_000_002 + last]);
-            // A large one: a block of its own, gone with it.
-            let large = fill(0, 30_000);
-            let alone = Arc::downgrade(&block_of(&large));
-            assert!(!Arc::ptr_eq(&facts, &block_of(&large)), "a large relation alone in its block");
-            assert_eq!(*large.row(29_999, 3), [89_997, 89_998, 89_999]);
-            drop(large);
-            assert!(alone.upgrade().is_none(), "its block goes with it");
+            assert_eq!(*next.row(29_999, 3), [1_089_997, 1_089_998, 1_089_999]);
         });
     }
 

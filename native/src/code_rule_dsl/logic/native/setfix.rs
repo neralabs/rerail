@@ -3847,6 +3847,10 @@ impl View {
     pub fn whole(&self) -> bool {
         self.ids.is_none()
     }
+    /// Whether constants chose its rows (a statement's `WHERE c = v`), not a version's or a pick's ids.
+    pub fn filtered(&self) -> bool {
+        !self.eqs.is_empty()
+    }
     /// The source's column that view column `c` reads.
     pub fn column(&self, c: usize) -> usize {
         self.cols[c]

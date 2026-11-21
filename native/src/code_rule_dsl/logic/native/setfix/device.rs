@@ -1470,6 +1470,19 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
                     let cols: String = view.src.columns().join(",").chars().take(60).collect();
                     crate::code_rule_dsl::prof::count_named(format!("device.upload ({why}): {cols}"), 8 * k * n);
                 }
+                // A relation's own (`Owner::Rel`): a view of chosen rows, or with dead rows, or flat rows no block
+                // holds as one relation with its dead rows' delta.
+                if let Owner::Rel(_) = &owner {
+                    let why = match &rel.view {
+                        Some(v) if !v.whole() && v.filtered() => "a view filtered by constants",
+                        Some(v) if !v.whole() => "a view of chosen rows (a version's, or picked)",
+                        Some(_) => "a view with dead rows",
+                        None if rel.ndead > 0 => "flat rows with dead rows, no block taking their delta",
+                        None => "flat rows in no one block",
+                    };
+                    let src: String = rel.view.as_ref().map_or_else(String::new, |v| v.src.columns().join(",")).chars().take(60).collect();
+                    crate::code_rule_dsl::prof::count_named(format!("device.upload ({why}): {src}"), 8 * k * n);
+                }
 // copy (0353 step 6): rows uploaded from the host (decision 0353).
                 let dev = mj::DevRel::upload(k, n, |v| {
                     let row_of = |r: usize| ids.as_ref().map_or(r, |ids| ids[r]);
