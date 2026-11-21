@@ -1127,6 +1127,9 @@ pub struct Exp {
     pub out: Buf,
     /// A round's scan (decision 0523 §2): the lists (`q` of them) and their tokens (`sc_cap`).
     scans: Buf,
+    /// The lists a round's walks make final and place (decision 0523 §2): two halves of `q` each.
+    fins: Buf,
+    places: Buf,
     sc_n: Buf,
     sc_base: Buf,
     sc_xj: Buf,
@@ -1190,7 +1193,7 @@ impl Exp {
         // The tokens' front between two givings: a 32nd of the room (at most 32 givings from the
         // front's growth); less to test them.
         let gap = std::env::var("RERAIL_PP_GIVE_GAP").ok().and_then(|v| v.parse::<usize>().ok()).map_or(tok / 32, |g| g.min(tok)).max(1);
-        let mut ctl = [0u32; 26];
+        let mut ctl = [0u32; 32];
         ctl[4] = lit_bytes as u32;
         ctl[15] = gap as u32;
 
@@ -1271,6 +1274,8 @@ impl Exp {
             // The output's pieces: five columns, `out` words each (decision 0520 §3).
             out: zeroed(5 * out)?,
             scans: zeroed(q)?,
+            fins: zeroed(2 * q)?,
+            places: zeroed(2 * q)?,
             sc_n: zeroed(q)?,
             sc_base: zeroed(q)?,
             sc_xj: zeroed(q)?,
@@ -1303,7 +1308,7 @@ impl Exp {
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
         l.at("CU_SLOT", &self.cu_slot).at("CU_SUB", &self.cu_sub).at("CU_UNIT", &self.cu_unit).at("TRN", &self.trn).at("LREAD", &self.lread);
-        l.at("SCANS", &self.scans).at("SC_N", &self.sc_n).at("SC_BASE", &self.sc_base).at("SC_XJ", &self.sc_xj).at("SC_TOTAL", &self.sc_scan.total);
+        l.at("SCANS", &self.scans).at("FINS", &self.fins).at("PLACES", &self.places).at("SC_N", &self.sc_n).at("SC_BASE", &self.sc_base).at("SC_XJ", &self.sc_xj).at("SC_TOTAL", &self.sc_scan.total);
         for (name, b) in SC_TOK.iter().zip(&self.sc_tok) {
             l.at(name, b);
         }

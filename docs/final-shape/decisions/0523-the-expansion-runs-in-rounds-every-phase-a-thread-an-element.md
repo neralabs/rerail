@@ -134,14 +134,36 @@ SIMD-group operation switches each thread of the group.
    | 150 levels, an argument scanned at each | 902 | 648 ms | 344 ms |
    | 150 levels, an exit at each | 452 | 400 ms | 206 ms |
 
-   About 0.4 ms a round. What is left per round is the item bodies, a SIMD group a list.
-   - **A list's final** (`px_final`) climbs its chain on one SIMD group, walking each level's
-     pieces (`px_walk`).
-   - **The places go top-down,** a level a round: each place pushes its children's places, so a
-     chain takes two rounds a level.
-   - **A 32,768-token `#if` line** (`a_unit_past_its_room_runs_again_larger`) takes 920 ms in 20
-     rounds. That is the 4,681 lists' walks, a SIMD group each, not its rounds.
+   About 0.4 ms a round. What was left per round was the item bodies, a SIMD group a list: a
+   list's final climbed its chain on one SIMD group walking each level's pieces, and the places
+   went top-down a level a round (a chain took two rounds a level).
+   - **The final and the place are the walks** (§2's last row), `px_wk_*`. `px_done` and a place
+     add the list to a set (`px_set_later`, two halves as the items'), and after its scan a round
+     walks the set it made final, then the set it places, an iteration a set until one makes
+     none. Each iteration is phases over all its lists' tokens:
+     - a thread a list for its children in order (the rollback's exit-bearing claims decided one
+       after another, as the SIMD walk's ballot did);
+     - segmented max scans for the claims and the children's ends;
+     - a thread a token for its life, its source piece and its paint;
+     - segmented sums for its places;
+     - the runs' lengths;
+     - the writes, and the children's bases.
 
-   Next: the final and the place as grid phases (§2's last row), then the call and the
-   substitution.
+     `px_walk`, `px_final` and `px_place` are gone.
+   - **A set a group holds is group 0's.** An iteration whose lists and tokens fit
+     `UKL_GRID_SMALL` runs on group 0 alone with its own barriers, one such after another, so a
+     chain's climb crosses no grid barrier a level. The grid joins for a larger set or the end.
+
+   | Unit | Rounds | Device time |
+   |---|---|---|
+   | A chain of 150 plain levels | 152 | 188 ms |
+   | 150 levels, an argument scanned at each | 452 | 540 ms |
+   | 150 levels, an exit at each | 302 | 319 ms |
+   | A 32,768-token `#if` line, a run | 12 | 720 ms |
+
+   The rounds halved, but the CPU's time did not: the climb and the places still cross a phase's
+   barriers a level (a group's barrier switches the CPU's 256 coroutines as a grid's does). The
+   `#if` line's time is `px_subst`'s body, a SIMD group a list (half its samples).
+
+   Next: the substitution, then the call, as grid phases.
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.

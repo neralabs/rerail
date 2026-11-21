@@ -195,6 +195,18 @@ UKL_INLINE bool ukl_grid_scan_exclusive_u32(UklGrid g, UKL_GLOBAL const uint32_t
     return ukl_grid_scan_n(g, n, in, out, out + n, sums, scratch, flag __UKL_ARGS);
 }
 
+// `ukl_grid_scan_n` by one group alone (its threads, `g.lid` of `g.lsz`; the other groups call nothing): its tiles in
+// order, the total into `*total`, then the group's barrier (device memory). For phases whose elements a group holds
+// (decision 0523): no grid barrier.
+UKL_INLINE void ukl_group_scan_n(UklGrid g, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT uint32_t* out,
+                                 UKL_COHERENT uint32_t* total, UKL_LOCAL uint32_t* scratch __UKL_PARAMS)
+{
+    uint32_t run = ukl_grid_scan_tiles(g, 0u, n, 0u, in, out, scratch __UKL_ARGS);
+    if (g.lid == 0u)
+        *total = run;
+    ukl_tg_barrier_device();
+}
+
 // --- The segmented scan ------------------------------------------------------------------------------------------
 
 // The segmented scans' operators.
@@ -256,6 +268,24 @@ UKL_INLINE uint32_t ukl_tg_seg_inclusive(uint32_t op, uint32_t f, uint32_t v, ui
     *tf = af;
     ukl_tg_barrier();
     return fi != 0u ? x : ukl_seg_op(op, cv, x);
+}
+
+// `ukl_grid_seg_scan_n` by one group alone (as `ukl_group_scan_n`): its tiles in order, each from the carry of
+// those before it, then the group's barrier (device memory).
+UKL_INLINE void ukl_group_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHERENT const uint32_t* in, UKL_COHERENT const uint32_t* heads,
+                                     UKL_COHERENT uint32_t* out, UKL_LOCAL uint32_t* sv, UKL_LOCAL uint32_t* sf __UKL_PARAMS)
+{
+    uint32_t carry = 0u;
+    for (uint32_t base = 0u; base < n; base += g.lsz) {
+        uint32_t i = base + g.lid;
+        bool live = i < n;
+        uint32_t f = live && heads[i] != 0u ? 1u : 0u, fin, tv, tf;
+        uint32_t x = ukl_tg_seg_inclusive(op, f, live ? in[i] : 0u, g.lid, g.lsz, sv, sf, &fin, &tv, &tf __UKL_ARGS);
+        if (live)
+            out[i] = fin != 0u ? x : ukl_seg_op(op, carry, x);
+        carry = ukl_seg_join(op, carry, tf, tv);
+    }
+    ukl_tg_barrier_device();
 }
 
 // The inclusive segmented scan (`op`: `UKL_SEG_ADD` or `UKL_SEG_MAX`) of `in`'s first `n` values into `out`, a
