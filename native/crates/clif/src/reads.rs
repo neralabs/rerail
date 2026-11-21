@@ -1305,7 +1305,9 @@ pub(crate) fn cache_lookup(b: &mut B<'_, '_>, cache: Value, key: Value, size: Va
     let t = b.f.ins().ireduce(I32, t);
     let t = b.f.ins().bor_imm(t, 1);
     let tag = b.f.ins().ishl_imm(t, i64::from(c::TAG_SHIFT));
+    // Bounded by the most slots too, so a slot's offset has a bound the compiler sees (`cache::SLOTS_MAX`).
     let slot_mask = b.f.ins().iadd_imm(slots, -1);
+    let slot_mask = b.f.ins().band_imm(slot_mask, i64::from(c::SLOTS_MAX - 1));
     let done = b.f.create_block();
     b.f.append_block_param(done, I64);
     // An open lookup's entry being written by another thread: the dead entry, `PENDING`.
@@ -2689,6 +2691,7 @@ mod ukl_header {
             ("C_CLEARING", c::CLEARING.into()),
             ("C_WRITING", c::WRITING.into()),
             ("C_PROBES", c::PROBES.into()),
+            ("C_SLOTS_MAX", c::SLOTS_MAX.into()),
             ("C_TRIES", c::TRIES.into()),
             ("C_SPIN", c::SPIN.into()),
             ("C_TAG_SHIFT", c::TAG_SHIFT.into()),

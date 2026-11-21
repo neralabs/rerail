@@ -112,9 +112,17 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
        a DGX Spark's CUDA and the Mac mini's Metal.
    - The label passes' spill queue needs no item budget: its frames are walks' pieces, and every walk is within
      its task's step budget (decision 0334), past which it stops and goes to W or runs again.
-   - **Still to do: `pp_expand`'s workers.** Its host already encodes a bounded number of work launches
-     (`WORK_LAUNCHES`) and refuses what is left (`px_check`). Its workers are Metal-only, and pp runs on Metal are
-     off until they are allowed again.
+   - **Written (2026-11-21), not yet run: `pp_expand`'s workers.** Its launches are encoded in one command buffer, so
+     the host cannot look between them. Each of its 512 workers (64 groups of 8 SIMD groups) takes `work_budget`
+     items in a launch at most, 4 even shares of the queue's capacity, then ends. The first launch is of 64 groups;
+     each one after it is indirect, its groups written by `px_next`: 64 while an item is active, none once the queue
+     is done, so a launch past the work costs a dispatch of nothing. The launches are at most `work_launches`, the
+     capacity over the budget and one more (129), in place of a fixed 3, and items left after them are refused
+     (`px_check`), as before. The source compiles (offline, Metal 4). Its workers are Metal-only, and pp runs on Metal
+     are off until they are allowed again, so it has not run.
+     Superseded where django-bugs was merged with the hub (uglykl-CPU-SIMD-parallelization, 2026-11-21): there the
+     evaluation runs in rounds on the grid (decision 0523), with no work queue, `px_work` or `pp_expand.metal`, and
+     `pp_setup` joins its grid (§3 above); this item's code was not carried.
 4. A 16z block decoded by its SIMD group's lanes together, so a miss costs a group a block once.
 5. The M3, then the M1 Max: the grid's tests, the device's tape tests and the engine's Metal tests, one at a time.
    - **The M3 (2026-11-21):**
@@ -126,3 +134,64 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      - A decode of a block takes well under a millisecond, so the writers waited for stood still while their
        waiters spun. Point 2's premise, that a claimant goes on, does not hold on the M3. The bound held: nothing
        hung.
+     - **The experiments (2026-11-21), each one run of that test on the M3:**
+       - *Not a lane waiting for its own SIMD group.* With one lane in 32 reading (the rest returned at once) it
+         failed worse: 828 waits ran out, none ended with its block found, 631 turns of the cache.
+       - *Not a writer that waits for a turn on its core.* Waits that read memory one turn in 64, over 64 times the
+         turns, and that stalled on loads of the tape's own bytes between: 15 s of waiting, all 7 blocks filled, and
+         still 8,510 waits ran out.
+       - *What a wait that runs out finds.* Every one (117 of 117) finds a slot of its key claimed, with no entry
+         yet. At the first, no writer is counted in the head, and every claim made so far has been settled (given
+         an entry or given back). The claimed slot read complete a moment before, the same way on every run. An
+         add of a zero the compiler cannot know, a poll and a load all agree that it then reads claimed. No clear
+         touched the head, and no decode or copy wrote past its entry.
+       - *Takes that find the head full with 8 entries.* 1,667 claims in one run found no free slot among their 16
+         probes while most of the head's slots were empty: the cache turned with 8 entries in it. A lookup's first
+         turn reads the epoch and the take's stamp check by loads, which may be stale copies (Q123). With the stamp
+         check a poll and every turn after a failed try polling, such claims were 57 to 2,673 a run, and the test
+         still failed.
+       - *A won claim is lost (2026-11-21, a log of every write to the cache's index, in the dead entry).* With one
+         read a node and the decode skipped, the 7 blocks' first claims are made at once, each by lane 0 of its own
+         SIMD group, into slots of one 128-byte line. Every run, the same 4 of them are lost: right after the claim
+         loop the claimant's slot reads 0, or (two blocks whose probes meet) the other block's tag, and no logged
+         write was made to it. Inside the loop a second compare-and-swap, of the tag for the tag, still finds the
+         tag. At that moment no generation's index holds the 4 losers' tags anywhere, while it holds the 3 others'.
+         Two claims of one slot both found it 0, by compare-and-swap and by `fetch_or`, which coherent atomics
+         cannot do. So the losers' atomics act on a copy of the line that no load sees, and that never reaches the
+         buffer. Every write of the cache's code to an index slot is logged, and none explains it.
+       - *What does not change it:* one lane of a SIMD group's swap at a time, every store an exchange, the cold
+         reads inlined, a claim by `fetch_or` in place of a swap, and the cache's atomics on `coherent(device)`
+         words. The counts are the same to a few in every run.
+       - *What differs:* the M3 Max runs macOS 15.7.7 (Metal 3). The Mac mini (an M1) runs macOS 27.2.1 and the
+         M1 Max macOS 26.2 (Metal 4), and both run the same instrumented kernel cleanly: 7 claims, 7 numbers. Metal
+         compiles the source on the device, so the M3's compiler and driver differ from theirs, as well as its GPU.
+         A runtime compile cannot turn Metal's optimizer off, so the M3 itself on macOS 26 is what separates the two.
+       - *Not the compiler (2026-11-21).* Each Mac's own runtime compile of the kernel's source (kept by
+         `RERAIL_METAL_SOURCE_DIR`), in a binary archive: its AIR, from macOS 15.7.7 and from macOS 27.2.1, is the
+         same instruction for instruction, but for the operand Metal 4 adds to each atomic. The claim is one relaxed
+         device-scope swap. And the M3's AIR compiled for G15 by Xcode 26's back end (`metal-tt`), run on the M3
+         from that archive (`RERAIL_METAL_BINARY_ARCHIVE`, the archive's code confirmed), loses the same 4 claims.
+         So the front end does not make the difference, and neither does the back end's version: both back ends
+         compile the code for G15 otherwise than for G13. A user on an M3, whatever their Metal version, may meet
+         it. Apple's tools have no disassembler for G15 code ("no instruction printer for target agx3").
+       - **Found (2026-11-21): two address foldings of G15's back end, by reduction.** The kernel was cut down on
+         the M3, one piece at a time, while the loss still showed (a harness that compiles a `.metal` file and runs
+         it once on the test's dumped inputs). Both come from how the back end folds an address computed from a
+         loaded value; both reproduce in kernels of a few lines, from the runtime compiler of macOS 15.7.7 and from
+         Xcode 26's `metal-tt`.
+         - *The claim's swap.* A compare-and-swap at `gen + ((h + p) & (slots - 1)) * 4 + INDEX`, with `slots` read
+           from the header, acts on another word than its address: two threads both win one slot, and a load of the
+           slot after finds neither's tag. With the index masked by a constant as well, it acts on the slot. A
+           constant mask up to 2^29 - 1 is enough; 0x3FFFFFFF is not. So the slot's index is masked by
+           `view::cache::SLOTS_MAX - 1` too (131,072 slots, the most `Spec::new` makes for the most entries), in
+           `tape_body.h` and in the CLIF, and `Spec::check` and `init_zeroed` refuse a cache of more slots.
+         - *The decode's match.* LZ4's copy reads at the output's place less the match's offset, a zero-extended
+           16-bit load: `dst + at - zext16(off)`. G15 folds it as `dst + at + (uint16)(-off)`, a place 2^16 bytes
+           past the source, so every match read the entry's zeros. This is what failed the blocks once the claims
+           were kept. The decode now computes its places as 32-bit offsets from the output's start and adds each
+           to `dst` (`dst + (uint64_t)(uint32_t)(at - off)`), which G15 compiles right.
+         - With both: `the_device_reads_read_every_node_as_the_crate_does` and
+           `the_device_reads_16z_through_a_cache_that_turns` pass on the M3 Max, the Mac mini and the M1 Max, and the
+           host's tests (the CLIF's reads, which gain the mask, and the generated relation reads) pass on Linux.
+         - Other device code that subtracts a loaded narrow value from an address, or swaps at an index masked only
+           by a loaded count, may meet the same foldings. The engine's Metal tests on the M3 are next.
