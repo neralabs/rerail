@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Pull request 978 report</title>
+<style>
+/* Base: the team page's tokens, type, layout, figures and tables. */
+/* Layout: a contents rail beside one reading column; every idea is a figure with a caption that says what to notice. */
+:root { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: 0 1px 2px rgba(0,0,0,.05), 0 2px 8px rgba(0,0,0,.04); }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; } }
+:root[data-theme="dark"] { --bg: #141413; --surface: #1d1d1b; --surface2: #262623; --text: #ecece8; --muted: #a6a69e; --border: #3a3a36; --line: #5a5a54; --accent: #9aa6ff; --accentsoft: #252a4d; --good: #6fcf97; --goodsoft: #17301f; --warn: #f0b45a; --warnsoft: #36290f; --bad: #f28b82; --badsoft: #3a1a18; --info: #7cb8e8; --infosoft: #14283a; --before: #6f6f68; --shadow: none; color-scheme: dark; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --bg: #f7f7f5; --surface: #ffffff; --surface2: #f0f0ec; --text: #1c1c1a; --muted: #5d5d57; --border: #dcdcd5; --line: #b9b9b0; --accent: #3f4fd8; --accentsoft: #e6e8fb; --good: #1e7a46; --goodsoft: #e1f2e8; --warn: #9a5b00; --warnsoft: #fbf0dc; --bad: #b3261e; --badsoft: #fbe4e2; --info: #20639b; --infosoft: #e1eef8; --before: #a9a9a1; --shadow: none; color-scheme: light; } }
+
+* { box-sizing: border-box; }
+html { scroll-behavior: smooth; }
+body { margin: 0; background: var(--bg); color: var(--text);
+  font: 16px/1.6 -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; }
+a { color: var(--accent); }
+a:focus-visible, button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.layout { display: grid; grid-template-columns: 236px minmax(0, 1fr); gap: 40px; max-width: 1200px; margin: 0 auto;
+  padding-block: 32px 80px; padding-left: max(24px, env(safe-area-inset-left, 0px)); padding-right: max(24px, env(safe-area-inset-right, 0px)); }
+nav.toc { position: sticky; top: 24px; align-self: start; font-size: 14px; max-height: calc(100vh - 48px); overflow-y: auto; }
+nav.toc .brand { font-weight: 700; font-size: 15px; margin-bottom: 12px; }
+nav.toc ol { list-style: none; margin: 0; padding: 0; counter-reset: s; }
+nav.toc li { counter-increment: s; }
+nav.toc a { display: block; padding: 5px 10px; border-radius: 6px; color: var(--muted); text-decoration: none; }
+nav.toc a::before { content: counter(s) ". "; opacity: .7; }
+nav.toc a:hover { background: var(--surface2); color: var(--text); }
+nav.toc .theme { margin-top: 16px; }
+nav.toc button { font: inherit; font-size: 13px; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--surface); color: var(--text); cursor: pointer; }
+main { min-width: 0; }
+header.hero { background: var(--surface); border: 1px solid var(--border); border-radius: 14px; padding: 28px 32px; box-shadow: var(--shadow); }
+.eyebrow { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; color: var(--muted); font-weight: 600; }
+h1 { font-size: 34px; line-height: 1.2; margin: 6px 0 10px; text-wrap: balance; }
+h2 { font-size: 26px; line-height: 1.25; margin: 0 0 6px; text-wrap: balance; }
+h3 { font-size: 19px; margin: 34px 0 8px; text-wrap: balance; }
+h4 { font-size: 17px; margin: 0 0 6px; line-height: 1.35; text-wrap: balance; }
+.lede { font-size: 18px; color: var(--muted); margin: 0; max-width: 64ch; }
+section { margin-top: 52px; scroll-margin-top: 20px; }
+.sub { color: var(--muted); margin: 0 0 18px; max-width: 72ch; }
+p { max-width: 72ch; margin: 10px 0; }
+.muted { color: var(--muted); } .small { font-size: 14px; }
+.state { font-size: 14px; color: var(--muted); margin: 10px 0 0; max-width: none; }
+.callout { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 14px 18px; border-radius: 0 10px 10px 0; margin: 16px 0; max-width: 78ch; }
+.callout strong:first-child { display: block; margin-bottom: 2px; }
+table { width: 100%; border-collapse: collapse; font-size: 15px; }
+th, td { text-align: left; vertical-align: top; padding: 9px 12px; border-bottom: 1px solid var(--border); }
+th { font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; background: var(--surface2); }
+.table-wrap { overflow-x: auto; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; box-shadow: var(--shadow); margin: 14px 0; }
+.table-wrap table tr:last-child td { border-bottom: 0; }
+.numc { font-variant-numeric: tabular-nums; white-space: nowrap; }
+td.k { font-weight: 700; min-width: 8.5em; }
+td.n { white-space: nowrap; }
+.tag { margin-left: 6px; font-weight: 600; font-size: 12px; padding: 1px 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); white-space: nowrap; vertical-align: 1px; }
+.tag.new { background: var(--accentsoft); border-color: var(--accent); color: var(--accent); }
+
+/* The words a section needs, defined once */
+.words { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 16px 0; }
+.word { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.word b { display: block; } .word span { font-size: 14.5px; color: var(--muted); }
+
+/* Figures */
+figure.fg { margin: 16px 0 0; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+figure.fg figcaption { font-size: 14px; color: var(--muted); margin-top: 10px; max-width: 86ch; }
+.pns { display: grid; gap: 12px; } .pns.c2 { grid-template-columns: repeat(2, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+.pn { border: 1px solid var(--border); border-radius: 10px; padding: 10px; background: var(--bg); min-width: 0; }
+.pt { font-size: 12px; text-transform: uppercase; letter-spacing: .06em; font-weight: 700; color: var(--muted); margin-bottom: 6px; }
+.pn.before .pt { color: var(--bad); } .pn.after .pt { color: var(--good); } .pn.mid .pt { color: var(--accent); }
+svg.dg { display: block; width: 100%; height: auto; max-width: 440px; margin: 0 auto; }
+svg.dg.wide { max-width: 840px; }
+svg.dg.narrow { display: none; max-width: 380px; }
+svg.dg.mock { max-width: 420px; margin: 0; }
+svg.defs { position: absolute; }
+.t { font: 12px -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, Roboto, Helvetica, Arial, sans-serif; fill: var(--text); }
+.t.b { font-weight: 700; } .t.s { font-size: 11px; fill: var(--muted); }
+.t.inv { fill: var(--surface); } .t.acc { fill: var(--accent); }
+.bx { fill: var(--surface); stroke: var(--line); stroke-width: 1.2; }
+.bx.good { fill: var(--goodsoft); stroke: var(--good); } .bx.warn { fill: var(--warnsoft); stroke: var(--warn); }
+.bx.acc { fill: var(--accentsoft); stroke: var(--accent); } .bx.info { fill: var(--infosoft); stroke: var(--info); }
+.bx.ghost { fill: none; stroke: var(--muted); stroke-dasharray: 5 4; } .bx.mono { fill: var(--surface2); }
+.bx.accf { fill: var(--accent); stroke: none; }
+.bx.zone { fill: var(--surface2); stroke: none; } .bx.zoneacc { fill: var(--accentsoft); stroke: none; }
+.sq { fill: var(--surface2); stroke: var(--line); stroke-width: .8; }
+.sq.acc { fill: var(--accent); stroke: var(--accent); } .sq.good { fill: var(--good); stroke: var(--good); }
+.sq.draft { fill: none; stroke: var(--muted); stroke-dasharray: 3 2; } .sq.hollow { fill: var(--surface); stroke: var(--line); stroke-width: 1; }
+.ar { stroke: var(--muted); stroke-width: 1.5; fill: none; }
+.ar.good { stroke: var(--good); } .ar.acc { stroke: var(--accent); }
+.ar.thin { stroke-width: .7; } .ar.dash { stroke-dasharray: 5 4; }
+line.ar.thin:not(.acc) { stroke: var(--border); stroke-width: 1; }
+.mk { fill: var(--muted); } .mk.bad { fill: var(--bad); } .mk.good { fill: var(--good); } .mk.acc { fill: var(--accent); }
+.nc { fill: var(--accent); }
+.cm { stroke: var(--muted); stroke-width: 1.5; fill: var(--surface); }
+.cm.on { fill: var(--accent); stroke: var(--accent); } .cm.off { stroke-dasharray: 3 2; }
+.bar { fill: var(--accent); } .barrm { fill: var(--before); }
+.legend { display: flex; flex-wrap: wrap; gap: 8px 16px; font-size: 13.5px; color: var(--muted); margin: 10px 0 0; align-items: center; }
+.legend .key { display: inline-flex; align-items: center; gap: 6px; }
+.legend .sw { width: 16px; height: 10px; border-radius: 3px; display: inline-block; border: 1px solid var(--line); background: var(--surface); }
+.legend .sw.f { background: var(--good); border-color: var(--good); } .legend .sw.a { background: var(--accent); border-color: var(--accent); }
+.legend .sw.r { background: var(--before); border-color: var(--before); } .legend .sw.d { border: 1px dashed var(--muted); background: none; }
+.legend .sw.l { width: 0; height: 12px; border: 0; border-left: 1.5px dashed var(--accent); border-radius: 0; background: none; }
+
+/* Numbers, lists, rules, questions */
+.big { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 12px; margin: 18px 0 0; }
+.big div { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--bg); }
+.big b { display: block; font-size: 28px; line-height: 1.15; font-variant-numeric: tabular-nums; } .big span { font-size: 14px; color: var(--muted); }
+.three { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin: 14px 0; }
+.lesson { border: 1px solid var(--border); border-radius: 10px; padding: 12px 14px; background: var(--surface); }
+.lesson b { display: block; margin-bottom: 4px; } .lesson span { font-size: 14.5px; color: var(--muted); }
+.facts { margin: 12px 0; padding-left: 20px; } .facts li { margin: 5px 0; max-width: 76ch; }
+.rules { counter-reset: r; list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 8px; }
+.rules li { counter-increment: r; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; max-width: 80ch; }
+.rules li::before { content: counter(r); width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.rl { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 8px; }
+.rl li { display: grid; grid-template-columns: 62px minmax(0, 1fr); gap: 12px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 11px 14px; }
+.rl .rn { font-size: 12px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); padding-top: 4px; white-space: nowrap; }
+.rl .x { display: block; color: var(--muted); font-size: 15px; max-width: 78ch; }
+.asks { list-style: none; padding: 0; margin: 16px 0; display: grid; gap: 12px; counter-reset: q; }
+.asks li { counter-increment: q; display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 12px; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; box-shadow: var(--shadow); }
+.asks li::before { content: counter(q); width: 28px; height: 28px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 14px; display: grid; place-items: center; }
+.asks h4 { margin: 2px 0 4px; } .asks p { margin: 4px 0; }
+.asks .now { font-size: 14.5px; color: var(--muted); }
+.anat { display: grid; grid-template-columns: minmax(0, 420px) minmax(0, 1fr); gap: 22px; align-items: start; }
+.anat .rules { margin: 0; font-size: 15px; }
+.dec { display: grid; gap: 18px; }
+.dp { display: grid; grid-template-columns: 30px minmax(0, 1fr); gap: 10px; align-items: start; }
+.dp > .dn { width: 26px; height: 26px; border-radius: 50%; background: var(--accent); color: var(--surface); font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+.dp h4 { margin: 2px 0 4px; } .dp p { margin: 4px 0; }
+.dp ul { margin: 4px 0; padding-left: 20px; } .dp li { margin: 5px 0; max-width: 76ch; }
+.dp .table-wrap { margin: 8px 0 2px; box-shadow: none; }
+.t.n { font-size: 11px; font-weight: 600; }
+.opn { fill: none; stroke: var(--accent); stroke-width: 2; }
+.legend .sw.gs { background: var(--goodsoft); border-color: var(--good); } .legend .sw.ws { background: var(--warnsoft); border-color: var(--warn); }
+.legend .sw.o { border: 2px solid var(--accent); }
+.legend .sw.as { background: var(--accentsoft); border-color: var(--accent); }
+/* The mock-up is drawn narrow, so its small lines are one unit larger than elsewhere. */
+svg.dg.anat .t.s { font-size: 12px; }
+.big a { color: inherit; }
+.ord { display: inline-block; min-width: 26px; padding: 0 6px; margin-right: 7px; border-radius: 6px; background: var(--surface2); border: 1px solid var(--border); font-size: 13px; font-variant-numeric: tabular-nums; text-align: center; }
+.sm { display: block; font-size: 13px; color: var(--muted); font-weight: 400; overflow-wrap: anywhere; }
+table.tight { font-size: 14px; } table.tight th, table.tight td { padding: 8px 10px; } table.tight td.k { min-width: 0; }
+dl.gloss { display: grid; grid-template-columns: 220px minmax(0, 1fr); gap: 8px 16px; margin: 0; }
+dl.gloss dt { font-weight: 600; } dl.gloss dd { margin: 0; color: var(--muted); }
+footer { margin-top: 56px; font-size: 14px; color: var(--muted); }
+footer p { max-width: 86ch; }
+
+@media (max-width: 980px) {
+  .layout { grid-template-columns: 1fr; gap: 16px; padding-block: 16px 60px; padding-left: max(16px, env(safe-area-inset-left, 0px)); padding-right: max(16px, env(safe-area-inset-right, 0px)); }
+  nav.toc { position: static; max-height: none; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px; }
+  nav.toc ol { columns: 2; }
+  .layout { display: flex; flex-direction: column; } main { display: contents; }
+  main > header.hero { order: 0; } nav.toc { order: 1; } main > section, main > footer { order: 2; }
+  .pns.c3 { grid-template-columns: 1fr; }
+  .anat { grid-template-columns: 1fr; } svg.dg.mock { margin: 0 auto; }
+}
+@media (max-width: 760px) {
+  svg.dg.wide { display: none; }
+  svg.dg.narrow { display: block; }
+}
+@media (max-width: 680px) {
+  h1 { font-size: 27px; } h2 { font-size: 22px; }
+  header.hero { padding: 20px; }
+  nav.toc ol { columns: 1; }
+  .pns.c2, .three, .words { grid-template-columns: 1fr; }
+  dl.gloss { grid-template-columns: 1fr; gap: 2px; } dl.gloss dd { margin-bottom: 8px; }
+  .rl li { grid-template-columns: 1fr; gap: 2px; }
+  .dp { grid-template-columns: 1fr; gap: 4px; }
+  figure.fg { padding: 10px; }
+  /* Tables become one card per row, each cell named by its column */
+  table.tc, table.tc tbody, table.tc tr, table.tc td { display: block; }
+  table.tc thead { position: absolute; width: 1px; height: 1px; overflow: hidden; clip-path: inset(50%); }
+  table.tc tr { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+  table.tc tr:last-child { border-bottom: 0; }
+  table.tc td { padding: 2px 0; border-bottom: 0; white-space: normal; }
+  table.tc td[data-l]::before { content: attr(data-l) ": "; font-size: 13px; font-weight: 600; color: var(--muted); }
+  table.tc td:first-child { font-weight: 700; font-size: 16px; }
+  table.tc td:first-child::before { content: none; }
+}
+@media print {
+  * { -webkit-print-color-adjust: exact; print-color-adjust: exact; }
+  nav.toc { display: none; } .layout { grid-template-columns: 1fr; max-width: none; padding: 0; }
+  @page { size: Letter; margin: 12mm; }
+  /* A drawing, a card or a table row never splits across two pages; a long table may, between rows. */
+  figure.fg, .lesson, .callout, .rl li, .asks li, svg, .pn, .dp, .word, .big > div, tr, .rules li, .facts li { break-inside: avoid; }
+  .table-wrap { overflow: visible; } thead { display: table-header-group; }
+  /* Print keeps the wide drawings, and the mock-up at a width whose height fits one page. */
+  svg.dg.wide { display: block; } svg.dg.narrow { display: none; }
+  .anat { grid-template-columns: 1fr; } svg.dg.anat { max-width: 400px; margin: 0 auto; }
+  /* Print is denser than the screen: the whole page at 82%, full-width text, no page tint. */
+  body { zoom: 0.82; background: #fff; }
+  p, .sub, .lede, figure.fg figcaption, .facts li, .rules li, .callout, footer p, .rl .x { max-width: none; }
+  .big { grid-template-columns: repeat(4, minmax(0, 1fr)); } .pns.c3 { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+  h2, h3, h4, .sub { break-after: avoid; } .sub { break-inside: avoid; }
+  section { margin-top: 26px; }
+  header.hero, .asks li { box-shadow: none; }
+  a { color: inherit; text-decoration: none; }
+}
+@media (prefers-reduced-motion: reduce) { html { scroll-behavior: auto; } }
+
+/* The report's own parts. Risk is an ordered scale, so it is one hue from light to dark, and every use carries its word. */
+:root { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; }
+@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; } }
+:root[data-theme="dark"] { --r-low: #55302d; --r-med: #c45a51; --r-high: #ffb9b1; }
+@media print { :root, :root[data-theme="dark"], :root:not([data-theme="light"]) { --r-low: #f6d5d1; --r-med: #d9695f; --r-high: #8a1c16; } }
+.rk { stroke: none; } .rk.high { fill: var(--r-high); } .rk.med { fill: var(--r-med); }
+.rk.low { fill: var(--r-low); stroke: var(--r-med); stroke-width: 1; } .rk.skim, .rk.was { fill: var(--before); } .rk.now { fill: var(--accent); } .rk.tick { fill: var(--text); }
+.bx.hib { fill: var(--surface2); stroke: var(--r-high); stroke-width: 1.5; }
+.lt { fill: var(--surface); stroke: var(--text); stroke-width: 1.3; }
+.mh { fill: var(--good); } .mt { fill: none; stroke: var(--surface); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.ml { fill: var(--surface); stroke: var(--warn); stroke-width: 1.6; } .mlf { fill: var(--warn); }
+/* A check that does not hold yet: an empty dashed ring. */
+.mo { fill: var(--surface); stroke: var(--muted); stroke-width: 1.6; stroke-dasharray: 3 2; }
+.rule { stroke: var(--line); stroke-width: 1; }
+svg.dg.grid { max-width: 470px; } svg.dg.pic { max-width: 380px; margin: 0; }
+/* The flag of an answer changed on purpose: filled for the change of intent, hollow for the others. */
+svg.fl { width: 13px; height: 15px; flex: none; vertical-align: -2px; margin-right: 5px; fill: var(--surface); stroke: var(--warn); stroke-width: 1.7; stroke-linejoin: round; }
+svg.fl.full { fill: var(--warn); }
+.q { border-left: 4px solid var(--accent); background: var(--accentsoft); padding: 12px 18px; border-radius: 0 10px 10px 0; margin: 12px 0 10px; }
+.q .ql { font-size: 13px; letter-spacing: .06em; text-transform: uppercase; font-weight: 700; color: var(--accent); }
+.q p { font-size: 18px; line-height: 1.4; margin: 3px 0 6px; max-width: 80ch; }
+.q ol { margin: 0; padding-left: 22px; font-size: 15px; } .q li { margin: 1px 0; }
+.rec { margin: 10px 0 0; max-width: 100ch; font-size: 16px; }
+.hero .big { margin-top: 12px; } .hero .big div { padding: 10px 14px; }
+.big b.w { font-size: 21px; } .hero .big span { font-size: 13.5px; }
+.chip { display: inline-flex; align-items: center; gap: 6px; font-size: 12.5px; font-weight: 600; padding: 1px 8px; border-radius: 999px; border: 1px solid var(--border); background: var(--surface2); white-space: nowrap; }
+.chip i { width: 13px; height: 9px; border-radius: 2px; display: inline-block; }
+.chip svg.fl { margin-right: 0; }
+.chip.high i { background: var(--r-high); } .chip.medium i { background: var(--r-med); } .chip.low i { background: var(--r-low); outline: 1px solid var(--r-med); }
+.chip.intent { border-color: var(--warn); background: var(--warnsoft); } .chip.answer { border-color: var(--warn); }
+.lb { display: inline-grid; place-items: center; width: 24px; height: 24px; border-radius: 6px; border: 1.5px solid var(--text); font-weight: 700; font-size: 13.5px; background: var(--surface); flex: none; }
+/* Part 2: a row per change, three cells joined by arrows. A table, so a screen reader reads it by row and a phone stacks it. */
+table.it { border-collapse: separate; border-spacing: 14px 9px; font-size: 14.5px; line-height: 1.45; }
+table.it th { background: none; padding: 0 2px; border: 0; }
+table.it td { border: 1.2px solid var(--line); border-radius: 9px; padding: 9px 11px; position: relative; }
+table.it td.k { border: 0; padding: 9px 0 0; min-width: 0; font-weight: 400; }
+table.it td.k b { display: block; margin: 5px 0 4px; }
+table.it td.in { background: var(--surface2); }
+table.it td.now { background: var(--goodsoft); border-color: var(--good); }
+table.it tr.intent td.now { background: var(--warnsoft); border-color: var(--warn); }
+table.it tr.intent td:not(.k) { border-width: 2.4px; border-color: var(--warn); }
+table.it td.fo::after, table.it td.now::after { content: ""; position: absolute; left: -12px; top: 50%; margin-top: -5px; border: 5px solid transparent; border-left: 7px solid var(--muted); border-right: 0; }
+.tagx { display: inline-block; font-size: 12px; color: var(--muted); border: 1px solid var(--border); border-radius: 6px; padding: 0 6px; background: var(--surface); white-space: nowrap; }
+figure.fg.flat { padding: 4px; } figure.fg.flat figcaption { margin: 6px 12px 10px; }
+/* A drawing beside its text: side by side on a desktop and on paper, stacked on a phone. */
+.duo { display: grid; grid-template-columns: minmax(0, 430px) minmax(0, 1fr); gap: 22px; align-items: start; margin-top: 14px; }
+.duo figure.fg { margin: 0; } .duo > div > :first-child { margin-top: 0; }
+.steps { counter-reset: st; list-style: none; padding: 0; margin: 0 0 8px; display: grid; gap: 7px; }
+.steps li, .skim { display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; align-items: start; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 12px; font-size: 14.5px; line-height: 1.45; }
+.steps li { counter-increment: st; }
+.steps li::before { content: counter(st); width: 24px; height: 24px; border-radius: 50%; background: var(--surface2); border: 1px solid var(--line); font-weight: 700; font-size: 13px; display: grid; place-items: center; }
+.steps li.first::before { background: var(--accent); border-color: var(--accent); color: var(--surface); }
+.steps .min, .skim .min { font-variant-numeric: tabular-nums; font-size: 13px; color: var(--muted); white-space: nowrap; margin-left: 6px; }
+.steps .x, .skim .x { display: block; color: var(--muted); } .steps b code { white-space: nowrap; }
+#grid figure.fg { max-width: 560px; }
+.steps .rf, .skim .rf { font-size: 11.5px; font-weight: 700; letter-spacing: .05em; text-transform: uppercase; color: var(--accent); margin-right: 6px; }
+/* What can be skimmed is set apart from the steps: a dashed frame, a grey bar where a step has its number. */
+.skim { border-style: dashed; background: var(--surface2); } .skim .rf { color: var(--muted); }
+.skim i { width: 22px; height: 10px; border-radius: 3px; background: var(--before); margin-top: 7px; }
+.dblock { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 14px 18px; box-shadow: var(--shadow); margin: 12px 0; }
+.dblock h3 { margin: 0 0 4px; font-size: 17.5px; } .dblock p { margin: 4px 0; max-width: none; }
+.dblock .table-wrap { box-shadow: none; } .dblock .pns { margin: 12px 0; }
+.lines { list-style: none; padding: 0; margin: 12px 0; display: grid; gap: 7px; }
+.lines > li { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 8px 14px; }
+ol.lines { counter-reset: q; } ol.lines > li { counter-increment: q; display: grid; grid-template-columns: 26px minmax(0, 1fr); gap: 10px; }
+ol.lines > li::before { content: counter(q); width: 24px; height: 24px; border-radius: 50%; background: var(--accent); color: var(--surface); font-weight: 700; font-size: 13px; display: grid; place-items: center; margin-top: 1px; }
+/* Folded parts. A card's summary is its one line in view. */
+details.ev, details.card { background: var(--surface); border: 1px solid var(--border); border-radius: 10px; margin: 8px 0; }
+details.ev { padding: 2px 14px; } details.ev > summary { cursor: pointer; font-weight: 600; font-size: 14.5px; padding: 7px 0; color: var(--muted); }
+details.ev[open] > summary { border-bottom: 1px solid var(--border); margin-bottom: 8px; color: var(--text); }
+details.ev .table-wrap { box-shadow: none; }
+details.card > summary { list-style: none; cursor: pointer; display: flex; flex-wrap: wrap; gap: 5px 9px; align-items: center; padding: 9px 14px; }
+details.card > summary::-webkit-details-marker { display: none; }
+details.card > summary .sx { flex: 1 1 320px; font-size: 15px; }
+details.card > summary::after { content: "+"; font-weight: 700; font-size: 18px; line-height: 1; color: var(--accent); }
+details.card[open] > summary { border-bottom: 1px solid var(--border); } details.card[open] > summary::after { content: "\2212"; }
+.card .two { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 360px); gap: 20px; align-items: start; padding: 12px 14px 14px; }
+.kv { display: grid; grid-template-columns: 104px minmax(0, 1fr); gap: 6px 12px; margin: 0; }
+.kv dt { font-size: 12px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 600; padding-top: 3px; }
+.kv dd { margin: 0; font-size: 14.5px; }
+.card figure { margin: 0; } .card figcaption { font-size: 13px; color: var(--muted); margin-top: 6px; }
+code { font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size: .9em; background: var(--surface2); padding: 1px 4px; border-radius: 4px; overflow-wrap: anywhere; }
+td .src { display: block; font-size: 13px; color: var(--muted); margin-top: 3px; overflow-wrap: anywhere; }
+@media (max-width: 840px) { .duo { grid-template-columns: 1fr; } .card .two { grid-template-columns: 1fr; } }
+@media (max-width: 680px) {
+  .kv { grid-template-columns: 1fr; gap: 2px; } .kv dd { margin-bottom: 8px; }
+  .dblock { padding: 12px 14px; } .q p { font-size: 17px; }
+  figure.fg.flat { padding: 0; }
+  table.it { border-spacing: 0; } table.it tr { padding: 12px; }
+  table.it td:not(.k) { padding: 8px 10px; margin-top: 6px; }
+  table.it td.k { padding: 0; } table.it td.k b { display: inline; margin: 0 6px; }
+  table.it td.fo::after, table.it td.now::after { content: none; }
+}
+</style>
+</head>
+<body>
+<svg width="0" height="0" class="defs" aria-hidden="true"><defs><marker id="ah" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk "/></marker><marker id="ah-bad" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk bad"/></marker><marker id="ah-good" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk good"/></marker><marker id="ah-acc" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M0 0L10 5L0 10z" class="mk acc"/></marker></defs></svg>
+<div class="layout">
+<nav class="toc" aria-label="Contents">
+  <div class="brand">Decision report</div>
+  <ol><li><a href="#decision">The decision</a></li>
+<li><a href="#intent">Intent and the gap</a></li>
+<li><a href="#look">Where to look</a></li>
+<li><a href="#grid">Risk and verification</a></li>
+<li><a href="#changes">The changes</a></li>
+<li><a href="#decisions">The decisions</a></li>
+<li><a href="#fits">How it fits</a></li>
+<li><a href="#gaps">Not covered</a></li>
+<li><a href="#asks">Our asks</a></li>
+<li><a href="#evidence">Evidence</a></li>
+</ol>
+  <div class="theme"><button type="button" id="theme-toggle">Light or dark</button></div>
+</nav>
+<main>
+<header class="hero" id="decision">
+  <div class="eyebrow">Decision report &middot; Rerail pull request #978</div>
+  <h1>Git: Rerail&#x27;s own Git calls start no program a repository&#x27;s config names</h1>
+  <div class="q"><div class="ql">1. The one question</div>
+  <p>May Rerail&#x27;s Git calls set a repository&#x27;s own filter drivers to the person&#x27;s value or none, and ask each checked-out submodule itself?</p>
+  <ol><li><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg>A file only its repository&#x27;s driver maps is compared as it is on disk.</li></ol></div>
+  <p class="rec"><b>We recommend:</b> approve it: at main five calls started a program a repository&#x27;s config names, here none does; the person&#x27;s drivers run, and a call starts the Gits main&#x27;s starts, plus three where the checkout records submodules.</p>
+  <div class="big">
+    <div><b class="w">4,057 lines</b><span>in 23 files. 1,645 ship, 2,412 are tests and text.</span></div><div><b class="w">Maintainer approves review</b><span>It changes what Rerail&#x27;s own Git calls start.</span></div><div><b class="w">Waits on nothing</b><span>It stands on main alone.</span></div><div><b class="w">4 not verified</b><span><a href="#gaps">Part 8</a> lists each.</span></div>
+  </div>
+  <p class="state">Read from <a href="https://github.com/neralabs/rerail/pull/978">GitHub</a> on 21 November 2026, at head f1a6d791b.</p>
+</header>
+<section id="intent"><h2>2. Intent, and the gap</h2>
+<figure class="fg flat"><table class="tc it"><colgroup><col style="width:15%"><col style="width:25%"><col style="width:29%"><col style="width:31%"></colgroup><thead><tr><th>Change</th><th>Intended</th><th>Found</th><th>Now</th></tr></thead><tbody><tr><td class="k"><span class="lb">A</span><b>Submodule programs</b></td><td class="in" data-l="Intended">Rerail&#x27;s Git calls keep a repository&#x27;s config from running programs: &quot;no fsmonitor, no hooks&quot;. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">A checked-out submodule&#x27;s own filter ran through Git&#x27;s status in it: 3 runs from one audit and one scan diff. <span class="tagx">stand-in program</span></td><td class="now" data-l="Now"><b>Closes the gap</b> and keeps Git out of submodules, asking each through the same guard.</td></tr><tr><td class="k"><span class="lb">B</span><b>Repository filters</b></td><td class="in" data-l="Intended">Rerail&#x27;s Git calls keep a repository&#x27;s config from running programs: &quot;no fsmonitor, no hooks&quot;. <span class="tagx">code comment</span></td><td class="fo" data-l="Found">A tracked file rewritten at the same size ran the repository&#x27;s clean filter: 5 runs from an audit, a scan and a walk. <span class="tagx">stand-in program</span></td><td class="now" data-l="Now"><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>Closes the gap, changes answer 1.</b> and sets each driver only a repository defines to no program; the person&#x27;s own drivers still run.</td></tr></tbody></table>
+<figcaption>Found in November 2026 on Linux x64 and Windows 11 machines, with a stand-in program per call.</figcaption></figure>
+<details class="ev"><summary>Sources at main, and causes</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:42%"><col style="width:42%"></colgroup><thead><tr><th>Change</th><th>Where main states the intent</th><th>The cause, and what was measured</th></tr></thead><tbody><tr><td class="k">A. Submodule programs</td><td data-l="Where main states the intent"><code>src/engine/git.ts</code> at main, above <code>SAFE_CONFIG</code>: &quot;A repository&#x27;s own config can&#x27;t run programs through Rerail&#x27;s git calls: no fsmonitor, no hooks.&quot;</td><td data-l="The cause, and what was measured">Git&#x27;s diff starts <code>git status --porcelain=2</code> in each checked-out submodule to tell whether it changed. That status reads the submodule&#x27;s own config with none of the call&#x27;s options on it, so its filter ran; a Git folder placed at a registered submodule&#x27;s path ran its program the same way.</td></tr><tr><td class="k">B. Repository filters</td><td data-l="Where main states the intent"><code>src/engine/git.ts</code> at main, above <code>SAFE_CONFIG</code>: &quot;A repository&#x27;s own config can&#x27;t run programs through Rerail&#x27;s git calls: no fsmonitor, no hooks.&quot;</td><td data-l="The cause, and what was measured"><code>git diff --name-only</code> and <code>git ls-files --modified</code> compare a file whose size matches its index entry and whose stat does not through <code>filter.&lt;name&gt;.clean</code>. The calls set no filter key, so the program the repository&#x27;s config names ran as the person.</td></tr></tbody></table></div></details>
+</section><section id="look"><h2>3. Where to look</h2>
+<p class="sub">Minutes are our estimate.</p>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 262" role="img" aria-label="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Submodules asked through the guard, medium risk, 952 lines; B, Drivers set for each call, medium risk, 693 lines. Read first: submodule-state.ts, git.ts, filter-drivers.ts. To skim: 2,374 lines of tests and 38 lines of the threat model and a release note." class="dg map"><text x="4" y="14" class="t b">Code to read</text><text x="336" y="14" text-anchor="end" class="t s">bar: changed lines</text><rect x="4.5" y="24.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="38" text-anchor="middle" class="t b">A</text><rect x="30" y="29" width="14" height="10" rx="2" class="rk med"/><text x="49" y="38" class="t s">Medium risk, 952 lines</text><text x="128" y="59" text-anchor="end" class="t s">submodule-state.ts</text><g><title>submodule-state.ts: 849 changed lines, medium risk</title><path d="M134 50h78.9102a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-78.9102z" class="rk med"/></g><text x="221.91" y="59" class="t n">849</text><text x="336" y="59" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="55" r="8.5" class="nc"/><text x="254" y="59" text-anchor="middle" class="t b inv">1</text><text x="128" y="76" text-anchor="end" class="t s">3 other files</text><g><title>3 other files: 103 changed lines, medium risk</title><path d="M134 67h6.05859a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-6.05859z" class="rk med"/></g><text x="149.059" y="76" class="t n">103</text><rect x="4.5" y="90.5" width="19" height="19" rx="5" class="lt"/><text x="14" y="104" text-anchor="middle" class="t b">B</text><rect x="30" y="95" width="14" height="10" rx="2" class="rk med"/><text x="49" y="104" class="t s">Medium risk, 693 lines</text><text x="128" y="125" text-anchor="end" class="t s">git.ts</text><g><title>git.ts: 498 changed lines, medium risk</title><path d="M134 116h44.6328a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-44.6328z" class="rk med"/></g><text x="187.633" y="125" class="t n">498</text><text x="336" y="125" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="121" r="8.5" class="nc"/><text x="254" y="125" text-anchor="middle" class="t b inv">2</text><text x="128" y="142" text-anchor="end" class="t s">filter-drivers.ts</text><g><title>filter-drivers.ts: 195 changed lines, medium risk</title><path d="M134 133h15.043a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-15.043z" class="rk med"/></g><text x="158.043" y="142" class="t n">195</text><text x="336" y="142" text-anchor="end" class="t b acc">read first</text><circle cx="254" cy="138" r="8.5" class="nc"/><text x="254" y="142" text-anchor="middle" class="t b inv">3</text><line x1="4" y1="156" x2="336" y2="156" class="ar thin"/><text x="4" y="176" class="t b">Skim: tests and text</text><text x="128" y="196" text-anchor="end" class="t s">tests of A</text><g><title>Tests of change A: 1,536 changed lines, skim</title><path d="M134 187h146a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-146z" class="rk skim"/></g><text x="289" y="196" class="t n">1,536</text><text x="128" y="213" text-anchor="end" class="t s">tests of B</text><g><title>Tests of change B: 838 changed lines, skim</title><path d="M134 204h77.8359a4 4 0 0 1 4 4v3a4 4 0 0 1 -4 4h-77.8359z" class="rk skim"/></g><text x="220.836" y="213" class="t n">838</text><text x="128" y="230" text-anchor="end" class="t s">threat model, notes</text><g><title>The threat model and a release note: 38 lines</title><path d="M134 221h0a3.71094 3.71094 0 0 1 3.71094 3.71094v3.57812a3.71094 3.71094 0 0 1 -3.71094 3.71094h-0z" class="rk skim"/></g><text x="142.711" y="230" class="t n">38</text><rect x="4" y="246" width="14" height="10" rx="2" class="rk high"/><text x="22" y="255" class="t s">High</text><rect x="62.8" y="246" width="14" height="10" rx="2" class="rk med"/><text x="80.8" y="255" class="t s">Medium</text><rect x="133" y="246" width="14" height="10" rx="2" class="rk low"/><text x="151" y="255" class="t s">Low risk</text><rect x="214.6" y="246" width="14" height="10" rx="2" class="rk skim"/><text x="232.6" y="255" class="t s">Skim</text></svg>
+<figcaption>Most lines are Git&#x27;s submodule rules and the guard around each call.</figcaption></figure>
+<div><ol class="steps"><li class="first"><div><span class="rf">Read first</span><b><code>submodule-state.ts</code>: <code>withChangedSubmodules</code>, <code>submoduleChanged</code>, <code>worktreeIndex</code></b><span class="min">15 min</span><span class="x">Does each diff list the submodules Git&#x27;s own diff lists?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>git.ts</code>: <code>runGit</code>, <code>runGitWithoutBlocking</code>, <code>guardedBy</code>, <code>submoduleOpener</code></b><span class="min">15 min</span><span class="x">Can a call that reads worktree files still start a repository&#x27;s driver?</span></div></li><li class="first"><div><span class="rf">Read first</span><b><code>filter-drivers.ts</code>: <code>driverOverrides</code>, <code>worktreeRead</code></b><span class="min">5 min</span><span class="x">Does every driver a repository defines get the person&#x27;s value or none?</span></div></li><li><div><b><code>audit-control.ts</code>, <code>headless-scan.ts</code>, <code>operations.ts</code>: the callers await the diff</b><span class="min">5 min</span></div></li></ol>
+<div class="skim"><i></i><div><span class="rf">Then skim</span><b>Tests and text</b><span class="min">10 min</span><span class="x">The differential cases compare each answer with Git&#x27;s own; the threat model says what the calls keep from a repository&#x27;s config.</span></div></div>
+</div></div>
+</section><section id="grid"><h2>4. Risk against verification</h2>
+<figure class="fg"><svg viewBox="0 0 340 191" role="img" aria-label="The changes by risk, high on top, against six checks. A, Submodules, medium risk: users lose nothing holds with a limit. B, Drivers, medium risk: users lose nothing holds with a limit, Windows 11: no new failure holds with a limit. CI at this head does not hold yet for every change." class="dg grid"><text x="150" y="13" text-anchor="middle" class="t b">1</text><text x="184" y="13" text-anchor="middle" class="t b">2</text><text x="218" y="13" text-anchor="middle" class="t b">3</text><text x="252" y="13" text-anchor="middle" class="t b">4</text><text x="286" y="13" text-anchor="middle" class="t b">5</text><text x="320" y="13" text-anchor="middle" class="t b">6</text><rect x="1" y="20" width="338" height="82" rx="8" class="bx zone"/><rect x="9" y="25" width="14" height="10" rx="2" class="rk med"/><text x="28" y="34" class="t s b">Medium risk</text><rect x="8.5" y="42.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="56" text-anchor="middle" class="t b">A</text><text x="34" y="56" class="t b">Submodules</text><g><title>Submodules, fails without the fix: At main a checked-out submodule&#x27;s own filter ran 3 times and a placed Git folder&#x27;s 3 times, on Linux x64 and Windows 11; here 0. The last round&#x27;s 13 new cases fail at the commit before.</title><circle cx="150" cy="52" r="8" class="mh"/><path d="M146 52l3 3l5 -6" class="mt"/></g><g><title>Submodules, independent review: Our own independent review found one blocker and six follow-ups; each has a case that fails without its fix.</title><circle cx="184" cy="52" r="8" class="mh"/><path d="M180 52l3 3l5 -6" class="mt"/></g><g><title>Submodules, users lose nothing: Layouts under eleven rule sets equal Git&#x27;s own stdout byte for byte. A checkout of more than about four million files that records a submodule fails where main answered.</title><circle cx="218" cy="52" r="7.4" class="ml"/><path d="M218 44.6A7.4 7.4 0 0 0 218 59.4Z" class="mlf"/></g><g><title>Submodules, rules scan: nothing new: No new finding in the touched files, with the published Rerail and with Rerail built from main; no function over complexity 6.</title><circle cx="252" cy="52" r="8" class="mh"/><path d="M248 52l3 3l5 -6" class="mt"/></g><g><title>Submodules, Windows 11: no new failure: The 29 test files importing a module this round changed pass on Windows 11 with the engine built for this tree, each failure beside other runs passing run again.</title><circle cx="286" cy="52" r="8" class="mh"/><path d="M282 52l3 3l5 -6" class="mt"/></g><g><title>Submodules, CI at this head: CI runs once the branch is on GitHub.</title><circle cx="320" cy="52" r="7.4" class="mo"/></g><line x1="8" y1="68" x2="332" y2="68" class="ar thin"/><rect x="8.5" y="74.5" width="19" height="19" rx="5" class="lt"/><text x="18" y="88" text-anchor="middle" class="t b">B</text><text x="34" y="88" class="t b">Drivers</text><g><title>Drivers, fails without the fix: At main a tracked file rewritten at the same size ran the repository&#x27;s clean filter 5 times, and a signed reflog its signing program once; here 0, on Linux x64 and Windows 11.</title><circle cx="150" cy="84" r="8" class="mh"/><path d="M146 84l3 3l5 -6" class="mt"/></g><g><title>Drivers, independent review: Our own independent review asked for a Git&#x27;s version kept per Git and a cap under Node&#x27;s longest string; both have cases that fail without them.</title><circle cx="184" cy="84" r="8" class="mh"/><path d="M180 84l3 3l5 -6" class="mt"/></g><g><title>Drivers, users lose nothing: A file under a driver only the repository defines is listed as changed when only its stat changed.</title><circle cx="218" cy="84" r="7.4" class="ml"/><path d="M218 76.6A7.4 7.4 0 0 0 218 91.4Z" class="mlf"/></g><g><title>Drivers, rules scan: nothing new: No new finding in the touched files, with the published Rerail and with Rerail built from main.</title><circle cx="252" cy="84" r="8" class="mh"/><path d="M248 84l3 3l5 -6" class="mt"/></g><g><title>Drivers, Windows 11: no new failure: The test files pass on Windows 11; the cases with a stand-in Git run on Linux only.</title><circle cx="286" cy="84" r="7.4" class="ml"/><path d="M286 76.6A7.4 7.4 0 0 0 286 91.4Z" class="mlf"/></g><g><title>Drivers, CI at this head: CI runs once the branch is on GitHub.</title><circle cx="320" cy="84" r="7.4" class="mo"/></g><text x="8" y="121" class="t s">1  fails without the fix</text><text x="168" y="121" class="t s">2  independent review</text><text x="8" y="137" class="t s">3  users lose nothing</text><text x="168" y="137" class="t s">4  rules scan: nothing new</text><text x="8" y="153" class="t s">5  Windows 11: no new failure</text><text x="168" y="153" class="t s">6  CI at this head</text><g><title>holds</title><circle cx="14" cy="177" r="8" class="mh"/><path d="M10 177l3 3l5 -6" class="mt"/></g><text x="28" y="181" class="t s">holds</text><g><title>holds with a limit</title><circle cx="92" cy="177" r="7.4" class="ml"/><path d="M92 169.6A7.4 7.4 0 0 0 92 184.4Z" class="mlf"/></g><text x="106" y="181" class="t s">holds with a limit</text><g><title>does not hold yet</title><circle cx="244.1" cy="177" r="7.4" class="mo"/></g><text x="258.1" y="181" class="t s">not yet</text></svg>
+<figcaption>Start with the submodule rules: they follow Git&#x27;s own and are where a wrong answer lists or drops a path.</figcaption></figure>
+<details class="ev"><summary>Each limit, and each check that does not hold yet</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:18%"><col style="width:22%"><col style="width:60%"></colgroup><thead><tr><th>Change</th><th>Check</th><th>Its limit, or why it does not hold yet</th></tr></thead><tbody><tr><td class="k">A. Submodules</td><td data-l="Check">users lose nothing</td><td data-l="Its limit, or why it does not hold yet">Layouts under eleven rule sets equal Git&#x27;s own stdout byte for byte. A checkout of more than about four million files that records a submodule fails where main answered.</td></tr><tr><td class="k">B. Drivers</td><td data-l="Check">users lose nothing</td><td data-l="Its limit, or why it does not hold yet">A file under a driver only the repository defines is listed as changed when only its stat changed.</td></tr><tr><td class="k">B. Drivers</td><td data-l="Check">Windows 11: no new failure</td><td data-l="Its limit, or why it does not hold yet">The test files pass on Windows 11; the cases with a stand-in Git run on Linux only.</td></tr><tr><td class="k">A and B</td><td data-l="Check">CI at this head</td><td data-l="Its limit, or why it does not hold yet">CI runs once the branch is on GitHub.</td></tr></tbody></table></div></details>
+</section><section id="changes"><h2>5. The changes</h2>
+<p class="sub">Each line opens its card.</p>
+<details class="card"><summary><span class="lb">A</span><b>Submodules asked through the guard</b><span class="chip medium"><i></i>Medium risk</span><span class="sx">450 submodules, Windows 11 running nothing else: audit 3.5 s here, 5.4 s at main, every call answered.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>Git&#x27;s diff starts <code>git status</code> in each checked-out submodule, which runs the programs that submodule&#x27;s own config names, also in a Git folder placed at a registered submodule&#x27;s path.</dd>
+<dt>Who meets it</dt><dd>Every audit request with the default scope and every <code>rerail scan</code> in a checkout with submodules. How many checkouts have them is not measured.</dd>
+<dt>What it does</dt><dd><code>runGitWithoutBlocking</code> runs the diff with <code>--ignore-submodules=dirty</code>, then <code>withChangedSubmodules</code> asks each checked-out submodule its status through the same guard, all at once, within the call&#x27;s one 10 s limit, following Git&#x27;s rules for which submodules a diff looks into.</dd>
+<dt>Risk</dt><dd>Medium: Rerail now follows Git&#x27;s rules (2.31 to 2.53) for submodules, and a rule it gets wrong lists a submodule Git would not, or leaves one out.</dd>
+<dt>Check</dt><dd>Read <code>withChangedSubmodules</code> and <code>submoduleChanged</code> beside Git&#x27;s <code>is_submodule_modified</code>. Check that a <code>.gitmodules</code> in conflict, a linked worktree and an index the environment names each answer as Git does.</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="At main a checked-out submodule&#x27;s own filter ran 3 times and a placed Git folder&#x27;s program 3 times; here neither runs." class="dg pic"><text x="4" y="17" class="t b">Submodule&#x27;s own filter</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Submodule&#x27;s own filter, main: 3 runs</title><path d="M80 24h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="34" class="t n">3 runs</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Submodule&#x27;s own filter, this change: 0 runs</title><path d="M80 41h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="51" class="t n">0 runs</text><text x="4" y="75" class="t b">Placed Git folder</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>Placed Git folder, main: 3 runs</title><path d="M80 82h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="92" class="t n">3 runs</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>Placed Git folder, this change: 0 runs</title><path d="M80 99h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="109" class="t n">0 runs</text></svg><figcaption>Method: A stand-in program per state that writes a line to a file of the test&#x27;s own, each call made as its caller makes it, at main 1e80e3b04 and here, on Linux x64 and Windows 11.</figcaption></figure></div></details><details class="card"><summary><span class="lb">B</span><b>Drivers set for each call</b><span class="chip medium"><i></i>Medium risk</span><span class="sx">A repository&#x27;s clean filter at main: 5 runs per audit, scan and walk. Here: 0.</span></summary>
+<div class="two"><dl class="kv">
+<dt>Problem</dt><dd>The audit&#x27;s and the scan&#x27;s diff and the session walk&#x27;s listing ran the <code>filter.&lt;name&gt;.clean</code> program a repository&#x27;s config names, as the person, outside any agent&#x27;s sandbox.</dd>
+<dt>Who meets it</dt><dd>Every session walk, audit request and <code>rerail scan</code> in a repository whose config names a filter. How many do is not measured.</dd>
+<dt>What it does</dt><dd><code>runGit</code> and the reads that do not block list the config with its scopes once, then set each driver a repository defines to the person&#x27;s own value or to no program, through <code>GIT_CONFIG_COUNT</code>. Every call sets <code>log.showSignature=false</code>.</dd>
+<dt>Risk</dt><dd>Medium: every call that reads worktree files starts one Git more, and a writer changing the config between the listing and the call can still have its driver started.</dd>
+<dt>Check</dt><dd>Read <code>guardedBy</code> and <code>driverOverrides</code>: does any driver a repository defines keep a program, and does the person&#x27;s own driver, Git LFS among them, keep its value?</dd>
+</dl><figure><svg viewBox="0 0 340 128" role="img" aria-label="At main a repository&#x27;s clean filter ran 5 times across an audit, a scan and a walk, and the signing program once in a reflog read; here neither runs." class="dg pic"><text x="4" y="17" class="t b">Repository&#x27;s clean filter</text><text x="74" y="34" text-anchor="end" class="t s">main</text><g><title>Repository&#x27;s clean filter, main: 5 runs</title><path d="M80 24h186a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-186z" class="rk was"/></g><text x="276" y="34" class="t n">5 runs</text><text x="74" y="51" text-anchor="end" class="t s">this change</text><g><title>Repository&#x27;s clean filter, this change: 0 runs</title><path d="M80 41h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="51" class="t n">0 runs</text><text x="4" y="75" class="t b">Signing program</text><text x="74" y="92" text-anchor="end" class="t s">main</text><g><title>Signing program, main: 1 run</title><path d="M80 82h34a4 4 0 0 1 4 4v4a4 4 0 0 1 -4 4h-34z" class="rk was"/></g><text x="124" y="92" class="t n">1 run</text><text x="74" y="109" text-anchor="end" class="t s">this change</text><g><title>Signing program, this change: 0 runs</title><path d="M80 99h0a2 2 0 0 1 2 2v8a2 2 0 0 1 -2 2h0z" class="rk now"/></g><text x="88" y="109" class="t n">0 runs</text></svg><figcaption>Method: A stand-in program per state that writes a line to a file of the test&#x27;s own, each call made as its caller makes it, at main 1e80e3b04 and here, on Linux x64 and Windows 11.</figcaption></figure></div></details>
+</section><section id="decisions"><h2>6. The decisions</h2>
+<div class="dblock"><h3>How should a call keep a repository&#x27;s drivers from running?</h3>
+<p><b>We chose</b> list the config with its scopes, then set each driver a repository defines to the person&#x27;s value or none.</p>
+<p><b>Would change our mind:</b> a repository whose rules need its own driver&#x27;s output in Rerail&#x27;s diff.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">Listing, then overrides for the drivers it found <span class='tag new'>chosen</span></td><td data-l="What a user gets">No repository driver runs; the person&#x27;s drivers, Git LFS among them, run.</td><td data-l="Cost">One Git more per call that reads worktree files.</td><td data-l="What it breaks">A writer changing the config between the listing and the call can have its driver started.</td></tr><tr><td class="k">A view of the config Rerail writes for each call</td><td data-l="What a user gets">No window between listing and call.</td><td data-l="Cost">As built.</td><td data-l="What it breaks">Conditional config: 1 to 3 files wrongly listed per call; the scan&#x27;s diff lost replace refs.</td></tr></tbody></table></div><p><b>Evidence.</b> Generated layouts equal Git&#x27;s own answer but for a file whose stat alone changed under a repository&#x27;s driver; Git LFS on Windows 11 cleans as the person&#x27;s own Git does.</p></details></div>
+<div class="dblock"><h3>How should the diffs learn which submodules changed?</h3>
+<p><b>We chose</b> Git kept out of them, and Rerail asks each checked-out submodule through the same guard, all at once.</p>
+<p><b>Would change our mind:</b> a checkout with so many submodules that main answers and this does not.</p>
+<details class="ev"><summary>Options and evidence</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:28%"><col style="width:22%"><col style="width:22%"><col style="width:28%"></colgroup><thead><tr><th>Option</th><th>What a user gets</th><th>Cost</th><th>What it breaks</th></tr></thead><tbody><tr><td class="k">One Git a submodule where its config and index allow, all at once <span class='tag new'>chosen</span></td><td data-l="What a user gets">With 450 submodules every call answers on a Windows 11 VM running nothing else, in 3.5 s where main takes 5.4 s.</td><td data-l="Cost">460 Git starts for an audit at 450, against 457 at main.</td><td data-l="What it breaks">Nothing main gives, measured.</td></tr><tr><td class="k">One Git for all, with the guard&#x27;s options</td><td data-l="What a user gets">Main&#x27;s cost.</td><td data-l="Cost">As main.</td><td data-l="What it breaks">The options name only the checkout&#x27;s drivers, so a submodule&#x27;s own driver and a placed Git folder run their programs.</td></tr></tbody></table></div><p><b>Evidence.</b> At 0, 80, 200 and 450 submodules, 5 calls each on a Windows 11 virtual machine and Linux x64, beside main on the same machine: every call answered with Git&#x27;s own paths.</p></details></div>
+</section><section id="fits"><h2>7. How it fits</h2>
+<div class="duo"><figure class="fg"><svg viewBox="0 0 340 216" role="img" aria-label="The change is based on main at 1e80e3b04, merged in with no conflict. A trial merge with the open pull request #964 conflicts in two import lines, and whichever lands second keeps both." class="dg fit"><rect x="4" y="4" width="332" height="50" rx="8" class="bx good"/><text x="14" y="23" class="t b">main at 1e80e3b04</text><text x="14" y="38" class="t s">merged in, no conflict</text><line x1="170" y1="55" x2="170" y2="79" class="ar " marker-end="url(#ah)"/><text x="176" y="71" class="t s">based on</text><rect x="4" y="80" width="332" height="46" rx="8" class="bx acc"/><text x="170" y="100" text-anchor="middle" class="t b">Git calls start no program</text><text x="170" y="116" text-anchor="middle" class="t s">two changes</text><text x="4" y="146" class="t b">Trial merges with open work</text><rect x="4" y="154" width="108" height="58" rx="8" class="bx warn"/><text x="12" y="171" class="t b">#964</text><text x="12" y="187" class="t s">2 import lines:</text><text x="12" y="201" class="t s">keep both</text></svg></figure>
+<div><p>Nothing has to merge first. It meets #964 in two import lines; whichever lands second keeps both.</p>
+<details class="ev"><summary>The shared lines and the trial merge</summary><p>A trial merge with #964 conflicts in line 3 of <code>integration/rerail-without-daemon.test.ts</code>, the <code>node:fs/promises</code> names, and line 10 of <code>src/engine/audit/audit-control.ts</code>, the imports beside <code>../git.js</code>. No other open pull request of ours touches these files.</p></details>
+</div></div>
+</section><section id="gaps"><h2>8. What is not covered</h2>
+<ul class="lines">
+<li><b>macOS</b> never ran.</li>
+<li><b>Git LFS on Linux</b> never ran; on Windows 11 it cleans as the person&#x27;s own Git does.</li>
+<li><b>A Git older than 2.31</b> ran through stand-ins on Linux only, not through the built command line.</li>
+<li><b>The stand-in Git cases</b> run on Linux only: Windows cannot start a script as its Git.</li>
+</ul>
+<details class="ev"><summary>Three limits that stay</summary>
+<p><b>Limits that stay.</b></p>
+<ul class="facts">
+<li>A writer changing the config between the listing and the call has its driver started in some calls: 9 of 40 audits on Linux.</li>
+<li>A checkout of more than about four million files that records a submodule passes the listing&#x27;s cap and fails the diff.</li>
+<li>Submodules more than 16 deep fail the diff, where Git follows them.</li>
+</ul></details>
+</section><section id="asks"><h2>9. What we ask of you</h2>
+<p class="sub">Ask 1 rules on answer 1.</p>
+<ol class="lines">
+<li><div><svg class="fl" viewBox="0 0 14 16" aria-hidden="true"><path d="M2 1v14M2 1h10l-3 4l3 4h-10"/></svg><b>May a file under a driver only its repository defines be compared as it is on disk?</b> We recommend yes: the other way runs that repository&#x27;s program.</div></li>
+</ol>
+</section><section id="evidence"><h2>10. Evidence</h2>
+<p>The description on GitHub is the record: &quot;How you tested it&quot; holds the failing runs, the figures and the test files.</p>
+<details class="ev"><summary>Runs at this head</summary><div class="table-wrap"><table class="tc tight"><colgroup><col style="width:16%"><col style="width:40%"><col style="width:44%"></colgroup><thead><tr><th>Where</th><th>What ran</th><th>Result</th></tr></thead><tbody><tr><td class="k">Linux x64</td><td data-l="What ran">The five calls, at main and here</td><td data-l="Result">All five fail at main and pass here.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The five calls, at main and here</td><td data-l="Result">All five fail at main and pass here.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">29 test files importing a changed module</td><td data-l="Result">1,216 passed, 31 skipped; main&#x27;s 37 files passed.</td></tr><tr><td class="k">Windows 11</td><td data-l="What ran">The same 40 files</td><td data-l="Result">1,184 passed, 65 skipped, 3 failed beside other runs and passed run again at main and here, with the engine built for this tree.</td></tr><tr><td class="k">Linux x64</td><td data-l="What ran">Each new line changed, 19 runs</td><td data-l="Result">With nothing changed the files pass; each of the 18 changes fails a case.</td></tr></tbody></table></div></details>
+<details class="ev"><summary>Sources</summary><p>The branch and its diff against main, read on 21 November 2026; Git 2.53 and 2.56 for Git&#x27;s own answers.</p></details>
+</section>
+<footer><p>A figure we could not source is left out.</p></footer>
+</main>
+</div>
+<script>
+(function () {
+  var root = document.documentElement, key = "pr-report-theme";
+  try { var saved = localStorage.getItem(key); if (saved) root.setAttribute("data-theme", saved); } catch (e) {}
+  document.getElementById("theme-toggle").addEventListener("click", function () {
+    var dark = root.getAttribute("data-theme") === "dark" || (!root.getAttribute("data-theme") && window.matchMedia("(prefers-color-scheme: dark)").matches);
+    var next = dark ? "light" : "dark"; root.setAttribute("data-theme", next);
+    try { localStorage.setItem(key, next); } catch (e) {}
+  });
+})();
+</script>
+</body>
+</html>
