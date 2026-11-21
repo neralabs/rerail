@@ -858,7 +858,7 @@ function remoteSource(root: string): RemoteSource | undefined {
 function remoteFacts(own: string | undefined, common: string): string | undefined {
   const environment = environmentConfig();
   const wide = wideConfigFiles();
-  if (own === undefined || wide === undefined || INCLUDE.test(environment)) return undefined;
+  if (wide === undefined || INCLUDE.test(environment)) return undefined;
   const files = [join(common, "config"), ...wide];
   const texts = [own, ...files.map(configText), olderRemoteFiles(common)];
   return texts.some(text => text === undefined) ? undefined : [environment, ...files, ...texts].join("\0");
@@ -935,7 +935,7 @@ function entryCount(path: string): number | undefined {
   try {
     return readdirSync(path).length;
   } catch (error) {
-    return errorCode(error) === "ENOENT" || errorCode(error) === "ENOTDIR" ? 0 : undefined;
+    return errorCode(error) === "ENOENT" ? 0 : undefined;
   }
 }
 

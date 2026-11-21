@@ -226,6 +226,26 @@ const ROWS: readonly Row[] = [
     change: () => vi.stubEnv("GIT_CONFIG_VALUE_0", TWO),
   },
   {
+    what: "the count GIT_CONFIG_COUNT gives its keys",
+    arrange: at => {
+      vi.stubEnv("GIT_CONFIG_COUNT", "1");
+      vi.stubEnv("GIT_CONFIG_KEY_0", "remote.origin.url");
+      vi.stubEnv("GIT_CONFIG_VALUE_0", ONE);
+      return at.main;
+    },
+    change: () => vi.stubEnv("GIT_CONFIG_COUNT", "0"),
+  },
+  {
+    what: "a key GIT_CONFIG_COUNT's keys name",
+    arrange: at => {
+      vi.stubEnv("GIT_CONFIG_COUNT", "1");
+      vi.stubEnv("GIT_CONFIG_KEY_0", "remote.origin.url");
+      vi.stubEnv("GIT_CONFIG_VALUE_0", ONE);
+      return at.main;
+    },
+    change: () => vi.stubEnv("GIT_CONFIG_KEY_0", "remote.other.url"),
+  },
+  {
     what: "a remote GIT_CONFIG_PARAMETERS sets",
     arrange: at => {
       vi.stubEnv("GIT_CONFIG_PARAMETERS", `'remote.origin.url=${ONE}'`);
