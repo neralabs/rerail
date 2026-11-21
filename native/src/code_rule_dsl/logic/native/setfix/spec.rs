@@ -76,8 +76,9 @@ pub enum JoinItem {
     Atom { neg: bool, src: Source, args: Vec<Arg> },
     /// `count <src> <args…> <out>`
     Count { src: Source, args: Vec<Arg>, out: Tok },
-    /// `sum|min|max <src> <args…> <value column> <out>`
-    Extreme { op: Extreme, src: Source, args: Vec<Arg>, col: usize, out: Tok },
+    /// `sum|min|max <src> <args…> <value column> <out>`; bounded (decision 0511), `maxlt|maxle|mingt|minge <src>
+    /// <args…> <value column> <bound> <out>`: the extreme of the values on the bound's side, strictly or not.
+    Extreme { op: Extreme, src: Source, args: Vec<Arg>, col: usize, out: Tok, bound: Option<(Tok, bool)> },
     /// `strjoin <src> <args…> <x column>:<0|1> <by columns|-> <separator> <out>` (a column's `1`: a symbol)
     StrJoin { src: Source, args: Vec<Arg>, x: (usize, bool), by: Vec<(usize, bool)>, sep: Tok, out: Tok },
     /// `cat <out> <a> <b>`
@@ -398,13 +399,20 @@ impl std::fmt::Display for JoinItem {
         match self {
             JoinItem::Atom { neg, src, args } => write!(f, "{} {src} {}", if *neg { "neg" } else { "pos" }, joined(args)),
             JoinItem::Count { src, args, out } => write!(f, "count {src} {} {out}", joined(args)),
-            JoinItem::Extreme { op, src, args, col, out } => {
-                let name = match op {
-                    Extreme::Sum => "sum",
-                    Extreme::Min => "min",
-                    Extreme::Max => "max",
+            JoinItem::Extreme { op, src, args, col, out, bound } => {
+                let name = match (op, bound) {
+                    (Extreme::Sum, _) => "sum",
+                    (Extreme::Min, None) => "min",
+                    (Extreme::Max, None) => "max",
+                    (Extreme::Min, Some((_, true))) => "mingt",
+                    (Extreme::Min, Some((_, false))) => "minge",
+                    (Extreme::Max, Some((_, true))) => "maxlt",
+                    (Extreme::Max, Some((_, false))) => "maxle",
                 };
-                write!(f, "{name} {src} {} {col} {out}", joined(args))
+                match bound {
+                    Some((b, _)) => write!(f, "{name} {src} {} {col} {b} {out}", joined(args)),
+                    None => write!(f, "{name} {src} {} {col} {out}", joined(args)),
+                }
             }
             JoinItem::StrJoin { src, args, x, by, sep, out } => {
                 let by = if by.is_empty() { "-".to_owned() } else { by.iter().map(|&b| col(b)).collect::<Vec<_>>().join(",") };
@@ -453,6 +461,15 @@ impl JoinSpec {
                     args: args(&t[2..n - 2], true)?,
                     col: num(t[n - 2])?,
                     out: tok(t[n - 1])?,
+                    bound: None,
+                },
+                "maxlt" | "maxle" | "mingt" | "minge" if n >= 5 => JoinItem::Extreme {
+                    op: if t[0].starts_with("max") { Extreme::Max } else { Extreme::Min },
+                    src: source(t[1])?,
+                    args: args(&t[2..n - 3], true)?,
+                    col: num(t[n - 3])?,
+                    out: tok(t[n - 1])?,
+                    bound: Some((tok(t[n - 2])?, matches!(t[0], "maxlt" | "mingt"))),
                 },
                 "strjoin" if n >= 7 => {
                     let column = |x: &str| -> Result<(usize, bool), String> {

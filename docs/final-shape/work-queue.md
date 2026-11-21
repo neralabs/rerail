@@ -8864,3 +8864,19 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
     assertion states 0361 now: `o` is not prepared, and `r` is, as `o`'s inferred facts size it.
   - The plan module's tests pass (90). Along the way: `gate/executor-coverage/packs.tsv` was stale since the merge's
     `lib/python/references.rr` became `.rerail` and the library's programs counted one more. Blessed.
+
+### Q413. On Metal at the default 512 MB, the reference graph's rules leave the ast matcher wave no room (0483)
+- **Seen** (2026-11-20, 565dbba02, all, `--metal`): with `python/references.rerail` on the run's path, the run panics:
+  "the ast matcher wave failed on Metal: BackendCapacity". 966 device joins ran on the CPU instead ("a lease of N MB
+  past the Metal budget of 512 MB (509 MB leased, 0 MB idle)"). With `--metal-mb 2048` it passes, and its rows are the
+  before run's (plus `rr_embed_req`), at 76 s of CPU and 26 s of wall against the before run's 37 s and 32 s. Even
+  2 GB was leased to 2,031 MB at two moments.
+- **Cause**: the run's derived relations' row blocks are leased from the one Metal budget (0266 §16). The profile at
+  2 GB: "rows' blocks: a run's 28 (546 MB written of 1119 MB)", 1.1–1.4 GB leased. The rules derive about 80 M head
+  rows where W's Rust derived none, and half of each block reserved is not written. The wave's ledger counts those
+  leases, and `make_room` can free only idle buffers and residency slabs.
+- **Not the fix**: a wait in the ledger for leases to be dropped (`tmp/refs/room-wait.patch`; its test passed). The
+  blocks are held for the run, not for a submission: the run waited and then failed all the same, and each split
+  level would wait again.
+- **Do**: row blocks that pass the budget spill to the deferrable tier (mmap slabs) rather than hold device leases;
+  reserve a block's written extent, not twice it.

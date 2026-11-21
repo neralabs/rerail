@@ -780,20 +780,18 @@ ks(1, 20). ks(1, 10). ks(2, 30).
 lo(k, v) :- kv(k, _), v = min x : { kv(k, x) }.
 .decl hi(k: number, v: number)
 hi(k, v) :- kv(k, _), v = max x : { kv(k, x) }.
-.decl one(k: number)
-one(k) :- ks(k, _), s = min t : { ks(k, t) }, ks(k, s).
 .decl q(p: symbol, k: number)
 q("a.b.c", 1). q("a.b.c", 2). q("a", 3).
 .decl up(p: symbol, k: number, u: symbol)
 up(p, k, u) :- q(p, k), u = @pkg_up(p, k).
-.output lo, hi, one, up
+.output lo, hi, up
 "#;
+    // (A min or max over symbols is refused: `front::tests::named_errors`.)
     let out = dir.join("out");
     crate::code_rule_dsl::logic::plan::corpus::run(program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
     let read = |rel: &str| crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap();
     assert_eq!(read("lo"), [["1", "3"], ["2", "4"]]);
     assert_eq!(read("hi"), [["1", "9"], ["2", "4"]]);
-    assert_eq!(read("one"), [["1"], ["2"]]);
     assert_eq!(read("up"), [["a", "3", ""], ["a.b.c", "1", "a.b"], ["a.b.c", "2", "a"]]);
     let _ = std::fs::remove_dir_all(&dir);
 }

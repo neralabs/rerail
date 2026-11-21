@@ -499,6 +499,10 @@ impl<'v> Canon<'v> {
                         AggRef::Product => (3, false),
                         AggRef::Max => (4, false),
                         AggRef::Join { .. } => (5, false),
+                        AggRef::Bounded { max: false, strict: false, .. } => (6, false),
+                        AggRef::Bounded { max: false, strict: true, .. } => (7, false),
+                        AggRef::Bounded { max: true, strict: false, .. } => (8, false),
+                        AggRef::Bounded { max: true, strict: true, .. } => (9, false),
                     };
                     c.out.push(Tok::I(k));
                     if !count {
@@ -510,6 +514,10 @@ impl<'v> Canon<'v> {
                             c.out.push(Tok::V(s));
                         }
                         c.out.push(Tok::S(v.text(sep)));
+                    }
+                    if let Some(b) = op.bound() {
+                        let b = c.name(b);
+                        c.out.push(Tok::V(b));
                     }
                     c.atom(atom);
                 }

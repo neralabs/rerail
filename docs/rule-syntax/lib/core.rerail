@@ -38,6 +38,9 @@
 // `__init__.py`. Ruff names such a module by its file's stem and resolves no relative import from it; Python can
 // still import it as a namespace package's module, by `doc`'s name.
 .decl unpackaged(d: number)                              // a Python file outside every regular package
+// tape_error(d): document d's tree holds a tree-sitter ERROR or MISSING node: the tape's own verdict, which
+// `syntax_error` (CPython's) is not. The document keeps its tree.
+.decl tape_error(d: number)
 // For "src/app/main.py": path_part(d, "src"), path_part(d, "app"), path_part(d, "main.py"). Lets rules test
 // "is this file under a `tests` directory" without regex on the whole path.
 .decl path_part(d: number, s: symbol)                    // each directory of the document's path, and its file name
@@ -119,7 +122,7 @@
 // fstring_template(n, "{...}", "SELECT {...} FROM t") for f'SELECT {x} FROM t': n's decoded text with each
 // interpolation replaced by the marker, a constant; a debug field's `x = ` stays literal text. The same hosts.
 .decl fstring_template(n: node, marker: symbol, v: symbol)
-.input doc, pkg, unpackaged, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
+.input doc, pkg, unpackaged, tape_error, path_part, file_name, node, kind, field, child, text, op, docof, line, unset, list_len
 .input value, str, strprefix, name, comment, static_value, value_type, value_type_of, fstring_piece, fstring_template
 
 // ---- text tests (built-in constraints) -----------------------------------------------------------------------
@@ -238,7 +241,8 @@
 // reference_open(f): f refers to something no static name denotes, or f's file does not parse: what f reaches
 // is not all known.
 .decl reference_open(n: node)
-.input reference_edge, reference_open
+// Both are rules, not inputs (decision 0483): a program that reads them includes python/references.rerail, the one
+// file that derives them.
 
 // ---- tree structure (tape arithmetic, never Datalog recursion) -------------------------------------------------
 // These answer ancestor and sibling questions from node offsets. A recursive `ancestor` relation in Datalog
@@ -760,7 +764,8 @@
 //                                              skip .git, .venv, venv, __pycache__ and tmp.
 // .references {"siblingLinks": […], "constructorFields": {…}, "scope": {…}}
 //                                              the reference graph's links, as the policy's `references` gives
-//                                              them, over the files of `scope` (default: every file).
+//                                              them, over the files of `scope` (default: every file): facts
+//                                              python/references.rerail reads (decision 0483).
 
 // Batched Python facts. Requests is a unary node relation; targets is a unary symbol relation.
 // These operators do not evaluate rules. Unknown semantic facts produce no known result.

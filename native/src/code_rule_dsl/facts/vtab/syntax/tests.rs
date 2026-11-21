@@ -2268,3 +2268,51 @@ fn a_batch_given_counts_knows_its_row_space_making_nothing() {
     let failed = text.failure().expect("a relation's rows differ from its count");
     assert!(failed.contains("text") && failed.contains("0494"), "{failed}");
 }
+
+/// A batch grown by a round's documents (decision 0431 §6) runs the `ast` matchers over that round's documents only:
+/// the files the batch was started with are not matched again. (Each round of guests ran the wave over every file of
+/// the chunk again: 17 s of 131 s of CPU on `all` once the reference graph's rules read string annotations, decision
+/// 0483; final-rerail-shape's `with_matchers` kept the rows for that, which the grower does by construction.)
+#[test]
+fn a_batch_grown_by_a_round_matches_that_rounds_documents_alone() {
+    struct Seen(std::sync::Mutex<Vec<String>>);
+    impl AstWave for Seen {
+        fn len(&self) -> usize {
+            1
+        }
+        fn matched(
+            &self,
+            tapes: &[(Arc<Facts>, crate::code_rule_dsl::tape::TapeDoc, String)],
+            _: &[Option<&Projected>],
+            _: crate::code_rule_dsl::facts::nearest::Binding,
+            _: &crate::content_store::atoms::Atoms,
+        ) -> StoreResult<Vec<(String, Relation)>> {
+            self.0.lock().unwrap().extend(tapes.iter().map(|(_, _, path)| path.clone()));
+            // A node of each document matched: its key (the test's path `m{key}.py`) above its local id.
+            let mut rows = Relation::new(&["n"]);
+            for (_, _, path) in tapes {
+                let key: i64 = path.trim_start_matches('m').trim_end_matches(".py").parse().unwrap();
+                rows.push(&[key << 32 | 1]);
+            }
+            Ok(vec![("rr_ast_1_1".to_owned(), rows)])
+        }
+    }
+    let store = ContentStore::open(&temp("grown-matchers")).unwrap();
+    let wave = Arc::new(Seen(std::sync::Mutex::new(Vec::new())));
+    let matchers = Matchers::new(Arc::clone(&wave) as Arc<dyn AstWave>);
+    let tests = Arc::new(crate::code_rule_dsl::logic::strings::Vocabulary::default());
+    let binding = crate::code_rule_dsl::facts::nearest::Binding::Cpu;
+    let projection = Projection::core();
+    let file = |k: u32| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return x\n"));
+    let read = |sources: &[(String, Arc<dyn Source>)]| {
+        let (_, matched) = sources.iter().find(|(n, _)| n == "rr_ast_1_1").expect("the matchers' relation is bound");
+        (0..matched.len()).for_each(|r| drop(matched.value(r, 0)));
+    };
+    let (sources, mut grower) = Grower::start(&store, vec![file(1), file(2)], &[], &matchers, &tests, binding, &projection, &HashMap::new()).unwrap();
+    read(&sources);
+    let grown = grower.grow(&store, vec![file(3)], &[], &tests, binding, &projection).unwrap();
+    read(&grown);
+    let mut seen = wave.0.lock().unwrap().clone();
+    seen.sort();
+    assert_eq!(seen, ["m1.py", "m2.py", "m3.py"], "each file matched once: the round's alone when the batch grows");
+}

@@ -140,9 +140,13 @@ fn matcher_atom_exports_captures() {
 
 #[test]
 fn named_errors() {
-    let unbounded = parse(".decl hi(n: node, v: max<>)\n");
+    // An unbounded lattice needs `widen k` where its relation is recursive (decision 0515 §3): one its own rules read
+    // back. Read by none of them, a key's value changes once a batch.
+    let recursive = ".decl e(n: node, v: number)\n.input e\nhi(n, v) :- e(n, v).\nhi(n, w) :- hi(n, v), w = v + 1.\n";
+    let unbounded = parse(&format!(".decl hi(n: node, v: max<>)\n{recursive}"));
     assert_eq!(unbounded.unwrap_err(), Error::UnboundedLattice { relation: "hi".into() });
-    assert!(parse(".decl hi(n: node, v: max<>) widen 4\n").is_ok());
+    assert!(parse(&format!(".decl hi(n: node, v: max<>) widen 4\n{recursive}")).is_ok());
+    assert!(parse(".decl e(n: node, v: number)\n.input e\n.decl hi(n: node, v: max<>)\nhi(n, v) :- e(n, v).\n").is_ok());
 
     // A min over symbols reduced their ids, not their text (python/references.rerail picked a route at random).
     let symbols = ".decl p(a: number, s: symbol)\n.decl q(a: number, s: symbol)\n.decl n(a: number, s: number)\n.decl r(a: number, s: number)\n";

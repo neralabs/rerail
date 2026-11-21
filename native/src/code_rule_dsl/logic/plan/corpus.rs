@@ -41,31 +41,6 @@ pub mod sizing;
 pub mod kept_strata;
 pub mod maintained;
 pub mod cone_rounds;
-// cratify: `references` is rerail-engine's (it mounts it)
-
-/// The reference graph's base relations (`reference_edge`, `reference_open`), and their columns
-/// (`sql::select::input_columns`).
-pub const REFERENCE_RELATIONS: [&str; 2] = ["reference_edge", "reference_open"];
-
-/// Base relations a program reads that are built across a run's files (the reference graph's,
-/// `corpus::references`): each file added as its facts are built, the rows bound in the cross-file part.
-pub trait CrossFileRelations: Send + Sync {
-    /// Adds the file with key `key` at `path`, with its source, facts and tape (the run's own, read in place: the file
-    /// is not parsed again).
-    fn add(&self, key: u32, path: &str, source: &Arc<String>, facts: &Arc<crate::code_rule_dsl::facts::core::Facts>, tape: &crate::code_rule_dsl::tape::TapeDoc) -> Result<()>;
-    /// The relations the run's files give, with their columns and rows.
-    fn relations(self: Box<Self>, store: &crate::content_store::ContentStore, read: &BTreeSet<String>) -> Result<Vec<(&'static str, Vec<String>, Vec<Option<Vec<i64>>>)>>;
-}
-
-/// What makes a program's cross-file relations over the files at `paths` of the dialect `label`, where it reads them.
-pub(crate) type MakeCrossFile = fn(&str, &dyn ProgramFields, &BTreeSet<String>, &[String]) -> Result<Option<Box<dyn CrossFileRelations>>>;
-
-static CROSS_FILE: std::sync::OnceLock<MakeCrossFile> = std::sync::OnceLock::new();
-
-/// Registers what makes a program's cross-file relations (once, at load).
-pub fn install_cross_file(make: MakeCrossFile) {
-    let _ = CROSS_FILE.set(make);
-}
 pub mod prepared;
 pub mod maintain;
 pub mod retain;
@@ -101,6 +76,10 @@ pub const COMBINING: &[&str] = &[
     "RERAIL_NODE_IDS",
     // Identical relations merged (`combining::same_relations`, in combining and again in preparing).
     "RERAIL_SAME",
+    // The `.rerail` lowering's rewrites, `=off` to leave the rules as written: a min or max bounded by its probe
+    // (`lower::bounded`, decision 0511) and a group's first by an order (`lower::first`, decision 0515).
+    "RERAIL_ASOF",
+    "RERAIL_FIRST",
 ];
 
 /// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
@@ -1129,6 +1108,8 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
     let _ = std::fs::write(path.with_extension("local.rerail"), rules(&split.versions.local));
     let _ = std::fs::write(path.with_extension("cross.rerail"), rules(&split.versions.cross));
     let _ = std::fs::write(path.with_extension("exports.txt"), split.exports.join("\n"));
+    // Why each cross-file relation is: the first rule the split found not to stay on one document.
+    let _ = std::fs::write(path.with_extension("causes.txt"), split.causes.iter().map(|(r, c)| format!("{r}\t{c}\n")).collect::<String>());
     const ORDER: [&str; 10] = ["config", "same-unit", "union", "recursive-local", "lookup", "exists", "grouped", "total", "recursive", "-"];
     let rank = |c: &str| ORDER.iter().position(|o| *o == c).unwrap_or(0);
     let cross = &split.versions.cross;
@@ -1161,9 +1142,10 @@ fn dump_split(path: &std::path::Path, split: &crate::code_rule_dsl::typing::file
                 term_vars(l, &mut out);
                 term_vars(r, &mut out);
             }
-            Lit::Agg { var, over, atom, .. } => {
+            Lit::Agg { var, op, over, atom } => {
                 out.insert(var);
                 out.extend(over);
+                out.extend(op.bound());
                 atom.args().for_each(|t| term_vars(t, &mut out));
             }
             Lit::Nearest { n, a, .. } => out.extend([n, a]),
@@ -4361,9 +4343,6 @@ fn run_observed_within(
         (Err(blocked), _) => format!("off: rows of {blocked:?} name no document"),
         _ => format!("off ({})", if memo.is_none() { "no persistent store" } else if t.is_some() { "T's facts" } else if unlocated.is_empty() { "typing, RERAIL_CORPUS_MEMO=off or the run's `memo: off`" } else { "a relation without a location column" }),
     });
-    // The reference graph's relations, for a program that reads them: its files are summarized as the chunks are
-    // built, and linked once they all are (`references`). W's graph is Python's.
-    let references = match CROSS_FILE.get() { Some(make) => make(label, head, &read, &docs.iter().map(|(_, p)| p.clone()).filter(|p| !text_document(p, label)).collect::<Vec<_>>())?, None => None };
     let part_of = |version| lowered.with_version(version);
     crate::code_rule_dsl::logic::profile::decision("file-local split", || {
         format!(
@@ -4671,7 +4650,7 @@ fn run_observed_within(
         repository
     };
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the base relations' columns".into()));
-    for rel in split.base.iter().filter(|rel| !REFERENCE_RELATIONS.contains(&rel.as_str()) && !repository.iter().any(|(r, _, _)| r == *rel)) {
+    for rel in split.base.iter().filter(|rel| !repository.iter().any(|(r, _, _)| r == *rel)) {
         let cols = projection.columns(rel).ok_or_else(|| Error::Plan(format!("no columns for {rel}")))?;
         let decode: &[&str] = match rel.as_str() {
             "node" if decodes => &["d", "n"],
@@ -4767,9 +4746,6 @@ fn run_observed_within(
     let memo_plan = memo::Program::new(memo_program, &lowered.domains);
     // No hold on the run's plans or the sources it reads (decision 0306 step 4): its collection lease (`reading`) keeps
     // every collector off the store until its record, with the manifest naming them, is applied.
-    // A run that reads the reference graph is not memoised: the graph needs every file's facts
-    // (`references::Files::add`), which a memo hit does not build.
-    let memoised = memoised && references.is_none();
     // The base relations a chunk keeps only for the nodes its exports hold (`file_local::semijoin_bases`): read by
     // the cross part only as lookups of those nodes.
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the semijoin bases".into()));
@@ -5860,10 +5836,10 @@ fn run_observed_within(
                     }
                 };
                 if tape.is_some() { &file_tapes.0 } else { &file_tapes.1 }.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-                core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), true, keep_tapes || references.is_some())
+                core::build_in_wave_with_tape(&file, cache, digest, tape.as_ref(), true, keep_tapes)
             }
             Some(_) => unreachable!("no tape cache without `tape-cache`"),
-            None => core::build_with_tape(&file, keep_tapes || references.is_some()),
+            None => core::build_with_tape(&file, keep_tapes),
         };
         // The tape is kept beside the facts only where the program runs matchers over it (decision 0106).
         let (built, tape) = match built {
@@ -5874,15 +5850,6 @@ fn run_observed_within(
             Built::Facts(f) => Arc::new(f),
             Built::Unparsed => return Err(Error::Plan(format!("{path} did not parse"))),
         };
-        if let Some(references) = &references {
-            // W's reference graph summarizes the file from its tape, read in place (Q51: it parsed every file again
-            // with tree-sitter, 39% of internal_dead_code's CPU).
-            let _refs = crate::code_rule_dsl::logic::profile::span(|| "W's reference graph".into());
-            let doc = tape.as_ref().ok_or_else(|| Error::Plan(format!("{path}: no tape for the reference graph")))?;
-            references.add(*d as u32, path, &file.source, &facts, doc)?;
-        }
-        // A tape kept only for the reference graph goes with it.
-        let tape = tape.filter(|_| keep_tapes);
         // The tape, in the file's context: kept only for a program that reads W's values, f-string trees or string
         // annotations off it, or runs matchers over it (decision 0106).
         let tape = tape.map(|doc| (doc, Arc::new(file) as Arc<dyn crate::code_rule_dsl::facts::core::SourceFile>));
@@ -8343,15 +8310,6 @@ fn run_observed_within(
     Ok(((c.parse.0 + jobs_cpu.0, c.parse.1 + jobs_cpu.1), c.batch, std::mem::take(&mut c.read_sources), std::mem::take(&mut *stats_read.lock()), std::mem::take(&mut c.read_unstored)))
     })?;
     (parse_cpu.0, parse_cpu.1, batch_cpu.0, batch_cpu.1) = (worker_cpu.0.0, worker_cpu.0.1, worker_cpu.1.0, worker_cpu.1.1);
-    // The reference graph over every chunk's files, bound for the cross-file part with its statistics.
-    if let Some(references) = references {
-        for (rel, columns, values) in references.relations(store, &read)? {
-            let source = crate::code_rule_dsl::logic::native::component::columns_source(columns, values);
-            totals.add(rel, source.len(), &syntax::statistics(source.as_ref()));
-            cross_inputs.push((rel.to_owned(), Arc::clone(&source)));
-            modules.bind(db, rel, source)?;
-        }
-    }
     // The loaded documents are the run's documents from here on; their rows are not its findings.
     for (d, p) in &loaded_docs {
         paths.insert(*d, p.clone());
@@ -9213,7 +9171,7 @@ fn run_observed_within(
     // A base relation the cross part reads that no chunk held a row of (a run whose files hold no program reads no
     // `rr_program` row): known empty, as with no documents (above), and still bound.
     if !docs.is_empty() {
-        let unheld: Vec<&String> = split.base.iter().filter(|rel| !base_sources.contains_key(*rel) && !REFERENCE_RELATIONS.contains(&rel.as_str()) && !repository.iter().any(|(r, _, _)| r == *rel)).collect();
+        let unheld: Vec<&String> = split.base.iter().filter(|rel| !base_sources.contains_key(*rel) && !repository.iter().any(|(r, _, _)| r == *rel)).collect();
         for rel in unheld {
             if cross_inputs.iter().any(|(r, _)| r == rel) {
                 continue;

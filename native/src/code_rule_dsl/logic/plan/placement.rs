@@ -497,6 +497,8 @@ impl Shape {
                                 AggRef::Min => "min",
                                 AggRef::Max => "max",
                                 AggRef::Sum => "sum",
+                                AggRef::Bounded { max: true, .. } => "bounded max",
+                                AggRef::Bounded { max: false, .. } => "bounded min",
                                 _ => "product",
                             };
                             self.note(Form::Aggregate, || format!("aggregate {name}"))
