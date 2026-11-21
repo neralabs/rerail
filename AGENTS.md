@@ -205,7 +205,7 @@ hours (scripts/dev/relax/README.md, "How the caches stay bounded").
 - Both build outside every worktree, under `~/Library/Caches`, with the repository's toolchain.
   Don't build them in a worktree's `tmp/`, and don't run binaries from there.
 
-`rerail-pp-aot`, `rust_stream` and `clif_rust` are deprecated (decision 0550): no new use. A
+`rerail-pp-aot` and `clif_rust` are deprecated (decision 0550): no new use; `rust_stream` is removed (0565). A
 grammar's Rust is the Bitlex compiler's (`bitlex_lex_rust`, `bitlex_rust`), checked in, as
 `rerail-kotlin-aot`, `rerail-json-aot` and `rerail-rr-aot` hold theirs (decision 0560).
 

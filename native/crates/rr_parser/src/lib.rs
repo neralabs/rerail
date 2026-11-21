@@ -370,7 +370,7 @@ pub mod tests {
         }
     }
 
-    /// Tier 2 writes the table as it stands at the end (`rust_stream::node_words`): a wrap
+    /// Tier 2 writes the table as it stands at the end (the JIT's, `native_cpu_stream`): a wrap
     /// placed at once, before the node it wraps (a leaf's swap, or a larger node's rows moved,
     /// their parents with them); a dropped node taken out where it is dropped. Chains of wraps,
     /// wraps over large operands and inside them, and comments among them, as the engine's.

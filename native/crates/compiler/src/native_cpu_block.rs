@@ -360,7 +360,7 @@ impl Batch {
     }
 
     /// Each extract's stream ended in two entries of its file's length, past its count, as simdjson's stage 1 ends
-    /// its index: tier 2 takes a token with one load (`rust_stream`'s `take`), the end's start the file's length,
+    /// its index: tier 2 takes a token with one load, the end's start the file's length,
     /// whose byte (padding) no switch takes. The extract's slack (`capacity`) holds them.
     fn end_streams(&mut self, program: &CompiledBlock) {
         let fields: Option<[u64; 3]> = program.records.as_ref().map(|t| [u64::from(t.starts), u64::from(t.lasts), program.extracts.len() as u64]);
