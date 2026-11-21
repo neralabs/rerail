@@ -3,6 +3,7 @@
 each host compiles").
 
     scripts/build/farm/bench [HOST...] [--jobs 1,4,8]
+    scripts/build/farm/bench --table      # the saved results only, nothing run
 
 The task: a clean debug build of the workspace's `gix` (121 crates, the same Cargo.lock everywhere),
 with no compile cache (`build.rustc-wrapper=''`), from an empty target directory, at each job count.
@@ -143,6 +144,10 @@ def main(argv):
         i = argv.index("--jobs")
         jobs = [int(x) for x in argv[i + 1].split(",")]
         argv = argv[:i] + argv[i + 2:]
+    if argv == ["--table"]:
+        return table(jobs)
+    if any(a.startswith("-") for a in argv):
+        sys.exit(__doc__)
     if argv:
         names = argv
         unknown = [n for n in names if n != LOCAL and farm.entry(n) is None]

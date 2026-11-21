@@ -98,6 +98,7 @@ the file there are no hosts, and every command below runs here instead.
 ```
 scripts/build/farm/status                          # which hosts are usable now, and why not; each one's compile speed
 scripts/build/farm/bench [HOST...]                 # measure compile speed again (a clean gix build at 1, 4 and 8 jobs)
+scripts/build/farm/bench --table                   # every host's saved figures, against this Mac
 scripts/build/farm/dashboard --open                # a live page: each host's CPU, GPU, memory, disk, jobs, links
 scripts/build/farm/diagnose [DIR | --all]          # why a checkout's builds miss the shared cache
 scripts/dev/test-remote -- cargo nextest run --lib --profile gate
