@@ -64,6 +64,8 @@ pub(super) struct Closure {
     /// `cls_late(n, x, s)`), as a join of that one atom over the row's columns (slot `c`: column `c`), asked once a
     /// row however many rests read it, with whichever sign.
     tests: Vec<JoinRule>,
+    /// Each shared test's atom, over the row's columns, asked as the index's probe alone (`cands::holds`).
+    atoms: Vec<Step>,
 }
 
 /// Whether two row tests ask the same: the same source by the same index, the same keys.
@@ -331,7 +333,7 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
     }
     // One walk whose rest reads only the walking column: the reach per node.
     if let [(w, nslots)] = &walks[..] && !w.keyed && readers.is_empty() && wi == 0 {
-        return Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new() });
+        return Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new(), atoms: Vec::new() });
     }
     // Keyed (decision 0523): `RERAIL_KEYED_CLOSURE=off` leaves it semi-naive.
     if std::env::var("RERAIL_KEYED_CLOSURE").is_ok_and(|v| v == "off") {
@@ -362,9 +364,10 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
             Reader { head, rest: rest_join_to(&left, j.out.clone(), j.nslots), slots, need, direct }
         })
         .collect();
+    let atoms = tests.clone();
     let tests = tests.iter().map(|t| rest_join_to(std::slice::from_ref(t), vec![Term::Const(1)], k)).collect();
     let (w, nslots) = &walks[0];
-    Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed, w: wi, readers, tests })
+    Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed, w: wi, readers, tests, atoms })
 }
 
 /// What the closure did, for the run's report: nodes reached, rows made, and which way.
@@ -488,6 +491,9 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
     // Each shared test's answer for each row of the depth: 0 not asked yet, 1 holds, 2 does not.
     let mut answers: Vec<Vec<u8>> = vec![Vec::new(); cl.tests.len()];
     let mut ends: Vec<i64> = Vec::new();
+    // A test asked as the index's probe alone (the spike, decision 0561); `RERAIL_DIRECT_TESTS=off` asks it as a join.
+    let direct = std::env::var("RERAIL_DIRECT_TESTS").map_or(true, |v| v != "off");
+    let asked: Vec<std::cell::RefCell<super::cands::Asked>> = cl.atoms.iter().map(|_| Default::default()).collect();
     while !frontier.is_empty() {
         depths += 1;
         made.clear();
@@ -501,7 +507,14 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
             let mut alive: Vec<u32> = (0..n as u32).collect();
             for &(t, want) in need {
                 let ask: Vec<u32> = alive.iter().copied().filter(|&i| answers[t][i as usize] == 0).collect();
-                if !ask.is_empty() {
+                if !ask.is_empty() && direct {
+                    let mut a = asked[t].borrow_mut();
+                    for &r in &ask {
+                        let r = r as usize;
+                        let row = &frontier[r * k..(r + 1) * k];
+                        answers[t][r] = if super::cands::holds(&cl.atoms[t], store, row, &mut a) { 1 } else { 2 };
+                    }
+                } else if !ask.is_empty() {
                     let mut i = 0;
                     let got = &mut answers[t];
                     run_join_each_row(&cl.tests[t], store, syms, &all, &mut |out: &mut Vec<i64>, vals: &mut [i64]| {
@@ -526,7 +539,9 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
         // The climb's ends: each reader over the rows this depth starts from (the seeds, then each depth's new rows).
         let ends_h = (!cl.readers.is_empty()).then(|| prof::host("closure", "keyed: the readers (the climb's ends, decision 0561)"));
         for rd in &cl.readers {
+            let tests_h = prof::host("closure", "keyed: the readers' tests");
             let alive = passing(&rd.need, &mut answers, store, syms)?;
+            drop(tests_h);
             ends.clear();
             match &rd.direct {
                 Some(terms) => {
@@ -553,6 +568,7 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
                     .ok()?;
                 }
             }
+            let _push_h = prof::host("closure", "keyed: the readers' rows pushed");
             let rel = &mut store.rels[rd.head];
             let hk = rel.k;
             for row in ends.chunks(hk) {

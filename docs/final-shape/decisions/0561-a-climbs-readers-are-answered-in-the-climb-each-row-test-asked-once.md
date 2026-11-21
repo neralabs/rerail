@@ -77,14 +77,18 @@ shared, the climb and its readers take what the climb alone took.
 
 On `all` it is even, not a gain. The keyed climbs take 4.35 s, the readers 2.56 s of it. The readers ask the shared
 tests first, about 9.8 M probes at about 260 ns each. That is the executor's per-row work around each probe
-(`run_join_each_row`'s frames and callback), not the probe itself. The memory is `look`'s index of `walk` and the
+(`run_join_each_row`'s frames and callback), not the probe itself. (Wrong: asked directly, the probe is most of it;
+"Left".) The memory is `look`'s index of `walk` and the
 rows it no longer holds: `walk` is now read only in its own stratum, so the run releases it there (`last_reads`).
 
 ## Left
 
-- **A test asked directly.** A shared test runs as a join of one atom, through the executor's per-row machinery.
-  Asked as the index's probe alone (`candidates`, now nested in `run_join_in_each`), it would cost the probe. That
-  is the next lever here, about 1 s on `all`.
+- **A test asked directly: built, a small gain.** A shared test is asked as its index's probe alone
+  (`cands::holds`, with `candidates` moved out of `run_join_in_each` into `setfix/cands.rs`), not as a join of one
+  atom. `RERAIL_DIRECT_TESTS=off` asks it as a join. On s1000 (M1 Max, rows unchanged) the readers went 271 →
+  244 ms and 309.8 → 306.2 G instructions. Split, the readers are 191 ms of tests and 47 ms of pushing their rows.
+  So the executor's frames around a probe were about a tenth of a test's cost, not most of it, as "Measured" guessed.
+  The rest is the probe, the probe structure's job (below).
 - `walk`'s rows are still pushed during the climb, as its set check. They are released after its stratum.
 - W's probe is a hash probe. Cheaper probes are the probe structure's job (t50 step 5, the spike; no sorted hash,
   the user, 2026-11-21).

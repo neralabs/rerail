@@ -586,8 +586,13 @@ climb at each depth. A row's tests (`bound_in(s, x)`, `cls_late(n, x, s)`, `gbef
 shared by every rest and sign. Readers alone, without the shared tests, were slower (lookup 1.65 s): they asked each
 row again. With them, s1000's lookup went 1.48 → 1.18 s and 321.9 → 311.0 G instructions, rows unchanged. On `all`
 it is even: 3.165 → 3.159 T instructions, lookup 11.74 → 12.19 s, peak memory 9.89 → 9.14 GB, rows unchanged.
-The shared tests cost about 260 ns each, the executor's per-row work around each probe. Asking a test as the index's
-probe alone is the next lever (0561, "Left"). `walk` is read only in its stratum now, and released after it.
+The shared tests cost about 260 ns each. `walk` is read only in its stratum now, and released after it.
+
+**A test asked directly (the spike, 0561).** A shared test is asked as its index's probe alone (`cands::holds`), not as
+a join of one atom (`RERAIL_DIRECT_TESTS=off`). On s1000 the readers went 271 → 244 ms and 309.8 → 306.2 G
+instructions, rows unchanged. So the executor's frames were about a tenth of it, not most of it, as written above. The
+readers' 240 ms is now 191 ms of tests and 47 ms of pushing `look`'s rows. The tests' cost is the probes themselves, the
+probe structure's job (step 5's spike, above).
 
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 

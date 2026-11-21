@@ -91,6 +91,7 @@ mod inputs_tests;
 mod blocks_compare_tests;
 use spec::{Arg, ComponentSpec, InputKey, JoinItem, JoinSpec, Line, Reprobe, Source, Start, Tok};
 pub mod closure;
+mod cands;
 pub mod table;
 pub mod level;
 // cratify: `device` is rerail-device-metal's (it mounts it)
@@ -7027,58 +7028,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                      /// Profiled: the CPU per step (`StepClock`).
                      clock: Option<Box<StepClock>> }
     fn val(slots: &[i64], k: Key) -> i64 { match k { Key::Slot(s) => slots[s], Key::Const(c) => c } }
-    /// Where an atom's candidate tuples are: an input relation or a component relation, by id.
-    #[derive(Clone, Copy)]
-    enum Rows<'a> { In(&'a InRel), Comp(&'a Rel), Source(&'a View) }
-    impl<'a> Rows<'a> {
-        fn row(self, id: u32) -> RowRef<'a> {
-            match self { Rows::In(r) => r.at(id as usize).read(), Rows::Comp(r) => RowRef::Rows(&r.data, id, r.k), Rows::Source(v) => RowRef::Source(v, id as usize).read() }
-        }
-        /// `row`, a view's columns in `need` alone (`RowRef::read_need`).
-        fn row_need(self, id: u32, need: u64) -> RowRef<'a> {
-            match self { Rows::In(r) => r.at(id as usize).read_need(need), Rows::Comp(r) => RowRef::Rows(&r.data, id, r.k), Rows::Source(v) => RowRef::Source(v, id as usize).read_need(need) }
-        }
-        /// Calls `f` on each candidate and its row (`row_need`) until it returns true; returns whether one did. A
-        /// scan of a whole view (a range of its rows) reads them in one walk (`Source::for_rows_in`): a view of the
-        /// tape then finds each row's node, id and parent as it walks, where a row at a time is a select, a granule
-        /// search and a parent search (decision 0353 step 2).
-        fn each(self, cands: Cands<'_>, need: u64, mut f: impl FnMut(u32, RowRef<'a>) -> bool) -> bool {
-            if let (Rows::In(r), &Cands::Range(lo, hi)) = (self, &cands)
-                && hi - lo >= WALK_SCAN
-                && let Some(v) = &r.view
-                && v.ids.is_none()
-                && v.cols.len() <= READ
-            {
-                let (mut cols, mut at, mut m) = ([0usize; READ], [0usize; READ], 0);
-                for c in 0..v.cols.len() {
-                    if need >> c & 1 != 0 {
-                        cols[m] = v.cols[c];
-                        at[m] = c;
-                        m += 1;
-                    }
-                }
-                let mut hit = false;
-                v.src.for_rows_in(lo as usize..hi as usize, &cols[..m], &mut |row, got| {
-                    let mut vals = [0i64; READ];
-                    for j in 0..m {
-                        vals[at[j]] = got[j];
-                    }
-                    hit = f(row as u32, RowRef::Read(vals, row));
-                    !hit
-                });
-                return hit;
-            }
-            if let Cands::Read(rows) = cands {
-                return rows.rows().iter().any(|&(id, vals)| f(id, RowRef::Read(vals, id as usize)));
-            }
-            cands.any(|id| f(id, self.row_need(id, need)))
-        }
-        /// A row deleted in place (`Rel::based`), which no step reads.
-        #[inline]
-        fn dead(self, id: u32) -> bool {
-            match self { Rows::In(r) => is_dead(&r.dead, id), Rows::Comp(r) => r.dead(id), Rows::Source(_) => false }
-        }
-    }
+    use self::cands::Rows;
     /// The rows of step `i`'s scan (`cands`, a range of at least `SCAN_SORTED` rows) in the order of the key step
     /// `i + 1` probes with, when the scan binds all of that key: the next step's probes then come as one sorted batch,
     /// each starting where the last ended in each run (`Index::find_at`), and read each run once, in order.
@@ -7235,88 +7185,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
         /// The candidates: an input's index on exactly the key columns, a component relation's composite index, or
         /// its shortest posting chain among its key columns (every key is then checked), or every tuple when none is
         /// bound.
-        fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64) -> (Rows<'a>, Cands<'a>) {
-            match src {
-                Src::In(rel, ix) => {
-                    if !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
-                    if keys.is_empty() { (Rows::In(rel), Cands::Range(0, rel.len() as u32)) }
-                    else if let Some(index) = ix.runs(rel) {
-                        // An order answering the key's columns, or leading with some of them (`chain_lead`: every key
-                        // is checked): the key's values in the order's column order.
-                        let m = index.cols.iter().take_while(|c| ix.cols.contains(c)).count();
-                        let mut buf = [0i64; MAX_KEY];
-                        let at = |c: usize| key[ix.cols.iter().position(|&x| x == c).expect("a key column")];
-                        (Rows::In(rel), Cands::Runs(index.find_at(&rel.rows, rel.k, permuted(&index.cols[..m], at, &mut buf), None, hints)))
-                    }
-                    else if ix.keyed { let r = rel.keyed_rows(key[ix.lead]); (Rows::In(rel), Cands::Range(r.start, r.end)) }
-                    else if ix.composite && let Some(v) = &rel.view {
-                        let mut eq = [(0usize, 0i64); MAX_KEY];
-                        for (j, &c) in ix.cols.iter().enumerate() { eq[j] = (v.cols[c], key[j]); }
-                        // A step that reads no column of the row (every key exact, `need` 0) asks only whether it is
-                        // there: a source's test where it has one (`Source::holds`, `within` with both bound). The
-                        // candidate it gives is never read.
-                        // `RERAIL_WITHIN_TEST=off` (a measurement aid) probes such a step's rows as before.
-                        static TEST: std::sync::LazyLock<bool> = std::sync::LazyLock::new(|| std::env::var("RERAIL_WITHIN_TEST").map_or(true, |v| v != "off"));
-                        if need == 0 && *TEST && let Some(h) = v.src.holds(&eq[..ix.cols.len()]) {
-                            return (Rows::Source(v), Cands::Range(0, u32::from(h)));
-                        }
-                        let rows = v.src.lookup_all(&eq[..ix.cols.len()]).unwrap_or_default();
-                        (Rows::Source(v), Cands::Owned(rows.into_iter().map(|r| r as u32).collect()))
-                    }
-                    else if ix.sorted && let Some(v) = &rel.view {
-                        let (c, k) = (v.cols[ix.cols[ix.lead]], key[ix.lead]);
-                        (Rows::Source(v), match v.src.sorted_range(c, k) { Some(r) => Cands::Range(r.start, r.end), None => Cands::Slice(v.src.sorted_rows(c, k).unwrap_or(&[])) })
-                    }
-                    else if ix.source && let Some(v) = &rel.view {
-                        let probed = match last {
-                            Some((k, p)) if k.as_slice() == key && !matches!(&*p, Probed::Read(_, n) if *n != need) => p.clone(),
-                            _ => {
-                                // A step's rows are read as the probe finds them, with the columns it reads (none for
-                                // a test): a source that reads in place answers without a list of ids; one that does
-                                // not gives the ids.
-                                let read = v.find_read(&ix.cols, key, ix.lead, need);
-                                let p = match read {
-                                    Some(rows) => Probed::Read(rows, need),
-                                    None => Probed::Ids(v.find_keyed(&ix.cols, key, ix.lead)),
-                                };
-                                match last {
-                                    Some((k, q)) => {
-                                        k.clear();
-                                        // copy: not block data (a probe key's values, kept to compare the next probe with)
-                                        k.extend_from_slice(key);
-                                        *q = p.clone();
-                                    }
-                                    None => *last = Some((key.to_vec(), p.clone())),
-                                }
-                                p
-                            }
-                        };
-                        match probed {
-                            Probed::Ids(ids) => (Rows::Source(v), Cands::Owned(ids)),
-                            Probed::Read(rows, _) => (Rows::Source(v), Cands::Read(rows)),
-                        }
-                    }
-                    else { (Rows::In(rel), Cands::Slice(ix.get(rel, key))) }
-                }
-                Src::FullMulti(r, cols) => {
-                    let rel = &store.rels[*r];
-                    probed::note(&rel.table, cols.iter().copied());
-                    (Rows::Comp(rel), rel.probe_at(cols, key, false, hints).0)
-                }
-                Src::Delta(r) | Src::Full(r) => {
-                    let rel = &store.rels[*r];
-                    let delta = matches!(src, Src::Delta(_));
-                    if keys.is_empty() {
-                        (Rows::Comp(rel), if delta { Cands::Range(rel.lo as u32, rel.hi as u32) } else { Cands::Range(0, rel.n as u32) })
-                    } else {
-                        if probed::on() { probed::note(&if delta { format!("{}+delta", rel.table) } else { rel.table.clone() }, keys.iter().map(|&(c, _)| c)); }
-                        let mut cols = [0usize; MAX_KEY];
-                        for (j, &(c, _)) in keys.iter().enumerate() { cols[j] = c; }
-                        (Rows::Comp(rel), rel.probe_at(&cols[..keys.len()], key, delta, hints).0)
-                    }
-                }
-        }
-        }
+        use self::cands::candidates;
         match step {
             Step::Atom { src, neg, keys, binds, tests } => {
                 cx.key.clear();
