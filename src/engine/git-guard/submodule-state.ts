@@ -15,7 +15,7 @@
  */
 import { accessSync, closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, statSync, type Stats } from "node:fs";
 import { readFile } from "node:fs/promises";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { lastValue, type ListedEntry } from "./filter-drivers.js";
 
 /** How a diff treats a submodule's worktree: Git's `--ignore-submodules` values. */
@@ -38,10 +38,15 @@ export interface Places {
   readonly prefix: string;
 }
 
+/**
+ * Stdout of `git <args>` run in a repository, or how it failed: past `most` bytes of output (by default the most a
+ * guard's question takes), with the error `code` `ENOBUFS`, as Node's `spawnSync` fails such a start.
+ */
+export type Ask = (args: readonly string[], most?: number) => Promise<string | GitFailure>;
+
 /** A repository asked through the guard on Rerail's Git calls: each question runs with the drivers its config defines set. */
 export interface GuardedRepository {
-  /** Stdout of `git <args>` run in the repository, or how it failed. */
-  readonly ask: (args: readonly string[]) => Promise<string | GitFailure>;
+  readonly ask: Ask;
   /** The repository's config, every scope, as the guard listed it. */
   readonly entries: readonly ListedEntry[];
   readonly places: Places;
@@ -50,6 +55,8 @@ export interface GuardedRepository {
 /** The repository a diff runs in: its places are asked only once its index is seen to record a submodule. */
 export interface DiffRepository extends Omit<GuardedRepository, "places"> {
   readonly place: () => Promise<Places | GitFailure>;
+  /** The index file the diff reads, found in process ({@link worktreeIndex}); undefined when Git must be asked. */
+  readonly index: string | undefined;
 }
 
 /**
@@ -90,13 +97,26 @@ export function nameDiff(args: readonly string[]): NameDiff | undefined {
   return { relative: options.includes("--relative"), ignore: ignoreOption(options), listsModified: listsModified(options) };
 }
 
-/** Whether `args` are a `git diff --name-only -z` with no pathspec and no `--relative=<folder>`. */
+/**
+ * Whether `args` are a `git diff --name-only -z` that ends with `--`, so it names no path, with no `--relative=<folder>`,
+ * and that compares the worktree ({@link readsWorktree}).
+ */
 function namesOnly(args: readonly string[]): boolean {
+  if (args[0] !== "diff" || args.indexOf("--") !== args.length - 1) return false;
   const options = diffOptions(args);
-  const end = args.indexOf("--");
-  const noPathspec = end < 0 || end === args.length - 1;
-  return args[0] === "diff" && noPathspec && ["--name-only", "-z"].every(option => options.includes(option))
-    && !options.some(option => option.startsWith("--relative="));
+  return ["--name-only", "-z"].every(option => options.includes(option)) && !options.some(option => option.startsWith("--relative=")) && readsWorktree(options);
+}
+
+/** A revision that names two commits: a range (`A..B`, `A...B`), or a commit and its parents (`A^!`, `A^@`, `A^-`). */
+const TWO_COMMITS = /\.\.|\^[!@-]/u;
+
+/**
+ * Whether a diff with `options` compares the worktree: it names at most one revision, which is no range. A diff of
+ * two commits, of a range, or of a merge base and a commit (`--merge-base A B`) compares two trees and reads no worktree.
+ */
+function readsWorktree(options: readonly string[]): boolean {
+  const revisions = options.filter(option => !option.startsWith("-"));
+  return revisions.length <= 1 && !revisions.some(revision => TWO_COMMITS.test(revision));
 }
 
 /** The `--ignore-submodules` `options` set last (a bare one is `all`); undefined without one or with a value Git refuses. */
@@ -119,8 +139,12 @@ export function outsideSubmodules(args: readonly string[]): string[] {
   return end < 0 ? [...args, "--ignore-submodules=dirty"] : [...args.slice(0, end), "--ignore-submodules=dirty", ...args.slice(end)];
 }
 
-/** The arguments that list a repository's whole index, each path from its top: `<mode> <object> <stage> TAB <path> NUL`. */
-export const GITLINK_LISTING = ["ls-files", "-z", "--stage", "--full-name", "--", ":/"] as const;
+/**
+ * The arguments that list a repository's whole index, each path from its top: `<mode> <object> <stage> TAB <path> NUL`.
+ * `--no-literal-pathspecs` keeps `:/` the top of the worktree where the environment sets `GIT_LITERAL_PATHSPECS=1`,
+ * under which Git takes it for a file named `:/` and lists nothing.
+ */
+export const GITLINK_LISTING = ["--no-literal-pathspecs", "ls-files", "-z", "--stage", "--full-name", "--", ":/"] as const;
 
 /** A gitlink's mode, 0160000, as every entry of an index file stores its mode: one big-endian word. */
 const GITLINK_MODE = Buffer.from([0x00, 0x00, 0xe0, 0x00]);
@@ -136,6 +160,37 @@ const SPLIT_INDEX_LINK = Buffer.from("link", "latin1");
 export async function recordsNoSubmodule(index: string): Promise<boolean> {
   const bytes = await readFile(index).catch(() => undefined);
   return bytes !== undefined && !bytes.includes(GITLINK_MODE) && !bytes.includes(SPLIT_INDEX_LINK);
+}
+
+/** The variables with which Git finds a repository's Git folder, worktree or index otherwise than from its folder. */
+const PLACING_VARIABLES = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"] as const;
+
+/**
+ * The index file a Git started in `folder` with the environment `env` reads, found in process as Git's discovery finds
+ * a worktree's: the `index` of the Git folder of the first `.git` from `folder` up ({@link discoveredAt}). Undefined,
+ * so that Git is asked, when `env` sets one of {@link PLACING_VARIABLES}, or the discovery meets a folder it does not
+ * take as a worktree's.
+ */
+export function worktreeIndex(folder: string, env: Readonly<Record<string, string | undefined>>): string | undefined {
+  if (PLACING_VARIABLES.some(name => env[name] !== undefined)) return undefined;
+  let at = resolve(folder);
+  let found = discoveredAt(at);
+  while (found === undefined && dirname(at) !== at) {
+    at = dirname(at);
+    found = discoveredAt(at);
+  }
+  return typeof found === "string" ? join(found, "index") : undefined;
+}
+
+/**
+ * What Git's discovery finds at the folder `at`, read in process: the Git folder its `.git` names; null where Git is
+ * to be asked, for a `.git` that holds no repository (Git would look further up) or a folder that is a Git folder
+ * itself; else undefined, and Git looks in the folder above.
+ */
+function discoveredAt(at: string): string | null | undefined {
+  const gitFolder = submoduleGitFolder(at);
+  if (gitFolder !== undefined) return typeof gitFolder === "string" ? gitFolder : null;
+  return holdsRepository(at) ? null : undefined;
 }
 
 /** The submodules a repository's index records, each path from its top, and whether its `.gitmodules` is in conflict. */
@@ -184,21 +239,20 @@ export function readGitmodules(listing: string): Gitmodules {
 interface IgnoreRules {
   readonly entries: readonly ListedEntry[];
   readonly gitmodules: Gitmodules;
-  readonly unmerged: boolean;
   /** How it treats a submodule its `.gitmodules` does not name. */
   readonly base: SubmoduleIgnore;
 }
 
 /**
  * How the diff treats the submodule at `path`: `submodule.<name>.ignore` from the config, else from `.gitmodules`, else
- * `all` while `.gitmodules` is in conflict, else the base; undefined for a configured value Git refuses, which fails it.
+ * the base; undefined for a configured value Git refuses, which fails it.
  */
 function submoduleIgnore(rules: IgnoreRules, path: string): SubmoduleIgnore | undefined {
   const name = rules.gitmodules.names.get(path);
   if (name === undefined) return rules.base;
   const configured = lastValue(rules.entries, `submodule.${name}.ignore`);
   if (configured !== undefined) return IGNORE_VALUES.has(configured) ? configured as SubmoduleIgnore : undefined;
-  return rules.gitmodules.ignores.get(name) ?? (rules.unmerged ? "all" : rules.base);
+  return rules.gitmodules.ignores.get(name) ?? rules.base;
 }
 
 /** `diff.ignoreSubmodules` as `entries` set it; null when unset, undefined for a value Git refuses. */
@@ -293,16 +347,20 @@ async function gitmodulesOf(repository: GuardedRepository): Promise<Gitmodules |
 
 const NO_GITMODULES: Gitmodules = { names: new Map(), ignores: new Map() };
 
-/** How a diff in `repository` treats each submodule, given its base; how it fails for a base Git refuses. */
+/**
+ * How a diff in `repository` treats each submodule, given its base; how it fails for a base Git refuses. A
+ * `.gitmodules` in conflict is not read, as Git reads none then (`repo_read_gitmodules`), so each submodule takes the
+ * base, whatever its worktree file holds.
+ */
 async function ignoreRules(repository: GuardedRepository, gitlinks: Gitlinks, base: SubmoduleIgnore | undefined): Promise<IgnoreRules | GitFailure> {
   if (base === undefined) return refused("diff.ignoreSubmodules");
-  const gitmodules = gitlinks.paths.length === 0 ? NO_GITMODULES : await gitmodulesOf(repository);
-  return "names" in gitmodules ? { entries: repository.entries, gitmodules, unmerged: gitlinks.gitmodulesUnmerged, base } : gitmodules;
+  const gitmodules = gitlinks.paths.length === 0 || gitlinks.gitmodulesUnmerged ? NO_GITMODULES : await gitmodulesOf(repository);
+  return "names" in gitmodules ? { entries: repository.entries, gitmodules, base } : gitmodules;
 }
 
 /** The rules of a diff whose `--ignore-submodules` option overrides every config: `ignore` for each submodule. */
 function overriding(repository: GuardedRepository, ignore: SubmoduleIgnore): IgnoreRules {
-  return { entries: repository.entries, gitmodules: NO_GITMODULES, unmerged: false, base: ignore };
+  return { entries: repository.entries, gitmodules: NO_GITMODULES, base: ignore };
 }
 
 function refused(what: string): GitFailure {
@@ -317,9 +375,11 @@ function failed(error: Error): GitFailure {
  * Git's `diff` stdout for `diff`, from `stdout`, its stdout with {@link outsideSubmodules} in `top`: each submodule the
  * diff looks into whose worktree changed added, and with no `--ignore-submodules` option, each the config tells it to
  * ignore whole left out. The names keep Git's order (byte order of the paths). How it failed instead when a submodule
- * cannot be asked, as Git's diff fails then. An index that records no submodule leaves `stdout` as it is.
+ * cannot be asked, as Git's diff fails then. An index that records no submodule leaves `stdout` as it is: one whose
+ * file is found and read in process ({@link recordsNoSubmodule}) starts no Git to list it.
  */
 export async function withChangedSubmodules(stdout: string, diff: NameDiff, top: DiffRepository, open: SubmoduleOpener): Promise<string | GitFailure> {
+  if (top.index !== undefined && await recordsNoSubmodule(top.index)) return stdout;
   const listing = await top.ask(GITLINK_LISTING);
   if (typeof listing !== "string") return listing;
   const gitlinks = readGitlinks(listing);
@@ -548,15 +608,29 @@ export function notARepository(gitFolder: string): GitFailure {
 }
 
 /**
+ * The most of a submodule's status Rerail reads: 64 KiB holds hundreds of entries. Git's diff lists a submodule whose
+ * own status lists any entry, and Rerail's status lists more than that one only for submodules inside it that their
+ * rules leave out (`ignore = all`), so a status past it is taken as changed: Git leaves the submodule out then only
+ * where some hundreds of those were all that status listed.
+ */
+const STATUS_MOST_BYTES = 64 * 1024;
+
+/** Whether `failure` is a question's that printed past the most its asker takes ({@link Ask}). */
+function pastMost(failure: GitFailure): boolean {
+  return (failure.error as NodeJS.ErrnoException | undefined)?.code === "ENOBUFS";
+}
+
+/**
  * {@link submoduleChanged} for a submodule opened through the guard: its status, then the submodules inside it. The
  * status finds no renames: a partial clone fails rename detection on a blob it does not hold, as Rerail fetches none,
- * and a rename makes the submodule changed as surely as the deletion and addition it is listed as instead.
+ * and a rename makes the submodule changed as surely as the deletion and addition it is listed as instead. A status
+ * that prints past {@link STATUS_MOST_BYTES} lists entries, and the submodule is changed ({@link pastMost}).
  */
 async function changedThroughGuard(
   repository: GuardedRepository, untrackedLeftOut: boolean, deeper: { open: SubmoduleOpener; depth: number },
 ): Promise<boolean | GitFailure> {
-  const status = await repository.ask(["status", "--porcelain=2", "-z", "--no-renames", "--ignore-submodules=dirty", ...(untrackedLeftOut ? ["-uno"] : [])]);
-  if (typeof status !== "string") return status;
+  const status = await repository.ask(["status", "--porcelain=2", "-z", "--no-renames", "--ignore-submodules=dirty", ...(untrackedLeftOut ? ["-uno"] : [])], STATUS_MOST_BYTES);
+  if (typeof status !== "string") return pastMost(status) || status;
   const read = readStatus(status);
   // A submodule inside whose index differs from HEAD is listed whatever its rules: Git compares the index with HEAD so.
   return read.own || [...read.submodules.values()].some(entry => entry.staged) || await nestedChanged(repository, read, untrackedLeftOut, deeper);

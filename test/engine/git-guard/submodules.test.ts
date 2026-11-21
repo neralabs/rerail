@@ -133,22 +133,88 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect(answers.map(answer => listed(answer.stdout))).toEqual([["top.txt"], ["top.txt"]]);
   }, 60_000);
 
-  it("and ask a checkout whose index records no submodule nothing more than that", async () => {
+  it("and ask a checkout whose index records no submodule nothing more than that, from its top or a folder in it", async () => {
     const root = await folder();
-    const work = await repository(root, "work", { "top.txt": "top\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n", "notes.txt": "notes\n" });
+    await mkdir(join(work, "src"));
+    await writeFile(join(work, "src", "code.txt"), "code\n");
+    git(work, "add", ".");
+    git(work, "commit", "--quiet", "-m", "src");
     await writeFile(join(work, "top.txt"), "changed\n");
+    await writeFile(join(work, "src", "code.txt"), "changed\n");
     // Asked once first: each process asks Git's version once, at its first call that reads worktree files.
     await runGitWithoutBlocking(work, AUDIT_DIFF);
-    const trace = join(root, "trace");
-    await mkdir(trace);
-    vi.stubEnv("GIT_TRACE2_EVENT", trace);
+    const traces = ["audit", "scan", "folder"].map(name => join(root, name));
+    const calls: Array<readonly [string, readonly string[]]> = [[work, AUDIT_DIFF], [work, SCAN_DIFF], [join(work, "src"), AUDIT_DIFF]];
 
-    const audit = await runGitWithoutBlocking(work, AUDIT_DIFF);
+    const answers: GitResult[] = [];
+    for (const [at, [cwd, args]] of calls.entries()) {
+      await mkdir(traces[at]!);
+      vi.stubEnv("GIT_TRACE2_EVENT", traces[at]!);
+      answers.push(await runGitWithoutBlocking(cwd, args));
+    }
 
     vi.stubEnv("GIT_TRACE2_EVENT", undefined);
-    // Each Git process writes its events to a file of its own: the config listing, the diff, and the index's submodules.
-    expect(readdirSync(trace)).toHaveLength(3);
-    expect(listed(audit.stdout)).toEqual(["top.txt"]);
+    // Each Git process writes its events to a file of its own: the config listing and the diff. Rerail reads the
+    // index file in process, and starts no Git to list its submodules.
+    expect(traces.map(trace => readdirSync(trace).length)).toEqual([2, 2, 2]);
+    expect(answers.map(answer => answer.stdout)).toEqual(calls.map(([cwd, args]) => git(cwd, ...args)));
+  }, 60_000);
+
+  it("and read the index of a linked worktree, not its main worktree's, to tell whether it records a submodule", async () => {
+    const root = await folder();
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    const linked = join(root, "linked");
+    git(work, "worktree", "add", "--quiet", "-b", "with-submodule", linked);
+    git(linked, "submodule", "add", "--quiet", source, "sub");
+    git(linked, "commit", "--quiet", "-m", "submodule");
+    await writeFile(join(linked, "sub", "inner.txt"), "two\n");
+
+    const answers = [await runGitWithoutBlocking(linked, AUDIT_DIFF), await runGitWithoutBlocking(linked, SCAN_DIFF)];
+
+    expect(answers.map(answer => answer.stdout)).toEqual([git(linked, ...AUDIT_DIFF), git(linked, ...SCAN_DIFF)]);
+    expect(listed(answers[0]!.stdout)).toEqual(["sub"]);
+  }, 60_000);
+
+  it("and add no submodule to a diff of two commits, of a range or of a merge base, which reads no worktree", async () => {
+    const root = await folder();
+    const work = await changedSubmodule(root);
+    git(work, "commit", "--quiet", "-m", "top", "top.txt");
+    const forms = [["HEAD~1", "HEAD"], ["HEAD~1..HEAD"], ["HEAD~1...HEAD"], ["HEAD^!"], ["--merge-base", "HEAD~1", "HEAD"], ["HEAD~1"]];
+    const diffs = forms.map(revisions => ["diff", "--name-only", "-z", ...revisions, "--"]);
+
+    const answers = await Promise.all(diffs.map(async args => await runGitWithoutBlocking(work, args)));
+
+    expect(answers.map(answer => answer.stdout)).toEqual(diffs.map(args => git(work, ...args)));
+    // Only the diff of one commit against the worktree lists the submodule whose worktree changed.
+    expect(answers.map(answer => listed(answer.stdout))).toEqual([...forms.slice(0, -1).map(() => ["top.txt"]), ["sub", "top.txt"]]);
+  }, 60_000);
+
+  it("and add no submodule to a diff whose filter leaves changed entries out, as Git's own adds none", async () => {
+    const root = await folder();
+    const work = await changedSubmodule(root);
+    const diffs = ["--diff-filter=D", "--diff-filter=m"].map(filter => ["diff", "--name-only", "-z", filter, "--"]);
+
+    const answers = await Promise.all(diffs.map(async args => await runGitWithoutBlocking(work, args)));
+
+    expect(answers.map(answer => [answer.status, answer.stdout])).toEqual(diffs.map(args => [0, git(work, ...args)]));
+    expect(answers.map(answer => answer.stdout)).toEqual(["", ""]);
+  }, 60_000);
+
+  it("and list a submodule whose status prints past what Rerail reads of it, as Git lists it", async () => {
+    const root = await folder();
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", source, "sub");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    // About 90 KB of status entries, past the 64 KiB Rerail reads of a submodule's status.
+    for (let at = 0; at < 1500; at += 1) writeFileSync(join(work, "sub", `untracked-${String(at).padStart(4, "0")}-${"x".repeat(40)}.txt`), "");
+
+    const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
+
+    expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, git(work, ...AUDIT_DIFF)], [0, git(work, ...SCAN_DIFF)]]);
+    expect(answers.map(answer => listed(answer.stdout))).toEqual([["sub"], []]);
   }, 60_000);
 
   it("and ask a clean checked-out submodule whose index records no submodule only its config and its status", async () => {
@@ -480,7 +546,29 @@ const CONFIGS: ReadonlyArray<readonly [string, (work: string, root: string) => P
   ["submodule.leaf.ignore = all in the submodules that hold one", work => {
     for (const middle of ["nested-modified", "nested-untracked"]) git(join(work, middle), "config", "submodule.leaf.ignore", "all");
   }],
+  // Git reads no `.gitmodules` in conflict, so each submodule takes the base, whatever the worktree file says.
+  [".gitmodules in conflict, with conflict markers in the worktree", async work => {
+    await conflictedGitmodules(work, committed => `<<<<<<< ours\n${committed}=======\n${ignoringAll(committed)}>>>>>>> theirs\n`);
+  }],
+  [".gitmodules in conflict, resolved to ignore = all in the worktree and not staged", async work => {
+    await conflictedGitmodules(work, ignoringAll);
+  }],
+  ["GIT_LITERAL_PATHSPECS=1 in the environment", () => void vi.stubEnv("GIT_LITERAL_PATHSPECS", "1")],
 ];
+
+/** `.gitmodules` of `work` in conflict: the committed file at stages 1 to 3 of the index, and `text` of it in the worktree. */
+async function conflictedGitmodules(work: string, text: (committed: string) => string): Promise<void> {
+  const committed = readFileSync(join(work, ".gitmodules"), "utf8");
+  const blob = git(work, "hash-object", "-w", ".gitmodules").trim();
+  git(work, "update-index", "--force-remove", ".gitmodules");
+  execFileSync("git", ["update-index", "--index-info"], { cwd: work, input: [1, 2, 3].map(stage => `100644 ${blob} ${stage}\t.gitmodules\n`).join("") });
+  await writeFile(join(work, ".gitmodules"), text(committed));
+}
+
+/** The `.gitmodules` text `committed` with `ignore = all` for each submodule. */
+function ignoringAll(committed: string): string {
+  return committed.replaceAll(/^(\tpath = .*\n)/gmu, "$1\tignore = all\n");
+}
 
 function submoduleNames(work: string): string[] {
   return git(work, "config", "--file", ".gitmodules", "--get-regexp", "^submodule\\..*\\.path$").split("\n").filter(line => line !== "").map(line => line.split(" ")[1]!);

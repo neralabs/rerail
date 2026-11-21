@@ -1,3 +1,4 @@
+import { constants as bufferConstants } from "node:buffer";
 import { accessSync, constants, existsSync, realpathSync, statSync } from "node:fs";
 import { access, realpath, stat } from "node:fs/promises";
 import { availableParallelism, homedir, userInfo } from "node:os";
@@ -11,8 +12,8 @@ import {
   CONFIG_LISTING, configEntryVariables, driverOverrides, listedEntries, oldGitNotice, readDriverConfig, worktreeRead, type ListedEntry,
 } from "./git-guard/filter-drivers.js";
 import {
-  GITLINK_LISTING, nameDiff, outsideSubmodules, recordsNoSubmodule, repositoryConfig, UNASKED, withChangedSubmodules, type DiffRepository,
-  type GitFailure, type GuardedRepository, type Places, type SubmoduleOpener,
+  GITLINK_LISTING, nameDiff, outsideSubmodules, recordsNoSubmodule, repositoryConfig, UNASKED, withChangedSubmodules, worktreeIndex, type Ask,
+  type DiffRepository, type GitFailure, type GuardedRepository, type Places, type SubmoduleOpener,
 } from "./git-guard/submodule-state.js";
 
 /** What Rerail looks for Git with: the system, the account's home, `PATH`, and the folder it runs in. */
@@ -989,8 +990,12 @@ const SAFE_CONFIG: readonly string[] = [
   "-c", "core.fsmonitor=false", "-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`, "-c", "log.showSignature=false",
 ];
 const DEFAULT_TIMEOUT_MS = 10_000;
-/** The most bytes the guard's own questions (a repository's config, its index's submodules) take: past it, the call it guards is not made. */
-const MAX_LISTING_BYTES = 1024 * 1024 * 1024;
+/**
+ * The most bytes the guard's own questions (a repository's config, its index's submodules) take: past it, the call it
+ * guards is not made. 256 MiB holds the index listing of some two million files, and sits under the longest string
+ * Node makes (`MAX_STRING_LENGTH`), past which joining the output would throw.
+ */
+const MAX_LISTING_BYTES = Math.min(256 * 1024 * 1024, bufferConstants.MAX_STRING_LENGTH);
 
 /**
  * The environment of every Git process Rerail starts, a start of the Git at `executable`: this process's with
@@ -1203,21 +1208,18 @@ interface GuardedCall {
   readonly options: RunGitOptions;
 }
 
-/** Stdout of a question asked in a repository, or how it failed. */
-type Ask = (args: readonly string[]) => Promise<string | GitFailure>;
-
 /** Stdout of each question `git -C <cwd> <args>` with `env` set, or how it failed. */
 function asker(git: LaterGit, cwd: string, env: GitVariables): Ask {
-  return async args => {
-    const answer = await git(cwd, args, { env, maxBuffer: MAX_LISTING_BYTES });
+  return async (args, most = MAX_LISTING_BYTES) => {
+    const answer = await git(cwd, args, { env, maxBuffer: most });
     return answer.status === 0 && answer.error === undefined ? answer.stdout : answer;
   };
 }
 
-/** The repository a guarded diff runs in, as `git-guard/submodule-state.ts` asks it. */
+/** The repository a guarded diff runs in, as `git-guard/submodule-state.ts` asks it: its index found in process. */
 function diffRepository(git: LaterGit, cwd: string, guarded: Guarded): DiffRepository {
   const ask = asker(git, cwd, guarded.env);
-  return { entries: guarded.entries, ask, place: async () => await places(ask) };
+  return { entries: guarded.entries, ask, place: async () => await places(ask), index: worktreeIndex(cwd, { ...process.env, ...guarded.env }) };
 }
 
 /** The top of the worktree a question runs in, and its folder below that top; how asking failed instead. */
@@ -1264,7 +1266,7 @@ function submoduleOpener(git: LaterGit, env: GitVariables = {}): SubmoduleOpener
  * status, where Git's own diff started one, its status.
  */
 function submoduleAsker(ask: Ask, gitFolder: string): Ask {
-  return async args => args === GITLINK_LISTING && await recordsNoSubmodule(join(gitFolder, "index")) ? "" : await ask(args);
+  return async (args, most) => args === GITLINK_LISTING && await recordsNoSubmodule(join(gitFolder, "index")) ? "" : await ask(args, most);
 }
 
 /**
@@ -1282,13 +1284,30 @@ async function holdsNoEntry(git: LaterGit, folder: string, gitFolder: string): P
   return listed.status === 0 && listed.stdout === "";
 }
 
-/** What this process's Git means for the guard: what Rerail says when it is too old ({@link oldGitNotice}), and whether it said it. */
+/** What a Git means for the guard: what Rerail says when it is too old ({@link oldGitNotice}), and whether it said it. */
 interface GuardGit {
   readonly notice: string | undefined;
   told: boolean;
 }
 
-let guardGit: GuardGit | undefined;
+/**
+ * The {@link GuardGit} of each Git this process asked, by its path, as {@link ProcessGit} keeps each Git's build: a
+ * daemon whose Git was found gone and replaced asks the one found again.
+ */
+const guardGits = new Map<string, GuardGit>();
+
+/** The {@link GuardGit} of the Git this process runs now; undefined before it was asked, or when no Git is found. */
+function knownGuardGit(): GuardGit | undefined {
+  const executable = readerGit(undefined);
+  return executable === undefined ? undefined : guardGits.get(executable);
+}
+
+/** `asked`, kept for the Git this process runs once it answered: the one that answered, or the one found again for it. */
+function keptGuardGit(asked: GuardGit | undefined): GuardGit | undefined {
+  const executable = readerGit(undefined);
+  if (asked !== undefined && executable !== undefined) guardGits.set(executable, asked);
+  return asked;
+}
 
 /** {@link GuardGit} from `git version` asked in `cwd`; undefined when Git did not answer, so a later call asks again. */
 function askedGuardGitSync(git: CallGit, cwd: string): GuardGit | undefined {
@@ -1301,20 +1320,17 @@ function guardGitOf(answer: GitResult): GuardGit | undefined {
 }
 
 /**
- * Whether the guard covers this process's Git calls: a Git it works with (2.31 or later), asked once. With an older one
- * every call runs as it ran before the guard, so each answers as that Git answers, and the first call the guard would
- * cover says why on the process's error stream, which for the daemon is its log.
+ * Whether the guard covers this process's Git calls: a Git it works with (2.31 or later), asked once for each Git. With
+ * an older one every call runs as it ran before the guard, so each answers as that Git answers, and the first call the
+ * guard would cover says why on the process's error stream, which for the daemon is its log.
  */
 function guardWorks(git: CallGit, cwd: string): boolean {
-  guardGit ??= askedGuardGitSync(git, cwd);
-  return guardCovers(guardGit);
+  return guardCovers(knownGuardGit() ?? keptGuardGit(askedGuardGitSync(git, cwd)));
 }
 
-/** {@link guardWorks} for a call that does not block, asking Git's version with `version` when no call has yet. */
+/** {@link guardWorks} for a call that does not block, asking Git's version with `version` when no call has asked this Git. */
 async function guardWorksLater(version: () => Promise<GuardGit | undefined>): Promise<boolean> {
-  const asked = guardGit ?? await version();
-  guardGit ??= asked;
-  return guardCovers(asked);
+  return guardCovers(knownGuardGit() ?? keptGuardGit(await version()));
 }
 
 /** {@link GuardGit} from `git version` asked in `cwd` within a {@link runGitWithoutBlocking} call. */
@@ -1397,7 +1413,8 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
       bytes += Buffer.byteLength(chunk);
       if (bytes <= maxBuffer) printed[stream].push(chunk);
       else if (failure === undefined) {
-        failure = new Error(`Git printed more than maxBuffer (${maxBuffer} bytes) to ${stream}`);
+        // `ENOBUFS`, as `spawnSync` names the same failure.
+        failure = Object.assign(new Error(`Git printed more than maxBuffer (${maxBuffer} bytes) to ${stream}`), { code: "ENOBUFS" });
         endPastMaxBuffer(child);
       }
     });

@@ -242,7 +242,7 @@ without hooks or network.
     (`src/engine/git-guard/filter-drivers.ts`). A driver the person installed, such as Git LFS, still runs. A file under a
     driver only a repository defines is compared as it is on disk: its stat changing alone lists it as changed where
     that program would have mapped it to the index's bytes. The audit's and the scan's `git diff --name-only` run
-    through `runGitWithoutBlocking`, with `--ignore-submodules=dirty`, so Git opens no submodule's Git folder for it,
+    through `runGitWithoutBlocking`, with `--ignore-submodules=dirty`, so Git starts no Git in a submodule for it,
     and Rerail asks each checked-out submodule through the same guard, all of them at once (at most one Git per
     processor), in the Git folder its `.git` named when Rerail read it. Another `runGit` call that would look into
     submodules runs as it is, Git looking into them with their own drivers; Rerail makes none. Rerail

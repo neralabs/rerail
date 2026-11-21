@@ -457,4 +457,78 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     expect(existsSync(marker)).toBe(false);
     expect(said.mock.calls.map(([text]) => String(text)).filter(text => text.startsWith("rerail:"))).toEqual([]);
   }, 60_000);
+
+  /** git.ts as the daemon loads it, with `first` then `second` first on `PATH`; then `first` found gone and `second` kept. */
+  async function replacedGit(root: string, first: string, second: string): Promise<{ git: typeof import("../../../src/engine/git.js"); replace: () => Promise<void> }> {
+    const [one, two] = [join(root, "one"), join(root, "two")];
+    await Promise.all([mkdir(one), mkdir(two)]);
+    vi.stubEnv("PATH", [await olderGit(one, first), await olderGit(two, second), process.env.PATH ?? ""].join(delimiter));
+    vi.resetModules();
+    const git = await import("../../../src/engine/git.js");
+    git.gitLivesOn();
+    return {
+      git,
+      replace: async () => {
+        await rm(git.gitExecutable());
+        // A call that finds the Git kept gone looks for Git again and keeps the one it finds.
+        await git.runGitAsync(root, ["--version"]);
+      },
+    };
+  }
+
+  it("a daemon whose Git is replaced by an older one runs each call as that Git answers it", async () => {
+    const root = await folder();
+    const { git, replace } = await replacedGit(root, "2.53.0", "2.25.1");
+    const { work } = await checkoutWithDriver(root);
+    expect((await git.runGitWithoutBlocking(work, AUDIT_DIFF)).stdout).toBe("notes.txt\0");
+    await replace();
+    const said = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+
+    const answers = [await git.runGitWithoutBlocking(work, AUDIT_DIFF), git.runGit(work, AUDIT_DIFF)];
+
+    expect(git.gitExecutable()).toBe(join(root, "two", "bin", "git"));
+    expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, "notes.txt\0"], [0, "notes.txt\0"]]);
+    expect(said.mock.calls.map(([text]) => String(text)).filter(text => text.startsWith("rerail: Git 2.25.1 is older than 2.31"))).toHaveLength(1);
+  }, 60_000);
+
+  it("a daemon whose Git is replaced by one the guard works with guards each call from then on", async () => {
+    const root = await folder();
+    const { git, replace } = await replacedGit(root, "2.25.1", "2.53.0");
+    const { work, marker } = await checkoutWithDriver(root);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    await git.runGitWithoutBlocking(work, AUDIT_DIFF);
+    await replace();
+    await rm(marker, { force: true });
+
+    const answers = [await git.runGitWithoutBlocking(work, AUDIT_DIFF), git.runGit(work, AUDIT_DIFF)];
+
+    expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, "notes.txt\0"], [0, "notes.txt\0"]]);
+    expect(existsSync(marker)).toBe(false);
+  }, 60_000);
+
+  it("a config listing past what the guard reads fails the call it guards, and throws nothing", async () => {
+    const root = await folder();
+    const bin = await printingGit(root, 600 * 1024 * 1024);
+    vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
+    vi.resetModules();
+    const git = await import("../../../src/engine/git.js");
+    const { work, marker } = await checkoutWithDriver(root);
+
+    const answers = [git.runGit(work, AUDIT_DIFF), await git.runGitWithoutBlocking(work, AUDIT_DIFF)];
+    const walk = await git.gitModifiedOrUntrackedPaths(work);
+
+    expect(answers.map(answer => [answer.status, answer.stdout, (answer.error as NodeJS.ErrnoException | undefined)?.code])).toEqual([[null, "", "ENOBUFS"], [null, "", "ENOBUFS"]]);
+    expect([walk, existsSync(marker)]).toEqual([[], false]);
+  }, 120_000);
 });
+
+/** A `git` in `root/bin` that prints `bytes` NUL bytes as its config listing with scopes, and runs every other call as the Git this test found first. */
+async function printingGit(root: string, bytes: number): Promise<string> {
+  const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const bin = join(root, "bin");
+  await mkdir(bin);
+  const program = ["#!/bin/sh", "for argument in \"$@\"; do", `  case "$argument" in --show-scope) head -c ${bytes} /dev/zero; exit 0;; esac`, "done", `exec '${real}' "$@"`];
+  await writeFile(join(bin, "git"), `${program.join("\n")}\n`);
+  chmodSync(join(bin, "git"), 0o755);
+  return bin;
+}
