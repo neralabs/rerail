@@ -983,8 +983,9 @@ export interface RunGitOptions {
  * no signature check, which `git reflog` and `git log` make under `log.showSignature` by starting `gpg.program` for each
  * signed commit they list. A call that reads worktree files also needs the filter drivers a repository's config
  * defines set to no program, which {@link runGit} and the reads that do not block do on Git 2.31 or later
- * ({@link guardedSync}); `runGitAsync` and `streamGit` do not, and of their calls only Merge Assist's diff of its base
- * against the working files (internal testing) reads a worktree file.
+ * ({@link guardedSync}); `runGitAsync` and `streamGit` do not, and of their calls only two of Merge Assist's (internal
+ * testing, off by default) read a worktree file: its diff of its base against the working files, and its
+ * `git blame --contents` of a working file (`conflict-detect.ts`).
  */
 const SAFE_CONFIG: readonly string[] = [
   "-c", "core.fsmonitor=false", "-c", `core.hooksPath=${process.platform === "win32" ? "NUL" : "/dev/null"}`, "-c", "log.showSignature=false",

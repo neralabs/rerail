@@ -257,8 +257,9 @@ without hooks or network.
     no config at the listing and holds some by then is never opened (`src/engine/git-guard/submodule-state.ts`).
     A call whose config Git cannot list is not made. With a Git older than 2.31 every call runs as it would without
     these overrides, and the process says so once. `runGitAsync` and `streamGit` set no filter drivers: of their calls,
-    only Merge Assist's diff of its base against the working files ([internal testing](internal-testing.md)) reads
-    worktree files. The listing and the call are two Git processes (T11).
+    only two of Merge Assist's ([internal testing](internal-testing.md), off by default) read worktree files, and each
+    can start a clean filter a repository's config names: its diff of its base against the working files, and its
+    `git blame --contents` of a working file. The listing and the call are two Git processes (T11).
   - No network commands; `cat-file --batch` runs no textconv, and a `--name-only` diff runs no textconv or external
     diff.
 - **Git read in process** (`native/src/git_access/`): the engine opens every repository it reads through one opener.
