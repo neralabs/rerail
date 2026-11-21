@@ -191,4 +191,25 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
            `the_device_reads_16z_through_a_cache_that_turns` pass on the M3 Max, the Mac mini and the M1 Max, and the
            host's tests (the CLIF's reads, which gain the mask, and the generated relation reads) pass on Linux.
          - Other device code that subtracts a loaded narrow value from an address, or swaps at an index masked only
-           by a loaded count, may meet the same foldings. The engine's Metal tests on the M3 are next.
+           by a loaded count, may meet the same foldings.
+     - **The engine's Metal tests on the M3 (2026-11-21, `--features metal-tests`, one at a time).** Of the 118
+       conformance tests (`metal_semantic_conformance`), 117 pass. Of the 15 others, 10 pass. What fails, and what
+       the M1 Max (macOS 26.2) says of the same tests:
+       - *M3 only: the step budgets' tests* (`a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots`,
+         `on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not`): no task runs
+         over its budget. Both pass on the M1 Max. The same evaluation (one program, one file, 34 tasks, a budget of
+         256 steps each on both) takes 477 steps at most a task on the M1 Max and 18 on the M3, with the roots the
+         CPU finds (`lowered_clauses_find_the_same_roots_on_the_resident_interpreter` passes on the M3). So the M3
+         counts a task's steps short, or explores fewer of its pending paths. Not yet reduced.
+       - *M3 only: `retained_grid_runtime::inputs_compact_stage_capturing_sibling_closures_preserve_maximal_prefixes`*
+         fails as `BackendFailure` after 3 attempts, where the CPU's JIT agrees with the expected output. On the M1
+         Max the same test held the GPU: the farm's watchdog killed it after a one-thread dispatch had not finished
+         for 16 s. Not to be run again until the wait is found in the code.
+       - *Both Macs: the launch limit.* `lowered_clauses_find_the_same_roots_on_metal` (2 ruf028 clauses) and both
+         wave tests stop with `BackendLaunchLimit`. A chain's reach with more levels than `label_phase`'s programs
+         hold fails its run (`ChainLevels`), which runs again with twice the levels, from 1. These clauses need 4:
+         three runs of about 69 launches each, every run's launches in the evaluation's ledger, past its 200
+         (`KERNEL_LAUNCH_LIMIT`, a user decision). Not a GPU's difference.
+       - *Fixed: the wave tests aborted on the M3* on a pool thread's read of the machine's jobs' walls outside any
+         run (decision 0442): the label kernels' warm-up, and `threads::spawn_in`, read them before they entered
+         their caller's run. They enter first now.
