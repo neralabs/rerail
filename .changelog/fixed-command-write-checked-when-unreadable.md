@@ -1,1 +1,0 @@
-When Rerail cannot read a file at a check, as when another program holds it open, the next check that can read it now takes what changed: a shell command's write steers the agent, and another program's write to a file the agent edited is recorded. Before, Rerail missed both.

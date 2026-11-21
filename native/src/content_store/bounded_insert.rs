@@ -1,4 +1,4 @@
-//! Bounded typed publication batches, from Pulling-it-all-together's anchor store. SQLite owns
+//! Bounded typed publication batches, from PIAT's anchor store. SQLite owns
 //! stored rows and transaction rollback.
 #[allow(unused_imports)]
 use crate::content_store::connection::Cached as _;

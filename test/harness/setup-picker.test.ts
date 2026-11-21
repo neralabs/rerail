@@ -12,7 +12,7 @@ import { CARRIED_FLAG_NAMES, runSetupCommand, runSetupStepArgs, type SetupContex
 import { pickSetup, SETUP_CANCELLED, type SetupPickerUi } from "../../src/harness/setup-picker.js";
 import { ManagedUpdater } from "../../src/setup/index.js";
 import { removeInstalledPacks } from "../support/installed-packs.js";
-import { directoryPackStore, repositoryPackVersions } from "../support/directory-pack-store.js";
+import { directoryPackStore, REPOSITORY_CORE_VERSION, repositoryPackVersions } from "../support/directory-pack-store.js";
 import { fakeSetupEnvironment, type FakeSetupEnvironment } from "../support/fake-setup-environment.js";
 import { attachedPacks } from "../support/attached-packs.js";
 import { ENTRY_POINTS, shellWord } from "../../src/engine/index.js";
@@ -51,12 +51,12 @@ async function machine(): Promise<Machine> {
   const home = join(root, "home");
   const packageRoot = join(root, "package");
   mkdirSync(join(packageRoot, "dist"), { recursive: true });
-  writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.9" }));
+  writeFileSync(join(packageRoot, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: REPOSITORY_CORE_VERSION }));
   vi.stubEnv("RERAIL_HOME", home);
   // Past set-up's one approval that Rerail may read sessions; `setup-json.test.ts` asks it.
   mkdirSync(home, { recursive: true });
   writeFileSync(join(home, "consent.json"), JSON.stringify({ sessions: { approvedAt: "2026-10-16T00:00:00.000Z" } }));
-  const updater = new ManagedUpdater({ home, packageRoot, packageVersion: "0.1.9" });
+  const updater = new ManagedUpdater({ home, packageRoot, packageVersion: REPOSITORY_CORE_VERSION });
   await updater.activateRoot(packageRoot);
   return { root, repo: gitRepository(join(root, "acme-api")), databasePath: join(home, "rerail.sqlite"), context: { home, packageRoot, updater, packs: directoryPackStore(undefined, ["typescript"]) } };
 }
@@ -297,7 +297,7 @@ describe("/rerail-start in OMP and Pi", { timeout: SETUP_TIMEOUT_MS }, () => {
 
   it("never installs the session's own package over the active one, so answering after /rerail-update keeps the update", async () => {
     const setup = await machine();
-    // The session loaded 0.1.8; `/rerail-update` has since made 0.1.9 the active install.
+    // The session loaded 0.1.8; `/rerail-update` has since made this repository's version the active install.
     const sessionPackage = join(setup.root, "session-package");
     mkdirSync(join(sessionPackage, "dist"), { recursive: true });
     writeFileSync(join(sessionPackage, "package.json"), JSON.stringify({ name: "@neralabs/rerail", version: "0.1.8" }));

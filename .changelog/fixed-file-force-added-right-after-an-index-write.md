@@ -1,1 +1,0 @@
-Rerail now checks an agent's edit to a file `git add -f` has just made tracked when Git wrote the index twice within one step of the file system's clock. Before, Rerail kept the earlier index and treated the file as still ignored, leaving its edits unchecked until Git wrote the index again.
