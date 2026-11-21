@@ -1045,9 +1045,13 @@ describe("a state file Windows left behind", () => {
     return {
       ...olderEngine(started),
       env: { RERAIL_HOME: home },
+      // A signal ends it, as one ends a daemon of 0.1.4, so a caller that signals it goes on to what it does next.
       kill: (pid, signal) => {
         if (pid !== DEAD_PID || !running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
-        if (signal !== 0) events.push(String(signal));
+        if (signal !== 0) {
+          events.push(String(signal));
+          running = false;
+        }
         return true;
       },
       endProcessStartedBy: () => {
@@ -1164,8 +1168,17 @@ describe("a state file Windows left behind", () => {
     ["the audit's lookup", async machine => await findRunningDaemon(home, machine)],
   ])("sends no capability to another listener on the port of a daemon whose engine has no proof: %s", async (_caller, call) => {
     const heard: string[] = [];
+    const carriesToken = (line: string): boolean => line.includes("capability") || line.includes("native");
+    // The listener hearing a token ends the wait as the caller's own end does: a caller that sent one may then wait on
+    // a daemon that never comes.
+    let tokenHeard = (): void => {};
+    const heardToken = new Promise<void>(resolve => {
+      tokenHeard = resolve;
+    });
     const listener = createHttpServer((request, response) => {
-      heard.push(`${request.url} ${String(request.headers["x-rerail-access"] ?? "")} ${String(request.headers.authorization ?? "")}`);
+      const line = `${request.url} ${String(request.headers["x-rerail-access"] ?? "")} ${String(request.headers.authorization ?? "")}`;
+      heard.push(line);
+      if (carriesToken(line)) tokenHeard();
       response.setHeader("content-type", "application/json");
       response.end(JSON.stringify({ status: "ok", pid: DEAD_PID }));
     });
@@ -1175,8 +1188,8 @@ describe("a state file Windows left behind", () => {
       const { port } = listener.address() as AddressInfo;
       const machine = await besideOlderDaemon(OLDER_STARTED_AT - 600, OWN_ROOT, [], `http://127.0.0.1:${port}/`);
       vi.unstubAllGlobals();
-      await call(machine).catch(() => undefined);
-      expect(heard.filter(line => line.includes("capability") || line.includes("native"))).toEqual([]);
+      await Promise.race([call(machine).catch(() => undefined), heardToken]);
+      expect(heard.filter(carriesToken)).toEqual([]);
     } finally {
       listener.close();
     }
