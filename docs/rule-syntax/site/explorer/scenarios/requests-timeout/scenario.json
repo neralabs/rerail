@@ -1,0 +1,5 @@
+{
+  "title": "HTTP calls without a timeout",
+  "rule": "bandit-b113-request-without-timeout",
+  "note": "B113 wants every requests call to say how long it may wait. A missing timeout and an explicit timeout=None are findings; a number or a tuple is not, nor is a call on an object that only happens to be named requests."
+}

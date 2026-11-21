@@ -4,6 +4,15 @@ Every notable change to this rule pack, latest first. Each release says how many
 
 Versions are numbered as in [Semantic Versioning](https://semver.org/spec/v2.0.0.html), which promises nothing about compatibility below 1.0.0. Below 1.0.0 every release is a patch, and a patch can add, change or remove rules, so read the notes before you update.
 
+## 0.1.9 (2026-11-20)
+
+37 rules, 11 of them on by default.
+
+### Fixed
+
+- `n-callback-return` now reports an optional callback call such as `cb?.()` that is a function's last statement or comes just before a block's final `return`, as eslint-plugin-n does. A plain `cb()` in those positions is still allowed.
+- `n-no-path-concat` no longer reports `__dirname` or `__filename` in a file that assigns to that name, such as `__dirname = '.'`, as eslint-plugin-n does: after the assignment the name no longer holds Node's module path.
+
 ## 0.1.8 (2026-11-17)
 
 37 rules, 11 of them on by default.

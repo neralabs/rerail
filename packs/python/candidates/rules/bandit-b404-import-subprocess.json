@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "bandit-b404-import-subprocess",
-  "revision": 1,
+  "revision": 2,
   "mode": "steer",
   "description": "Avoid importing subprocess unless you need it; running external commands risks command injection when arguments come from untrusted input.",
   "scope": {
@@ -19,13 +19,53 @@
           "rule": {
             "any": [
               {
-                "pattern": "import subprocess"
+                "kind": "import_statement",
+                "has": {
+                  "any": [
+                    {
+                      "kind": "dotted_name"
+                    },
+                    {
+                      "kind": "aliased_import"
+                    }
+                  ],
+                  "regex": "^subprocess"
+                }
               },
               {
-                "pattern": "import subprocess as $ALIAS"
+                "kind": "import_from_statement",
+                "has": {
+                  "field": "module_name",
+                  "regex": "^[.\\s]*subprocess"
+                }
               },
               {
-                "pattern": "from subprocess import $$$NAMES"
+                "kind": "import_from_statement",
+                "all": [
+                  {
+                    "has": {
+                      "field": "module_name",
+                      "regex": "^[.\\s]+$"
+                    }
+                  },
+                  {
+                    "has": {
+                      "any": [
+                        {
+                          "kind": "dotted_name"
+                        },
+                        {
+                          "kind": "aliased_import"
+                        }
+                      ],
+                      "regex": "^subprocess",
+                      "follows": {
+                        "stopBy": "end",
+                        "regex": "^import$"
+                      }
+                    }
+                  }
+                ]
               }
             ]
           }

@@ -1,6 +1,6 @@
-import { chmodSync, existsSync, mkdirSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { randomUUID } from "node:crypto";
-import { spawnSync } from "node:child_process";
+import { execFileSync, spawnSync } from "node:child_process";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -8,8 +8,11 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { preUpdateSnapshotPath, runResetCommand, runRulesCommand, type SnapshotUpdater, updateWithSnapshot } from "../../src/cli/project-cli.js";
 import type { UpdateResult, UpdateStatus } from "../../src/setup/index.js";
-import { defaultRerailDatabasePath, loadRuleCatalog, openRerailDatabase, recordCheckout, upsertLibraryRule } from "../../src/engine/index.js";
-import { MOCK_CODE_RULES } from "../../src/cli/index.js";
+import {
+  defaultRerailDatabasePath, loadRuleCatalog, openRerailDatabase, recordCheckout, setUpRepository, STATUS_LINES_FOLDER, upsertLibraryRule,
+} from "../../src/engine/index.js";
+import { AGENT_SESSION_VARIABLES, agentSession, MOCK_CODE_RULES, runRuleApproveCommand } from "../../src/cli/index.js";
+import { CLEARED_AGENT_SESSION_VARIABLES } from "../support/environment/agent-session-variables.js";
 import { POSIX_MODES } from "../support/platform/file-mode.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -70,6 +73,74 @@ describe("rerail rules import", () => {
     expect(runRulesCommand(["import", dump, "--approve"], () => "usage", io)).toBe(0);
     expect(output).toContain(`● Approved ${rule.id}: it runs in the mode it is set to from the next edit.\n`);
     expect(output).not.toContain("runs in Log");
+  });
+});
+
+async function repository(): Promise<string> {
+  const root = await mkdtemp(join(tmpdir(), "rerail-agent-session-"));
+  directories.push(root);
+  execFileSync("git", ["init", "-q", "-b", "main"], { cwd: root });
+  return root;
+}
+
+describe("a coding agent's session", () => {
+  it("is read from the variable each coding agent sets in its shell", () => {
+    expect(agentSession({ CLAUDECODE: "1" })).toEqual({ agent: "Claude Code", variable: "CLAUDECODE" });
+    expect(agentSession({ CODEX_THREAD_ID: "019a-thread" })).toEqual({ agent: "Codex", variable: "CODEX_THREAD_ID" });
+    expect(agentSession({ CURSOR_AGENT: "1" })).toEqual({ agent: "Cursor", variable: "CURSOR_AGENT" });
+    expect(agentSession({ PI_CODING_AGENT: "true", AI_AGENT: "pi" })).toEqual({ agent: "Pi", variable: "PI_CODING_AGENT" });
+    expect(agentSession({ AI_AGENT: "some-agent" })).toEqual({ agent: "a coding agent", variable: "AI_AGENT" });
+  });
+
+  it("is cleared for every test, so the suite reads as a person's terminal whoever runs it", () => {
+    expect(CLEARED_AGENT_SESSION_VARIABLES).toEqual(AGENT_SESSION_VARIABLES);
+    expect(agentSession()).toBeUndefined();
+  });
+
+  it("is not a person's terminal, where none is set or one is empty", () => {
+    expect(agentSession({})).toBeUndefined();
+    expect(agentSession({ CLAUDECODE: "", AI_AGENT: "" })).toBeUndefined();
+    // The integrated terminal of Cursor's editor sets this for a person too.
+    expect(agentSession({ CURSOR_TRACE_ID: "abc" })).toBeUndefined();
+  });
+
+  it("is refused rules approve of a named rule or pack, and told where a person approves it, but lists what waits", async () => {
+    const repo = await repository();
+    // A rule created by you, added here and not approved, so it waits.
+    const database = openRerailDatabase(defaultRerailDatabasePath());
+    try {
+      upsertLibraryRule(database, loadRuleCatalog(), {
+        format: "rerail.policy/v1", id: "acme:no-console-log", revision: 1, mode: "steer", title: "No console.log",
+        scope: { include: ["src/**/*.ts"], exclude: [] },
+        clauses: [{ id: "c", forbid: { regex: { pattern: String.raw`console\.log`, source: "file.content" } }, violation: { anchor: "witness.span", code: "X", message: "Use the logger." } }],
+      }, "code");
+      setUpRepository(database, recordCheckout(database, repo).repositoryKey, { packs: [], rules: [{ sourceKind: "library_rule", sourceId: "acme:no-console-log", folder: "" }] });
+    } finally {
+      database.$client.close();
+    }
+    let listed = "";
+    const write = { stdout: { write: (text: string) => (listed += text) } };
+
+    expect(() => runRuleApproveCommand(["acme:no-console-log", "--repo", repo], () => "usage", write, undefined, { CLAUDECODE: "1" })).toThrow(
+      "rules approve is a person's, and Claude Code runs this command (CLAUDECODE is set). A person reads and approves acme:no-console-log on its "
+        + "page in the dashboard, which rerail manage opens, or with rerail rules approve in a terminal of their own.",
+    );
+    expect(() => runRuleApproveCommand(["a", "b", "--repo", repo], () => "usage", write, undefined, { AI_AGENT: "some-agent" })).toThrow(
+      "rules approve is a person's, and a coding agent runs this command (AI_AGENT is set). A person reads and approves a, b on their page",
+    );
+    expect(runRuleApproveCommand(["--repo", repo], () => "usage", write, undefined, { CLAUDECODE: "1" })).toBe(0);
+    expect(listed).toBe([
+      "Waiting for approval; each runs in Log, and steers no one, until a person approves it:",
+      "  rule acme:no-console-log  (created by you)",
+      "A person reads each and approves it on its page in the dashboard, which rerail manage opens.",
+      "",
+    ].join("\n"));
+  });
+
+  it("is refused rules import, which replaces your rules, approved ones included", () => {
+    expect(() => runRulesCommand(["import", "rules.json", "--approve"], () => "usage", {}, { CURSOR_AGENT: "1" })).toThrow(
+      "rules import is a person's, and Cursor runs this command (CURSOR_AGENT is set): it replaces your rules, approved ones included. Run it in a terminal of your own.",
+    );
   });
 });
 
@@ -256,6 +327,35 @@ describe("rerail reset", () => {
       expect(live.$client.prepare("SELECT count(*) AS n FROM events").get()).toEqual({ n: 0 });
       erase.failure = undefined;
       expect(runResetCommand([], () => "usage")).toBe(0);
+    } finally {
+      live.$client.close();
+    }
+  });
+
+  it("removes the Claude Code status line of each session it deletes, and keeps the lines of the sessions it keeps", async () => {
+    const root = await mkdtemp(join(tmpdir(), "rerail-reset-"));
+    directories.push(root);
+    vi.stubEnv("RERAIL_HOME", join(root, "home"));
+    const checkout = join(root, "repo");
+    mkdirSync(checkout);
+    vi.spyOn(process, "cwd").mockReturnValue(checkout);
+    vi.spyOn(process.stdout, "write").mockReturnValue(true);
+    const live = openRerailDatabase(join(root, "home", "rerail.sqlite"));
+    try {
+      const { repositoryKey } = recordCheckout(live, checkout);
+      const session = live.$client.prepare("INSERT INTO sessions (session_id, host, cwd, repository_id, started_at, ended_at) VALUES (?, 'claude-code', ?, ?, 1, ?)");
+      session.run("ended-here", checkout, repositoryKey, 2);
+      session.run("running-here", checkout, repositoryKey, null);
+      session.run("in-another-repository", root, "another-repository", 2);
+      const status = join(root, "home", STATUS_LINES_FOLDER);
+      mkdirSync(status);
+      for (const sessionId of ["ended-here", "running-here", "in-another-repository"]) writeFileSync(join(status, sessionId), "a line\n");
+      // A file of the person's own, with a name no session id can have.
+      writeFileSync(join(status, "notes.txt"), "mine\n");
+
+      expect(runResetCommand([], () => "usage")).toBe(0);
+
+      expect(readdirSync(status).sort()).toEqual(["in-another-repository", "notes.txt", "running-here"]);
     } finally {
       live.$client.close();
     }

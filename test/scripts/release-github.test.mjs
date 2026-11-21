@@ -4,7 +4,7 @@
 
 import { describe, expect, it } from "vitest";
 import { NO_CHANGELOG_ENTRIES } from "../../scripts/release/core.mjs";
-import { backfillPlan, backfillTags, changelogPath, ghReleaseArgs, githubRelease, packReleaseNotes, parseRemoteTags, RELEASE_NOTES_LIMIT, releasedByTag } from "../../scripts/release/github-release.mjs";
+import { backfillPlan, backfillTags, changelogPath, ghReleaseArgs, githubRelease, packReleaseNotes, parseRemoteTags, previousStable, RELEASE_NOTES_LIMIT, releasedByTag } from "../../scripts/release/github-release.mjs";
 
 const CORE = "@neralabs/rerail";
 const PYTHON = "@neralabs/rerail-pack-python";
@@ -42,7 +42,12 @@ describe("githubRelease", () => {
     expect(githubRelease({ name: CORE, version: "0.1.0", distTag: "latest" }, "").notes).toBe(NO_CHANGELOG_ENTRIES);
   });
 
-  it("never makes a pack's release the latest, and makes it a pre-release only when held under next, its notes the entries alone", () => {
+  it("makes core's plain version a pre-release while it is on next, and the latest release once promoted", () => {
+    expect(githubRelease({ name: CORE, version: "0.1.0", distTag: "next" }, coreChangelog)).toMatchObject({ prerelease: true, latest: false });
+    expect(githubRelease({ name: CORE, version: "0.1.0", distTag: "latest" }, coreChangelog)).toMatchObject({ prerelease: false, latest: true });
+  });
+
+  it("never makes a pack's release the latest, and makes it a pre-release while it is on next, its notes the entries alone", () => {
     expect(githubRelease({ name: PYTHON, version: "0.1.4", distTag: "latest" }, packChangelog)).toEqual({
       tag: `${PYTHON}@0.1.4`,
       title: `${PYTHON}@0.1.4`,
@@ -62,6 +67,121 @@ describe("githubRelease", () => {
     expect(githubRelease({ name: PYTHON, version: "0.1.6", distTag: "latest" }, pack).notes).toBe(
       `- See [the README](https://github.com/neralabs/rerail/blob/${PYTHON}@0.1.6/packs/python/README.md) and [packs](https://neralabs.github.io/rerail/rule-packs.html).`,
     );
+  });
+});
+
+describe("a promoted version's notes, since the last stable release", () => {
+  // 0.2.0 was a candidate on next and never promoted; 0.2.1 patches it and is promoted over 0.1.5.
+  const changelog = [
+    "# Changelog",
+    "",
+    "## 0.2.1 (2026-11-27)",
+    "",
+    "0.2.1 brings the new rule engine, with the fixes its first candidate needed.",
+    "",
+    "### Fixed",
+    "",
+    "- Set-up no longer stalls on a large repository.",
+    "",
+    "## 0.2.0 (2026-11-21)",
+    "",
+    "0.2.0 brings the new rule engine.",
+    "",
+    "### Added",
+    "",
+    "- Code rules read Go.",
+    "",
+    "### Fixed",
+    "",
+    "- The daemon restarts after a crash.",
+    "",
+    "## 0.1.5 (2026-11-17)",
+    "",
+    "Lighter and steadier.",
+    "",
+    "### Fixed",
+    "",
+    "- Windows fixes.",
+    "",
+  ].join("\n");
+
+  it("brings every change since the last stable release, under the promoted version's lead, grouped by type and newest first", () => {
+    expect(githubRelease({ name: CORE, version: "0.2.1", distTag: "latest" }, changelog, "0.1.5").notes).toBe(
+      [
+        "0.2.1 brings the new rule engine, with the fixes its first candidate needed.",
+        "",
+        "This release also brings 0.2.0, which was a release candidate on `next` and never reached `latest`.",
+        "",
+        "### Added",
+        "",
+        "- Code rules read Go.",
+        "",
+        "### Fixed",
+        "",
+        "- Set-up no longer stalls on a large repository.",
+        "- The daemon restarts after a crash.",
+      ].join("\n"),
+    );
+  });
+
+  it("is the version's own section when no candidate was skipped, as before", () => {
+    expect(githubRelease({ name: CORE, version: "0.2.0", distTag: "latest" }, changelog, "0.1.5").notes).toBe(githubRelease({ name: CORE, version: "0.2.0", distTag: "latest" }, changelog).notes);
+  });
+
+  it("leaves a candidate's own Release on next, and a put-back, to their own sections", () => {
+    expect(githubRelease({ name: CORE, version: "0.2.1", distTag: "next" }, changelog, "0.1.5").notes).not.toContain("0.2.0");
+    expect(githubRelease({ name: CORE, version: "0.1.5", distTag: "latest" }, changelog, "0.1.4").notes).toBe("Lighter and steadier.\n\n### Fixed\n\n- Windows fixes.");
+  });
+
+  it("does the same for a pack, its entries as packReleaseNotes reads them", () => {
+    const pack = [`# ${PYTHON}`, "", "## 0.1.12", "", "### Fixed", "", "- Fewer false positives.", "", "## 0.1.11", "", "### Added", "", "- Two new rules.", "", "## 0.1.10", "", "### Fixed", "", "- Older.", ""].join("\n");
+    expect(githubRelease({ name: PYTHON, version: "0.1.12", distTag: "latest" }, pack, "0.1.10").notes).toBe(
+      ["This release also brings 0.1.11, which was a release candidate on `next` and never reached `latest`.", "", "### Added", "", "- Two new rules.", "", "### Fixed", "", "- Fewer false positives."].join("\n"),
+    );
+  });
+
+  it("opens with no lead, rather than saying no entries were written, when the promoted version has none of its own", () => {
+    const empty = changelog.replace(/(## 0\.2\.1 \(2026-11-27\)\n\n)[\s\S]*?(\n## 0\.2\.0)/u, `$1${NO_CHANGELOG_ENTRIES}\n$2`);
+    expect(githubRelease({ name: CORE, version: "0.2.1", distTag: "latest" }, empty, "0.1.5").notes).toBe(
+      ["This release also brings 0.2.0, which was a release candidate on `next` and never reached `latest`.", "", "### Added", "", "- Code rules read Go.", "", "### Fixed", "", "- The daemon restarts after a crash."].join("\n"),
+    );
+  });
+
+  it("lists entries written under no type heading before the typed ones, as a version's own section does, not inside the last type", () => {
+    const untyped = changelog.replace("0.2.0 brings the new rule engine.\n", "0.2.0 brings the new rule engine.\n\n- Written under no type.\n");
+    expect(githubRelease({ name: CORE, version: "0.2.1", distTag: "latest" }, untyped, "0.1.5").notes).toBe(
+      [
+        "0.2.1 brings the new rule engine, with the fixes its first candidate needed.",
+        "",
+        "This release also brings 0.2.0, which was a release candidate on `next` and never reached `latest`.",
+        "",
+        "- Written under no type.",
+        "",
+        "### Added",
+        "",
+        "- Code rules read Go.",
+        "",
+        "### Fixed",
+        "",
+        "- Set-up no longer stalls on a large repository.",
+        "- The daemon restarts after a crash.",
+      ].join("\n"),
+    );
+  });
+});
+
+describe("previousStable", () => {
+  const release = (tag, prerelease = false) => ({ tag, prerelease });
+
+  it("is the newest version below the promoted one whose Release is no pre-release: the last version on latest", () => {
+    const releases = [release("v0.1.4"), release("v0.1.5"), release("v0.2.0", true), release("v0.2.0-next.1", true), release(`${PYTHON}@0.1.10`)];
+    expect(previousStable(CORE, "0.2.1", releases)).toBe("0.1.5");
+    expect(previousStable(PYTHON, "0.1.12", releases)).toBe("0.1.10");
+  });
+
+  it("is null before any stable release, and never the promoted version itself", () => {
+    expect(previousStable(CORE, "0.1.0", [release("v0.1.0", true)])).toBeNull();
+    expect(previousStable(CORE, "0.1.5", [release("v0.1.5")])).toBeNull();
   });
 });
 
@@ -191,9 +311,13 @@ describe("backfillPlan", () => {
   };
   const readAt = (tag, path) => files[tag]?.[path] ?? null;
   const tags = ["v0.1.0-next.4", "port-readiness-recordings", `${PYTHON}@0.1.4`, "@neralabs/rerail-pack-sql@0.1.1", "v0.1.0", "v0.1.1"];
+  const onLatest = new Map([
+    [CORE, "0.1.1"],
+    [PYTHON, "0.1.4"],
+  ]);
 
   it("makes the Release of every release tag without one, in tag order, with the notes at that tag", () => {
-    const { releases } = backfillPlan(tags, new Set(["port-readiness-recordings"]), readAt);
+    const { releases } = backfillPlan(tags, new Set(["port-readiness-recordings"]), readAt, onLatest);
     expect(releases.map(({ tag }) => tag)).toEqual([`${PYTHON}@0.1.4`, "v0.1.0", "v0.1.1"]);
     expect(releases[0]).toMatchObject({ notes: "- Messages.", prerelease: false, latest: false });
     expect(releases[1]).toMatchObject({ notes: "First release.", latest: false });
@@ -201,19 +325,33 @@ describe("backfillPlan", () => {
   });
 
   it("leaves a tag whose changelog has no section for its version, or no changelog at all, without a Release, and names it", () => {
-    const { releases, noNotes } = backfillPlan(tags, new Set(), readAt);
+    const { releases, noNotes } = backfillPlan(tags, new Set(), readAt, onLatest);
     expect(noNotes).toEqual(["v0.1.0-next.4", "@neralabs/rerail-pack-sql@0.1.1"]);
     expect(releases.some(({ notes }) => notes === NO_CHANGELOG_ENTRIES)).toBe(false);
   });
 
   it("does not name a tag that has its Release already, whatever its changelog says", () => {
-    const { noNotes } = backfillPlan(tags, new Set(["v0.1.0-next.4"]), readAt);
+    const { noNotes } = backfillPlan(tags, new Set(["v0.1.0-next.4"]), readAt, onLatest);
     expect(noNotes).toEqual(["@neralabs/rerail-pack-sql@0.1.1"]);
   });
 
   it("marks no older core version latest when the newest has its Release already", () => {
-    const { releases } = backfillPlan(tags, new Set(["v0.1.1", `${PYTHON}@0.1.4`]), readAt);
+    const { releases } = backfillPlan(tags, new Set(["v0.1.1", `${PYTHON}@0.1.4`]), readAt, onLatest);
     expect(releases.map(({ tag }) => tag)).toEqual(["v0.1.0"]);
     expect(releases.some(({ latest }) => latest)).toBe(false);
+  });
+
+  it("makes a plain version above its package's latest, or of a package with no latest, a pre-release, so a later promotion does not take it for the last stable version", () => {
+    const candidates = new Map([
+      [CORE, "0.1.0"],
+      [PYTHON, undefined],
+    ]);
+    const { releases } = backfillPlan(tags, new Set(), readAt, candidates);
+    expect(releases.map(({ tag, prerelease, latest }) => ({ tag, prerelease, latest }))).toEqual([
+      { tag: `${PYTHON}@0.1.4`, prerelease: true, latest: false },
+      { tag: "v0.1.0", prerelease: false, latest: true },
+      { tag: "v0.1.1", prerelease: true, latest: false },
+    ]);
+    expect(previousStable(CORE, "0.1.2", releases)).toBe("0.1.0");
   });
 });

@@ -1,0 +1,71 @@
+.policy "rerail-home-file-paths" revision 2
+.description "Take the Rerail home's active-version link, versions folder, update record and launcher paths from the updater instead of joining their names onto the home again."
+.language typescript
+.mode log
+.scope include "src/**/*.ts"
+.scope exclude "src/**/updater.ts", "**/*.test.ts", "src/**/*.generated.ts"
+// The Rerail home's active-version link (`current`), versions folder, update record and launcher folder (`bin`) are
+// the updater's paths (ManagedUpdater in src/**/updater.ts). Joining one of those names onto the home again, by
+// join/resolve or in a template, is reported. Four text searches over each file, one per name, as the JSON's
+// regex clauses; the home is any name ending in "home" (any case), defaultRerailHome(…), or homedir() and ".rerail":
+//   join(rerailHome, "current")                              HOME_CURRENT_PATH
+//   resolve(options.home ?? defaultRerailHome(), "versions")  HOME_VERSIONS_PATH
+//   join(homedir(), ".rerail", "update-state.json")          HOME_UPDATE_STATE_PATH
+//   `${home}/bin/rerail`                                     HOME_LAUNCHER_PATH
+//   join(current, "package.json"), dirname(launcherPath)     not reported
+// A finding sits where the match starts. The regexes are the JSON's, copied exactly.
+
+.violation HOME_CURRENT_PATH(at: span) "Use ManagedUpdater's currentLink where an updater is at hand, instead of joining \"current\" onto the home; elsewhere, and in src/engine, keep it until the name has a constant."
+HOME_CURRENT_PATH(m) :- source(_, sp), match_all("(?:\\b(?:join|resolve)\\(\\s*(?:(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*,\\s*(?:[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)?|(?:os\\.)?homedir\\(\\)\\s*,\\s*[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)[\\\"'`]current[\\\"'`]|\\$\\{\\s*(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*\\}[/\\\\]+current\\b)", sp, m).
+
+.violation HOME_VERSIONS_PATH(at: span) "Use ManagedUpdater's versionsRoot where an updater is at hand, instead of joining \"versions\" onto the home; elsewhere, and in src/engine, keep it until the name has a constant."
+HOME_VERSIONS_PATH(m) :- source(_, sp), match_all("(?:\\b(?:join|resolve)\\(\\s*(?:(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*,\\s*(?:[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)?|(?:os\\.)?homedir\\(\\)\\s*,\\s*[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)[\\\"'`]versions[\\\"'`]|\\$\\{\\s*(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*\\}[/\\\\]+versions\\b)", sp, m).
+
+.violation HOME_UPDATE_STATE_PATH(at: span) "Use ManagedUpdater's statePath where an updater is at hand, instead of joining \"update-state.json\" onto the home; elsewhere keep it until the name has a constant."
+HOME_UPDATE_STATE_PATH(m) :- source(_, sp), match_all("(?:\\b(?:join|resolve)\\(\\s*(?:(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*,\\s*(?:[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)?|(?:os\\.)?homedir\\(\\)\\s*,\\s*[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)[\\\"'`]update-state\\.json[\\\"'`]|\\$\\{\\s*(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*\\}[/\\\\]+update-state\\.json\\b)", sp, m).
+
+.violation HOME_LAUNCHER_PATH(at: span) "Use ManagedUpdater's launcherPath (dirname for its folder) where an updater is at hand, instead of joining \"bin\" onto the home; elsewhere keep it until the name has a constant."
+HOME_LAUNCHER_PATH(m) :- source(_, sp), match_all("(?:\\b(?:join|resolve)\\(\\s*(?:(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*,\\s*(?:[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)?|(?:os\\.)?homedir\\(\\)\\s*,\\s*[\\\"'`]\\.rerail[\\\"'`]\\s*,\\s*)[\\\"'`]bin[\\\"'`]|\\$\\{\\s*(?:[\\w$.]*(?i:home)!?(?:\\s*\\?\\?\\s*defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))?|defaultRerailHome\\((?:[^()]|\\([^()]*\\))*\\))\\s*\\}[/\\\\]+bin\\b)", sp, m).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_joined_current_link_is_reported exactly
+    .fixture "src/setup/coding-agents.ts" ```
+        export function registrationRoot(rerailHome: string, packageRoot: string): string {
+          const current = join(rerailHome, "current");
+          return existsSync(join(current, "package.json")) ? current : packageRoot;
+        }
+        ```
+    .expect HOME_CURRENT_PATH at "src/setup/coding-agents.ts":2
+.end
+
+.test each_name_is_reported exactly
+    .fixture "src/cli/paths.ts" ```
+        const versions = resolve(options.home ?? defaultRerailHome(process.env), "versions");
+        const state = join(homedir(), ".rerail", "update-state.json");
+        const bin = `${context.rerailHome!}/bin/rerail`;
+        const link = path.join(defaultRerailHome(), '.rerail', 'current');
+        const launcher = join(HOME, "bin");
+        const other = join(rerailHome, "packs");
+        const elsewhere = join(projectRoot, "current");
+        ```
+    .expect HOME_VERSIONS_PATH at "src/cli/paths.ts":1
+    .expect HOME_UPDATE_STATE_PATH at "src/cli/paths.ts":2
+    .expect HOME_LAUNCHER_PATH at "src/cli/paths.ts":3
+    .expect HOME_CURRENT_PATH at "src/cli/paths.ts":4
+    .expect HOME_LAUNCHER_PATH at "src/cli/paths.ts":5
+.end
+
+// The pack's passing example, and the files the scope leaves out.
+.test the_updater_paths_pass exactly
+    .fixture "src/cli/setup-cli.ts" ```
+        const { launcherPath } = context.updater;
+        if (!existsSync(launcherPath)) return undefined;
+        const binDir = dirname(launcherPath);
+        ```
+    .fixture "src/runtime/updater.ts" ```
+        this.currentLink = join(rerailHome, "current");
+        ```
+    .fixture "src/cli/setup-cli.test.ts" ```
+        const link = join(rerailHome, "current");
+        ```
+.end

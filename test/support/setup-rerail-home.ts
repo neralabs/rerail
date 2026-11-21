@@ -6,6 +6,7 @@ import { dirname, join } from "node:path";
 import { setTimeout as sleep } from "node:timers/promises";
 import { removeFolder } from "./platform/remove-folder.js";
 import { watchRealAgentSettings } from "./user-home.js";
+import { CLEARED_AGENT_SESSION_VARIABLES } from "./environment/agent-session-variables.js";
 
 const priorRerailHome = process.env.RERAIL_HOME;
 const priorContentStorePath = process.env.RERAIL_CONTENT_STORE_PATH;
@@ -19,6 +20,10 @@ const contentStoreDirectory = mkdtempSync(join(tmpdir(), "rerail-vitest-store-")
 const userHome = mkdtempSync(join(tmpdir(), "rerail-vitest-user-"));
 
 process.env.RERAIL_HOME = rerailHome;
+// A test reads as a person's terminal whoever runs it: a coding agent running the suite sets the variables that mark
+// its session, which would refuse `rules approve` and turn `rules add` over an approved rule into a copy. A test of that
+// passes the session itself.
+for (const variable of CLEARED_AGENT_SESSION_VARIABLES) delete process.env[variable];
 // Every test file gets a user home of its own, so code that falls back to os.homedir() (harness registration, the
 // Claude status store, git's global config) never reaches the person's profile. os.homedir() reads HOME on POSIX and
 // USERPROFILE on Windows, so both are set; a test that moves the home uses stubUserHome, which moves both.
@@ -32,7 +37,7 @@ const gitConfig = join(userHome, ".gitconfig");
 writeFileSync(gitConfig, "[user]\n\tname = Rerail test\n\temail = test@rerail.invalid\n");
 process.env.GIT_CONFIG_NOSYSTEM = "1";
 process.env.GIT_CONFIG_GLOBAL = gitConfig;
-// A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v1.sqlite`, shared by
+// A test run is a dev build, whose store would otherwise be this checkout's `.rerail/content-v5.sqlite`, shared by
 // every test file; each file gets its own (`contentStorePath` honours the override).
 process.env.RERAIL_CONTENT_STORE_PATH = join(contentStoreDirectory, "content.sqlite");
 // Every experimental feature starts off, whatever the shell running the tests turned on (`RERAIL_EXPERIMENTAL=1`, or

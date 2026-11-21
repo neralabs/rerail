@@ -1,7 +1,7 @@
 {
   "format": "rerail.policy/v1",
   "id": "n-no-path-concat",
-  "revision": 5,
+  "revision": 6,
   "mode": "steer",
   "description": "Use path.join() or path.resolve() instead of concatenating __dirname, __filename or import.meta paths with strings; hand-built paths break across platforms.",
   "scope": {
@@ -382,16 +382,147 @@
               }
             ]
           },
+          "modified:__dirname": {
+            "kind": "program",
+            "has": {
+              "stopBy": "end",
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                }
+              ],
+              "regex": "^__dirname$",
+              "resolves": {
+                "global": [
+                  "__dirname"
+                ]
+              },
+              "matches": "write-slot"
+            }
+          },
+          "modified:__filename": {
+            "kind": "program",
+            "has": {
+              "stopBy": "end",
+              "any": [
+                {
+                  "kind": "identifier"
+                },
+                {
+                  "kind": "shorthand_property_identifier_pattern"
+                }
+              ],
+              "regex": "^__filename$",
+              "resolves": {
+                "global": [
+                  "__filename"
+                ]
+              },
+              "matches": "write-slot"
+            }
+          },
+          "write-slot": {
+            "any": [
+              {
+                "inside": {
+                  "kind": "assignment_expression",
+                  "field": "left"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "augmented_assignment_expression",
+                  "field": "left"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "update_expression",
+                  "field": "argument"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "for_in_statement",
+                  "field": "left"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "parenthesized_expression",
+                  "matches": "write-slot"
+                }
+              },
+              {
+                "inside": {
+                  "any": [
+                    {
+                      "kind": "array_pattern"
+                    },
+                    {
+                      "kind": "object_pattern"
+                    },
+                    {
+                      "kind": "rest_pattern"
+                    }
+                  ]
+                }
+              },
+              {
+                "inside": {
+                  "kind": "pair_pattern",
+                  "field": "value"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "assignment_pattern",
+                  "field": "left"
+                }
+              },
+              {
+                "inside": {
+                  "kind": "object_assignment_pattern",
+                  "field": "left"
+                }
+              }
+            ]
+          },
           "path-source": {
             "any": [
               {
                 "kind": "identifier",
-                "regex": "^(?:__dirname|__filename)$",
+                "regex": "^__dirname$",
                 "resolves": {
                   "global": [
-                    "__dirname",
+                    "__dirname"
+                  ]
+                },
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "program",
+                    "matches": "modified:__dirname"
+                  }
+                }
+              },
+              {
+                "kind": "identifier",
+                "regex": "^__filename$",
+                "resolves": {
+                  "global": [
                     "__filename"
                   ]
+                },
+                "not": {
+                  "inside": {
+                    "stopBy": "end",
+                    "kind": "program",
+                    "matches": "modified:__filename"
+                  }
                 }
               },
               {

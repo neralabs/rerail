@@ -1,0 +1,86 @@
+.policy "rerail-rule-documents-in-packs" revision 2
+.description "Keep code and conversation rules in a pack's rules or candidates folder and rule drafts out of the repository; engine test inputs belong under fixtures."
+.mode steer
+.scope include "**/*.json"
+.scope text "**/*.json"
+.scope exclude "packs/*/rules/*.json", "packs/*/candidates/rules/*.json", "packs/*/candidates/**/rules/*.json", "fixtures/packs/**", "fixtures/*/compile/examples/*.json", "fixtures/host/benchmark/resolves/*.json", "fixtures/host/benchmark/usage/*.json", "fixtures/host/code-rule-dsl/*.json", "fixtures/host/constraint-code-rules/*.json", "**/node_modules/**", "**/target/**", "**/*.expected.json", "native/grammars/**"
+// A code or conversation rule lives in a pack's rules/ or candidates/ folder; a rule draft (the rule wrapped with its
+// kind, folder and cases) stays outside the repository. Three text searches from the start of each JSON file, as
+// the JSON's regex clauses, which read its top-level object's leading keys:
+//   { "kind": "code", "rule": { … }, "cases": { … } }                    RULE_DRAFT_IN_REPOSITORY (at the file's start)
+//   { "id": "x", "revision": 1, "format": "rerail.policy/v1", … }        CODE_RULE_OUTSIDE_PACK (at "format")
+//   { "id": "x", "match": { … }, "sample": { "source": "user-input" } }  CONVERSATION_RULE_OUTSIDE_PACK (at "sample")
+//   { "caught": [ { "source": "assistant-text", … } ] }                  not reported (a test's cases)
+// The files are read as text: the regexes need no tree, and a JSON file that does not parse is still searched.
+// The regexes are the JSON's, copied exactly.
+
+.violation RULE_DRAFT_IN_REPOSITORY(at: span) "Keep rule drafts in a temp folder outside the repo; to add this rule, save only its rule object as packs/<pack>/candidates/rules/<id>.json. A recorded API response may stay."
+RULE_DRAFT_IN_REPOSITORY(m) :- source(_, sp), match_all("\\A\\s*\\{\\s*(?:(?:\"folder\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"cases\"\\s*:\\s*\\{(?s:.*?)\\})\\s*,\\s*)*(?:\"kind\"\\s*:\\s*\"(?:code|conversation)\"\\s*,\\s*(?:(?:\"folder\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"cases\"\\s*:\\s*\\{(?s:.*?)\\})\\s*,\\s*)*\"rule\"\\s*:\\s*\\{|\"rule\"\\s*:\\s*\\{(?s:.*)\"kind\"\\s*:\\s*\"(?:code|conversation)\"\\s*[,}])", sp, m).
+
+.violation CODE_RULE_OUTSIDE_PACK(at: span) "Save this rule as packs/<pack>/candidates/rules/<id>.json (rules/ once it ships). An engine test's input may stay in fixtures/ if no folder on its path is rules, candidates, probes or policies."
+CODE_RULE_OUTSIDE_PACK(g) :- source(_, sp), match_group("\\A\\s*\\{\\s*(?:(?:\"(?:description|id|mode)\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"revision\"\\s*:\\s*\\d+|\"scope\"\\s*:\\s*\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\"|\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})*\\})\\s*,\\s*)*(?:\"clauses\"\\s*:(?s:.*?))?(?P<FORMAT>\"format\")\\s*:\\s*\"rerail\\.policy/v1\"", sp, _, "FORMAT", g).
+
+.violation CONVERSATION_RULE_OUTSIDE_PACK(at: span) "Save this conversation rule as packs/<pack>/candidates/rules/<id>.json. An engine test's input may stay in fixtures/ if no folder on its path is rules, candidates, probes or policies."
+CONVERSATION_RULE_OUTSIDE_PACK(g) :- source(_, sp),
+    match_group("\\A\\s*\\{\\s*(?:(?:\"(?:id|mode|reference)\"\\s*:\\s*\"(?:[^\"\\\\]|\\\\.)*\"|\"(?:action|repeat)\"\\s*:\\s*\\{(?:[^{}\"]|\"(?:[^\"\\\\]|\\\\.)*\")*\\})\\s*,\\s*)*(?:\"match\"\\s*:(?s:.*?))?(?P<SAMPLE>\"sample\")\\s*:\\s*\\{\\s*(?:\"(?:boundary|minimumTokens)\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|\\d+)\\s*,\\s*)*\"source\"\\s*:\\s*\"(?:tool:[^\"]*|user-input|assistant-text)\"\\s*(?:,\\s*\"(?:boundary|minimumTokens)\"\\s*:\\s*(?:\"(?:[^\"\\\\]|\\\\.)*\"|\\d+)\\s*)*\\}", sp, _, "SAMPLE", g).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_rule_draft_is_reported exactly
+    .fixture "packs/pack-message-tool-names.draft.json" ```
+        {
+          "kind": "code",
+          "rule": {
+            "format": "rerail.policy/v1",
+            "id": "local:pack-message-tool-names",
+            "revision": 1,
+            "mode": "steer",
+            "clauses": []
+          },
+          "cases": { "caught": [], "passed": [] }
+        }
+        ```
+    .expect RULE_DRAFT_IN_REPOSITORY at "packs/pack-message-tool-names.draft.json":1
+.end
+
+.test rules_outside_a_pack_are_reported exactly
+    .fixture "scripts/rules/no-print.json" ```
+        {
+          "id": "no-print",
+          "revision": 1,
+          "scope": { "include": ["**/*.py"] },
+          "format": "rerail.policy/v1",
+          "clauses": []
+        }
+        ```
+    .fixture "fixtures/host/probes/ask-first.json" ```
+        {
+          "id": "ask-first",
+          "mode": "steer",
+          "match": { "pattern": "rm -rf" },
+          "sample": { "boundary": "turn", "source": "tool:bash" }
+        }
+        ```
+    .expect CODE_RULE_OUTSIDE_PACK at "scripts/rules/no-print.json":5
+    .expect CONVERSATION_RULE_OUTSIDE_PACK at "fixtures/host/probes/ask-first.json":5
+.end
+
+// The pack's passing example, rules where they belong, and a document whose leading keys are not a rule's.
+.test cases_and_pack_rules_pass exactly
+    .fixture "fixtures/host/task-completion/workflow-check-unfinished-task.cases.json" ```
+        {
+          "caught": [
+            { "source": "assistant-text", "boundary": "turn", "text": "Not yet done from the spec." }
+          ],
+          "passed": []
+        }
+        ```
+    .fixture "packs/python/candidates/rules/no-print.json" ```
+        { "format": "rerail.policy/v1", "id": "no-print", "clauses": [] }
+        ```
+    .fixture "fixtures/packs/python/no-print.json" ```
+        { "format": "rerail.policy/v1", "id": "no-print", "clauses": [] }
+        ```
+    .fixture "docs/api/response.json" ```
+        { "name": "a", "format": "rerail.policy/v1" }
+        ```
+.end

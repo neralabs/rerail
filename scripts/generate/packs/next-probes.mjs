@@ -5,13 +5,18 @@
 // through a "use client" module; every label below is chosen by hand from Next.js 16's documented semantics, located
 // by a unique substring of its fixture. Run offline by a maintainer, never in CI; the output is deterministic.
 //
+// The fixtures' package.json files pin next 16.0.0 on purpose: they are test data, never installed or run, so a
+// Dependabot alert on them is dismissed as not_used, and test/scripts/generate/next-probes.test.ts fails when a
+// committed file differs from what this writes.
+//
 // Usage (from the repository root): node scripts/generate/packs/next-probes.mjs
 // Then: node --import tsx conformance/languages/cli.ts --pack-dir packs/next/candidates/probes --fixtures
 import { mkdirSync, rmSync, writeFileSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
-const ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packs", "next", "candidates", "probes");
+/** The probe pack's folder: everything in it is this generator's output. */
+export const NEXT_PROBES_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "packs", "next", "candidates", "probes");
 const SCOPE = { include: ["**/*.ts", "**/*.mts", "**/*.cts", "**/*.tsx", "**/*.js", "**/*.jsx", "**/*.mjs", "**/*.cjs"], exclude: [] };
 
 // ---- fixtures: a checkout with Next.js projects ---------------------------------------------------------------------
@@ -357,7 +362,8 @@ const PROBES = [
   },
   {
     name: "use-server-sync-export",
-    description: "Directive + exports: in a \"use server\" file, an exported name that is not an async function (Next allows only async functions there).",
+    revision: 2,
+    description: "Directive + exports: in a \"use server\" file, an exported name whose value is not an async function (Next allows only async functions there); a call's result is left to Next's runtime check.",
     ast: {
       rule: {
         kind: "identifier",
@@ -365,7 +371,8 @@ const PROBES = [
           {
             any: [
               { inside: { kind: "function_declaration", not: { regex: "^async\\s" }, inside: { kind: "export_statement" } } },
-              { inside: { kind: "variable_declarator", not: { has: { field: "value", any: [{ kind: "arrow_function" }, { kind: "function_expression" }], regex: "^async\\s" } }, inside: { kind: "lexical_declaration", inside: { kind: "export_statement" } } } },
+              // Whether a call's result (a factory's, such as next-safe-action's) is a function, Next checks only at runtime.
+              { inside: { kind: "variable_declarator", not: { has: { field: "value", any: [{ any: [{ kind: "arrow_function" }, { kind: "function_expression" }], regex: "^async\\s" }, { kind: "call_expression" }] } }, inside: { kind: "lexical_declaration", inside: { kind: "export_statement" } } } },
             ],
           },
           { inside: { stopBy: "end", kind: "program", has: { kind: "expression_statement", has: { kind: "string", value: { eq: "use server" } }, ...IN_PROLOGUE } } },
@@ -376,14 +383,7 @@ const PROBES = [
   },
 ];
 
-// ---- write ----------------------------------------------------------------------------------------------------------
-rmSync(join(ROOT, "rules"), { recursive: true, force: true });
-rmSync(join(ROOT, "labels"), { recursive: true, force: true });
-const fixtures = join(ROOT, "labels", "fixtures");
-for (const [path, text] of Object.entries(FILES)) {
-  mkdirSync(dirname(join(fixtures, path)), { recursive: true });
-  writeFileSync(join(fixtures, path), text);
-}
+// ---- render ---------------------------------------------------------------------------------------------------------
 const position = (path, needle) => {
   const text = FILES[path];
   if (needle === undefined) return { line: 1, column: 1 };
@@ -392,47 +392,64 @@ const position = (path, needle) => {
   const before = text.slice(0, index).split("\n");
   return { line: before.length, column: [...before.at(-1)].length + 1 };
 };
-const findings = [];
-mkdirSync(join(ROOT, "rules"), { recursive: true });
-for (const probe of PROBES) {
-  const code = `next/${probe.name}`;
-  writeFileSync(
-    join(ROOT, "rules", `next-probe-${probe.name}.json`),
+const capabilities = probe => ["syntax", ...(JSON.stringify(probe.ast).includes('"resolves"') ? ["scope"] : []), ...(JSON.stringify(probe.ast).includes('"value"') ? ["value"] : [])];
+
+/** Every file of the probe pack, by its path under NEXT_PROBES_ROOT (`/`-separated), and its text. */
+export function renderNextProbes() {
+  const files = new Map();
+  for (const [path, text] of Object.entries(FILES)) files.set(`labels/fixtures/${path}`, text);
+  const findings = [];
+  for (const probe of PROBES) {
+    const code = `next/${probe.name}`;
+    files.set(
+      `rules/next-probe-${probe.name}.json`,
+      `${JSON.stringify(
+        {
+          format: "rerail.policy/v1",
+          id: `next-probe-${probe.name}`,
+          revision: probe.revision ?? 1,
+          mode: "log",
+          description: `Next pack probe. ${probe.description}`,
+          scope: SCOPE,
+          clauses: [{ id: "probe", forbid: { ast: { language: "typescript", ...probe.ast } }, violation: { anchor: probe.anchor ?? "witness.span", code, message: probe.description } }],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    for (const [path, needle] of probe.labels) findings.push({ rule: code, path, ...position(path, needle) });
+  }
+  findings.sort((a, b) => (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line || a.column - b.column);
+  files.set(
+    "labels/fixtures.expected.json",
+    `${JSON.stringify({ tool: "labels", version: "1", source: { kind: "fixtures", origin: "hand-labelled", rules: PROBES.map(probe => `next/${probe.name}`), files: [Object.keys(FILES).sort()] }, findings }, null, 1)}\n`,
+  );
+  files.set(
+    "conformance.json",
     `${JSON.stringify(
       {
-        format: "rerail.policy/v1",
-        id: `next-probe-${probe.name}`,
-        revision: 1,
-        mode: "log",
-        description: `Next pack probe. ${probe.description}`,
-        scope: SCOPE,
-        clauses: [{ id: "probe", forbid: { ast: { language: "typescript", ...probe.ast } }, violation: { anchor: probe.anchor ?? "witness.span", code, message: probe.description } }],
+        pack: "next-probes",
+        family: "ecma",
+        capabilities: ["syntax", "scope", "value"],
+        tools: [{ name: "labels", version: "1" }],
+        oracles: ".",
+        rules: PROBES.map(probe => ({ id: `next-probe-${probe.name}`, upstream: { tool: "labels", rule: `next/${probe.name}` }, policy: `rules/next-probe-${probe.name}.json`, capabilities: capabilities(probe), match: "line+column" })),
       },
       null,
       2,
     )}\n`,
   );
-  for (const [path, needle] of probe.labels) findings.push({ rule: code, path, ...position(path, needle) });
+  return files;
 }
-findings.sort((a, b) => (a.rule < b.rule ? -1 : a.rule > b.rule ? 1 : 0) || (a.path < b.path ? -1 : a.path > b.path ? 1 : 0) || a.line - b.line || a.column - b.column);
-writeFileSync(
-  join(ROOT, "labels", "fixtures.expected.json"),
-  `${JSON.stringify({ tool: "labels", version: "1", source: { kind: "fixtures", origin: "hand-labelled", rules: PROBES.map(probe => `next/${probe.name}`), files: [Object.keys(FILES).sort()] }, findings }, null, 1)}\n`,
-);
-const capabilities = probe => ["syntax", ...(JSON.stringify(probe.ast).includes('"resolves"') ? ["scope"] : []), ...(JSON.stringify(probe.ast).includes('"value"') ? ["value"] : [])];
-writeFileSync(
-  join(ROOT, "conformance.json"),
-  `${JSON.stringify(
-    {
-      pack: "next-probes",
-      family: "ecma",
-      capabilities: ["syntax", "scope", "value"],
-      tools: [{ name: "labels", version: "1" }],
-      oracles: ".",
-      rules: PROBES.map(probe => ({ id: `next-probe-${probe.name}`, upstream: { tool: "labels", rule: `next/${probe.name}` }, policy: `rules/next-probe-${probe.name}.json`, capabilities: capabilities(probe), match: "line+column" })),
-    },
-    null,
-    2,
-  )}\n`,
-);
-console.log(`probes: ${PROBES.length}, files: ${Object.keys(FILES).length}, labels: ${findings.length}`);
+
+// ---- write ----------------------------------------------------------------------------------------------------------
+if (process.argv[1] !== undefined && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  const files = renderNextProbes();
+  rmSync(join(NEXT_PROBES_ROOT, "rules"), { recursive: true, force: true });
+  rmSync(join(NEXT_PROBES_ROOT, "labels"), { recursive: true, force: true });
+  for (const [path, text] of files) {
+    mkdirSync(dirname(join(NEXT_PROBES_ROOT, path)), { recursive: true });
+    writeFileSync(join(NEXT_PROBES_ROOT, path), text);
+  }
+  console.log(`probes: ${PROBES.length}, files: ${Object.keys(FILES).length}, labels: ${JSON.parse(files.get("labels/fixtures.expected.json")).findings.length}`);
+}

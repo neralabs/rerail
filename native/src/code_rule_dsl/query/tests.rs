@@ -44,9 +44,11 @@ fn regex_matches_stop_at_the_deadline() {
 /// A Python pack code rule (a path under `packs/python/`: `rules/` or `candidates/rules/`), as
 /// the conformance runner registers it.
 fn python_pack_code_rule(rule: &str) -> CompiledCodeRuleDsl {
-    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../packs/python")
-        .join(rule);
+    let path = std::path::PathBuf::from(
+        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
+    )
+    .join("../packs/python")
+    .join(rule);
     CodeRuleDslRuntime::compile(
         std::fs::read_to_string(&path).expect("pack policy"),
         "json".to_owned(),
@@ -75,8 +77,7 @@ fn agreeing(
 /// The shortcuts that only skip work (the anchor-set shortcuts) change no result of F811, F821 or
 /// F841: on every Ruff fixture, and on a module that mixes unpacking, assignment chains, walruses,
 /// `with` targets, redefinitions and dotted imports.
-#[test]
-fn python_shortcuts_change_no_pack_result() {
+fn python_shortcuts_agree_for_rule(rule: &str) {
     let fixtures = pack_test_data("packs/python/upstream/ruff/fixtures");
     let mut files = Vec::new();
     let mut pending = vec![fixtures];
@@ -122,30 +123,33 @@ class C:
     import sys
     z = sys
 ";
-    // Each rule on a thread of its own: the shortcuts are switched per thread.
-    std::thread::scope(|scope| {
-        for rule in [
-            "candidates/rules/ruff-f811-redefined-while-unused.json",
-            "candidates/rules/ruff-f821-undefined-name.json",
-            "candidates/rules/ruff-f841-unused-variable.json",
-        ] {
-            let files = &files;
-            scope.spawn(move || {
-                let (with, without) = (python_pack_code_rule(rule), python_pack_code_rule(rule));
-                for file in files {
-                    let source = std::fs::read_to_string(file).expect("fixture");
-                    let path = if file.extension().is_some_and(|extension| extension == "pyi") {
-                        "fixture.pyi"
-                    } else {
-                        "fixture.py"
-                    };
-                    agreeing(&with, &without, path, &source);
-                }
-                let result = agreeing(&with, &without, "mixed.py", mixed);
-                assert_eq!(result["failures"], json!([]), "{rule}: {result}");
-            });
-        }
-    });
+    let (with, without) = (python_pack_code_rule(rule), python_pack_code_rule(rule));
+    for file in &files {
+        let source = std::fs::read_to_string(file).expect("fixture");
+        let path = if file.extension().is_some_and(|extension| extension == "pyi") {
+            "fixture.pyi"
+        } else {
+            "fixture.py"
+        };
+        agreeing(&with, &without, path, &source);
+    }
+    let result = agreeing(&with, &without, "mixed.py", mixed);
+    assert_eq!(result["failures"], json!([]), "{rule}: {result}");
+}
+
+#[test]
+fn python_shortcuts_change_no_pack_result_f811() {
+    python_shortcuts_agree_for_rule("candidates/rules/ruff-f811-redefined-while-unused.json");
+}
+
+#[test]
+fn python_shortcuts_change_no_pack_result_f821() {
+    python_shortcuts_agree_for_rule("candidates/rules/ruff-f821-undefined-name.json");
+}
+
+#[test]
+fn python_shortcuts_change_no_pack_result_f841() {
+    python_shortcuts_agree_for_rule("candidates/rules/ruff-f841-unused-variable.json");
 }
 
 /// F841's work grows linearly with a function's assignments, each an unpacked chain whose

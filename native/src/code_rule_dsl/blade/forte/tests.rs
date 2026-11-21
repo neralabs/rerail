@@ -23,13 +23,15 @@ use std::collections::BTreeMap;
 use std::fmt::Write as _;
 use std::path::Path;
 
-const ORACLES: &str = crate::code_rule_dsl::fixtures_dir!();
-
 /// The oracle file at `path` (`/`-separated) below the Forte fixtures. On Windows the fixtures
 /// folder is the verbatim path `build.rs` canonicalized (`\\?\C:\...`), where `/` separates no
 /// names, so `Path::join` adds each name with the platform's separator.
 pub(super) fn read_oracle(path: &str) -> Json {
-    read_json(Path::new(ORACLES).join("blade/blade/forte").join(path))
+    read_json(
+        Path::new(crate::code_rule_dsl::fixtures::fixtures_dir!())
+            .join("blade/blade/forte")
+            .join(path),
+    )
 }
 
 pub(super) fn read_json(path: impl AsRef<Path>) -> Json {
@@ -743,6 +745,11 @@ impl Outcome {
 /// Checks every case of an oracle file; cases with only digests are checked when the stage
 /// compares whole trees.
 fn check_file(oracle: &Json) -> Outcome {
+    check_cases(oracle, |_| true)
+}
+
+/// `check_file` over the cases whose index `keep` admits.
+fn check_cases(oracle: &Json, keep: impl Fn(usize) -> bool) -> Outcome {
     let stage = stage();
     let only: Option<usize> = std::env::var("FORTE_CASE")
         .ok()
@@ -755,7 +762,7 @@ fn check_file(oracle: &Json) -> Outcome {
         .iter()
         .enumerate()
     {
-        if only.is_some_and(|only| only != index) {
+        if only.is_some_and(|only| only != index) || !keep(index) {
             continue;
         }
         let source = source_of(case);
@@ -830,13 +837,35 @@ pub(super) fn prefix_positions(length: usize) -> Vec<usize> {
     }
 }
 
-#[test]
-fn forte_suite_matches_forte() {
+/// Forte's test suite, in four shards by case index so they run in parallel; each holds a quarter
+/// of the suite's 9,000-plus trees.
+fn forte_suite_shard(shard: usize) {
     let oracle = match std::env::var("FORTE_SUITE") {
         Ok(path) => read_json(&path),
         Err(_) => read_oracle("suite.expected.json"),
     };
-    check_file(&oracle).assert("Forte's test suite", 9_000);
+    check_cases(&oracle, |index| index % 4 == shard)
+        .assert(&format!("Forte's test suite, shard {shard} of 4"), 2_000);
+}
+
+#[test]
+fn forte_suite_matches_forte() {
+    forte_suite_shard(0);
+}
+
+#[test]
+fn forte_suite_matches_forte_shard_1() {
+    forte_suite_shard(1);
+}
+
+#[test]
+fn forte_suite_matches_forte_shard_2() {
+    forte_suite_shard(2);
+}
+
+#[test]
+fn forte_suite_matches_forte_shard_3() {
+    forte_suite_shard(3);
 }
 
 #[test]

@@ -7,10 +7,12 @@
     {
       "label": "java",
       "variant": "Java",
-      "suffixes": [".java"],
+      "suffixes": [
+        ".java"
+      ],
       "parser": "tree-sitter",
       "grammar": "ast-grep:Java",
-      "tapeTag": 13
+      "tapeTag": 18
     }
   ],
   "capabilities": {

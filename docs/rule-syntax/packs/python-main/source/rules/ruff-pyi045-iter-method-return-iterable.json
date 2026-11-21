@@ -1,0 +1,431 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi045-iter-method-return-iterable",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Annotate __iter__ as returning an Iterator and __aiter__ as returning an AsyncIterator, never the Iterable forms; callers must be able to advance the result.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "iter-returns-iterable",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "method-of": {
+              "kind": "function_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "regex": "^__iter__$"
+              },
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "kind": "class_definition"
+              }
+            },
+            "iterable-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.Iterable",
+                      "collections.abc.Iterable"
+                    ]
+                  }
+                },
+                {
+                  "matches": "later-import-ref"
+                }
+              ]
+            },
+            "later-import-ref": {
+              "kind": "identifier",
+              "pattern": "$LATE",
+              "resolves": {
+                "unresolved": true
+              },
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": "end",
+                  "pattern": "$LATE",
+                  "binds": {
+                    "form": "import",
+                    "scope": "module",
+                    "latest": true
+                  },
+                  "any": [
+                    {
+                      "kind": "dotted_name",
+                      "resolves": {
+                        "imported": [
+                          "typing.Iterable",
+                          "collections.abc.Iterable"
+                        ]
+                      }
+                    },
+                    {
+                      "kind": "identifier",
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "dotted_name",
+                        "resolves": {
+                          "imported": [
+                            "typing.Iterable",
+                            "collections.abc.Iterable"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "ref-expr": {
+              "any": [
+                {
+                  "matches": "iterable-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ref-expr"
+                  }
+                }
+              ]
+            },
+            "subscripted-ref": {
+              "any": [
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "matches": "iterable-ref"
+                  }
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "ref-expr"
+                  }
+                }
+              ]
+            },
+            "subscripted-expr": {
+              "any": [
+                {
+                  "matches": "subscripted-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "subscripted-expr"
+                  }
+                }
+              ]
+            },
+            "iterable-annotation": {
+              "any": [
+                {
+                  "matches": "iterable-ref"
+                },
+                {
+                  "matches": "subscripted-ref"
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "subscripted-expr"
+                  }
+                }
+              ]
+            },
+            "return-position": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "return_type",
+                      "matches": "method-of"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "return-position"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "return-position"
+              },
+              {
+                "matches": "iterable-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI045",
+        "message": "Annotate `__iter__` as returning `Iterator` (from `collections.abc`) instead of `Iterable`; if the body returns a list or similar, return `iter(...)` of it.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI045"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "aiter-returns-async-iterable",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "utils": {
+            "method-of": {
+              "kind": "function_definition",
+              "has": {
+                "stopBy": "neighbor",
+                "field": "name",
+                "regex": "^__aiter__$"
+              },
+              "inside": {
+                "stopBy": {
+                  "any": [
+                    {
+                      "kind": "function_definition"
+                    },
+                    {
+                      "kind": "class_definition"
+                    }
+                  ]
+                },
+                "kind": "class_definition"
+              }
+            },
+            "iterable-ref": {
+              "any": [
+                {
+                  "any": [
+                    {
+                      "kind": "identifier"
+                    },
+                    {
+                      "kind": "attribute"
+                    }
+                  ],
+                  "resolves": {
+                    "import": [
+                      "typing.AsyncIterable",
+                      "collections.abc.AsyncIterable"
+                    ]
+                  }
+                },
+                {
+                  "matches": "later-import-ref"
+                }
+              ]
+            },
+            "later-import-ref": {
+              "kind": "identifier",
+              "pattern": "$LATE",
+              "resolves": {
+                "unresolved": true
+              },
+              "inside": {
+                "stopBy": "end",
+                "kind": "module",
+                "has": {
+                  "stopBy": "end",
+                  "pattern": "$LATE",
+                  "binds": {
+                    "form": "import",
+                    "scope": "module",
+                    "latest": true
+                  },
+                  "any": [
+                    {
+                      "kind": "dotted_name",
+                      "resolves": {
+                        "imported": [
+                          "typing.AsyncIterable",
+                          "collections.abc.AsyncIterable"
+                        ]
+                      }
+                    },
+                    {
+                      "kind": "identifier",
+                      "follows": {
+                        "stopBy": "end",
+                        "kind": "dotted_name",
+                        "resolves": {
+                          "imported": [
+                            "typing.AsyncIterable",
+                            "collections.abc.AsyncIterable"
+                          ]
+                        }
+                      }
+                    }
+                  ]
+                }
+              }
+            },
+            "ref-expr": {
+              "any": [
+                {
+                  "matches": "iterable-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "ref-expr"
+                  }
+                }
+              ]
+            },
+            "subscripted-ref": {
+              "any": [
+                {
+                  "kind": "generic_type",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "kind": "identifier",
+                    "matches": "iterable-ref"
+                  }
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "ref-expr"
+                  }
+                }
+              ]
+            },
+            "subscripted-expr": {
+              "any": [
+                {
+                  "matches": "subscripted-ref"
+                },
+                {
+                  "kind": "parenthesized_expression",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "subscripted-expr"
+                  }
+                }
+              ]
+            },
+            "iterable-annotation": {
+              "any": [
+                {
+                  "matches": "iterable-ref"
+                },
+                {
+                  "matches": "subscripted-ref"
+                },
+                {
+                  "kind": "subscript",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "field": "value",
+                    "matches": "subscripted-expr"
+                  }
+                }
+              ]
+            },
+            "return-position": {
+              "any": [
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "type",
+                    "inside": {
+                      "stopBy": "neighbor",
+                      "field": "return_type",
+                      "matches": "method-of"
+                    }
+                  }
+                },
+                {
+                  "inside": {
+                    "stopBy": "neighbor",
+                    "kind": "parenthesized_expression",
+                    "matches": "return-position"
+                  }
+                }
+              ]
+            }
+          },
+          "rule": {
+            "all": [
+              {
+                "matches": "return-position"
+              },
+              {
+                "matches": "iterable-annotation"
+              }
+            ]
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI045",
+        "message": "Annotate `__aiter__` as returning `AsyncIterator` (from `collections.abc`) instead of `AsyncIterable`; the result must support `__anext__`.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI045"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

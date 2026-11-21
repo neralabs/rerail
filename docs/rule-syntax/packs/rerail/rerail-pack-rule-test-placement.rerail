@@ -1,0 +1,96 @@
+.policy "rerail-pack-rule-test-placement" revision 2
+.description "Keep a test of one or a few code rules of a single pack in the code-rule tests' pack-rules folder; engine-feature, pack-wide and conversation-rule tests stay where they are."
+.language typescript
+.mode steer
+.scope include "test/engine/**/*.test.ts"
+.scope exclude "test/engine/code-rule/pack-rules/**", "test/engine/code-rule/ecma/node-pack-module-system*.test.ts", "test/engine/catalog/javascript-rule-options.test.ts"
+// A test of one or a few code rules of a single pack lives in test/engine/code-rule/pack-rules/. A test elsewhere
+// under test/engine that reads one rule's JSON file from a pack, or loads a pack to pick rules out of it by id,
+// is reported at that call; tests of conversation rules (which name parseConversationRule,
+// ConversationRuleRegistry or conversationRuleSchema) are not.
+//   repositoryPath("packs", "python", "candidates", "rules", `${RULE_ID}.json`)     reported
+//   join(repositoryPath("packs", "python", "rules"), "bandit-b101.json")            reported
+//   repositoryPath("packs/python/rules/bandit-b101.json")                           reported
+//   loadBundledRules([repositoryPath("packs", "python")]).find(…)                   reported
+//   const documents = loadPackRuleDocuments([repositoryPath("packs", "python")]);   reported where the file
+//       … documents.filter(d => d.rule.id === "bandit-b101") …                      picks rules by `x.rule.id ===`
+//   loadPackRuleDocuments([repositoryPath("packs", "complexity")]).filter(…)        not reported (a whole pack)
+// The JSON's `regex` tests the call's whole text, as ast-grep's does: `^`/`$` anchor it.
+
+.violation PACK_RULE_TEST_OUTSIDE_PACK_RULES(at: node) "Move this test into test/engine/code-rule/pack-rules/, fixing its relative paths for the new depth; merge into a same-named file there. Leave engine-feature, pack-wide and conversation-rule tests."
+PACK_RULE_TEST_OUTSIDE_PACK_RULES(n) :- reads_pack_rule(n), docof(n, d), !conversation_rule_test(d).
+
+// reads_pack_rule(n): call n reads one rule's file from a pack, by its path's parts, joined, or as one path.
+.decl reads_pack_rule(n: node)
+reads_pack_rule(n) :- kind(n, "call_expression"),
+    match("repositoryPath\\(\\s*[\"\\']packs[\"\\'],\\s*[\"\\'][a-z0-9-]+[\"\\'],\\s*(?:[\"\\']candidates[\"\\'],\\s*)?[\"\\']rules[\"\\'],\\s*(?:[\"\\'][^\"\\'\\n]+\\.json[\"\\']|`[^`\\n]*\\.json`)\\s*,?\\s*\\)", n).
+reads_pack_rule(n) :- kind(n, "call_expression"),
+    match("(?:path\\.)?join\\(\\s*repositoryPath\\(\\s*[\"\\']packs[\"\\'],\\s*[\"\\'][a-z0-9-]+[\"\\'],\\s*(?:[\"\\']candidates[\"\\'],\\s*)?[\"\\']rules[\"\\']\\s*\\)\\s*,\\s*(?:[\"\\'][^\"\\'\\n]+\\.json[\"\\']|`[^`\\n]*\\.json`)(?s:.*)", n).
+reads_pack_rule(n) :- kind(n, "call_expression"),
+    match("repositoryPath\\(\\s*(?:[\"\\']packs/[a-z0-9-]+/(?:candidates/)?rules/[^\"\\'\\n]+\\.json[\"\\']|`packs/[a-z0-9-]+/(?:candidates/)?rules/[^`\\n]+\\.json`)\\s*\\)", n).
+// Or loads a pack and finds a rule in it, or keeps the pack's documents in a variable in a file that picks rules by id.
+reads_pack_rule(n) :- kind(n, "call_expression"),
+    match("(?:loadPackRuleDocuments|loadBundledRules)\\(\\s*\\[\\s*repositoryPath\\(\\s*[\"\\']packs[\"\\'],\\s*[\"\\'][a-z0-9-]+[\"\\'][^\\]]*\\]\\s*\\)\\s*\\.find\\((?s:.*)", n).
+reads_pack_rule(n) :- kind(n, "call_expression"),
+    match("(?:loadPackRuleDocuments|loadBundledRules)\\(\\s*\\[\\s*repositoryPath\\(\\s*[\"\\']packs[\"\\'],\\s*[\"\\'][a-z0-9-]+[\"\\']\\s*\\)\\s*,?\\s*\\]\\s*\\)", n),
+    child(v, n, _), kind(v, "variable_declarator"), docof(n, d), picks_rule_by_id(d).
+
+// picks_rule_by_id(d): d compares `x.rule.id` with `===` somewhere.
+.decl picks_rule_by_id(d: number)
+picks_rule_by_id(d) :- kind(m, "member_expression"), match("[A-Za-z_$][\\w$]*\\.rule\\.id", m),
+    inside(m, b, "binary_expression"), match("(?s:.*)\\.rule\\.id\\s*===(?s:.*)", b), docof(m, d).
+// conversation_rule_test(d): d names the conversation rules' parser, registry or schema.
+.decl conversation_rule_test(d: number)
+conversation_rule_test(d) :- kind(i, "identifier"),
+    glob("{parseConversationRule,ConversationRuleRegistry,conversationRuleSchema}", i), docof(i, d).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_single_rule_test_is_reported exactly
+    .fixture "test/engine/code-rule/python-bandit-b604-shell-keyword.test.ts" ```
+        import { readFile } from "node:fs/promises";
+        import { repositoryPath } from "../../support/oracles.js";
+
+        const RULE_ID = "bandit-b604-any-other-function-with-shell-equals-true";
+        const rule = await readFile(repositoryPath("packs", "python", "candidates", "rules", `${RULE_ID}.json`), "utf8");
+        ```
+    .expect PACK_RULE_TEST_OUTSIDE_PACK_RULES at "test/engine/code-rule/python-bandit-b604-shell-keyword.test.ts":5
+.end
+
+.test joins_paths_and_finds_are_reported exactly
+    .fixture "test/engine/catalog/one-rule.test.ts" ```
+        const a = join(repositoryPath("packs", "python", "rules"), "bandit-b101.json");
+        const b = repositoryPath("packs/python/rules/bandit-b101.json");
+        const c = loadBundledRules([repositoryPath("packs", "python")]).find(rule => rule.id === "x");
+        const documents = loadPackRuleDocuments([repositoryPath("packs", "python")]);
+        const picked = documents.filter(document => document.rule.id === "bandit-b101");
+        const folder = repositoryPath("packs", "python", "rules");
+        ```
+    .expect PACK_RULE_TEST_OUTSIDE_PACK_RULES at "test/engine/catalog/one-rule.test.ts":1
+    .expect PACK_RULE_TEST_OUTSIDE_PACK_RULES at "test/engine/catalog/one-rule.test.ts":2
+    .expect PACK_RULE_TEST_OUTSIDE_PACK_RULES at "test/engine/catalog/one-rule.test.ts":3
+    .expect PACK_RULE_TEST_OUTSIDE_PACK_RULES at "test/engine/catalog/one-rule.test.ts":4
+.end
+
+// The pack's passing example, a whole pack kept without picking by id, a conversation-rule test, and the files
+// the scope leaves out.
+.test pack_wide_and_conversation_tests_pass exactly
+    .fixture "test/engine/code-rule/complexity-rules.test.ts" ```
+        import { loadPackRuleDocuments } from "../../../src/engine/catalog/rule-documents.js";
+        import { repositoryPath } from "../../support/oracles.js";
+
+        const documents = loadPackRuleDocuments([repositoryPath("packs", "complexity")]).filter(document => document.rule.id.startsWith("complexity-"));
+        ```
+    .fixture "test/engine/catalog/whole-pack.test.ts" ```
+        const documents = loadPackRuleDocuments([repositoryPath("packs", "python")]);
+        expect(documents.length).toBeGreaterThan(10);
+        ```
+    .fixture "test/engine/conversation/rules.test.ts" ```
+        const rule = parseConversationRule(await readFile(repositoryPath("packs", "omp", "rules", "x.json"), "utf8"));
+        ```
+    .fixture "test/engine/code-rule/pack-rules/bandit.test.ts" ```
+        const rule = repositoryPath("packs", "python", "rules", "bandit-b101.json");
+        ```
+    .fixture "test/engine/catalog/javascript-rule-options.test.ts" ```
+        const rule = repositoryPath("packs", "javascript", "rules", "eslint-curly.json");
+        ```
+.end

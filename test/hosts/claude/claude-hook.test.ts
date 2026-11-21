@@ -5,9 +5,10 @@ import { createServer as createHttpServer, type Server } from "node:http";
 import type { AddressInfo } from "node:net";
 import { join } from "node:path";
 import Database from "better-sqlite3";
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { z } from "zod";
 import { type AdapterDelivery, codeRuleSchema, conflictNote, defaultRerailDatabasePath, type RerailEventLoop, sessionStartNote } from "../../../src/engine/index.js";
+import { SqliteSessionReader } from "../../../src/runtime/index.js";
 import { claudeHookOutput, handleClaudeEvent } from "../../../src/hosts/claude/claude-hook-adapter.js";
 import { runClaudeHook } from "../../../src/hosts/claude/claude-hook.js";
 import { bindSteerReceipt, type HookInput, type HookOptions } from "../../../src/harness/index.js";
@@ -16,9 +17,26 @@ import { hookOptions, scriptedLoop, serveText, temporaryDirectories, sessionData
 import { startTestRepository, stopTestRepository } from "../../support/started-repository.js";
 import { setUpTestRepository } from "../../support/repository-rules.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { startChurn } from "../../support/processes/churn.js";
+import { denyAccess, restoreAccess } from "../../support/platform/deny-access.js";
 import { editSteer, steeredRules } from "../../support/steers.js";
 import { closeNativeTestDaemons, startNativeTestDaemon } from "../../support/native-daemon.js";
 import { testEngineEndpoint } from "../../support/platform/engine-endpoint.js";
+
+/**
+ * The daemon's waits (`daemon-waits.ts`) as the hook reads them, each as it waits: the product's, unless a test sets
+ * its own, as the tests that wait out a busy or silent daemon do.
+ */
+const waits = vi.hoisted(() => ({ probeMs: undefined as number | undefined, busyMs: undefined as number | undefined }));
+vi.mock("../../../src/runtime/daemon/daemon-waits.js", async () => {
+  const actual = await vi.importActual<typeof import("../../../src/runtime/daemon/daemon-waits.js")>("../../../src/runtime/daemon/daemon-waits.js");
+  return {
+    ...actual,
+    get PROBE_TIMEOUT_MS() { return waits.probeMs ?? actual.PROBE_TIMEOUT_MS; },
+    get BUSY_DAEMON_WAIT_MS() { return waits.busyMs ?? actual.BUSY_DAEMON_WAIT_MS; },
+    get HOOK_DAEMON_WAIT_MS() { return (waits.probeMs ?? actual.PROBE_TIMEOUT_MS) + (waits.busyMs ?? actual.BUSY_DAEMON_WAIT_MS); },
+  };
+});
 
 const temporaryDirectory = temporaryDirectories("rerail-claude-hook-");
 
@@ -77,8 +95,20 @@ describe("Claude Code hook without a daemon", () => {
 });
 
 describe("Claude Code hook with a daemon that misses its health probe", () => {
+  // The hook's waits for the daemon, shorter than the product's 2 s probe and 10 s busy wait, in the same order and
+  // with the same 2 s start check (`READ_TIMEOUT_MS`) before them: a hook waits `HOOK_WAIT_MS` from the event's arrival.
+  // The probe stays long enough that hooks waiting in turn would finish a second or more apart.
+  const PROBE_MS = 1_000;
+  const BUSY_MS = 6_000;
+  const HOOK_WAIT_MS = PROBE_MS + BUSY_MS;
   const servers: Server[] = [];
+  beforeEach(() => {
+    waits.probeMs = PROBE_MS;
+    waits.busyMs = BUSY_MS;
+  });
   afterEach(async () => {
+    waits.probeMs = undefined;
+    waits.busyMs = undefined;
     vi.unstubAllEnvs();
     await Promise.all(servers.splice(0).map(server => {
       server.closeAllConnections();
@@ -127,8 +157,9 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
     vi.stubEnv("RERAIL_AUTOSTART", autostart);
     const daemon = await startNativeTestDaemon(root);
-    // The daemon answers 3 s late, past the first probe's 2 s, as one does while an audit holds its event loop.
-    const front = await slowFront(daemon.url, 3_000);
+    // The daemon answers 2.5 s late, past the start check's 2 s and the first probe's, as one does while an audit holds
+    // its event loop.
+    const front = await slowFront(daemon.url, 2_500);
     await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
     const daemonPath = daemonHookOptions(root, { keepDatabase: false });
     const common = { session_id: "busy-session", cwd: root };
@@ -192,12 +223,12 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
       return performance.now() - started;
     };
     const finished = await Promise.all([toolCall("t1"), toolCall("t2"), toolCall("t3")]);
-    // Each hook gives up on the silent daemon about 12 s after its event arrives. Under the session's lock each would
-    // begin its wait when the one before it gave up, and the three would finish 2 s or more apart.
-    expect(Math.max(...finished) - Math.min(...finished)).toBeLessThan(1_000);
+    // Each hook gives up on the silent daemon `HOOK_WAIT_MS` after its event arrives. Under the session's lock each
+    // would begin its wait when the one before it gave up, and the three would finish a probe or more apart.
+    expect(Math.max(...finished) - Math.min(...finished)).toBeLessThan(PROBE_MS);
   });
 
-  it("gives up on a silent daemon 12 s after the event arrives, the start check's read of it included", { timeout: 60_000 }, async () => {
+  it("gives up on a silent daemon at the hook's wait after the event arrives, the start check's read of it included", { timeout: 60_000 }, async () => {
     const root = await temporaryDirectory();
     startTestRepository(root);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
@@ -209,12 +240,13 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     await rewriteState(state => ({ ...state, url: front, port: Number(new URL(front).port) }));
     const started = performance.now();
     expect(await runClaudeHook({ ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "t1", tool_input: { file_path: "a.ts" } }, daemonPath)).toEqual({});
-    // The start check waited 2 s for the daemon, then the endpoint lookup waited its own 2 s and 10 s: about 14.3 s.
-    expect(performance.now() - started).toBeLessThan(13_000);
+    // Had the wait begun after the start check, the check would have waited 2 s, then the endpoint lookup its own
+    // `HOOK_WAIT_MS`.
+    expect(performance.now() - started).toBeLessThan(HOOK_WAIT_MS + 1_000);
   });
 
   // RERAIL_AUTOSTART=1 is a person's session, where the start finds the daemon alive and waits for it; 0 starts none.
-  it.each(["1", "0"])("gives up on a silent daemon at a session's start 12 s after the event arrives (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
+  it.each(["1", "0"])("gives up on a silent daemon at a session's start at the hook's wait after the event arrives (RERAIL_AUTOSTART=%s)", { timeout: 60_000 }, async autostart => {
     const root = await temporaryDirectory();
     startTestRepository(root);
     vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
@@ -226,9 +258,9 @@ describe("Claude Code hook with a daemon that misses its health probe", () => {
     const started = performance.now();
     await expect(runClaudeHook({ session_id: "silent-start", cwd: root, hook_event_name: "SessionStart", source: "startup" }, daemonPath))
       .rejects.toThrow(/is alive but not answering/u);
-    // The start check waited 2 s for the daemon, then the start's lookup waited its own 2 s and 10 s: about 14 s, and
-    // 24 s with RERAIL_AUTOSTART=0, whose lookup waited the 10 s twice.
-    expect(performance.now() - started).toBeLessThan(13_000);
+    // Had the wait begun after the start check, the check would have waited 2 s, then the start's lookup its own
+    // `HOOK_WAIT_MS`, and with RERAIL_AUTOSTART=0 the busy wait twice.
+    expect(performance.now() - started).toBeLessThan(HOOK_WAIT_MS + 1_000);
   });
 });
 
@@ -311,6 +343,175 @@ describe("Claude Code hook with a running daemon", () => {
       database.close();
     }
     expect(JSON.stringify([result, stop])).toContain("test:no-print");
+  });
+
+  describe("a session whose turn ends cannot check part of the repository", () => {
+    /** A regex rule on every Python file, so the session's code rules run and its turn ends walk the repository. */
+    const PYTHON_RULE = codeRuleSchema.parse({
+      format: "rerail.policy/v1", id: "test:needle", revision: 1, mode: "log", scope: { include: ["**/*.py"], exclude: [] },
+      clauses: [{ id: "needle", violation: { code: "NEEDLE", anchor: "witness.span", message: "No needle" }, forbid: { regex: { pattern: "NEEDLE", source: "file.content" } } }],
+    });
+    const denied: string[] = [];
+    afterEach(async () => {
+      for (const folder of denied.splice(0)) await restoreAccess(folder);
+    });
+
+    /** A Git repository under `root` with the rule on, and a daemon serving it, as a person's started repository is. */
+    async function startedRepository(root: string): Promise<string> {
+      const repository = join(root, "repository");
+      await mkdir(join(repository, "src"), { recursive: true });
+      await writeFile(join(repository, "src", "app.py"), "def app():\n    return 1\n");
+      execFileSync("git", ["init", "-q"], { cwd: repository });
+      setUpTestRepository(repository, { library: [{ kind: "code", rule: PYTHON_RULE }] });
+      vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
+      await startNativeTestDaemon(repository);
+      return repository;
+    }
+    /** A replayed Claude Code session in `repository`: its start, then each turn's prompt and the Stop that ends it. */
+    function claudeSession(repository: string, id: string) {
+      const options = daemonHookOptions(repository, { keepDatabase: false });
+      const common = { session_id: id, cwd: repository };
+      let turn = 0;
+      return {
+        start: (source = "startup") => runClaudeHook({ ...common, hook_event_name: "SessionStart", source }, options),
+        async turn() {
+          turn += 1;
+          await runClaudeHook({ ...common, hook_event_name: "UserPromptSubmit", prompt_id: `p${turn}`, prompt: "Tidy the app." }, options);
+          return await runClaudeHook({ ...common, hook_event_name: "Stop", prompt_id: `p${turn}`, stop_hook_active: false, last_assistant_message: "Done." }, options);
+        },
+        /** Ends turns until one ends with the session's code rules running, so its walk ran; at most 30. */
+        async walked() {
+          for (let tries = 0; tries < 30; tries += 1) {
+            const pending = kindCount(id, "code-rules-pending");
+            await this.turn();
+            if (kindCount(id, "code-rules-pending") === pending) return;
+          }
+          throw new Error(`${id}: the session's code rules never ran`);
+        },
+      };
+    }
+    function kindCount(sessionId: string, kind: string): number {
+      const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+      try {
+        return database.prepare<[string, string], { n: number }>("SELECT count(*) AS n FROM events WHERE session_id = ? AND kind = ?").get(sessionId, kind)!.n;
+      } finally {
+        database.close();
+      }
+    }
+    /** The session's `source-discovery-gap` rows, each payload but its boundary, in the order recorded. */
+    function gapRows(sessionId: string): unknown[] {
+      const database = new Database(defaultRerailDatabasePath(), { readonly: true });
+      try {
+        return database.prepare<[string], { payload: string }>(
+          "SELECT payload_json AS payload FROM events WHERE session_id = ? AND kind = 'source-discovery-gap' ORDER BY sequence",
+        ).all(sessionId).map(row => {
+          const { boundary: _boundary, ...place } = JSON.parse(row.payload) as Record<string, unknown>;
+          return place;
+        });
+      } finally {
+        database.close();
+      }
+    }
+    /** The places recorded for the session, each with why, once what a person reads (count and list) says the same. */
+    function gapPlaces(sessionId: string): unknown[] {
+      const rows = gapRows(sessionId);
+      const reader = new SqliteSessionReader(defaultRerailDatabasePath());
+      try {
+        expect(reader.gaps(sessionId).discoveryGaps).toBe(rows.length);
+        expect(reader.discoveryGaps(sessionId, 1_000).map(({ path, reason }) => ({ path, reason }))).toEqual(rows);
+        return rows;
+      } finally {
+        reader.close();
+      }
+    }
+    /** Takes the folder's rights away (`denyAccess`); whether that holds for the daemon these tests start. */
+    async function deny(folder: string): Promise<boolean> {
+      denied.push(folder);
+      return await denyAccess(folder);
+    }
+    /** Whether a denial holds for this process, asked of a scratch folder under `root` before any session walks. */
+    async function denialHolds(root: string): Promise<boolean> {
+      const scratch = join(root, "denial-probe");
+      await mkdir(scratch);
+      const holds = await deny(scratch);
+      await restoreAccess(scratch);
+      return holds;
+    }
+    /** Why a folder the user is denied is a place: EACCES on POSIX; on Windows EPERM, whose look again finds it still there. */
+    function deniedReason(folder: string, place: string): unknown {
+      if (process.platform !== "win32") return `EACCES: permission denied, opendir '${folder}'`;
+      return expect.stringMatching(new RegExp(`^EPERM: operation not permitted, opendir '.+[\\\\/]${place.replaceAll("/", "[\\\\/]")}'$`));
+    }
+
+    it("records ten places that never change once each over 20 turn ends, and answers each Stop as before", { timeout: 180_000 }, async () => {
+      const root = await temporaryDirectory({ started: false });
+      const repository = await startedRepository(root);
+      // Folders the user may not read, where a denial holds for this process; where it does not (root, or a Windows token
+      // holding the backup privilege), Python files too large to read.
+      const denies = await denialHolds(root);
+      const places = Array.from({ length: 10 }, (_, index) => `src/pkg${index}`);
+      for (const place of places) {
+        await mkdir(join(repository, place));
+        await writeFile(join(repository, place, "a.py"), "a = 1\n");
+        if (!denies) await writeFile(join(repository, place, "big.py"), "x = 1\n".repeat(170_000));
+      }
+      const session = claudeSession(repository, "places-session");
+      await session.start();
+      await session.walked();
+      if (denies) for (const place of places) expect(await deny(join(repository, place))).toBe(true);
+      for (let turn = 0; turn < 20; turn += 1) expect(await session.turn()).toEqual({});
+
+      const reasons = places.map(place => (denies ? deniedReason(join(repository, place), place) : "Source exceeds 1000000 byte policy limit"));
+      expect(gapRows("places-session")).toHaveLength(10);
+      expect(gapPlaces("places-session")).toEqual(places.map((place, index) => ({ path: denies ? place : `${place}/big.py`, reason: reasons[index] })));
+    });
+
+    it("records nothing of the folders and files a running process makes and removes beside 30 turn ends", { timeout: 180_000 }, async () => {
+      const root = await temporaryDirectory({ started: false });
+      const repository = await startedRepository(root);
+      const churn = join(repository, "src", "churn");
+      await mkdir(churn);
+      const session = claudeSession(repository, "churn-session");
+      await session.start();
+      await session.walked();
+      const loop = startChurn(churn);
+      let rounds = 0;
+      try {
+        for (let turn = 0; turn < 30; turn += 1) expect(await session.turn()).toEqual({});
+      } finally {
+        rounds = await loop.stop();
+      }
+      expect(rounds).toBeGreaterThan(30);
+      expect(gapRows("churn-session")).toEqual([]);
+      expect(gapPlaces("churn-session")).toEqual([]);
+    });
+
+    it("records no second copy of a folder whose files it saw, after the daemon restarts and the session resumes", { timeout: 180_000 }, async ({ skip }) => {
+      const root = await temporaryDirectory({ started: false });
+      const repository = await startedRepository(root);
+      const locked = join(repository, "src", "locked");
+      await mkdir(locked);
+      await writeFile(join(locked, "a.py"), "a = 1\n");
+      const session = claudeSession(repository, "restart-session");
+      await session.start();
+      await session.walked();
+      if (!await deny(locked)) skip("this process reads a folder its user is denied: root, or a Windows token holding the backup privilege");
+      for (let turn = 0; turn < 2; turn += 1) await session.turn();
+      const recorded = gapRows("restart-session");
+      // The parent lists the folder and the folder refuses its own listing: with EACCES on POSIX, with EPERM on Windows,
+      // whose look again finds the folder still there, as a folder the user is denied stays.
+      const reason = process.platform === "win32"
+        ? expect.stringMatching(/^EPERM: operation not permitted, opendir '.+[\\/]src[\\/]locked'$/)
+        : `EACCES: permission denied, opendir '${locked}'`;
+      expect(recorded).toEqual([{ path: "src/locked", reason }]);
+
+      await closeNativeTestDaemons();
+      await startNativeTestDaemon(repository);
+      await session.start("resume");
+      await session.walked();
+      for (let turn = 0; turn < 3; turn += 1) await session.turn();
+      expect(gapPlaces("restart-session")).toEqual(recorded);
+    });
   });
 });
 
@@ -551,13 +752,13 @@ describe("Claude Code one-shot hook", () => {
   });
 
   it("gives the agent a conflict note as context and the person its line, beside a rule's, with the card linked as open", () => {
-    const note = conflictNote({ file: "src/model.ts", peer: "PR #398", author: "Tim", summary: "Share compiled matchers", pullRequest: true });
-    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps PR #398 (Tim): model.ts", url: "http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678" };
+    const note = conflictNote({ file: "src/model.ts", peer: "PR #398", author: "Sam", summary: "Share compiled matchers", pullRequest: true });
+    const conflict = { id: "conflict:overlap:abc:12345678", text: "your edit overlaps PR #398 (Sam): model.ts", url: "http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678" };
     const rule = delivery("steer", editSteer("a", "Fix a."), ["a"], steeredRules(["a"], "http://127.0.0.1:4791/"));
     const output = claudeHookOutput("PostToolUse", [rule, { ...delivery("steer", note), conflict }], { links: "plain", mark: "RERAIL" });
     expect(output).toEqual({
       systemMessage: "\n◆ RERAIL · a  steered  ·  why? → http://127.0.0.1:4791/#rule/a"
-        + "\n◆ RERAIL · your edit overlaps PR #398 (Tim): model.ts  ·  open → http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678",
+        + "\n◆ RERAIL · your edit overlaps PR #398 (Sam): model.ts  ·  open → http://127.0.0.1:4791/#merge?conflict=conflict:overlap:abc:12345678",
       hookSpecificOutput: { hookEventName: "PostToolUse", additionalContext: `${editSteer("a", "Fix a.")}\n\n${note}` },
     });
   });

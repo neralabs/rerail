@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from "node:crypto";
-import { spawn, spawnSync } from "node:child_process";
-import { appendFileSync, mkdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { appendFileSync, chmodSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
 import { type FileHandle, mkdtemp, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -10,6 +10,8 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 import { rewriteAppendedFile, runScrubCommand, scrubHintOnce } from "../../src/cli/scrub-cli.js";
 import { openRerailDatabase, recordCheckout } from "../../src/engine/index.js";
 import { withPendingFileLock } from "../../src/harness/index.js";
+import { withoutBackupPrivileges } from "../support/platform/backup-privileges.js";
+import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 import { linkFolder } from "../support/platform/links.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
 
@@ -29,9 +31,10 @@ vi.mock("../../src/engine/storage/database.js", async () => {
 /**
  * The files whose every write by the scrub first waits until another process has appended to the file, with the number
  * of such writes per file. Each write of `rewriteAppendedFile` comes after its read of the file, so an append always
- * lands between the two: the moment a line would be lost if the scrub wrote past what it read.
+ * lands between the two: the moment a line would be lost if the scrub wrote past what it read. `stalled` names a file
+ * no append reached within `APPEND_DEADLINE_MS`.
  */
-const appendsBetween = vi.hoisted(() => ({ waited: new Map<string, number>() }));
+const appendsBetween = vi.hoisted(() => ({ waited: new Map<string, number>(), stalled: undefined as string | undefined }));
 vi.mock("../../src/engine/no-follow.js", async () => {
   const actual = await vi.importActual<typeof import("../../src/engine/no-follow.js")>("../../src/engine/no-follow.js");
   return {
@@ -43,7 +46,17 @@ vi.mock("../../src/engine/no-follow.js", async () => {
   };
 });
 
-/** `handle`, whose writes each wait until the file at `path` has grown, that is until another process appended to it. */
+/**
+ * How long a write waits for the appender: far past its pace (an append every 1 ms, about every 16 ms on Windows) and
+ * well inside the test's own limit, so an appender that stopped is named rather than left to the test's timeout.
+ */
+const APPEND_DEADLINE_MS = 2_000;
+
+/**
+ * `handle`, whose writes each wait until the file at `path` has grown, that is until another process appended to it. A
+ * write no append reaches by `APPEND_DEADLINE_MS` fails, and `appendsBetween.stalled` says so: the scrub reports a
+ * write that fails as a file it skipped, not as an error.
+ */
 function writingAfterAnAppend(path: string, handle: FileHandle): FileHandle {
   return new Proxy(handle, {
     get(target, property) {
@@ -51,7 +64,16 @@ function writingAfterAnAppend(path: string, handle: FileHandle): FileHandle {
       if (property !== "write") return typeof value === "function" ? value.bind(target) : value;
       return async (...args: unknown[]) => {
         const size = statSync(path).size;
-        while (statSync(path).size === size) await delay(1);
+        // An appender that stopped appends to no file again, so once one write has waited out the deadline, every later
+        // write fails at once, and `stalled` keeps the first file named.
+        const deadline = appendsBetween.stalled === undefined ? performance.now() + APPEND_DEADLINE_MS : 0;
+        while (statSync(path).size === size) {
+          if (performance.now() > deadline) {
+            appendsBetween.stalled ??= `no append to ${path} within ${APPEND_DEADLINE_MS} ms: the appender stopped`;
+            throw new Error(appendsBetween.stalled);
+          }
+          await delay(1);
+        }
         appendsBetween.waited.set(path, (appendsBetween.waited.get(path) ?? 0) + 1);
         return await (Reflect.apply(target.write, target, args) as Promise<unknown>);
       };
@@ -63,6 +85,7 @@ const directories: string[] = [];
 afterEach(async () => {
   erase.failure = undefined;
   appendsBetween.waited.clear();
+  appendsBetween.stalled = undefined;
   vi.restoreAllMocks();
   vi.unstubAllEnvs();
   await Promise.all(directories.splice(0).map(path => removeFolder(path)));
@@ -221,6 +244,35 @@ async function scrubFixture() {
   return { root, home, sessions, ledger, token, live, printed };
 }
 
+const systemTool = (name: string): string => join(process.env.SystemRoot ?? "C:\\Windows", "System32", name);
+
+/**
+ * Takes from this account the right to list `folder` and no other: a deny entry on the folder alone on Windows (its own
+ * `whoami` and `icacls` by path, as Git Bash puts a `whoami` of its own first on PATH), mode `0300` elsewhere.
+ */
+function denyListing(folder: string): { restore: () => void } {
+  if (process.platform !== "win32") {
+    chmodSync(folder, 0o300);
+    return { restore: () => chmodSync(folder, 0o700) };
+  }
+  const me = /"(S-1-[\d-]+)"\s*$/u.exec(execFileSync(systemTool("whoami.exe"), ["/user", "/fo", "csv", "/nh"], { encoding: "utf8" }))?.[1] ?? "";
+  execFileSync(systemTool("icacls.exe"), [folder, "/deny", `*${me}:(RD)`], { stdio: "ignore" });
+  return { restore: () => execFileSync(systemTool("icacls.exe"), [folder, "/remove:d", `*${me}`], { stdio: "ignore" }) };
+}
+
+/**
+ * Whether listing `folder` is refused: root reads past a mode, and on Windows a process whose Backup privilege is on past
+ * a deny entry, which {@link withoutBackupPrivileges} turns off.
+ */
+function refusesListing(folder: string): boolean {
+  try {
+    readdirSync(folder);
+    return false;
+  } catch {
+    return true;
+  }
+}
+
 function sampleLine(text: string): string {
   return `${JSON.stringify({ type: "sample", item: { ref: { source: "host:event", id: `e:${randomUUID()}` }, text, metadata: {} } })}\n`;
 }
@@ -246,6 +298,79 @@ describe("rerail scrub alongside running sessions", () => {
     }
   });
 
+  it("scrubs the ledgers of the sessions it records in a records folder this account may not list, and names the folder", async ({ skip }) => {
+    skip(!POSIX_MODES, NO_POSIX_MODES);
+    const { sessions, ledger, token, live, printed } = await scrubFixture();
+    try {
+      writeFileSync(ledger, sampleLine(`GITHUB_TOKEN=${token}`));
+      // As a records folder another account shares is to this one: it may pass through and make a folder, not list.
+      chmodSync(sessions, 0o311);
+      expect(() => readdirSync(sessions)).toThrow(/EACCES/u);
+      try {
+        expect(await runScrubCommand([], () => "usage")).toBe(0);
+      } finally {
+        chmodSync(sessions, 0o700);
+      }
+      expect(readFileSync(ledger, "utf8")).not.toContain(token);
+      expect(printed()).toContain(
+        `Could not list ${sessions} (EACCES): scrubbed the 1 session folder the database records there; a session it does not record is left.\n`,
+      );
+    } finally {
+      live.$client.close();
+    }
+  });
+
+  it("scrubs the held steers of the sessions it records in a held-steer folder this account may not list, and names the folder", async ({ skip }) => {
+    const { sessions, token, live, printed } = await scrubFixture();
+    const pending = join(sessions, "claude-code-pending");
+    const file = join(pending, `${createHash("sha256").update("s1").digest("hex")}.json`);
+    try {
+      mkdirSync(pending);
+      writeFileSync(file, JSON.stringify([{ sessionId: "s1", requested: "steer", mechanism: "deferred-context", content: `use ${token}`, ruleIds: [], rules: [] }]));
+      // As a held-steer folder another account made in a records folder both share: this one adds files, never lists.
+      const listing = denyListing(pending);
+      try {
+        await withoutBackupPrivileges(async () => {
+          if (!refusesListing(pending)) skip("this process lists past the denial");
+          expect(await runScrubCommand([], () => "usage")).toBe(0);
+        });
+      } finally {
+        listing.restore();
+      }
+      expect(readFileSync(file, "utf8")).not.toContain(token);
+      expect(printed()).toContain("Scrubbed 0 lines in 0 session ledgers and 1 held steer file ");
+      const unlisted = printed().split("\n").find(line => line.startsWith(`Could not list ${pending} `))?.slice(`Could not list ${pending} `.length);
+      expect(unlisted).toMatch(/^\(E(?:ACCES|PERM)\): scrubbed the 1 held steer file the database records there; a session it does not record is left\.$/u);
+    } finally {
+      live.$client.close();
+    }
+  });
+
+  it("names a held-steer folder this account may not list when the database records none of its steers", async ({ skip }) => {
+    const { sessions, token, live, printed } = await scrubFixture();
+    const pending = join(sessions, "claude-code-pending");
+    // A steer held for a session this database does not record, as another account's hook would hold one.
+    const file = join(pending, `${createHash("sha256").update("s2").digest("hex")}.json`);
+    try {
+      mkdirSync(pending);
+      writeFileSync(file, JSON.stringify([{ sessionId: "s2", requested: "steer", mechanism: "deferred-context", content: `use ${token}`, ruleIds: [], rules: [] }]));
+      const listing = denyListing(pending);
+      try {
+        await withoutBackupPrivileges(async () => {
+          if (!refusesListing(pending)) skip("this process lists past the denial");
+          expect(await runScrubCommand([], () => "usage")).toBe(0);
+        });
+      } finally {
+        listing.restore();
+      }
+      expect(readFileSync(file, "utf8")).toContain(token);
+      const unlisted = printed().split("\n").find(line => line.startsWith(`Could not list ${pending} `))?.slice(`Could not list ${pending} `.length);
+      expect(unlisted).toMatch(/^\(E(?:ACCES|PERM)\): scrubbed the 0 held steer files the database records there; a session it does not record is left\.$/u);
+    } finally {
+      live.$client.close();
+    }
+  });
+
   it("loses no line a process appends to daemon.log or a ledger while it scrubs them", async () => {
     const { root, home, ledger, token, live } = await scrubFixture();
     const log = join(home, "daemon.log");
@@ -266,7 +391,9 @@ describe("rerail scrub alongside running sessions", () => {
         // Each write of the scrub to either file first waits for an append after its read of it. Left to the clock, the
         // whole scrub could fall between two appends, as Windows wakes the appender's 1 ms wait only every 15.6 ms or so.
         appendsBetween.waited.set(ledger, 0).set(log, 0);
-        expect(await runScrubCommand([], () => "usage")).toBe(0);
+        const scrubbed = await runScrubCommand([], () => "usage");
+        expect(appendsBetween.stalled).toBeUndefined();
+        expect(scrubbed).toBe(0);
         expect(appendsBetween.waited.get(ledger)).toBeGreaterThan(0);
         expect(appendsBetween.waited.get(log)).toBeGreaterThan(0);
       } finally {

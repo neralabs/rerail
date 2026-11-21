@@ -1,0 +1,29 @@
+.policy "eslint-no-unsafe-negation" revision 5
+.description "Don't negate the left operand of in or instanceof in JavaScript; negate the whole parenthesized check, since the operator applies to the negated value."
+.language typescript
+.mode steer
+.scope include "**/*"
+
+// ESLint's no-unsafe-negation: `!` binds tighter than `in` and `instanceof`, so `!key in obj` is
+// `(!key) in obj`, a test of "true" or "false" as a key. Reported at the negation.
+//   !key in obj   !obj instanceof Foo                → reported
+//   !(key in obj)   (!key) in obj  (written on purpose)   fine
+// enforceForOrderingRelations "true" also reports < > <= >=:   !a < b
+// ESLint's suggestions: negate the whole test, `!(key in obj)`, or keep the meaning, `(!key) in obj`.
+.violation no_unsafe_negation(at: node, o: symbol) code "no-unsafe-negation"
+    "Unexpected negating the left operand of '{o}' operator."
+    suppress eslint "no-unsafe-negation"
+    suppress oxlint "no-unsafe-negation"
+    suppress biome "lint/suspicious/noUnsafeNegation"
+    fix negate_whole "Negate the whole comparison, as in !(a {o} b), if negating the operand is not intended."
+    fix keep_operand "Wrap the negation in parentheses, (!a) {o} b, to make the intent explicit."
+no_unsafe_negation(l, o) :- kind(n, "binary_expression"), op(n, o), negation_op(o), field(n, "left", l),
+    kind(l, "unary_expression"), op(l, "!").
+.decl negation_op(o: symbol)  // the operators whose left operand must not be a bare negation
+negation_op("in"). negation_op("instanceof").
+negation_op(o) :- option("enforceForOrderingRelations", "true"), (o = "<" ; o = ">" ; o = "<=" ; o = ">=").
+
+// The suggestions: `!a in b` → `!(a in b)`, or `(!a) in b`.
+negate_whole(l, _) :- field(n, "left", l), field(l, "argument", a), field(n, "right", r), op(n, o)
+    => replace(n, `!($a $o $r)`).
+keep_operand(l, _) => replace(l, `($l)`).

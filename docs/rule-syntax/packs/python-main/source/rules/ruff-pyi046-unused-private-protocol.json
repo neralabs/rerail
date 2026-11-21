@@ -1,0 +1,171 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "ruff-pyi046-unused-private-protocol",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Use, make public or remove a private Protocol class that nothing in its file references; an unused private protocol is likely a mistake.",
+  "scope": {
+    "include": [
+      "**/*"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "shared",
+      "define": {
+        "language": "python",
+        "utils": {
+          "protocol-ref": {
+            "any": [
+              {
+                "any": [
+                  {
+                    "kind": "identifier"
+                  },
+                  {
+                    "kind": "attribute"
+                  }
+                ],
+                "resolves": {
+                  "import": [
+                    "typing.Protocol",
+                    "typing_extensions.Protocol",
+                    "_typeshed.Protocol"
+                  ]
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "protocol-ref"
+                }
+              }
+            ]
+          },
+          "protocol-base": {
+            "any": [
+              {
+                "matches": "protocol-ref"
+              },
+              {
+                "kind": "subscript",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "value",
+                  "matches": "protocol-ref"
+                }
+              },
+              {
+                "kind": "parenthesized_expression",
+                "has": {
+                  "stopBy": "neighbor",
+                  "matches": "protocol-base"
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-private-protocol",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "regex": "^_",
+            "binds": {
+              "form": "definition",
+              "site": {
+                "kind": "class_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "superclasses",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "protocol-base"
+                  }
+                }
+              },
+              "latest": true,
+              "used": false,
+              "scope": [
+                "module",
+                "function"
+              ]
+            }
+          },
+          "file": {
+            "path": {
+              "notRegex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI046",
+        "message": "Nothing in this file uses the private protocol `$NAME`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI046"
+            ]
+          }
+        }
+      }
+    },
+    {
+      "id": "unused-private-protocol-stub",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "kind": "identifier",
+            "pattern": "$NAME",
+            "regex": "^_",
+            "binds": {
+              "form": "definition",
+              "site": {
+                "kind": "class_definition",
+                "has": {
+                  "stopBy": "neighbor",
+                  "field": "superclasses",
+                  "kind": "argument_list",
+                  "has": {
+                    "stopBy": "neighbor",
+                    "matches": "protocol-base"
+                  }
+                }
+              },
+              "latest": true,
+              "used": false
+            }
+          },
+          "file": {
+            "path": {
+              "regex": "\\.pyi$"
+            }
+          }
+        }
+      },
+      "violation": {
+        "anchor": "witness.span",
+        "code": "PYI046",
+        "message": "Nothing in this file uses the private protocol `$NAME`. Use it, rename it without the underscore if other modules import it, or remove it once nothing does.",
+        "suppress": {
+          "noqa": {
+            "codes": [
+              "PYI046"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

@@ -8,12 +8,11 @@
  * The option does nothing on macOS and Linux. `npm run check:owned-builtins` fails on any other `node:child_process`
  * import in `src/`.
  *
- * On Windows it also refuses a program named by anything but an absolute path (`assertProgramPath`).
+ * On Windows it also refuses a program named by anything but a path from a drive or a server (`assertProgramPath`).
  */
 import * as childProcess from "node:child_process";
-import { win32 } from "node:path";
 import { promisify } from "node:util";
-import { windowsSystemProgram } from "./system-programs.js";
+import { isFullyQualifiedWindowsPath, windowsSystemProgram } from "./system-programs.js";
 
 const HIDDEN = { windowsHide: true } as const;
 
@@ -40,18 +39,23 @@ export function withHiddenWindow(args: readonly unknown[]): unknown[] {
 /**
  * Refuses, on Windows, to start a program named by a bare name or a relative path: Windows looks for one in the current
  * folder before PATH, and Rerail runs inside repositories it does not trust, so a `git.exe`, `node.exe` or
- * `powershell.exe` committed to one would run in Rerail's place and get what Rerail hands it. Rerail names every program
- * by absolute path there, found as `system-programs.ts` finds it. A command line run with `shell: true` is the shell's
- * to read, and is let through.
+ * `powershell.exe` committed to one would run in Rerail's place and get what Rerail hands it. A path from the root of
+ * the current drive (`\tools\git.exe`) is refused too: Windows reads it on the drive of the current folder, so it names
+ * another file on each drive. Rerail names every program by a path from a drive or a server there
+ * ({@link isFullyQualifiedWindowsPath}), found as `system-programs.ts` finds it. A command line run with `shell: true`
+ * is the shell's to read, and is let through.
  */
 export function assertProgramPath(args: readonly unknown[], platform: NodeJS.Platform = process.platform): void {
-  if (platform !== "win32") return;
   const [command] = args;
-  const options = args[optionsAt(args)];
-  const shell = typeof options === "object" && options !== null && "shell" in options && Boolean(options.shell);
-  if (typeof command === "string" && !shell && !win32.isAbsolute(command)) {
-    throw new Error(`Rerail starts a program on Windows by its absolute path, never from the current folder; it was asked for ${command}`);
+  if (platform !== "win32" || typeof command !== "string" || runsInShell(args[optionsAt(args)])) return;
+  if (!isFullyQualifiedWindowsPath(command)) {
+    throw new Error(`Rerail starts a program on Windows by its absolute path from a drive or a server, never from the current folder or drive; it was asked for ${command}`);
   }
+}
+
+/** Whether a child_process call's options, read where Node reads them ({@link optionsAt}), hand the command line to a shell. */
+function runsInShell(options: unknown): boolean {
+  return typeof options === "object" && options !== null && "shell" in options && Boolean(options.shell);
 }
 
 type Starter = "spawn" | "spawnSync" | "execFile" | "execFileSync";

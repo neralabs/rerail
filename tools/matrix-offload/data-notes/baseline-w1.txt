@@ -1,0 +1,7 @@
+workload w1, load average 143, data load 0.06 s CPU, 13088 documents
+rules with names: 444 of 602 files; distinct rule names 767; names per rule p50 3 max 161
+postings of rule names: 206507 (document, name) entries
+(a) postings per rule: 0.0103 s CPU, 1473222 nonzero (document, rule) cells of 5811072
+(b) dense bit product 13088×767 by 444×767 bits: 0.0258 s CPU (173.1 Gbit-op/s), same result
+exported docs_bits.u64 (13088 rows × 12 words), rules_bits.u64 (444 rows × 12 words)
+total CPU 0.29 s
