@@ -117,3 +117,12 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      off until they are allowed again.
 4. A 16z block decoded by its SIMD group's lanes together, so a miss costs a group a block once.
 5. The M3, then the M1 Max: the grid's tests, the device's tape tests and the engine's Metal tests, one at a time.
+   - **The M3 (2026-11-21):**
+     - These pass: the work queue's tests (the budget's among them), every grid test (the barrier, past residency:
+       120 groups of 4,096 took part, the scans and the sort), and `the_device_reads_16z_through_a_cache_that_turns`.
+     - `the_device_reads_read_every_node_as_the_crate_does` fails on 16z, through a cache sized for the whole tape.
+       In the statistics mode: 35 misses for 7 blocks, 96,723 hits, 2,670 waits that ended, 135 duplicates (waits
+       that ran out their 65,536 turns), 5 turns of the cache, then 1,594,231 failed lookups, all in 0.37 s.
+     - A decode of a block takes well under a millisecond, so the writers waited for stood still while their
+       waiters spun. Point 2's premise, that a claimant goes on, does not hold on the M3. The bound held: nothing
+       hung.
