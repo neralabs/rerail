@@ -11,7 +11,7 @@ import { ingestEngineEvent, startEngineService, type EngineService } from "../..
 import { addRemote } from "../../../src/runtime/remote-config.js";
 import { RemoteOutbox } from "../../../src/runtime/remote-outbox.js";
 import { sessionDirectory } from "../../../src/runtime/session-paths.js";
-import { lastObservedEventAt } from "../../../src/runtime/session-store.js";
+import { lastObservedEventAt, SqliteSessionReader, SqliteSessionStore } from "../../../src/runtime/session-store.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 import { startFakeSink, storedRecords, type FakeSink } from "../../support/fake-sink.js";
 import { testEmbedder } from "../../support/hook-events.js";
@@ -71,10 +71,10 @@ async function records(): Promise<{ root: string; databasePath: string; checkout
 }
 
 /** The next daemon's engine service, in this process, over the records the power cut left. */
-async function nextDaemon(root: string, databasePath: string): Promise<EngineService> {
+async function nextDaemon(root: string, databasePath: string, now: () => number = Date.now): Promise<EngineService> {
   const started = await startEngineService({
     socketPath: socketIn(root), storageRoot: join(root, "state"), databasePath, embedder: testEmbedder, idleSessionMs: IDLE_MS,
-    idleRuntimeMs: 0, createAuditor: quietAuditor,
+    idleRuntimeMs: 0, createAuditor: quietAuditor, now,
   });
   services.push(started);
   return started;
@@ -179,6 +179,23 @@ async function ledgerLinesFrom(storageRoot: string, sessionId: string, eventId: 
   const at = lines.findIndex(line => (JSON.parse(line) as { type?: string; eventId?: string }).type === "event" && line.includes(`"eventId":"${eventId}"`));
   expect(at, `the ledger's line of ${eventId}`).toBeGreaterThanOrEqual(0);
   return { path, lines: lines.length - at };
+}
+
+/** The session's row as the store holds it, read through a connection of its own. */
+function sessionRow(databasePath: string, sessionId: string): { startedAt: number; endedAt: number | null } | undefined {
+  const database = new Database(databasePath, { readonly: true });
+  try {
+    return database.prepare("SELECT started_at AS startedAt, ended_at AS endedAt FROM sessions WHERE session_id = ?").get(sessionId) as
+      { startedAt: number; endedAt: number | null } | undefined;
+  } finally {
+    database.close();
+  }
+}
+
+/** When each of `eventIds` was recorded, in the state the log's last commit leaves. */
+function recordedAt(databasePath: string, eventIds: readonly string[]): number[] {
+  return stateAt(databasePath, walCommits(databasePath).at(-1)!, database =>
+    eventIds.map(eventId => (database.prepare("SELECT observed_at AS at FROM events WHERE event_id = ?").get(eventId) as { at: number }).at));
 }
 
 const hasEvent = (database: Database.Database, eventId: string): boolean =>
@@ -322,6 +339,65 @@ describe("the records a power cut leaves, once the next daemon has started", () 
       const next = await nextDaemon(root, databasePath);
       await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "four"));
       expect(lastObservedEventAt(databasePath)).toBeGreaterThanOrEqual(lostAt);
+    });
+  });
+
+  describe("what the other readers of the store show", () => {
+    // The hook process records a steer it showed (`steering-delivered`, its own writer); the footer, the feedback and the
+    // evidence count those rows. The cut takes the receipt: what was lost is that record itself, the cost of the setting.
+    it("counts one steer fewer in the footer when the cut takes its receipt", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout } = await records();
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      await daemon.send(prompt("s", "one"));
+      const receipts = new SqliteSessionStore(databasePath);
+      receipts.recordSteer({ host: "claude-code", sessionId: "s", cwd: checkout }, "r1", ["a-rule"]);
+      receipts.close();
+      await daemon.send(prompt("s", "two"));
+      await daemon.stop();
+      cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "s:one") && !hasEvent(database, "steering-delivered:r1")));
+      await nextDaemon(root, databasePath);
+      const reader = new SqliteSessionReader(databasePath);
+      try {
+        expect(reader.hud("s").steeringCount).toBe(0);
+      } finally {
+        reader.close();
+      }
+    });
+
+    // The cut took the session's every row, its own included: it began in the seconds before. Its next open wrote its
+    // row with the time of that open, which no later write corrects, so the session read as starting then, for good.
+    it("gives a session whose row the cut took the time its ledger says it started", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout } = await records();
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      await daemon.send(prompt("s", "one"));
+      await daemon.stop();
+      const [startedAt] = recordedAt(databasePath, ["s:start"]);
+      cutPower(databasePath, latestCommitWhere(databasePath, database => database.prepare("SELECT 1 FROM sessions WHERE session_id = 's'").get() === undefined));
+      const next = await nextDaemon(root, databasePath);
+      await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "two"));
+      expect(sessionRow(databasePath, "s")?.startedAt).toBe(startedAt);
+    });
+
+    // The next start ends the session its daemon left open at the idle limit after it was last heard from: its newest
+    // event the cut left, so it ends that much earlier than after its newest event, by the span of the lost commits.
+    it("ends a session the gone daemon left open at the idle limit after its newest event the cut left", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout } = await records();
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      for (const text of ["one", "two", "three"]) await daemon.send(prompt("s", text));
+      await daemon.stop();
+      const [one, three] = recordedAt(databasePath, ["s:one", "s:three"]);
+      cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "s:one") && !hasEvent(database, "s:two")));
+      const heardAt = lastObservedEventAt(databasePath)!;
+      expect(heardAt).toBeGreaterThanOrEqual(one!);
+      expect(heardAt).toBeLessThan(three!);
+      await nextDaemon(root, databasePath, () => Date.now() + 24 * 60 * 60_000);
+      expect(sessionRow(databasePath, "s")?.endedAt).toBe(heardAt + IDLE_MS);
     });
   });
 });

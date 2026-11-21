@@ -232,6 +232,12 @@ function processedEventIds(ledger: readonly LedgerEntry[]): Set<string> {
   return new Set(ledger.flatMap((entry) => (entry.type === "event" ? [entry.eventId] : [])));
 }
 
+/** When the ledger's first event that carries its row's time was recorded; undefined when none does. */
+function firstDatedEvent(ledger: readonly LedgerEntry[]): number | undefined {
+  for (const entry of ledger) if (entry.type === "event" && entry.observedAt !== undefined) return entry.observedAt;
+  return undefined;
+}
+
 /**
  * The events the ledger holds whose rows a power cut or an operating system crash took, oldest first. An event's row is
  * committed before its ledger line is written, one event after another, and such a loss takes only the store's last
@@ -2145,8 +2151,10 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
     // A session the engine service suspended goes on from where its walks stood (`SessionSuspension`).
     const suspension = this.#suspendedSessions?.get(session.sessionId);
     const recordedSession = this.#sessionStore.session(session.sessionId);
-    const startedAt = recordedSession?.startedAt ?? Date.now();
     const ledger = await this.#openLedger(session, recordedSession === undefined);
+    // A session whose row is gone (a power cut took it with its first commits, or `rerail reset` took an ended one's)
+    // started when its ledger's first dated event came, not now.
+    const startedAt = recordedSession?.startedAt ?? firstDatedEvent(ledger.entries) ?? Date.now();
     this.#failWhileWriteLockedForScan(session.sessionId);
     const checkout = this.#startingCheckout(session);
     const restored = await this.#restoreRegistry(session, ledger.entries, checkout);
