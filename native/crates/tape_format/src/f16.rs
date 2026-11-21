@@ -1967,6 +1967,77 @@ mod tests {
         same_reads(&reads, &f15, &image, &v);
     }
 
+    /// Decision 0463: every walk ends, whatever it is asked of whatever view. A node at or past the view's count, a
+    /// view whose count is short of its tape's, a byte past the source and a line past the last ask each walking read
+    /// (sizes' hops, a parent's descent, the newline index's selects) to step past what the tape holds: each step must
+    /// still move it on, and the walk end. A read that does not return within its time is reported by name, not left
+    /// to hang the run (on a GPU, nothing stops such a kernel: decision 0440). The tape lies before a zeroed tail, and
+    /// the nodes asked lie within it.
+    #[test]
+    fn every_walk_ends_whatever_it_is_asked() {
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let t = sixteen(&lang, &plain, &(0..600).collect::<Vec<_>>(), pos + 2);
+        let v16 = placement(t.as_bytes()).unwrap().view(&lang, 0).unwrap();
+        let (image, _) = crate::tape::tests::sample();
+        let v15 = crate::tape::f15_view(&image, 0).unwrap();
+        let tail = |bytes: &[u8]| bytes.iter().copied().chain(std::iter::repeat_n(0u8, 8 << 20)).collect::<Vec<u8>>();
+        let tapes = vec![("format 16", tail(t.as_bytes()), v16), ("format 15", tail(&image), v15)];
+        let asked = std::sync::Arc::new(std::sync::Mutex::new(String::new()));
+        let (done, finished) = std::sync::mpsc::channel();
+        let at = asked.clone();
+        std::thread::spawn(move || {
+            let reads = rerail_clif::jit::Reads::new();
+            // Said on stderr too: a read that leaves the buffer faults, and the fault ends the process.
+            let ask = |what: String| {
+                eprintln!("asking {what}");
+                *at.lock().unwrap() = what;
+            };
+            for (format, bytes, view) in &tapes {
+                let n = view.nodes;
+                // Within the zeroed tail: a node further out reads its own cell outside any buffer, which no walk does.
+                let past = [n, n + 1, n + 7, n + 4096];
+                // Views whose count is short of the tape's, each asked of every node the tape holds.
+                let mut short = Vec::new();
+                for count in [0, 1, n / 2] {
+                    short.push((TapeView { nodes: count, ..*view }, (0..n).collect::<Vec<u32>>()));
+                }
+                short.push((*view, past.to_vec()));
+                for (v, nodes) in &short {
+                    for &i in nodes {
+                        for read in ["tape_size", "tape_end_of", "tape_parent", "tape_next", "tape_first_child", "tape_child_count", "tape_start", "tape_end"] {
+                            ask(format!("{format}: {read}({i}) of a view of {} nodes", v.nodes));
+                            reads.one(read, bytes, v, i as usize);
+                        }
+                        for k in [0, 1, 5, u32::MAX] {
+                            ask(format!("{format}: tape_child({i}, {k}) of a view of {} nodes", v.nodes));
+                            reads.two("tape_child", bytes, v, i as usize, k);
+                        }
+                        ask(format!("{format}: tape_next_in({i}, {}) of a view of {} nodes", u32::MAX, v.nodes));
+                        reads.two("tape_next_in", bytes, v, i as usize, u32::MAX);
+                    }
+                }
+                // Bytes past the source, lines past the last.
+                for x in [view.source_len, view.source_len + 1, view.source_len + 4096] {
+                    ask(format!("{format}: tape_line({x}) of a source of {} bytes", view.source_len));
+                    reads.one("tape_line", bytes, view, x as usize);
+                }
+                let lines = reads.one("tape_line", bytes, view, view.source_len.saturating_sub(1) as usize);
+                for k in [lines + 1, lines + 2, lines + 1000] {
+                    ask(format!("{format}: tape_line_start({k}) of {} lines", lines + 1));
+                    reads.one("tape_line_start", bytes, view, k as usize);
+                }
+            }
+            let _ = done.send(());
+        });
+        if finished.recv_timeout(std::time::Duration::from_secs(20)).is_err() {
+            panic!("a walk that does not end: {}", asked.lock().unwrap());
+        }
+    }
+
     /// Decision 0463: a 16z tape's reads stay within it and its cache, whatever its blocks hold. A side length past
     /// what its block's bytes decode to is refused when the tape is read in. A block whose literals claim more
     /// bytes than it has is decoded no further than its own: the tape lies against a page no read may touch, and

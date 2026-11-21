@@ -2327,14 +2327,17 @@ fn end_of(b: &mut B<'_, '_>) -> Value {
     hop(b, i, size)
 }
 
-/// `c + size`, past `c` however `size` wraps, and no further than the tape's nodes: a walk by sizes ends whatever
-/// the tape holds, and every node it gives is one of the tape's (decision 0463).
+/// `c + size`, no further than the tape's nodes, and always past `c` however `size` wraps: a walk by sizes ends
+/// whatever the tape holds, and every node it gives from one of the tape's is one of the tape's (decision 0463). A
+/// walk at or past the view's last node (a short count, a node asked past it) still steps on: clamped to the nodes
+/// first, a hop from there was a step of zero, and a walk stopped only past its end never stopped.
 fn hop(b: &mut B<'_, '_>, c: Value, size: Value) -> Value {
     let to = b.f.ins().iadd(c, size);
     let past = b.f.ins().iadd_imm(c, 1);
     let to = b.f.ins().umax(to, past);
     let nodes = b.view(at::NODES);
-    b.f.ins().umin(to, nodes)
+    let to = b.f.ins().umin(to, nodes);
+    b.f.ins().umax(to, past)
 }
 
 /// The node after the node's subtree while it is before `end` (its parent's subtree's end), else `NONE`.
@@ -2486,7 +2489,9 @@ fn select_in_word(b: &mut B<'_, '_>, x: Value, r: Value) -> Value {
 }
 
 /// The position in the newline index's high bits of its `j`-th one (`ones` 1) or zero (0): from the sample before
-/// it, a word at a time.
+/// it, a word at a time, within the index's words. Past them (a `j` the index does not hold: a line past the last),
+/// the position past its last word: the walk ends there. Unbounded, a word of none of them was a step of zero, and
+/// past the index lies the rest of the slab, zeroed: a select of a one there walked it all (2026-11-20, a GPU held).
 fn line_select(b: &mut B<'_, '_>) -> Value {
     let (ones, j) = (b.arg(0), b.arg(1));
     let zs = lines_field(b, 2);
@@ -2504,13 +2509,18 @@ fn line_select(b: &mut B<'_, '_>) -> Value {
     let samples = b.f.ins().iadd(zs, os);
     let samples = b.f.ins().imul_imm(samples, 8);
     let high = lines_part(b, samples);
-    let (head, done) = (b.f.create_block(), b.f.create_block());
+    let words = lines_field(b, 4);
+    let (head, within, done) = (b.f.create_block(), b.f.create_block(), b.f.create_block());
     b.f.append_block_param(head, I32);
     b.f.append_block_param(head, I32);
     b.f.append_block_param(done, I32);
     b.f.ins().jump(head, &[w0.into(), before0.into()]);
     b.f.switch_to_block(head);
     let (w, before) = (b.f.block_params(head)[0], b.f.block_params(head)[1]);
+    let inside = b.f.ins().icmp(IntCC::UnsignedLessThan, w, words);
+    let end = b.f.ins().imul_imm(words, 64);
+    b.f.ins().brif(inside, within, &[], done, &[end.into()]);
+    b.f.switch_to_block(within);
     let at = b.f.ins().imul_imm(w, 8);
     let word = b.word(high, at);
     let flipped = b.f.ins().bnot(word);

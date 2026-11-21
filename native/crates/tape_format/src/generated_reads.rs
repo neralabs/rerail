@@ -960,6 +960,7 @@ pub mod f16 {
         let mut v6: u32 = 0;
         let mut v7: u32 = 0;
         let mut v8: u32 = 0;
+        let mut v9: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
@@ -970,7 +971,8 @@ pub mod f16 {
     v6 = v4.max(v5);
     v7 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
     v8 = v6.min(v7);
-    return v8;
+    v9 = v8.max(v5);
+    return v9;
     }
 
     #[inline(always)]
@@ -1064,6 +1066,7 @@ pub mod f16 {
         let mut v14: u32 = 0;
         let mut v15: u32 = 0;
         let mut v16: u32 = 0;
+        let mut v17: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
@@ -1079,8 +1082,9 @@ pub mod f16 {
     v13 = v11.max(v12);
     v14 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
     v15 = v13.min(v14);
-    v16 = v6.wrapping_add(1i64 as u32);
-    { let t = (v15, v16); v5 = t.0; v6 = t.1; continue 'b1; }
+    v16 = v15.max(v12);
+    v17 = v6.wrapping_add(1i64 as u32);
+    { let t = (v16, v17); v5 = t.0; v6 = t.1; continue 'b1; }
      } else { v7 = v6; return v7;
      }
     }
@@ -1107,6 +1111,7 @@ pub mod f16 {
         let mut v15: u32 = 0;
         let mut v16: u32 = 0;
         let mut v17: u32 = 0;
+        let mut v18: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
@@ -1124,8 +1129,9 @@ pub mod f16 {
     v14 = v12.max(v13);
     v15 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
     v16 = v14.min(v15);
-    v17 = v7.wrapping_add(-1i64 as u32);
-    { let t = (v16, v17); v6 = t.0; v7 = t.1; continue 'b1; }
+    v17 = v16.max(v13);
+    v18 = v7.wrapping_add(-1i64 as u32);
+    { let t = (v17, v18); v6 = t.0; v7 = t.1; continue 'b1; }
      } else { v8 = v6; break 'm4; }
      } else { v8 = v10; break 'm4; }
     }
@@ -1529,84 +1535,93 @@ pub mod f16 {
         let mut v42: u32 = 0;
         let mut v43: u32 = 0;
         let mut v44: u32 = 0;
-        let mut v45: u32 = 0;
-        let mut v46: u32 = 0;
+        let mut v45: u64 = 0;
+        let mut v46: u64 = 0;
         let mut v47: u64 = 0;
         let mut v48: u64 = 0;
-        let mut v49: u64 = 0;
-        let mut v50: u64 = 0;
-        let mut v51: u64 = 0;
-        let mut v52: u64 = 0;
-        let mut v53: u64 = 0;
-        let mut v54: u64 = 0;
+        let mut v49: u32 = 0;
+        let mut v50: u32 = 0;
+        let mut v51: u32 = 0;
+        let mut v52: u32 = 0;
+        let mut v53: u8 = 0;
+        let mut v54: u32 = 0;
         let mut v55: u32 = 0;
-        let mut v56: u32 = 0;
-        let mut v57: u8 = 0;
-        let mut v58: u32 = 0;
-        let mut v59: u32 = 0;
-        let mut v60: u32 = 0;
+        let mut v56: u64 = 0;
+        let mut v57: u64 = 0;
+        let mut v58: u64 = 0;
+        let mut v59: u64 = 0;
+        let mut v60: u64 = 0;
         let mut v61: u64 = 0;
         let mut v62: u64 = 0;
-        let mut v63: u32 = 0;
-        let mut v64: u8 = 0;
+        let mut v63: u64 = 0;
+        let mut v64: u32 = 0;
         let mut v65: u32 = 0;
-        let mut v66: u32 = 0;
-        let mut v67: u64 = 0;
-        let mut v68: u64 = 0;
+        let mut v66: u8 = 0;
+        let mut v67: u32 = 0;
+        let mut v68: u32 = 0;
         let mut v69: u32 = 0;
-        let mut v70: u32 = 0;
+        let mut v70: u64 = 0;
         let mut v71: u64 = 0;
-        let mut v72: u64 = 0;
-        let mut v73: u32 = 0;
-        let mut v74: u8 = 0;
+        let mut v72: u32 = 0;
+        let mut v73: u8 = 0;
+        let mut v74: u32 = 0;
         let mut v75: u32 = 0;
-        let mut v76: u32 = 0;
+        let mut v76: u64 = 0;
         let mut v77: u64 = 0;
-        let mut v78: u64 = 0;
+        let mut v78: u32 = 0;
         let mut v79: u32 = 0;
-        let mut v80: u32 = 0;
+        let mut v80: u64 = 0;
         let mut v81: u64 = 0;
-        let mut v82: u64 = 0;
-        let mut v83: u32 = 0;
-        let mut v84: u8 = 0;
+        let mut v82: u32 = 0;
+        let mut v83: u8 = 0;
+        let mut v84: u32 = 0;
         let mut v85: u32 = 0;
-        let mut v86: u32 = 0;
+        let mut v86: u64 = 0;
         let mut v87: u64 = 0;
-        let mut v88: u64 = 0;
+        let mut v88: u32 = 0;
         let mut v89: u32 = 0;
-        let mut v90: u32 = 0;
+        let mut v90: u64 = 0;
         let mut v91: u64 = 0;
-        let mut v92: u64 = 0;
-        let mut v93: u32 = 0;
-        let mut v94: u8 = 0;
+        let mut v92: u32 = 0;
+        let mut v93: u8 = 0;
+        let mut v94: u32 = 0;
         let mut v95: u32 = 0;
-        let mut v96: u32 = 0;
+        let mut v96: u64 = 0;
         let mut v97: u64 = 0;
-        let mut v98: u64 = 0;
+        let mut v98: u32 = 0;
         let mut v99: u32 = 0;
-        let mut v100: u32 = 0;
+        let mut v100: u64 = 0;
         let mut v101: u64 = 0;
-        let mut v102: u64 = 0;
-        let mut v103: u32 = 0;
-        let mut v104: u8 = 0;
+        let mut v102: u32 = 0;
+        let mut v103: u8 = 0;
+        let mut v104: u32 = 0;
         let mut v105: u32 = 0;
-        let mut v106: u32 = 0;
+        let mut v106: u64 = 0;
         let mut v107: u64 = 0;
-        let mut v108: u64 = 0;
+        let mut v108: u32 = 0;
         let mut v109: u32 = 0;
-        let mut v110: u32 = 0;
+        let mut v110: u64 = 0;
         let mut v111: u64 = 0;
-        let mut v112: u64 = 0;
-        let mut v113: u32 = 0;
-        let mut v114: u8 = 0;
+        let mut v112: u32 = 0;
+        let mut v113: u8 = 0;
+        let mut v114: u32 = 0;
         let mut v115: u32 = 0;
-        let mut v116: u32 = 0;
+        let mut v116: u64 = 0;
         let mut v117: u64 = 0;
-        let mut v118: u64 = 0;
+        let mut v118: u32 = 0;
         let mut v119: u32 = 0;
-        let mut v120: u32 = 0;
-        let mut v121: u32 = 0;
+        let mut v120: u64 = 0;
+        let mut v121: u64 = 0;
         let mut v122: u32 = 0;
+        let mut v123: u8 = 0;
+        let mut v124: u32 = 0;
+        let mut v125: u32 = 0;
+        let mut v126: u64 = 0;
+        let mut v127: u64 = 0;
+        let mut v128: u32 = 0;
+        let mut v129: u32 = 0;
+        let mut v130: u32 = 0;
+        let mut v131: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
@@ -1651,88 +1666,100 @@ pub mod f16 {
     v40 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(96isize as usize)) as *const u32) };
     v41 = v40.wrapping_add(v39);
     v42 = v41.wrapping_add(20i64 as u32);
-    { let t = (v31, v37); v43 = t.0; v44 = t.1; 'b1: loop {
-    v46 = v43.wrapping_mul(8i64 as u32);
-    v47 = v42 as u64;
-    v48 = v46 as u64;
-    v49 = v0.wrapping_add(v47);
-    v50 = v49.wrapping_add(v48);
-    v51 = ld::<u64>(v0, len, (v50 as usize)) as u64;
-    v52 = !v51;
-    v53 = if v2 != 0 { v51 } else { v52 };
-    v54 = v53.count_ones() as u64;
-    v55 = v54 as u32;
-    v56 = v44.wrapping_add(v55);
-    v57 = ((v56 as u32) > (v3 as u32)) as u8;
-    if v57 != 0 { v59 = v3.wrapping_sub(v44);
-    v60 = 0i64 as u32;
-    v61 = v53 & (4294967295i64 as u64);
-    v62 = v61.count_ones() as u64;
-    v63 = v62 as u32;
-    v64 = ((v59 as u32) >= (v63 as u32)) as u8;
-    v65 = v59.wrapping_sub(v63);
-    v66 = if v64 != 0 { v65 } else { v59 };
-    v67 = v53.wrapping_shr(32);
-    v68 = if v64 != 0 { v67 } else { v53 };
-    v69 = v60.wrapping_add(32i64 as u32);
-    v70 = if v64 != 0 { v69 } else { v60 };
-    v71 = v68 & (65535i64 as u64);
-    v72 = v71.count_ones() as u64;
-    v73 = v72 as u32;
-    v74 = ((v66 as u32) >= (v73 as u32)) as u8;
-    v75 = v66.wrapping_sub(v73);
-    v76 = if v74 != 0 { v75 } else { v66 };
-    v77 = v68.wrapping_shr(16);
-    v78 = if v74 != 0 { v77 } else { v68 };
-    v79 = v70.wrapping_add(16i64 as u32);
-    v80 = if v74 != 0 { v79 } else { v70 };
-    v81 = v78 & (255i64 as u64);
-    v82 = v81.count_ones() as u64;
-    v83 = v82 as u32;
-    v84 = ((v76 as u32) >= (v83 as u32)) as u8;
-    v85 = v76.wrapping_sub(v83);
-    v86 = if v84 != 0 { v85 } else { v76 };
-    v87 = v78.wrapping_shr(8);
-    v88 = if v84 != 0 { v87 } else { v78 };
-    v89 = v80.wrapping_add(8i64 as u32);
-    v90 = if v84 != 0 { v89 } else { v80 };
-    v91 = v88 & (15i64 as u64);
-    v92 = v91.count_ones() as u64;
-    v93 = v92 as u32;
-    v94 = ((v86 as u32) >= (v93 as u32)) as u8;
-    v95 = v86.wrapping_sub(v93);
-    v96 = if v94 != 0 { v95 } else { v86 };
-    v97 = v88.wrapping_shr(4);
-    v98 = if v94 != 0 { v97 } else { v88 };
-    v99 = v90.wrapping_add(4i64 as u32);
-    v100 = if v94 != 0 { v99 } else { v90 };
-    v101 = v98 & (3i64 as u64);
-    v102 = v101.count_ones() as u64;
-    v103 = v102 as u32;
-    v104 = ((v96 as u32) >= (v103 as u32)) as u8;
-    v105 = v96.wrapping_sub(v103);
-    v106 = if v104 != 0 { v105 } else { v96 };
-    v107 = v98.wrapping_shr(2);
-    v108 = if v104 != 0 { v107 } else { v98 };
-    v109 = v100.wrapping_add(2i64 as u32);
-    v110 = if v104 != 0 { v109 } else { v100 };
-    v111 = v108 & (1i64 as u64);
-    v112 = v111.count_ones() as u64;
-    v113 = v112 as u32;
-    v114 = ((v106 as u32) >= (v113 as u32)) as u8;
-    v115 = v106.wrapping_sub(v113);
-    v116 = if v114 != 0 { v115 } else { v106 };
-    v117 = v108.wrapping_shr(1);
-    v118 = if v114 != 0 { v117 } else { v108 };
-    v119 = v110.wrapping_add(1i64 as u32);
-    v120 = if v114 != 0 { v119 } else { v110 };
-    v121 = v43.wrapping_mul(64i64 as u32);
-    v122 = v121.wrapping_add(v120);
-    { v45 = v122; return v45;
+    v43 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(96isize as usize)) as *const u32) };
+    v44 = 16i64 as u32;
+    v45 = v43 as u64;
+    v46 = v44 as u64;
+    v47 = v0.wrapping_add(v45);
+    v48 = v47.wrapping_add(v46);
+    v49 = ld::<u32>(v0, len, (v48 as usize)) as u32;
+    { let t = (v31, v37); v50 = t.0; v51 = t.1; 'b1: loop {
+    'm5: {
+    v53 = ((v50 as u32) < (v49 as u32)) as u8;
+    v54 = v49.wrapping_mul(64i64 as u32);
+    if v53 != 0 { v55 = v50.wrapping_mul(8i64 as u32);
+    v56 = v42 as u64;
+    v57 = v55 as u64;
+    v58 = v0.wrapping_add(v56);
+    v59 = v58.wrapping_add(v57);
+    v60 = ld::<u64>(v0, len, (v59 as usize)) as u64;
+    v61 = !v60;
+    v62 = if v2 != 0 { v60 } else { v61 };
+    v63 = v62.count_ones() as u64;
+    v64 = v63 as u32;
+    v65 = v51.wrapping_add(v64);
+    v66 = ((v65 as u32) > (v3 as u32)) as u8;
+    if v66 != 0 { v68 = v3.wrapping_sub(v51);
+    v69 = 0i64 as u32;
+    v70 = v62 & (4294967295i64 as u64);
+    v71 = v70.count_ones() as u64;
+    v72 = v71 as u32;
+    v73 = ((v68 as u32) >= (v72 as u32)) as u8;
+    v74 = v68.wrapping_sub(v72);
+    v75 = if v73 != 0 { v74 } else { v68 };
+    v76 = v62.wrapping_shr(32);
+    v77 = if v73 != 0 { v76 } else { v62 };
+    v78 = v69.wrapping_add(32i64 as u32);
+    v79 = if v73 != 0 { v78 } else { v69 };
+    v80 = v77 & (65535i64 as u64);
+    v81 = v80.count_ones() as u64;
+    v82 = v81 as u32;
+    v83 = ((v75 as u32) >= (v82 as u32)) as u8;
+    v84 = v75.wrapping_sub(v82);
+    v85 = if v83 != 0 { v84 } else { v75 };
+    v86 = v77.wrapping_shr(16);
+    v87 = if v83 != 0 { v86 } else { v77 };
+    v88 = v79.wrapping_add(16i64 as u32);
+    v89 = if v83 != 0 { v88 } else { v79 };
+    v90 = v87 & (255i64 as u64);
+    v91 = v90.count_ones() as u64;
+    v92 = v91 as u32;
+    v93 = ((v85 as u32) >= (v92 as u32)) as u8;
+    v94 = v85.wrapping_sub(v92);
+    v95 = if v93 != 0 { v94 } else { v85 };
+    v96 = v87.wrapping_shr(8);
+    v97 = if v93 != 0 { v96 } else { v87 };
+    v98 = v89.wrapping_add(8i64 as u32);
+    v99 = if v93 != 0 { v98 } else { v89 };
+    v100 = v97 & (15i64 as u64);
+    v101 = v100.count_ones() as u64;
+    v102 = v101 as u32;
+    v103 = ((v95 as u32) >= (v102 as u32)) as u8;
+    v104 = v95.wrapping_sub(v102);
+    v105 = if v103 != 0 { v104 } else { v95 };
+    v106 = v97.wrapping_shr(4);
+    v107 = if v103 != 0 { v106 } else { v97 };
+    v108 = v99.wrapping_add(4i64 as u32);
+    v109 = if v103 != 0 { v108 } else { v99 };
+    v110 = v107 & (3i64 as u64);
+    v111 = v110.count_ones() as u64;
+    v112 = v111 as u32;
+    v113 = ((v105 as u32) >= (v112 as u32)) as u8;
+    v114 = v105.wrapping_sub(v112);
+    v115 = if v113 != 0 { v114 } else { v105 };
+    v116 = v107.wrapping_shr(2);
+    v117 = if v113 != 0 { v116 } else { v107 };
+    v118 = v109.wrapping_add(2i64 as u32);
+    v119 = if v113 != 0 { v118 } else { v109 };
+    v120 = v117 & (1i64 as u64);
+    v121 = v120.count_ones() as u64;
+    v122 = v121 as u32;
+    v123 = ((v115 as u32) >= (v122 as u32)) as u8;
+    v124 = v115.wrapping_sub(v122);
+    v125 = if v123 != 0 { v124 } else { v115 };
+    v126 = v117.wrapping_shr(1);
+    v127 = if v123 != 0 { v126 } else { v117 };
+    v128 = v119.wrapping_add(1i64 as u32);
+    v129 = if v123 != 0 { v128 } else { v119 };
+    v130 = v50.wrapping_mul(64i64 as u32);
+    v131 = v130.wrapping_add(v129);
+    { v52 = v131; break 'm5; }
+     } else { v67 = v50.wrapping_add(1i64 as u32);
+    { let t = (v67, v65); v50 = t.0; v51 = t.1; continue 'b1; }
      }
-     } else { v58 = v43.wrapping_add(1i64 as u32);
-    { let t = (v58, v56); v43 = t.0; v44 = t.1; continue 'b1; }
-     }
+     } else { v52 = v54; break 'm5; }
+    }
+    return v52;
     }
      }
     }
@@ -2905,8 +2932,8 @@ pub mod f15 {
         let mut v17: u32 = 0;
         let mut v18: u32 = 0;
         let mut v19: u32 = 0;
-        let mut v20: u8 = 0;
-        let mut v21: u32 = 0;
+        let mut v20: u32 = 0;
+        let mut v21: u8 = 0;
         let mut v22: u32 = 0;
         let mut v23: u32 = 0;
         let mut v24: u32 = 0;
@@ -2918,8 +2945,10 @@ pub mod f15 {
         let mut v30: u32 = 0;
         let mut v31: u32 = 0;
         let mut v32: u32 = 0;
-        let mut v33: u8 = 0;
-        let mut v34: u8 = 0;
+        let mut v33: u32 = 0;
+        let mut v34: u32 = 0;
+        let mut v35: u8 = 0;
+        let mut v36: u8 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
@@ -2941,24 +2970,26 @@ pub mod f15 {
     v17 = v15.max(v16);
     v18 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
     v19 = v17.min(v18);
-    v20 = ((v19 as u32) > (v2 as u32)) as u8;
-    if v20 != 0 { v6 = v13; break 'm11; } else { v21 = v8.wrapping_add(1i64 as u32);
-    { let t = (v13, v21); v7 = t.0; v8 = t.1; continue 'b3; }
+    v20 = v19.max(v16);
+    v21 = ((v20 as u32) > (v2 as u32)) as u8;
+    if v21 != 0 { v6 = v13; break 'm11; } else { v22 = v8.wrapping_add(1i64 as u32);
+    { let t = (v13, v22); v7 = t.0; v8 = t.1; continue 'b3; }
      }
-     } else { v25 = 0i64 as u32;
-    { v22 = v25; 'b7: loop {
-    v26 = v22.wrapping_add(1i64 as u32);
-    { let t = (v22, v26); v23 = t.0; v24 = t.1; 'b8: loop {
-    v27 = unsafe { f1(len, v0, v1, v24) };
-    v28 = v24.wrapping_add(v27);
-    v29 = v24.wrapping_add(1i64 as u32);
-    v30 = v28.max(v29);
-    v31 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
-    v32 = v30.min(v31);
-    v33 = ((v32 as u32) <= (v2 as u32)) as u8;
-    if v33 != 0 { { let t = (v23, v32); v23 = t.0; v24 = t.1; continue 'b8; }
-     } else { v34 = ((v24 as u32) == (v2 as u32)) as u8;
-    if v34 != 0 { v6 = v23; break 'm11; } else { v22 = v24; continue 'b7; }
+     } else { v26 = 0i64 as u32;
+    { v23 = v26; 'b7: loop {
+    v27 = v23.wrapping_add(1i64 as u32);
+    { let t = (v23, v27); v24 = t.0; v25 = t.1; 'b8: loop {
+    v28 = unsafe { f1(len, v0, v1, v25) };
+    v29 = v25.wrapping_add(v28);
+    v30 = v25.wrapping_add(1i64 as u32);
+    v31 = v29.max(v30);
+    v32 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
+    v33 = v31.min(v32);
+    v34 = v33.max(v30);
+    v35 = ((v34 as u32) <= (v2 as u32)) as u8;
+    if v35 != 0 { { let t = (v24, v34); v24 = t.0; v25 = t.1; continue 'b8; }
+     } else { v36 = ((v25 as u32) == (v2 as u32)) as u8;
+    if v36 != 0 { v6 = v24; break 'm11; } else { v23 = v25; continue 'b7; }
      }
     }
      }
@@ -2985,6 +3016,7 @@ pub mod f15 {
         let mut v6: u32 = 0;
         let mut v7: u32 = 0;
         let mut v8: u32 = 0;
+        let mut v9: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
@@ -2995,7 +3027,8 @@ pub mod f15 {
     v6 = v4.max(v5);
     v7 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
     v8 = v6.min(v7);
-    return v8;
+    v9 = v8.max(v5);
+    return v9;
     }
 
     #[inline(always)]
@@ -3089,6 +3122,7 @@ pub mod f15 {
         let mut v14: u32 = 0;
         let mut v15: u32 = 0;
         let mut v16: u32 = 0;
+        let mut v17: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
@@ -3104,8 +3138,9 @@ pub mod f15 {
     v13 = v11.max(v12);
     v14 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
     v15 = v13.min(v14);
-    v16 = v6.wrapping_add(1i64 as u32);
-    { let t = (v15, v16); v5 = t.0; v6 = t.1; continue 'b1; }
+    v16 = v15.max(v12);
+    v17 = v6.wrapping_add(1i64 as u32);
+    { let t = (v16, v17); v5 = t.0; v6 = t.1; continue 'b1; }
      } else { v7 = v6; return v7;
      }
     }
@@ -3132,6 +3167,7 @@ pub mod f15 {
         let mut v15: u32 = 0;
         let mut v16: u32 = 0;
         let mut v17: u32 = 0;
+        let mut v18: u32 = 0;
         v0 = a0;
         v1 = a1;
         v2 = a2;
@@ -3149,8 +3185,9 @@ pub mod f15 {
     v14 = v12.max(v13);
     v15 = unsafe { core::ptr::read_unaligned(((v1 as usize).wrapping_add(4isize as usize)) as *const u32) };
     v16 = v14.min(v15);
-    v17 = v7.wrapping_add(-1i64 as u32);
-    { let t = (v16, v17); v6 = t.0; v7 = t.1; continue 'b1; }
+    v17 = v16.max(v13);
+    v18 = v7.wrapping_add(-1i64 as u32);
+    { let t = (v17, v18); v6 = t.0; v7 = t.1; continue 'b1; }
      } else { v8 = v6; break 'm4; }
      } else { v8 = v10; break 'm4; }
     }
@@ -3512,4 +3549,4 @@ pub mod f15 {
 }
 
 /// This source's fingerprint (`rust::fingerprint` of what comes before).
-pub const SOURCE: u64 = 0xca032e262e70dbf2;
+pub const SOURCE: u64 = 0x37f0f251419d5e77;
