@@ -11,6 +11,12 @@
 
 use rerail_c_lean::{Dialect, Tape};
 
+pub mod ctape;
+pub mod k;
+pub mod lower;
+pub mod ops;
+pub mod ty;
+
 /// A failure on the way: the preprocessor's errors, or the parser's refusal, with where.
 #[derive(Debug)]
 pub struct Error(pub String);

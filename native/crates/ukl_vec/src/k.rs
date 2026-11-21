@@ -1,0 +1,426 @@
+//! The kernel tape (decision 0567 §2.2): a program lowered from its C tape, in the tape format. Each node is an
+//! operation of one machine type; its children are its operands, in order. A node's span is its payload in the
+//! tape's payload words (its "source", as a C tape's span is its text): the words at its start are its own, by its
+//! kind (`Kind`'s docs), and its span runs to the end of its last descendant's.
+//!
+//! Every value is a machine type's bits in a `u64` (`M`). An lvalue is an address: a variable is `LOCAL` (its place
+//! in the thread's frame) or `GLOBAL`, read by `LOAD` and written by `STORE`. A structure's value is its address
+//! (`M::agg`): a load of one is that address, a store of one copies its bytes. Every conversion is a `CAST`.
+
+/// A machine type: the low byte its kind, the bytes above it a structure's size (`AGG`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub struct M(pub u32);
+
+impl M {
+    pub const VOID: M = M(0);
+    /// `bool`: a byte, 0 or 1.
+    pub const B: M = M(1);
+    pub const I8: M = M(2);
+    pub const U8: M = M(3);
+    pub const I16: M = M(4);
+    pub const U16: M = M(5);
+    pub const I32: M = M(6);
+    pub const U32: M = M(7);
+    pub const I64: M = M(8);
+    pub const U64: M = M(9);
+    pub const F32: M = M(10);
+    pub const F64: M = M(11);
+    /// A pointer: an address, 64 bits.
+    pub const PTR: M = M(12);
+    const AGG: u32 = 13;
+
+    /// A structure (or an array) of `size` bytes, its value its address.
+    pub const fn agg(size: u32) -> M {
+        M(Self::AGG | size << 8)
+    }
+
+    pub const fn kind(self) -> u32 {
+        self.0 & 0xff
+    }
+
+    pub const fn is_agg(self) -> bool {
+        self.kind() == Self::AGG
+    }
+
+    /// Its bytes in memory.
+    pub const fn bytes(self) -> u32 {
+        match self.kind() {
+            0 => 0,
+            1..=3 => 1,
+            4 | 5 => 2,
+            6 | 7 | 10 => 4,
+            8 | 9 | 11 | 12 => 8,
+            _ => self.0 >> 8,
+        }
+    }
+
+    pub const fn signed(self) -> bool {
+        matches!(self.kind(), 2 | 4 | 6 | 8)
+    }
+
+    pub const fn float(self) -> bool {
+        matches!(self.kind(), 10 | 11)
+    }
+
+    /// Its bits, for an integer.
+    pub const fn bits(self) -> u32 {
+        if self.kind() == 1 { 1 } else { self.bytes() * 8 }
+    }
+}
+
+/// A node's kind; its payload words in its doc.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u16)]
+pub enum Kind {
+    /// The tape's root: `[functions]`; its children the functions' bodies, in the order written, then `Data`.
+    Program = 1,
+    /// A function: `[id, frame bytes, threadgroup bytes, return type, parameters, (offset, type) a parameter]`; one
+    /// child, its body.
+    Func,
+    /// The program's constant memory (its tables and strings): `[bytes]`, then the bytes, padded to a word.
+    Data,
+    /// Statements in order.
+    Block,
+    /// An expression evaluated for its effect: one child.
+    Expr,
+    /// `cond, then [, else]`.
+    If,
+    /// `cond, body`.
+    While,
+    /// `body, cond`.
+    Do,
+    /// `cond, body, step`: a `for` (its init a statement before it), `continue` going to `step`.
+    For,
+    Break,
+    Continue,
+    /// `[has value]`: its value, if any.
+    Return,
+    /// Nothing.
+    Empty,
+    /// `[type, low, high]`: a constant.
+    Const,
+    /// `[offset]`: the address of a variable of the thread's frame.
+    Local,
+    /// `[offset]`: the address of the program's constant memory at `offset`.
+    Global,
+    /// `[offset]`: the address of the group's threadgroup memory at `offset` (a `SHARED` row's).
+    Shared,
+    /// `[type]`: the value at its child's address.
+    Load,
+    /// `[type]`: its second child's value stored at its first's address; the value.
+    Store,
+    /// `[type, bytes]`: `bytes` zero bytes at its child's address.
+    Zero,
+    /// `[op, type]`: a binary operation on two values of `type` (a comparison's result a `bool`).
+    Bin,
+    /// `[op, type]`: a unary one.
+    Un,
+    /// `[from, to]`: a conversion.
+    Cast,
+    /// `[type]`: `cond ? a : b`, only the one taken evaluated.
+    Cond,
+    /// `[and]`: `a && b` (`and` 1) or `a || b`, short-circuit; a `bool`.
+    Logic,
+    /// `[function, type, temp]`: a call of the program's function, its arguments the children; an aggregate's
+    /// result copied to the caller's frame at `temp`, its value that address.
+    Call,
+    /// `[builtin, type, arguments, argument types...]`: one of OpenCL's builtins (`Builtin`).
+    Builtin,
+    /// `a, b`: `b`'s value.
+    Comma,
+    /// `[op, lhs type, op type, post]`: an assignment through `op` (`Op::None`: `++`/`--` as `+= 1`) at its first
+    /// child's address, of its second child's value (of `op type`); the new value, or (`post`) the old.
+    Update,
+    /// `[bytes]`: `bytes` bytes copied from its second child's address to its first's; the first's address.
+    Copy,
+}
+
+impl Kind {
+    pub const LAST: u16 = Kind::Copy as u16;
+
+    pub fn of(k: u16) -> Kind {
+        assert!((1..=Self::LAST).contains(&k), "a kernel tape's kind: {k}");
+        // SAFETY: `Kind` is `repr(u16)`, its values 1 to `LAST` in order.
+        unsafe { std::mem::transmute::<u16, Kind>(k) }
+    }
+}
+
+/// A binary or unary operation (`Bin`, `Un`, `Update`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Op {
+    None,
+    Add,
+    Sub,
+    Mul,
+    Div,
+    Rem,
+    Shl,
+    Shr,
+    And,
+    Or,
+    Xor,
+    Eq,
+    Ne,
+    Lt,
+    Le,
+    Gt,
+    Ge,
+    /// Unary.
+    Neg,
+    Not,
+    LNot,
+}
+
+impl Op {
+    pub fn of(w: u32) -> Op {
+        assert!(w <= Op::LNot as u32, "an operation: {w}");
+        // SAFETY: `Op` is `repr(u32)`, its values 0 to `LNot` in order.
+        unsafe { std::mem::transmute::<u32, Op>(w) }
+    }
+
+    pub fn compares(self) -> bool {
+        matches!(self, Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge)
+    }
+}
+
+/// OpenCL's builtins a kernel calls (its sub-groups 32 lanes).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u32)]
+pub enum Builtin {
+    /// `[dim]` arguments: the thread's ids and the grid's sizes.
+    LocalId,
+    LocalSize,
+    GlobalId,
+    GlobalSize,
+    GroupId,
+    NumGroups,
+    SubGroupLocalId,
+    /// A threadgroup barrier: a sync point.
+    Barrier,
+    /// A fence: nothing on the CPU, whose memory is coherent.
+    MemFence,
+    /// The SIMD group's: sync points.
+    SubGroupBarrier,
+    SubGroupBallot,
+    SubGroupShuffle,
+    SubGroupShuffleUp,
+    SubGroupShuffleDown,
+    SubGroupShuffleXor,
+    /// Relaxed atomics on a 32-bit word: `(pointer, value)`, `(pointer, expected, new)` for `cmpxchg`.
+    AtomicAdd,
+    AtomicSub,
+    AtomicAnd,
+    AtomicOr,
+    AtomicXor,
+    AtomicXchg,
+    AtomicMin,
+    AtomicMax,
+    AtomicCmpxchg,
+    AtomicInc,
+    AtomicDec,
+    /// Bit counts, of the argument's type.
+    Popcount,
+    Clz,
+    /// The high half of the product.
+    MulHi,
+    /// The bits as another type (`as_int`, `as_float`, ...): the result type's.
+    As,
+    Min,
+    Max,
+}
+
+impl Builtin {
+    pub fn of(w: u32) -> Builtin {
+        assert!(w <= Builtin::Max as u32, "a builtin: {w}");
+        // SAFETY: `Builtin` is `repr(u32)`, its values 0 to `Max` in order.
+        unsafe { std::mem::transmute::<u32, Builtin>(w) }
+    }
+
+    /// Whether every thread of its group (or SIMD group) must reach it together.
+    pub fn syncs(self) -> bool {
+        matches!(
+            self,
+            Builtin::Barrier | Builtin::SubGroupBarrier | Builtin::SubGroupBallot | Builtin::SubGroupShuffle | Builtin::SubGroupShuffleUp | Builtin::SubGroupShuffleDown | Builtin::SubGroupShuffleXor
+        )
+    }
+
+    /// The builtin OpenCL names so, with its result type, from its arguments' types (`None`: not a builtin).
+    pub fn named(name: &str) -> Option<Builtin> {
+        Some(match name {
+            "get_local_id" => Builtin::LocalId,
+            "get_local_size" => Builtin::LocalSize,
+            "get_global_id" => Builtin::GlobalId,
+            "get_global_size" => Builtin::GlobalSize,
+            "get_group_id" => Builtin::GroupId,
+            "get_num_groups" => Builtin::NumGroups,
+            "get_sub_group_local_id" => Builtin::SubGroupLocalId,
+            "barrier" => Builtin::Barrier,
+            "mem_fence" | "read_mem_fence" | "write_mem_fence" => Builtin::MemFence,
+            "sub_group_barrier" => Builtin::SubGroupBarrier,
+            "sub_group_ballot" => Builtin::SubGroupBallot,
+            "sub_group_shuffle" => Builtin::SubGroupShuffle,
+            "sub_group_shuffle_up" => Builtin::SubGroupShuffleUp,
+            "sub_group_shuffle_down" => Builtin::SubGroupShuffleDown,
+            "sub_group_shuffle_xor" => Builtin::SubGroupShuffleXor,
+            "atomic_add" | "atom_add" => Builtin::AtomicAdd,
+            "atomic_sub" | "atom_sub" => Builtin::AtomicSub,
+            "atomic_and" | "atom_and" => Builtin::AtomicAnd,
+            "atomic_or" | "atom_or" => Builtin::AtomicOr,
+            "atomic_xor" | "atom_xor" => Builtin::AtomicXor,
+            "atomic_xchg" | "atom_xchg" => Builtin::AtomicXchg,
+            "atomic_min" | "atom_min" => Builtin::AtomicMin,
+            "atomic_max" | "atom_max" => Builtin::AtomicMax,
+            "atomic_cmpxchg" | "atom_cmpxchg" => Builtin::AtomicCmpxchg,
+            "atomic_inc" | "atom_inc" => Builtin::AtomicInc,
+            "atomic_dec" | "atom_dec" => Builtin::AtomicDec,
+            "popcount" => Builtin::Popcount,
+            "clz" => Builtin::Clz,
+            "mul_hi" => Builtin::MulHi,
+            "as_int" | "as_uint" | "as_float" | "as_long" | "as_ulong" | "as_double" | "as_short" | "as_ushort" | "as_char" | "as_uchar" => Builtin::As,
+            "min" => Builtin::Min,
+            "max" => Builtin::Max,
+            _ => return None,
+        })
+    }
+}
+
+/// A node's field when its subtree reaches a sync point (a barrier, a SIMD-group operation, or a call of a function
+/// that does): set by the cut (`lower::cut`). Such a node runs for its whole group at once; any other for one thread.
+/// The kernel tape's nodes have no other field.
+pub const SYNCS: u16 = 1;
+
+/// The tape's language tag: none of a grammar's.
+pub const TAG: u8 = 0xfe;
+
+/// A kernel tape being written: its nodes in preorder (key, start, end, size), and its payload words.
+#[derive(Default)]
+pub struct Builder {
+    nodes: Vec<(u32, u32, u32, u32)>,
+    pub words: Vec<u32>,
+}
+
+impl Builder {
+    /// Opens a node of `kind` with payload `words`: its index.
+    pub fn open(&mut self, kind: Kind, words: &[u32]) -> usize {
+        let start = self.words.len() as u32;
+        self.words.extend_from_slice(words);
+        self.nodes.push((rerail_tape_format::key(kind as u16, 0, 0), start, start, 0));
+        self.nodes.len() - 1
+    }
+
+    /// Closes node `n`, opened last of those open: its subtree and its span end here.
+    pub fn close(&mut self, n: usize) {
+        let (size, end) = ((self.nodes.len() - n) as u32, self.words.len() as u32);
+        self.nodes[n].2 = end;
+        self.nodes[n].3 = size;
+    }
+
+    /// A node of `kind` with no children.
+    pub fn leaf(&mut self, kind: Kind, words: &[u32]) -> usize {
+        let n = self.open(kind, words);
+        self.close(n);
+        n
+    }
+
+    /// The nodes so far.
+    pub fn len(&self) -> usize {
+        self.nodes.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.nodes.is_empty()
+    }
+
+    /// Node `n`'s payload word `k` changed (a forward reference filled in).
+    pub fn set_word(&mut self, n: usize, k: usize, w: u32) {
+        let at = self.nodes[n].1 as usize + k;
+        self.words[at] = w;
+    }
+
+    /// Node `n`'s key, as written.
+    pub fn key(&self, n: usize) -> u32 {
+        self.nodes[n].0
+    }
+
+    /// Node `n`'s subtree, once closed.
+    pub fn size(&self, n: usize) -> usize {
+        self.nodes[n].3 as usize
+    }
+
+    /// Node `n`'s payload word `k`.
+    pub fn word(&self, n: usize, k: usize) -> u32 {
+        self.words[self.nodes[n].1 as usize + k]
+    }
+
+    /// Node `n`'s field set to `field` (`SYNCS`).
+    pub fn set_field(&mut self, n: usize, field: u16) {
+        self.nodes[n].0 |= u32::from(field) << rerail_tape_format::KIND_BITS;
+    }
+
+    /// The tape: its image (spans in payload words) and the words.
+    pub fn finish(self) -> Tape {
+        let bytes: Vec<u8> = self.words.iter().flat_map(|w| w.to_le_bytes()).collect();
+        let image = rerail_tape_format::preorder_image(TAG, &bytes, &self.nodes);
+        Tape { image, words: self.words }
+    }
+}
+
+/// A kernel tape: its image, and its payload words (its spans' units).
+pub struct Tape {
+    pub image: Vec<u8>,
+    pub words: Vec<u32>,
+}
+
+/// A kernel tape read in place.
+pub struct View<'t> {
+    pub v: rerail_tape_format::View<'t>,
+    pub words: &'t [u32],
+}
+
+impl<'t> View<'t> {
+    pub fn new(t: &'t Tape) -> View<'t> {
+        View { v: rerail_tape_format::View::new(&t.image).expect("a kernel tape's image"), words: &t.words }
+    }
+
+    pub fn len(&self) -> usize {
+        self.v.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.v.is_empty()
+    }
+
+    pub fn kind(&self, i: usize) -> Kind {
+        Kind::of((self.v.key(i) & 0x3ff) as u16)
+    }
+
+    /// Whether node `i`'s subtree reaches a sync point (`SYNCS`).
+    pub fn syncs(&self, i: usize) -> bool {
+        (self.v.key(i) >> rerail_tape_format::KIND_BITS) as u16 & 0x3f == SYNCS
+    }
+
+    /// Node `i`'s payload word `k`.
+    pub fn w(&self, i: usize, k: usize) -> u32 {
+        self.words[self.v.start(i) as usize + k]
+    }
+
+    /// Node `i`'s payload words from `k` on, to its span's end.
+    pub fn ws(&self, i: usize, k: usize, n: usize) -> &'t [u32] {
+        let s = self.v.start(i) as usize + k;
+        &self.words[s..s + n]
+    }
+
+    pub fn size(&self, i: usize) -> usize {
+        self.v.size(i)
+    }
+
+    pub fn children(&self, i: usize) -> impl Iterator<Item = usize> + '_ {
+        self.v.children(i)
+    }
+
+    /// Node `i`'s `k`-th child.
+    pub fn child(&self, i: usize, k: usize) -> usize {
+        self.v.children(i).nth(k).expect("a kernel tape node's child")
+    }
+}

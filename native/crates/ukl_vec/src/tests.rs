@@ -18,3 +18,19 @@ fn the_library_tests_source_is_dumped_when_asked() {
     }
 }
 
+
+/// The library's test kernels lower to one kernel tape: every function, its frame, and its kernels named.
+#[test]
+fn the_library_tests_lower() {
+    let src = super::source("/<kernels>/library_tests.uglykl", LIBRARY_TESTS, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let v = super::k::View::new(&p.tape);
+    let syncs = (0..v.len()).filter(|&i| v.syncs(i)).count();
+    println!("{} nodes, {} syncing, {} functions", v.len(), syncs, p.funcs.len());
+    for name in ["t_simd", "t_group", "t_lz4", "t_grid_sort", "t_workqueue_sg", "ukl_radix_u64_scatter"] {
+        let k = p.kernel(name).unwrap_or_else(|| panic!("no kernel {name}"));
+        assert!(p.stacks[k as usize] > 0, "{name}'s stack");
+    }
+    assert!(syncs > 0, "the cut found sync points");
+}
