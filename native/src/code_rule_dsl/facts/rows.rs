@@ -349,10 +349,7 @@ pub fn install_block_device(device: fn() -> rerail_blocks::alloc::Device) {
 /// evaluation runs, counted while it lives.
 fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<Facts>, String> {
     let fill = (2 * need + MARGIN).max(life.block_bytes());
-    // A run's and a batch's sources' blocks (the ones whose relations the device probes); a kept relation's block is
-    // as its relations fill it.
-    let room = if matches!(life, Life::Run | Life::Source) { HEADROOM } else { 1 };
-    let f = Arc::new(Facts::shared(lease(room * fill, life)?, fill));
+    let f = Arc::new(Facts::shared(lease(HEADROOM * fill, life)?, fill));
     if let Some(c) = chunk {
         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
         c.note();

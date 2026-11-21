@@ -2577,9 +2577,11 @@ fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Resu
     crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into a relation of their own (no tail with rows)", 1);
     // A large one alone in a block with room past its rows for the indexes its readers probe it by (decision 0353
     // step 6): in the run's shared block, a later probe found no room there and copied it (`DevIndex::moved`, 766.4
-    // MB in 247 copies on the M3's 300-file run, ab110). Its block is memory only as it is written. A small one
-    // shares the run's block, its copy as small.
-    let part = if n >= ALONE_ROWS { Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, k, n, (k + 1).min(rerail_blocks::relation::ADDED_INDEXES)) } else { Part::for_writes(k, n) };
+    // MB in 247 copies on the M3's 300-file run, ab110). Room for a full directory of them (`ADDED_INDEXES`): with
+    // room for one a column and one more, a relation of three columns probed by more keys was copied (ab118). Its
+    // block is memory only as it is written. A small one shares the run's block, whose room past its fill line is for
+    // the indexes of its relations (`facts::rows::HEADROOM`).
+    let part = if n >= ALONE_ROWS { Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, k, n, rerail_blocks::relation::ADDED_INDEXES) } else { Part::for_writes(k, n) };
     let dst = mj::DevRel::in_block(&part.in_block(n as u32), k).map_err(|e| format!("{e:?}: a head's rows in their block"))?;
     Ok((super::Placed::Part(part), dst, 0))
 }
