@@ -266,8 +266,35 @@ pub fn install_source_checker(check: SourceChecker) {
     CHECK_SOURCES.get_or_init(|| check);
 }
 
-static VIEWS: Mutex<Vec<Arc<View>>> = Mutex::new(Vec::new());
-static ACTIVE: AtomicUsize = AtomicUsize::new(0);
+/// The views open now, which a path under one's root is read through: the caller's, shared by design with the runs
+/// it hands its shared object (decision 0442's `shared`: a session's views, never the process's), and how many
+/// there are, so that a read with none open takes no lock.
+#[derive(Debug, Default)]
+struct Views {
+    open: Mutex<Vec<Arc<View>>>,
+    count: AtomicUsize,
+}
+
+impl Views {
+    fn add(&self, view: &Arc<View>) {
+        let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());
+        open.push(Arc::clone(view));
+        self.count.store(open.len(), Ordering::Release);
+    }
+
+    fn remove(&self, id: u64) {
+        let mut open = self.open.lock().unwrap_or_else(|e| e.into_inner());
+        open.retain(|v| v.id != id);
+        self.count.store(open.len(), Ordering::Release);
+    }
+
+    fn find(&self, path: &Path) -> Option<Arc<View>> {
+        if self.count.load(Ordering::Acquire) == 0 {
+            return None;
+        }
+        self.open.lock().unwrap_or_else(|e| e.into_inner()).iter().find(|v| path.starts_with(&v.root)).cloned()
+    }
+}
 /// The storage batch under way (`StorageBatch`): its view and epoch, in the run's context (decision 0442), so its
 /// jobs read through it too.
 #[derive(Clone, Copy, Default)]
@@ -548,15 +575,7 @@ impl View {
 }
 
 fn view(path: &Path) -> Option<Arc<View>> {
-    if ACTIVE.load(Ordering::Acquire) == 0 {
-        return None;
-    }
-    VIEWS
-        .lock()
-        .unwrap_or_else(|e| e.into_inner())
-        .iter()
-        .find(|v| path.starts_with(&v.root))
-        .cloned()
+    rerail_prof::code_rule_dsl::logic::profile::with_shared::<Views, _>(|views| views.find(path))
 }
 
 pub fn contains(path: &Path) -> bool {
@@ -573,6 +592,8 @@ pub fn view_root(path: &Path) -> Option<PathBuf> {
 #[derive(Debug)]
 pub struct Snapshot {
     view: Arc<View>,
+    /// The views it is open among (the caller's, `Views`), which it leaves when dropped, on whatever thread.
+    views: Arc<Views>,
 }
 
 /// A repository, selected object and directory within it, shared by equivalent source views.
@@ -876,18 +897,15 @@ impl Snapshot {
                 Ok::<(), String>(())
             }).map_err(|error| error.to_string())??;
         }
-        let mut views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
-        views.push(Arc::clone(&view));
-        ACTIVE.store(views.len(), Ordering::Release);
-        Ok(Self { view })
+        let views = rerail_prof::code_rule_dsl::logic::profile::shared::<Views>();
+        views.add(&view);
+        Ok(Self { view, views })
     }
 }
 
 impl Drop for Snapshot {
     fn drop(&mut self) {
-        let mut views = VIEWS.lock().unwrap_or_else(|e| e.into_inner());
-        views.retain(|v| v.id != self.view.id);
-        ACTIVE.store(views.len(), Ordering::Release);
+        self.views.remove(self.view.id);
     }
 }
 
