@@ -163,6 +163,29 @@ function thrown(run: () => void): unknown {
   return undefined;
 }
 
+/**
+ * A remote outbox beside the database at `path` whose cursor says a remote holds every event numbered up to `taken`, as
+ * a power cut that took the store's last commits leaves it. Only the table a session's first open reads
+ * (`remote-cursors.ts`).
+ */
+function remoteHolds(path: string, taken: number): void {
+  const outbox = new Database(join(dirname(path), "remote-outbox.sqlite"));
+  try {
+    outbox.exec("CREATE TABLE cursors (stream TEXT PRIMARY KEY, value INTEGER NOT NULL)");
+    outbox.prepare("INSERT INTO cursors (stream, value) VALUES ('event', ?)").run(taken);
+  } finally {
+    outbox.close();
+  }
+}
+
+/** A tool call event of the test's session, observed at `observedAt`, and its line in the session's ledger. */
+function callEvent(eventId: string, observedAt: number) {
+  return {
+    event: { sessionId: session.sessionId, eventId, kind: "call", observedAt, payload: {} },
+    line: { eventId, kind: "call", observedAt },
+  };
+}
+
 function rows(path: string, sql: string): unknown[] {
   const database = new Database(path, { readonly: true });
   try {
@@ -550,6 +573,44 @@ describe("record writes while another process holds the write lock", () => {
 
     expect(stderr).toHaveBeenCalledWith(expect.stringContaining("1 records not written"));
     holder.exec("COMMIT");
+  }, 30_000);
+
+  // The move of the event numbers past a remote's ran on the store's own connection, on the thread answering hooks: it
+  // slept the 5 s bound in SQLite's busy handler, then the session's open failed with the lock's error.
+  it("move the event numbers past a remote's at a session's first open without waiting, ahead of its row and events", async () => {
+    const { path, sessions } = await stores();
+    remoteHolds(path, 40);
+    const holder = await lockHolder(path);
+    await holder.hold();
+
+    let error: unknown;
+    const ms = msOf(() => {
+      error = thrown(() => {
+        sessions.openSession(session, 1_000);
+        sessions.append(callEvent("first-call", 1_000).event, session);
+      });
+    });
+    expect(error).toBeUndefined();
+    expect(ms).toBeLessThan(1_000);
+
+    await holder.release();
+    await settled(path);
+    expect(rows(path, "SELECT session_id FROM sessions")).toEqual([[session.sessionId]]);
+    expect(rows(path, "SELECT sequence, event_id FROM events")).toEqual([[41, "first-call"]]);
+  }, 30_000);
+
+  // A session reopened while its earlier rows still waited read an older event as the last recorded, and its open
+  // counted the rows after it as lost.
+  it("are made before the last recorded event is read, when the holder gave the lock back", async () => {
+    const { path, sessions } = await stores();
+    sessions.openSession(session, 1_000);
+    sessions.append(callEvent("one", 1).event, session);
+    const holder = holderHere(path);
+    sessions.append(callEvent("two", 2).event, session);
+    sessions.append(callEvent("three", 3).event, session);
+    holder.exec("COMMIT");
+
+    expect(sessions.lastRecordedEvent(session.sessionId, new Set(["call"]))).toBe("three");
   }, 30_000);
 
   it("throw at once a failure that is not the lock, as a write made at once did before", async () => {
