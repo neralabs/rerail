@@ -60,7 +60,7 @@ slow". The answers below are the user's, given to the questions of the design pa
    the rule on hardware that supports it (independent thread scheduling) is later work.
 4. **The SIMD-group width is 32** (`UKL_SIMD_WIDTH`), as on Metal and CUDA, and other widths stay possible (the
    library passes at 32, 16, 8 and 1). Where the hardware's vector is narrower, a SIMD group is several vectors,
-   looped. With little register pressure, a group's wider span means fewer loop iterations and less overhead per
+   looped, a value taking as many registers as its type needs (decision 6). With little register pressure, a group's wider span means fewer loop iterations and less overhead per
    lane; a kernel whose live state does not fit runs a narrower native width per step within its 32.
 5. **SIMD-group operations are written once**, as operations of the vector tape, for every back end:
    - ballot is a move-mask;
@@ -72,11 +72,13 @@ slow". The answers below are the user's, given to the questions of the design pa
 6. **Three back ends from the vector tape:**
    - **The interpreter** runs the vector tape at once, each operation over a group's lanes, so a kernel runs while
      its compile is in the background.
-   - **Cranelift (the JIT)** with 128-bit vectors for now: 4 lanes of 32 bits a register, unrolled to the group's
+   - **Cranelift (the JIT)** with 128-bit vectors for now: a register holds 16 lanes of 8 bits, 8 of 16, 4 of 32 or
+     2 of 64, so a 32-lane group's value is 2, 4, 8 or 16 registers by its type. A region is unrolled to the group's
      width as register pressure allows. Wider types in the vendored Cranelift are later work, if its numbers ask
      for them.
    - **Rust (AOT)**, written directly from the vector tape (decision 0550: not through CLIF, not by an old
-     lowering), in `simd8`'s form: generic over a backend, with AVX-512 (16 lanes), AVX2 (8), NEON (4) and scalar,
+     lowering), in `simd8`'s form: generic over a backend, with AVX-512 (512 bits: 16 lanes of 32 bits, 8 of 64, 64
+     of 8), AVX2 (256 bits), NEON (128 bits) and scalar,
      each compiled with its CPU features and chosen at run time. On stable Rust, without `std::simd`.
 
 ## Order of work, each step gated
