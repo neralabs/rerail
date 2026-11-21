@@ -40,7 +40,17 @@ pub fn defines() -> Vec<(&'static str, String)> {
     if std::env::var("RERAIL_CPU_OPENCL_RULE").is_ok_and(|v| v == "1") {
         v.push(("UKL_CPU_OPENCL_RULE", "1".to_string()));
     }
+    if strict_simd() {
+        v.push(("UKL_CPU_SIMD_STRICT", "1".to_string()));
+    }
     v
+}
+
+/// `RERAIL_CPU_SIMD_STRICT=1`: a SIMD group's lanes meet only at the same operation reached by the same path
+/// (`ukl_cpu_shim.h`'s `__ukl_cpu_site`), compiled without optimization so that none is duplicated: a kernel with a
+/// SIMD-group operation some lanes skip fails, naming where each waits.
+pub fn strict_simd() -> bool {
+    std::env::var("RERAIL_CPU_SIMD_STRICT").is_ok_and(|v| v == "1")
 }
 
 /// The CPU's SIMD groups' lanes: `RERAIL_CPU_SIMD_WIDTH`, else 32.
@@ -237,7 +247,7 @@ impl CpuComputeFunctionLibrary {
     pub fn compile_from_source(_device: &CpuDevice, preprocessed_source: &str, file_name_to_appear_in_error_messages: &str) -> Result<Self, String> {
         let cxx = compiler()?;
         // The store's (`crate::store`), else the temporary directory's: the CPU's form is a file `dlopen` loads.
-        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), preprocessed_source.as_bytes()]);
+        let k = crate::store::key(&[b"cpu", cxx.as_bytes(), compiler_version(cxx).as_bytes(), CXX_FLAGS.join(" ").as_bytes(), if strict_simd() { b"-O0" } else { b"" }, preprocessed_source.as_bytes()]);
         let lib = match crate::store::path("cpu", &k, "so") {
             Some(p) => p,
             None => {
@@ -268,8 +278,12 @@ impl CpuComputeFunctionLibrary {
             let src = dir.join(format!("{own}.cpp"));
             std::fs::write(&src, preprocessed_source).map_err(|e| format!("{}: {e}", src.display()))?;
             let tmp = dir.join(format!("{own}.so"));
+            // `-O0` last before `-o`: it overrides the flags' `-O1`.
+            let (flags, out) = CXX_FLAGS.split_at(CXX_FLAGS.len() - 1);
             let o = std::process::Command::new(cxx)
-                .args(CXX_FLAGS)
+                .args(flags)
+                .args(strict_simd().then_some("-O0"))
+                .args(out)
                 .arg(&tmp)
                 .arg(&src)
                 .output()
@@ -345,6 +359,17 @@ struct Launch {
     sched: *mut u8,
     sched_bytes: u64,
     tls: extern "C" fn() -> *mut c_void,
+    resident: u32,
+    pad: u32,
+}
+
+/// The threads the CPU runs at once across a launch's groups: its resident groups are these over a group's threads
+/// (at most 64), so a persistent grid of up to that many groups meets its barriers (`ukl_cpu_shim.h`).
+const RESIDENT_THREADS: usize = 8192;
+
+/// The groups of `threads` threads the CPU runs at once.
+pub fn resident_groups(threads: usize) -> usize {
+    (RESIDENT_THREADS / threads.max(1)).clamp(1, 64)
 }
 
 /// The scheduler's storage a root's thread gives each launch: more than the shim's (`__ukl_cpu_sched`, which checks).
@@ -639,15 +664,19 @@ impl CpuBindContext<'_> {
             if grid.contains(&0) {
                 return Ok(());
             }
-            let mut local = vec![0u128; (shared as usize).div_ceil(16).max(1)];
-            let (stacks, stride) = w.stacks(threads);
+            let groups = grid.iter().map(|&g| g as usize).product::<usize>();
+            let resident = resident_groups(threads).min(groups);
+            let slot = (shared as usize).div_ceil(16) * 16;
+            let mut local = vec![0u128; (slot * resident).div_ceil(16).max(1)];
+            // A stack for each thread of each resident group, and, past one group, one for each group's own coroutine.
+            let (stacks, stride) = w.stacks(threads * resident + if resident > 1 { resident } else { 0 });
             let mut error = vec![0 as c_char; 1024];
             let ptrs: Vec<*const c_void> = params.iter().map(|p| p.as_ptr().cast::<c_void>()).collect();
             let launch = Launch {
                 grid,
                 block,
                 shared: local.as_mut_ptr().cast(),
-                shared_bytes: shared,
+                shared_bytes: slot as u64,
                 stacks,
                 stack_bytes: stride as u64,
                 error: error.as_mut_ptr(),
@@ -655,6 +684,8 @@ impl CpuBindContext<'_> {
                 sched: w.sched.as_mut_ptr().cast(),
                 sched_bytes: SCHED_BYTES as u64,
                 tls,
+                resident: resident as u32,
+                pad: 0,
             };
             if entry(ptrs.as_ptr(), &launch) != 0 {
                 let e = unsafe { CStr::from_ptr(error.as_ptr()) }.to_string_lossy().into_owned();

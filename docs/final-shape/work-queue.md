@@ -8266,3 +8266,58 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   - `rerail-compiler`: 143.
   - `rerail-kotlin-aot`: builds with `generated`, in 12.7 s.
   - Clippy is clean on all four, and the lock is unchanged by cargo.
+
+### Q382. Roll-up 21 (Go-C-and-C-support onto Pulling-it-all-together): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): Go-C-and-C-support at 689ac6b231, 39 commits past roll-up 12's ce2c4019c83. These are
+  0460's steps 5a–5f and §4–§5, 0467, 0475, 0478 and 0520's steps 0–4. Their decisions here:
+  - 0460 is 0468, whose document already had their edits.
+  - 0475 is 0485, and 0478 is 0486. Both documents were moved, and each says what it was numbered.
+  - 0467 and 0520 keep their numbers; both were free.
+  - Their added text is in this hub's numbers: 0421 is 0482, 0424 is 0459, 0425 is 0460, 0426 is 0434,
+    0427 is 0463, 0431 is 0479, 0445 is 0480, 0459 is 0473.
+- **Taken from theirs**:
+  - The preprocessor's evaluator is UKL (`pp_*.uglykl`), on one persistent grid. Its arena is `pp_arena`, which
+    replaces `pp_blocks` and the `.metal` sources.
+  - P1 runs on the device; `rounds::place` replaces the tests' own `place`.
+  - The rooms are sized from use, and the expansion is pieces.
+  - The CPU shim's resident groups, so a grid meets its barriers on the CPU.
+  - The library tests run at the device's resident count.
+  - The README rows for 0467, 0485, 0486 and 0520, and 0468's sentence on UKL.
+- **Kept from ours**:
+  - The CPU shim keeps no thread-local in a kernel library (0440 step C). The scheduler's storage and the
+    running thread come from the host; the one-group path uses that storage, not theirs' `static thread_local`.
+    The launch carries both sets of fields: ours' `sched`, `sched_bytes`, `tls`, then theirs' `resident`, `pad`.
+  - 0471: a unit reads its tapes in every slab they lie in. This is ported into theirs' code:
+    - `Unit::of` keeps the other slabs, and `Unit::batch` is `Unit::of` over the units' documents. Theirs refused
+      a batch across slabs.
+    - `pp_arena::Enc` makes those slabs resident at each launch, through `run_over` and `run_timed`.
+    - In the UKL a view's offset is an i64 (`pf_at`). A name's key reads words from its document's first byte
+      (`pf_words`), not from `data`.
+  - The lane API from CUDA's 0440 step D. `Enc` holds a `lane::Command` and launches a `Kernel`.
+  - The slab lease takes the device through `lane::device()`.
+  - The test helpers' type names (`DeviceRun`), and the Q367 ignores.
+- **Found and fixed on the way**:
+  - Clippy, eight findings:
+    - In `rerail-device`: a typed `sym_as` for `dlsym`'s pointers, `as_chunks`, and `checked_div`.
+    - In `rerail-metal`: `is_multiple_of`, and a cast.
+    - In the tests: an unused variable, needless borrows, and two complex types named (`SettledUnit`,
+      `RoomsRun`).
+  - Two `runtime` upload tests panicked under `RERAIL_GPU=cpu`. They are blits on the Metal queue, and now skip
+    where the process's device is another backend's.
+  - A stale header comment in `pp_expand.uglykl` named the deleted `.metal` files.
+- **Checked**: on a Linux DGX Spark and an M1 Max, every run held to the CPU (`RERAIL_GPU=cpu`, no Metal):
+  - `rerail-device`: 6 tests.
+  - `rerail-gpu`: 20.
+  - `rerail-ukl`: 8.
+  - `rerail-c-pp`: 46.
+  - `rerail-metal`: 27, its arena and pool tests included.
+  - `rerail-c-directives`: 30 eval tests on UKL's CPU backend. This includes the Q367-ignored ones, run with
+    `--run-ignored`; the corpus, Boost and measurement tests were left out.
+  - `rerail-engine`: 21 tests of the work-queue kernels (lattice, label passes).
+  - Clippy is clean on `rerail-metal`, `rerail-c-directives`, `rerail-device`, `rerail-gpu`, `rerail-forest`,
+    `rerail-ukl` and `rerail-c-pp`.
+- **Open**:
+  - The Q367 ignores name the M1 Max's Metal. On the CPU those tests pass now, but on Metal they were not run.
+  - `rerail-c-directives` is wholly in nextest's slow tier: each test process compiles a C grammar. That is the
+    per-process cost Kotlin's suite had (Q371).

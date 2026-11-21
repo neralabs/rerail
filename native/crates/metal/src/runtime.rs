@@ -939,6 +939,10 @@ mod memory_budget_tests {
 
     #[test]
     fn private_upload_copies_multiple_chunks_and_odd_tail_exactly() {
+        // A blit on the process's Metal queue: none where the process's device is another backend's (`RERAIL_GPU=cpu`).
+        if crate::queue().is_err() {
+            return;
+        }
         let device = Device::system_default().unwrap();
         let bytes = (0..METAL_UPLOAD_CHUNK_BYTES + 37)
             .map(|i| (i % 251) as u8)
@@ -973,6 +977,10 @@ mod memory_budget_tests {
 
     #[test]
     fn batched_private_upload_preserves_offsets_across_staging_reuse() {
+        // A blit on the process's Metal queue: none where the process's device is another backend's (`RERAIL_GPU=cpu`).
+        if crate::queue().is_err() {
+            return;
+        }
         let device = Device::system_default().unwrap();
         let values = (0..(METAL_UPLOAD_CHUNK_BYTES / 4 + 37))
             .map(|index| (index as u32).wrapping_mul(7919))

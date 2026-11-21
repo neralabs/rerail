@@ -97,6 +97,13 @@ fn open(names: &[String]) -> Option<Ptr> {
     })
 }
 
+/// A symbol `dlsym` found, as the function pointer type `F` its field declares.
+fn sym_as<F>(p: *mut c_void) -> F {
+    const { assert!(size_of::<F>() == size_of::<*mut c_void>()) };
+    // SAFETY: `F` is the symbol's C function pointer type, the size of a pointer (checked above).
+    unsafe { std::mem::transmute_copy(&p) }
+}
+
 /// The driver and NVRTC, opened once; `Err` says what is missing.
 fn api() -> Result<&'static Api, String> {
     static API: OnceLock<Result<Api, String>> = OnceLock::new();
@@ -120,7 +127,7 @@ fn api() -> Result<&'static Api, String> {
                 if p.is_null() {
                     return Err(format!("{} not found", [$($name),+].join(" or ")));
                 }
-                unsafe { std::mem::transmute::<*mut c_void, _>(p) }
+                sym_as(p)
             }};
         }
         Ok(Api {
@@ -523,7 +530,7 @@ impl CudaComputeFunctionLibrary {
         let text = self.global(&format!("{function_name}__ukl_params"))?;
         let text = CStr::from_bytes_until_nul(&text).map_err(|e| e.to_string())?.to_str().map_err(|e| e.to_string())?.to_string();
         let rows = self.global(&format!("{function_name}__ukl_rows"))?;
-        let rows: Vec<u64> = rows.chunks_exact(8).map(|c| u64::from_le_bytes(c.try_into().unwrap())).collect();
+        let rows: Vec<u64> = rows.as_chunks::<8>().0.iter().map(|&c| u64::from_le_bytes(c)).collect();
         let (arguments, param_sizes) = crate::rows::arguments(function_name, &text, &rows, |ty| self.struct_type(ty))?;
         // The shared memory a launch may take beyond the kernel's static storage.
         let a = self.device.current();
