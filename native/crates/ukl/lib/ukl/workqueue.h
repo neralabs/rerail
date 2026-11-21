@@ -12,6 +12,8 @@
 // - every loop is bounded (`UKL_WQ_TURNS`); a bound reached ends the worker, as an idle one does;
 // - an idle worker polls a bounded number of times, then exits. A worker that pushed is still running, so a queued
 //   item has a live worker; the host launches the dispatch again while any remain at its end (`control[2]`).
+// - the control words are read by polls (`ukl_atomic_poll`, decision 0540): on Apple's GPUs a relaxed load in a loop
+//   may keep reading the core's copy (Q123), and a worker would see the queue empty, or its work active, for ever.
 //
 // `control`: 0 head, 1 tail, 2 active (pushed, not yet done), 3 overflow. Items are below 0xFFFFFFFE.
 //
@@ -56,10 +58,10 @@ UKL_INLINE bool ukl_wq_push(UklWorkQueue q, uint32_t item)
 // Takes an item into `item`; false when there was none to take now.
 UKL_INLINE bool ukl_wq_take(UklWorkQueue q, UKL_PRIVATE uint32_t* item)
 {
-    uint32_t head = ukl_atomic_load(&q.control[0]);
+    uint32_t head = ukl_atomic_poll(&q.control[0]);
     bool claimed = false;
     for (uint32_t attempt = 0u; attempt < UKL_WQ_TURNS && !claimed; attempt++) {
-        uint32_t tail = ukl_atomic_load(&q.control[1]);
+        uint32_t tail = ukl_atomic_poll(&q.control[1]);
         tail = tail < q.capacity ? tail : q.capacity;
         if (head >= tail)
             return false;
@@ -82,9 +84,9 @@ UKL_INLINE bool ukl_wq_take_sg(UklWorkQueue q, uint32_t lane, UKL_PRIVATE uint32
     // Lane 0 claims `count` items from `head` at once.
     uint32_t head = 0u, count = 0u;
     if (lane == 0u) {
-        head = ukl_atomic_load(&q.control[0]);
+        head = ukl_atomic_poll(&q.control[0]);
         for (uint32_t attempt = 0u; attempt < UKL_WQ_TURNS; attempt++) {
-            uint32_t tail = ukl_atomic_load(&q.control[1]);
+            uint32_t tail = ukl_atomic_poll(&q.control[1]);
             tail = tail < q.capacity ? tail : q.capacity;
             if (head >= tail)
                 break;
@@ -114,7 +116,7 @@ UKL_INLINE void ukl_wq_done(UklWorkQueue q) { ukl_atomic_sub(&q.control[2], 1u);
 // Whether a worker that found nothing should stop: nothing is active, or it has polled `limit` times.
 UKL_INLINE bool ukl_wq_idle(UklWorkQueue q, UKL_PRIVATE uint32_t* polls, uint32_t limit)
 {
-    if (ukl_atomic_load(&q.control[2]) == 0u)
+    if (ukl_atomic_poll(&q.control[2]) == 0u)
         return true;
     return ++*polls >= limit;
 }
@@ -127,5 +129,5 @@ UKL_INLINE bool ukl_wq_idle_sg(UklWorkQueue q, bool got, UKL_PRIVATE uint32_t* p
         *polls = 0u;
         return false;
     }
-    return ukl_sg_broadcast(ukl_atomic_load(&q.control[2]), 0u __UKL_ARGS) == 0u || ++*polls >= limit;
+    return ukl_sg_broadcast(ukl_atomic_poll(&q.control[2]), 0u __UKL_ARGS) == 0u || ++*polls >= limit;
 }

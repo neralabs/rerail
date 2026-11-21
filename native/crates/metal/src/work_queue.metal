@@ -31,6 +31,10 @@ constant uint WQ_TURNS=100000000u;
 
 struct WorkQueue { device atomic_uint* slots; device atomic_uint* control; uint capacity; };
 
+// A control word, polled: a read-modify-write that changes nothing (decision 0540). A relaxed load in a loop may
+// keep reading the core's copy on Apple's GPUs (Q123), and a worker see the queue empty, or its work active, for ever.
+static uint wq_poll(device atomic_uint* p){return atomic_fetch_or_explicit(p,0u,memory_order_relaxed);}
+
 // Pushes `item` (below 0xFFFFFFFE). False when the queue is full (the overflow flag is set).
 static bool wq_push(WorkQueue q,uint item){
   atomic_fetch_add_explicit(&q.control[2],1u,memory_order_relaxed);
@@ -52,10 +56,10 @@ static bool wq_push(WorkQueue q,uint item){
 
 // Takes an item into `item`; false when there was none to take now.
 static bool wq_take(WorkQueue q,thread uint& item){
-  uint head=atomic_load_explicit(&q.control[0],memory_order_relaxed);
+  uint head=wq_poll(&q.control[0]);
   bool claimed=false;
   for(uint attempt=0u;attempt<WQ_TURNS&&!claimed;attempt++){
-    uint tail=min(atomic_load_explicit(&q.control[1],memory_order_relaxed),q.capacity);
+    uint tail=min(wq_poll(&q.control[1]),q.capacity);
     if(head>=tail)return false;
     claimed=atomic_compare_exchange_weak_explicit(&q.control[0],&head,head+1u,memory_order_relaxed,memory_order_relaxed);
   }
@@ -71,6 +75,6 @@ static void wq_done(WorkQueue q){atomic_fetch_sub_explicit(&q.control[2],1u,memo
 
 // Whether a worker that found nothing should stop: nothing is active, or it has polled `limit` times.
 static bool wq_idle(WorkQueue q,thread uint& polls,uint limit){
-  if(atomic_load_explicit(&q.control[2],memory_order_relaxed)==0u)return true;
+  if(wq_poll(&q.control[2])==0u)return true;
   return ++polls>=limit;
 }
