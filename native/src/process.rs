@@ -564,6 +564,10 @@ mod tests {
         let asked = Instant::now();
         let end = end_process_started_by(child.id(), started, 60_000).expect("the call runs");
         assert_eq!(end, "ended");
-        assert!(asked.elapsed() < Duration::from_secs(5), "{:?}", asked.elapsed());
+        assert!(
+            asked.elapsed() < Duration::from_secs(5),
+            "{:?}",
+            asked.elapsed()
+        );
     }
 }
