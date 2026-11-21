@@ -36,12 +36,12 @@ export async function placeCheckout(folder: string, options: GitReadOptions = {}
   }
 }
 
-/** Where `folder` sits in Git, by its path as given and by its real path, which the session's checkout is found by. */
+/**
+ * Where `folder` sits in Git, by its path as given. Its checkout's top level is placed next by its real path
+ * ({@link placeRepository}), the path the session's checkout is found by.
+ */
 async function placeFolder(folder: string, options: GitReadOptions): Promise<RepositoryIdentityLocation | undefined> {
-  const requested = resolve(folder);
-  const real = physicalPath(requested);
-  const [location] = await Promise.all([requested, ...(real === requested ? [] : [real])].map(path => placeWithoutBlocking(path, options)));
-  return location;
+  return await placeWithoutBlocking(resolve(folder), options);
 }
 
 /**
