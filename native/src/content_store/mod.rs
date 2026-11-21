@@ -68,6 +68,7 @@ mod tree_pages;
 #[allow(dead_code)]
 mod tree_result_segments;
 pub mod upkeep;
+mod verified_files;
 pub mod working_set;
 mod workspaces;
 pub mod write_back;
@@ -95,6 +96,7 @@ pub use schema::STORE_FILE_NAME;
 pub use segments::{SealedSegments, SegmentBytes, SegmentWriter};
 pub use tree_diff::{TreeChange, TreeDiff};
 pub use tree_pages::{TREE_PAGE_FILES, TreePage, TreePageKey, tree_pages_digest};
+pub use verified_files::{VerifiedWorktreeFile, worktree_path_key};
 
 #[cfg(any(test, feature = "test-hooks"))]
 pub use connection::{

@@ -1149,7 +1149,8 @@ fn the_system_attributes_beside_the_named_config_decide_the_stat_shortcut() {
         )));
         let workspace = crate::git_workspace::discover(&root.join("work")).unwrap();
         crate::git_workspace::reset_source_alias_hashes();
-        assert!(workspace.holds_blob_bytes("a.py", 2));
+        let mut memory = crate::git_workspace::VerifiedFiles::new(None, &root.join("work"));
+        assert!(workspace.holds_blob_bytes("a.py", 2, &mut memory));
         let hashed = std::env::var_os("GIT_ATTR_NOSYSTEM").is_none();
         assert_eq!(
             crate::git_workspace::source_alias_hashes(),

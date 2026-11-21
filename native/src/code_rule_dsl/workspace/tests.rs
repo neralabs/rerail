@@ -298,7 +298,10 @@ fn poisoned_state_rejections_and_close_release_resident_sources() {
         );
         assert!(!workspace.accepts_path("resident.py".into()));
         for rejected in [
-            workspace.set_root("/".into()).unwrap_err(),
+            // An absolute path on every system ("/" is not one on Windows).
+            workspace
+                .set_root(std::env::temp_dir().to_string_lossy().into_owned())
+                .unwrap_err(),
             workspace.evict_inactive().unwrap_err(),
             workspace.set_document_residency_limit(1024).unwrap_err(),
         ] {

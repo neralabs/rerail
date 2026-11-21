@@ -1,0 +1,1 @@
+On Windows, repository scans and the walk behind `file.package.serverGraph` read edits that keep a file's size and modification time. Scans still leave untouched files and files marked offline or as cloud placeholders unread; a file whose times were set is read by the next scan, then again only after it is written or its times or attributes change.
