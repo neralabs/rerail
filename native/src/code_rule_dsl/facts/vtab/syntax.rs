@@ -4592,6 +4592,9 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
     // no join binds, cost nothing. Their statistics come from the tree.
     let _nearest = crate::code_rule_dsl::logic::profile::span(|| "nearest".into());
     use crate::code_rule_dsl::logic::front::ast::{AXIS, DESCENDANTS};
+    // The axes over one set of kinds share their solves (`within::Solves`, decision 0494 step 7): each mode's is made
+    // once, and an `inside` whose set nests nowhere is its `nearest`.
+    let mut solves: Vec<(BTreeSet<i64>, Arc<within::Solves>)> = Vec::new();
     for (name, members) in sets {
         let axis = if name.starts_with(DESCENDANTS) {
             within::Axis::Has
@@ -4600,7 +4603,16 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
         } else {
             within::Axis::Nearest
         };
-        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members, binding))));
+        let set: BTreeSet<i64> = members.iter().copied().collect();
+        let shared = match solves.iter().find(|(s, _)| *s == set) {
+            Some((_, shared)) => Arc::clone(shared),
+            None => {
+                let shared = Arc::new(within::Solves::default());
+                solves.push((set, Arc::clone(&shared)));
+                shared
+            }
+        };
+        out.push((name.clone(), Arc::new(within::Within::axis(Arc::clone(&batch), axis, members, binding).sharing(shared))));
     }
     // The stored-projection spike (measurement only): the relations the program reads, but the per-node axes.
     if let Some(db) = std::env::var_os("RERAIL_SPIKE_PROJECTION") {
