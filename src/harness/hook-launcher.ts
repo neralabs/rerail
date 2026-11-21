@@ -46,8 +46,8 @@ function quiet(reason: string, answered: boolean): void {
 }
 
 /**
- * Whether a hook run in this process has written to stdout since the call, as the answer collected from a hook run as a
- * child tells: it counts what goes through `process.stdout.write`, which a hook's answer and `console.log` use.
+ * Whether the hook has written to stdout since the call, as the answer a launcher collects from the one it starts
+ * tells: it counts what goes through `process.stdout.write`, which a hook's answer and `console.log` use.
  */
 function watchAnswer(): () => boolean {
   const write = process.stdout.write.bind(process.stdout);
@@ -89,8 +89,8 @@ if (recordedNode !== HERE && existsSync(recordedNode) && !sameFile(recordedNode,
   turnOnCompileCache();
   process.argv.splice(1, 3, hookScript);
   const answered = watchAnswer();
-  // A hook that fails here answers as a hook run as a child does: exit 0, and `{}` when it wrote nothing. Whether it
-  // ends the process itself, throws after it has loaded or leaves a failing exit code is known once the process ends.
+  // A hook that fails here exits 0 all the same, with `{}` when it wrote nothing. Whether it ends the process itself,
+  // throws after it has loaded or leaves a failing exit code is known once the process ends.
   process.on("exit", code => {
     if (code !== 0) quiet(`exited ${code}`, answered());
   });
