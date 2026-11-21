@@ -29,7 +29,6 @@ import { readAddedSettingsEntries, writeAddedSettingsEntries, type AddedSettings
 import { commandFileText, MANAGED_SKILL_MARKER, type CommandFileContext } from "../harness/rerail-command-files.js";
 import { RERAIL_COMMANDS, type RerailCommandName } from "../harness/rerail-commands.js";
 import { andList } from "../harness/setup-screens.js";
-import { sameFile } from "../harness/same-file.js";
 import { commandLine, POWERSHELL_SAFE, powershellLiteral, shellWord } from "../engine/command-line.js";
 import { stableJsonText } from "../engine/stable-json.js";
 import { ENTRY_POINTS, RERAIL_PACKAGE_NAME } from "../engine/package-root.js";
@@ -38,7 +37,7 @@ import { mainContentStoreDirectory } from "../engine/native/rerail-build.js";
 import { runGit } from "../engine/git.js";
 import { replaceFile } from "../engine/file-replace.js";
 import { pinnedNodePath } from "./node-path.js";
-import { pathKey, programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
+import { windowsSystemProgram } from "../engine/system-programs.js";
 import { ACTIVE_PROFILE_FILE, PROFILES_DIR } from "../activation/customer-profile.js";
 import { DEVICE_SECRETS_DIR } from "../activation/device-keystore.js";
 import { RERAIL_HOSTS, type RerailHost } from "../engine/adapter-contract.js";
@@ -61,10 +60,10 @@ export interface RegistrationOptions {
   platform?: NodeJS.Platform;
   /**
    * Keep a Claude Code hook entry on Windows that already runs the same launcher, recorded Node and hook, in either form
-   * registration writes: `node` from PATH or cmd.exe. Which of the two it writes depends on the PATH of the process that
-   * plans it (`hookExecEntry`), so a check of whether Rerail is connected, run with another PATH, would otherwise read a
-   * current registration as out of date. With it, registration reads no PATH. Set-up and `rerail update` leave it off
-   * and write the form their PATH calls for.
+   * a registration writes or wrote: cmd.exe, or `node` from PATH (`hookExecEntry`). Versions 0.2.0 and earlier wrote
+   * `node` where the PATH of the process that planned it found the recorded node, so a check of whether Rerail is
+   * connected would otherwise read such a registration as out of date. Set-up and `rerail update` leave it off and write
+   * the entry this version writes.
    */
   keepHookCommand?: boolean;
   /**
@@ -575,32 +574,20 @@ function cursorPowershellHookCommand(context: HookCommandContext, executable: st
 }
 
 /**
- * The same recorded-first order without a shell, for hosts that spawn exec-form hooks directly: the hook launcher runs
- * the hook under the recorded node, or under the node that started it once the recorded one is gone. Where `node` on
- * PATH is the recorded node, the host starts the launcher with it, and the launcher runs the hook in its own process.
- * Elsewhere `node` would start the launcher on another node, which would start the recorded one as a second process on
- * every hook event, so the hook starts through cmd.exe (`cmdHookEntry`): cmd starts the recorded node itself while it
- * exists and `node.exe` from PATH once it is gone, one node either way. Only a registration that writes the entry
- * chooses its form from PATH (`choosesHookForm`); with `keepHookCommand`, an entry in either form that the settings
- * already hold stays as it is (`keptHookEntry`).
+ * The same recorded-first order without a shell, for hosts that spawn exec-form hooks directly: the hook starts through
+ * cmd.exe (`cmdHookEntry`), which starts the recorded node itself while it exists and `node.exe` from PATH once it is
+ * gone, so a hook event starts one node whatever PATH the host runs with. A `node` entry would start the hook launcher
+ * on the node the host's PATH finds first, and where that is another node than the recorded one the launcher starts the
+ * recorded one as a second process on every hook event; the PATH set-up runs with tells nothing of the host's, which a
+ * version manager's shell, an editor started from another shell or an installer run since can make differ. The `node`
+ * entry stays only where cmd.exe cannot start the paths (`cmdHookEntry`). Registration reads no PATH. With
+ * `keepHookCommand`, an entry in either form that the settings already hold stays as it is (`keptHookEntry`). A
+ * removal writes no entry (`updateGroupedHooks`), so it does not look for cmd.exe.
  */
 async function hookExecEntry(context: Context, executable: string): Promise<JsonObject> {
   const launched: LauncherArgs = [hookScript(context, ENTRY_POINTS.hookLauncher), context.nodePath, hookScript(context, executable)];
-  const viaPath = nodeHookEntry(launched);
-  if (!choosesHookForm(context)) return viaPath;
-  const viaCmd = await cmdHookEntry(context, launched);
-  return viaCmd === undefined || pathFindsNode(context.nodePath, context.platform) ? viaPath : viaCmd;
-}
-
-/**
- * Whether this registration writes the hook entry in the form its PATH calls for: set-up and `rerail update`, not a
- * removal, which never adds the entry, and not a check of whether Rerail is connected (`keepHookCommand`), which the
- * daemon runs each time the dashboard's Settings opens. Only these commands read PATH: a look for node there is a file
- * check per PATH entry, and one on a share that does not answer holds its process for as long as Windows waits on it,
- * about 21 s.
- */
-function choosesHookForm(context: Pick<Context, "mode" | "keepHookCommand">): boolean {
-  return context.mode === "register" && !context.keepHookCommand;
+  const viaCmd = context.mode === "register" ? await cmdHookEntry(context, launched) : undefined;
+  return viaCmd ?? nodeHookEntry(launched);
 }
 
 /** The `node` exec-form entry: `node` from PATH starts the hook launcher with `launched`. */
@@ -681,16 +668,14 @@ function cmdReadsAsOneWord(path: string): boolean {
 
 /**
  * `entry`, or with `keepHookCommand` the entry of either form for the same hook (`nodeHookEntry`, `cmdHookEntry`) that
- * `settings` already hold. Which form registration writes depends on the PATH of the process that plans it, so a check
- * of whether Rerail is connected, run with another PATH, would otherwise read a current registration as out of date. A
- * cmd.exe entry stays only while a file is at its path: one with nothing there starts no hook, so it reads as out of
- * date.
+ * `settings` already hold: versions 0.2.0 and earlier wrote the `node` form where their PATH found the recorded node,
+ * and such a hook still runs, so a check of whether Rerail is connected reads it as current. `entry` is the cmd.exe form
+ * only while a file is at its path (`hookExecEntry`): one with nothing there starts no hook, so it reads as out of date.
  */
-async function keptHookEntry(context: Context, settings: JsonObject, entry: JsonObject): Promise<JsonObject> {
+function keptHookEntry(context: Context, settings: JsonObject, entry: JsonObject): JsonObject {
   const launched = context.keepHookCommand && typeof entry.command === "string" ? launcherArgs(entry.command, entry.args) : undefined;
   if (launched === undefined) return entry;
-  const forms = [nodeHookEntry(launched), await cmdHookEntry(context, launched)].filter(form => form !== undefined);
-  return forms.find(form => holdsHookEntry(settings, form)) ?? entry;
+  return [nodeHookEntry(launched), entry].find(form => holdsHookEntry(settings, form)) ?? entry;
 }
 
 /** Whether `settings` hold `entry` among their hooks: the same command with the same arguments. */
@@ -701,39 +686,6 @@ function holdsHookEntry(settings: JsonObject, entry: JsonObject): boolean {
   const wanted = JSON.stringify([entry.command, entry.args]);
   return entries.some(found => isObject(found) && JSON.stringify([found.command, found.args]) === wanted);
 }
-
-/**
- * Whether `node` on this process's PATH is the file at `nodePath`, found as a spawn without a shell finds it
- * (`programOnPath`) and compared by the hook launcher's own test (`sameFile`). The search ends at the first PATH entry on
- * a server (`pathBeforeServer`), so where one comes before node's folder the answer is no and the cmd.exe entry is
- * written.
- */
-function pathFindsNode(nodePath: string, platform: NodeJS.Platform): boolean {
-  const found = programOnPath("node", { platform, env: pathBeforeServer(process.env) });
-  return found !== undefined && sameFile(found, nodePath);
-}
-
-/**
- * `env` with its PATH cut at the first entry on a server (`isServerPath`), unquoted as Windows reads PATH. Windows waits
- * about 21 s on a share that does not answer, as on a laptop off its VPN, and set-up would wait as long only to choose
- * a hook entry's form. Past such an entry the cmd.exe entry is the one to write: it starts the recorded node by its
- * path, so a hook event never asks the share either, where Claude Code's start of `node` would ask it on every event.
- */
-function pathBeforeServer(env: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
-  const key = pathKey(env);
-  const entries = (env[key] ?? "").split(";");
-  const server = entries.findIndex(entry => isServerPath(entry.replace(/^"(.*)"$/u, "$1")));
-  return server < 0 ? env : { ...env, [key]: entries.slice(0, server).join(";") };
-}
-
-/**
- * Whether a Windows path names a folder on a server: `\\server\share`, or the long forms `\\?\UNC\server\share` and
- * `\\.\UNC\server\share`, with either slash. `\\?\C:\` and `\\.\C:\` name a local drive.
- */
-function isServerPath(path: string): boolean {
-  return /^[\\/]{2}(?:[^\\/?.]|[?.][\\/]unc[\\/])/iu.test(path);
-}
-
 
 type PromptCommandHarness = "claude-code" | "cursor";
 
@@ -953,7 +905,7 @@ async function updateGroupedHooks(
   entry: JsonObject,
 ): Promise<JsonObject> {
   const hooks = await stripHookEvents(hooksObject(value, path), context, executable);
-  if (context.mode === "register") addHookGroups(hooks, events, toolEvents, await keptHookEntry(context, value, entry), path);
+  if (context.mode === "register") addHookGroups(hooks, events, toolEvents, keptHookEntry(context, value, entry), path);
   return withHooks(value, hooks);
 }
 
@@ -2054,7 +2006,7 @@ export function detectHarnesses(home: string = homedir()): Harness[] {
 
 /**
  * Whether a file or folder is at `path`, asked of this computer's file system off the event loop: the daemon asks it in
- * the check of whether Rerail is connected (`keptHookEntry`), and a synchronous look would hold every request it serves.
+ * the check of whether Rerail is connected (`cmdHookEntry`), and a synchronous look would hold every request it serves.
  */
 function fileThere(path: string): Promise<boolean> {
   return access(path).then(() => true, () => false);

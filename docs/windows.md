@@ -414,7 +414,7 @@ its exact text, so `src/setup/harness-registration.ts` writes and reads those it
 
 | Agent | Hook command | Commands it runs |
 | --- | --- | --- |
-| Claude Code | Exec form, no shell: `node <hook launcher> <recorded node> <hook>` where `node` on PATH is the recorded node, where set-up finds no `cmd.exe` by its full System32 path, or where `cmd.exe` would split a path of the entry (one that holds `%`, `!` or `"`, or one with no space that holds `& ( ) ^ \| < > , ; =`); elsewhere, a folder on a server before node's on PATH included, `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, with exit 0 where that node cannot start or crashes while the launcher is there, or `node.exe` from PATH once that node is gone | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
+| Claude Code | Exec form, no shell: `cmd.exe` runs `<recorded node> <hook launcher> <recorded node> <hook>`, with exit 0 where that node cannot start or crashes while the launcher is there, or `node.exe` from PATH once that node is gone, one Node a hook event whatever PATH Claude Code has; `node <hook launcher> <recorded node> <hook>` where set-up finds no `cmd.exe` by its full System32 path, or where `cmd.exe` would split a path of the entry (one that holds `%`, `!` or `"`, or one with no space that holds `& ( ) ^ \| < > , ; =`) | Git Bash: `'<node>' '<cli.js>'`, and the status line with POSIX quoting |
 | Codex | PowerShell: `$LASTEXITCODE = 1; if (Test-Path -LiteralPath '<node>') { & '<node>' '<hook>' } else { node '<hook>' }; exit $LASTEXITCODE` | PowerShell: `& '<node>' '<cli.js>'` |
 | Cursor | PowerShell, the event piped in: `Invoke-Command -ScriptBlock { if (Test-Path -LiteralPath '<node>') { $input \| & '<node>' '<hook>' } else { $input \| node '<hook>' } }` | PowerShell: `& '<node>' '<cli.js>'` |
 
@@ -505,12 +505,20 @@ the one node started.
 
 A coding agent that times out a hook kills the process it started. On macOS and Linux that is node, since the sh
 launcher `exec`s it. On Windows it is the parent node runs under: PowerShell for Codex and Cursor, `cmd.exe` for
-Claude Code where its entry starts `cmd.exe`, and the hook launcher where the `node` entry finds another node on PATH.
-Where that node is the recorded one, the launcher runs the hook in the process Claude Code ends, as on macOS and Linux.
+Claude Code, whose entry set-up writes through `cmd.exe` wherever `cmd.exe` can start its paths, and the hook launcher
+where a `node` entry finds another node on PATH. Where a `node` entry finds the recorded one, the launcher runs the
+hook in the process Claude Code ends, as on macOS and Linux.
 Windows never kills a child with its parent, so the hook ran on holding its session's lock, and the
 session's next hook waited up to 30 s for it. A hook that exits holding its session's lock now removes it as it exits,
 and a lock whose holder has stopped touching it for 10 s is taken by the next hook, even when Windows has given the
-holder's pid to another process. The watch checks the parent once a second. Since the watch does nothing
+holder's pid to another process. The watch checks the parent once a second, so a Claude Code hook whose `cmd.exe`
+parent was killed runs on until its next check. On a Windows 11 machine, 10 runs each with the kill falling across
+that second, such a hook ended 16 to 933 ms after the kill (median 480 ms), where the hook of a `node` entry that
+finds the recorded node, which the kill ends itself, ended within 4 to 20 ms. A Claude Code hook lets go of its
+session's lock while the daemon checks its event, the wait a timeout usually cuts short: the session's next hook,
+started at the kill, then took the lock within 16 ms with either entry. A hook killed while it held the lock holds it
+until it ends: the next hook then waited 2 to 878 ms for it (median 427 ms), where after such an entry's kill it took
+the lock from the ended holder in 3 to 10 ms. Since the watch does nothing
 off Windows, `test/harness/hook-entries.test.ts` checks that `serveHookEntry` ends a hook whose parent is gone while
 the hook still runs, and that each entry module serves its hook through `serveHookEntry`.
 

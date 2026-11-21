@@ -314,9 +314,10 @@ describe("whether a coding agent can read Rerail's data", () => {
   });
 
   it("counts Claude Code on Windows as connected whatever node PATH finds first for whoever asks", async () => {
-    // Set-up writes Claude Code's Windows hooks with `node` where PATH finds the recorded node, here the one running
-    // this test, and with cmd.exe where PATH finds another. The dashboard and `rerail status` ask from the daemon and
-    // the shell, each with a PATH of its own.
+    // Versions 0.1.4 and earlier wrote Claude Code's Windows hooks with `node` always; 0.1.5 and 0.2.0 with `node` where
+    // set-up's PATH found the recorded node, here the one running this test, and with cmd.exe where it found another;
+    // this one writes cmd.exe. The dashboard and `rerail status` ask from the daemon and the shell, each with a PATH of
+    // its own.
     let recorded = "";
     const { root, home } = await connected(["claude-code"], async home => {
       recorded = await folderOfThisNode(dirname(home));
@@ -343,7 +344,7 @@ describe("whether a coding agent can read Rerail's data", () => {
   it("reads Claude Code on Windows as connected and registered, and takes it out, without looking for node on PATH", async () => {
     // The daemon reads whether Rerail is connected on its event loop each time the dashboard's Settings opens, and
     // `rerail update` reads whether an agent is registered before it registers it again. A look for node on PATH checks
-    // a file in each PATH entry, which a share that does not answer holds for about 21 s: only set-up's write looks.
+    // a file in each PATH entry, which a share that does not answer holds for about 21 s: no registration looks.
     const { root, home } = await connected(["claude-code"], async () => {}, "win32");
     const settings = join(home, ".claude", "settings.json");
     const other = join(dirname(home), "other-node");
@@ -357,8 +358,7 @@ describe("whether a coding agent can read Rerail's data", () => {
     looksOnPath.mockClear();
     await registerHarnesses(windows);
     expect(await readFile(settings, "utf8")).toContain(inJson(cmd));
-    expect(looksOnPath).toHaveBeenCalledWith("node");
-    looksOnPath.mockClear();
+    expect(looksOnPath).not.toHaveBeenCalled();
 
     expect(await stateOf(root, home, "claude-code", { platform: "win32", claudeManagedSettings: null, fileExists })).toEqual({ connected: true, access: "file-tools" });
     // The question `rerail update` and set-up ask of each coding agent (`isRegistered`): would a removal change anything.
