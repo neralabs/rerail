@@ -42,9 +42,10 @@ pub struct Input<'a> {
     pub own: u32,
     /// The code's token marks: each its bit, its mask and the word it needs (0: any).
     pub token_bits: &'a [(u8, CodeMask, u16)],
-    /// The grammar's assumptions (decision 0552): a mask's name, what it is at a token's start,
-    /// and whether the prover proved it.
-    pub assumed: &'a [(String, Expr, bool)],
+    /// The grammar's assumptions (decision 0552): its scope (`None` at every token's start, else
+    /// in the tokens of a kind), a mask's name, what it reads as there, and whether the prover
+    /// proved what tier 1 makes of it.
+    pub assumed: &'a [(Option<String>, String, Expr, bool)],
 }
 
 /// A token mark's mask in the code (decision 0407), of the rows' starts (`Stmt::Token`s in
@@ -367,7 +368,48 @@ impl Gen<'_> {
         }
         let name = format!("t{}", self.next);
         self.next += 1;
-        self.make_node(key, name, show(e), e)
+        // Its comment once its operands are made, to name them.
+        let id = self.make_node(key, name, String::new(), e)?;
+        self.nodes[id].what = self.brief(e);
+        Ok(id)
+    }
+
+    /// `e` as its comment: a long one names the masks of stage 1 it reads.
+    fn brief(&self, e: &Expr) -> String {
+        let full = show(e);
+        if full.len() <= 100 {
+            return full;
+        }
+        fn go(g: &Gen, e: &Expr, top: bool) -> String {
+            if !top && !matches!(e, Expr::Name(_)) {
+                if let Some(&id) = g.node_of.get(&format!("{e:?}")) {
+                    return g.nodes[id].name.clone();
+                }
+            }
+            let inner = |a: &Expr| match a {
+                Expr::And(..) | Expr::Or(..) | Expr::Xor(..) if g.node_of.get(&format!("{a:?}")).is_none() => format!("({})", go(g, a, false)),
+                _ => go(g, a, false),
+            };
+            match e {
+                Expr::Not(a) => format!("~{}", inner(a)),
+                Expr::And(a, b) => format!("{} & {}", inner(a), inner(b)),
+                Expr::Or(a, b) => format!("{} | {}", inner(a), inner(b)),
+                Expr::Xor(a, b) => format!("{} ^ {}", inner(a), inner(b)),
+                Expr::Call(f, args) => {
+                    let args: Vec<String> = args
+                        .iter()
+                        .map(|a| match a {
+                            Arg::E(e) => go(g, e, false),
+                            Arg::N(k) => k.to_string(),
+                            Arg::S(s) => format!("{:?}", String::from_utf8_lossy(s)),
+                        })
+                        .collect();
+                    format!("{f}({})", args.join(", "))
+                }
+                _ => show(e),
+            }
+        }
+        go(self, e, true)
     }
 
     /// Stage 1's mask `name` of `e`: a carried operation's step, else its word.
@@ -647,7 +689,7 @@ impl Gen<'_> {
         }
         // An assumption (decision 0552): the mask at a start is its expression.
         if let Expr::Name(n) = e
-            && let Some((_, a, _)) = self.x.assumed.iter().find(|(m, _, _)| m == n)
+            && let Some((_, _, a, _)) = self.x.assumed.iter().find(|(sc, m, _, _)| sc.is_none() && m == n)
         {
             if self.regional(a) {
                 return Err(format!("tier 1 as Rust: `assume … {n} = …` reads a region's mask"));
@@ -1085,18 +1127,48 @@ impl Gen<'_> {
         // The token loop: each top row's branch.
         let mut branches = String::new();
         let mut pair_fns = String::new();
+        let mut checked: Vec<String> = Vec::new();
         for (row, s) in &rows {
             let Stmt::Token { kind, start, last, rule, .. } = s else { continue };
             if matches!(rule, Some(TokenRule::Inside(..))) {
                 continue;
             }
-            let st = match self.at_start(start)? {
+            let mut st = match self.at_start(start)? {
                 Some(t) => t,
                 None => format!("bit(&{}, s)", self.val(start)?),
             };
+            // The at-starts assumptions the prover did not prove, checked in a test build where the
+            // loop first reads them: at the first row whose start reads the mask, the rows before
+            // it not starting here.
+            let mut check = String::new();
+            for (scope, name, e, proved) in self.x.assumed {
+                if *proved || scope.is_some() || checked.contains(name) || !reads_mask(start, name, &self.defs) {
+                    continue;
+                }
+                checked.push(name.clone());
+                let Some(at) = self.at_start(e)? else { continue };
+                let m = self.val(&Expr::Name(name.clone()))?;
+                let _ = write!(check, "\n            // `assume … at starts {name} = {}`, not proved: a test build checks it.\n            #[cfg(feature = \"test-hooks\")]\n            assert_eq!(bit(&{m}, s), {at}, \"assume {name} at byte {{s}}\");", self.brief(e));
+            }
+            if !check.is_empty() {
+                st = format!("{{{check}\n            {st}\n        }}");
+            }
             let k = self.kind_of(*row);
             let (how, l) = match rule {
-                Some(TokenRule::Run(r)) => (format!("run {}", show(r)), format!("run_last(&{}, s)", self.val(r)?)),
+                Some(TokenRule::Run(r)) => {
+                    // Its run as its kind's assumptions read it (`in KIND`, decision 0552).
+                    let these: Vec<(&str, &Expr)> = x.assumed.iter().filter(|a| a.0.as_ref() == Some(kind)).map(|a| (a.1.as_str(), &a.2)).collect();
+                    let read = if these.is_empty() { None } else { Some(substitute(r, &these, &self.defs)) };
+                    match read {
+                        Some(read) if !self.regional(&read) => {
+                            let v = self.val(&read)?;
+                            let proved = x.assumed.iter().filter(|a| a.0.as_ref() == Some(kind)).all(|a| a.3);
+                            let check = if proved { String::new() } else { format!(";\n            // Not proved: a test build checks it against the rule over the file.\n            #[cfg(feature = \"test-hooks\")]\n            assert_eq!(run_last(&{}, s), run_last(&{v}, s), \"assume in {kind} at byte {{s}}\")", self.val(r)?) };
+                            (format!("run {}, read as {} (assumed)", show(r), self.brief(&read)), format!("run_last(&{v}, s){check}"))
+                        }
+                        _ => (format!("run {}", show(r)), format!("run_last(&{}, s)", self.val(r)?)),
+                    }
+                }
                 Some(TokenRule::RunOnce(r, d)) => (format!("run {} once {}", show(r), show(d)), format!("run_once_last(&{}, &{}, s)", self.val(r)?, self.val(d)?)),
                 Some(TokenRule::Pair(p)) => (format!("pair {}", show(p)), format!("s + usize::from(bit(&{}, s))", self.val(p)?)),
                 Some(TokenRule::Pairs { pairs, .. }) => {
@@ -1267,18 +1339,6 @@ impl Gen<'_> {
             let plain: Vec<String> = opens.iter().enumerate().filter(|(_, r)| r.2.is_empty()).map(|(k, _)| k.to_string()).collect();
             let _ = write!(open_code, "        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the region opened last of those with none (`plain`) is one.\n        let open = {} else {{\n            usize::MAX\n        }};\n        if matches!(open, {}) {{\n            plain = open;\n        }}\n", arms.join(" else "), plain.join(" | "));
         }
-        // The assumptions the prover did not prove: a test build checks each at every token's start,
-        // against its mask over the file.
-        let mut assume_code = String::new();
-        for (name, e, proved) in self.x.assumed {
-            if *proved {
-                continue;
-            }
-            let Some(at) = self.at_start(e)? else { continue };
-            let m = self.val(&Expr::Name(name.clone()))?;
-            let _ = write!(assume_code, "        // `assume … at starts {name} = {}`, not proved: a test build checks it.\n        #[cfg(feature = \"test-hooks\")]\n        assert_eq!(bit(&{m}, s), {at}, \"assume {name} at byte {{s}}\");\n", show(e));
-        }
-        open_code.push_str(&assume_code);
         let mut out = String::new();
         out.push_str("// Generated by the Bitlex compiler (`rerail_compiler::bitlex_lex_rust`) from the grammar's lexer statements. Do not edit.\n\n");
         out.push_str("/// The masks tier 2 reads, a bit a byte: those it splits a region by, where it reads one in parts.\npub struct Masks {\n");
@@ -1308,6 +1368,67 @@ impl Gen<'_> {
         out.push_str(HELPERS);
         Ok(out)
     }
+}
+
+/// Whether `e` reads mask `name`, itself or through the masks it reads (`defs`).
+pub fn reads_mask(e: &Expr, name: &str, defs: &HashMap<String, Expr>) -> bool {
+    let e = substitute(e, &[(name, &Expr::Name(format!("{name}'")))], defs);
+    fn has(e: &Expr, n: &str) -> bool {
+        match e {
+            Expr::Name(m) => m == n,
+            Expr::Empty | Expr::Test { .. } => false,
+            Expr::Not(a) => has(a, n),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => has(a, n) || has(b, n),
+            Expr::Call(_, args) => args.iter().any(|a| matches!(a, Arg::E(e) if has(e, n))),
+        }
+    }
+    has(&e, &format!("{name}'"))
+}
+
+/// `e` with `assumed`'s masks read as their expressions (decision 0552's `in KIND`): each mask whose
+/// expression reads one of them, by `defs`, written out to where it does; the others kept by name.
+pub fn substitute(e: &Expr, assumed: &[(&str, &Expr)], defs: &HashMap<String, Expr>) -> Expr {
+    fn reads(n: &str, assumed: &[(&str, &Expr)], defs: &HashMap<String, Expr>, memo: &mut HashMap<String, bool>) -> bool {
+        if assumed.iter().any(|(a, _)| *a == n) {
+            return true;
+        }
+        if let Some(&r) = memo.get(n) {
+            return r;
+        }
+        memo.insert(n.to_owned(), false);
+        let r = defs.get(n).is_some_and(|d| names_in(d).iter().any(|m| reads(m, assumed, defs, memo)));
+        memo.insert(n.to_owned(), r);
+        r
+    }
+    fn names_in(e: &Expr) -> Vec<String> {
+        match e {
+            Expr::Name(n) => vec![n.clone()],
+            Expr::Empty | Expr::Test { .. } => Vec::new(),
+            Expr::Not(a) => names_in(a),
+            Expr::And(a, b) | Expr::Or(a, b) | Expr::Xor(a, b) => [names_in(a), names_in(b)].concat(),
+            Expr::Call(_, args) => args.iter().flat_map(|a| if let Arg::E(e) = a { names_in(e) } else { Vec::new() }).collect(),
+        }
+    }
+    fn go(e: &Expr, assumed: &[(&str, &Expr)], defs: &HashMap<String, Expr>, memo: &mut HashMap<String, bool>) -> Expr {
+        match e {
+            Expr::Name(n) => {
+                if let Some((_, a)) = assumed.iter().find(|(a, _)| a == n) {
+                    (*a).clone()
+                } else if reads(n, assumed, defs, memo) {
+                    go(&defs[n], assumed, defs, memo)
+                } else {
+                    e.clone()
+                }
+            }
+            Expr::Empty | Expr::Test { .. } => e.clone(),
+            Expr::Not(a) => simplify(Expr::Not(Box::new(go(a, assumed, defs, memo)))),
+            Expr::And(a, b) => simplify(Expr::And(Box::new(go(a, assumed, defs, memo)), Box::new(go(b, assumed, defs, memo)))),
+            Expr::Or(a, b) => simplify(Expr::Or(Box::new(go(a, assumed, defs, memo)), Box::new(go(b, assumed, defs, memo)))),
+            Expr::Xor(a, b) => simplify(Expr::Xor(Box::new(go(a, assumed, defs, memo)), Box::new(go(b, assumed, defs, memo)))),
+            Expr::Call(f, args) => Expr::Call(f.clone(), args.iter().map(|a| if let Arg::E(x) = a { Arg::E(go(x, assumed, defs, memo)) } else { a.clone() }).collect()),
+        }
+    }
+    go(e, assumed, defs, &mut HashMap::new())
 }
 
 /// `e` with its constants folded: `empty` (none) and `~empty` (every byte).

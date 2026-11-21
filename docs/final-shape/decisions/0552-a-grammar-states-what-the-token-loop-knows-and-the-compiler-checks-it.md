@@ -22,31 +22,50 @@ facts it can not find alone: each holds because of how the other rows end their 
 
 ## The decision
 
-- **The statement.** `assume "WHY" at starts NAME = E`: at every byte a token starts at, mask `NAME` is `E`. It
-  changes no mask, so the executors that make every mask at once read nothing new (the evaluator skips it).
-- **What tier 1 makes of it.** Where a token's start reads `NAME` (`at_start`), it reads `E` there. `E` reads no
-  region's mask (the compiler refuses one that does). A mask made of the regions that the token loop reads only
-  at starts then no longer needs the regions' walk.
+- **The statements.** Neither changes a mask, so the executors that make every mask at once read nothing new
+  (the evaluator skips them).
+  - `assume "WHY" at starts NAME = E`: where the token loop reads `NAME` at a token's start, it is `E`. The loop
+    reads it at the first row whose start reads it, where no row before that one starts (a later row reading it
+    is reached at fewer bytes).
+  - `assume "WHY" in KIND NAME = E`: over the tokens of `KIND`, the bytes their run rule reads (each byte after
+    the start the rule holds at, and the byte after the run, where it stops), `NAME` is `E`.
+- **What tier 1 makes of them.** Where a token's start reads `NAME` (`at_start`), it reads `E` there. A row of
+  `KIND` with a run reads its rule with the kind's assumptions: each mask the rule reads that reads `NAME`
+  (through the masks it is made of) is written out with `E` for `NAME`, and the rest kept by name
+  (`substitute`). `E` reads no region's mask, and the rewritten rule is used only where it reads none. A mask
+  made of the regions that the token loop reads only at starts and runs then no longer needs the regions' walk.
 - **How each is checked** (the user's 1 + 2 + 3):
-  1. **Proved.** The obligation is a mask question: `(NAME ^ E) & starts & ~skip` is zero everywhere, where
-     `starts` is the union of the rows the loop reads (not a region's parts). The loop stands nowhere else: a byte
-     no row starts at refuses. `Lowering::either_never` asks it (the bounded search, then induction, with the
-     walk's equations), and the answer is cached by the question's content as every proof is (0414): shipped in
-     the grammar's answers (`kotlin.answers`), so a compile with them proves nothing again.
-  2. **Checked by the tests.** One the prover does not prove is checked at every token's start in a test build
-     (`#[cfg(feature = "test-hooks")]`): its mask over the file against `E` there. The grammar's tests and its
-     corpus check it; a product build trusts what they checked.
+  1. **Proved.** Each obligation is a mask question, that a mask is zero everywhere:
+     - at starts: `(NAME ^ E) & start_i & ~start_0 & … & ~start_(i-1) & ~skip`, row `i` the first that reads
+       `NAME`, over the rows the loop reads (not a region's parts). The loop stands nowhere else: a byte no row
+       starts at refuses.
+     - in a kind: for each row of `KIND`, with `S` its start, `R` its rule and `R′` the rule as tier 1 reads it,
+       `(R ^ R′) & (RUN | END)`, where `RUN = fill(prev(S) & R, ~R)` and `END = prev(S | RUN) & ~RUN`.
+     `Lowering::either_never` asks it (the bounded search, then induction, with the walk's equations), and the
+     answer is cached by the question's content as every proof is (0414): shipped in the grammar's answers
+     (`kotlin.answers`), so a compile with them proves nothing again.
+  2. **Checked by the tests.** One the prover does not prove is checked in a test build
+     (`#[cfg(feature = "test-hooks")]`): an at-starts one in the condition of the first row that reads it, its
+     mask over the file against `E` there; an in-kind one in its row, the run's end by the rule over the file
+     against the run tier 1 reads. The grammar's tests and its corpus check it; a product build trusts what they
+     checked.
   3. **A refusal.** Where a test at the token decides a fact, it can be a refusal instead (as 0551's step B
      makes the regions' escapes), sound in every build.
-- **The cost.** One question an assumption, all of them asked with one prover (its settings fixed: horizon 8,
-  100,000 conflicts). Kotlin's first four, cold: about 14 s of the compile; with the shipped answers, none.
+- **The cost.** One question an at-starts assumption, one a row of an assumed kind, all of them asked with one
+  prover (its settings fixed: horizon 8, 100,000 conflicts). Kotlin's first four, cold: about 14 s of the
+  compile; with the shipped answers, none.
   `RERAIL_ASSUMPTIONS=1` prints each and whether it was proved.
 
 ## Kotlin
 
-The first four, all proved: a name starts at a letter (`word_start = alpha`), and a decimal, hex or binary
-number at its digit not after one `.` (`int_at`, `hex_at`, `bin_at`). Tier 1's starts of those rows are now
-stage 1's masks at the token.
+At starts, all proved: a name starts at a letter (`word_start = alpha`); a decimal, hex or binary number at its
+digit not after one `.` (`int_at`, `hex_at`, `bin_at`); a real number at a `.` before a digit (`dot_at`); and
+an operator at its first byte, not a pair's second (`p_start`: a comment's `/` is taken by the comment rows
+before it). Tier 1's starts of those rows are now stage 1's masks at the token.
+
+In kinds, checked by the tests (the prover does not reach them yet): a name runs over its word's bytes
+(`name_more = word` in `simple_identifier`), and a number's bytes are code (`code = ~empty` in the four number
+kinds), so their runs (`nb`, `hx`, `bx`) are stage 1's masks too.
 
 ## Why not
 

@@ -706,7 +706,10 @@ pub enum Stmt {
     /// lexer that reads tokens one at a time reads `NAME` there as `E`. The compiler proves it
     /// where it can (the prover, its answers cached by content, 0414); else a test build checks it
     /// at every token.
-    Assume { why: String, name: String, expr: Expr },
+    ///
+    /// `assume "WHY" in KIND NAME = E`: in every token of the kind, after its start through the byte
+    /// its run ends at, mask `NAME` reads as `E`: the token's rule is read with `E` for it.
+    Assume { why: String, scope: Option<String>, name: String, expr: Expr },
     /// `escape "WHY" at KIND when count(E) at least N` (or `run(E)`): a test of each token of
     /// the kind over its own bytes, as a lexer checks a token it reads (decision 0177): `count`,
     /// `E`'s bits in the token at least `N`; `run`, `E` at each of its first `N` bytes (the token
@@ -1877,11 +1880,16 @@ impl P {
             }
             "assume" => {
                 let why = String::from_utf8_lossy(&self.string()?).into_owned();
-                self.want_kw("at")?;
-                self.want_kw("starts")?;
+                let scope = if self.eat_kw("in") {
+                    Some(self.ident()?)
+                } else {
+                    self.want_kw("at")?;
+                    self.want_kw("starts")?;
+                    None
+                };
                 let name = self.ident()?;
                 self.want_p("=")?;
-                Stmt::Assume { why, name, expr: self.expr()? }
+                Stmt::Assume { why, scope, name, expr: self.expr()? }
             }
             "mask" => {
                 let n = self.ident()?;

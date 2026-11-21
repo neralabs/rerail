@@ -259,6 +259,14 @@ assume "a name starts at a word's first letter: a start is never in a word" at s
 assume "a number starts at a digit not after one `.`: a start is never in a word" at starts int_at = digit & ~(zero & (next(x_letter) | next(b_letter))) & ~prev(dot & ~prev(dot))
 assume "a `0x` starts a hex number at a start" at starts hex_at = zero & next(x_letter) & ~prev(dot & ~prev(dot))
 assume "a `0b` starts a binary number at a start" at starts bin_at = zero & next(b_letter) & ~prev(dot & ~prev(dot))
+assume "a `.` starts a real number before a digit, not after a word or a `.`" at starts dot_at = dot & next(digit) & ~prev(word) & ~prev(dot)
+assume "an operator starts at its first byte: a start is never a pair's second" at starts p_start = punct & ~(prev(two_start) | prev(two_start_three, 2)) & ~(dot & next(digit) & ~prev(word) & ~prev(dot))
+# A token's bytes after its start are code: the regions open only at a token's start.
+assume "a name runs over its word's bytes" in simple_identifier name_more = word
+assume "a number's bytes are code" in integer_literal code = ~empty
+assume "a number's bytes are code" in real_literal code = ~empty
+assume "a number's bytes are code" in hex_literal code = ~empty
+assume "a number's bytes are code" in bin_literal code = ~empty
 token simple_identifier = start word_start run name_more
 token integer_literal = start int_at run nb
 token real_literal = start dot_at run nb

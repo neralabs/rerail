@@ -430,9 +430,10 @@ pub struct Lowering {
     pub rust: Option<Result<String, String>>,
     /// Tier 1 as Rust (`Compiled::lexer_rust`).
     pub lexer_rust: Option<Result<String, String>>,
-    /// The grammar's assumptions (`assume`, decision 0552): each mask's name, what it is at a
-    /// token's start, and whether the prover proved it (else a test build checks it).
-    pub assumed: Vec<(String, Expr, bool)>,
+    /// The grammar's assumptions (`assume`, decision 0552): each its scope (`None` at every token's
+    /// start, else in a kind's tokens), mask's name, what it reads as there, and whether the prover
+    /// proved what tier 1 makes of it (else a test build checks it).
+    pub assumed: Vec<(Option<String>, String, Expr, bool)>,
     /// The tree section's tables tier 2 as Rust reads (`bitlex_rust`).
     pub rust_tables: Option<RustTables>,
 }
@@ -2981,32 +2982,100 @@ pub fn statement(stmt: &Stmt) -> String {
 /// question each, cached by its content as every proof is (0414): a later compile of the same
 /// grammar, or one whose question is the same, proves nothing again.
 fn assumptions(low: &mut Lowering, stmts: &[Stmt], token_rows: &[(String, Val, Val)]) -> Result<(), String> {
-    let asked: Vec<(&String, &String, &Expr)> = stmts.iter().filter_map(|s| if let Stmt::Assume { why, name, expr } = s { Some((why, name, expr)) } else { None }).collect();
+    let asked: Vec<(&String, &Option<String>, &String, &Expr)> = stmts.iter().filter_map(|s| if let Stmt::Assume { why, scope, name, expr } = s { Some((why, scope, name, expr)) } else { None }).collect();
     if asked.is_empty() {
         return Ok(());
     }
-    // The rows the loop reads: not a region's parts, which tier 2 reads inside their region.
-    let rows: Vec<Val> = token_rows.iter().enumerate().filter(|(i, _)| !low.inside.get(*i).copied().unwrap_or(false)).map(|(_, t)| t.1).collect();
-    let Some(&first) = rows.first() else { return Err("`assume … at starts`: a grammar with no token rows".into()) };
-    let mut starts = first;
-    for &t in &rows[1..] {
-        starts = low.or(starts, t)?;
+    // The rows the loop reads, in its order: not a region's parts, which tier 2 reads inside their
+    // region. Each with its start's expression.
+    let exprs: Vec<&Expr> = stmts.iter().filter_map(|s| if let Stmt::Token { start, .. } = s { Some(start) } else { None }).collect();
+    if exprs.len() != token_rows.len() {
+        return Err("`assume`: the token rows and their statements differ".into());
     }
-    if let Some(skip) = low.skip {
-        let not = low.not(skip)?;
-        starts = low.and(starts, not)?;
+    let rows: Vec<(Val, &Expr)> = token_rows.iter().enumerate().filter(|(i, _)| !low.inside.get(*i).copied().unwrap_or(false)).map(|(i, t)| (t.1, exprs[i])).collect();
+    if rows.is_empty() {
+        return Err("`assume`: a grammar with no token rows".into());
     }
-    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
-    for (why, name, expr) in asked {
-        let a = low.expr(&Expr::Name(name.clone()))?;
-        let b = low.expr(expr)?;
-        let differs = low.xor(a, b)?;
-        let at = low.and(differs, starts)?;
-        let proved = low.either_never(&mut settled, at);
-        if std::env::var_os("RERAIL_ASSUMPTIONS").is_some() {
-            eprintln!("assume {name}: {} ({why})", if proved { "proved" } else { "not proved: a test build checks it" });
+    let defs: std::collections::HashMap<String, Expr> = stmts.iter().filter_map(|s| if let Stmt::Mask(n, e) = s { Some((n.clone(), e.clone())) } else { None }).collect();
+    // Where the loop reads mask `name` at a start: at the first row whose start reads it, where the
+    // rows before it do not start (and not a skipped byte). A later row reading it is reached at
+    // fewer bytes.
+    let reached = |low: &mut Lowering, name: &str| -> Result<Option<Val>, String> {
+        let Some(i) = rows.iter().position(|r| crate::bitlex_lex_rust::reads_mask(r.1, name, &defs)) else { return Ok(None) };
+        let mut at = rows[i].0;
+        for r in &rows[..i] {
+            let not = low.not(r.0)?;
+            at = low.and(at, not)?;
         }
-        low.assumed.push((name.clone(), expr.clone(), proved));
+        if let Some(skip) = low.skip {
+            let not = low.not(skip)?;
+            at = low.and(at, not)?;
+        }
+        Ok(Some(at))
+    };
+    let verbose = std::env::var_os("RERAIL_ASSUMPTIONS").is_some();
+    let mut settled = bitlex_prove::Induction::new(&low.program.rounds, 8, 100_000);
+    // In a kind's tokens: what tier 1 reads, the run rule with the kind's assumptions (`substitute`),
+    // proved equal to the rule over each of its tokens' runs and the byte each ends at.
+    let mut in_kind: HashMap<String, bool> = HashMap::default();
+    for &(_, scope, _, _) in &asked {
+        let Some(kind) = scope else { continue };
+        if in_kind.contains_key(kind) {
+            continue;
+        }
+        let these: Vec<(&str, &Expr)> = asked.iter().filter(|a| a.1.as_ref() == Some(kind)).map(|a| (a.2.as_str(), a.3)).collect();
+        let mut proved = true;
+        let mut any = false;
+        for s in stmts {
+            let Stmt::Token { kind: k, start, rule: Some(::bitlex::syntax::TokenRule::Run(r)), .. } = s else { continue };
+            if k != kind {
+                continue;
+            }
+            any = true;
+            let read = crate::bitlex_lex_rust::substitute(r, &these, &defs);
+            let (sv, rv, ev) = (low.expr(start)?, low.expr(r)?, low.expr(&read)?);
+            // The run: from the byte after the start while the rule holds; its end, the byte after.
+            let after = low.prev(sv, 1)?;
+            let from = low.and(after, rv)?;
+            let stop = low.not(rv)?;
+            let run = low.fill(from, stop)?;
+            let both = low.or(sv, run)?;
+            let past = low.prev(both, 1)?;
+            let off = low.not(run)?;
+            let end = low.and(past, off)?;
+            let scope = low.or(run, end)?;
+            let differs = low.xor(rv, ev)?;
+            let at = low.and(differs, scope)?;
+            proved &= low.either_never(&mut settled, at);
+        }
+        let proved = proved && any;
+        if verbose {
+            eprintln!("assume in {kind}: {}", if proved { "proved" } else { "not proved: a test build checks it" });
+        }
+        in_kind.insert(kind.clone(), proved);
+    }
+    for (why, scope, name, expr) in asked {
+        let proved = match scope {
+            Some(kind) => in_kind[kind],
+            None => {
+                let a = low.expr(&Expr::Name(name.clone()))?;
+                let b = low.expr(expr)?;
+                let differs = low.xor(a, b)?;
+                // No row's start reads it: nothing to prove, and tier 1 reads none.
+                let proved = match reached(low, name)? {
+                    Some(starts) => {
+                        let at = low.and(differs, starts)?;
+                        low.either_never(&mut settled, at)
+                    }
+                    None => true,
+                };
+                if verbose {
+                    eprintln!("assume {name}: {} ({why})", if proved { "proved" } else { "not proved: a test build checks it" });
+                }
+                proved
+            }
+        };
+        low.assumed.push((scope.clone(), name.clone(), expr.clone(), proved));
     }
     Ok(())
 }
