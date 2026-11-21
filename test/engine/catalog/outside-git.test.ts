@@ -220,7 +220,8 @@ describe("a linked worktree whose main checkout was deleted", () => {
     vi.mocked(realpathSync).mockImplementation(js as typeof realpathSync);
     vi.mocked(realpathSync.native).mockImplementation(native as typeof realpathSync.native);
 
-    expect(repositoryIdentityLocation(worktree)).toMatchObject({ git: false, gitFolderGone });
+    const location = repositoryIdentityLocation(worktree);
+    expect({ git: location.git, gitFolderGone: location.gitFolderGone }).toEqual({ git: false, gitFolderGone });
     expect(locateCalls(worktree)).toBe(asks);
   });
 });

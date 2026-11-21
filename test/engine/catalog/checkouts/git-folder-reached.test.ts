@@ -77,6 +77,9 @@ interface Row {
   readonly after: After;
 }
 
+/** A row makes a repository and a worktree with Git, records it and asks Git again: the first rows load the modules too. */
+const ROW_TIMEOUT = 30_000;
+
 const REACHES: readonly Reach[] = WINDOWS ? ["own path", "link", "directory link"] : ["own path", "link"];
 
 const ROWS: readonly (Row & { readonly name: string })[] = SPELLINGS.flatMap(spelling => [
@@ -186,7 +189,7 @@ async function rowRun(row: Row, context: TestContext) {
 }
 
 describe("a .git file's path in a form Git writes: Rerail answers, equal to Git", () => {
-  it.for(ROWS.filter(row => row.spelling.answered))("$name", async (row, context) => {
+  it.for(ROWS.filter(row => row.spelling.answered))("$name", { timeout: ROW_TIMEOUT }, async (row, context) => {
     const { asked, gitdir, reaches, db, recorded, answer, placed, location } = await rowRun(row, context);
     const gone = !placed && missing(reaches);
     expect(placed ? storedForm(answer.gitDir!) : answer.status, "Git places the worktree where its Git folder is there").toBe(placed ? storedForm(reaches) : 128);
@@ -208,7 +211,7 @@ describe("a .git file's path in a form Git writes: Rerail answers, equal to Git"
 });
 
 describe("a .git file's path in any other form: handed to Git, the answer is Git's", () => {
-  it.for(ROWS.filter(row => !row.spelling.answered))("$name", async (row, context) => {
+  it.for(ROWS.filter(row => !row.spelling.answered))("$name", { timeout: ROW_TIMEOUT }, async (row, context) => {
     const { asked, gitdir, answer, placed, location } = await rowRun(row, context);
 
     const read = { git: location.git, workspaceRoot: location.workspaceRoot, gitFolderGone: location.gitFolderGone };
@@ -271,6 +274,7 @@ describe("the two forms Git writes into a .git file, read as each system reads a
     { written: "D:\\repos\\main \\.git\\worktrees\\feature", platform: "win32", form: undefined },
     { written: "D:\\repos\\.\\main\\.git\\worktrees\\feature", platform: "win32", form: undefined },
     { written: "D:repos\\main\\.git\\worktrees\\feature", platform: "win32", form: undefined },
+    { written: "D:", platform: "win32", form: undefined },
   ] as const)("$platform: $written", ({ written, platform, form }) => {
     expect(writtenForm(written, platform)).toBe(form);
   });
