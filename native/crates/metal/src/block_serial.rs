@@ -2170,7 +2170,7 @@ fn run_passes(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[std
                 rerun_seconds += run.rerun_seconds;
                 sink_seconds += run.sink_seconds;
                 if i == last {
-                    let run = SerialRun { run: BatchRun { files: run.run.files, launches, seconds }, segments: segs.len(), reruns, dropped, rounds, first_seconds, rerun_seconds, sink_seconds };
+                    let run = SerialRun { run: BatchRun { files: run.run.files, launches, seconds, parks: 0, again: 0 }, segments: segs.len(), reruns, dropped, rounds, first_seconds, rerun_seconds, sink_seconds };
                     return Ok((run, if read { None } else { kept.map(|k| k.with(Some(out))) }));
                 }
             }
@@ -2274,7 +2274,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let fit = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
     let (slabs, slab_of) = crate::slabs::source_slabs(sources).ok_or(Error::BackendCapacity)?;
     if files.is_empty() {
-        return Ok((SerialRun { run: BatchRun { files: Vec::new(), launches: 0, seconds: 0.0 }, segments: 0, reruns: 0, dropped: 0, rounds: 0, first_seconds: 0.0, rerun_seconds: 0.0, sink_seconds: 0.0 }, None));
+        return Ok((SerialRun { run: BatchRun { files: Vec::new(), launches: 0, seconds: 0.0, parks: 0, again: 0 }, segments: 0, reruns: 0, dropped: 0, rounds: 0, first_seconds: 0.0, rerun_seconds: 0.0, sink_seconds: 0.0 }, None));
     }
     // The file table: `groups` is the file's words an output (its blocks), `group0` its first
     // segment, `halo_base` its segments.
@@ -2529,7 +2529,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
     let mut results = Vec::with_capacity(files.len());
     let times = (first_seconds, rerun_seconds, sink_seconds);
     let dropped = hopped.read::<u32>(3)[2] as usize;
-    let serial = |files: Vec<BlockRun>| SerialRun { run: BatchRun { files, launches, seconds: times.0 + times.1 + times.2 }, segments: total, reruns, dropped, rounds, first_seconds, rerun_seconds, sink_seconds };
+    let serial = |files: Vec<BlockRun>| SerialRun { run: BatchRun { files, launches, seconds: times.0 + times.1 + times.2, parks: 0, again: 0 }, segments: total, reruns, dropped, rounds, first_seconds, rerun_seconds, sink_seconds };
     if !read {
         let placed = rows
             .iter()

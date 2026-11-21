@@ -207,7 +207,7 @@ pub mod matcher {
             let executor = if generated_ready(natives, LaneWidth::W64) { Executor::Generated(ClassStrategy::Lookup) } else { Executor::Interpreter };
             // A form Metal lacks is refused before anything runs, and recorded (`metal-form`, decision 0202): the cores'.
             // Every other error is the run's (decision 0382).
-            match run_split(natives, batch, LaneWidth::W64, executor, 64) {
+            match run_split(natives, batch, LaneWidth::W64, executor) {
                 Ok(run) => Ok(Some(run.files.into_iter().map(|mut r| r.outputs.swap_remove(0)).collect())),
                 Err(Error::UnsupportedBackend) => Ok(None),
                 Err(error) => Err(error),

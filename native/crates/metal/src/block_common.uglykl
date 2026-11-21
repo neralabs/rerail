@@ -15,6 +15,7 @@
 #include <ukl/backend.h>
 #include <ukl/bits.h>
 #include <ukl/simd.h>
+#include <ukl/workqueue.h>
 
 // Metal's `select(a, b, c)`: `b` where `c`, else `a`. A C conditional, so it evaluates one of `a` and `b`: a
 // SIMD-group operation is never in an operand (a lane that skips it leaves its lanes reading an inactive lane, and
@@ -354,6 +355,219 @@ UKL_INLINE uint32_t poll(UKL_GLOBAL uint32_t* x) { return ukl_atomic_or(x, 0u); 
 UKL_INLINE uint32_t poll(UKL_GLOBAL uint32_t* x) { return ukl_atomic_load(x); }
 #endif
 
+// No group waits for another (decision 0540 step 7). A group reads each predecessor's word once; where one is not
+// published yet, the group's item ends parked (the kernels' `block_park`), and its worker takes other work. Each
+// group's successor in its file (`BlockWake::next`, a ticket) has a wake word: its predecessor's publications counted
+// below BLOCK_PARKED, and BLOCK_PARKED while it is parked. A group that publishes a word it changes counts one there,
+// and where the successor is parked, clears the flag and pushes the successor onto the launch's queue (`q`): whoever
+// takes it runs the group again from its start, its own words published as before. Of a park and a publication, the
+// one whose clear of BLOCK_PARKED finds it set runs the group again: the parker, where a publication came between its
+// start and its park (the count it read at its start is not the count now), else the publisher's push.
+#define BLOCK_PARKED (1u << 31)
+#define BLOCK_NONE 0xFFFFFFFFu
+typedef struct BlockWake {
+    UKL_GLOBAL uint32_t* wake;
+    UklWorkQueue q;
+    uint32_t next;
+} BlockWake;
+
+// A publication counted in the successor's wake word, after the words published (a fence between), and the successor
+// pushed where it was parked.
+UKL_INLINE void block_notify(BlockWake k)
+{
+    if (k.next == BLOCK_NONE) return;
+    ukl_fence_device();
+    uint32_t was = ukl_atomic_add(&k.wake[k.next], 1u);
+    if ((was & BLOCK_PARKED) != 0u && (ukl_atomic_and(&k.wake[k.next], ~BLOCK_PARKED) & BLOCK_PARKED) != 0u) ukl_wq_push(k.q, k.next);
+}
+
+// The group's publications of an exchange counted once (`block_notify`), where any lane changed its word: every lane's
+// write fenced before the group meets.
+UKL_INLINE void block_notify_any(BlockWake k, bool changed, uint32_t l __UKL_PARAMS)
+{
+    ukl_fence_device();
+    bool any = sg_any(changed __UKL_ARGS);
+    if (any && l == 0u) block_notify(k);
+}
+
+// `value` published at `word`, which only grows (nothing, then an aggregate, then an inclusive prefix; nothing, then a
+// halo word with its flag): a group run again publishes the same values and changes nothing. True when it changed.
+UKL_INLINE bool block_publish(UKL_GLOBAL uint32_t* word, uint32_t value) { return ukl_atomic_max(word, value) < value; }
+
+// A launch's queue buffer (`queue`, block_program.rs's `run_batch`): 0-3 the queue's control (head, tail, active,
+// overflow), 4 the groups taken in launch order, 5 the groups finished, 6 the parks, 7 the parks run again at once;
+// then a wake word a group (BLOCK_QUEUE_WAKE), a resume record a group (`BlockSave`), the queue's slots, and the
+// save slots' words (BLOCK_SAVES a worker).
+#define BLOCK_QUEUE_TAKEN 4u
+#define BLOCK_QUEUE_DONE 5u
+#define BLOCK_QUEUE_PARKS 6u
+#define BLOCK_QUEUE_AGAIN 7u
+#define BLOCK_QUEUE_WAKE 8u
+
+// The launch's wake words and queue, over `groups` groups; no successor yet.
+UKL_INLINE BlockWake block_wake(UKL_GLOBAL uint32_t* queue, uint32_t groups, uint32_t capacity)
+{
+    BlockWake k;
+    k.wake = queue + BLOCK_QUEUE_WAKE;
+    k.q.control = queue;
+    k.q.slots = queue + BLOCK_QUEUE_WAKE + 2u * groups;
+    k.q.capacity = capacity;
+    k.q.budget = 0u;
+    k.next = BLOCK_NONE;
+    return k;
+}
+
+// A worker's next group (`*t`, a ticket): a parked group pushed back (`*from` 2: the queue's), else the next in
+// launch order (1); false when there is neither, and the worker ends. Lane 0 takes; the group takes both from it.
+UKL_INLINE bool block_take(UKL_GLOBAL uint32_t* queue, UklWorkQueue q, uint32_t groups, uint32_t l, UKL_PRIVATE uint32_t* t, UKL_PRIVATE uint32_t* from __UKL_PARAMS)
+{
+    uint32_t item = 0u, got = 0u;
+    if (l == 0u) {
+        if (ukl_wq_take(q, &item)) {
+            // A pushed group's values and record were written before its push.
+            got = 2u;
+            ukl_fence_device();
+        } else if (ukl_atomic_poll(&queue[BLOCK_QUEUE_TAKEN]) < groups) {
+            item = ukl_atomic_add(&queue[BLOCK_QUEUE_TAKEN], 1u);
+            got = item < groups ? 1u : 0u;
+        }
+    }
+    *from = ukl_sg_shuffle(got, 0u __UKL_ARGS);
+    *t = ukl_sg_shuffle(item, 0u __UKL_ARGS);
+    return *from != 0u;
+}
+
+// The publications group `t`'s predecessor had made when the group starts (read before any of its words).
+UKL_INLINE uint32_t block_seen(BlockWake k, uint32_t t, uint32_t l __UKL_PARAMS)
+{
+    uint32_t seen = 0u;
+    if (l == 0u) {
+        seen = ukl_atomic_poll(&k.wake[t]) & ~BLOCK_PARKED;
+        ukl_fence_device();
+    }
+    return ukl_sg_shuffle(seen, 0u __UKL_ARGS);
+}
+
+// A parked group's values (generated code's, decision 0540 step 7): what its code reads after the exchange it parked at,
+// kept in a save slot, so whoever runs it again goes on from that exchange (its `stage`: the exchange's number plus
+// one) instead of from its start. A worker has BLOCK_SAVES slots of `live` lane words each; it claims one for a group
+// it parks (or keeps the one the group came with) and whoever finishes the group frees it. With none free, the group
+// parks without one, and runs again from its start. The group's resume record: 0 none, else its stage, and its slot
+// plus one from bit 8.
+#define BLOCK_SAVES 4u
+typedef struct BlockSave {
+    UKL_GLOBAL BM* data;
+    UKL_GLOBAL uint32_t* used;
+    UKL_GLOBAL uint32_t* resume;
+    uint32_t live, first, stage, slot;
+} BlockSave;
+
+// The stage and slot of a resume record.
+UKL_INLINE BlockSave block_record(BlockSave s, uint32_t record)
+{
+    s.stage = record & 0xffu;
+    s.slot = (record >> 8) == 0u ? BLOCK_NONE : (record >> 8) - 1u;
+    return s;
+}
+
+// Worker `w`'s saves for group `t`, taken from the queue (`from` 2: it may have parked) or fresh, over the launch's
+// queue buffer of `groups` groups and `capacity` slots.
+UKL_INLINE BlockSave block_save(UKL_GLOBAL uint32_t* queue, UKL_GLOBAL BM* data, uint32_t groups, uint32_t capacity, uint32_t live, uint32_t w, uint32_t t,
+                                uint32_t from, uint32_t l __UKL_PARAMS)
+{
+    BlockSave s;
+    s.data = data;
+    s.used = queue + BLOCK_QUEUE_WAKE + 2u * groups + capacity;
+    s.resume = queue + BLOCK_QUEUE_WAKE + groups + t;
+    s.live = live;
+    s.first = w * BLOCK_SAVES;
+    uint32_t record = 0u;
+    if (l == 0u && from == 2u) record = ukl_atomic_poll(s.resume);
+    return block_record(s, ukl_sg_shuffle(record, 0u __UKL_ARGS));
+}
+
+// The group's resume record again, as its own park wrote it (it runs again at once).
+UKL_INLINE BlockSave block_reload(BlockSave s, uint32_t l __UKL_PARAMS)
+{
+    uint32_t record = 0u;
+    if (l == 0u) record = ukl_atomic_poll(s.resume);
+    return block_record(s, ukl_sg_shuffle(record, 0u __UKL_ARGS));
+}
+
+// A slot for the group's values: the one it came with, else a free one of the worker's, else none.
+UKL_INLINE uint32_t block_claim(BlockSave s, uint32_t l __UKL_PARAMS)
+{
+    uint32_t got = s.slot;
+    if (l == 0u && got == BLOCK_NONE) {
+        for (uint32_t i = 0u; i < BLOCK_SAVES && got == BLOCK_NONE; i++) {
+            if (ukl_atomic_cas(&s.used[s.first + i], 0u, 1u) == 0u) got = s.first + i;
+        }
+    }
+    return ukl_sg_shuffle(got, 0u __UKL_ARGS);
+}
+
+// Value `i` of the lane's into slot `slot` (none: nothing kept), and back from the group's slot.
+UKL_INLINE void block_put(BlockSave s, uint32_t slot, uint32_t i, uint32_t l, BM v)
+{
+    if (slot != BLOCK_NONE) s.data[((uint64_t)slot * s.live + i) * GROUP_LANES + l] = v;
+}
+UKL_INLINE BM block_get(BlockSave s, uint32_t i, uint32_t l) { return s.data[((uint64_t)s.slot * s.live + i) * GROUP_LANES + l]; }
+
+// A park at stage `stage` with its `kept` values in `slot`: every lane's values written (a fence, then the group
+// together), then the record: none where it keeps values and has no slot for them (it runs again from its start).
+// False: the group is unfinished.
+UKL_INLINE bool block_parked(BlockSave s, uint32_t stage, uint32_t slot, uint32_t kept, uint32_t l __UKL_PARAMS)
+{
+    ukl_fence_device();
+    ukl_sg_ballot(true __UKL_ARGS);
+    uint32_t record = slot != BLOCK_NONE ? stage | ((slot + 1u) << 8) : kept == 0u ? stage : 0u;
+    if (l == 0u) ukl_atomic_store(s.resume, record);
+    ukl_fence_device();
+    return false;
+}
+
+// A finished group's slot freed.
+UKL_INLINE void block_release(BlockSave s, uint32_t l)
+{
+    if (l == 0u && s.slot != BLOCK_NONE) ukl_atomic_store(&s.used[s.slot], 0u);
+}
+
+// A worker's counts (lane 0's): the groups it finished, its parks, and those it ran again at once; added to the
+// launch's when it ends (`block_counted`).
+typedef struct BlockCounts {
+    uint32_t done, parks, again;
+} BlockCounts;
+
+// Group `t`'s run ended, finished (`ok`) or not: an unfinished group parks, and is run again at once (true) where its
+// predecessor published since its start (`seen`) and it cleared its own park; else the predecessor's next publication
+// pushes it.
+UKL_INLINE bool block_end(BlockWake k, uint32_t t, uint32_t l, bool ok, uint32_t seen, UKL_PRIVATE BlockCounts* counts __UKL_PARAMS)
+{
+    uint32_t again = 0u;
+    if (l == 0u && ok) {
+        counts->done += 1u;
+    } else if (l == 0u) {
+        counts->parks += 1u;
+        uint32_t was = ukl_atomic_or(&k.wake[t], BLOCK_PARKED);
+        if ((was & ~BLOCK_PARKED) != seen && (ukl_atomic_and(&k.wake[t], ~BLOCK_PARKED) & BLOCK_PARKED) != 0u) {
+            counts->again += 1u;
+            again = 1u;
+            ukl_fence_device();
+        }
+    }
+    return ukl_sg_shuffle(again, 0u __UKL_ARGS) != 0u;
+}
+
+// A worker's counts into the launch's, as it ends.
+UKL_INLINE void block_counted(UKL_GLOBAL uint32_t* queue, BlockCounts counts, uint32_t l)
+{
+    if (l == 0u) {
+        ukl_atomic_add(&queue[BLOCK_QUEUE_DONE], counts.done);
+        ukl_atomic_add(&queue[BLOCK_QUEUE_PARKS], counts.parks);
+        ukl_atomic_add(&queue[BLOCK_QUEUE_AGAIN], counts.again);
+    }
+}
+
 // Tables of 1-bit carry vectors (`table_helpers(1)` for 1, block_program.rs): apply, compose (`a` then `b`), the
 // identity, and the group's exclusive scan with the group's total.
 UKL_INLINE uint32_t tapply1(uint32_t t, uint32_t c) { return (t >> (c * 1u)) & 1u; }
@@ -374,41 +588,40 @@ UKL_INLINE uint32_t texclusive1(uint32_t t, uint32_t l, UKL_PRIVATE uint32_t* to
 
 // One scanned carry's look-back (`06-block-parallel.md` §5): the lanes' tables (bit `c` is the lane's carry-out for
 // carry-in `c`) scanned in the group, the group's aggregate published, then the predecessors' states read back to
-// an inclusive one. Each predecessor is polled once and `spins` more times; false when one has published nothing
-// yet.
-UKL_INLINE bool look_back(UKL_GLOBAL uint32_t* state, uint32_t g, uint32_t l, uint32_t t, uint32_t spins, UKL_PRIVATE uint32_t* cin __UKL_PARAMS)
+// an inclusive one. Each predecessor's state is read once; false when one has published nothing yet (the group
+// parks, `BlockWake`).
+UKL_INLINE bool look_back(UKL_GLOBAL uint32_t* state, uint32_t g, uint32_t l, uint32_t t, BlockWake k, UKL_PRIVATE uint32_t* cin __UKL_PARAMS)
 {
     uint32_t agg = 0u;
     uint32_t e = texclusive1(t, l, &agg __UKL_ARGS);
-    if (l == 0u) ukl_atomic_store(&state[g], CARRY_AGGREGATE | agg);
+    if (l == 0u && block_publish(&state[g], CARRY_AGGREGATE | agg)) block_notify(k);
     uint32_t prefix = TID1;
     for (uint32_t back = 1u; back <= g; back++) {
-        uint32_t st = 0u;
-        for (uint32_t spin = 0u; spin <= spins && (st >> 30) == 0u; spin++) st = ukl_sg_shuffle(poll(&state[g - back]), 0u __UKL_ARGS);
+        uint32_t st = ukl_sg_shuffle(poll(&state[g - back]), 0u __UKL_ARGS);
         if ((st >> 30) == 0u) return false;
         prefix = tcompose1(st & CARRY_VALUE, prefix);
         if ((st >> 30) == 2u) break;
     }
-    if (l == 0u) ukl_atomic_store(&state[g], CARRY_INCLUSIVE | tcompose1(prefix, agg));
+    if (l == 0u && block_publish(&state[g], CARRY_INCLUSIVE | tcompose1(prefix, agg))) block_notify(k);
     *cin = tapply1(e, tapply1(prefix, 0u));
     return true;
 }
 
 // A carried `prev`'s halo: the group's last 64 bits of the operand, published as three words of 30, 30 and 4 bits,
-// each with a flag (no fence: every word says whether it is written), and the group before's read back. False when
-// the group before has not published it yet.
-UKL_INLINE bool halo_exchange(UKL_GLOBAL uint32_t* halos, uint32_t g, uint32_t l, uint64_t last, uint32_t spins, UKL_PRIVATE uint64_t* before __UKL_PARAMS)
+// each with a flag (no fence: every word says whether it is written), and the group before's read back, each word
+// once. False when the group before has not published it yet (the group parks, `BlockWake`).
+UKL_INLINE bool halo_exchange(UKL_GLOBAL uint32_t* halos, uint32_t g, uint32_t l, uint64_t last, BlockWake k, UKL_PRIVATE uint64_t* before __UKL_PARAMS)
 {
     if (l == 0u) {
-        ukl_atomic_store(&halos[g * 3u], HALO_FLAG | (uint32_t)(last & 0x3ffffffful));
-        ukl_atomic_store(&halos[g * 3u + 1u], HALO_FLAG | (uint32_t)((last >> 30) & 0x3ffffffful));
-        ukl_atomic_store(&halos[g * 3u + 2u], HALO_FLAG | (uint32_t)(last >> 60));
+        bool changed = block_publish(&halos[g * 3u], HALO_FLAG | (uint32_t)(last & 0x3ffffffful));
+        changed = block_publish(&halos[g * 3u + 1u], HALO_FLAG | (uint32_t)((last >> 30) & 0x3ffffffful)) || changed;
+        changed = block_publish(&halos[g * 3u + 2u], HALO_FLAG | (uint32_t)(last >> 60)) || changed;
+        if (changed) block_notify(k);
     }
     *before = 0ul;
     if (g == 0u) return true;
     for (uint32_t w = 0u; w < 3u; w++) {
-        uint32_t x = 0u;
-        for (uint32_t spin = 0u; spin <= spins && (x & HALO_FLAG) == 0u; spin++) x = ukl_sg_shuffle(poll(&halos[(g - 1u) * 3u + w]), 0u __UKL_ARGS);
+        uint32_t x = ukl_sg_shuffle(poll(&halos[(g - 1u) * 3u + w]), 0u __UKL_ARGS);
         if ((x & HALO_FLAG) == 0u) return false;
         *before |= (uint64_t)(x & 0x3ffffffful) << (30u * w);
     }
@@ -419,40 +632,41 @@ UKL_INLINE bool halo_exchange(UKL_GLOBAL uint32_t* halos, uint32_t g, uint32_t l
 // `stride` words, and `rec` is this word's place in group 0's. Kind 0: a halo word, published with a flag and the
 // group before's read once it is; kind 3 the same, published only (its value is known). Kind 1: a scan's table, and
 // kind 2: a count, each published as an aggregate and read back to an inclusive prefix by `look_back`'s protocol.
-// `got`: the halo word, or the prefix before the group. False when a predecessor has published nothing after `spins`
-// polls; a lane past the exchange's words (`owns` false) has nothing to do. Every lane of a group polls its own word
-// at once, so an exchange of many values waits about as long as one: no SIMD-group operation here.
+// `got`: the halo word, or the prefix before the group. False when a predecessor has published nothing yet (each
+// predecessor's word is read once; the group parks, `BlockWake`); a lane past the exchange's words (`owns` false) has
+// nothing to do. Every lane of a group reads and publishes its own word, and says in `changed` whether it changed it:
+// the group counts one publication for them all (`block_notify_any`). No SIMD-group operation here.
 //
 // A table that gives the same carry for either carry in has one state: a group whose own table is constant
 // publishes it as its inclusive prefix at once, and a look-back stops at the first constant prefix, since nothing
 // before it changes the carry.
-UKL_INLINE bool exchange_word(UKL_GLOBAL uint32_t* rec, uint32_t g, uint32_t stride, uint32_t kind, uint32_t mine, uint32_t spins, bool owns, UKL_PRIVATE uint32_t* got)
+UKL_INLINE bool exchange_word(UKL_GLOBAL uint32_t* rec, uint32_t g, uint32_t stride, uint32_t kind, uint32_t mine, bool owns, UKL_PRIVATE uint32_t* got,
+                              UKL_PRIVATE uint32_t* changed)
 {
     *got = 0u;
+    *changed = 0u;
     if (!owns) return true;
     if (kind == 3u) {
-        ukl_atomic_store(&rec[g * stride], HALO_FLAG | mine);
+        *changed = block_publish(&rec[g * stride], HALO_FLAG | mine) ? 1u : 0u;
         return true;
     }
     if (kind == 0u) {
-        ukl_atomic_store(&rec[g * stride], HALO_FLAG | mine);
+        *changed = block_publish(&rec[g * stride], HALO_FLAG | mine) ? 1u : 0u;
         if (g == 0u) return true;
-        uint32_t x = 0u;
-        for (uint32_t spin = 0u; spin <= spins && (x & HALO_FLAG) == 0u; spin++) x = poll(&rec[(g - 1u) * stride]);
+        uint32_t x = poll(&rec[(g - 1u) * stride]);
         *got = x & 0x3ffffffful;
         return (x & HALO_FLAG) != 0u;
     }
     bool single = kind == 1u && tapply1(mine, 0u) == tapply1(mine, 1u);
-    ukl_atomic_store(&rec[g * stride], SEL(CARRY_AGGREGATE, CARRY_INCLUSIVE, single) | mine);
+    *changed = block_publish(&rec[g * stride], SEL(CARRY_AGGREGATE, CARRY_INCLUSIVE, single) | mine) ? 1u : 0u;
     uint32_t prefix = SEL(0u, TID1, kind == 1u);
     for (uint32_t back = 1u; back <= g; back++) {
-        uint32_t st = 0u;
-        for (uint32_t spin = 0u; spin <= spins && (st >> 30) == 0u; spin++) st = poll(&rec[(g - back) * stride]);
+        uint32_t st = poll(&rec[(g - back) * stride]);
         if ((st >> 30) == 0u) return false;
         prefix = SEL(prefix + (st & CARRY_VALUE), tcompose1(st & CARRY_VALUE, prefix), kind == 1u);
         if ((st >> 30) == 2u || (kind == 1u && tapply1(prefix, 0u) == tapply1(prefix, 1u))) break;
     }
-    ukl_atomic_store(&rec[g * stride], CARRY_INCLUSIVE | SEL(prefix + mine, tcompose1(prefix, mine), kind == 1u));
+    if (block_publish(&rec[g * stride], CARRY_INCLUSIVE | SEL(prefix + mine, tcompose1(prefix, mine), kind == 1u))) *changed = 1u;
     *got = prefix;
     return true;
 }
@@ -510,23 +724,22 @@ UKL_INLINE void write_positions(BM w, uint32_t at, uint32_t gl, uint32_t delay, 
 // start. The count is a carry like the others, combined by addition: the lanes' counts summed in the group, the
 // group's aggregate published, and the predecessors' states read back to an inclusive count, by `look_back`'s
 // protocol. The file's last group writes the total. With `write`, each lane's bits are written as positions. False
-// when a predecessor has not published its count yet.
+// when a predecessor has not published its count yet (the group parks, `BlockWake`).
 UKL_INLINE bool count_sink(BM v, uint32_t gl, uint32_t g, uint32_t l, uint32_t groups, uint32_t len, uint32_t delay, UKL_GLOBAL uint32_t* state,
-                           UKL_GLOBAL uint32_t* positions, uint32_t capacity, bool write, UKL_GLOBAL uint32_t* total, uint32_t spins __UKL_PARAMS)
+                           UKL_GLOBAL uint32_t* positions, uint32_t capacity, bool write, UKL_GLOBAL uint32_t* total, BlockWake k __UKL_PARAMS)
 {
     BM w = stream_cut(v, gl, len, delay);
     uint32_t n = POPCOUNT_BM(lane_bits(w));
     uint32_t agg = ukl_sg_sum(n __UKL_ARGS);
-    if (l == 0u) ukl_atomic_store(&state[g], CARRY_AGGREGATE | agg);
+    if (l == 0u && block_publish(&state[g], CARRY_AGGREGATE | agg)) block_notify(k);
     uint32_t prefix = 0u;
     for (uint32_t back = 1u; back <= g; back++) {
-        uint32_t st = 0u;
-        for (uint32_t spin = 0u; spin <= spins && (st >> 30) == 0u; spin++) st = ukl_sg_shuffle(poll(&state[g - back]), 0u __UKL_ARGS);
+        uint32_t st = ukl_sg_shuffle(poll(&state[g - back]), 0u __UKL_ARGS);
         if ((st >> 30) == 0u) return false;
         prefix += st & CARRY_VALUE;
         if ((st >> 30) == 2u) break;
     }
-    if (l == 0u) ukl_atomic_store(&state[g], CARRY_INCLUSIVE | (prefix + agg));
+    if (l == 0u && block_publish(&state[g], CARRY_INCLUSIVE | (prefix + agg))) block_notify(k);
     // An extract's count; a total's flag: whether the output has a bit (`BlockProgram::totals`).
     if (l == 0u && g + 1u == groups) *total = write ? prefix + agg : (uint32_t)(prefix + agg != 0u);
     uint32_t at = prefix + ukl_sg_exclusive_sum(n, l __UKL_ARGS);

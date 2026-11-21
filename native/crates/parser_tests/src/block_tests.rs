@@ -199,16 +199,41 @@ fn check_lowering(name: &str, p: &Program) {
 }
 
 /// A program function's control lines, each the same in every lane: those that leave the group
-/// unfinished, and the full group's bodies.
-const CONTROL: [&str; 6] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink(", "if (sg_any(", "if (g > 0u && (g + 1u) * ", "if (sg_all(ascii __UKL_ARGS))"];
+/// unfinished (a park), the full group's bodies, and a body's stages (`stitch`: where a parked group
+/// goes on from).
+const CONTROL: [&str; 7] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink(", "if (sg_any(", "if (g > 0u && (g + 1u) * ", "if (sg_all(ascii __UKL_ARGS))", "if (s.stage "];
 
 /// The SIMD-group operations of the generated code (`block_common.uglykl`'s and UKL's).
 const SIMD_GROUP_OPERATIONS: [&str; 8] = ["ukl_sg_", "sg_any(", "sg_all(", "sg_bcast", "sg_up64(", "sg_down64(", "SG_UP_BM(", "SG_BCAST_BM("];
 
 /// The functions of `block_common.uglykl` that loop: the look-backs and exchanges, over predecessor groups; the
 /// sinks that write positions, over a lane's set bits, and finish a count; the interpreter's byte tests, over a
-/// lane's chunks. (Metal's source declared them without `inline`.)
-const LOOPING: [&str; 9] = ["look_back", "halo_exchange", "exchange_word", "count_sink", "write_positions", "totals_or", "count_finish", "eq_file", "plane_file"];
+/// lane's chunks. (Metal's source declared them without `inline`.) And the workers' parks and takes, which branch on
+/// the queue (`BlockWake`, decision 0540 step 7).
+const LOOPING: [&str; 22] = [
+    "look_back",
+    "halo_exchange",
+    "exchange_word",
+    "count_sink",
+    "write_positions",
+    "totals_or",
+    "count_finish",
+    "eq_file",
+    "plane_file",
+    "block_notify",
+    "block_take",
+    "block_seen",
+    "block_end",
+    "block_record",
+    "block_save",
+    "block_reload",
+    "block_claim",
+    "block_put",
+    "block_parked",
+    "block_release",
+    "block_notify_any",
+    "block_counted",
+];
 
 /// The generated UKL's lane code: every function (the carry helpers, `load16`,
 /// and each `program_P`). The functions that loop (`LOOPING`), and the workers' kernel, which loops over groups,
@@ -906,8 +931,8 @@ fn carried_chain_equals_reference_on_every_executor() {
     });
 }
 
-/// The look-back's fallback: polling once, a group whose predecessor has not published leaves
-/// unfinished and the launch is repeated, and the outputs are the same. The second program has a
+/// The look-back's park: a group whose predecessor has not published parks, and is run again in the
+/// same launch (decision 0540 step 7), and the outputs are the same. The second program has a
 /// carried `prev` (a halo) between two scanned carries.
 #[test]
 #[cfg(target_os = "macos")]
@@ -927,11 +952,10 @@ fn lookback_fallback_equals_reference() {
                 want.push(words_of(&toggle_reference(&prev_reference(&inside, 5))));
             }
             for width in LaneWidth::ALL {
-                for spins in [0, 64] {
-                    for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Planes)] {
-                        let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor, spins).expect("runs");
-                        assert_eq!(run.files[0].outputs, want, "{} bytes, {}-byte lanes, {spins} polls, {executor:?}", bytes.len(), width.bytes());
-                    }
+                for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Planes)] {
+                    let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor).expect("runs");
+                    assert_eq!(run.launches, 1, "{} bytes, {}-byte lanes, {executor:?}", bytes.len(), width.bytes());
+                    assert_eq!(run.files[0].outputs, want, "{} bytes, {}-byte lanes, {executor:?} ({} parks)", bytes.len(), width.bytes(), run.parks);
                 }
             }
         }
@@ -1066,16 +1090,16 @@ fn extract_equals_reference_on_every_executor() {
         for (name, got) in extract_executors(&p, &bytes) {
             assert_eq!(got.positions, want, "{name}, {} bytes", bytes.len());
         }
-        // One poll: a group whose predecessor has not published its count leaves unfinished,
-        // and the launch is repeated.
+        // A group whose predecessor has not published its count parks, and is run again in the
+        // same launch (decision 0540 step 7).
         #[cfg(target_os = "macos")]
         {
             use metal_program_backend::block_program::{BatchFile, ClassStrategy, Executor, LaneWidth, run_batch};
             let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
             for width in LaneWidth::ALL {
                 for executor in [Executor::Interpreter, Executor::Generated(ClassStrategy::Planes)] {
-                    let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor, 0).expect("runs");
-                    assert_eq!(run.files[0].positions, want, "no polls, {}-byte lanes, {executor:?}, {} bytes", width.bytes(), bytes.len());
+                    let run = run_batch(&[&native], &[BatchFile { bytes: &bytes, program: 0 }], width, executor).expect("runs");
+                    assert_eq!(run.files[0].positions, want, "{}-byte lanes, {executor:?}, {} bytes ({} parks)", width.bytes(), bytes.len(), run.parks);
                 }
             }
         }
@@ -1245,15 +1269,9 @@ fn stage1_cost_per_block() {
     #[cfg(target_os = "macos")]
     {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, run_generated_with};
-        // The mask passes alone, and with the extract pass (in the same launch unless a
-        // look-back runs out of polls; repeated launches are timed, and counted).
+        // The mask passes alone, and with the extract pass, each in one launch.
         let mut masks = native.clone();
         masks.extracts.clear();
-        use metal_program_backend::block_program::RepeatedLaunches;
-        // The count is the run's (decision 0442).
-        let _run = rerail_context::test_run();
-        let repeated = rerail_context::local::<RepeatedLaunches>();
-        let before = repeated.0.load(std::sync::atomic::Ordering::Relaxed);
         for (what, program) in [("masks", &masks), ("masks + extract", &native)] {
             for strategy in ClassStrategy::ALL {
                 for width in LaneWidth::ALL {
@@ -1268,8 +1286,6 @@ fn stage1_cost_per_block() {
                 }
             }
         }
-        let repeats = repeated.0.load(std::sync::atomic::Ordering::Relaxed) - before;
-        println!("repeated launches: {repeats} over 60 runs");
     }
 }
 

@@ -661,7 +661,7 @@ fn metal_corpus_runs(natives: &[block_native::BlockNative], files: &[block::Batc
                     .filter(|f| (base..base + programs.len()).contains(&f.program))
                     .map(|f| block::BatchFile { bytes: f.bytes, program: f.program - base })
                     .collect();
-                let run = run_split(programs, &mine, width, executor, 64).unwrap_or_else(|e| panic!("{name}: {e:?}"));
+                let run = run_split(programs, &mine, width, executor).unwrap_or_else(|e| panic!("{name}: {e:?}"));
                 got.extend(run.files.into_iter().map(|r| r.outputs));
             }
             eprintln!("{name}: {:.1} s", seconds(t));
