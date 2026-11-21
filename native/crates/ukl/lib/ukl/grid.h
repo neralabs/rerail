@@ -1,5 +1,11 @@
 // ukl/grid.h: a persistent grid's device-wide barrier, and the primitives written as its phases (decision 0468 §4).
 //
+// Not for new code (decision 0540 step 7): no thread waits at a barrier for others. On the M3 Max, groups that had
+// joined a grid were kept from reaching its barrier (0540 step 6), and how many groups run at once is no kernel's to
+// rely on. A step that needs other groups' results is a continuation that the group finishing them pushes onto a
+// work queue (`<ukl/workqueue.h>`; `label_phase` in label_passes.uglykl). The engine's kernels include this header no
+// more.
+//
 // A persistent grid is G threadgroups resident together, each walking its own share of the work. Between two of its
 // phases, every group waits for every other at `ukl_grid_barrier`: the writes of every group before it are seen by
 // every group after it. So a primitive that took a dispatch a level (a scan's tile sums, their scan, the tiles from

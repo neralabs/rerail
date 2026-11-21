@@ -310,3 +310,7 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
      group. Without the fences that order only atomics it was no faster. The block programs keep their look-back
      (polls on a group that took its ticket earlier, bounded, and a launch again where they run out) until the
      user chooses.
+   - **Marked: `<ukl/grid.h>`'s barrier** is not for new code; no engine kernel includes it. The preprocessor's own
+     MSL (`pp_blocks.metal`, `pp_expand.metal`'s idle wait, `work_queue.metal`) still waits so: the preprocessor is
+     another agent's, so its waits are left to it. Outside the device, forest's random-forest predictor has a "spin"
+     mode that waits for a GPU event by polling the host's CPU (`randomforest_predict.rs`), one of its modes.
