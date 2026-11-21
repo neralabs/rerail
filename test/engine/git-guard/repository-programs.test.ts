@@ -229,18 +229,10 @@ describe("Rerail's Git calls start no filter program only a repository's own con
 
   it.skipIf(process.platform === "win32")("makes no call whose config Git cannot list, and its result holds none of what the listing printed", async () => {
     const root = await folder();
-    const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
-    const bin = join(root, "bin");
-    await mkdir(bin);
-    // A Git whose config listing prints one entry and then fails, as a listing does that meets an include being renamed.
-    await writeFile(join(bin, "git"), `#!/bin/sh\ncase " $* " in *" --show-scope --list "*) printf 'local\\0core.bare\\nfalse\\0'; exit 128;; esac\nexec '${real}' "$@"\n`);
-    chmodSync(join(bin, "git"), 0o755);
     // A driver in its config, so the guard lists it.
     const work = await repository(root, "work", { "notes.txt": "one\n" }, { "filter.probe.clean": "cat" });
     await writeFile(join(work, "notes.txt"), "two\n");
-    vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
-    vi.resetModules();
-    const fresh = await import("../../../src/engine/git.js");
+    const fresh = await withFailingListing(root);
 
     const audit = await fresh.runGitWithoutBlocking(work, AUDIT_DIFF);
     const walk = await fresh.gitModifiedOrUntrackedPaths(work);
@@ -248,7 +240,49 @@ describe("Rerail's Git calls start no filter program only a repository's own con
     expect([audit.status, audit.stdout]).toEqual([128, ""]);
     expect(walk).toEqual([]);
   }, 60_000);
+
+  it.skipIf(process.platform === "win32")("fails a diff whose submodules' rules Git cannot list, in a checkout whose config defines no driver", async () => {
+    const root = await folder();
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "notes.txt": "one\n" });
+    git(work, "submodule", "add", "--quiet", source, "sub");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    await writeFile(join(work, "sub", "inner.txt"), "two\n");
+    const fresh = await withFailingListing(root);
+
+    const audit = await fresh.runGitWithoutBlocking(work, AUDIT_DIFF);
+
+    expect([audit.status, audit.stdout]).toEqual([128, ""]);
+  }, 60_000);
+
+  it("lists the config where the environment names the Git folder, which Rerail does not find in process", async () => {
+    const root = await folder();
+    const marker = join(root, "filter-ran");
+    const work = await repository(root, "work", { ".gitattributes": "*.txt filter=probe\n", "notes.txt": "one\n" }, { "filter.probe.clean": recording(marker) });
+    await writeFile(join(work, "notes.txt"), "two\n");
+    const env = { GIT_DIR: join(work, ".git") };
+
+    const answers = [runGit(work, AUDIT_DIFF, { env }), await runGitWithoutBlocking(work, AUDIT_DIFF, { env })];
+
+    expect(runs(marker)).toBe(0);
+    expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, "notes.txt\0"], [0, "notes.txt\0"]]);
+  }, 60_000);
 });
+
+/**
+ * git.ts loaded with a Git whose config listing prints one entry and then fails, as a listing does that meets an
+ * include being renamed.
+ */
+async function withFailingListing(root: string): Promise<typeof import("../../../src/engine/git.js")> {
+  const real = execFileSync("sh", ["-c", "command -v git"], { encoding: "utf8" }).trim();
+  const bin = join(root, "bin");
+  await mkdir(bin);
+  await writeFile(join(bin, "git"), `#!/bin/sh\ncase " $* " in *" --show-scope --list "*) printf 'local\\0core.bare\\nfalse\\0'; exit 128;; esac\nexec '${real}' "$@"\n`);
+  chmodSync(join(bin, "git"), 0o755);
+  vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
+  vi.resetModules();
+  return await import("../../../src/engine/git.js");
+}
 
 /** How a repository's own config defines the driver `probe` to run `command`, each a form only its file's text shows. */
 const DRIVER_FORMS: ReadonlyArray<readonly [string, (work: string, command: string) => Promise<void> | void]> = [

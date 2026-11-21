@@ -669,6 +669,11 @@ const CONFIGS: ReadonlyArray<readonly [string, (work: string, root: string) => P
     for (const name of submoduleNames(work)) git(work, "config", `submodule.${name}.ignore`, "none");
   }],
   ["diff.ignoreSubmodules = all", work => void git(work, "config", "diff.ignoreSubmodules", "all")],
+  // A driver in its config, so the guard lists it before the diff.
+  ["diff.ignoreSubmodules = all in a checkout whose config defines a driver", work => {
+    git(work, "config", "diff.ignoreSubmodules", "all");
+    git(work, "config", "filter.probe.clean", "cat");
+  }],
   [".gitmodules ignore = all staged, with no .gitmodules in the worktree", async work => {
     setGitmodules(work, "all");
     git(work, "add", ".gitmodules");
@@ -1140,7 +1145,7 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
 
     // Git's version, the diff, the index's submodules, the top folder and the config listing, then the submodules'
     // statuses, asked at once, each with what was left: two, and the third not started.
-    expect(gits.map(leftAt)).toEqual(Array(7).fill(true));
+    expect(gits.map(({ limit }, at) => limit !== undefined && limit > 18_000 - 3_000 * at && limit <= 20_000 - 3_000 * at)).toEqual(Array(7).fill(true));
     expect(gits.slice(5).map(({ args }) => args.slice(-5))).toEqual(Array(2).fill(["status", "--porcelain=2", "-z", "--no-renames", "--ignore-submodules=dirty"]));
     expect([answer.status, answer.stdout, answer.stderr, answer.error?.message]).toEqual([null, "", "", `spawnSync ${gits[0]?.file} ETIMEDOUT`]);
     expect(answer.error).toMatchObject({ code: "ETIMEDOUT", errno: ranOut?.errno, syscall: `spawnSync ${gits[0]?.file}`, path: gits[0]?.file });
