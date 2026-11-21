@@ -15,6 +15,9 @@ pub const BLOCK: u32 = 256;
 pub const HEAD16: u64 = 120;
 pub const MAX_NODES: u32 = 1 << 30;
 pub const NONE: u32 = u32::MAX;
+/// The state's flag: each node is final as it is written (no `retag` or `set_start`), so the frontier is the count
+/// and a block settles once the node after it opens or its last open node closes, as after a commit each node.
+pub const FINAL_AS_WRITTEN: u32 = 4;
 pub const MAGIC16: u64 = u64::from_le_bytes(*b"TMPTAPB6");
 pub const MAGIC16Z: u64 = u64::from_le_bytes(*b"TMPTAPBZ");
 /// An open node's frame: its node (u32 at 0), its children so far (4), its last child (8), its start (u64 at 16).
@@ -100,7 +103,7 @@ pub struct State {
     /// A block's bytes, and where each column starts in it (codes, slots, gaps, lengths, checkpoints).
     pub stride: u32,
     pub at: [u32; 5],
-    /// 1: a presence a block is kept; 2: the tape is 16z.
+    /// 1: a presence a block is kept; 2: the tape is 16z; 4: each node final as written (`FINAL_AS_WRITTEN`).
     pub flags: u32,
     pub kw: u32,
     pub fw: u32,
@@ -642,7 +645,7 @@ impl State {
         let end = (b + 1) * Z;
         // SAFETY: block `b` is made.
         let done = unsafe { ld32(self.entry(b) + 8) };
-        if done != 0 || self.n <= end || self.frontier < end {
+        if done != 0 || self.n <= end || (self.frontier < end && self.flags & FINAL_AS_WRITTEN == 0) {
             return Ok(());
         }
         // The open nodes' indices ascend: the last below the block's end is the one that may be in it.
@@ -770,7 +773,7 @@ impl State {
     /// Fails unless node `i` is written and its block not final.
     unsafe fn changeable(&mut self, i: u32) -> R {
         // SAFETY: node `i`'s block is made where `i` is below the count.
-        if i >= self.n || unsafe { ld32(self.entry(i / Z) + 8) } != 0 {
+        if i >= self.n || self.flags & FINAL_AS_WRITTEN != 0 || unsafe { ld32(self.entry(i / Z) + 8) } != 0 {
             return self.fail(fail::FINAL, i);
         }
         Ok(())

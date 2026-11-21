@@ -380,6 +380,12 @@ impl Writer {
         self.reserve_final(count);
     }
 
+    /// Each node final as it is written: no commit is needed, and no node is changed after (`w::FINAL_AS_WRITTEN`).
+    /// The blocks settle as they would with a commit after each node, so the tape is the same.
+    pub fn final_as_written(&mut self) {
+        self.state.flags |= w::FINAL_AS_WRITTEN;
+    }
+
     /// The state's address: what code that calls the ops itself passes them (`reserve_run` first).
     pub fn state_address(&mut self) -> *mut u8 {
         std::ptr::from_mut::<State>(&mut self.state).cast::<u8>()

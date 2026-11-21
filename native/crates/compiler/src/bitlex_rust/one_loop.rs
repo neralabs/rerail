@@ -13,7 +13,8 @@
 //!   A region read in parts (a string) is read at its token, its pieces leaves, as simdjson's `parse_string`.
 //! - **The tree** through format 16's writer (`rerail_tape_format::f16::Writer`), each node's number a literal of
 //!   the code table the generator makes (`ENTRIES`): each node's kind, field and supertypes, as it writes them. No
-//!   node changes once written, so each is committed as it is made, as the JIT's direct run's.
+//!   node changes once written and the run's room is reserved once, so no node is committed as it is made: the
+//!   writer's finish settles the blocks, as the lean parser writes its columns with no commit.
 //! - **Checks**: a `check` of a kind is a function of the token's bytes, run where a token of the kind is a leaf;
 //!   a `keywords … required` kind's piece must be one of its words.
 
@@ -441,7 +442,7 @@ impl Lp<'_, '_> {
                 if self.checked.iter().any(|c| c == k) {
                     let _ = writeln!(body, "if !check_{}(&src[s..e]) {{\nreturn Err(s as u32);\n}}", ident(k));
                 }
-                let _ = writeln!(body, "leaf(d, {}, s as u64, e as u64);\ncommit(d);", self.number(k, key)?);
+                let _ = writeln!(body, "leaf(d, {}, s as u64, e as u64);", self.number(k, key)?);
             }
             Ok(body)
         };
@@ -498,14 +499,14 @@ impl Lp<'_, '_> {
             "let s = starts[i] as usize;\n\
              i += 1;\n\
              let c = match first_bit(&m.{close}, s + 1) {{\nSome(c) => c,\nNone => return Err(s as u32),\n}};\n\
-             open(d, {node}, s as u64);\ncommit(d);\n\
+             open(d, {node}, s as u64);\n\
              let mut p = s + 1;\n\
              loop {{\n\
              let q = match first_bit(&m.{part_start}, p) {{\nSome(q) if q < c => q,\n_ => c,\n}};\n\
-             if q > p {{\nleaf(d, {content}, p as u64, q as u64);\ncommit(d);\n}}\n\
+             if q > p {{\nleaf(d, {content}, p as u64, q as u64);\n}}\n\
              if q == c {{\nbreak;\n}}\n\
              p = q;\n{check}\
-             leaf(d, {piece}, p as u64, (p + {len}) as u64);\ncommit(d);\n\
+             leaf(d, {piece}, p as u64, (p + {len}) as u64);\n\
              p += {len};\n\
              }}\n\
              e = c + 1;\nclose(d, e as u64);\n",
@@ -716,7 +717,7 @@ impl Lp<'_, '_> {
                     if let Some(code) = self.region(kind, body, key, t)? {
                         return Ok(code);
                     }
-                    format!("open(d, {}, at(src, starts, i) as u64);\ncommit(d);\n{}close(d, e as u64);\n", self.number(kind, key)?, self.plain(body, &Key::default(), t)?)
+                    format!("open(d, {}, at(src, starts, i) as u64);\n{}close(d, e as u64);\n", self.number(kind, key)?, self.plain(body, &Key::default(), t)?)
                 }
                 Some(Stmt::Choice { supertype, body, .. }) => self.plain(body, &self.through(key, supertype.as_deref())?, t)?,
                 _ => return self.err(format!("`{n}`: no rule or token")),
@@ -792,18 +793,18 @@ impl Lp<'_, '_> {
                         // its depth tested as a level's.
                         let _ = write!(
                             out,
-                            "if stack.len() == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nif peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\ncommit(d);\n{}}}\n",
+                            "if stack.len() == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nif peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\n{}}}\n",
                             Self::go(ret)
                         );
                     } else {
                         out.push_str("if stack.len() == DEPTH {\nreturn Err(at(src, starts, i));\n}\n");
                     }
-                    let _ = write!(out, "open(d, {number}, at(src, starts, i) as u64);\ncommit(d);\nstack.push({ret});\n{}", Self::go(first));
+                    let _ = write!(out, "open(d, {number}, at(src, starts, i) as u64);\nstack.push({ret});\n{}", Self::go(first));
                     out
                 }
                 Some(Stmt::Node { kind, body, .. }) => {
                     let after = format!("close(d, e as u64);\n{}", Self::jump(&k));
-                    format!("open(d, {}, at(src, starts, i) as u64);\ncommit(d);\n{}", self.number(kind, key)?, self.walk(body, &Key::default(), K::Code(after), t)?)
+                    format!("open(d, {}, at(src, starts, i) as u64);\n{}", self.number(kind, key)?, self.walk(body, &Key::default(), K::Code(after), t)?)
                 }
                 Some(Stmt::Choice { nested: false, supertype, body, .. }) => match self.heads(g, key)? {
                     Some(h) => {
@@ -1011,14 +1012,6 @@ fn close(d: *mut u8, end: u64) {
     debug_assert_eq!(r, 0, "the writer's close, its room reserved");
 }
 
-/// The nodes so far final but for the open ones, as `open`.
-#[inline(always)]
-fn commit(d: *mut u8) {
-    // SAFETY: as `open`'s.
-    let r = unsafe { w_commit(d) };
-    debug_assert_eq!(r, 0, "the writer's commit, its room reserved");
-}
-
 /// The first byte of record `i`, or 256 past the last.
 #[inline(always)]
 fn peek(src: &[u8], starts: &[u32], i: usize) -> u16 {
@@ -1124,7 +1117,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     let end = "close(d, src.len() as u64);\nif i != starts.len() {\nreturn Err(at(src, starts, i));\n}\nreturn Ok(());\n".to_owned();
     let mut lp = lp;
     lp.root_end = end.clone();
-    let code = format!("open(d, {number}, at(src, starts, i) as u64);\ncommit(d);\n{}", lp.walk(body, &Key::default(), K::Code(end), T::No)?);
+    let code = format!("open(d, {number}, at(src, starts, i) as u64);\n{}", lp.walk(body, &Key::default(), K::Code(end), T::No)?);
     lp.places.borrow_mut()[first] = code;
     // The words of the kinds split by them.
     let mut words = String::new();
@@ -1166,7 +1159,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     }
     let mut out = String::new();
     out.push_str("// Generated by the Bitlex compiler (`rerail_bitlex::bitlex_rust::tier2_loop`) from the grammar's tree rules. Do not edit.\n\n");
-    out.push_str("use rerail_tape_format::f16::Writer;\nuse rerail_tape_format::writer16::{Fixed, w_close_with, w_commit, w_leaf_with, w_open_with};\n\n");
+    out.push_str("use rerail_tape_format::f16::Writer;\nuse rerail_tape_format::writer16::{Fixed, w_close_with, w_leaf_with, w_open_with};\n\n");
     // The language's widths (slots, gaps, lengths) are the parser's: a value past its width is its side list's, as
     // every format 16 tape's. One byte each, the implementer's choice.
     out.push_str("/// The language's cell widths, slots, gaps and lengths: the writer's language is to have these (`Lang::new`).\npub const WIDTHS: [usize; 3] = [1, 1, 1];\n\n/// The writer's cells at those widths, constants in the ops.\ntype Cells = Fixed<1, 1, 1>;\n\n");
@@ -1181,7 +1174,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     }
     let _ = write!(
         out,
-        "/// `src`'s tape into `w`, from tier 1's records (each token's first byte) and masks, or the byte it was refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\nw.reserve_run(1 + lx.starts.len() + src.len(), (DEPTH + 1) * {frames} + 1);\nlet d = w.state_address();\nrun(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`.\nfn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {{\nlet starts = &lx.starts[..];\nlet m = &lx.masks;\n// The next record, the last token's end, the places the open levels return to, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut stack: Vec<{ty}> = Vec::with_capacity(64);\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n"
+        "/// `src`'s tape into `w`, from tier 1's records (each token's first byte) and masks, or the byte it was refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\nw.reserve_run(1 + lx.starts.len() + src.len(), (DEPTH + 1) * {frames} + 1);\n// Each node final as written: no commit after each.\nw.final_as_written();\nlet d = w.state_address();\nrun(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`.\nfn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {{\nlet starts = &lx.starts[..];\nlet m = &lx.masks;\n// The next record, the last token's end, the places the open levels return to, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut stack: Vec<{ty}> = Vec::with_capacity(64);\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n"
     );
     let _ = &x.tokens;
     Ok(out)
