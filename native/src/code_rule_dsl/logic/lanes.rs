@@ -138,6 +138,34 @@ pub mod wave {
     /// flush (the commit it `defer`red takes it by number): an inner job that found the outer job's submission open
     /// and encoded into it deferred no commit, so its fenced flush committed nothing and its stratum found its wave
     /// unflushed, and the outer job's commit then ran the inner's work.
+    ///
+    /// **What a job opens or defers never outlives it.** A form opens a submission and defers its commit
+    /// (`defer`); the commit takes the submission off first (`take`), so once it runs nothing stays open, whatever
+    /// the commit then does. Every commit a job deferred runs exactly once, by one of two places: its job's `flush`,
+    /// or, for whatever is left, leaving its job's fence (`unfence`), the one place that guarantees it. The ways a
+    /// commit could be skipped or outlive its job, each tested in `wave_tests::nothing_a_job_deferred_outlives_it`:
+    /// 1. The job ends without a flush (a form opened a submission, then its stratum ran on its own or the form
+    ///    failed, so nothing waited for the wave): left in `DEFERRED`, run by `unfence`. Closed in 5913067797.
+    /// 2. The flush's launch batch fails: its commits run anyway, and the flush returns the batch's error.
+    ///    Before, they were dropped unrun (`?` on the launches), and the submission stayed open.
+    /// 3. The flush's launch batch panics: the commits it took go back to `DEFERRED` as the panic leaves the flush
+    ///    (`Commits`' drop), and `unfence`, which runs as the panic leaves the job, runs them.
+    /// 4. A commit returns an error: the flush still runs the commits after it, and returns the first error.
+    ///    Before, the first error skipped the rest.
+    /// 5. A commit panics: the commits after it go back to `DEFERRED` as in 3; the one that panicked had taken its
+    ///    submission off before it could panic.
+    /// 6. A commit run by `unfence` fails or panics: `unfence` runs it under `catch_unwind` and goes on with the
+    ///    rest (no stratum waits on those, and `unfence` may itself run while a panic unwinds the job); the fence is
+    ///    popped first, so the depth is right whatever happens.
+    /// 7. Fences left out of order: they cannot be. A job is fenced only by `rerail_accel::exec::fenced`, whose guard
+    ///    leaves its fence when its scope ends, so fences nest as the jobs' calls do, and `unfence` always leaves the
+    ///    innermost, committing what its job left there and nothing of the jobs around it.
+    /// 8. A failure between opening a submission and deferring its commit: `setfix::device::open_wave` defers the
+    ///    commit before it opens the submission, so a commit can find nothing to take (then it does nothing), but no
+    ///    submission is ever open without its commit deferred.
+    ///
+    /// Launches a job queued and never flushed (`queue`) are not submissions: no later job can encode into one, and
+    /// each carries its own ticket. They go back to the job around it, as before fences.
     pub struct OpenWaves<B> {
         open: Vec<(usize, u64, B)>,
     }
@@ -180,16 +208,49 @@ pub mod wave {
         }
     }
 
-    /// Ends the innermost `fence`. The submissions the job deferred and never flushed (a form that opened one and
-    /// then ran its stratum on its own, or failed, so nothing waited for the wave) are committed now: left open, a
-    /// later job at the same depth on this thread found its form's submission open (`OpenWaves::mine`), encoded into
-    /// it, deferred nothing, and its flush committed nothing ("a stratum's wave was not flushed"). No stratum waits on
-    /// them, so their result reaches nobody. The launches it queued and never flushed are the job around it's again.
+    /// Ends the innermost `fence`, and runs every commit its job deferred and did not run (`OpenWaves`' list: a job
+    /// that ended without a flush, a flush that failed or panicked part-way). Left, a later job at the same depth on
+    /// this thread found its form's submission open (`OpenWaves::mine`), encoded into it, deferred nothing, and its
+    /// flush committed nothing ("a stratum's wave was not flushed"). No stratum waits on these, so a commit's error
+    /// reaches nobody; a panic is caught, since this runs from the fence's guard, possibly while the job unwinds. The
+    /// launches the job queued and never flushed are the job around it's again.
     pub fn unfence() {
         let Some(at) = FENCES.with_borrow_mut(Vec::pop) else { return };
         let left = DEFERRED.with_borrow_mut(|d| d.split_off(at.1.min(d.len())));
         for commit in left {
-            drop(commit());
+            drop(std::panic::catch_unwind(std::panic::AssertUnwindSafe(commit)));
+        }
+    }
+
+    /// The commits a `flush` took off `DEFERRED`: each runs once (`run_all`), and those not run when this is dropped
+    /// (the launches or an earlier commit panicked) go back to `DEFERRED`, for the job's `unfence` to run.
+    struct Commits(std::vec::IntoIter<Box<dyn FnOnce() -> Result<(), String>>>);
+
+    impl Commits {
+        fn take() -> Self {
+            let from = fenced();
+            Commits(DEFERRED.with_borrow_mut(|d| d.split_off(from.1.min(d.len()))).into_iter())
+        }
+
+        /// Runs every commit, past one that fails: the first error, if any.
+        fn run_all(&mut self) -> Result<(), String> {
+            let mut first = Ok(());
+            for commit in self.0.by_ref() {
+                let r = commit();
+                if first.is_ok() {
+                    first = r;
+                }
+            }
+            first
+        }
+    }
+
+    impl Drop for Commits {
+        fn drop(&mut self) {
+            let rest: Vec<_> = self.0.by_ref().collect();
+            if !rest.is_empty() {
+                DEFERRED.with_borrow_mut(|d| d.extend(rest));
+            }
         }
     }
 
@@ -199,7 +260,8 @@ pub mod wave {
     }
 
     /// Runs `f` when the wave is flushed (a form that encoded its work into a submission of its own, shared by the
-    /// level's strata, commits it there): once, after the wave's launches.
+    /// level's strata, commits it there): once, after the wave's launches, at the job's flush or, if that never runs
+    /// it, when the job's fence is left (`OpenWaves`). `f` takes its submission off before anything that can fail.
     pub fn defer(f: Box<dyn FnOnce() -> Result<(), String>>) {
         DEFERRED.with_borrow_mut(|d| d.push(f));
     }
@@ -305,19 +367,24 @@ pub mod wave {
     pub fn flush(strata: usize) -> Result<usize, String> {
         let from = fenced();
         let q = QUEUED.with_borrow_mut(|q| q.split_off(from.0.min(q.len())));
-        let deferred = DEFERRED.with_borrow_mut(|d| d.split_off(from.1.min(d.len())));
-        let ran = deferred.len();
-        if q.is_empty() {
-            if ran > 0 {
-                let (w, l) = FLUSHED.get();
-                FLUSHED.set((w + 1, l));
-                super::prof::wave(ran, strata);
-            }
-            for f in deferred {
-                f()?;
-            }
-            return Ok(ran);
+        let mut commits = Commits::take();
+        let ran = commits.0.len();
+        let n = q.len();
+        let launched = if q.is_empty() { Ok(()) } else { run_launches(q, strata) };
+        if n == 0 && ran > 0 {
+            let (w, l) = FLUSHED.get();
+            FLUSHED.set((w + 1, l));
+            super::prof::wave(ran, strata);
         }
+        // The commits run whether the launches ran or failed (`OpenWaves`, way 2).
+        let committed = commits.run_all();
+        launched?;
+        committed?;
+        Ok(n + ran)
+    }
+
+    /// Runs a flush's launches `q` as one batch, their outputs kept by ticket (`take`).
+    fn run_launches(q: Vec<(&'static str, u64, Kernel)>, strata: usize) -> Result<(), String> {
         let n = q.len();
         let form = if q.iter().all(|l| l.0 == q[0].0) { q[0].0 } else { "device wave (forms mixed)" };
         let tickets: Vec<u64> = q.iter().map(|l| l.1).collect();
@@ -327,10 +394,7 @@ pub mod wave {
         DONE.with_borrow_mut(|d| d.extend(tickets.into_iter().zip(done.into_iter().map(|d| d.out))));
         let (w, l) = FLUSHED.get();
         FLUSHED.set((w + 1, l + n as u64));
-        for f in deferred {
-            f()?;
-        }
-        Ok(n + ran)
+        Ok(())
     }
 
     /// The outputs of a flushed wave's launches, by their tickets.
@@ -442,32 +506,158 @@ mod wave_tests {
     #[derive(Default)]
     struct Submissions {
         open: std::cell::RefCell<wave::OpenWaves<Vec<&'static str>>>,
+        opened: std::cell::RefCell<Vec<u64>>,
         committed: std::cell::RefCell<Vec<(u64, Vec<&'static str>)>>,
         numbers: std::cell::Cell<u64>,
     }
 
+    /// What a submission's commit does once it has taken its submission off.
+    #[derive(Clone, Copy)]
+    enum Commit {
+        Fine,
+        Fails,
+        Panics,
+    }
+
+    /// `setfix::device::open_wave`'s steps: the commit deferred first (it takes the submission off before anything
+    /// else, as the device's does, then ends as `commit` says), then the submission opened at this job's depth. Its
+    /// number.
+    fn open(subs: &std::rc::Rc<Submissions>, commit: Commit) -> u64 {
+        let n = defer_commit(subs, commit);
+        subs.open.borrow_mut().open(wave::depth(), n, Vec::new());
+        subs.opened.borrow_mut().push(n);
+        n
+    }
+
+    /// The first half of `open`: a new number and its commit deferred, no submission opened yet.
+    fn defer_commit(subs: &std::rc::Rc<Submissions>, commit: Commit) -> u64 {
+        let n = subs.numbers.get() + 1;
+        subs.numbers.set(n);
+        let at = std::rc::Rc::clone(subs);
+        wave::defer(Box::new(move || {
+            let taken = at.open.borrow_mut().take(n);
+            if let Some(done) = taken {
+                at.committed.borrow_mut().push((n, done));
+            }
+            match commit {
+                Commit::Fine => Ok(()),
+                Commit::Fails => Err(format!("submission {n}'s commit failed")),
+                Commit::Panics => panic!("submission {n}'s commit panicked"),
+            }
+        }));
+        n
+    }
+
     /// `setfix::device::submit`'s steps over a thread's open submissions: the one of this job's depth, else a new one
-    /// whose commit is deferred to this job's flush; `work` encoded into it. Its number.
-    fn submit(subs: &std::rc::Rc<Submissions>, work: &'static str) -> u64 {
-        let depth = wave::depth();
-        let mine = subs.open.borrow().mine(depth);
+    /// (`open`); `work` encoded into it. Its number.
+    fn submit_as(subs: &std::rc::Rc<Submissions>, work: &'static str, commit: Commit) -> u64 {
+        let mine = subs.open.borrow().mine(wave::depth());
         let n = match mine {
             Some(n) => n,
-            None => {
-                let n = subs.numbers.get() + 1;
-                subs.numbers.set(n);
-                subs.open.borrow_mut().open(depth, n, Vec::new());
-                let at = std::rc::Rc::clone(subs);
-                wave::defer(Box::new(move || {
-                    let done = at.open.borrow_mut().take(n).expect("its submission open until its commit");
-                    at.committed.borrow_mut().push((n, done));
-                    Ok(())
-                }));
-                n
-            }
+            None => open(subs, commit),
         };
         subs.open.borrow_mut().get_mut(n).expect("the open submission").push(work);
         n
+    }
+
+    fn submit(subs: &std::rc::Rc<Submissions>, work: &'static str) -> u64 {
+        submit_as(subs, work, Commit::Fine)
+    }
+
+    /// A launch the executor refuses: a join with no keys (`Kernel::join_shape`), so the flush's batch fails.
+    fn refused_launch() -> rerail_accel::Kernel {
+        rerail_accel::Kernel::Join { left: std::sync::Arc::from(Vec::new()), right: std::sync::Arc::from(Vec::new()), right_id: None, by: rerail_accel::kernel::JoinBy::Probe }
+    }
+
+    /// A launch that panics on the CPU (a histogram code not below its width), which the executor turns into the
+    /// batch's error.
+    fn panicking_launch() -> rerail_accel::Kernel {
+        rerail_accel::Kernel::Histogram { off: std::sync::Arc::from([0u32, 1]), codes: std::sync::Arc::from([5u16]), width: 2 }
+    }
+
+    /// `OpenWaves`' list of the ways a job's submission or deferred commit could outlive the job or be skipped, each
+    /// played on a thread of its own with two forms' submissions (`a`, `b`), the job's fence entered and left as
+    /// `rerail_accel::exec::fenced` does (its guard leaves it however the job ends). After each: no submission open,
+    /// every one opened committed exactly once, the depth back to 0, and nothing left for a later flush.
+    #[test]
+    fn nothing_a_job_deferred_outlives_it() {
+        type Way = fn(&std::rc::Rc<Submissions>, &std::rc::Rc<Submissions>);
+        let ways: [(&str, Way); 8] = [
+            ("1. the job ends without a flush", |a, _| {
+                wave::fence();
+                submit(a, "not waited on");
+                wave::unfence();
+            }),
+            ("2. the flush's launch batch fails", |a, _| {
+                wave::fence();
+                submit(a, "beside a refused launch");
+                wave::queue("a test's refused launch", vec![refused_launch()]);
+                assert!(wave::flush(1).is_err(), "the batch's error is the flush's");
+                wave::unfence();
+            }),
+            ("3. a launch of the flush panics", |a, _| {
+                wave::fence();
+                submit(a, "beside a launch that panics");
+                wave::queue("a test's panicking launch", vec![panicking_launch()]);
+                assert!(wave::flush(1).is_err(), "the executor's error for the panic is the flush's");
+                wave::unfence();
+            }),
+            ("4. a commit returns an error", |a, b| {
+                wave::fence();
+                submit_as(a, "its commit fails", Commit::Fails);
+                submit(b, "its commit after it");
+                assert!(wave::flush(1).is_err(), "the first commit's error is the flush's");
+                wave::unfence();
+            }),
+            ("5. a commit panics in the flush", |a, b| {
+                wave::fence();
+                submit_as(a, "its commit panics", Commit::Panics);
+                submit(b, "its commit after it");
+                assert!(std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| wave::flush(1))).is_err(), "the flush panicked");
+                wave::unfence();
+            }),
+            ("6. commits run by leaving the fence fail or panic", |a, b| {
+                wave::fence();
+                submit_as(a, "its commit panics", Commit::Panics);
+                submit_as(b, "its commit fails", Commit::Fails);
+                wave::unfence();
+            }),
+            ("7. nested fences, each left by its own job", |a, _| {
+                wave::fence();
+                let outer = submit(a, "outer");
+                wave::fence();
+                let inner = submit(a, "inner");
+                wave::unfence();
+                assert_eq!(*a.committed.borrow(), [(inner, vec!["inner"])], "leaving the inner fence commits the inner job's alone");
+                assert!(a.open.borrow_mut().get_mut(outer).is_some(), "the outer job's stays open");
+                wave::unfence();
+            }),
+            ("8. a failure between deferring a commit and opening its submission", |a, _| {
+                wave::fence();
+                defer_commit(a, Commit::Fine);
+                wave::unfence();
+            }),
+        ];
+        let mut failed = Vec::new();
+        for (name, way) in ways {
+            let outcome = std::thread::spawn(move || {
+                let (a, b) = (std::rc::Rc::new(Submissions::default()), std::rc::Rc::new(Submissions::default()));
+                way(&a, &b);
+                for subs in [&a, &b] {
+                    assert!(subs.open.borrow_mut().each_mut().next().is_none(), "a submission left open");
+                    let mut committed: Vec<u64> = subs.committed.borrow().iter().map(|c| c.0).collect();
+                    committed.sort_unstable();
+                    assert_eq!(committed, *subs.opened.borrow(), "every submission opened committed exactly once");
+                }
+                assert_eq!(wave::depth(), 0, "every fence left");
+                assert_eq!(wave::flush(0).unwrap(), 0, "nothing left for a later flush");
+            })
+            .join();
+            if outcome.is_err() {
+                failed.push(name);
+            }
+        }
+        assert!(failed.is_empty(), "ways a job's submission outlived it: {failed:?}");
     }
 
     /// An inner job that submits while the outer job's submission is open (on Metal, the device joins' command
@@ -489,30 +679,6 @@ mod wave_tests {
             assert_eq!(submit(&subs, "outer, second"), outer, "back at its depth, the outer job encodes into its own");
             wave::flush(1).unwrap();
             assert_eq!(*subs.committed.borrow(), [(inner, vec!["inner"]), (outer, vec!["outer, first", "outer, second"])]);
-        })
-        .join()
-        .unwrap();
-    }
-
-    /// A job that opened a submission and ended without flushing it (its stratum ran on its own, or failed, so nothing
-    /// waited for the wave) leaves none open: leaving its fence commits it, and the next job at that depth opens its
-    /// own and commits it at its flush. Left open, the next job encoded into it, deferred no commit, and its flush
-    /// committed nothing.
-    #[test]
-    fn a_job_that_ends_without_flushing_leaves_no_submission_open() {
-        std::thread::spawn(|| {
-            let subs = std::rc::Rc::new(Submissions::default());
-            wave::fence();
-            let first = submit(&subs, "first job, not waited on");
-            wave::unfence();
-            assert_eq!(*subs.committed.borrow(), [(first, vec!["first job, not waited on"])], "leaving the fence commits it");
-            assert!(subs.open.borrow_mut().get_mut(first).is_none(), "nothing left open");
-            wave::fence();
-            let second = submit(&subs, "second job");
-            assert_ne!(second, first, "the next job at that depth opens its own");
-            wave::flush(1).unwrap();
-            wave::unfence();
-            assert_eq!(*subs.committed.borrow(), [(first, vec!["first job, not waited on"]), (second, vec!["second job"])]);
         })
         .join()
         .unwrap();

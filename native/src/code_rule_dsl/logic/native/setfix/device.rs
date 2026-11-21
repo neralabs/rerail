@@ -1995,12 +1995,11 @@ fn commit_wave() -> Result<(), String> {
 }
 
 /// Opens this job's command buffer for the level's wave (`OpenWaves`, at its fence depth), its commit deferred to
-/// this job's flush: its number.
+/// this job's flush: its number. The commit is deferred before the buffer is opened (`OpenWaves`, way 8): no buffer
+/// is ever open without its commit, and a commit whose buffer never opened takes nothing and does nothing.
 fn open_wave() -> Result<u64, String> {
     let n = WAVES.get() + 1;
     WAVES.set(n);
-    let batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
-    WAVE.with_borrow_mut(|w| w.open(wave::depth(), n, batch));
     wave::defer(Box::new(move || {
         let Some(mut batch) = WAVE.with_borrow_mut(|w| w.take(n)) else { return Ok(()) };
         let done = on_lane("stratum joins (a wave)", 1, || batch.finish().map_err(|e| format!("{e:?}")));
@@ -2008,6 +2007,8 @@ fn open_wave() -> Result<u64, String> {
         FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
         Ok(())
     }));
+    let batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
+    WAVE.with_borrow_mut(|w| w.open(wave::depth(), n, batch));
     Ok(n)
 }
 
