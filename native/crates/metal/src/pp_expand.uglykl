@@ -2362,6 +2362,12 @@ UKL_INLINE void px_done1(Ar a, uint32_t l) {
     if (ukl_atomic_sub(&a.lists[l].pending, 1u) == 1u) px_set_later(a, 0u, l);
 }
 
+// Call `i`'s size, for the choice of the phases' form: its raw tokens and its body's items.
+UKL_INLINE uint32_t px_cl_size(Ux u, Ar a, Cl c, uint32_t i) {
+    UKL_GLOBAL PxList* L = &a.lists[c.set[i]];
+    return (L->end - L->at) + u.defs[L->def].n_body;
+}
+
 // Call `i`: its raw tokens between its parentheses, its parameters, its body's items.
 UKL_INLINE void px_cl_count(Ux u, Ar a, Cl c, uint32_t i) {
     if (i >= c.ns) return;
@@ -2617,6 +2623,9 @@ UKL_INLINE Vo px_sb_vo_of(Sb s, uint32_t i) {
 UKL_INLINE uint32_t px_sb_plist(Sb s, uint32_t p) { return pb_item_of(s.l + SB_POFF * s.qcap, s.ns, p); }
 UKL_INLINE uint32_t px_sb_ilist(Sb s, uint32_t t) { return pb_item_of(s.base, s.ns, t); }
 
+// List `i`'s size, for the choice of the phases' form: its body's items.
+UKL_INLINE uint32_t px_sb_size(Ux u, Ar a, Sb s, uint32_t i) { return u.defs[a.lists[s.set[i]].def].n_body; }
+
 // List `i`: its body's items, its `__VA_OPT__`s, its pieces' origin.
 UKL_INLINE void px_sb_count(Ux u, Ar a, Sb s, uint32_t i) {
     if (i >= s.ns) return;
@@ -2845,23 +2854,48 @@ UKL_INLINE void px_make(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t
     *ao = a;
 }
 
-// This round's items, each SIMD group of the grid taking every `n_sg`-th.
-UKL_INLINE void px_worker(Ux u, Ar a, uint32_t sg, uint32_t n_sg, uint32_t lane __UKL_PARAMS) {
-    UKL_GLOBAL uint32_t* qctl = a.qctl;
-    UKL_GLOBAL uint32_t* slots = a.qslots;
-    // This round's items (decision 0523), each SIMD group of the grid taking every `n_sg`-th from
-    // its own: no queue, no polling, no ordering between them (each reads what earlier rounds made).
-    uint32_t n = ukl_atomic_load(&qctl[2]), side = ukl_atomic_load(&qctl[4]) & 1u;
-    for (uint32_t k = sg; k < n && k < a.qcap; k += n_sg) {
-        uint32_t item = slots[side * a.qcap + k];
+// Whether a round's item is a SIMD group's: `_Pragma`'s and a configuration's test's calls,
+// `_Pragma`'s read and the built-ins' substitutions.
+UKL_INLINE bool px_item_sg(Ar a, uint32_t item) {
+    uint32_t m = a.lists[item & ~IT_KIND].def;
+    if ((item & IT_KIND) == IT_CALL) return m == L_PRAGMA || m == L_FEATURE;
+    if ((item & IT_KIND) == IT_SUBST) return m == L_PRAGMA || px_one_token(m);
+    return false;
+}
+
+// Item `k` of this round's (decision 0523), a thread each: a place, a scan, a definition's call or
+// substitution into the round's sets; a SIMD group's into `sgs` (`QCTL` 8 of them, `px_worker`).
+// No queue, no polling, no ordering between them (each reads what earlier rounds made).
+UKL_INLINE void px_item(Ar a, UKL_GLOBAL uint32_t* sgs, uint32_t k) {
+    uint32_t n = ukl_atomic_load(&a.qctl[2]), side = ukl_atomic_load(&a.qctl[4]) & 1u;
+    if (k >= n || k >= a.qcap) return;
+    uint32_t item = a.qslots[side * a.qcap + k], l = item & ~IT_KIND;
+    if (px_item_sg(a, item)) {
+        sgs[ukl_atomic_add(&a.qctl[8], 1u)] = item;
+        return;
+    }
+    switch (item & IT_KIND) {
+        case IT_PLACE: px_set_later(a, 1u, l); break;
+        case IT_SCAN: px_scan_later(a, l); break;
+        case IT_CALL: {
+            uint32_t i = ukl_atomic_add(&a.qctl[7], 1u);
+            if (i >= a.qcap) px_refuse(a.ctl, X_ROOM);
+            else a.calls[i] = l;
+            break;
+        }
+        default: px_sub_later(a, l); break;
+    }
+}
+
+// This round's SIMD groups' items (`px_item`), each SIMD group of the grid taking every `n_sg`-th.
+UKL_INLINE void px_worker(Ux u, Ar a, UKL_GLOBAL const uint32_t* sgs, uint32_t sg, uint32_t n_sg, uint32_t lane __UKL_PARAMS) {
+    uint32_t n = ukl_min(ukl_atomic_load(&a.qctl[8]), a.qcap);
+    for (uint32_t k = sg; k < n; k += n_sg) {
+        uint32_t item = sgs[k];
         px_fence();
         uint32_t l = item & ~IT_KIND;
-        switch (item & IT_KIND) {
-            case IT_PLACE: if (lane == 0u) px_set_later(a, 1u, l); break;
-            case IT_CALL: px_call(u, a, l, lane __UKL_ARGS); break;
-            case IT_SCAN: if (lane == 0u) px_scan_later(a, l); break;
-            default: px_subst(u, a, l, lane __UKL_ARGS); break;
-        }
+        if ((item & IT_KIND) == IT_CALL) px_call(u, a, l, lane __UKL_ARGS);
+        else px_subst(u, a, l, lane __UKL_ARGS);
         px_fence();
         ukl_sg_barrier();
     }

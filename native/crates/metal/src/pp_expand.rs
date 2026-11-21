@@ -1263,7 +1263,7 @@ impl Exp {
             args: zeroed(args * (ARG_WORDS + 1) + POOL_HEADS)?,
             // A round's items and the next's (decision 0523).
             slots: zeroed(2 * q)?,
-            qctl: zeroed(8)?,
+            qctl: zeroed(10)?,
             ctl: arena.from_slice(&ctl)?,
             cnt: zeroed(2 + 2 * cnt_cap)?,
             tr_sk: arena.zeroed::<u64>(cnt_cap)?,

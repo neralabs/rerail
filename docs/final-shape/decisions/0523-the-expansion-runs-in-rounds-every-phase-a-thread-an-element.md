@@ -109,7 +109,7 @@ SIMD-group operation switches each thread of the group.
 |---|---|---|
 | R1 | Every evaluation test finishes within 1 s, under cargo on the CPU backend | `cargo nextest run -p rerail-c-directives --lib --profile second` (stops each test at 1 s) |
 | R2 | The expansion's tests give the serial pass's tokens | the eval tests (0448 R5–R8, 0475, 0478, 0520) |
-| R3 | A round's items run on every SIMD group of the grid; nothing polls | `px_worker` takes its share by index, with no queue |
+| R3 | A round's items run a thread an item over the grid; nothing polls | `px_item` takes an item by index, with no queue; `px_worker` takes the SIMD groups' share of what is left to one by index |
 
 ## Steps
 
@@ -235,6 +235,17 @@ SIMD-group operation switches each thread of the group.
    On these tests a chain's level is one call a round, so its time a round is as it was (a
    100-level chain with an exit at each, 302 rounds: 52 ms); what the phases change is a round
    with many calls, whose SIMD groups each walked a call's tokens 32 at a time.
+
+   - **A round's items are a thread an item** (`px_item`): a place, a scan, a call or a
+     substitution only adds to its phase's set. Only `_Pragma`, the built-ins and the
+     configuration's tests still take a SIMD group (`px_worker`, over the items `px_item` set
+     aside: `QCTL` 8).
+   - **The calls' and substitutions' small form.** As the walks' (above): the phases are one
+     macro over the phase forms (`PX_CALL_PHASES`, `PX_SUB_PHASES`), and a set whose elements fit
+     `UKL_GRID_SMALL` (each group sums its share and decides alike) runs on group 0 alone, with
+     its own barriers, then one grid barrier. A round of a chain's climb then crosses a grid
+     barrier only between the phases' sets, not within them. All 31 eval tests under the
+     `second` profile, the longest 0.55 s.
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.
    Done: all 31 eval tests pass under the `second` profile's 1 s on a farm Mac (CPU backend),
    the longest 0.68 s.
