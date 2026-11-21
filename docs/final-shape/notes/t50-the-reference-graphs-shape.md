@@ -507,6 +507,28 @@ agree. One thread, a million probes or more each; ns per probe:
 faster probes would save at most 5–6% of the run's CPU. The data stays here; the structure is not built. The next
 measure is the join's per-row work (`any(…)`, `flush`, the view probes).
 
+**The join, by role** (self time under `run_join_in_each::enter`, the same sample; 32.2% of the run): the
+interpreter's own work (`enter`, `candidates`, the row closures, the `any` loops) 24.7% of the join, index probes
+15.9%, view reads 8.9%, the within/nearest axis 8.5%, `RowRef` 5.6%, alloc and free 5.4%, plain relation reads 5.3%,
+thread-locals and clock reads 4.2% (in part the profiler's own span per scalar-summary probe), the head's write and
+dedup 3.5%, lazy index builds 3.2%, strings and scalars 2.9%. The inclusive shares of the row closures (22.4%) and
+`flush` (11.0%) nest: they recurse into the next step.
+
+**The join, by rule** (`RERAIL_JOIN_LINES` on `all`, no sample: 180 s wall, 294 s user, 3.38 T instructions): 93 K
+lines, 872 M rows of work, 104.8 s of line wall over the threads, about 120 ns a row. No rule is over 4.7%. Most run
+at 90–140 ns a row: the cost is the executor's per row, spread over every rule. The outliers by ns a row:
+
+| Rule | Rows of work | Wall s | ns/row |
+|---|---|---|---|
+| `st_open` (one line) | 23 K | 1.20 | 52,329 |
+| `walk` (the recursive step: `!bound_in`, `!gbefore`, `rr_nearest_lfscope`) | 3.8 M | 3.60 | 959 |
+| `rf_fn_n` (a count) | 2.0 M | 1.18 | 591 |
+| `st_ref_at` | 3.1 M | 1.57 | 512 |
+| `rf_crossing`, `rasg` | 3.5 M, 2.9 M | 1.04, 0.84 | 293, 290 |
+
+And by size: `st_pos` (a position for every node of every document, from `node` and `doc`) is 70 M rows of work,
+4.97 s, the largest rule.
+
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
 `RERAIL_STAGE_DIFFS=1` listed every differing row. Each kind was cut down to a case of a few lines
