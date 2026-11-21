@@ -27,11 +27,10 @@ pub(super) fn requests(v: &Version, about: &About) -> BTreeMap<String, BTreeSet<
     for (q, p) in &about.answers {
         out.entry(v.rel_name(*q).to_owned()).or_default().insert(v.rel_name(*p).to_owned());
     }
-    if v.rel(guests::DEMAND).is_some_and(|id| v.heads(id).next().is_some()) {
-        let (produced, _) = guests::answered(v);
-        if !produced.is_empty() {
-            out.entry(guests::DEMAND.to_owned()).or_default().extend(produced);
-        }
+    // Each guest request the fixpoint answers (`guests::answering`: a string's, `@parse`'s, `@splice`'s), with what it
+    // produces.
+    for (req, (produced, _)) in guests::answering(v) {
+        out.entry(req).or_default().extend(produced);
     }
     out
 }

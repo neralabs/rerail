@@ -198,7 +198,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn rewrite(p: &mut Program<'_>
                 || !upstream::eligible(p, rel)
                 || p.f.qualifiers.get(rel).is_some_and(|q| !q.is_empty())
                 || tapes.contains_key(rel)
-                || p.f.demand.contains(rel)
+                || p.f.demand.iter().any(|r| r == rel)
                 || shapes.iter().any(|s| s.head == rel || s.lit == rel)
                 || p.f.asked_by.values().flatten().any(|refs| refs.contains(rel))
             {
