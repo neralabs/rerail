@@ -6,14 +6,17 @@
  * runs the submodule's filter drivers, and where a submodule is registered but not checked out, a writer of the
  * worktree alone can put a Git folder there for Git to look into. So Rerail runs such a diff with
  * `--ignore-submodules=dirty`, which still lists a submodule whose commit moved, and asks each checked-out submodule the
- * same question itself, through the guard: its config listed, its drivers set, then its status. Git asks its
+ * same question itself, through the guard: its config read in process, or listed and its drivers set where it may
+ * define one, then its status. Git asks its
  * submodules one after another; Rerail asks them all at once, each one's questions in turn, so a checkout with many
  * submodules answers within the one time limit Git's own diff had. This module holds Git's rules (2.31 to 2.53) for
  * which submodules a diff looks into (`set_diffopt_flags_from_submodule_config` and `repo_diff_setup`; for the
  * submodules inside a submodule, `wt_status_collect_changes_worktree`) and for what makes a submodule changed
  * (`is_submodule_modified`): any entry its status lists.
  */
-import { accessSync, closeSync, constants, existsSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, type Stats } from "node:fs";
+import {
+  accessSync, closeSync, constants, existsSync, fstatSync, lstatSync, openSync, readFileSync, readlinkSync, readSync, realpathSync, statSync, type Stats,
+} from "node:fs";
 import { readFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import { lastValue, type ListedEntry } from "./filter-drivers.js";
@@ -48,14 +51,16 @@ export type Ask = (args: readonly string[], most?: number) => Promise<string | G
 /** A repository asked through the guard on Rerail's Git calls: each question runs with the drivers its config defines set. */
 export interface GuardedRepository {
   readonly ask: Ask;
-  /** The repository's config, every scope, as the guard listed it. */
+  /** The repository's config, every scope, as the guard listed it; none for one whose rules are never read. */
   readonly entries: readonly ListedEntry[];
   readonly places: Places;
 }
 
-/** The repository a diff runs in: its places are asked only once its index is seen to record a submodule. */
-export interface DiffRepository extends Omit<GuardedRepository, "places"> {
+/** The repository a diff runs in: its places and its config are asked only once its index is seen to record a submodule. */
+export interface DiffRepository extends Omit<GuardedRepository, "places" | "entries"> {
   readonly place: () => Promise<Places | GitFailure>;
+  /** Its config, every scope, as the guard listed it, or how listing it failed. */
+  readonly listed: () => Promise<readonly ListedEntry[] | GitFailure>;
   /** The index file the diff reads, found in process ({@link worktreeIndex}); undefined when Git must be asked. */
   readonly index: string | undefined;
 }
@@ -166,14 +171,20 @@ export async function recordsNoSubmodule(index: string): Promise<boolean> {
 /** The variables with which Git finds a repository's Git folder, worktree or index otherwise than from its folder. */
 const PLACING_VARIABLES = ["GIT_DIR", "GIT_WORK_TREE", "GIT_INDEX_FILE", "GIT_COMMON_DIR"] as const;
 
-/**
- * The index file a Git started in `folder` with the environment `env` reads, found in process as Git's discovery finds
- * a worktree's: the `index` of the Git folder of the first `.git` from `folder` up ({@link discoveredAt}), climbing the
- * folder's path with every link resolved, as Git climbs from `getcwd()` once `-C` changed into it. Undefined, so that
- * Git is asked, when `env` sets one of {@link PLACING_VARIABLES}, that path cannot be read, or the discovery meets a
- * folder it does not take as a worktree's.
- */
+/** The index file a Git started in `folder` with the environment `env` reads: the `index` of {@link worktreeGitFolder}. */
 export function worktreeIndex(folder: string, env: Readonly<Record<string, string | undefined>>): string | undefined {
+  const gitFolder = worktreeGitFolder(folder, env);
+  return gitFolder === undefined ? undefined : join(gitFolder, "index");
+}
+
+/**
+ * The Git folder a Git started in `folder` with the environment `env` opens, found in process as Git's discovery finds
+ * a worktree's: the Git folder of the first `.git` from `folder` up ({@link discoveredAt}), climbing the folder's path
+ * with every link resolved, as Git climbs from `getcwd()` once `-C` changed into it. Undefined, so that Git is asked,
+ * when `env` sets one of {@link PLACING_VARIABLES}, that path cannot be read, or the discovery meets a folder it does
+ * not take as a worktree's.
+ */
+export function worktreeGitFolder(folder: string, env: Readonly<Record<string, string | undefined>>): string | undefined {
   if (PLACING_VARIABLES.some(name => env[name] !== undefined)) return undefined;
   let at = physicalPath(folder);
   if (at === undefined) return undefined;
@@ -182,7 +193,7 @@ export function worktreeIndex(folder: string, env: Readonly<Record<string, strin
     at = dirname(at);
     found = discoveredAt(at);
   }
-  return typeof found === "string" ? join(found, "index") : undefined;
+  return typeof found === "string" ? found : undefined;
 }
 
 /**
@@ -202,12 +213,18 @@ function physicalPath(path: string): string | undefined {
 const GIT_ABSOLUTE = process.platform === "win32" ? /^(?:[\\/]|[A-Za-z]:)/u : /^\//u;
 
 /**
- * The folder a Git file names with `named` from the folder `base`, as Git finds it: `base/named` joined as text unless
- * `named` is absolute, then resolved by the system ({@link physicalPath}, Git's `strbuf_realpath`), so each `..` goes
- * up from where the links before it lead. Undefined when that path cannot be read.
+ * The folder a Git file names with `named` from the folder `base`, as Git finds it: {@link namedPath}, resolved by the
+ * system ({@link physicalPath}, Git's `strbuf_realpath`), so on Linux and macOS each `..` goes up from where the links
+ * before it lead; Windows folds each `..` into the path's text before it opens it, as it does for Git. Undefined when
+ * that path cannot be read.
  */
 function namedFolder(base: string, named: string): string | undefined {
-  return physicalPath(GIT_ABSOLUTE.test(named) ? named : `${base}/${named}`);
+  return physicalPath(namedPath(base, named));
+}
+
+/** The path a Git file's `named` names from the folder `base`, as Git joins it: `base/named` as text, or `named` when absolute. */
+function namedPath(base: string, named: string): string {
+  return GIT_ABSOLUTE.test(named) ? named : `${base}/${named}`;
 }
 
 /**
@@ -412,8 +429,16 @@ export async function withChangedSubmodules(stdout: string, diff: NameDiff, top:
   if (typeof listing !== "string") return listing;
   const gitlinks = readGitlinks(listing);
   if (gitlinks.paths.length === 0) return stdout;
-  const places = await top.place();
-  return "top" in places ? await changedSubmodules(stdout, { diff, gitlinks, top: { ...top, places }, open }) : places;
+  const guarded = await guardedTop(top);
+  return "ask" in guarded ? await changedSubmodules(stdout, { diff, gitlinks, top: guarded, open }) : guarded;
+}
+
+/** `top` with its places and its config, asked once its index is seen to record a submodule; how asking failed instead. */
+async function guardedTop({ ask, place, listed }: DiffRepository): Promise<GuardedRepository | GitFailure> {
+  const places = await place();
+  if (!("top" in places)) return places;
+  const entries = await listed();
+  return "stderr" in entries ? entries : { ask, places, entries };
 }
 
 /** What {@link changedSubmodules} decides from: the diff, the submodules its index records, its repository and the opener. */
@@ -551,6 +576,66 @@ export function repositoryConfig(gitFolder: string): string | undefined {
 }
 
 /**
+ * The words a config file holds where it defines a filter driver (`[filter "x"]`, `[filter.x]`) or includes a file that
+ * may (`[include]`, `[includeIf "..."]`): Git takes a section's name in any case, and a key only under its section.
+ */
+const DRIVER_SECTIONS = /filter|include/iu;
+/** The most bytes of a repository's config file Rerail reads to see that it defines no driver; Git lists a larger one. */
+const MAX_READ_CONFIG_BYTES = 64 * 1024;
+
+/**
+ * Whether the repository whose Git folder is `gitFolder` defines no filter driver in its own config, read in process
+ * so that no Git starts to list it: its `config` ({@link repositoryConfig}) and its `config.worktree` are each absent
+ * or hold no {@link DRIVER_SECTIONS} word. Its calls then need no driver set, as the guard sets none for a driver only
+ * the person's config defines. False, so that Git lists the config, when `gitFolder` holds no repository now, or a
+ * file cannot be read whole within {@link MAX_READ_CONFIG_BYTES}.
+ */
+export function definesNoDriver(gitFolder: string): boolean {
+  const config = repositoryConfig(gitFolder);
+  return config !== undefined && namesNoDriver(config) && namesNoDriver(join(gitFolder, "config.worktree"));
+}
+
+/** Whether the config file at `path` is absent, or holds no {@link DRIVER_SECTIONS} word. */
+function namesNoDriver(path: string): boolean {
+  const text = configText(path);
+  return text !== undefined && !DRIVER_SECTIONS.test(text);
+}
+
+/**
+ * The bytes of the config file at `path`, one byte to each character, and none when there is no file; undefined when
+ * it is not a file, cannot be read, or holds more than {@link MAX_READ_CONFIG_BYTES}. It opens without waiting, so a
+ * pipe put there holds no thread.
+ */
+function configText(path: string): string | undefined {
+  let file: number;
+  try {
+    // Windows has no O_NONBLOCK, and no pipe in a folder.
+    file = openSync(path, constants.O_RDONLY | (constants.O_NONBLOCK ?? 0));
+  } catch (error) {
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "" : undefined;
+  }
+  try {
+    return fstatSync(file).isFile() ? readWithin(file, MAX_READ_CONFIG_BYTES)?.toString("latin1") : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    closeSync(file);
+  }
+}
+
+/** The bytes of the open file `file` to its end; undefined past `most`. */
+function readWithin(file: number, most: number): Buffer | undefined {
+  const bytes = Buffer.alloc(most + 1);
+  let read = 0;
+  let got: number;
+  do {
+    got = readSync(file, bytes, read, bytes.length - read, null);
+    read += got;
+  } while (got > 0 && read < bytes.length);
+  return read > most ? undefined : bytes.subarray(0, read);
+}
+
+/**
  * The common directory of the repository in `gitFolder`, as Git's `get_common_dir` finds it: the folder its `commondir`
  * file names from it ({@link namedFolder}), else `gitFolder`; undefined when that file or the folder it names cannot be
  * read.
@@ -621,7 +706,7 @@ function namedGitFolder(folder: string, dotGit: string, stats: Stats): string | 
   if (text === undefined) return undefined;
   if (!text.startsWith("gitdir: ")) return notARepository(dotGit);
   const named = text.slice("gitdir: ".length).replace(/[\r\n]+$/u, "");
-  return namedFolder(folder, named) ?? notARepository(named);
+  return namedFolder(folder, named) ?? notARepository(namedPath(folder, named));
 }
 
 function statOf(path: string): Stats | undefined {

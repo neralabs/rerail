@@ -236,7 +236,9 @@ without hooks or network.
     a 10 s time limit, which every Git process a guarded call or a read that does not block starts shares: one asked
     once it is spent is not started, and the call fails as a Git that ran out of time.
   - A call through `runGit`, or a read that does not block, that reads worktree files (the audit's and the scan's
-    `git diff`, the session walk's `git ls-files --modified`) first lists the config with its scopes, and sets each
+    `git diff`, the session walk's `git ls-files --modified`) first reads the repository's `config` and
+    `config.worktree` in process: where each is absent or holds neither `filter` nor `include` in any case, the
+    repository defines no driver, and the call runs as it is. Else it lists the config with its scopes, and sets each
     filter driver a repository's own config defines (its `config`, `config.worktree` and the files they include) as
     the person's own config (system, global, command line) defines it, or to no program
     (`src/engine/git-guard/filter-drivers.ts`). A driver the person installed, such as Git LFS, still runs. A file under a
@@ -834,7 +836,7 @@ should not widen it.
   call, and the next process looks for Git afresh at its first call. The daemon alone also asks whether the home share
   `HOMEDRIVE` and `HOMEPATH` name is a folder, to put that home's `bin` on `PATH` as Git for Windows' launcher does; a
   hook's or a command's Git gets both homes' `bin`, the share's first.
-- A Git call that reads worktree files lists the repository's config, then runs as a second Git process that reads
+- A Git call that reads worktree files reads or lists the repository's config, then runs as a Git process that reads
   the config again: a writer that changes the config, or a file it includes, between the two can have its filter
   driver started, as the person's own `git status` would start it (`src/engine/git.ts`). The person's own Git LFS
   runs the programs a repository's config names under `lfs.extension`. A Git older than 2.31 runs a repository's

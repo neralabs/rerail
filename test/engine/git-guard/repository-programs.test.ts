@@ -1,6 +1,6 @@
 import { execFileSync, spawnSync } from "node:child_process";
 import { chmodSync, existsSync, readFileSync } from "node:fs";
-import { appendFile, mkdir, mkdtemp, rm, utimes, writeFile } from "node:fs/promises";
+import { appendFile, mkdir, mkdtemp, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -235,7 +235,8 @@ describe("Rerail's Git calls start no filter program only a repository's own con
     // A Git whose config listing prints one entry and then fails, as a listing does that meets an include being renamed.
     await writeFile(join(bin, "git"), `#!/bin/sh\ncase " $* " in *" --show-scope --list "*) printf 'local\\0core.bare\\nfalse\\0'; exit 128;; esac\nexec '${real}' "$@"\n`);
     chmodSync(join(bin, "git"), 0o755);
-    const work = await repository(root, "work", { "notes.txt": "one\n" });
+    // A driver in its config, so the guard lists it.
+    const work = await repository(root, "work", { "notes.txt": "one\n" }, { "filter.probe.clean": "cat" });
     await writeFile(join(work, "notes.txt"), "two\n");
     vi.stubEnv("PATH", `${bin}${delimiter}${process.env.PATH ?? ""}`);
     vi.resetModules();
@@ -246,6 +247,37 @@ describe("Rerail's Git calls start no filter program only a repository's own con
 
     expect([audit.status, audit.stdout]).toEqual([128, ""]);
     expect(walk).toEqual([]);
+  }, 60_000);
+});
+
+/** How a repository's own config defines the driver `probe` to run `command`, each a form only its file's text shows. */
+const DRIVER_FORMS: ReadonlyArray<readonly [string, (work: string, command: string) => Promise<void> | void]> = [
+  ["in a section whose name is in capitals", async (work, command) => {
+    await appendFile(join(work, ".git", "config"), `[FILTER "probe"]\n\tclean = ${configValue(command)}\n`);
+  }],
+  ["in a file its config includes", async (work, command) => {
+    await writeFile(join(work, ".git", "drivers"), `[filter "probe"]\n\tclean = ${configValue(command)}\n`);
+    await appendFile(join(work, ".git", "config"), "[Include]\n\tpath = drivers\n");
+  }],
+  ["in the worktree's own config", (work, command) => {
+    git(work, "config", "extensions.worktreeConfig", "true");
+    git(work, "config", "--worktree", "filter.probe.clean", command);
+  }],
+];
+
+describe("Rerail's Git calls read a repository's own config to tell that it defines no driver", () => {
+  it.each(DRIVER_FORMS)("and list it, starting no program, where it defines one %s", async (_name, define) => {
+    const root = await folder();
+    const marker = join(root, "filter-ran");
+    const work = await repository(root, "work", { ".gitattributes": "*.txt filter=probe\n", "notes.txt": "one\n" });
+    await define(work, recording(marker));
+    await writeFile(join(work, "notes.txt"), "two\n");
+
+    const answers = [runGit(work, AUDIT_DIFF), await runGitWithoutBlocking(work, AUDIT_DIFF)];
+    const walk = await gitModifiedOrUntrackedPaths(work);
+
+    expect(runs(marker)).toBe(0);
+    expect([...answers.map(answer => [answer.status, answer.stdout]), walk]).toEqual([[0, "notes.txt\0"], [0, "notes.txt\0"], ["notes.txt"]]);
   }, 60_000);
 });
 
@@ -535,6 +567,33 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     expect(git.gitExecutable()).toBe(join(two, "bin", "git"));
     expect(answers.map(result => [result.status, result.stdout])).toEqual([[0, "notes.txt\0"], [0, "notes.txt\0"]]);
     expect(said.mock.calls.map(([text]) => String(text)).filter(text => text.startsWith("rerail: Git 2.25.1 is older than 2.31"))).toHaveLength(1);
+  }, 60_000);
+
+  it("a daemon whose Git is found gone as a call asks its version keeps that answer for no Git, and asks the Git it runs next", async () => {
+    const root = await folder();
+    const [one, two] = [join(root, "one"), join(root, "two")];
+    await Promise.all([mkdir(one), mkdir(two)]);
+    vi.stubEnv("PATH", [await olderGit(one, "2.53.0"), await olderGit(two, "2.25.1"), process.env.PATH ?? ""].join(delimiter));
+    vi.resetModules();
+    const git = await import("../../../src/engine/git.js");
+    git.gitLivesOn();
+    const { work, marker } = await checkoutWithDriver(root);
+    vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    const [first, second] = [join(one, "bin", "git"), join(two, "bin", "git")];
+    expect(git.gitExecutable()).toBe(first);
+    // The Git kept is gone when the call asks its version: the Git found again, too old for the guard, answers it.
+    await rename(first, `${first}.away`);
+    await git.runGitWithoutBlocking(work, AUDIT_DIFF);
+    // That one goes too and the first comes back: a call that finds the Git kept gone keeps the one it finds.
+    await rename(`${first}.away`, first);
+    await rm(second);
+    await git.runGitAsync(root, ["--version"]);
+    await rm(marker, { force: true });
+
+    const answer = await git.runGitWithoutBlocking(work, AUDIT_DIFF);
+
+    expect([git.gitExecutable(), answer.status, answer.stdout]).toEqual([first, 0, "notes.txt\0"]);
+    expect(existsSync(marker)).toBe(false);
   }, 60_000);
 
   it("a config listing of 300 MiB, under Node's longest string, guards the call as a short one does", async () => {

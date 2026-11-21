@@ -1,12 +1,14 @@
 import * as childProcess from "node:child_process";
 import { execFileSync, spawn } from "node:child_process";
-import { chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync } from "node:fs";
+import {
+  appendFileSync, chmodSync, cpSync, existsSync, mkdirSync, readdirSync, readFileSync, realpathSync, renameSync, symlinkSync, unlinkSync, writeFileSync,
+} from "node:fs";
 import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { availableParallelism, tmpdir } from "node:os";
 import { delimiter, join, sep } from "node:path";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { runGit, runGitWithoutBlocking, type GitResult } from "../../../src/engine/git.js";
+import { gitModifiedOrUntrackedPaths, runGit, runGitWithoutBlocking, type GitResult } from "../../../src/engine/git.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
 
 vi.mock("node:child_process", { spy: true });
@@ -42,6 +44,12 @@ async function repository(root: string, name: string, files: Record<string, stri
   return path;
 }
 
+/** `work` with a filter driver in its own config, so the guard lists its config before each call that reads its files. */
+function withDriver(work: string): string {
+  git(work, "config", "filter.probe.clean", "cat");
+  return work;
+}
+
 function recording(marker: string): string {
   return `echo ran >> '${marker.replaceAll("\\", "/")}'; cat`;
 }
@@ -51,6 +59,18 @@ function runs(marker: string): number {
 }
 
 const listed = (stdout: string): string[] => stdout.split("\0").filter(path => path !== "").sort();
+
+/** What `call` answered, and the Git processes it started: each writes its trace2 events to a file of its own. */
+async function gitsStarted<T>(root: string, call: () => T | Promise<T>): Promise<{ answer: T; started: number }> {
+  const trace = await mkdtemp(join(root, "trace-"));
+  vi.stubEnv("GIT_TRACE2_EVENT", trace);
+  try {
+    const answer = await call();
+    return { answer, started: readdirSync(trace).length };
+  } finally {
+    vi.stubEnv("GIT_TRACE2_EVENT", undefined);
+  }
+}
 
 /** The audit's `git diff` (`audit-control.ts`) and the scan's (`headless-scan.ts`), as each runs it. */
 const AUDIT_DIFF = ["diff", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"];
@@ -155,10 +175,43 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     }
 
     vi.stubEnv("GIT_TRACE2_EVENT", undefined);
-    // Each Git process writes its events to a file of its own: the config listing and the diff. Rerail reads the
-    // index file in process, and starts no Git to list its submodules.
-    expect(traces.map(trace => readdirSync(trace).length)).toEqual([2, 2, 2]);
+    // Each Git process writes its events to a file of its own: the diff alone, as before the guard. Rerail reads the
+    // config files and the index file in process, and starts no Git to list the config or the index's submodules.
+    expect(traces.map(trace => readdirSync(trace).length)).toEqual([1, 1, 1]);
     expect(answers.map(answer => answer.stdout)).toEqual(calls.map(([cwd, args]) => git(cwd, ...args)));
+  }, 60_000);
+
+  it.each([
+    ["defines no driver and has no worktree config: the call alone, as before the guard", () => undefined, [1, 1]],
+    ["is past what Rerail reads of a config file: its listing, then the call", (gitFolder: string) => {
+      appendFileSync(join(gitFolder, "config"), `# ${"x".repeat(64 * 1024)}\n`);
+    }, [2, 2]],
+  ] as const)("and start for a blocking call and the walk's listing, where the checkout's config %s", async (_name, change, gits) => {
+    const root = await folder();
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    change(join(work, ".git"));
+    await writeFile(join(work, "top.txt"), "changed\n");
+    // Asked once first: each process asks Git's version once, at its first call that reads worktree files.
+    runGit(work, ["ls-files", "-z", "--modified"]);
+
+    const blocking = await gitsStarted(root, () => runGit(work, ["ls-files", "-z", "--modified"]));
+    const walk = await gitsStarted(root, async () => await gitModifiedOrUntrackedPaths(work));
+
+    expect([blocking.started, walk.started]).toEqual(gits);
+    expect([blocking.answer, walk.answer]).toEqual([{ ...blocking.answer, status: 0, stdout: "top.txt\0" }, ["top.txt"]]);
+  }, 60_000);
+
+  // Windows has no pipe in a folder.
+  it.skipIf(process.platform === "win32")("and list a checkout's config whose worktree config is a pipe, which Git does not open here, holding no thread on it", async () => {
+    const root = await folder();
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    execFileSync("mkfifo", [join(work, ".git", "config.worktree")]);
+    await writeFile(join(work, "top.txt"), "changed\n");
+    runGit(work, ["ls-files", "-z", "--modified"]);
+
+    const audit = await gitsStarted(root, async () => await runGitWithoutBlocking(work, AUDIT_DIFF));
+
+    expect([audit.started, audit.answer.stdout]).toEqual([2, git(work, ...AUDIT_DIFF)]);
   }, 60_000);
 
   it("and read the index of a linked worktree, not its main worktree's, to tell whether it records a submodule", async () => {
@@ -243,10 +296,11 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
   it.skipIf(process.platform === "win32" || process.getuid?.() === 0)("and fail a diff where a submodule's status warns past the most the guard reads, as a question past its cap fails", async () => {
     const root = await folder();
     const { work, shut } = await warningSubmodule(root);
-    // The guard's cap at 32 KiB, under the submodule's warnings: Node's longest string sets it.
+    // The guard's cap at 32 KiB, Node's longest string (96 KiB here) less 64 KiB: past the config listings, under the
+    // submodule's 90 KB of warnings.
     vi.doMock("node:buffer", async original => {
       const actual = await original<typeof import("node:buffer")>();
-      return { ...actual, constants: { ...actual.constants, MAX_STRING_LENGTH: 32 * 1024 } };
+      return { ...actual, constants: { ...actual.constants, MAX_STRING_LENGTH: 96 * 1024 } };
     });
     vi.resetModules();
     try {
@@ -254,7 +308,8 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
 
       const audit = await fresh.runGitWithoutBlocking(work, AUDIT_DIFF);
 
-      expect([audit.status, audit.stdout, (audit.error as NodeJS.ErrnoException | undefined)?.code]).toEqual([null, "", "ENOBUFS"]);
+      const error = audit.error as (NodeJS.ErrnoException & { stream?: string }) | undefined;
+      expect([audit.status, audit.stdout, error?.code, error?.stream]).toEqual([null, "", "ENOBUFS", "stderr"]);
     } finally {
       vi.doUnmock("node:buffer");
       for (const path of shut) chmodSync(path, 0o755);
@@ -318,10 +373,10 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const audit = await runGitWithoutBlocking(work, AUDIT_DIFF);
 
     vi.stubEnv("GIT_TRACE2_EVENT", undefined);
-    // The checkout's config listing, its diff, its index's submodules and its top folder (the audit's diff names
-    // `--ignore-submodules=none`, so `.gitmodules` is not read); then the submodule's config listing and its status,
-    // and no listing of the submodule's own index.
-    expect(readdirSync(trace)).toHaveLength(6);
+    // The checkout's diff, its index's submodules, its top folder and its config listing (the audit's diff names
+    // `--ignore-submodules=none`, so `.gitmodules` is not read); then the submodule's status alone, as Git's own diff
+    // starts it: Rerail reads its config and its index in process, and lists neither.
+    expect(readdirSync(trace)).toHaveLength(5);
     expect(audit.stdout).toBe(git(work, ...AUDIT_DIFF));
   }, 60_000);
 
@@ -375,6 +430,8 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
 
     expect(() => git(work, ...AUDIT_DIFF)).toThrow();
     expect([audit.status === 0, audit.stdout]).toEqual([false, ""]);
+    // The path as Git joins it from the submodule's folder, so a diff with many submodules names the one that failed.
+    expect(audit.stderr).toMatch(/^fatal: not a git repository: .+[\\/]sub\/\.\.\/missing\n$/u);
   }, 60_000);
 
   it.skipIf(process.platform === "win32")("in the Git folder a submodule's `.git` named when Rerail looked, though it names a placed one by the status", async () => {
@@ -782,7 +839,8 @@ const GIT_FOLDERS: ReadonlyArray<readonly [string, (work: string, root: string) 
     git(work, "config", "--file", join(gitFolder, "config"), "--unset", "core.worktree");
     git(work, "--git-dir", gitFolder, "worktree", "add", "--quiet", "--detach", join(work, "sub"), commit);
     await writeFile(join(work, "sub", "inner.txt"), "two\n");
-    // Through the link, the four `..` lead to the repository; read as text, to the folder above it, which holds none.
+    // On Linux and macOS the four `..` go up from where the link leads, to the repository; read as text, to the folder
+    // above it, which holds none. Windows folds them as text, for Git too, so there both diffs fail alike.
     const linkedFolder = join(gitFolder, "worktrees", "sub");
     mkdirSync(join(linkedFolder, "a", "b"), { recursive: true });
     symlinkSync(join(linkedFolder, "a", "b"), join(linkedFolder, "ln"), "junction");
@@ -954,6 +1012,8 @@ const DISCOVERED: ReadonlyArray<readonly [string, (root: string) => Promise<stri
     unlinkSync(join(work, "sub", ".git"));
     await writeFile(join(work, "sub", ".git"), `gitdir: ${join(store, "modules", "sub").replaceAll("\\", "/")}\n`);
     symlinkSync(join(root, "a", "b"), join(work, "ln"), "junction");
+    // On Linux and macOS `..` goes up from where the link leads, to `a/store.git`. Windows folds it as text, for Git
+    // too, to the bare `work/store.git`, and there both diffs fail alike.
     await writeFile(join(work, ".git"), "gitdir: ln/../store.git\n");
     git(root, "init", "--quiet", "--bare", join(work, "store.git"));
     cpSync(join(root, "source", ".git", "index"), join(work, "store.git", "index"));
@@ -1127,7 +1187,7 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
 
   it("and so does the session walk's listing, which does not block: its Gits share the read's 10 s", async () => {
     const root = await folder();
-    const work = await repository(root, "work", { "top.txt": "top\n" });
+    const work = withDriver(await repository(root, "work", { "top.txt": "top\n" }));
 
     const { gits, answer } = await startedBy(async fresh => await fresh.gitModifiedOrUntrackedListing(work), undefined, 5_000);
 
@@ -1137,7 +1197,7 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
 
   it.each([["config listing", "--list"], ["listing of changed files", "--modified"]])("and the walk's %s gets only what is left of the read's 10 s", async (_name, hangs) => {
     const root = await folder();
-    const work = await repository(root, "work", { "top.txt": "top\n" });
+    const work = withDriver(await repository(root, "work", { "top.txt": "top\n" }));
     vi.resetModules();
     const fresh = await import("../../../src/engine/git.js");
     const started = await import("node:child_process");
@@ -1168,7 +1228,7 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
 
   it.each([["status", "--porcelain=2", "-z"], ["ls-files", "-z", "--modified"]])("and so does a guarded `git %s`", async (...args: string[]) => {
     const root = await folder();
-    const work = await repository(root, "work", { "top.txt": "top\n" });
+    const work = withDriver(await repository(root, "work", { "top.txt": "top\n" }));
 
     const { gits, answer } = await startedBy(fresh => fresh.runGit(work, args, { timeout: 20_000 }));
 
