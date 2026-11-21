@@ -3659,6 +3659,7 @@ name = "rerail-kotlin-aot"
 version = "0.1.0"
 dependencies = [
  "rerail-kotlin-aot",
+ "rerail-simd8",
  "rerail-tape-format",
 ]
 
