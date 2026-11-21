@@ -920,6 +920,8 @@ struct LabelKernel {
     chunk: Option<u64>,
     stats: Option<u64>,
     spill: [Option<u64>; 3],
+    /// `label_phase`'s work queue (`phasequeue`, <ukl/workqueue.h>).
+    queue: Option<u64>,
 }
 
 impl LabelKernel {
@@ -930,6 +932,7 @@ impl LabelKernel {
             chunk: at("chunk"),
             stats: at("wstats"),
             spill: [at("qslots"), at("qcontrol"), at("qitems")],
+            queue: at("phasequeue"),
         }
     }
 }
@@ -940,7 +943,7 @@ impl LabelKernel {
 const KERNELS: [&str; 9] = ["label_sink", "label_settle", "label_round", "label_micro", "label_group", "root_records", "label_leaves", "label_phase", "label_parents"];
 /// `label_leaves` in `KERNELS` (decision 0365).
 const LEAVES_KERNEL: usize = 6;
-/// `label_phase` (decisions 0474, 0475): a level's formulas, a dispatch a phase, a thread a (word, formula).
+/// `label_phase` (decisions 0474, 0475, 0540 step 6): a level's formulas, every phase in one launch, a thread a (word, formula).
 const PHASE_KERNEL: usize = 7;
 /// `label_parents` (0475): the batch's parents once, for `label_phase`.
 const PARENTS_KERNEL: usize = 8;
@@ -1534,6 +1537,8 @@ struct Runner<'a> {
     workspace: Option<Workspace>,
     command: lane::Command,
     retained: Vec<HostMapped>,
+    /// `label_phase`'s queues, read after the run: an overflow or an item left active.
+    phase_queues: Vec<HostMapped>,
     programs: Vec<Arc<ProgramBuffers>>,
     /// By the level's address in the plan; `None` for a level with no tasks.
     prepared: HashMap<usize, Option<Prepared>>,
@@ -1620,8 +1625,8 @@ pub(in crate::code_rule_dsl) fn run(plan: &Plan<'_>, files: &[TapeDoc]) -> Resul
 fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
     let _evaluation = super::super::metal_backend::evaluation_scope();
     lane::device()?;
-    // Decision 0365: a level's formulas (its anchors, its formula passes): their leaves, and a dispatch a phase of the
-    // one with the most (0475). An anchor is evaluated once a run (`Runner::anchors`): `seen` holds those counted, in
+    // Decision 0365: a level's formulas (its anchors, its formula passes): their leaves, and one launch of all their
+    // phases (0475, 0540 step 6). An anchor is evaluated once a run (`Runner::anchors`): `seen` holds those counted, in
     // the order `encode` runs them; a formula pass runs at each of its level's runs.
     let formulas = |level: &Vec<Pass<'_>>, seen: &mut std::collections::HashSet<usize>| {
         let phases = level
@@ -1635,7 +1640,8 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
             })
             .map(formula_phase_count)
             .max();
-        phases.map_or(0, |phases| 1 + phases)
+        // Their leaves, and every phase in one launch (decision 0540 step 6).
+        phases.map_or(0, |_| 2)
     };
     // A level's launches: the programs' dispatch and sink, the derived labels, the settle, its formulas.
     let launches = |level: &Vec<Pass<'_>>, seen: &mut std::collections::HashSet<usize>| {
@@ -1970,6 +1976,7 @@ fn encode(
         flags: HostMapped::zeroed::<u32>(6)?,
         workspace: None,
         retained: Vec::new(),
+        phase_queues: Vec::new(),
         programs: Vec::new(),
         prepared: HashMap::new(),
         segment_bytes: 0,
@@ -2076,6 +2083,17 @@ fn encode(
     if runner.flag(0) & 2 != 0 {
         crate::code_rule_dsl::prof::count("gpu.frames_overflow", 1);
         return Err(Error::WalkFrames);
+    }
+    // `label_phase`'s queues (decision 0540 step 6): one that ran out of slots is over its capacity; an item still
+    // active after the run is a fault.
+    for queue in &runner.phase_queues {
+        let control = unsafe { std::slice::from_raw_parts(queue.host().cast::<u32>(), 4) };
+        if control[3] != 0 {
+            return Err(Error::BackendCapacity);
+        }
+        if control[2] != 0 {
+            return Err(Error::BackendFailure);
+        }
     }
     if runner.flag(0) & 1 != 0 {
         return Err(Error::BackendFailure);
@@ -2990,8 +3008,9 @@ impl Runner<'_> {
         Ok(())
     }
 
-    /// `label_phase` (0474): `programs`' formulas (the first of the group's headers), a dispatch a phase, a thread a
-    /// (word of the region, formula). Their slots in a scratch of their own, as many formulas at once as it holds.
+    /// `label_phase` (0474): `programs`' formulas (the first of the group's headers), every phase in one launch (0540
+    /// step 6), a thread a (word of the region, formula). Their slots in a scratch of their own, as many formulas at once
+    /// as it holds: a launch a chunk.
     #[allow(clippy::too_many_arguments)]
     fn phase_dispatches(&mut self, programs: &[PhaseProgram], region: usize, inputs: &[&Buffer; 5], leaves: &Buffer, targets: &Buffer, rules: &Buffer, texts: Option<&Buffer>) -> Result<(), Error> {
         let slots = programs.iter().map(|program| program.slots).max().unwrap_or(1).max(1) as usize;
@@ -3048,27 +3067,44 @@ impl Runner<'_> {
             let phases = own.iter().map(|program| program.phases).max().unwrap_or(1);
             crate::code_rule_dsl::prof::count("gpu.formula_phases", phases as usize);
             let program = self.upload(&program)?;
-            // A launch a phase, in order in the run's command: each reads what the one before wrote.
-            for round in 0..phases {
-                let shape = Shape { item_count: first as u32, target_count: own.len() as u32, round, recursive: region as u32, queue: (slots * region) as u32, ..self.shape() };
-                crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[PHASE_KERNEL]), 1);
-                let mut launch = self.launch(&kernel, KERNELS[PHASE_KERNEL]);
-                for (index, buffer) in inputs.iter().enumerate() {
-                    launch = launch.slot(index as u64, buffer, 0);
-                }
-                launch
-                    .slot(5, &scratch, 0)
-                    .slot_value(6, &shape)
-                    .slot(7, leaves, 0)
-                    .slot(8, &program, 0)
-                    .slot(9, targets, 0)
-                    .slot(10, &scratch_rows, scratch_at)
-                    .slot(11, rules, 0)
-                    .slot(12, texts.unwrap_or(rules), 0)
-                    .slot(13, &flags, 0)
-                    .slot(14, &parents, 0)
-                    .groups([groups, own.len() as u64, 1], [PHASE_WORDS, 1, 1]);
+            // Every phase in one launch (decision 0540 step 6): a work queue whose items are a phase of a formula over a
+            // block, each formula's phase 0 its seeds, and the next phase's blocks pushed by the group that finished
+            // its phase's last (`label_phase`). A group a seed is dispatched; one that finds nothing to take ends.
+            let shape = Shape { item_count: first as u32, target_count: own.len() as u32, recursive: region as u32, queue: (slots * region) as u32, ..self.shape() };
+            let formulas = own.len() as u64;
+            // The continuations: each formula's phases past its first, its blocks each; and a slot a group more, which a
+            // take that came before its push's write gives up (<ukl/workqueue.h>): a group ends at a take that finds
+            // nothing, so it gives up one at most.
+            let dispatched = groups * formulas;
+            let capacity = own.iter().map(|program| u64::from(program.phases.max(1) - 1) * groups).sum::<u64>() + dispatched;
+            if u64::from(phases) * formulas * groups >= u64::from(u32::MAX - 2) || 6 + formulas + capacity > u64::from(u32::MAX) {
+                return Err(Error::BackendCapacity);
             }
+            // Not an upload: the queue's control, its seeds' count and each formula's items done, all zero, and its
+            // capacity (word 5), written once here; its slots, empty.
+            let queue = HostMapped::zeroed::<u32>((6 + formulas + capacity) as usize)?;
+            unsafe { queue.host().cast::<u32>().add(5).write(capacity as u32) };
+            let queue_buffer = queue.buffer().clone();
+            self.phase_queues.push(queue);
+            crate::code_rule_dsl::prof::count_named(format!("kernel.{}", KERNELS[PHASE_KERNEL]), 1);
+            let queue_slot = kernel.queue.expect("label_phase's queue");
+            let mut launch = self.launch(&kernel, KERNELS[PHASE_KERNEL]);
+            for (index, buffer) in inputs.iter().enumerate() {
+                launch = launch.slot(index as u64, buffer, 0);
+            }
+            launch
+                .slot(5, &scratch, 0)
+                .slot_value(6, &shape)
+                .slot(7, leaves, 0)
+                .slot(8, &program, 0)
+                .slot(9, targets, 0)
+                .slot(10, &scratch_rows, scratch_at)
+                .slot(11, rules, 0)
+                .slot(12, texts.unwrap_or(rules), 0)
+                .slot(13, &flags, 0)
+                .slot(14, &parents, 0)
+                .slot(queue_slot, &queue_buffer, 0)
+                .groups([dispatched, 1, 1], [PHASE_WORDS, 1, 1]);
             let _ = self.split(KERNELS[PHASE_KERNEL]);
         }
         Ok(())
@@ -3332,7 +3368,7 @@ impl Runner<'_> {
         let head = self.tapes.supertypes.buffer().clone();
         self.command.copy(&round_word, 0, &head, at, 4);
         self.command.fill(&head, at + 4 * (2 + 2 * group as u64 + round as u64 % 2), 1, 0);
-        let kernel = LabelKernel { kernel: self.sweep.clone().ok_or(Error::BackendFailure)?, chunk: None, stats: None, spill: [None; 3] };
+        let kernel = LabelKernel { kernel: self.sweep.clone().ok_or(Error::BackendFailure)?, chunk: None, stats: None, spill: [None; 3], queue: None };
         crate::code_rule_dsl::prof::count(concat!("kernel.", "label_sweep"), 1);
         let mut launch = self.launch(&kernel, "label_sweep");
         for (index, buffer) in buffers.iter().enumerate() {
@@ -3821,7 +3857,7 @@ impl Runner<'_> {
         let routes = prepared.routes.buffer().clone();
         let buffers = self.bound(prepared);
         crate::code_rule_dsl::prof::count(concat!("kernel.", "Rerail label pass programs"), 1);
-        let kernel = LabelKernel { kernel: self.engine.kernel().clone(), chunk: None, stats: None, spill: [None; 3] };
+        let kernel = LabelKernel { kernel: self.engine.kernel().clone(), chunk: None, stats: None, spill: [None; 3], queue: None };
         let mut launch = self.launch(&kernel, "Rerail label pass programs");
         for (index, buffer) in buffers.iter().enumerate() {
             launch = launch.slot(index as u64, buffer, 0);

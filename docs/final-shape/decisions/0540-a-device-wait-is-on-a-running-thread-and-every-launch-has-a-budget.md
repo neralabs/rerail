@@ -238,3 +238,39 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
        - *Fixed: the wave tests aborted on the M3* on a pool thread's read of the machine's jobs' walls outside any
          run (decision 0442): the label kernels' warm-up, and `threads::spawn_in`, read them before they entered
          their caller's run. They enter first now.
+6. **Done (2026-11-21): a level's formulas are one launch, a work queue with continuations, not a launch a phase.**
+   - *Why.* The wave's plan was 337 launches, past the 200 an evaluation has: 212 of them `label_phase`'s, a launch a
+     phase of each level's formula with the most (up to 12), most formulas needing 1 to 3. Then leaves 49, programs
+     and sinks 34, settles 23, recursive groups 13, patterns 5, parents 1.
+   - **Decided (user, 2026-11-21): no cross-thread barrier that spins.** "Those that launch should launch and do
+     whatever useful work is available. If they need to wait for another thread, they should enqueue a continuation
+     and pick up more work rather than spin." What was tried first, and why it is not the design:
+     - *A persistent grid* (`ukl_grid_join`, a grid barrier between phases). On the M3 Max (40 cores), 1,024 groups of
+       64 threads all joined, and 520 to 950 reached the first barrier; at 640, every group finished its items and
+       exactly 520 (13 a core) reached it, the other 120 running only once those gave up at the bound. A group that
+       has started can be kept from going on there.
+     - *The grid sized by occupancy* (the cores, from the IORegistry's `gpu-core-count`, times the groups
+       `maxTotalThreadsPerThreadgroup` admits). Right on the M1 Max (512 groups, the clause passed); on the M3 Max
+       the pipeline says 1,024 threads a core and 832 went on. No bound read from the pipeline holds there.
+   - *The queue* (`label_phase`, `<ukl/workqueue.h>`): an item is a phase of a formula over a block of the region's
+     words, a group of 64 threads an item. Each formula's phase 0 is there from the start (seeds, taken from a
+     counter); the group whose item finishes a formula's phase (its count of done items reaches the phase's end)
+     pushes the next phase's blocks and goes on taking items, so a pushed item has a worker that is running. A
+     group that finds nothing ends. Nothing waits for another group, and the groups that run at once are not this
+     kernel's concern. Ordering: a group's writes, a device barrier and fence, then its count; the pusher's fence,
+     then its pushes; the taker's fence after its take. The slots' plain reads and writes are coherent.
+   - *Its capacity*: the continuations (each formula's phases past its first, its blocks each), and a slot a dispatched
+     group more: a take that comes before its push's write gives that slot up, and a group ends at a take that finds
+     nothing, so it gives up one at most. Counting only the continuations, a clause overflowed (`BackendCapacity`).
+     After the run the host reads each queue: overflow is `BackendCapacity`, an item left active `BackendFailure`.
+   - *No worker budget* (point 4) here: a budget ends a worker with items left, and an evaluation is one command, so
+     nothing would launch again for them. The launch's work is the plan's items, each a phase of one block, and no
+     worker waits: its time is its items', which the launches a phase took in the same command buffer.
+   - The plan counts a level's formulas as 2 launches (their leaves, their phases).
+   - *Measured*, the lowered-clauses gate (492 clauses, 60 fixtures): 492 equal on the M3 Max and the M1 Max; 8,332
+     launches against 12,685, at most 52 a clause against 96; Metal 15.5 s against 15.3 s on the M3 Max, the host
+     as loaded (CPU 21.5 s both). The wave: planned 174, launched 126 (345 before), one command buffer, 5.7 s. Its
+     matches still differ from the oracle in 406 (clause, file) pairs, the same clauses first (B404, B603, A005 in
+     `f000.py`) that a run with a launch a phase and the limit at 400 missed: the wave's, not the phases'.
+   - The label-sweep tests on the M3 Max fail as before and no more: the two step-budget tests, and the resident
+     interpreter's (the same 14 clauses; 99 equal, 97 before, two fewer refused at the limit).
