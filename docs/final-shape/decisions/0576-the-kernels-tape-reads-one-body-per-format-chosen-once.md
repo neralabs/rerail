@@ -41,9 +41,45 @@ format 16's reads alone.
 
 6. **The view reads the same way** (`view.h`, generated from the CLIF by `view_ukl_source`). A view read that reads
    the tape (itself or through another view read) is written once, into `<ukl/body/view_reads.h>`, with its tape reads
-   named `CLIF_F(end)`, `CLIF_F(parent)`, … and the view reads it calls `CLIF_V(view_x)`; `view.h` includes that body
-   once per format (`clif_f15_view_*`, `clif_f16_view_*`, `clif_f16z_view_*`), and each view read keeps its name and
-   signature as the one place its format is told: format 16's read, 16z's under the one check, else format 15's. So a
-   view read of a 16z tape is checked once, not each tape read it makes. The reads that read no tape (the lines', the
-   numbering's) are written once.
+   named `CLIF_F(end)`, `CLIF_F(parent)`, …; `view.h` includes that body once per format (`clif_f15_view_*`,
+   `clif_f16_view_*`, `clif_f16z_view_*`), and each view read keeps its name, its signature and its qualifier as the
+   one place its format is told: format 16's body, 16z's under the one check, else format 15's. The format bodies are
+   inlined into it, so a view read is still one function: written first with each format's body a function of its
+   own (three times the called functions), the join kernels compiled 1.5x slower on an Arc 140V (`rows_copy` 18 →
+   28 s, `witness_count` 46 → 82 s), as Intel's compiler makes each called function a stack call, at a cost each.
+   A view read that calls another calls that read, which tells its format again. The reads that read no tape (the
+   lines', the numbering's) are written once.
 7. **The check is one macro**, `CLIF_Z_READ` (`tape_f16z.h`), which the tape's public reads and the view reads use.
+8. **A kernel of one format is compiled for it.** The label kernels already took the batch's format as their
+   specialization constant (`tape_format`: each load of the view's format reads it, and the other formats' bodies
+   are dead). The resident interpreter and the sweep now do too (`label_passes::run_format`: a run places its tapes
+   in format 15 or 16, a 16z tape as 16), so they hold one format's reads and no 16z read, and so does the
+   transducer's interpreter over tapes: its launch takes the kernel of the batch's format (`DocTable::format`). A
+   mixed batch's (0) reads every format, as before. The fixed kernels' list names them per format (`interpreter 15`,
+   `resident interpreter 15`, `label sweep 16`, …).
+9. **Which reads are called stays as measured.** With format 16's side-list read, its line select and every
+   format's parent called (`UKL_COLD`, as the reads before this decision had them), the interpreter of format 15
+   compiled (155 s) but the join kernels compiled up to 7x slower (`rows_copy` 18 → 120 s, `scan_count` 33 → 140
+   s): every read here is inlined but the 16z block's lookup and decode.
+
+## Measured
+
+On an Arc 140V (Intel's OpenCL), each fixed kernel compiled into an empty store: `rows_copy` alone first, then the
+whole list 4 at a time, bounded at 460 s (`kernels compile --within`). Before is 0395 §7's (one kernel, the mixed
+interpreters); "> N" a compile still running when the bound ended it.
+
+| Kernel | Before | Tape reads per format (§1–5) | And views, kernels per format (§6–8) |
+|---|---|---|---|
+| `join rows_copy`, alone | 45–47 s | 18.1 s | 17.5 s |
+| `join stage_count` | | 46.7 s | 46.4 s |
+| `join witness_count` | | 46.4 s | 46.8 s |
+| `join scan_count` | | 26.5 s | 29.8 s |
+| `join ix_bucket` | | 24.1 s | 24.3 s |
+| the interpreter over tapes | > 240 s | > 383 s | 145 s (15), > 332 s (16) |
+| the resident interpreter | > 240 s | > 383 s | 180 s (15), > 241 s (16) |
+| the label sweep | > 240 s | > 335 s | 145 s (15), > 206 s (16) |
+| the label passes, 15 / 16 | | 42.6 s / 206 s | 46.1 s / 164 s |
+| `tape_writer_replay` | | 23.3 s | 19.6 s |
+
+Format 16's kernels are what is left: its reads (a value's escape to its side list, the checkpoints and the gaps'
+sum) are inlined at each of the interpreter's reads, and calling them instead made every other kernel slower (§9).

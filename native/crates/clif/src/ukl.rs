@@ -110,7 +110,7 @@ pub fn translate_view_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str) -
     }
     let named = |id: u32| -> Result<String, String> {
         if let Some((.., n)) = funcs.iter().find(|(f, ..)| *f == id) {
-            return Ok(if tape.contains(&id) { format!("CLIF_V({n})") } else { format!("{prefix}{n}") });
+            return Ok(format!("{prefix}{n}"));
         }
         let read = reads.get(id as usize).filter(|read| read.family != Family::View).ok_or(format!("a call of u0:{id}, no read"))?;
         Ok(match read.name.strip_prefix("tape_") {
@@ -134,13 +134,16 @@ pub fn translate_view_reads(funcs: &[(u32, ir::Function, &str)], prefix: &str) -
             writeln!(once, "{declared}{{\n{text}}}").unwrap();
             continue;
         }
-        let declared = signature(f, &format!("CLIF_V({n})"), family, hot)?;
+        // A format's body is inlined into the read (one function a read, as before: Intel's compiler makes each called
+        // function a stack call, at a cost each), and a view read it calls is that read, which tells its format again.
+        let declared = signature(f, &format!("CLIF_V({n})"), family, true)?.replacen("UKL_COLD", "UKL_INLINE", 1);
         writeln!(body_declared, "{declared};").unwrap();
         writeln!(bodies, "{declared}{{\n{text}}}").unwrap();
         // The read itself: the format, then its read.
         let [ret] = f.signature.returns.as_slice() else { return Err(format!("{n}: a read returns one value")) };
         let ret = ty(ret.value_type)?.0;
-        let outer = signature(f, &format!("{prefix}{n}"), family, true)?.replacen("UKL_COLD", "UKL_INLINE", 1);
+        let outer = signature(f, &format!("{prefix}{n}"), family, hot)?;
+        writeln!(head, "{outer};").unwrap();
         let args: String = (family.pointers()..f.signature.params.len()).map(|k| format!(",a{k}")).collect();
         let pass = format!("t,a0,tt,v,ll{args}");
         writeln!(

@@ -63,10 +63,21 @@ UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, delta) == 120, "ViewDoc.delta");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, within_lo) == 128, "ViewDoc.within_lo");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDoc, within_hi) == 132, "ViewDoc.within_hi");
 UKL_INLINE uint32_t clif_lines_line(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
+UKL_COLD uint64_t clif_view_node(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
+UKL_COLD uint64_t clif_view_child(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
+UKL_COLD uint64_t clif_view_field(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
 UKL_INLINE uint64_t clif_view_core(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
+UKL_INLINE uint64_t clif_view_line(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
 UKL_INLINE uint32_t clif_loc_line(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1);
+UKL_COLD uint64_t clif_view_loc_line(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
+UKL_COLD uint64_t clif_view_loc_end(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
+UKL_COLD uint64_t clif_view_loc_col(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
 UKL_COLD uint64_t clif_view_loc_docof(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5);
+UKL_COLD uint32_t clif_view_child_first(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4);
+UKL_COLD uint32_t clif_view_child_next(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4);
 UKL_COLD uint32_t clif_view_number(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4);
+UKL_COLD uint32_t clif_view_up(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4);
+UKL_COLD uint32_t clif_view_end(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4);
 UKL_INLINE uint32_t clif_lines_line(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_t a1){
  uint64_t v0=0;
  uint32_t v1=0;
@@ -312,19 +323,19 @@ UKL_COLD uint32_t clif_view_number(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_G
 #define CLIF_F(name) clif_f16z_##name
 #define CLIF_V(name) clif_f16z_##name
 #include <ukl/body/view_reads.h>
-UKL_INLINE uint64_t clif_view_node(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
+UKL_COLD uint64_t clif_view_node(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
  uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);
  if(clif_format==16u) return clif_f16_view_node(t,a0,tt,v,ll,a4,a5);
  if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint64_t,tt,v,clif_f16z_view_node(t,a0,tt,v,ll,a4,a5))
  return clif_f15_view_node(t,a0,tt,v,ll,a4,a5);
 }
-UKL_INLINE uint64_t clif_view_child(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
+UKL_COLD uint64_t clif_view_child(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
  uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);
  if(clif_format==16u) return clif_f16_view_child(t,a0,tt,v,ll,a4,a5);
  if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint64_t,tt,v,clif_f16z_view_child(t,a0,tt,v,ll,a4,a5))
  return clif_f15_view_child(t,a0,tt,v,ll,a4,a5);
 }
-UKL_INLINE uint64_t clif_view_field(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
+UKL_COLD uint64_t clif_view_field(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
  uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);
  if(clif_format==16u) return clif_f16_view_field(t,a0,tt,v,ll,a4,a5);
  if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint64_t,tt,v,clif_f16z_view_field(t,a0,tt,v,ll,a4,a5))
@@ -336,43 +347,43 @@ UKL_INLINE uint64_t clif_view_line(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_G
  if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint64_t,tt,v,clif_f16z_view_line(t,a0,tt,v,ll,a4,a5))
  return clif_f15_view_line(t,a0,tt,v,ll,a4,a5);
 }
-UKL_INLINE uint64_t clif_view_loc_line(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
+UKL_COLD uint64_t clif_view_loc_line(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
  uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);
  if(clif_format==16u) return clif_f16_view_loc_line(t,a0,tt,v,ll,a4,a5);
  if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint64_t,tt,v,clif_f16z_view_loc_line(t,a0,tt,v,ll,a4,a5))
  return clif_f15_view_loc_line(t,a0,tt,v,ll,a4,a5);
 }
-UKL_INLINE uint64_t clif_view_loc_end(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
+UKL_COLD uint64_t clif_view_loc_end(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
  uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);
  if(clif_format==16u) return clif_f16_view_loc_end(t,a0,tt,v,ll,a4,a5);
  if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint64_t,tt,v,clif_f16z_view_loc_end(t,a0,tt,v,ll,a4,a5))
  return clif_f15_view_loc_end(t,a0,tt,v,ll,a4,a5);
 }
-UKL_INLINE uint64_t clif_view_loc_col(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
+UKL_COLD uint64_t clif_view_loc_col(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4,uint32_t a5){
  uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);
  if(clif_format==16u) return clif_f16_view_loc_col(t,a0,tt,v,ll,a4,a5);
  if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint64_t,tt,v,clif_f16z_view_loc_col(t,a0,tt,v,ll,a4,a5))
  return clif_f15_view_loc_col(t,a0,tt,v,ll,a4,a5);
 }
-UKL_INLINE uint32_t clif_view_child_first(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4){
+UKL_COLD uint32_t clif_view_child_first(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4){
  uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);
  if(clif_format==16u) return clif_f16_view_child_first(t,a0,tt,v,ll,a4);
  if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint32_t,tt,v,clif_f16z_view_child_first(t,a0,tt,v,ll,a4))
  return clif_f15_view_child_first(t,a0,tt,v,ll,a4);
 }
-UKL_INLINE uint32_t clif_view_child_next(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4){
+UKL_COLD uint32_t clif_view_child_next(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4){
  uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);
  if(clif_format==16u) return clif_f16_view_child_next(t,a0,tt,v,ll,a4);
  if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint32_t,tt,v,clif_f16z_view_child_next(t,a0,tt,v,ll,a4))
  return clif_f15_view_child_next(t,a0,tt,v,ll,a4);
 }
-UKL_INLINE uint32_t clif_view_up(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4){
+UKL_COLD uint32_t clif_view_up(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4){
  uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);
  if(clif_format==16u) return clif_f16_view_up(t,a0,tt,v,ll,a4);
  if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint32_t,tt,v,clif_f16z_view_up(t,a0,tt,v,ll,a4))
  return clif_f15_view_up(t,a0,tt,v,ll,a4);
 }
-UKL_INLINE uint32_t clif_view_end(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4){
+UKL_COLD uint32_t clif_view_end(UKL_GLOBAL const uint8_t* t,uint64_t a0,UKL_GLOBAL const uint8_t* tt,CLIF_VIEW_SPACE const uint32_t* v,UKL_GLOBAL const uint8_t* ll,uint32_t a4){
  uint32_t clif_format=clif_view(v,CLIF_T_FORMAT);
  if(clif_format==16u) return clif_f16_view_end(t,a0,tt,v,ll,a4);
  if(clif_format==CLIF_T_F16Z_FORMAT) CLIF_Z_READ(uint32_t,tt,v,clif_f16z_view_end(t,a0,tt,v,ll,a4))

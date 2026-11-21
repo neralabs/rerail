@@ -9,7 +9,7 @@ use super::*;
 use crate::code_rule_dsl::tape::TapeDoc;
 #[cfg(any(test, feature = "test-hooks"))]
 use std::cell::Cell;
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap};
 use std::ops::{Deref, DerefMut};
 use std::sync::{Arc, Mutex};
 
@@ -276,8 +276,6 @@ const BATCH_ENTRY: &str = include_str!("batch_runtime.uglykl");
 /// batch's chunk block through the tape view (decision 0032), with no node records: the document table's entry as
 /// generated (`slabs::msl`, decision 0289 §4), the reads written once (decision 0310), then the readers.
 static TAPE_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| prefix(""));
-/// The interpreter of resident label batches: tasks from roots, not records (decision 0033).
-static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| prefix("#define RERAIL_RESIDENT 1\n"));
 
 fn prefix(defines: &str) -> String {
     format!(
@@ -286,6 +284,14 @@ fn prefix(defines: &str) -> String {
         "#include <ukl/reads/tape_z.h>\n",
         include_str!("device_tape.h")
     )
+}
+
+/// The interpreter of resident label batches (tasks from roots, not records: decision 0033), over a batch of tapes in
+/// `format` (0: mixed) as the label kernels read it ([`tape_view`]): the format told once, at the compile (decision
+/// 0576). A run places its tapes in format 15 or 16 (a 16z tape as 16), so its interpreter and sweep hold one
+/// format's reads, and no 16z read.
+fn resident_prefix(format: u32) -> String {
+    format!("#define RERAIL_RESIDENT 1\n{}", tape_view(format))
 }
 
 /// The device's tape view (decision 0032), which the label and pattern kernels read: the
@@ -622,24 +628,25 @@ const INTERPRETER_FETCH: &str =
 
 /// The interpreter over resident tapes (the label passes'), compiled once (until the residency's
 /// drop releases it with the other pipelines' caches: it is held by the label runs' callers).
-pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
+pub(super) fn compile_resident_interpreter_cached(format: u32) -> Result<Engine, Error> {
     #[derive(Default)]
-    struct ResidentInterpreter(Mutex<Option<Engine>>);
+    struct ResidentInterpreter(Mutex<HashMap<u32, Engine>>);
     let held_ = crate::code_rule_dsl::logic::profile::machine::<ResidentInterpreter>();
     let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
-    if let Some(engine) = &*cached {
+    if let Some(engine) = cached.get(&format) {
         return Ok(engine.clone());
     }
-    let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
+    let source = format!("{}{}", resident_prefix(format), kernel_source(INTERPRETER_FETCH, None, "", "", ""));
     lane::device()?;
-    let engine = Engine::Interpreter { kernel: lane::kernel_fixed(&source, "run_batch", None), buffers: Arc::new(Mutex::new(None)) };
-    *cached = Some(engine.clone());
+    let engine = Engine::Interpreter { kernel: lane::kernel_fixed(&source, "run_batch", Some(format)), buffers: Arc::new(Mutex::new(None)) };
+    cached.insert(format, engine.clone());
     Ok(engine)
 }
 
 /// The program backend's fixed kernels, to compile ahead of their first use (`MatcherDevice::kernels_ahead`): the set
-/// steps', the lattice's and the nearest jumps' kernels, the interpreter over tapes and over resident tapes, the sweep,
-/// and the label passes' kernels of formats 15 and 16 (the formats a run places its tapes in: `label_passes::warm`).
+/// steps', the lattice's and the nearest jumps' kernels, and the interpreter over tapes, the label passes' kernels,
+/// the interpreter over resident tapes and the sweep of formats 15 and 16 (the formats a run places its tapes in:
+/// `label_passes::warm`).
 /// Each is asked for as its use asks for it, so its use finds it.
 pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhead> {
     fn made(name: &str, make: impl Fn() -> Result<(), Error> + Send + Sync + 'static) -> super::device::KernelAhead {
@@ -654,39 +661,54 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
         made("set steps", || Ok(drop(set_steps::kernel()))),
         made("lattice", || Ok(drop(lattice::kernel()))),
         made("nearest jumps", || Ok(drop(nearest::kernel()))),
-        made("interpreter", || compile_interpreter().map(drop)),
-        made("resident interpreter", || compile_resident_interpreter_cached().map(drop)),
-        made("label passes 15", || label_passes::compile_labels(15)),
-        made("label passes 16", || label_passes::compile_labels(16)),
     ];
-    // Not where NVRTC compiles (`rerail_metal::nvrtc_unbounded`).
-    if !rerail_metal::nvrtc_unbounded() {
-        v.push(made("label sweep", || compile_sweep_cached().map(drop)));
+    for format in [15u32, 16] {
+        v.push(made(&format!("interpreter {format}"), move || interpreter_kernel(format).map(drop)));
+        v.push(made(&format!("resident interpreter {format}"), move || compile_resident_interpreter_cached(format).map(drop)));
+        v.push(made(&format!("label passes {format}"), move || label_passes::compile_labels(format)));
+        // Not where NVRTC compiles (`rerail_metal::nvrtc_unbounded`).
+        if !rerail_metal::nvrtc_unbounded() {
+            v.push(made(&format!("label sweep {format}"), move || compile_sweep_cached(format).map(drop)));
+        }
     }
     v
 }
 
+/// The interpreter over tapes, of the run's format (`label_passes::run_format`): a batch's launch takes the kernel of
+/// its own format (`interpreter_kernel`), this one where the batch is the run's.
 pub fn compile_interpreter() -> Result<Engine, Error> {
+    Ok(Engine::Interpreter { kernel: interpreter_kernel(label_passes::run_format())?, buffers: Arc::new(Mutex::new(None)) })
+}
+
+/// The interpreter over a batch of tapes in `format` (0: mixed), compiled once per format: its tape reads are the
+/// format's alone (decision 0576), as the label kernels' are ([`tape_view`]).
+fn interpreter_kernel(format: u32) -> Result<lane::Kernel, Error> {
+    #[derive(Default)]
+    struct Interpreters(Mutex<HashMap<u32, lane::Kernel>>);
+    let held_ = crate::code_rule_dsl::logic::profile::machine::<Interpreters>();
+    let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
+    if let Some(kernel) = cached.get(&format) {
+        return Ok(kernel.clone());
+    }
     lane::device()?;
-    Ok(Engine::Interpreter {
-        kernel: lane::kernel_fixed(&format!("{}{}", *TAPE_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch", None),
-        buffers: Arc::new(Mutex::new(None)),
-    })
+    let kernel = lane::kernel_fixed(&format!("{}{}", tape_view(format), kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch", Some(format));
+    cached.insert(format, kernel.clone());
+    Ok(kernel)
 }
 
 /// The interpreter with a recursive group's sweep kernel (`label_passes`, `label_sweep`), compiled
 /// once per process. A program whose flags carry a route (bit 31; bit 30 captured nodes, bits 8..30
 /// the label) marks its label as each result is published; other programs run as in `run_batch`.
-pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<lane::Kernel, Error> {
+pub(in crate::code_rule_dsl) fn compile_sweep_cached(format: u32) -> Result<lane::Kernel, Error> {
     #[derive(Default)]
-    struct Sweep(Mutex<Option<lane::Kernel>>);
+    struct Sweep(Mutex<HashMap<u32, lane::Kernel>>);
     let held_ = crate::code_rule_dsl::logic::profile::machine::<Sweep>();
     let mut cached = held_.0.lock().map_err(|_| Error::BackendFailure)?;
-    if let Some(pipeline) = &*cached {
+    if let Some(pipeline) = cached.get(&format) {
         return Ok(pipeline.clone());
     }
-    // The label passes' sweep, over resident tapes as their interpreter.
-    let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
+    // The label passes' sweep, over resident tapes as their interpreter, of the batch's format.
+    let source = format!("{}{}", resident_prefix(format), kernel_source(INTERPRETER_FETCH, None, "", "", ""));
     let edit = |source: String, from: &str, to: &str| {
         assert_eq!(source.matches(from).count(), 1, "the runtime has one {from}");
         source.replacen(from, to, 1)
@@ -700,8 +722,8 @@ pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<lane::Kernel, E
     );
     // The sweep's kernel takes the batch's rows (`run_batch`'s), after the runtime it runs tasks with.
     lane::device()?;
-    let kernel = lane::kernel_fixed(&format!("{source}\n{}", include_str!("label_sweep.uglykl")), "label_sweep", None);
-    *cached = Some(kernel.clone());
+    let kernel = lane::kernel_fixed(&format!("{source}\n{}", include_str!("label_sweep.uglykl")), "label_sweep", Some(format));
+    cached.insert(format, kernel.clone());
     Ok(kernel)
 }
 
@@ -940,7 +962,16 @@ fn execute_packed_once(
     // The rows by name (`run_batch`'s): the block stands for the node records, children, source and line starts.
     let lanes = batch.evaluation_lanes.len() as u64;
     let mut command = lane::Command::new("Tempo packed transducer batch");
-    let mut launch = command.launch(engine.kernel(), "Tempo packed transducer kernel");
+    // The interpreter of the batch's format (0: mixed).
+    let interpreter;
+    let kernel = match engine {
+        Engine::Interpreter { .. } => {
+            interpreter = interpreter_kernel(table.format().unwrap_or(0))?;
+            &interpreter
+        }
+        Engine::Jit { .. } => engine.kernel(),
+    };
+    let mut launch = command.launch(kernel, "Tempo packed transducer kernel");
     for (name, buffer) in [
         ("tasks", task_buffer.buffer()),
         ("header", header_buffer.buffer()),
