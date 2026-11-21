@@ -405,6 +405,21 @@ describe("a Cursor hook while the daemon is not reading", () => {
       .toEqual({ additional_context: expect.stringContaining("Held steer.") });
   });
 
+  it("removes the steers held for the session at its end, as one the daemon answers does, since no later hook of it reads them", async () => {
+    const root = await temporaryDirectory();
+    const storage = join(root, "sessions");
+    const common = { conversation_id: "cursor-ended", generation_id: "g1", cwd: root };
+    const steer: AdapterDelivery = { sessionId: "cursor-ended", requested: "steer", mechanism: "deferred-context", content: "Held steer.", ruleIds: [], rules: [] };
+    const call = { tool_use_id: "t1", tool_name: "Shell", tool_input: { command: "ls" }, hook_event_name: "preToolUse" };
+    expect(await handleCursorEvent({ ...common, ...call }, scriptedLoop({ call: [steer] }), storage)).toEqual({ permission: "allow" });
+    const left = untakenLoop();
+    expect(await handleCursorEvent({ ...common, hook_event_name: "sessionEnd", reason: "completed" }, left, storage)).toEqual({});
+    expect(left.events).not.toEqual([]);
+    // A session resumed under the same id: before, its first result carried the steer held for the session that ended.
+    const result = { ...call, hook_event_name: "postToolUse", tool_output: "a" };
+    expect(await handleCursorEvent({ ...common, ...result }, scriptedLoop({}), storage)).toEqual({});
+  });
+
   it("leaves the transcript unread for the next hook the daemon answers, and leaves only the hook's own event", async () => {
     const { storage, common } = await unreadTranscript();
     const tool = { tool_use_id: "shell-1", tool_name: "Shell", tool_input: { command: "ls" } };

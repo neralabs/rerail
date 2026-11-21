@@ -231,11 +231,13 @@ export async function handleCursorEvent(
  * The answer of a hook that left its event for a daemon that is not reading: one with nothing to deliver, the session's
  * held steers waiting in their file for the next hook the daemon answers. A `beforeSubmitPrompt` then records that the
  * session sends its own text (`transcriptCarriesText`), with its event left already: such a hook holds no session lock,
- * so it takes the lock for that write alone, and a lock it is not given fails the hook with its event kept.
+ * so it takes the lock for that write alone, and a lock it is not given fails the hook with its event kept. A
+ * `sessionEnd` removes the held steers' file, as one the daemon answered does: no later hook of the session reads it.
  */
 async function leftAnswer(input: CursorHookInput, descriptor: AdapterSession, storageRoot: string): Promise<CursorHookOutput> {
   const hook = requiredText(input, "hook_event_name");
   if (hook === "beforeSubmitPrompt") await withSessionLock(storageRoot, "cursor", descriptor.sessionId, async () => await transcriptCarriesText(input, descriptor, storageRoot));
+  if (hook === "sessionEnd") await rm(pendingPath(storageRoot, "cursor", descriptor.sessionId), { force: true });
   return cursorHookOutput(hook, []);
 }
 

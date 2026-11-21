@@ -897,4 +897,18 @@ describe("a Claude Code hook while the daemon is not reading", () => {
     expect(await handleClaudeEvent({ ...call, tool_use_id: "tool-2" }, scriptedLoop({}), storageRoot, { NO_COLOR: "1" }))
       .toEqual({ hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: expect.stringContaining("Deferred steer.") } });
   });
+
+  it("removes the steers held for the session at its end, as one the daemon answers does, since no later hook of it reads them", async () => {
+    const root = await temporaryDirectory();
+    const storageRoot = join(root, "sessions");
+    const common = { session_id: "claude-session", cwd: root };
+    const stopLoop = scriptedLoop({ "turn-end": [delivery("steer", "Deferred steer.")] });
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "Stop", prompt_id: "p1", stop_hook_active: true }, stopLoop, storageRoot)).toEqual({});
+    const left = { ...scriptedLoop({}), untaken: true as const };
+    expect(await handleClaudeEvent({ ...common, hook_event_name: "SessionEnd", reason: "exit" }, left, storageRoot)).toEqual({});
+    expect(left.events).not.toEqual([]);
+    // A session resumed under the same id: before, its first answer carried the steer held for the session that ended.
+    const call = { ...common, hook_event_name: "PreToolUse", tool_name: "Read", tool_use_id: "tool-1", tool_input: {} };
+    expect(await handleClaudeEvent(call, scriptedLoop({}), storageRoot, { NO_COLOR: "1" })).toEqual({});
+  });
 });

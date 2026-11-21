@@ -107,6 +107,11 @@ export async function handleClaudeEvent(
   const sessionId = requiredText(input, "session_id");
   const deliveries: AdapterDelivery[] = [];
   for (const event of claudeHookEvents(input)) deliveries.push(...await eventLoop.ingest(event));
+  // No later hook of the session reads its held steers, whether the daemon took its end or it was left untaken.
+  if (hook === "SessionEnd") {
+    await rm(pendingPath(storageRoot, "claude-code", sessionId), { force: true });
+    return {};
+  }
   // Left for a daemon that is not reading: the session's held steers wait in their file for the next hook it answers.
   if (eventLoop.untaken === true) return {};
   // The daemon's answer carries the note's link and rules and the steers' links; an older daemon's is read after it.
@@ -127,10 +132,6 @@ async function answerClaudeHook(
   input: HookInput, { hook, sessionId, storageRoot, env, answered }: ClaudeAnswerAt, deliveries: readonly AdapterDelivery[],
 ): Promise<HookOutput> {
   const path = pendingPath(storageRoot, "claude-code", sessionId);
-  if (hook === "SessionEnd") {
-    await rm(path, { force: true });
-    return {};
-  }
   // A steer held for a later event keeps this answer's links, so that event's answer need carry none.
   const found = linkedByAnswer(deliveries, answered);
   // Rerail keeps a turn going at most once: a Stop that follows a Stop hook's continuation (`stop_hook_active`) holds
