@@ -1989,15 +1989,17 @@ fn shared_batch(arena: &Rc<mj::Arena>) -> Result<mj::Batch, String> {
     mj::Batch::with_shared_arena(Rc::clone(arena)).map_err(|e| format!("{e:?}"))
 }
 
-/// The thread's open wave, committed (`direct_batch`).
+/// Every open wave on the thread committed (`direct_batch`), the outer jobs' too: a resident relation's sort may be
+/// in any of them (Q48). Each stays open for more work, its own job's commit still to come.
 fn commit_wave() -> Result<(), String> {
     WAVE.with_borrow_mut(|w| w.each_mut().try_for_each(|batch| batch.commit_open().map_err(|e| format!("{e:?}"))))
 }
 
 /// Opens this job's command buffer for the level's wave (`OpenWaves`, at its fence depth), its commit deferred to
-/// this job's flush: its number. The commit is deferred before the buffer is opened (`OpenWaves`, way 8): no buffer
-/// is ever open without its commit, and a commit whose buffer never opened takes nothing and does nothing.
+/// this job's flush: its number. The buffer is made first, the one step that can fail; then its commit is deferred
+/// and it is opened, nothing that can fail between (`OpenWaves`, way 8): a failed make leaves nothing deferred or open.
 fn open_wave() -> Result<u64, String> {
+    let batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
     let n = WAVES.get() + 1;
     WAVES.set(n);
     wave::defer(Box::new(move || {
@@ -2007,7 +2009,6 @@ fn open_wave() -> Result<u64, String> {
         FLUSHED.with_borrow_mut(|f| f.insert(n, done.map(Some)));
         Ok(())
     }));
-    let batch = mj::Batch::new().map_err(|e| format!("{e:?}"))?;
     WAVE.with_borrow_mut(|w| w.open(wave::depth(), n, batch));
     Ok(n)
 }
