@@ -1066,8 +1066,10 @@ function checkoutRepository(database: RerailDatabase, cwd: string): string | nul
 export interface KeptReceipt {
   readonly receipt: SteerReceipt;
   /**
-   * Removes the receipt's file. A record writer makes writes in the order they were asked for, so queued behind the
-   * receipt's own write it runs only once that one is made. A removal that fails leaves the file for the next start.
+   * Removes the receipt's file once the database holds the receipt's event. A record writer makes writes in the order
+   * they were asked for, so queued behind the receipt's own write it runs once that one is made, or failed: a record
+   * that failed (the disk full, the database read-only) leaves the file for the next start, as a removal that fails
+   * does.
    */
   readonly forget: RecordWrite;
 }
@@ -1086,7 +1088,13 @@ function forgetFile(file: string): void {
 }
 
 function keptReceipt(file: string, receipt: SteerReceipt): KeptReceipt {
-  return { receipt, forget: () => forgetFile(file) };
+  const where = and(eq(events.sessionId, receipt.session.sessionId), eq(events.eventId, steerEvent(receipt.session, receipt.receiptId, []).eventId!));
+  return {
+    receipt,
+    forget: database => {
+      if (database.select({ sequence: events.sequence }).from(events).where(where).get() !== undefined) forgetFile(file);
+    },
+  };
 }
 
 /**

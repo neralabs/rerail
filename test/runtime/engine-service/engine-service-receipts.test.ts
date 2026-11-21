@@ -164,6 +164,30 @@ describe("the engine service's receipts", () => {
     },
   );
 
+  it.each([["in its session's runtime", true], ["for a session no runtime holds", false]] as const)(
+    "keeps a taken receipt whose record fails once the lock is given back on disk, and the next start records it (%s)",
+    async (_case, started) => {
+      const { databasePath, socketPath, session, startAgain } = await serviceOverCheckout();
+      const link = engineLink({ socketPath });
+      if (started) await link.ingest({ kind: "session-start", eventId: "d:start", session: session("d") });
+      const holder = new Database(databasePath);
+      holder.exec("BEGIN IMMEDIATE");
+      await expect(link.handReceipt({ session: session("d"), receiptId: "receipt-8", ruleIds: ["rule:a"] })).resolves.toBe(true);
+      // The holder leaves the database refusing the receipt's insert, as a full disk or a read-only file would.
+      holder.exec("CREATE TRIGGER refuse_steers BEFORE INSERT ON events WHEN NEW.kind = 'steering-delivered' BEGIN SELECT RAISE(ABORT, 'database or disk is full'); END");
+      holder.exec("COMMIT");
+      recordsMade(databasePath);
+      expect(receipts(databasePath)).toEqual([]);
+      expect(await keptFiles(databasePath)).toHaveLength(1);
+      holder.exec("DROP TRIGGER refuse_steers");
+      holder.close();
+      await startAgain();
+      recordsMade(databasePath);
+      expect(receipts(databasePath).map(row => row.eventId)).toEqual(["steering-delivered:receipt-8"]);
+      expect(await keptFiles(databasePath)).toEqual([]);
+    },
+  );
+
   it("records at its start each receipt a daemon took and ended before recording, once, and removes what it kept", async () => {
     const receipt = (checkout: string) => ({ session: { host: "claude-code" as const, sessionId: "left", cwd: checkout }, receiptId: "receipt-6", ruleIds: ["rule:a"] });
     const { databasePath, repositoryKey } = await serviceOverCheckout(undefined, async (databasePath, checkout) => {
