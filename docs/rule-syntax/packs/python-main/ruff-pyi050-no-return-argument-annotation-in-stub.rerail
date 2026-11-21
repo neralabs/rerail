@@ -1,5 +1,4 @@
 .policy "ruff-pyi050-no-return-argument-annotation-in-stub" revision 1
-.guests off
 .description "Use Never instead of NoReturn for parameter annotations in stub files; NoReturn describes a function that never returns, which makes little sense for a parameter."
 .language python
 .mode steer

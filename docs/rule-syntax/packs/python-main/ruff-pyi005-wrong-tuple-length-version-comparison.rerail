@@ -1,5 +1,4 @@
 .policy "ruff-pyi005-wrong-tuple-length-version-comparison" revision 1
-.guests off
 .description "Compare a sys.version_info slice only with a tuple of the same length in stub files; a tuple of another length is never equal."
 .language python
 .mode steer

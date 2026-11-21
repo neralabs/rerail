@@ -1,5 +1,4 @@
 .policy "ruff-try201-verbose-raise" revision 1
-.guests off
 .description "Use a bare raise to re-raise the caught exception instead of raising it again by name; the bare form is the idiomatic way to propagate it."
 .language python
 .mode steer

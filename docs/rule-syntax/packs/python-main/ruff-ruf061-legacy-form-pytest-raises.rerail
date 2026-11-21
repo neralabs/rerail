@@ -1,5 +1,4 @@
 .policy "ruff-ruf061-legacy-form-pytest-raises" revision 1
-.guests off
 .description "Use the context-manager form of pytest raises, warns and deprecated_call instead of passing the callable as an argument; it reads better and accepts extra arguments."
 .language python
 .mode steer

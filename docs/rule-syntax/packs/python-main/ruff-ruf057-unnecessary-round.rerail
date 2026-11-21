@@ -1,5 +1,4 @@
 .policy "ruff-ruf057-unnecessary-round" revision 1
-.guests off
 .description "Remove the round call on a value that is already an integer; rounding an integer returns it unchanged."
 .language python
 .mode steer

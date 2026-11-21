@@ -23,6 +23,9 @@ pub const MESSAGE_COLUMN: usize = 6;
 
 /// Decision 0431 R9: the clauses whose findings are placed at a node no file holds (`corpus::refuse_unplaced`).
 pub const UNPLACED: &str = "rr_unplaced";
+/// The tape values' nodes a string of a file places (`guest_place` at a string whose document is a file's): a node of
+/// a string inside another value stands in that value's text, which is no file's (decision 0431 §3, R9).
+pub const PLACED_AT: &str = "rr_placed_at";
 
 /// Whether `rel` is a finding's relation.
 pub fn is_diagnostic(rel: &str) -> bool {
@@ -137,24 +140,20 @@ fn on_reports(settings: &[(String, String)]) -> Vec<(String, String, bool)> {
 }
 
 /// Decision 0055's settings (`Findings::guest_policy`): the `guest_policy` facts they state, the guest errors they
-/// report (`(grammar, code)`), and whether one is a warning.
-fn guest_settings(settings: &[(String, String)]) -> (Vec<(String, String)>, Vec<(Option<String>, String)>, bool) {
+/// report (`(grammar, code)`), and whether one is a warning. `.guests` and `.scope embedded` are refused (decision
+/// 0523): `.embedded` is the one setting.
+fn guest_settings(settings: &[(String, String)]) -> Result<(Vec<(String, String)>, Vec<(Option<String>, String)>, bool), Error> {
     let mut facts = Vec::new();
     let mut findings = Vec::new();
     let mut warn = false;
     for (key, text) in settings {
         let words: Vec<&str> = text.split_whitespace().collect();
-        if key == "guests" {
-            if let [v @ ("on" | "off")] = words.as_slice() {
-                facts.push(("library".to_owned(), (*v).to_owned()));
-            }
-            continue;
+        if key == "guests" || (key == "scope" && words.first() == Some(&"embedded")) {
+            return Err(Error::Syntax(format!(
+                ".{key} {text}: retired (decision 0523): a run reads other languages' files for their programs only under `.embedded on`, and a rule reaches a string's code through `parsed`"
+            )));
         }
-        // `.scope embedded false` keeps the policy to primary documents: `.guests off` (`core.rerail`).
         if key == "scope" {
-            if let ["embedded", v @ ("true" | "false")] = words.as_slice() {
-                facts.push(("library".to_owned(), if *v == "true" { "on" } else { "off" }.to_owned()));
-            }
             continue;
         }
         let ["guest_error", rest @ ..] = words.as_slice() else { continue };
@@ -175,7 +174,7 @@ fn guest_settings(settings: &[(String, String)]) -> (Vec<(String, String)>, Vec<
             findings.push((grammar, (*code).to_owned()));
         }
     }
-    (facts, findings, warn)
+    Ok((facts, findings, warn))
 }
 
 /// An entry of a `.scope` glob from a policy option (`front::OPTION_GLOB`): its form and the option's name.
@@ -260,7 +259,7 @@ impl<'p> Findings<'_, 'p> {
     fn findings(&mut self, mut violations: Vec<Violation>, seen: RulesSeen) -> Result<bool, Error> {
         // `.on syntax_error report CODE [at line 1]` and `.on input_error report CODE` (`core.rerail`).
         let on = on_reports(&self.b.settings());
-        let guest_errors = self.guest_policy(seen.reads_guest_policy);
+        let guest_errors = self.guest_policy()?;
         self.references_setting()?;
         if violations.is_empty() && on.is_empty() && guest_errors.is_empty() {
             return Ok(false);
@@ -285,7 +284,13 @@ impl<'p> Findings<'_, 'p> {
         let (p, l, c, d, v0) = (self.v("rr_p"), self.v("rr_l"), self.v("rr_c"), self.v("rr_d"), self.v("rr_v0"));
         let w = || Tm::Wild;
         for f in std::mem::take(&mut violations) {
-            self.diagnostics(&policy, &f)?;
+            // A finding at a tape value's node stands at each string that holds it, in that string's file (decision
+            // 0431 §3: "a finding at s by n, placed through s"): C408's `dict()` inside `a: "dict({})"`.
+            let through = f.node && seen.reads_guests;
+            if through {
+                self.placed_at()?;
+            }
+            self.diagnostics(&policy, &f, through)?;
             let code_col = match f.code {
                 FindingCode::Column(i) => Some(i),
                 _ => None,
@@ -309,7 +314,18 @@ impl<'p> Findings<'_, 'p> {
             self.put(&mut o, "col", &[v0.clone(), c.clone()], false);
             self.scope(&mut o, scoped);
             self.close(o)?;
-            // Decision 0431 R9: a finding at a node whose document is no file's (a tape value's) is refused by the run.
+            if through {
+                let s = self.v("rr_s");
+                let mut o = self.open("violation", &head);
+                self.put(&mut o, &f.name, &cols, false);
+                self.put(&mut o, "guest_place", &[v0.clone(), s.clone(), l.clone(), c.clone()], false);
+                self.put(&mut o, "node", &[d.clone(), s, w(), w(), w()], false);
+                self.put(&mut o, "doc", &[d.clone(), p.clone(), w()], false);
+                self.scope(&mut o, scoped);
+                self.close(o)?;
+            }
+            // Decision 0431 R9: a finding at a node whose document is no file's (a tape value's), and that no string
+            // places (a value no file's string holds), is refused by the run.
             self.b.fields().declare_absent(UNPLACED, &[("clause", "sym")]);
             self.b.fields().add_output(UNPLACED);
             let clause = self.s(&f.name);
@@ -321,6 +337,12 @@ impl<'p> Findings<'_, 'p> {
                 self.put(&mut o, "docof", &[v0.clone(), d.clone()], false);
             }
             self.put(&mut o, "doc", &[d.clone(), w(), w()], true);
+            if through {
+                // The node's document is a tape value's (`tape_of`, an entry: hiding leaves `d` unbounded, so a value
+                // in the hidden range is refused too), and no file's string places it.
+                self.put(&mut o, "tape_of", &[d.clone(), w()], false);
+                self.put(&mut o, PLACED_AT, &[v0.clone()], true);
+            }
             self.close(o)?;
             if !f.node && place_values {
                 let path = self.call(PLACE_PATH, vec![v0.clone()]);
@@ -633,33 +655,26 @@ impl<'p> Findings<'_, 'p> {
     }
 
     /// Decision 0055's settings as `guest_policy` facts, which the corpus runner and the batch read:
-    /// - `.guests on | off`: `guest_policy("library", …)`, whether the libraries' `embed`s are made (on by default);
+    /// - `.guests on | off` and `.scope embedded true | false` are refused (decision 0523): `.embedded` says what a
+    ///   run reads of other languages' files, and a program shows files and the run language's code guests always;
     /// - `.on guest_error [GRAMMAR] skip | partial [warn | report CODE]`, or `.on guest_error [GRAMMAR] warn | report
     ///   CODE` (skip): `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`. A skipped guest is
     ///   withheld; a partial one keeps the tree it has. `warn` and `report` both give a finding, `warn`'s of severity
     ///   warning (`.severity guest_error warning`); the findings are returned, `(grammar, code)`, for `findings`.
-    fn guest_policy(&mut self, reads: bool) -> Vec<(Option<String>, String)> {
+    fn guest_policy(&mut self) -> Result<Vec<(Option<String>, String)>, Error> {
         let settings = self.b.settings();
-        let (mut facts, findings, warn) = guest_settings(&settings);
+        let (facts, findings, warn) = guest_settings(&settings)?;
         if warn {
             let mut all = settings.clone();
             all.push(("severity".to_owned(), "guest_error warning".to_owned()));
             self.b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Settings(&all));
-        }
-        // The libraries' `embed`s are made by default: a program that reads the setting and sets none reads
-        // `guest_policy("library", "on")`, a stated fact, so `!guest_policy("library", "off")` is decided before the
-        // run (`simplify`) instead of reading a relation nothing gives.
-        // A program printed with the fact states it already.
-        let stated = self.b.fact_rows(GUEST_POLICY).iter().any(|r| matches!(r.first(), Some(Value::Str(k)) if k == "library"));
-        if reads && !stated && !facts.iter().any(|(k, _)| k == "library") {
-            facts.push(("library".to_owned(), "on".to_owned()));
         }
         if !facts.is_empty() {
             self.b.fields().declare(GUEST_POLICY, &[("k", "sym"), ("v", "sym")]);
             let rows: Vec<crate::code_rule_dsl::logic::front::List<Value>> = facts.into_iter().map(|(k, v)| [Value::Str(k.into()), Value::Str(v.into())].into()).collect();
             self.b.fields().add_facts(GUEST_POLICY, &rows);
         }
-        findings
+        Ok(findings)
     }
 
     /// Error directives use the same public diagnostic transport as ordinary violations: `body` writes the error's
@@ -672,10 +687,10 @@ impl<'p> Findings<'_, 'p> {
         self.diagnostic_rule(policy, &finding, &[Tm::Int(0)], Tm::Int(0), true, body)
     }
 
-    fn diagnostics(&mut self, policy: &str, finding: &Violation) -> Result<(), Error> {
+    fn diagnostics(&mut self, policy: &str, finding: &Violation, through: bool) -> Result<(), Error> {
         let cols: Vec<Tm> = (0..finding.arity).map(|i| self.v(&format!("rr_v{i}"))).collect();
         let at = cols[0].clone();
-        self.diagnostic_rule(policy, finding, &cols, at, false, &|me, o| {
+        self.diagnostic_rule(policy, finding, &cols, at.clone(), false, &|me, o| {
             let (d, p, l) = (me.v("rr_d"), me.v("rr_p"), me.v("rr_l"));
             me.put(o, &finding.name, &cols, false);
             if finding.node {
@@ -686,6 +701,16 @@ impl<'p> Findings<'_, 'p> {
             me.put(o, "doc", &[d, p, Tm::Wild], false);
             me.put(o, "line", &[cols[0].clone(), l], false);
         })?;
+        // At a tape value's node: at each file's string that holds it, at the node's line there (`guest_place`).
+        if through {
+            self.diagnostic_rule(policy, finding, &cols, at, false, &|me, o| {
+                let (d, p, l, s) = (me.v("rr_d"), me.v("rr_p"), me.v("rr_l"), me.v("rr_s"));
+                me.put(o, &finding.name, &cols, false);
+                me.put(o, "guest_place", &[cols[0].clone(), s.clone(), l, Tm::Wild], false);
+                me.put(o, "node", &[d.clone(), s, Tm::Wild, Tm::Wild, Tm::Wild], false);
+                me.put(o, "doc", &[d, p, Tm::Wild], false);
+            })?;
+        }
         if finding.places {
             let mut args = vec![self.v("rr_p"), self.v("rr_l")];
             args.extend(cols.iter().skip(1).cloned());
@@ -693,6 +718,21 @@ impl<'p> Findings<'_, 'p> {
             self.diagnostic_rule(policy, finding, &cols, Tm::Int(0), true, &|me, o| me.put(o, &place, &args, false))?;
         }
         Ok(())
+    }
+
+    /// `PLACED_AT`'s rule, once a program: a tape value's node `n`, placed by `guest_place` at a string `s` whose document
+    /// is a file's.
+    fn placed_at(&mut self) -> Result<(), Error> {
+        if self.b.declares(PLACED_AT) {
+            return Ok(());
+        }
+        self.b.fields().declare(PLACED_AT, &[("n", "node")]);
+        let (n, s, d) = (self.v("rr_n"), self.v("rr_s"), self.v("rr_d"));
+        let mut o = self.open(PLACED_AT, &[n.clone()]);
+        self.put(&mut o, "guest_place", &[n, s.clone(), Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, "node", &[d.clone(), s, Tm::Wild, Tm::Wild, Tm::Wild], false);
+        self.put(&mut o, "doc", &[d, Tm::Wild, Tm::Wild], false);
+        self.close(o)
     }
 
     /// The rule of `finding`'s relation (`diagnostic_name`): its row of the finding's columns `cols`, at `at` (a place's
@@ -815,7 +855,7 @@ impl<'p> Findings<'_, 'p> {
 /// setting or a guest error reported. Only then does the caller derive a version for them (`findings_on`).
 pub fn findings_write(prog: &(impl crate::code_rule_dsl::logic::program_image::fields::ProgramFields + ?Sized), pending: &PendingFindings) -> bool {
     let settings = prog.settings();
-    !pending.violations.is_empty() || !on_reports(&settings).is_empty() || !guest_settings(&settings).1.is_empty()
+    !pending.violations.is_empty() || !on_reports(&settings).is_empty() || guest_settings(&settings).map_or(true, |g| !g.1.is_empty())
 }
 
 /// The findings (`Findings`) of `pending` written onto `b`: its fields, and its rules after those it holds (where

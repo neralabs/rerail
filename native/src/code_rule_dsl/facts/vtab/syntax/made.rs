@@ -211,6 +211,8 @@ impl Docs {
         // A guest's file is made before it (`file_lines`), so its own lines are never built ahead of it (decision 0470 step 2:
         // the eager batch hands a file the lines a program of it built first).
         let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, None, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
+        // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
+        p.file = Guest::file_key(d.guest.as_deref(), d.key);
         drop(new_span);
         // A program that reads `end_point` has each node's end point among the positions, after the lines.
         let nodes = p.len();

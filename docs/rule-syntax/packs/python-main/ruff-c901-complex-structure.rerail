@@ -1,5 +1,4 @@
 .policy "ruff-c901-complex-structure" revision 1
-.guests off
 .description "Split Python functions with many branches, loops, exception handlers and nested functions into smaller ones; heavily branching code is hard to read, test and change."
 .language python
 .mode steer

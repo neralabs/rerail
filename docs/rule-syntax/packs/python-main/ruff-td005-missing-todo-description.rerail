@@ -1,5 +1,4 @@
 .policy "ruff-td005-missing-todo-description" revision 1
-.guests off
 .description "Describe the work after a TODO, FIXME or XXX tag instead of leaving the tag bare; readers need to know what is meant to be done."
 .language python
 .mode steer

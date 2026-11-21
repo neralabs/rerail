@@ -1,5 +1,4 @@
 .policy "ruff-c403-unnecessary-list-comprehension-set" revision 1
-.guests off
 .description "Use a set comprehension instead of passing a list comprehension to set; it skips building a throwaway list."
 .language python
 .mode steer

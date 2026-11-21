@@ -1,5 +1,4 @@
 .policy "bandit-b402-import-ftplib" revision 1
-.guests off
 .description "Remove imports of ftplib; FTP sends credentials and data unencrypted, so use SFTP, SCP, or another encrypted protocol."
 .language python
 .mode steer

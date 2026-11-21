@@ -510,17 +510,20 @@ pub(crate) struct Valued {
     values: OnceLock<HashMap<u32, String>>,
 }
 
-/// The relation a program's guest settings are facts of (`.guests`, `.on guest_error`; decision 0055):
-/// `guest_policy("library", "on" | "off")`, `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`.
+/// The relation a program's guest settings are facts of (`.on guest_error`; decision 0055; `.guests` is retired, 0523):
+/// `guest_policy("errors" | "errors:GRAMMAR", "skip" | "partial")`.
 pub const GUEST_POLICY: &str = "guest_policy";
 
-/// The first guest document's key: files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), code guests in the run's
-/// language `GUEST_KEYS..ANNOTATION_KEYS`, annotations (type expressions, Python's in a Python run)
-/// `ANNOTATION_KEYS..HIDDEN_KEYS`, and every other document (a guest in another grammar, a value) `HIDDEN_KEYS..2^31`
-/// (decision 0058 §1: what a rule sees is a bound on these keys). A rule that does not name a guest sees files and code
-/// guests; a relation an annotation's rows reach (`corpus::preparation::combining::FoldOwn`) sees annotations too.
+/// The first guest document's key. A key's range is what the document is to the run, by role and grammar, never by
+/// language (decisions 0058 §1, 0512): files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), a file read for its
+/// programs among them (its text); code guests in the run's language (programs) `GUEST_KEYS..RUN_VALUE_KEYS`; tape
+/// values in the run's language (a string a rule parses in it: Python's string annotations in a Python run, any
+/// language's in its own) `RUN_VALUE_KEYS..HIDDEN_KEYS`; and every other document (a guest in another grammar, a file's
+/// own tree in another grammar, a value) `HIDDEN_KEYS..2^31`. What a rule sees is a bound on these keys: a rule that
+/// does not name a guest sees files and code guests; a relation a run value's rows reach
+/// (`corpus::preparation::combining::FoldOwn`) sees run values too.
 pub const GUEST_KEYS: u32 = 1 << 30;
-pub const ANNOTATION_KEYS: u32 = (1 << 30) + (1 << 28);
+pub const RUN_VALUE_KEYS: u32 = (1 << 30) + (1 << 28);
 pub const HIDDEN_KEYS: u32 = (1 << 30) + (1 << 29);
 
 /// A guest document's place (decision 0055): the host document and the node or span it stands at, its grammar and
@@ -548,11 +551,23 @@ pub struct Guest {
     pub made: Made,
 }
 
+impl Guest {
+    /// The key `node`'s and `docof`'s document column gives a node of document `key` that is this guest (decision
+    /// 0431 §4): a program's file, in either shape; any other guest's own key, for it is no file's.
+    pub fn file_key(guest: Option<&Guest>, key: u32) -> u32 {
+        guest.filter(|g| matches!(g.made, Made::Host | Made::File) && g.file != 0).map_or(key, |g| g.file)
+    }
+}
+
 /// What made a guest document.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Made {
     /// The code at `at` in its host (`embed`, `parsed`, `sub_tape`).
     Host,
+    /// A file's own tree, where the run reads the file for its programs (decision 0512): the file is a text document
+    /// under its own key, shown, and this, its tree in its grammar, a guest of it under a hidden key, standing at its
+    /// whole text. It is no program: no `rr_program`, `sub_tape` or `parsed` row. Its programs are guests of it.
+    File,
     /// `@parse(grammar, text)`: a value document, with no host; its places are its own text's.
     Parse { text: String },
     /// `@splice(tape, node, with)`: tape `tape` with node `node`'s text replaced by tape `with`'s, parsed in its
@@ -1209,11 +1224,6 @@ impl Locs {
     }
 }
 
-/// The key of the file document `key` is part of (decision 0431 §4): a program's file's (`Guest::file`), else its own.
-/// `guest` is the document's guest as its projection places it (in `core.rerail`'s shape only).
-pub(crate) fn file_of(key: u32, guest: Option<&Guest>) -> u32 {
-    guest.filter(|g| g.made == Made::Host && g.file != 0).map_or(key, |g| g.file)
-}
 
 impl Projected {
     /// Document `key`'s projection in `shape`; `dialect` is its facts' (`None` for a text-only document, which has no
@@ -1340,7 +1350,7 @@ impl Projected {
             }
         });
         let tokens = ranks.count(Item::Token);
-        let file = file_of(key, guest.as_ref().map(|(g, _)| *g));
+        let file = Guest::file_key(guest.as_ref().map(|(g, _)| *g), key);
         let mut p = Projected {
             module: None,
             key,
@@ -1367,7 +1377,7 @@ impl Projected {
             }
             // Raw file text remains valid when its tree is withheld. Guests have no own text spans.
             let own_text = guest.is_none();
-            let host = guest.filter(|(g, _)| g.made == Made::Host).map(|(g, lines)| (lines, g.in_file.clone()));
+            let host = guest.filter(|(g, _)| matches!(g.made, Made::Host | Made::File)).map(|(g, lines)| (lines, g.in_file.clone()));
             p.extra = Some(Box::new(Locs { lines, tokens, ends: 0, own_text, host }));
         } else if definition_ids() && let Some(dialect) = dialect {
             // T's shape has no token spans: its nodes alone are numbered per definition.
@@ -1679,7 +1689,7 @@ pub struct Batch {
     /// searched in (Q220).
     pub docs: made::Docs,
     /// The programs among the documents (decision 0431 §4), by file: `(file, document)`, ascending; a lookup of `node`
-    /// by its document reads a file's programs' rows with its own. Found from the documents' inputs (`file_of`): none is made for it.
+    /// by its document reads a file's programs' rows with its own. Found from the documents' inputs (`Guest::file_key`): none is made for it.
     programs: Vec<(u32, usize)>,
     /// Each document's tape, for W's values answered on request (`LongTexts::value_any`, decision 0174), and its values,
     /// read off it at the first request; empty where no program asks for values.
@@ -2784,7 +2794,7 @@ impl Batch {
     /// Document `doc`'s file (decision 0431 §4): a program's is its file's, any other document's its own key. Read
     /// from its input, so no document is made for it.
     fn file(&self, doc: usize) -> u32 {
-        file_of(self.docs.key(doc), self.docs.input(doc).guest.as_deref().filter(|_| self.shape == Shape::Core))
+        Guest::file_key(self.docs.input(doc).guest.as_deref().filter(|_| self.shape == Shape::Core), self.docs.key(doc))
     }
 
     /// Whether the batch's documents are made by its probes: one given its documents' counts (decision 0494), whose
@@ -2934,7 +2944,7 @@ impl Batch {
         }
         // The programs among the documents, by file (decision 0431 §4): a program's file is its guest's (`Guest::file`).
         let mut programs: Vec<(u32, usize)> = (0..n).filter_map(|i| {
-            let file = file_of(docs.key(i), docs.input(i).guest.as_deref().filter(|_| shape == Shape::Core));
+            let file = Guest::file_key(docs.input(i).guest.as_deref().filter(|_| shape == Shape::Core), docs.key(i));
             (file != docs.key(i)).then_some((file, i))
         }).collect();
         programs.sort_unstable();
@@ -4460,20 +4470,6 @@ impl Grower {
         let mut grower = Grower::default();
         let (out, batch) = grower.sources_of(store, documents, Some(matchers), tests, binding, projection, given, false)?;
         Ok((finish(out, &batch, sets, projection, binding), grower))
-    }
-
-    /// The sources with `documents` added: a round's, past every document the batch holds.
-    pub fn grow(
-        &mut self,
-        store: &ContentStore,
-        documents: Vec<Document>,
-        sets: &[(String, Vec<i64>)],
-        tests: &Arc<crate::code_rule_dsl::logic::strings::Vocabulary>,
-        binding: crate::code_rule_dsl::facts::nearest::Binding,
-        projection: &Projection,
-    ) -> StoreResult<Vec<(String, Arc<dyn Source>)>> {
-        let (out, batch) = self.sources_of(store, documents, None, tests, binding, projection, &HashMap::new(), false)?;
-        Ok(finish(out, &batch, sets, projection, binding))
     }
 
     /// The sources of tape value `document` alone, admitted inside the chunk's fixpoint (decision 0431 §8): projected

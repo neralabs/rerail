@@ -1,5 +1,4 @@
 .policy "ruff-pth208-os-listdir" revision 1
-.guests off
 .description "Use Path.iterdir() instead of os.listdir(); path objects read better than string-based os calls."
 .language python
 .mode steer

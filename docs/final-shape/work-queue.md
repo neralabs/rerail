@@ -7322,7 +7322,8 @@ object.
      two chunks' growth is not taken as one's?
   2. The device has two LZ4 decoders. The library's `ukl/lz4.h` (a whole block decoded by a group) sits beside the
      reads' `z_lz4`, which is 0353 step 4b's one decoder. Should the library's go, or be the reads'?
-  3. `<ukl/writer.h>` is 249 KB, every op `UKL_INLINE`; the MSL source it replaces was 192 KB. Measure its compile.
+  3. ~~`<ukl/writer.h>` is 249 KB, every op `UKL_INLINE`; the MSL source it replaces was 192 KB. Measure its compile.~~
+     Written by hand since 2026-11-20 (decision 0524): 60 KB.
 
 ### Q316. `open_tuple` grows faster than its chunk: 0435's bigger chunks cost ep2's cold run 35%
 
@@ -7374,6 +7375,22 @@ object.
 - **Decided** (2026-11-19, the user: "pick a for the decision"): the guest relations name a program by its file and
   place (`parsed(at, grammar, root)`), so `node`'s `d` is the file (0431 §4).
 - **Done when**: `docof` of a program's node is its file in a T program too, with a test.
+- **Done** (2026-11-20): `node`'s document column is a program's file in T's shape too. The batch dropped a
+  program's guest in T's shape (it takes the program's whole tree, not its root's subtree), and with it the file
+  key, so a projection's `file` was the program's own key. The file key is now one rule, `Guest::file_key`, that
+  both shapes' projections take. Test: `a_t_programs_docof_of_a_programs_node_is_its_file` (a T program in a
+  JavaScript run with `.embedded on`, over an HTML file's script). `doc` still has a row for the program's own key
+  (the document underneath), so a test that joins `doc` by path alone does not see the difference; the test checks
+  that the key is not the node id's.
+
+### Q389. (Q271 on django-bugs) A wildcard node in a rule is not bounded by hiding
+
+- **Seen** (2026-11-20, Q324's probe): `zo(k, d) :- node(d, _, k, _, _).`, in a T program in a JavaScript run with
+  `.embedded on`, gives the hidden HTML host's own kinds (`document`, `element`, …). Hiding bounds a node by its
+  variable (0058 §1), and a wildcard has none. `kind(_, k)` in core.rr's shape is the same case, by its place.
+- **Do**: check the case in core's shape too; bound a wildcard node column as a variable is bounded (a fresh
+  variable for it, in the hiding pass).
+- **Done when**: a rule with a wildcard node column sees no hidden document's rows, with a test in each shape.
 
 ### Q325. (Q268 on django-bugs) 0431's leftovers after step 3
 
@@ -7392,6 +7409,54 @@ object.
     (`combined_programs_see_guests_by_their_own_policy`).
 - **Done when**: no round outside the fixpoint; a file's programs read from its stored tape; the setting's meaning
   decided.
+- **Programs kept with the tape, done** (2026-11-20, 0431 step 6, R11): a file's programs are made at its parse,
+  carried in its facts, stored with its tape and read back with it; the batch runs an embedder only for a tape whose
+  record is not known (stored before step 6). Test: `a_files_programs_are_kept_with_its_tape`.
+- **No round outside the fixpoint, done** (2026-11-20, 0431 step 7, R12): `@parse` and `@splice` values are asked
+  inside the fixpoint; the embed slice and its rounds are gone. The demand split no longer cuts a relation above a
+  value's answer.
+- **Setting decided, done** (2026-11-20, decision 0523): `.guests` is retired; `.embedded` is the one setting.
+- **The rule-file language's embeds, done** (2026-11-20, decision 0495): JSON objects, `match` regexes (a new
+  `regex` grammar) and Python patterns (`python-pattern`) are a rule file's programs. Found on the way: Q385.
+- **Older than this item** (each fails at 3aeaf9336e, before 0431 step 6):
+  `maintain_tests::r7_the_recheck_order_is_priced` ("after a use added, every recheck line is priced") and
+  `corpus::tests::a_header_edit_asks_again_only_for_the_units_that_read_it` ("a file no unit looked at asks for
+  none"). `the_run_after_a_cold_one_writes_nothing` flakes under load (2026-11-18, above).
+- **Seen on the way**: `value::eslint_rules::no_dupe_keys_through_key_nodes` (3 of 16 lines found) and
+  `typing::oracle_tests::a_loop_target_is_its_iterators_next_value_and_a_with_alias_the_value_entered` ("unbounded
+  node Cartesian product in `base`") fail at 11d32e9f0 too, before step 7 (Q249's kind for the second).
+
+### Q385. (done) A host file's own nodes are shown under `.embedded on`
+
+- **Seen** (2026-11-20, decision 0495 step 3): a JSON run under `.embedded on` sees a rule file's own nodes
+  (`source_file`, `clause`), and an HTML run a Python file's `module`. 0470 step 2 meant them hidden: a host file takes
+  a hidden key. But hiding runs only for a program that makes guests (`corpus.rs`, `guests_of`), and a program that
+  only says `.embedded on` makes none. 0470's tests ask only for kinds a host file has none of, so they pass.
+- **Tried, and taken back**: running hiding for `.embedded on` too hides the host's nodes, and its programs with
+  them. A program's node's document is its host file's (Q324), whose key is hidden, so `docof(n, d), doc(d, p, _)`
+  fails the document bound. Leaving a node's document unbounded (the node's bound deciding) shows Python's
+  annotations to rules that do not name them (`a_partial_hit_makes_only_the_guests_its_cone_can_see`): an
+  annotation's nodes have ids under their file's key, and only the document bound keeps them out.
+- **To decide**: one key range cannot both show a host file's document and hide its nodes. A likely shape: a host
+  file takes a shown document key, and its own nodes ids under a hidden key, as an annotation's are the other way
+  round. That changes how a file's nodes are numbered: the user's call.
+- **Test**: `a_host_files_own_nodes_are_not_shown` (ignored, naming this item).
+- **Done** (2026-11-20, decision 0512, the user: "go ahead"): a host file keeps its own key as its text's document
+  (`doc`, `source`, `src_line` shown: the user, "rules need to know line numbers and text in the host so that they can
+  report properly"), and its tree is a guest of it (`Made::File`) under the hidden key, the host of its programs.
+  Hiding runs for `.embedded on`. The test runs, and asks for the host's lines and text too.
+
+### Q272. The store crate's tests: five fail on a farm host, one flakes
+
+- **Seen** (2026-11-20, 0431 step 6): `cargo nextest run -p rerail-store` did not compile (`journal.rs`: two test
+  calls to `fsevents::since` lacked `settle`, from the hub merge 667386cfe). With `SETTLE` passed it compiles, and
+  246 of 251 pass on the M3 and the M1 Max. Fail there: `git_workspace::tests::discovers_current_repository_without_a_git_process`
+  (the farm's copy of the checkout has no `.git`) and four `observe` tests on the journal
+  (`a_listing_names_an_edited_file_and_no_other`: 7 stats where 2 are expected, and three like it). Flaky:
+  `write_back::tests::a_batch_run_again_after_a_fork_keeps_every_wait_queued_meanwhile` fails 2 runs in 3.
+- **Do**: run the five here, where the checkout has its `.git` and the journal its usual roots, to tell the host's
+  environment from a fault; find the fork test's race.
+- **Done when**: the crate's tests pass where they are meant to run, and the fork test every time.
 
 ### Q326. (Q269 on django-bugs) A fragment is parsed from a node kind (decision 0466)
 
@@ -8970,6 +9035,46 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   connection "lost"; the same with a 9-character `--config` passes, as does the long one with shorter flags. A
   Windows job also passes no environment (`RERAIL_GPU`, the OpenCL switches): only cargo's `--config env.K='V'`.
 - **Done when** a Windows job takes a long command, and an environment as a Linux one does.
+
+### Q395. A `@parse` value's finding is placed at its own text's line, under its asker's path
+
+- **Seen** (2026-11-20, merging the hub, 0431 R9): `Inner(n) :- …, t = @parse("python", "y = 2"), tape_of(d, t),
+  node(d, n, "identifier", _, _)` as a `.violation` in `a.py`'s run gives `a.py:1:0`. A value document has a `doc`
+  row in each file whose rules asked for it (0058 §4, `askers`), so `node(d, n), doc(d, p, _), line(n, l)` places
+  the finding at the value's own text, line 1, column 0, with the file's path: no place in that file. 0431 §3 says
+  `doc` has no row for a tape, so R9 cannot refuse it.
+- **Do**: decide what a value's finding is. Either a value's document has no `doc` row (0431 §3, and the askers kept
+  apart from `doc`), so R9 refuses it as it refuses a string inside a value, or it is placed at the asking rule's
+  place.
+- **Done when**: a finding at a `@parse` value's node is refused or placed in its file, with a test either way.
+
+### Q399. Four block tests hang on a Mac's Metal executors, and pass in 0.04 s without them (done)
+
+- **Seen** (2026-11-20, after merging the hub to 236ea95371): `rerail-parser-tests`'
+  `block_tests::prev_equals_reference_on_every_executor`, `stage1_utf8_equals_std_on_every_executor`,
+  `binary_operators_equal_reference_on_every_executor` and `within_and_delay_equal_reference_on_every_executor` run
+  past their 240 s on an M1 Max host, alone as with other tests, and are terminated. On a Linux host, where
+  `Executors::run` has no Metal executors (`run_generated_with`, the forward carry `run_serial_split`), the first two
+  pass in 0.04 s. So the time is on a Metal path: an MSL compile, or a command buffer that does not end.
+- **Why it matters**: a command buffer that runs for minutes is what rebooted a Mac twice on 2026-11-20 (the pp
+  grid's Boost test); a hung test's GPU work may outlive the test's kill. Not run again on a Mac until bounded.
+- **Not the cause**: `bee578718a`'s ASCII-split change is in the Cranelift block compiler, and these programs have
+  no gated region, so their code is the same.
+- **Next**: on a farm Mac, the first executor `every` reaches that does not return (a print per executor), and whether
+  it is the MSL compile or the wait; then bound the launch's GPU time.
+- **Found** (2026-11-20, on an M3): no hang. `prev_equals_reference_on_every_executor` ran 7,290 Metal launches in its
+  240 s, each 25 to 58 ms whatever its input's size, of which the GPU took 0.02 to 0.04 ms. The rest was the kernel
+  store's key (`rerail_accel::gpu::kernels::Key::of`): `rerail_ukl::fingerprint()` hashed the 1.2 MB of carried UKL
+  headers byte by byte at every lookup, 17 ms in a debug build, twice for a fixed kernel (`function_fixed`). It is now
+  computed once by `rerail-ukl`'s build script (`carried.rs`, one list for the crate and the script), to the same value
+  (`the_fingerprint_is_fnv_over_the_carried_files`). A launch takes 0.5 to 1 ms; the 46 block tests pass on the M3 in
+  35 s, the slowest in 21 s.
+- **Found on the way**, in the same crate's tests:
+  - `corpus_cranelift_equals_the_interpreter`: `bee578718a` kept a gated region's vectors out of the ASCII split, and a
+    region vector made from the split's words (`as_words`: 0565's `%48 = %47 & ~%46`, `%46` the non-ASCII class) was
+    then made by no one, so its reader read 0. The region makes such vectors at its start, as it makes the masked ones.
+  - `a_files_start_on_metal_is_the_interpreters`: the serial executor refused a prefix (0335) again (`starts_late`),
+    which Q215 (5670277876) had made it run; a hub merge brought the refusal back. Removed; the test passes on the M3.
 
 ---
 

@@ -1,5 +1,4 @@
 .policy "ruff-pth104-os-rename" revision 1
-.guests off
 .description "Use Path.rename() instead of os.rename(); path objects read better than string-based os calls."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-n815-mixed-case-variable-in-class-scope" revision 1
-.guests off
 .description "Name class-level variables in snake_case instead of mixedCase, as PEP 8 recommends for variable names."
 .language python
 .mode steer

@@ -425,6 +425,9 @@ pub(crate) struct Writer {
     /// The store's identity (`store_identity`), set by its first handle: a store created again at the path has
     /// another, and a writer of its own (as it has atoms of its own).
     identity: std::sync::OnceLock<i64>,
+    /// The registry (`Writers`) of the object that registered it: its last handle leaves that one, on whatever thread
+    /// it is dropped, in a run or not (decision 0442).
+    registry: std::sync::OnceLock<std::sync::Weak<Writers>>,
 }
 
 impl Writer {
@@ -539,6 +542,7 @@ pub(super) fn register(path: &Path) -> Arc<Writer> {
     let held = writers();
     let mut all = held.0.lock().expect("the writers");
     let w = Arc::clone(all.entry(path.to_path_buf()).or_default());
+    w.registry.get_or_init(|| Arc::downgrade(&held));
     w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     w
 }
@@ -554,6 +558,7 @@ pub(super) fn register_store(path: &Path, identity: i64) -> Arc<Writer> {
         entry.identity.get_or_init(|| identity);
     }
     let w = Arc::clone(entry);
+    w.registry.get_or_init(|| Arc::downgrade(&held));
     w.handles.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
     w
 }
@@ -562,12 +567,15 @@ pub(super) fn register_store(path: &Path, identity: i64) -> Arc<Writer> {
 fn unregister(path: &Path, w: &Arc<Writer>) {
     // Under the registry's lock: a handle opened meanwhile finds this writer, never a new one that cannot see its
     // queue (the writer's jobs never take this lock).
-    let held = writers();
-    let mut all = held.0.lock().expect("the writers");
+    // The registry it was registered in, not the thread's run: a handle dropped on a pool thread is in none.
+    let held = w.registry.get().and_then(std::sync::Weak::upgrade);
+    let mut all = held.as_ref().map(|h| h.0.lock().expect("the writers"));
     if w.handles.fetch_sub(1, std::sync::atomic::Ordering::SeqCst) != 1 {
         return;
     }
-    if all.get(path).is_some_and(|x| Arc::ptr_eq(x, w)) {
+    if let Some(all) = all.as_mut()
+        && all.get(path).is_some_and(|x| Arc::ptr_eq(x, w))
+    {
         all.remove(path);
     }
     // Every run's wave still open is sealed: the store's last handle takes no more writes.

@@ -2202,6 +2202,47 @@ fn a_file_read_from_the_memo_has_its_tape_values_for_a_cross_file_rule() {
     let _ = std::fs::remove_dir_all(&fresh);
 }
 
+/// Decision 0431 R11 (step 6): a file's programs are made once, at its parse, and kept with its tape. A fresh run
+/// makes the HTML file's script at its parse and the batch reads it off the file's record; a run of another program
+/// (no memo hit) finds the file's tape in the store and its script with it, parsing nothing; a tape whose record is
+/// not known (stored before step 6) has its script made in the batch. The rows are the same each time.
+#[test]
+fn a_files_programs_are_kept_with_its_tape() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("programs-kept");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("ws")).unwrap();
+    std::fs::write(dir.join("ws/a.html"), "<p>x</p>\n<script>f(1)</script>\n").unwrap();
+    let run = |extra: &str| -> (super::Report, Vec<Vec<String>>) {
+        crate::install_store_functions();
+        let rule = dir.join("program.rerail");
+        let text = format!(".language javascript\n.embedded on\n.decl calls(x: symbol, p: symbol, l: number)\ncalls(x, p, l) :- kind(c, \"call_expression\"), text(c, x), docof(c, d), doc(d, p, _), line(c, l).\n.output calls\n{extra}");
+        std::fs::write(&rule, text).unwrap();
+        let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+        super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+        let out = dir.join("out");
+        let _ = std::fs::remove_dir_all(&out);
+        let report = super::run(&program, &dir.join("ws"), None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let rows = super::super::output::Outputs::open(&out).unwrap().get("calls").map(|r| r.shown()).unwrap_or_default();
+        (report, rows)
+    };
+    let want = [["f(1)", "a.html", "2"]].map(|r| r.map(str::to_owned).to_vec()).to_vec();
+    let (fresh, rows) = run("");
+    assert_eq!(rows, want, "a fresh run's rows");
+    assert_eq!(fresh.programs, (1, 0), "made at the parse, read off the record: none by an embedder in the batch");
+    // Another program: no memo hit, the file's tape found by its text.
+    let (stored, rows) = run(".decl other(x: symbol)\nother(x) :- kind(c, \"identifier\"), text(c, x).\n.output other\n");
+    assert_eq!(rows, want, "a stored tape's rows");
+    assert_eq!(stored.file_tapes, (1, 0), "the file's tape is found, not parsed: {:?}", stored.file_tapes);
+    assert_eq!(stored.programs, (1, 0), "its script found with it: {:?}", stored.programs);
+    // A tape stored with no record: its script made in the batch, as before step 6.
+    rusqlite::Connection::open(dir.join("store.sqlite")).unwrap().execute("UPDATE tape_objects SET programs = -1", []).unwrap();
+    let (unknown, rows) = run(".decl third(x: symbol)\nthird(x) :- kind(c, \"number\"), text(c, x).\n.output third\n");
+    assert_eq!(rows, want, "an unrecorded tape's rows");
+    assert_eq!(unknown.programs, (0, 1), "made by its embedder in the batch: {:?}", unknown.programs);
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0431 R5's run: `program` (`.rerail`, with its includes) over `files` in a store of its own, giving the report
 /// and the rows of `output`, as shown.
 fn batch_run(name: &str, files: &[(&str, &str)], program: &str, output: &str) -> (super::Report, Vec<Vec<String>>) {
@@ -2233,14 +2274,13 @@ fn batch_run_on(name: &str, files: &[(&str, &str)], program: &str, output: &str,
 #[test]
 fn a_files_programs_build_no_second_batch() {
     let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
-    let (report, calls) = batch_run("r5-programs", &[("a.html", html)], r#"
+    let (_, calls) = batch_run("r5-programs", &[("a.html", html)], r#"
 .language html
 #include "html/embeds.rerail"
 .decl calls(x: symbol)
 calls(x) :- kind(r, "raw_text"), parsed(r, "javascript", p), within(c, p), kind(c, "call_expression"), text(c, x).
 .output calls
 "#, "calls");
-    assert_eq!((report.slice_runs, report.batch_grown), (0, 0), "no slice round, no batch grown");
     assert_eq!(calls, [["f(1)"], ["g(2)"]].map(|r| r.map(str::to_owned).to_vec()).to_vec(), "both scripts' calls");
 }
 
@@ -2263,7 +2303,6 @@ flat(x) :- kind(m, "identifier"), text(m, x).
 "#;
     let files = [("a.py", "x: \"List[int]\" = []\ndef f(a: \"Optional['Foo']\"): pass\n")];
     let (report, names) = batch_run("r10-names", &files, program, "names");
-    assert_eq!((report.slice_runs, report.batch_grown), (0, 0), "no slice round, no batch grown");
     assert_eq!(report.values_admitted, 3, "the two annotations' values and 'Foo''s, each admitted once");
     assert_eq!(report.guest_parses, 3, "each value parsed once");
     let set = |rows: Vec<Vec<String>>| rows.into_iter().map(|r| r.join("\t")).collect::<std::collections::BTreeSet<String>>();
@@ -2315,7 +2354,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
         assert!(bytes <= base + q266(3), "{output}: the values' rows are read where they lie ({bytes} bytes uploaded, {base} with no values)");
         assert!(!on_cpu.is_empty(), "{output}: rows");
         assert_eq!(on_metal, on_cpu, "{output}: the device's rows are the CPU's");
-        assert_eq!((metal.values_admitted, metal.guest_parses, metal.slice_runs), (cpu.values_admitted, cpu.guest_parses, cpu.slice_runs), "{output}: the same values, read alike");
+        assert_eq!((metal.values_admitted, metal.guest_parses), (cpu.values_admitted, cpu.guest_parses), "{output}: the same values, read alike");
     }
     let html = "<!doctype html>\n<script>\nlet a = f(1);\n</script>\n<script type=\"module\">g(2)</script>\n";
     let programs = r#"

@@ -1,5 +1,4 @@
 .policy "ruff-pyi018-unused-private-type-var" revision 1
-.guests off
 .description "Remove private type variables that are never used, or use them; an unused underscore-prefixed type variable is likely a mistake."
 .language python
 .mode steer

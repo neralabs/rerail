@@ -1,5 +1,4 @@
 .policy "ruff-g201-logging-exc-info" revision 1
-.guests off
 .description "Use the exception logging method instead of error with exc_info inside exception handlers; it logs the same traceback at ERROR level."
 .language python
 .mode steer

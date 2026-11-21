@@ -1,5 +1,4 @@
 .policy "ruff-pyi033-legacy-type-comment" revision 1
-.guests off
 .description "Use inline annotations instead of type comments in stub files; type comments are deprecated and never needed in stubs."
 .language python
 .mode steer

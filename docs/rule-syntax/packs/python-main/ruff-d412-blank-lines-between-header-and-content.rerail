@@ -1,5 +1,4 @@
 .policy "ruff-d412-blank-lines-between-header-and-content" revision 1
-.guests off
 .description "Start each docstring section's content on the line right after its header, without blank lines in between, for a consistent docstring layout."
 .language python
 .mode steer

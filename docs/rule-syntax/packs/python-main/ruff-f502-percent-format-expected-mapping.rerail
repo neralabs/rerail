@@ -1,5 +1,4 @@
 .policy "ruff-f502-percent-format-expected-mapping" revision 1
-.guests off
 .description "Pass a mapping, not a list, tuple or set, to a %-format string that uses %(key) placeholders; the call fails at run time."
 .language python
 .mode steer

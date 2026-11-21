@@ -1,5 +1,4 @@
 .policy "ruff-try203-useless-try-except" revision 1
-.guests off
 .description "Remove exception handlers that only re-raise; the try block adds nothing when every handler immediately raises the same error again."
 .language python
 .mode steer

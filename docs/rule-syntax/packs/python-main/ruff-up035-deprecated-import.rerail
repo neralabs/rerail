@@ -1,5 +1,4 @@
 .policy "ruff-up035-deprecated-import" revision 1
-.guests off
 .description "Import names from the module that now provides them instead of a deprecated location, such as collections.abc rather than collections or typing."
 .language python
 .mode steer

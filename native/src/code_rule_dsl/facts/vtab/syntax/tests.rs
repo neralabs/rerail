@@ -2314,12 +2314,12 @@ fn a_batch_given_counts_knows_its_row_space_making_nothing() {
     assert!(failed.contains("text") && failed.contains("0494"), "{failed}");
 }
 
-/// A batch grown by a round's documents (decision 0431 §6) runs the `ast` matchers over that round's documents only:
-/// the files the batch was started with are not matched again. (Each round of guests ran the wave over every file of
-/// the chunk again: 17 s of 131 s of CPU on `all` once the reference graph's rules read string annotations, decision
-/// 0483; final-rerail-shape's `with_matchers` kept the rows for that, which the grower does by construction.)
+/// A tape value admitted into the batch (decision 0431 §8) runs no `ast` matcher: the files the batch was started
+/// with are matched once, and are not matched again (a value alone is no file, `Grower::admit`). Each round of guests
+/// ran the wave over every file of the chunk again, 17 s of 131 s of CPU on `all` once the reference graph's rules
+/// read string annotations (decision 0483), before the rounds went with the embed slice (0431 step 7).
 #[test]
-fn a_batch_grown_by_a_round_matches_that_rounds_documents_alone() {
+fn a_value_admitted_into_the_batch_matches_no_file_again() {
     struct Seen(std::sync::Mutex<Vec<String>>);
     impl AstWave for Seen {
         fn len(&self) -> usize {
@@ -2355,9 +2355,9 @@ fn a_batch_grown_by_a_round_matches_that_rounds_documents_alone() {
     };
     let (sources, mut grower) = Grower::start(&store, vec![file(1), file(2)], &[], &matchers, &tests, binding, &projection, &HashMap::new()).unwrap();
     read(&sources);
-    let grown = grower.grow(&store, vec![file(3)], &[], &tests, binding, &projection).unwrap();
-    read(&grown);
+    let admitted = grower.admit(&store, file(3), &[], &tests, binding, &projection).unwrap();
+    assert!(!admitted.iter().any(|(n, _)| n == "rr_ast_1_1"), "a value's sources hold no matchers' rows of their own");
     let mut seen = wave.0.lock().unwrap().clone();
     seen.sort();
-    assert_eq!(seen, ["m1.py", "m2.py", "m3.py"], "each file matched once: the round's alone when the batch grows");
+    assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
 }

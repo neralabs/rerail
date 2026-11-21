@@ -422,6 +422,7 @@ fn file_documents_persist_apart_and_are_checked() {
                 source_map: map,
                 host_errors: &host_errors,
                 tape,
+                at: None,
             }],
         )
     };
@@ -2655,6 +2656,8 @@ fn the_msvc_json_fallback_reads_as_simdjson_does() {
         "[1,]", "{\"a\": 1,}", "// c\n{\"a\": 1,}", "[[1,],]", "{\"a\": {\"b\": 1,},}", "[{\"a\": 1},\n]", "[\"x\", // c\n]",
         "{\"a\": [1, 2,], \"b\": 3, /* last */ }", "{\n  \"compilerOptions\": {\n    \"strict\": true,\n    \"lib\": [\"es2022\", \"dom\",],\n  },\n}\n",
         "{", "{\"a\" 1}", "tru", "", "[1,,]", "[,1]", "{,}", "// c\n{\"a\": 1,,}", "[1 / 2]", "/* open", "1e+2", "[1.5E+3]",
+        // A number past simdjson's range with an exponent's `+`: refused by simdjson, read by the Bitlex parser.
+        "[1e+21, -9223372036854778000]", "{\"a\": 1e+21, \"b\": [12345678901234567890123]}",
     ]
     .into_iter()
     .map(|s| (format!("{s:?}"), s.to_owned()))

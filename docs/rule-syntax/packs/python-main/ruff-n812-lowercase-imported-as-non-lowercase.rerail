@@ -1,5 +1,4 @@
 .policy "ruff-n812-lowercase-imported-as-non-lowercase" revision 1
-.guests off
 .description "Keep the alias of an imported lowercase name lowercase; an uppercase alias makes readers mistake a function or module for a class or constant."
 .language python
 .mode steer

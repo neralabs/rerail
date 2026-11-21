@@ -1,5 +1,4 @@
 .policy "ruff-com818-trailing-comma-on-bare-tuple" revision 1
-.guests off
 .description "Remove a stray comma at the end of a statement, or parenthesize the tuple; a trailing comma silently turns the value into a tuple."
 .language python
 .mode steer

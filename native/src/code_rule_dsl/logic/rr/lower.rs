@@ -1680,10 +1680,12 @@ impl PendingFindings {
 pub struct RulesSeen {
     /// Whether a rule makes a `@place` value: only then can a span or loc `at` hold one.
     pub place_values: bool,
-    /// Whether a rule reads `guest_policy`.
-    pub reads_guest_policy: bool,
     /// The first tool call's relation a rule reads (`TOOL_CALLS`), refused outside `.scope tool_calls`.
     pub reads_tool_call: Option<&'static str>,
+    /// Whether a rule, the program's or its library's, reads a guest relation (`parsed`, `guest_of`, …), `guest_place`
+    /// and `tape_of` declared: only then can a finding's node be a tape value's, placed through the string that holds
+    /// it (`guest_place`, decision 0431 §3).
+    pub reads_guests: bool,
 }
 
 /// Whether a term makes a `@place` value (`RulesSeen`).

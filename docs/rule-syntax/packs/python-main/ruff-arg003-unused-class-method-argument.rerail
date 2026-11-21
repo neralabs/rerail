@@ -1,5 +1,4 @@
 .policy "ruff-arg003-unused-class-method-argument" revision 1
-.guests off
 .description "Remove class method parameters the body never reads, or prefix them with an underscore when the signature must stay and no caller passes them by keyword."
 .language python
 .mode steer

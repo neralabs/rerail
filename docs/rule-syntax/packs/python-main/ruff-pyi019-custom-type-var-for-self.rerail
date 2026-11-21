@@ -1,5 +1,4 @@
 .policy "ruff-pyi019-custom-type-var-for-self" revision 1
-.guests off
 .description "Use Self instead of a custom type variable to annotate the instance or class a method works on; Self is shorter and needs no type variable."
 .language python
 .mode steer

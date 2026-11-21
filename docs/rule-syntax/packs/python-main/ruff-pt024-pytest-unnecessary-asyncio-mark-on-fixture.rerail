@@ -1,5 +1,4 @@
 .policy "ruff-pt024-pytest-unnecessary-asyncio-mark-on-fixture" revision 1
-.guests off
 .description "Don't apply the pytest asyncio marker to a fixture; marks have no effect on fixtures."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-pyi036-bad-exit-annotation" revision 1
-.guests off
 .description "Declare exit and aexit methods with the three standard arguments or star-args, annotated as object or as the exception type, exception and traceback each unioned with None."
 .language python
 .mode steer

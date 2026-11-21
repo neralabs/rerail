@@ -1,5 +1,4 @@
 .policy "ruff-td004-missing-todo-colon" revision 1
-.guests off
 .description "Put a colon straight after the TODO tag and its author, so every TODO comment has the same shape."
 .language python
 .mode steer

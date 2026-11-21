@@ -1,5 +1,4 @@
 .policy "ruff-pyi032-any-eq-ne-annotation" revision 1
-.guests off
 .description "Use object instead of Any to annotate the other operand of equality and inequality methods; object accepts every value while keeping type checking on."
 .language python
 .mode steer

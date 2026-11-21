@@ -1,5 +1,4 @@
 .policy "ruff-pyi053-string-or-bytes-too-long" revision 1
-.guests off
 .description "Replace string and bytes literals longer than 50 characters in stub files with an ellipsis; type checkers ignore default values, so a literal that long is an implementation detail."
 .language python
 .mode steer

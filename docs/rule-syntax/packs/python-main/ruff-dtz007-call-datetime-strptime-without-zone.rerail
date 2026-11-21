@@ -1,5 +1,4 @@
 .policy "ruff-dtz007-call-datetime-strptime-without-zone" revision 1
-.guests off
 .description "Make datetimes parsed from text timezone-aware, by parsing a UTC offset or attaching a timezone afterwards; naive datetimes can't be safely compared with aware ones."
 .language python
 .mode steer

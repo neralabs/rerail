@@ -1,5 +1,4 @@
 .policy "ruff-pgh004-blanket-noqa" revision 1
-.guests off
 .description "Name specific rule codes in noqa comments instead of suppressing every check, and put a colon before the codes; a blanket noqa hides unrelated problems."
 .language python
 .mode steer

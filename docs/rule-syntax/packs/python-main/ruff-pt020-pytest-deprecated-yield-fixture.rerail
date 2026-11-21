@@ -1,5 +1,4 @@
 .policy "ruff-pt020-pytest-deprecated-yield-fixture" revision 1
-.guests off
 .description "Use the pytest fixture decorator instead of the deprecated yield_fixture alias; fixtures can already yield, so the rename changes nothing else."
 .language python
 .mode steer

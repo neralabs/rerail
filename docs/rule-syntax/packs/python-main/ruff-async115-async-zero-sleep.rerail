@@ -1,5 +1,4 @@
 .policy "ruff-async115-async-zero-sleep" revision 1
-.guests off
 .description "Use lowlevel.checkpoint() instead of sleep(0) in trio and anyio code; it states the intent of yielding to the scheduler."
 .language python
 .mode steer

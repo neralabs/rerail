@@ -1,5 +1,4 @@
 .policy "ruff-pt019-pytest-fixture-param-without-value" revision 1
-.guests off
 .description "Activate fixtures a test does not read with the usefixtures mark instead of declaring underscore-prefixed parameters for them."
 .language python
 .mode steer

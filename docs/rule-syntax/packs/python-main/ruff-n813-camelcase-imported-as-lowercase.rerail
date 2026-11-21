@@ -1,5 +1,4 @@
 .policy "ruff-n813-camelcase-imported-as-lowercase" revision 1
-.guests off
 .description "Keep the alias of an imported CamelCase name in CamelCase; a lowercase alias makes readers mistake a class for a function or variable."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-slot000-no-slots-in-str-subclass" revision 1
-.guests off
 .description "Define __slots__ in subclasses of str (enums excepted); without it every instance carries its own attribute dict and uses more memory."
 .language python
 .mode steer

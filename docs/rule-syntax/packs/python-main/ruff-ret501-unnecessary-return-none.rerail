@@ -1,5 +1,4 @@
 .policy "ruff-ret501-unnecessary-return-none" revision 1
-.guests off
 .description "Use a bare return instead of return None in Python functions that never return anything else."
 .language python
 .mode steer

@@ -1,5 +1,4 @@
 .policy "ruff-up010-unnecessary-future-import" revision 1
-.guests off
 .description "Remove __future__ imports of features that Python 3 always enables; they have no effect on current Python versions."
 .language python
 .mode steer
