@@ -136,6 +136,7 @@ describe("a repository's first events in a daemon", () => {
       if (isGit(args)) placing.resolve();
       return realSpawn(...args);
     });
+    const before = spawn.mock.calls.length;
     const opening = runtime.ingest({ kind: "session-start", eventId: "late-start", session: { host: "claude-code", sessionId: "late", cwd: checkouts[0]! } });
     try {
       await placing.promise;
@@ -145,6 +146,12 @@ describe("a repository's first events in a daemon", () => {
     const disposing = runtime.dispose();
     const [spawned, blocked] = [spawn.mock.calls.length, vi.mocked(childProcess.spawnSync).mock.calls.length];
     await disposing;
+    // Every Git the placement started has exited once dispose returns: none is left running in the checkout.
+    const running = spawn.mock.results.slice(before).filter((result, i) => {
+      const child = result.value as childProcess.ChildProcess;
+      return isGit(spawn.mock.calls[before + i]!) && child.exitCode === null && child.signalCode === null;
+    });
+    expect(running).toEqual([]);
     await opening.catch(() => undefined);
     expect({
       spawned: spawn.mock.calls.slice(spawned).filter(isGit).length,
