@@ -288,7 +288,7 @@ describe("rerail support-bundle", () => {
     expect(bundle.session?.host).toBe("claude-code");
     expect(bundle.session?.eventCounts).toMatchObject({ call: 1, result: 1, "steering-delivered": 1 });
     expect(bundle.session?.gaps).toEqual({
-      droppedEvents: 4, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 1, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
+      droppedEvents: 4, lostEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 1, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
     });
     expect(bundle.session?.timeline).toContainEqual(expect.objectContaining({ kind: "result", tool: "Bash", failed: true }));
     expect(bundle.session?.timeline).toContainEqual(expect.objectContaining({ kind: "steering-delivered", ruleIds: ["eslint-eqeqeq"] }));

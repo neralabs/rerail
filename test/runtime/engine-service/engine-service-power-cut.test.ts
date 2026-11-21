@@ -1,5 +1,5 @@
 import { spawn, type ChildProcess } from "node:child_process";
-import { mkdir, mkdtemp, realpath, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -10,11 +10,13 @@ import type { AdapterEvent, CodeRuleAuditor } from "../../../src/engine/index.js
 import { ingestEngineEvent, startEngineService, type EngineService } from "../../../src/runtime/engine-service.js";
 import { addRemote } from "../../../src/runtime/remote-config.js";
 import { RemoteOutbox } from "../../../src/runtime/remote-outbox.js";
+import { sessionDirectory } from "../../../src/runtime/session-paths.js";
+import { lastObservedEventAt } from "../../../src/runtime/session-store.js";
 import { withExperiments } from "../../support/environment/experiments.js";
 import { startFakeSink, storedRecords, type FakeSink } from "../../support/fake-sink.js";
 import { testEmbedder } from "../../support/hook-events.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
-import { cutPower, latestCommitWhere } from "../../support/engine/power-cut.js";
+import { cutPower, latestCommitWhere, stateAt, walCommits } from "../../support/engine/power-cut.js";
 import { startTestRepository } from "../../support/started-repository.js";
 
 // The store's writers commit with `synchronous = NORMAL`: a power cut or an operating system crash can take the last
@@ -164,6 +166,21 @@ function storedEvents(databasePath: string): Array<{ sequence: number; eventId: 
   }
 }
 
+/** The session's history as the dashboard pages it (`GET /api/sessions/{id}/events`), each event's id, kind and payload. */
+async function history(databasePath: string, sessionId: string): Promise<Array<{ eventId: string; kind: string; payload: unknown }>> {
+  const page = await dashboard(databasePath, `/api/sessions/${sessionId}/events`) as { events: Array<{ eventId: string; kind: string; payload: unknown }> };
+  return page.events.map(({ eventId, kind, payload }) => ({ eventId, kind, payload }));
+}
+
+/** How many of the last lines of the ledger of `sessionId` come from the line of `eventId` on. */
+async function ledgerLinesFrom(storageRoot: string, sessionId: string, eventId: string): Promise<{ path: string; lines: number }> {
+  const path = join(sessionDirectory(storageRoot, sessionId), "events.jsonl");
+  const lines = (await readFile(path, "utf8")).split("\n").filter(Boolean);
+  const at = lines.findIndex(line => (JSON.parse(line) as { type?: string; eventId?: string }).type === "event" && line.includes(`"eventId":"${eventId}"`));
+  expect(at, `the ledger's line of ${eventId}`).toBeGreaterThanOrEqual(0);
+  return { path, lines: lines.length - at };
+}
+
 const hasEvent = (database: Database.Database, eventId: string): boolean =>
   database.prepare("SELECT 1 FROM events WHERE event_id = ?").get(eventId) !== undefined;
 
@@ -243,6 +260,68 @@ describe("the records a power cut leaves, once the next daemon has started", () 
       const stored = storedEvents(databasePath);
       expect(stored.map(row => row.eventId)).toContain("s:six");
       expect(stored.map(row => [row.eventId, named.get(`${machine}:${row.sequence}`)])).toEqual(stored.map(row => [row.eventId, row.eventId]));
+    });
+  });
+
+  describe("a session's history", () => {
+    // The rows went, the ledger kept their lines: the events count as processed, so nothing writes them again, and the
+    // session's history missed them without a word.
+    it("records, at the session's next open, which events the cut took and when, from its ledger", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout } = await records();
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      for (const text of ["one", "two", "three"]) await daemon.send(prompt("s", text));
+      await daemon.stop();
+      cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "s:one") && !hasEvent(database, "s:two")));
+      const next = await nextDaemon(root, databasePath);
+      await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "four"));
+      const kept = await history(databasePath, "s");
+      expect(kept.map(event => event.eventId)).toEqual(expect.arrayContaining(["s:one", "s:four"]));
+      expect(kept.filter(event => event.kind === "events-lost").map(event => event.payload)).toEqual([
+        expect.objectContaining({ count: 2, kinds: { "user-prompt": 2 }, firstEventId: "s:two", lastEventId: "s:three" }),
+      ]);
+      const { gaps } = await dashboard(databasePath, "/api/sessions/s") as { gaps: { lostEvents: number } };
+      expect(gaps.lostEvents).toBe(2);
+    });
+
+    // The ledger is not synced either: the cut can take its last lines too, and those events count as never processed.
+    it("records only the events whose ledger lines the cut left", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout, storageRoot } = await records();
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      for (const text of ["one", "two", "three"]) await daemon.send(prompt("s", text));
+      await daemon.stop();
+      const ledger = await ledgerLinesFrom(storageRoot, "s", "s:three");
+      cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "s:one") && !hasEvent(database, "s:two")), { [ledger.path]: ledger.lines });
+      const next = await nextDaemon(root, databasePath);
+      await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "four"));
+      expect((await history(databasePath, "s")).filter(event => event.kind === "events-lost").map(event => event.payload)).toEqual([
+        expect.objectContaining({ count: 1, firstEventId: "s:two", lastEventId: "s:two" }),
+      ]);
+    });
+
+    // `rerail status` says hooks run but nothing was recorded since a hook failure later than the time of the newest event
+    // (`hookFailureLines`, given `lastObservedEventAt`): the cut takes the newest events, so a failure while they were
+    // recorded reads so until the next event is.
+    it("leaves `rerail status` as main has it: right again once the next event is recorded", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout } = await records();
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      for (const text of ["one", "two", "three"]) await daemon.send(prompt("s", text));
+      await daemon.stop();
+      const commits = walCommits(databasePath);
+      const lostAt = stateAt(databasePath, commits.at(-1)!, database =>
+        (database.prepare("SELECT observed_at AS at FROM events WHERE event_id = 's:three'").get() as { at: number }).at);
+      // A hook of another session that failed while the events the cut took were recorded, at `lostAt`, counts as one
+      // after which nothing was recorded.
+      cutPower(databasePath, latestCommitWhere(databasePath, database => hasEvent(database, "s:one") && !hasEvent(database, "s:two")));
+      expect(lastObservedEventAt(databasePath)).toBeLessThan(lostAt);
+      const next = await nextDaemon(root, databasePath);
+      await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "four"));
+      expect(lastObservedEventAt(databasePath)).toBeGreaterThanOrEqual(lostAt);
     });
   });
 });

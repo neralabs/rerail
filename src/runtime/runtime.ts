@@ -56,7 +56,7 @@ import { cosineSimilarity, NativeSemanticEmbedder, SemanticWorkspace } from "../
 import { ConversationRuleRegistry, type RuleMatch } from "../engine/catalog/registry.js";
 import { LiveConversationRules } from "../engine/catalog/conversation-rule-sync.js";
 import { parseSampleSource, SAMPLE_BOUNDARIES } from "../engine/catalog/rule-schema.js";
-import { restorableRule, type DroppedEvents, type RuleMutation } from "./session-state.js";
+import { restorableRule, type DroppedEvents, type LostEvent, type RuleMutation } from "./session-state.js";
 import { SessionLanes } from "./session-lanes.js";
 import { rewoundSteer, steerBlock, steerRules, steerShell, subagentSteer, type SteerShell } from "../engine/code-rule/rerail-steer.js";
 import { steerOrigin, steerTitle } from "../engine/code-rule/steer-origin.js";
@@ -231,6 +231,25 @@ function validatedLedger(values: readonly unknown[]): LedgerEntry[] {
 function processedEventIds(ledger: readonly LedgerEntry[]): Set<string> {
   return new Set(ledger.flatMap((entry) => (entry.type === "event" ? [entry.eventId] : [])));
 }
+
+/**
+ * The events the ledger holds whose rows a power cut or an operating system crash took, oldest first. An event's row is
+ * committed before its ledger line is written, one event after another, and such a loss takes only the store's last
+ * commits: so the lost events are those after the newest one whose row is there. A ledger line older builds wrote
+ * (no kind or time) ends the walk, since those builds synced every commit; a ledger with no row of any of its events
+ * gives none: `rerail reset` deleted the session's history, or the loss took every row of it, which nothing tells apart.
+ * Costs one indexed read when nothing was lost.
+ */
+function lostEvents(ledger: readonly LedgerEntry[], hasRow: (eventId: string) => boolean): LostEvent[] {
+  const lost: LostEvent[] = [];
+  for (let index = ledger.length - 1; index >= 0; index -= 1) {
+    const entry = ledger[index]!;
+    if (entry.type !== "event") continue;
+    if (entry.kind === undefined || entry.observedAt === undefined || hasRow(entry.eventId)) return lost.reverse();
+    lost.push({ eventId: entry.eventId, kind: entry.kind, observedAt: entry.observedAt });
+  }
+  return [];
+}
 interface AuditRequestVerdict {
   status: "completed" | "failed" | "interrupted";
   error: string | null;
@@ -393,7 +412,8 @@ const ContentItemSchema = z.object({
   }),
 });
 const LedgerEntrySchema = z.union([
-  z.object({ type: z.literal("event"), eventId: z.string() }),
+  // `kind` and `observedAt` are the event's row's own, which a ledger written before they were added lacks.
+  z.object({ type: z.literal("event"), eventId: z.string(), kind: z.string().optional(), observedAt: z.number().int().optional() }),
   z.object({ type: z.literal("hud-tracking-start") }),
   z.object({ type: z.literal("sample"), item: ContentItemSchema }),
   z.object({ type: z.literal("turn"), eventId: z.string() }),
@@ -417,7 +437,7 @@ const LedgerEntrySchema = z.union([
 ]);
 
 type LedgerEntry =
-  | { type: "event"; eventId: string }
+  | { type: "event"; eventId: string; kind?: string; observedAt?: number }
   | { type: "hud-tracking-start" }
   | { type: "sample"; item: ContentItem }
   | { type: "turn"; eventId: string }
@@ -2207,6 +2227,7 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       await this.#beforeSessionPublish?.(session);
       this.#failWhileWriteLockedForScan(session.sessionId);
       this.#sessionStore.openSession(session, startedAt, this.#repositoryKey(checkout));
+      this.#sessionStore.recordLostEvents(session, lostEvents(ledger.entries, eventId => this.#sessionStore.hasEvent(session.sessionId, eventId)));
       this.#closedSessions.delete(session.sessionId);
       this.#sessionStore.startHudTracking(session, ledger.completeTracking);
       opened.ownerClaim = this.#registerOwner(session.sessionId);
@@ -2768,10 +2789,12 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       state.secretCalls.add(event.toolCallId);
     }
     const withheld = event.kind === "result" && state.secretCalls.has(event.toolCallId);
+    const observedAt = Date.now();
     this.#sessionStore.append({
       sessionId,
       eventId: event.eventId,
       kind: event.kind,
+      observedAt,
       // Stored scrubbed of secrets (`scrubValue`); the live event, which rules match, keeps them.
       payload: event.kind === "result" && withheld ? { ...event, output: withheldOutput(event.output) } : scrubValue(event),
     }, state.descriptor);
@@ -2780,7 +2803,9 @@ export class RerailRuntime implements HostRuntimePort, RerailEventLoop {
       state.secretCalls.delete(event.toolCallId);
       state.withheldResults.add(event.eventId);
     }
-    await this.#append(state, { type: "event", eventId: event.eventId });
+    // The row's kind and time go with the line, so the record of the event, should a power cut take its row, can be
+    // written again at the session's next open (`lostEvents`).
+    await this.#append(state, { type: "event", eventId: event.eventId, kind: event.kind, observedAt });
     state.processed.add(event.eventId);
   }
 

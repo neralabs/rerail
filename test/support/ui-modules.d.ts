@@ -49,6 +49,7 @@ declare module "*/ui/sessions-model.js" {
   export function placeCorrections(turns: TurnView[], corrections: readonly Correction[]): TurnView[];
   export function resumeCommand(s: { host: string; cwd: string; sessionId: string }): { name: string; cmd: string | null; cwd?: string };
   export function droppedEvents(s: { sessionId: string }): number;
+  export function lostEvents(s: { sessionId: string }): number;
   export function uncheckedBoundaries(s: { sessionId: string }): number;
   export function codeRulesPendingBoundaries(s: { sessionId: string }): number;
   export function discoveryGapPlaces(s: { sessionId: string }): Array<{ path?: string; reason: string; boundary: string; observedAt: number }>;

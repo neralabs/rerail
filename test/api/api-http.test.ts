@@ -268,7 +268,7 @@ describe("Rerail API over HTTP", () => {
 
     const { gaps } = await getJson<{ gaps: Record<string, unknown> }>(`/api/sessions/${SESSION.sessionId}`);
     expect(gaps).toEqual({
-      droppedEvents: 9, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2, discoveryGapsMore: true,
+      droppedEvents: 9, lostEvents: 0, uncheckedBoundaries: 1, codeRulesPendingBoundaries: 2, ignoredEdits: 1, ignoreRuleChanges: 2, discoveryGaps: 2, discoveryGapsMore: true,
       // Each place with why, in the order the session met them, for the person to act on.
       discoveryGapPlaces: [
         { boundary: "turn", path: "src/locked", reason: locked.reason, observedAt: expect.any(Number) },
