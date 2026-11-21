@@ -290,7 +290,20 @@ impl MetalComputeEvent {
                 GPU_NANOS.fetch_add((self.gpu_seconds() * 1e9) as u64, std::sync::atomic::Ordering::Relaxed);
                 Ok(())
             }
-            s => Err(format!("Metal command buffer: {s:?}")),
+            s => {
+                // The command buffer's error: its code (MTLCommandBufferError: 2 a timeout, 3 a page fault, …) and text.
+                let error: *mut objc::runtime::Object = unsafe { msg_send![&*self.command_buffer, error] };
+                let why = if error.is_null() {
+                    String::new()
+                } else {
+                    let code: i64 = unsafe { msg_send![error, code] };
+                    let text: *mut objc::runtime::Object = unsafe { msg_send![error, localizedDescription] };
+                    let utf8: *const std::os::raw::c_char = unsafe { msg_send![text, UTF8String] };
+                    let text = if utf8.is_null() { String::new() } else { unsafe { std::ffi::CStr::from_ptr(utf8) }.to_string_lossy().into_owned() };
+                    format!(" (code {code}: {text})")
+                };
+                Err(format!("Metal command buffer: {s:?}{why}"))
+            }
         }
     }
 
