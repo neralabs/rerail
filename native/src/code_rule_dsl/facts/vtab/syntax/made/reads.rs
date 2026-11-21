@@ -186,7 +186,7 @@ impl Docs {
                 (view.side[0], view.side[1]) = (rel as u32, (rel >> 32) as u32);
             }
         }
-        let entry = ViewEntry::new(b, p, &self.context.dialects[p.tag]);
+        let entry = ViewEntry::new(b, p, &self.context.dialects[p.tag()]);
         let dir = self.dir().cast_mut();
         // SAFETY: row `i` and its homes `2i`, `2i + 1`, in the batch's block: the reads layer's fields, which only this
         // write writes (once, in the row's `OnceLock`), and the search layer's readers do not read.

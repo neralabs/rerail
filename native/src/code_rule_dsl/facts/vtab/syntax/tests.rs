@@ -717,7 +717,7 @@ fn within_holds_exactly_the_contained_pairs() {
             let doc = batch.nodes().doc_of(r, rerail_clif::view_reads::NO_DOC);
             let (p, local) = (&batch.docs[doc], r - batch.nodes().at(doc));
             let (start, end) = p.facts.span(p.node(local as u32));
-            (p.key, local, p.size(local) as usize, axes[doc][local] as usize, start, end)
+            (p.key(), local, p.size(local) as usize, axes[doc][local] as usize, start, end)
         })
         .collect();
     let at = |r: usize| rows[r];
@@ -808,12 +808,12 @@ fn the_kind_set_axes_hold_exactly_their_pairs() {
     // (document, local, size) and kind atom of node row r.
     let at = |r: usize| {
         let (p, local) = batch.locate(View::Node, r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
-        (p.key, local, p.size(local) as usize)
+        (p.key(), local, p.size(local) as usize)
     };
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
         let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
-        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+        i64::from(kind_atom(p.tag(), batch.dialects[p.tag()].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
     // Nested kinds: the root's, and two from inside the documents; and every kind of broken.py's nodes, ERROR's
     // among them.
@@ -1870,7 +1870,7 @@ fn an_axis_counts_its_rows_without_its_solve() {
     let kind = |r: usize| {
         let (p, local) = batch.locate(View::Node, r, &mut { crate::code_rule_dsl::facts::vtab::NO_MEMO });
         let code = crate::code_rule_dsl::facts::core::kind_code(p.facts.kind(p.node(local as u32)));
-        i64::from(kind_atom(p.tag, batch.dialects[p.tag].canonical.get(usize::from(code)).copied().unwrap_or(code)))
+        i64::from(kind_atom(p.tag(), batch.dialects[p.tag()].canonical.get(usize::from(code)).copied().unwrap_or(code)))
     };
     let set: Vec<i64> = [0, nodes / 3, nodes / 2].map(kind).to_vec();
     let sources = [
@@ -2165,14 +2165,14 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         let field = if l < nf {
                             let fx = p.ranks().select(Item::Field, l).unwrap();
                             let fl = p.ranks().rank(Item::Node, fx);
-                            [parent(fl), i64::from(field_atom(p.tag, facts.field(fx))), p.global(fl)]
+                            [parent(fl), i64::from(field_atom(p.tag(), facts.field(fx))), p.global(fl)]
                         } else {
                             [0; 3]
                         };
-                        let mut row = vec![i64::from(p.key), p.global(l), i64::from(dialect.kind_of_atom(facts.kind(x))), i64::from(facts.start(x)), i64::from(facts.end(x))];
+                        let mut row = vec![i64::from(p.key()), p.global(l), i64::from(dialect.kind_of_atom(facts.kind(x))), i64::from(facts.start(x)), i64::from(facts.end(x))];
                         row.extend(child);
                         row.extend(field);
-                        row.extend([i64::from(p.key), i64::from(x), p.global(l)]);
+                        row.extend([i64::from(p.key()), i64::from(x), p.global(l)]);
                         row.extend([p.global(l), i64::from(facts.start_line(x))]);
                         row
                     })
@@ -2225,7 +2225,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                         // The views no CLIF reads: the host's rows.
                         assert_eq!(doc.size(l), p.size(l as usize), "{at}: node {l}'s size");
                         assert_eq!(doc.depth(l), p.depth(l as usize), "{at}: node {l}'s depth");
-                        assert_eq!(doc.order_row(l, 1), i64::from(p.key) << 32 | i64::from(p.order(l)), "{at}: node {l}'s order");
+                        assert_eq!(doc.order_row(l, 1), i64::from(p.key()) << 32 | i64::from(p.order(l)), "{at}: node {l}'s order");
                     }
                     for i in 0..p.after_siblings() {
                         let (l, _) = doc.after_sibling(i);
@@ -2505,11 +2505,11 @@ fn the_views_directory_is_the_hosts_too() {
     let homes = unsafe { std::slice::from_raw_parts(block.ptr::<ViewHome>(dir.homes as usize), dir.nhomes as usize) };
     for (row, p) in rows.iter().zip(batch.docs.iter()) {
         let entry = unsafe { &*block.ptr::<ViewDoc>(row.entry as usize) };
-        assert_eq!(entry.key, p.key, "the row's entry is its document's");
+        assert_eq!(entry.key, p.key(), "the row's entry is its document's");
         let (bytes, view) = p.facts.tape.as_ref().unwrap().in_place().unwrap();
-        assert_eq!(homes[row.homes[0] as usize].host + row.tape, bytes.as_ptr() as u64, "document {}'s tape, where it lies", p.key);
+        assert_eq!(homes[row.homes[0] as usize].host + row.tape, bytes.as_ptr() as u64, "document {}'s tape, where it lies", p.key());
         assert_eq!((row.view.format, row.view.nodes), (view.format, view.nodes));
-        assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.words().as_ptr() as u64, "document {}'s lines", p.key);
+        assert_eq!(homes[row.homes[1] as usize].host + row.lines, p.facts.lines.words().as_ptr() as u64, "document {}'s lines", p.key());
     }
     // The homes its rows name (fixed: a row's tape in `2i`, its lines in `2i + 1`), and the 16z cache's where it has one.
     assert_eq!(dir.nhomes as usize, 2 * rows.len() + 1, "two homes a row, and the cache's");
@@ -2610,7 +2610,7 @@ fn the_directorys_searches_are_the_jits() {
             // SAFETY: as `dir`.
             let host = unsafe { ViewDir::doc_of_key(dir, key, memo) };
             assert_eq!(by_key(d, key, memo), host, "key {key}, memo {memo}");
-            let expect = batch.docs.iter().position(|p| p.key == key).map_or(NO_DOC, |i| i as u32);
+            let expect = batch.docs.iter().position(|p| p.key() == key).map_or(NO_DOC, |i| i as u32);
             assert_eq!(host, expect, "key {key}");
             tried += 1;
         }

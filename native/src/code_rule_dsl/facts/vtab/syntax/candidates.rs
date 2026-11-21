@@ -49,7 +49,7 @@ impl PythonCandidates for Batch {
         for p in self
             .docs
             .iter()
-            .filter(|p| p.tag == py.grammar.tag() && scope.contains(&i64::from(p.key)))
+            .filter(|p| p.tag() == py.grammar.tag() && scope.contains(&i64::from(p.key())))
         {
             let (rows, work) = candidates::collect(&py.grammar, &p.facts, kind, &members, |n| {
                 match candidates::eligibility(&py.grammar, &p.facts, n) {

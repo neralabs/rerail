@@ -917,7 +917,7 @@ impl CoreRows {
 
     /// A withheld document's one row: its first error (`verdict`).
     pub(super) fn withheld(&mut self, p: &Projected, (l, msg): &(u32, String), string: &mut dyn FnMut(&str) -> usize) {
-        self.syntax_error.push([i64::from(p.key), i64::from(*l), string(msg) as i64]);
+        self.syntax_error.push([i64::from(p.key()), i64::from(*l), string(msg) as i64]);
     }
 
     /// A document's rows: its source-text spans (a file's own, `own_text`; a guest's text is part of its file's), and
@@ -926,7 +926,7 @@ impl CoreRows {
     pub(super) fn document(&mut self, p: &Projected, dialect: Option<&Dialect>, string: &mut dyn FnMut(&str) -> usize, wants_text: bool, wants_tokens: bool, wants_split_lines: bool, wants_lf_lines: bool, wants_source_text: bool, wants_line_text: bool, own_text: bool, projection: &super::Projection) {
         let f = &*p.facts;
         let x = p.extra.as_ref().expect("core.rerail's spans");
-        let key = i64::from(p.key);
+        let key = i64::from(p.key());
         if x.ends > 0 {
             let from = p.len() + x.ends_from();
             self.end_point.extend(p.node_ids().take(x.ends as usize).map(|(l, _, n)| [n, p.global(from + l)]));

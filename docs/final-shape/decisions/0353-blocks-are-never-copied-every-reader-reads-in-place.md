@@ -899,6 +899,41 @@ Metal, the M3 passes `the_kernels_directory_searches_are_the_hosts`, `a_views_in
 `views_made_on_the_device_are_the_hosts_rows` and `a_view_made_on_the_device_is_made_at_each_stratum` (the mini's
 Xcode license is still not agreed to).
 
+**Step 3, the scans (2026-11-21).** `Viewed`'s scans (`each_row`: `for_rows`, `for_rows_in`, `for_rows_keyed`,
+`rows_of`, `filter_eq`) and its lookups' matches (`read_matches`) read each row through its document's directory
+row (`Docs::read`, a `Doc`), as its point reads do: a row is its view's read of the entry and the tape, the
+kernels' reads' twins. The walk over the projection (`each_row_projected`) is left for the rows with no tape read
+(`views.refused.*`, counted). A lookup still finds its rows by the projection's rank index and granule table (in the
+batch's block): only the columns are read through the directory. `documents_of` reads the keys from the directory
+and the file from the document's input, so no document is made for them.
+
+**Step 4, the host structures (2026-11-21).** Each one of the table goes with its last reader, or moves into the
+batch's block:
+- `made::Docs::tags`: a document's tag is its tape's (`Facts::tag`, read from its input).
+- `made::Docs::given`: each document's counts as the documents' table gave them are written once beside the
+  directory, in the batch's block (`made::directory`, `[nodes, fielded, siblings, places, 1]` a row, zeros where
+  none was given).
+- `Projected`'s `key`, `file` and `tag`: a projection's entry (`ViewDoc`) is made in its block as the projection is,
+  with its key, file and tag; `Projected::key` and `file` read it, and `tag` is its tape's. The views' reads fill in
+  the rest of the same entry on the first read (`ViewEntry::new`), once: the layered directory (`views_over`) names
+  the same entry, where it made a second one before.
+- `of_tag`, `programs`: the batch's documents by tag (`by_tag`, `tag_at`) and its programs by file are `Cells` in
+  the batch's block.
+- `kinds` (`KindRows`): the `node` view's index by kind is `Cells` in the batch's block (its keys, starts and
+  matches), sorted in scratch where it is made.
+- `given_rows`: the families' relations' kept counts are a table in the batch's block, one slot a relation, by
+  family and then relation.
+
+Left of the table: `made::Docs::slots` (each document's input and its projection, made on its first read),
+`Shared` (`strings`, `at`, `atoms`), the batch's strings by index, whose home is the atoms directory, and the
+layered directory (`views_over`), still made whole from its batches' rows rather than written through each batch's
+reads layer.
+
+Cold hogql gives 1,629 findings at 90.2 B and 89.9 B instructions (91.3 B and 91.3 B before; this Mac at a load of
+about 12), and its profile counts no `views.refused.*`: every scan's rows are read through the directory. On
+Metal, the M3 passes `the_kernels_directory_searches_are_the_hosts`, `a_views_index_is_in_its_block_for_every_thread`,
+`views_made_on_the_device_are_the_hosts_rows` and `a_view_made_on_the_device_is_made_at_each_stratum`.
+
 ## What it replaces
 
 - **0289 §1–2.** The chunk block holds the placed tapes, the line starts and the granule tables. It holds no node

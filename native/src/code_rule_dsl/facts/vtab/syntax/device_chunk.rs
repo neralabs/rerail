@@ -276,7 +276,7 @@ fn docs_of(batch: &Batch, past: [u32; rerail_clif::view_reads::ROWS]) -> Vec<Dir
         .docs
         .iter()
         .enumerate()
-        .map(|(i, p)| DirDoc { p, dialect: &batch.dialects[p.tag], rows: std::array::from_fn(|k| past[k] + firsts[k].at(i) as u32) })
+        .map(|(i, p)| DirDoc { p, dialect: &batch.dialects[p.tag()], rows: std::array::from_fn(|k| past[k] + firsts[k].at(i) as u32) })
         .collect()
 }
 
@@ -344,7 +344,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>], ends: [u32; rerail_clif::view_
         if !Arc::ptr_eq(p.block(), b) {
             return refused("views.refused.block");
         }
-        let mut row = ViewRow { key: p.key, rows: first_rows, ..Default::default() };
+        let mut row = ViewRow { key: p.key(), rows: first_rows, ..Default::default() };
         if locs && p.locs() > 0 && super::view_docs::ViewEntry::locs(b, p).is_none() {
             // Why, by the guest's placement where it has one.
             let why = match p.extra.as_ref().and_then(|x| x.host.as_ref()).map(|(_, place)| place) {
@@ -559,9 +559,9 @@ fn build_in(batch: &Batch) -> Chunk {
         // SAFETY: entry `i` of the table just allocated; every span set below points into `b`.
         unsafe {
             let d = docs.add(i);
-            (*d).key = p.key;
-            (*d).file = p.file;
-            (*d).tag = u32::from(p.tag);
+            (*d).key = p.key();
+            (*d).file = p.file();
+            (*d).tag = u32::from(p.tag());
             (*d).nodes = p.len();
             (*d).node_row = batch.nodes().at(i) as u32;
             (*d).child_row = batch.firsts(View::Child).at(i) as u32;
@@ -598,7 +598,7 @@ fn build_in(batch: &Batch) -> Chunk {
             made(&b, &raw const (*d).end, n, |l| f.end(ids(l)));
             made(&b, &raw const (*d).kind, n, |l| f.kind(ids(l)));
             made(&b, &raw const (*d).field, n, |l| f.field(ids(l)));
-            match canon.get(&p.tag) {
+            match canon.get(&p.tag()) {
                 Some(&(c, n)) => Span::set(&raw const (*d).canonical, c, n),
                 None => Span::set(&raw const (*d).canonical, std::ptr::null::<u16>(), 0),
             }

@@ -191,7 +191,7 @@ impl Within {
     /// tree's containment).
     fn set<T: Tape>(&self, doc: usize, t: &T) -> &CodeSet {
         self.sets[doc].get_or_init(|| {
-            let tag = self.batch.docs[doc].tag;
+            let tag = self.batch.docs[doc].tag();
             let key = (if self.mode == Mode::Tree { u16::MAX } else { u16::from(tag) }, std::ptr::from_ref(t.table()) as usize);
             let mut shared = self.shared.lock();
             shared
@@ -529,7 +529,7 @@ impl Within {
         // The table's slot is the atom's place in its stride: ERROR's atom is slot 0 (`kind_atom`), as on the tape and
         // in the device's bits. `kind_code` gives ERROR as `u16::MAX`, past the table, which left it out of every set.
         let slot = p.facts.kind(p.node(local)) % crate::code_rule_dsl::facts::core::KIND_STRIDE;
-        self.members.get(&p.tag).is_some_and(|t| t.get(slot as usize).is_some_and(|&m| m))
+        self.members.get(&p.tag()).is_some_and(|t| t.get(slot as usize).is_some_and(|&m| m))
     }
 
     /// The document and local node of node row `row`.
@@ -949,7 +949,7 @@ impl Source for Within {
             let rows = self.solved_rows();
             for r in 0..rows.len() {
                 let id = rows.get(r, column.min(1));
-                let key = self.batch.node(id, &mut memo).map_or(0, |(doc, _)| self.batch.docs[doc].key);
+                let key = self.batch.node(id, &mut memo).map_or(0, |(doc, _)| self.batch.docs[doc].key());
                 each(r as usize, if key == 0 { id } else { i64::from(key) });
             }
             return;
@@ -959,7 +959,7 @@ impl Source for Within {
             let node = if column == 0 { (pair >> 32) as usize } else { (pair & 0xffff_ffff) as usize };
             let p = self.batch.locate(View::Node, node, &mut memo).0;
             // A document keyed 0 has ids below `1 << 32`, each its own "document" (`memo::document_of`).
-            each(r, if p.key == 0 { self.value(r, column) } else { i64::from(p.key) });
+            each(r, if p.key() == 0 { self.value(r, column) } else { i64::from(p.key()) });
         }
     }
     fn value(&self, row: usize, column: usize) -> i64 {

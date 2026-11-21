@@ -29,17 +29,20 @@ pub(super) fn view_counts(p: &Projected) -> ViewCounts {
 /// `block`: `n` rows, each its document's key, `keys` in order; the first rows are written when counted
 /// (`Batch::firsts`), and each document's reads layer on its first read (`Docs::reads`). Its homes are fixed: row
 /// `i`'s tape in home `2i`, its lines in `2i + 1`, the 16z cache in `2n` (`ViewDir::cache` is `2n + 1` once it is
-/// made). Its offset in the block.
-pub(super) fn directory(block: &Block, keys: impl Iterator<Item = u32>, n: usize) -> usize {
+/// made). Beside it, each document's views' counts as the documents' table gave them (`Given`, `[counts, 1]`, or
+/// zeros where none was given). Its offset in the block, and the given counts'.
+pub(super) fn directory(block: &Block, docs: impl Iterator<Item = (u32, Option<ViewCounts>)>, n: usize) -> (usize, usize) {
     use rerail_clif::view_reads::{ViewDir, ViewHome, ViewRow};
     let rows: *mut ViewRow = block.alloc_t(n.max(1));
+    let given: *mut Given = block.alloc_t(n.max(1));
     let homes: *mut ViewHome = block.alloc_t(2 * n + 1);
     let dir: *mut ViewDir = block.alloc_t(1);
     let mut k = 0;
-    for key in keys.take(n) {
-        // SAFETY: row `k` of the rows just allocated in `block`, and its two homes.
+    for (key, counts) in docs.take(n) {
+        // SAFETY: row `k` of the rows and the given counts just allocated in `block`, and its two homes.
         unsafe {
             rows.add(k).write(ViewRow { key, homes: [2 * k as u32, 2 * k as u32 + 1], ..Default::default() });
+            given.add(k).write(counts.map_or([0; 5], |[a, b, c, d]| [a, b, c, d, 1]));
             homes.add(2 * k).write(ViewHome::default());
             homes.add(2 * k + 1).write(ViewHome::default());
         }
@@ -53,8 +56,11 @@ pub(super) fn directory(block: &Block, keys: impl Iterator<Item = u32>, n: usize
     unsafe {
         dir.write(ViewDir { at: at as u64, ndocs: n as u32, nhomes: 2 * n as u32 + 1, rows: block.offset_of(rows) as u64, homes: block.offset_of(homes) as u64, ..Default::default() })
     };
-    at
+    (at, block.offset_of(given))
 }
+
+/// A document's views' counts as given (`directory`): the counts, then 1 where given.
+type Given = [u32; 5];
 
 /// A batch's documents (decision 0494): each one's projection made on its first read; its key and tag known before.
 pub struct Docs {
@@ -63,9 +69,10 @@ pub struct Docs {
     /// The views' directory's offset in the batch's block (`view_reads::ViewDir`, decision 0353 step 3 on the CPU):
     /// its search layer, each document's key from the start and its first rows once counted (`Batch::firsts`).
     dir: usize,
-    tags: Vec<u8>,
-    /// Each document's views' counts, where given (the documents' table's).
-    given: Vec<Option<ViewCounts>>,
+    /// Each document's views' counts, where given (the documents' table's): their offset in the batch's block
+    /// (`directory`), and whether every one was.
+    given: usize,
+    given_all: bool,
     context: Context,
     /// How many projections are made (R2's tests read it).
     made: AtomicUsize,
@@ -103,48 +110,51 @@ pub(super) struct Context {
 impl Docs {
     /// `documents`, sorted by key and distinct, with the views' counts `given` of some, by key.
     pub(super) fn new(documents: Vec<Document>, context: Context, given: &HashMap<u32, ViewCounts>) -> Self {
-        let tags = documents.iter().map(|d| crate::code_rule_dsl::facts::core::facts_tag(&d.facts)).collect();
-        let given = documents.iter().map(|d| given.get(&d.key).copied()).collect();
-        let dir = directory(&context.block, documents.iter().map(|d| d.key), documents.len());
+        let given_all = !documents.is_empty() && documents.iter().all(|d| given.contains_key(&d.key));
+        let (dir, given) = directory(&context.block, documents.iter().map(|d| (d.key, given.get(&d.key).copied())), documents.len());
         let slots: Vec<Arc<Slot>> = documents.into_iter().map(|input| Arc::new(Slot { input, made: OnceLock::new() })).collect();
         let layer = reads::Layer::new(slots.len());
-        Self { slots, dir, tags, given, context, made: AtomicUsize::new(0), layer }
+        Self { slots, dir, given, given_all, context, made: AtomicUsize::new(0), layer }
     }
     /// `prior`'s documents and `documents` (sorted by key, none of `prior`'s), in key order: `prior`'s shared, as
     /// made there (decision 0431 §6), `documents` unmade, with the views' counts `given` of some. Each one's index here
     /// is returned for `prior`'s, in its order.
     pub(super) fn grown(prior: &Docs, documents: Vec<Document>, context: Context, given: &HashMap<u32, ViewCounts>) -> (Self, Vec<usize>) {
-        let new_tags: Vec<u8> = documents.iter().map(|d| crate::code_rule_dsl::facts::core::facts_tag(&d.facts)).collect();
-        let new_given: Vec<Option<ViewCounts>> = documents.iter().map(|d| given.get(&d.key).copied()).collect();
         let new_slots: Vec<Arc<Slot>> = documents.into_iter().map(|input| Arc::new(Slot { input, made: OnceLock::new() })).collect();
         let n = prior.slots.len() + new_slots.len();
-        let (mut slots, mut tags, mut given, mut at) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(prior.slots.len()));
+        let (mut slots, mut counts, mut at) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(prior.slots.len()));
         let (mut i, mut j) = (0, 0);
         while i < prior.slots.len() || j < new_slots.len() {
             if j == new_slots.len() || (i < prior.slots.len() && prior.key(i) < new_slots[j].input.key) {
                 at.push(slots.len());
                 slots.push(Arc::clone(&prior.slots[i]));
-                tags.push(prior.tags[i]);
-                given.push(prior.given[i]);
+                counts.push(prior.given(i));
                 i += 1;
             } else {
                 slots.push(Arc::clone(&new_slots[j]));
-                tags.push(new_tags[j]);
-                given.push(new_given[j]);
+                counts.push(given.get(&new_slots[j].input.key).copied());
                 j += 1;
             }
         }
-        let dir = directory(&context.block, slots.iter().map(|s| s.input.key), slots.len());
+        let given_all = !counts.is_empty() && counts.iter().all(Option::is_some);
+        let (dir, given) = directory(&context.block, slots.iter().map(|s| s.input.key).zip(counts), slots.len());
         let layer = reads::Layer::new(slots.len());
-        (Self { slots, dir, tags, given, context, made: AtomicUsize::new(0), layer }, at)
+        (Self { slots, dir, given, given_all, context, made: AtomicUsize::new(0), layer }, at)
     }
     /// Whether every document's views' counts were given: the views' row space is known with none made.
     pub fn given_all(&self) -> bool {
-        !self.given.is_empty() && self.given.iter().all(Option::is_some)
+        self.given_all
+    }
+    /// Document `i`'s views' counts as the documents' table gave them, in the batch's block (`directory`).
+    fn given(&self, i: usize) -> Option<ViewCounts> {
+        assert!(i < self.slots.len(), "document {i} of {}", self.slots.len());
+        // SAFETY: the given counts `directory` wrote in the batch's block, which the context holds; `i` is one of its.
+        let [a, b, c, d, given] = unsafe { self.context.block.ptr::<Given>(self.given).add(i).read() };
+        (given != 0).then_some([a, b, c, d])
     }
     /// Document `i`'s views' counts: those given, else its projection's (made if it is not).
     pub fn counts(&self, i: usize) -> ViewCounts {
-        match (self.slots[i].made.get(), self.given[i]) {
+        match (self.slots[i].made.get(), self.given(i)) {
             (Some(m), _) => view_counts(&m.p),
             (None, Some(c)) => c,
             (None, None) => view_counts(&self.made(i).p),
@@ -185,7 +195,7 @@ impl Docs {
     }
     /// Document `i`'s tape tag (`Facts::tag`), made or not.
     pub fn tag(&self, i: usize) -> u8 {
-        self.tags[i]
+        crate::code_rule_dsl::facts::core::facts_tag(&self.slots[i].input.facts)
     }
     /// The index of the document of key `key`.
     pub fn position(&self, key: u32) -> Option<usize> {
@@ -235,7 +245,7 @@ impl Docs {
             self.made.fetch_add(1, Ordering::Relaxed);
             let made = self.project(i);
             // Its counts as given (the documents' table's): the views' rows were placed by them.
-            if let Some(given) = self.given[i]
+            if let Some(given) = self.given(i)
                 && given != view_counts(&made.p)
             {
                 self.fail(format!(
@@ -253,7 +263,7 @@ impl Docs {
         let projection = &*self.context.projection;
         let shape = projection.shape;
         let core = shape == Shape::Core;
-        let tag = self.tags[i];
+        let tag = self.tag(i);
         // A text-only document has no dialect, and no node.
         let dialect = if tag == TEXT { None } else { self.context.dialects.get(tag) };
         // `core.rerail`: a document that does not parse is withheld from the policy (no facts) but its `doc`, path and
@@ -278,7 +288,7 @@ impl Docs {
         // the eager batch hands a file the lines a program of it built first).
         let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, None, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
         // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
-        p.file = Guest::file_key(d.guest.as_deref(), d.key);
+        p.set_file(Guest::file_key(d.guest.as_deref(), d.key));
         drop(new_span);
         // A program that reads `end_point` has each node's end point among the positions, after the lines.
         let nodes = p.len();
