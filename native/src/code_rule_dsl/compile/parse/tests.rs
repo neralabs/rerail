@@ -217,7 +217,7 @@ fn parse_rules_are_checked() {
         ),
         (
             json!({ "parse": { "grammar": "yaml", "kind": "text" } }),
-            "/clauses/0/forbid/ast/rule/parse/grammar: `yaml` is not a grammar; expected one of percentFormat, identifierWords, pythonFString, braceFormat, annotation, eslintDirective, printfFormat, scanfFormat, phpDoc, rustFormat, testChars",
+            "/clauses/0/forbid/ast/rule/parse/grammar: `yaml` is not a grammar; expected one of percentFormat, identifierWords, pythonFString, braceFormat, annotation, eslintDirective, printfFormat, scanfFormat, phpDoc, rustFormat, regex, testChars",
         ),
         (
             json!({ "parse": { "grammar": "ecmaRegex", "kind": "text" } }),

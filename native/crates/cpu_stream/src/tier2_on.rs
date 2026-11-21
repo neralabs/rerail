@@ -1,9 +1,9 @@
-//! Tier 2 on tier 1's buffers as the Metal backend left them: the compiled words (the compiler
-//! crate's `native_cpu_stream`) read a file's bytes, records (positions and codes), mask words
-//! and totals in the device's shared memory, where tier 1 wrote them.
+//! Tier 2 on tier 1's buffers as the Metal backend left them (`rerail_metal::block_program`): the compiled words
+//! (`native_cpu_stream`) read a file's bytes, records (positions and codes), mask words and totals in the device's
+//! shared memory, where tier 1 wrote them.
 
-use crate::block_program::serial::Resident;
-use rerail_compiler::native_cpu_stream::{CompiledStream, Parser, Tier1View};
+use rerail_metal::block_program::serial::Resident;
+use crate::native_cpu_stream::{CompiledStream, Parser, Tier1View};
 use rerail_compiler::stream::Refused;
 
 /// File `i`'s tape (the engine's bytes) from tier 1's buffers as the device left them
@@ -53,7 +53,7 @@ fn image_with(parser: &Parser, t2: &CompiledStream, run: &Resident, i: usize) ->
     };
     let mut tape = t2.tape(starts.1);
     // The code counts on the program's padding (`BlockNative::pad`): the slab's margin is its.
-    assert!(parser.tier1.pad <= crate::slabs::SOURCE_MARGIN, "a program padded past the slab's margin");
+    assert!(parser.tier1.pad <= rerail_metal::slabs::SOURCE_MARGIN, "a program padded past the slab's margin");
     // SAFETY: as above; the source's bytes have `SOURCE_MARGIN` zero bytes after them in its
     // slab, the program's padding at least; the tape is sized for the stream.
     let r = unsafe { t2.call(source.slab.host().add(source.offset), source.len, view, &mut tape) };

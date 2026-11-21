@@ -1,0 +1,8 @@
+[package]
+name = "rerail-registry"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Registries of an abstraction's providers, filled as the program loads and sealed before any run (docs/final-shape/proposals/crate-split/incremental-plan.md, §2)."
+
+[dependencies]

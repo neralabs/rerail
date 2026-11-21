@@ -818,7 +818,7 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
             NODE_SUPER => nodes.last_mut().expect("a node before its supertype").supers.push(operand),
             PUSH => {
                 // Calls nested at most `DEPTH` deep, as tier 2's runs and simdjson's `DEFAULT_MAX_DEPTH` (0537).
-                if returns.len() >= crate::native_cpu_stream::DEPTH as usize {
+                if returns.len() >= DEPTH as usize {
                     return refuse!(pc - 1, "calls nested past the depth");
                 }
                 returns.push((operand, word, flags));
@@ -1234,3 +1234,8 @@ pub fn validate_rules(program: &Words) -> Result<(), Error> {
     }
     Ok(())
 }
+
+/// Native calls nested at most this deep (`Cut::calls`): past it, the file is refused (to the
+/// fallback), as the machine's stack is the calls'. A rule's frame is at most about 350 bytes
+/// on `.rerail`: some 360 KB at the most.
+pub const DEPTH: i64 = 1024;

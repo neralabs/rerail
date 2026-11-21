@@ -38,7 +38,7 @@ DESCRIPTIONS = {
     'rerail-rr': 'The .rerail front end: parsing to programs, magic sets, lowering, printing, checking.',
     'rerail-logic': 'The Datalog engine: plans, the native executor, SQL, typing, the waves core, the solver device interface.',
     'rerail-sessions': "The SQL executor's sessions.",
-    'rerail-w': "W: the matcher, scopes, values, suppressions, demand and the workspace's model.",
+    'rerail-classic': "W: the matcher, scopes, values, suppressions, demand and the workspace's model.",
     'rerail-transducer': "The transducer: the CPU interpreter, Cranelift, Bitlex, the batch ABI, the matcher device interface.",
     'rerail-device-metal': 'Metal, as the logic\'s and the transducer\'s device (macOS only; registered by the engine).',
     'rerail-lang-python': 'Python: its facts, scopes, values and suppressions.',

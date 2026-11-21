@@ -7,36 +7,11 @@ use crate::content_store::Binding;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
-fn root() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl")
-}
+use super::fixtures::{corpus, documents, facts, root};
+
 fn temp(what: &str) -> PathBuf {
     let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
     std::env::temp_dir().join(format!("rerail-vtab-{what}-{}-{nonce}.sqlite", std::process::id()))
-}
-
-/// CPython 3.13's `fnmatch`, `ftplib`, `glob`, `json/` and `shlex`: the planner fixture's corpus, in its `doc` order.
-fn corpus() -> Vec<(String, String)> {
-    let raw = zstd::decode_all(std::fs::File::open(root().join("facts/vtab/golden/corpus.json.zst")).unwrap()).unwrap();
-    serde_json::from_slice(&raw).unwrap()
-}
-fn facts(path: &str, source: &str) -> Arc<Facts> {
-    let file = FileInput::new(path.to_owned(), "python".to_owned(), Arc::new(source.to_owned()), None, None, "core").unwrap();
-    match core::build(&file).unwrap() {
-        Built::Facts(f) => Arc::new(f),
-        Built::Unparsed => panic!("{path} did not parse"),
-    }
-}
-/// The corpus as a batch, document `d` keyed `d`.
-pub(in crate::code_rule_dsl) fn documents() -> Vec<Document> {
-    corpus()
-        .into_iter()
-        .enumerate()
-        .map(|(d, (path, source))| {
-            let facts = facts(&path, &source);
-            Document { key: d as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
-        })
-        .collect()
 }
 
 /// How a column's integers decode to T's text.
@@ -1117,7 +1092,7 @@ fn definition_slots_stay_below_the_span_bit() {
 fn span_ids_census() {
     use granules::ExtraSpan;
     // The data-layer pack's converted programs: pack test data (`npm run fixtures:pull`), not in git.
-    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
+    let pack = crate::source_tree::native().join("../packs/data-layer/upstream/lint/authored/packs/data-layer/candidates/datalog");
     assert!(pack.exists(), "{} is missing: pack test data is not in git: run `npm run fixtures:pull`", pack.display());
     let literal = regex::Regex::new(r#"(?:match_all|match_group|rx_span)\("((?:[^"\\]|\\.)*)""#).unwrap();
     let mut patterns: BTreeSet<String> = BTreeSet::new();
@@ -1710,7 +1685,7 @@ fn definition_ids_are_pinned() {
         return;
     }
     use sha2::{Digest, Sha256};
-    let ruff = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let ruff = crate::source_tree::native().join("../packs/python/upstream/ruff/fixtures");
     let mut files: Vec<(&str, String, String)> = [
         ("python", "a.py", "import os\nLIMIT = 3\n\ndef f(a):\n    return a + 1\n\n@dataclass\nclass C:\n    size: int = 0\n    def m(self, x):\n        return [x, x * 2]\n"),
         ("tsx", "a.tsx", "import React from 'react';\ntype Props = { title: string };\nexport const Header = ({ title }: Props) => <h1>{title}</h1>;\nexport function Footer() {\n  return <footer>ft</footer>;\n}\n"),

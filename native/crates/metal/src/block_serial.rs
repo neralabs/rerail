@@ -278,7 +278,7 @@ fn lanes_function(p: usize, native: &BlockNative, state: &State, levels: Option<
     }
     // The segment's count of each counted output (`counted_outputs`), for the positions' bases
     // and the totals.
-    // The totals' one count is every total's words OR-ed (`native_cpu_block::counted`).
+    // The totals' one count is every total's words OR-ed (`block_native::counted`).
     for (c, k) in counted_outputs(native).into_iter().enumerate() {
         let w = if c < native.extracts.len() { format!("ow{k}") } else { native.totals.iter().map(|t| format!("ow{t}")).collect::<Vec<_>>().join(" | ") };
         tail.push_str(&format!("  {{ const uint32_t n = ukl_sg_sum(ukl_popcount64({w}) __UKL_ARGS); if (l == 0u) counts[{c}u] = n; }}\n"));
@@ -1847,7 +1847,7 @@ fn group_levels(programs: &[&BlockNative]) -> std::collections::BTreeSet<usize> 
 
 /// The outputs counted per segment: the extracts', then one for all the totals (one flag).
 fn counted_outputs(native: &BlockNative) -> Vec<usize> {
-    rerail_compiler::native_cpu_block::counted(native)
+    rerail_compiler::block_native::counted(native)
 }
 
 /// Whether the exact scans are left to the runs to learn: no `RERAIL_SERIAL_EXACT`.
@@ -2315,7 +2315,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
         out_base += n.outputs.len() * blocks;
         // The extracts' positions, and with records a code a token after them.
         pos_base += (n.extracts.len() + usize::from(n.records.is_some())) * len.max(1);
-        tot_base += rerail_compiler::native_cpu_block::counted(n).len();
+        tot_base += rerail_compiler::block_native::counted(n).len();
     }
     let total = segs.len();
     let table = crate::pool::upload(&rows)?;

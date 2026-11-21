@@ -7,15 +7,18 @@ description = "Tier 2 for .rerail built ahead of time: the JIT's Cranelift IR as
 
 [features]
 # The test-only items of the crates below, for the tests above them (native/Cargo.toml, `test-hooks`).
-test-hooks = ["rerail-context/test-hooks", "rerail-compiler/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks"]
+test-hooks = ["rerail-context/test-hooks", "rerail-compiler/test-hooks", "rerail-bitlex/test-hooks", "rerail-cpu-block/test-hooks", "rerail-cpu-stream/test-hooks", "rerail-tape-format/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-rr-parser/test-hooks"]
 # The generated tiers: the build script writes the parser's code as Rust (about 700 KB) and this
 # crate compiles it. Off by default, so a workspace build or test leaves them out:
 # `cargo test -p rerail-rr-aot --features generated --profile profiling`.
-generated = ["dep:rerail-compiler", "dep:rerail-rr-parser", "dep:rerail-context"]
+generated = ["dep:rerail-compiler", "dep:rerail-cpu-stream", "dep:rerail-rr-parser", "dep:rerail-context"]
 
 [dependencies]
 rerail-context = { path = "../context" }
 rerail-compiler = { path = "../compiler" }
+rerail-bitlex = { path = "../bitlex" }
+rerail-cpu-block = { path = "../cpu_block" }
+rerail-cpu-stream = { path = "../cpu_stream" }
 rerail-rr-parser = { path = "../rr_parser" }
 rerail-rr-syntax = { path = "../rr_syntax" }
 # The language the format 16 source is generated for (`lang`, decision 0535).
@@ -24,6 +27,7 @@ rerail-tape-format = { path = "../tape_format" }
 [build-dependencies]
 rerail-context = { path = "../context", optional = true }
 rerail-compiler = { path = "../compiler", optional = true }
+rerail-cpu-stream = { path = "../cpu_stream", optional = true }
 rerail-rr-parser = { path = "../rr_parser", optional = true }
 rerail-tape-format = { path = "../tape_format" }
 

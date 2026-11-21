@@ -1,7 +1,7 @@
 //! A migration tool, never an execution fallback. An unsupported clause refuses the whole candidate.
 //! Converted candidates still need the full original assertion suite before acceptance.
 use super::*;
-use crate::code_rule_dsl::{CodeRuleDslRuntime, model::{Anchor, ClauseKind, Query, Template, TemplatePart}};
+use crate::code_rule_dsl::{model::{Anchor, ClauseKind, Query, Template, TemplatePart}};
 
 pub(in crate::code_rule_dsl) fn policy(source: &str) -> Result<serde_json::Value, String> {
     let mut document: serde_json::Value = serde_json::from_str(source).map_err(|e| e.to_string())?;
@@ -19,7 +19,7 @@ pub(in crate::code_rule_dsl) fn policy(source: &str) -> Result<serde_json::Value
     if !reports {
         return Ok(serde_json::json!({"id": id, "status": "needs-manual-port", "gaps": gaps, "program": null}));
     }
-    let compiled = CodeRuleDslRuntime::compile(document.to_string(), "json".to_owned(), crate::code_rule_dsl::tools::CAPABILITIES.to_owned()).map_err(|e| e.reason)?;
+    let compiled = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", crate::code_rule_dsl::tools::CAPABILITIES).map_err(|e| e.reason)?;
     let dialect = if id.contains("rust-sql") { GrammarDialect::Rust } else { GrammarDialect::Python };
     let mut emitter = Emitter::new(dialect);
     let mut findings = Vec::new();

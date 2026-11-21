@@ -10091,6 +10091,23 @@ Found 2026-11-20, reproducing Q361 on the 50 data-layer files with the 57 rule f
   answers it (the native addon's), and what main's tests (which count Git processes through `runGit`) assert of it.
 - **Done when**: the scan and the catalog's placement start no Git process, their tests pass on the reads.
 
+### Q460. Roll-up 39 (engine-crating a422e17a72 onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-39-engine-crating.md`:
+
+- **Theirs' crate split taken whole**: boot, the registry, the six test crates and the compiler's five crates.
+- **One fix made twice**: `Batch::ensure` claims under the lock it found under. One body; theirs' comment.
+- **A semi-join's kept statistics**:
+  - Ours' t51 item 2: per document in the documents' table, under `held_stats_name`.
+  - Theirs' merge had added a second store beside it (`retain::semijoin_stats`). That store, its reads, its writes and
+    its encoding's test are gone, because two kept forms for one job is the split t51 item 2 removed.
+- **Metal's block programs**: ours' split of `run_batch` (t51 item 6), naming the front end's paths (`block_native`,
+  `lane_plan`), since theirs' step 4 has Metal read only the front end.
+- **Fixed on the way**: clippy over the whole workspace (16 findings, json_lean's `walk` among them), and the edit
+  bench's BSD-only `time`.
+- **Measured** on spark2: corpus0 under main's 49 bandit rules, cold 29.75–30.08 s CPU before and 29.74–30.18 s after;
+  warm and an append equal; the same findings.
+
 ---
 
 > **Read this first. This queue is not a place to put work.** Recording something here as open is almost never

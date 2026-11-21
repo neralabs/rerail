@@ -339,7 +339,7 @@ fn a_probe_is_planned_when_its_delta_first_has_rows_child() {
 }
 
 fn root() -> std::path::PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/logic")
+    crate::source_tree::native().join("src/code_rule_dsl/logic")
 }
 
 /// T's expected rows of `rel` (its golden `<rel>.csv`, a fixture T wrote): its lines, as T shows its rows. A fixture
@@ -595,7 +595,7 @@ fn t_programs_over_atoms_plan_and_run_like_t() {
     let store = ContentStore::open(&path).unwrap();
     let db = Connection::open(&path).unwrap();
     let modules = Modules::default();
-    for (name, source) in syntax::sources(&store, syntax::tests::documents()).unwrap() {
+    for (name, source) in syntax::sources(&store, syntax::fixtures::documents()).unwrap() {
         modules.bind(&db, name, source).unwrap();
     }
     let t = Connection::open_in_memory().unwrap();
@@ -649,7 +649,7 @@ fn t_programs_as_wave_programs_give_run_atoms_outputs() {
     use crate::content_store::Binding;
     let path = crate::code_rule_dsl::fixtures::temp();
     let store = ContentStore::open(&path).unwrap();
-    let docs = syntax::tests::documents();
+    let docs = syntax::fixtures::documents();
     store.bind_names(&docs.iter().map(|d| Binding { name: d.core.clone(), digest: d.digest }).collect::<Vec<_>>()).unwrap();
     let db = Connection::open(&path).unwrap();
     let modules = Modules::default();
@@ -742,7 +742,7 @@ fn t_programs_with_the_transducers_nearest_derive_t_outputs() {
             assert!(!sets.is_empty(), "{name} reads nearest");
             let placed = lowered.placed().unwrap();
             assert!(!placed.v.rules().flat_map(|r| r.body()).any(|l| matches!(l.view(), crate::code_rule_dsl::logic::program_image::Lit::Nearest { .. })));
-            for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
+            for (rel, source) in syntax::with_nearest(&store, syntax::fixtures::documents(), &sets, &Default::default(), binding, &Default::default()).unwrap() {
                 if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                     db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                     for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {
@@ -786,7 +786,7 @@ fn t_programs_run_natively_over_atoms_like_t() {
     let mut ran = BTreeSet::new();
     for name in ["workload", "workload_demand", "calls"] {
         let (lowered, sets) = lowered_with_nearest(program(name), python, &mut |s| store.intern_atoms(s).map_err(|e| Error::Plan(e.to_string())));
-        for (rel, source) in syntax::with_nearest(&store, syntax::tests::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
+        for (rel, source) in syntax::with_nearest(&store, syntax::fixtures::documents(), &sets, &Default::default(), Binding::Cpu, &Default::default()).unwrap() {
             if rel.starts_with(crate::code_rule_dsl::logic::front::NEAREST) {
                 db.execute("INSERT OR REPLACE INTO s.stat_meta VALUES (?1, ?2)", rusqlite::params![format!("rows.{rel}"), source.len() as i64]).unwrap();
                 for (col, rows, ndv, sq, sqd) in syntax::statistics(source.as_ref()) {

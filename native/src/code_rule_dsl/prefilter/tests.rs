@@ -2,7 +2,7 @@ use super::*;
 use crate::code_rule_dsl::language::GrammarDialect;
 use crate::content_store::prefilter::TOO_BIG;
 
-pub(in crate::code_rule_dsl) use crate::code_rule_dsl::fixtures::{document, open, temp};
+pub(in crate::code_rule_dsl) use super::fixtures::{document, matcher, open, put, temp};
 
 /// Removes the stores `temp` made for processes that have exited.
 fn sweep() {
@@ -25,39 +25,10 @@ fn sweep() {
     }
 }
 
-/// Stores `source` and its tape, publishes the tape's prefilter rows, and returns both.
-pub(in crate::code_rule_dsl) fn put(store: &ContentStore, source: &str, lang: GrammarDialect) -> (TapeId, TapeDoc) {
-    let (doc, bytes) = document(source, lang);
-    let grammar = i64::from(language::tape_tag(lang).unwrap());
-    let source_id = store.put_source(source.as_bytes(), &[]).unwrap();
-    let tape = store.put_tape(source_id, grammar, 1, i64::from(crate::code_rule_dsl::tape::formats::stored_version()), &bytes).unwrap();
-    publish(store, &[tape], std::slice::from_ref(&doc)).unwrap();
-    (tape, doc)
-}
-
 fn count(store: &ContentStore, sql: &str) -> i64 {
     store.query_rows(sql, [], |r| r.get(0)).unwrap()[0]
 }
 
-/// A rule's compiled matcher, outside any rule document.
-pub(in crate::code_rule_dsl) fn matcher(rule: &serde_json::Value, lang: GrammarDialect) -> crate::code_rule_dsl::matcher::AstMatcher {
-    let ids = std::collections::BTreeMap::new();
-    let utils = crate::code_rule_dsl::compile::UtilScope {
-        table: std::sync::Weak::new(),
-        ids: &ids,
-        options: None,
-        python: None,
-        transform: None,
-        conflicts: None,
-        captures: Default::default(),
-        calls: None,
-        instances: None,
-        documents: None,
-        side: crate::code_rule_dsl::compile::documents::Side::Host,
-        patterns: None,
-    };
-    crate::code_rule_dsl::compile::compile_ast_rule(rule, lang, "test/rule", &mut Vec::new(), &utils).unwrap()
-}
 
 #[test]
 fn terms_are_case_exact_grammar_agnostic_and_die_with_their_tape() {
@@ -189,7 +160,7 @@ fn kind_positions_are_every_preorder_of_the_kind_and_feed_kind_frequencies() {
 fn no_relation_stores_a_row_per_node() {
     let store = open(&temp());
     let mut nodes = 0_usize;
-    let here = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("src/code_rule_dsl/prefilter");
+    let here = crate::source_tree::native().join("src/code_rule_dsl/prefilter");
     let mut files = std::fs::read_dir(&here).unwrap().map(|entry| entry.unwrap().path()).filter(|path| path.extension().is_some_and(|e| e == "rs")).collect::<Vec<_>>();
     files.sort();
     for path in &files {

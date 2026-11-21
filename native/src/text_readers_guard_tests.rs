@@ -12,8 +12,7 @@ use crate::executors_guard_tests::{product_lines, repo, sources};
 const SPLITS: [&str; 7] = ["split('\\t')", "split_once('\\t')", "rsplit_once('\\t')", "rsplit('\\t')", "split(\"\\t\")", "split_once(\"\\t\")", ", '\\t')"];
 
 /// The files that may split on a tab, how many times, and why.
-const ALLOWED: [(&str, usize, &str); 8] = [
-    ("native/src/code_rule_dsl/logic/strings/git.rs", 1, "a consulted read's key (repository root, revision), made in memory and stored length-prefixed"),
+const ALLOWED: [(&str, usize, &str); 7] = [
     ("native/src/code_rule_dsl/logic/plan/corpus/inputs.rs", 2, "a `.input` file's text (a repository file the rule declares as input), and a consulted read's key (revision, path)"),
     ("native/src/code_rule_dsl/logic/plan/coverage.rs", 2, "the coverage ledger, a hand-kept document: its pack gaps, and its cells compared without a device"),
     ("native/src/code_rule_dsl/typing/rounds.rs", 8, "the typing spike's fact dumps (T's research inputs), not a run's outputs"),

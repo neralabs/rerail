@@ -145,7 +145,7 @@ struct FileRow {
     pos_base: u32,
     /// The batch's slab binding the file's bytes are in (`SLAB_BUFFERS`).
     slab: u32,
-    /// Where the file's counts start (one per counted output: `native_cpu_block::counted`).
+    /// Where the file's counts start (one per counted output: `block_native::counted`).
     tot_base: u32,
     /// A program in passes (`native_ir::Passes`, the forward carry only): where the file's slot
     /// words start in the output buffer, block `b`'s slot `k` at `slot_base + b * slots + k`.
@@ -347,7 +347,7 @@ impl BatchForms {
     }
 }
 
-/// The file table, each group's file, each program's counted outputs (`native_cpu_block::counted`),
+/// The file table, each group's file, each program's counted outputs (`block_native::counted`),
 /// and the batch's groups and bases past its last file.
 struct FileTable {
     rows: Vec<FileRow>,
@@ -374,7 +374,7 @@ impl FileTable {
         let span = width.bytes() * GROUP;
         // The file table, and each base after the files before.
         let (mut group0, mut out_base, mut state_base, mut halo_base, mut ext_base, mut pos_base, mut tot_base) = (0, 0, 0, 0, 0, 0, 0);
-        let counted: Vec<Vec<usize>> = forms.forms.iter().map(rerail_compiler::native_cpu_block::counted).collect();
+        let counted: Vec<Vec<usize>> = forms.forms.iter().map(rerail_compiler::block_native::counted).collect();
         let mut rows = Vec::with_capacity(files.len());
         let mut group_file: Vec<u32> = Vec::new();
         for (i, file) in files.iter().enumerate() {
@@ -549,7 +549,7 @@ fn program_row(n: &BlockNative, counted: &[usize], steps: &mut Vec<[u32; 4]>, ou
         out0,
         outs: fit(n.outputs.len())?,
         ext0,
-        exts: fit(rerail_compiler::native_cpu_block::counted(n).len())?,
+        exts: fit(rerail_compiler::block_native::counted(n).len())?,
         pad: [0; 2],
     })
 }
@@ -1233,7 +1233,7 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
     // A total is a flag (`BlockProgram::totals`): a group with a bit sets it, in any order and
     // again on a relaunch, so it waits on no other group.
     let extracts = native.extracts.len();
-    // All of them into one flag, the count after the extracts' (`native_cpu_block::counted`).
+    // All of them into one flag, the count after the extracts' (`block_native::counted`).
     for &k in &native.totals {
         out.push_str(&format!("  totals_or(SEL(BMC(0), stream_cut(v{}, gl, len, {}u), keep), l, counts + f.tot_base + {extracts}u __UKL_ARGS);\n", native.outputs[k], native.output_delays[k]));
     }
@@ -1260,11 +1260,11 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
 
 /// A program's form in a full group: one past the file's first and inside the file, so that
 /// every `within` is all ones and the values the CPU's known bits find all zeros or all ones in
-/// a full block (`native_cpu_lanes::Plan::full`) are constants. Only those two: a lane word is
+/// a full block (`lane_plan::Plan::full`) are constants. Only those two: a lane word is
 /// narrower than a block, and a constant of both kinds is the same at every width. A carry
 /// (`toggle`, `escaped`, `fill`) is never folded: its look-back is the same in every body.
 fn full_form(native: &BlockNative) -> BlockNative {
-    let plan = rerail_compiler::native_cpu_lanes::Plan::of(native);
+    let plan = rerail_compiler::lane_plan::Plan::of(native);
     let mut form = native.clone();
     let members = group_members(native);
     for (at, inst) in form.insts.iter_mut().enumerate() {
@@ -1296,9 +1296,9 @@ fn group_members(native: &BlockNative) -> Vec<bool> {
 }
 
 /// A program's form in a full group of ASCII bytes: `full_form`, with each byte-local value known
-/// on ASCII bytes (`native_cpu_lanes::Plan::ascii`) a constant: a UTF-8 check's, say.
+/// on ASCII bytes (`lane_plan::Plan::ascii`) a constant: a UTF-8 check's, say.
 fn ascii_form(native: &BlockNative) -> BlockNative {
-    let plan = rerail_compiler::native_cpu_lanes::Plan::of(native);
+    let plan = rerail_compiler::lane_plan::Plan::of(native);
     let mut form = full_form(native);
     let members = group_members(native);
     for (at, inst) in form.insts.iter_mut().enumerate() {

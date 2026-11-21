@@ -605,8 +605,8 @@ impl Batch {
     pub(super) fn ensure(&self, want: &[usize]) {
         let me = std::thread::current().id();
         loop {
-            // What it needs is claimed under the lock it was found under: found, then claimed under a second lock, two
-            // reads found the same documents unclaimed, and the second made them too and set its group aside.
+            // What to make, and its claim, under one lock: a document another thread claims between the two would be
+            // made by both, and one group set aside.
             let (need, waits, claim) = {
                 let mut s = self.rows.state.lock();
                 let making = s.makers.contains(&me);

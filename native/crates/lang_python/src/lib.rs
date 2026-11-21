@@ -23,10 +23,10 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::build_ids;
     #[path = "calls"]
     pub mod calls {
-        pub use rerail_w::code_rule_dsl::calls::*;
+        pub use rerail_classic::code_rule_dsl::calls::*;
         #[path = "closure"]
         pub mod closure {
-            pub use rerail_w::code_rule_dsl::calls::closure::*;
+            pub use rerail_classic::code_rule_dsl::calls::closure::*;
             pub mod lang_python;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::calls::names::Name;
@@ -47,7 +47,7 @@ pub mod code_rule_dsl {
         // python_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
         #[path = "summary"]
         pub mod summary {
-            pub use rerail_w::code_rule_dsl::calls::summary::*;
+            pub use rerail_classic::code_rule_dsl::calls::summary::*;
             pub mod python;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::tree::Tree;
@@ -103,9 +103,9 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::language::adapter::pack as language_pack;
     }
     pub mod compile {
-        pub use rerail_w::code_rule_dsl::compile::*;
+        pub use rerail_classic::code_rule_dsl::compile::*;
         pub mod binds {
-            pub use rerail_w::code_rule_dsl::compile::binds::*;
+            pub use rerail_classic::code_rule_dsl::compile::binds::*;
             // ruff: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
             #[allow(unused_imports)]
             use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
@@ -135,7 +135,7 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
         pub mod format_args {
-            pub use rerail_w::code_rule_dsl::compile::format_args::*;
+            pub use rerail_classic::code_rule_dsl::compile::format_args::*;
             // ruff: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
             #[allow(unused_imports)]
             use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
@@ -165,7 +165,7 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
         pub mod parse {
-            pub use rerail_w::code_rule_dsl::compile::parse::*;
+            pub use rerail_classic::code_rule_dsl::compile::parse::*;
             // ruff: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
             #[allow(unused_imports)]
             use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
@@ -248,17 +248,17 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::language::adapter::pack as language_pack;
     }
     pub mod cpython;
-    pub use rerail_w::code_rule_dsl::crypto;
+    pub use rerail_classic::code_rule_dsl::crypto;
     #[path = "embed"]
     pub mod embed {
         pub use rerail_lang::code_rule_dsl::embed::*;
         pub mod call_argument;
     }
-    pub use rerail_w::code_rule_dsl::eval;
+    pub use rerail_classic::code_rule_dsl::eval;
     #[path = "facts"]
     pub mod facts {
         pub use rerail_facts::code_rule_dsl::facts::*;
-        pub use rerail_w::code_rule_dsl::facts::facts_a;
+        pub use rerail_classic::code_rule_dsl::facts::facts_a;
         #[path = "producers"]
         pub mod producers {
             pub use rerail_facts::code_rule_dsl::facts::producers::*;
@@ -268,7 +268,7 @@ pub mod code_rule_dsl {
         pub mod vtab {
             pub use rerail_facts::code_rule_dsl::facts::vtab::*;
             #[cfg(any(test, feature = "test-hooks"))]
-            pub use rerail_w::code_rule_dsl::facts::vtab::p_table;
+            pub use rerail_classic::code_rule_dsl::facts::vtab::p_table;
             pub mod python;
             #[path = "syntax"]
             pub mod syntax {
@@ -338,15 +338,15 @@ pub mod code_rule_dsl {
     }
     #[cfg_attr(any(test, feature = "test-hooks"), path = "findings")]
     pub mod findings {
-        pub use rerail_w::code_rule_dsl::findings::*;
+        pub use rerail_classic::code_rule_dsl::findings::*;
         #[cfg(any(test, feature = "test-hooks"))]
         #[path = "tests/async_reference.rs"]
         pub mod async_reference;
     }
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_lang::code_rule_dsl::fixtures;
-    pub use rerail_w::code_rule_dsl::hooks;
-    pub use rerail_w::code_rule_dsl::identifier;
+    pub use rerail_classic::code_rule_dsl::hooks;
+    pub use rerail_classic::code_rule_dsl::identifier;
     pub use rerail_lang::code_rule_dsl::json;
     pub use rerail_lang::code_rule_dsl::regexes;
     #[path = "language"]
@@ -354,10 +354,10 @@ pub mod code_rule_dsl {
         pub use rerail_lang::code_rule_dsl::language::*;
         #[path = "adapter"]
         pub mod adapter {
-            pub use rerail_w::code_rule_dsl::language::adapter::*;
+            pub use rerail_classic::code_rule_dsl::language::adapter::*;
             #[path = "arguments"]
             pub mod arguments {
-                pub use rerail_w::code_rule_dsl::language::adapter::arguments::*;
+                pub use rerail_classic::code_rule_dsl::language::adapter::arguments::*;
                 pub mod lang_python;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Refusal, Refused};
@@ -370,7 +370,7 @@ pub mod code_rule_dsl {
             }
             #[path = "calls"]
             pub mod calls {
-                pub use rerail_w::code_rule_dsl::language::adapter::calls::*;
+                pub use rerail_classic::code_rule_dsl::language::adapter::calls::*;
                 pub mod lang_python;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Refusal, Refused};
@@ -399,7 +399,7 @@ pub mod code_rule_dsl {
             }
             #[path = "format_args"]
             pub mod format_args {
-                pub use rerail_w::code_rule_dsl::language::adapter::format_args::*;
+                pub use rerail_classic::code_rule_dsl::language::adapter::format_args::*;
                 pub mod lang_python;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Refusal, Refused};
@@ -411,7 +411,7 @@ pub mod code_rule_dsl {
             pub mod python;
             #[path = "scope"]
             pub mod scope {
-                pub use rerail_w::code_rule_dsl::language::adapter::scope::*;
+                pub use rerail_classic::code_rule_dsl::language::adapter::scope::*;
                 pub mod lang_python;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Adapter, Refusal};
@@ -440,7 +440,7 @@ pub mod code_rule_dsl {
             }
             #[path = "syntax"]
             pub mod syntax {
-                pub use rerail_w::code_rule_dsl::language::adapter::syntax::*;
+                pub use rerail_classic::code_rule_dsl::language::adapter::syntax::*;
                 pub mod lang_python;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Adapter, Refusal};
@@ -465,7 +465,7 @@ pub mod code_rule_dsl {
             }
             #[path = "value"]
             pub mod value {
-                pub use rerail_w::code_rule_dsl::language::adapter::value::*;
+                pub use rerail_classic::code_rule_dsl::language::adapter::value::*;
                 pub mod lang_python;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::Refusal;
@@ -557,7 +557,7 @@ pub mod code_rule_dsl {
     }
     #[path = "literal"]
     pub mod literal {
-        pub use rerail_w::code_rule_dsl::literal::*;
+        pub use rerail_classic::code_rule_dsl::literal::*;
         pub mod annotation;
         pub mod brace;
         pub mod format_tape;
@@ -630,10 +630,10 @@ pub mod code_rule_dsl {
     }
     #[path = "matcher"]
     pub mod matcher {
-        pub use rerail_w::code_rule_dsl::matcher::*;
+        pub use rerail_classic::code_rule_dsl::matcher::*;
         #[path = "arguments"]
         pub mod arguments {
-            pub use rerail_w::code_rule_dsl::matcher::arguments::*;
+            pub use rerail_classic::code_rule_dsl::matcher::arguments::*;
             pub mod lang_python;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::tree::Tree;
@@ -662,7 +662,7 @@ pub mod code_rule_dsl {
         }
         #[path = "format_args"]
         pub mod format_args {
-            pub use rerail_w::code_rule_dsl::matcher::format_args::*;
+            pub use rerail_classic::code_rule_dsl::matcher::format_args::*;
             pub mod python;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::tree::Tree;
@@ -826,24 +826,24 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::matcher::term::{LanguageTerm, TermCompiler, install_terms};
     }
-    pub use rerail_w::code_rule_dsl::model;
+    pub use rerail_classic::code_rule_dsl::model;
     pub use rerail_lang::code_rule_dsl::module_path;
-    pub use rerail_w::code_rule_dsl::origin;
+    pub use rerail_classic::code_rule_dsl::origin;
     pub use rerail_prof::code_rule_dsl::phase_clock;
-    pub use rerail_w::code_rule_dsl::placement;
+    pub use rerail_classic::code_rule_dsl::placement;
     pub use rerail_facts::code_rule_dsl::producers;
     pub use rerail_prof::code_rule_dsl::prof;
     #[cfg(feature="code-rule-profile")]
-    pub use rerail_w::code_rule_dsl::profile;
-    pub use rerail_w::code_rule_dsl::query;
+    pub use rerail_classic::code_rule_dsl::profile;
+    pub use rerail_classic::code_rule_dsl::query;
     #[path = "residency"]
     pub mod residency {
         #[path = "admission"]
         pub mod admission {
-            pub use rerail_w::code_rule_dsl::residency::admission::*;
+            pub use rerail_classic::code_rule_dsl::residency::admission::*;
             #[path = "relational"]
             pub mod relational {
-                pub use rerail_w::code_rule_dsl::residency::admission::relational::*;
+                pub use rerail_classic::code_rule_dsl::residency::admission::relational::*;
                 pub mod python_ast;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::eval::{failure, violation_from_witness};
@@ -879,15 +879,15 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         pub(in crate::code_rule_dsl) use crate::code_rule_dsl::residency::admission::relational::ast_stage::install_ast_producer;
     }
-    pub use rerail_w::code_rule_dsl::resolution;
-    pub use rerail_w::code_rule_dsl::rule_api;
+    pub use rerail_classic::code_rule_dsl::resolution;
+    pub use rerail_classic::code_rule_dsl::rule_api;
     #[path = "scope"]
     pub mod scope {
-        pub use rerail_w::code_rule_dsl::scope::*;
+        pub use rerail_classic::code_rule_dsl::scope::*;
         pub mod python;
         #[path = "usage"]
         pub mod usage {
-            pub use rerail_w::code_rule_dsl::scope::usage::*;
+            pub use rerail_classic::code_rule_dsl::scope::usage::*;
             pub mod lang_python;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::scope::{
@@ -937,13 +937,13 @@ pub mod code_rule_dsl {
     }
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    pub use rerail_w::code_rule_dsl::soundness;
+    pub use rerail_classic::code_rule_dsl::soundness;
     pub use rerail_facts::code_rule_dsl::sql_profile;
     pub use rerail_facts::code_rule_dsl::sql_admission;
-    pub use rerail_w::code_rule_dsl::stats;
+    pub use rerail_classic::code_rule_dsl::stats;
     #[path = "suppress"]
     pub mod suppress {
-        pub use rerail_w::code_rule_dsl::suppress::*;
+        pub use rerail_classic::code_rule_dsl::suppress::*;
         pub mod noqa;
         pub mod nosec;
         // ruff: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
@@ -991,7 +991,7 @@ pub mod code_rule_dsl {
     }
     pub use rerail_facts::code_rule_dsl::text;
     pub mod transducer {
-        pub use rerail_w::code_rule_dsl::transducer::semantic_facts;
+        pub use rerail_classic::code_rule_dsl::transducer::semantic_facts;
         #[allow(unused_imports)]
         #[cfg(any(test, feature = "test-hooks"))]
         use crate::code_rule_dsl::tape::TapeDoc;
@@ -1017,7 +1017,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::tree;
     #[path = "value"]
     pub mod value {
-        pub use rerail_w::code_rule_dsl::value::*;
+        pub use rerail_classic::code_rule_dsl::value::*;
         pub mod python;
         pub mod python_ast;
         pub mod python_structure;
@@ -1042,14 +1042,14 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         pub(crate) use crate::code_rule_dsl::value::text_regex::MAX_STRING_BYTES;
     }
-    pub use rerail_w::code_rule_dsl::violations;
+    pub use rerail_classic::code_rule_dsl::violations;
     #[cfg(any(test, feature = "test-hooks"))]
-    pub use rerail_w::code_rule_dsl::walks;
+    pub use rerail_classic::code_rule_dsl::walks;
     pub mod waves {
         #[cfg(any(test, feature = "test-hooks"))]
-        pub use rerail_w::code_rule_dsl::waves::relational;
+        pub use rerail_classic::code_rule_dsl::waves::relational;
     }
-    pub use rerail_w::code_rule_dsl::workspace;
+    pub use rerail_classic::code_rule_dsl::workspace;
     #[allow(unused_imports)]
     use crate::code_rule_dsl::residency::admission::relational;
     #[allow(unused_imports)]
@@ -1075,6 +1075,6 @@ pub mod code_rule_dsl {
     #[cfg(any(test, feature = "test-hooks"))]
     pub(crate) use crate::code_rule_dsl::rule_api::CodeRuleDslEditor;
 }
-pub use rerail_w::git_ignore;
-pub use rerail_w::panic_boundary;
+pub use rerail_classic::git_ignore;
+pub use rerail_classic::panic_boundary;
 // cratify: mounts end

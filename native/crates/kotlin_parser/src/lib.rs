@@ -6,8 +6,9 @@
 //! file the compiled parser refuses (a construct the grammar does not read yet, or any syntax
 //! error) goes to the lean parser, and from there to tree-sitter.
 
-use rerail_compiler::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_cpu_clusters, native_cpu_stream, native_ir, rir_asm as rir};
+use rerail_bitlex::bitlex_masks as bitlex_compile;
+use rerail_compiler::{native_ir, rir_asm as rir};
+use rerail_cpu_stream::{native_cpu_clusters, native_cpu_stream};
 use rerail_kotlin_lean as lean;
 
 /// The grammar.
@@ -25,11 +26,11 @@ pub struct Compiled {
     pub words: String,
     pub machine: String,
     /// The provers' answers the compile made, for the next (`compile_timed`'s `known`).
-    pub proofs: Vec<(rerail_compiler::bitlex_prove::Key, rerail_compiler::bitlex_prove::Answer)>,
+    pub proofs: Vec<(rerail_bitlex::bitlex_prove::Key, rerail_bitlex::bitlex_prove::Answer)>,
 }
 
 /// The provers' answers by question (decision 0414).
-pub type Proofs = rerail_compiler::bitlex_prove::Known;
+pub type Proofs = rerail_bitlex::bitlex_prove::Known;
 
 // SAFETY: nothing changes a compiled parser once it is made (as `rerail_rr_parser::Compiled`):
 // `image` takes `&self` and writes only buffers it allocates for the call.
@@ -46,13 +47,13 @@ pub const ANSWERS: &[u8] = include_bytes!("../kotlin.answers");
 
 /// [`ANSWERS`], decoded: `compile_timed`'s `known`.
 pub fn shipped_answers() -> Proofs {
-    rerail_compiler::bitlex_prove::decode(ANSWERS)
+    rerail_bitlex::bitlex_prove::decode(ANSWERS)
 }
 
 /// The grammar compiled from the shipped answers and the machine's (`answers::answered`: what an
 /// edit asks anew is proved by one compile on the machine, and kept for the others).
 pub fn compile_answered(grammar: &str) -> Result<Compiled, String> {
-    rerail_compiler::answers::answered("kotlin", grammar.as_bytes(), shipped_answers(), |known| {
+    rerail_bitlex::answers::answered("kotlin", grammar.as_bytes(), shipped_answers(), |known| {
         let c = compile_timed(grammar, known, &mut |_, _| {})?;
         let made = c.proofs.clone();
         Ok((c, made))
@@ -118,12 +119,12 @@ pub fn compile_timed(grammar: &str, known: Proofs, lap: &mut dyn FnMut(&'static 
     lap("native IR");
     native.tag = TAG;
     for b in &mut native.block_programs {
-        b.pad = rerail_compiler::native_cpu_block::BACK as u16;
+        b.pad = rerail_cpu_block::native_cpu_block::BACK as u16;
     }
     let cut = native_cpu_clusters::by_rules(&native);
     lap("clusters");
     let block = native.block_programs.first().ok_or("no tier 1 program")?;
-    let tier1 = rerail_compiler::native_cpu_block::compile(block).map_err(|e| format!("Cranelift: {e:?}"))?;
+    let tier1 = rerail_cpu_block::native_cpu_block::compile(block).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 1 Cranelift");
     let tier2 = native_cpu_stream::compile_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     lap("tier 2 Cranelift");
