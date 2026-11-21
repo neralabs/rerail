@@ -89,10 +89,11 @@
                 assert!(!held || r.in_place >= 1, "the rows held read in place: {r:?}");
             }
             let counts = super::super::step_counts(&db, "dev_test").unwrap();
+            let ranged = super::super::step_ranged(&db, "dev_test").unwrap();
             super::super::close(&db, "dev_test").unwrap();
             let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
             rows.sort_unstable();
-            got.push((rows, counts));
+            got.push((rows, counts, ranged));
         }
         assert!(got[0].0.len() > 1000, "{} rows", got[0].0.len());
         assert_eq!(got[0].0, got[1].0, "the device's rows are the CPU's (held: {held})");
@@ -100,19 +101,40 @@
         // comparison bounds (`ranges`, Q245 item 5): there the probe yields only the rows in it (fewer, from the same
         // bindings), and the comparison's step, a filter now of rows that all pass, ends where the device's does.
         let (cpu, dev) = (&got[0].1, &got[1].1);
-        assert_eq!(cpu.len(), dev.len(), "rules (held: {held})");
+        if let Err(e) = counts_agree(cpu, dev, &got[0].2) {
+            panic!("{e} (held: {held})");
+        }
         for (rule, (c, d)) in cpu.iter().zip(dev).enumerate() {
-            assert_eq!(c.len(), d.len(), "rule {rule}'s steps (held: {held})");
-            let mut narrowed = false;
-            for (s, (cs, ds)) in c.iter().zip(d).enumerate() {
-                let probe = cs.0 == ds.0 && cs.1 < ds.1;
-                let filter = narrowed && cs.0 < ds.0 && cs.1 == ds.1 && cs.0 == cs.1;
-                assert!(cs == ds || probe || filter, "rule {rule}, step {s}: the CPU's {cs:?}, the device's {ds:?} (held: {held}): {c:?} against {d:?}");
-                narrowed = (narrowed || probe) && cs != ds;
-            }
             assert_eq!(c.last(), d.last(), "rule {rule}: the head's bindings (held: {held})");
         }
         }
+    }
+
+    /// Whether the CPU's counts per step (`step_counts`) are the device's, by rule: the same at each step, but where
+    /// the CPU's probe read a range of its index that a later comparison bounds (`ranged`, `step_ranged`; Q245 item
+    /// 5). There the probe yields only the rows in it (fewer, from the same bindings), and each step after it reads
+    /// and yields no more than the device's, until the comparison, a filter now of rows that all pass, ends where the
+    /// device's does: from there they are the same again. The first difference past that, else none.
+    pub(super) fn counts_agree(cpu: &[Vec<(i64, i64)>], dev: &[Vec<(i64, i64)>], ranged: &[Vec<bool>]) -> Result<(), String> {
+        if cpu.len() != dev.len() {
+            return Err(format!("{} rules on the CPU, {} on the device", cpu.len(), dev.len()));
+        }
+        for (rule, (c, d)) in cpu.iter().zip(dev).enumerate() {
+            if c.len() != d.len() {
+                return Err(format!("rule {rule}: {c:?} against {d:?}: its steps"));
+            }
+            let mut narrowed = false;
+            for (s, (cs, ds)) in c.iter().zip(d).enumerate() {
+                let at_range = ranged.get(rule).and_then(|r| r.get(s)).copied().unwrap_or(false);
+                let probe = at_range && cs.0 == ds.0 && cs.1 < ds.1;
+                let filter = narrowed && cs.0 <= ds.0 && cs.1 <= ds.1;
+                if !(cs == ds || probe || filter) {
+                    return Err(format!("rule {rule}, step {s}: the CPU's {cs:?}, the device's {ds:?}: {c:?} against {d:?} (ranged {:?})", ranged.get(rule)));
+                }
+                narrowed = (narrowed || probe) && cs != ds;
+            }
+        }
+        Ok(())
     }
 
     /// A recursive stratum on the device: its rounds to the fixpoint there, the same rows as the CPU's waves.
