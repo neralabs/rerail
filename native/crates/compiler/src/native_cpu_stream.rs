@@ -33,7 +33,7 @@ pub struct Ctx {
     /// The file's first byte. One readable byte before it and 64 after its end.
     bytes: *const u8,
     len: u64,
-    /// The extract `TOKEN` names, and its count; two readable slots past the count.
+    /// The extract `TOKEN` names, and its count; two entries past the count, each the file's length.
     starts: *const u32,
     nstarts: u64,
     /// The records' other columns (`records`): each token's last byte and its code, zipped
@@ -4409,6 +4409,7 @@ pub(crate) fn supertype_classes(native: &Structure) -> Result<Vec<u16>, Error> {
 }
 
 impl TableFns {
+    /// `near`: the module's code in one arena (`Cut::near`), so the writer's ops call each other directly.
     fn make(module: &mut JITModule, words: &[crate::native_ir::StructuralBlock], x: crate::native_cpu_tape::Image<'_>, sixteen: bool, near: bool) -> Result<Self, Error> {
         let w = x.widths;
         let inner = words.iter().any(|b| matches!(b.operation, Op::NodeField { on: On::Inner, .. } | Op::Reread { .. }));
@@ -8411,7 +8412,8 @@ fn framed(words: &[crate::native_ir::StructuralBlock]) -> bool {
 }
 
 /// Tier 1's buffers as tier 2 reads them, where tier 1 wrote them (the CPU's batch, or the
-/// device's buffers in shared memory): the starts (two readable slots past `nstarts`); the
+/// device's buffers in shared memory): the starts (two entries past `nstarts`, each the file's length, as
+/// simdjson's stage 1 ends its index: `Batch::end_streams`); the
 /// mask's words, word `i` at `lasts + i * lasts_stride` bytes, `nlasts` of them; output `o`'s
 /// words from `outputs + o * output_stride` bytes, a word every `lasts_stride`; total `t` the
 /// bits `totals_mask` of the 8 readable bytes at `totals + t * totals_stride`.
@@ -8813,10 +8815,11 @@ impl CompiledStream {
     fn run_raw(&self, bytes: &[u8], tier1: &crate::block::BlockRun, tape: &mut Tape) -> u64 {
         let mut padded = vec![0u8; bytes.len() + 65];
         padded[1..=bytes.len()].copy_from_slice(bytes);
+        // Each stream ended in two entries of the file's length, as the batch's (`Batch::end_streams`).
         let stream = |e: Option<usize>| -> (Vec<u32>, usize) {
             let mut v = e.map_or_else(Vec::new, |e| tier1.positions[e].clone());
             let n = v.len();
-            v.extend([0, 0]);
+            v.extend([bytes.len() as u32; 2]);
             (v, n)
         };
         let starts = stream(self.starts);

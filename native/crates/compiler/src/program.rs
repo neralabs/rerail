@@ -261,6 +261,9 @@ pub struct Names {
     pub kinds: Vec<(u16, String)>,
     pub tokens: Vec<(u8, String)>,
     pub marks: Vec<(u8, String)>,
+    /// Each field's name (`name field F "N"`): what code generated from the words names a field by
+    /// (`rust_stream`'s labels). No word reads them.
+    pub fields: Vec<(u16, String)>,
 }
 
 /// A program's words and the tables they index.

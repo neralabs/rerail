@@ -593,6 +593,57 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 52, done: a return two ways (decision 0548)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A container's return | `scope_end`: `d == 0` ends the walk, else `object[d]` | `match ret { 0, 1, 2, _ => refuse }`, and `keep_ret(0)` at the document's calls | `if s.depth == 0 { … } else if ret == 1 { … } else { … }`, no number kept for the document |
+
+## Step 51, done: a close that cannot fail (decision 0547)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A node closed | `close`: two stores, no failure | `s.close::<…>(…)?`, the writer testing for an open node, the bounds and the room | `s.close::<…>(…);`, the writer asserting them |
+
+## Step 50, done: the end the stream's count, tested once (decision 0546)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| The end | `next == index + count`, once, after the outer close | a token taken past the count, `t.start == s.len`, and `ACCEPT`'s `t.start == self.len` | no token taken, `if (t.next as usize == s.n)`, `ACCEPT` tests the open nodes alone |
+
+## Step 49, done: an empty container one leaf (decision 0545)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| `{}`, `[]` | `empty!`: the next token is the closer, so one leaf | `open16`, a call, the call's switch on `}`, `close`, the return | `if s.byte(starts[t.next]) == 0x7d { … s.leaf16(7, st, t.rec_end); … }`, else the open and the call |
+
+## Step 48, done: a node's open and leaf cannot fail (decision 0544)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A node written | `open`, `leaf`: the columns hold `bound` nodes, reserved once | `s.open16(…)?`, `s.leaf16(…)?`, each a refusal where the writer failed, each `pending = 0` | `s.open16(…);`, `s.leaf16(…);`: the room reserved once, the nodes' count checked once (`fits`), no `pending` |
+
+## Step 47, done: a token one load and one add (decision 0543)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| A token taken | `take!()`: one load, one add; the index ends in sentinel entries | the index clamped to the count, the end selected, `last_end` copied | `t.start = *starts.add(t.next * rs); t.next += 1;`, the stream ended in two entries of the file's length |
+| The last token's end | the `end` it holds | `t.last_end = t.rec_end` at every token | read from `rec_end` where no arm made it again (`,`, `:`); kept by the `}` and `]` arms before they make theirs |
+
+## Step 46, done: the token's state the rule's local (decision 0542)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| The token's state | `walk`'s locals `next`, `v`, `end` | fields of `S`: `s.start`, `s.rec_end`, `s.next`, `s.last_end`, `s.code` | `T`, the rule's local (`let t = &mut T::NEW;`): `t.start`, `t.rec_end`, … |
+| A node's start | `open(…, start)`, `leaf(…, start, end)` | read from `self.start` | given: `s.open16(7, t.start)`, `s.leaf16(13, t.start, t.rec_end)` |
+
+## Step 45, done: one dispatch, its values named by the grammar (decision 0541)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| Dispatches | one `match label`, six labels | three nested `match d` loops, arms that only pass a value on | one `match d`, four values; the object's and the array's loops each entered once |
+| A value's name | `ObjectBegin`, `ArrayValue`, `ScopeEnd` | its place (`L::Token32`, `L::Span40`) | what the place does, from the grammar's names: `L::ObjectBegin`, `L::ArrayBegin`, `L::ArrayValue`, `L::End` |
+
 ## Step 44, done: a string's place its argument, a dispatch's value named (decision 0526)
 
 | | the lean parser | before | now |
