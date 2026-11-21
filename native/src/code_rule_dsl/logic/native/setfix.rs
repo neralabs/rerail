@@ -278,11 +278,55 @@ pub struct OnConn {
     changing: parking_lot::Mutex<Option<std::collections::BTreeSet<String>>>,
     /// The given versions of a run's changed reads (`give_versions`), by table: `Old`, `Minus`, `Plus`, `New`.
     given: parking_lot::Mutex<HashMap<String, [Arc<InRel>; 4]>>,
+    /// Told to the machine's `Held` (heap sampling on): the profile reads its relations at the footprint's peak.
+    noted: std::sync::atomic::AtomicBool,
+    /// The histograms `step_histograms` counted off its runs' input relations, by the relation's id, the step's
+    /// constants, the columns and the sample's cap: an input's rows do not change while it lives, and a rule split
+    /// by constants into many lines (one per pair of kinds) asks the same of each.
+    histograms: parking_lot::Mutex<HashMap<(u64, Vec<(usize, i64)>, Vec<usize>, usize), Histogram>>,
 }
 
 /// What the evaluator keeps for `conn` (`OnConn`).
 fn on(conn: impl Scoped) -> Arc<OnConn> {
-    conn.db().data().get::<OnConn>()
+    let on = conn.db().data().get::<OnConn>();
+    if rerail_prof::heap::on() && !on.noted.swap(true, std::sync::atomic::Ordering::Relaxed) {
+        let held = crate::code_rule_dsl::logic::profile::machine::<Held>();
+        let mut h = held.0.lock();
+        h.retain(|w| w.strong_count() > 0);
+        h.push(Arc::downgrade(&on));
+        let _ = crate::code_rule_dsl::logic::profile::machine::<crate::code_rule_dsl::logic::profile::memory::RelationsByName>().0.set(held_by_name);
+    }
+    on
+}
+
+/// The connections' evaluator state, while each lives (heap sampling on): what `held_by_name` reads.
+#[derive(Default)]
+struct Held(parking_lot::Mutex<Vec<std::sync::Weak<OnConn>>>);
+
+/// The runs' relations held now, by name: their rows, columns, values' bytes (allocated), and the runs holding one
+/// of that name; most bytes first. A run's derived relations, and its loaded inputs as `input: <spec>`.
+pub fn held_by_name() -> Vec<(String, usize, usize, usize, usize)> {
+    let held = crate::code_rule_dsl::logic::profile::machine::<Held>();
+    let conns: Vec<Arc<OnConn>> = held.0.lock().iter().filter_map(std::sync::Weak::upgrade).collect();
+    let mut by: HashMap<String, (usize, usize, usize, usize)> = HashMap::default();
+    let mut add = |name: String, r: &InRel| {
+        let e = by.entry(name).or_default();
+        e.0 += r.len();
+        e.1 = r.k;
+        e.2 += r.held_bytes().0;
+        e.3 += 1;
+    };
+    for c in &conns {
+        for (name, r) in c.derived.lock().iter() {
+            add(name.clone(), r);
+        }
+        for (key, r) in c.inputs.lock().iter() {
+            add(format!("input: {}", key.sql.chars().take(80).collect::<String>()), r);
+        }
+    }
+    let mut out: Vec<(String, usize, usize, usize, usize)> = by.into_iter().map(|(n, (rows, k, b, runs))| (n, rows, k, b, runs)).collect();
+    out.sort_by_key(|o| std::cmp::Reverse(o.3));
+    out
 }
 fn symbols_by_path(conn: impl Scoped) -> Result<Arc<Symbols>> {
     let conn = conn.db();
@@ -3320,6 +3364,7 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
         (false, _) => None,
     });
     let Some(j) = j else { return Ok(vec![None; wanted.len()]) };
+    let on = on(conn);
     Ok(wanted.iter().map(|(at, cols)| {
         // `at` is the plan's step: the atom is the step made first for it.
         let Some(Step::Atom { src, neg: false, keys, .. }) = j.step_of(*at).and_then(|s| j.steps.get(s)) else { return None };
@@ -3344,7 +3389,20 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
                 let rel = &store.rels[*r];
                 count(rel.n, &|i, c| (!rel.dead(i)).then(|| rel.value(i as usize, c)))
             }
-            Src::In(rel, _) => count(rel.len(), &|i, c| (!is_dead(&rel.dead, i)).then(|| rel.at(i as usize).read().at(c))),
+            Src::In(rel, _) => {
+                // Counted once per input, constants and columns (`OnConn::histograms`).
+                let key = (rel.uid.0, consts.clone(), cols.clone(), cap);
+                if let Some(h) = on.histograms.lock().get(&key) {
+                    return Some(h.clone());
+                }
+                let stride = count(rel.len(), &|i, c| (!is_dead(&rel.dead, i)).then(|| rel.at(i as usize).read().at(c)));
+                if stride > 1 {
+                    counts.values_mut().for_each(|n| *n *= stride);
+                }
+                let h = (passed * stride, counts);
+                on.histograms.lock().insert(key, h.clone());
+                return Some(h);
+            }
         };
         if stride > 1 {
             counts.values_mut().for_each(|n| *n *= stride);
@@ -4371,7 +4429,9 @@ pub fn forget_inputs_of(conn: &Connection, tables: &[String]) {
 
 /// Drops every native relation of `conn`'s runs: a chunk's, once its exports are written to the cross-file part.
 pub fn forget_derived(conn: &Connection) {
-    on(conn).derived.lock().clear();
+    let on = on(conn);
+    on.derived.lock().clear();
+    on.histograms.lock().clear();
 }
 
 /// A native relation of `conn`'s run, for a caller that keeps it past the run with the indexes it has (a session's

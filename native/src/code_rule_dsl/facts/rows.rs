@@ -123,8 +123,9 @@ impl Facts {
         if rerail_prof::heap::on() {
             let made = crate::code_rule_dsl::logic::profile::machine::<Made>();
             let mut m = made.0.lock().unwrap_or_else(|e| e.into_inner());
-            m.retain(|(e, _, _)| e.strong_count() > 0);
-            m.push((block.meter(), rerail_prof::heap::span(), life as u8));
+            m.retain(|(e, _, _, _)| e.strong_count() > 0);
+            let maker = (life == Life::Device).then(made_by);
+            m.push((block.meter(), rerail_prof::heap::span(), life as u8, maker));
             let _ = crate::code_rule_dsl::logic::profile::machine::<crate::code_rule_dsl::logic::profile::memory::BlocksBySpan>().0.set(held_by_span);
         }
         Facts { block: Arc::new(block), ix: Mutex::new(Vec::new()), given: crate::code_rule_dsl::logic::profile::local::<GivenBack>(), tally, life, shared }
@@ -219,23 +220,47 @@ struct Live(Mutex<[Vec<std::sync::Weak<Facts>>; 3]>);
 /// The relations' blocks made while heap sampling is on (`RERAIL_HEAP_SAMPLE`), as they live: each one's extent, the
 /// span open where it was made (`rerail_prof::heap::span`) and its `Life`.
 #[derive(Default)]
-struct Made(Mutex<Vec<(std::sync::Weak<rerail_blocks::block::Extent>, u32, u8)>>);
+struct Made(Mutex<Vec<(std::sync::Weak<rerail_blocks::block::Extent>, u32, u8, Option<Arc<str>>)>>);
+
+/// The engine's frames that made a block (a device run's own, which a span alone does not name): its maker's
+/// innermost `code_rule_dsl` functions, outermost last, four of them.
+fn made_by() -> Arc<str> {
+    let bt = std::backtrace::Backtrace::force_capture().to_string();
+    let mut names: Vec<String> = Vec::new();
+    for line in bt.lines() {
+        let l = line.trim();
+        let Some(f) = l.split_once(": ").map(|(_, f)| f) else { continue };
+        if !f.contains("code_rule_dsl") || f.contains("facts::rows::") || f.contains("made_by") {
+            continue;
+        }
+        let f = f.rsplit_once("::h").map_or(f, |(a, _)| a);
+        let short: Vec<&str> = f.split("::").filter(|p| !p.starts_with('{')).collect();
+        let name = short[short.len().saturating_sub(2)..].join("::");
+        if names.last() != Some(&name) {
+            names.push(name);
+        }
+        if names.len() == 4 {
+            break;
+        }
+    }
+    names.join(" < ").into()
+}
 
 /// The relations' blocks live now, by the span that made them and their `Life`: their bytes used (written up to
 /// their top, less what their free lists hold), most first. Empty unless heap sampling is on.
-pub fn held_by_span() -> Vec<(u32, u8, usize, usize)> {
+pub fn held_by_span() -> Vec<(u32, u8, usize, usize, String)> {
     let made = crate::code_rule_dsl::logic::profile::machine::<Made>();
     let m = made.0.lock().unwrap_or_else(|e| e.into_inner());
-    let mut by: std::collections::HashMap<(u32, u8), (usize, usize)> = std::collections::HashMap::new();
-    for (e, span, life) in m.iter() {
+    let mut by: std::collections::HashMap<(u32, u8, Option<Arc<str>>), (usize, usize)> = std::collections::HashMap::new();
+    for (e, span, life, maker) in m.iter() {
         if let Some(e) = e.upgrade() {
             use std::sync::atomic::Ordering::Relaxed;
-            let v = by.entry((*span, *life)).or_default();
+            let v = by.entry((*span, *life, maker.clone())).or_default();
             v.0 += e.top.load(Relaxed).saturating_sub(e.free.load(Relaxed));
             v.1 += 1;
         }
     }
-    let mut out: Vec<(u32, u8, usize, usize)> = by.into_iter().map(|((s, l), (b, n))| (s, l, b, n)).collect();
+    let mut out: Vec<(u32, u8, usize, usize, String)> = by.into_iter().map(|((s, l, w), (b, n))| (s, l, b, n, w.map_or_else(String::new, |w| w.to_string()))).collect();
     out.sort_by_key(|o| std::cmp::Reverse(o.2));
     out
 }
@@ -1270,6 +1295,17 @@ impl Part {
 
     /// A relation of `k` columns and `rows` rows alone in a block of `life`'s, every row claimed, with room for
     /// `indexes` indexes of its rows.
+    /// A device run's own relation of no columns and `rows` rows with no room for an index: what a `has` axis read
+    /// off the tape is bound by (`DevRel::has`), which nothing indexes (its probes walk the tape). Room for an index
+    /// of its rows was 8 to 10 bytes a node, per binding: 133 blocks, 448 MB, at a 300-file run's peak (ab135).
+    pub fn for_device_unindexed(rows: usize) -> Result<Part, String> {
+        let directory = rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>() + 64;
+        let part = Part::try_new_with(Life::Device, 0, rows, directory, false)?;
+        // SAFETY: a relation of no columns: its rows have no values to write.
+        unsafe { part.rel().rows.claim_reserved(rows as u32) };
+        Ok(part)
+    }
+
     fn claimed(life: Life, k: usize, rows: usize, indexes: usize) -> Result<Part, String> {
         let cap = rows.next_power_of_two().max(1);
         let one = 4 * (cap + 1) + 4 * rows.max(1) + 2 * 64;

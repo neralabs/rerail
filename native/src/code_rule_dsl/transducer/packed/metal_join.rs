@@ -491,7 +491,11 @@ impl DevRel {
     /// rows) and its set's kind atoms `kinds`, ascending. It has no rows of its own: a stage probes it by one of its
     /// columns only (`Batch::by_has`), each binding's rows walked on the tape.
     pub(in crate::code_rule_dsl) fn has(nodes: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace, kinds: &[i64]) -> Result<DevRel, Error> {
-        let mut dev = DevRel::view(2, nodes, view)?;
+        // Nothing indexes it (`Batch::by_has` walks the tape): its relation of no columns has no room for an index.
+        let part = crate::code_rule_dsl::facts::rows::Part::for_device_unindexed(nodes).map_err(|_| Error::BackendCapacity)?;
+        let mut dev = DevRel::of_part(part, 0, nodes)?;
+        dev.cols = 2;
+        dev.view = Some(view);
         let set = Words::zeroed(2 * kinds.len())?;
         for (i, &k) in kinds.iter().enumerate() {
             set.set(2 * i, k as u32);

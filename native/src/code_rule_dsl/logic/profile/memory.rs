@@ -154,7 +154,12 @@ fn holders() -> [usize; 7] {
 /// The relations' blocks live now by the span that made them (span, life, bytes used, blocks), as the facts crate
 /// reads them (`rows::held_by_span`), which sets it at its first block: the sampler takes it at the peak.
 #[derive(Default)]
-pub struct BlocksBySpan(pub std::sync::OnceLock<fn() -> Vec<(u32, u8, usize, usize)>>);
+pub struct BlocksBySpan(pub std::sync::OnceLock<fn() -> Vec<(u32, u8, usize, usize, String)>>);
+
+/// The runs' relations held now by name (name, rows, columns, bytes of values, runs holding it), as the evaluator
+/// reads them (`setfix::held_by_name`), which sets it at its first run: the sampler takes it at the peak.
+#[derive(Default)]
+pub struct RelationsByName(pub std::sync::OnceLock<fn() -> Vec<(String, usize, usize, usize, usize)>>);
 
 #[derive(Default)]
 pub(super) struct Sampled {
@@ -172,7 +177,9 @@ pub(super) struct Sampled {
     pub(super) heap_frames: Vec<((u32, Vec<usize>), u64)>,
     /// The relations' blocks live then, by the span that made them and their life (`rows::held_by_span`): span,
     /// life, bytes used, blocks.
-    pub(super) blocks: Vec<(u32, u8, usize, usize)>,
+    pub(super) blocks: Vec<(u32, u8, usize, usize, String)>,
+    /// The runs' relations held then (`RelationsByName`).
+    pub(super) relations: Vec<(String, usize, usize, usize, usize)>,
     pub(super) heap_at: u64,
     /// `RERAIL_HEAP_AT=<text>`: the live heap by allocating span at the most footprint seen while a thread had a
     /// span open whose path holds the text (a phase that is not the peak's), and that footprint.
@@ -269,10 +276,12 @@ pub(super) fn sample() {
                         let heap = rerail_prof::heap::snapshot();
                         let heap_frames = rerail_prof::heap::snapshot_frames();
                         let blocks = super::machine::<BlocksBySpan>().0.get().map_or_else(Vec::new, |f| f());
+                        let relations = super::machine::<RelationsByName>().0.get().map_or_else(Vec::new, |f| f());
                         s = SAMPLED.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
                         s.heap = heap;
                         s.heap_frames = heap_frames;
                         s.blocks = blocks;
+                        s.relations = relations;
                     }
                 }
                 if let Some(text) = heap_at_text()
@@ -370,8 +379,18 @@ pub(super) fn sampled_report(r: &mut String) {
         let _ = writeln!(r, "Relations' blocks live then, by the span that made them (at {} MB footprint; {} MB used in all, of {} blocks):",
             mb(s.heap_at as f64), total >> 20, s.blocks.iter().map(|b| b.3).sum::<usize>());
         let lives = ["a run's", "sources'", "kept", "a device run's own"];
-        for (id, life, bytes, n) in s.blocks.iter().take(30) {
-            let _ = writeln!(r, "{:>10} MB  {:>5} blocks, {}, made in {}", bytes >> 20, n, lives.get(*life as usize).unwrap_or(&"?"), super::short(&rerail_prof::heap::name(*id), 140));
+        for (id, life, bytes, n, by) in s.blocks.iter().take(30) {
+            let by = if by.is_empty() { String::new() } else { format!(", by {by}") };
+            let _ = writeln!(r, "{:>10} MB  {:>5} blocks, {}, made in {}{by}", bytes >> 20, n, lives.get(*life as usize).unwrap_or(&"?"), super::short(&rerail_prof::heap::name(*id), 140));
+        }
+    }
+    if !s.relations.is_empty() {
+        let total: usize = s.relations.iter().map(|r| r.3).sum();
+        let rows: usize = s.relations.iter().map(|r| r.1).sum();
+        let _ = writeln!(r, "The runs' relations held then, by name (at {} MB footprint; {} relations, {} rows, {} MB of values in all; rows, columns, MB, runs):",
+            mb(s.heap_at as f64), s.relations.len(), rows, total >> 20);
+        for (name, rows, k, bytes, runs) in s.relations.iter().take(40) {
+            let _ = writeln!(r, "{:>10} MB  {:>9} rows  {k} columns  {runs} runs  {}", bytes >> 20, rows, super::short(name, 120));
         }
     }
     if let Some(text) = heap_at_text()
