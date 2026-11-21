@@ -1292,7 +1292,13 @@ impl Part {
     /// goes on writing round after round (a lattice head, its held rows updated in place, its new keys' rows past
     /// them), its rows' chunks and its key map growing in the block (`reserve`), never moved. Its block reserves
     /// address space: the room is memory only as it is written. `Err` when no block can be had.
+    ///
+    /// Where a reservation is address space, `room` is its least: the block reserves as every growing block of
+    /// relations does (decision 0445, `BLOCK_RESERVE`). A recursive head's 256 MB ran out under its rows and its
+    /// rounds' indexes, and its relation was copied for each next key (ab127: 478.7 MB of 0353 row 9). Few are live at
+    /// once (a fixpoint's heads).
     pub fn for_writes_with_room(k: usize, rows: usize, room: usize) -> Result<Part, String> {
+        let room = if RESERVES_ADDRESS_SPACE { room.max(BLOCK_RESERVE - room_for(k, rows).min(BLOCK_RESERVE / 2)) } else { room };
         Part::try_new_with(Life::Run, k, rows, room.max(1), true)
     }
 
