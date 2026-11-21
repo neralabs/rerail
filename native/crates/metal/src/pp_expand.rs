@@ -1015,8 +1015,8 @@ impl Vis {
 /// The tokens' pool's heads (`<ukl/pool.h>`'s `UKL_POOL_CLASSES`, rounded up).
 const POOL_HEADS: usize = 128;
 
-/// A list (`PxList` in the UKL): 37 words; an argument (`PxArg`): 3.
-const LIST_WORDS: usize = 37;
+/// A list (`PxList` in the UKL): 39 words; an argument (`PxArg`): 3.
+const LIST_WORDS: usize = 39;
 const ARG_WORDS: usize = 3;
 
 /// Why a unit is refused (`pp_expand.uglykl`'s `X_*`). `X_ROOM` reruns it at the next rung.
@@ -1151,6 +1151,10 @@ pub struct Exp {
     sc_sort: Sort,
     sc_first: Buf,
     sc_cap: u32,
+    /// The definitions each list's chain disables (`px_link`): a trie of their ids, 2 bits a
+    /// level, `trie_lv` levels of 4 words a list.
+    trie: Buf,
+    trie_lv: u32,
 }
 
 /// A round's substitutions' columns a list (`SB_COLS` in `pp_expand.uglykl`).
@@ -1169,6 +1173,8 @@ impl Exp {
             return Err(Error::BackendCapacity);
         }
         let va_opt = name_key(b"__VA_OPT__");
+        // A definition's id is below the unit's rows: 2 bits of it a level of the trie.
+        let trie_lv = (usize::BITS - unit.dir_bound.max(2).saturating_sub(1).leading_zeros()).div_ceil(2).max(1);
         // The scratch: bytes and tokens, in one buffer: the tokens (an
         // even number, so the bytes after them are 8-byte aligned), then the bytes. The first of
         // each are the files' `__FILE__` literals, the configuration's three, then the files'
@@ -1305,6 +1311,8 @@ impl Exp {
             // climbing (2).
             sc_first: zeroed(3)?,
             sc_cap: x.sc as u32,
+            trie: zeroed(lists * 4 * trie_lv as usize)?,
+            trie_lv,
         })
     }
 
@@ -1323,6 +1331,7 @@ impl Exp {
         l.at("OPV", &self.opv).at("OPBASE", &self.opbase).at("OPTOTAL", &self.opscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("ARGS", &self.args).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
         l.word("LIST_CAP", self.list_cap).word("OUT_CAP", self.out_cap).word("Q_CAP", self.q_cap);
+        l.at("TRIE", &self.trie).word("TRIE_LV", self.trie_lv);
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
         l.at("TR_SK", &self.tr_sk).at("TR_NK", &self.tr_nk).at("TR_TY", &self.tr_ty).at("TO_F", &self.to_f).at("TO_S", &self.to_s);
         l.at("CU_SLOT", &self.cu_slot).at("CU_SUB", &self.cu_sub).at("CU_UNIT", &self.cu_unit).at("TRN", &self.trn).at("LREAD", &self.lread);

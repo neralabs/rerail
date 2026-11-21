@@ -318,6 +318,17 @@ SIMD-group operation switches each thread of the group.
        tokens beside each level's call (`G(s) a L(s) b G(s) c`), whose lists lose their first
        call's pieces and move the rest (36 moves a run). Skipping the moves fails it, and skipping
        the forwarding fails `a_chains_use_is_flat_in_its_length`.
+   - **A list's chain is read from the list, not climbed** (`px_link`, when a list is made).
+     - Its top call (`top`): an argument's its call's, a top call itself, any other its
+       parent's. `px_top_call` (each `__LINE__` and line row) climbed up to `MAX_CHAIN` lists.
+     - The definitions its chain disables (`troot`): a persistent trie of the definitions' ids,
+       2 bits a level (`TRIE_LV` levels: the unit's rows' bits over 2), 4 words a level a list
+       (`TRIE`). A macro's list copies its parent's path to its definition (its own nodes; the
+       rest shared), any other list takes its parent's root. A list never outlives the lists
+       above it (they die in one pause), so a shared node stays. `px_disabled` (each name a
+       scan or a walk looks up) climbed up to `MAX_CHAIN` parents; it reads `TRIE_LV` words.
+     - The test: making `px_disabled` answer no fails 5 eval tests (the recursion's), and making
+       `px_top_call` the list itself fails 2 (`__LINE__` in a call's arguments).
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.
    Done: all 31 eval tests pass under the `second` profile's 1 s on a farm Mac (CPU backend),
    the longest 0.68 s.

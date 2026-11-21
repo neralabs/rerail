@@ -785,6 +785,9 @@ typedef struct PxList {
     // The units at its own block's end given back while it is live (its done calls' spans' pieces
     // taken out of its array: `px_gv_keep`).
     uint32_t pgave;
+    // Its top call (`px_top_call`), and the root + 1 of the definitions its chain disables
+    // (`px_disabled`; 0 none): each from the lists above it, when it is made (`px_link`).
+    uint32_t top, troot;
 } PxList;
 #define ORDER_PLACED (0u)
 #define NO_OWNER (0xffffffffu)
@@ -841,6 +844,38 @@ UKL_INLINE void px_init(UKL_GLOBAL PxList* l, uint32_t parent, uint32_t def, uin
     l->order = 0xffffffffu;
     l->owner = NO_OWNER; l->lref = NO_LREF; l->flags = 0u; l->blk = 0xffffffu; l->xhi = NO_POS;
     l->kid = 0u; l->nkid = 0u; l->np = 0u; l->psize = 0u; l->tat = 0u; l->npaint = 0u; l->pgave = 0u; l->abl = 0u;
+}
+
+// List `id`'s links to the lists above it, once its parent, kind, definition and (an argument's)
+// call are set. Its top call: an argument's its call's, a list at the top level itself, any other
+// its parent's. The definitions its chain disables (the serial pass's: its own and its parents'),
+// a set kept as a trie of the definitions' ids, 2 bits a level (`tlv` levels): a macro's list
+// copies its parent's path to its definition, its nodes the list's own (`trie`, 4 words a level:
+// each child's owner + 1, at the last level whether it is there), the rest shared; any other list
+// takes its parent's. A list never outlives the lists above it (they die in one pause,
+// `px_free_mark`), so the nodes it shares stay. `tlv` levels a list, written in one thread.
+UKL_INLINE void px_link(UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* trie, uint32_t tlv, uint32_t id) {
+    UKL_GLOBAL PxList* L = &lists[id];
+    uint32_t p = L->parent;
+    bool top = (p & TOP) != 0u;
+    L->top = L->kind == LK_ARG ? lists[L->call].top : top ? id : lists[p].top;
+    uint32_t r = top ? 0u : lists[p].troot, m = L->def;
+    if (m >= L_DEFS) { L->troot = r; return; }
+    UKL_GLOBAL uint32_t* mine = trie + id * 4u * tlv;
+    for (uint32_t j = 0u; j < tlv; j++) {
+        uint32_t d = (m >> (2u * (tlv - 1u - j))) & 3u, next = 0u;
+        UKL_GLOBAL uint32_t* nd = mine + 4u * j;
+        if (r != 0u) {
+            UKL_GLOBAL const uint32_t* o = trie + (r - 1u) * 4u * tlv + 4u * j;
+            nd[0] = o[0]; nd[1] = o[1]; nd[2] = o[2]; nd[3] = o[3];
+            next = o[d];
+        } else {
+            nd[0] = 0u; nd[1] = 0u; nd[2] = 0u; nd[3] = 0u;
+        }
+        nd[d] = id + 1u;
+        r = next;
+    }
+    L->troot = id + 1u;
 }
 
 // Reading a node of the unit: its file's tape and the node in it.
@@ -1110,7 +1145,7 @@ UKL_INLINE void px_top_outer(UKL_GLOBAL const uint32_t* cend, UKL_GLOBAL const u
 
 // Each outermost top call's list (its index the scan's) and its item: CALL for a function-like
 // macro, SUBST for an object-like one.
-UKL_INLINE void px_top_lists(UKL_GLOBAL const uint32_t* lookups, UKL_GLOBAL const uint32_t* cend, UKL_GLOBAL const uint32_t* state, UKL_GLOBAL const uint32_t* oid, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* gslot, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, uint32_t runs, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const PpDef* defs, uint32_t list_cap, uint32_t s) {
+UKL_INLINE void px_top_lists(UKL_GLOBAL const uint32_t* lookups, UKL_GLOBAL const uint32_t* cend, UKL_GLOBAL const uint32_t* state, UKL_GLOBAL const uint32_t* oid, UKL_GLOBAL const uint32_t* n_toks, UKL_GLOBAL const uint32_t* gslot, UKL_GLOBAL const uint32_t* gat, UKL_GLOBAL const uint32_t* n_gaps, uint32_t runs, UKL_GLOBAL PxList* lists, UKL_GLOBAL uint32_t* trie, uint32_t tlv, UKL_GLOBAL uint32_t* slots, UKL_GLOBAL uint32_t* ctl, UKL_GLOBAL const PpDef* defs, uint32_t list_cap, uint32_t s) {
     if (s >= n_toks[0] || state[s] != 1u) return;
     uint32_t c = oid[s];
     if (c >= list_cap) { px_refuse(ctl, X_ROOM); return; }
@@ -1121,6 +1156,7 @@ UKL_INLINE void px_top_lists(UKL_GLOBAL const uint32_t* lookups, UKL_GLOBAL cons
     uint32_t e = cend[s] - 1u, p = pb_item_of(gat, n_gaps[0], e);
     px_init(l, TOP, m, gslot[p] + (runs != 0u ? e - gat[p] : 0u), LK_MACRO);
     l->lo = s; l->hi = cend[s] - 1u; l->at = l->lo; l->end = l->hi;
+    px_link(lists, trie, tlv, c);
     // The first round's items, in the half the first round takes (`px_seed`).
     slots[c] = px_fnlike(defs, m) ? (c | IT_CALL) : (c | IT_SUBST);
 }
@@ -1169,6 +1205,8 @@ typedef struct Ar {
     // scratch token), and their room.
     UKL_GLOBAL uint32_t* cnt; uint32_t cnt_cap;
     Tf tf;
+    // The definitions each list's chain disables (`px_link`): `tlv` levels of 4 a list.
+    UKL_GLOBAL uint32_t* trie; uint32_t tlv;
 } Ar;
 
 // The rounds (decision 0523): an item made in a round runs in the next. `QCTL`: 0 the items the
@@ -1455,16 +1493,13 @@ UKL_INLINE void px_one(Ar a, uint32_t l, Tk t) {
     L->first = base; L->np = 1u; L->len = 1u;
 }
 
-// Whether definition `m` is disabled for list `l`'s tokens: a list on its chain expands it.
-UKL_INLINE bool px_disabled(UKL_GLOBAL PxList* lists, uint32_t l, uint32_t m, UKL_GLOBAL uint32_t* ctl) {
-    uint32_t k = l;
-    for (uint32_t step = 0u; step < MAX_CHAIN; step++) {
-        if ((k & TOP) != 0u) return false;
-        if (lists[k].def == m) return true;
-        k = lists[k].parent;
-    }
-    px_refuse(ctl, X_DEPTH);
-    return true;
+// Whether definition `m` is disabled for list `l`'s tokens: a list on its chain expands it (its
+// trie's path to `m`, `px_link`).
+UKL_INLINE bool px_disabled(Ar a, uint32_t l, uint32_t m) {
+    if ((l & TOP) != 0u) return false;
+    uint32_t r = a.lists[l].troot;
+    for (uint32_t j = 0u; j < a.tlv && r != 0u; j++) r = a.trie[(r - 1u) * 4u * a.tlv + 4u * j + ((m >> (2u * (a.tlv - 1u - j))) & 3u)];
+    return r != 0u;
 }
 
 // Whether the next raw token after list `l`'s end is `(` (R-peek): the token after the range it
@@ -1520,7 +1555,7 @@ UKL_INLINE uint32_t px_claim_pieces(Ar a, uint32_t k, uint32_t c) {
 UKL_INLINE bool px_painted(Ux u, Ar a, uint32_t k, Tk t) {
     if ((t.flags & T_NOEXP) != 0u || ref_kind(u, t.ref) != K_IDENTIFIER) return false;
     uint32_t m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, ref_key(u, t.ref), a.lists[k].slot, a.ctl + 2);
-    return m < L_DEFS && px_disabled(a.lists, k, m, a.ctl);
+    return m < L_DEFS && px_disabled(a, k, m);
 }
 
 // The sets of lists a round's walks take (decision 0523 §2): `which` 0 the lists made final, 1 the
@@ -1547,17 +1582,8 @@ UKL_INLINE void px_done1(Ar a, uint32_t l) {
 // count checked (a wrong one leaves the name alone, painted), and a list for each parameter used
 // expanded (claimed once), its tokens the argument's refs, its SCAN pushed. SUBST follows when the
 // last is flattened.
-// List `l`'s top call: its frames climbed, an argument's by its call.
-UKL_INLINE uint32_t px_top_call(Ar a, uint32_t l) {
-    uint32_t k = l;
-    for (uint32_t step = 0u; step < MAX_CHAIN; step++) {
-        UKL_GLOBAL const PxList* K = &a.lists[k];
-        if (K->kind == LK_ARG) k = K->call;
-        else if ((K->parent & TOP) != 0u) break;
-        else k = K->parent;
-    }
-    return k;
-}
+// List `l`'s top call (`px_link`).
+UKL_INLINE uint32_t px_top_call(Ar a, uint32_t l) { return a.lists[l].top; }
 
 // A number token in the scratch: its ref.
 UKL_INLINE uint32_t px_number(Ar a, uint32_t value) {
@@ -1680,6 +1706,7 @@ UKL_INLINE void px_pragma_operand(Ux u, Ar a, uint32_t l) {
     Sq v = px_sq(a, p, lo);
     A->src = v.p; A->first = v.k; A->len = len; A->lo = lo; A->hi = hi; A->call = l; A->order = 0u;
     A->owner = px_owner(a, L->parent);
+    px_link(a.lists, a.trie, a.tlv, id);
     ukl_atomic_store(&a.args[ab].list, id + 2u);
     ukl_atomic_add(&L->apending, 1u);
     px_fence();
@@ -2360,6 +2387,7 @@ UKL_INLINE void px_cl_make(Ar a, Cl c, uint32_t p) {
     Sq v = px_sq(a, L->src, lo);
     A->src = v.p; A->first = v.k; A->len = len; A->lo = lo; A->hi = lo + len; A->call = l;
     A->owner = px_owner(a, L->parent);
+    px_link(a.lists, a.trie, a.tlv, id);
     ukl_atomic_store(&a.args[e].list, id + 2u);
     ukl_atomic_add(&L->apending, 1u);
     px_scan_later(a, id);
@@ -2810,7 +2838,7 @@ UKL_INLINE void px_sc_tok(Ux u, Ar a, Sc c, uint32_t t) {
         } else if (px_one_token(m)) {
             kind = SK_CALL; e = j;
         } else if (px_callable(m)) {
-            if (m < L_DEFS && px_disabled(a.lists, l, m, a.ctl)) kind = SK_PAINT;
+            if (m < L_DEFS && px_disabled(a, l, m)) kind = SK_PAINT;
             else if (!px_fnlike(u.defs, m)) { kind = SK_CALL; e = j; }
             else if (j + 1u < n) { if (ref_is(u, par_ref(u, a, l, j + 1u), '(')) kind = SK_OPEN; }
             else if (px_peek_paren(u, a, l)) { kind = SK_CALL | SK_PAST; e = n; }
@@ -2888,6 +2916,7 @@ UKL_INLINE void px_sc_child(Ux u, Ar a, Sc c, uint32_t t) {
     C->lo = j; C->hi = e;
     C->at = j; C->end = e;
     C->owner = px_owner(a, l);
+    px_link(a.lists, a.trie, a.tlv, child);
     C->lref = px_lref_at(u, a, l, e);
     if (L->nkid != 0u) *px_kid(a.psrc, L, r - px_sc_rank(c, c.base[i])) = child;
     ukl_atomic_add(&L->pending, 1u);
@@ -3044,6 +3073,7 @@ UKL_INLINE void px_ex_join(Ux u, Ar a, Ex x, uint32_t e) {
     px_init(N, xf, m, (xf & TOP) != 0u ? top_slot(u.sc, u.gat, u.n_gaps, end) : L->slot, LK_MACRO);
     N->lo = lo; N->hi = end; N->src = jid; N->at = 0u; N->end = total - 1u;
     J->owner = px_owner(a, xf); N->owner = J->owner;
+    px_link(a.lists, a.trie, a.tlv, jid); px_link(a.lists, a.trie, a.tlv, nid);
     if ((xf & TOP) == 0u) { ukl_atomic_add(&a.lists[xf].pending, 1u); ukl_atomic_min(&a.lists[xf].xhi, end); }
     L->xname = EXC(x, EX_J, e) + 1u; L->xcall = nid + 1u;
     EXC(x, EX_BASE, e) = base; EXC(x, EX_K, e) = nid;

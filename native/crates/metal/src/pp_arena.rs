@@ -322,6 +322,7 @@ pub const SLOTS: &[&str] = &[
     "CLOSE_BITS", "CEND", "EHEADS", "REACH", "STATE", "OFLAG", "OID", "OTOTAL", "LISTS", "SLOTS", "CTL", "QCTL", "XFLAG", "XAT",
     "XTOTAL", "XPOS", "XCOVER", "V", "OBASE", "VTOTAL", "OPV", "OPBASE", "OPTOTAL", "OUT", "SCANS", "SUBS", "CALLS", "SB_L", "FINS", "PLACES", "SC_N", "SC_BASE", "SC_XJ", "SC_TOTAL", "SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT",
     "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK", "SC_CTOTAL", "SC_LTOTAL", "SC_CKEYS", "SC_FIRST", "SC_KB", "SC_VA", "SC_VB", "SC_HIST", "SC_CAP", "TOKENS", "ARGS", "WORDS", "SCRATCH", "LIST_CAP", "OUT_CAP", "Q_CAP",
+    "TRIE", "TRIE_LV",
 ];
 
 fn slot(name: &str) -> usize {
