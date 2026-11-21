@@ -1457,6 +1457,10 @@ rerail_simd8::dispatch! {
     fn stage1_best(src: &[u8]) -> Stage1 = stage1, on stage1_on;
 }
 
+/// The token's first byte's group (`dispatch`), as simdjson's `classify`: a byte's bit `r` is set in both where it is of product `r`'s high and low nibbles; each product is one group's.
+static DISPATCH_LO: [u16; 16] = [0x7204, 0x3c01, 0x3c20, 0x3c01, 0x3c01, 0x3c01, 0x3c01, 0x3c40, 0x3c01, 0x3c01, 0x3803, 0x81b, 0x81b, 0x880b, 0x89a, 0x1902];
+static DISPATCH_HI: [u16; 16] = [0x0, 0x0, 0x1e1, 0x602, 0x804, 0x1008, 0x4800, 0xa010, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0];
+
 /// `src`'s records.
 pub fn lex(src: &[u8]) -> Lexed {
     let n = src.len();
@@ -1937,33 +1941,40 @@ pub fn lex(src: &[u8]) -> Lexed {
         let fs_5 = fill_5;
         // `fill(as_run & dot, ~as_run)`: at the byte before the token.
         let fs_6 = fill_6 && fs_4;
-        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the region opened last of those with none (`plain`) is one.
-        let open = if bit(&m_line_open, s) {
-            // `line`
-            0
-        } else if bit(&m_block_open, s) {
-            // `block`
-            1
-        } else if bit(&m_dq3, s) {
-            // `rstr`
-            2
-        } else if bit(&t5, s) {
-            // `str`
-            3
-        } else if bit(&m_sq, s) {
-            // `chr`
-            4
-        } else if bit(&m_bt, s) {
-            // `tick`
-            5
-        } else if (plain == 3 || plain == 4 || plain == 5) && bit(&m_t_close, s) {
-            // `tail`
-            6
-        } else if (plain == 2) && bit(&m_t_close, s) {
-            // `rtail`
-            7
-        } else {
-            usize::MAX
+        // The token's first byte's group, by the dispatch tables (simdjson's `classify`).
+        let c = src[s];
+        let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();
+        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the region opened last of those with none (`plain`) is one; of those whose opener may be the byte's.
+        let open = match group {
+            // `"`
+            5 => if bit(&m_dq3, s) {
+                2
+            } else if bit(&t5, s) {
+                3
+            } else {
+                usize::MAX
+            },
+            // `'`
+            6 => 4,
+            // `/`
+            8 => if bit(&m_line_open, s) {
+                0
+            } else if bit(&m_block_open, s) {
+                1
+            } else {
+                usize::MAX
+            },
+            // ```
+            14 => 5,
+            // `}`
+            15 => if (plain == 3 || plain == 4 || plain == 5) && bit(&m_t_close, s) {
+                6
+            } else if (plain == 2) && bit(&m_t_close, s) {
+                7
+            } else {
+                usize::MAX
+            },
+            _ => usize::MAX,
         };
         if matches!(open, 0 | 1 | 2 | 3 | 4 | 5) {
             plain = open;
@@ -2028,732 +2039,832 @@ pub fn lex(src: &[u8]) -> Lexed {
             break;
         }
         let mut hits = 0u32;
-        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = if (bit(&m_slash, s) && open == 0) {
-            // `line_comment`: read line
-            let l = {
-                let c = first_bit(&m_lf, s + 1).unwrap_or(n);
-                let last = c - 1;
-                // `rd0_close`, for tier 2
-                clear(&mut fw_rd0_close, s, s);
-                clear(&mut fw_rd0_close, c, last);
-                // `rd1_close`, for tier 2
-                clear(&mut fw_rd1_close, s, s);
-                clear(&mut fw_rd1_close, c, last);
-                last
-            };
-            let l = l.max(s);
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-            fill_2 = (xs_2 || fs_2);
-            xl_2 = false;
-            fill_3 = fs_3;
-            fill_4 = (xs_4 && l == s);
-            xl_4 = false;
-            fill_5 = fs_5;
-            fill_6 = ((xs_4 && fs_6) && l == s);
-            (l, 0, true, 0x100)
-        } else if (bit(&m_slash, s) && open == 1) {
-            // `multiline_comment`: read block
-            let l = match first_bit(&m_block_end, s + 1) {
-                Some(c) => {
-                    let last = c + 0;
-                    // a nested block comment
-                    if any_in(&m_block_open, s + 1, c - 1) {
-                        refused = true;
-                        break;
-                    }
-                    // `rd0_close`, for tier 2
-                    clear(&mut fw_rd0_close, s, s);
-                    clear(&mut fw_rd0_close, c, last);
-                    // `rd1_close`, for tier 2
-                    clear(&mut fw_rd1_close, s, s);
-                    clear(&mut fw_rd1_close, c, last);
-                    last
+        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {
+            // The row: the first whose start holds, of those whose start may be the byte's.
+            let row = match group {
+                // `!#$%&()*+,-:;<=>?@[\]^{|~`
+                0 | 1 | 2 | 3 | 4 => if bit(&t105, s) {
+                    13
+                } else {
+                    usize::MAX
                 },
-                None => {
-                    refused = true;
-                    break;
-                }
-            };
-            let l = l.max(s);
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-            fill_2 = (xs_2 || fs_2);
-            xl_2 = false;
-            fill_3 = fs_3;
-            fill_4 = (xs_4 && l == s);
-            xl_4 = false;
-            fill_5 = fs_5;
-            fill_6 = ((xs_4 && fs_6) && l == s);
-            (l, 0, true, 0x300)
-        } else if bit(&m_alpha, s) {
-            // `simple_identifier`: run name_more, read as word (assumed)
-            let l = run_last(&m_word, s);
-            // Not proved: a test build checks it against the rule over the file.
-            #[cfg(feature = "test-hooks")]
-            assert_eq!(run_last(&m_name_more, s), run_last(&m_word, s), "assume in simple_identifier at byte {s}");
-            let l = l.max(s);
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-            fill_2 = if l > s { false } else { xs_2 };
-            xl_2 = false;
-            fill_3 = false;
-            fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => any_in(&t45, q - 1, l - 1), None => ((xs_4 || (!bit(&t47, s) && fs_4)) || any_in(&t45, s, l - 1)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
-            xl_4 = if l > s { bit(&t45, l) } else { bit(&t45, s) };
-            fill_5 = false;
-            fill_6 = (((xs_4 || (!bit(&t47, s) && fs_4)) && fs_6) && !any_in(&t48, s + 1, l));
-            // a `0x` or `0b` with no digit
-            if bit(&t56, s) {
-                refused = true;
-                break;
-            }
-            // a digit after a binary number
-            if any_in(&t57, s, l) {
-                refused = true;
-                break;
-            }
-            // a word touching a real number
-            if any_in(&t77, s, l) {
-                refused = true;
-                break;
-            }
-            // a number that ends in `_`
-            if any_in(&t78, s, l) {
-                refused = true;
-                break;
-            }
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else if bit(&t96, s) {
-            // `integer_literal`: run nb, read as ((((((t59 | ((dot & prev(t59)) & next(digit))) | (((dot & next(digit)) & ~prev(word)) & ~prev(dot))) | t61) | t66) | t68) | t64) | (f_letter & prev(t70)) (assumed)
-            let l = run_last(&t69, s);
-            // Not proved: a test build checks it against the rule over the file.
-            #[cfg(feature = "test-hooks")]
-            assert_eq!(run_last(&m_nb, s), run_last(&t69, s), "assume in integer_literal at byte {s}");
-            let l = l.max(s);
-            if count_in(&t97, s, l) >= 1 {
-                hits |= 1 << 5;
-            }
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-            fill_2 = if l > s { false } else { xs_2 };
-            xl_2 = false;
-            fill_3 = false;
-            fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
-            xl_4 = false;
-            fill_5 = false;
-            fill_6 = (if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) } && (((xs_4 || (!bit(&t47, s) && fs_4)) && fs_6) || any_in(&m_dot, s + 1, l)));
-            // a `0x` or `0b` with no digit
-            if any_in(&t56, s, l) {
-                refused = true;
-                break;
-            }
-            // a digit after a binary number
-            if any_in(&t57, s, l) {
-                refused = true;
-                break;
-            }
-            // a word touching a real number
-            if any_in(&t77, s, l) {
-                refused = true;
-                break;
-            }
-            // a number that ends in `_`
-            if any_in(&t78, s + 1, l) {
-                refused = true;
-                break;
-            }
-            // punct: a triple's last byte starts a pair
-            if any_in(&t80, s + 1, l) {
-                refused = true;
-                break;
-            }
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else if bit(&t98, s) {
-            // `real_literal`: run nb, read as ((((((t59 | ((dot & prev(t59)) & next(digit))) | t98) | t61) | t66) | t68) | t64) | (f_letter & prev(t70)) (assumed)
-            let l = run_last(&t69, s);
-            // Not proved: a test build checks it against the rule over the file.
-            #[cfg(feature = "test-hooks")]
-            assert_eq!(run_last(&m_nb, s), run_last(&t69, s), "assume in real_literal at byte {s}");
-            let l = l.max(s);
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-            fill_2 = if l > s { false } else { xs_2 };
-            xl_2 = false;
-            fill_3 = false;
-            fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
-            xl_4 = false;
-            fill_5 = false;
-            fill_6 = (if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) } && ((xs_4 || (!bit(&t47, s) && fs_4)) || any_in(&m_dot, s + 1, l)));
-            // a `0x` or `0b` with no digit
-            if any_in(&t56, s + 1, l) {
-                refused = true;
-                break;
-            }
-            // a digit after a binary number
-            if any_in(&t57, s + 1, l) {
-                refused = true;
-                break;
-            }
-            // a word touching a real number
-            if any_in(&t77, s, l) {
-                refused = true;
-                break;
-            }
-            // a number that ends in `_`
-            if any_in(&t78, s + 1, l) {
-                refused = true;
-                break;
-            }
-            // punct: a triple's last byte starts a pair
-            if any_in(&t80, s, l) {
-                refused = true;
-                break;
-            }
-            (l, 4, false, 0x0)
-        } else if bit(&t99, s) {
-            // `hex_literal`: run prev(hex_at) | hx, read as prev(t73) | t71 (assumed)
-            let l = run_last(&t100, s);
-            // Not proved: a test build checks it against the rule over the file.
-            #[cfg(feature = "test-hooks")]
-            assert_eq!(run_last(&t101, s), run_last(&t100, s), "assume in hex_literal at byte {s}");
-            let l = l.max(s);
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-            fill_2 = if l > s { false } else { xs_2 };
-            xl_2 = false;
-            fill_3 = false;
-            fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
-            xl_4 = false;
-            fill_5 = false;
-            fill_6 = (if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) } && ((xs_4 || (!bit(&t47, s) && fs_4)) && fs_6));
-            // a `0x` or `0b` with no digit
-            if bit(&t56, s) {
-                refused = true;
-                break;
-            }
-            // a digit after a binary number
-            if any_in(&t57, s, l) {
-                refused = true;
-                break;
-            }
-            // a word touching a real number
-            if any_in(&t77, s, l) {
-                refused = true;
-                break;
-            }
-            // a number that ends in `_`
-            if any_in(&t78, s + 1, l) {
-                refused = true;
-                break;
-            }
-            (l, 6, false, 0x0)
-        } else if bit(&t102, s) {
-            // `bin_literal`: run prev(bin_at) | bx, read as prev(t76) | t74 (assumed)
-            let l = run_last(&t103, s);
-            // Not proved: a test build checks it against the rule over the file.
-            #[cfg(feature = "test-hooks")]
-            assert_eq!(run_last(&t104, s), run_last(&t103, s), "assume in bin_literal at byte {s}");
-            let l = l.max(s);
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-            fill_2 = if l > s { false } else { xs_2 };
-            xl_2 = false;
-            fill_3 = false;
-            fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
-            xl_4 = false;
-            fill_5 = false;
-            fill_6 = (if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) } && ((xs_4 || (!bit(&t47, s) && fs_4)) && fs_6));
-            // a `0x` or `0b` with no digit
-            if bit(&t56, s) {
-                refused = true;
-                break;
-            }
-            // a digit after a binary number
-            if any_in(&t57, s, l) {
-                refused = true;
-                break;
-            }
-            // a word touching a real number
-            if any_in(&t77, s, l) {
-                refused = true;
-                break;
-            }
-            // a number that ends in `_`
-            if any_in(&t78, s + 1, l) {
-                refused = true;
-                break;
-            }
-            (l, 5, false, 0x0)
-        } else if open == 3 {
-            // `"`: read str parts, to its closer
-            let l = match first_bit(&t6, s + 1) {
-                Some(c) => {
-                    close = c;
-                    let last = if bit(&m_t_dollar, c) { c + 1 } else { c + 0 };
-                    // a string, a character or a backtick name over a line
-                    if any_in(&m_lf, s + 1, c - 1) {
-                        refused = true;
-                        break;
-                    }
-                    // a `$` before a backtick
-                    if any_in(&t53, s + 1, c - 1) {
-                        refused = true;
-                        break;
-                    }
-                    // `rd0_close`, for tier 2
-                    put(&mut fw_rd0_close, &m_dq_close, s, s);
-                    put(&mut fw_rd0_close, &t6, s + 1, c - 1);
-                    // `o_str`, for tier 2
-                    set(&mut fw_o_str, s, s + 1);
-                    // `id_dollar`, for tier 2
-                    put(&mut fw_id_dollar, &t85, s + 1, c - 1);
-                    // `rd0_part3`, for tier 2
-                    put(&mut fw_rd0_part3, &t84, s + 1, c - 1);
-                    // `id_last`, for tier 2
-                    put(&mut fw_id_last, &t87, s + 1, c - 1);
-                    // `lone`, for tier 2
-                    put(&mut fw_lone, &t92, s + 1, c - 1);
-                    // `rd0_open`, for tier 2
-                    set(&mut fw_rd0_open, s, s + 1);
-                    // `rd1_close`, for tier 2
-                    put(&mut fw_rd1_close, &t93, s, s);
-                    last
+                // `"`
+                5 => if open == 3 {
+                    7
+                } else if open == 2 {
+                    8
+                } else {
+                    usize::MAX
                 },
-                None => {
-                    refused = true;
-                    break;
-                }
+                // `'`
+                6 => 11,
+                // `.`
+                7 => if bit(&t98, s) {
+                    4
+                } else if bit(&t105, s) {
+                    13
+                } else {
+                    usize::MAX
+                },
+                // `/`
+                8 => if open == 0 {
+                    0
+                } else if open == 1 {
+                    1
+                } else if bit(&t105, s) {
+                    13
+                } else {
+                    usize::MAX
+                },
+                // `0`
+                9 => if bit(&t96, s) {
+                    3
+                } else if bit(&t99, s) {
+                    5
+                } else if bit(&t102, s) {
+                    6
+                } else {
+                    usize::MAX
+                },
+                // `123456789`
+                10 => if bit(&t96, s) {
+                    3
+                } else {
+                    usize::MAX
+                },
+                // `ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz`
+                11 | 12 | 13 => 2,
+                // ```
+                14 => 12,
+                // `}`
+                15 => if open == 6 {
+                    9
+                } else if open == 7 {
+                    10
+                } else if bit(&t105, s) {
+                    13
+                } else {
+                    usize::MAX
+                },
+                _ => usize::MAX,
             };
-            let l = l.max(s);
-            // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
-            if bit(&m_t_dollar, close) {
-                let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
-                // a `${…}` template with a brace, a template, a comment or a line break
-                if any_in(&t49, l + 1, c - 1) {
-                    refused = true;
-                    break;
+            match row {
+                0 => {
+                    // `line_comment`: read line
+                    let l = {
+                        let c = first_bit(&m_lf, s + 1).unwrap_or(n);
+                        let last = c - 1;
+                        // `rd0_close`, for tier 2
+                        clear(&mut fw_rd0_close, s, s);
+                        clear(&mut fw_rd0_close, c, last);
+                        // `rd1_close`, for tier 2
+                        clear(&mut fw_rd1_close, s, s);
+                        clear(&mut fw_rd1_close, c, last);
+                        last
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    fill_2 = (xs_2 || fs_2);
+                    xl_2 = false;
+                    fill_3 = fs_3;
+                    fill_4 = (xs_4 && l == s);
+                    xl_4 = false;
+                    fill_5 = fs_5;
+                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    (l, 0, true, 0x100)
                 }
-                // an empty `${}`
-                if bit(&m_rbrace, l + 1) {
-                    refused = true;
-                    break;
-                }
-                span_0 = (l + 1, c);
-            }
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-            fill_2 = xs_2;
-            xl_2 = false;
-            fill_3 = false;
-            fill_4 = (xs_4 && l == s);
-            xl_4 = false;
-            fill_5 = false;
-            fill_6 = ((xs_4 && fs_6) && l == s);
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else if open == 2 {
-            // `"`: read rstr parts, to its closer
-            let l = match first_bit(&t4, s + 1) {
-                Some(c) => {
-                    close = c;
-                    let last = if bit(&m_t_dollar, c) { c + 1 } else { if bit(&m_t_dollar, c) { c + 0 } else { c + 2 } };
-                    // a backslash before `$` in a raw string
-                    if any_in(&t50, s + 1, c - 1) {
-                        refused = true;
-                        break;
-                    }
-                    // a raw string closed by four quotes or more
-                    if any_in(&t51, s + 3, c - 1) {
-                        refused = true;
-                        break;
-                    }
-                    // a raw string opened by four quotes or more
-                    if bit(&t52, s) {
-                        refused = true;
-                        break;
-                    }
-                    // a `$` before a backtick
-                    if any_in(&t53, s + 1, c - 1) {
-                        refused = true;
-                        break;
-                    }
-                    // `rd0_close`, for tier 2
-                    put(&mut fw_rd0_close, &m_rclose, s, s);
-                    put(&mut fw_rd0_close, &t4, s + 1, c - 1);
-                    // `o_rstr`, for tier 2
-                    set(&mut fw_o_rstr, s, s + 1);
-                    // `rd0_part0`, for tier 2
-                    set(&mut fw_rd0_part0, s + 1, (s + 1).min(c - 1) + 1);
-                    if c - s == 1 {
-                        set(&mut fw_rd0_part0, c, c + 1);
-                    }
-                    // `r_start`, for tier 2
-                    put(&mut fw_r_start, &t82, s + 3, (s + 3).min(c - 1));
-                    put(&mut fw_r_start, &t88, s + 4, c - 1);
-                    // `rd0_part1_last`, for tier 2
-                    put(&mut fw_rd0_part1_last, &t91, s + 1, c - 1);
-                    if s + 1 < c {
-                        clear(&mut fw_rd0_part1_last, s + 1, s + 1);
-                    }
-                    if s + 2 < c {
-                        clear(&mut fw_rd0_part1_last, s + 2, s + 2);
-                    }
-                    if s + 3 < c {
-                        match c - s - 3 {
-                            1 => { put(&mut fw_rd0_part1_last, &t90, s + 3, s + 3); }
-                            _ => {}
+,
+                1 => {
+                    // `multiline_comment`: read block
+                    let l = match first_bit(&m_block_end, s + 1) {
+                        Some(c) => {
+                            let last = c + 0;
+                            // a nested block comment
+                            if any_in(&m_block_open, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // `rd0_close`, for tier 2
+                            clear(&mut fw_rd0_close, s, s);
+                            clear(&mut fw_rd0_close, c, last);
+                            // `rd1_close`, for tier 2
+                            clear(&mut fw_rd1_close, s, s);
+                            clear(&mut fw_rd1_close, c, last);
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break;
                         }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    fill_2 = (xs_2 || fs_2);
+                    xl_2 = false;
+                    fill_3 = fs_3;
+                    fill_4 = (xs_4 && l == s);
+                    xl_4 = false;
+                    fill_5 = fs_5;
+                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    (l, 0, true, 0x300)
+                }
+,
+                2 => {
+                    // `simple_identifier`: run name_more, read as word (assumed)
+                    let l = run_last(&m_word, s);
+                    // Not proved: a test build checks it against the rule over the file.
+                    #[cfg(feature = "test-hooks")]
+                    assert_eq!(run_last(&m_name_more, s), run_last(&m_word, s), "assume in simple_identifier at byte {s}");
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
+                    fill_2 = if l > s { false } else { xs_2 };
+                    xl_2 = false;
+                    fill_3 = false;
+                    fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => any_in(&t45, q - 1, l - 1), None => ((xs_4 || (!bit(&t47, s) && fs_4)) || any_in(&t45, s, l - 1)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
+                    xl_4 = if l > s { bit(&t45, l) } else { bit(&t45, s) };
+                    fill_5 = false;
+                    fill_6 = (((xs_4 || (!bit(&t47, s) && fs_4)) && fs_6) && !any_in(&t48, s + 1, l));
+                    // a `0x` or `0b` with no digit
+                    if bit(&t56, s) {
+                        refused = true;
+                        break;
                     }
-                    if s + 4 < c {
-                        match c - s - 4 {
-                            1 => { put(&mut fw_rd0_part1_last, &t90, s + 4, s + 4); }
-                            _ => {}
+                    // a digit after a binary number
+                    if any_in(&t57, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a word touching a real number
+                    if any_in(&t77, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a number that ends in `_`
+                    if any_in(&t78, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                3 => {
+                    // `integer_literal`: run nb, read as ((((((t59 | ((dot & prev(t59)) & next(digit))) | (((dot & next(digit)) & ~prev(word)) & ~prev(dot))) | t61) | t66) | t68) | t64) | (f_letter & prev(t70)) (assumed)
+                    let l = run_last(&t69, s);
+                    // Not proved: a test build checks it against the rule over the file.
+                    #[cfg(feature = "test-hooks")]
+                    assert_eq!(run_last(&m_nb, s), run_last(&t69, s), "assume in integer_literal at byte {s}");
+                    let l = l.max(s);
+                    if count_in(&t97, s, l) >= 1 {
+                        hits |= 1 << 5;
+                    }
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
+                    fill_2 = if l > s { false } else { xs_2 };
+                    xl_2 = false;
+                    fill_3 = false;
+                    fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
+                    xl_4 = false;
+                    fill_5 = false;
+                    fill_6 = (if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) } && (((xs_4 || (!bit(&t47, s) && fs_4)) && fs_6) || any_in(&m_dot, s + 1, l)));
+                    // a `0x` or `0b` with no digit
+                    if any_in(&t56, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a digit after a binary number
+                    if any_in(&t57, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a word touching a real number
+                    if any_in(&t77, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a number that ends in `_`
+                    if any_in(&t78, s + 1, l) {
+                        refused = true;
+                        break;
+                    }
+                    // punct: a triple's last byte starts a pair
+                    if any_in(&t80, s + 1, l) {
+                        refused = true;
+                        break;
+                    }
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                4 => {
+                    // `real_literal`: run nb, read as ((((((t59 | ((dot & prev(t59)) & next(digit))) | t98) | t61) | t66) | t68) | t64) | (f_letter & prev(t70)) (assumed)
+                    let l = run_last(&t69, s);
+                    // Not proved: a test build checks it against the rule over the file.
+                    #[cfg(feature = "test-hooks")]
+                    assert_eq!(run_last(&m_nb, s), run_last(&t69, s), "assume in real_literal at byte {s}");
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
+                    fill_2 = if l > s { false } else { xs_2 };
+                    xl_2 = false;
+                    fill_3 = false;
+                    fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
+                    xl_4 = false;
+                    fill_5 = false;
+                    fill_6 = (if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) } && ((xs_4 || (!bit(&t47, s) && fs_4)) || any_in(&m_dot, s + 1, l)));
+                    // a `0x` or `0b` with no digit
+                    if any_in(&t56, s + 1, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a digit after a binary number
+                    if any_in(&t57, s + 1, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a word touching a real number
+                    if any_in(&t77, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a number that ends in `_`
+                    if any_in(&t78, s + 1, l) {
+                        refused = true;
+                        break;
+                    }
+                    // punct: a triple's last byte starts a pair
+                    if any_in(&t80, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    (l, 4, false, 0x0)
+                }
+,
+                5 => {
+                    // `hex_literal`: run prev(hex_at) | hx, read as prev(t73) | t71 (assumed)
+                    let l = run_last(&t100, s);
+                    // Not proved: a test build checks it against the rule over the file.
+                    #[cfg(feature = "test-hooks")]
+                    assert_eq!(run_last(&t101, s), run_last(&t100, s), "assume in hex_literal at byte {s}");
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
+                    fill_2 = if l > s { false } else { xs_2 };
+                    xl_2 = false;
+                    fill_3 = false;
+                    fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
+                    xl_4 = false;
+                    fill_5 = false;
+                    fill_6 = (if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) } && ((xs_4 || (!bit(&t47, s) && fs_4)) && fs_6));
+                    // a `0x` or `0b` with no digit
+                    if bit(&t56, s) {
+                        refused = true;
+                        break;
+                    }
+                    // a digit after a binary number
+                    if any_in(&t57, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a word touching a real number
+                    if any_in(&t77, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a number that ends in `_`
+                    if any_in(&t78, s + 1, l) {
+                        refused = true;
+                        break;
+                    }
+                    (l, 6, false, 0x0)
+                }
+,
+                6 => {
+                    // `bin_literal`: run prev(bin_at) | bx, read as prev(t76) | t74 (assumed)
+                    let l = run_last(&t103, s);
+                    // Not proved: a test build checks it against the rule over the file.
+                    #[cfg(feature = "test-hooks")]
+                    assert_eq!(run_last(&t104, s), run_last(&t103, s), "assume in bin_literal at byte {s}");
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
+                    fill_2 = if l > s { false } else { xs_2 };
+                    xl_2 = false;
+                    fill_3 = false;
+                    fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
+                    xl_4 = false;
+                    fill_5 = false;
+                    fill_6 = (if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) } && ((xs_4 || (!bit(&t47, s) && fs_4)) && fs_6));
+                    // a `0x` or `0b` with no digit
+                    if bit(&t56, s) {
+                        refused = true;
+                        break;
+                    }
+                    // a digit after a binary number
+                    if any_in(&t57, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a word touching a real number
+                    if any_in(&t77, s, l) {
+                        refused = true;
+                        break;
+                    }
+                    // a number that ends in `_`
+                    if any_in(&t78, s + 1, l) {
+                        refused = true;
+                        break;
+                    }
+                    (l, 5, false, 0x0)
+                }
+,
+                7 => {
+                    // `"`: read str parts, to its closer
+                    let l = match first_bit(&t6, s + 1) {
+                        Some(c) => {
+                            close = c;
+                            let last = if bit(&m_t_dollar, c) { c + 1 } else { c + 0 };
+                            // a string, a character or a backtick name over a line
+                            if any_in(&m_lf, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // a `$` before a backtick
+                            if any_in(&t53, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // `rd0_close`, for tier 2
+                            put(&mut fw_rd0_close, &m_dq_close, s, s);
+                            put(&mut fw_rd0_close, &t6, s + 1, c - 1);
+                            // `o_str`, for tier 2
+                            set(&mut fw_o_str, s, s + 1);
+                            // `id_dollar`, for tier 2
+                            put(&mut fw_id_dollar, &t85, s + 1, c - 1);
+                            // `rd0_part3`, for tier 2
+                            put(&mut fw_rd0_part3, &t84, s + 1, c - 1);
+                            // `id_last`, for tier 2
+                            put(&mut fw_id_last, &t87, s + 1, c - 1);
+                            // `lone`, for tier 2
+                            put(&mut fw_lone, &t92, s + 1, c - 1);
+                            // `rd0_open`, for tier 2
+                            set(&mut fw_rd0_open, s, s + 1);
+                            // `rd1_close`, for tier 2
+                            put(&mut fw_rd1_close, &t93, s, s);
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break;
                         }
+                    };
+                    let l = l.max(s);
+                    // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
+                    if bit(&m_t_dollar, close) {
+                        let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
+                        // a `${…}` template with a brace, a template, a comment or a line break
+                        if any_in(&t49, l + 1, c - 1) {
+                            refused = true;
+                            break;
+                        }
+                        // an empty `${}`
+                        if bit(&m_rbrace, l + 1) {
+                            refused = true;
+                            break;
+                        }
+                        span_0 = (l + 1, c);
                     }
-                    if c > s + 5 {
-                        put(&mut fw_rd0_part1_last, &t90, c - 1, c - 1);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    fill_2 = xs_2;
+                    xl_2 = false;
+                    fill_3 = false;
+                    fill_4 = (xs_4 && l == s);
+                    xl_4 = false;
+                    fill_5 = false;
+                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                8 => {
+                    // `"`: read rstr parts, to its closer
+                    let l = match first_bit(&t4, s + 1) {
+                        Some(c) => {
+                            close = c;
+                            let last = if bit(&m_t_dollar, c) { c + 1 } else { if bit(&m_t_dollar, c) { c + 0 } else { c + 2 } };
+                            // a backslash before `$` in a raw string
+                            if any_in(&t50, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // a raw string closed by four quotes or more
+                            if any_in(&t51, s + 3, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // a raw string opened by four quotes or more
+                            if bit(&t52, s) {
+                                refused = true;
+                                break;
+                            }
+                            // a `$` before a backtick
+                            if any_in(&t53, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // `rd0_close`, for tier 2
+                            put(&mut fw_rd0_close, &m_rclose, s, s);
+                            put(&mut fw_rd0_close, &t4, s + 1, c - 1);
+                            // `o_rstr`, for tier 2
+                            set(&mut fw_o_rstr, s, s + 1);
+                            // `rd0_part0`, for tier 2
+                            set(&mut fw_rd0_part0, s + 1, (s + 1).min(c - 1) + 1);
+                            if c - s == 1 {
+                                set(&mut fw_rd0_part0, c, c + 1);
+                            }
+                            // `r_start`, for tier 2
+                            put(&mut fw_r_start, &t82, s + 3, (s + 3).min(c - 1));
+                            put(&mut fw_r_start, &t88, s + 4, c - 1);
+                            // `rd0_part1_last`, for tier 2
+                            put(&mut fw_rd0_part1_last, &t91, s + 1, c - 1);
+                            if s + 1 < c {
+                                clear(&mut fw_rd0_part1_last, s + 1, s + 1);
+                            }
+                            if s + 2 < c {
+                                clear(&mut fw_rd0_part1_last, s + 2, s + 2);
+                            }
+                            if s + 3 < c {
+                                match c - s - 3 {
+                                    1 => { put(&mut fw_rd0_part1_last, &t90, s + 3, s + 3); }
+                                    _ => {}
+                                }
+                            }
+                            if s + 4 < c {
+                                match c - s - 4 {
+                                    1 => { put(&mut fw_rd0_part1_last, &t90, s + 4, s + 4); }
+                                    _ => {}
+                                }
+                            }
+                            if c > s + 5 {
+                                put(&mut fw_rd0_part1_last, &t90, c - 1, c - 1);
+                            }
+                            // `id_dollar`, for tier 2
+                            put(&mut fw_id_dollar, &t85, s + 1, c - 1);
+                            // `rd0_part3`, for tier 2
+                            put(&mut fw_rd0_part3, &t84, s + 1, c - 1);
+                            // `id_last`, for tier 2
+                            put(&mut fw_id_last, &t87, s + 1, c - 1);
+                            // `lone`, for tier 2
+                            put(&mut fw_lone, &t92, s + 1, c - 1);
+                            // `rd0_open`, for tier 2
+                            set(&mut fw_rd0_open, s, s + 1);
+                            // `rd1_close`, for tier 2
+                            put(&mut fw_rd1_close, &t93, s, s);
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
+                    if bit(&m_t_dollar, close) {
+                        let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
+                        // a `${…}` template with a brace, a template, a comment or a line break
+                        if any_in(&t49, l + 1, c - 1) {
+                            refused = true;
+                            break;
+                        }
+                        // an empty `${}`
+                        if bit(&m_rbrace, l + 1) {
+                            refused = true;
+                            break;
+                        }
+                        span_0 = (l + 1, c);
                     }
-                    // `id_dollar`, for tier 2
-                    put(&mut fw_id_dollar, &t85, s + 1, c - 1);
-                    // `rd0_part3`, for tier 2
-                    put(&mut fw_rd0_part3, &t84, s + 1, c - 1);
-                    // `id_last`, for tier 2
-                    put(&mut fw_id_last, &t87, s + 1, c - 1);
-                    // `lone`, for tier 2
-                    put(&mut fw_lone, &t92, s + 1, c - 1);
-                    // `rd0_open`, for tier 2
-                    set(&mut fw_rd0_open, s, s + 1);
-                    // `rd1_close`, for tier 2
-                    put(&mut fw_rd1_close, &t93, s, s);
-                    last
-                },
-                None => {
-                    refused = true;
-                    break;
+                    // `rt_code`: from the byte after `rt_brace`, to the next of `rbrace`.
+                    if bit(&m_t_dollar, close) {
+                        let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
+                        span_1 = (l + 1, c);
+                    }
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    fill_2 = xs_2;
+                    xl_2 = false;
+                    fill_3 = false;
+                    fill_4 = (xs_4 && l == s);
+                    xl_4 = false;
+                    fill_5 = false;
+                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
                 }
-            };
-            let l = l.max(s);
-            // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
-            if bit(&m_t_dollar, close) {
-                let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
-                // a `${…}` template with a brace, a template, a comment or a line break
-                if any_in(&t49, l + 1, c - 1) {
-                    refused = true;
-                    break;
+,
+                9 => {
+                    // `interpolation_expression_end`: read tail parts, to its closer
+                    let l = match first_bit(&t6, s + 1) {
+                        Some(c) => {
+                            close = c;
+                            let last = if bit(&m_dq_close, c) { c + 0 } else if bit(&m_t_dollar, c) { c + 1 } else { c + 0 };
+                            // a string, a character or a backtick name over a line
+                            if any_in(&m_lf, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // a `$` before a backtick
+                            if any_in(&t53, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // `rd0_close`, for tier 2
+                            clear(&mut fw_rd0_close, s, s);
+                            // `id_dollar`, for tier 2
+                            put(&mut fw_id_dollar, &t85, s + 1, c - 1);
+                            // `rd0_part3`, for tier 2
+                            put(&mut fw_rd0_part3, &t84, s + 1, c - 1);
+                            // `id_last`, for tier 2
+                            put(&mut fw_id_last, &t87, s + 1, c - 1);
+                            // `lone`, for tier 2
+                            put(&mut fw_lone, &t92, s + 1, c - 1);
+                            // `rd1_close`, for tier 2
+                            clear(&mut fw_rd1_close, s, s);
+                            put(&mut fw_rd1_close, &t6, s + 1, c - 1);
+                            // `o_tail`, for tier 2
+                            set(&mut fw_o_tail, s, s + 1);
+                            // `rd1_closes0`, for tier 2
+                            put(&mut fw_rd1_closes0, &m_dq_close, s + 1, c - 1);
+                            put(&mut fw_rd1_closes0, &m_dq_close, c, last);
+                            // `rd1_open`, for tier 2
+                            set(&mut fw_rd1_open, s, s + 1);
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
+                    if bit(&m_t_dollar, close) {
+                        let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
+                        // a `${…}` template with a brace, a template, a comment or a line break
+                        if any_in(&t49, l + 1, c - 1) {
+                            refused = true;
+                            break;
+                        }
+                        // an empty `${}`
+                        if bit(&m_rbrace, l + 1) {
+                            refused = true;
+                            break;
+                        }
+                        span_0 = (l + 1, c);
+                    }
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    fill_2 = xs_2;
+                    xl_2 = false;
+                    fill_3 = false;
+                    fill_4 = (xs_4 && l == s);
+                    xl_4 = false;
+                    fill_5 = false;
+                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    (l, 1, false, 0x0)
                 }
-                // an empty `${}`
-                if bit(&m_rbrace, l + 1) {
-                    refused = true;
-                    break;
+,
+                10 => {
+                    // `interpolation_expression_end`: read rtail parts, to its closer
+                    let l = match first_bit(&t4, s + 1) {
+                        Some(c) => {
+                            close = c;
+                            let last = if bit(&m_rclose, c) { c + 2 } else if bit(&m_t_dollar, c) { c + 1 } else { if bit(&m_t_dollar, c) { c + 0 } else { c + 2 } };
+                            // a backslash before `$` in a raw string
+                            if any_in(&t50, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // a raw string closed by four quotes or more
+                            if any_in(&t51, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // a `$` before a backtick
+                            if any_in(&t53, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // `rd0_close`, for tier 2
+                            clear(&mut fw_rd0_close, s, s);
+                            // `r_start`, for tier 2
+                            put(&mut fw_r_start, &t82, s + 1, (s + 1).min(c - 1));
+                            put(&mut fw_r_start, &t88, s + 2, c - 1);
+                            // `rd0_part1_last`, for tier 2
+                            put(&mut fw_rd0_part1_last, &t91, s + 1, c - 1);
+                            if c > s + 1 {
+                                put(&mut fw_rd0_part1_last, &t90, c - 1, c - 1);
+                            }
+                            // `id_dollar`, for tier 2
+                            put(&mut fw_id_dollar, &t85, s + 1, c - 1);
+                            // `rd0_part3`, for tier 2
+                            put(&mut fw_rd0_part3, &t84, s + 1, c - 1);
+                            // `id_last`, for tier 2
+                            put(&mut fw_id_last, &t87, s + 1, c - 1);
+                            // `lone`, for tier 2
+                            put(&mut fw_lone, &t92, s + 1, c - 1);
+                            // `rd1_close`, for tier 2
+                            clear(&mut fw_rd1_close, s, s);
+                            put(&mut fw_rd1_close, &t4, s + 1, c - 1);
+                            // `o_rtail`, for tier 2
+                            set(&mut fw_o_rtail, s, s + 1);
+                            // `rd1_closes1`, for tier 2
+                            put(&mut fw_rd1_closes1, &m_rclose, s + 1, c - 1);
+                            put(&mut fw_rd1_closes1, &m_rclose, c, c);
+                            // `rd1_open`, for tier 2
+                            set(&mut fw_rd1_open, s, s + 1);
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
+                    if bit(&m_t_dollar, close) {
+                        let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
+                        // a `${…}` template with a brace, a template, a comment or a line break
+                        if any_in(&t49, l + 1, c - 1) {
+                            refused = true;
+                            break;
+                        }
+                        // an empty `${}`
+                        if bit(&m_rbrace, l + 1) {
+                            refused = true;
+                            break;
+                        }
+                        span_0 = (l + 1, c);
+                    }
+                    // `rt_code`: from the byte after `rt_brace`, to the next of `rbrace`.
+                    if bit(&m_t_dollar, close) {
+                        let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
+                        span_1 = (l + 1, c);
+                    }
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    fill_2 = xs_2;
+                    xl_2 = false;
+                    fill_3 = false;
+                    fill_4 = (xs_4 && l == s);
+                    xl_4 = false;
+                    fill_5 = false;
+                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    (l, 1, false, 0x0)
                 }
-                span_0 = (l + 1, c);
-            }
-            // `rt_code`: from the byte after `rt_brace`, to the next of `rbrace`.
-            if bit(&m_t_dollar, close) {
-                let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
-                span_1 = (l + 1, c);
-            }
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-            fill_2 = xs_2;
-            xl_2 = false;
-            fill_3 = false;
-            fill_4 = (xs_4 && l == s);
-            xl_4 = false;
-            fill_5 = false;
-            fill_6 = ((xs_4 && fs_6) && l == s);
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else if open == 6 {
-            // `interpolation_expression_end`: read tail parts, to its closer
-            let l = match first_bit(&t6, s + 1) {
-                Some(c) => {
-                    close = c;
-                    let last = if bit(&m_dq_close, c) { c + 0 } else if bit(&m_t_dollar, c) { c + 1 } else { c + 0 };
-                    // a string, a character or a backtick name over a line
-                    if any_in(&m_lf, s + 1, c - 1) {
+,
+                11 => {
+                    // `'`: read chr parts, to its closer
+                    let l = match first_bit(&m_sq_close, s + 1) {
+                        Some(c) => {
+                            let last = c + 0;
+                            // a string, a character or a backtick name over a line
+                            if any_in(&m_lf, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // a `\u` without four hex digits
+                            if any_in(&t54, s + 1, c - 1) || any_in(&t54, c, last) {
+                                refused = true;
+                                break;
+                            }
+                            // `rd0_close`, for tier 2
+                            clear(&mut fw_rd0_close, s, s);
+                            clear(&mut fw_rd0_close, c, last);
+                            // `rd1_close`, for tier 2
+                            clear(&mut fw_rd1_close, s, s);
+                            clear(&mut fw_rd1_close, c, last);
+                            // `c_uesc`, for tier 2
+                            put(&mut fw_c_uesc, &t55, s + 1, c - 1);
+                            // `rd2_part1`, for tier 2
+                            put(&mut fw_rd2_part1, &t94, s + 1, c - 1);
+                            put(&mut fw_rd2_part1, &t94, c, last);
+                            // `rd2_part2`, for tier 2
+                            put(&mut fw_rd2_part2, &t95, s + 1, c - 1);
+                            // `o_chr`, for tier 2
+                            set(&mut fw_o_chr, s, s + 1);
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    fill_2 = xs_2;
+                    xl_2 = false;
+                    fill_3 = false;
+                    fill_4 = (xs_4 && l == s);
+                    xl_4 = false;
+                    fill_5 = false;
+                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                12 => {
+                    // `backtick_name`: read tick
+                    let l = match first_bit(&m_bt, s + 1) {
+                        Some(c) => {
+                            let last = c + 0;
+                            // a string, a character or a backtick name over a line
+                            if any_in(&m_lf, s + 1, c - 1) {
+                                refused = true;
+                                break;
+                            }
+                            // `rd0_close`, for tier 2
+                            clear(&mut fw_rd0_close, s, s);
+                            clear(&mut fw_rd0_close, c, last);
+                            // `rd1_close`, for tier 2
+                            clear(&mut fw_rd1_close, s, s);
+                            clear(&mut fw_rd1_close, c, last);
+                            last
+                        },
+                        None => {
+                            refused = true;
+                            break;
+                        }
+                    };
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
+                    fill_2 = xs_2;
+                    xl_2 = false;
+                    fill_3 = false;
+                    fill_4 = (xs_4 && l == s);
+                    xl_4 = false;
+                    fill_5 = false;
+                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                13 => {
+                    // `punct`: pair
+                    let l = pair_52(src, s);
+                    let l = l.max(s);
+                    // `assume … at ends t_brace`, not proved: a test build checks it.
+                    #[cfg(feature = "test-hooks")]
+                    assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
+                    fill_2 = if l > s { bit(&m_semicolon, l - 1) } else { xs_2 };
+                    xl_2 = if l > s { false } else { bit(&m_semicolon, s) };
+                    fill_3 = false;
+                    fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
+                    xl_4 = false;
+                    fill_5 = if l > s { false } else { bit(&m_semicolon, s) };
+                    fill_6 = (if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) } && (((xs_4 || (!bit(&t47, s) && fs_4)) && (bit(&m_dot, s) || fs_6)) || any_in(&m_dot, s + 1, l)));
+                    // a dotted type after `as` before a `<`: over the token's bytes after its first.
+                    if ((xs_4 || (!bit(&t47, s) && fs_4)) && { let e1 = first_in(&t47, s + 1, l).unwrap_or(l); ((((xs_4 || (!bit(&t47, s) && fs_4)) && (bit(&m_dot, s) || fs_6)) && any_in(&t79, s + 1, e1)) || first_in(&m_dot, s + 1, e1).is_some_and(|y1| any_in(&t79, y1 + 1, e1))) }) {
                         refused = true;
                         break;
                     }
-                    // a `$` before a backtick
-                    if any_in(&t53, s + 1, c - 1) {
+                    // a `$` outside a string
+                    if bit(&m_dollar, s) {
                         refused = true;
                         break;
                     }
-                    // `rd0_close`, for tier 2
-                    clear(&mut fw_rd0_close, s, s);
-                    // `id_dollar`, for tier 2
-                    put(&mut fw_id_dollar, &t85, s + 1, c - 1);
-                    // `rd0_part3`, for tier 2
-                    put(&mut fw_rd0_part3, &t84, s + 1, c - 1);
-                    // `id_last`, for tier 2
-                    put(&mut fw_id_last, &t87, s + 1, c - 1);
-                    // `lone`, for tier 2
-                    put(&mut fw_lone, &t92, s + 1, c - 1);
-                    // `rd1_close`, for tier 2
-                    clear(&mut fw_rd1_close, s, s);
-                    put(&mut fw_rd1_close, &t6, s + 1, c - 1);
-                    // `o_tail`, for tier 2
-                    set(&mut fw_o_tail, s, s + 1);
-                    // `rd1_closes0`, for tier 2
-                    put(&mut fw_rd1_closes0, &m_dq_close, s + 1, c - 1);
-                    put(&mut fw_rd1_closes0, &m_dq_close, c, last);
-                    // `rd1_open`, for tier 2
-                    set(&mut fw_rd1_open, s, s + 1);
-                    last
-                },
-                None => {
-                    refused = true;
-                    break;
-                }
-            };
-            let l = l.max(s);
-            // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
-            if bit(&m_t_dollar, close) {
-                let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
-                // a `${…}` template with a brace, a template, a comment or a line break
-                if any_in(&t49, l + 1, c - 1) {
-                    refused = true;
-                    break;
-                }
-                // an empty `${}`
-                if bit(&m_rbrace, l + 1) {
-                    refused = true;
-                    break;
-                }
-                span_0 = (l + 1, c);
-            }
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-            fill_2 = xs_2;
-            xl_2 = false;
-            fill_3 = false;
-            fill_4 = (xs_4 && l == s);
-            xl_4 = false;
-            fill_5 = false;
-            fill_6 = ((xs_4 && fs_6) && l == s);
-            (l, 1, false, 0x0)
-        } else if open == 7 {
-            // `interpolation_expression_end`: read rtail parts, to its closer
-            let l = match first_bit(&t4, s + 1) {
-                Some(c) => {
-                    close = c;
-                    let last = if bit(&m_rclose, c) { c + 2 } else if bit(&m_t_dollar, c) { c + 1 } else { if bit(&m_t_dollar, c) { c + 0 } else { c + 2 } };
-                    // a backslash before `$` in a raw string
-                    if any_in(&t50, s + 1, c - 1) {
+                    // a word touching a real number
+                    if any_in(&t77, s, l) {
                         refused = true;
                         break;
                     }
-                    // a raw string closed by four quotes or more
-                    if any_in(&t51, s + 1, c - 1) {
+                    // punct: a triple's last byte starts a pair
+                    if any_in(&t80, s, l) {
                         refused = true;
                         break;
                     }
-                    // a `$` before a backtick
-                    if any_in(&t53, s + 1, c - 1) {
-                        refused = true;
-                        break;
-                    }
-                    // `rd0_close`, for tier 2
-                    clear(&mut fw_rd0_close, s, s);
-                    // `r_start`, for tier 2
-                    put(&mut fw_r_start, &t82, s + 1, (s + 1).min(c - 1));
-                    put(&mut fw_r_start, &t88, s + 2, c - 1);
-                    // `rd0_part1_last`, for tier 2
-                    put(&mut fw_rd0_part1_last, &t91, s + 1, c - 1);
-                    if c > s + 1 {
-                        put(&mut fw_rd0_part1_last, &t90, c - 1, c - 1);
-                    }
-                    // `id_dollar`, for tier 2
-                    put(&mut fw_id_dollar, &t85, s + 1, c - 1);
-                    // `rd0_part3`, for tier 2
-                    put(&mut fw_rd0_part3, &t84, s + 1, c - 1);
-                    // `id_last`, for tier 2
-                    put(&mut fw_id_last, &t87, s + 1, c - 1);
-                    // `lone`, for tier 2
-                    put(&mut fw_lone, &t92, s + 1, c - 1);
-                    // `rd1_close`, for tier 2
-                    clear(&mut fw_rd1_close, s, s);
-                    put(&mut fw_rd1_close, &t4, s + 1, c - 1);
-                    // `o_rtail`, for tier 2
-                    set(&mut fw_o_rtail, s, s + 1);
-                    // `rd1_closes1`, for tier 2
-                    put(&mut fw_rd1_closes1, &m_rclose, s + 1, c - 1);
-                    put(&mut fw_rd1_closes1, &m_rclose, c, c);
-                    // `rd1_open`, for tier 2
-                    set(&mut fw_rd1_open, s, s + 1);
-                    last
-                },
-                None => {
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                _ => {
+                    // A byte no token begins with.
                     refused = true;
                     break;
                 }
-            };
-            let l = l.max(s);
-            // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
-            if bit(&m_t_dollar, close) {
-                let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
-                // a `${…}` template with a brace, a template, a comment or a line break
-                if any_in(&t49, l + 1, c - 1) {
-                    refused = true;
-                    break;
-                }
-                // an empty `${}`
-                if bit(&m_rbrace, l + 1) {
-                    refused = true;
-                    break;
-                }
-                span_0 = (l + 1, c);
             }
-            // `rt_code`: from the byte after `rt_brace`, to the next of `rbrace`.
-            if bit(&m_t_dollar, close) {
-                let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
-                span_1 = (l + 1, c);
-            }
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-            fill_2 = xs_2;
-            xl_2 = false;
-            fill_3 = false;
-            fill_4 = (xs_4 && l == s);
-            xl_4 = false;
-            fill_5 = false;
-            fill_6 = ((xs_4 && fs_6) && l == s);
-            (l, 1, false, 0x0)
-        } else if open == 4 {
-            // `'`: read chr parts, to its closer
-            let l = match first_bit(&m_sq_close, s + 1) {
-                Some(c) => {
-                    let last = c + 0;
-                    // a string, a character or a backtick name over a line
-                    if any_in(&m_lf, s + 1, c - 1) {
-                        refused = true;
-                        break;
-                    }
-                    // a `\u` without four hex digits
-                    if any_in(&t54, s + 1, c - 1) || any_in(&t54, c, last) {
-                        refused = true;
-                        break;
-                    }
-                    // `rd0_close`, for tier 2
-                    clear(&mut fw_rd0_close, s, s);
-                    clear(&mut fw_rd0_close, c, last);
-                    // `rd1_close`, for tier 2
-                    clear(&mut fw_rd1_close, s, s);
-                    clear(&mut fw_rd1_close, c, last);
-                    // `c_uesc`, for tier 2
-                    put(&mut fw_c_uesc, &t55, s + 1, c - 1);
-                    // `rd2_part1`, for tier 2
-                    put(&mut fw_rd2_part1, &t94, s + 1, c - 1);
-                    put(&mut fw_rd2_part1, &t94, c, last);
-                    // `rd2_part2`, for tier 2
-                    put(&mut fw_rd2_part2, &t95, s + 1, c - 1);
-                    // `o_chr`, for tier 2
-                    set(&mut fw_o_chr, s, s + 1);
-                    last
-                },
-                None => {
-                    refused = true;
-                    break;
-                }
-            };
-            let l = l.max(s);
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-            fill_2 = xs_2;
-            xl_2 = false;
-            fill_3 = false;
-            fill_4 = (xs_4 && l == s);
-            xl_4 = false;
-            fill_5 = false;
-            fill_6 = ((xs_4 && fs_6) && l == s);
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else if open == 5 {
-            // `backtick_name`: read tick
-            let l = match first_bit(&m_bt, s + 1) {
-                Some(c) => {
-                    let last = c + 0;
-                    // a string, a character or a backtick name over a line
-                    if any_in(&m_lf, s + 1, c - 1) {
-                        refused = true;
-                        break;
-                    }
-                    // `rd0_close`, for tier 2
-                    clear(&mut fw_rd0_close, s, s);
-                    clear(&mut fw_rd0_close, c, last);
-                    // `rd1_close`, for tier 2
-                    clear(&mut fw_rd1_close, s, s);
-                    clear(&mut fw_rd1_close, c, last);
-                    last
-                },
-                None => {
-                    refused = true;
-                    break;
-                }
-            };
-            let l = l.max(s);
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
-            fill_2 = xs_2;
-            xl_2 = false;
-            fill_3 = false;
-            fill_4 = (xs_4 && l == s);
-            xl_4 = false;
-            fill_5 = false;
-            fill_6 = ((xs_4 && fs_6) && l == s);
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else if bit(&t105, s) {
-            // `punct`: pair
-            let l = pair_52(src, s);
-            let l = l.max(s);
-            // `assume … at ends t_brace`, not proved: a test build checks it.
-            #[cfg(feature = "test-hooks")]
-            assert!(!any_in(&m_t_brace, at, l), "assume t_brace at ends, by byte {l}");
-            fill_2 = if l > s { bit(&m_semicolon, l - 1) } else { xs_2 };
-            xl_2 = if l > s { false } else { bit(&m_semicolon, s) };
-            fill_3 = false;
-            fill_4 = if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) };
-            xl_4 = false;
-            fill_5 = if l > s { false } else { bit(&m_semicolon, s) };
-            fill_6 = (if l > s { match last_in(&t47, s + 1, l) { Some(q) => false, None => (xs_4 || (!bit(&t47, s) && fs_4)) } } else { (xs_4 || (!bit(&t47, s) && fs_4)) } && (((xs_4 || (!bit(&t47, s) && fs_4)) && (bit(&m_dot, s) || fs_6)) || any_in(&m_dot, s + 1, l)));
-            // a dotted type after `as` before a `<`: over the token's bytes after its first.
-            if ((xs_4 || (!bit(&t47, s) && fs_4)) && { let e1 = first_in(&t47, s + 1, l).unwrap_or(l); ((((xs_4 || (!bit(&t47, s) && fs_4)) && (bit(&m_dot, s) || fs_6)) && any_in(&t79, s + 1, e1)) || first_in(&m_dot, s + 1, e1).is_some_and(|y1| any_in(&t79, y1 + 1, e1))) }) {
-                refused = true;
-                break;
-            }
-            // a `$` outside a string
-            if bit(&m_dollar, s) {
-                refused = true;
-                break;
-            }
-            // a word touching a real number
-            if any_in(&t77, s, l) {
-                refused = true;
-                break;
-            }
-            // punct: a triple's last byte starts a pair
-            if any_in(&t80, s, l) {
-                refused = true;
-                break;
-            }
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } 
-else {
-            // A byte no token begins with.
-            refused = true;
-            break;
-        };
+        }
+;
         let word = if extra { 0 } else { word(&src[s..=l]) };
         // The token marks: tier 2 tests the rest of each.
         if (open == 5 && (((((((((((bit(&m_alpha, s) || bit(&t96, s)) || bit(&t98, s)) || bit(&t99, s)) || bit(&t102, s)) || open == 3) || open == 2) || open == 6) || open == 7) || open == 4) || open == 5) || bit(&t105, s))) {
