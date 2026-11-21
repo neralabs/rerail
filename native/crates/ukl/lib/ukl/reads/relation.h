@@ -695,6 +695,7 @@ UKL_COLD uint32_t clif_verdict_get(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint3
   {b=10u;continue;}
  }
  case 15u:{
+  ukl_fence_device();
   uint32_t v73=v60+((uint32_t)(18446744073709551615ul));
   uint64_t v74=((uint64_t)(v73));
   uint64_t v75=((uint64_t)((uint64_t)(v74)<<(((uint32_t)(2))&63u)));
@@ -840,6 +841,7 @@ UKL_COLD uint32_t clif_verdict_get(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint3
   if(v153!=0){b=43u;continue;}else{b=46u;continue;}
  }
  case 46u:{
+  ukl_fence_device();
   uint32_t v154=v152+((uint32_t)(18446744073709551615ul));
   uint64_t v155=((uint64_t)(v154));
   uint64_t v156=((uint64_t)((uint64_t)(v155)<<(((uint32_t)(2))&63u)));
@@ -1160,6 +1162,7 @@ UKL_COLD uint32_t clif_verdict_get(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint3
   if(v332!=0){b=83u;continue;}else{b=86u;continue;}
  }
  case 86u:{
+  ukl_fence_device();
   uint32_t v333=v331+((uint32_t)(18446744073709551615ul));
   uint64_t v334=((uint64_t)(v333));
   uint64_t v335=((uint64_t)((uint64_t)(v334)<<(((uint32_t)(2))&63u)));
@@ -1696,6 +1699,7 @@ UKL_COLD uint32_t clif_verdict_put(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint3
   {b=10u;continue;}
  }
  case 15u:{
+  ukl_fence_device();
   uint32_t v74=v61+((uint32_t)(18446744073709551615ul));
   uint64_t v75=((uint64_t)(v74));
   uint64_t v76=((uint64_t)((uint64_t)(v75)<<(((uint32_t)(2))&63u)));
@@ -1841,6 +1845,7 @@ UKL_COLD uint32_t clif_verdict_put(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint3
   if(v154!=0){b=43u;continue;}else{b=46u;continue;}
  }
  case 46u:{
+  ukl_fence_device();
   uint32_t v155=v153+((uint32_t)(18446744073709551615ul));
   uint64_t v156=((uint64_t)(v155));
   uint64_t v157=((uint64_t)((uint64_t)(v156)<<(((uint32_t)(2))&63u)));
@@ -2161,6 +2166,7 @@ UKL_COLD uint32_t clif_verdict_put(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint3
   if(v333!=0){b=83u;continue;}else{b=86u;continue;}
  }
  case 86u:{
+  ukl_fence_device();
   uint32_t v334=v332+((uint32_t)(18446744073709551615ul));
   uint64_t v335=((uint64_t)(v334));
   uint64_t v336=((uint64_t)((uint64_t)(v335)<<(((uint32_t)(2))&63u)));
@@ -2685,6 +2691,7 @@ UKL_COLD uint64_t clif_text_find(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_
   {b=10u;continue;}
  }
  case 15u:{
+  ukl_fence_device();
   uint32_t v73=v60+((uint32_t)(18446744073709551615ul));
   uint64_t v74=((uint64_t)(v73));
   uint64_t v75=((uint64_t)((uint64_t)(v74)<<(((uint32_t)(2))&63u)));
@@ -2830,6 +2837,7 @@ UKL_COLD uint64_t clif_text_find(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_
   if(v153!=0){b=43u;continue;}else{b=46u;continue;}
  }
  case 46u:{
+  ukl_fence_device();
   uint32_t v154=v152+((uint32_t)(18446744073709551615ul));
   uint64_t v155=((uint64_t)(v154));
   uint64_t v156=((uint64_t)((uint64_t)(v155)<<(((uint32_t)(2))&63u)));
@@ -3150,6 +3158,7 @@ UKL_COLD uint64_t clif_text_find(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_
   if(v332!=0){b=83u;continue;}else{b=86u;continue;}
  }
  case 86u:{
+  ukl_fence_device();
   uint32_t v333=v331+((uint32_t)(18446744073709551615ul));
   uint64_t v334=((uint64_t)(v333));
   uint64_t v335=((uint64_t)((uint64_t)(v334)<<(((uint32_t)(2))&63u)));
@@ -3629,6 +3638,7 @@ UKL_COLD uint64_t clif_text_open(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_
   {b=10u;continue;}
  }
  case 15u:{
+  ukl_fence_device();
   uint32_t v74=v61+((uint32_t)(18446744073709551615ul));
   uint64_t v75=((uint64_t)(v74));
   uint64_t v76=((uint64_t)((uint64_t)(v75)<<(((uint32_t)(2))&63u)));
@@ -3774,6 +3784,7 @@ UKL_COLD uint64_t clif_text_open(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_
   if(v154!=0){b=43u;continue;}else{b=46u;continue;}
  }
  case 46u:{
+  ukl_fence_device();
   uint32_t v155=v153+((uint32_t)(18446744073709551615ul));
   uint64_t v156=((uint64_t)(v155));
   uint64_t v157=((uint64_t)((uint64_t)(v156)<<(((uint32_t)(2))&63u)));
@@ -4094,6 +4105,7 @@ UKL_COLD uint64_t clif_text_open(UKL_GLOBAL const uint8_t* t,uint64_t a0,uint32_
   if(v333!=0){b=83u;continue;}else{b=86u;continue;}
  }
  case 86u:{
+  ukl_fence_device();
   uint32_t v334=v332+((uint32_t)(18446744073709551615ul));
   uint64_t v335=((uint64_t)(v334));
   uint64_t v336=((uint64_t)((uint64_t)(v335)<<(((uint32_t)(2))&63u)));

@@ -1,5 +1,11 @@
 # Work queue
 
+> **Read this first. This queue is not a place to put work.** Recording something here as open is almost never
+> allowed. Work you find — a red test, a flaky test, a gap, a leftover from a merge, a "next step" — is work to
+> complete now, and once it is complete it is not recorded here at all: the commit says what was done. An "Open:",
+> "Next:" or "left for later" line written instead of doing the work is a failure, not a record. The only things that
+> may go here are items the user has decided to defer, or a choice that is the user's to make, with the evidence.
+
 ## Intro
 
 This is the list of open work from the merges of 2026-11-15, kept so that nobody has to remember it. The agent doing
@@ -6303,10 +6309,10 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   data layer's workload, and its times (515 s of CPU at 2,410 files, "35-40 min" at 9,618) say nothing about it.
   The workload is the data layer's 50 policies (`docs/rule-syntax/data-layer/*.rr`, scoped) together over the
   repository at 2b1504adc (9,010 `.py` files), against the data layer's own linters, which take about a minute of
-  wall on the whole repository (t3, "PR full repo 70.6 s wall"). The target is seconds. Q354 is that work.
+  wall on the whole repository (t3, "PR full repo 70.6 s wall"). The target is seconds. Q384 is that work.
 - **The maintain-mode ladder** stays a test of 0364 at size: run it with the policies' scopes kept.
 
-### Q354. (Q315 on investigate-bend-vs-datalog; Q245 there before the merge of rr-align 62618b2e0a) The data layer's 50 policies together: four structural regressions (2026-11-19)
+### Q384. (Q354 at the hub; Q315 on investigate-bend-vs-datalog; Q245 there before the merge of rr-align 62618b2e0a) The data layer's 50 policies together: four structural regressions (2026-11-19)
 
 - **The run** (`tmp/dl9010`, not in git: the tree at 2b1504adc, `run.sh`, `each.sh`, samples `s100` of 91
   `.py` files and `s10` of 901, each with the root's other files). On the 91 files, each policy alone took 26 s of
@@ -6420,7 +6426,7 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
 - **To do:** print the mode's lines for `ca_alias_at` (`RERAIL_MODE_TRACE`, the plans `mode_costs` prices) and see
   which line's estimate is past its rows; a delta-led line should cost in proportion to its delta (R4).
 
-### Q353. (Q314 on investigate-bend-vs-datalog; Q244 there before the merge of rr-align 62618b2e0a) 0364's open items not taken up on 2026-11-19, and why
+### Q385. (Q353 at the hub; Q314 on investigate-bend-vs-datalog; Q244 there before the merge of rr-align 62618b2e0a) 0364's open items not taken up on 2026-11-19, and why
 
 - **Levels as a column of the relation's block** (0328 decision 1; now a `Vec<u32>` beside the rows): the kept
   blocks' format is being aligned on the phased-facts and rr-align branches (0401 step 7, 0402). Levels go into the
@@ -8331,7 +8337,7 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
 - **Done when**: the rewrite is on by default and corpus0 x B-now takes no more instructions than with it off, with
   SLF001 on PostHog bounded as Release-debugging measured.
 
-### Q383. Roll-up 22 (final-rerail-shape-phased-facts onto rr-align): what the merge chose, and what stays open
+### Q383. Roll-up 22 (final-rerail-shape-phased-facts onto rr-align): what the merge chose
 
 - **Merged** (2026-11-20): final-rerail-shape-phased-facts at 4b093e78ea, its own lazy batch (0504) and its merge of
   the hub (6868107a33). The hub carries older commits of cost-classifier and CUDA-support than rr-align has, so
@@ -8371,9 +8377,17 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   rerail-store's kept facts (8); rerail-device-metal on the CPU backend (70). macOS: the same check on the m3; on the
   m1max rerail-c-directives (47; the 16 ignored are corpus, data and measurement tests), rerail-metal (22), and
   rerail-device-metal (71) in 16 full runs after the fixes, 7 more on the m3.
-- **Open**:
-  - one of those 23 runs (the m1max's first after a rebuild) lost verdicts again; its message was not kept. A
-    second entry of a key can still come of a writer in another group outlasting `SPIN`, or of a promotion's copy
-    (`verdict_reads`: a copy may miss a verdict). Next: keep the message of a failing run, and give an accumulating
-    entry no duplicate (wait, or the dead entry) where a decoded block's may have one.
-  - theirs' queue numbers Q353 and Q354 twice each (the hub's too): left for the hub's numbering.
+- **Then fixed**: the same test still lost 7-17 verdicts in 2 runs of 24 on the m1max, with the cache's counts
+  showing 30 misses for 19 keys and no duplicate counted: a reader saw a slot's number (a relaxed atomic) with an
+  older entry offset, key or completion, took the entry for another key's, and made a second entry. The cache's
+  lookup and take now fence after a numbered slot before reading its entry (the half of the pair the writer's
+  fence before the number lacked); 24 of 24 runs pass on the m1max, and rerail-device-metal on Linux (70). Theirs'
+  items Q353 and Q354, each twice, are Q384 and Q385 for their second copies.
+
+---
+
+> **Read this first. This queue is not a place to put work.** Recording something here as open is almost never
+> allowed. Work you find — a red test, a flaky test, a gap, a leftover from a merge, a "next step" — is work to
+> complete now, and once it is complete it is not recorded here at all: the commit says what was done. An "Open:",
+> "Next:" or "left for later" line written instead of doing the work is a failure, not a record. The only things that
+> may go here are items the user has decided to defer, or a choice that is the user's to make, with the evidence.
