@@ -349,9 +349,6 @@ fn a_kind_lookup_reads_the_rows_a_per_row_read_finds() {
     }
 }
 
-/// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
-/// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
-/// fields, and for a field it lacks.
 /// The statistics of a relation held as a view of `node` (decision 0329) are its rows' counts, made without reading
 /// them: per column, the distinct values, the squares of their counts and each value's count, as counting every row
 /// gives (`n`, the key: each value once, no counts).
@@ -379,6 +376,9 @@ fn a_node_columns_counts_are_its_rows_counts() {
     assert!(node_column_counts(&batch, 3).is_none());
 }
 
+/// A field's children by parent and field (`lookup_eq`, a join's `field($a, #f, $t)` with `$a` bound) are the rows a
+/// lookup by parent finds and a filter on the field keeps, in the same order: for every parent and each of its
+/// fields, and for a field it lacks.
 #[test]
 fn a_fields_lookup_by_parent_and_field_holds_what_a_filter_keeps() {
     let store = ContentStore::open(&temp("lookup-eq")).unwrap();

@@ -7974,9 +7974,20 @@ object.
     its few values keeps their filter"), one cold hogql run in four. A clone of a sketch still in its few values
     now counts its own. Test: `a_clone_of_few_values_keeps_its_keys_when_the_sketch_passes_them` (fails without).
   - Left: rewriting `cls_early` and `def_outside` through a relation of their candidates did nothing (the planner
-    inlines it back) and cost 11 B outside the spans, so it is not kept. `nameref`'s own body (every identifier
-    and its text, 1.6 M rows of work, 0.25 s) is the largest stratum left; t50's next steps (keyed nearest for
+    inlines it back) and cost 11 B outside the spans, so it is not kept. t50's next steps (keyed nearest for
     `walk`/`look`) are final-rerail-shape's.
+  - **`nameref`** (2026-11-21). Before the merge it was inlined into its readers. The merge gave it 16 reader
+    copies, so it is now built whole, and `pat_tail` (the merge's) was demanded. The demand split's scan took
+    `pat_tail(n)` at every `child` row, because `child(d, n, i)` binds `n`, though `d` is one of a few dotted names.
+    So `nameref` was a `pre_` relation of every identifier, a 236 k-row demand and a second pass: 0.45 s of strata
+    CPU. A scan's rows are now carried across the base atoms its variables share (the rows a probe of that column
+    meets, `stats.fan`), so `pat_tail` is not demanded, and `nameref` is one stratum at 0.22 s. Measured 90.5 and
+    90.9 B, 1.89-1.95 s wall at load 11-15, 1,629 findings. Test: `a_scan_bound_through_a_small_kinds_children_is_not_demanded`.
+    The demand, split and planner tests (338), the corpus and converter tests and the pack-data ones pass.
+    What is left of `nameref`, at 365 k identifiers: two `!field(_, #f, $n)` at 150-165 ns a probe and
+    `text($n, $x)` at 255-267 ns. Each resolves a node id to its document and tape node again: three times an
+    identifier, through the granule table (`number_of`). A test that reads `$n`'s own field and builds no rows
+    (`Source::holds` on `field`) measured the same, so the rows built are not the cost. It is not kept.
   - The reference test on the projects needs the data-layer lint pack's two authored dead-code checks to include
     `python/references.rerail` (Final-shape-quality's staged publish); with that local copy it passes.
 
