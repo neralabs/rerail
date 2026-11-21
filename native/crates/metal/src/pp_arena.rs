@@ -102,9 +102,9 @@ impl Arena {
         let bytes = self.bytes().max(align);
         let device = lane::device()?;
         let block = rerail_accel::gpu::shared::lease_block_within(rerail_blocks::block::kind::SCRATCH, bytes + 2 * align + 4096)
-            .map_err(|_| Error::BackendCapacity)?;
+            .map_err(|why| capacity(&format!("{}:{}: {why}", file!(), line!())))?;
         // Zeroed: a pooled slab may hold an earlier block's bytes.
-        let base = block.try_alloc(bytes, align).ok_or(Error::BackendCapacity)?;
+        let base = block.try_alloc(bytes, align).ok_or_else(|| capacity(concat!(file!(), ":", line!())))?;
         let buffer = block.device_buffer(device).map_err(|_| Error::BackendFailure)?;
         let host = block.base_ptr();
         for (at, words) in self.0.init.borrow_mut().drain(..) {
@@ -327,7 +327,9 @@ pub fn groups() -> u64 {
     if matches!(device, lane::Device::Cpu(_)) {
         return 1;
     }
-    residency().groups.min(GROUPS_MOST)
+    // `RERAIL_PP_GROUPS`: at most that many, a measurement aid.
+    let most = std::env::var("RERAIL_PP_GROUPS").ok().and_then(|g| g.parse().ok()).unwrap_or(GROUPS_MOST);
+    residency().groups.min(GROUPS_MOST).min(most)
 }
 
 /// `ukl/grid.h`'s `UKL_GRID_SMALL`: at most this many values, a grid primitive is group 0's alone.
@@ -359,11 +361,20 @@ fn grid_key() -> String {
     rerail_device::store::key(&[source().as_bytes(), b"pp_setup"])
 }
 
+/// `BackendCapacity`, refused at `at` (`file:line`), which `RERAIL_PP_WHY` prints: a refusal for room or a budget is
+/// the caller's to rerun smaller, and the log says which one refused.
+pub fn capacity(at: &str) -> Error {
+    if std::env::var_os("RERAIL_PP_WHY").is_some() {
+        eprintln!("pp: BackendCapacity at {at}");
+    }
+    Error::BackendCapacity
+}
+
 /// A dispatch of `groups` groups past the grid kernel's resident groups is refused (`BackendCapacity`, decision
 /// 0568): its groups past them would wait at a barrier for groups that do not run. The join (`ukl_grid_join`) is the
 /// floor below this, should a device run fewer than it holds.
 pub fn refuse_past(groups: u64) -> Result<(), Error> {
-    if groups > residency().groups { Err(Error::BackendCapacity) } else { Ok(()) }
+    if groups > residency().groups { Err(capacity(concat!(file!(), ":", line!()))) } else { Ok(()) }
 }
 
 /// A grid of `groups` groups failed a barrier: the grid kernel's resident groups are half of it from now on, kept

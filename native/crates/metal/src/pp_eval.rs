@@ -85,7 +85,7 @@ pub fn placement<'a>(
             }
             t
         });
-        let count = |n: usize| u32::try_from(n).map_err(|_| Error::BackendCapacity);
+        let count = |n: usize| u32::try_from(n).map_err(|_| crate::pp_arena::capacity(concat!(file!(), ":", line!())));
         let view = DocView {
             at: count(offset)?,
             nodes: count(p.n)?,
@@ -133,7 +133,7 @@ impl Unit {
             let mut view = d.view;
             if block.as_ref().is_some_and(|b| b.id != d.slab.id) {
                 let (Some(Some(base)), Some(at)) = (base, d.slab.device_buffer().device_address()) else {
-                    return Err(Error::BackendCapacity);
+                    return Err(crate::pp_arena::capacity(concat!(file!(), ":", line!())));
                 };
                 view.set_offset((at as i64).wrapping_sub(base as i64).wrapping_add(i64::from(d.view.at)));
                 if !slabs.iter().any(|s| s.id == d.slab.id) {

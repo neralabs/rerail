@@ -119,7 +119,7 @@ fn definitions_at(unit: &Unit, rung: u32, groups: u64) -> Result<(crate::pp_eval
     // SAFETY: the device finished writing `room`.
     if unsafe { *defs.room.host().cast::<u32>() } != 0 {
         if rung + 1 >= RUNGS {
-            return Err(Error::BackendCapacity);
+            return Err(crate::pp_arena::capacity(concat!(file!(), ":", line!())));
         }
         drop((front, defs));
         return definitions_from(unit, rung + 1);
@@ -1002,7 +1002,7 @@ impl Vis {
         // SAFETY: the device finished; `lookups` holds the scan's total of words.
         unsafe {
             if *self.bad.host().cast::<u32>() != 0 {
-                return Err(Error::BackendCapacity);
+                return Err(crate::pp_arena::capacity(concat!(file!(), ":", line!())));
             }
             let n = *self.gscan.total.host().cast::<u32>() as usize;
             Ok(std::slice::from_raw_parts(self.lookups.host().cast::<u32>(), n).to_vec())
@@ -1179,7 +1179,7 @@ impl Exp {
         let (rung, tok, lists, args, out) = (x.rung, x.tok, x.lists, x.args, x.out);
         let q = x.q;
         if tok >= u32::MAX as usize / 2 || q >= u32::MAX as usize / 2 {
-            return Err(Error::BackendCapacity);
+            return Err(crate::pp_arena::capacity(concat!(file!(), ":", line!())));
         }
         let va_opt = name_key(b"__VA_OPT__");
         // A definition's id is below the unit's rows: 2 bits of it a level of the trie.
@@ -1604,7 +1604,7 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
             def_rung += 1;
             if def_rung >= RUNGS {
-                return Err(Error::BackendCapacity);
+                return Err(crate::pp_arena::capacity(concat!(file!(), ":", line!())));
             }
             continue;
         }
@@ -1703,7 +1703,7 @@ fn lookups_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Resu
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {
             rung += 1;
             if rung >= RUNGS {
-                return Err(Error::BackendCapacity);
+                return Err(crate::pp_arena::capacity(concat!(file!(), ":", line!())));
             }
             continue;
         }

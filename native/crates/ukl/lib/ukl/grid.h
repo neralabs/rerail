@@ -125,6 +125,12 @@ UKL_INLINE bool ukl_grid_join(UKL_PRIVATE UklGrid* g, uint32_t dispatched, UKL_L
 // number of times. `flag` is a word of threadgroup memory.
 UKL_ONCE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
 {
+    // A grid of one group: its threadgroup's barrier, device-scoped, is the grid's. It waits for no other group, so it
+    // cannot fail, and it touches no control word.
+    if (g.groups == 1u) {
+        ukl_tg_barrier_device();
+        return true;
+    }
     // The group's writes, done.
     ukl_tg_barrier_device();
     if (g.lid == 0u) {
