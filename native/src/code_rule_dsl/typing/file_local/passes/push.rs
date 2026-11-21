@@ -359,7 +359,10 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                 let at = lits.iter().copied().find(|j| !replaced.iter().any(|(at, _)| at == j)).expect("a literal no other helper's read took");
                 replaced.push((at, BodyItem::New(helper.clone(), args)));
                 taken.extend(lits);
-                if !made.iter().any(|(_, n)| *n == helper) {
+                // Every rule that reads it: a helper that is not file-local sends each of them back a level in one
+                // round. Kept for the first alone, the rules that shared it (a hundred violation rules' location
+                // lookup, one content) went back one a round: 320 rounds of the program's split, 25 s.
+                if !made.iter().any(|(r, n)| *r == i && *n == helper) {
                     made.push((i, helper));
                 }
             }
@@ -385,8 +388,19 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
         let (candidate, split) = super::candidate(v, &round)?;
         let now = split.local.clone();
         let failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();
+        crate::code_rule_dsl::logic::profile::decision("file-local joins pushed: rounds", || {
+            let names: Vec<String> = made.iter().filter(|(_, n)| !now.contains(n)).take(3).map(|(i, n)| format!("{n} of {}", v.show_rule(rules[*i]))).collect();
+            format!("a round (keep_unrestricted {keep_unrestricted}): {} helpers made, {} not file-local: {}", made.len(), failed.len(), names.join(" | "))
+        });
         if failed.is_empty() {
-            return Ok(Some(Pushed { round, made: made.into_iter().map(|(_, n)| n).collect(), local: now, candidate }));
+            // Each helper once, as it was first made.
+            let mut names: Vec<String> = Vec::with_capacity(made.len());
+            for (_, n) in made {
+                if !names.contains(&n) {
+                    names.push(n);
+                }
+            }
+            return Ok(Some(Pushed { round, made: names, local: now, candidate }));
         }
         for i in failed {
             *level.entry(i).or_default() += 1;
