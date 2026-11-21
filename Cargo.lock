@@ -3276,7 +3276,6 @@ dependencies = [
 name = "rerail-context"
 version = "0.1.0"
 dependencies = [
- "libc",
  "parking_lot",
  "rayon",
  "rayon-core",
