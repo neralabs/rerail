@@ -197,25 +197,13 @@ describe("a linked worktree whose main checkout was deleted", () => {
     expect(recordCheckout(db, worktree).cloneId).toBe(recorded.cloneId);
   });
 
-  it("keeps its recorded clone id with no Git process where its .git file's relative path holds a . name", async () => {
-    const root = await plainRoot();
-    const main = checkout(root, "main");
-    const worktree = join(root, "feature");
-    git(main, "worktree", "add", "-q", "-b", "feature", worktree);
-    writeGitFile(worktree, "../main/.git/worktrees/feature/.");
-    const db = database(root);
-    const recorded = recordCheckout(db, worktree);
-    expect(recorded.git, "Git places the worktree").toBe(true);
-    await removeFolder(main);
-    vi.mocked(runGit).mockClear();
-
-    expect(recordCheckout(db, worktree).cloneId).toBe(recorded.cloneId);
-    expect(locateCalls(worktree)).toBe(0);
-  });
-
-  it("starts no Git where its real path cannot be read, as its .git file names its Git folder by an absolute path", async () => {
+  it.for([
+    { form: "an absolute path, which needs no real path", gitdir: undefined, asks: 0, gitFolderGone: true },
+    { form: "a relative path, joined to that real path", gitdir: "../main/.git/worktrees/linked", asks: 1, gitFolderGone: undefined },
+  ] as const)("where its real path cannot be read, by $form: Git asked only where that read is needed", async ({ gitdir, asks, gitFolderGone }) => {
     const root = await plainRoot();
     const worktree = goneMainWorktree(root);
+    if (gitdir !== undefined) writeGitFile(worktree, gitdir);
     const { realpathSync: actual } = await vi.importActual<typeof import("node:fs")>("node:fs");
     const refuse = (path: PathLike): void => {
       // Windows refuses the real path of a folder the user is denied, or of one whose delete is pending.
@@ -232,8 +220,8 @@ describe("a linked worktree whose main checkout was deleted", () => {
     vi.mocked(realpathSync).mockImplementation(js as typeof realpathSync);
     vi.mocked(realpathSync.native).mockImplementation(native as typeof realpathSync.native);
 
-    expect(repositoryIdentityLocation(worktree)).toMatchObject({ git: false, gitFolderGone: true });
-    expect(locateCalls(worktree)).toBe(0);
+    expect(repositoryIdentityLocation(worktree)).toMatchObject({ git: false, gitFolderGone });
+    expect(locateCalls(worktree)).toBe(asks);
   });
 });
 
