@@ -78,3 +78,61 @@ before. Against main, the pack loses RUF060's two string annotations and C408's 
 to 83–85 s, peak 5.8 GB to 6.4 GB: 88 narrow copies are evaluated beside their originals.
 
 Test: `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone`.
+
+### A copy within one document is its original's rows under the bound
+
+Added 2026-11-21. A narrow copy made each of its original's rules again: on corpus0 × B-now (one pack, one thread)
+the copies cost 11.6 s of the run's 92.6 s and doubled its instructions against the tree before the merge. Most
+originals keep each row in one document and make it from that document's rows alone: widened, such a rule makes in
+a document under the narrow bound exactly what it made there before. Its copy is then a filter of the widened
+original, `rr_narrow_r(c..) :- r(c..), c_node < narrow`, one rule per original, not its rules made again
+(`combining::one_document`).
+
+- A rule keeps its rows in one document when every location its head holds is joined to one document through positive
+  atoms whose rows are each in one document: a base relation's locations (`hide::located`, but a guest's reads,
+  which join documents), a relation found so, `nearest`, an equality. It has a node column to filter by.
+- Each bound of the rule's own (`$x < RUN_VALUE_KEYS`, a node's or a document's) is on that document, and each read of
+  an original kept narrow is of one found so, at a location of that document.
+- The largest such set is taken (a greatest fixpoint), then a relation whose filter would put its copy in a cycle with
+  its original once the fold is done is made again.
+- A row joined to another document by a value (`pair(n) :- e(n), text(n, t), asg(m), text(m, t)`), bounded in
+  another one, a native operator's, a lattice's and one with facts are made again, as before.
+
+Measured on corpus0 × B-now, off, one thread, on an M1 Max: one pack 1.314 T to 1.114 T instructions, the normal
+packs 3.157 T to 2.756 T; 463 findings, the same set (d067ec2ebf6f).
+
+Test: `a_narrow_copy_of_an_original_within_one_document_is_its_rows_under_the_narrow_bound`; #923's
+`a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone` passes.
+
+### A filter's copy differs from its original only by an annotation's rows, and holds none
+
+Added 2026-11-21, superseding the test above (one document). That test let a filter drop rows its copy holds: a
+rule as hiding left it reads an annotation's copy where it reaches an annotation (`type_arg(s, i, a) :-
+sub_item(s, i, e), !lone_tuple(s), rr_in_annotation_0_unparen(e, a)`), and its narrow copy reads the widened
+original there too, so the copy holds that annotation's rows, which the filter dropped. Corpus0's findings did not
+show it. A narrow copy is now a filter of its original exactly where
+- every row by which the widened original and its copy differ holds an annotation's node in a node column of the head
+  (*anchored*, a least fixpoint over each original's sets of such columns): a row differs by a bound of its rule's own,
+  which the widening raised, or by a row of another original kept narrow read (positive, negated or aggregated) that
+  differs so, and that annotation's node must reach a node of the head. A read of a copy folded in differs in neither;
+- no row of the copy holds an annotation's node (*covered*, a greatest fixpoint): each node of its head is bounded, read
+  from a covered relation's node (an original kept narrow, or a relation not widened that reads narrow), or of a
+  document such a node is of.
+
+Whether a node is an annotation's is carried through each rule by what each relation keeps in every row, widened or
+not (`Kept`, a greatest fixpoint): the pairs of its columns where one is an annotation's wherever the other is (a base
+relation's locations, `nearest`, an equality, `@doc`), and the columns that always are (`parsed(_, "annotation", r)`'s
+trees). Where the copy is neither but no literal differs, its rows are its original's, and its readers read the
+original (`Narrowing::same`). A constant node column (`-1`, no node) holds no annotation's node; a number column joined
+to a node (`modnode(d, m)`'s `d`) carries it. Name resolution across an annotation and its host file (`wstart`,
+`walk`, `look`) reads the annotations' copies: its copies are made again.
+
+Keeping such an original's annotation copies apart instead (unfolded, as hiding wrote them) was tried and dropped: a
+widened original takes its annotations' rows from the originals it reads widened, so one kept apart unfolded most of
+the typing library, and a quoted annotation's call lost its target (`quoted_annotations_are_read_as_their_code`).
+
+Measured on corpus0 × B-now, off, one thread, an M1 Max: one pack 0.939 T to 0.983 T, the normal packs 2.157 T to
+2.179 T (the cost of the rows the earlier test dropped); 463 findings, the same set.
+
+Tests: `a_narrow_copy_is_its_originals_rows_under_the_narrow_bound_through_constants_and_document_columns`,
+`a_narrow_copy_that_holds_an_annotations_rows_is_made_again`.

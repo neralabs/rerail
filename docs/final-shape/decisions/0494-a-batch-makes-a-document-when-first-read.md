@@ -170,7 +170,11 @@ Each has its test before the code that meets it.
    - **The cycles, not the instructions.** About 2× 0458's cycles for 6% more instructions: the tape values' parts
      (`syntax::values::Values`, 0431 §8) were behind a read-write lock that every probe of a layered source took,
      21% of the samples in `lock_shared_slow`. They are an `ArcSwap` now: a probe loads them, and an admission makes
-     a new map under its own lock.
+     a new map under its own lock. That map is made from the last without copying it (2026-11-21): the parts are
+     blocks of 64 and the keys 256 shards, each shared by the maps that hold it, so an admission copies its
+     relations' last blocks and its keys' shards. Copied whole (`Arc::make_mut` on parts the probes' map shares),
+     each admission copied every part and key before it: 7.6 s of a 90 s run on corpus0 × B-now, the normal packs
+     2.605 T to 2.189 T instructions (test: `an_add_copies_only_its_last_block_and_its_keys_shard`).
    - **The proofs.** The whole program's well-founded check found the recursive components by a pass over the
      6,842 rules for each component: 0.165 s, in both the cold run and the edit. One pass over the rules, keyed by
      each relation's component: 0.056 s (the helpers' steps 0.025 s of it, checking every recursive component under

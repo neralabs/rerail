@@ -2525,6 +2525,74 @@ Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), ki
     assert_eq!(at, [("a.py", "3")], "at the string's line in its file: {found:?}");
 }
 
+/// Decision 0431 R9: a tape value's node's place in a file (`guest_place` at a string, its document's path) is one
+/// relation a program's findings read, not a join each finding writes again: 346 diagnostics on corpus0 each made the
+/// same rows, every guest's placement.
+#[test]
+fn findings_placed_through_a_string_read_one_placement() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("tape-placed-once");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let program = r#"
+.policy "t:tape-placed-once" revision 1
+.language python
+.violation Inner(at: node) "a name inside an annotation"
+.violation Other(at: node) "an integer inside an annotation"
+Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, "List").
+Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "integer").
+"#;
+    let rule = dir.join("placed-once.rerail");
+    std::fs::write(&rule, program).unwrap();
+    let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let rules: Vec<&str> = flat.lines().filter(|l| l.contains(":-")).collect();
+    let joins: Vec<&str> = rules.iter().copied().filter(|l| l.contains("guest_place(") && l.contains("doc(")).collect();
+    let placed: Vec<&&str> = joins.iter().filter(|l| l.starts_with(super::lower::findings::PLACED_LINE)).collect();
+    assert_eq!(placed.len(), 1, "one rule places a value's node in its file: {joins:#?}");
+    assert!(joins.iter().all(|l| l.starts_with(super::lower::findings::PLACED_AT) || l.starts_with(super::lower::findings::PLACED_LINE)), "no finding joins the placement again: {joins:#?}");
+    let readers = rules.iter().filter(|l| l.contains(&format!("{}(", super::lower::findings::PLACED_LINE)) && !l.starts_with(super::lower::findings::PLACED_LINE)).count();
+    assert!(readers >= 4, "each finding's diagnostic and violation read it: {rules:#?}");
+}
+
+/// Decision 0431 R9: a program refuses its unplaced findings in one rule, over its findings' nodes, not in a rule each:
+/// each finding's own rule, negated reads and all, was a negation split, a demand and a join of its own (three strata
+/// a finding, 470 of a pack's on corpus0). A finding writes its clause and node alone, a positive projection.
+#[test]
+fn a_program_refuses_its_unplaced_findings_in_one_rule() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("unplaced-once");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let guests = r#"
+.policy "t:unplaced-once" revision 1
+.language python
+.violation Inner(at: node) "a name inside an annotation"
+.violation Other(at: node) "an integer inside an annotation"
+Inner(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "identifier"), text(i, "List").
+Other(i) :- string_annotation(s), parsed(s, "annotation", _), guest_of(i, s), kind(i, "integer").
+"#;
+    let plain = r#"
+.policy "t:unplaced-once-plain" revision 1
+.language python
+.violation Name(at: node) "a name"
+.violation Number(at: node) "an integer"
+Name(i) :- kind(i, "identifier").
+Number(i) :- kind(i, "integer").
+"#;
+    for (name, program, found) in [("guests", guests, super::lower::findings::FOUND_THROUGH), ("plain", plain, super::lower::findings::FOUND_NODE)] {
+        let rule = dir.join(format!("{name}.rerail"));
+        std::fs::write(&rule, program).unwrap();
+        let flat = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
+        let rules: Vec<&str> = flat.lines().filter(|l| l.contains(":-")).collect();
+        let unplaced: Vec<&&str> = rules.iter().filter(|l| l.starts_with(super::lower::findings::UNPLACED)).collect();
+        assert_eq!(unplaced.len(), 1, "{name}: one rule refuses the unplaced findings: {unplaced:#?}");
+        assert!(unplaced[0].contains(&format!("{found}(")), "{name}: it reads the findings' nodes: {unplaced:#?}");
+        let projections: Vec<&&str> = rules.iter().filter(|l| l.starts_with(&format!("{found}("))).collect();
+        assert_eq!(projections.len(), 2, "{name}: a projection a finding: {projections:#?}");
+        assert!(projections.iter().all(|l| !l.contains('!')), "{name}: each positive: {projections:#?}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Decision 0431 R9: a finding at a node of a string inside another tape value (`'int'` in `"List['int']"`) has no
 /// place: that string stands in the outer value's text, which is no file's. It is refused, naming its clause, not
 /// dropped.
@@ -5442,4 +5510,38 @@ fn ended_within(mut child: std::process::Child, limit: std::time::Duration) -> O
     child.kill().unwrap();
     child.wait().unwrap();
     None
+}
+
+/// A run's call opens the image store once and holds it until it returns (`held_image_store`, `HoldImages`): opened at
+/// each ask, its every close made SQLite delete and make again its write-ahead log. A call after it opens its own, and
+/// none holds it once returned; outside a call, each ask opens it.
+#[test]
+fn a_run_opens_the_image_store_once() {
+    let opened = std::sync::atomic::AtomicUsize::new(0);
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("held-image-store");
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let open = || {
+        opened.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        crate::content_store::ContentStore::open_images(&dir.join("images.sqlite")).ok().map(std::sync::Arc::new)
+    };
+    let count = || opened.load(std::sync::atomic::Ordering::Relaxed);
+    super::held_image_store(open);
+    super::held_image_store(open);
+    assert_eq!(count(), 2, "outside a run, each ask opens it");
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    for call in 1..=2 {
+        {
+            let _call = super::HoldImages::enter();
+            let _inner = super::HoldImages::enter();
+            let a = super::held_image_store(open).expect("the store");
+            drop(_inner);
+            let b = super::held_image_store(open).expect("the store");
+            assert!(std::sync::Arc::ptr_eq(&a, &b), "call {call}: one store, past an inner call");
+            assert_eq!(count(), 2 + call, "call {call} opened it once");
+        }
+        // The call returned: nothing holds the store open (a test's store is checked so after its run).
+        assert_eq!(crate::content_store::holding(&dir.join("images.sqlite")), (0, 0), "call {call} let it go");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
 }

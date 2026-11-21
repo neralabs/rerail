@@ -645,6 +645,8 @@ pub fn run_policies(
     invocation.evaluate(|_| { prepare_policy_graphs(paths); Ok(()) })?;
     // What the batch's runs share is kept while it runs (phase 1's runs, by their inputs), and nothing past it.
     let _batch = super::logic::plan::corpus::phases::Batch::enter();
+    // The image store, opened once for the batch's runs.
+    let _images = super::logic::rr::HoldImages::enter();
     // The policies of one language run as one pack (decision 0168): libraries read, lowered, hidden and evaluated once
     // (decisions 0051, 0089), each policy's findings split back by its id. The rest run alone.
     // `RERAIL_BATCH_PACK=off` runs each policy alone. With `strict`, a failed group returns its error.

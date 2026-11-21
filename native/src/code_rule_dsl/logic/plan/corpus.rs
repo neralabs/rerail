@@ -2278,8 +2278,13 @@ fn drop_relations<P: link::Part>(part: &mut P, relations: &BTreeSet<String>) -> 
 fn own_names<P: link::Part>(part: &P, core: &BTreeSet<String>) -> BTreeSet<String> {
     let prog = part.head();
     let heads: Vec<String> = part.rules().into_iter().map(|(head, _)| head).collect();
-    // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy).
-    let shared_outputs = |r: &str| r == "violation" || r == crate::code_rule_dsl::logic::rr::UNPLACED || crate::code_rule_dsl::logic::rr::is_diagnostic(r);
+    // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy). R9's relations too: each
+    // program's findings' nodes by clause (named by the clause), one rule refusing them and the placement it reads,
+    // the same rules in every program, so a pack holds one of each, not one a program.
+    let shared_outputs = |r: &str| {
+        use crate::code_rule_dsl::logic::rr::{FOUND_NODE, FOUND_THROUGH, PLACED_AT, PLACED_LINE, UNPLACED};
+        r == "violation" || [UNPLACED, FOUND_NODE, FOUND_THROUGH, PLACED_AT, PLACED_LINE].contains(&r) || crate::code_rule_dsl::logic::rr::is_diagnostic(r)
+    };
     let file_inputs = file_inputs(prog);
     let inputs = prog.input_names();
     let (declared, facts) = (prog.declared_names(), prog.fact_names());
@@ -3053,6 +3058,7 @@ fn run_handed(
     let root = &dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
+    let _images = crate::code_rule_dsl::logic::rr::HoldImages::enter();
     let git_batch = crate::git_workspace::snapshot::StorageBatch::begin(root).map_err(|error| Error::Plan(error.to_string()))?;
     // Upkeep yields to the run (decision 0190 §8): this process's, and other processes' over its store and the cost
     // statistics, stop at their next check, their work left due, until the run ends.
@@ -4166,7 +4172,13 @@ fn run_observed_within(
             if let Some((listed, outcome)) = &demand {
                 let listed = listed.join(", ");
                 match outcome {
-                    Ok(r) => crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0145)", || format!("{listed}: adornments {}; computed in full where demand would not hold: {}; {} magic rules", r.adornments.join(", "), if r.full_for_negation.is_empty() { "none".to_owned() } else { r.full_for_negation.join(", ") }, r.magic_rules)),
+                    Ok(r) => {
+                        crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0145)", || format!("{listed}: adornments {}; computed in full where demand would not hold: {}; {} magic rules; {} changed to keep the program's components", r.adornments.join(", "), if r.full_for_negation.is_empty() { "none".to_owned() } else { r.full_for_negation.join(", ") }, r.magic_rules, r.reasons.len()));
+                        // Each split, or relations computed in full: the cycle demand would have made, rule by rule.
+                        for why in &r.reasons {
+                            crate::code_rule_dsl::logic::profile::decision(crate::code_rule_dsl::logic::plan::corpus::preparation::magic::REASON_TOPIC, || why.clone());
+                        }
+                    }
                     Err(e) => crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0145)", || format!("{listed}: not applied ({e}); computed in full")),
                 }
             }
@@ -12403,6 +12415,29 @@ impl Own {
 
 #[cfg(test)]
 pub mod tests {
+    /// Decision 0431 R9's relations are a pack's, not a program's (`own_names`): each program's findings' nodes by
+    /// clause and the one rule refusing them are the same relations in every program, so a pack holds one of each.
+    /// Each program's own, they were 310 relations and as many strata in one pack of corpus0's policies.
+    #[test]
+    fn a_packs_programs_share_their_unplaced_findings_relations() {
+        use super::link::Part as _;
+        let text = r#"
+.policy "t:shared-unplaced" revision 1
+.decl e(n: node)
+.input e
+.violation Hit(at: node) "a hit"
+Hit(n) :- e(n).
+"#;
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+        let heads: Vec<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
+        assert!(heads.iter().any(|h| h == crate::code_rule_dsl::logic::rr::FOUND_NODE), "the finding's node by its clause: {heads:?}");
+        let own = super::own_names(&super::link::Versioned::of_version(v).unwrap(), &crate::code_rule_dsl::logic::rr::core_names());
+        for shared in [crate::code_rule_dsl::logic::rr::FOUND_NODE, crate::code_rule_dsl::logic::rr::FOUND_THROUGH, crate::code_rule_dsl::logic::rr::UNPLACED, crate::code_rule_dsl::logic::rr::PLACED_AT, crate::code_rule_dsl::logic::rr::PLACED_LINE] {
+            assert!(!own.contains(shared), "{shared} is the pack's: {own:?}");
+        }
+        assert!(own.contains("Hit"), "the finding's relation is the program's own: {own:?}");
+    }
+
     /// The chunks' totals give the planner every column's moments, but per value only what it reads (Q89): the
     /// values the program tests (`binding_domains`' lookups by constant), and every value of a column of few
     /// (`small_values`). Held whole, every distinct value of every export column was 118 MB of the cross part's
