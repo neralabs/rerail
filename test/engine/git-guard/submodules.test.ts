@@ -226,6 +226,29 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect([statuses.length, statuses.some(events => /"event":"exit".*"code":0[,}]/u.test(events))]).toEqual([1, false]);
   }, 60_000);
 
+  it("and ask Git which index it reads where the diff runs in a Git folder whose core.worktree names the checkout", async () => {
+    const root = await folder();
+    // The folder above holds a repository of its own, whose index records no submodule.
+    git(root, "init", "--quiet");
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", source, "sub");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    await writeFile(join(work, "sub", "inner.txt"), "two\n");
+    const store = join(root, "store.git");
+    renameSync(join(work, ".git"), store);
+    git(store, "config", "core.worktree", work);
+    git(store, "config", "--file", join(store, "modules", "sub", "config"), "core.worktree", join(work, "sub"));
+    // Git for Windows hides a submodule's `.git` file, and Windows refuses to open a hidden file for writing.
+    unlinkSync(join(work, "sub", ".git"));
+    await writeFile(join(work, "sub", ".git"), `gitdir: ${join(store, "modules", "sub").replaceAll("\\", "/")}\n`);
+
+    const answers = [await runGitWithoutBlocking(store, AUDIT_DIFF), await runGitWithoutBlocking(store, SCAN_DIFF)];
+
+    expect(answers.map(answer => answer.stdout)).toEqual([git(store, ...AUDIT_DIFF), git(store, ...SCAN_DIFF)]);
+    expect(listed(answers[0]!.stdout)).toEqual(["sub"]);
+  }, 60_000);
+
   it("and read the index the environment names, as a Git hook's environment names one, to tell whether it records a submodule", async () => {
     const root = await folder();
     const source = await repository(root, "source", { "inner.txt": "one\n" });
