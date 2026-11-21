@@ -552,10 +552,10 @@ describe("a session's start where RERAIL_AUTOSTART keeps hooks from starting or 
   ] as const;
 
   /**
-   * A Windows machine with RERAIL_AUTOSTART=0 whose daemon.json, in this test's Rerail home, names `kept` running; each
-   * request to its URL goes to `asked`.
+   * A Windows machine with RERAIL_AUTOSTART set to `setting` whose daemon.json, in this test's Rerail home, names `kept`
+   * running; each request to its URL goes to `asked`.
    */
-  async function besideKeptDaemon(kept: (typeof keptDaemons)[number], asked: string[]): Promise<DaemonMachine> {
+  async function besideKeptDaemon(kept: (typeof keptDaemons)[number], setting: string, asked: string[]): Promise<DaemonMachine> {
     const home = process.env.RERAIL_HOME!;
     await mkdir(home, { recursive: true });
     const state = {
@@ -569,7 +569,7 @@ describe("a session's start where RERAIL_AUTOSTART keeps hooks from starting or 
       return path === "/healthz" ? Response.json({ status: "ok", pid: DEAD_PID }) : new Response(null, { status: 404 });
     }));
     return fakeMachine("win32", {
-      env: { RERAIL_HOME: home, RERAIL_AUTOSTART: "0" },
+      env: { RERAIL_HOME: home, RERAIL_AUTOSTART: setting },
       kill: pid => {
         if (pid !== DEAD_PID) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
         return true;
@@ -584,20 +584,20 @@ describe("a session's start where RERAIL_AUTOSTART keeps hooks from starting or 
   // (told apart on Windows), and one of another install is not the active package's. RERAIL_AUTOSTART=0 keeps the hooks
   // from replacing it, so nothing is recorded while it runs. The session's start says so where the person reads it, with
   // the stop before the start, since a start beside a running daemon answers that one already runs; each lost event is
-  // a failure `rerail status` names.
-  it.each(sessionStarts.flatMap(start => keptDaemons.map(kept => ({ ...start, kept }))))(
-    "tells the person in $host that nothing is recorded beside a daemon $kept.daemon that the hooks may not replace",
-    async ({ run, input, told, kept }) => {
+  // a failure `rerail status` names. The line names the setting as the person set it.
+  it.each(sessionStarts.flatMap(start => keptDaemons.flatMap(kept => ["0", "false"].map(setting => ({ ...start, kept, setting })))))(
+    "tells the person in $host that nothing is recorded beside a daemon $kept.daemon that the hooks may not replace, with RERAIL_AUTOSTART=$setting",
+    async ({ run, input, told, kept, setting }) => {
       const root = await temporaryDirectory();
       vi.stubEnv("RERAIL_ENGINE_SOCKET", undefined);
-      vi.stubEnv("RERAIL_AUTOSTART", "0");
+      vi.stubEnv("RERAIL_AUTOSTART", setting);
       const asked: string[] = [];
-      const machine = await besideKeptDaemon(kept, asked);
+      const machine = await besideKeptDaemon(kept, setting, asked);
       const { daemonEngineEndpoint } = await vi.importActual<typeof import("../../src/runtime/daemon-control.js")>("../../src/runtime/daemon-control.js");
       lookups.daemonEngineEndpoint.mockClear().mockImplementationOnce((replace, deadline) => daemonEngineEndpoint(replace, deadline, machine));
       const { embedder: _testRuntime, ...daemonPath } = hookOptions(root);
       const served = await serveText(parsed => run(parsed, daemonPath), JSON.stringify(input(root)));
-      expect(served).toEqual({ stdout: `${JSON.stringify(told(keptLine("0")))}\n`, stderr: "" });
+      expect(served).toEqual({ stdout: `${JSON.stringify(told(keptLine(setting)))}\n`, stderr: "" });
       expect(lookups.daemonEngineEndpoint).toHaveBeenCalledTimes(1);
       // The kept daemon is sent nothing, its record stays for `rerail daemon stop`, and the lost event is logged.
       expect(asked.filter(path => path !== "/healthz")).toEqual([]);
