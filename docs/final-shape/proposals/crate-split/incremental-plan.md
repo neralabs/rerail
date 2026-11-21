@@ -12,9 +12,10 @@ The user's choices (2026-11-21):
 
 **"W"** is the name `05-implementation-plan.md` gives to the engine as it was on main before the final-shape
 work (wolfeel, `5cf4246e`): its per-file matcher and workspace evaluator, as opposed to the branches it merged
-(P, S, D, …). The crate `rerail-w` holds that evaluator: the matcher, rule compilation, scopes, values, calls,
-suppressions and the workspace model. The crates cut from it get names that say what they hold, and `rerail-w`
-goes away.
+(P, S, D, …). The crate that holds that evaluator (the matcher, rule compilation, scopes, values, calls,
+suppressions and the workspace model) was `rerail-w`. At the user's request (2026-11-21) it is now
+**`rerail-classic`** (`native/crates/classic`). The crates cut from it get names that say what they hold, and
+`rerail-classic` goes away. Below, "W" and "classic" are the same crate.
 
 ## Intro
 
@@ -38,9 +39,9 @@ taken) gives the lines each crate compiles:
 |---|---:|---:|---|
 | `rerail-engine` | 28k | **184k** | napi, CLI, boot, prefilter, glue; and other crates' tests (below) |
 | `rerail-logic` | 136k | 10k | `logic::plan` is 83k of it, and `plan::corpus` alone is 50k |
-| `rerail-w` | 73k | 33k | matcher 17k, workspace 12k, compile 11k, residency 7k |
+| `rerail-classic` | 73k | 33k | matcher 17k, workspace 12k, compile 11k, residency 7k |
 | `rerail-compiler` | 66k | 5k | CPU block/stream/pp tiers, Bitlex. Below `lang`, so everything rebuilds after an edit to it |
-| `rerail-transducer` | 47k | – | depends on `rerail-w`, which the first plan meant it never to |
+| `rerail-transducer` | 47k | – | depends on `rerail-classic`, which the first plan meant it never to |
 | `rerail-store` | 34k | 7k | |
 | `rerail-facts` | 32k | 3k | |
 | `rerail-lang-php`, `-python`, `-ecma` | 31k, 23k, 19k | | |

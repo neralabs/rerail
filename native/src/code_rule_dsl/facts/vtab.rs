@@ -1758,7 +1758,7 @@ impl Source for Relation {
 /// S's `query/plan/relation.rs` as copied (0689eb25); merged into this module (decision 0008).
 #[allow(dead_code)]
 pub mod s_relation;
-// cratify: `p_table` is rerail-w's (it mounts it)
+// cratify: `p_table` is rerail-classic's (it mounts it)
 // cratify: `tests` is rerail-logic's (it mounts it)
 
 #[cfg(any(test, feature = "test-hooks"))]
