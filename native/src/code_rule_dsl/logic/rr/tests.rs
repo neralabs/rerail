@@ -5512,8 +5512,9 @@ fn ended_within(mut child: std::process::Child, limit: std::time::Duration) -> O
     None
 }
 
-/// A run opens the image store once and holds it (`held_image_store`): opened at each ask, its every close made SQLite
-/// delete and make again its write-ahead log. A run after it opens its own; outside a run, each ask opens it.
+/// A run's call opens the image store once and holds it until it returns (`held_image_store`, `HoldImages`): opened at
+/// each ask, its every close made SQLite delete and make again its write-ahead log. A call after it opens its own, and
+/// none holds it once returned; outside a call, each ask opens it.
 #[test]
 fn a_run_opens_the_image_store_once() {
     let opened = std::sync::atomic::AtomicUsize::new(0);
@@ -5528,12 +5529,19 @@ fn a_run_opens_the_image_store_once() {
     super::held_image_store(open);
     super::held_image_store(open);
     assert_eq!(count(), 2, "outside a run, each ask opens it");
-    for run in 1..=2 {
-        let _run = crate::code_rule_dsl::logic::profile::test_run();
-        let a = super::held_image_store(open).expect("the store");
-        let b = super::held_image_store(open).expect("the store");
-        assert!(std::sync::Arc::ptr_eq(&a, &b), "run {run}: one store");
-        assert_eq!(count(), 2 + run, "run {run} opened it once");
+    let _run = crate::code_rule_dsl::logic::profile::test_run();
+    for call in 1..=2 {
+        {
+            let _call = super::HoldImages::enter();
+            let _inner = super::HoldImages::enter();
+            let a = super::held_image_store(open).expect("the store");
+            drop(_inner);
+            let b = super::held_image_store(open).expect("the store");
+            assert!(std::sync::Arc::ptr_eq(&a, &b), "call {call}: one store, past an inner call");
+            assert_eq!(count(), 2 + call, "call {call} opened it once");
+        }
+        // The call returned: nothing holds the store open (a test's store is checked so after its run).
+        assert_eq!(crate::content_store::holding(&dir.join("images.sqlite")), (0, 0), "call {call} let it go");
     }
     let _ = std::fs::remove_dir_all(&dir);
 }

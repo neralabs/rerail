@@ -767,18 +767,50 @@ pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::co
     if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { held_image_store(images::store) } else { None }
 }
 
-/// The image store a run opened, held for the run (one of its own values, decision 0442): opened at each ask, it was
-/// opened and closed once a program text (phase 0's graphs, a text's header, its guests' asks), and each close of its
-/// last connection made SQLite delete and make again its write-ahead log (1.9 s of a 90 s run). Outside a run, opened
-/// at each ask.
+/// The image store a run opened, held while the run's call runs (`HoldImages`, one of the run's own values, decision
+/// 0442): opened at each ask, it was opened and closed once a program text (phase 0's graphs, a text's header, its
+/// guests' asks), and each close of its last connection made SQLite delete and make again its write-ahead log (1.9 s
+/// of a 90 s run). Outside a run's call, opened at each ask. Held past the call, a test's store stayed open after its
+/// run (`a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test`).
 #[derive(Default)]
-struct HeldImageStore(std::sync::OnceLock<Option<std::sync::Arc<crate::content_store::ContentStore>>>);
+struct HeldImageStore {
+    store: std::sync::Mutex<Option<Option<std::sync::Arc<crate::content_store::ContentStore>>>>,
+    calls: std::sync::atomic::AtomicUsize,
+}
 
 pub fn held_image_store(open: impl FnOnce() -> Option<std::sync::Arc<crate::content_store::ContentStore>>) -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
     if crate::code_rule_dsl::logic::profile::run_own().is_none() {
         return open();
     }
-    crate::code_rule_dsl::logic::profile::local::<HeldImageStore>().0.get_or_init(open).clone()
+    let held = crate::code_rule_dsl::logic::profile::local::<HeldImageStore>();
+    if held.calls.load(std::sync::atomic::Ordering::Acquire) == 0 {
+        return open();
+    }
+    held.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(open).clone()
+}
+
+/// The image store held while a run's call runs (`held_image_store`): the outermost call's guard lets it go.
+pub struct HoldImages(Option<std::sync::Arc<HeldImageStore>>);
+
+impl HoldImages {
+    pub fn enter() -> HoldImages {
+        if crate::code_rule_dsl::logic::profile::run_own().is_none() {
+            return HoldImages(None);
+        }
+        let held = crate::code_rule_dsl::logic::profile::local::<HeldImageStore>();
+        held.calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        HoldImages(Some(held))
+    }
+}
+
+impl Drop for HoldImages {
+    fn drop(&mut self) {
+        if let Some(held) = &self.0 {
+            if held.calls.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
+                held.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+            }
+        }
+    }
 }
 
 /// How long a module's or program's image stays in the store after the last run that read or wrote it
