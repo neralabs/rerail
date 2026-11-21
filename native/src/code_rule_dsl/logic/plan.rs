@@ -100,6 +100,7 @@ pub mod text_demand;
 pub mod joins;
 /// Why a stratum an edit reaches is derived again (decision 0364 R3, R4).
 pub mod again;
+pub mod phased;
 pub mod table;
 pub mod output;
 pub mod shapes;

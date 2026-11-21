@@ -114,7 +114,7 @@ pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::tape;
     pub use rerail_facts::code_rule_dsl::text;
     pub use rerail_lang::code_rule_dsl::tree;
-    pub mod typing;
+    pub use rerail_typing::code_rule_dsl::typing;
     pub mod value {
         pub use rerail_lang::code_rule_dsl::value::text_regex;
         #[allow(unused_imports)]

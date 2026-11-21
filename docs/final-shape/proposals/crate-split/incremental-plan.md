@@ -566,3 +566,15 @@ decision record. There are no A/B triples. One run per state, with the host's lo
       `programs_hidden_alone_keep_their_attribute_copies_declared`, stops on pack test data that neither the hosts
       nor this checkout has (`packs/data-layer/…/datalog/authored`, `npm run fixtures:pull`), before it plans
       anything, on a Mac too.
+- **Step 5d** (2026-11-21): `rerail-typing` (`native/crates/typing`): `code_rule_dsl::typing`, 7.0k production lines,
+  over the planner. Its crate adds that one module to the planner's `code_rule_dsl`, which it re-exports whole, and
+  `rerail-logic` re-exports it. The corpus runs it (`plan::corpus::typing`).
+  - **What typing read of the corpus moved down.** The file-local passes ask whether a relation is an input every
+    program of a run shares (`phases::is_phased`). That read the names of the inputs the corpus runner fills from
+    Git, the analysis history and the source languages. The names and `is_phased` are the planner's,
+    `plan::phased`, and the corpus's `git`, `analysis_history`, `source_languages` and `phases` import them.
+  - Typing's inline tests (`terms`, `rounds`, `deps`, `declare`) read nothing above it and stay. Its engine,
+    oracle and phase tests were already mounted by the test crates.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on typing,
+    the planner and `rerail-logic`): on a Linux host, every typing test of typing, `rerail-logic`, tests_logic and
+    boot (47), and the corpus's Git, phase, analysis-history and source-language tests (15), pass.
