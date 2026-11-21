@@ -544,4 +544,26 @@ mod tests {
             "unread"
         );
     }
+
+    #[cfg(windows)]
+    #[test]
+    fn a_process_that_already_exited_reads_as_ended_without_a_wait() {
+        use super::{end_process_started_by, process_started_at};
+        use std::process::Command;
+        use std::time::{Duration, Instant};
+
+        let mut child = Command::new("cmd")
+            .args(["/d", "/c", "exit 0"])
+            .spawn()
+            .expect("cmd starts");
+        let started = process_started_at(child.id())
+            .expect("the read runs")
+            .expect("the child's start");
+        child.wait().expect("cmd exits");
+        // `child` keeps its handle, so the exited process's object and start stay readable by its pid.
+        let asked = Instant::now();
+        let end = end_process_started_by(child.id(), started, 60_000).expect("the call runs");
+        assert_eq!(end, "ended");
+        assert!(asked.elapsed() < Duration::from_secs(5), "{:?}", asked.elapsed());
+    }
 }
