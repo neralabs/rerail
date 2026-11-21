@@ -245,9 +245,10 @@ def choose(named, oses, roots):
             best = free[0]
             best[6].used()
             return best[5], best[6], best[7], None
-        if not starting:
+        if not starting and not named:
             # It would wait: the stopped guests that can take it are started (guest.py), and it
-            # takes the first slot that frees, a running host's or a guest's once it is up.
+            # takes the first slot that frees, a running host's or a guest's once it is up. A
+            # named host (`--host`) waits for its own slot: another guest started would take it.
             # One a command: another machine's before this Mac's (where the edit loop runs), then the
             # most cores; a second command that would wait starts the next.
             order = sorted(stopped_guests(oses), key=lambda g: (farm.shared_base(g)["guest"]["on"] == "local", -g.get("cores", 0)))
