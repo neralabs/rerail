@@ -355,13 +355,14 @@ describe.runIf(process.platform === "win32")("the engine proof, against an engin
     let ms = Date.now() - began;
     expect({ kept, file: existsSync(stateFile) }, `the lookup answered after ${ms} ms`).toEqual({ kept: { status: "unresponsive", state }, file: true });
     expect(ms).toBeLessThan(2_000 + SLACK_MS);
-    // Once no daemon holds the home, the lookup has used its limit on the pipe before it could read when this process
-    // started, which would show it is no daemon of the home: it keeps the record within its limit, and the stop decides.
+    // Once no daemon holds the home, the lookup has used its limit on the pipe, and still reads when this process
+    // started, a system call that needs none: it started after the record's startedAt, so it is no daemon of the home,
+    // and the record goes within the limit, with nothing sent.
     lock!.release();
     began = Date.now();
-    const unread = await lookupDaemon(home);
+    const read = await lookupDaemon(home);
     ms = Date.now() - began;
-    expect({ unread, file: existsSync(stateFile) }, `the lookup answered after ${ms} ms`).toEqual({ unread: { status: "unresponsive", state }, file: true });
+    expect({ read, file: existsSync(stateFile) }, `the lookup answered after ${ms} ms`).toEqual({ read: { status: "absent" }, file: false });
     expect(ms).toBeLessThan(2_000 + SLACK_MS);
   }, 45_000);
 
