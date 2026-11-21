@@ -214,6 +214,11 @@ mro_found(c, x, d) :- mro_ask(c, x), <the search>.      // the output: where the
 That also gives the cross-file memo its finer key. This waits for per-definition node ids (Typing-support's
 `granules.rs`), so positions stay out of what is compared.
 
+| Step | Change | State |
+|---|---|---|
+| 8.1 | **No cross-file reach of P3's own.** A name another document binds (an import, a dotted name, a star import) is resolved by P2 (`pt_lres`: `types__binds`, `types__attr`) to the symbol that binds it, and its value read by that symbol (`pt_wres`, `pt_wkey`: `m.x#k` is a binding of `m.x`) from `qv`, `lqv`, `tqv`, `qopen`. "A workspace module" is `pt_wsmod`. Late-bound `self`, declared classes' values and subtyping reach every workspace subclass, not the reader's closure's. No rule reads `rr_cx_`, so `components.rerail` is no longer added to the program | **done** (2026-11-21). The 84-file corpus with typeshed, a farm Mac, debug: 6,090 agree, 2 another definition, 614 unknown where Jedi decided, before and after; 26.0 s to 25.1 s main-thread CPU, peak RSS 476 to 440 MB. (The recording was made again, from the same files, after the old one was lost: Jedi 0.19.2 on Python 3.14, 8,882 calls, 2,176 Jedi leaves undecided. Its agree count is not comparable with the 6,410 above.) |
+| 8.2 | **Targets as symbols** | **not needed as a step of its own.** P3's values are definition nodes (a function, a class, a module, a class's instance), and with per-definition ids such a node's id is the document's digest, the slot its granule's key hashes to, and index 0: as stable as its symbol, and no position. Targets are placed when the outputs are written. The memo the finer key was for went with 0450. Making values symbols would change `call_target`'s interface, which pack rules join with function nodes (`owner(c, f)`), for no change in what is compared |
+
 ## Order, and what each stage waits for
 
 | Stage | Waits for | Where |
@@ -225,7 +230,7 @@ That also gives the cross-file memo its finer key. This waits for per-definition
 | 5 | 1 | engine and the owners |
 | 6 | 0101 §1 in the hub | the hub's owners; measured here |
 | 7 | 1 | this branch |
-| 8 | 2.1, 7.2, per-definition node ids | this branch |
+| 8 | 2.1, 7.2, per-definition node ids | this branch: done (8.1) |
 
 ## What this branch must not do
 
