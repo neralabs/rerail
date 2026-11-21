@@ -163,6 +163,27 @@ persistent grid; the M3, on 16z reads that spun out). Killing the process does n
          same instruction for instruction, but for the operand Metal 4 adds to each atomic. The claim is one relaxed
          device-scope swap. And the M3's AIR compiled for G15 by Xcode 26's back end (`metal-tt`), run on the M3
          from that archive (`RERAIL_METAL_BINARY_ARCHIVE`, the archive's code confirmed), loses the same 4 claims.
-         So neither front end nor back end makes the difference: G15 runs this code otherwise than G13, or macOS
-         15's driver does. A user on an M3, whatever their Metal version, may meet it. Apple's tools have no
-         disassembler for G15 code ("no instruction printer for target agx3").
+         So the front end does not make the difference, and neither does the back end's version: both back ends
+         compile the code for G15 otherwise than for G13. A user on an M3, whatever their Metal version, may meet
+         it. Apple's tools have no disassembler for G15 code ("no instruction printer for target agx3").
+       - **Found (2026-11-21): two address foldings of G15's back end, by reduction.** The kernel was cut down on
+         the M3, one piece at a time, while the loss still showed (a harness that compiles a `.metal` file and runs
+         it once on the test's dumped inputs). Both come from how the back end folds an address computed from a
+         loaded value; both reproduce in kernels of a few lines, from the runtime compiler of macOS 15.7.7 and from
+         Xcode 26's `metal-tt`.
+         - *The claim's swap.* A compare-and-swap at `gen + ((h + p) & (slots - 1)) * 4 + INDEX`, with `slots` read
+           from the header, acts on another word than its address: two threads both win one slot, and a load of the
+           slot after finds neither's tag. With the index masked by a constant as well, it acts on the slot. A
+           constant mask up to 2^29 - 1 is enough; 0x3FFFFFFF is not. So the slot's index is masked by
+           `view::cache::SLOTS_MAX - 1` too (131,072 slots, the most `Spec::new` makes for the most entries), in
+           `tape_body.h` and in the CLIF, and `Spec::check` and `init_zeroed` refuse a cache of more slots.
+         - *The decode's match.* LZ4's copy reads at the output's place less the match's offset, a zero-extended
+           16-bit load: `dst + at - zext16(off)`. G15 folds it as `dst + at + (uint16)(-off)`, a place 2^16 bytes
+           past the source, so every match read the entry's zeros. This is what failed the blocks once the claims
+           were kept. The decode now computes its places as 32-bit offsets from the output's start and adds each
+           to `dst` (`dst + (uint64_t)(uint32_t)(at - off)`), which G15 compiles right.
+         - With both: `the_device_reads_read_every_node_as_the_crate_does` and
+           `the_device_reads_16z_through_a_cache_that_turns` pass on the M3 Max, the Mac mini and the M1 Max, and the
+           host's tests (the CLIF's reads, which gain the mask, and the generated relation reads) pass on Linux.
+         - Other device code that subtracts a loaded narrow value from an address, or swaps at an index masked only
+           by a loaded count, may meet the same foldings. The engine's Metal tests on the M3 are next.
