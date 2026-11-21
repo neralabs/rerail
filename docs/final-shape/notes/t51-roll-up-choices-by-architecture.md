@@ -238,6 +238,33 @@ today. The preprocessor's grids (`pp_grid`, `pp_probes`) do not join: their size
 **Not a duplication**: the work queue's ring (ours, 0486 §10) and its budget (theirs, 0540 §4) are different jobs,
 a queue's storage reused and a worker's share of a launch. Both stay.
 
+**Done.**
+
+- `grid.h`: where a backend knows its resident count (`UKL_GRID_RESIDENT`, the CPU's `__ukl_cpu_resident()`, the
+  launch's `resident` clamped as `__ukl_cpu_run` clamps it), the first group closes the count once that many have
+  joined, with no window. Its polls yield, bounded by `UKL_GRID_SPINS`. The groups waiting for the count to close
+  yield too, so on the CPU the first group runs again to close it. A GPU keeps theirs' window.
+- `Device::resident_groups` gives the CPU's exact count (`compute_kernel_cpu::resident_groups`). It had given none,
+  so the library tests never ran a CPU grid at its residency.
+- `pp_setup` (`PP_GRID_BEGIN`) and the probes (`pb_sort_alone`, `pb_barriers_alone`, `pb_pool`) join their grids. The
+  grid's stage words move past the join's ticket word (`PG_STAGE` 4, `PG_STOP` 5). The pool probe's takers are the
+  dispatch's threads, taken in turn by the grid's. The probes' control words are four.
+- The host's count (`pp_arena::groups`) stays as the count the grid is dispatched at, not the grid. A dispatch at the
+  resident count closes the join when its last group joins, so it waits out no window; past it, the join finds the
+  groups that run. `fewer`'s halving is left for a barrier whose bound is reached, which residency no longer causes.
+  `Expanded::joined` reports the groups that joined (`Front::joined`, the grid's word 3).
+- `an_evaluation_is_a_fixed_handful_of_launches` held 0468's rule, that a grid of 4,096 groups fails and runs again at
+  half. It now holds 0540's: it runs once at 4,096 dispatched, fewer join, and the output is the same.
+- Tests (CPU backend: `RERAIL_GPU=cpu` on Linux, and on the M3 with no Metal):
+  - `the_cpus_grid_is_its_resident_groups`: 128 groups dispatched, 32 joined.
+  - rerail-gpu: 26 of 26.
+  - rerail-metal's pp tests: 9 of 9.
+  - rerail-c-directives' evaluation tier (`--profile second`, 1 s each): 31 of 31.
+  - Clippy is clean on rerail-gpu, rerail-device, rerail-metal and rerail-ukl.
+- The tier's first run on the M3 timed out 27 tests at 1 s. That is the CPU kernels' first compile into their cache:
+  one test took 8.7 s cold and 0.28 s warm, with the same instructions retired. That is the first-launch cost, not a
+  slow test.
+
 ## 5. Roll-up 22: a file's record lanes one threadgroup
 
 Listed as a possible cap on parallelism. It is not one. `RECORD_LANES` was 64, equal to `THREADS`, before the merge

@@ -38,10 +38,10 @@
 #define UKL_GRID_SPINS 1000000u
 #endif
 // The first group's polls for others to join, after the last that did (a window, not a wait: a group that has not
-// started by its end is not the grid's). A dispatch whose groups all start ends it when the last joins. The join
-// yields nowhere, so on the CPU backend (its groups taking turns at a yield) the grid is the first group alone. A
-// longer window costs a dispatch past residency its time: at 65,536 polls, 843 ms on a GB10 (48 groups polling one
-// word), against 30 ms.
+// started by its end is not the grid's). A dispatch whose groups all start ends it when the last joins. A longer
+// window costs a dispatch past residency its time: at 65,536 polls, 843 ms on a GB10 (48 groups polling one word),
+// against 30 ms. A backend that knows its resident count (`UKL_GRID_RESIDENT`, the CPU's: its groups take turns at a
+// yield) has no window: the count closes when that many have joined, and the polls yield.
 #ifndef UKL_GRID_WINDOW
 #define UKL_GRID_WINDOW 2048u
 #endif
@@ -62,7 +62,8 @@ UKL_INLINE bool ukl_grid_failed(UklGrid g) { return ukl_atomic_poll(&g.ctl[2]) !
 // once, before any barrier; `words` is two words of threadgroup memory.
 //
 // The first group (ticket 0) closes the count once no group has joined for `UKL_GRID_WINDOW` of its polls, or all
-// `dispatched` have. Every other one waits for that: for a group that is running (it took the first ticket) and waits
+// `dispatched` have; where the resident count is known (`UKL_GRID_RESIDENT`), once that many have, its polls
+// yielding to them. Every other one waits for that: for a group that is running (it took the first ticket) and waits
 // for nothing but its window, so the wait ends. Bounded still: past `UKL_GRID_SPINS` polls, the grid fails.
 UKL_INLINE bool ukl_grid_join(UKL_PRIVATE UklGrid* g, uint32_t dispatched, UKL_LOCAL uint32_t* words)
 {
@@ -82,12 +83,21 @@ UKL_INLINE bool ukl_grid_join(UKL_PRIVATE UklGrid* g, uint32_t dispatched, UKL_L
         if (ticket == 0u) {
             // The window: polled until all have joined, or none has for `UKL_GRID_WINDOW` polls; then closed, by a
             // compare-and-swap that finds the count it closes.
-            uint32_t last = 1u, quiet = 0u;
+            uint32_t last = 1u;
+#ifdef UKL_GRID_RESIDENT
+            uint32_t want = UKL_GRID_RESIDENT() < dispatched ? UKL_GRID_RESIDENT() : dispatched;
+            for (uint32_t spins = 0u; last < want && spins < UKL_GRID_SPINS; spins++) {
+                ukl_poll_yield();
+                last = ukl_atomic_poll(&g->ctl[3]);
+            }
+#else
+            uint32_t quiet = 0u;
             while (quiet < UKL_GRID_WINDOW && last < dispatched) {
                 uint32_t now = ukl_atomic_poll(&g->ctl[3]);
                 quiet = now == last ? quiet + 1u : 0u;
                 last = now;
             }
+#endif
             uint32_t at = ukl_atomic_poll(&g->ctl[3]);
             for (uint32_t tries = 0u; tries <= dispatched; tries++) {
                 uint32_t seen = ukl_atomic_cas(&g->ctl[3], at, at | UKL_GRID_CLOSED);
@@ -100,8 +110,11 @@ UKL_INLINE bool ukl_grid_join(UKL_PRIVATE UklGrid* g, uint32_t dispatched, UKL_L
             }
         } else if (ticket != UKL_GRID_CLOSED) {
             uint32_t now = ukl_atomic_poll(&g->ctl[3]);
-            for (uint32_t spins = 0u; (now & UKL_GRID_CLOSED) == 0u && spins < UKL_GRID_SPINS; spins++)
+            for (uint32_t spins = 0u; (now & UKL_GRID_CLOSED) == 0u && spins < UKL_GRID_SPINS; spins++) {
+                // On the CPU, the first group closes the count only when it runs.
+                ukl_poll_yield();
                 now = ukl_atomic_poll(&g->ctl[3]);
+            }
             count = now & ~UKL_GRID_CLOSED;
         }
         // Not closed (the first's closing lost every race, or the wait ran out): the grid fails, its barriers false.
