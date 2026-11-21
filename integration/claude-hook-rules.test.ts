@@ -29,7 +29,7 @@ import { setTimeout as delay } from "node:timers/promises";
 import { promisify } from "node:util";
 import { afterAll, beforeAll, describe, expect, it, vi } from "vitest";
 import { ENTRY_POINTS } from "../src/engine/index.js";
-import { DAEMON_STATE_FILE, type DaemonState } from "../src/runtime/index.js";
+import { DAEMON_STATE_FILE, ENGINE_CHALLENGE_HEADER, ENGINE_PROOF_PATH, type DaemonState } from "../src/runtime/index.js";
 import { removeFolder } from "../test/support/platform/remove-folder.js";
 import { setUpTestRepository } from "../test/support/repository-rules.js";
 
@@ -273,17 +273,24 @@ async function expectRulesFired(session: Session, files: readonly string[]): Pro
 
 /**
  * An engine socket in front of the daemon's that holds every event `delayMs` before passing it on, with the daemon's
- * capability: a daemon that takes that long to answer each event, as one does while it walks a large checkout.
+ * capability: a daemon that takes that long to answer each event, as one does while it walks a large checkout. It
+ * passes a proof's challenge on at once, as the daemon answers a challenge before it reads any event. On Windows this
+ * socket is a pipe of the test's own process, which Windows does not name as the daemon, so a hook sends its event
+ * only once the engine behind it proves it holds the capability in daemon.json.
  */
 async function slowEngine(delayMs: number): Promise<string> {
   const state = await daemonState();
   const path = process.platform === "win32" ? `\\\\.\\pipe\\rerail-slow-engine-${process.pid}-${Date.now()}` : join(root, "slow-engine.sock");
   const server = createServer(async (incoming, outgoing) => {
     const body = await text(incoming);
-    await delay(delayMs);
+    const challenge = incoming.headers[ENGINE_CHALLENGE_HEADER];
+    if (incoming.url !== ENGINE_PROOF_PATH) await delay(delayMs);
     const forwarded = request({
       socketPath: state.kernelSocketPath, method: "POST", path: incoming.url,
-      headers: { "content-type": "application/json", "content-length": Buffer.byteLength(body), "x-rerail-access": state.accessToken ?? "" },
+      headers: {
+        "content-type": "application/json", "content-length": Buffer.byteLength(body), "x-rerail-access": state.accessToken ?? "",
+        ...(challenge === undefined ? {} : { [ENGINE_CHALLENGE_HEADER]: challenge }),
+      },
     }, answer => {
       outgoing.writeHead(answer.statusCode ?? 502, { "content-type": "application/json" });
       answer.pipe(outgoing);
