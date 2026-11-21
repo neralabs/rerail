@@ -285,7 +285,7 @@ fn the_paste_relexer_is_the_lexers() {
     eprintln!("{} spellings, 5 dialects", texts.len());
 }
 
-/// A unit on the device from its main file alone, in P1's rounds of lookups (decision 0467 §1):
+/// A unit on the device from its main file alone, in P1's rounds of lookups (decision 0487 §1):
 /// the last round's unit and layout, and its files' paths.
 struct OnDevice {
     unit: Unit,
@@ -305,7 +305,7 @@ fn unit_of(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, pat
 /// device refuses it.
 fn on_device(cfg: rerail_c_pp::Config, io: &mut dyn rerail_c_pp::files::Files, path: &str, cpp: bool) -> Result<OnDevice, &'static str> {
     use rerail_metal::pp_expand::*;
-    // The rooms carry from round to round (decision 0478 §6).
+    // The rooms carry from round to round (decision 0489 §6).
     let mut sizes: Option<Sizes> = None;
     let r = super::rounds::run(&cfg, io, path, cpp, |u, l| {
         let mut s = sizes.map_or_else(|| Sizes::first(u, l), |s| s.fit(u, l));
@@ -1143,7 +1143,7 @@ fn pasting_is_the_serial_passes() {
         &[("main.c", "#define G(...) g(0, ## __VA_ARGS__)\nG() G(a) G(a, b)\n")],
         &[("main.c", "#define P(x) x ## _t\n#define Q(x) P(x)\n#define N 9\nP(N) Q(N) P(int)\n")],
         &[("main.c", "#define L(x) x ## L\n#define U(x) u ## x\nL(1) L(0x1) U(8) U(\"s\")\n")],
-        // A paste that spells a definition's name takes that name's ref (decision 0478 §10): it
+        // A paste that spells a definition's name takes that name's ref (decision 0489 §10): it
         // expands, `__LINE__` in it is the call's; one no definition has, a chain whose middle no
         // definition has, one defined after it, a left that is no identifier.
         &[("main.c", "#define C(a, b) a ## b\n#define C3(a, b, c) a ## b ## c\n#define W_1 one __LINE__\n#define W_ two\nC(W_, 1) C(W_, 2) C3(W, _, 1)\nC(\nW_,\n1) C(W, _) C(V_, 1) C(1, W_)\n#define V_1 three\nC(V_, 1)\n")],
@@ -1477,7 +1477,7 @@ fn a_unit_past_its_room_runs_again_larger() {
     }
 }
 
-/// Decision 0478 §9: an argument with no macro's, built-in's or call's name in it is read in
+/// Decision 0489 §9: an argument with no macro's, built-in's or call's name in it is read in
 /// place where the body uses it, with no list made for it. Used expanded, once and twice, with
 /// `#` and `##` beside, empty, with a painted name in it, with a function-like macro's name
 /// (scanned: not flat), as the last of a variadic call and under `__VA_OPT__`, and through levels
@@ -1503,7 +1503,7 @@ fn a_flat_argument_is_read_in_place() {
     }
 }
 
-/// Decision 0478 §10: the expansion's tokens no item reads again are given back between the
+/// Decision 0489 §10: the expansion's tokens no item reads again are given back between the
 /// queue's runs. Chains of 150 calls each passing a state of 120 tokens on make more tokens than
 /// rung 0 holds, while few stay live: each settles at rung 0, the serial pass's. The state passed
 /// through plain calls, through an argument scanned at each level (a dead argument's list), and

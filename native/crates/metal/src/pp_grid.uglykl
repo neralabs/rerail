@@ -96,7 +96,7 @@
         c_[15] = AT(const uint32_t, WORDS)[11]; c_[18] = AT(const uint32_t, WORDS)[12]; c_[19] = AT(const uint32_t, WORDS)[13]; \
         AT(uint32_t, QCTL)[1] = 0u; AT(uint32_t, QCTL)[4] = 0u; AT(uint32_t, CNT)[1] = 0u;             \
     }                                                                                                  \
-    /* The pools empty (decision 0478 §10): the tokens' heads past their five columns, the lists'    \
+    /* The pools empty (decision 0489 §10): the tokens' heads past their five columns, the lists'    \
        and the arguments' past their links. */                                                         \
     EACH(c, UKL_POOL_CLASSES) {                                                                        \
         AT(uint32_t, TOKENS)[5u * AT(const uint32_t, WORDS)[1] + c] = UKL_POOL_NONE;                  \
@@ -107,7 +107,7 @@
 
 // The queue's workers over a top, launched again in the kernel while work remains, a bounded
 // number of times. Between runs, where a store's front passed its mark (`px_past_marks`, the
-// workers stopped there), the blocks and ids no item reads again are given back (decision 0478
+// workers stopped there), the blocks and ids no item reads again are given back (decision 0489
 // §10). Their count is bounded by the host (`WORDS` 15): a store's mark is a gap past its front,
 // so each room is passed a bounded number of times, and the ring's pauses by the work bound. A
 // cap below that (192 givings) stopped every giving for the rest of a long top, and each store
@@ -361,7 +361,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         JOB(2, ni, P1_GCOUNT, P1_GRPF, P1_NGRP);
         SCANS(3);
         // Each room's high water (`P1_NEED`), whether or not it ran out: a settled run's rooms
-        // are sized from it (decision 0478 §8).
+        // are sized from it (decision 0489 §8).
         ONE(x) {
             UKL_GLOBAL uint32_t* nd_ = AT(uint32_t, P1_NEED);
             nd_[NEED_DIRS] = ukl_max(nd_[NEED_DIRS], N(N_DIRS)); nd_[NEED_GAPS] = ukl_max(nd_[NEED_GAPS], N(N_GAPS)); nd_[NEED_GROUPS] = ukl_max(nd_[NEED_GROUPS], N(P1_NGRP));

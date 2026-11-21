@@ -15,7 +15,7 @@
 //
 // `control`: 0 head, 1 tail, 2 active (pushed, not yet done), 3 overflow, 4 a ring's base. Items are below 0xFFFFFFFE.
 //
-// A ring (`ring` set, decision 0478 §10): positions run on past the capacity, position `p` in slot `p % capacity`,
+// A ring (`ring` set, decision 0489 §10): positions run on past the capacity, position `p` in slot `p % capacity`,
 // and a push takes positions below `base + capacity` alone. At a pause, when no worker runs (so no taker is between
 // its claim of a position and its exchange of the slot), `ukl_wq_rebase_clear` and `ukl_wq_rebase` move the base up
 // to the head: the slots of the positions taken since are emptied, and pushes may use them again. Every slot a push

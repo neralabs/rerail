@@ -57,7 +57,7 @@ On Boost.Preprocessor's tests that does not work:
    Before, every round climbed the definitions' rungs and P1's rooms again from the first: 3
    Boost `control` units took 82 runs for their rounds and 9 for their expansions; now 41 and 6.
 
-7. **The rounds are the batch's, and the last round's run is the expansion.** Since 0475 a run
+7. **The rounds are the batch's, and the last round's run is the expansion.** Since 0488 a run
    that makes no requests has done the text pass inside P1's iterations: it is the expansion.
    Each unit's rounds ran alone (`lookups`), and then the batch's run (`expand_many`) did every
    unit's last round again. Now `rounds::run_many` runs a batch's units' rounds together:

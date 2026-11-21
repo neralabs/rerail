@@ -1,4 +1,4 @@
-// ukl/pool.h: a store's blocks used again, a free list a size class (decision 0478 §10).
+// ukl/pool.h: a store's blocks used again, a free list a size class (decision 0489 §10).
 //
 // A store (an array of units: tokens, rows, ...) handed out from its front by an atomic add never takes back what
 // its users are done with. A pool keeps those blocks to hand out again: a free list a size class, each list linked

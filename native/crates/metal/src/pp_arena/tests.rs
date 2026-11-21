@@ -125,7 +125,7 @@ fn the_grid_sort_alone_is_fast() {
     }
 }
 
-/// `<ukl/pool.h>` over a grid (decision 0478 §10): the pieces of ranges given, taken by every
+/// `<ukl/pool.h>` over a grid (decision 0489 §10): the pieces of ranges given, taken by every
 /// thread of 8 groups at once, then given back and taken again. No block is taken twice in a
 /// round, each lies inside one given range and fits its class, and where the takers ask for
 /// more than a class holds, every block of it is taken.
@@ -188,7 +188,7 @@ fn the_pool_gives_each_block_once() {
     }
 }
 
-/// `<ukl/pool.h>`'s split takes over a grid (decision 0478 §10): every thread of 8 groups takes
+/// `<ukl/pool.h>`'s split takes over a grid (decision 0489 §10): every thread of 8 groups takes
 /// blocks of one class from pieces of every class, a larger piece split and its rest pushed back
 /// while others take; then they are given back and taken again. No unit is taken twice, each block
 /// lies inside one given range, and the takes met are the demand or the pieces' room in blocks of

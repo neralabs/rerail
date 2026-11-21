@@ -443,7 +443,7 @@ pub struct XCaps {
 impl XCaps {
     /// Every room at rung `rung` over a top level of `top` tokens.
     ///
-    /// The shares are from the corpus's most use over its top level's tokens (decision 0478
+    /// The shares are from the corpus's most use over its top level's tokens (decision 0489
     /// §8): tokens 0.39, lists and arguments 0.02, queue items 0.05, the output 0.64, scratch
     /// bytes 0.34; a room past them grows from its own count.
     pub fn at(top: usize, rung: u32) -> XCaps {
@@ -506,7 +506,7 @@ pub struct Sizes {
     pub x: XCaps,
     pub defs: u32,
     /// What the last run's P1 used (`NEED_*`, its rooms' high water), and the first rooms of the
-    /// unit it ran on: the next round's are sized from them (decision 0478 §8).
+    /// unit it ran on: the next round's are sized from them (decision 0489 §8).
     pub used: Option<([u32; NEEDS], Caps)>,
 }
 
@@ -1033,7 +1033,7 @@ pub const X_PRAGMA: u32 = 16384;
 /// A top's items past the work bound (`WORK`): not room, so no rung is larger for it.
 pub const X_WORK: u32 = 32768;
 /// A top's items at most (`RERAIL_PP_WORK` for tests): a launch's time bounded by its work, not
-/// by any room (decision 0478 §10).
+/// by any room (decision 0489 §10).
 pub const WORK: u32 = 1 << 18;
 
 /// The expansion's tries for room. A refused run stops where its first room ran out, so each try
@@ -1088,7 +1088,7 @@ pub struct Exp {
     lists: Buf,
     /// The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth and the
     /// ref `__LINE__` reads for it (+ 1; 0 its own); then the heads of the pool of blocks given
-    /// back (`POOL_HEADS`, decision 0478 §10), whose links are the first token's ref.
+    /// back (`POOL_HEADS`, decision 0489 §10), whose links are the first token's ref.
     tokens: Buf,
     args: Buf,
     slots: Buf,
@@ -1153,7 +1153,7 @@ impl Exp {
         // Past the tops (0, 1, 3, 4, 5) and the refusals (2): the literals' tops (6, 7), then each
         // top's high water over the passes (8 to 13: tokens, lists, args, scratch bytes and tokens,
         // queue items), the output's (14), the mark where the blocks no item reads again are given
-        // back (15: a 32nd of the tokens' room past the front, decision 0478 §10), the times they were (16) and the
+        // back (15: a 32nd of the tokens' room past the front, decision 0489 §10), the times they were (16) and the
         // drain's decision between runs (17: `PX_DRAIN`), the lists' and the arguments' entries'
         // marks (18, 19: a 32nd of each room past its front).
         // The tokens' front between two givings: a 32nd of the room (at most 32 givings from the
@@ -1271,7 +1271,7 @@ impl Exp {
             let ctl = self.ctl.host().cast::<u32>();
             let w = self.words.host().cast::<u32>();
             let [a, b, c, d, e] = [(0, 1, 8), (1, 2, 9), (3, 3, 10), (4, 8, 11), (5, 9, 12)].map(|(t, c, h)| ((*ctl.add(t)).max(*ctl.add(h)), *w.add(c)));
-            // The queue's ring: its positions past its base (decision 0478 §10).
+            // The queue's ring: its positions past its base (decision 0489 §10).
             let qc = self.qctl.host().cast::<u32>();
             let q = ((*qc.add(1)).wrapping_sub(*qc.add(4)).max(*ctl.add(13)), self.q_cap);
             // The output: the pieces' total of the text and of each top before (the lines'), as
@@ -1626,7 +1626,7 @@ fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), gr
     Ok(on_grid(&arena, unit, &front, &l, groups)?.map(|(_, s)| s))
 }
 
-/// One unit's answer from a batch (`rounds::run_many`, decision 0478 §7): the batch's expansion it ran in, its files
+/// One unit's answer from a batch (`rounds::run_many`, decision 0489 §7): the batch's expansion it ran in, its files
 /// there (`x.ev.bases`' and the refs' files), and its output (`x.out`'s range). Where the unit was
 /// refused, it ran alone, and `x.refused` says why.
 pub struct Part {
