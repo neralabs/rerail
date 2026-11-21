@@ -312,7 +312,14 @@ Facts:
 6. (built) The keep (`retain::write_frames`, `write_input_frames`; `write_kept`, `write_input_kept` since 0439) writes
    a space's delta, beside the frames.
 7. (built, 0438) The read (`preload_frames_live`, `kept_inputs`, the clean relations) binds views; F-R1–F-R3.
-8. Collection as a roll-up; F-R4.
+8. (built) Collection as a roll-up; F-R4. Each program (its `prepared_key`) keeps a reader record in each space it
+   reads: an entry of `READERS` listing the identities of the entries it asked and found, or put. A put's record
+   goes in the same file as its entries; what a run only asked goes at its end, before its manifest. A record only
+   grows: the writer adds a put of it to the one kept. Collection runs in the corpus collection pass, under its
+   lease, after the keep decision and while the dead plans are still marked dead (`corpus_plans.live = 0`). It
+   rewrites each space a dead program's record names as one base, without the entries only dead programs' records
+   name and without those records, and drops a space left empty (`collect_kept_facts`). An entry no record names
+   (an older build's, a session's) stays.
 9. (built, 0439, 0456) The virtual tables (`kept_entries`, `kept_facts`); F-R5. The frames retired: the engine writes and
    reads none, the store's frame machinery is gone, and an old store's frame tables are dropped when it is opened.
    The blocks are still larger than the frames were (0439, "Open").

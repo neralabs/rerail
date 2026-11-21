@@ -3959,6 +3959,10 @@ fn run_observed_within(
     if durable.is_some() {
         program_plans.push(prepared_key);
     }
+    // What the program asks and puts of each kept space, recorded there under its key (decision 0401 step 8): a
+    // space's entries no live program's record names are collection's. A phase's run binds its own.
+    let readers = durable.is_some().then(|| Arc::new(crate::content_store::kept_facts::ReaderLog::new(prepared_key)));
+    let _readers = readers.clone().map(|log| crate::code_rule_dsl::logic::profile::bind(crate::content_store::kept_facts::KeptReader(Some(log))));
     let part_keys: std::sync::Mutex<Vec<[u8; 32]>> = Default::default();
     // The pipelines' runs the run keeps (decision 0333): the manifest names them, and the next run finds them so.
     let kept_runs: std::sync::Mutex<Vec<[u8; 32]>> = Default::default();
@@ -10470,6 +10474,10 @@ fn run_observed_within(
     drop(waves.take());
     if let Some((relations, reading)) = publish_later {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "record the run in the store".into());
+        // What it only asked, recorded before the manifest that names its key.
+        if let Some(log) = &readers {
+            log.flush(store);
+        }
         collecting = record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).chain(kept_runs.lock().expect("the kept runs").iter()).copied().collect::<Vec<_>>(), Some(lane), policy, &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
     }
     // The cross part's writes are one wave: its kept strata's frames, retained rows, rounds and statistics.

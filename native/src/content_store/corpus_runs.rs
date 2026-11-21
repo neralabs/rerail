@@ -970,6 +970,8 @@ impl ContentStore {
             // utility job: soon, behind the run, and finished before the process exits; decision 0227).
             rerail_accel::upkeep::kick();
         }
+        // The kept spaces' entries only dead programs read (decision 0401 F4), while their plans are still known dead.
+        pass.plan_rows += self.collect_kept_facts()?;
         // Dead plans, one transaction each, until the pass's budget of rows is spent: a dead build's memo is its
         // entries' rows (one statement), and one plan a pass left a store's dead builds for as many runs.
         let mut budget = PLAN_ROWS_PER_PASS as usize;

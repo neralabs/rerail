@@ -390,3 +390,60 @@ fn chain_bytes_by_relation() {
         eprintln!("{b:>11} {:5.1}%  {what:7} {n:6} entries {r:10} rows  {rel}", *b as f64 * 100.0 / total.max(1) as f64);
     }
 }
+
+/// F-R4 (decision 0401 F4): collection writes a space's next base without the entries no live program reads. Each
+/// program's reads and puts are its reader record in the space (put with the entries, or at the run's end for what it
+/// only asked), and a record only grows. A space's entries only dead programs' records name go, with those records;
+/// those a live program's record names, or no record names, stay, read the same; a space left with none is dropped.
+#[test]
+fn collection_rewrites_without_dead_entries() {
+    let (path, c) = store("collect");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let (live, dead) = ([0x11u8; 32], [0x22u8; 32]);
+    let (mine, theirs, shared, asked, legacy) = ([1u8; 32], [2u8; 32], [3u8; 32], [4u8; 32], [5u8; 32]);
+    let entry = |rel: &str, ident: [u8; 32], v: i64| KeptPut { ident, ..put(rel, 0, v as u64, flat(&[v, v])) };
+    // A store without reader records (an older build's, a session's): its entry no record names.
+    store.queue_kept(SPACE, vec![entry("l", legacy, 5)]);
+    store.written().unwrap();
+    // Two programs' runs, each putting its entries; the live one also asks one it did not put, the dead one puts in
+    // another space too.
+    let other: [u8; 32] = [9; 32];
+    for (program, puts) in [(live, vec![entry("a", mine, 1), entry("s", shared, 3)]), (dead, vec![entry("b", theirs, 2), entry("s", shared, 3)])] {
+        let log = std::sync::Arc::new(ReaderLog::new(program));
+        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptReader(Some(std::sync::Arc::clone(&log))));
+        store.queue_kept(SPACE, puts);
+        if program == live {
+            log.asked(&SPACE, &asked, |_| Vec::new());
+        } else {
+            store.queue_kept(other, vec![entry("x", theirs, 7)]);
+        }
+        log.flush(&store);
+        store.written().unwrap();
+    }
+    let records = |c: &Connection, space: &[u8; 32]| -> Vec<([u8; 32], Vec<[u8; 32]>)> {
+        let rows = chain_rows(c, space).unwrap();
+        let kept = KeptSpace::open(&path, space, &rows).unwrap();
+        kept.view().of(READERS).map(|k| (*k.key.ident, record_idents(&k).collect())).collect()
+    };
+    assert_eq!(records(&c, &SPACE), [(live, vec![mine, shared, asked]), (dead, vec![theirs, shared])], "each program's record: what it put and asked, grown");
+    // The keep decision's: one program live, one dead.
+    c.execute("INSERT INTO corpus_plans(plan_digest, live) VALUES (?1, 1), (?2, 0)", rusqlite::params![&live[..], &dead[..]]).unwrap();
+    let before = read(&path, &c);
+    assert_eq!(store.collect_kept_facts().unwrap(), 2, "the space rewritten, the other dropped");
+    let after = read(&path, &c);
+    let rels: Vec<&str> = after.iter().map(|e| e.0.as_str()).collect();
+    assert_eq!(rels, [READERS, "a", "l", "s"], "the dead program's entry and record gone");
+    assert_eq!(after.iter().filter(|e| e.0 != READERS).cloned().collect::<Vec<_>>(), before.iter().filter(|e| e.0 != READERS && e.0 != "b").cloned().collect::<Vec<_>>(), "the rest read the same");
+    assert_eq!(chain_rows(&c, &SPACE).unwrap().len(), 1, "one base");
+    assert_eq!(files(&path).len(), 1, "the replaced files removed: {:?}", files(&path));
+    assert!(chain_rows(&c, &other).unwrap().is_empty() && !space_dir(&path, &other).exists(), "a space only dead programs read, dropped");
+    // The store's reads see the new chain.
+    assert_eq!(store.kept_space(&SPACE).unwrap().unwrap().view().all().count(), 4);
+    // Nothing dead is left to collect: a second pass rewrites nothing.
+    assert_eq!(store.collect_kept_facts().unwrap(), 0);
+    // The live program dies too: what only it read goes; what no record names stays.
+    c.execute("UPDATE corpus_plans SET live=0", []).unwrap();
+    assert_eq!(store.collect_kept_facts().unwrap(), 1);
+    assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["l"]);
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
