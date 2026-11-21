@@ -104,9 +104,10 @@ pub(super) struct Sketch {
     /// Its join-size counters and, while it has at most `SMALL` values, each one's rows (`join_size::Counts`, in a
     /// block): this sketch is their one writer; the planner's join sizes and the statistics' keys read them there.
     counts: Arc<Counts>,
-    /// Whether it writes `counts`: a clone reads the counts it was cloned with until it first adds, then writes a
-    /// copy of its own (as `own_keys`).
-    own_counts: bool,
+    /// Held by it and its clones while they share `counts`: a sketch that adds while another holds it writes a copy
+    /// of its own first, the original as well as a clone, so neither's rows reach the other's counts (a clone's
+    /// counts are the column's as it was cloned). The one left holding it alone writes the shared counts in place.
+    sharing: Arc<()>,
     rows: u64,
     dense: Option<Dense>,
     sparse: Option<Sparse>,
@@ -122,7 +123,7 @@ pub(super) struct Sketch {
 
 impl Default for Sketch {
     fn default() -> Sketch {
-        Sketch { registers: zeros(REGISTERS), counts: Arc::new(Counts::new()), own_counts: true, rows: 0, dense:None, sparse:None, keys: None, own_keys: true, sample: Sample::default() }
+        Sketch { registers: zeros(REGISTERS), counts: Arc::new(Counts::new()), sharing: Arc::new(()), rows: 0, dense:None, sparse:None, keys: None, own_keys: true, sample: Sample::default() }
     }
 }
 
@@ -130,7 +131,7 @@ impl Default for Sketch {
 /// columns' filters only where its rows change them.
 impl Clone for Sketch {
     fn clone(&self) -> Sketch {
-        Sketch { registers: self.registers.clone(), counts: Arc::clone(&self.counts), own_counts: false, rows: self.rows, dense: self.dense.clone(),
+        Sketch { registers: self.registers.clone(), counts: Arc::clone(&self.counts), sharing: Arc::clone(&self.sharing), rows: self.rows, dense: self.dense.clone(),
                  sparse: self.sparse.clone(), keys: self.keys.clone(), own_keys: false, sample: self.sample.clone() }
     }
 }
@@ -149,9 +150,9 @@ impl Sketch {
         if rho > self.registers[r] {
             self.registers[r] = rho;
         }
-        if !self.own_counts {
+        if Arc::strong_count(&self.sharing) > 1 {
             self.counts = Arc::new(Counts::clone(&self.counts));
-            self.own_counts = true;
+            self.sharing = Arc::new(());
         }
         self.counts.count(h);
         self.rows += 1;
@@ -336,7 +337,7 @@ pub mod tests {
         s.add(10);
         assert_eq!((few.few_len(), counts.join(&ten).rows), (Some(11), 1.0), "read where they lie, after the add");
         let mut c = s.clone();
-        assert!(Arc::ptr_eq(&c.counts, &s.counts) && !c.own_counts, "a clone reads them");
+        assert!(Arc::ptr_eq(&c.counts, &s.counts) && Arc::strong_count(&s.sharing) == 2, "a clone reads them");
         c.add(10);
         assert!(!Arc::ptr_eq(&c.counts, &s.counts), "a clone writes its own once it adds");
         assert_eq!((counts.join(&ten).rows, c.counts().join(&ten).rows), (1.0, 2.0));
@@ -345,6 +346,28 @@ pub mod tests {
             s.add(v);
         }
         assert!(few.few_len().is_none() && Arc::ptr_eq(few, &s.counts));
+    }
+
+    /// A clone's counts are the column's as it was cloned: the first sketch's later rows, past its few values here,
+    /// never reach them, and the clone still has its few values as its keys (the 9,010-file run's panic: "a sketch
+    /// past its few values keeps their filter", from a clone whose shared counts the first sketch had ended).
+    #[test]
+    fn a_clone_keeps_its_counts_when_the_first_sketch_adds() {
+        let mut s = Sketch::default();
+        for v in 0..10 {
+            s.add(v);
+        }
+        let c = s.clone();
+        for v in 10..1_000 {
+            s.add(v);
+        }
+        assert!(!Arc::ptr_eq(&c.counts, &s.counts) && Arc::strong_count(&c.sharing) == 1);
+        assert_eq!((c.counts.few_len(), c.ndv(), c.rows), (Some(10), 10, 10));
+        assert!(matches!(c.keys(), Keys::Few(_)), "its few values are its keys");
+        assert!(s.counts.few_len().is_none() && matches!(s.keys(), Keys::Filter(_)));
+        let mut c = c;
+        c.add(3);
+        assert_eq!(c.counts.few_len(), Some(10), "the clone, alone now, writes the counts in place");
     }
 
     #[test]
