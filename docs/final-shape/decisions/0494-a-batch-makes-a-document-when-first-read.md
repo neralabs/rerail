@@ -160,8 +160,32 @@ Each has its test before the code that meets it.
    - The edit: 45.0 G to 0458's 35.2 G, but 3.64 s CPU to 3.59 s. Instructions and CPU part here: retired
      instructions vary by ~10% between runs of one binary, the pool's waits among them, so the CPU is what
      compares.
-   Still above 0458, open: a cold run's +1.3 s CPU (the local part's `document rows / digests` under each chunk's
-   measure, 0.21 s; the text tests and the transducer's matchers under it, 0.36 s; joins, +0.84 s); its 83 MB more
-   at most; the edit's 0.21 s of well-founded proofs over the whole program for the measures' keys (0364 R6, not in
-   0458: the cross part's own proofs find no key, so they are not the same). The prepare span is split so these
-   show (`the measures' keys`, `the memo's program and digests`, …).
+   Then above 0458: a cold run's +1.3 s CPU, its 83 MB more at most, the edit's 0.21 s of well-founded proofs. The
+   prepare span is split so these show (`the measures' keys`, `the memo's program and digests`, …).
+
+   Measured again (2026-11-20, evening). Those runs had not been the CPU's alone: with `RERAIL_METAL_MAINTENANCE=off`
+   both engines still submitted Metal work on this Mac, and 0458's has no switch that keeps it off. Both now run
+   under a sandbox that refuses the GPU's user clients (`AGXDeviceUserClient`, `IOGPUDeviceUserClient`: no process
+   can make a Metal device), ours with `RERAIL_GPU=cpu` as well. Found and fixed, each with the 589 outputs unchanged:
+   - **The cycles, not the instructions.** About 2× 0458's cycles for 6% more instructions: the tape values' parts
+     (`syntax::values::Values`, 0431 §8) were behind a read-write lock that every probe of a layered source took,
+     21% of the samples in `lock_shared_slow`. They are an `ArcSwap` now: a probe loads them, and an admission makes
+     a new map under its own lock.
+   - **The proofs.** The whole program's well-founded check found the recursive components by a pass over the
+     6,842 rules for each component: 0.165 s, in both the cold run and the edit. One pass over the rules, keyed by
+     each relation's component: 0.056 s (the helpers' steps 0.025 s of it, checking every recursive component under
+     0.03 s).
+   - **The text tests' lazy DFA.** A group the DFA limit leaves lazy was searched in pieces on every thread, each
+     thread building its own states (3.6 µs a string over an edit's 30,000), and the regex's own pool kept a cache a
+     thread for the vocabulary's life (36 MB at the peak). A lazy group is searched on one thread, with a cache of
+     that search's own; a determinized group is still read by every thread at once.
+   - **A sketch made for every column measured** (`syntax::measured`), used only when a shadow is written: made only
+     then.
+
+   Cold, three alternated rounds (load 6–7): 12.35–12.44 s CPU and 202.4 G instructions to 0458's 12.02–12.08 s and
+   195.3 G (+2.8%); 726–732 MB of footprint at most to 594–610 MB. The edit: 3.42 s CPU to 3.04 s, 51.4 G to 41.4 G
+   (prepare +3.0 G, the chunks +2.2 G, the cross part +2.1 G).
+
+   Open: the footprint's +125 MB. It is not the CPU lane's 64 MB tape slab (a run with no device at all peaks
+   higher), nor the heap at the peak (within 20 MB of 0458's, the slab's zeroed pages aside), nor the blocks' free
+   lists (their free bytes are pages given back; with no split of a fitted chunk the run is the same).
