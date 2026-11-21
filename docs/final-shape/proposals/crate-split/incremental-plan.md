@@ -1,7 +1,20 @@
 # Plan: smaller crates, one at a time
 
-Status: plan, revision 1 (2026-11-21), at 066698e84e. Builds on the in-place split (`in-place-plan.md`), which
+Status: plan, revision 2 (2026-11-21), at 066698e84e. Builds on the in-place split (`in-place-plan.md`), which
 landed. Nothing here is built yet.
+
+The user's choices (2026-11-21):
+
+- **Keep mounting.** Each new crate mounts its files in place from `native/src`, as the first split did. The
+  files move into the crates later, as a separate step.
+- **Split the larger crates**, not only the engine. Logic, W and the compiler are cut to crates of about 20k
+  production lines or fewer (§3, steps 4–7).
+
+**"W"** is the name `05-implementation-plan.md` gives to the engine as it was on main before the final-shape
+work (wolfeel, `5cf4246e`): its per-file matcher and workspace evaluator, as opposed to the branches it merged
+(P, S, D, …). The crate `rerail-w` holds that evaluator: the matcher, rule compilation, scopes, values, calls,
+suppressions and the workspace model. The crates cut from it get names that say what they hold, and `rerail-w`
+goes away.
 
 ## Intro
 
@@ -131,44 +144,108 @@ run from a crate that depends on boot alone.
 `prefilter` (7.5k) becomes `rerail-prefilter`. The waves glue, `convert`, `slice` and `tools` go into the crates
 they serve. The engine is left with napi, the CLI, and calls to boot.
 
-### Step 4: the bottom of the DAG, the compiler
+### Steps 4–7: the larger crates
 
-`rerail-lang` and `rerail-facts` depend on all of `rerail-compiler` (71k), so an edit to any tier rebuilds the
-world. Split it so the crates low in the DAG depend only on what they read. The likely cut is the grammar and
-Bitlex front end (`grammar`, `bitlex_*`, `block`, `stream`) apart from the CPU tiers (`native_cpu_block` 10k,
-`native_cpu_stream` 9k, `native_cpu_pp` 7k, `native_cpu_bytes`, `native_cpu_lanes`). Each tier registers as a
-backend of the front end. The crate's own import graph decides the cut first.
+The target is **no crate over about 20k production lines**. A crate stays above that only where it is one file
+that would have to be split first; then the file is split. Mounting allows that: code changes where a cut needs
+it.
 
-### Step 5: logic, at its seams
+The counts below come from `code_rule_dsl::` and `super::` paths, counted by script. They are a guide. Each
+step's exact cut comes from the cut tools the first split used, run on one SCIP index of the step's tree:
 
-The references between modules come from `code_rule_dsl::` paths, counted by script:
+- add the new crate's rows to `crate-map.tsv`;
+- `join.py` lists every reference that would then go up the DAG (`upward.tsv`) and every item to widen
+  (`widen.tsv`);
+- each upward reference is cut by hand, in one of three ways:
+  - move the item it reads down;
+  - make it a trait plus a registry the higher crate fills;
+  - pass it as an argument.
 
-- **`plan::corpus` → `rerail-corpus`** (50k), above logic. The rest of logic reads it about 100 times:
-  `corpus::maintain` 22 times, `corpus::phase` 17, `preparation`, `observe` and `combined` 5–6 each. The small
-  leaf modules (`maintain`, `phase`, `thread_usage`) go down into logic. What the planner calls back into the
-  corpus runner becomes a trait in logic, which the corpus registers.
-- **`json_rules` → `rerail-json-rules`** (9k), an edge: the earlier JSON/YAML rule form, read by `dump-cli` and
-  `convert`.
-- **`logic::native` → `rerail-setfix`** (21k). Cut its cycle with the planner: the planner reads native 89
-  times, native reads the planner 18 times. The 18 become a trait in setfix, which the planner implements.
-- **`typing` → `rerail-typing`** (7k). Cut its cycle with the planner the same way (41 and 19 references).
+  The mounts are then written in the crate's shape, as `rerail-program-image`'s were (decision 0377).
 
-What is left of logic, the planner, is still about 60k. Its next cut is chosen after these steps, from its own
-graph at that time.
+The crates are cut from the bottom of the DAG up. A crate that is cut low rebuilds less above it.
 
-### Step 6: W, at its seams
+#### Step 4: the compiler (66k), at the bottom
 
-The layers are the adapter frameworks (`scope`, `value`, `literal`, `calls`), then `language::adapter`, then
-`matcher` and `compile`, then `eval`, `workspace` and `residency`. Three back edges cut across them:
+`rerail-lang` and `rerail-facts` depend on all of `rerail-compiler`, so an edit to any tier rebuilds everything.
 
-- `language → matcher` (36 references) and `language → compile` (9): the adapter traits name matcher types. Those
-  types move down into the frameworks crate.
-- `scope → language` (8) and `calls → language` (8): these read `Family`, which is `rerail-lang`'s. They are
-  re-spelled.
+| crate | holds | lines |
+|---|---|---:|
+| `rerail-compiler` (what is left) | grammar, `block`, `stream`, `rir_asm`, `clif_fold` and the rest of the front end | ~20k |
+| `rerail-bitlex` | `bitlex_masks`, `bitlex_tier2`, `bitlex_prove` | ~9k |
+| `rerail-cpu-block` | `native_cpu_block`, `native_cpu_lanes` | ~12k |
+| `rerail-cpu-stream` | `native_cpu_stream`, `native_cpu_bytes` | ~11k |
+| `rerail-cpu-pp` | `native_cpu_pp`, `pp_words` | ~10k |
 
-The crates are `rerail-adapters` (frameworks and the adapter traits, ~12k), `rerail-matcher` (matcher and compile,
-~28k) and `rerail-workspace` (eval, workspace, query, violations, residency, ~25k). The language packs then
-depend on `rerail-adapters` and `rerail-matcher` only, not on the workspace.
+- Each CPU tier implements a backend trait the front end declares, and registers through boot.
+- `rerail-lang` and `rerail-facts` depend only on the front end.
+- `rust_stream` (5.5k) lowers an intermediate form into Rust, which `rust-from-grammar-not-ir` and 0177ad94e4
+  removed elsewhere. It is checked for live callers. Then it goes, or is cut out as its own crate if something
+  still calls it.
+
+#### Step 5: logic (136k)
+
+| crate | holds | lines |
+|---|---|---:|
+| `rerail-setfix` | `logic::native` (`setfix.rs` 9.7k, `setfix/` 8.6k, the other solvers) | ~21k |
+| `rerail-typing` | `typing` | ~7k |
+| `rerail-json-rules` | `logic::json_rules`, the earlier JSON/YAML form (`dump-cli`, `convert`) | ~9k |
+| `rerail-planner` | `plan.rs` (15k) and `plan/*` other than the corpus | ~33k → split again (below) |
+| `rerail-corpus-prep` | `plan::corpus::preparation` (simplify, parts, lowering tail, hide, magic, merge, …) | ~15k |
+| `rerail-corpus-memo` | `memo`, `retain`, `kept_strata`, `keptstats`, `guests`, `input_delta`, `maintain(ed)` | ~9k |
+| `rerail-corpus` | `corpus.rs` (12.7k, one file), `product_demand` and the rest of the runner | ~25k |
+| `rerail-logic` (what is left) | `logic.rs`, `sql`, `costs`, `analysis`, `lanes`, `run`, `run_state`, `answers`, `bloom`, waves' core | ~15k |
+
+The cycles to cut:
+
+- **The planner and setfix.** The planner reads setfix 89 times. Setfix reads the planner 18 times; those 18
+  become a trait in setfix, which the planner implements.
+- **The planner and typing.** The planner reads typing 41 times and typing reads the planner 19 times. They are
+  cut the same way.
+- **Logic and the corpus.** The rest of logic reads the corpus about 100 times: `corpus::maintain` 22,
+  `corpus::phase` 17, `preparation`, `observe` and `combined` 5–6 each. The small leaves (`maintain`, `phase`,
+  `thread_usage`) go down. What logic calls back into the runner becomes a trait plus registry.
+- **The corpus and its children.** `corpus.rs` reads `memo` 172 times, `retain` 77, `guests` 44 and
+  `preparation` 25. These are downward references, which a crate cut allows. `preparation` reads the corpus root
+  33 times; that is upward once it is a crate below the root, so those items move down with it or into
+  `rerail-corpus-memo`.
+
+The planner's 33k is split once more when its turn comes, from its own graph then. `plan.rs` is a 15k-line file,
+so it is split first: `keeps`, `joins`, `output`, `statkeep` and `body` go into one crate under the passes that
+read them.
+
+#### Step 6: W (73k production, 33k tests)
+
+The layers are:
+
+1. the adapter frameworks: `scope`, `value`, `literal`, `calls`, `suppress`;
+2. `language::adapter`, the traits the language packs implement;
+3. `matcher`, then `compile`;
+4. `eval`, `workspace`, `query`, `violations`, `findings`;
+5. `residency::admission`.
+
+| crate | holds | lines |
+|---|---|---:|
+| `rerail-adapters` | the frameworks, `language::adapter`, `model`, `origin`, `identifier`, `stats` | ~15k |
+| `rerail-matcher` | `matcher` | ~17k |
+| `rerail-rule-compile` | `compile` | ~11k |
+| `rerail-workspace` | `workspace`, `eval`, `query`, `violations`, `findings`, `soundness`, `profile` | ~20k |
+| `rerail-admission` | `residency::admission` | ~7k |
+
+The back edges to cut:
+
+- `language → matcher` (36 references) and `language → compile` (9): the adapter traits name matcher and
+  compile types. Those types move down into `rerail-adapters`.
+- `scope → language` (8) and `calls → language` (8): these are cut the same way.
+
+The language packs then depend on `rerail-adapters`, plus `rerail-matcher` where they extend it. They no longer
+depend on the workspace, so an edit to the workspace does not rebuild them.
+
+#### Step 7: what is still large
+
+`rerail-store` (34k), `rerail-facts` (32k), `rerail-transducer` (47k), `rerail-lang-php` (31k) and
+`rerail-sessions` (25k) are measured again after steps 4–6, and are cut the same way. Each such cut is its own
+step with its own record. The transducer's dependency on W goes first: the first plan meant it to have none.
 
 ### Edges, at any time
 
@@ -202,9 +279,8 @@ decision record. There are no A/B triples. One run per state, with the host's lo
 
 ## 6. Open
 
-- **Files in place or moved?** The first split kept every file in `native/src` and mounted it, so that branches
-  could merge through one stop. Cut one crate at a time, each step is a small move that git's rename detection
-  merges. Moving the files makes each crate an ordinary crate, with no facades, no shared `code_rule_dsl`
-  namespace, no glob re-exports and no `allow(hidden_glob_reexports, dead_code)`. Mounting keeps other branches'
-  merges trivial.
-- **Test crate granularity:** the six in step 2, or one per crate below (`rerail-logic-tests`, …).
+- **Test crate granularity:** the six in step 2, or one per crate below (`rerail-logic-tests`, …). As the
+  library crates split in steps 4–7, the test crates follow them, one per library crate where its tests need the
+  providers.
+- **Moving the files** into the crates (after this plan): one step for the whole tree, at a quiet point for the
+  other branches.
