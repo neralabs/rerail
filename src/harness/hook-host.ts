@@ -45,17 +45,25 @@ export * from "./hook-adapter.js";
  * (`RecordWriter.writeNow`), as before. While another connection holds it, the hook hands the receipt to the daemon
  * that answered the event, which keeps it until the lock is given back, and meanwhile tries the lock again as SQLite's
  * busy wait did (`RecordWriter.writeWhenFree`): the hook ends once the daemon takes the receipt, once a try records it,
- * or at the busy timeout. A daemon that does not take it (one from before receipts were handed over, one gone) leaves
- * the tries to run, as the hook's own wait did.
+ * or at the busy timeout. A daemon that does not take it (one from before receipts were handed over, one gone, one
+ * whose record failed) leaves the tries to run, as the hook's own wait did; once they reach the busy timeout too, the
+ * hook fails with why, as SQLite's busy error failed it before. One that read it and has not answered by then keeps it.
  */
 async function recordReceipt(link: EngineLink, configuration: EngineRuntimeConfiguration, databasePath: string, receipt: SteerReceipt): Promise<void> {
   const write = steerReceiptWrite(databasePath, receipt);
   const writer = openRecordWriter(databasePath);
   const stop = new AbortController();
+  let refused = false;
   try {
     if (writer.writeNow(write)) return;
     const written = writer.writeWhenFree(write, stop.signal);
-    await Promise.race([written, link.handReceipt(receipt, configuration, stop.signal).then(taken => taken || written)]);
+    const handed = link.handReceipt(receipt, configuration, stop.signal).then(taken => {
+      refused = !taken;
+      return taken || written;
+    });
+    if (!await Promise.race([written, handed]) && refused) {
+      throw new Error("the steer's receipt was not recorded: another process held the database's write lock past the busy timeout, and the Rerail daemon did not take it");
+    }
   } finally {
     stop.abort();
     writer.close();

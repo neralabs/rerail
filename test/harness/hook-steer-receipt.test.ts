@@ -153,6 +153,25 @@ describe("a steered hook's receipt", () => {
     expect(receiptRows(root)).toHaveLength(1);
   });
 
+  it("fails the hook with why, as SQLite's busy error did, when the daemon does not take it and the lock stays held past the busy timeout", { timeout: 20_000 }, async () => {
+    const root = await temporaryDirectory();
+    const daemon = await fakeDaemon(root, "refuse");
+    const output = await steeredAnswer(root, daemon);
+    const release = holdWriteLock(root);
+    vi.useFakeTimers({ toFake: ["setTimeout", "clearTimeout", "performance"] });
+    try {
+      const emitted = emitHookOutput(output, sink());
+      const settled = emitted.then(() => "recorded", (error: unknown) => error);
+      await daemon.receiptRead;
+      for (let turn = 0; turn < 10; turn += 1) await new Promise(resolve => setImmediate(resolve));
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(await settled).toEqual(new Error("the steer's receipt was not recorded: another process held the database's write lock past the busy timeout, and the Rerail daemon did not take it"));
+    } finally {
+      release();
+    }
+    expect(receiptRows(root)).toEqual([]);
+  });
+
   it("is recorded by the hook itself once the lock is given back while the daemon reads it but does not answer", { timeout: 20_000 }, async () => {
     const root = await temporaryDirectory();
     const daemon = await fakeDaemon(root, "hold");

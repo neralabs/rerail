@@ -230,12 +230,19 @@ describe("the engine service's receipts", () => {
     expect(await keptFiles(databasePath)).toEqual([]);
   });
 
-  it("answers a receipt it could not record with why, so the hook records it itself", async () => {
+  it("answers a receipt it could not record with why, so the hook records it itself, and says why in daemon.log", async () => {
     const { root, databasePath, socketPath, session } = await serviceOverCheckout();
     const notADatabase = join(root, "not-a-database.sqlite");
     await writeFile(notADatabase, "not SQLite");
     const configuration = { storageRoot: join(root, "state"), modelPath: join(root, "model"), databasePath: notADatabase };
-    await expect(engineLink({ socketPath }).handReceipt({ session: session("c"), receiptId: "receipt-5", ruleIds: [] }, configuration)).resolves.toBe(false);
+    // Spied on, not replaced: a write of the service's waits for its callback.
+    const stderr = vi.spyOn(process.stderr, "write");
+    try {
+      await expect(engineLink({ socketPath }).handReceipt({ session: session("c"), receiptId: "receipt-5", ruleIds: [] }, configuration)).resolves.toBe(false);
+      expect(stderr).toHaveBeenCalledWith(expect.stringMatching(/^rerail: a steer's receipt a hook handed over was not kept, so the hook records it itself: .+\n$/u));
+    } finally {
+      stderr.mockRestore();
+    }
     expect(receipts(databasePath)).toEqual([]);
   });
 

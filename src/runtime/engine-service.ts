@@ -1240,11 +1240,16 @@ async function answerEvent(incoming: IncomingMessage, response: ServerResponse, 
  * Takes the receipt of a steer a hook posted once its answer was written (`recordHandedReceipt`), which never waits for
  * the write lock, and then answers: a receipt answered is recorded, or kept until the lock is given back, on disk so
  * that it survives the daemon. A receipt that cannot be kept or recorded is answered with why, so the hook records it
- * itself.
+ * itself, and daemon.log says why too.
  */
 async function answerReceipt(incoming: IncomingMessage, response: ServerResponse, service: EngineAnswers): Promise<void> {
   const { receipt, configuration } = ReceiptRequestSchema.parse(await requestBody(incoming));
-  await service.recordReceipt(receipt, configuration);
+  try {
+    await service.recordReceipt(receipt, configuration);
+  } catch (error) {
+    process.stderr.write(`rerail: a steer's receipt a hook handed over was not kept, so the hook records it itself: ${errorMessage(error)}\n`);
+    throw error;
+  }
   response.end("{}");
 }
 
