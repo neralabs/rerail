@@ -1991,7 +1991,7 @@ fn shared_batch(arena: &Rc<mj::Arena>) -> Result<mj::Batch, String> {
 
 /// The thread's open wave, committed (`direct_batch`).
 fn commit_wave() -> Result<(), String> {
-    WAVE.with_borrow_mut(|w| w.each_mut().try_for_each(|wave| wave.commit_open().map_err(|e| format!("{e:?}"))))
+    WAVE.with_borrow_mut(|w| w.each_mut().try_for_each(|batch| batch.commit_open().map_err(|e| format!("{e:?}"))))
 }
 
 /// Opens this job's command buffer for the level's wave (`OpenWaves`, at its fence depth), its commit deferred to
@@ -2032,11 +2032,7 @@ pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], name
         Some(n) => n,
         None => open_wave()?,
     };
-    let encoded = WAVE.with_borrow_mut(|w| {
-        let batch = w.get_mut(n).expect("the open wave");
-        encode_runs(rules, batch, &mut rep, names).map(|runs| (n, runs))
-    })?;
-    let (wave, runs) = encoded;
+    let runs = WAVE.with_borrow_mut(|w| encode_runs(rules, w.get_mut(n).expect("the open wave"), &mut rep, names))?;
     if runs.len() < rules.len() {
         // Encoded work it will not wait for: the wave runs it and nothing reads it, but it writes the runs' buffers,
         // which the wave keeps until it is done (back in the pool, another job's would be written).
@@ -2046,18 +2042,18 @@ pub(in crate::code_rule_dsl) fn submit(rules: &[(&Plan, &JoinRule, usize)], name
     rep.encode_cpu = thread_cpu() - c0 - rep.upload_cpu;
     let t = TICKETS.get() + 1;
     TICKETS.set(t);
-    SUSPENDED.with_borrow_mut(|s| s.insert(t, (runs, wave, rep, live)));
+    SUSPENDED.with_borrow_mut(|s| s.insert(t, (runs, n, rep, live)));
     Ok(Some(t))
 }
 
 /// A stratum that waited for its wave (`submit`'s `ticket`), finished: as `run`, from the flushed submission.
 pub(in crate::code_rule_dsl) fn resume(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, names: &Interner, fresh: &mut [Fresh]) -> Result<Vec<u64>, String> {
     let _span = crate::code_rule_dsl::logic::profile::span(|| "device joins (after the wave)".into());
-    let Some((runs, wave, mut rep, live)) = SUSPENDED.with_borrow_mut(|s| s.remove(&ticket)) else { return Err("a stratum's device joins were not submitted".into()) };
+    let Some((runs, n, mut rep, live)) = SUSPENDED.with_borrow_mut(|s| s.remove(&ticket)) else { return Err("a stratum's device joins were not submitted".into()) };
     let all = rules.len();
     let some: Vec<(&Plan, &JoinRule, usize)> = live.iter().map(|&k| rules[k]).collect();
     let rules = &some[..];
-    let done = FLUSHED.with_borrow_mut(|f| match f.get_mut(&wave) {
+    let done = FLUSHED.with_borrow_mut(|f| match f.get_mut(&n) {
         None => Err("a stratum's wave was not flushed".to_owned()),
         Some(Err(e)) => Err(e.clone()),
         // The wave's device seconds, counted once (by its first stratum).

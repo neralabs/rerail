@@ -180,9 +180,17 @@ pub mod wave {
         }
     }
 
-    /// Ends the innermost `fence`: what is queued above it is the waiter's again.
+    /// Ends the innermost `fence`. The submissions the job deferred and never flushed (a form that opened one and
+    /// then ran its stratum on its own, or failed, so nothing waited for the wave) are committed now: left open, a
+    /// later job at the same depth on this thread found its form's submission open (`OpenWaves::mine`), encoded into
+    /// it, deferred nothing, and its flush committed nothing ("a stratum's wave was not flushed"). No stratum waits on
+    /// them, so their result reaches nobody. The launches it queued and never flushed are the job around it's again.
     pub fn unfence() {
-        FENCES.with_borrow_mut(|f| f.pop());
+        let Some(at) = FENCES.with_borrow_mut(Vec::pop) else { return };
+        let left = DEFERRED.with_borrow_mut(|d| d.split_off(at.1.min(d.len())));
+        for commit in left {
+            drop(commit());
+        }
     }
 
     /// Where this thread's current job's part of the wave begins: the innermost fence, else the start.
@@ -407,9 +415,6 @@ mod wave_tests {
         assert_eq!(wave::flushed().0 - before.0, 1, "another thread's wave is not the run's");
     }
 
-    /// A job run on a thread inside another's work (`rerail_accel::exec::fenced`) is fenced off the wave the outer job
-    /// left on that thread: the inner job's flush runs only the submission it deferred, and the outer job's waits for
-    /// its own flush.
     /// The launches an outer job queued stay its own across a fenced inner job: the inner flush runs the inner
     /// launch alone, the outer launch has not run until the outer job's own flush. Without the fence the inner flush
     /// ran both, and the outer job's stratum, resumed on another thread, found its output gone ("launch 26 has not
@@ -489,6 +494,33 @@ mod wave_tests {
         .unwrap();
     }
 
+    /// A job that opened a submission and ended without flushing it (its stratum ran on its own, or failed, so nothing
+    /// waited for the wave) leaves none open: leaving its fence commits it, and the next job at that depth opens its
+    /// own and commits it at its flush. Left open, the next job encoded into it, deferred no commit, and its flush
+    /// committed nothing.
+    #[test]
+    fn a_job_that_ends_without_flushing_leaves_no_submission_open() {
+        std::thread::spawn(|| {
+            let subs = std::rc::Rc::new(Submissions::default());
+            wave::fence();
+            let first = submit(&subs, "first job, not waited on");
+            wave::unfence();
+            assert_eq!(*subs.committed.borrow(), [(first, vec!["first job, not waited on"])], "leaving the fence commits it");
+            assert!(subs.open.borrow_mut().get_mut(first).is_none(), "nothing left open");
+            wave::fence();
+            let second = submit(&subs, "second job");
+            assert_ne!(second, first, "the next job at that depth opens its own");
+            wave::flush(1).unwrap();
+            wave::unfence();
+            assert_eq!(*subs.committed.borrow(), [(first, vec!["first job, not waited on"]), (second, vec!["second job"])]);
+        })
+        .join()
+        .unwrap();
+    }
+
+    /// A job run on a thread inside another's work (`rerail_accel::exec::fenced`) is fenced off the wave the outer job
+    /// left on that thread: the inner job's flush runs only the submission it deferred, and the outer job's waits for
+    /// its own flush.
     #[test]
     fn a_flush_inside_a_fence_runs_only_what_was_queued_inside_it() {
         std::thread::spawn(|| {
