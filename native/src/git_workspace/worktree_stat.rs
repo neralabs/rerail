@@ -138,6 +138,17 @@ pub struct VerifiedFiles<'a> {
     volumes: HashMap<Option<u64>, bool>,
 }
 
+/// The worktree and each volume's answer: the store gives no `Debug`, and the files are many.
+impl std::fmt::Debug for VerifiedFiles<'_> {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter
+            .debug_struct("VerifiedFiles")
+            .field("worktree", &self.worktree)
+            .field("volumes", &self.volumes)
+            .finish_non_exhaustive()
+    }
+}
+
 impl<'a> VerifiedFiles<'a> {
     /// The memory of the worktree whose root is `worktree`, kept in `store`.
     pub fn new(store: Option<&'a ContentStore>, worktree: &Path) -> Self {

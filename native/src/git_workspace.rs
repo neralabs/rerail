@@ -312,6 +312,9 @@ pub struct GitWorkspace {
     pub base_files: Vec<BaseFile>,
     pub overlays: Vec<WorkspaceOverlay>,
     pub nested_roots: Vec<PathBuf>,
+    /// The memory with no store that `clean_blob_unread` asks, made at its first call and kept
+    /// across its calls and this workspace's clones, so each volume is asked once.
+    unread: std::sync::Arc<parking_lot::Mutex<Option<VerifiedFiles<'static>>>>,
 }
 
 #[derive(Debug)]
@@ -823,15 +826,13 @@ impl GitWorkspace {
     /// A clean base file's blob, unread: the path has no overlay, its worktree stat is exactly its index entry's
     /// (`BaseFile::checkout`) and, on Windows, nothing changed the file after its last write, or its volume leaves
     /// the stat to decide (`VerifiedFiles::proof`), so its bytes are the blob's (phase 0, t23). `None` where only a
-    /// hash could tell. `verified` keeps each volume's answer across calls, so each volume is asked once.
-    pub fn clean_blob_unread(
-        &self,
-        relative_path: &str,
-        verified: &mut VerifiedFiles<'_>,
-    ) -> Option<HashKey> {
+    /// hash could tell. The proof's memory is this workspace's own (`unread`), so each volume is asked once.
+    pub fn clean_blob_unread(&self, relative_path: &str) -> Option<HashKey> {
         let file = self.unedited_base_file(relative_path)?;
         let recorded = file.checkout?;
         let current = WorktreeStat::read(&self.worktree_root.join(relative_path))?;
+        let mut unread = self.unread.lock();
+        let verified = unread.get_or_insert_with(|| VerifiedFiles::new(None, &self.worktree_root));
         let proven = current.metadata.is_file()
             && current.matches(&recorded)
             && matches!(
@@ -1550,6 +1551,7 @@ fn workspace(
         base_files,
         overlays,
         nested_roots,
+        unread: Default::default(),
     })
 }
 
@@ -2431,11 +2433,7 @@ mod tests {
         }
         let (root, path, workspace) = committed_long_ago("unread-blob", b"print(1)\n");
         let base = &workspace.base_files[0];
-        let mut memory = VerifiedFiles::new(None, &root);
-        assert_eq!(
-            workspace.clean_blob_unread("a.py", &mut memory),
-            Some(base.blob)
-        );
+        assert_eq!(workspace.clean_blob_unread("a.py"), Some(base.blob));
         rewrite_keeping_its_time(&path, b"pront(1)\n");
         assert!(
             WorktreeStat::read(&path)
@@ -2443,14 +2441,13 @@ mod tests {
                 .matches(&base.checkout.unwrap()),
             "the stat Git recorded"
         );
-        let unread = workspace.clean_blob_unread("a.py", &mut memory);
-        assert_eq!(unread, None, "other bytes");
+        assert_eq!(workspace.clean_blob_unread("a.py"), None, "other bytes");
         std::fs::remove_dir_all(root).unwrap();
     }
 
-    /// The memory a caller keeps across looks at clean blobs asks a volume whether it keeps change
-    /// times once, as a restore's does: every later look at a file whose change time moved makes
-    /// the file id query alone.
+    /// A workspace asks a volume whether it keeps change times once across its looks at clean
+    /// blobs, as a restore does: every later look at a file whose change time moved makes the file
+    /// id query alone.
     #[cfg(windows)]
     #[test]
     fn looks_at_clean_blobs_ask_a_volume_about_its_change_times_once() {
@@ -2462,10 +2459,9 @@ mod tests {
         }
         let (root, path, workspace) = committed_long_ago("unread-volume-once", b"print(1)\n");
         rewrite_keeping_its_time(&path, b"print(1)\n");
-        let mut memory = VerifiedFiles::new(None, &root);
         worktree_stat::queries_made();
         for _ in 0..3 {
-            assert_eq!(workspace.clean_blob_unread("a.py", &mut memory), None);
+            assert_eq!(workspace.clean_blob_unread("a.py"), None);
         }
         assert_eq!(
             worktree_stat::queries_made(),
@@ -2780,6 +2776,7 @@ mod tests {
                 kind: OverlayKind::Untracked,
             }],
             nested_roots: Vec::new(),
+            unread: Default::default(),
         };
         assert!(workspace.read_source("escape/source.py", u64::MAX).is_err());
         std::fs::remove_dir_all(root).unwrap();
@@ -2806,6 +2803,7 @@ mod tests {
                 kind: OverlayKind::Untracked,
             }],
             nested_roots: Vec::new(),
+            unread: Default::default(),
         };
         let (sender, receiver) = std::sync::mpsc::channel();
         let reader = std::thread::spawn(move || {
@@ -2903,6 +2901,7 @@ mod tests {
                 })
                 .collect(),
             nested_roots: Vec::new(),
+            unread: Default::default(),
         };
         let clean = workspace
             .clean_trees()
@@ -2941,6 +2940,7 @@ mod tests {
                 kind: OverlayKind::Untracked,
             }],
             nested_roots: Vec::new(),
+            unread: Default::default(),
         };
         let clean = workspace
             .clean_trees()
@@ -2991,6 +2991,7 @@ mod tests {
             base_files: Vec::new(),
             overlays: Vec::new(),
             nested_roots: Vec::new(),
+            unread: Default::default(),
         }
     }
 

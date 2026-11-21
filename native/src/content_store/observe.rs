@@ -212,9 +212,8 @@ pub struct Observer {
     pub counts: Counts,
     /// The working directory, for relative paths: an entry is kept by its absolute path.
     cwd: PathBuf,
-    /// The Git work trees this run has discovered (`git`): a clean file's digest may come from its blob. Each with
-    /// the memory its blobs are taken unread by (`GitWorkspace::clean_blob_unread`), which asks each volume once.
-    git: Vec<(PathBuf, Arc<crate::git_workspace::GitWorkspace>, crate::git_workspace::VerifiedFiles<'static>)>,
+    /// The Git work trees this run has discovered (`git`): a clean file's digest may come from its blob.
+    git: Vec<(PathBuf, Arc<crate::git_workspace::GitWorkspace>)>,
     /// The roots watched (`watch`), each with whether the journal said what changed under it, and the run it was
     /// asked for (`flushes` then): a root is asked again when a later run watches it. A run inside a run (phase 0's)
     /// leaves the outer run's roots as they are.
@@ -741,9 +740,9 @@ impl Observer {
         // Git's work tree root is canonical: so is the path compared with it (one `realpath`, in Git runs only).
         let canonical = if self.git.is_empty() { None } else { dunce::canonicalize(path).ok() };
         let blob = canonical.as_ref().and_then(|c| {
-            self.git.iter_mut().find_map(|(_, g, verified)| {
+            self.git.iter().find_map(|(_, g)| {
                 let relative = c.strip_prefix(&g.worktree_root).ok()?.to_str()?;
-                g.clean_blob_unread(relative, verified)
+                g.clean_blob_unread(relative)
             })
         });
         if let Some(blob) = blob {
@@ -1083,13 +1082,12 @@ impl Observer {
     /// The Git work tree holding `root`, discovered once per run (`None`: not in one, or Git cannot read it).
     pub fn git(&mut self, root: &Path) -> Option<Arc<crate::git_workspace::GitWorkspace>> {
         let root = dunce::canonicalize(self.abs(root)).ok()?;
-        if let Some((_, g, _)) = self.git.iter().find(|(under, _, _)| root.starts_with(under)) {
+        if let Some((_, g)) = self.git.iter().find(|(under, _)| root.starts_with(under)) {
             return Some(Arc::clone(g));
         }
         // Only the part of the work tree under `root`: status over a whole large repository costs seconds.
         let g = Arc::new(crate::git_workspace::discover_under(&root).ok()?);
-        let verified = crate::git_workspace::VerifiedFiles::new(None, &g.worktree_root);
-        self.git.push((root, Arc::clone(&g), verified));
+        self.git.push((root, Arc::clone(&g)));
         Some(g)
     }
 
@@ -2484,8 +2482,7 @@ mod tests {
         git(&repo, &["update-index", "--ignore-missing", "--refresh"]);
         git(&clone, &["update-index", "--refresh"]);
         for root in [&repo, &clone] {
-            let mut verified = crate::git_workspace::VerifiedFiles::new(None, root);
-            assert!(crate::git_workspace::discover(root).unwrap().clean_blob_unread("a.py", &mut verified).is_some(), "{}: a.py proven clean by its stat", root.display());
+            assert!(crate::git_workspace::discover(root).unwrap().clean_blob_unread("a.py").is_some(), "{}: a.py proven clean by its stat", root.display());
         }
         let store = dir.path().join("p0.files");
         let mut o = Observer::open(Some(&store));
