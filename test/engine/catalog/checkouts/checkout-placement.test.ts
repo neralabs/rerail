@@ -130,6 +130,8 @@ describe("placeCheckout", () => {
     expect(placing.notBlocking.length).toBeGreaterThan(0);
 
     expect(await gitStarts(() => firstEventAsks(checkouts))).toEqual({ blocking: [], notBlocking: [] });
+    // A session opening there later finds each answer kept, its submodules' among them.
+    expect(await gitStarts(() => placeCheckout(checkouts[2]!))).toEqual({ blocking: [], notBlocking: [] });
   });
 
   it("asks Git again once what an answer rested on changes: a remote added, a submodule checked out", async () => {
