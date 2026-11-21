@@ -4,9 +4,13 @@
  * large ones; one named with its module (`Microsoft.PowerShell.Management\Get-Process`) it loads by that name.
  */
 
-/** Each cmdlet `script` calls by its name alone: a verb, a dash and a noun, each capitalised, with no module before it. */
+/**
+ * Each cmdlet `script` calls by its name alone: a verb, a dash and a noun, each starting with a capital
+ * (`ConvertTo-Json`), with no module before it. It misses aliases (`select`) and names written in lowercase, which
+ * PowerShell finds the same way.
+ */
 export function cmdletsWithoutModule(script: string): string[] {
-  return [...script.matchAll(/(?<![\w\\.-])[A-Z][a-z]+-[A-Z]\w*/gu)].map(match => match[0]);
+  return [...script.matchAll(/(?<![\w\\.-])[A-Z][A-Za-z]+-[A-Z]\w*/gu)].map(match => match[0]);
 }
 
 /** The script that follows `-Command` in `args`, or undefined when none does. */
