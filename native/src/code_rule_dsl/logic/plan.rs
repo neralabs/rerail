@@ -2773,8 +2773,13 @@ impl Model {
         } else {
             kept
         };
-        if let Some((_, _, _, _, Some(priced), _)) = &kept
+        // A kept price is a prediction, its line's last run what the order cost: a line that ran far over its kept
+        // price (`REPLAN` times it, by over `REPLAN_ROWS` rows) is not reused at that price, however near its sizes
+        // (corpus0, 2026-11-21: `open_tuple`'s seed kept at 753 rows, run at 41 M, reused at 753 by 7 strata).
+        let ran_over = |priced: &Priced, ran: Option<f64>| ran.is_some_and(|ran| ran > REPLAN * priced.got.0.1 && ran - priced.got.0.1 > REPLAN_ROWS);
+        if let Some((_, _, _, _, Some(priced), ran)) = &kept
             && near(&priced.sizes, &sizes)
+            && !ran_over(priced, *ran)
             && self.valid_live_driver(&priced.got.0.0, b, first)
         {
             super::profile::decision("plan cache (decision 0038)", || format!("a kept plan reused at its kept price: no size it reads moved over {PRICE_DRIFT}x"));
