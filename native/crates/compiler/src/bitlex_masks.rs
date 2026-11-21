@@ -3074,8 +3074,18 @@ fn token_check_ops(accept: &[bool], arms: &[(u16, ByteSet, u16)]) -> Result<Vec<
 /// The tree section lowered: the grammar's state machine (`grammar`), its checks added to the
 /// fallback, and tier 2's words (`bitlex_tier2`), with the grammar's ids from `symbols`.
 fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Tier2, String> {
-        let id = |name: &str| (symbols.kind)(name).ok_or_else(|| format!("no kind `{name}` in the grammar"));
-    let field_id = |name: &str| (symbols.field)(name).ok_or_else(|| format!("no field `{name}`"));
+    // Each name looked up kept with its number, for the program's `kindname` and `fieldname` rows.
+    let named: std::cell::RefCell<(std::collections::BTreeMap<u16, String>, std::collections::BTreeMap<u16, String>)> = Default::default();
+    let id = |name: &str| {
+        let k = (symbols.kind)(name).ok_or_else(|| format!("no kind `{name}` in the grammar"))?;
+        named.borrow_mut().0.entry(k).or_insert_with(|| name.to_owned());
+        Ok::<u16, String>(k)
+    };
+    let field_id = |name: &str| {
+        let f = (symbols.field)(name).ok_or_else(|| format!("no field `{name}`"))?;
+        named.borrow_mut().1.entry(f).or_insert_with(|| name.to_owned());
+        Ok::<u16, String>(f)
+    };
     // A token row whose every token is a keyword (`required`) has kind 0: the keyword's is its.
     let required: Vec<String> = low.keywords.iter().filter(|k| k.2).map(|k| k.0.clone()).collect();
     // The grammar's state machine (doc 18 §2). A token kind is a token row's that is not all
@@ -4209,6 +4219,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             return Err("a mark's token tests need the extra's mark from its reader".into());
         }
     }
+    let (kinds, fields) = named.into_inner();
+    let pairs = |m: std::collections::BTreeMap<u16, String>| m.into_iter().collect::<Vec<_>>();
+    crate::rir_text::name_rows(&mut lowered.text, &pairs(kinds), &pairs(fields));
     Ok((grammar::text(&states, &arms), lowered.text, takes_last, mark_masks, records))
 }
 

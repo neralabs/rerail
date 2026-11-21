@@ -477,6 +477,16 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
             }
             parts.word_kinds.push((s, k));
         }
+        "kindname" | "fieldname" => {
+            let field = keyword == "fieldname";
+            let k = if field { line.number("")? } else { line.kind()? };
+            let name = String::from_utf8(line.quoted()?).map_err(|_| format!("{keyword} {k}: a name is UTF-8"))?;
+            let names = if field { &mut parts.field_names } else { &mut parts.kind_names };
+            if names.last().is_some_and(|&(x, _)| x >= k) {
+                return Err(format!("{keyword} {k} out of order"));
+            }
+            names.push((k, name));
+        }
         "localcheck" => {
             parts.local_checks.push(local_check(line)?);
         }
@@ -939,6 +949,7 @@ pub fn head_rows(out: &mut String, program: &Words) {
     reading_rows(out, &program.readings);
     crate::rir_text::mark_word_rows(out, &program.mark_words);
     crate::rir_text::word_kind_rows(out, &program.word_kinds);
+    crate::rir_text::name_rows(out, &program.kind_names, &program.field_names);
     crate::rir_text::extra_rows(out, &program.extras);
     crate::rir_text::token_mark_rows(out, &program.token_marks);
     crate::rir_text::count_rows(out, &program.counts);

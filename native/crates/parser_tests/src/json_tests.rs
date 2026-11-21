@@ -384,6 +384,12 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // The dispatches' values are named, as the lean parser's `Label`s: each the place it goes on to.
     let numbered: Vec<&str> = src.lines().map(str::trim).filter(|l| l.split(['{', ';']).any(|st| st.trim().strip_prefix("d = ").is_some_and(|r| r.starts_with(|c: char| c.is_ascii_digit())))).collect();
     assert!(numbered.is_empty() && src.contains("enum L {") && src.contains("match d {"), "a dispatch's value a number: {numbered:?}");
+    // One dispatch, as the lean parser's one `match label`: the loops within it entered once each, a jump into
+    // another's header through the dispatch (`Shape::threaded`).
+    assert_eq!(src.matches("match d {").count(), 1, "one dispatch");
+    // Its values named by what their places do in the grammar, as the lean parser's (`rust_stream::meaning`).
+    let variants: Vec<&str> = src.split("enum L {\n").nth(1).and_then(|e| e.split('}').next()).unwrap_or_default().lines().map(|l| l.trim().trim_end_matches(',')).filter(|l| !l.is_empty()).collect();
+    assert_eq!(variants, ["ObjectBegin", "ArrayBegin", "ArrayValue", "End"], "the dispatch's values by their meaning");
     let resets = dispatch_resets(&src);
     assert!(resets.is_empty(), "a dispatch's arm only re-sets d: {resets:?}");
     // No room check a token: the harness sizes the tape from the input once, as simdjson's.
@@ -432,6 +438,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // it writes it: no `,`, `:`, `{` or `[` makes its end; `}` and `]` do, for the close of their container.
     let flat16 = flat(&src16);
     assert!(!src16.contains("part_at") && src16.contains("fn string(&mut self, mut at: u32) -> R {"), "a direct run's string is given the opener's place");
+    assert_eq!(src16.matches("match d {").count(), 1, "a direct run's one dispatch");
     for (byte, made) in [("0x2c", false), ("0x3a", false), ("0x7b", false), ("0x5b", false), ("0x7d", true), ("0x5d", true)] {
         let arms: Vec<&str> = flat16.split(&format!("\n{byte} => {{\n")).skip(1).collect();
         assert!(!arms.is_empty(), "the arms of {byte}");

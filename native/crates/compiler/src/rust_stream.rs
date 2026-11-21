@@ -3048,15 +3048,28 @@ fn rule(out: &mut String, x: &Facts<'_>, entry: usize) -> Result<(), String> {
         };
         if looped { what } else { format!("to_{what}") }
     };
-    // A dispatch's value by the place it goes on to, as the lean parser's `Label`s (`Label::ObjectContinue`): the
-    // label's name in the type's case (`'close_153: loop` is `L::Close153`).
+    // A dispatch's value by what its place does in the grammar, as the lean parser's `Label`s (`meaning`:
+    // `L::ObjectBegin`); where the grammar's names do not tell, by the place, its label's name in the type's case
+    // (`'close_153: loop` is `L::Close153`). Two places of one meaning: the second's its place's number after.
     let used = std::cell::RefCell::new(Vec::<String>::new());
+    let given = std::cell::RefCell::new(HashMap::<usize, String>::new());
     let label = |d: usize, k: usize| -> String {
-        let place = name(shape.entry_of(d, k), true);
+        let to = shape.entry_of(d, k);
+        if let Some(v) = given.borrow().get(&to) {
+            return format!("L::{v}");
+        }
+        let place = name(to, true);
         let mut parts = place.split('_');
         let role = parts.next().unwrap_or_default();
-        let mut variant: String = role.chars().take(1).flat_map(char::to_uppercase).chain(role.chars().skip(1)).collect();
-        variant.push_str(&parts.collect::<Vec<_>>().join("_"));
+        let mut by_place: String = role.chars().take(1).flat_map(char::to_uppercase).chain(role.chars().skip(1)).collect();
+        by_place.push_str(&parts.collect::<Vec<_>>().join("_"));
+        let taken = |v: &String| given.borrow().values().any(|g| g == v);
+        let variant = match shape.block_of(to).and_then(|b| meaning(x, nodes[b])) {
+            Some(m) if !taken(&m) => m,
+            Some(m) if shape.copy_of(to) == 0 && !taken(&format!("{m}{}", nodes[shape.block_of(to).unwrap_or(0)])) => format!("{m}{}", nodes[shape.block_of(to).unwrap_or(0)]),
+            _ => by_place,
+        };
+        given.borrow_mut().insert(to, variant.clone());
         let mut u = used.borrow_mut();
         if !u.contains(&variant) {
             u.push(variant.clone());
@@ -3883,6 +3896,144 @@ s.code = S::CODES2[usize::from(s.byte(i + 1))];
 
 /// What word `pc` does, for a label's name (`rule`): a region's part (`string`), a token, a switch, a node's open or
 /// close, a leaf, a call, a return, a check.
+/// What a dispatch's place does in the grammar, as the lean parser names its `Label`s (`ObjectBegin`, `ArrayValue`),
+/// from the grammar's names of its kinds and fields (`Structure::kind_names`): a rule's first word is its kind's
+/// `Begin`, a call's kind the one opened before it; a `RETURN` its rule's kind's `End` (`End` alone where the rules of
+/// two kinds share it); a switch, or the `TOKEN` before one, its rule's kind and what every arm making a node makes
+/// (the supertype, else the field, else the kind: `ArrayValue`). `None` where the names do not tell.
+fn meaning(x: &Facts<'_>, pc: usize) -> Option<String> {
+    let n = x.native;
+    let words = &n.structural;
+    let camel = |name: &str| -> Option<String> {
+        let s: String = name.split(|c: char| !c.is_ascii_alphanumeric()).filter(|p| !p.is_empty()).map(|p| p[..1].to_ascii_uppercase() + &p[1..]).collect();
+        (!s.is_empty() && !s.starts_with(|c: char| c.is_ascii_digit())).then_some(s)
+    };
+    let kind = |k: u16| n.kind_names.iter().find(|(c, _)| *c == k).and_then(|(_, s)| camel(s));
+    let field = |f: u16| n.field_names.iter().find(|(c, _)| *c == f).and_then(|(_, s)| camel(s));
+    let reached: Vec<usize> = {
+        let mut seen = vec![false; words.len()];
+        let mut stack: Vec<usize> = x.entries.clone();
+        let mut out = Vec::new();
+        while let Some(p) = stack.pop() {
+            if p < words.len() && !seen[p] {
+                seen[p] = true;
+                out.push(p);
+                stack.extend(succ(x, p));
+            }
+        }
+        out
+    };
+    let preds = |t: usize| reached.iter().copied().filter(move |&p| succ(x, p).contains(&t));
+    // The kind opened before a call: back over the words that set its field and supertypes, to its `OPEN`.
+    let opened = |p: usize| -> Option<u16> {
+        let mut at = p;
+        loop {
+            let before: Vec<usize> = preds(at).collect();
+            let &[b] = before.as_slice() else { return None };
+            match words[b].operation {
+                Op::NodeSuper { .. } | Op::NodeField { .. } => at = b,
+                Op::Open { kind } => return Some(kind),
+                _ => return None,
+            }
+        }
+    };
+    let pushes: Vec<usize> = (0..words.len()).filter(|&p| matches!(words[p].operation, Op::Push { .. })).collect();
+    let callees: Vec<usize> = {
+        let mut c: Vec<usize> = pushes.iter().map(|&p| crate::native_cpu_stream::callee(n, p)).collect();
+        c.sort_unstable();
+        c.dedup();
+        c
+    };
+    let rule_kind = |c: usize| -> Option<u16> {
+        let ks: Vec<Option<u16>> = pushes.iter().filter(|&&p| crate::native_cpu_stream::callee(n, p) == c).map(|&p| opened(p)).collect();
+        let first = *ks.first()?;
+        ks.iter().all(|&k| k == first).then_some(first).flatten()
+    };
+    // A rule's words: from its first, a call going on at its places after, a `RETURN` ending it.
+    let holds = |c: usize, w: usize| -> bool {
+        let mut seen = vec![false; words.len()];
+        let mut stack = vec![c];
+        while let Some(p) = stack.pop() {
+            if p >= words.len() || seen[p] {
+                continue;
+            }
+            if p == w {
+                return true;
+            }
+            seen[p] = true;
+            match words[p].operation {
+                Op::Push { target, .. } => match x.one.as_ref().and_then(|o| o.after.get(&p)) {
+                    Some(after) => stack.extend(after),
+                    None => stack.extend([usize::from(target), usize::from(target) + 1]),
+                },
+                Op::Return { .. } => {}
+                _ => stack.extend(succ(x, p)),
+            }
+        }
+        false
+    };
+    if callees.contains(&pc) {
+        return kind(rule_kind(pc)?).map(|k| format!("{k}Begin"));
+    }
+    let kinds: Vec<Option<u16>> = {
+        let mut ks: Vec<Option<u16>> = callees.iter().filter(|&&c| holds(c, pc)).map(|&c| rule_kind(c)).collect();
+        ks.dedup();
+        ks
+    };
+    let prefix = match kinds.as_slice() {
+        [Some(k)] => kind(*k)?,
+        [] => return None,
+        _ => String::new(),
+    };
+    let switch_at = match words[pc].operation {
+        Op::Switch { table } => Some(table),
+        Op::Token { .. } => match succ(x, pc).as_slice() {
+            &[t] => match words[t].operation {
+                Op::Switch { table } => Some(table),
+                _ => None,
+            },
+            _ => None,
+        },
+        _ => None,
+    };
+    match (words[pc].operation, switch_at) {
+        (Op::Return { .. }, _) => Some(format!("{prefix}End")),
+        (_, Some(table)) if !prefix.is_empty() => {
+            // What each arm's first node is: its kind, its field and its supertype, past the spans before it.
+            let made: Vec<(u16, Option<u16>, Option<u16>)> = switch_plan(x, &n.switches[usize::from(table)])
+                .refs
+                .into_iter()
+                .filter_map(|t| {
+                    let mut at = usize::from(t);
+                    while matches!(words.get(at)?.operation, Op::Span { .. }) {
+                        at += 1;
+                    }
+                    let k = match words[at].operation {
+                        Op::Open { kind } | Op::Leaf { kind, .. } => kind,
+                        _ => return None,
+                    };
+                    let (mut f, mut s) = (None, None);
+                    for w in &words[at + 1..] {
+                        match w.operation {
+                            Op::NodeField { field, on: On::Here } => f = Some(field),
+                            Op::NodeSuper { kind } => s = Some(kind),
+                            _ => break,
+                        }
+                    }
+                    Some((k, f, s))
+                })
+                .collect();
+            let all = |g: &dyn Fn(&(u16, Option<u16>, Option<u16>)) -> Option<u16>| -> Option<u16> {
+                let first = g(made.first()?)?;
+                made.iter().all(|m| g(m) == Some(first)).then_some(first)
+            };
+            let what = all(&|m| m.2).and_then(kind).or_else(|| all(&|m| m.1).and_then(field)).or_else(|| all(&|m| Some(m.0)).and_then(kind))?;
+            Some(format!("{prefix}{what}"))
+        }
+        _ => None,
+    }
+}
+
 fn label_role(x: &Facts<'_>, pc: usize) -> &'static str {
     if x.fetch.as_ref().is_some_and(|fx| fx.part_at(x, pc)) {
         return "string";

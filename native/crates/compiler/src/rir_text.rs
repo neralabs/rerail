@@ -63,6 +63,17 @@ pub fn word_kind_rows(out: &mut String, word_kinds: &[(u16, u16)]) {
     }
 }
 
+/// The grammar's names of its kinds and fields (`Words::kind_names`, `Words::field_names`).
+pub fn name_rows(out: &mut String, kinds: &[(u16, String)], fields: &[(u16, String)]) {
+    use std::fmt::Write as _;
+    for (k, name) in kinds {
+        let _ = writeln!(out, "  kindname #{k} {}", quote(name.as_bytes()));
+    }
+    for (f, name) in fields {
+        let _ = writeln!(out, "  fieldname {f} {}", quote(name.as_bytes()));
+    }
+}
+
 pub fn extra_rows(out: &mut String, extras: &[(u8, u16)]) {
     use std::fmt::Write as _;
     for &(b, k) in extras {

@@ -593,6 +593,13 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 45, done: one dispatch, its values named by the grammar (decision 0541)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| Dispatches | one `match label`, six labels | three nested `match d` loops, arms that only pass a value on | one `match d`, four values; the object's and the array's loops each entered once |
+| A value's name | `ObjectBegin`, `ArrayValue`, `ScopeEnd` | its place (`L::Token32`, `L::Span40`) | what the place does, from the grammar's names: `L::ObjectBegin`, `L::ArrayBegin`, `L::ArrayValue`, `L::End` |
+
 ## Step 44, done: a string's place its argument, a dispatch's value named (decision 0526)
 
 | | the lean parser | before | now |

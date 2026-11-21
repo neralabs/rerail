@@ -269,6 +269,11 @@ pub struct Words {
     /// Each keyword's node kind (`wordkind sW #K`): a token whose record names string `W` makes a
     /// leaf of kind `K` where a `LEAF` names `stream_ir::WORD_KIND`. Rising by string.
     pub word_kinds: Vec<(u16, u16)>,
+    /// Each node kind's and field's name in the grammar (`kindname #K "NAME"`, `fieldname F "NAME"`), rising by
+    /// number: what the code generated from the words names its places by (`rust_stream`'s labels). No word
+    /// reads them.
+    pub kind_names: Vec<(u16, String)>,
+    pub field_names: Vec<(u16, String)>,
     /// The extras a `TOKEN` takes (`m` with `TOKEN_EXTRAS`; `tokenextra bB #K`): a token whose
     /// record's code has the first entry's mark bit `B` (`records::MARK_SHIFT + B`) is an extra,
     /// of the first entry's kind `K`, or of a later entry's where it has that entry's bit too

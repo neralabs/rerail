@@ -328,26 +328,66 @@ impl Shape {
     pub fn threaded(first: Vec<Vec<usize>>, sizes: &[usize], only_jump: &[bool]) -> Option<Shape> {
         let size = |b: usize| sizes[b];
         let budget: usize = sizes.iter().sum();
-        let (mut block, mut succ): (Vec<Option<usize>>, _) = ((0..first.len()).map(Some).collect(), first.clone());
-        let mut copied = 0;
-        let mut label = std::collections::HashMap::new();
-        let order = loop {
-            let order = Order::of(&succ);
-            let Some((x, k)) = order.irreducible(&succ) else { break order };
-            let t = succ[x][k];
-            copied += block[t].map_or(0, size);
-            if copied > budget {
-                (block, succ, label) = Self::dispatched((0..first.len()).map(Some).collect(), first.clone())?;
-                Self::thread(&block, &mut succ, &mut label, only_jump);
+        // Split within the budget; past it, one dispatch for the outermost loops entered at two places, and the
+        // loops within them split (as the lean parser's one `match label`, its `ScopeEnd` a copy of each container's
+        // continue); past that again, a dispatch for every such loop.
+        // An edge into a loop entered at two places, where a dispatch holds it and the entry branches, goes to the
+        // dispatch, as the lean parser's `break Label::ArrayValue` from its `ScopeEnd`; any other is given a copy of
+        // its target (an entry that only goes on to one place, as a `TOKEN` before a switch: its copy is that much).
+        let split = |mut block: Vec<Option<usize>>, mut succ: Vec<Vec<usize>>, mut label: std::collections::HashMap<(usize, usize), usize>| {
+            let mut copied = 0;
+            loop {
                 let order = Order::of(&succ);
-                if order.irreducible(&succ).is_some() {
+                let Some((x, k)) = order.irreducible(&succ) else { return Some((block, succ, label, order)) };
+                let t = succ[x][k];
+                if let Some(d) = Self::dispatch_over(&block, &order, x).filter(|_| succ[t].len() > 1 && Self::two_entries(&block, &succ).contains(&t)) {
+                    let j = succ[d].iter().position(|&e| e == t).unwrap_or_else(|| {
+                        succ[d].push(t);
+                        succ[d].len() - 1
+                    });
+                    label.insert((x, k), j);
+                    succ[x][k] = d;
+                    continue;
+                }
+                copied += block[t].map_or(budget + 1, size);
+                if copied > budget {
                     return None;
                 }
-                break order;
+                let c = block.len();
+                block.push(block[t]);
+                succ.push(succ[t].clone());
+                let carried: Vec<(usize, usize)> = label.iter().filter(|&(&(u, _), _)| u == t).map(|(&(_, e), &l)| (e, l)).collect();
+                label.extend(carried.into_iter().map(|(e, l)| ((c, e), l)));
+                succ[x][k] = c;
             }
-            block.push(block[t]);
-            succ.push(succ[t].clone());
-            succ[x][k] = block.len() - 1;
+        };
+        let plain: Vec<Option<usize>> = (0..first.len()).map(Some).collect();
+        let (block, succ, label, order) = match split(plain.clone(), first.clone(), std::collections::HashMap::new()) {
+            Some(done) => done,
+            None => {
+                let outer = Self::dispatched(plain.clone(), first.clone(), true)?;
+                let threaded = |(block, mut succ, mut label): (Vec<Option<usize>>, Vec<Vec<usize>>, std::collections::HashMap<(usize, usize), usize>)| {
+                    Self::thread(&block, &mut succ, &mut label, only_jump);
+                    (block, succ, label)
+                };
+                let (b, s, l) = threaded(outer);
+                match split(b, s, l) {
+                    // The edges the split gave the dispatch threaded too.
+                    Some((block, succ, label, _)) => {
+                        let (block, succ, label) = threaded((block, succ, label));
+                        let order = Order::of(&succ);
+                        (block, succ, label, order)
+                    }
+                    None => {
+                        let (block, succ, label) = threaded(Self::dispatched(plain, first.clone(), false)?);
+                        let order = Order::of(&succ);
+                        if order.irreducible(&succ).is_some() {
+                            return None;
+                        }
+                        (block, succ, label, order)
+                    }
+                }
+            }
         };
         let n = block.len();
         let (mut header, mut merge) = (vec![false; n], vec![false; n]);
@@ -367,6 +407,36 @@ impl Shape {
             m.sort_by_key(|&b| std::cmp::Reverse(order.rpo[b]));
         }
         Some(Shape { block, succ, label, rpo: order.rpo, merges, header, merge })
+    }
+
+    /// The dispatch nearest above node `x` in the dominator tree.
+    fn dispatch_over(block: &[Option<usize>], order: &Order, x: usize) -> Option<usize> {
+        let mut i = order.rpo[x];
+        loop {
+            let b = order.order[i];
+            if block[b].is_none() {
+                return Some(b);
+            }
+            if i == 0 {
+                return None;
+            }
+            i = order.idom[i];
+        }
+    }
+
+    /// The entries of each loop entered at two places or more, the dispatches left out (a loop's
+    /// nodes a strongly connected part; its entries the nodes an edge from outside it reaches).
+    fn two_entries(block: &[Option<usize>], succ: &[Vec<usize>]) -> std::collections::HashSet<usize> {
+        let out: Vec<bool> = block.iter().map(Option::is_none).collect();
+        let mut all = std::collections::HashSet::new();
+        for part in strong_parts(succ, &out) {
+            let inside: std::collections::HashSet<usize> = part.iter().copied().collect();
+            let entries: std::collections::HashSet<usize> = succ.iter().enumerate().filter(|(u, _)| !inside.contains(u)).flat_map(|(_, next)| next.iter().copied().filter(|t| inside.contains(t))).collect();
+            if entries.len() >= 2 {
+                all.extend(entries);
+            }
+        }
+        all
     }
 
     /// Each dispatch's entry `e` that only jumps (`only_jump`) on into the same dispatch, with
@@ -397,14 +467,15 @@ impl Shape {
     /// Each loop (a strongly connected part of the graph, its header out, then the parts within,
     /// as a loop forest) entered at two nodes or more given a dispatch node, its one entry: the
     /// edges into those nodes go to the dispatch, each with its target's place (`label`), the
-    /// dispatch on to it. `None` where the function's first block is one of two entries.
+    /// dispatch on to it. `None` where the function's first block is one of two entries. `outer`: only the
+    /// outermost such loops, those no loop entered at two places holds.
     #[allow(clippy::type_complexity)]
-    fn dispatched(mut block: Vec<Option<usize>>, mut succ: Vec<Vec<usize>>) -> Option<(Vec<Option<usize>>, Vec<Vec<usize>>, std::collections::HashMap<(usize, usize), usize>)> {
+    fn dispatched(mut block: Vec<Option<usize>>, mut succ: Vec<Vec<usize>>, outer: bool) -> Option<(Vec<Option<usize>>, Vec<Vec<usize>>, std::collections::HashMap<(usize, usize), usize>)> {
         let mut label = std::collections::HashMap::new();
         let mut out = vec![false; block.len()];
         loop {
             let parts = strong_parts(&succ, &out);
-            if parts.is_empty() {
+            if parts.is_empty() || (outer && !label.is_empty()) {
                 return Some((block, succ, label));
             }
             for part in parts {
