@@ -546,6 +546,35 @@ lookup 12.92 → 12.61 s. The keyed steps take about what the recursive line too
 climb's probes (`bound_in`, `gbefore`, the nearest axis, about 200 ns each), not the waves. The operator's second
 part, answering a read at the climb's end without making `walk`'s rows, is next.
 
+### Step 5: what `wstart` pays a row (2026-11-21)
+
+`wstart` took 5.4 s on `all`, its first rule about 800 ns a `nameref` row over six steps. The step clocks put
+most of it on the nearest axis (161 ms on s1000 past its 61 ms solve, about 330 ns a probe). A measurement
+(`an_axis_probes_cost`, ignored; on an M1 Max) says otherwise. The solved axis's probe costs 17 ns through
+`Within::lookup_read`. A join over a held axis costs 17.4 ns a row more than the same join without it.
+
+| What (8 documents' nodes, ~2 M probes) | ns a probe |
+|---|---|
+| `Batch::node` (an id to its document and node) | 10.5 |
+| `Within::lookup`, then `value` (the rows path) | 36.3 |
+| `Within::lookup_read` (in place) | 17.0 |
+| the same probe through the set engine's join | 17.4 |
+
+A sample of the s1000 run agrees: the axis's reads are 35 ms past the solve. The join's probes (`candidates`, all
+strata) went to the index runs' `find_at` (40%), the views' reads (19%, half of it an id's translation: `local_of`'s
+`num_number_of`, then `select` back to the tape node), the step's own work (16%), and 4% to a fresh list and `Arc` for
+each probe's rows. So there is no one cost in `wstart`: it is the executor's per-step work on each of its steps.
+
+Two changes:
+
+- **A probe's rows held as found.** A read probe of no row or one row (the usual answer of a node's view or axis)
+  holds it in place (`Found::One`). A list and its `Arc` are made only for more rows.
+- **A test reads in place too.** A step that reads no column (`need` 0) took `find_keyed`, which for the axis is
+  its mutex-and-map rows path. It now takes `lookup_read` with no columns.
+
+On s1000, rows unchanged: 338.6 → 321.9 G instructions; `wstart` 0.755 → 0.697 s, `walk` 0.767 → 0.603 s (own
+CPU; the wall times are noisy between runs). The views' id translation and the index runs' probes are left.
+
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
 `RERAIL_STAGE_DIFFS=1` listed every differing row. Each kind was cut down to a case of a few lines

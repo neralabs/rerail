@@ -1052,11 +1052,24 @@ const FROZEN_RUNS: usize = 1;
 type LastProbe = Option<(Vec<i64>, Probed)>;
 /// A probe's candidates: their ids, or their ids with their rows' values read as they were found (`View::find_read`).
 #[derive(Clone)]
-enum Probed { Ids(Vec<u32>), Read(Arc<Vec<(u32, [i64; READ])>>, u64) }
+enum Probed { Ids(Vec<u32>), Read(Found, u64) }
+/// A read probe's rows, each with the values the step reads: none or one (the usual answer of a node's view or axis
+/// probe) held as they are, more in a list the step's last-probe memo shares, so a probe of one row allocates nothing.
+#[derive(Clone)]
+enum Found { None, One((u32, [i64; READ])), Many(Arc<Vec<(u32, [i64; READ])>>) }
+impl Found {
+    fn rows(&self) -> &[(u32, [i64; READ])] {
+        match self {
+            Found::None => &[],
+            Found::One(row) => std::slice::from_ref(row),
+            Found::Many(rows) => rows,
+        }
+    }
+}
 #[derive(Clone)]
 enum Cands<'a> { Range(u32, u32), Slice(&'a [u32]), Owned(Vec<u32>), Runs(runs::Found<'a>), Pending(runs::Found<'a>, u32, u32),
     /// Rows with the values a step reads, read as the probe found them (`View::find_read`).
-    Read(Arc<Vec<(u32, [i64; READ])>>) }
+    Read(Found) }
 impl Cands<'_> {
     /// Calls `f` on each id until it returns true; returns whether one did.
     fn any(self, mut f: impl FnMut(u32) -> bool) -> bool {
@@ -1066,7 +1079,7 @@ impl Cands<'_> {
             Cands::Owned(ids) => ids.into_iter().any(f),
             Cands::Runs(found) => found.ids().any(f),
             Cands::Pending(found, lo, hi) => found.ids().any(&mut f) || (lo..hi).any(f),
-            Cands::Read(rows) => rows.iter().any(|&(id, _)| f(id)),
+            Cands::Read(rows) => rows.rows().iter().any(|&(id, _)| f(id)),
         }
     }
 }
@@ -3847,7 +3860,7 @@ impl View {
     }
     /// `find_keyed`'s rows, each with its values of view columns `need` (bit `c`: column `c`), read as the source's
     /// probe found them (`Source::lookup_read`); `None` where it has no such read, or the probe is not `find`'s.
-    fn find_read(&self, cols: &[usize], key: &[i64], lead: usize, need: u64) -> Option<Vec<(u32, [i64; READ])>> {
+    fn find_read(&self, cols: &[usize], key: &[i64], lead: usize, need: u64) -> Option<Found> {
         if !self.eqs.is_empty() || self.ids.is_some() || self.cols.len() > READ {
             return None;
         }
@@ -3866,15 +3879,27 @@ impl View {
                 m += 1;
             }
         }
-        let mut rows = Vec::new();
+        let (mut first, mut more) = (None, Vec::new());
         let read = self.src.lookup_read(self.cols[cols[lead]], key[lead], &src[..m], &mut |row, got| {
             let mut vals = [0i64; READ];
             for j in 0..m {
                 vals[at[j]] = got[j];
             }
-            rows.push((row as u32, vals));
+            match first {
+                None => first = Some((row as u32, vals)),
+                Some(one) => {
+                    if more.is_empty() {
+                        more.push(one);
+                    }
+                    more.push((row as u32, vals));
+                }
+            }
         });
-        read.then_some(rows)
+        read.then(|| match first {
+            None => Found::None,
+            Some(one) if more.is_empty() => Found::One(one),
+            Some(_) => Found::Many(Arc::new(more)),
+        })
     }
     fn find(&self, c: usize, v: i64) -> Vec<u32> {
         if !self.eqs.is_empty() && let Some(rows) = self.src.lookup_eq(self.cols[c], v, &self.eqs) {
@@ -7036,7 +7061,7 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                 return hit;
             }
             if let Cands::Read(rows) = cands {
-                return rows.iter().any(|&(id, vals)| f(id, RowRef::Read(vals, id as usize)));
+                return rows.rows().iter().any(|&(id, vals)| f(id, RowRef::Read(vals, id as usize)));
             }
             cands.any(|id| f(id, self.row_need(id, need)))
         }
@@ -7238,11 +7263,12 @@ fn run_join_in_each(j: &JoinRule, head: usize, store: &Store, syms: &mut Interne
                         let probed = match last {
                             Some((k, p)) if k.as_slice() == key && !matches!(&*p, Probed::Read(_, n) if *n != need) => p.clone(),
                             _ => {
-                                // A step that reads columns has them read as the probe finds its rows; one that reads
-                                // none (`need` 0, a test) takes the ids.
-                                let read = if need != 0 { v.find_read(&ix.cols, key, ix.lead, need) } else { None };
+                                // A step's rows are read as the probe finds them, with the columns it reads (none for
+                                // a test): a source that reads in place answers without a list of ids; one that does
+                                // not gives the ids.
+                                let read = v.find_read(&ix.cols, key, ix.lead, need);
                                 let p = match read {
-                                    Some(rows) => Probed::Read(Arc::new(rows), need),
+                                    Some(rows) => Probed::Read(rows, need),
                                     None => Probed::Ids(v.find_keyed(&ix.cols, key, ix.lead)),
                                 };
                                 match last {

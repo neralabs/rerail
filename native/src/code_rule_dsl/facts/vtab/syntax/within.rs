@@ -864,6 +864,26 @@ impl Source for Within {
         }
         Some(self.below(n, a))
     }
+    /// By `n` on the batch's solve: each of the node's rows with its values, read from the solve's rows as they are
+    /// found. No list of rows is made, and no row's value is read again (`lookup` then `value`). An axis not solved
+    /// for the batch gives nothing here (`false`), and its rows are made per lookup as before.
+    fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        if column != 0 || !self.reads_solved() || columns.len() > 2 {
+            return false;
+        }
+        let Some((doc, local)) = self.batch.node(value) else { return true };
+        let row = self.batch.nodes[doc] + local as usize;
+        let start = self.starts();
+        let rows = self.solved_rows();
+        let mut got = [0i64; 2];
+        for r in start[row]..start[row + 1] {
+            for (j, &c) in columns.iter().enumerate() {
+                got[j] = rows.get(r, c.min(1));
+            }
+            each(r as usize, &got[..columns.len()]);
+        }
+        true
+    }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         let mut out = Vec::new();
         for &v in values {
