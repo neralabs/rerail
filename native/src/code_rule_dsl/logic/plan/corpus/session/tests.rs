@@ -326,6 +326,64 @@ IMP(i) :- impmod(i, _), docof(i, a), seen(a).
     let _ = std::fs::remove_dir_all(&base);
 }
 
+/// A stratum a changed read reaches, none of whose rules sees a row the read's delta gained or lost, is passed on as
+/// kept (decision 0563 B): an edit adds an assignment to a file. `wh` reads `kind` only for `while` statements, which
+/// the edit's nodes are none of (the delta's own rows); `pair` joins `docof`'s new rows to `wh`, which holds none of
+/// their nodes (a derived witness, read through its index). A second edit adds a `while` loop, which both see. Each
+/// run's findings are a full run's.
+#[test]
+fn a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-unseen");
+    let (src, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    let rule = base.join("unseen.rerail");
+    std::fs::write(
+        &rule,
+        r#".policy "test-unseen" revision 1
+.description "A while loop in a file, where another file has one too."
+.language python
+.mode steer
+.scope include "**/*.py"
+.decl wh(n: number)
+wh(n) :- kind(n, "while_statement").
+.decl pair(n: number, m: number)
+pair(n, m) :- wh(n), docof(n, a), wh(m), docof(m, b), a != b.
+.violation W(at: node) code "W" "A while loop in a file, where another file has one too."
+W(n) :- pair(n, _).
+"#,
+    )
+    .unwrap();
+    for (path, text) in [("a.py", "while a:\n    pass\n"), ("b.py", "while b:\n    pass\n"), ("c.py", "x = 1\n")] {
+        std::fs::write(src.join(path), text).unwrap();
+    }
+    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let findings = || {
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "violation").unwrap_or_default();
+        rows.sort();
+        rows
+    };
+    let full = || {
+        full(run);
+        findings()
+    };
+    let session = start(&base.join("session")).unwrap();
+    run();
+    assert_eq!(findings().len(), 2, "a.py's and b.py's loops: {:?}", findings());
+    std::fs::write(src.join("c.py"), "x = 1\ny = x + 2\n").unwrap();
+    let report = run();
+    let got = findings();
+    assert_eq!(got, full(), "the session's findings are a full run's");
+    assert!(report.cross_unseen > 0, "`pair` sees none of the edit's nodes: {} unseen, {:?} maintained", report.cross_unseen, report.cross_maintained);
+    std::fs::write(src.join("c.py"), "x = 1\nwhile x:\n    x = 0\n").unwrap();
+    run();
+    let got = findings();
+    assert_eq!(got, full(), "the session's findings are a full run's");
+    assert_eq!(got.len(), 3, "c.py's loop pairs too: {got:?}");
+    drop(session);
+    let _ = std::fs::remove_dir_all(&base);
+}
+
 /// A cross-file relation recomputed in its readers (decision 0099, `.decl … inline`) has no rows to keep: the
 /// run keeps the others, and the next run derives it again ("no such table: py_f" at O125 before). Every run's
 /// findings are a full run's.

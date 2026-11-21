@@ -199,21 +199,18 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
     Ok(p.current()?.clone())
 }
 
-/// Spike of decision 0563 A: `version` without the rules no row can reach once the guest relations are empty
-/// (`prune::Unfillable`), and what only they read (`Prune`). `part` names it in the decision.
-pub fn unfillable(version: Arc<Version>, part: &str) -> Result<Arc<Version>, String> {
-    // Only the guest relations: `guests::READS` also has `tape_of`, `doc_grammar` and `rr_program`, a file's too.
-    const GUEST_ONLY: [&str; 8] = ["guest_place", "guest_of", "host_node", "sub_tape", "parsed", "parse_of", "unparse_of", "splice_of"];
+/// `version` without the rules no row can reach in a run that admits no guest (decision 0563 A): its guest relations
+/// (`guests::ONLY`) empty, and what only those rules read (`prune::Unfillable`). `keep`: what another part reads of
+/// it (the file-local part's exports). `part` names it in the decision.
+pub fn unfillable(version: Arc<Version>, part: &str, keep: &[String]) -> Result<Arc<Version>, String> {
     let rules = version.size();
     let mut p = Pipeline::new("unfillable", version);
-    let mut unfillable = prune::Unfillable::new(GUEST_ONLY.iter().map(|r| (*r).to_owned()));
+    let mut unfillable = prune::Unfillable::new(super::guests::ONLY.iter().map(|r| (*r).to_owned()), keep.iter().cloned());
     p.program(&mut unfillable);
-    let mut pruned = prune::Prune::default();
-    p.program(&mut pruned);
     let v = p.current()?.clone();
     let found = unfillable.found.iter().take(16).cloned().collect::<Vec<_>>().join(", ");
-    crate::code_rule_dsl::logic::profile::decision("unfillable relations (decision 0563 A, spike)", || {
-        format!("{part}: no guest: {} rules no row can reach, {} more pruned ({rules} → {} rules); {} relations empty: {found}", unfillable.dropped, pruned.0, v.size(), unfillable.found.len())
+    crate::code_rule_dsl::logic::profile::decision("the rules no row can reach (decision 0563 A)", || {
+        format!("{part}: the run admits no guest: {} rules join an empty relation, {} more only they read ({rules} → {} rules); {} relations empty: {found}", unfillable.dropped, unfillable.unread, v.size(), unfillable.found.len())
     });
     Ok(v)
 }

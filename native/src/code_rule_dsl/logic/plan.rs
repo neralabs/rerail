@@ -5676,6 +5676,9 @@ pub struct Outcome {
     /// The strata passed on as quiet (decision 0101 §1), and the relations they held with no column measured
     /// (`QuietTally`).
     pub quiet: (usize, usize),
+    /// A maintained run's strata a changed read reached that no rule of saw a row of its delta, by kind or key
+    /// (decision 0563 B): passed on as kept, and counted with the skipped (`walked`).
+    pub unseen: usize,
 }
 
 impl Outcome {
@@ -11223,6 +11226,331 @@ pub trait KeptStrata {
 
 /// The relations a stratum's rules read: atoms (an aggregate's too), `node` and `child` for a `nearest` climb, a
 /// native operator's inputs.
+/// A changed read's versions as the maintain mode reads them (decision 0364): its kept rows, its rows gone and added,
+/// and its rows now, each a source read where it lies, with the columns of the input it is a view of, where it is
+/// one. A relation derived again that could not be made a version of its kept rows (`kept_delta`) has its kept rows
+/// as old and its rows gone and added as minus and plus (`diffs`); a changed input, its given deltas; a view of an
+/// input the engine holds with its change marked where its rows lie (a file-local part's export, `fl…_cparam`), its
+/// input's versions through its columns. Shared by the mode's inputs and the reach by kind and key (decision 0563 B).
+fn moved_versions(r: &str, diffs: &HashMap<String, [Arc<super::native::component::InRel>; 2]>, m: &mut dyn Maintain, db: &Connection, f0: Fields<'_>, rules_by: &IndexMap<&str, Vec<RuleKey>>, run_vs: &body::Versions) -> Option<([Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 4], Option<Vec<usize>>)> {
+    if let (Some([mi, pl]), Some(o), Some(now)) = (diffs.get(r), m.kept(r), super::native::component::held(db, r)) {
+        let cols = |x: &Arc<super::native::component::InRel>| x.source((0..o.k).map(|c| sql_col(r, c)).collect());
+        return Some(([cols(&o), cols(mi), cols(pl), cols(&now)], None));
+    }
+    let (base, cols) = if f0.is_input(r) {
+        (r.to_owned(), None)
+    } else {
+        let [k] = rules_by.get(r).map(Vec::as_slice).unwrap_or_default() else { return None };
+        let (v, rule) = run_vs.rule_at(*k);
+        let (base, cols) = input_view_shape(v, rule, |x| f0.is_input(x))?;
+        (base, Some(cols))
+    };
+    if let Some([mi, pl]) = m.given(&base) {
+        let now = crate::code_rule_dsl::facts::vtab::bound_source(db, &base)?;
+        return Some(([m.old_input(&base)?, mi, pl, now], cols));
+    }
+    cols.as_ref()?;
+    let h = super::native::component::held(db, &base).filter(|h| h.start().is_some())?;
+    let src = |x: &Arc<super::native::component::InRel>| x.source((0..h.k).map(|c| sql_col(&base, c)).collect());
+    use super::native::component::Ver;
+    let [o, mi, pl] = [Ver::Old, Ver::Minus, Ver::Plus].map(|v| h.version_view(v));
+    Some(([src(&o?), src(&mi?), src(&pl?), src(&h)], cols))
+}
+
+/// What the reach by kind and key reads of a stratum's changed reads (decision 0563 B): each one's versions
+/// (`moved_versions`), and how a joined relation is read. Made at the driver, for one stratum.
+struct Reach<'r, 'f> {
+    diffs: &'r HashMap<String, [Arc<super::native::component::InRel>; 2]>,
+    db: &'r Connection,
+    f0: Fields<'f>,
+    rules_by: &'r IndexMap<&'f str, Vec<RuleKey>>,
+    run_vs: &'r body::Versions,
+    moved: &'r BTreeSet<String>,
+    scc: &'r BTreeSet<String>,
+}
+
+/// A column's test in an atom: the values it may hold (none: the atom holds a constant no row has).
+type Allowed = Option<Vec<i64>>;
+
+/// Whether `values` (one a test, in order) pass `tests`.
+fn allowed(values: &[i64], tests: &[(usize, Allowed)]) -> bool {
+    tests.iter().zip(values).all(|((_, allowed), x)| allowed.as_ref().is_some_and(|vals| vals.contains(x)))
+}
+
+/// Whether some row of `d` passes `tests` (each a column of `d` and its values), read where it lies.
+fn passes(d: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, tests: &[(usize, Allowed)]) -> bool {
+    let cols: Vec<usize> = tests.iter().map(|(c, _)| *c).collect();
+    let mut any = false;
+    d.for_rows_in(0..d.len(), &cols, &mut |_, row| {
+        any = allowed(row, tests);
+        !any
+    });
+    any
+}
+
+impl Reach<'_, '_> {
+    /// Whether no rule of `rules` sees a row of any changed read's delta (decision 0563 B). Each atom over a changed
+    /// read shares a variable with a positive atom of another relation, earlier in the order of strata, and no row
+    /// gone or added of the read holds, in that column, a value any row of the other relation holds there under the
+    /// atom's other tests (a kind's constant, a kind set's facts, a field's name). The delta is read where it lies,
+    /// and the other relation, a derived one the run holds, through its own index (`Source::lookup`): its rows now,
+    /// and where it changed too, its rows gone. A read no rule names as an atom (a native's, a request's, a nearest ancestor's, a matcher's) is never
+    /// cut; nor is an aggregate's.
+    fn cuts(&self, m: &mut dyn Maintain, model: &mut Model, rules: &[RuleKey]) -> bool {
+        let mut named: BTreeSet<&str> = BTreeSet::new();
+        for &k in rules {
+            let (v, rule) = self.run_vs.rule_at(k);
+            let mut sets: HashMap<VarSlot, Vec<i64>> = HashMap::new();
+            for l in rule.body() {
+                match l.view() {
+                    Lit::Nearest { .. } | Lit::Ast { .. } => return false,
+                    Lit::Agg { atom, .. } if self.moved.contains(v.rel_name(atom.rel())) => return false,
+                    Lit::Atom(a) if !a.neg() && a.args().count() == 1 => {
+                        // A kind set: a relation of facts alone, each a value.
+                        let name = v.rel_name(a.rel());
+                        if let (Some(x), Some(facts)) = (a.args().next().and_then(TermRef::var), v.facts(v.rel_atom(a.rel())))
+                            && v.heads(a.rel()).next().is_none()
+                            && !self.f0.is_input(name)
+                        {
+                            let mut values: Vec<i64> = Vec::new();
+                            for row in facts.rows() {
+                                for c in row {
+                                    match c {
+                                        super::program_image::Cell::Int(i) => values.push(i),
+                                        super::program_image::Cell::Branded(b) => values.push(b.value()),
+                                        super::program_image::Cell::Str(t) => values.extend(super::native::setfix::symbol_id(self.db, v.text(t)).ok().flatten()),
+                                    }
+                                }
+                            }
+                            sets.insert(x, values);
+                        }
+                    }
+                    Lit::Cmp { l, op: CmpOp::Eq, r } => {
+                        let held = match (l.var(), r.var()) {
+                            (Some(x), None) => self.constant(v, r).map(|c| (x, c)),
+                            (None, Some(x)) => self.constant(v, l).map(|c| (x, c)),
+                            _ => None,
+                        };
+                        if let Some((x, c)) = held {
+                            sets.insert(x, c.into_iter().collect());
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            for l in rule.body() {
+                let Lit::Atom(a) = l.view() else { continue };
+                let name = v.rel_name(a.rel());
+                let Some(moved) = self.moved.get(name) else { continue };
+                named.insert(moved.as_str());
+                if !self.atom_cut(m, model, v, rule, a, &sets) {
+                    return false;
+                }
+            }
+        }
+        self.moved.iter().all(|r| named.contains(r.as_str()))
+    }
+
+    /// A constant term's value as the run holds it; `Some(None)`: a symbol the run has none of, which no row holds.
+    fn constant(&self, v: &Version, t: TermRef<'_>) -> Option<Option<i64>> {
+        match t {
+            TermRef::Int(i) => Some(Some(i)),
+            TermRef::Branded(b) => Some(Some(b.value())),
+            TermRef::Str(x) => Some(super::native::setfix::symbol_id(self.db, v.text(x)).ok().flatten()),
+            _ => None,
+        }
+    }
+
+    /// Whether atom `a` (over a changed read) sees no row of the read's delta: some positive atom of another
+    /// relation shares a variable with it and holds none of the delta's values there.
+    fn atom_cut(&self, m: &mut dyn Maintain, model: &mut Model, v: &Version, rule: super::program_image::RuleRef<'_>, a: AtomRef<'_>, sets: &HashMap<VarSlot, Vec<i64>>) -> bool {
+        let r = v.rel_name(a.rel());
+        let Some(([_, minus, plus, _], cols)) = moved_versions(r, self.diffs, m, self.db, self.f0, self.rules_by, self.run_vs) else { return false };
+        let at = |c: usize, cols: &Option<Vec<usize>>| cols.as_ref().map_or(Some(c), |m| m.get(c).copied());
+        // The atom's own tests (a kind's constant, a kind set's facts): a row of the delta none of them passes is no
+        // row the rule sees.
+        let own: Vec<(usize, Allowed)> = a.args().enumerate().filter_map(|(i, u)| {
+            let test = match u {
+                TermRef::Var(y) => sets.get(&y).map(|vals| Some(vals.clone())),
+                other => self.constant(v, other).map(|c| c.map(|c| vec![c])),
+            }?;
+            Some((at(i, &cols)?, test))
+        }).collect();
+        if !own.is_empty() && [&minus, &plus].iter().all(|d| !passes(d, &own)) {
+            return true;
+        }
+        for (i, t) in a.args().enumerate() {
+            let (Some(x), Some(ri)) = (t.var(), at(i, &cols)) else { continue };
+            for o in rule.body() {
+                let Lit::Atom(b) = o.view() else { continue };
+                let q = v.rel_name(b.rel());
+                if b.neg() || q == r || self.scc.contains(q) {
+                    continue;
+                }
+                let Some(j) = b.args().position(|u| u.var() == Some(x)) else { continue };
+                // The other columns' tests: a constant, or a variable a kind set or a comparison holds.
+                let tests: Vec<(usize, Allowed)> = b.args().enumerate().filter(|(jj, _)| *jj != j).filter_map(|(jj, u)| match u {
+                    TermRef::Var(y) => sets.get(&y).map(|vals| (jj, Some(vals.clone()))),
+                    other => self.constant(v, other).map(|c| (jj, c.map(|c| vec![c]))),
+                }).collect();
+                let Some(sources) = self.joined(m, model, q) else { continue };
+                if self.joins_none(&[&minus, &plus], ri, &own, &sources, j, &tests) == Some(true) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Joined relation `q` as the stratum reads it, where it lies: its rows now, and where it changed, its rows gone
+    /// too. `None` where the run holds no source of it, and for an input or a view of one: an input is read through
+    /// its view of the batch's documents, where a lookup builds the documents' rows (420 ms for `docof` on ep2's
+    /// insert), which a run that keeps its strata never builds. An input's delta is still tested in its own rows.
+    fn joined(&self, m: &mut dyn Maintain, model: &mut Model, q: &str) -> Option<Vec<(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<Vec<usize>>)>> {
+        // An input the run holds no rows of itself (neither held nor kept) is read through a view of the documents,
+        // and so is a changed input's rows now: only a relation this program derives is read changed. A relation held
+        // as kept is an input of the maintained program too.
+        let derived = self.rules_by.contains_key(q);
+        if self.moved.contains(q) {
+            if !derived {
+                return None;
+            }
+            let ([_, minus, _, now], cols) = moved_versions(q, self.diffs, m, self.db, self.f0, self.rules_by, self.run_vs)?;
+            if cols.is_some() {
+                return None;
+            }
+            return Some(vec![(now, None), (minus, None)]);
+        }
+        if self.f0.is_input(q) && !derived && super::native::component::held(self.db, q).is_none() && !m.keeps(q) {
+            return None;
+        }
+        // Held, kept in memory, or bound as an input is (a kept relation `Maintain::need` bound where it lies); kept
+        // and not read yet, bound so first, as a stratum that reads it binds it.
+        let bound = |m: &mut dyn Maintain| -> Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
+            if let Some(h) = super::native::component::held(self.db, q).or_else(|| m.kept(q)) {
+                return Some(h.source((0..h.k).map(|c| sql_col(q, c)).collect()));
+            }
+            crate::code_rule_dsl::facts::vtab::bound_source(self.db, q)
+        };
+        if let Some(src) = bound(m) {
+            return Some(vec![(src, None)]);
+        }
+        if m.keeps(q) {
+            m.need(&[q.to_owned()], model).ok()?;
+            return Some(vec![(bound(m)?, None)]);
+        }
+        None
+    }
+
+    /// Whether no row of `deltas` holds in column `ri` a value some row of `sources` holds in column `j` under `tests`;
+    /// `None` where a source has no lookup of that column.
+    fn joins_none(&self, deltas: &[&Arc<dyn crate::code_rule_dsl::facts::vtab::Source>], ri: usize, own: &[(usize, Allowed)], sources: &[(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<Vec<usize>>)], j: usize, tests: &[(usize, Allowed)]) -> Option<bool> {
+        self.joins_none_in(deltas, ri, own, sources, (j, tests), true)
+    }
+
+    /// `joins_none`, with the other relation's joined column and its tests (`at`); `turn`: whether the walk may turn
+    /// to the other relation's rows (not where a delta has no lookup of the column).
+    fn joins_none_in(&self, deltas: &[&Arc<dyn crate::code_rule_dsl::facts::vtab::Source>], ri: usize, own: &[(usize, Allowed)], sources: &[(Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, Option<Vec<usize>>)], (j, tests): (usize, &[(usize, Allowed)]), turn: bool) -> Option<bool> {
+        let at = |c: usize, cols: &Option<Vec<usize>>| cols.as_ref().map_or(Some(c), |m| m.get(c).copied());
+        // Each source's joined column and tested columns, through the columns of the input it is a view of.
+        let probes: Vec<(&Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, usize, Vec<usize>)> = sources.iter().map(|(s, cols)| Some((s, at(j, cols)?, tests.iter().map(|(c, _)| at(*c, cols)).collect::<Option<Vec<usize>>>()?))).collect::<Option<_>>()?;
+        let read: Vec<usize> = std::iter::once(ri).chain(own.iter().map(|(c, _)| *c)).collect();
+        let mut got = vec![0i64; tests.len()];
+        // The delta first, for as many rows as the other relation has: a stratum the delta reaches finds its witness
+        // in its first rows. Where none is found by then and the other relation is the smaller, its rows are walked
+        // and each looked up in the delta, through the delta's own index (a stratum's few rows against an insert's
+        // renumbered nodes). Each probe reads at most twice the smaller side.
+        let delta_rows: usize = deltas.iter().map(|d| d.len()).sum();
+        let other_rows: usize = probes.iter().map(|(s, ..)| s.len()).sum();
+        let budget = if turn && other_rows < delta_rows { other_rows } else { usize::MAX };
+        let mut walked = 0usize;
+        let mut none = Some(true);
+        for d in deltas {
+            d.for_rows_in(0..d.len(), &read, &mut |_, row| {
+                walked += 1;
+                if walked > budget {
+                    return false;
+                }
+                if !allowed(&row[1..], own) {
+                    return true;
+                }
+                let value = row[0];
+                for (s, sj, tcols) in &probes {
+                    // A view of the tape gives each match's values from what found it; a kept index, its rows' slice;
+                    // else the source's own lookup.
+                    let mut seen = false;
+                    if s.lookup_read(*sj, value, tcols, &mut |_, vals| seen |= allowed(vals, tests)) {
+                        if seen {
+                            none = Some(false);
+                            return false;
+                        }
+                        continue;
+                    }
+                    let hit = |row: usize, got: &mut [i64]| {
+                        s.row_at(row, tcols, got);
+                        allowed(got, tests)
+                    };
+                    let found = if let Some(rows) = s.sorted_rows(*sj, value) {
+                        rows.iter().any(|&r| tests.is_empty() || hit(r as usize, &mut got))
+                    } else if let Some(rows) = s.lookup(*sj, &[value]) {
+                        rows.into_iter().any(|r| tests.is_empty() || hit(r, &mut got))
+                    } else {
+                        none = None;
+                        return false;
+                    };
+                    if found {
+                        none = Some(false);
+                        return false;
+                    }
+                }
+                true
+            });
+            if none != Some(true) {
+                return none;
+            }
+        }
+        if walked <= budget {
+            return none;
+        }
+        let mut own_got = vec![0i64; own.len()];
+        let own_cols: Vec<usize> = own.iter().map(|(c, _)| *c).collect();
+        for (s, sj, tcols) in &probes {
+            let cols: Vec<usize> = std::iter::once(*sj).chain(tcols.iter().copied()).collect();
+            s.for_rows_in(0..s.len(), &cols, &mut |_, row| {
+                if !allowed(&row[1..], tests) {
+                    return true;
+                }
+                for d in deltas {
+                    let hit = |r: usize, got: &mut [i64]| {
+                        d.row_at(r, &own_cols, got);
+                        allowed(got, own)
+                    };
+                    let found = if let Some(rows) = d.sorted_rows(ri, row[0]) {
+                        rows.iter().any(|&r| own.is_empty() || hit(r as usize, &mut own_got))
+                    } else if let Some(rows) = d.lookup(ri, &[row[0]]) {
+                        rows.into_iter().any(|r| own.is_empty() || hit(r, &mut own_got))
+                    } else {
+                        none = None;
+                        return false;
+                    };
+                    if found {
+                        none = Some(false);
+                        return false;
+                    }
+                }
+                true
+            });
+            if none != Some(true) {
+                break;
+            }
+        }
+        if none.is_none() {
+            return self.joins_none_in(deltas, ri, own, sources, (j, tests), false);
+        }
+        none
+    }
+}
+
 fn stratum_reads(f: Fields<'_>, vs: &body::Versions, scc: &BTreeSet<String>, rules: &[RuleKey]) -> BTreeSet<String> {
     let mut read: BTreeSet<&str> = BTreeSet::new();
     let mut nearest = false;
@@ -12147,6 +12475,8 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
     // The maintained run's driver (decision 0117 step 3).
     let mut maintaining = hooks.maintain.take();
     let mut moved_rels: HashSet<String> = maintaining.as_deref_mut().map(|m| m.seeds().into_iter().collect()).unwrap_or_default();
+    // The reach by kind and key (decision 0563 B); `RERAIL_REACH_BY_KEY=off` reaches by relation alone, to compare.
+    let by_key = std::env::var("RERAIL_REACH_BY_KEY").map_or(true, |x| x != "off");
     // Reach indexes made again whose old rows are kept in memory: their deltas made once they are (`kept_delta`).
     let mut reach_olds: HashMap<String, Arc<super::native::component::InRel>> = HashMap::new();
     // A relation derived again whose delta is its rows gone and added (`Moved::Rows`): its minus and plus versions,
@@ -12610,6 +12940,18 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     let rules: Vec<RuleKey> = scc.iter().flat_map(|rel| rules_by.get(rel.as_str()).into_iter().flatten().copied()).collect();
                     let reads = stratum_reads(f0, &run_vs, scc, &rules);
                     let moved: BTreeSet<String> = reads.iter().filter(|r| !scc.contains(*r) && moved_rels.contains(r.as_str())).cloned().collect();
+                    // Decision 0563 B: a stratum none of whose rules sees a row of its changed reads' deltas, by kind
+                    // or by key, is passed on as one no read of which changed. A native's stratum and a view of an
+                    // input are left to their own paths.
+                    let unseen = by_key
+                        && !moved.is_empty()
+                        && !scc.iter().any(|r| f0.native(r).is_some())
+                        && run.view_shaped(scc, &rules).is_none()
+                        && Reach { diffs: &diffs, db, f0, rules_by: &rules_by, run_vs: &run_vs, moved: &moved, scc }.cuts(&mut *m, &mut run.model, &rules);
+                    let moved = if unseen { BTreeSet::new() } else { moved };
+                    if unseen {
+                        outcome.unseen += 1;
+                    }
                     waved[j] = true;
                     if moved.is_empty() {
                         let no_facts = scc.iter().all(|r| !f0.has_facts(r));
@@ -12631,7 +12973,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                         if placed {
                             quiet_slots += 1;
                             outcome.unchanged.extend(scc.iter().cloned());
-                            super::profile::stratum(&stratum_key(scc), "native set engine", || "quiet: no read changed; each relation is its kept one (decision 0117 step 3)".to_owned());
+                            super::profile::stratum(&stratum_key(scc), "native set engine", || if unseen { "quiet: no rule sees a row its changed reads' deltas gained or lost, by kind or key (decision 0563 B); each relation is its kept one".to_owned() } else { "quiet: no read changed; each relation is its kept one (decision 0117 step 3)".to_owned() });
                             slots[j] = Slot::Quiet;
                             continue;
                         }
@@ -12713,32 +13055,7 @@ fn run_within(program: &body::Placed, db: &Connection, inputs: Inputs, lowering:
                     // A view of an input's columns has its input's, through its columns. A relation derived again that
                     // could not be made a version of its kept rows (`kept_delta`) has its kept rows as old, and its rows
                     // gone and added as minus and plus (`diffs`).
-                    let ins: ModeInputs = moved.iter().filter_map(|r| {
-                        if let (Some([mi, pl]), Some(o), Some(now)) = (diffs.get(r), m.kept(r), super::native::component::held(db, r)) {
-                            let cols = |x: &Arc<super::native::component::InRel>| x.source((0..o.k).map(|c| sql_col(r, c)).collect());
-                            return Some((r.clone(), ([cols(&o), cols(mi), cols(pl), cols(&now)], None)));
-                        }
-                        let (base, cols) = if f0.is_input(r) {
-                            (r.clone(), None)
-                        } else {
-                            let [k] = rules_by.get(r.as_str()).map(Vec::as_slice).unwrap_or_default() else { return None };
-                            let (v, rule) = run_vs.rule_at(*k);
-                            let (base, cols) = input_view_shape(v, rule, |x| f0.is_input(x))?;
-                            (base, Some(cols))
-                        };
-                        if let Some([mi, pl]) = m.given(&base) {
-                            let now = crate::code_rule_dsl::facts::vtab::bound_source(db, &base)?;
-                            return Some((r.clone(), ([m.old_input(&base)?, mi, pl, now], cols)));
-                        }
-                        // A view of an input the engine holds with its change marked where its rows lie (a file-local
-                        // part's export, `fl…_cparam`): its input's versions, read in place through its columns.
-                        cols.as_ref()?;
-                        let h = super::native::component::held(db, &base).filter(|h| h.start().is_some())?;
-                        let src = |x: &Arc<super::native::component::InRel>| x.source((0..h.k).map(|c| sql_col(&base, c)).collect());
-                        use super::native::component::Ver;
-                        let [o, mi, pl] = [Ver::Old, Ver::Minus, Ver::Plus].map(|v| h.version_view(v));
-                        Some((r.clone(), ([src(&o?), src(&mi?), src(&pl?), src(&h)], cols)))
-                    }).collect();
+                    let ins: ModeInputs = moved.iter().filter_map(|r| moved_versions(r, &diffs, &mut *m, db, f0, &rules_by, &run_vs).map(|got| (r.clone(), got))).collect();
                     // Each as the stratum reads it: its rows gone and added that agree on the columns its rules read are
                     // no change to it (`unchanged_as_read`). A view's columns are its source's through `cols`.
                     let ins: ModeInputs = ins.into_iter().map(|(r, ([o, mi, pl, now], cols))| {

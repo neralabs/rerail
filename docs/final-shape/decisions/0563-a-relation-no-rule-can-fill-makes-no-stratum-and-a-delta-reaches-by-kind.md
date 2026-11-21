@@ -1,7 +1,9 @@
 # 0563: A relation no rule can fill makes no stratum, and an edit's delta reaches a rule by the kinds it holds
 
 Status: designed (2026-11-21), spiked (2026-11-21, "Spike" below: each part validated on ep2, findings exact; the
-design is amended there), not built. The user asked for it (2026-11-21): "okay, please survey and design this.
+design is amended there), A1–A2 and B built (2026-11-21, "Built" below). A1–A2 hold only for batches whose
+languages embed none; a Python batch's guests are known only once its documents are loaded, so for ep2 that part
+waits for A3's run-time form. The user asked for it (2026-11-21): "okay, please survey and design this.
 Does it also make sense to track changes per fact type? Presumably much work could be cut out if certain fact
 deltas are empty without needing to propagate it." "This" is the 1,700 strata the merge of the serverplan-quality
 hub (2ac89a3a70) added to every cold run of ep2, which makes no guests. Follows 0101 §1, 0117, 0120 and 0431.
@@ -282,10 +284,16 @@ In the tree, off unless `RERAIL_UNFILLABLE=guests` is set:
   asks for a guest".
 
 So the right test is §3 A1's, made on the file-local part after the split: `answering(local_version)` is empty and
-the run is not `.embedded on`. The run already makes that test, as `parsing`. A1's "a language of the batch embeds"
-is not needed: an embedding is made only by a request or under `.embedded on`. The requests ep2 makes are never
+the run is not `.embedded on`. The run already makes that test, as `parsing`. The requests ep2 makes are never
 answered, so they are work for nothing too. A request no part answers can go the same way, as an empty input of its
 readers.
+
+**Corrected in the build: A1's "a language of the batch embeds" is needed.** The spike claimed that an embedding
+is made only by a request or under `.embedded on`. That is false: a language's own embeds are made when its
+document is loaded, with no request (0431 §4). An HTML file's scripts and styles are guests of their file, and so
+is a Python call's HTML argument (`Markup("…")`, `format_html(…)`, 0470's call-argument embedder). The spike's
+predicate held on ep2 only because none of its files has such a call. Its outputs were the same, but the proof was
+not.
 
 **The empty set is narrower than `guests::READS`.**
 
@@ -392,6 +400,81 @@ stratum only where its proof is exact (the outputs compared). For the other 103 
 rule's key is a column of a relation changed in the same edit, or the read has no given delta (a relation derived
 in the run, whose delta is known only when its stratum has run).
 
+## Built (2026-11-21)
+
+### A1 and A2
+
+- **The predicate** (`run_observed_within`, after the split): the file-local part answers no request (`!parsing`),
+  the run is not `.embedded on`, and no language of the batch embeds another (`Dialect::embeds()` empty, for the
+  run's dialect and each document's). There is no switch: the pruned parts are a function of the split's, whose
+  digests the memo's and the components' keys are.
+- **The guest-only set** is `guests::ONLY`, beside `READS`.
+- **One pass, `prune::Unfillable`**, forward and backward:
+  - forward: the closure seeded from the empty inputs;
+  - backward: from what the dropped rules read alone, the relations no rule left reads, never an output, a native's
+    or a request's.
+  - A part's exports are kept: the general `Prune` took one of them from the file-local part, because its roots are
+    the outputs alone. That broke `comments_are_ws_comment_nodes` (a Rust batch). So the general pass does not run
+    on a part.
+- **Tests:** `prune::tests::a_rule_joining_an_empty_input_goes_with_what_only_it_reads` (a rule over an empty input
+  goes, with the demand only it read; a negated empty relation keeps its rule; a relation a phase binds beside its
+  rules is never taken empty), and the guest tests of `corpus` and `rr`.
+- **ep2** is a Python batch, so A does not fire there. Python embeds by call argument, and whether a file has such
+  a call is known only once it is loaded, after the split. That case is A3's run-time form (below).
+
+### B: the reach by kind and key
+
+At the driver (`plan.rs`, `Reach::cuts`, where `moved` is formed), before a stratum's spec and plan. A stratum none
+of whose rules sees a row of its changed reads' deltas takes the quiet path. It is counted in `Outcome::unseen` and
+`Report::cross_unseen`, with its own profile line. `RERAIL_REACH_BY_KEY=off` reaches by relation alone, to compare.
+Per atom over a changed read:
+
+1. **The atom's own tests** over the delta's rows, read where they lie: a kind's constant, a kind set's facts, a
+   field's or symbol's constant. No delta row passes them, so the atom sees none.
+2. **A witness that shares a variable:** another positive atom, outside the stratum, over a relation this program
+   derives. No delta row's value in the shared column is one of its rows' under its own tests.
+   - It is read through its own index: `lookup_read`, `sorted_rows`, else `lookup`.
+   - These are its rows now. Where it changed too, they are its rows gone as well.
+   - A stored relation not read yet is bound where it lies (`Maintain::need`, 0401 F3) and then probed.
+3. **Read first, the delta**, for as many rows as the witness has. A reached stratum finds its match in the first
+   rows. Then, where the witness is the smaller, its rows are walked and each is looked up in the delta's own index.
+   So a probe reads at most twice the smaller side. That took the insert's probes from 364 ms to 47 ms.
+
+Not cut:
+
+- a native's stratum;
+- a view of an input;
+- an aggregate over a changed read;
+- a nearest-ancestor or AST literal;
+- a changed read no rule names as an atom.
+
+**Never joined as a witness: an input read through a view of the batch's documents**, and a changed input's rows
+now. A lookup there builds the documents' rows. On ep2's insert, one probe of `docof` built 295 documents' rows and
+AST matchers, about 420 ms, which a run that keeps its strata never builds. A relation held as kept counts as an
+input of the maintained program (`Fields::is_input`) but is read as kept rows, so the test is "derived here, held
+or kept", not `is_input`.
+
+**Unlike the design**, the delta's kinds and keys are not facts written with the delta, and stored relations have no
+key summary. The delta's rows are read in place per atom, and a stored witness is bound where it lies. The probe
+costs 29–47 ms over a whole edit, so neither was needed.
+
+**Test:** `session::tests::a_session_passes_on_a_stratum_its_changed_kinds_do_not_reach`. An assignment added to a
+file cuts the strata reached through `kind` and `docof`, and a `while` loop added after is seen. Each run's findings
+are a full run's.
+
+**Measured on ep2, M3, unprofiled.** Two stores, B off (a) and on (b), sides alternating on each edit. The outputs
+(`outputs.rro`) are identical on every run.
+
+| Edit | Instructions | CPU | Wall | Peak memory |
+|---|---|---|---|---|
+| `append` (a function at a file's end) | 59.8 → 37.6 G | 4.61 → 2.97 s | 3.20 → 2.08 s | 883 → 671 MB |
+| An import at a file's top | 66.0 → 66.6 G | 4.66 → 4.65 s | 3.46 → 3.46 s | 894 → 876 MB |
+| A comprehension added at another file's end | 61.5 → 58.4 G | 4.66 → 4.49 s | 3.32 → 3.15 s | 909 → 895 MB |
+
+- The insert's delta is the rest of the file, renumbered: nearly every stratum it reaches sees a row. Stable node
+  identity (step 3) is what makes it small.
+- The profiled edit runs overstate the edits by 20–40%, so the numbers above are unprofiled.
+
 ### The order of work, amended
 
 1. **A1 and A2** as spiked:
@@ -405,7 +488,8 @@ in the run, whose delta is known only when its stratum has run).
    - the kind and key tests at the driver, probing indexes and key summaries;
    - the outputs compared on the `append` and insert edits, and B4's test.
 3. **Stable node identity** across an edit, so an insert's delta is the nodes changed.
-4. **A3**, on a corpus that answers requests.
+4. **A3**, on a corpus that answers requests, and as A1–A2's run-time form: the guest inputs counted empty once a
+   batch's documents are loaded and none holds a guest. That is what serves a Python batch like ep2.
 
 ## Prior art
 
