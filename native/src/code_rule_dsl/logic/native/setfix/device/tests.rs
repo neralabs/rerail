@@ -1369,10 +1369,13 @@
                     batch.finish().unwrap();
                     // A 16z batch's blocks through its cache (0353 step 4b): every read found room.
                     assert_eq!(v.cache_failed(), 0, "{name}: the 16z cache had room: {:?}", v.cache_counts());
-                    for (j, &c) in cols.iter().enumerate() {
-                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
-                        assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
-                    }
+                    // A wrong row is told with every column read and the host's, at the first rows that differ: what a
+                    // device's misread reads instead (another column, another row) shows there.
+                    let got: Vec<Vec<i64>> = (0..cols.len()).map(|j| out.column(j)).collect();
+                    let want: Vec<Vec<i64>> = cols.iter().map(|&c| (0..n).map(|r| src.value(r, c)).collect()).collect();
+                    let wrong: Vec<usize> = (0..n).filter(|&r| (0..cols.len()).any(|j| got[j][r] != want[j][r])).take(6).collect();
+                    let told: Vec<String> = wrong.iter().map(|&r| format!("row {r}: device {:#x?}, host {:#x?}", (0..cols.len()).map(|j| got[j][r]).collect::<Vec<_>>(), (0..cols.len()).map(|j| want[j][r]).collect::<Vec<_>>())).collect();
+                    assert!(wrong.is_empty(), "{name}: columns {cols:?} read in place, {} of {n} rows wrong:\n{}", (0..n).filter(|&r| (0..cols.len()).any(|j| got[j][r] != want[j][r])).count(), told.join("\n"));
                     in_place += 1;
                 }
             }
@@ -1641,7 +1644,7 @@
             let path = format!("d{at}.py");
             let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
             let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
-            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None }
+            Document { key: (7 + 3 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
         }).collect();
         let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
         let content = crate::content_store::ContentStore::open(&std::env::temp_dir().join(format!("rerail-filtered-view-{}-{nonce}.sqlite", std::process::id()))).unwrap();
