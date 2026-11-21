@@ -6213,6 +6213,23 @@ loss depends on the device's timing, not the cases. It reads no view, and no 035
   bundle as the seed): the encoded answers are one entry. No map of its own (0092, 0103).
 - **Done when**: a second process's compile of an unchanged or edited grammar makes no proofs it
   made before, measured.
+- **Done for Kotlin** (2026-11-20, roll-up 20; the user: "why can't we cache the proofs?", then "make the proof
+  vastly smaller. We shouldn't dump random giant files in LFS"):
+  - **Keys are digests.** A question is kept by the first 16 bytes of its text's SHA-256 (`bitlex_prove::Key`,
+    `key_of`, taken in `Proofs::ask`). The text, the question's whole cone, was 4.7 KB a key: Kotlin's 2,974 answers
+    were 14 MB. They are now 52 KB (`RRANSWER`, 17 bytes a yes or no), so no zstd and no LFS.
+  - **The seed** is `kotlin_parser/kotlin.answers`, a tracked file. Its test (`the_shipped_answers_answer_the_grammar`)
+    says when it lacks an answer, and `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes it again.
+  - **The machine's answers** are `answers::answered` (rerail-compiler): one file a grammar family in the
+    temporary directory's `rerail-prover-answers/`, written whole. Its `.done` mark names the text the file answers
+    all of: a compile of that text takes no lock; a compile of another takes the family's lock, so compiles that
+    start together on an edit prove its new questions once, and the others compile from the answers.
+    `kotlin_parser::compile_answered` uses it, as do `compiled()`, the tests' grammar variants and `kotlin_aot`'s
+    build script.
+  - **Measured** (a Linux DGX Spark): the suite on an edited `hex_digit` class took 53.6 s at its first run (one
+    process proved; 378 s when each did) and 13.5 s at its second.
+  - **Not yet**: the engine build's content store, as asked above. `kotlin_parser` has none, and nothing bounds the
+    machine's file: about 52 KB an edit that asks everything again. `rerail_rr_parser::compiled` is not on it yet.
 
 ### Q235. (Q220 on Swift-Kotlin-Scala-support) Bitlex's reference does not implement a mark's `, settles`
 
@@ -8292,6 +8309,20 @@ on an M3 or M5:
   - 2026-11-20: it passes on Linux (131 s on spark2), so it was slow, never red. It is no longer ignored. It is in
     nextest's slow tier (`.config/nextest.toml`): the gate runs it, with 8 minutes allowed, and the quick tier leaves
     it out. Still open: the compile's time, three compiles of 44 s on spark2.
+  - 2026-11-20, roll-up 20 (the user: "kotlin tests should have a few second budget"): the crate's quick tier took
+    378 s on a Linux DGX Spark, for tests whose own parses take microseconds. Each test's process compiled the grammar
+    cold: 41.3 s, 40.5 s of it the provers (3,452 answers). With those answers known, the compile is 1.5 s and makes
+    the same program (`compile_time`). The answers are now shipped beside the grammar, as 0414 and Q234 ask for a
+    seed: `kotlin_parser/kotlin.answers` (52 KB, keyed by digest; Q234), given to `compiled()` and to `kotlin_aot`'s
+    build script and test (the AOT test takes no Kotlin on the hub: 0531). What an edit asks anew
+    is proved once on a machine and kept there (`answers::answered`, Q234).
+    - The quick tier: 44 tests in 14.1 s.
+    - `the_shipped_answers_answer_the_grammar` (1.6 s) fails when an edit asks a question they lack;
+      `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again.
+    - The cold compiles (`a_cold_compile_makes_the_shipped_answers_program`, 45 s, and `walk_lemmas_keep_the_tapes`,
+      53 s) are the slow tier's.
+    - Still open: about 1.5 s of warm compile in each test's process (0.8 s the Bitlex compiler, the rest Cranelift),
+      and the cold compile's 40 s of proofs for an edited grammar's new questions.
 
 ### Q349. Cranelift refuses corpus program `0565-mix-seed_205` by 0423's check
 

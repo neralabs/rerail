@@ -8,7 +8,7 @@ use super::*;
 fn compiled() -> Result<&'static Compiled, &'static str> {
     static OTHER: std::sync::OnceLock<Result<Compiled, String>> = std::sync::OnceLock::new();
     match std::env::var("RERAIL_KOTLIN_GRAMMAR") {
-        Ok(p) => OTHER.get_or_init(|| compile_text(&std::fs::read_to_string(p).expect("the grammar file"))).as_ref().map_err(String::as_str),
+        Ok(p) => OTHER.get_or_init(|| compile_answered(&std::fs::read_to_string(p).expect("the grammar file"))).as_ref().map_err(String::as_str),
         Err(_) => super::compiled(),
     }
 }
@@ -875,15 +875,38 @@ fn fingerprint(c: &crate::Compiled) -> u64 {
     h.finish()
 }
 
-/// The answers a compile made, given to another compile of the grammar (decision 0414): it asks
-/// none of its questions again, and makes the same program.
+/// The shipped answers (`kotlin.answers`, decision 0414's seed) answer every question the grammar
+/// asks: a compile from them alone, not the machine's kept answers, proves nothing.
+/// `RERAIL_BLESS_KOTLIN_ANSWERS=1` writes them again, from a cold compile's.
 #[test]
-fn known_answers_make_the_same_program() {
-    let cold = compiled().expect("compiles");
+fn the_shipped_answers_answer_the_grammar() {
+    if std::env::var_os("RERAIL_BLESS_KOTLIN_ANSWERS").is_some() {
+        let cold = compile_text(GRAMMAR).expect("the grammar compiles");
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/kotlin.answers");
+        std::fs::write(path, rerail_compiler::bitlex_prove::encode(&cold.proofs)).expect("kotlin.answers written");
+        return;
+    }
+    let c = crate::compile_timed(GRAMMAR, crate::shipped_answers(), &mut |_, _| {}).expect("the grammar compiles");
+    assert!(
+        c.proofs.is_empty(),
+        "{} questions the shipped answers lack (the grammar or the provers changed): RERAIL_BLESS_KOTLIN_ANSWERS=1 writes kotlin.answers",
+        c.proofs.len()
+    );
+}
+
+/// A cold compile (no answers known) makes the program the shipped answers make, and its answers,
+/// given to another compile, leave nothing to ask (decision 0414): the answers decide nothing a
+/// proof would not, and the compiler's maps hash with a fixed seed. Cold, so in nextest's slow tier.
+#[test]
+fn a_cold_compile_makes_the_shipped_answers_program() {
+    let cold = compile_text(GRAMMAR).expect("the grammar compiles");
+    let shipped = super::compiled().expect("the grammar compiles");
+    assert_eq!(fingerprint(&cold), fingerprint(shipped), "the shipped answers make another program");
+    assert!(cold.words == shipped.words && cold.program.words == shipped.program.words, "the grammar compiles to two programs");
     let known: crate::Proofs = cold.proofs.iter().cloned().collect();
     let warm = crate::compile_timed(crate::GRAMMAR, known, &mut |_, _| {}).expect("compiles");
     assert_eq!(warm.proofs.len(), 0, "a question asked again");
-    assert_eq!(fingerprint(&warm), fingerprint(cold));
+    assert_eq!(fingerprint(&warm), fingerprint(&cold));
 }
 
 /// Tier 1 alone: `RERAIL_KOTLIN_GRAMMAR`'s, the interpreter's records against the CPU's, over
@@ -1298,18 +1321,9 @@ fn lazy_probe() {
     eprintln!("blank marks read by the CPU loop: {blank_bits:b}; records_made {:?}", native.records_made());
 }
 
-/// One grammar compiles to one program, each time: the compiler's maps hash with a fixed seed.
-#[test]
-fn the_grammar_compiles_to_one_program() {
-    let with = super::compiled().expect("the grammar compiles");
-    let again = compile_text(GRAMMAR).expect("the grammar compiles");
-    assert!(with.words == again.words && with.program.words == again.program.words, "the grammar compiles to two programs");
-}
-
 /// The walk lemmas (`bitlex_masks::NO_WALK_LEMMAS`: a walk's regions never overlap) change only what tier 2 is proved
 /// to need: the grammar reads each text as without them, the same tape or the same refusal.
 #[test]
-#[ignore = "compiles the grammar without the walk lemmas: minutes"]
 fn walk_lemmas_keep_the_tapes() {
     let with = super::compiled().expect("the grammar compiles");
     assert!(!with.program.block_programs[0].walks.is_empty(), "the grammar has no walk for the lemmas");

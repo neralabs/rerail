@@ -30,7 +30,7 @@ default-filter = """not (
   | package(rerail-c-directives)
   | (package(rerail-parser-tests) & test(=aot_tests::ladder_steps_rust_tapes_are_the_jits))
   | (package(rerail-accel) & test(=gpu::join::tests::a_screened_probe_finds_the_hosts_pairs))
-  | (package(rerail-kotlin-parser) & test(=tests::a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes))
+  | (package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/))
 )"""
 # A test past this is reported as slow; past four periods it is stopped.
 slow-timeout = { period = "60s", terminate-after = 4 }
@@ -65,10 +65,10 @@ slow-timeout = { period = "60s", terminate-after = 8 }
 filter = "package(rerail-accel) & test(=gpu::join::tests::a_screened_probe_finds_the_hosts_pairs)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
-# Kotlin's last ladder step compiled three times (one program each time, and the walk lemmas'): 131 s on a Linux
-# Spark, ~255 s on an M1 Max, in a debug build (Q371).
+# Kotlin's grammar compiled cold (against its shipped answers, and without the walk lemmas): about 45 s and 53 s on a
+# Linux Spark, in a debug build (Q371).
 [[profile.default.overrides]]
-filter = "package(rerail-kotlin-parser) & test(=tests::a_step_compiles_to_one_program_and_walk_lemmas_keep_its_tapes)"
+filter = "package(rerail-kotlin-parser) & test(/^tests::(walk_lemmas_keep_the_tapes|a_cold_compile_makes_the_shipped_answers_program)$/)"
 slow-timeout = { period = "60s", terminate-after = 8 }
 
 [profile.default.junit]
