@@ -1182,7 +1182,7 @@ impl TextTest {
             let probed = self.probed.lock();
             strings.into_iter().zip(symbols).filter(|(_, sym)| !probed.tested.contains(&i64::from(*sym))).unzip()
         };
-        let passing = if untested.0.is_empty() { Vec::new() } else { self.tests.rows(&untested.0, &untested.1).swap_remove(self.k) };
+        let passing = if untested.0.is_empty() { Vec::new() } else { self.tests.rows_of(self.k, &untested.0, &untested.1) };
         let mut probed = self.probed.lock();
         probed.tested.extend(untested.1.iter().map(|&sym| i64::from(sym)));
         for s in passing {
@@ -1214,7 +1214,7 @@ impl TextTest {
                 symbols.push(sym);
             }
         }
-        let passing = if strings.is_empty() { Vec::new() } else { self.tests.rows(&strings, &symbols).swap_remove(self.k) };
+        let passing = if strings.is_empty() { Vec::new() } else { self.tests.rows_of(self.k, &strings, &symbols) };
         let mut probed = self.probed.lock();
         probed.tested.extend(fresh);
         for s in passing {

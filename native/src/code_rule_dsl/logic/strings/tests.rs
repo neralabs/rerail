@@ -292,6 +292,28 @@ fn batches_test_their_strings_at_once_on_one_pool() {
     }
 }
 
+/// One test's passing symbols (`rows_of`) are `rows`' for that test, whether its strings are new to the vocabulary or
+/// tested before (by `rows`, or by another test's `rows_of`), and over 64 tests (a second word of bits).
+#[test]
+fn one_tests_rows_are_its_share_of_every_tests() {
+    let names: Vec<String> = (0..70).map(|k| format!("strtest_{k}")).collect();
+    let specs: Vec<(String, Vec<String>)> = (0..70).map(|k| ("prefix".to_owned(), vec![format!("w{}", k % 7)])).collect();
+    let vocabulary = Vocabulary::from_specs(&names, specs.clone()).unwrap();
+    let strings: Vec<String> = (0..500).map(|i| format!("w{}_{i}", i % 9)).collect();
+    let symbols: Vec<u32> = (0..500).collect();
+    for k in [3, 66] {
+        let one = vocabulary.rows_of(k, &strings[..200], &symbols[..200]);
+        assert_eq!(one, (0..200i64).filter(|i| *i as usize % 9 == k % 7).collect::<Vec<_>>(), "test {k}, new strings");
+    }
+    let all = vocabulary.rows(&strings, &symbols);
+    let fresh = Vocabulary::from_specs(&names, specs).unwrap();
+    for k in 0..70 {
+        assert_eq!(vocabulary.rows_of(k, &strings, &symbols), all[k], "test {k}, tested before");
+        assert_eq!(fresh.rows_of(k, &strings, &symbols), all[k], "test {k}, a vocabulary of its own");
+    }
+    assert!(vocabulary.rows_of(70, &strings, &symbols).is_empty(), "no such test");
+}
+
 /// The data-layer programs' SQLite functions (decision 0107) give what SQLite's own give, over strings with
 /// multi-byte characters, negative and zero positions, and patterns of `%` and `_`.
 #[test]
