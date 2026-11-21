@@ -8771,7 +8771,39 @@ fn run_observed_within(
                     Counted::Measured(syntax::statistics(source))
                 })
             };
-            if counts.len() > 1 { crate::code_rule_dsl::logic::profile::on_cores(|| counts.par_iter().map(count).collect()) } else { counts.iter().map(count).collect() }
+            // Counted in waves within a share of the budget (decision 0126): a column's pass lists each row's
+            // document and value (`RelStats::count`, `ROW_BYTES` a row), so every relation of millions of rows counted
+            // at once held 1.2 GB more on 901 files. A wave is side by side, and has one relation at least. Kept
+            // statistics (a text test's, a patch's) count no row, and a semi-join's only its held nodes'; neither is
+            // asked its rows here, which would make its documents.
+            const ROW_BYTES: usize = 48;
+            let allowance = rerail_accel::budget::share(256 << 20);
+            let bytes = |c: &Count| match () {
+                () if semijoin.contains(&c.rel) => held_nodes.len() * ROW_BYTES,
+                () if c.kept.is_some() => 0,
+                () => c.source.len() * ROW_BYTES,
+            };
+            let mut counted: Vec<Counted> = Vec::with_capacity(counts.len());
+            let mut at = 0;
+            while at < counts.len() {
+                let (mut end, mut held) = (at, 0usize);
+                while end < counts.len() {
+                    let b = bytes(&counts[end]);
+                    if end > at && held + b > allowance {
+                        break;
+                    }
+                    held += b;
+                    end += 1;
+                }
+                let wave = &counts[at..end];
+                if wave.len() > 1 {
+                    counted.extend(crate::code_rule_dsl::logic::profile::on_cores(|| wave.par_iter().map(count).collect::<Vec<_>>()));
+                } else {
+                    counted.extend(wave.iter().map(count));
+                }
+                at = end;
+            }
+            counted
         };
         // Applied in the relations' order, as one thread gave them.
         for (c, counted) in counts.into_iter().zip(counted) {

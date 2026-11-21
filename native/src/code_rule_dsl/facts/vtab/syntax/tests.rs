@@ -2289,6 +2289,36 @@ fn a_batch_made_by_group_holds_the_eager_batchs_rows() {
     assert_eq!(probed.groups(), 3, "the scan made the rest as one group");
 }
 
+/// Decision 0494 (Q396): reads of a batch side by side make each document once. Each thread reads a relation whole;
+/// a read finding documents another is making waits for them, so every group made is kept, none made again and set
+/// aside (the base relations counted on the pool made the whole batch once each).
+#[test]
+fn reads_side_by_side_make_each_document_once() {
+    let store = ContentStore::open(&temp("side-by-side")).unwrap();
+    let docs: Vec<Document> = (1..=48).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    # c{k}\n    return g(x, {k}) + \"s{k}\"\n"))).collect();
+    let reads = ["node", "text", "comment", "op", "str", "name", "line", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let sources = made_sources(&batch);
+    let start = std::sync::Barrier::new(sources.len());
+    let read: Vec<usize> = std::thread::scope(|scope| {
+        let threads: Vec<_> = sources
+            .iter()
+            .map(|(_, _, s)| {
+                let start = &start;
+                scope.spawn(move || {
+                    start.wait();
+                    (0..s.len()).filter(|&r| s.value(r, 0) >= 0).count()
+                })
+            })
+            .collect();
+        threads.into_iter().map(|t| t.join().unwrap()).collect()
+    });
+    assert!(read.iter().sum::<usize>() > 0);
+    assert!(batch.groups() >= 1);
+    assert_eq!(batch.makes(), batch.groups(), "no group made again and set aside");
+}
+
 /// Decision 0494, R2: a probe of a relation by a node makes that node's document alone, its projection and its rows.
 #[test]
 fn a_probe_makes_the_document_it_names_alone() {

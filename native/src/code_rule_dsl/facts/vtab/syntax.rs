@@ -3404,6 +3404,12 @@ impl Batch {
         self.rows.groups()
     }
 
+    /// How many groups it has made, those set aside because another read made one of their documents first too: its
+    /// groups, unless a document was made twice.
+    pub fn makes(&self) -> usize {
+        self.rows.makes()
+    }
+
     /// The node view's row offsets by document: every document's projection made.
     pub fn nodes(&self) -> &[usize] {
         self.offsets(View::Node)
