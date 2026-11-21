@@ -27,7 +27,7 @@ use std::path::{Path, PathBuf};
 
 /// JSON in simdjson's structure (`json_parser/json-simdjson.bitlex`, page 40), compiled.
 fn simdjson_form() -> Compiled {
-    let source = std::fs::read_to_string(Path::new(env!("CARGO_MANIFEST_DIR")).join("../json_parser/json-simdjson.bitlex")).expect("reads");
+    let source = std::fs::read_to_string(std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../json_parser/json-simdjson.bitlex")).expect("reads");
     compile_step("json-simdjson", &source)
 }
 

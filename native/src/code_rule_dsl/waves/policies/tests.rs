@@ -16,7 +16,7 @@ fn files(directory: &Path, found: &mut Vec<PathBuf>) {
 
 /// A pack's compiled policies, by file stem.
 fn policies(pack: &str) -> Vec<(String, CompiledCodeRuleDsl)> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR")).join("../packs").join(pack);
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs").join(pack);
     let mut paths = Vec::new();
     files(&root.join("rules"), &mut paths);
     files(&root.join("candidates/rules"), &mut paths);

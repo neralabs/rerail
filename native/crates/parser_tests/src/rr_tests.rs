@@ -16,7 +16,9 @@
 use rerail_compiler::ladder::{Compiled, IdNode, check_ladder, steps_in};
 use rerail_rr_syntax as rr;
 
-const DIR: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../rr_syntax/bitlex_ladder");
+// The rr ladder's directory, found as the test runs: not written into its build (decision 0224).
+static DIR: std::sync::LazyLock<String> =
+    std::sync::LazyLock::new(|| format!("{}/../rr_syntax/bitlex_ladder", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")));
 
 /// The bytes a mutation writes: `.rerail`'s punctuation, quotes, comment openers and words.
 const ALPHABET: &[u8] = b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\";
@@ -393,8 +395,8 @@ fn against_the_engine(step: &str, c: &Compiled, bytes: &[u8], want: &Option<Vec<
 /// the step parses.
 #[test]
 fn rr_steps_parse_as_the_reference_and_the_engine() {
-    let steps = steps_in(DIR);
-    assert!(!steps.is_empty(), "no steps in {DIR}");
+    let steps = steps_in(&DIR);
+    assert!(!steps.is_empty(), "no steps in {}", *DIR);
     let fixed: Vec<&str> = CASES.iter().map(|c| c.0).collect();
     let differ = check_ladder(&steps, ALPHABET, SAMPLES, &fixed, &|step, c, bytes, want| against_the_engine(step, c, bytes, want));
     assert!(differ.is_empty(), "{} steps differ:\n{}", differ.len(), differ.join("\n"));
@@ -404,7 +406,7 @@ fn rr_steps_parse_as_the_reference_and_the_engine() {
 #[test]
 fn rr_cases_parse_from_their_steps() {
     let mut missing = Vec::new();
-    for (name, source) in steps_in(DIR) {
+    for (name, source) in steps_in(&DIR) {
         let c = rerail_compiler::ladder::compile_step(&name, &source);
         for &(doc, from) in CASES {
             if name.as_str() >= from && rerail_compiler::ladder::reference(&c, doc.as_bytes()).is_none() {
@@ -420,7 +422,7 @@ fn rr_cases_parse_from_their_steps() {
 /// each level they call refusing it too, no level that may end and go on.
 #[test]
 fn a_refused_mark_is_checked() {
-    let source = std::fs::read_to_string(format!("{DIR}/22-test-blocks.bitlex")).expect("the grammar");
+    let source = std::fs::read_to_string(format!("{}/22-test-blocks.bitlex", *DIR)).expect("the grammar");
     assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
     let refuse = "refuse json_bad in json_document json_inner_object json_inner_array";
     for (from, to, why) in [
@@ -440,7 +442,7 @@ fn a_refused_mark_is_checked() {
 /// the program (`RETAG m=3` names one; `provisional` fields the program checks at `ACCEPT`).
 #[test]
 fn a_reading_is_checked() {
-    let source = std::fs::read_to_string(format!("{DIR}/22-test-blocks.bitlex")).expect("the grammar");
+    let source = std::fs::read_to_string(format!("{}/22-test-blocks.bitlex", *DIR)).expect("the grammar");
     assert_eq!(rerail_compiler::ladder::compile_error(&source), None);
     for (from, to, why) in [
         ("reread parenthesized_strict pattern_tail\n  provisional", "reread nowhere pattern_tail\n  provisional", "no reading of that name"),
@@ -469,7 +471,7 @@ fn rr_look() {
         Some(path) => std::fs::read_to_string(path).expect("reads the file"),
         None => doc.replace("\\n", "\n"),
     };
-    for (name, source) in steps_in(DIR).into_iter().filter(|s| s.0.contains(&step)) {
+    for (name, source) in steps_in(&DIR).into_iter().filter(|s| s.0.contains(&step)) {
         let c = rerail_compiler::ladder::compile_step(&name, &source);
         let out = ::bitlex::eval::Ev::run(&c.stmts, doc.as_bytes(), &std::collections::HashMap::new()).expect("runs");
         eprintln!("{name}: errors {:?}", out.errors);
@@ -517,11 +519,11 @@ fn rr_look() {
 #[test]
 #[ignore = "the corpus: run by name"]
 fn rr_corpus() {
-    let steps = steps_in(DIR);
+    let steps = steps_in(&DIR);
     let want = std::env::var("RERAIL_RR_STEP").ok();
     let (name, source) = steps.iter().rev().find(|s| want.as_ref().is_none_or(|w| s.0.contains(w.as_str()))).expect("a step");
     let c = rerail_compiler::ladder::compile_step(name, source);
-    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../..");
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../../..");
     let mut files = Vec::new();
     let mut work = vec![root];
     while let Some(dir) = work.pop() {

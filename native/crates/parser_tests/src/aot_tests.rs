@@ -30,8 +30,8 @@ const KOTLIN_SAMPLES: &[(&str, &[&str])] = &[
 ];
 
 const LADDERS: [Ladder; 4] = [
-    Ladder { name: "json", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../compiler/bitlex_ladder")), alphabet: b"<>();=#^ \nav9~,eE-{}[]\":/*", fixed: json_fixed, samples: &[], rules: false, known: Known::default },
-    Ladder { name: "rr", steps: || steps(concat!(env!("CARGO_MANIFEST_DIR"), "/../rr_syntax/bitlex_ladder")), alphabet: b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\", fixed: Vec::new, samples: &[], rules: false, known: Known::default },
+    Ladder { name: "json", steps: || steps(&format!("{}/../compiler/bitlex_ladder", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))), alphabet: b"<>();=#^ \nav9~,eE-{}[]\":/*", fixed: json_fixed, samples: &[], rules: false, known: Known::default },
+    Ladder { name: "rr", steps: || steps(&format!("{}/../rr_syntax/bitlex_ladder", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))), alphabet: b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\", fixed: Vec::new, samples: &[], rules: false, known: Known::default },
     Ladder { name: "kotlin", steps: || vec![("kotlin.bitlex".to_owned(), include_str!("../../kotlin_parser/kotlin.bitlex").to_owned())], alphabet: b"(){}[].,:;=<>!?+-*/\"'`$@ \naxZ09_", fixed: Vec::new, samples: KOTLIN_SAMPLES, rules: true, known: rerail_kotlin_parser::shipped_answers },
     Ladder { name: "probe", steps: || vec![("retagged-root".to_owned(), RETAGGED_ROOT.to_owned()), ("wrapped-twice".to_owned(), WRAPPED_TWICE.to_owned()), ("folded-chain".to_owned(), FOLDED_CHAIN.to_owned())], alphabet: b"();!? \nvraifus", fixed: probe_fixed, samples: &[], rules: false, known: Known::default },
 ];

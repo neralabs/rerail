@@ -558,6 +558,17 @@ impl Scoreboard {
         Ticket { id: NEXT.fetch_add(1, Ordering::Relaxed), lane, items, queued: Instant::now(), started: None, share0: 0.0, cpu: 0.0, cpu0: None, phases: Vec::new() }
     }
 
+    /// A queued job dropped unrun (a stream's, left when its caller returned early): off the lane's queue, its
+    /// estimate no longer outstanding. It never started, so it was never running and is no job the lane ran.
+    pub fn unqueue(&self, t: Ticket) {
+        let est: f64 = t.items.iter().map(|i| i.estimate).sum();
+        self.with(|s| {
+            let u = &mut s.units[t.lane.index()];
+            u.queued -= 1;
+            u.outstanding = (u.outstanding - est).max(0.0);
+        });
+    }
+
     /// A worker took the job.
     pub fn start(&self, t: &mut Ticket) {
         let now = Instant::now();

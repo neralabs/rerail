@@ -101,6 +101,8 @@ pub struct Block {
     base: *mut u8,
     reserved: usize,
     ext: Arc<Extent>,
+    /// A file block's file: an open block's, for the truncation at its freeze, and closed then (Unix): a mapping needs
+    /// no descriptor, so a frozen block holds none.
     file: Option<File>,
     /// Its memory is a file's mapping, not a reservation (`mem::reserve`): counted neither way. A mapping read-only
     /// holds no descriptor (`map_file`), so this is not `file.is_some()`.
@@ -620,6 +622,11 @@ impl Block {
             unsafe { crate::mem::protect_read(self.base, self.reserved) };
         }
         let mut b = self;
+        // Unix: nothing is left to truncate, and the mapping outlives the file's descriptor: it is closed.
+        #[cfg(unix)]
+        {
+            b.file = None;
+        }
         b.writable = false;
         Frozen(Arc::new(b))
     }
@@ -740,27 +747,41 @@ impl Block {
         if len < size_of::<Header>() {
             return Err(format!("{}: {len} bytes, shorter than a header", path.display()));
         }
-        #[cfg(unix)]
-        let b = {
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
-            if p == libc::MAP_FAILED {
-                return Err(io::Error::last_os_error().to_string());
-            }
-            Block::make(p.cast(), len, len, Some(f), false, None)
-        };
-        // No mapping: the file read into a reservation of its own.
-        #[cfg(not(unix))]
-        let b = {
-            let mut f = f;
-            let p = crate::mem::reserve(len.div_ceil(PAGE) * PAGE);
-            std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) }).map_err(|e| e.to_string())?;
-            Block::make(p, len.div_ceil(PAGE) * PAGE, len, None, false, None)
-        };
-        let at = frozen_at(unsafe { std::slice::from_raw_parts(b.base, len) }, kind).map_err(|e| format!("{}: {e}", path.display()))?;
-        if at.length != len {
-            return Err(format!("{}: header says {} bytes, the file has {len}", path.display(), at.length));
-        }
+        let b = Block::map_read(f, len)?;
+        b.check_frozen(len, kind).map_err(|e| format!("{}: {e}", path.display()))?;
         Ok(Frozen(Arc::new(b)))
+    }
+
+    /// The whole of `f`, `len` bytes, mapped read-only. The mapping keeps the pages, so the descriptor is closed (`f`,
+    /// dropped as this returns).
+    #[cfg(unix)]
+    fn map_read(f: File, len: usize) -> Result<Block, String> {
+        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+        if p == libc::MAP_FAILED {
+            return Err(io::Error::last_os_error().to_string());
+        }
+        // A mapping (counted as one by `make`), its file let go.
+        let mut b = Block::make(p.cast(), len, len, Some(f), false, None);
+        b.file = None;
+        Ok(b)
+    }
+
+    /// No mapping: the whole of `f`, `len` bytes, read into a reservation of its own.
+    #[cfg(not(unix))]
+    fn map_read(mut f: File, len: usize) -> Result<Block, String> {
+        let p = crate::mem::reserve(len.div_ceil(PAGE) * PAGE);
+        std::io::Read::read_exact(&mut f, unsafe { std::slice::from_raw_parts_mut(p, len) }).map_err(|e| e.to_string())?;
+        Ok(Block::make(p, len.div_ceil(PAGE) * PAGE, len, None, false, None))
+    }
+
+    /// Whether the block, its file's `len` bytes, was frozen whole as a block of `kind`: magic, kind, state, and the
+    /// length its header says is the file's.
+    fn check_frozen(&self, len: usize, kind: u32) -> Result<(), String> {
+        let at = frozen_at(unsafe { std::slice::from_raw_parts(self.base, len) }, kind)?;
+        if at.length != len {
+            return Err(format!("header says {} bytes, the file has {len}", at.length));
+        }
+        Ok(())
     }
 }
 
@@ -899,4 +920,38 @@ pub fn frame(kind: u32, root_len: usize) -> (Vec<u8>, Vec<u8>) {
     // SAFETY: `head` holds at least a header; every field is a plain integer.
     unsafe { std::ptr::write_unaligned(head.as_mut_ptr().cast::<Header>(), h) };
     (head, vec![0u8; length - root - root_len])
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    /// The descriptors this process has open.
+    fn open_descriptors() -> usize {
+        std::fs::read_dir("/dev/fd").expect("/dev/fd").count()
+    }
+
+    /// Frozen file blocks hold no descriptor: a store keeps many segments mapped at once (its caches hold them), and
+    /// a descriptor each reached the default limit of 1,024 (`unable to open database file` from SQLite after).
+    #[test]
+    fn frozen_file_blocks_hold_no_descriptor() {
+        const N: usize = 256;
+        let dir = std::env::temp_dir().join(format!("rerail-block-descriptors-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let before = open_descriptors();
+        let mut held = Vec::new();
+        for i in 0..N {
+            let path = dir.join(format!("{i}.block"));
+            let block = Block::file(&path, kind::JOURNAL, PAGE).unwrap();
+            block.alloc(64, 64);
+            held.push(block.freeze());
+            held.push(Block::open_file(&path, kind::JOURNAL).unwrap());
+        }
+        let grown = open_descriptors().saturating_sub(before);
+        assert_eq!(held.iter().map(|b| b.used()).min(), held.iter().map(|b| b.used()).max(), "every block read back whole");
+        drop(held);
+        std::fs::remove_dir_all(&dir).unwrap();
+        // Other tests of this binary open files meanwhile: a bound well under the blocks' count, not an exact one.
+        assert!(grown < N / 4, "{} frozen file blocks held {grown} more descriptors open", 2 * N);
+    }
 }

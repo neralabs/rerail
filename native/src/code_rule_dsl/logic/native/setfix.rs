@@ -84,7 +84,8 @@ mod view_tests;
 #[cfg(test)]
 mod base_probe;
 mod inputs_tests;
-#[cfg(all(test, any(target_os = "macos", target_os = "linux")))]
+// macOS's: it reads the malloc zones' statistics and logger, an OS fact (decision 0440 step E keeps those there).
+#[cfg(all(test, target_os = "macos"))]
 mod blocks_compare_tests;
 #[cfg(test)]
 mod verdict_tests;

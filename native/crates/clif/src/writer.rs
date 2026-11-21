@@ -3222,7 +3222,7 @@ mod tests {
     /// The tape crate's writer is the ops' Rust (decision 0434 §6).
     #[test]
     fn the_tape_crates_writer_is_this() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tape_format/src/generated_writer.rs");
+        let path = &format!("{}/../tape_format/src/generated_writer.rs", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
         let source = super::rust_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(path, &source).unwrap();
@@ -3234,7 +3234,7 @@ mod tests {
     /// The kernels' writer is the ops' UKL, the library's `<ukl/writer.h>` (decisions 0434 §6 R15, 0440 §3.3).
     #[test]
     fn the_tape_crates_writer_kernels_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl/lib/ukl/writer.h");
+        let path = &format!("{}/../ukl/lib/ukl/writer.h", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
         let source = super::ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(path, &source).unwrap();

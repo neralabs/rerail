@@ -277,7 +277,7 @@ fn a_file_past_64_kib_is_read_at_wide_columns() {
 /// through Cranelift too. The earlier steps are in git's history (decision 0422).
 #[test]
 fn every_ladder_step_compiles() {
-    let dir = concat!(env!("CARGO_MANIFEST_DIR"), "/bitlex_ladder");
+    let dir = &format!("{}/bitlex_ladder", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let mut steps: Vec<_> = std::fs::read_dir(dir).expect("the ladder").map(|e| e.expect("an entry").path()).collect();
     steps.sort();
     for p in &steps {

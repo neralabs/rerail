@@ -8394,3 +8394,64 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   - Metal was not run: the record pass's barrier and the launch split are checked on the CPU backend alone.
   - The roots' anchors (`Runner::records`) are still not in a plan's count. Where they pass the budget, the
     submission's check refuses and the split takes it, unless the last segment has one step.
+
+### Q384. Roll-up 23 (main onto Pulling-it-all-together): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): main at 1328a4e386, 8 commits past their merge base 6ec384ad90 (#830, #861, #910, #911,
+  #916, #917, #918, #919). None adds a decision. Main's decision 0224 (no crate compiles its checkout's path in),
+  which #830 applies, now covers ours' code too.
+- **Taken from main**:
+  - The tree watch's own crate (`rerail-tree-watch`), a workspace member beside ours'.
+  - **#861, a long-lived store's bounded descriptors and segments.** A frozen file block holds no descriptor on Unix
+    (`Block::map_read`, `check_frozen`; `frozen_file_blocks_hold_no_descriptor`). A kind's segments past
+    `segments::SEGMENT_BUDGET` (1,024) are merged, all but the oldest half of it (`retired`, `SegmentKind::compact`).
+    test-rr's work directory is stable per store, file and test, so a rerun adds no corpus root.
+  - **#918**: the packed sort's split into `Held`, `Layout` and its steps, with the fix for a tag every row shares
+    (zero width: its place is the key's whole width when the values fill 128 bits), and its test.
+  - **#910**: the marks test over every corpus file, its CPU codes compared exactly up to the token where tier 1
+    refuses the file (`refusing_token`). The test's parts are `MarksForms` and `check_file`.
+  - The other commits' tests, CI and scripts, which merged without a conflict.
+- **Kept from ours, main's change ported into it**:
+  - `Block` keeps ours' `Extent` and `mapped` flag, with no Windows mapping. `map_read` makes a mapping with its
+    file, so that it is counted as one, and then lets the file go.
+  - Ours retired the frames (49bef77037), so main's `frames.rs` stays deleted, with its frame compaction. Main's
+    two memo tests in that file move to ours' `held.rs` (`a_compaction_cannot_run_inside_the_batch_that_names_its_segments`,
+    `a_memos_segments_past_the_budget_are_merged_in_their_order`), and the budget's check to ours' memo test.
+  - The memo's compaction is main's whole, taking ours' write-back setting (`write_segments`' `flush`).
+  - The object segments keep ours' four tables (`PLACED`: tapes, sources, check results, tree pages), in main's
+    budgeted compaction (`placed_objects`, `lose_object`, `move_object` over `PLACED`). Ours copied bytes that
+    several rows name once. That is now `segments::install`'s, for every kind. A new test checks the budget:
+    `object_segments_past_the_budget_are_merged`.
+  - The sort keeps ours' signature, its tags put in `out` and a `bool` for whether it ran.
+  - The marks test keeps ours' device check, gated to the lane's targets. The device's codes agree with the
+    interpreter's up to a refusal (`codes_agree`), because ours' record pass stops a refused file's lanes (Q383).
+    That check runs over the cases, a fifth of the corpus and the files refused at a token. Ours' grammar refuses
+    only a number of 19 digits at its token, since a float's digits never refuse. So the cases refused at a token
+    are that one after each pad, and `1.2.3` is refused past tier 1.
+  - In the test files both sides changed, ours' APIs (`parse_version`, `print_version`, the 22-test-blocks grammar,
+    the fixture repository) are written with main's paths read at run time.
+- **Decision 0224 on ours' code**: ours' 21 `env!("CARGO_MANIFEST_DIR")` reads are now the variable read as the test
+  runs, in c-directives, clif, kotlin_parser, parser_tests, ukl and the engine's tests. clif's `UKL_READS` is a
+  test-only `ukl_reads()`. Main's lab crate (tape16) keeps its own, as main does.
+- **Found and fixed on the way**:
+  - `setfix::blocks_compare_tests` reads macOS's malloc zones. 0440 step E widened its gate to Linux, and
+    rerail-logic's tests stopped linking there (`malloc_logger` undefined). It is gated to macOS again: an OS fact.
+  - The front's source walk passed its root by value in a loop. That was hidden while `native` was a `&Path`.
+- **Checked**, every run held to the CPU (`RERAIL_GPU=cpu`, `RERAIL_DEVICE=cpu`; no Metal):
+  - Clippy is clean on 18 crates on a Linux DGX Spark and an M1 Max: `rerail-blocks`, `-engine`, `-clif`,
+    `-c-directives`, `-kotlin-parser`, `-parser-tests`, `-ukl`, `-simdjson`, `-rr-parser`, `-tree-watch`, `-store`,
+    `-device-metal`, `-logic`, `-rr`, `-w`, `-facts`, `-sessions` and `-transducer`.
+  - On the Spark:
+    - `rerail-store` 241, `-blocks` 40, `-clif` 21, `-simdjson` 4, `-ukl` 8, `-tree-watch` 24 and
+      `-kotlin-parser` 44.
+    - rr_parser's 49 (the marks test alone, 160 s), and c-directives' ladder test.
+    - 215 of the engine's tests over the conflicted files, and 45 of rerail-logic's (front, rr, program text,
+      setfix's runs).
+  - On the M1 Max: `rerail-store` 253, `-blocks` 40 and `-simdjson` 4.
+- **Open**:
+  - `rerail-parser-tests` on Linux with the device held to the CPU: 6 block tests time out at 240 s, and
+    `a_files_start_on_metal_is_the_interpreters` is refused (`UnsupportedBackend`: the serial path refuses a
+    prefix). Both are 0440 step E's, since those tests first ran on Linux there. Q399, on the bend branch
+    (0112eaa9af), fixes both: UKL's fingerprint was hashed at every kernel lookup, 17 ms each, and the refusal
+    came back in a hub merge. It lands with that branch's merge, the next roll-up but one.
+  - The marks test's 160 s is the device's share on the CPU backend (Q383). It is to be measured again after Q399.

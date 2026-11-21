@@ -27,7 +27,7 @@ use crate::content_store::ContentStore;
 use crate::code_rule_dsl::logic::front::AggOp;
 use crate::code_rule_dsl::logic::strings::functions::{Kind, all as functions};
 use std::fmt::Write as _;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 /// The facts every probe reads: symbols, numbers, pairs, edges (with a cycle) and labelled edges (`l`: routes of one
 /// length that differ in their bytes, and a route of fewer characters but more bytes).
@@ -408,7 +408,7 @@ fn packs_ledger(all: &[Probe], matrix: &str) {
 
 /// The ledger's place.
 fn ledger() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
+    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../gate/executor-coverage/matrix.tsv")
 }
 
 /// One cell, on one line: the explanation's own detail (rule numbers, slots; the rule a SQL error was in) left
@@ -589,7 +589,7 @@ fn ops_of(file: &std::sync::Arc<crate::code_rule_dsl::logic::rr::from_tape::RrFi
 
 /// The shipped `.rerail` files: the packs and the engine's own programs.
 fn shipped() -> Vec<PathBuf> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
     let mut out = Vec::new();
     let mut walk = vec![root.join("../docs/rule-syntax"), root.join("src/code_rule_dsl")];
     while let Some(d) = walk.pop() {

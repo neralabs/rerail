@@ -282,7 +282,10 @@ pub fn tape_z_ukl_source() -> Result<String, String> {
 }
 
 /// Where the reads' UKL is held: the library's `ukl/reads/`, which every kernel includes them from.
-pub const UKL_READS: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl/lib/ukl/reads");
+#[cfg(test)]
+fn ukl_reads() -> String {
+    format!("{}/../ukl/lib/ukl/reads", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
+}
 
 /// A generated header's first lines: what made it, and how to make it again.
 fn generated(function: &str, decision: &str, test: &str) -> String {
@@ -2705,7 +2708,7 @@ mod tests {
     /// The facts crate's numbering reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_facts_id_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.rs");
+        let path = &format!("{}/../../src/code_rule_dsl/facts/vtab/syntax/id_reads.rs", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
         let source = super::ids_rust_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(path, &source).unwrap();
@@ -2717,7 +2720,7 @@ mod tests {
     /// The numbering's kernels' reads are these, as UKL (`<ukl/reads/ids.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_facts_id_kernels_reads_are_these() {
-        let path = format!("{}/ids.h", super::UKL_READS);
+        let path = format!("{}/ids.h", super::ukl_reads());
         let source = super::ids_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();
@@ -2729,7 +2732,7 @@ mod tests {
     /// The blocks crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_blocks_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../blocks/src/generated_reads.rs");
+        let path = &format!("{}/../blocks/src/generated_reads.rs", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
         let source = super::relation_rust_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(path, &source).unwrap();
@@ -2741,7 +2744,7 @@ mod tests {
     /// The relation's kernels' reads are these, as UKL (`<ukl/reads/relation.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_blocks_kernels_reads_are_these() {
-        let path = format!("{}/relation.h", super::UKL_READS);
+        let path = format!("{}/relation.h", super::ukl_reads());
         let source = super::relation_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();
@@ -2753,7 +2756,7 @@ mod tests {
     /// The kernels' reads are these, as UKL (`<ukl/reads/tape.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_kernels_reads_are_these() {
-        let path = format!("{}/tape.h", super::UKL_READS);
+        let path = format!("{}/tape.h", super::ukl_reads());
         let source = super::tape_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();
@@ -2765,7 +2768,7 @@ mod tests {
     /// The tape crate's reads are these, as Rust: written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_tape_crates_reads_are_these() {
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../tape_format/src/generated_reads.rs");
+        let path = &format!("{}/../tape_format/src/generated_reads.rs", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
         let source = super::rust_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(path, &source).unwrap();
@@ -2777,7 +2780,7 @@ mod tests {
     /// The views' kernels' reads are these, as UKL (`<ukl/reads/view.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_view_kernels_reads_are_these() {
-        let path = format!("{}/view.h", super::UKL_READS);
+        let path = format!("{}/view.h", super::ukl_reads());
         let source = super::view_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();
@@ -2789,7 +2792,7 @@ mod tests {
     /// The 16z kernels' reads are these, as UKL (`<ukl/reads/tape_z.h>`): written again with `RERAIL_WRITE_READS=1`.
     #[test]
     fn the_16z_kernels_reads_are_these() {
-        let path = format!("{}/tape_z.h", super::UKL_READS);
+        let path = format!("{}/tape_z.h", super::ukl_reads());
         let source = super::tape_z_ukl_source().unwrap();
         if std::env::var_os("RERAIL_WRITE_READS").is_some() {
             std::fs::write(&path, &source).unwrap();

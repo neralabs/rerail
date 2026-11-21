@@ -882,7 +882,7 @@ fn fingerprint(c: &crate::Compiled) -> u64 {
 fn the_shipped_answers_answer_the_grammar() {
     if std::env::var_os("RERAIL_BLESS_KOTLIN_ANSWERS").is_some() {
         let cold = compile_text(GRAMMAR).expect("the grammar compiles");
-        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/kotlin.answers");
+        let path = &format!("{}/kotlin.answers", std::env::var("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
         std::fs::write(path, rerail_compiler::bitlex_prove::encode(&cold.proofs)).expect("kotlin.answers written");
         return;
     }

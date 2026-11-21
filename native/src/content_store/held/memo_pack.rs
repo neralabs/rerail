@@ -25,8 +25,8 @@
 
 #[allow(unused_imports)]
 use crate::content_store::connection::Cached as _;
-use super::super::{ContentStore, StoreError, StoreResult};
-use super::super::segments::{ALIGN, Place, SealedSegments, SegmentBytes, SegmentMaps, SegmentWriter, segment_path, write_segments};
+use super::super::{ContentStore, StoreResult};
+use super::super::segments::{ALIGN, Moved, Place, SEGMENT_BUDGET, SealedSegments, SegmentBytes, SegmentKind, SegmentMaps, SegmentUse, SegmentWriter, retired};
 use rusqlite::params;
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -61,10 +61,6 @@ pub fn pack_dir(database: &Path) -> PathBuf {
     let mut name = database.as_os_str().to_owned();
     name.push(".memo");
     PathBuf::from(name)
-}
-
-fn seg_path(database: &Path, seg: i64) -> PathBuf {
-    segment_path(&pack_dir(database), seg)
 }
 
 /// A pack of before (`framed` 0), removed by compaction.
@@ -109,13 +105,6 @@ fn row_of(r: &rusqlite::Row<'_>) -> rusqlite::Result<Row> {
         over: (over_len > 0).then(|| Ok::<_, rusqlite::Error>(Place { seg: r.get(7)?, at: r.get::<_, i64>(8)? as u64, len: over_len as usize })).transpose()?,
     })
 }
-
-/// An entry's row as compaction reads it: its space, part, document key, content digest, place, and the place of
-/// what is kept over it.
-type Compacted = (Vec<u8>, i64, i64, Vec<u8>, Place, Option<Place>);
-
-/// An entry compaction keeps: its space, part, document key, content digest, bytes and what is kept over it.
-type Kept<'a> = (&'a [u8], i64, i64, [u8; 32], SegmentBytes, Option<SegmentBytes>);
 
 const COLUMNS: &str = "part, path, digest, doc, pack, at, len, over_pack, over_at, over_len";
 
@@ -323,89 +312,115 @@ impl ContentStore {
 
     /// The segments' bytes (and the packs' of before), and the bytes their rows name: what compaction would leave.
     pub fn memo_pack_bytes(&self) -> StoreResult<(u64, u64)> {
-        let (packs, named): (Vec<i64>, i64) = {
-            let connection = self.connection.lock().expect("content store mutex poisoned");
-            let mut st = connection.prepare_cached("SELECT pack FROM memo_packs")?;
-            let packs = st.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
-            (packs, connection.query_row_cached("SELECT coalesce(sum(len + over_len), 0) FROM memo_entries WHERE framed = 1", [], |r| r.get(0))?)
-        };
-        let size = |p: PathBuf| std::fs::metadata(p).map_or(0, |m| m.len());
-        let held = packs.iter().map(|&p| size(seg_path(&self.database_path, p)) + size(old_pack_path(&self.database_path, p))).sum();
-        Ok((held, named as u64))
+        let usage = self.memo_pack_use()?;
+        Ok((usage.held, usage.named))
     }
 
-    /// Copies every entry (and what is kept over it) to a new segment and removes the others, where the bytes no row
-    /// names are more than half the segments and at least `floor`: one write transaction, so no writer adds one
-    /// meanwhile. Rows of the packs before are forgotten. Returns the bytes freed. A reader of another process that
-    /// found a row before is told of an old segment: it misses (one it mapped stays as it was).
+    /// The segments' bytes (and the packs' of before), the bytes their rows name, and their numbers.
+    fn memo_pack_use(&self) -> StoreResult<SegmentUse> {
+        let dir = pack_dir(&self.database_path);
+        let connection = self.connection.lock().expect("content store mutex poisoned");
+        Ok(memo_use(&connection, &memo_kind(&dir), &self.database_path)?)
+    }
+
+    /// Merges the segments compaction retires (`segments::retired`): every one where the bytes no row names are more
+    /// than half of them and at least `floor`, else, past `segments::SEGMENT_BUDGET` of them, all but the oldest half
+    /// of it. Each entry there, and what is kept over it, is copied in their order to a new segment numbered after
+    /// them, so a path's newest entry is still the one in the newest segment; one write transaction, so no writer
+    /// adds one meanwhile. Rows of the packs before are forgotten. Returns the bytes freed. A reader of another
+    /// process that found a row before is told of an old segment: it misses (one it mapped stays as it was).
     pub fn compact_memo_pack(&self, floor: u64) -> StoreResult<u64> {
-        let (held, named) = self.memo_pack_bytes()?;
-        if held < floor || held.saturating_sub(named) < held / 2 {
+        self.compact_memo_pack_within(floor, SEGMENT_BUDGET)
+    }
+
+    /// `compact_memo_pack`, keeping at most `budget` segments. Chosen again in the write transaction
+    /// (`SegmentKind::compact`); read before it too, so a store with nothing due takes no write lock.
+    pub(in crate::content_store) fn compact_memo_pack_within(&self, floor: u64, budget: usize) -> StoreResult<u64> {
+        let usage = self.memo_pack_use()?;
+        if retired(&usage, floor, budget).is_none() {
             return Ok(0);
         }
-        let database = self.database_path.clone();
-        let (old, file) = self.immediate_transaction_once(|t| {
-            let packs: Vec<i64> = t.prepare_cached("SELECT pack FROM memo_packs")?.query_map([], |r| r.get(0))?.collect::<Result<_, _>>()?;
-            t.execute_cached("DELETE FROM memo_entries WHERE framed = 0", [])?;
-            // Each entry and what is kept over it (`over_len` 0: nothing).
-            let rows: Vec<Compacted> = t
-                .prepare_cached("SELECT space, part, doc, digest, pack, at, len, over_pack, over_at, over_len FROM memo_entries ORDER BY pack, at")?
-                .query_map([], |r| {
-                    let at = |p: usize| -> rusqlite::Result<Place> { Ok(Place { seg: r.get(p)?, at: r.get::<_, i64>(p + 1)? as u64, len: r.get::<_, i64>(p + 2)? as usize }) };
-                    let over = at(7)?;
-                    Ok((r.get(0)?, r.get(1)?, r.get(2)?, r.get(3)?, at(4)?, (over.len > 0).then_some(over)))
-                })?
-                .collect::<Result<_, _>>()?;
-            let mut segments = SegmentMaps::new(pack_dir(&database));
-            // An entry not there is forgotten; what is kept over it, where not there, too.
-            let mut kept: Vec<Kept<'_>> = Vec::new();
-            for (space, part, doc, digest, at, over) in &rows {
-                match (segments.at(*at), <[u8; 32]>::try_from(digest.as_slice())) {
-                    (Some(bytes), Ok(digest)) => kept.push((space, *part, *doc, digest, bytes, over.and_then(|o| segments.at(o)))),
-                    _ => {
-                        t.execute_cached("DELETE FROM memo_entries WHERE space = ?1 AND part = ?2", params![space, part])?;
-                    }
-                }
-            }
-            let mut entries: Vec<(&[u8], i64, &[u8; 32])> = Vec::new();
-            for (_, _, doc, digest, bytes, over) in &kept {
-                entries.push((bytes.bytes(), *doc, digest));
-                if let Some(o) = over {
-                    entries.push((o.bytes(), *doc, digest));
-                }
-            }
-            t.execute_cached("DELETE FROM memo_packs", [])?;
-            if kept.is_empty() {
-                return Ok((packs, None));
-            }
-            let mut placed = write_segments(&pack_dir(&database), &entries, crate::content_store::connection::flush_of(t))?;
-            if placed.files().len() != 1 {
-                return Err(StoreError::Invalid("the memo's compaction made more than one segment".into()));
-            }
-            let seg = packs.iter().copied().max().unwrap_or(0) + 1;
-            t.execute_cached("INSERT INTO memo_packs(pack) VALUES (?1)", [seg])?;
-            let mut offsets = (0..placed.len()).map(|i| placed.placed(i).1);
-            for (space, part, _, _, _, over) in &kept {
-                let at = offsets.next().expect("an offset an entry");
-                let (over_at, over_len) = match over {
-                    Some(o) => (offsets.next().expect("an offset an entry") as i64, o.len() as i64),
-                    None => (0, 0),
-                };
-                t.execute_cached(
-                    "UPDATE memo_entries SET pack = ?1, at = ?2, over_pack = ?1, over_at = ?3, over_len = ?4, over_raw = ?4 WHERE space = ?5 AND part = ?6",
-                    params![seg, at as i64, over_at, over_len, space, part],
-                )?;
-            }
-            placed.name(&pack_dir(&database), &[seg])?;
-            Ok((packs, Some(seg)))
-        })?;
-        for pack in old.into_iter().filter(|&p| Some(p) != file) {
-            let _ = std::fs::remove_file(seg_path(&database, pack));
-            let _ = std::fs::remove_file(old_pack_path(&database, pack));
-        }
-        let (now, _) = self.memo_pack_bytes()?;
-        Ok(held.saturating_sub(now))
+        let (database, dir) = (&self.database_path, pack_dir(&self.database_path));
+        let kind = memo_kind(&dir);
+        let retired = self.immediate_transaction_once(|t| kind.compact(t, &memo_use(t, &kind, database)?, (floor, budget), placed_entries, |e| lose_entry(t, e), |e, seg, at| move_entry(t, e, seg, at)))?;
+        kind.remove(&retired);
+        remove_old_packs(database, &retired);
+        Ok(usage.held.saturating_sub(self.memo_pack_bytes()?.0))
     }
+}
+
+/// The memo's segments, as compaction finds and merges them.
+fn memo_kind(dir: &Path) -> SegmentKind<'_> {
+    SegmentKind { table: "memo_packs", column: "pack", dir }
+}
+
+/// The memo's segments' use, read in `t` (`segments::SegmentUse`), the packs' of before (`old_pack_path`) held too.
+fn memo_use(t: &rusqlite::Connection, kind: &SegmentKind<'_>, database: &Path) -> rusqlite::Result<SegmentUse> {
+    let mut usage = kind.usage(t, "SELECT coalesce(sum(len + over_len), 0) FROM memo_entries WHERE framed = 1")?;
+    usage.held += usage.numbers.iter().map(|&p| std::fs::metadata(old_pack_path(database, p)).map_or(0, |m| m.len())).sum::<u64>();
+    Ok(usage)
+}
+
+/// Removes the packs of before (`old_pack_path`) among `retired`, once the transaction that retired them committed.
+fn remove_old_packs(database: &Path, retired: &[i64]) {
+    for &pack in retired {
+        let _ = std::fs::remove_file(old_pack_path(database, pack));
+    }
+}
+
+/// An entry's bytes as compaction moves them: its row's space and part, and whether they are what is kept over it.
+type EntryBytes = (Vec<u8>, i64, bool);
+
+/// An entry's row as compaction reads it: its space, part, document key, content digest, and where it and what is
+/// kept over it are (pack, offset, length; `over_len` 0: nothing).
+type PlacedEntry = (Vec<u8>, i64, i64, Vec<u8>, i64, i64, i64, i64, i64, i64);
+
+/// The entries, and what is kept over them, in segments numbered `from` and after, in their order there; the rows of
+/// the packs of before, and a row whose digest is not one (`Moved::digest`), forgotten first.
+fn placed_entries(t: &rusqlite::Connection, from: i64) -> rusqlite::Result<Vec<Moved<EntryBytes>>> {
+    t.execute_cached("DELETE FROM memo_entries WHERE framed = 0 OR length(digest) != 32", [])?;
+    let mut st = t.prepare_cached(
+        "SELECT space, part, doc, digest, pack, at, len, over_pack, over_at, over_len FROM memo_entries \
+         WHERE pack >= ?1 OR (over_len > 0 AND over_pack >= ?1) ORDER BY pack, at",
+    )?;
+    let mut out = Vec::new();
+    for row in st.query_map([from], |r| PlacedEntry::try_from(r))? {
+        entry_places(row?, from, &mut out);
+    }
+    Ok(out)
+}
+
+/// An entry's bytes, and what is kept over it, where they are in segments numbered `from` and after.
+fn entry_places((space, part, doc, digest, pack, at, len, over_pack, over_at, over_len): PlacedEntry, from: i64, out: &mut Vec<Moved<EntryBytes>>) {
+    // Every row's digest is 32 bytes here (`placed_entries` forgot the others).
+    let digest: [u8; 32] = digest.try_into().unwrap_or_default();
+    let place = |seg, at: i64, len: i64| Place { seg, at: at as u64, len: len as usize };
+    if pack >= from {
+        out.push(Moved { key: (space.clone(), part, false), doc, digest, place: place(pack, at, len) });
+    }
+    if over_len > 0 && over_pack >= from {
+        out.push(Moved { key: (space, part, true), doc, digest, place: place(over_pack, over_at, over_len) });
+    }
+}
+
+/// An entry whose bytes are not there, forgotten; what is kept over one, where not there, dropped from its row.
+fn lose_entry(t: &rusqlite::Connection, (space, part, over): &EntryBytes) -> rusqlite::Result<()> {
+    let sql = if *over {
+        "UPDATE memo_entries SET over_at = 0, over_len = 0, over_raw = 0 WHERE space = ?1 AND part = ?2"
+    } else {
+        "DELETE FROM memo_entries WHERE space = ?1 AND part = ?2"
+    };
+    t.execute_cached(sql, params![space, part]).map(drop)
+}
+
+/// An entry's bytes, or what is kept over it, moved to segment `seg` at `at`.
+fn move_entry(t: &rusqlite::Connection, (space, part, over): &EntryBytes, seg: i64, at: i64) -> rusqlite::Result<()> {
+    let sql = if *over {
+        "UPDATE memo_entries SET over_pack = ?1, over_at = ?2 WHERE space = ?3 AND part = ?4"
+    } else {
+        "UPDATE memo_entries SET pack = ?1, at = ?2 WHERE space = ?3 AND part = ?4"
+    };
+    t.execute_cached(sql, params![seg, at, space, part]).map(drop)
 }
 
 /// Forgets every memo entry of `space` (a dead plan's), in the caller's transaction: how many.
