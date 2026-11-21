@@ -4826,7 +4826,17 @@ impl Model {
                     // (Q245 item 5, made apart from this one) left the share of witnesses always all, and Q240's
                     // documents no longer led (1 M rows where 1,200 come, Q411).
                     let raw = from.raw + w + filtered;
-                    let tail = from.tail.or_else(|| head_mask.is_some_and(|h| *bound & h == h).then_some((from.raw, left)));
+                    // A cross product in the tail is not discounted by its witnesses: its rows are not witnesses (no row
+                    // of what it follows vouched for them), and a binding with none reads all of them. It is paid in
+                    // full, and the tail starts again after it, its rows the bindings. Discounted, RUF007's climb seed
+                    // in main's pack crossed `child($p12, $c11, _)` and `child($p8, $c7, _)` after the head was bound
+                    // (71 K bindings, 2·10¹⁰ crossed rows, priced as 4,194) and ran past 90 s on one file.
+                    let head_bound = head_mask.is_some_and(|h| *bound & h == h);
+                    let tail = if crossed && (from.tail.is_some() || head_bound) {
+                        Some((raw, out))
+                    } else {
+                        from.tail.or_else(|| head_bound.then_some((from.raw, left)))
+                    };
                     let cand = Cell { work: witnessed(raw, tail, out), rows: out, prev, last: i, mode, unfounded, fan, basis: by, raw, tail };
                     if mask == full_mask {
                         finals.push((cand.work, prev, i, mode, fan, by));
