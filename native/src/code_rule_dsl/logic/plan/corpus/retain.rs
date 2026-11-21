@@ -1212,6 +1212,10 @@ impl Source for Renamed {
     fn columns(&self) -> Vec<String> {
         self.1.clone()
     }
+    /// Its source's test: renamed, its columns are the same columns in the same order.
+    fn holds(&self, equal: &[(usize, i64)]) -> Option<bool> {
+        self.0.holds(equal)
+    }
     fn rows_of_documents(&self, docs: &BTreeSet<u32>) -> Option<Vec<usize>> {
         self.0.rows_of_documents(docs)
     }

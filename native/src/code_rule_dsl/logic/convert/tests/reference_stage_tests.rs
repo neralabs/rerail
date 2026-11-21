@@ -295,6 +295,8 @@ pub(super) fn rules_side_in(dir: &std::path::Path, chunk_nodes: usize) -> Side {
     let (local, cross) = (heads(before), heads(after));
     let out = crate::code_rule_dsl::fixtures::temp().with_extension("reference-stages-out");
     let _ = std::fs::remove_dir_all(&out);
+    // The run's records are its scope's (decision 0442): read after it, in it.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
     let profile = crate::code_rule_dsl::logic::profile::on();
     crate::code_rule_dsl::logic::profile::set(true);
     crate::code_rule_dsl::logic::profile::reset();

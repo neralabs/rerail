@@ -690,6 +690,24 @@ fn within_with_both_given_is_an_interval_test() {
             assert_eq!(within.lookup_all(&eq).unwrap().len(), usize::from(within.holds(&eq).unwrap()), "{format:?}: {n} below {a}");
         }
     }
+    // As a chunk binds it (`values::Layered`, every source of a chunk's run): the same test, no row made.
+    {
+        let within = Arc::new(within::Within::new(Arc::clone(&batch), within::Mode::Tree));
+        let layered = super::values::Layered::new("within", Arc::clone(&within) as Arc<dyn Source>, Default::default());
+        for n in (0..nodes).step_by(97) {
+            for a in (0..nodes).step_by(13) {
+                let eq = [(0, batch.id(n)), (1, batch.id(a))];
+                assert_eq!(layered.holds(&eq), within.holds(&eq), "layered: node rows {n} below {a}");
+            }
+        }
+        assert!(within.made_rows() == 0, "layered: the test made no row");
+        // Probed by both columns at once, as the base is: the step's index is composite, which asks the test.
+        assert!(layered.composite(), "layered: both columns at once");
+        for (n, a) in [(nodes - 1, 0), (1, 0), (0, 1)] {
+            let eq = [(0, batch.id(n)), (1, batch.id(a))];
+            assert_eq!(layered.lookup_all(&eq), within.lookup_all(&eq), "layered: {n} below {a}");
+        }
+    }
 }
 
 /// `within` and `span_within` (decision 0050) hold exactly the pairs that comparing every pair of one document's
