@@ -49,8 +49,6 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/blocks/src/scratch.rs", "THREAD", Thread, "this thread's scratch region for a freeze's sort keys, emptied at each use"),
     ("crates/c_directives/src/expand.rs", "JIT", Thread, "this thread's Cranelift code of the process's pp words (0348), without a rustc build of them; the same on any thread"),
     ("crates/clif/src/rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
-    ("crates/clif/src/rust.rs", "CHECKED", Call, "the state of one call in progress on this thread, set and reset within it (`translate_ops`)"),
-    ("crates/clif/src/rust.rs", "READS", Thread, "this thread's scratch or counters in a backend"),
     ("crates/compiler/src/native_cpu_stream.rs", "IDS", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/launch.rs", "EVALUATION", Thread, "this thread's scratch or counters in a backend"),
@@ -63,6 +61,7 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/budget.rs", "BUDGET_COUNTDOWN", Call, "the state of one call in progress on this thread"),
     ("src/code_rule_dsl/budget.rs", "MATCH_BUDGET", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/budget.rs", "STEP_COUNTDOWN", Call, "the state of one call in progress on this thread"),
+    ("src/code_rule_dsl/build_ids.rs", "REBUILT", Carried, ""),
     ("src/code_rule_dsl/calls/mod.rs", "EVALUATION", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/calls/mod.rs", "FILE_CALLS", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/calls/rust.rs", "ITEMS", Call, "the state of one call in progress on this thread, set and read within it"),
@@ -108,8 +107,6 @@ pub(crate) const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "RESIDENT", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "SUSPENDED", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/native/setfix/device.rs", "TESTS", Thread, "device text tests by pattern: any thread's gives the same"),
-    ("src/code_rule_dsl/logic/native/setfix/device.rs", "TICKETS", Thread, "this thread's device waves and launches"),
-    ("src/code_rule_dsl/logic/native/setfix/device.rs", "WAVES", Thread, "this thread's device waves and launches"),
     ("src/code_rule_dsl/logic/plan.rs", "EXPLAIN_ALWAYS", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "NO_SHAPES", Carried, ""),
     ("src/code_rule_dsl/logic/plan.rs", "OWN_PLANS", Carried, ""),
@@ -313,6 +310,8 @@ fn carried_elsewhere(c: &mut Capture) {
     c.copy(&["IN_PHASE_0"], &crate::code_rule_dsl::phase_clock::IN_PHASE_0);
     c.copy(&["WAVES"], &crate::content_store::write_back::WAVES);
     c.copy(&["STAGE"], &super::profile::STAGE);
+    #[cfg(any(test, feature = "test-hooks"))]
+    c.copy(&["REBUILT"], &crate::code_rule_dsl::build_ids::REBUILT);
     c.part(&["CURRENT"], Shared(crate::code_rule_dsl::sql_admission::current(), crate::code_rule_dsl::sql_admission::enter_current));
 }
 

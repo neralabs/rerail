@@ -25,6 +25,19 @@ mod frames;
 pub mod kept_facts;
 pub mod guest_keys;
 mod object_segments;
+
+/// The files the store at `from` keeps beside its database, copied beside `to`: its atoms blocks (decision 0401) and
+/// its object segments (decision 0295 step 5). With the database file copied to `to`, the store copied whole.
+pub fn copy_beside(from: &std::path::Path, to: &std::path::Path) -> std::io::Result<()> {
+    atoms::copy_blocks(from, to)?;
+    let (objects, into) = (object_segments::object_dir(from), object_segments::object_dir(to));
+    let Ok(entries) = std::fs::read_dir(&objects) else { return Ok(()) };
+    std::fs::create_dir_all(&into)?;
+    for e in entries.flatten() {
+        std::fs::copy(e.path(), into.join(e.file_name()))?;
+    }
+    Ok(())
+}
 mod segments;
 mod facts_memo;
 mod objects;

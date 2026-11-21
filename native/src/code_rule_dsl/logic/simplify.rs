@@ -1141,19 +1141,21 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
     if bodies.is_empty() {
         return Vec::new();
     }
-    let mut fresh = 0usize;
     let mut out = Vec::with_capacity(prog.rules.len());
-    // Each rule with its place among the program's, so the request record follows its copies (`Program::set_rules_from`).
-    let mut work: Vec<(Rule, usize)> = prog.rules.iter().enumerate().filter(|(_, r)| !bodies.contains_key(r.head.rel.as_str())).map(|(i, r)| (r.clone(), i)).collect();
+    // Each rule with its place among the program's, so the request record follows its copies (`Program::set_rules_from`),
+    // and how many inlinings made it: a definition's variables are renamed apart by that count (`_f<k>`), the rule's
+    // own, so their names follow neither the program's order of rules nor its definitions' (as the version's
+    // `preparation::simplify` names them).
+    let mut work: Vec<(Rule, usize, usize)> = prog.rules.iter().enumerate().filter(|(_, r)| !bodies.contains_key(r.head.rel.as_str())).map(|(i, r)| (r.clone(), i, 0)).collect();
     work.reverse();
-    while let Some((rule, from)) = work.pop() {
+    while let Some((rule, from, depth)) = work.pop() {
         let Some(at) = rule.body.iter().position(|l| matches!(l, Literal::Atom(a) if !a.neg && bodies.contains_key(a.rel.as_str()))) else {
             out.push((rule, vec![from]));
             continue;
         };
         let Literal::Atom(read) = rule.body[at].clone() else { unreachable!("a read") };
+        let fresh = depth + 1;
         for def in &bodies[read.rel.as_str()] {
-            fresh += 1;
             // The definition's variables renamed apart; a head variable read as a variable becomes it, anything else
             // an equality.
             let mut local = BTreeSet::new();
@@ -1183,7 +1185,7 @@ fn inline_filters(prog: &mut Program) -> Vec<String> {
             }
             let mut c = rule.clone();
             c.body.splice(at..=at, body);
-            work.push((c, from));
+            work.push((c, from, fresh));
         }
     }
     let inlined = prog.inlined_readers(bodies.keys());
