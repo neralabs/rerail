@@ -35,6 +35,9 @@ pub const ENTRIES: &[(u16, u16, &[u16])] = &[
 /// The levels open at most: past it, the file is refused, as the JIT's calls (`native_cpu_stream::DEPTH`).
 const DEPTH: usize = 1024;
 
+/// Each byte's token row, one past its number (0: none), as simdjson's structural-or-whitespace table.
+static ROWS: [u8; 256] = [3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 0, 3, 3, 0, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 0, 3, 1, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 2, 3, 2, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3, 3];
+
 /// Node `number` opened at `start`, by the writer's op on its state `d`. `parse` reserved the run's room once
 /// (`reserve_run`), for every node and level it can write, so the op does not fail.
 #[inline(always)]
@@ -80,66 +83,39 @@ fn at(src: &[u8], starts: &[u32], i: usize) -> u32 {
     unsafe { *starts.get_unchecked(i) }
 }
 
+/// The 64 bytes from `p` of the padded source: the bits of byte `a` and of byte `b` (simdjson's `backslash_quote`, a
+/// block at a time).
 #[inline(always)]
-fn bit(x: &[u64], i: usize) -> bool {
-    x.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
+fn marks(src: &[u8], p: usize, a: u8, b: u8) -> (u64, u64) {
+    let block: &[u8; 64] = src[p..p + 64].try_into().expect("the padded source");
+    marks_best(block, a, b)
 }
 
-/// Mask `x`'s first bit at or after `from`.
+/// `marks` on a backend.
 #[inline(always)]
-fn first_bit(x: &[u64], from: usize) -> Option<usize> {
-    let mut q = from / 64;
-    let mut w = x.get(q)? & (!0u64 << (from % 64));
-    loop {
-        if w != 0 {
-            return Some(64 * q + w.trailing_zeros() as usize);
-        }
-        q += 1;
-        w = *x.get(q)?;
+unsafe fn marks_in<S: rerail_simd8::Simd8x64>(block: &[u8; 64], a: u8, b: u8) -> (u64, u64) {
+    // SAFETY: the caller's backend runs.
+    unsafe {
+        let v = S::load(block);
+        (S::eq_mask(v, a), S::eq_mask(v, b))
     }
 }
 
-/// The last bit of the run of mask `x` from `s` (`s` itself where the run is empty).
-#[inline(always)]
-fn run_last(x: &[u64], s: usize) -> usize {
-    let mut q = (s + 1) / 64;
-    let mut w = !x.get(q).copied().unwrap_or(0) & (!0u64 << ((s + 1) % 64));
-    loop {
-        if w != 0 {
-            return 64 * q + w.trailing_zeros() as usize - 1;
-        }
-        q += 1;
-        w = !x.get(q).copied().unwrap_or(0);
-    }
+rerail_simd8::dispatch! {
+    fn marks_best(block: &[u8; 64], a: u8, b: u8) -> (u64, u64) = marks_in, on marks_on;
 }
 
-/// A `number` token's word: its keyword's, 0 for none.
+/// Whether byte `b` is of row `r` (its number, one past the row's): a byte a token of the row runs over.
 #[inline(always)]
-fn word_number(b: &[u8]) -> u32 {
-match b {
-b"true" => 10,
-b"false" => 11,
-b"null" => 12,
-_ => 0,
-}
+fn in_row(b: u8, r: u8) -> bool {
+    ROWS[usize::from(b)] == r
 }
 
-/// A `punctuation` token's word: its keyword's, 0 for none.
-#[inline(always)]
-fn word_punctuation(b: &[u8]) -> u32 {
-match b {
-b"\x7b" => 13,
-b"\x7d" => 16,
-b"\x5b" => 17,
-b"\x5d" => 18,
-b"\x2c" => 15,
-b"\x3a" => 14,
-_ => 0,
-}
-}
 
-/// `check number`: its bytes match the check's grammar.
-fn check_number(b: &[u8]) -> bool {
+
+/// `check number`: the end of the check's grammar's match from the start of `b` (the bytes from the token's,
+/// to the padded source's end), or none.
+fn check_number(b: &[u8]) -> Option<usize> {
 let mut j = 0usize;
 if matches!(b.get(j), Some(0x2d)) {
 j += 1;
@@ -152,12 +128,12 @@ while matches!(b.get(j), Some(0x30..=0x39)) {
 j += 1;
 }
 } else {
-return false;
+return None;
 }
 if matches!(b.get(j), Some(0x2e)) {
 j += 1;
 if !matches!(b.get(j), Some(0x30..=0x39)) {
-return false;
+return None;
 }
 j += 1;
 while matches!(b.get(j), Some(0x30..=0x39)) {
@@ -172,44 +148,52 @@ j += 1;
 } else if matches!(b.get(j), Some(0x2d)) {
 j += 1;
 } else {
-return false;
+return None;
 }
 }
 if !matches!(b.get(j), Some(0x30..=0x39)) {
-return false;
+return None;
 }
 j += 1;
 while matches!(b.get(j), Some(0x30..=0x39)) {
 j += 1;
 }
 }
-j == b.len()
+Some(j)
 }
 
 /// `string`, its pieces leaves, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its
 /// caller's key, as each place gives them.
 #[inline(always)]
-fn string(src: &[u8], starts: &[u32], m: &crate::tier1::Masks, d: *mut u8, ip: &mut usize, n: [u32; 1]) -> Result<usize, u32> {
+fn string(src: &[u8], len: usize, starts: &[u32], d: *mut u8, ip: &mut usize, n: [u32; 1]) -> Result<usize, u32> {
 let mut i = *ip;
 let mut e = 0usize;
 let s = starts[i] as usize;
 i += 1;
-let c = match first_bit(&m.q, s + 1) {
-Some(c) => c,
-None => return Err(s as u32),
-};
 open(d, n[0], s as u64);
-let mut p = s + 1;
+// The content from `p`, read from `x` a block at a time: its pieces' first bytes and its closers.
+let (mut p, mut x) = (s + 1, s + 1);
 loop {
-let q = match first_bit(&m.esc, p) {
-Some(q) if q < c => q,
-_ => c,
-};
+if x >= len {
+return Err(s as u32);
+}
+let (lead, quote) = marks(src, x, 0x5c, 0x22);
+// A closer before every piece: the end (simdjson's `(bs - 1) & quote`).
+if lead.wrapping_sub(1) & quote != 0 {
+let c = x + quote.trailing_zeros() as usize;
+if c > p {
+leaf(d, 1, p as u64, c as u64);
+}
+e = c + 1;
+break;
+}
+if lead == 0 {
+x += 64;
+continue;
+}
+let q = x + lead.trailing_zeros() as usize;
 if q > p {
 leaf(d, 1, p as u64, q as u64);
-}
-if q == c {
-break;
 }
 p = q;
 if !matches!(&src[p..p + 2], b"\x5c\x22" | b"\x5c\x5c" | b"\x5c\x2f" | b"\x5cb" | b"\x5cf" | b"\x5cn" | b"\x5cr" | b"\x5ct" | b"\x5cu") {
@@ -217,8 +201,8 @@ return Err(p as u32);
 }
 leaf(d, 2, p as u64, (p + 2) as u64);
 p += 2;
+x = p;
 }
-e = c + 1;
 close(d, e as u64);
 *ip = i;
 Ok(e)
@@ -227,39 +211,42 @@ Ok(e)
 /// `value`'s alternatives that call no level, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its
 /// caller's key, as each place gives them.
 #[inline(always)]
-fn value(src: &[u8], starts: &[u32], m: &crate::tier1::Masks, d: *mut u8, ip: &mut usize, n: [u32; 5]) -> Result<usize, u32> {
+fn value(src: &[u8], len: usize, starts: &[u32], d: *mut u8, ip: &mut usize, n: [u32; 5]) -> Result<usize, u32> {
 let mut i = *ip;
 let mut e = 0usize;
 match peek(src, starts, i) {
 0x22 => {
-e = string(src, starts, m, d, &mut i, [n[0]])?;
+e = string(src, len, starts, d, &mut i, [n[0]])?;
 }
 0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-// `number`: its word.
+// `number`: its word, by its bytes.
 let s = starts[i] as usize;
-let end = run_last(&m.run_number, s) + 1;
-match word_number(&src[s..end]) {
-10 => {
+match src[s] {
+0x74 if src[s..s + 4] == *b"true" && !in_row(src[s + 4], 3) => {
+let end = s + 4;
 i += 1;
 e = end;
 leaf(d, n[1], s as u64, e as u64);
 }
-11 => {
+0x66 if src[s..s + 5] == *b"false" && !in_row(src[s + 5], 3) => {
+let end = s + 5;
 i += 1;
 e = end;
 leaf(d, n[2], s as u64, e as u64);
 }
-12 => {
+0x6e if src[s..s + 4] == *b"null" && !in_row(src[s + 4], 3) => {
+let end = s + 4;
 i += 1;
 e = end;
 leaf(d, n[3], s as u64, e as u64);
 }
 _ => {
+let end = match check_number(&src[s..]) {
+Some(j) if !in_row(src[s + j], 3) => s + j,
+_ => return Err(s as u32),
+};
 i += 1;
 e = end;
-if !check_number(&src[s..e]) {
-return Err(s as u32);
-}
 leaf(d, n[4], s as u64, e as u64);
 }
 }
@@ -272,7 +259,8 @@ return Err(at(src, starts, i));
 Ok(e)
 }
 
-/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and masks, or the byte it was refused at.
+/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and the bytes, or the byte it was
+/// refused at.
 /// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes
 /// open at once (3 a level), and the root's.
 pub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {
@@ -298,8 +286,7 @@ Some(_) => Err(u32::MAX),
 /// `parse`'s walk, on the writer's state `d`.
 fn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {
 // The records, then the index's three last entries; their count; the file's length (`src` is it padded).
-let (starts, count, n) = (&lx.starts[..], lx.count, lx.len);
-let m = &lx.masks;
+let (starts, count, len) = (&lx.starts[..], lx.count, lx.len);
 // The next record, the last token's end, by depth the place each open level returns to (the lean parser's `object[d]`), the levels open, the place.
 let mut i = 0usize;
 let mut e = 0usize;
@@ -312,7 +299,7 @@ match st {
 open(d, 0, at(src, starts, i) as u64);
 match peek(src, starts, i) {
 0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-e = value(src, starts, m, d, &mut i, [3, 4, 5, 6, 7])?;
+e = value(src, len, starts, d, &mut i, [3, 4, 5, 6, 7])?;
 st = 1;
 continue 'run;
 }
@@ -366,7 +353,7 @@ return Err(at(src, starts, i));
 }
 }
 1 => {
-close(d, n as u64);
+close(d, len as u64);
 if i != count {
 return Err(at(src, starts, i));
 }
@@ -385,7 +372,7 @@ match peek(src, starts, i) {
 0x22 => {}
 _ => return Err(at(src, starts, i)),
 }
-e = string(src, starts, m, d, &mut i, [18])?;
+e = string(src, len, starts, d, &mut i, [18])?;
 match peek(src, starts, i) {
 0x3a => {
 let s = starts[i] as usize;
@@ -398,7 +385,7 @@ return Err(at(src, starts, i));
 }
 match peek(src, starts, i) {
 0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-e = value(src, starts, m, d, &mut i, [9, 10, 11, 12, 13])?;
+e = value(src, len, starts, d, &mut i, [9, 10, 11, 12, 13])?;
 st = 5;
 continue 'run;
 }
@@ -484,7 +471,7 @@ continue 'run;
 7 => {
 match peek(src, starts, i) {
 0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-e = value(src, starts, m, d, &mut i, [3, 4, 5, 6, 7])?;
+e = value(src, len, starts, d, &mut i, [3, 4, 5, 6, 7])?;
 st = 8;
 continue 'run;
 }

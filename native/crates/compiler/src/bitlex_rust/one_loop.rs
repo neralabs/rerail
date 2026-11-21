@@ -2,21 +2,23 @@
 //! (the user, 2026-11-21: "single loop"), never from tier 2's state machine or any lowered form:
 //!
 //! - **One loop, one dispatch.** A `nested` rule is a level: its call opens its node where the caller is (the node's
-//!   key, its field and supertypes, is the caller's), pushes the place it returns to and goes to the rule's first
-//!   place; its end closes the node and goes to the place it pops, as simdjson's `scope_end`. The places are the
-//!   loop's arms (`'run: loop { match st { … } }`): a nested rule's first one, and each one after a level's call
-//!   (simdjson's `object_continue`, `array_continue`). Every other rule is written where it is used.
+//!   key, its field and supertypes, is the caller's), leaves the place it returns to at its depth (`ret[depth]`, the
+//!   lean parser's `object[d]`) and goes to the rule's first place; its end closes the node and goes back by its
+//!   depth, as simdjson's `scope_end`. The places are the loop's arms (`'run: loop { match st { … } }`); a list
+//!   `A (sep A)*` is two, its element and its cycle (simdjson's `object_field`, `object_continue`).
 //! - **Decisions at the token**, as simdjson's `switch` on the byte: `[A]`, `A*`, `A+`, `A | B` match the next
-//!   record's first byte. A token kind is its first bytes; a word of a one-byte token its byte; a word of a longer
-//!   one its kind's bytes, then its word.
-//! - **A token's end** from tier 1's masks (`bitlex_lex_rust::stage1_ends`): a run's, a pair's, a region's closer.
-//!   A region read in parts (a string) is read at its token, its pieces leaves, as simdjson's `parse_string`.
+//!   record's first byte, and no arm tests again what its decision found. A token kind is its first bytes; a word of a
+//!   longer token its first byte, its bytes and the byte after not its row's (simdjson's atoms).
+//! - **A token's end from the bytes**: a run's by its check's read (`number_end`) or its row's bytes; a region read in
+//!   parts (a string) a block at a time, its closer's and its pieces' bytes (`backslash_quote`), each piece a leaf.
+//!   Tier 1 gives the records alone (the index ends in `len`, `len`, 0, the source padded), read unchecked.
+//! - **Methods**: a region's read and a choice's alternatives that call no level are written once each (`string`,
+//!   `primitive`), the numbers their callers' keys give their arguments.
 //! - **The tree** through format 16's writer (`rerail_tape_format::f16::Writer`), each node's number a literal of
 //!   the code table the generator makes (`ENTRIES`): each node's kind, field and supertypes, as it writes them. No
-//!   node changes once written and the run's room is reserved once, so no node is committed as it is made: the
-//!   writer's finish settles the blocks, as the lean parser writes its columns with no commit.
-//! - **Checks**: a `check` of a kind is a function of the token's bytes, run where a token of the kind is a leaf;
-//!   a `keywords … required` kind's piece must be one of its words.
+//!   node changes once written, so the writer's nodes are final as written (`final_as_written`): no commit.
+//! - **Checks**: a `check` of a kind is a function from the token's first byte to its match's end; a
+//!   `keywords … required` kind's piece must be one of its words.
 
 use super::{First, G, Input, Test, ident};
 use ::bitlex::syntax::{Expr, Gram, PartLen, Stmt, TokenRule};
@@ -69,17 +71,17 @@ struct Key {
     classes: Vec<u16>,
 }
 
-/// How a record kind's token ends, as tier 2 finds it from tier 1's masks.
+/// How a record kind's token ends, as tier 2 finds it from the bytes.
 #[derive(Clone)]
 enum End {
     /// One byte.
     One,
-    /// A run of a mask (`run_K`).
-    Run(String),
-    /// A second byte where a mask holds (`pair_K`).
-    Pair(String),
-    /// The first bit of a mask (`last_K`).
-    Last(String),
+    /// A run: its check's match, or its row's bytes (`run` in the grammar).
+    Run,
+    /// A second byte (`pair`): not read from the bytes yet.
+    Pair,
+    /// A last byte (`last`): not read from the bytes yet.
+    Last,
     /// A region read in parts: its reader.
     Region(usize),
 }
@@ -300,14 +302,21 @@ impl Lp<'_, '_> {
         self.g.x.keywords.iter().filter(|r| r.0 == name).flat_map(|r| r.1.iter()).filter(|(_, k)| k.as_deref().is_some_and(|k| k != name)).filter_map(|(w, _)| self.g.word_of(&String::from_utf8_lossy(w))).collect()
     }
 
-    /// The end (one past the last byte) of the token at `s`, by its kind's rule.
-    fn end_code(&self, end: &End) -> Result<String, String> {
+    /// The end (one past the last byte) of the token at `s` of kind `name`, by its kind's rule, read from the bytes:
+    /// a run's by its check where it has one (its bytes read once, as the lean parser's `number_end`), else by its
+    /// row's bytes; the byte after a run not its row's (`in_row`, simdjson's `is_not_structural_or_whitespace`).
+    fn end_code(&self, name: &str, end: &End) -> Result<String, String> {
         Ok(match end {
             End::One => "s + 1".to_owned(),
-            End::Run(f) => format!("run_last(&m.{f}, s) + 1"),
-            End::Pair(f) => format!("s + 1 + usize::from(bit(&m.{f}, s))"),
-            End::Last(f) => format!("first_bit(&m.{f}, s).unwrap_or(s) + 1"),
-            End::Region(r) => format!("first_bit(&m.{}, s + 1).map_or(n, |c| c + 1)", self.readers[*r].close),
+            End::Run => {
+                let (rk, _) = self.token(name)?;
+                if self.checked.iter().any(|c| c == name) {
+                    format!("match check_{}(&src[s..]) {{\nSome(j) if !in_row(src[s + j], {}) => s + j,\n_ => return Err(s as u32),\n}}", ident(name), rk + 1)
+                } else {
+                    format!("{{\nlet mut x = s + 1;\nwhile in_row(src[x], {}) {{\nx += 1;\n}}\nx\n}}", rk + 1)
+                }
+            }
+            End::Pair | End::Last | End::Region(_) => return self.err(format!("`{name}`: its end from the bytes is not written yet")),
         })
     }
 
@@ -399,29 +408,28 @@ impl Lp<'_, '_> {
         }
         for (rk, (name, words, own)) in &split {
             let (_, end) = self.token(name)?;
+            // A word: its first byte, its bytes, the byte after not the row's (simdjson's atoms, `str4ncmp`).
+            let word = |w: u8| -> (String, usize) {
+                let b = &self.g.x.words[usize::from(w) - 1];
+                (format!("{:#04x} if src[s..s + {l}] == *b\"{}\" && !in_row(src[s + {l}], {})", b[0], lit(b), rk + 1, l = b.len()), b.len())
+            };
             let mut inner = String::new();
             for (w, a) in words {
-                let _ = write!(inner, "{w} => {{\n{}}}\n", code(*a, T::Word)?);
+                let (test, l) = word(*w);
+                let _ = write!(inner, "{test} => {{\nlet end = s + {l};\n{}}}\n", code(*a, T::Word)?);
             }
             let rest = match own {
                 Some(a) => {
                     // The kind's own arm: none of its hard words.
-                    let hard: Vec<String> = self.hard_words(name).iter().filter(|h| !words.iter().any(|(w, _)| w == *h)).map(|h| h.to_string()).collect();
-                    if !hard.is_empty() {
-                        let _ = write!(inner, "{} => {{\n{none}}}\n", hard.join(" | "));
+                    for h in self.hard_words(name).iter().filter(|h| !words.iter().any(|(w, _)| w == *h)) {
+                        let _ = write!(inner, "{} => {{\n{none}}}\n", word(*h).0);
                     }
-                    code(*a, T::Word)?
+                    format!("let end = {};\n{}", self.end_code(name, &end)?, code(*a, T::Word)?)
                 }
                 None => none.to_owned(),
             };
             let _ = write!(inner, "_ => {{\n{rest}}}\n");
-            let _ = write!(
-                out,
-                "{} => {{\n// `{name}`: its word.\nlet s = starts[i] as usize;\nlet end = {};\nmatch word_{}(&src[s..end]) {{\n{inner}}}\n}}\n",
-                pattern(&self.bytes_of(*rk)),
-                self.end_code(&end)?,
-                ident(name)
-            );
+            let _ = write!(out, "{} => {{\n// `{name}`: its word, by its bytes.\nlet s = starts[i] as usize;\nmatch src[s] {{\n{inner}}}\n}}\n", pattern(&self.bytes_of(*rk)));
         }
         let _ = write!(out, "_ => {{\n{none}}}\n}}\n");
         Ok(out)
@@ -430,17 +438,22 @@ impl Lp<'_, '_> {
     /// The code that takes the token `test` is, a leaf of `kind` unless it is implied (`None`), with `key`; `t`, what
     /// a decision found of it.
     fn take(&self, test: &Test, kind: Option<&str>, key: &Key, t: T) -> Result<String, String> {
-        let end = match test {
-            Test::Kind(k) => self.token(k)?.1,
-            Test::Word(w) => self.word_token(*w)?.2,
+        let (name, end) = match test {
+            Test::Kind(k) => (k.clone(), self.token(k)?.1),
+            Test::Word(w) => {
+                let (name, _, end, _) = self.word_token(*w)?;
+                (name, end)
+            }
             Test::Mark(_) => return self.err("marks are not written yet"),
         };
+        // A run's check is read where its end is found.
+        let run_checked = matches!(end, End::Run) && self.checked.iter().any(|c| *c == name);
         let body = |t: T| -> Result<String, String> {
             // A word's decision bound its start and its end.
-            let mut body = if t == T::Word { "i += 1;\ne = end;\n".to_owned() } else { format!("let s = starts[i] as usize;\ni += 1;\ne = {};\n", self.end_code(&end)?) };
+            let mut body = if t == T::Word { "i += 1;\ne = end;\n".to_owned() } else { format!("let s = starts[i] as usize;\ni += 1;\ne = {};\n", self.end_code(&name, &end)?) };
             if let Some(k) = kind {
-                if self.checked.iter().any(|c| c == k) {
-                    let _ = writeln!(body, "if !check_{}(&src[s..e]) {{\nreturn Err(s as u32);\n}}", ident(k));
+                if self.checked.iter().any(|c| c == k) && !(run_checked && k == name) {
+                    let _ = writeln!(body, "if check_{}(&src[s..e]) != Some(e - s) {{\nreturn Err(s as u32);\n}}", ident(k));
                 }
                 let _ = writeln!(body, "leaf(d, {}, s as u64, e as u64);", self.number(k, key)?);
             }
@@ -487,7 +500,18 @@ impl Lp<'_, '_> {
         if !rd.closes.is_empty() || kinds.iter().any(|k| *k != part && *k != rd.content) {
             return self.err(format!("`{kind}`: its pieces are not its region's"));
         }
-        let required: Vec<String> = self.g.x.keywords.iter().filter(|r| r.0 == *part && r.2).flat_map(|r| r.1.iter().map(|(w, _)| format!("b\"{}\"", lit(w)))).collect();
+        let _ = part_start;
+        let words: Vec<Vec<u8>> = self.g.x.keywords.iter().filter(|r| r.0 == *part && r.2).flat_map(|r| r.1.iter().map(|(w, _)| w.clone())).collect();
+        let required: Vec<String> = words.iter().map(|w| format!("b\"{}\"", lit(w))).collect();
+        // The closer's byte (the opener's), and the pieces' first (their words'): the read finds both in the bytes.
+        let quote = match self.bytes_of(self.token(&o)?.0).as_slice() {
+            [b] => *b,
+            _ => return self.err(format!("`{kind}`: a closer of other than one byte is not written yet")),
+        };
+        let lead = match words.iter().map(|w| w[0]).collect::<std::collections::BTreeSet<u8>>().into_iter().collect::<Vec<_>>().as_slice() {
+            [b] if *b != quote => *b,
+            _ => return self.err(format!("`{kind}`: pieces of other than one first byte are not written yet")),
+        };
         let check = if required.is_empty() { String::new() } else { format!("if !matches!(&src[p..p + {len}], {}) {{\nreturn Err(p as u32);\n}}\n", required.join(" | ")) };
         let test = if t == T::No { format!("match peek(src, starts, i) {{\n{} => {{}}\n_ => return Err(at(src, starts, i)),\n}}\n", pattern(&self.bytes_of(self.token(&o)?.0))) } else { String::new() };
         // The read, a method of its own (`string` in the lean parser), the node's number its caller's.
@@ -498,19 +522,28 @@ impl Lp<'_, '_> {
             Ok(format!(
             "let s = starts[i] as usize;\n\
              i += 1;\n\
-             let c = match first_bit(&m.{close}, s + 1) {{\nSome(c) => c,\nNone => return Err(s as u32),\n}};\n\
              open(d, {node}, s as u64);\n\
-             let mut p = s + 1;\n\
+             // The content from `p`, read from `x` a block at a time: its pieces' first bytes and its closers.\n\
+             let (mut p, mut x) = (s + 1, s + 1);\n\
              loop {{\n\
-             let q = match first_bit(&m.{part_start}, p) {{\nSome(q) if q < c => q,\n_ => c,\n}};\n\
+             if x >= len {{\nreturn Err(s as u32);\n}}\n\
+             let (lead, quote) = marks(src, x, {lead:#04x}, {quote:#04x});\n\
+             // A closer before every piece: the end (simdjson's `(bs - 1) & quote`).\n\
+             if lead.wrapping_sub(1) & quote != 0 {{\n\
+             let c = x + quote.trailing_zeros() as usize;\n\
+             if c > p {{\nleaf(d, {content}, p as u64, c as u64);\n}}\n\
+             e = c + 1;\n\
+             break;\n\
+             }}\n\
+             if lead == 0 {{\nx += 64;\ncontinue;\n}}\n\
+             let q = x + lead.trailing_zeros() as usize;\n\
              if q > p {{\nleaf(d, {content}, p as u64, q as u64);\n}}\n\
-             if q == c {{\nbreak;\n}}\n\
              p = q;\n{check}\
              leaf(d, {piece}, p as u64, (p + {len}) as u64);\n\
              p += {len};\n\
+             x = p;\n\
              }}\n\
-             e = c + 1;\nclose(d, e as u64);\n",
-            close = rd.close,
+             close(d, e as u64);\n",
             ))
         })?;
         Ok(Some(format!("{test}{}", self.call(&ident(kind), &ns, key)?)))
@@ -622,7 +655,7 @@ impl Lp<'_, '_> {
         let code = code?;
         let n = if ns.is_empty() { "_n" } else { "n" };
         self.method_code.borrow_mut().push(format!(
-            "/// {what}, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its\n/// caller's key, as each place gives them.\n#[inline(always)]\nfn {name}(src: &[u8], starts: &[u32], m: &crate::tier1::Masks, d: *mut u8, ip: &mut usize, {n}: [u32; {}]) -> Result<usize, u32> {{\nlet mut i = *ip;\nlet mut e = 0usize;\n{code}*ip = i;\nOk(e)\n}}\n\n",
+            "/// {what}, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its\n/// caller's key, as each place gives them.\n#[inline(always)]\nfn {name}(src: &[u8], len: usize, starts: &[u32], d: *mut u8, ip: &mut usize, {n}: [u32; {}]) -> Result<usize, u32> {{\nlet mut i = *ip;\nlet mut e = 0usize;\n{code}*ip = i;\nOk(e)\n}}\n\n",
             ns.len()
         ));
         self.methods.borrow_mut().insert(name.to_owned(), ns.clone());
@@ -637,7 +670,7 @@ impl Lp<'_, '_> {
             classes.extend(extra.iter().copied());
             args.push(self.number(kind, &Key { field: key.field, classes })?);
         }
-        Ok(format!("e = {name}(src, starts, m, d, &mut i, [{}])?;\n", args.join(", ")))
+        Ok(format!("e = {name}(src, len, starts, d, &mut i, [{}])?;\n", args.join(", ")))
     }
 
     /// `a` then `star` as a list `A (sep A)*`: its separator's parts.
@@ -901,7 +934,7 @@ impl Lp<'_, '_> {
     /// A `check K = G` as a function of the token's bytes: `G` over them, its names byte classes, its literals
     /// bytes, each decision at the next byte.
     fn check_fn(&self, kind: &str, body: &Gram) -> Result<String, String> {
-        Ok(format!("/// `check {kind}`: its bytes match the check's grammar.\nfn check_{}(b: &[u8]) -> bool {{\nlet mut j = 0usize;\n{}j == b.len()\n}}\n\n", ident(kind), self.check_code(body, false)?))
+        Ok(format!("/// `check {kind}`: the end of the check's grammar's match from the start of `b` (the bytes from the token's,\n/// to the padded source's end), or none.\nfn check_{}(b: &[u8]) -> Option<usize> {{\nlet mut j = 0usize;\n{}Some(j)\n}}\n\n", ident(kind), self.check_code(body, false)?))
     }
 
     /// The bytes a check's grammar may start with, and whether it may match none.
@@ -961,7 +994,7 @@ impl Lp<'_, '_> {
     fn check_code(&self, g: &Gram, tested: bool) -> Result<String, String> {
         Ok(match g {
             Gram::Lit(_) | Gram::Sym(_) if tested => "j += 1;\n".to_owned(),
-            Gram::Lit(_) | Gram::Sym(_) => format!("if !{} {{\nreturn false;\n}}\nj += 1;\n", self.at_byte(g)?),
+            Gram::Lit(_) | Gram::Sym(_) => format!("if !{} {{\nreturn None;\n}}\nj += 1;\n", self.at_byte(g)?),
             Gram::Seq(gs) => gs.iter().enumerate().map(|(k, g)| self.check_code(g, tested && k == 0)).collect::<Result<String, String>>()?,
             Gram::Opt(a) => format!("if {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a, true)?),
             Gram::Star(a) => format!("while {} {{\n{}}}\n", self.at_byte(a)?, self.check_code(a, true)?),
@@ -971,7 +1004,7 @@ impl Lp<'_, '_> {
                 for g in gs {
                     let _ = write!(out, "if {} {{\n{}}} else ", self.at_byte(g)?, self.check_code(g, true)?);
                 }
-                out + "{\nreturn false;\n}\n"
+                out + "{\nreturn None;\n}\n"
             }
             other => return self.err(format!("a check's {other:?}")),
         })
@@ -985,7 +1018,7 @@ enum Admit {
     Kind { name: String, rk: u8 },
 }
 
-/// The parser's own code: the writer's ops, the record's first byte, the masks' bits.
+/// The parser's own code: the writer's ops, the record's first byte, the block's bytes; what nothing calls is left out.
 const RUNTIME: &str = r#"
 /// Node `number` opened at `start`, by the writer's op on its state `d`. `parse` reserved the run's room once
 /// (`reserve_run`), for every node and level it can write, so the op does not fail.
@@ -1037,6 +1070,34 @@ fn bit(x: &[u64], i: usize) -> bool {
     x.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
 }
 
+/// The 64 bytes from `p` of the padded source: the bits of byte `a` and of byte `b` (simdjson's `backslash_quote`, a
+/// block at a time).
+#[inline(always)]
+fn marks(src: &[u8], p: usize, a: u8, b: u8) -> (u64, u64) {
+    let block: &[u8; 64] = src[p..p + 64].try_into().expect("the padded source");
+    marks_best(block, a, b)
+}
+
+/// `marks` on a backend.
+#[inline(always)]
+unsafe fn marks_in<S: rerail_simd8::Simd8x64>(block: &[u8; 64], a: u8, b: u8) -> (u64, u64) {
+    // SAFETY: the caller's backend runs.
+    unsafe {
+        let v = S::load(block);
+        (S::eq_mask(v, a), S::eq_mask(v, b))
+    }
+}
+
+rerail_simd8::dispatch! {
+    fn marks_best(block: &[u8; 64], a: u8, b: u8) -> (u64, u64) = marks_in, on marks_on;
+}
+
+/// Whether byte `b` is of row `r` (its number, one past the row's): a byte a token of the row runs over.
+#[inline(always)]
+fn in_row(b: u8, r: u8) -> bool {
+    ROWS[usize::from(b)] == r
+}
+
 /// Mask `x`'s first bit at or after `from`.
 #[inline(always)]
 fn first_bit(x: &[u64], from: usize) -> Option<usize> {
@@ -1080,13 +1141,12 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     for s in x.lexer {
         match s {
             Stmt::Token { kind, start, rule, last, .. } => {
-                let k = ident(kind);
                 let end = match (rule, last) {
                     (Some(TokenRule::Inside(..)), _) => continue,
-                    (Some(TokenRule::Run(_)), _) => End::Run(format!("run_{k}")),
+                    (Some(TokenRule::Run(_)), _) => End::Run,
                     (Some(TokenRule::Pair(Expr::Empty)), _) | (None, None) => End::One,
-                    (Some(TokenRule::Pair(_)), _) => End::Pair(format!("pair_{k}")),
-                    (None, Some(_)) => End::Last(format!("last_{k}")),
+                    (Some(TokenRule::Pair(_)), _) => End::Pair,
+                    (None, Some(_)) => End::Last,
                     (Some(TokenRule::ReadParts(..)), _) => End::Region(readers.iter().position(|r| r.kind == *kind).ok_or_else(|| format!("tier 2 as one loop: `{kind}` has no reader"))?),
                     (Some(other), _) => return Err(format!("tier 2 as one loop: `{kind}`'s rule {other:?} is not written yet")),
                 };
@@ -1119,7 +1179,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     };
     let first = lp.place(String::new());
     let number = lp.number(kind, &Key::default())?;
-    let end = "close(d, n as u64);\nif i != count {\nreturn Err(at(src, starts, i));\n}\nreturn Ok(());\n".to_owned();
+    let end = "close(d, len as u64);\nif i != count {\nreturn Err(at(src, starts, i));\n}\nreturn Ok(());\n".to_owned();
     let mut lp = lp;
     lp.root_end = end.clone();
     let code = format!("open(d, {number}, at(src, starts, i) as u64);\n{}", lp.walk(body, &Key::default(), K::Code(end), T::No)?);
@@ -1170,7 +1230,11 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     out.push_str("/// The language's cell widths, slots, gaps and lengths: the writer's language is to have these (`Lang::new`).\npub const WIDTHS: [usize; 3] = [1, 1, 1];\n\n/// The writer's cells at those widths, constants in the ops.\ntype Cells = Fixed<1, 1, 1>;\n\n");
     let _ = write!(out, "/// The code table the numbers below are of: each number's kind, field and supertypes.\npub const ENTRIES: &[(u16, u16, &[u16])] = &[\n{entries}];\n\n");
     out.push_str("/// The levels open at most: past it, the file is refused, as the JIT's calls (`native_cpu_stream::DEPTH`).\nconst DEPTH: usize = 1024;\n");
+    // Each byte's row, one past its number (0: none): what `in_row` reads.
+    let rows: Vec<String> = lp.row_of.iter().map(|r| r.map_or(0, |r| u16::from(r) + 1).to_string()).collect();
+    let _ = write!(out, "\n/// Each byte's token row, one past its number (0: none), as simdjson's structural-or-whitespace table.\nstatic ROWS: [u8; 256] = [{}];\n", rows.join(", "));
     out.push_str(RUNTIME);
+
     out.push('\n');
     out.push_str(&words);
     out.push_str(&check_fns);
@@ -1179,8 +1243,31 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     }
     let _ = write!(
         out,
-        "/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and masks, or the byte it was refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\n// A file with no token: simdjson's `EMPTY`.\nif lx.count == 0 {{\nreturn Err(lx.len as u32);\n}}\nw.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * {frames} + 1);\n// Each node final as written: no commit after each.\nw.final_as_written();\nlet d = w.state_address();\nrun(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`.\nfn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {{\n// The records, then the index's three last entries; their count; the file's length (`src` is it padded).\nlet (starts, count, n) = (&lx.starts[..], lx.count, lx.len);\nlet m = &lx.masks;\n// The next record, the last token's end, by depth the place each open level returns to (the lean parser's `object[d]`), the levels open, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut ret: [{ty}; DEPTH] = [0; DEPTH];\nlet mut depth = 0usize;\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n"
+        "/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and the bytes, or the byte it was\n/// refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\n// A file with no token: simdjson's `EMPTY`.\nif lx.count == 0 {{\nreturn Err(lx.len as u32);\n}}\nw.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * {frames} + 1);\n// Each node final as written: no commit after each.\nw.final_as_written();\nlet d = w.state_address();\nrun(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`.\nfn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {{\n// The records, then the index's three last entries; their count; the file's length (`src` is it padded).\nlet (starts, count, len) = (&lx.starts[..], lx.count, lx.len);\n// The next record, the last token's end, by depth the place each open level returns to (the lean parser's `object[d]`), the levels open, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut ret: [{ty}; DEPTH] = [0; DEPTH];\nlet mut depth = 0usize;\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n"
     );
     let _ = &x.tokens;
-    Ok(out)
+    // The parser's own code, but for what nothing in it calls.
+    let parts: Vec<String> = RUNTIME.split("\n\n").chain(words.split("\n\n")).map(|p| p.trim_matches('\n').to_owned()).filter(|p| !p.is_empty()).collect();
+    Ok(drop_uncalled(out, &parts))
+}
+
+/// `out` without each of `parts` (a function and its comments, as written in `out`) that nothing else in `out` calls.
+fn drop_uncalled(mut out: String, parts: &[String]) -> String {
+    let name = |p: &str| p.lines().find_map(|l| l.strip_prefix("fn ").or_else(|| l.strip_prefix("unsafe fn ")).or_else(|| l.strip_prefix("    fn "))).and_then(|l| l.split(['(', '<']).next()).map(str::to_owned);
+    loop {
+        let mut dropped = false;
+        for p in parts {
+            let Some(n) = name(p) else { continue };
+            let Some(at) = out.find(p.as_str()) else { continue };
+            let without = format!("{}{}", &out[..at], &out[at + p.len()..]);
+            let called = without.lines().filter(|l| !l.trim_start().starts_with("//")).any(|l| l.contains(&format!("{n}(")) || l.contains(&format!("{n},")) || l.contains(&format!("= {n}")));
+            if !called {
+                out = without;
+                dropped = true;
+            }
+        }
+        if !dropped {
+            return out.replace("\n\n\n\n", "\n\n").replace("\n\n\n", "\n\n");
+        }
+    }
 }

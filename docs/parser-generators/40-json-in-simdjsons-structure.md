@@ -636,7 +636,7 @@ source the compiler writes. The order is the order of the fixes: what one unbloc
 4. Tier 2 reads its tokens as `take!()`, and writes its nodes without a commit each. Its writes done (decision 0584): the writer's nodes final as written. Its reads done (decision 0585): the source padded, the index ending in three entries.
 5. Tier 1 makes the strings and the masks made of them in its pass, and writes the structurals there. Done (decision 0585).
 6. Tier 1 writes no codes tier 2 does not read (done in 0585), and keeps no mask that tier 2 can read from the bytes, as `walk`
-   reads a string and a number.
+   reads a string and a number. Done (decision 0586).
 7. Tier 1's UTF-8 check in simdjson's form.
 
 Steps 5 and 6 are also 0556's second step (`bitlex_lex_rust` is Kotlin's and `.rerail`'s tier 1 too); steps 1 to 4
