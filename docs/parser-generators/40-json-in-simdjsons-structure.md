@@ -593,6 +593,12 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 56, done: the empty container and the root's closer, in the loop (decision 0553)
+
+Steps 49 and 53 again, from the grammar: a level whose rule is a one-byte opener, what may be empty and a one-byte
+closer peeks at its call for the closer and writes one leaf (`empty!`); where its call returns to the root's end,
+the file's last record is tested first (`last != '}'`).
+
 ## Step 55, done: the loop's writer reserved once (decision 0552)
 
 The generated tier 2 reserves its run's room once, as the JIT does, and calls the writer's ops on its state: an

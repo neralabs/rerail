@@ -66,6 +66,9 @@ struct Lp<'g, 'a> {
     checked: Vec<String>,
     /// Each byte's token row (its "record kind" here): the row whose start may hold at it.
     row_of: [Option<u8>; 256],
+    /// The root's end (its close and the stream's end), and the place it is once one is made of it.
+    root_end: String,
+    root_place: std::cell::Cell<Option<usize>>,
 }
 
 /// A set of bytes.
@@ -161,8 +164,44 @@ impl Lp<'_, '_> {
     fn to_place(&self, k: K) -> usize {
         match k {
             K::Go(l) => l,
-            K::Code(c) => self.place(c),
+            K::Code(c) => {
+                let root = c == self.root_end;
+                let l = self.place(c);
+                if root {
+                    self.root_place.set(Some(l));
+                }
+                l
+            }
         }
+    }
+
+    /// A one-byte token's byte: a word of a token of one byte, or a kind all of whose tokens start at one byte
+    /// and are one byte long.
+    fn one_byte(&self, g: &Gram) -> Option<u8> {
+        let g = match g {
+            Gram::As(_, a) => a,
+            g => g,
+        };
+        let (t, _) = self.g.token_of(g)?;
+        match self.admits(&(t, None)).ok()? {
+            Admit::Bytes(b) if b.len() == 1 => {
+                let row = self.row_of[usize::from(b[0])]?;
+                self.ends.values().any(|(r, e)| *r == row && matches!(e, End::One)).then_some(b[0])
+            }
+            _ => None,
+        }
+    }
+
+    /// A level's brackets: its body an opener of one byte, what may be empty, and a closer of one byte.
+    fn brackets(&self, rule: &str) -> Result<Option<(u8, u8)>, String> {
+        let Some(Stmt::Node { body: Gram::Seq(gs), .. }) = self.g.rules.get(rule) else { return Ok(None) };
+        let [first, middle @ .., last] = gs.as_slice() else { return Ok(None) };
+        for g in middle {
+            if !self.g.first(g)?.1 {
+                return Ok(None);
+            }
+        }
+        Ok(self.one_byte(first).zip(self.one_byte(last)))
     }
 
     /// The number of a node of `kind` written with `key`.
@@ -265,6 +304,16 @@ impl Lp<'_, '_> {
                         }
                         e.2 = Some(a);
                     }
+                }
+            }
+        }
+        // A split kind whose words and own test all go to one arm is that arm's by its bytes alone: no word read.
+        let whole: Vec<u8> = split.iter().filter(|(_, (_, words, own))| own.is_some_and(|a| words.iter().all(|w| w.1 == a))).map(|(&rk, _)| rk).collect();
+        for rk in whole {
+            let (_, _, own) = split.remove(&rk).expect("the kind");
+            for b in self.bytes_of(rk) {
+                if by_byte.insert(b, own.expect("its arm")).is_some() {
+                    return self.err(format!("byte {b:#04x} starts two arms"));
                 }
             }
         }
@@ -499,11 +548,26 @@ impl Lp<'_, '_> {
                 Some(Stmt::Node { kind, nested: true, .. }) => {
                     let first = self.level(n)?;
                     let ret = self.to_place(k);
-                    format!(
-                        "if stack.len() == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nopen(d, {}, at(src, starts, i) as u64);\ncommit(d);\nstack.push({ret});\n{}",
-                        self.number(kind, key)?,
-                        Self::go(first)
-                    )
+                    let number = self.number(kind, key)?;
+                    let mut out = String::new();
+                    if let Some((open, close)) = self.brackets(n)? {
+                        // The level the root's value: the file's last record its closer, checked before the walk, as
+                        // the lean parser's `last != '}'`.
+                        if self.root_place.get() == Some(ret) {
+                            let _ = write!(out, "if starts.last().map(|&l| src[l as usize]) != Some({close:#04x}) {{\nreturn Err(at(src, starts, i));\n}}\n");
+                        }
+                        // Empty: one leaf from its opener to its closer, as the lean parser's `empty!`; its depth tested
+                        // as a level's.
+                        let _ = write!(
+                            out,
+                            "if stack.len() == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nif peek(src, starts, i) == {open:#04x} && peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\ncommit(d);\n{}}}\n",
+                            Self::go(ret)
+                        );
+                    } else {
+                        out.push_str("if stack.len() == DEPTH {\nreturn Err(at(src, starts, i));\n}\n");
+                    }
+                    let _ = write!(out, "open(d, {number}, at(src, starts, i) as u64);\ncommit(d);\nstack.push({ret});\n{}", Self::go(first));
+                    out
                 }
                 Some(Stmt::Node { kind, body, .. }) => {
                     let after = format!("close(d, e as u64);\n{}", Self::jump(&k));
@@ -782,7 +846,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             _ => {}
         }
     }
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of };
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None) };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {
@@ -792,6 +856,8 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     let first = lp.place(String::new());
     let number = lp.number(kind, &Key::default())?;
     let end = "close(d, src.len() as u64);\nif i != starts.len() {\nreturn Err(at(src, starts, i));\n}\nreturn Ok(());\n".to_owned();
+    let mut lp = lp;
+    lp.root_end = end.clone();
     let code = format!("open(d, {number}, at(src, starts, i) as u64);\ncommit(d);\n{}", lp.walk(body, &Key::default(), K::Code(end))?);
     lp.places.borrow_mut()[first] = code;
     // The words of the kinds split by them.

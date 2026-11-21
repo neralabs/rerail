@@ -1504,6 +1504,19 @@ fn json_rust_is_current() {
         }
         assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "json_aot's {file} is not the compiler's: RERAIL_BLESS=1");
     }
+    let tier2 = json_rust().1;
+    // An empty object or array one leaf, at its call (decision 0553): at every call of each, a value's arm.
+    for (opener, kind) in [("0x7b", "object"), ("0x5b", "array")] {
+        // A call's arm: the depth's test, or first the root's closer's.
+        let calls = tier2.matches(&format!("{opener} => {{\nif stack.len() == DEPTH {{")).count() + tier2.matches(&format!("{opener} => {{\nif starts.last()")).count();
+        assert!(calls > 0 && tier2.matches(&format!("// `{kind}`, empty.")).count() == calls, "every call of {kind} peeks for its closer");
+    }
+    // A value's decision once a site of the grammar's (`value`'s five), not once a word of the number's row.
+    assert_eq!(tier2.matches("// `object`, empty.").count(), 5, "a value's decision a site");
+    // The root's closer checked before the walk, where its value is a container: once each.
+    for b in ["0x7d", "0x5d"] {
+        assert_eq!(tier2.matches(&format!("if starts.last().map(|&l| src[l as usize]) != Some({b}) {{")).count(), 1, "the closer {b} checked once");
+    }
 }
 
 /// The generated parser's format 16 and 16z tapes are the JIT's, byte for byte, in a language whose table is the
@@ -1517,6 +1530,10 @@ fn json_rusts_tapes_are_the_jits() {
     let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
     let mut inputs = tree_inputs();
     inputs.extend(deep_nests(1023..1026));
+    // Empty containers (one leaf each, decision 0553), and files whose last record is not the root's closer.
+    for f in [&b"[]"[..], b"{}", b"[[]]", b"[{}]", b"{\"a\":[]}", b"{\"a\":{}}", b"[[],{},[[]],{\"b\":[]}]", b"{\"a\":[],\"b\":{},\"c\":1}", b"[ ]", b"{ }", b" [] ", b"[1] 2", b"{} {}", b"[]]", b"{}}", b"[1]]", b"{\"a\":1}]", b"[1", b"{", b"[", b"[]["] {
+        inputs.push(f.to_vec());
+    }
     let (mut same, mut refused) = (0, 0);
     for (k, f) in inputs.iter().enumerate() {
         let show = || String::from_utf8_lossy(&f[..f.len().min(60)]).into_owned();
