@@ -57,10 +57,15 @@ format 16's reads alone.
    transducer's interpreter over tapes: its launch takes the kernel of the batch's format (`DocTable::format`). A
    mixed batch's (0) reads every format, as before. The fixed kernels' list names them per format (`interpreter 15`,
    `resident interpreter 15`, `label sweep 16`, …).
-9. **Which reads are called stays as measured.** With format 16's side-list read, its line select and every
-   format's parent called (`UKL_COLD`, as the reads before this decision had them), the interpreter of format 15
-   compiled (155 s) but the join kernels compiled up to 7x slower (`rows_copy` 18 → 120 s, `scan_count` 33 → 140
-   s): every read here is inlined but the 16z block's lookup and decode.
+9. **The interpreter calls its tape and its evaluators; the reads inline.** In the interpreter (one kernel function:
+   `run_batch` with everything inlined, 154 KB of source) format 15's tape reads were two thirds of the compile:
+   132 s, 45 s with them stubbed, on an Arc 140V, one kernel alone, as `clc build` times it. They were inlined at
+   every use (66 copies each of a node's start and end, 136 of the unaligned load). So the readers the interpreter
+   calls (`device_tape.h`'s `tape_*`, the runtime's `Node_*`) and its evaluators (the NFA, the Lua patterns, the
+   assertions, the text tests, the output, the query admission, the look-arounds) are called functions
+   (`UKL_COLD`): 39 s for that kernel (the reads stubbed too: 21 s). Calling the reads themselves instead (format
+   16's side-list read, its line select, the parents) made the join kernels up to 7x slower (`rows_copy` 18 →
+   120 s): the reads stay inlined into the readers that call them.
 
 ## Measured
 
@@ -68,18 +73,16 @@ On an Arc 140V (Intel's OpenCL), each fixed kernel compiled into an empty store:
 whole list 4 at a time, bounded at 460 s (`kernels compile --within`). Before is 0395 §7's (one kernel, the mixed
 interpreters); "> N" a compile still running when the bound ended it.
 
-| Kernel | Before | Tape reads per format (§1–5) | And views, kernels per format (§6–8) |
-|---|---|---|---|
-| `join rows_copy`, alone | 45–47 s | 18.1 s | 17.5 s |
-| `join stage_count` | | 46.7 s | 46.4 s |
-| `join witness_count` | | 46.4 s | 46.8 s |
-| `join scan_count` | | 26.5 s | 29.8 s |
-| `join ix_bucket` | | 24.1 s | 24.3 s |
-| the interpreter over tapes | > 240 s | > 383 s | 145 s (15), > 332 s (16) |
-| the resident interpreter | > 240 s | > 383 s | 180 s (15), > 241 s (16) |
-| the label sweep | > 240 s | > 335 s | 145 s (15), > 206 s (16) |
-| the label passes, 15 / 16 | | 42.6 s / 206 s | 46.1 s / 164 s |
-| `tape_writer_replay` | | 23.3 s | 19.6 s |
+| Kernel | Before | Tape reads per format (§1–5) | Views, kernels per format (§6–8) | Readers called (§9) |
+|---|---|---|---|---|
+| `join rows_copy`, alone | 45–47 s | 18.1 s | 17.5 s | 17.6 s |
+| `join stage_count` | | 46.7 s | 46.4 s | 46.1 s |
+| `join witness_count` | | 46.4 s | 46.8 s | 46.6 s |
+| the interpreter over tapes | > 240 s | > 383 s | 145 s (15), > 332 s (16) | 47 s (15), 59 s (16) |
+| the resident interpreter | > 240 s | > 383 s | 180 s (15), > 241 s (16) | 52 s (15), 65 s (16) |
+| the label sweep | > 240 s | > 335 s | 145 s (15), > 206 s (16) | 103 s (15), 99 s (16) |
+| the label passes, 15 / 16 | | 42.6 s / 206 s | 46.1 s / 164 s | 49.6 s / 54.9 s |
+| every fixed kernel | > 460 s | > 460 s | > 460 s | 279 s |
 
-Format 16's kernels are what is left: its reads (a value's escape to its side list, the checkpoints and the gaps'
-sum) are inlined at each of the interpreter's reads, and calling them instead made every other kernel slower (§9).
+None of this is yet a kernel compiled in seconds: the sweep, the join kernels' view reads and the interpreter's own
+body (21 s without a tape read) are next.
