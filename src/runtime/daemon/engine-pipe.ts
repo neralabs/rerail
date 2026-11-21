@@ -93,12 +93,28 @@ export type PipeServer = NativeNamedPipeServer;
  * for each pipe instance (the native binding's `namedPipeServer`). While other clients hold every instance it waits for
  * one to free and opens again, as Node's own client does, until `timeoutMs` has passed. Any local user can create a pipe
  * of any name, but not one Windows records as another process's. Undefined where no such pipe takes a connection, or
- * where the binding predates the question, will not load in this process or throws, so the engine's proof decides.
+ * where the binding predates the question, will not load in this process or throws, so the engine's proof decides; the
+ * first load failure or throw is reported ({@link reportPipeServerFailure}).
  */
 export function pipeServer(path: string, timeoutMs: number): PipeServer | undefined {
   try {
     return loadNativeBinding().namedPipeServer?.(path, timeoutMs) ?? undefined;
-  } catch {
+  } catch (error) {
+    reportPipeServerFailure(path, error);
     return undefined;
   }
+}
+
+/** Whether a failure to ask Windows which process serves a pipe was reported in this process. */
+let pipeServerFailureReported = false;
+
+/**
+ * Writes the first failure to ask Windows which process serves a pipe to stderr, once per process: without that answer
+ * each event a hook sends waits for the engine on the pipe to prove itself.
+ */
+function reportPipeServerFailure(path: string, error: unknown): void {
+  if (pipeServerFailureReported) return;
+  pipeServerFailureReported = true;
+  const reason = error instanceof Error ? error.message : String(error);
+  process.stderr.write(`rerail: the engine could not ask Windows which process serves the pipe ${path}, so the engine on it must prove itself: ${reason}\n`);
 }

@@ -970,15 +970,19 @@ describe("a state file Windows left behind", () => {
       expect(asked).toEqual([]);
     });
 
-    it("asks the engine to prove itself, and sends the event once it does, when the engine's binding will not load in the hook's process", async () => {
+    it("asks the engine to prove itself, and sends the event once it does, when the engine's binding will not load in the hook's process, and says why once", async () => {
       await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
       // The binding that asks Windows which process serves the pipe is missing, as while an update replaces it.
-      vi.stubEnv("RERAIL_ENGINE_PATH", join(home, "missing-engine.node"));
+      const missing = join(home, "missing-engine.node");
+      vi.stubEnv("RERAIL_ENGINE_PATH", missing);
+      const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
       try {
         const unloaded = (answer: EngineProofAnswer): DaemonMachine => ({ ...answering(answer), pipeServer });
         expect(await engineEndpointAt(PIPE, undefined, unloaded("proved"))).toMatchObject({ socketPath: PIPE, accessToken: "capability" });
         await expect(engineEndpointAt(PIPE, undefined, unloaded("refused"))).rejects.toThrow(notOurs);
+        expect(written.mock.calls.map(([text]) => String(text))).toEqual([expect.stringContaining(`which process serves the pipe ${PIPE}, so the engine on it must prove itself: RERAIL_ENGINE_PATH does not exist: ${missing}`)]);
       } finally {
+        written.mockRestore();
         vi.unstubAllEnvs();
       }
       expect(asked.map(([socketPath, accessToken]) => [socketPath, accessToken])).toEqual(Array(2).fill([PIPE, "capability"]));
