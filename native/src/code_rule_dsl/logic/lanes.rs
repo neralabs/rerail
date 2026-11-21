@@ -113,10 +113,11 @@ pub mod wave {
         static FENCES: RefCell<Vec<Mark>> = const { RefCell::new(Vec::new()) };
     }
 
-    /// A job another waits for may run on the waiter's thread (`rerail_accel::exec::help_once`): from here until
-    /// `unfence`, a `flush` on this thread runs only what that job queued, not the launches and submissions the
-    /// waiter left for its own wave. Without it the job ran them into its own outputs, and the waiter's stratum,
-    /// resumed on another thread, found none ("launch has not run").
+    /// A job may run on a thread inside another's work (a wait that helps the pool, rayon's own waits): from here until
+    /// `unfence`, a `flush` on this thread runs only what this job queued, not the launches and submissions the job
+    /// around it left for its own wave. Without it the inner job ran them into its own outputs, and the outer job's
+    /// stratum, resumed on another thread, found none ("launch has not run"). Called around every job
+    /// (`rerail_accel::exec::fenced`).
     pub fn fence() {
         let at = mark();
         FENCES.with_borrow_mut(|f| f.push(at));

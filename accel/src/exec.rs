@@ -127,17 +127,17 @@ thread_local! {
     static LAST_RUN: std::cell::Cell<(f64, &'static str)> = const { std::cell::Cell::new((0.0, "")) };
 }
 
-/// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]).
+/// Runs `f` as the job `name`: a wait that runs it for another knows what made it late ([`waits`]). It runs inside the
+/// job fence ([`fenced`]).
 pub fn as_job<R>(name: &'static str, f: impl FnOnce() -> R) -> R {
-    let r = f();
+    let r = fenced(f);
     LAST_JOB.with(|j| j.set(name));
     r
 }
 
 /// Runs one of the pool's other jobs on this thread, if one is queued (a pool thread's wait): whether it ran one. Its
 /// CPU is counted as helped ([`helped`]), not as the waiter's own, and its wall is the job the wait last ran (how late
-/// the wait may be, if what it waits for was ready during it: [`Waiting`]). The job runs inside the fence the caller
-/// set ([`fence_helps`]), so it does not take what the waiter left on this thread.
+/// the wait may be, if what it waits for was ready during it: [`Waiting`]).
 pub fn help_once() -> bool {
     // A job run here runs on this wait's frames, and may wait and help in turn: with too little stack left, it is
     // left to a thread with more (an unbounded nesting of helps overflowed a pool thread's stack in a debug build).
@@ -147,12 +147,7 @@ pub fn help_once() -> bool {
     let c0 = crate::score::thread_cpu();
     let t0 = Instant::now();
     LAST_JOB.with(|j| j.set(""));
-    let fence = HELP_FENCE.get().map(|&(enter, exit)| {
-        enter();
-        Fence(exit)
-    });
     let ran = rayon::yield_now() == Some(rayon::Yield::Executed);
-    drop(fence);
     if ran {
         let spent = crate::score::thread_cpu() - c0;
         HELPED.with(|h| h.set(h.get() + spent));
@@ -164,10 +159,10 @@ pub fn help_once() -> bool {
     ran
 }
 
-/// What [`help_once`] calls around another job it runs on a waiting thread ([`fence_helps`]).
-static HELP_FENCE: OnceLock<(fn(), fn())> = OnceLock::new();
+/// What [`fenced`] calls around a job ([`fence_jobs`]).
+static JOB_FENCE: OnceLock<(fn(), fn())> = OnceLock::new();
 
-/// A helped job's fence, closed when it ends (or unwinds).
+/// A job's fence, closed when it ends (or unwinds).
 struct Fence(fn());
 
 impl Drop for Fence {
@@ -176,12 +171,23 @@ impl Drop for Fence {
     }
 }
 
-/// Sets what fences a helped job off the waiter's per-thread state: `enter` is called before the job runs and `exit`
-/// after. The engine's device wave keeps the launches a stratum queued on its thread until the stratum's wave is
-/// flushed (`rerail_engine`'s `lanes::wave`); a job helped on that thread that flushed them would run them into its own
-/// outputs, and the stratum, resumed elsewhere, would find none. Set once, at start; a later call is ignored.
-pub fn fence_helps(enter: fn(), exit: fn()) {
-    let _ = HELP_FENCE.set((enter, exit));
+/// Runs the job `f` inside the fence the engine set ([`fence_jobs`]), on whatever thread runs it: the pool's, a
+/// stream's worker, or a thread that waits and takes it (a wait that helps, rayon's own waits).
+pub fn fenced<R>(f: impl FnOnce() -> R) -> R {
+    let _fence = JOB_FENCE.get().map(|&(enter, exit)| {
+        enter();
+        Fence(exit)
+    });
+    f()
+}
+
+/// Sets what fences a job off the per-thread state of the job it may be run inside: `enter` is called before each job
+/// ([`fenced`]) and `exit` after. The engine's device wave keeps the launches a stratum queued on its thread until the
+/// stratum's wave is flushed (`rerail_engine`'s `lanes::wave`); a job taken by that thread while it waited, whose own
+/// flush took them, ran them into its own outputs, and the stratum, resumed elsewhere, found none. Set once, at start;
+/// a later call is ignored.
+pub fn fence_jobs(enter: fn(), exit: fn()) {
+    let _ = JOB_FENCE.set((enter, exit));
 }
 
 /// One site's waits ([`Waiting`]): how many ran others' jobs, for how long, and how late those jobs made them.
