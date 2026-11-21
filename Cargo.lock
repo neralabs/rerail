@@ -3650,6 +3650,7 @@ name = "rerail-json-aot"
 version = "0.1.0"
 dependencies = [
  "rerail-json-aot",
+ "rerail-simd8",
  "rerail-tape-format",
 ]
 
@@ -3667,6 +3668,7 @@ name = "rerail-kotlin-aot"
 version = "0.1.0"
 dependencies = [
  "rerail-kotlin-aot",
+ "rerail-simd8",
  "rerail-tape-format",
 ]
 

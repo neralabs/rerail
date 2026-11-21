@@ -4998,6 +4998,12 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     if clustered && !cut.pass.is_empty() {
         flags.push(("enable_multi_ret_implicit_sret", "true"));
     }
+    // A word of another cluster is a tail call of it (`return_call`), which Cranelift's x64
+    // backend emits only with frame pointers kept (its `emit` asserts it); AArch64's frames
+    // keep them already.
+    if clustered && cfg!(target_arch = "x86_64") {
+        flags.push(("preserve_frame_pointers", "true"));
+    }
     let mut builder = if cut.unsigned {
         unsigned_builder(&flags)?
     } else {
