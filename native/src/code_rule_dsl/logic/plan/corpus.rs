@@ -4511,6 +4511,14 @@ fn run_observed_within(
     // the fixpoint). The memo's keys are the split's, made before.
     let answering = guests::answering(&local_version);
     let parsing = !answering.is_empty();
+    // Spike of decision 0563 A: a file-local part that answers no guest request, in a run not `.embedded on`, admits
+    // no guest, so the guest relations are empty in both parts: the rules no row can reach go, and what only they
+    // read (`Prune`).
+    let (local_version, cross_version) = if !parsing && !embedded_on(&*local_version) && std::env::var("RERAIL_UNFILLABLE").is_ok_and(|x| x == "guests") {
+        (preparation::unfillable(local_version, "file-local").map_err(Error::Plan)?, preparation::unfillable(cross_version, "cross-file").map_err(Error::Plan)?)
+    } else {
+        (local_version, cross_version)
+    };
     let local_version = if parsing {
         let answers: BTreeMap<String, Vec<String>> = answering.iter().map(|(r, (produced, _))| (r.clone(), produced.clone())).collect();
         crate::code_rule_dsl::logic::answers::gate(&super::body::Placed::whole(local_version), &answers).map_err(Error::Plan)?

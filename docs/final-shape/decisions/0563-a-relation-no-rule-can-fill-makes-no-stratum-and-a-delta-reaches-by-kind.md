@@ -1,6 +1,7 @@
 # 0563: A relation no rule can fill makes no stratum, and an edit's delta reaches a rule by the kinds it holds
 
-Status: designed (2026-11-21), not built. The user asked for it (2026-11-21): "okay, please survey and design this.
+Status: designed (2026-11-21), spiked (2026-11-21, "Spike" below: each part validated on ep2, findings exact; the
+design is amended there), not built. The user asked for it (2026-11-21): "okay, please survey and design this.
 Does it also make sense to track changes per fact type? Presumably much work could be cut out if certain fact
 deltas are empty without needing to propagate it." "This" is the 1,700 strata the merge of the serverplan-quality
 hub (2ac89a3a70) added to every cold run of ep2, which makes no guests. Follows 0101 §1, 0117, 0120 and 0431.
@@ -258,6 +259,153 @@ always.
 2. **A3**, the guest inputs counted empty once admission closes. Measure it on a corpus with guests.
 3. **B3's measurement** of the `append` delta. Then either the stable node identity, or straight to B1.
 4. **B1 and B2** on 0120 step 3's driver. 0120 steps 3 and 4 are built first, or with it.
+
+## Spike (2026-11-21): what holds, what changes
+
+The user asked for it (2026-11-21): "spike on the entire shape of the solution … I want to validate that it will
+work before we build the entire thing". All runs were on ep2, on the M3 (CPU). Each edit's outputs were compared
+with the same edit's run without the spike, byte for byte (`outputs.rro`, and every relation's row count).
+
+### A1 and A2: the predicate and the closure
+
+In the tree, off unless `RERAIL_UNFILLABLE=guests` is set:
+
+- `preparation::prune::Unfillable` is the forward pass. `preparation::unfillable` runs it, then `Prune`.
+- `run_observed_within` runs both on the file-local and cross-file versions, where the run finds that the file-local
+  part answers no request and is not `.embedded on`.
+
+**The predicate moved.** On the combined program, `guests::answering` is not empty for ep2:
+
+- the cross-file part derives `rr_embed_req` (0470's call-argument embedding: Python embeds HTML), 17,925 rows of
+  it;
+- but the file-local part, the only one that answers a request (0431 §8), derives none, and the profile says "no rule
+  asks for a guest".
+
+So the right test is §3 A1's, made on the file-local part after the split: `answering(local_version)` is empty and
+the run is not `.embedded on`. The run already makes that test, as `parsing`. A1's "a language of the batch embeds"
+is not needed: an embedding is made only by a request or under `.embedded on`. The requests ep2 makes are never
+answered, so they are work for nothing too. A request no part answers can go the same way, as an empty input of its
+readers.
+
+**The empty set is narrower than `guests::READS`.**
+
+- `guests::READS` has `tape_of`, `doc_grammar` and `rr_program`. These are a file's too: `sources.rerail` reads
+  `tape_of` for every loaded document.
+- With them taken as empty, the `sources` phase made no `document`.
+- The guest-only set is `guest_place`, `guest_of`, `host_node`, `sub_tape`, `parsed`, `parse_of`, `unparse_of` and
+  `splice_of`. The build names it in `guests` beside `READS`.
+
+**A relation is empty only when it traces back to an empty input.**
+
+- The first closure took a relation that only rules make as empty when none of its rules could fire.
+- A phase's engine-bound relations (`load`'s) broke that.
+- The closure now seeds from the empty inputs alone: a relation every rule of which joins an empty relation is
+  empty. It is conservative for recursion through an empty relation, and exact for ep2.
+
+**Measured, cold.**
+
+- File-local part: 1,516 rules can never fire and `Prune` takes 414 more (6,637 → 4,707 rules), 1,328 relations
+  empty.
+- Cross-file part: 3 rules and 103 more (3,377 → 3,271).
+- Strata: 8,067 → 5,608 (5,050 before the merge).
+- The `fz`, `fzk` and `xd` `rr_diagnostic` strata are back to their counts before the merge (329 → 3 and 6), and so
+  are `pre_N` (1,568 → 844) and `violation_at` (329 → 166).
+- Still added by the merge: `demand_exists` and `xd_exists` (163 each) and `flN_violation` (330 against 168). They
+  are not guest rules: `exists_N(d) :- pN_X(v), node(d, v, …), !placed_at(v)`, whose `xd_exists` is found empty only
+  by its data.
+
+| ep2 cold, plain, interleaved after a warm-up | Instructions | CPU | Wall | Peak memory |
+|---|---|---|---|---|
+| Off (two runs) | 733.0 / 732.7 G | 57.9 / 55.3 s | 20.1 / 18.8 s | 1,714 / 1,730 MB |
+| On (two runs) | 717.6 / 717.3 G | 55.4 / 53.8 s | 18.8 / 18.1 s | 1,660 / 1,661 MB |
+
+**A4's targets were wrong.** The saving is 2.1% of instructions and about 2.5 s of CPU, not 6.5 s and 1.2 GB:
+
+- the profiled runs' per-stratum costs (§1) were mostly the profiler's own;
+- the first run of a session costs about 130 G more than the next, so order an A/B after a warm-up.
+- The gain is real and exact, and the rules removed (1,930 of 10,000) cost preparation, planning and memory.
+
+### A3: not validated
+
+In ep2 no part answers a request, so the static prune covers it, and A3 has nothing to cut. Validating A3 needs a
+corpus whose file-local part answers requests. It stays as designed, and is built after A1–A2 and B.
+
+### B3: what an edit's delta holds
+
+Traced at the driver's input deltas (`driven_part`'s `answer`):
+
+| Edit | `node` delta | Kinds | Largest node-keyed deltas |
+|---|---|---|---|
+| `append` (a function at a file's end) | +14 −1 | 11 | 13 rows of 10 kinds each (`ast_depth`, `node_order`, `visit_index`, `unparen`, …) |
+| An import at a file's top | +4,341 −4,336 | 71 | `line` +4,678, `node_order` and `visit_index` +4,340 |
+
+- A row names its node by preorder (`input_delta`), so an insert renumbers every node after it, and the delta is the
+  rest of the file.
+- The kind cut still pays there (below), but stable node identity would shrink the delta itself. That is its own
+  item: 0117 step 2's input deltas, after B.
+
+### B1–B2: the reach by kind, and by key
+
+The spike tested, at the driver's reach (`plan.rs`, where `moved` is formed), whether every rule of a reached stratum
+sees no row of any changed read's delta. If so, the stratum takes the quiet path. Two tests, per atom over a changed
+read:
+
+1. **By kind.**
+   - The atom's node variable is held to kinds by `node`'s or `kind`'s kind constant, or by a kind set's facts.
+   - The constants are branded atoms (`#k1230`), whose values are the tape's kind codes, the same values as `node`'s
+     delta holds.
+   - `kind` is a projection of `node`, so its delta is `node`'s, projected.
+2. **By key.**
+   - Another positive atom of the rule over a relation that did not change shares the variable.
+   - No value of the delta's in that column is one of that relation's rows there.
+   - It is a semijoin of the delta's few keys against the relation's index.
+
+**Kind alone is not enough.** Of the 536 strata `append` reached, 325 were reached through `node` by the merge's
+`exists_N(d) :- pN_X(v), node(d, v, _, _, _), !placed_at(v)`. These hold no kind. Their selectivity is `pN_X`, a
+finding's nodes. The key test cuts them. So "per fact type" is per kind for the tape's views, and per key for
+everything that joins them.
+
+**Measured** (profiled edits; the outputs identical in both):
+
+| ep2 edit | Strata cut, of those reached | Maintained strata | Joins of the cross part | The spike's probe | Instructions |
+|---|---|---|---|---|---|
+| `append` | 449 of 552 | 531 → 82 | 1.30 s → under 0.2 s | about +0.9 s | 83.5 → 77.2 G |
+| Import at the top | 391 of 558 | 377 → 156 | 1.26 s → 0.41 s | about +1.0 s | 87.5 → 86.8 G |
+
+- The cut saves about 0.9 s of joins on each edit, of a cross part of 1.8–2.0 s.
+- The spike's probe costs about as much again, under "other: cross". It reads each probed relation's column whole
+  into a set, and admits a stored relation (`Maintain::need`) to do so.
+- That is also a copy of a block (0353), so the spike's B code is not in the tree. It is kept as a patch,
+  `tmp/spikes/0563-spike-b-plan.patch`, and with the B3 trace in `tmp/spikes/0563-spike-all.patch`.
+
+**What the build does instead.**
+
+- **The delta's keys and kinds are derived facts**, written once where the delta is made (`driven_part`). They are
+  never re-read from the delta's rows per atom.
+- **The key test probes the relation's own index in its block** (`Source::lookup_read` or `sorted_rows`). A stored,
+  unread relation is probed through a key summary kept with its frames (its keys' filter, written when the
+  relation is kept), so the test admits no rows.
+- **The test runs before a stratum's spec and plan**, as the spike's did at the driver.
+
+The target stays: the cross part's joins less 0.9 s on both edits, at a probe cost of a few ms. The test cuts a
+stratum only where its proof is exact (the outputs compared). For the other 103 strata `append` reached, either a
+rule's key is a column of a relation changed in the same edit, or the read has no given delta (a relation derived
+in the run, whose delta is known only when its stratum has run).
+
+### The order of work, amended
+
+1. **A1 and A2** as spiked:
+   - the predicate on the file-local part (`!parsing`, not `.embedded on`);
+   - the guest-only set named in `guests`;
+   - the closure seeded from the empty inputs;
+   - a request no part answers taken as empty;
+   - the tests of A4.
+2. **B**:
+   - the delta's kinds and keys made with the delta;
+   - the kind and key tests at the driver, probing indexes and key summaries;
+   - the outputs compared on the `append` and insert edits, and B4's test.
+3. **Stable node identity** across an edit, so an insert's delta is the nodes changed.
+4. **A3**, on a corpus that answers requests.
 
 ## Prior art
 

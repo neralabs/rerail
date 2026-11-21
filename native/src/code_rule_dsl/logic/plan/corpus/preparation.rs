@@ -199,6 +199,25 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
     Ok(p.current()?.clone())
 }
 
+/// Spike of decision 0563 A: `version` without the rules no row can reach once the guest relations are empty
+/// (`prune::Unfillable`), and what only they read (`Prune`). `part` names it in the decision.
+pub fn unfillable(version: Arc<Version>, part: &str) -> Result<Arc<Version>, String> {
+    // Only the guest relations: `guests::READS` also has `tape_of`, `doc_grammar` and `rr_program`, a file's too.
+    const GUEST_ONLY: [&str; 8] = ["guest_place", "guest_of", "host_node", "sub_tape", "parsed", "parse_of", "unparse_of", "splice_of"];
+    let rules = version.size();
+    let mut p = Pipeline::new("unfillable", version);
+    let mut unfillable = prune::Unfillable::new(GUEST_ONLY.iter().map(|r| (*r).to_owned()));
+    p.program(&mut unfillable);
+    let mut pruned = prune::Prune::default();
+    p.program(&mut pruned);
+    let v = p.current()?.clone();
+    let found = unfillable.found.iter().take(16).cloned().collect::<Vec<_>>().join(", ");
+    crate::code_rule_dsl::logic::profile::decision("unfillable relations (decision 0563 A, spike)", || {
+        format!("{part}: no guest: {} rules no row can reach, {} more pruned ({rules} → {} rules); {} relations empty: {found}", unfillable.dropped, pruned.0, v.size(), unfillable.found.len())
+    });
+    Ok(v)
+}
+
 /// The passes before lowering, on the version (decision 0281's path, steps 6c–6e): the functors only CPython gives
 /// and the base relations as inputs, a prune, `simplify` and a prune again, the reach form, the demand for negated
 /// tests, the program's own demand (`RERAIL_DEMAND=off` computes the listed relations in full) and a prune after

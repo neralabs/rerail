@@ -170,3 +170,75 @@ mod tests {
         assert_eq!(pruned("dead"), (1, false), "its reader is the version's, and unread");
     }
 }
+
+/// The rules no row can reach (decision 0563 §3, A2's forward half; `Prune` is its backward half): given the inputs
+/// the run knows are empty (`empty`), a relation is empty when only rules make it and each of its rules joins an
+/// empty relation. A rule with a positive atom (not an aggregate's) over an empty relation is dropped; a negated or aggregated one keeps its rule, whose relation is
+/// empty when it runs. What only the dropped rules read goes at the next `Prune`.
+pub struct Unfillable {
+    pub empty: BTreeSet<String>,
+    /// How many rules it dropped, and the relations it found empty.
+    pub dropped: usize,
+    pub found: BTreeSet<String>,
+}
+
+impl Unfillable {
+    pub fn new(empty: impl IntoIterator<Item = String>) -> Self {
+        Unfillable { empty: empty.into_iter().collect(), dropped: 0, found: BTreeSet::new() }
+    }
+}
+
+impl ProgramPass for Unfillable {
+    const NAME: &'static str = "the rules no row can reach";
+    fn settings(&self) -> Vec<u8> {
+        self.empty.iter().flat_map(|r| r.bytes().chain([0])).collect()
+    }
+    fn run(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> Result<(), String> {
+        use crate::code_rule_dsl::logic::program_image::{Lit as L, RelId};
+        let v = cx.v();
+        let rules: Vec<RuleRef<'_>> = v.rules().collect();
+        let about = About::of(v);
+        let positive = |r: &RuleRef<'_>| -> Vec<RelId> {
+            r.body().filter_map(|l| match l.view() {
+                L::Atom(a) if !a.neg() => Some(a.rel()),
+                _ => None,
+            }).collect()
+        };
+        // Empty: the inputs known empty, then each relation only rules make (no input, fact or native's) every rule
+        // of which joins an empty one. Seeded from the inputs alone: a relation some phase or the engine binds beside
+        // its rules (a phase's `load`) is never taken for empty because its rules make nothing here.
+        let inputs: HashSet<&str> = v.inputs().map(|a| v.text(a)).collect();
+        let facts: HashSet<String> = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::fact_names(&**v).into_iter().collect();
+        let natives: HashSet<RelId> = about.natives.iter().map(|n| n.rel).collect();
+        let bodies: Vec<Vec<RelId>> = rules.iter().map(positive).collect();
+        let mut by_head: HashMap<RelId, Vec<usize>> = HashMap::new();
+        for (i, r) in rules.iter().enumerate() {
+            by_head.entry(r.head().rel()).or_default().push(i);
+        }
+        let mut empty: HashSet<RelId> = self.empty.iter().filter(|r| inputs.contains(r.as_str())).filter_map(|r| v.rel(r)).collect();
+        loop {
+            let mut grew = false;
+            for (&h, at) in &by_head {
+                let name = v.rel_name(h);
+                if empty.contains(&h) || inputs.contains(name) || facts.contains(name) || natives.contains(&h) {
+                    continue;
+                }
+                if at.iter().all(|&i| bodies[i].iter().any(|a| empty.contains(a))) {
+                    empty.insert(h);
+                    grew = true;
+                }
+            }
+            if !grew {
+                break;
+            }
+        }
+        let gone: HashSet<_> = rules.iter().enumerate().filter(|(i, _)| bodies[*i].iter().any(|a| empty.contains(a))).map(|(_, r)| r.id()).collect();
+        self.found.extend(empty.iter().map(|&a| v.rel_name(a).to_owned()));
+        if gone.is_empty() {
+            return Ok(());
+        }
+        self.dropped += gone.len();
+        w.keep(|r| !gone.contains(&r.id()))?;
+        Ok(())
+    }
+}
