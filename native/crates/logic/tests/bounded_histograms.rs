@@ -6,6 +6,15 @@ mod sketch;
 mod rows {
     pub use rerail_facts::code_rule_dsl::facts::rows::BlockVec;
 }
+/// The keys' hash a sketch shares with the Bloom filters (`logic::bloom::hash`), at the path the sketch names it by.
+#[allow(dead_code)]
+#[path = "../../../src/code_rule_dsl/logic/bloom.rs"]
+pub mod bloom;
+mod code_rule_dsl {
+    pub mod logic {
+        pub use crate::bloom;
+    }
+}
 #[test]
 fn compact_integer_domains_keep_exact_counts_past_64_distinct_values() {
     let mut s=sketch::Sketch::default();

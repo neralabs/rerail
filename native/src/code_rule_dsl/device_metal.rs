@@ -111,8 +111,8 @@ impl SolverDevice for Metal {
         packed::metal_sort::install_guard();
     }
 
-    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
-        joins::column_stats(cols, k).map_err(Refused::Failed)
+    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize, words: usize) -> Result<(Vec<ColumnStats>, usize), Refused> {
+        joins::column_stats(cols, k, words).map_err(Refused::Failed)
     }
 }
 

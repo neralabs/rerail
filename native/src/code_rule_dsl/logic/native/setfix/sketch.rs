@@ -108,14 +108,10 @@ impl Default for Sketch {
     }
 }
 
+/// The keys' hash: the Bloom filters' too (`logic::bloom`), so a filter and a sketch see the same keys alike.
 #[inline]
-fn mix(v: i64) -> u64 {
-    let mut x = v as u64 ^ 0x9e37_79b9_7f4a_7c15;
-    x ^= x >> 30;
-    x = x.wrapping_mul(0xbf58_476d_1ce4_e5b9);
-    x ^= x >> 27;
-    x = x.wrapping_mul(0x94d0_49bb_1331_11eb);
-    x ^ (x >> 31)
+pub(super) fn mix(v: i64) -> u64 {
+    crate::code_rule_dsl::logic::bloom::hash(v)
 }
 
 impl Sketch {
@@ -168,12 +164,31 @@ impl Sketch {
         if let Some(small) = &self.small {
             return small.len();
         }
+        Self::estimate(self.registers.iter().copied(), self.rows)
+    }
+
+    /// Estimated fraction of the probe column's distinct keys present in the build column.
+    /// Inclusion-exclusion can lose a small intersection in the sketch error. This only prices a plan.
+    pub(super) fn overlap(&self, other: &Self) -> f64 {
+        let left = self.ndv();
+        let right = other.ndv();
+        let union = Self::estimate(self.registers.iter().zip(other.registers.iter()).map(|(&a, &b)| a.max(b)),
+            self.rows.saturating_add(other.rows));
+        (left.saturating_add(right).saturating_sub(union).min(left.min(right)) as f64) / left.max(1) as f64
+    }
+
+    fn estimate(registers: impl Iterator<Item = u8>, rows: u64) -> usize {
+        if rows == 0 { return 0; }
         let m = REGISTERS as f64;
-        let sum: f64 = self.registers.iter().map(|&r| 2f64.powi(-(r as i32))).sum();
+        let mut sum = 0.0;
+        let mut zeros = 0;
+        for rank in registers {
+            sum += 2f64.powi(-i32::from(rank));
+            zeros += usize::from(rank == 0);
+        }
         let raw = 0.7213 / (1.0 + 1.079 / m) * m * m / sum;
-        let zeros = self.registers.iter().filter(|&&r| r == 0).count();
         let est = if raw <= 2.5 * m && zeros > 0 { m * (m / zeros as f64).ln() } else { raw };
-        (est.round() as usize).clamp(1, self.rows.max(1) as usize)
+        (est.round() as usize).clamp(1, usize::try_from(rows).unwrap_or(usize::MAX))
     }
 
     /// The sum over values of each value's rows squared.

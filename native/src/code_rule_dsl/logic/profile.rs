@@ -33,6 +33,7 @@ use std::path::Path;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{LazyLock, Mutex};
 
+pub mod author_joins;
 pub mod analysis;
 pub mod analysis_report;
 pub mod kinds;
@@ -138,6 +139,7 @@ pub struct State {
     /// (`setfix::step_cpu`), where the engine timed them.
     pub native_step_cpu: BTreeMap<(String, String), Vec<f64>>,
     pub notes: BTreeMap<String, String>,
+    pub join_rows: BTreeMap<String, (usize, usize)>,
     /// Run-level decisions by (topic, text): how many times made, or stated by a reused version that made them
     /// (`reused`, decision 0269).
     pub decisions: BTreeMap<(String, String), u64>,
@@ -218,6 +220,11 @@ impl State {
         }
         for (k, t) in o.notes {
             self.notes.entry(k).or_insert(t);
+        }
+        for (table, (min, max)) in o.join_rows {
+            let range = self.join_rows.entry(table).or_insert((min, max));
+            range.0 = range.0.min(min);
+            range.1 = range.1.max(max);
         }
         for (k, n) in o.decisions {
             *self.decisions.entry(k).or_default() += n;
@@ -2561,12 +2568,14 @@ pub fn rule_name(rule: Option<usize>, kind: &str) -> String {
 
 /// The EXPLAIN ANALYZE section: decisions, then each stratum's engine and its plans, steps with estimates and actuals.
 pub fn explain(r: &mut String, state: &State) {
+    author_joins::render(r, state);
     let _ = writeln!(r, "\n== Decisions and optimizations (times made)");
     if state.decisions.is_empty() {
         r.push_str("(none recorded)\n");
     }
     let mut topic = "";
     for ((t, text), n) in &state.decisions {
+        if t == author_joins::TOPIC { continue; }
         if t != topic {
             let _ = writeln!(r, "{t}:");
             topic = t;

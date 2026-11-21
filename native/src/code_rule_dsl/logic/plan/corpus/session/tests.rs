@@ -824,3 +824,70 @@ fn a_session_derives_the_reach_index_again_when_cycles_and_connections_change() 
     drop(session);
     let _ = std::fs::remove_dir_all(&base);
 }
+
+#[test]
+fn cache_boundary_edits_explain_the_current_snapshot() {
+    use crate::code_rule_dsl::logic::{plan::corpus, profile, rr};
+    use std::fs;
+    let work = tempfile::tempdir().unwrap();
+    let root = work.path().join("files");
+    fs::create_dir(&root).unwrap();
+    fs::write(root.join("input.py"), "x = 1\n").unwrap();
+    let rule = work.path().join("join.rr");
+    let mut src = String::from(".decl doc(d:number, path:symbol, module:symbol)\n.input doc\n\
+        .decl lhs(a:number,k:number)\n.decl rhs(b:number,k:number)\n.decl wide(a:number,b:number)\n\
+        .decl lefts(a:number)\n.decl rights(b:number)\n.output lefts, rights\n\
+        wide(a,b) :- lhs(a,k), rhs(b,k).\nlefts(a) :- wide(a,_).\nrights(b) :- wide(_,b).\n\
+        lhs(64,0) :- doc(_, \"extra.py\", _).\n");
+    for i in 0..64 { src.push_str(&format!("lhs({i},0). rhs({i},0).\n")); }
+    // Only the first lefts clause reads wide. Its explanation must point to that clause.
+    src.push_str("lefts(a) :- lhs(a,999).\n");
+    fs::write(&rule, &src).unwrap();
+    let program = rr::parse_version(&src).unwrap();
+    let _store = corpus::use_store(work.path().join("store.sqlite"));
+    let _session = corpus::session::start(&work.path().join("session")).unwrap();
+    struct Profiling(bool);
+    impl Drop for Profiling { fn drop(&mut self) { profile::set(self.0); } }
+    let _profiling = Profiling(profile::on());
+    profile::set(true);
+    let _sources = rr::profile_join_sources(&[&rule]);
+    // The runs' profiles are the run's (decision 0441): one run under way here holds them for the report.
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    // The deferred joins are off by default (decision 0488): this test is of them.
+    let _deferred = profile::bind(corpus::preparation::DeferredJoins(Some("auto")));
+    let run = |out: &std::path::Path| {
+        corpus::run_read(&program, &root, out, "program", Binding::Cpu, 4096,
+            &Default::default(), &serde_json::Value::Null).unwrap();
+        ["lefts", "rights"].map(|name| {
+            let mut rows = crate::code_rule_dsl::logic::plan::output::shown(out, name).unwrap();
+            rows.sort();
+            rows
+        })
+    };
+    for (i, expected_pairs) in [4096, 0, 4096].into_iter().enumerate() {
+        match i {
+            1 => fs::write(root.join("extra.py"), "extra = 1\n").unwrap(),
+            2 => fs::remove_file(root.join("extra.py")).unwrap(),
+            _ => {}
+        }
+        let actual = run(&work.path().join("out"));
+        let mut report = String::new();
+        profile::author_joins::render(&mut report, &profile::merged());
+        assert!(report.contains("join.rr:9)"), "snapshot {i}: {report}");
+        assert!(report.contains("Cache limit 4096 pair witnesses"), "{report}");
+        assert!(report.contains(&format!("Observed {expected_pairs} cached pairs"))
+            || (expected_pairs == 0 && report.contains("empty cache guard allows zero cached pairs")), "snapshot {i}: {report}");
+        assert!(report.contains(if expected_pairs == 0 { "joined the factors directly" } else { "used the pair cache" }), "snapshot {i}: {report}");
+        assert!(report.contains("Reader lefts") && report.contains("join.rr:10)"), "{report}");
+        let fresh = corpus::session::full(|| {
+            let _fresh = corpus::use_store(work.path().join(format!("fresh-{i}.sqlite")));
+            run(&work.path().join(format!("fresh-out-{i}")))
+        });
+        assert_eq!(actual, fresh);
+        for (rows, size) in actual.iter().zip([64 + usize::from(i == 1), 64]) {
+            let mut expected: Vec<_> = (0..size).map(|n| vec![n.to_string()]).collect();
+            expected.sort();
+            assert_eq!(*rows, expected);
+        }
+    }
+}

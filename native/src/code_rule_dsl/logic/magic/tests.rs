@@ -35,6 +35,16 @@ fn transformed(src: &str, mode: &str) -> Result<Arc<Version>, String> {
     Ok(v)
 }
 
+/// A nullary atom is an existence test: in a body the adornment orders, it is ready with no bindings, and the rule
+/// keeps it.
+#[test]
+fn a_nullary_guard_is_ready_in_a_demanded_body() {
+    let src = ".decl rows(x: number)\n.input rows\n.decl ready()\n.input ready\n.decl answer(x: number)\n.output answer\nanswer(x) :- ready(), rows(x).\n";
+    let v = transformed(src, "adorn").unwrap();
+    let kept = v.rules().any(|r| v.rel_name(r.head().rel()) == "answer" && r.reads().any(|a| v.rel_name(a.rel()) == "ready"));
+    assert!(kept, "answer reads ready");
+}
+
 /// The program as the goldens print it (T's repr, and `json.dumps` with sorted keys for gates and the report).
 fn golden_text(p: &Version) -> String {
     let mut lines = Vec::new();

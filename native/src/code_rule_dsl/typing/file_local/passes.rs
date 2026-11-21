@@ -14,6 +14,7 @@ mod factorize;
 mod push;
 mod requests;
 pub use factorize::FactorizeExports;
+pub(crate) use factorize::{FactorCaches, factorize_intermediates};
 pub use requests::RequestsFileLocal;
 pub use push::PushLocalJoins;
 
@@ -255,18 +256,20 @@ impl ProgramPass for Locate {
 
 // ---- rules a pass makes from its input's, written into a derivation (`FactorizeExports`, `PushLocalJoins`) ----
 
-/// A body item: a literal of the source rule, or an atom made (`rel`, args).
+/// A body item: a literal of the source rule, or an atom made (`rel`, args), positive or negated (`Not`).
 #[derive(Clone)]
 pub(super) enum BodyItem<'v> {
     Orig(LitRef<'v>),
     New(String, Vec<NOwned<'v>>),
+    Not(String, Vec<NOwned<'v>>),
 }
 
-/// A term of a rule being made: one of its source rule's, or a variable by name.
+/// A term of a rule being made: one of its source rule's, a variable by name, or an integer.
 #[derive(Clone)]
 pub(super) enum NOwned<'v> {
     T(TermRef<'v>),
     V(String),
+    Int(i64),
 }
 
 /// A rule of the round's program: its source rule, its head (the source's, or one made), its body.
@@ -284,6 +287,7 @@ fn t_from<'b>(input: &'b Version, src: RuleRef<'b>, n: &'b NOwned<'b>) -> T<'b> 
     match n {
         NOwned::T(t) => t_of(input, src, *t),
         NOwned::V(s) => T::Var(s.as_str()),
+        NOwned::Int(i) => T::Int(*i),
     }
 }
 
@@ -293,6 +297,28 @@ pub(super) struct Round<'v> {
     pub(super) undeclared: Vec<String>,
     pub(super) rules: Vec<Made<'v>>,
     pub(super) no_inline: Vec<String>,
+    /// Relations made nullary (their unit column, as `lowering_tail::BooleanRelations` leaves them).
+    pub(super) nullary: Vec<String>,
+    /// Relations whose qualifiers go with them (an undeclared relation's).
+    pub(super) unqualified: Vec<String>,
+    /// Rules of counts: `head(1) :- c0 = count : { f0(_, …) }, c1 = count : { f1(_, …) }, @f(c0, c1, a…) = 1`.
+    pub(super) counts: Vec<Counts>,
+}
+
+/// A rule `Round::counts` holds: its head (a nullary relation), the relations counted (name, arity), and the function
+/// of the counts and its further arguments that must be 1.
+pub(super) struct Counts {
+    pub(super) head: String,
+    pub(super) counted: Vec<(String, usize)>,
+    pub(super) test: &'static str,
+    pub(super) args: Vec<i64>,
+}
+
+impl Round<'_> {
+    /// A round of `rules` alone, changing nothing else.
+    pub(super) fn of(decls: Vec<(String, Vec<(String, String)>)>, undeclared: Vec<String>, rules: Vec<Made<'_>>, no_inline: Vec<String>) -> Round<'_> {
+        Round { decls, undeclared, rules, no_inline, nullary: Vec::new(), unqualified: Vec::new(), counts: Vec::new() }
+    }
 }
 
 pub(super) fn write(b: &mut Builder<'_>, input: &Version, round: &Round<'_>) -> Result<(), String> {
@@ -349,9 +375,38 @@ fn write_onto(b: &mut Builder<'_>, input: &Version, round: &Round<'_>, onto: boo
                     let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
                     rb.atom(rel.as_str(), &args)
                 }
+                BodyItem::Not(rel, args) => {
+                    let args: Vec<T<'_>> = args.iter().map(|n| t_from(input, m.src, n)).collect();
+                    rb.not(rel.as_str(), &args)
+                }
             };
         }
         rb.finish()?;
+    }
+    for c in &round.counts {
+        let vars: Vec<String> = (0..c.counted.len()).map(|i| format!("rr_count_{i}")).collect();
+        let mut rb = b.rule().head(c.head.as_str(), &[T::Int(1)]);
+        for ((rel, arity), var) in c.counted.iter().zip(&vars) {
+            rb = rb.agg(T::Var(var), &crate::code_rule_dsl::logic::front::ast::AggOp::Count, None, rel.as_str(), &vec![T::Wild; *arity]);
+        }
+        let mut args: Vec<T<'_>> = vars.iter().map(|x| T::Var(x.as_str())).collect();
+        args.extend(c.args.iter().map(|&a| T::Int(a)));
+        rb.cmp(T::Call(c.test, args), crate::code_rule_dsl::logic::program_image::CmpOp::Eq, T::Int(1)).finish()?;
+    }
+    if !round.nullary.is_empty() {
+        let mut nullary = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::nullary(input);
+        nullary.extend(round.nullary.iter().cloned());
+        b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Nullary(&nullary));
+    }
+    if !round.unqualified.is_empty() {
+        let mut qualifiers = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::qualifiers(input);
+        let had = qualifiers.len();
+        for rel in &round.unqualified {
+            qualifiers.remove(rel);
+        }
+        if qualifiers.len() != had {
+            b.fields().set_field(crate::code_rule_dsl::logic::program_facts::Field::Qualifiers(&qualifiers));
+        }
     }
     if !round.no_inline.is_empty() {
         let words: Vec<(&str, &str)> = round.no_inline.iter().map(|k| (k.as_str(), "no_inline")).collect();

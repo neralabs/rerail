@@ -1356,8 +1356,9 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], batch: &mut mj::Ba
 
 /// Decision 0209 §6 on the device, with decision 0261: columns' statistics in one batch
 /// (`rerail_accel::gpu::join::column_stats_of`). A relation in its block is read in place, its column where it
-/// lies; any other's values are gathered on the host. Also how many columns were read in place.
-pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), String> {
+/// lies; any other's values are gathered on the host. Also how many columns were read in place. With `words`, each
+/// column's distinct values as a Bloom filter of that many words too (`ColumnStats::keys`).
+pub fn column_stats(cols: &[StatColumn<'_>], k: usize, words: usize) -> Result<(Vec<ColumnStats>, usize), String> {
     use rerail_accel::gpu::join::{StatCol, column_stats_of};
     let devs: Vec<Option<(Rc<mj::DevRel>, usize)>> = cols
         .iter()
@@ -1388,9 +1389,9 @@ pub fn column_stats(cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStat
             (_, _, g) => StatCol::Host(g.as_deref().expect("gathered")),
         })
         .collect();
-    let made = column_stats_of(&stat, k)?;
+    let made = column_stats_of(&stat, k, words)?;
     let in_place = devs.iter().filter(|d| d.is_some()).count();
-    Ok((made.into_iter().map(|m| ColumnStats { rows: m.rows, ndv: m.ndv, sq: m.sq, cube: m.cube, top: m.top }).collect(), in_place))
+    Ok((made.into_iter().map(|m| ColumnStats { rows: m.rows, ndv: m.ndv, sq: m.sq, cube: m.cube, top: m.top, keys: m.keys }).collect(), in_place))
 }
 
 /// Column `col` of `rel`'s live rows, in row order (as the resident upload lays them out).

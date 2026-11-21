@@ -67,7 +67,7 @@ pub trait SolverDevice: Send + Sync {
     fn install_launch_guard(&self);
     /// Columns' exact statistics and `k` most common values (decision 0209 §6), in one batch. A relation's column the
     /// device holds is read where it is (decision 0261); the others are gathered. Also how many were read in place.
-    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize) -> Result<(Vec<ColumnStats>, usize), Refused>;
+    fn column_stats(&self, cols: &[StatColumn<'_>], k: usize, words: usize) -> Result<(Vec<ColumnStats>, usize), Refused>;
 }
 
 /// A column for `SolverDevice::column_stats`: values on the host, or column `.1` of an engine relation.
@@ -85,6 +85,8 @@ pub struct ColumnStats {
     pub sq: u64,
     pub cube: u64,
     pub top: Vec<(i64, u64)>,
+    /// The column's distinct values as a `logic::bloom` filter of the words asked for; empty where none were.
+    pub keys: Vec<u64>,
 }
 
 static SOLVER: OnceLock<&'static dyn SolverDevice> = OnceLock::new();

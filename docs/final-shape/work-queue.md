@@ -8455,3 +8455,77 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
     (0112eaa9af), fixes both: UKL's fingerprint was hashed at every kernel lookup, 17 ms each, and the refusal
     came back in a hub merge. It lands with that branch's merge, the next roll-up but one.
   - The marks test's 160 s is the device's share on the CPU backend (Q383). It is to be measured again after Q399.
+
+### Q417. (Q189 on cost-classifier-metal-rf) A loop's stolen halves lose their run where two runs share a pool
+
+- **Found** (2026-11-19, porting 0488): a parallel loop inside `on_cores` splits by rayon's `join`, and a half
+  another of the machine's pool threads steals runs with nothing of its caller's: no run and no bindings. With
+  `RERAIL_PROFILE` the first file-stat loop (`profile::work`) is refused at once. Before 0442 step 5 the loops ran on
+  rayon's global pool, whose threads were not marked as the engine's: the same reads silently took values of their
+  own, so a profile lost the stolen halves' work and a binding read there gave its default.
+- **Built so far** (60df62dc48): `on_cores` registers its job in its pool's `Inside`, and a pool thread with no run of
+  its own takes the run there when the jobs inside are one run's (tests in rerail-context). That covers a program
+  with one run. It does not cover two runs' loops in one pool at once: a corpus run's phase 0 and its main program
+  do, and a profiled corpus0 x B-now run is still refused there.
+- **Next**: a stolen job carries its creator's run. Rayon has no hook for it: patch rayon-core (`[patch.crates-io]`)
+  so `StackJob` and `HeapJob` capture a carrier the engine installs (`job_run`) when made and enter it when run.
+  Then `Inside` goes.
+- **Done when**: a test with two runs' loops in one pool at once reads each run's own value in every item, and a
+  profiled corpus0 x B-now run completes.
+
+### Q418. (Q190 on cost-classifier-metal-rf) The deferred joins are priced (0488)
+
+- **Found** (2026-11-19, 0488): `RERAIL_DEFERRED_JOINS=auto` took 7-12% more instructions on corpus0 x B-now for the
+  same findings, so it is off by default. It rewrote pair demand into many rules (`c4_elt`, `c4_comp`, `exc_call`,
+  ...), each a few more strata, where the joins were cheap as written.
+- **Next**: offer each rewrite as an alternative the pricer scores against the join as written, from the readers'
+  distinct requests and the factors' sizes (the lab's design, `scripts/profiling/deferred_joins/README.md`, "Where
+  the classifier belongs"), and keep it only where it wins.
+- **Done when**: the rewrite is on by default and corpus0 x B-now takes no more instructions than with it off, with
+  SLF001 on PostHog bounded as Release-debugging measured.
+
+### Q419. Roll-up 24 (cost-classifier-metal-rf onto Pulling-it-all-together): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): cost-classifier-metal-rf at 6a9a5fb623, 4 commits past their merge base cc9f39ecdf
+  (ac0959ba26, 614fc9a88e, 1a8fbabd3f, 6a9a5fb623). Its decision 0477 is 0488 here (ours holds 0477), and its Q189
+  and Q190 are Q417 and Q418 (ours holds both numbers, and the bend branch holds up to Q416).
+- **Taken from theirs**:
+  - 0442's stolen loop halves: a pool thread with no run takes the run of the jobs inside its pool (rerail-context).
+  - The blocked Bloom filter (`logic::bloom`), the probe screen (`setfix::join_filter`), the failed-probe cache
+    (`setfix::join_cache`), the sketches' shared hash and overlap, each heavy-values column's filter in the tables'
+    statistics, the pair caches' admission (`rr_admit_pairs`, the machine's pricer), the authored joins' report
+    (`profile::author_joins`), `RERAIL_BATCH_PACK=strict`, and the deferred joins lab (`scripts/profiling/deferred_joins`).
+- **Ported onto ours' shape**:
+  - **The deferred joins pass on the version.** Theirs decoded the tree for it, and checked it against the tree in a
+    debug build. Ours has no tree. `product_demand::deferred` is written over ours' `product_demand::Program`, each
+    step a derivation: the requests are the reader demand under `DEFERRED_PAIRS` (`upstream::install_named`), and the
+    shared endpoints are rules written into a derivation (`share`). It is a keyed step of `preparation::front`
+    (`Pipeline::made`, `defer_joins`), a whole program's only. The rounds a replan makes eager are undone by
+    `rr::lower::undone_with`. Its five tests are theirs, on versions.
+  - **The reduced factors and the pair caches are the exports' factorizing.** `file_local::passes::factorize` is
+    split into a scan (`Scan::of`) and a round (`Scan::round`), shared by the exports pass and
+    `factorize_intermediates`. The pair cache is in the same round: its guard (a nullary relation, counted by a
+    rule of counts, `passes::Counts`), its pairs, and the readers' eager and cold copies (`BodyItem::Not`). Theirs'
+    tree-based `deferred_cache.rs` is not kept.
+  - The device's filter (`col_bloom`) is in ours' UKL sort source, not a second MSL source. On the CPU device it
+    matches the host's filter word for word.
+  - The authored clauses' locations read ours' tape statements (`rr::check::rule_reads`).
+  - The profiling guide stays retired (#831). Its "Inspect a join in a rule" section is in decision 0488.
+- **Found and fixed on the way**:
+  - The authored joins' observations counted a maintained relation's old set, which the maintain mode holds under
+    the relation's name before its component changes it. The report then said "0–4096 cached pairs" for a snapshot
+    that held none. The old set is held by `hold_old`, which is not observed. So is a bound kept relation
+    (`hold_bound`).
+  - `bounded_histograms` mounts the sketch alone, and the sketch now names `logic::bloom::hash`: the test mounts
+    `bloom.rs` too.
+- **Checked**, every run held to the CPU (`RERAIL_GPU=cpu`, `RERAIL_DEVICE=cpu`; no Metal):
+  - Clippy is clean on 13 crates on a Linux DGX Spark and an M1 Max: `rerail-accel`, `-logic`, `-engine`,
+    `-device-metal`, `-context`, `-store`, `-facts`, `-prof`, `-rr`, `-sessions`, `-w`, `-transducer` and
+    `-program-image`.
+  - rerail-logic: 185 plan tests, among them the deferred joins, products, preparation, corpus, session, tables
+    and maintain mode, on both hosts. Also 22 tests of the filters, sketches, magic sets and rr checks, and 16 of
+    the file-local factorizing.
+  - rerail-engine: 226 of the maintain mode, sessions, rr, tools and factorizing. rerail-device-metal: the 2 device
+    filter tests. rerail-accel: the 2 column statistics tests.
+- **Open**: Q417 (a loop's stolen halves across two runs in one pool) and Q418 (the deferred joins priced, so that
+  they are on by default) are theirs, as they left them.

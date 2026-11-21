@@ -8429,7 +8429,7 @@ impl<'a> Run<'a, '_> {
         let spec = ComponentSpec { name: name.clone(), lines };
         let fx = Fx { db: self.db, direct: true };
         for r in scc {
-            super::native::component::hold_as(self.db, r, Arc::clone(&olds[r]));
+            super::native::component::hold_old(self.db, r, Arc::clone(&olds[r]));
         }
         fx.open(&spec)?;
         fx.run(&name, 0)?;
