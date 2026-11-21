@@ -54,13 +54,45 @@ function connectSqlite(path: string, readonly: boolean): RerailDatabase {
  * it (WAL, journal, pre-update copies) lose any group or other access (`keepFilesPrivate`); SQLite gives a WAL it
  * creates the database file's mode. `secure_delete` zeroes what a delete frees (cells and pages), so deleted history
  * does not linger in free space; it costs writes only on deletes.
+ *
+ * `synchronous = NORMAL`: a commit appends to the WAL and returns without waiting for the disk; the WAL is synced only
+ * when a checkpoint copies it into the file. What it keeps: the file is never damaged, each transaction is kept whole or
+ * not at all, and the commits kept are the earliest ones (WAL frames carry a running checksum, so recovery keeps a prefix
+ * of them, in order); when only Rerail's own process ends (killed, out of memory, crashed), nothing committed is lost.
+ * What it does not keep: after a power cut or an operating system crash, the last commits, those the operating system
+ * had not written back yet (seconds of records). `FULL` kept those too by waiting for the disk at every commit, up to a
+ * second at a time while another program kept the disk busy, inside the hook that wrote. What the next start and the
+ * session's next open repair of such a loss: `endSessionsOfEndedOwners`, `keepEventNumbersPastRemotes` and the session's
+ * `lostEvents`. What none repairs: the file holds rule configuration and settings too, and a change of either made in
+ * those seconds (a rule added, turned off or approved, a setting changed) is gone with them, to be made again. Those
+ * writers run in the CLI, the dashboard's API and a repository's start, not in a hook, so their commits could wait for
+ * the disk (`commitDurably`) and no hook would; they do not yet. `docs/reference.md` (Rerail database) says the same,
+ * and a test holds the two together.
  */
 function prepareWriter(database: RerailDatabase, path: string): void {
   keepFilesPrivate(dirname(path), [basename(path)]);
   enableWal(() => database.run(sql`PRAGMA journal_mode = WAL`));
   database.run(sql`PRAGMA foreign_keys = ON`);
-  database.run(sql`PRAGMA synchronous = FULL`);
+  database.run(sql`PRAGMA synchronous = NORMAL`);
   database.run(sql`PRAGMA secure_delete = ON`);
+}
+
+/**
+ * Runs `write` in one transaction of `client` whose commit waits for the disk (`synchronous = FULL` for it alone), and
+ * gives the connection back its own setting however `write` ends: for the rare commit a power cut must not take, on a
+ * connection whose other commits do not wait. A FULL commit in WAL mode also syncs every frame the log holds before it.
+ * Call it outside a transaction: inside one, `write` would commit with the open transaction, which does not wait for
+ * the disk, and SQLite refuses to change `synchronous` there, so it throws before `write` runs.
+ */
+export function commitDurably<T>(client: Database.Database, write: () => T): T {
+  if (client.inTransaction) throw new Error("commitDurably must be called outside a transaction: inside one, its commit would not wait for the disk");
+  const own = client.pragma("synchronous", { simple: true }) as number;
+  client.pragma("synchronous = FULL");
+  try {
+    return client.transaction(write)();
+  } finally {
+    client.pragma(`synchronous = ${own}`);
+  }
 }
 
 /** Open the Node-owned SQLite database without applying Rerail's project schema. */

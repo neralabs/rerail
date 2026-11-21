@@ -447,10 +447,14 @@ export class SqliteAuditControlStore {
   /**
    * Ends each open session whose owner row's writer has ended (`writerEnded`), as a daemon stopped by a machine
    * restart, its heap limit or a kill leaves every session it held or had let go of while quiet: its scans still queued
-   * are interrupted and its owner released, as when its owner is found gone, and its record ends `idleMs` after it was
-   * last heard from (its newest recorded event, else its start), as the idle close of a daemon still running would have
-   * ended it, and at the latest at `now`. Each process and each lock is asked once. One query and one transaction;
-   * returns how many sessions it ended.
+   * and its checks still running are interrupted (a check whose finish a power cut took would read as running for
+   * good otherwise, as would one a kill stopped, in a session that never opens again) and its owner released, as when
+   * its owner is found gone, and its record ends `idleMs` after it was last heard from (its newest recorded event, else
+   * its start), as the idle close of a daemon still running would have ended it, and at the latest at `now`. A check
+   * still running finishes at the later of its own start and that end, so its time does not grow by the wait for this
+   * start: at the session's end when it started by then, at its own start when it started later (a session kept open
+   * because it owes a scan can start one after it), and at `now` when its start is later than `now`. Each process and
+   * each lock is asked once. One query and one transaction; returns how many sessions it ended.
    */
   endSessionsOfEndedOwners(idleMs: number, now: number): number {
     return this.#database.transaction(() => {
@@ -485,7 +489,10 @@ export class SqliteAuditControlStore {
       .where(and(inArray(auditRequests.sessionId, ids), inArray(auditRequests.status, ["queued", "running"]))).run();
     this.#database.update(policySessionOwners).set({ active: false, updatedAt: at }).where(inArray(policySessionOwners.sessionId, ids)).run();
     for (const { sessionId, heardAt } of ended) {
-      this.#database.update(sessions).set({ endedAt: Math.min(heardAt + idleMs, now) }).where(eq(sessions.sessionId, sessionId)).run();
+      const endedAt = Math.min(heardAt + idleMs, now);
+      this.#database.update(audits).set({ status: "interrupted", finishedAt: sql`min(max(${audits.startedAt}, ${endedAt}), ${now})` })
+        .where(and(eq(audits.sessionId, sessionId), eq(audits.status, "running"))).run();
+      this.#database.update(sessions).set({ endedAt }).where(eq(sessions.sessionId, sessionId)).run();
     }
   }
   requestAudit(sessionId: string, input: z.input<typeof auditRequestInputSchema>): AuditRequest {

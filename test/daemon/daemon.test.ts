@@ -416,7 +416,7 @@ describe("Rerail daemon", () => {
     const { gaps, declined, ...head } = (await getJson<Record<string, unknown>>(daemon, "/api/sessions/large-run")).body;
     expect(compact.context?.session).toEqual(head);
     expect(gaps).toEqual({
-      droppedEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
+      droppedEvents: 0, lostEvents: 0, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 0, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
       discoveryGapPlaces: [],
     });
     expect(declined).toEqual({ violations: 0, notes: [] });

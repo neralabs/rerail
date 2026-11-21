@@ -376,7 +376,7 @@ The footer never animates. Full audits and rule lists are on the dashboard.
 - **Rules** is the session's configured coverage: code and conversation rules that are on, including mid-session changes. Not rules matching the current file, nor checks that passed.
 - **Steered** counts lines you saw: two rules in one edit count 2; a delivery naming no rule counts 1. A steer counts once, when its line shows, which is when its block reaches the agent. Logs, matches, queued guidance and failed sends don't count.
 - **Unknown is not zero.** Older sessions, and history lost in a reset, show `steering unavailable`; recomputing coverage shows `rules unavailable`.
-- **A steer proves nothing** about whether the agent read it or fixed anything. A crash right after sending can leave it uncounted.
+- **A steer proves nothing** about whether the agent read it or fixed anything. A crash right after sending, or a power cut or an operating system crash in the seconds after it, can leave it uncounted.
 - **Violations are not a to-do list** or a review-ready signal. Rerail running normally and an audit reporting failures are separate states.
 
 </details>

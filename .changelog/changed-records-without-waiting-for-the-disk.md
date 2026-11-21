@@ -1,0 +1,1 @@
+Rerail records without waiting for the disk at each write, so a hook no longer waits up to a second while another program keeps the disk busy. Nothing recorded is lost when only Rerail stops; a power cut or an operating system crash can take the last seconds of records, and the next start closes what they left open.

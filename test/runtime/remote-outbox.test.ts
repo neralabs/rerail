@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { linkSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
+import { existsSync, linkSync, mkdtempSync, readFileSync, renameSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import Database from "better-sqlite3";
@@ -452,5 +452,99 @@ describe("machineId", () => {
     machineId(home);
 
     expect(real.readdirSync(home).filter(name => name.startsWith("machine-id"))).toEqual(["machine-id"]);
+  });
+});
+
+describe("event numbers a remote has taken", () => {
+  const sent = () => sink.requests.flatMap(request => request.records).filter(record => record.type === "event").map(record => record.eventId);
+  const session = { host: "claude-code" as const, sessionId: "fresh", cwd: "/work/app" };
+  const sequenceOf = (path: string, eventId: string): number => {
+    const database = new Database(path, { readonly: true });
+    try {
+      return (database.prepare("SELECT sequence FROM events WHERE event_id = ?").get(eventId) as { sequence: number }).sequence;
+    } finally {
+      database.close();
+    }
+  };
+  /** Moves the home's database aside, as Rerail's refusal of an unreadable file tells a person to: the outbox stays. */
+  const moveAside = (): void => {
+    for (const suffix of ["", "-wal", "-shm"]) if (real.existsSync(`${databasePath()}${suffix}`)) real.renameSync(`${databasePath()}${suffix}`, `${databasePath()}.aside${suffix}`);
+  };
+
+  // Its first events took the numbers the remote's cursor had passed, and were never sent.
+  it("numbers the first event of a database started fresh past the remote's cursor, so the outbox sends it", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    moveAside();
+    const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "again" } }, session);
+    store.close();
+    await outbox().sync({ force: true });
+    expect(sent()).toContain("first");
+  });
+
+  // A hook's steer receipt opens a writer of its own and no session (`hook-host.ts`), and its session opened in the
+  // daemon first, which moved the numbers: the receipt's writer opened the outbox at every receipt all the same.
+  it("reads no outbox for a writer that opens no session, as a hook's steer receipt", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    moveAside();
+    vi.mocked(existsSync).mockClear();
+    const store = new SqliteSessionStore(databasePath());
+    store.recordSteer(session, "r1", ["a-rule"]);
+    store.close();
+    expect(vi.mocked(existsSync).mock.calls.filter(([path]) => String(path).endsWith("remote-outbox.sqlite"))).toEqual([]);
+    expect(sequenceOf(databasePath(), "steering-delivered:r1")).toBe(1);
+  });
+
+  it("reads the outbox at a store's first session open only", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
+    vi.mocked(existsSync).mockClear();
+    store.openSession({ ...session, sessionId: "second" });
+    store.close();
+    expect(vi.mocked(existsSync).mock.calls.filter(([path]) => String(path).endsWith("remote-outbox.sqlite"))).toEqual([]);
+  });
+
+  // A batch with no event (a queued scan) has no number to keep taken: its sync makes no commit that waits for the disk.
+  it("records no event number for a batch that carries no event", async () => {
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    const report = { schema: "rerail.scan/1", scanId: "scan-1", repository: { key: REPOSITORY, displayName: "app" }, checkout: { path: home }, rules: [], violations: [] };
+    expect(outbox().queueScan(report)).toBe(true);
+    await outbox().sync({ force: true });
+    expect(storedRecords(sink)).toEqual([expect.objectContaining({ type: "scan", id: "scan-1" })]);
+    const state = new Database(join(home, "remote-outbox.sqlite"), { readonly: true });
+    try {
+      expect(state.prepare("SELECT value FROM cursors WHERE stream = 'event-posted'").all()).toEqual([]);
+    } finally {
+      state.close();
+    }
+  });
+
+  it("leaves the numbering of a database the outbox does not read as it is", async () => {
+    seed();
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const other = join(home, "other.sqlite");
+    const store = new SqliteSessionStore(other);
+    store.openSession(session);
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "elsewhere" } }, session);
+    store.close();
+    expect(sequenceOf(other, "first")).toBe(1);
+  });
+
+  it("numbers events as before beside an outbox it cannot read", () => {
+    real.writeFileSync(join(home, "remote-outbox.sqlite"), "not a database");
+    const store = new SqliteSessionStore(databasePath());
+    store.openSession(session);
+    store.append({ sessionId: "fresh", eventId: "first", kind: "user-prompt", payload: { text: "hello" } }, session);
+    store.close();
+    expect(sequenceOf(databasePath(), "first")).toBe(1);
   });
 });
