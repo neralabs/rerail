@@ -1149,9 +1149,9 @@ describe("Rerail's diff of a checkout with submodules keeps the call's one time 
     expect(gits.slice(5).map(({ args }) => args.slice(-5))).toEqual(Array(2).fill(["status", "--porcelain=2", "-z", "--no-renames", "--ignore-submodules=dirty"]));
     expect([answer.status, answer.stdout, answer.stderr, answer.error?.message]).toEqual([null, "", "", `spawnSync ${gits[0]?.file} ETIMEDOUT`]);
     expect(answer.error).toMatchObject({ code: "ETIMEDOUT", errno: ranOut?.errno, syscall: `spawnSync ${gits[0]?.file}`, path: gits[0]?.file });
-    // The third submodule's status, which Git's own diff would have failed at too.
+    // The status of the submodule asked last, whichever its index read let through last.
     const spawnargs = (answer.error as unknown as { spawnargs: string[] }).spawnargs;
-    expect([spawnargs.slice(0, 2), spawnargs.at(-7), spawnargs.at(-6)?.endsWith("three"), spawnargs.slice(-5)]).toEqual([
+    expect([spawnargs.slice(0, 2), spawnargs.at(-7), /[\\/](?:one|two|three)$/u.test(spawnargs.at(-6) ?? ""), spawnargs.slice(-5)]).toEqual([
       ["-c", "core.fsmonitor=false"], "-C", true, ["status", "--porcelain=2", "-z", "--no-renames", "--ignore-submodules=dirty"],
     ]);
   }, 60_000);

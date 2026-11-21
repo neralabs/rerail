@@ -258,7 +258,8 @@ describe("Rerail's Git calls start no filter program only a repository's own con
   it("lists the config where the environment names the Git folder, which Rerail does not find in process", async () => {
     const root = await folder();
     const marker = join(root, "filter-ran");
-    const work = await repository(root, "work", { ".gitattributes": "*.txt filter=probe\n", "notes.txt": "one\n" }, { "filter.probe.clean": recording(marker) });
+    const work = await repository(root, "work", { ".gitattributes": "*.txt filter=probe\n", "notes.txt": "one\n" });
+    git(work, "config", "filter.probe.clean", recording(marker));
     await writeFile(join(work, "notes.txt"), "two\n");
     const env = { GIT_DIR: join(work, ".git") };
 
