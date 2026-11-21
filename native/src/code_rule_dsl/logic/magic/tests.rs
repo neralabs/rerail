@@ -153,3 +153,84 @@ fn a_negative_cycle_through_demand_drops_the_demand() {
     assert_eq!(ProgramFields::demand_dropped(&*got), [("blocked".to_owned(), "negative cycle through its demand".to_owned())]);
     assert!(ProgramFields::demand(&*got).is_empty() && !got.declares("magic_blocked"));
 }
+
+/// The demand of `src` (`.pragma "magic-transform"`, as a corpus run's front makes it): the program's rules, the
+/// relations split with their copies, and the report's reasons.
+fn demanded(src: &str) -> (Vec<String>, Vec<(String, String)>, Vec<String>) {
+    let mut p = Pipeline::new("demand", parse_version(src).unwrap());
+    let mut own = ProgramDemand::default();
+    p.program(&mut own);
+    let v = p.finish().unwrap().0;
+    let Some(Ok(report)) = own.outcome else { panic!("{:?}", own.outcome) };
+    // The program keeps the reasons with its report.
+    assert_eq!(ProgramFields::magic_report(&*v).map(|r| r.reasons), Some(report.reasons.clone()));
+    (v.rules().map(|r| v.show_rule(r)).collect(), own.splits, report.reasons)
+}
+
+/// A string annotation's shape (decision 0431 §8): the parse request reads `unparen` (through `tsub`), and a reader
+/// of the request's answer (`parsed`, through `ref_site`) asks `unparen` too. One demand for both would join the
+/// request's component with `unparen` and `tsub` (`rr_embed_req -> tsub -> unparen -> magic_unparen_bf -> ref_site ->
+/// parsed -> rr_embed_req`), which the program keeps apart: the answer's reader reads a copy, with a demand of its
+/// own, and `unparen`'s demand reads nothing the request answers.
+const ANSWER_READS_DEMAND: &str = "
+    .decl kind(n: int, k: symbol)
+    .decl inner(e: int, i: int)
+    .decl ann(a: int, e: int)
+    .decl parsed(at: int, g: symbol, r: int)
+    .input kind, inner, ann, parsed
+    .decl unparen(e: int, m: int)
+    .pragma \"magic-transform\" \"unparen\"
+    unparen(e, e) :- kind(e, k), k != \"paren\".
+    unparen(e, m) :- kind(e, \"paren\"), inner(e, i), unparen(i, m).
+    .decl tsub(a: int, m: int)
+    tsub(a, m) :- ann(a, e), unparen(e, m).
+    .decl rr_embed_req(at: int, g: symbol)
+    rr_embed_req(m, \"python\") :- tsub(_, m).
+    .decl ref_site(r: int)
+    ref_site(r) :- parsed(_, _, r).
+    .decl typevar(r: int, m: int)
+    typevar(r, m) :- ref_site(r), unparen(r, m).
+    .output typevar, rr_embed_req
+";
+
+#[test]
+fn a_demand_that_reads_a_requests_answer_is_split_from_what_the_request_reads() {
+    let (rules, splits, reasons) = demanded(ANSWER_READS_DEMAND);
+    assert_eq!(splits, [("unparen".to_owned(), "unparen__rr_embed_req".to_owned())]);
+    // The reason names the cycle, each step with its rule, and the rule moved to the copy.
+    let [why] = reasons.as_slice() else { panic!("{reasons:#?}") };
+    assert!(why.starts_with("unparen's demand magic_unparen_bf joins rr_embed_req's component: rr_embed_req -> tsub -> unparen -> magic_unparen_bf -> ref_site -> parsed -> rr_embed_req"), "{why}");
+    assert!(why.contains("magic_unparen_bf -> ref_site: magic_unparen_bf($r) :- ref_site($r).") && why.contains("parsed -> rr_embed_req: parsed is rr_embed_req's answer"), "{why}");
+    assert!(why.ends_with("the rules that read the copy (1):\n    typevar($r, $m) :- ref_site($r), unparen($r, $m)"), "{why}");
+    let with = |head: &str| rules.iter().filter(|r| r.starts_with(&format!("{head}("))).cloned().collect::<Vec<_>>();
+    // `unparen`'s demand comes from `tsub` alone; the copy's from the answer's reader alone.
+    assert!(!with("magic_unparen_bf").is_empty() && with("magic_unparen_bf").iter().all(|r| !r.contains("ref_site(")), "{rules:#?}");
+    assert!(!with("magic_unparen__rr_embed_req_bf").is_empty() && with("magic_unparen__rr_embed_req_bf").iter().all(|r| !r.contains("ann(")), "{rules:#?}");
+    assert!(with("tsub").iter().all(|r| r.contains("unparen(") && !r.contains("unparen__")), "{rules:#?}");
+    assert!(with("typevar").iter().all(|r| r.contains("unparen__rr_embed_req(")), "{rules:#?}");
+    // The copy recurses into itself, under its own demand.
+    assert!(with("unparen__rr_embed_req").iter().any(|r| r.contains("magic_unparen__rr_embed_req_bf(") && r.matches("unparen__rr_embed_req(").count() == 2), "{rules:#?}");
+}
+
+/// Without the request nothing joins: one demand, no copy.
+#[test]
+fn a_shared_demand_with_no_request_is_not_split() {
+    let src = ANSWER_READS_DEMAND.replace("rr_embed_req(m, \"python\") :- tsub(_, m).", "").replace(".output typevar, rr_embed_req", ".output typevar, tsub");
+    let (rules, splits, _) = demanded(&src);
+    assert!(splits.is_empty(), "{splits:?}");
+    assert!(rules.iter().all(|r| !r.contains("__rr_embed_req")), "{rules:#?}");
+}
+
+/// A split relation's copy asks the demanded relations below it under its own demand, which reads the answer in
+/// turn: the next round splits those (`hop`) for the copy.
+#[test]
+fn a_split_copy_splits_the_demand_below_it_in_the_next_round() {
+    let src = ANSWER_READS_DEMAND
+        .replace("\"unparen\"", "\"unparen, hop\"")
+        .replace("unparen(e, m) :- kind(e, \"paren\"), inner(e, i), unparen(i, m).", ".decl hop(e: int, i: int)\n    hop(e, i) :- inner(e, i), kind(i, _).\n    unparen(e, m) :- kind(e, \"paren\"), hop(e, i), unparen(i, m).");
+    let (rules, splits, _) = demanded(&src);
+    assert_eq!(splits, [("unparen".to_owned(), "unparen__rr_embed_req".to_owned()), ("hop".to_owned(), "hop__rr_embed_req".to_owned())], "{rules:#?}");
+    let with = |head: &str| rules.iter().filter(|r| r.starts_with(&format!("{head}("))).cloned().collect::<Vec<_>>();
+    assert!(with("magic_hop_bf").iter().all(|r| !r.contains("__rr_embed_req")), "{rules:#?}");
+    assert!(with("unparen__rr_embed_req").iter().filter(|r| r.contains("hop")).all(|r| r.contains("hop__rr_embed_req(")), "{rules:#?}");
+}

@@ -690,6 +690,9 @@ pub struct Report {
     pub extras_kept: usize,
     pub gates: usize,
     pub full_for_negation: Vec<String>,
+    /// Why demand was changed to keep the program's components: each relation split, or computed in full, with the
+    /// cycle demand would have made, each step's rule, and the rules moved (`magic::split`).
+    pub reasons: Vec<String>,
 }
 
 /// A gated negation's gate: `done` copies `src` (the negated relation's demand) once `quiet` is quiet, after the
