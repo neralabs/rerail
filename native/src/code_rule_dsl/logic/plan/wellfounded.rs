@@ -131,8 +131,10 @@ fn rules_of(v: &Version) -> Vec<Rule> {
         .collect()
 }
 
-/// A helper's step from its column `i` to its column `j`, read off its own rules (`summarize`).
-type Helpers = HashMap<(String, usize, usize), Step>;
+/// A helper's step from its column `i` to its column `j`, read off its own rules (`summarize`), by the helper: an atom's
+/// steps are one lookup of its relation. Kept as one map of every (relation, i, j), each atom of each rule `order` read
+/// scanned all of them: 83,170 rules on main's Python pack, past 31 s.
+type Helpers = HashMap<String, BTreeMap<(usize, usize), Step>>;
 
 /// How `y` relates to `x` through `rule`'s tree atoms, helpers and equalities: `None` where no one way is read.
 fn order(rule: &Rule, helpers: &Helpers, x: u32, y: u32) -> Option<Step> {
@@ -160,10 +162,8 @@ fn order(rule: &Rule, helpers: &Helpers, x: u32, y: u32) -> Option<Step> {
                 e.entry(b).or_default().push((u, Step::U));
             }
         } else {
-            for ((hr, i, j), k) in helpers {
-                if *hr == at.rel
-                    && let (Some(a), Some(b)) = (col(*i), col(*j))
-                {
+            for (&(i, j), k) in helpers.get(&at.rel).into_iter().flatten() {
+                if let (Some(a), Some(b)) = (col(i), col(j)) {
                     e.entry(a).or_default().push((b, *k));
                 }
             }
@@ -249,7 +249,7 @@ fn summarize(rules: &[Rule], types: &dyn Fn(&str) -> Vec<String>) -> Helpers {
                     }
                     let d = *dirs.iter().next().expect("one direction");
                     let strict = Step::of(d, false);
-                    helpers.insert(((*rel).to_owned(), i, j), if ks == BTreeSet::from([strict]) { strict } else { Step::of(d, true) });
+                    helpers.entry((*rel).to_owned()).or_default().insert((i, j), if ks == BTreeSet::from([strict]) { strict } else { Step::of(d, true) });
                 }
             }
         }
@@ -357,7 +357,9 @@ impl Analysis for Proofs {
         let f = Fields::over(cx.v(), &d);
         let types = |r: &str| f.types(r).into_iter().map(str::to_owned).collect::<Vec<_>>();
         let rules = rules_of(cx.v());
+        let summarized = crate::code_rule_dsl::logic::profile::span(|| format!("the rules' helpers summarized ({} rules)", rules.len()));
         let helpers = summarize(&rules, &types);
+        drop(summarized);
         let comps = cx.get::<Components>()?;
         // A component is recursive when a rule of it reads it: found in one pass over the rules, by each relation's
         // component. A pass over every rule for each component took 0.16 s of the data layer's 6,842 rules (R7
@@ -377,6 +379,7 @@ impl Analysis for Proofs {
 }
 
 fn classify(rules: &[Rule], helpers: &Helpers, types: &dyn Fn(&str) -> Vec<String>, comp: &BTreeSet<String>) -> Result<Measure, String> {
+    let _span = crate::code_rule_dsl::logic::profile::span(|| format!("a recursive component classified ({} relations)", comp.len()));
     let rs: Vec<&Rule> = rules.iter().filter(|r| comp.contains(&r.head.rel) && r.atoms.iter().any(|a| comp.contains(&a.rel))).collect();
     let rels: Vec<&String> = comp.iter().collect();
     let cols: Vec<Vec<usize>> = rels.iter().map(|r| types(r).iter().enumerate().filter(|(_, t)| *t == "node").map(|(i, _)| i).collect()).collect();
