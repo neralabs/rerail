@@ -475,6 +475,28 @@ describe("the records a power cut leaves, once the next daemon has started", () 
       expect(await lostRecords(databasePath, "s")).toEqual([]);
     });
 
+    // The session began under an older build and went on under this one: the lines after the older build's are not
+    // lost either.
+    it("takes no event a reset deleted for lost when an older build began the ledger", { timeout: 120_000 }, async () => {
+      const { root, databasePath, checkout, storageRoot } = await records();
+      const { start, prompt } = events(checkout);
+      const daemon = await daemonProcess(root, databasePath);
+      await daemon.send(start("s"));
+      for (const text of ["one", "two"]) await daemon.send(prompt("s", text));
+      await daemon.stop();
+      const { path } = await ledgerLinesFrom(storageRoot, "s", "s:two");
+      const lines = (await readFile(path, "utf8")).split("\n").filter(Boolean).map(line => JSON.parse(line) as Record<string, unknown>);
+      const older = (line: Record<string, unknown>) => (line.type === "event" && line.eventId !== "s:two" ? { type: "event", eventId: line.eventId } : line);
+      await writeFile(path, lines.map(line => `${JSON.stringify(older(line))}\n`).join(""));
+      const database = new Database(databasePath, { readonly: true });
+      const { repositoryId } = database.prepare("SELECT repository_id AS repositoryId FROM sessions WHERE session_id = 's'").get() as { repositoryId: string };
+      database.close();
+      expect(resetRepositoryHistory(databasePath, repositoryId)).toMatchObject({ openSessions: 1 });
+      const next = await nextDaemon(root, databasePath);
+      await ingestEngineEvent({ socketPath: next.socketPath }, prompt("s", "three"));
+      expect(await lostRecords(databasePath, "s")).toEqual([]);
+    });
+
     // The record of lost events takes its times from the ledger, and `rerail status` reads the row's: one clock reading
     // for both, whatever time passes between the row's write and the line's.
     it("gives an event's row and its ledger line one time", async () => {

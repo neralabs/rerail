@@ -247,20 +247,23 @@ function ledgerKinds(ledger: readonly LedgerEntry[]): Set<string> {
  * The events the ledger holds whose rows a power cut or an operating system crash took, oldest first. An event's row is
  * committed before its ledger line is written, one event after another, and such a loss takes only the store's last
  * commits: so the lost events are those after `recorded` (`SqliteSessionStore.lastRecordedEvent`), the newest one
- * whose row is there, or the last of a stretch a record of lost events already counted. A ledger line older builds
- * wrote (no kind or time) ends the walk, since those builds synced every commit; a ledger that does not hold `recorded`
- * gives none: `rerail reset` deleted the session's history, or the loss took every row of it, which nothing tells
- * apart. The walk reads only the ledger in memory.
+ * whose row is there, or the last of a stretch a record of lost events already counted. A ledger that does not hold
+ * `recorded` gives none, whatever lines an older build wrote in it: `rerail reset` deleted the session's history, or
+ * the loss took every row of it, which nothing tells apart. Between `recorded` and the ledger's end, a line an older
+ * build wrote (no kind or time) ends the walk, since those builds synced every commit. The walk reads only the ledger
+ * in memory.
  */
 function lostEvents(ledger: readonly LedgerEntry[], recorded: string | undefined): LostEvent[] {
+  const from = ledger.findLastIndex(entry => entry.type === "event" && entry.eventId === recorded);
+  if (from < 0) return [];
   const lost: LostEvent[] = [];
-  for (let index = ledger.length - 1; index >= 0; index -= 1) {
+  for (let index = ledger.length - 1; index > from; index -= 1) {
     const entry = ledger[index]!;
     if (entry.type !== "event") continue;
-    if (entry.kind === undefined || entry.observedAt === undefined || entry.eventId === recorded) return lost.reverse();
+    if (entry.kind === undefined || entry.observedAt === undefined) break;
     lost.push({ eventId: entry.eventId, kind: entry.kind, observedAt: entry.observedAt });
   }
-  return [];
+  return lost.reverse();
 }
 interface AuditRequestVerdict {
   status: "completed" | "failed" | "interrupted";
