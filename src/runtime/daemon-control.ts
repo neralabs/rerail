@@ -691,12 +691,13 @@ async function recordedDaemon(state: DaemonState, machine: DaemonMachine, wait: 
 }
 
 /**
- * {@link proofVerdict} for a lookup, by `deadline` (epoch ms): the start of the process an engine with no proof runs in
- * decides whether it is the daemon that wrote the record ({@link olderDaemon}).
+ * {@link proofVerdict} for a lookup, by `deadline` (epoch ms): the start of the process an engine with no proof runs in,
+ * read by `readDeadline`, the lookup's own limit, decides whether it is the daemon that wrote the record
+ * ({@link olderDaemon}).
  */
-async function lookedUpEngine(state: DaemonState, machine: DaemonMachine, deadline: number): Promise<RecordedEngine> {
+async function lookedUpEngine(state: DaemonState, machine: DaemonMachine, deadline: number, readDeadline: number): Promise<RecordedEngine> {
   const recorded = await proofVerdict(state, machine, { timeoutMs: deadline - Date.now() });
-  return recorded === "no-proof" ? olderDaemon(state, machine, deadline) : recorded;
+  return recorded === "no-proof" ? olderDaemon(state, machine, readDeadline) : recorded;
 }
 
 /**
@@ -841,7 +842,7 @@ function startVerdict(state: DaemonState, machine: DaemonMachine, deadline: numb
  * answer as itself is kept unless it is proven not to be the daemon that wrote the record ({@link recordedProcess}),
  * within what is left of `readLimitMs` from the lookup's start (that limit, unless a stop passes its own wait): a busy
  * daemon is kept, and a process that took a dead daemon's pid is not. A start time not read by then proves nothing, and
- * the record is kept.
+ * the record is kept. The start of a daemon whose engine has no proof is read by the same limit ({@link olderDaemon}).
  */
 export async function lookupDaemon(
   home: string,
@@ -853,16 +854,19 @@ export async function lookupDaemon(
   const state = await readDaemonState(stateFile, machine.platform);
   if (state === undefined) return { status: "absent" };
   const deadline = Date.now() + readLimitMs;
-  const found = await checkedLookup(stateFile, state, machine, probeTimeoutMs);
+  const found = await checkedLookup(stateFile, state, machine, probeTimeoutMs, deadline);
   if (found.status === "running" || found.status === "absent" || recordedProcess(home, state, machine, deadline) !== "not-ours") return found;
   await rm(stateFile, { force: true });
   return { status: "absent", notDaemon: state.pid };
 }
 
-/** What the pid, the engine's proof and the health probe make of the daemon `state` records, within `probeTimeoutMs`. */
-async function checkedLookup(stateFile: string, state: DaemonState, machine: DaemonMachine, probeTimeoutMs: number): Promise<DaemonLookup> {
+/**
+ * What the pid, the engine's proof and the health probe make of the daemon `state` records, within `probeTimeoutMs`;
+ * the start of a daemon whose engine has no proof is read by `readDeadline` (epoch ms), the lookup's own limit.
+ */
+async function checkedLookup(stateFile: string, state: DaemonState, machine: DaemonMachine, probeTimeoutMs: number, readDeadline: number): Promise<DaemonLookup> {
   const deadline = Date.now() + probeTimeoutMs;
-  const recorded = await lookedUpEngine(state, machine, deadline);
+  const recorded = await lookedUpEngine(state, machine, deadline, readDeadline);
   // Another user's process cannot be this user's daemon, and on Windows no daemon lives without its engine pipe or
   // fails its engine's proof: the state is stale, and its URL is never probed.
   if (recorded === "gone") {
