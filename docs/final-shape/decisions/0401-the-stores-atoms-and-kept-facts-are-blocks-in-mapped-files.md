@@ -419,6 +419,26 @@ holds a collection lease until it finishes, and a run's own pass (`record_run`) 
 from 89.2 MB in 15 files to 88.9 MB in 12, the cross space from 86.9 MB to 86.6 MB. The warm run after took 33.0 G
 against 32.7 G before. Now the analysis run collects as it finishes (`collect_after`).
 
-Open: against the 2026-11-18 runs above, the cold run takes 2,474 G (1,436 G, `k0`), an edit 53 G (21.6 G, `a2`)
-and a warm run 35.9 G (21.7 G, `k2`), at the same rows. The binaries are three days and many merges apart, so the
-comparison is not clean.
+Against 6fc580233a (the step 6 commit, measured again on the M3 the same day, profiling binary), the regressions
+were three, each found in the two profiles:
+
+| ep2, M3 | 6fc580233a | before the fixes | after |
+|---|---|---|---|
+| cold | 1,078-1,220 G | 2,476 G | 1,517 G |
+| warm | 1.8 G | 35.9 G | 2.0 G |
+| edit (`qq991`) | 43.9 G | 74-90 G | 75.8 G |
+
+- Warm (7127549186): every `logic` command begins an analysis run (0547), and the whole-run cutoff skipped any run
+  with a staged owner (since 395a6ac2f7). A hit now re-owns the recorded run's manifests.
+- Cold, `open_tuple` (d92e01dffb): 0299's combination floor priced `child($t, $c, _)` at a row a pair after a cross
+  product, and Q146's witness pricing then took the cross product as nearly free: 61 M rows, 19.7 s.
+- Cold, prepare 27 s against 1.4 s (9baa291010): the push held back one reader of a helper shared by 400
+  `violation` rules a round, so it ran about 400 rounds, each a split of the program.
+
+Still above the baseline, by cause:
+- The narrow copies of main's #923 (0c3dde2edb) double the program: 6,664 strata against 3,236, and
+  `rr_narrow_<rel>` evaluates its original's rules again (`ruff_safe_operand` and its copy, 1.6 s each). The
+  fixes that make a copy its original's rows (15e8c73191, c82460adf4) are on investigate-bend-vs-datalog alone.
+- An edit counts Q396's semi-joins (`docof`, `end_line`, `visit_index`, `node_order`, `ast_depth`) by walking every
+  held node's document, making all 300 (1.1 s of the edit's stats, 0.06 s before): their statistics are kept
+  under the cross program's key, which an edit changes, not beside the base relations' table.
