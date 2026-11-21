@@ -18,13 +18,16 @@ use crate::Pod;
 use crate::block::Backing;
 use std::cell::{Cell, RefCell};
 
-/// Address space an anonymous scratch region reserves (nothing resident until written). Without a mapping
-/// (`crate::mem`) the reservation is allocated whole, and on Windows it is committed whole (counted against the
-/// commit limit), so it is a working size there.
-#[cfg(unix)]
+/// Address space an anonymous scratch region reserves (nothing resident until written; on Windows, committed as
+/// takes reach it). Without a mapping (`crate::mem`) the reservation is allocated whole, so it is a working size
+/// there.
+#[cfg(any(unix, windows))]
 const ANON: usize = 1 << 36;
-#[cfg(not(unix))]
+#[cfg(not(any(unix, windows)))]
 const ANON: usize = 256 << 20;
+/// Windows: what a region commits at once as its takes pass its committed bytes.
+#[cfg(windows)]
+const COMMIT_STEP: usize = 1 << 20;
 /// Bytes of a thread's scratch kept resident between uses; past them, a use's pages are given back.
 const KEEP: usize = 64 << 20;
 
@@ -37,18 +40,40 @@ pub struct Scratch {
     /// The bytes `end` gave back to the OS, from and to: marked in use again (`reuse_pages`) when a take reaches them.
     given: Cell<(usize, usize)>,
     backing: Option<Box<dyn Backing>>,
+    /// Windows: the bytes from its base that are committed (`mem::commit`): an anonymous region's as its takes pass
+    /// them, a backing's all.
+    #[cfg(windows)]
+    committed: Cell<usize>,
 }
 
 impl Scratch {
     /// An anonymous region of `reserved` bytes of address space.
     pub fn anon(reserved: usize) -> Scratch {
         let p = crate::mem::reserve(reserved);
-        Scratch { base: p, len: reserved, top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: None }
+        Scratch {
+            base: p,
+            len: reserved,
+            top: Cell::new(0),
+            high: Cell::new(0),
+            given: Cell::new((0, 0)),
+            backing: None,
+            #[cfg(windows)]
+            committed: Cell::new(0),
+        }
     }
 
     /// The region `backing` holds (a pooled slab): it may hold an earlier use's bytes.
     pub fn over(backing: Box<dyn Backing>) -> Scratch {
-        Scratch { base: backing.base(), len: backing.len(), top: Cell::new(0), high: Cell::new(0), given: Cell::new((0, 0)), backing: Some(backing) }
+        Scratch {
+            base: backing.base(),
+            len: backing.len(),
+            top: Cell::new(0),
+            high: Cell::new(0),
+            given: Cell::new((0, 0)),
+            #[cfg(windows)]
+            committed: Cell::new(backing.len()),
+            backing: Some(backing),
+        }
     }
 
     /// `n` values of `T`, their contents whatever the last use left.
@@ -60,6 +85,14 @@ impl Scratch {
         assert!(end <= self.len, "scratch full: {end} of {} bytes", self.len);
         self.top.set(end);
         self.high.set(self.high.get().max(end));
+        #[cfg(windows)]
+        if end > self.committed.get() {
+            let have = self.committed.get();
+            let to = end.next_multiple_of(COMMIT_STEP).min(self.len);
+            // SAFETY: the region's own reservation, past what it has committed.
+            unsafe { crate::mem::commit(self.base.add(have), to - have) };
+            self.committed.set(to);
+        }
         let (from, to) = self.given.get();
         if to > from && end > from {
             // SAFETY: the region's own pages, given back by `end`.

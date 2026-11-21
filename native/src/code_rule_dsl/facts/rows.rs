@@ -31,9 +31,9 @@ use rerail_blocks::rows::ColRead;
 /// The most segments a frozen relation holds; past them its newest are merged.
 const MAX_SEGMENTS: usize = 8;
 
-/// Whether a reservation is address space only (a 64-bit Unix: `rerail_blocks::mem::reserve`), its pages taken as
-/// they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
-const RESERVES_ADDRESS_SPACE: bool = cfg!(all(unix, target_pointer_width = "64"));
+/// Whether a reservation is address space only (a 64-bit Unix or Windows: `rerail_blocks::mem::reserve`), its pages
+/// taken (on Windows, committed) as they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
+const RESERVES_ADDRESS_SPACE: bool = cfg!(all(any(unix, windows), target_pointer_width = "64"));
 
 /// What a block of relations reserves where a reservation is address space (decision 0445, t49 item 2): enough that
 /// no relation's tail outgrows its block within a run's memory. A Mac gave 4,000 such reservations at once.
