@@ -226,6 +226,27 @@
         BARM();                                                                                        \
         EACHM(p, s_.pieces) px_sb_piece(xu, xa, s_, p);                                                \
         BARM();                                                                                        \
+        if (ukl_atomic_load(&AT(uint32_t, QCTL)[9]) != 0u) {                                           \
+            SCANM(s_.pieces, SC_HEADS, SC_K, SC_LTOTAL);                                               \
+            uint32_t nh_ = N(SC_LTOTAL);                                                               \
+            EACHM(p, s_.pieces) px_sb_str_rank(s_, p);                                                 \
+            BARM();                                                                                    \
+            SCANM(nh_, SC_CLOSE, SC_LIVE, SC_TOTAL);                                                   \
+            uint32_t nt_ = N(SC_TOTAL);                                                                \
+            if (nt_ > W(SC_CAP)) {                                                                     \
+                ONEM(x) { AT(uint32_t, CTL)[24] = ukl_max(AT(const uint32_t, CTL)[24], nt_); px_refuse(AT(uint32_t, CTL), X_ROOM); } \
+            } else {                                                                                   \
+                EACHM(x, nt_) px_sb_str_bytes(xu, xa, s_, nh_, nt_, x);                                \
+                BARM();                                                                                \
+                SCANM(nt_, SC_REACH, SC_DEPTH, SC_CTOTAL);                                             \
+                uint32_t nb_ = N(SC_CTOTAL);                                                           \
+                ONEM(x) px_sb_str_alloc(xa, nh_, nb_, AT(uint32_t, SC_FIRST));                         \
+                BARM();                                                                                \
+                EACHM(x, nt_) px_sb_str_write(xu, xa, s_, nh_, nt_, AT(const uint32_t, SC_FIRST), x);  \
+                EACHM(h, nh_) px_sb_str_lit(xa, s_, nh_, nt_, nb_, AT(const uint32_t, SC_FIRST), h);   \
+                BARM();                                                                                \
+            }                                                                                          \
+        }                                                                                              \
         EACHM(i, s_.ns) px_sb_va(xu, xa, s_, i);                                                       \
         BARM();                                                                                        \
         EACHM(p, s_.pieces) px_sb_paste(xu, xa, s_, p);                                                \
@@ -498,6 +519,7 @@
                     ukl_atomic_store(&q_[6], 0u);                                                      \
                     ukl_atomic_store(&q_[7], 0u);                                                      \
                     ukl_atomic_store(&q_[8], 0u);                                                      \
+                    ukl_atomic_store(&q_[9], 0u);                                                      \
                     ukl_atomic_store(&q_[4], (q_[4] & 1u) ^ 1u);                                       \
                     c_[25]++;                                                                          \
                 }                                                                                      \

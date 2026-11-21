@@ -1899,40 +1899,6 @@ UKL_INLINE bool px_is_counter(Ar a, uint32_t ref) {
     return false;
 }
 
-// `#` of the raw tokens `lo..hi` of list `p` (or the top level), by one thread: a string literal
-// written to the scratch bytes (each token, a space before it where it has one, a literal's `"`
-// and `\` escaped; one atomic add), as a scratch token.
-UKL_INLINE uint32_t px_stringize(Ux u, Ar a, uint32_t p, uint32_t lo, uint32_t hi) {
-    uint32_t total = 0u;
-    for (uint32_t k = lo; k < hi; k++) {
-        if (px_is_counter(a, par_ref(u, a, p, k))) px_refuse(a.ctl, X_COUNTER_SPELLED);
-        Span r = ref_span(u, par_ref(u, a, p, k));
-        // A token with a line splice inside: its phase-2 spelling is the CPU's.
-        if (has_splice(r.p, r.len)) px_refuse(a.ctl, X_SPLICE);
-        total += r.len + (k > lo && (par_flags(u, a, p, k) & T_SPACE) != 0u ? 1u : 0u);
-        if (r.kind == K_LITERAL) for (uint32_t b = 0u; b < r.len; b++) total += (r.p[b] == ((uint8_t)('"')) || r.p[b] == ((uint8_t)('\\'))) ? 1u : 0u;
-    }
-    uint32_t base = ukl_atomic_add(&a.ctl[4], total + 2u), id = ukl_atomic_add(&a.ctl[5], 1u);
-    if (base + total + 2u > a.sb_cap || id >= a.st_cap) {
-        px_refuse(a.ctl, X_ROOM);
-        return SCRATCH;
-    }
-    uint32_t w = base + 1u;
-    for (uint32_t k = lo; k < hi; k++) {
-        Span r = ref_span(u, par_ref(u, a, p, k));
-        if (k > lo && (par_flags(u, a, p, k) & T_SPACE) != 0u) a.sbytes[w++] = ((uint8_t)(' '));
-        for (uint32_t b = 0u; b < r.len; b++) {
-            uint8_t c = r.p[b];
-            if (r.kind == K_LITERAL && (c == ((uint8_t)('"')) || c == ((uint8_t)('\\')))) a.sbytes[w++] = ((uint8_t)('\\'));
-            a.sbytes[w++] = c;
-        }
-    }
-    a.sbytes[base] = ((uint8_t)('"'));
-    a.sbytes[base + total + 1u] = ((uint8_t)('"'));
-    a.stoks[id].start = base; a.stoks[id].end = base + total + 2u; a.stoks[id].kind = K_LITERAL;
-    return SCRATCH | id;
-}
-
 // Whether `c` is a byte of an identifier past its first (the relexer's, without `$`).
 UKL_INLINE bool px_ident_byte(uint8_t c) {
     return (c >= ((uint8_t)('a')) && c <= ((uint8_t)('z'))) || (c >= ((uint8_t)('A')) && c <= ((uint8_t)('Z'))) || (c >= ((uint8_t)('0')) && c <= ((uint8_t)('9'))) || c == ((uint8_t)('_'));
@@ -2670,6 +2636,7 @@ UKL_INLINE void px_sb_alloc(Ar a, Sb s, uint32_t i) {
 // Piece `p`: written by its item's role.
 UKL_INLINE void px_sb_piece(Ux u, Ar a, Sb s, uint32_t p) {
     if (p >= s.pieces) return;
+    s.brk[p] = 0u;
     uint32_t t = pb_item_of(s.off, s.items, p), i = px_sb_ilist(s, t), base = SBC(s, SB_PBASE, i);
     if (base == NO_POS) return;
     uint32_t j = t - s.base[i], o = p - s.off[t], w = base + (p - SBC(s, SB_POFF, i)), x1 = SBC(s, SB_X1, i);
@@ -2702,10 +2669,78 @@ UKL_INLINE void px_sb_piece(Ux u, Ar a, Sb s, uint32_t p) {
     } else if (r.role == R_HASH) {
         uint32_t q = u.items[d.ifirst + j + 1u] & 0xffffu;
         uint32_t lo = q < L->nargs ? a.args[L->args + q].lo : 0u, hi = q < L->nargs ? a.args[L->args + q].hi : 0u;
+        // Its literal's ref written by the stringizing's phases (`px_sb_str_*`).
         Tk tk;
-        tk.ref = px_stringize(u, a, L->src, lo, hi); tk.flags = sp != 0u ? T_SPACE : 0u; tk.exp = x1;
+        tk.ref = SCRATCH; tk.flags = sp != 0u ? T_SPACE : 0u; tk.exp = x1;
         pc_put_ref(a, w, tk, 0u);
+        s.brk[p] = 1u; s.sum[p] = lo; s.run[p] = hi - lo;
+        ukl_atomic_add(&a.qctl[9], 1u);
     }
+}
+
+// The `#`s of the round's substitutions (decision 0523 §2), a thread a token: each `#` piece
+// flagged by its writer (`brk`, its argument's raw tokens from `sum`, `run` of them; `QCTL` 9
+// counts them), ranked (`lenv`); a thread a `#`: its piece (`hv`), its tokens (`hidx`) and
+// their first (`rank`); their scan (`keep`); a thread a token: its bytes (a space before it where
+// it has one but the first, a literal's `"` and `\` escaped; `run`), their scan (`sum`); one
+// block of scratch bytes and of scratch tokens for them all (`SC_FIRST` 0 and 1); a thread a
+// token its bytes written, and a thread a `#` its quotes, its scratch token and its piece's ref.
+UKL_INLINE void px_sb_str_rank(Sb s, uint32_t p) {
+    if (p >= s.pieces || s.brk[p] == 0u) return;
+    uint32_t h = s.lenv[p];
+    s.hv[h] = p; s.hidx[h] = s.run[p]; s.rank[h] = s.sum[p];
+}
+// Token `x` of the `#`s' (`nh`): its `#`, and its ref in its list's source.
+typedef struct StrTok { uint32_t h, k, ref, flags; } StrTok;
+UKL_INLINE StrTok px_sb_str_tok(Ux u, Ar a, Sb s, uint32_t nh, uint32_t x) {
+    StrTok r;
+    r.h = pb_item_of(s.keep, nh, x);
+    r.k = x - s.keep[r.h];
+    uint32_t src = a.lists[s.set[px_sb_plist(s, s.hv[r.h])]].src, q = s.rank[r.h] + r.k;
+    r.ref = par_ref(u, a, src, q);
+    r.flags = par_flags(u, a, src, q);
+    return r;
+}
+UKL_INLINE void px_sb_str_bytes(Ux u, Ar a, Sb s, uint32_t nh, uint32_t ntok, uint32_t x) {
+    if (x >= ntok) return;
+    StrTok t = px_sb_str_tok(u, a, s, nh, x);
+    if (px_is_counter(a, t.ref)) px_refuse(a.ctl, X_COUNTER_SPELLED);
+    Span r = ref_span(u, t.ref);
+    // A token with a line splice inside: its phase-2 spelling is the CPU's.
+    if (has_splice(r.p, r.len)) px_refuse(a.ctl, X_SPLICE);
+    uint32_t n = r.len + (t.k > 0u && (t.flags & T_SPACE) != 0u ? 1u : 0u);
+    if (r.kind == K_LITERAL) for (uint32_t b = 0u; b < r.len; b++) n += (r.p[b] == ((uint8_t)('"')) || r.p[b] == ((uint8_t)('\\'))) ? 1u : 0u;
+    s.run[x] = n;
+}
+// The bytes before token `x` of the `#`s' (`nb` past the last).
+UKL_INLINE uint32_t px_sb_str_at(Sb s, uint32_t ntok, uint32_t nb, uint32_t x) { return x < ntok ? s.sum[x] : nb; }
+UKL_INLINE void px_sb_str_alloc(Ar a, uint32_t nh, uint32_t nb, UKL_GLOBAL uint32_t* first) {
+    uint32_t base = ukl_atomic_add(&a.ctl[4], nb + 2u * nh), id = ukl_atomic_add(&a.ctl[5], nh);
+    if (base + nb + 2u * nh > a.sb_cap || id + nh > a.st_cap) { px_refuse(a.ctl, X_ROOM); base = NO_POS; }
+    first[0] = base; first[1] = id;
+}
+UKL_INLINE void px_sb_str_write(Ux u, Ar a, Sb s, uint32_t nh, uint32_t ntok, UKL_GLOBAL const uint32_t* first, uint32_t x) {
+    if (x >= ntok || first[0] == NO_POS) return;
+    StrTok t = px_sb_str_tok(u, a, s, nh, x);
+    Span r = ref_span(u, t.ref);
+    uint32_t w = first[0] + 2u * t.h + 1u + s.sum[x];
+    if (t.k > 0u && (t.flags & T_SPACE) != 0u) a.sbytes[w++] = ((uint8_t)(' '));
+    for (uint32_t b = 0u; b < r.len; b++) {
+        uint8_t c = r.p[b];
+        if (r.kind == K_LITERAL && (c == ((uint8_t)('"')) || c == ((uint8_t)('\\')))) a.sbytes[w++] = ((uint8_t)('\\'));
+        a.sbytes[w++] = c;
+    }
+}
+UKL_INLINE void px_sb_str_lit(Ar a, Sb s, uint32_t nh, uint32_t ntok, uint32_t nb, UKL_GLOBAL const uint32_t* first, uint32_t h) {
+    if (h >= nh || first[0] == NO_POS) return;
+    uint32_t start = first[0] + 2u * h + px_sb_str_at(s, ntok, nb, s.keep[h]);
+    uint32_t endq = first[0] + 2u * h + 1u + px_sb_str_at(s, ntok, nb, s.keep[h] + s.hidx[h]);
+    a.sbytes[start] = ((uint8_t)('"'));
+    a.sbytes[endq] = ((uint8_t)('"'));
+    uint32_t id = first[1] + h;
+    a.stoks[id].start = start; a.stoks[id].end = endq + 1u; a.stoks[id].kind = K_LITERAL;
+    uint32_t p = s.hv[h], i = px_sb_plist(s, p);
+    a.pst[SBC(s, SB_PBASE, i) + (p - SBC(s, SB_POFF, i))] = SCRATCH | id;
 }
 
 // List `i`: a present `__VA_OPT__`'s content's first piece takes `__VA_OPT__`'s space (where the

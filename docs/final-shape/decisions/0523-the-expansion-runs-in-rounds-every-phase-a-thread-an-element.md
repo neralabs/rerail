@@ -260,6 +260,12 @@ SIMD-group operation switches each thread of the group.
      rounds). A list's walk does it only when it has claims (no added barrier otherwise), and the
      top level's (`px_top_cover`, a SIMD group, is gone) the same way. The test holds a list
      whose claims do not nest (with every claim taken as live it fails).
+   - **`#` is phases, a thread a token** (`px_sb_str_*`), in place of a thread a `#`. The piece
+     writer flags each `#` (`QCTL` 9) and writes its piece with its ref to come. A round with any
+     `#` then ranks them, scans their tokens, and takes a thread a token for its bytes (its space,
+     a literal's escapes) and their scan. One block of scratch bytes and of scratch tokens is
+     taken for all of them, then a thread a token writes its bytes and a thread a `#` its quotes,
+     its scratch token and its piece's ref, before the pastes read them.
 3. **The tests past 1 s brought under it:** what each one runs is sized to what it checks.
    Done: all 31 eval tests pass under the `second` profile's 1 s on a farm Mac (CPU backend),
    the longest 0.68 s.
