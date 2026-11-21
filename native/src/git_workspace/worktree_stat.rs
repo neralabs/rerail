@@ -263,6 +263,16 @@ fn keeps_change_times(name: &str) -> bool {
     matches!(name, "NTFS" | "ReFS")
 }
 
+/// Whether a file whose volume answered the protocol query (`FileRemoteProtocolInfo`) as
+/// `answered` says, or refused it with `refusal`, is on this machine: a network share answers the
+/// protocol it is reached by, and a local NTFS volume refuses the query as a parameter it does not
+/// take (`ERROR_INVALID_PARAMETER`, 87). Any other refusal cannot tell, so the stat decides, as on
+/// a share, and nothing is remembered.
+#[cfg(any(windows, test))]
+fn on_this_machine(answered: bool, refusal: &std::io::Error) -> bool {
+    !answered && refusal.raw_os_error() == Some(87)
+}
+
 /// The attributes of a file whose data is not all on this disk: a cloud file placeholder, whose
 /// provider downloads its data when it is read (`FILE_ATTRIBUTE_RECALL_ON_DATA_ACCESS`) or opened
 /// (`FILE_ATTRIBUTE_RECALL_ON_OPEN`), and a file moved to offline storage
@@ -498,8 +508,7 @@ mod platform {
         (read != 0).then_some((info.VolumeSerialNumber, info.FileId.Identifier))
     }
 
-    /// Whether `file` is on this machine: only a file on a network share answers the protocol it
-    /// is reached by.
+    /// Whether `file` is on this machine (`super::on_this_machine`).
     fn is_local(file: &File) -> bool {
         #[cfg(test)]
         if queried(ON_A_SHARE.get()) {
@@ -508,15 +517,15 @@ mod platform {
         // Larger than `FILE_REMOTE_PROTOCOL_INFO`, and aligned as it is.
         let mut info = [0_u64; 32];
         // SAFETY: an open handle, and a buffer of the size given that lives across the call.
-        let remote = unsafe {
+        let answered = unsafe {
             GetFileInformationByHandleEx(
                 file.as_raw_handle(),
                 FileRemoteProtocolInfo,
                 info.as_mut_ptr().cast(),
                 std::mem::size_of_val(&info) as u32,
             )
-        };
-        remote == 0
+        } != 0;
+        super::on_this_machine(answered, &std::io::Error::last_os_error())
     }
 
     /// The name of the file system that holds `file`, such as `NTFS`; empty where it is not told.
@@ -551,7 +560,9 @@ mod platform {
 
 #[cfg(test)]
 mod tests {
-    use super::{ChangeStamp, HashKey, VerifiedFiles, keeps_change_times, stat_decides};
+    use super::{
+        ChangeStamp, HashKey, VerifiedFiles, keeps_change_times, on_this_machine, stat_decides,
+    };
     use std::io::{Error, ErrorKind};
     use std::path::Path;
 
@@ -614,6 +625,19 @@ mod tests {
         assert!(keeps_change_times("ReFS"));
         for name in ["FAT", "FAT32", "exFAT", "CDFS", "UDF", ""] {
             assert!(!keeps_change_times(name), "{name}");
+        }
+    }
+
+    /// A file is on this machine only where its volume refuses the protocol query as a local
+    /// NTFS volume does (87): a share answers it, and a volume that refuses it for another reason
+    /// (a function it lacks, a denial, a redirector that does not take the query) cannot tell.
+    #[test]
+    fn only_a_refusal_of_the_protocol_query_as_ntfs_gives_it_is_this_machine() {
+        assert!(on_this_machine(false, &Error::from_raw_os_error(87)));
+        assert!(!on_this_machine(true, &Error::from_raw_os_error(87)), "answered");
+        for code in [1, 5, 50, 120] {
+            let refusal = Error::from_raw_os_error(code);
+            assert!(!on_this_machine(false, &refusal), "{code}");
         }
     }
 }
