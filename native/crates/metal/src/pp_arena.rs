@@ -145,7 +145,7 @@ impl Bound for Buffer {
 
 /// The evaluator's one source, UKL (decision 0468 §5): the tape's view and its reads written once
 /// in CLIF (`<ukl/reads/tape.h>`, the view read where the batch holds it), the persistent grid's
-/// barrier and primitives (`<ukl/grid.h>`), the work queue (`<ukl/workqueue.h>`), the pool of
+/// barrier and primitives (`<ukl/grid.h>`), the pool of
 /// blocks used again (`<ukl/pool.h>`), the arena's
 /// slots (`SLOTS`, the source's `S_*`), the front passes (`pp_eval.uglykl`), the searches
 /// (`pp_search.uglykl`), the expansion's passes (`pp_expand.uglykl`), the kernels that run them
@@ -154,7 +154,7 @@ impl Bound for Buffer {
 pub fn source() -> &'static str {
     static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "#include <ukl/backend.h>\n{PP_GLOBAL}#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/workqueue.h>\n#include <ukl/pool.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "#include <ukl/backend.h>\n{PP_GLOBAL}#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/pool.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}",
             rerail_clif::view::ukl(),
             SLOTS.iter().enumerate().map(|(k, s)| format!("#define S_{s} {k}u\n")).collect::<String>(),
             include_str!("pp_eval.uglykl"),
@@ -188,8 +188,16 @@ pub fn kernel(name: &str) -> lane::Kernel {
 #[derive(Default)]
 struct Kernels(std::sync::Mutex<std::collections::HashMap<String, lane::Kernel>>);
 
-/// The threads of a group.
+/// The threads of a group on a GPU.
 pub const TG: u64 = 256;
+
+/// The threads of a group on the process's device: `TG` on a GPU; 32 on the CPU (decision 0527
+/// §3), where each of a group's threads is a coroutine that every barrier switches, so a phase
+/// costs its group's width in switches (the radix sort's tiles run 8 of their threads a thread).
+pub fn tg() -> u64 {
+    static T: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *T.get_or_init(|| if matches!(lane::device(), Ok(lane::Device::Cpu(_))) { 32 } else { TG })
+}
 
 /// A probe's scalars (`pp_probes.uglykl`'s `PpProbeArgs`).
 #[repr(C)]
@@ -229,7 +237,7 @@ impl<'a> Enc<'a> {
         if let Some(a) = args {
             launch = launch.value("args", &a);
         }
-        launch.groups([groups.max(1), 1, 1], [TG, 1, 1]);
+        launch.groups([groups.max(1), 1, 1], [tg(), 1, 1]);
     }
 
     /// The launches it holds (those within the budget).
@@ -308,7 +316,7 @@ pub fn groups() -> u64 {
             return 1;
         }
         let local = kernel("pp_setup").threadgroup_bytes();
-        device.resident_groups(TG as u32, local).map_or(GROUPS_UNKNOWN, |g| g.min(GROUPS_MOST))
+        device.resident_groups(tg() as u32, local).map_or(GROUPS_UNKNOWN, |g| g.min(GROUPS_MOST))
     })
 }
 
@@ -322,7 +330,7 @@ pub const SLOTS: &[&str] = &[
     "GRID", "SUMS", "LAST", "STOP", "N_FILES", "NODES_FLAG", "FILES", "BASES", "TOTAL", "DIR_BASES", "DIR_TOTAL", "DFLAG", "GFLAG", "AFLAG", "DEV", "DRANK", "GRANK", "ARANK", "NDEPTH", "DEV_TOTAL", "N_GROUPS", "N_ARMS",
     "ARM_KEYS", "ASORT_KB", "ASORT_VA", "ASORT_VB", "ASORT_HIST", "GRP_KEYS", "PSORT_KB", "PSORT_VA", "PSORT_VB", "PSORT_HIST", "G_OUT", "G_ARMS",
     "DIR_GROUPS", "GUARDED", "GUARDS", "BAD", "KEYS", "NODES_OUT", "ROWS", "DIR_KEYS",
-    "DEFS", "PCOUNT", "BCOUNT", "PFIRST", "IFIRST", "PTOTAL", "ITOTAL", "PKEYS", "ITEMS", "ROOM", "CAP", "VA_LO", "VA_HI",
+    "DEFS", "PCOUNT", "BCOUNT", "PFIRST", "IFIRST", "PTOTAL", "ITOTAL", "PKEYS", "ITEMS", "VAI", "ROOM", "CAP", "VA_LO", "VA_HI", "VO_LO", "VO_HI",
     "INSTS", "N_INSTS", "DSLOT", "DACTIVE", "N_DIRS", "GSLOT", "GACTIVE", "N_GAPS", "N_BUILTIN", "ND", "NG", "OWNER_IN", "VHEADS",
     "OWNER", "TFLAG", "TRANK", "TTOTAL", "TEXT_NODES", "RFLAG", "RAT", "RTOTAL", "SORT_KEYS", "NAME_KEYS", "VALUES", "N_ROWS",
     "SORT_KB", "SORT_VA", "SORT_VB", "SORT_HIST", "GCOUNTS", "GFIRSTS", "GKEYS", "GSORT_KB", "GSORT_VA", "GSORT_VB", "GSORT_HIST",
@@ -337,8 +345,9 @@ pub const SLOTS: &[&str] = &[
     "RSTART", "RUNX", "RUNTOT", "RUN_END", "CNT", "CNT_CAP", "TR_SK", "TR_NK", "TR_TY", "TO_F", "TO_S", "CU_SLOT", "CU_SUB", "CU_UNIT", "TRN", "LREAD", "LB_CAP", "LDELTA", "LKEY", "LVAL", "LVALN", "LHEAD", "LATEST", "LATESTN", "ILINE", "ILINEN", "SLINE", "SLINEN", "LCTL", "IF_COUNT", "IF_FIRST", "IF_KIND", "IF_INST", "SINST", "P1_RNAMES", "P1_RNTOP", "RNC", "RQC", "IF_AT", "IF_TOTAL", "IF_NODES", "IF_OPS", "IF_VAL", "IF_KEYS", "IF_TRUE", "N_IFOP", "IF_OPKEYS", "IF_OPKINDS", "N_FEAT", "IF_FEATKEYS", "IF_FEATVALS",
     "THEADS", "DELTA", "DEPTH", "CLOSE", "CLOSE_AT", "CLOSE_TOTAL", "CLOSE_KEYS", "CSORT_KB", "CSORT_VA", "CSORT_VB", "CSORT_HIST",
     "CLOSE_BITS", "CEND", "EHEADS", "REACH", "STATE", "OFLAG", "OID", "OTOTAL", "LISTS", "SLOTS", "CTL", "QCTL", "XFLAG", "XAT",
-    "XTOTAL", "XPOS", "XCOVER", "V", "OBASE", "VTOTAL", "OPV", "OPBASE", "OPTOTAL", "OUT", "SCANS", "FINS", "PLACES", "SC_N", "SC_BASE", "SC_XJ", "SC_TOTAL", "SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT",
+    "XTOTAL", "XPOS", "XCOVER", "V", "OBASE", "VTOTAL", "OPV", "OPBASE", "OPTOTAL", "OUT", "SCANS", "SUBS", "CALLS", "SB_L", "FINS", "PLACES", "SC_N", "SC_BASE", "SC_XJ", "SC_TOTAL", "SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT",
     "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK", "SC_CTOTAL", "SC_LTOTAL", "SC_CKEYS", "SC_FIRST", "SC_KB", "SC_VA", "SC_VB", "SC_HIST", "SC_CAP", "TOKENS", "ARGS", "WORDS", "SCRATCH", "LIST_CAP", "OUT_CAP", "Q_CAP",
+    "TRIE", "TRIE_LV",
 ];
 
 fn slot(name: &str) -> usize {

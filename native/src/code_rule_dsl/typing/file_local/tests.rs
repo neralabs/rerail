@@ -782,7 +782,7 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
         assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
     }
     let helpers: Vec<_> = made.iter().filter(|name| name.ends_with("_observed")).collect();
-    assert_eq!(helpers.len(), usize::from(equal_columns), "{}", result.show());
+    assert_eq!(helpers.len(), usize::from(push_equal_columns()), "{}", result.show());
     if let [helper] = helpers.as_slice() {
         assert!(result.show().contains(&format!("observed($answer) :- {helper}(")));
     }

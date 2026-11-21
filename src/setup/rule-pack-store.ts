@@ -40,7 +40,7 @@ import { CommandTimeoutError, outsideAnyProject, prefixInstallNpm, runNpm, unrea
 import { formatDuration } from "../runtime/progress.js";
 import { withPacksLock } from "./packs-lock.js";
 
-/** The dist-tag a pack is fetched under when core's update channel has no version of it: where a held pack publishes. */
+/** The dist-tag a pack is fetched under when core's update channel has no version of it: where every release publishes. */
 export const PACK_FALLBACK_TAG = "next";
 /** A staging folder older than this is left from a run that never finished, and is removed by the next fetch. */
 const STALE_STAGING_MS = 60 * 60 * 1000;

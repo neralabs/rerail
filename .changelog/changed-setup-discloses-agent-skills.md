@@ -1,1 +1,0 @@
-Set-up now says, before it connects your coding agents, that the `/rerail` commands load Rerail's skills (instructions your agent follows to write rules and to work out what went wrong), and the installation guide describes the same.

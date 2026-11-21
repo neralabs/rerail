@@ -7,7 +7,7 @@ shape, not recursion. How it is done is the implementer's choice. Follows 0550. 
 
 ## What was there
 
-- `rust_stream` (0525-0549) wrote JSON's tier 2 by walking the native IR's words: a lowering of the IR, deprecated by
+- `rust_stream` (0525-0546, 0557-0559) wrote JSON's tier 2 by walking the native IR's words: a lowering of the IR, deprecated by
   0550.
 - Kotlin's generator (`bitlex_rust::tier2`) writes recursive descent, format 15 through `Writer`, and refused
   JSON's grammar at its first keyword kind (`true`). Its tier 1 (`bitlex_lex_rust::tier1`) needs `skip` and has no
@@ -63,7 +63,7 @@ an uncommitted 16z tape differs was not looked into.
 - Speed: nothing was measured. The writer is the host's `f16::Writer`, called through its methods, a commit a node;
   no room is reserved once, no widths are constant. Tier 1 makes whole-file mask vectors, as Kotlin's.
 - The corpus (`JSONTestSuite`, the test data) was not run through the generated parser.
-- 0541-0549's work on `rust_stream` is not redone here: the empty container's peek, the closer's check before the
+- 0541-0546's and 0557-0559's work on `rust_stream` is not redone here: the empty container's peek, the closer's check before the
   walk, the infallible open and close, the two-way return.
 - `rust_stream`'s JSON tests and `aot_tests`, and `rr_aot`, still use the deprecated modules (0550).
 - Which other grammars the loop form takes: only JSON's was tried.

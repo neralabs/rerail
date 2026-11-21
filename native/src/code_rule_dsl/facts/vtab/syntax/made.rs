@@ -10,6 +10,7 @@ use super::*;
 use crate::code_rule_dsl::facts::vtab::DeviceView;
 use crate::code_rule_dsl::facts::vtab::{ReadRow, RowCells, RowStream};
 use crate::code_rule_dsl::logic::profile;
+use std::collections::HashSet;
 use std::ops::Range;
 use std::sync::atomic::{AtomicUsize, Ordering};
 

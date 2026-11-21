@@ -3344,7 +3344,7 @@ fn token_check_ops(accept: &[bool], arms: &[(u16, ByteSet, u16)]) -> Result<Vec<
 /// The tree section lowered: the grammar's state machine (`grammar`), its checks added to the
 /// fallback, and tier 2's words (`bitlex_tier2`), with the grammar's ids from `symbols`.
 fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Tier2, String> {
-    // Each kind's and field's name looked up, with its number (`Words::names`).
+    // The kinds' and fields' names, as the grammar asks for them (`Words::names`).
     let named: std::cell::RefCell<(std::collections::BTreeMap<u16, String>, std::collections::BTreeMap<u16, String>)> = Default::default();
     let id = |name: &str| {
         let k = (symbols.kind)(name).ok_or_else(|| format!("no kind `{name}` in the grammar"))?;
@@ -5052,9 +5052,9 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             return Err("a mark's token tests need the extra's mark from its reader".into());
         }
     }
-    // The names (`Words::names`): each rule's, its level's kind's; each node kind's; each record
+    // The names (`Words::names`): each rule's, its level's kind's; each node kind's and field's; each record
     // kind's, the first token row's whose first byte has it.
-    let (named, field_named) = named.into_inner();
+    let (named, fields) = named.into_inner();
     let mut names = crate::program::Names::default();
     for (i, &r) in lowered.rule_ids.iter().enumerate() {
         if let Some(n) = states.iter().find(|s| s.rule == r).and_then(|s| named.get(&s.level)) {
@@ -5062,7 +5062,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         }
     }
     names.kinds = named.iter().map(|(&k, n)| (k, n.clone())).collect();
-    names.fields = field_named.into_iter().collect();
+    names.fields = fields.into_iter().collect();
     let mut token_named = [false; 256];
     for b in 0..256usize {
         let k = records.kinds[b];

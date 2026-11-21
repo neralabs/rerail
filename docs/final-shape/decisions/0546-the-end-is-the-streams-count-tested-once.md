@@ -25,7 +25,7 @@ step 50.
 3. **`ACCEPT` tests no end where every way into it is such a switch's end arm** with no take after it
    (`accept_at_end`). Then only the open nodes are checked there.
 4. **Not done here: the lean parser's check before the walk** (that the outer closer is the last token). This item
-   said the lean parser checks once, after its walk. It checks both before and after (corrected in 0549, which adds
+   said the lean parser checks once, after its walk. It checks both before and after (corrected in 0559, which adds
    the check before).
 
 ## Checks

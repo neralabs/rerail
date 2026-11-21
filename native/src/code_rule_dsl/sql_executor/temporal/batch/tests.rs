@@ -356,9 +356,7 @@ ORDER BY 1,2
 #[test]
 fn signed_gate_statistics_reach_the_background_cost_store() {
     let dir = tempfile::tempdir().unwrap();
-    let result = std::process::Command::new("nice")
-        .args(["-n", "19"])
-        .arg(std::env::current_exe().unwrap())
+    let result = crate::code_rule_dsl::test_support::niced_self()
         .args([
             "--exact",
             "code_rule_dsl::sql_executor::temporal::batch::tests::signed_feedback_child",

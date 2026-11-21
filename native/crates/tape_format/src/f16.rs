@@ -2272,6 +2272,47 @@ DEFINE_KERNEL2(tests, t_reads,
     for (uint32_t k = 0u; k <= 12u; k++)
         o[10u + k] = clif_tape_child(tape, view, i, k);
 }
+
+typedef struct RandomArgs {
+    uint32_t n;
+    uint32_t threads;
+    uint32_t rounds;
+    uint32_t cache;
+} RandomArgs;
+UKL_REFLECT_STRUCT(RandomArgs, n, threads, rounds, cache)
+
+// Each thread's reads of `rounds` nodes at random (its code, start, end and parent, against `want`'s): how many were
+// wrong, and how many of those were wrong with no failure yet counted by the cache (at `cache` in the tape), in its
+// own two words (no counter shared by every thread).
+DEFINE_KERNEL2(tests, t_random,
+               ARGS,     RandomArgs, args,  ,
+               RWBUFFER, uint8_t,    tape,  "[bytes]",
+               ROBUFFER, uint32_t,   view,  "[29]",
+               ROBUFFER, uint32_t,   want,  "[n * 4]",
+               RWBUFFER, uint32_t,   out,   "[threads * 2]",
+               GID0,     uint32_t,   i,     )
+{
+    if (i >= args.threads)
+        return;
+    uint32_t x = i * 0x9E3779B9u + 1u, wrong = 0u, silent = 0u;
+    for (uint32_t r = 0u; r < args.rounds; r++) {
+        x ^= x << 13;
+        x ^= x >> 17;
+        x ^= x << 5;
+        uint32_t node = x % args.n;
+        ROBUFFER(uint32_t) w = want + node * 4u;
+        uint32_t bad = 0u;
+        bad += clif_tape_number(tape, view, node) != w[0] ? 1u : 0u;
+        bad += clif_tape_start(tape, view, node) != w[1] ? 1u : 0u;
+        bad += clif_tape_end(tape, view, node) != w[2] ? 1u : 0u;
+        bad += clif_tape_parent(tape, view, node) != w[3] ? 1u : 0u;
+        wrong += bad;
+        if (bad != 0u && ukl_atomic_load_at(tape, (uint64_t)args.cache + CLIF_T_C_FAILED) == 0u)
+            silent += bad;
+    }
+    out[2u * i] = wrong;
+    out[2u * i + 1u] = silent;
+}
 "#;
     const DEVICE_READS: usize = 23;
 
@@ -2282,6 +2323,16 @@ DEFINE_KERNEL2(tests, t_reads,
         pad: u32,
     }
     unsafe impl rerail_gpu::Pod for ReadArgs {}
+
+    #[repr(C)]
+    #[derive(Clone, Copy)]
+    struct RandomArgs {
+        n: u32,
+        threads: u32,
+        rounds: u32,
+        cache: u32,
+    }
+    unsafe impl rerail_gpu::Pod for RandomArgs {}
 
     /// `t`'s every read of every node, as the kernel lays them out; `parent_end` each node's parent's subtree's end.
     fn reads_of<T: Tape>(t: &T) -> (Vec<u32>, Vec<u32>) {
@@ -2465,6 +2516,72 @@ DEFINE_KERNEL2(tests, t_reads,
         assert!(counts.rotated > 100 && counts.promoted > 0 && counts.hits > 0, "the cache turned: {counts:?}");
         assert!(wrong <= failed() as usize, "{wrong} reads wrong, {} failures", failed());
         drop(buf);
+    }
+
+    /// Decision 0540: the device's threads read a 16z tape through a cache they share while it turns, as this crate
+    /// does: 256 threads read 32 nodes each at random through a cache of three generations, each of one block fewer
+    /// than the tape's, so lookups find blocks other threads are decoding, promote blocks from the oldest generation
+    /// and fill the head. Read at random, the cache thrashes (every turn's head filled by promotions), and a lookup
+    /// may run out of tries (on Metal most do: a SIMD group's turn outlasts several turns of the cache, and once one
+    /// lookup has failed, a pending one does not wait). What holds is the cache's promise: a read wrong only where
+    /// the cache counted a failure (the dead entry read), so a caller refuses the batch (decision 0463). Each thread
+    /// reads the failure count after each of its reads: no read is wrong while it is still 0. Without a device it
+    /// passes, saying so.
+    #[test]
+    fn the_device_reads_16z_through_a_cache_that_turns() {
+        use rerail_clif::view::cache;
+        use rerail_gpu::kernels::{alloc, buffer_of, launch, read};
+        let Some(shared) = rerail_gpu::shared::get() else {
+            eprintln!("no device: the reads as UKL did not run");
+            return;
+        };
+        let text: &'static str = Box::leak(DEVICE_KERNEL.replace("READS_HEADER", "<ukl/reads/tape_z.h>").into_boxed_str());
+        let program = rerail_gpu::kernels::program("tape_reads_turning", text).unwrap_or_else(|e| panic!("{}: {e}", rerail_gpu::device::backend()));
+        let entries: Vec<Entry> = (0..600u16).map(|k| Entry { kind: k, field: 0, flags: 0, alias: None, classes: Vec::new() }).collect();
+        let table = CodeTable::new(entries);
+        let lang = lang_of(&table);
+        let (nodes, pos) = escaped_nodes();
+        let plain = Plain(&nodes, &table);
+        let Ok(Written::F16Z(z)) = write_from(&lang, &plain, &(0..600).collect::<Vec<_>>(), &source_of(pos + 2), 0, true) else { panic!("16z") };
+        let t = z.reader(&lang).unwrap();
+        let n = t.len();
+        assert!(z.p.block_count() > 2, "a tape of more blocks than a generation holds");
+        let want: Vec<u32> = (0..n).flat_map(|i| [t.code(i), t.start(i) as u32, t.end(i) as u32, t.parent(i).map_or(u32::MAX, |p| p as u32)]).collect();
+        let mut view = z.view(&lang).unwrap();
+        let blocks = z.p.block_count() as u32;
+        let spec = cache::Spec::new(3, blocks - 1, view.columns[3] as usize);
+        let at = z.as_bytes().len().next_multiple_of(64);
+        let mut bytes = z.as_bytes().to_vec();
+        bytes.resize(at + spec.bytes(), 0);
+        spec.init(&mut bytes[at..]).unwrap();
+        bytes.resize(bytes.len().next_multiple_of(8) + 8, 0);
+        (view.side[0], view.side[1], view.columns[3], view.columns[4]) = (at as u32, 0, spec.entry_bytes() as u32, 1);
+        // SAFETY: the view is plain u32s.
+        let words = unsafe { std::slice::from_raw_parts(std::ptr::from_ref(&view).cast::<u32>(), size_of::<TapeView>() / 4) };
+        let (threads, rounds) = (256u32, 32u32);
+        let (tb, vb, wb) = (buffer_of(&bytes).unwrap(), buffer_of(words).unwrap(), buffer_of(&want).unwrap());
+        let out = alloc::<u32>(2 * threads as usize).unwrap();
+        let mut q = rerail_gpu::device::ComputeQueue::new(&shared.queue);
+        let started = std::time::Instant::now();
+        launch(&q, program.function("t_random").unwrap())
+            .value("args", &RandomArgs { n: n as u32, threads, rounds, cache: at as u32 })
+            .buffer("tape", &tb)
+            .buffer("view", &vb)
+            .buffer("want", &wb)
+            .buffer("out", &out)
+            .run(&[threads.div_ceil(64) as u64], &[64])
+            .unwrap();
+        q.flush().await_().unwrap();
+        let words: Vec<u32> = read(&out, 2 * threads as usize);
+        let wrong: u64 = words.iter().step_by(2).map(|&w| u64::from(w)).sum();
+        let silent: u64 = words.iter().skip(1).step_by(2).map(|&w| u64::from(w)).sum();
+        let back: Vec<u8> = read(&tb, bytes.len());
+        // SAFETY: the cache `Spec::init` made at the view's offset, in the bytes read back.
+        let counts = unsafe { cache::Counts::read(back.as_ptr().add(at)) };
+        eprintln!("{}: {} reads in {:.2} s, wrong {wrong} (before any failure {silent}): {:?}", rerail_gpu::device::backend(), threads * rounds * 4, started.elapsed().as_secs_f64(), counts.named());
+        assert_eq!(silent, 0, "reads wrong with no failure counted yet: {:?}", counts.named());
+        assert!(counts.rotated > 0, "the cache turned: {:?}", counts.named());
+        assert!(wrong <= u64::from(counts.failed), "{wrong} reads wrong, {} failures", counts.failed);
     }
 
     /// Every shipped table loads, and its text reads back to the same choices.

@@ -248,7 +248,7 @@ UKL_INLINE void micro_run(uint32_t FRAMES,UKL_GLOBAL const DocView* docs,UKL_GLO
   uint64_t mask=0ul;uint32_t pass=0u,file=0u,group=0u;
   SimdRoots r=simd_roots(0ul,lane __UKL_ARGS);
   bool walking=true,fresh=true;
-  UklWorkQueue wq={q.slots,q.control,q.capacity,0u};
+  UklWorkQueue wq={q.slots,q.control,q.capacity,0u,0u};
   uint32_t polls=0u,idle=tid<MICRO_STANDBY?MICRO_POLLS:1u,turn=0u;
   while(true){
     uint32_t p=0u,f=0u,start=0u,depth0=0u;
@@ -323,7 +323,7 @@ UKL_INLINE bool spill_give(MicroQ q,MicroFrame give,uint32_t start){
   uint32_t w[MICRO_ITEM]={give.pc,give.node,give.resume,give.named,give.next,give.end,give.cursors[0],give.cursors[1],give.cursors[2],give.cursors[3],give.cursors[4],give.cursors[5],give.cursors[6],give.cursors[7],give.capture0,give.capture1,give.captured,start,q.pass,q.doc};
   for(uint32_t k=0u;k<MICRO_ITEM;k++)ukl_atomic_store(&item[k],w[k]);
   ukl_fence_device();
-  UklWorkQueue wq={q.slots,q.control,q.capacity,0u};
+  UklWorkQueue wq={q.slots,q.control,q.capacity,0u,0u};
   return ukl_wq_push(wq,at);
 }
 

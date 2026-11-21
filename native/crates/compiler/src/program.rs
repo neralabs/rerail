@@ -252,18 +252,17 @@ pub fn split(word: u32) -> (u8, u8, u16) {
 }
 
 /// The grammar's names for a program's numbers (`name rule R "N"`, `name kind #K "N"`, `name
-/// token K "N"`, `name mark K "N"`): each rule's (by its place among `Words::rules`), each node
-/// kind's, each record kind's (the token kinds tier 1's records give), and each mark's in the
-/// records' code (`Records::marks`, by its bit).
+/// field F "N"`, `name token K "N"`, `name mark K "N"`): each rule's (by its place among
+/// `Words::rules`), each node kind's and field's (rising by number: what `rust_stream`'s labels
+/// are named by too), each record kind's (the token kinds tier 1's records give), and each mark's
+/// in the records' code (`Records::marks`, by its bit).
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
 pub struct Names {
     pub rules: Vec<(u16, String)>,
     pub kinds: Vec<(u16, String)>,
+    pub fields: Vec<(u16, String)>,
     pub tokens: Vec<(u8, String)>,
     pub marks: Vec<(u8, String)>,
-    /// Each field's name (`name field F "N"`): what code generated from the words names a field by
-    /// (`rust_stream`'s labels). No word reads them.
-    pub fields: Vec<(u16, String)>,
 }
 
 /// A program's words and the tables they index.

@@ -380,9 +380,6 @@ pub struct Structure {
     /// Tier 2's rules (`Words::rules`): each rule's first place.
     /// Each keyword's node kind, by string (`Words::word_kinds`).
     pub word_kinds: Vec<(u16, u16)>,
-    /// The grammar's names of its kinds and fields (`Words::names`).
-    pub kind_names: Vec<(u16, String)>,
-    pub field_names: Vec<(u16, String)>,
     /// The extras a `TOKEN` takes (`Words::extras`): a code's mark bit and the leaf's kind.
     pub extras: Vec<(u8, u16)>,
     /// The token marks (`Words::token_marks`).
@@ -572,8 +569,6 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
         rules: program.rules.clone(),
         names: program.names.clone(),
         word_kinds: program.word_kinds.clone(),
-        kind_names: program.names.kinds.clone(),
-        field_names: program.names.fields.clone(),
         extras: program.extras.clone(),
         token_marks: program.token_marks.clone(),
         taken: (0..64u8).map(|k| program.taken(k)).collect(),

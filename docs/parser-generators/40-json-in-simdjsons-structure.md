@@ -617,19 +617,19 @@ shape:
 Its tapes are the JIT's, byte for byte, in format 16 and 16z, on the tree test's files; the refusals are the JIT's.
 Not yet: a writer with its room reserved once and constant widths, and steps 45 to 53's work in this form.
 
-## Step 53, done: the document's closer checked before the walk (decision 0549)
+## Step 53, done: the document's closer checked before the walk (decision 0559)
 
 | | the lean parser | before | now |
 |---|---|---|---|
 | The outer container | `last != '}'` before the walk, then `next == index + count` after it | the count after the walk alone | `if s.n == 0 \|\| s.byte(starts[(s.n - 1) * rs]) != 0x7d { refuse }` in the `{` arm (`0x5d` in `[`), then the count |
 
-## Step 52, done: a return two ways (decision 0548)
+## Step 52, done: a return two ways (decision 0558)
 
 | | the lean parser | before | now |
 |---|---|---|---|
 | A container's return | `scope_end`: `d == 0` ends the walk, else `object[d]` | `match ret { 0, 1, 2, _ => refuse }`, and `keep_ret(0)` at the document's calls | `if s.depth == 0 { … } else if ret == 1 { … } else { … }`, no number kept for the document |
 
-## Step 51, done: a close that cannot fail (decision 0547)
+## Step 51, done: a close that cannot fail (decision 0557)
 
 | | the lean parser | before | now |
 |---|---|---|---|

@@ -3,10 +3,10 @@
 .decl in_scope(d: number)
 .decl out_scope(d: number)
 .decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
-in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/versioned_lazy_mixin.py", p).
-in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/versioned_transactions.py", p).
-in_scope(d) :- doc(d, p, _), glob("l7200_versioned_transactions/graph_lazy_sql.py", p).
-in_scope(d) :- doc(d, p, _), glob("impl/common/l2070_server_plan/steps/intent_graph.py", p).
+in_scope(d) :- doc(d, p, _), glob("app/storage/revision_records/revisions_lazy_mixin.py", p).
+in_scope(d) :- doc(d, p, _), glob("app/storage/revision_records/revisions_transactions.py", p).
+in_scope(d) :- doc(d, p, _), glob("app/storage/revision_records/graph_lazy_sql.py", p).
+in_scope(d) :- doc(d, p, _), glob("src/planning/query_plan_stage/steps/intent_graph.py", p).
 out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
 out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).

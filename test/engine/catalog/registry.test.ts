@@ -30,9 +30,9 @@ function rule(overrides: Partial<ConversationRule> = {}): ConversationRule {
 }
 
 describe("ConversationRuleRegistry", () => {
-  it("returns configured actions with native conversation rule match facts", () => {
+  it("returns configured actions with native conversation rule match facts, and the rule's title for the person's line", () => {
     const registry = new ConversationRuleRegistry({ modelPath: resolve("model") });
-    registry.replace([rule()]);
+    registry.replace([rule({ title: "Guest checkout stays" })]);
 
     const matches = registry.match({
       source: "assistant-text",
@@ -45,6 +45,7 @@ describe("ConversationRuleRegistry", () => {
         ruleId: "checkout",
         similarity: 1,
         mode: "steer",
+        title: "Guest checkout stays",
         action: { content: "Check checkout requirements." },
       }),
     ]);

@@ -3254,6 +3254,27 @@ pub fn step_cpu(conn: impl Scoped, name: &str) -> Result<Vec<Vec<f64>>> {
     }).collect())
 }
 
+/// Per probe of component `name`, by plan step (as `step_counts`'s), whether the CPU's probe there reads only the
+/// range of its index that later comparisons bound (`ranges`, Q245 item 5): its rows out are then fewer than a
+/// probe's that reads every row of its key (the device's), from the same bindings. A probe that is not a join: none.
+pub fn step_ranged(conn: impl Scoped, name: &str) -> Result<Vec<Vec<bool>>> {
+    let conn = conn.db();
+    let comp = component(conn, name)?;
+    let comp = comp.lock().unwrap();
+    Ok(comp.probes.iter().map(|p| match &p.body {
+        Body::Join(j) => {
+            let mut by = vec![false; j.plan_steps];
+            for (i, r) in j.ranges.iter().enumerate() {
+                if let (Some(_), Some(&at)) = (r, j.from.get(i)) && at < by.len() {
+                    by[at] = true;
+                }
+            }
+            by
+        }
+        Body::Sql(_) | Body::Unplanned => Vec::new(),
+    }).collect())
+}
+
 /// Per probe of component `name`, the first step past the one that binds its head's slots (`tail`): from it on, the
 /// CPU's walk counts one witness (decision 0229) and the device's stages every row (decision 0277), so the two
 /// counts agree only before it. A probe that is not a join: 0.

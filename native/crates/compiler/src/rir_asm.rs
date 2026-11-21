@@ -476,6 +476,11 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
                     parts.names.kinds.push((k, n));
                 }
+                "field" => {
+                    let f = line.number("")?;
+                    let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
+                    parts.names.fields.push((f, n));
+                }
                 "token" => {
                     let k = line.number("")?;
                     let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
@@ -486,12 +491,7 @@ pub fn word_row(parts: &mut Words, line: &mut Line<'_>, keyword: &str) -> Result
                     let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
                     parts.names.marks.push((k, n));
                 }
-                "field" => {
-                    let f = line.number("")?;
-                    let n = String::from_utf8(line.quoted()?).map_err(|_| "a name is UTF-8")?;
-                    parts.names.fields.push((f, n));
-                }
-                w => return Err(format!("`name {w}`: a name is a rule's, a kind's, a token's, a mark's or a field's")),
+                w => return Err(format!("`name {w}`: a name is a rule's, a kind's, a field's, a token's or a mark's")),
             }
         }
         "markword" => {

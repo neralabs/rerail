@@ -590,10 +590,15 @@ impl<'a> Bytewise<'a> {
     /// file's end. Where the output is false on a zero byte (`zero_kills`), none past it
     /// already: the bytes there are zeros, more than the 16 and its delay
     /// (`native_cpu_block::Batch`). Else the file's bytes' bits: `len - p`, at most 16.
+    ///
+    /// Either way the word is its 16 lanes' bits: at one bit a lane (`SHORT_STRIDE` off NEON)
+    /// the 48 bits above them are no lane's, and a complement (a class's lane where the backend
+    /// has no bit test, `Sym`'s), a `not` or a `prev`'s shift sets them; a closer's first bit
+    /// found there would be past the window. Four bits a lane fill the word.
     #[allow(clippy::too_many_arguments)]
     fn short_cut(&self, f: &mut FunctionBuilder<'_>, at: &File, x: usize, d: i64, p: Value, m: Value, stride: u32) -> Value {
         if crate::native_cpu_lanes::zero_kills(self.native, x, d as u32) {
-            return m;
+            return if 16 * stride < 64 { f.ins().band_imm(m, (1i64 << (16 * stride)) - 1) } else { m };
         }
         let rem = f.ins().isub(at.len, p);
         let zero = f.ins().iconst(types::I64, 0);
@@ -2124,6 +2129,9 @@ mod tests {
                         let nib = m >> (st * j) & ((1 << st) - 1);
                         assert!(nib == 0 || nib == (1 << st) - 1, "a lane's bits all alike");
                     }
+                }
+                if 16 * st < 64 {
+                    assert_eq!(m >> (16 * st), 0, "round {round}, output {o}: no bit past the window's 16 lanes");
                 }
                 assert_eq!(set, u64::from((!w).trailing_zeros().min(16)), "round {round}, output {o}: the lanes set");
                 assert_eq!((0..16).filter(|&j| lane(below, j) == 1).count(), (0..5).filter(|&j| w >> j & 1 == 1).count(), "the first five lanes");

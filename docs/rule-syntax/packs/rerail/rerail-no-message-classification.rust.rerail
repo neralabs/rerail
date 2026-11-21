@@ -1,0 +1,120 @@
+.policy "rerail-no-message-classification" revision 2
+.description "Classify a failure by its code or a shared constant, not by another Rerail component's message wording, in TypeScript and Rust; build steer notices from structured rule data."
+.language rust
+.mode log
+.scope include "native/src/**/*.rs"
+.scope exclude "native/src/**/tests/**", "native/src/**/*tests.rs", "native/src/**/test_support.rs"
+// rerail-no-message-classification for the engine's Rust (the TypeScript policy, rerail-no-message-classification
+// .rerail, says why): a failure is classified by its code or a shared constant, not by its message's wording.
+// Three clauses, as the JSON's:
+//   e.to_string().contains("off the run's thread")         NATIVE_MESSAGE_TEST (a str method, a worded literal)
+//   msg == "Bytes literal cannot be mixed with non-bytes"   NATIVE_MESSAGE_EQUALS (a phrase: words with a space)
+//   match msg.as_str() { "Expected an indented block" => … }  NATIVE_MESSAGE_MATCH (also (code, msg) tuples)
+//   err.kind() == ErrorKind::NotFound                       not reported
+// A message is a name or field ending in message, msg, error, err, reason or detail (maybe called, borrowed, or
+// .as_str() / .as_ref()), or error.to_string() and its kin. Code under #[test] or #[cfg(test)] is left alone.
+
+#include "rust/syntax.rerail"
+//   attached(a, n): attribute item a applies to n, through other attributes and comments
+
+// message(n): n reads a failure's message, by the JSON's regex on its text (a name, a field, a call, `*`/`&` of one).
+.decl message(n: node)
+message(n) :- kind(n, k), message_kind(k), match("\\*?&?(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?|(?:error|err|e|cause|source)\\.to_string\\(\\)", n).
+.decl message_kind(k: symbol)
+message_kind("identifier"). message_kind("field_expression"). message_kind("call_expression").
+message_kind("unary_expression"). message_kind("reference_expression").
+// worded(s): a string literal with three letters in a row; phrase(s): one with words and a space between.
+.decl worded(s: node)
+worded(s) :- (kind(s, "string_literal") ; kind(s, "raw_string_literal")), glob("**[A-Za-z][A-Za-z][A-Za-z]**", s).
+.decl phrase(s: node)
+phrase(s) :- (kind(s, "string_literal") ; kind(s, "raw_string_literal")),
+    match("(?s:.*)(?:[A-Za-z]{3}[^\\n]*\\s\\S|\\S\\s[^\\n]*[A-Za-z]{3})(?s:.*)", s).
+
+// finding(n, code): a message classified by its wording, before tests are left out.
+.decl finding(n: node, code: symbol)
+// msg.contains("…"), err.to_string().starts_with("…"), detail.strip_prefix("…").
+finding(c, "NATIVE_MESSAGE_TEST") :- c ~ `$M.$F($S)`, message(M), worded(S),
+    glob("{contains,starts_with,ends_with,strip_prefix,strip_suffix,find,rfind,matches}", F).
+// msg == "…", "…" != reason.
+finding(n, "NATIVE_MESSAGE_EQUALS") :- kind(n, "binary_expression"), op(n, o), (o = "==" ; o = "!="),
+    child(n, a, 0), child(n, b, 1), (message(a), phrase(b) ; phrase(a), message(b)).
+// A phrase in an arm's pattern of `match msg { … }`, or in the message's slot of `match (code, msg) { … }`.
+finding(s, "NATIVE_MESSAGE_MATCH") :- phrase(s), inside(s, p, "match_pattern"), arm_of(p, x), scrutinee(x, "message").
+finding(s, "NATIVE_MESSAGE_MATCH") :- phrase(s), tuple_slot(s, x, i), scrutinee(x, w), (i = 1, w = "pair, message second" ; i = 0, w = "pair, message first").
+
+// arm_of(p, x): p is the pattern of an arm of match expression x.
+.decl arm_of(p: node, x: node)
+arm_of(p, x) :- kind(p, "match_pattern"), child(a, p, _), kind(a, "match_arm"), child(b, a, _), kind(b, "match_block"),
+    child(x, b, _), kind(x, "match_expression").
+// scrutinee(x, w): what match x reads: a message, or a pair holding one first or second.
+.decl scrutinee(x: node, w: symbol)
+scrutinee(x, "message") :- kind(x, "match_expression"), child(x, v, _), !kind(v, "match_block"),
+    match("[*&]*(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?", v).
+scrutinee(x, "pair, message second") :- kind(x, "match_expression"), child(x, v, _), kind(v, "tuple_expression"),
+    match("\\(\\s*[*&]*[\\w.]+(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*,\\s*[*&]*(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*\\)", v).
+scrutinee(x, "pair, message first") :- kind(x, "match_expression"), child(x, v, _), kind(v, "tuple_expression"),
+    match("\\(\\s*[*&]*(?:[\\w.]*\\.)?(?:message|msg|error|err|reason|detail)(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*,\\s*[*&]*[\\w.]+(?:\\(\\))?(?:\\.as_str\\(\\)|\\.as_ref\\(\\))?\\s*\\)", v).
+// tuple_slot(s, x, i): s is element i (0 or 1) of a tuple pattern of an arm of match x, or inside it.
+.decl slot(y: node, x: node, i: number)
+slot(y, x, i) :- kind(t, "tuple_pattern"), child(t, y, i), i < 2, child(p, t, _), arm_of(p, x).
+.decl tuple_slot(s: node, x: node, i: number)
+tuple_slot(s, x, i) :- phrase(s), slot(s, x, i).
+tuple_slot(s, x, i) :- phrase(s), slot(y, x, i), within(s, y).
+
+// Test code: inside a module, function or impl marked #[test], #[cfg(test)] or #[cfg(all(…, test, …))].
+.decl in_test(n: node)
+in_test(n) :- finding(n, _), inside(n, i, test_scope_kind), attached(a, i),
+    match("#\\[\\s*(?:test\\s*\\]|cfg\\s*\\(\\s*(?:test\\s*\\)|all\\s*\\([^\\]]*\\btest\\b))(?s:.*)", a).
+.decl test_scope_kind(k: symbol)
+test_scope_kind("mod_item"). test_scope_kind("function_item"). test_scope_kind("impl_item").
+
+.violation NATIVE_MESSAGE_TEST(at: node) "Branch on the failure's code, adding one where this message is written, or on a constant that place uses, not on its wording. SQLite's or another program's own errors may be matched."
+NATIVE_MESSAGE_TEST(n) :- finding(n, "NATIVE_MESSAGE_TEST"), !in_test(n).
+.violation NATIVE_MESSAGE_EQUALS(at: node) "Branch on the failure's code, adding one where this message is written, or on a constant that place uses, not on its wording. SQLite's or another program's own errors may be matched."
+NATIVE_MESSAGE_EQUALS(n) :- finding(n, "NATIVE_MESSAGE_EQUALS"), !in_test(n).
+.violation NATIVE_MESSAGE_MATCH(at: node) "Branch on the failure's code, adding one where this message is written, or on a constant that place uses, not on its wording. SQLite's or another program's own errors may be matched."
+NATIVE_MESSAGE_MATCH(n) :- finding(n, "NATIVE_MESSAGE_MATCH"), !in_test(n).
+
+.test message_wording_is_reported exactly
+    .fixture "native/src/code_rule_dsl/compose.rs" ```
+        fn classify(e: Error, msg: &str, code: u32) -> bool {
+            let busy = e.to_string().contains("too many references to");
+            let mixed = msg == "Bytes literal cannot be mixed with non-bytes literals";
+            let indented = match msg {
+                "Expected an indented block" => true,
+                _ => false,
+            };
+            match (code, msg) {
+                (1, "unexpected end of input") => true,
+                _ => busy || mixed || indented,
+            }
+        }
+        ```
+    .expect NATIVE_MESSAGE_TEST at "native/src/code_rule_dsl/compose.rs":2
+    .expect NATIVE_MESSAGE_EQUALS at "native/src/code_rule_dsl/compose.rs":3
+    .expect NATIVE_MESSAGE_MATCH at "native/src/code_rule_dsl/compose.rs":5
+    .expect NATIVE_MESSAGE_MATCH at "native/src/code_rule_dsl/compose.rs":9
+.end
+
+// Codes, single words, and test code pass; so does a test file.
+.test codes_words_and_tests_pass exactly
+    .fixture "native/src/code_rule_dsl/plan.rs" ```
+        fn classify(e: &std::io::Error, msg: &str) -> bool {
+            e.kind() == std::io::ErrorKind::NotFound || msg == "busy"
+        }
+        #[cfg(test)]
+        mod checks {
+            fn off_thread(e: Error) -> bool {
+                e.to_string().contains("off the run's thread")
+            }
+        }
+        /// A test.
+        #[test]
+        fn reports() {
+            assert!(err.contains("off the run's thread"));
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/plan_tests.rs" ```
+        fn f(e: Error) -> bool { e.to_string().contains("off the run's thread") }
+        ```
+.end

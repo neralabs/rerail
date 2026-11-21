@@ -4993,11 +4993,10 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     if pinned_ctx || pin_one {
         flags.push(("enable_pinned_reg", "true"));
     }
-    // The passed fields come back with a function's result: more results than registers go
-    // through a return area.
-    if clustered && !cut.pass.is_empty() {
-        flags.push(("enable_multi_ret_implicit_sret", "true"));
-    }
+    // The host's (`rerail_clif::jit::flags`): more results than registers through a return area (any function's
+    // results past the target's registers, and the passed fields that come back with a function's result), and
+    // x86-64's frame pointers.
+    let flags = rerail_clif::jit::flags(&flags);
     let mut builder = if cut.unsigned {
         unsigned_builder(&flags)?
     } else {
@@ -5054,7 +5053,8 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
     // The node words' rare loops, outlined (`TableFns`).
     let classes = supertype_classes(native)?;
     let image = crate::native_cpu_tape::Image { tag: widths_tag.1, widths: widths_tag.0, extras: &native.readings.extras, classes: &classes };
-    let table_fns = TableFns::make(&mut module, &native.structural, image, sixteen, cut.near)?;
+    // A format 16 module is one arena (above), so its ops call each other directly.
+    let table_fns = TableFns::make(&mut module, &native.structural, image, sixteen, cut.near || sixteen)?;
     // A region `TOKEN` splits (decision 0323, lowering B).
     let split = split_parts(native)?;
     // The records `TOKEN` makes from each start (page 40).

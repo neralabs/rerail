@@ -184,6 +184,10 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<bool, String>
     Ok(false)
 }
 
+/// A graph being shaped: each node's block, its successors, and the edges into a dispatch node with their
+/// target's place (`Shape`'s `block`, `succ` and `label`).
+type Graph = (Vec<Option<usize>>, Vec<Vec<usize>>, std::collections::HashMap<(usize, usize), usize>);
+
 /// A function's graph as Rust's structured control ("Beyond Relooper", Ramsey 2022, as
 /// WebAssembly's backends do): a loop header a labelled `loop`, a node two forward edges reach (a
 /// merge) the code after a labelled block its branches `break` out of, any other node inline at
@@ -433,7 +437,7 @@ impl Shape {
             Some(done) => done,
             None => {
                 let outer = Self::dispatched(plain.clone(), first.clone(), true)?;
-                let threaded = |(block, mut succ, mut label): (Vec<Option<usize>>, Vec<Vec<usize>>, std::collections::HashMap<(usize, usize), usize>)| {
+                let threaded = |(block, mut succ, mut label): Graph| {
                     Self::thread(&block, &mut succ, &mut label, only_jump);
                     (block, succ, label)
                 };
@@ -536,8 +540,7 @@ impl Shape {
     /// edges into those nodes go to the dispatch, each with its target's place (`label`), the
     /// dispatch on to it. `None` where the function's first block is one of two entries. `outer`: only the
     /// outermost such loops, those no loop entered at two places holds.
-    #[allow(clippy::type_complexity)]
-    fn dispatched(mut block: Vec<Option<usize>>, mut succ: Vec<Vec<usize>>, outer: bool) -> Option<(Vec<Option<usize>>, Vec<Vec<usize>>, std::collections::HashMap<(usize, usize), usize>)> {
+    fn dispatched(mut block: Vec<Option<usize>>, mut succ: Vec<Vec<usize>>, outer: bool) -> Option<Graph> {
         let mut label = std::collections::HashMap::new();
         let mut out = vec![false; block.len()];
         loop {

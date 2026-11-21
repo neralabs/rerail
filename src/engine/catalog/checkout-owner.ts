@@ -145,7 +145,7 @@ export class CheckoutOwners {
   /**
    * The folders `#confirm` found holding a `.git` entry that Git did not take for a top level (one naming a Git folder
    * that is gone, or one Git is still making), told apart from those that held none, each with that entry as it was:
-   * `lookAgainAt` asks Git again only once the entry, or the Git folder it names, changed, so such an entry costs one
+   * `lookAgain` asks Git again only once the entry, or the Git folder it names, changed, so such an entry costs one
    * Git process, not one per write below it, and a worktree looked up before Git finished making it is found once Git
    * has. `#confirm` keeps it in step for every folder `#confirmed` holds.
    */

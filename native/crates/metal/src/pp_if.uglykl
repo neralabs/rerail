@@ -5,7 +5,7 @@
 // directive's slot. Its names are looked up there as the serial pass's `in_if` reads them:
 // `defined X` and `defined ( X )` are answered and their operands not expanded, and the
 // `__has_*` tests' operands are left raw. The line is then expanded by the text's own passes and
-// queue (`px_top_*`, `px_worker`), and each test's output is evaluated by one thread, as
+// rounds (`px_top_*`, `px_item`), and each test's output is evaluated by one thread, as
 // `expr::eval` evaluates it.
 
 // A top token's mark (`IF_OPS`): `defined` as the operator; a `__has_*` test followed by `(`.

@@ -1,5 +1,5 @@
 //! Physical SQL boundaries for shared candidate sets. Temporary storage can spill to disk.
-//! Adapted from Pulling-it-all-together's `matcher/anchors/sql/execute.rs`: statements run on the
+//! Adapted from PIAT's `matcher/anchors/sql/execute.rs`: statements run on the
 //! content store's connection (`ContentStore::candidate_transaction`) rather than a private
 //! anchor database, so there are no incremental tape readers to close and no structural fill.
 use super::lower::{Statement, lifetime::Action};

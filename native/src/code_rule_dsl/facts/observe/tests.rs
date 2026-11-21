@@ -49,7 +49,7 @@ fn a_blob_edit_reruns_only_what_read_its_path_or_the_trees_above_it() {
     let first = push_root(&store, WS, hash(100), 8, |_| unreachable!()).unwrap();
     assert_eq!(first.rebound, 6);
 
-    // One tape per file, and one result page per directory (Tempo's per-tree pages).
+    // One tape per file, and one result page per directory (the predecessor's per-tree pages).
     let readers = [
         ("tape:src/a.py", vec![path_name(WS, "src/a.py")]),
         ("tape:src/b.py", vec![path_name(WS, "src/b.py")]),

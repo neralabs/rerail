@@ -10,7 +10,7 @@ import { and, eq, inArray, or } from "drizzle-orm";
 import { loadRuleCatalog } from "../catalog/rule-catalog.js";
 import { conversationRulesEnabled } from "../experimental-features.js";
 import { worktreeRuleCatalog } from "../catalog/worktree-pack.js";
-import { physicalPath, withinCheckout } from "../catalog/checkout-control.js";
+import { physicalPath } from "../catalog/checkout-control.js";
 import { CheckoutOwners, type CheckoutOwner } from "../catalog/checkout-owner.js";
 import { defaultRerailDatabasePath, openRerailDatabase, type RerailDatabase } from "../storage/database.js";
 import { reportQuarantinedRule, type QuarantinedRule } from "../catalog/rule-quarantine.js";
@@ -29,12 +29,19 @@ import {
   type RepositoryStatus,
 } from "../catalog/repository-model.js";
 import { repositoryIdentityLocation, type RepositoryIdentityLocation } from "../catalog/repository-identity.js";
-import { checkoutStatus, followsGitignore, parentCheckouts, recordedCheckoutsVersionReader, recordStartedWorktree } from "../catalog/repository-registry.js";
-import { loadCheckoutRuleSet, ruleConfigurationSignature } from "../catalog/rule-configuration.js";
+import {
+  followsGitignore,
+  recordedCheckoutsReader,
+  recordedCheckoutsVersionReader,
+  recordStartedWorktree,
+  type RecordedCheckouts,
+  type RecordedCheckoutStatus,
+} from "../catalog/repository-registry.js";
+import { loadCheckoutRuleSet, ruleConfigurationSignature, ruleConfigurationVersionReader } from "../catalog/rule-configuration.js";
 import { LIBRARY_OWNER, quarantinedLibraryRules } from "../catalog/rule-library.js";
 import type { ConversationRule } from "../catalog/rule-schema.js";
-import { checkouts, ruleAttachments, ruleSettings } from "../storage/schema.js";
-import { compareDeterministicStrings, stableJsonText } from "../stable-json.js";
+import { ruleAttachments, ruleSettings } from "../storage/schema.js";
+import { compareDeterministicStrings, ruleSourceText, stableJsonText } from "../stable-json.js";
 
 export { bundledCodeRuleDslDirectory };
 
@@ -57,10 +64,14 @@ export function loadCodeRuleCapabilities(path: string = resolve(bundledCodeRuleD
   return { path: resolve(path), json, digest: digest(json) };
 }
 
-type CompileOutcome = { readonly ok: true; readonly executable: NativeCompiledCodeRuleDsl } | { readonly ok: false; readonly reason: string };
+type CompileOutcome =
+  | { readonly ok: true; readonly executable: NativeCompiledCodeRuleDsl; readonly crossFile: boolean }
+  | { readonly ok: false; readonly reason: string };
 
 /** A compiled outcome as the cache keeps it: a failure whole, an executable only while a catalog still holds it. */
-type HeldOutcome = { readonly ok: true; readonly executable: WeakRef<NativeCompiledCodeRuleDsl> } | { readonly ok: false; readonly reason: string };
+type HeldOutcome =
+  | { readonly ok: true; readonly executable: WeakRef<NativeCompiledCodeRuleDsl>; readonly crossFile: boolean }
+  | { readonly ok: false; readonly reason: string };
 
 /**
  * Compiled executables shared by every checkout of the process: one per rule id, capabilities and `config` (a
@@ -87,7 +98,7 @@ export class CompiledRuleCache {
     const held = cached?.sourceDigest === sourceDigest ? liveOutcome(cached.outcome) : undefined;
     if (held !== undefined) return held;
     const outcome = compileOutcome(capabilities, policyId, sourceText);
-    this.#outcomes.set(key, { sourceDigest, outcome: outcome.ok ? { ok: true, executable: new WeakRef(outcome.executable) } : outcome });
+    this.#outcomes.set(key, { sourceDigest, outcome: outcome.ok ? { ...outcome, executable: new WeakRef(outcome.executable) } : outcome });
     return outcome;
   }
 }
@@ -96,7 +107,7 @@ export class CompiledRuleCache {
 function liveOutcome(held: HeldOutcome): CompileOutcome | undefined {
   if (!held.ok) return held;
   const executable = held.executable.deref();
-  return executable === undefined ? undefined : { ok: true, executable };
+  return executable === undefined ? undefined : { ...held, executable };
 }
 
 function compileOutcome(capabilities: CodeRuleCapabilities, policyId: string, sourceText: string): CompileOutcome {
@@ -104,7 +115,7 @@ function compileOutcome(capabilities: CodeRuleCapabilities, policyId: string, so
     const executable = loadNativeBinding().CodeRuleDslRuntime.compile(sourceText, "json", capabilities.json);
     const canonical = JSON.parse(executable.canonicalJson()) as { id?: unknown };
     return canonical.id === policyId
-      ? { ok: true, executable }
+      ? { ok: true, executable, crossFile: executable.readsOtherFiles() }
       : { ok: false, reason: `Compiled policy ID does not match rule document: ${policyId}` };
   } catch (error) {
     return { ok: false, reason: error instanceof Error ? error.message : String(error) };
@@ -118,6 +129,10 @@ export interface CompiledCodeRuleDslEntry {
   readonly executable: NativeCompiledCodeRuleDsl;
   /** Where the code rule runs in the checkout, at which mode, and where suppression comments are ignored; passed to the native workspace. */
   readonly placement: CodeRulePlacement;
+  /** Whether its finding in one file can depend on another file's text, as the engine routes its clauses (`readsOtherFiles`). */
+  readonly crossFile: boolean;
+  /** The rule document's own title, which the person's line names the rule by (`steerTitle`); absent when it has none. */
+  readonly title?: string | undefined;
 }
 
 /** Immutable provenance and executables used to construct one native evaluation workspace. */
@@ -261,59 +276,87 @@ export class CheckoutCodeRuleCatalog implements CodeRuleDslCatalog {
 
   #build(loaded: LoadedCheckoutRules, sourceSignature: string): CatalogState {
     const quarantined = [...loaded.quarantined];
-    const codeRules: CompiledCodeRuleDslEntry[] = [];
-    const provenance: RepositoryAuditRuleProvenance[] = [];
-    const versioned: unknown[] = [];
-    const ruleSet = loaded.ruleSet;
-    const placed = ruleSet === undefined ? new Map<string, PlacedRule>() : placedRules(ruleSet, loaded.folders);
+    const built: BuiltRule[] = [];
+    const placed = loaded.ruleSet === undefined ? new Map<string, PlacedRule>() : placedRules(loaded.ruleSet, loaded.folders);
     for (const id of [...placed.keys()].sort(compareDeterministicStrings)) {
-      const { rule, decisions } = placed.get(id)!;
-      const placement = placementOf(decisions, loaded.folders);
-      if (placement.length === 0) continue;
-      if (rule.configError !== null) {
-        quarantined.push({ ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` });
-        continue;
-      }
-      const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
-      if (relationalOff !== undefined) {
-        quarantined.push({ ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER, reason: relationalOff });
-        continue;
-      }
-      const sourceText = stableJsonText(rule.document.rule);
-      if (sourceText === undefined) throw new Error(`Policy ${id} is not JSON representable`);
-      const sourceDigest = digest(sourceText);
-      const outcome = compiledRules.compile(this.#capabilities, id, sourceText, sourceDigest, stableJsonText(rule.config) ?? "");
-      if (!outcome.ok) {
-        // A rule naming a language the engine does not read yet is inactive by design: quarantined with that code, not reported.
-        const unsupported = languageNotSupportedOf(outcome.reason);
-        quarantined.push({
-          ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER,
-          reason: unsupported?.reason ?? outcome.reason,
-          ...(unsupported === undefined ? {} : { code: unsupported.code }),
-        });
-        continue;
-      }
-      codeRules.push({ id, executable: outcome.executable, placement });
-      provenance.push({
-        ruleId: id,
-        revision: rule.revision,
-        payloadHash: rule.payloadHash,
-        source: { ...rule.source },
-        repositoryKey: ruleSet!.checkout.repositoryKey,
-        checkoutPath: ruleSet!.checkout.checkoutPath,
-        placement: decisions,
-      });
-      versioned.push({ id, sourceDigest, placement, source: rule.source });
+      const compiled = this.#compiled(id, placed.get(id)!, loaded);
+      if (compiled === undefined) continue;
+      if ("quarantined" in compiled) quarantined.push(compiled.quarantined);
+      else built.push(compiled);
     }
-    for (const entry of quarantined) if (entry.code === undefined) reportQuarantinedRule(this.#source.label, entry);
-    const canonical = stableJsonText({ capabilitiesDigest: this.#capabilities.digest, format: "rerail.policy-dsl-catalog/v3", policies: versioned });
-    if (canonical === undefined) throw new Error("Policy catalog version is not JSON representable");
+    return catalogState({ capabilitiesDigest: this.#capabilities.digest, label: this.#source.label, sourceSignature }, built, quarantined);
+  }
+
+  /** One placed rule compiled: its entry, provenance and version line; why it is quarantined; undefined where it is placed nowhere. */
+  #compiled(id: string, { rule, decisions }: PlacedRule, loaded: LoadedCheckoutRules): BuiltRule | { readonly quarantined: QuarantinedRule } | undefined {
+    const placement = placementOf(decisions, loaded.folders);
+    if (placement.length === 0) return undefined;
+    const refused = refusedBeforeCompile(id, rule);
+    if (refused !== undefined) return { quarantined: refused };
+    const source = ruleSourceText(rule.document.rule);
+    if (source === undefined) throw new Error(`Policy ${id} is not JSON representable`);
+    const outcome = compiledRules.compile(this.#capabilities, id, source.text, source.digest, stableJsonText(rule.config) ?? "");
+    if (!outcome.ok) return { quarantined: refusedRule(id, rule, outcome.reason) };
+    const checkout = loaded.ruleSet!.checkout;
     return {
-      status: { ruleCount: codeRules.length, version: digest(canonical), sourceSignature },
-      snapshot: { version: digest(canonical), codeRules, provenance },
-      quarantined,
+      entry: { id, executable: outcome.executable, placement, crossFile: outcome.crossFile, title: rule.document.rule.title },
+      provenance: {
+        ruleId: id, revision: rule.revision, payloadHash: rule.payloadHash, source: { ...rule.source },
+        repositoryKey: checkout.repositoryKey, checkoutPath: checkout.checkoutPath, placement: decisions,
+      },
+      versioned: { id, sourceDigest: source.digest, placement, source: rule.source },
     };
   }
+}
+
+/** A rule the catalog compiled: its entry, its provenance, and its line of the catalog's version. */
+interface BuiltRule {
+  readonly entry: CompiledCodeRuleDslEntry;
+  readonly provenance: RepositoryAuditRuleProvenance;
+  readonly versioned: unknown;
+}
+
+/**
+ * Why a placed rule is quarantined before it compiles: the repository's config for it does not apply, or it is a
+ * relational rule while relational rules are off. Undefined when it goes on to compile.
+ */
+function refusedBeforeCompile(id: string, rule: EffectiveRule): QuarantinedRule | undefined {
+  if (rule.configError !== null)
+    return { ruleId: id, kind: "code", owner: RERAIL_OWNER, reason: `The repository's config for this rule does not apply: ${rule.configError}` };
+  const relationalOff = rule.document.kind === "code" ? relationalRulesOff(rule.document.rule) : undefined;
+  if (relationalOff === undefined) return undefined;
+  return { ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER, reason: relationalOff };
+}
+
+/**
+ * A rule the engine refused. One naming a language the engine does not read yet is inactive by design: quarantined
+ * with that code, not reported.
+ */
+function refusedRule(id: string, rule: EffectiveRule, reason: string): QuarantinedRule {
+  const unsupported = languageNotSupportedOf(reason);
+  return {
+    ruleId: id, kind: "code", owner: rule.source.kind === "library_rule" ? LIBRARY_OWNER : RERAIL_OWNER,
+    reason: unsupported?.reason ?? reason,
+    ...(unsupported === undefined ? {} : { code: unsupported.code }),
+  };
+}
+
+/** The catalog's state from the rules it built and those it quarantined, each quarantined one without a code reported. */
+function catalogState(
+  catalog: { readonly capabilitiesDigest: string; readonly label: string; readonly sourceSignature: string },
+  built: readonly BuiltRule[],
+  quarantined: readonly QuarantinedRule[],
+): CatalogState {
+  for (const entry of quarantined) if (entry.code === undefined) reportQuarantinedRule(catalog.label, entry);
+  const policies = built.map(rule => rule.versioned);
+  const canonical = stableJsonText({ capabilitiesDigest: catalog.capabilitiesDigest, format: "rerail.policy-dsl-catalog/v3", policies });
+  if (canonical === undefined) throw new Error("Policy catalog version is not JSON representable");
+  const codeRules = built.map(rule => rule.entry);
+  return {
+    status: { ruleCount: codeRules.length, version: digest(canonical), sourceSignature: catalog.sourceSignature },
+    snapshot: { version: digest(canonical), codeRules, provenance: built.map(rule => rule.provenance) },
+    quarantined,
+  };
 }
 
 /** Whether a checkout may run rules: `ok` only when it is recorded, effectively started, and its repository set up. */
@@ -351,6 +394,8 @@ export class CheckoutCatalogs {
   readonly #capabilities: CodeRuleCapabilities;
   readonly #entries = new Map<string, CheckoutEntry>();
   readonly #recordedCheckoutsVersion: () => string;
+  readonly #recorded: RecordedCheckouts;
+  readonly #configurationVersion: () => string;
 
   /**
    * `options.ruleCatalog` fixes the installed packs; without it each read follows them (`loadRuleCatalog`). Either way a
@@ -369,6 +414,8 @@ export class CheckoutCatalogs {
     this.#checkoutRules = options.checkoutRules;
     this.#capabilities = options.capabilities ?? loadCodeRuleCapabilities();
     this.#recordedCheckoutsVersion = recordedCheckoutsVersionReader(this.database);
+    this.#recorded = recordedCheckoutsReader(this.database);
+    this.#configurationVersion = ruleConfigurationVersionReader(this.database);
   }
 
   /**
@@ -403,8 +450,26 @@ export class CheckoutCatalogs {
   /** Re-read `root`'s record, start state and set-up; returns its eligibility. */
   refresh(root: string): CheckoutEligibility {
     const entry = this.#entry(root, false);
-    this.#read(entry);
+    this.#read([entry]);
     return entry.eligibility;
+  }
+
+  /**
+   * `refresh` of every one of `roots`, the recorded ones read in one statement: what a session that knows every worktree
+   * of its repository asks at every event. Returns each root's eligibility.
+   */
+  refreshAll(roots: Iterable<string>): Map<string, CheckoutEligibility> {
+    const entries = [...roots].map(root => this.#entry(root, false));
+    this.#read(entries);
+    return new Map(entries.map(entry => [entry.root, entry.eligibility]));
+  }
+
+  /**
+   * Every repository's rule configuration as one text, read in one statement (`ruleConfigurationVersionReader`): when it
+   * differs from the last one, some checkout's rules may read differently, whichever checkout a process configured.
+   */
+  configurationVersion(): string {
+    return this.#configurationVersion();
   }
 
   /** See {@link recordedCheckoutsVersion}; `CheckoutOwners` forgets its cached ownership when it changes. */
@@ -412,11 +477,12 @@ export class CheckoutCatalogs {
     return this.#recordedCheckoutsVersion();
   }
 
-  /** The recorded checkouts strictly inside `root` (physical paths), at any depth. */
+  /**
+   * The recorded checkouts strictly inside `root` (physical paths), at any depth, without a read of every row: the
+   * session's ignore rules ask this at every tool call (`RecordedCheckouts.within`).
+   */
   recordedCheckoutsWithin(root: string): string[] {
-    return this.database.select({ checkoutPath: checkouts.checkoutPath }).from(checkouts).all()
-      .map(row => row.checkoutPath)
-      .filter(path => path !== root && withinCheckout(root, path));
+    return this.#recorded.within(root);
   }
 
   /** The compiled code rules of `root`; its `refresh()` re-reads eligibility and configuration. */
@@ -461,18 +527,26 @@ export class CheckoutCatalogs {
         parents: [], status: undefined, eligibility: "unrecorded", catalog: undefined,
       };
       this.#entries.set(root, entry);
-      if (read) this.#read(entry);
+      if (read) this.#read([entry]);
     }
     return entry;
   }
 
   /**
-   * Only a recorded checkout is eligible; its row names its repository, so Git is asked once per checkout. A worktree
-   * of a started clone that no session started in is recorded here, the first time a path in it is looked up.
+   * Only a recorded checkout is eligible; its row names its repository, so Git is asked once per checkout. The recorded
+   * ones are read in one statement, with their parents and start state (`RecordedCheckouts.read`). A worktree of a
+   * started clone that no session started in is recorded here, the first time a path in it is looked up.
    */
-  #read(entry: CheckoutEntry): void {
-    const row = this.#row(entry) ?? this.#recordWorktree(entry);
-    if (row === undefined) {
+  #read(entries: readonly CheckoutEntry[]): void {
+    const roots = entries.map(entry => entry.root);
+    let recorded = this.#recorded.read(roots);
+    // A worktree recorded here may hold another of the entries, so all of them are read again with its row.
+    if (entries.filter(entry => !recorded.has(entry.root) && this.#recordWorktree(entry)).length > 0) recorded = this.#recorded.read(roots);
+    for (const entry of entries) this.#apply(entry, recorded.get(entry.root));
+  }
+
+  #apply(entry: CheckoutEntry, recorded: RecordedCheckoutStatus | undefined): void {
+    if (recorded === undefined) {
       entry.checkout = undefined;
       entry.parents = [];
       entry.status = undefined;
@@ -481,31 +555,25 @@ export class CheckoutCatalogs {
     }
     entry.location ??= repositoryIdentityLocation(entry.root);
     const { git, main } = entry.location;
-    const checkout: CheckoutContext = { checkoutPath: entry.root, repositoryKey: row.repositoryKey, cloneId: row.cloneId, git, main };
-    const status = checkoutStatus(this.database, checkout);
-    entry.checkout = checkout;
-    entry.parents = parentCheckouts(this.database, checkout).map(parent => parent.checkoutPath);
+    const { status } = recorded;
+    entry.checkout = { checkoutPath: entry.root, repositoryKey: recorded.repositoryKey, cloneId: recorded.cloneId, git, main };
+    entry.parents = recorded.parents;
     entry.status = status;
     if (!status.started) entry.eligibility = "stopped";
     else entry.eligibility = status.setUp ? "ok" : "not-set-up";
   }
 
-  /** The row of `entry` once recorded as a worktree of a started clone (`recordStartedWorktree`); undefined when it is not one. */
-  #recordWorktree(entry: CheckoutEntry): { repositoryKey: string; cloneId: string } | undefined {
+  /** Records `entry` when it is a worktree of a started clone (`recordStartedWorktree`); whether it did. */
+  #recordWorktree(entry: CheckoutEntry): boolean {
     // A folder outside Git may become a checkout, so only a Git location is kept.
     const location = entry.location ?? repositoryIdentityLocation(entry.root);
     if (location.git) entry.location = location;
-    return recordStartedWorktree(this.database, entry.root, location) ? this.#row(entry) : undefined;
-  }
-
-  #row(entry: CheckoutEntry): { repositoryKey: string; cloneId: string } | undefined {
-    return this.database.select({ repositoryKey: checkouts.repositoryKey, cloneId: checkouts.cloneId })
-      .from(checkouts).where(eq(checkouts.checkoutPath, entry.root)).get();
+    return recordStartedWorktree(this.database, entry.root, location);
   }
 
   /** `<eligibility>` while unrecorded, else `<eligibility>\0<configuration signature>`; see `configurationSignatureOf`. */
   #signature(entry: CheckoutEntry): string {
-    this.#read(entry);
+    this.#read([entry]);
     if (entry.checkout === undefined) return entry.eligibility;
     const signature = ruleConfigurationSignature(this.database, this.#ruleCatalogOf(entry.root), entry.checkout.repositoryKey, this.ownerCheckoutPaths(entry.root));
     return `${entry.eligibility}\0${signature}`;

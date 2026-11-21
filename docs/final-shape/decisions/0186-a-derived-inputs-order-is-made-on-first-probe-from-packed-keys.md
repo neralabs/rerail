@@ -1,6 +1,6 @@
 # 0186: A derived input's order is made when first probed, and sorted by packed keys
 
-(Numbered 0179 on its branch, jeremybarnes/final-rerail-shape-phased-facts; renumbered at the roll-up.)
+(Numbered 0179 on its branch, final-rerail-shape-phased-facts; renumbered at the roll-up.)
 
 Status: built (2026-11-13), `setfix.rs` (`Csr::runs`, the derived input's index) and `setfix/runs.rs`
 (`sort_keyed`, `sort_packed`). It follows decision 0185's open item: the build of decision 0112's derived-input

@@ -342,7 +342,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // object and the document are dispatched (`match d`), as simdjson's `goto`s into them.
     let rules = src.match_indices("\nfn r").filter(|&(at, _)| src[at + 5..].starts_with(|c: char| c.is_ascii_digit())).count();
     assert!(rules == 1 && src.contains("ret = s.taken_ret();"), "one function, an explicit stack");
-    // A return as `scope_end`'s (`rust_stream::root_number`, decision 0548): the document's where the depth is 0,
+    // A return as `scope_end`'s (`rust_stream::root_number`, decision 0558): the document's where the depth is 0,
     // else the container's two places by one test of its number; no match, no refusal of a number, no number kept
     // by the document's own calls.
     let two_ways = |what: &str, code: &str| {
@@ -467,7 +467,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     assert_eq!(take.trim(), "t.start = unsafe { *self.starts.add(t.next as usize * self.rs) };\n        t.next += 1;\n        Ok(())", "the token's step");
     assert!(flat16.contains("\n0x2c => {\ns.close::<false, true>(t.rec_end);\n"), "a `,` closes the value by the end it left");
     assert!(flat16.contains("\n0x7d => {\nt.last_end = t.rec_end;\nt.rec_end = t.start + 1;\ns.close::<false, true>(t.last_end);\n"), "a `}}` keeps the value's end before it makes its own");
-    // A close cannot fail (`rust_stream::sure_closes`, decision 0547): no result, no `?`, the writer's close asserts.
+    // A close cannot fail (`rust_stream::sure_closes`, decision 0557): no result, no `?`, the writer's close asserts.
     assert!(src16.contains("    fn close<const THIS: bool, const SURE: bool>(&mut self, end: u32) {\n") && !src16.lines().any(|l| l.contains("s.close::<") && l.contains(")?;")), "a close returns nothing");
     assert!(src16.contains("debug_assert!(self.open_len != 0, \"a close of an open node\");") && !src16.contains("self.fail(w::fail::NO_OPEN"), "the writer's close cannot fail");
     // The language holds every key a direct run writes (`direct_entries`): no node word refuses for want of its
@@ -482,7 +482,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         let arms: Vec<&str> = flat16.split(&format!("\n{opener} => {{")).skip(1).collect();
         assert!(!arms.is_empty(), "the arms of {opener}");
         for arm in arms {
-            // Its enclosing nodes opened first (the document's, at the top, with its closer checked: 0549).
+            // Its enclosing nodes opened first (the document's, at the top, with its closer checked: 0559).
             let at = arm.find(&empty(closer));
             let first = at.is_some_and(|k| arm[..k].lines().all(|l| l.is_empty() || l.starts_with("s.open16(") || l.starts_with("if s.n == 0 || s.byte(unsafe { *s.starts.add((s.n - 1) * s.rs) })")));
             assert!(first, "{opener}'s arm looks for its closer first: {}", &arm[..arm.len().min(160)]);
@@ -493,7 +493,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     assert!(!src16.contains("t.start == s.len") && !src16.contains("t.start == self.len") && !src16.contains("t.at_end"), "the end tested once, by the count");
     assert!(flat16.contains("\nif (t.next as usize == s.n) {\n") && src16.contains("    fn accept(&mut self, t: &T) -> R {\n        if self.wr.open_len != 1 {"), "the end the stream's count, `ACCEPT` past it");
     // The document's container closed by the stream's last token, checked before the walk as the lean parser's
-    // `last != '}'` (`rust_stream::last_closers`, decision 0549): in the `{` and `[` arms, once each.
+    // `last != '}'` (`rust_stream::last_closers`, decision 0559): in the `{` and `[` arms, once each.
     for closer in ["0x7d", "0x5d"] {
         let check = format!("if s.n == 0 || s.byte(unsafe {{ *s.starts.add((s.n - 1) * s.rs) }}) != {closer} {{ return refuse(why::BYTE); }}\n");
         assert_eq!(flat16.matches(&check).count(), 1, "the document's closer {closer} the last token, checked before the walk");

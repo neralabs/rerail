@@ -4760,7 +4760,7 @@ t.code = S::CODES2[usize::from(s.byte(i + 1))];
 /// What word `pc` does, for a label's name (`rule`): a region's part (`string`), a token, a switch, a node's open or
 /// close, a leaf, a call, a return, a check.
 /// What a dispatch's place does in the grammar, as the lean parser names its `Label`s (`ObjectBegin`, `ArrayValue`),
-/// from the grammar's names of its kinds and fields (`Structure::kind_names`): a rule's first word is its kind's
+/// from the grammar's names of its kinds and fields (`Structure::names`): a rule's first word is its kind's
 /// `Begin`, a call's kind the one opened before it; a `RETURN` its rule's kind's `End` (`End` alone where the rules of
 /// two kinds share it); a switch, or the `TOKEN` before one, its rule's kind and what every arm making a node makes
 /// (the supertype, else the field, else the kind: `ArrayValue`). `None` where the names do not tell.
@@ -4771,8 +4771,8 @@ fn meaning(x: &Facts<'_>, pc: usize) -> Option<String> {
         let s: String = name.split(|c: char| !c.is_ascii_alphanumeric()).filter(|p| !p.is_empty()).map(|p| p[..1].to_ascii_uppercase() + &p[1..]).collect();
         (!s.is_empty() && !s.starts_with(|c: char| c.is_ascii_digit())).then_some(s)
     };
-    let kind = |k: u16| n.kind_names.iter().find(|(c, _)| *c == k).and_then(|(_, s)| camel(s));
-    let field = |f: u16| n.field_names.iter().find(|(c, _)| *c == f).and_then(|(_, s)| camel(s));
+    let kind = |k: u16| n.names.kinds.iter().find(|(c, _)| *c == k).and_then(|(_, s)| camel(s));
+    let field = |f: u16| n.names.fields.iter().find(|(c, _)| *c == f).and_then(|(_, s)| camel(s));
     let reached: Vec<usize> = {
         let mut seen = vec![false; words.len()];
         let mut stack: Vec<usize> = x.entries.clone();
