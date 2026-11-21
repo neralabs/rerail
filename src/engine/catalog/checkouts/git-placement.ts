@@ -325,7 +325,8 @@ const WINDOWS_READING: PathReading = { separator: /[\\/]/u, root: /^[A-Za-z]:$/u
 /**
  * Which of the two forms Git itself writes into a `.git` file the path `written` takes, read as on `platform`:
  * `absolute`, a root and then names, with no `.`, `..` or empty name (on Windows from a drive letter); `relative`,
- * leading `..` names and then such names, as `git worktree add --relative-paths` writes it. Undefined for any other.
+ * zero or more leading `..` names and then such names, as `git worktree add --relative-paths` writes it. Undefined for
+ * any other.
  */
 export function writtenForm(written: string, platform: NodeJS.Platform = process.platform): "absolute" | "relative" | undefined {
   const reading = platform === "win32" ? WINDOWS_READING : POSIX_READING;
