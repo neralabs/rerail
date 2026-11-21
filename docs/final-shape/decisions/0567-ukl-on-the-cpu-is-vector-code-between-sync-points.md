@@ -1,6 +1,6 @@
 # 0567: UKL on the CPU is vector code between sync points, made by tape-to-tape passes
 
-Status: agreed with the user (2026-11-21), not yet built. The goal is the user's: "run the same kernels on the GPU and
+Status: agreed with the user (2026-11-21). Steps 1 and 2 are built (2026-11-21, "Step 2, as built" below). The goal is the user's: "run the same kernels on the GPU and
 the CPU", where the CPU backend's coroutine C++ (decision 0440 §8, "The CPU backend") "is correct but horribly
 slow". The answers below are the user's, given to the questions of the design pass. Follows 0440 and 0310.
 
@@ -53,7 +53,8 @@ slow". The answers below are the user's, given to the questions of the design pa
       barrier then costs nothing; it is the boundary between two regions.
    4. **Uniformity:** each value is uniform (the same for every thread) or varying. A uniform value stays scalar.
       Each memory access is sorted by its index: uniform, consecutive in the thread id, strided, or gathered and
-      scattered.
+      scattered. As built (step 2), there are four levels: uniform, agreed, the same in each SIMD group, and
+      varying. The sorting of memory accesses is step 3's, where the code generator uses it.
    5. **Vectorize** (whole-function vectorization, as POCL's and Intel's OpenCL CPU runtimes do it): a varying
       operation becomes a W-wide one. A varying `if` is masked execution, and a varying loop runs until its mask is
       empty. Atomics:
@@ -105,3 +106,61 @@ slow". The answers below are the user's, given to the questions of the design pa
 3. Cranelift. Gate: the library's tests, then `join_stages` and `pp_grid` equal to the coroutine backend.
 4. Rust AOT. Gate: the same, with its speed measured against the coroutine path.
 5. Cranelift's wider types, if step 3's numbers ask for them.
+
+## Step 2, as built
+
+- **The vector tape** (`rerail-ukl-vec`'s `vector`) is one per kernel, made on its first launch. It is the kernel
+  tape with every call inlined. A call is an `Inline` node over its parameters' stores and its callee's body, and
+  the callee's `return`s store into the call's slot. A callee's frame follows its caller's, and sibling calls
+  share it. Each node's field holds:
+  - its value's level;
+  - whether its subtree reaches a sync point, or a threadgroup barrier (the cut: such a node runs for the whole
+    group at once);
+  - whether it has an effect;
+  - whether its condition is checked as it runs.
+- **The levels**, as a fixed point over the kernel:
+  - **Uniform:** constants, sizes, group ids, and loads at uniform addresses (the kernel's memory is race-free).
+  - **Agreed:** an atomic that leaves its word as it is (a poll), at a uniform address. It is the same in a SIMD
+    group, and across the group as far as the kernel's own synchronization makes it.
+  - **The same in a SIMD group:** a ballot, or a shuffle from a uniform lane.
+  - **Varying:** the thread's ids, the other atomics, and a SIMD group's lanes.
+
+  A variable's level is the most varying of its stores' values and of the control they run under. Three refinements
+  keep legal kernels from being refused:
+  - Levels are kept by byte range, so a structure's fields are apart: `UklGrid`'s `group` is uniform and its `lid`
+    is not.
+  - A pointer into a lane's own variables is followed to them, offset and all. OpenCL's private memory is no
+    other lane's, so `&ip` passed to a helper does not make `ip` varying.
+  - Each declaration has its own number (the kernel tape's `Local`), even where scopes share a frame offset.
+
+  Lanes that returned from an inlined call never read its variables again. So their return raises only the writes
+  its caller sees: the call's result, the caller's variables, and what pointers reach. A `break` or `continue`
+  raises every later write in its loop.
+- **The barrier rule is proven statically** (decision 3), or the kernel is refused with both places, as
+  `path:line:column`:
+  - A threadgroup barrier must run under control that is agreed or uniform, and a SIMD-group operation under
+    control that is the same in its SIMD group.
+  - The lanes that a more varying branch, loop condition or exit leaves out must end without reaching another
+    sync point. For a branch, that means its other side and what follows it; for a `return`, what follows its call;
+    for a `break`, what follows its loop. A `continue`'s lanes always come back, so they are never let off.
+  - Where the proof rests on an agreed condition, the condition is marked, and the interpreter checks as it runs
+    that every SIMD group of the group decides it alike, or the kernel fails.
+  - The tests are `a_barrier_some_threads_skip_is_refused_with_its_place`,
+    `a_simd_group_operation_some_lanes_skip_is_refused` and `threads_that_end_are_let_off`. Every kernel of the
+    library's tests vectorizes.
+- **The interpreter runs at 32 lanes**, a SIMD group at a time, its active lanes a mask:
+  - A uniform value with no effect is computed once for its SIMD group; any other node is read once and its lanes
+    run in a loop.
+  - A varying branch runs each side under its mask, and a loop runs until its mask is empty.
+  - A cut node runs for all of the group's SIMD groups, each region between barriers one SIMD group after another.
+  - SIMD-group operations are native: a ballot is the mask's lanes, and a shuffle is a permute of the lanes'
+    values.
+  - A lane's variables are its own, as a struct of arrays in its SIMD group's frame.
+- **A scan's tile is 16 values a thread** on this path (`UKL_SCAN_VT`), as on the CPU backend (decision 0527 §3).
+  A group operation costs hundreds of the tape's nodes, against a few for a thread's fold of one value. At 1 value
+  a thread, the grid scan of 1,000,000 values took 3 s; at 16, the whole test takes 2.7 s.
+- **Gate:** with `RERAIL_GPU=cpu RERAIL_CPU_EXEC=vec`, the library's 19 tests pass (the bench is ignored):
+  - in 31–57 s at 6 threads, by the machine's load, against 223 s for step 1's one-lane interpreter;
+  - against 5.7 s for the coroutine backend, on a debug build (`rerail-ukl-vec` at opt-level 3).
+
+  The interpreter's speed is step 3's work.

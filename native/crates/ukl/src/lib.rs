@@ -260,6 +260,19 @@ impl Preprocess {
         Ok((tokens.finish(), paths))
     }
 
+    /// The text of file `path` as a pass reads it, a given file's or a carried header's (a path the files of an
+    /// `expanded` name): for telling a place's line.
+    pub fn text_of(&self, path: &str) -> Option<Vec<u8>> {
+        if let Some(t) = self.files.get(path) {
+            return Some(t.clone());
+        }
+        let carried = HEADERS.iter().find(|(p, _)| format!("{ROOT}/{p}") == path).or_else(|| LIBRARY.iter().find(|(p, _)| format!("{ROOT}/lib/{p}") == path));
+        if let Some((_, t)) = carried {
+            return Some(t.as_bytes().to_vec());
+        }
+        if path.starts_with(ROOT) { None } else { std::fs::read(path).ok() }
+    }
+
     /// One pass of the preprocessor over `main` into `sink`: the sink, and the paths of the files, by file id.
     fn pass<S: Sink>(&self, main: &str, sink: S) -> Result<(S, Vec<String>), Error> {
         // OpenCL C is C (C99 with clang's extensions); every other backend's language is C++.

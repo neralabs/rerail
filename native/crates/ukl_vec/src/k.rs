@@ -83,23 +83,29 @@ pub enum Kind {
     Block,
     /// An expression evaluated for its effect: one child.
     Expr,
-    /// `cond, then [, else]`.
+    /// `[site]`: `cond, then [, else]`.
     If,
-    /// `cond, body`.
+    /// `[site]`: `cond, body`.
     While,
-    /// `body, cond`.
+    /// `[site]`: `body, cond`.
     Do,
-    /// `cond, body, step`: a `for` (its init a statement before it), `continue` going to `step`.
+    /// `[site]`: `cond, body, step`: a `for` (its init a statement before it), `continue` going to `step`.
     For,
+    /// `[site]`.
     Break,
+    /// `[site]`.
     Continue,
-    /// `[has value]`: its value, if any.
+    /// `[has value, site]`: its value, if any. In a vector tape `[has value, site, slot, type]`: the value stored to
+    /// its inlined call's result at frame offset `slot` (`NO_SLOT`: the kernel's own, the thread ends).
     Return,
     /// Nothing.
     Empty,
     /// `[type, low, high]`: a constant.
     Const,
-    /// `[offset]`: the address of a variable of the thread's frame.
+    /// `[offset, size, inner, variable]`: the address of byte `inner` of the variable of `size` bytes at `offset` of
+    /// the thread's frame; `variable` its number, its function's parameters first then its declarations in order
+    /// (variables of scopes apart share offsets). A vector tape's frame holds each variable once a lane, and its
+    /// number is its inlined call's (`vector`).
     Local,
     /// `[offset]`: the address of the program's constant memory at `offset`.
     Global,
@@ -134,10 +140,17 @@ pub enum Kind {
     Update,
     /// `[bytes]`: `bytes` bytes copied from its second child's address to its first's; the first's address.
     Copy,
+    /// A vector tape's inlined call (decision 0567 §2.2): `[type, slot, temp]`; its children its parameters' stores,
+    /// then the callee's body. Its value is its result at frame offset `slot` (the body's `Return`s store it there),
+    /// an aggregate's copied to the caller's `temp` (its value that address).
+    Inline,
 }
 
+/// A `Return`'s slot when it ends the thread (the kernel's own body's).
+pub const NO_SLOT: u32 = u32::MAX;
+
 impl Kind {
-    pub const LAST: u16 = Kind::Copy as u16;
+    pub const LAST: u16 = Kind::Inline as u16;
 
     pub fn of(k: u16) -> Kind {
         assert!((1..=Self::LAST).contains(&k), "a kernel tape's kind: {k}");
@@ -286,10 +299,36 @@ impl Builtin {
     }
 }
 
-/// A node's field when its subtree reaches a sync point (a barrier, a SIMD-group operation, or a call of a function
-/// that does): set by the cut (`lower::cut`). Such a node runs for its whole group at once; any other for one thread.
-/// The kernel tape's nodes have no other field.
-pub const SYNCS: u16 = 1;
+/// A vector tape's node's field (`vector`), its bits: its value's uniformity (`LEVEL`, a `Level`), whether its
+/// subtree reaches a sync point (`SYNC`: a barrier or a SIMD-group operation) or a threadgroup barrier (`GSYNC`: it
+/// runs for the whole group at once, the cut), whether its condition's uniformity is checked as it runs (`CHECK`), and
+/// whether its subtree has an effect (`EFFECT`).
+/// A kernel tape's nodes have no field.
+pub const LEVEL: u16 = 3;
+pub const SYNC: u16 = 4;
+pub const GSYNC: u16 = 8;
+pub const CHECK: u16 = 16;
+/// Its subtree has an effect or reads its lanes as a whole (a store, an atomic, a SIMD-group operation, an inlined
+/// call): a uniform value of one without is computed once for its SIMD group.
+pub const EFFECT: u16 = 32;
+
+/// A value's uniformity (decision 0567 §2.4), in order: the same in every thread of the group; the same by the
+/// kernel's protocol (an atomic that leaves its word as it is, at a uniform address: the same in a SIMD group, and
+/// across the group as the kernel's synchronization makes it, checked where control turns on it); the same in each
+/// SIMD group; varying from lane to lane.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub enum Level {
+    Uniform,
+    Agreed,
+    SimdGroup,
+    Varying,
+}
+
+impl Level {
+    pub fn of(bits: u16) -> Level {
+        [Level::Uniform, Level::Agreed, Level::SimdGroup, Level::Varying][usize::from(bits & LEVEL)]
+    }
+}
 
 /// The tape's language tag: none of a grammar's.
 pub const TAG: u8 = 0xfe;
@@ -354,7 +393,7 @@ impl Builder {
         self.words[self.nodes[n].1 as usize + k]
     }
 
-    /// Node `n`'s field set to `field` (`SYNCS`).
+    /// Node `n`'s field set to `field` (a vector tape's bits, `LEVEL`, ...).
     pub fn set_field(&mut self, n: usize, field: u16) {
         self.nodes[n].0 |= u32::from(field) << rerail_tape_format::KIND_BITS;
     }
@@ -397,9 +436,19 @@ impl<'t> View<'t> {
         Kind::of((self.v.key(i) & 0x3ff) as u16)
     }
 
-    /// Whether node `i`'s subtree reaches a sync point (`SYNCS`).
-    pub fn syncs(&self, i: usize) -> bool {
-        (self.v.key(i) >> rerail_tape_format::KIND_BITS) as u16 & 0x3f == SYNCS
+    /// Node `i`'s field (a vector tape's bits).
+    #[inline(always)]
+    pub fn field(&self, i: usize) -> u16 {
+        (self.v.key(i) >> rerail_tape_format::KIND_BITS) as u16 & 0x3f
+    }
+
+    pub fn level(&self, i: usize) -> Level {
+        Level::of(self.field(i))
+    }
+
+    /// Whether node `i` runs for its whole group at once (`GSYNC`).
+    pub fn gsync(&self, i: usize) -> bool {
+        self.field(i) & GSYNC != 0
     }
 
     /// Node `i`'s payload, its words from its start (a visit's reads, its start found once).

@@ -17,6 +17,7 @@ pub mod lower;
 pub mod ops;
 pub mod run;
 pub mod ty;
+pub mod vector;
 
 /// A failure on the way: the preprocessor's errors, or the parser's refusal, with where.
 #[derive(Debug)]
@@ -54,6 +55,8 @@ const SPELLINGS: &[(&str, &str)] = &[
 pub struct Source {
     pub expanded: rerail_ukl::Expanded,
     pub paths: Vec<String>,
+    /// Each file's lines' starts (empty if its text is not at hand).
+    pub lines: Vec<Vec<u32>>,
 }
 
 impl Source {
@@ -62,12 +65,24 @@ impl Source {
         std::str::from_utf8(&self.expanded.text).unwrap_or("")
     }
 
-    /// Where byte `at` of the expanded text came from: `path+offset`, or the expansion it is in.
+    /// Where byte `at` of the expanded text came from: `path:line:column`, or the expansion it is in.
     pub fn place(&self, at: u32) -> String {
         match self.expanded.origin(at) {
-            Some((o, off)) if o.exp == 0 => format!("{}+{off}", self.paths.get(o.file as usize).map_or("?", String::as_str)),
-            Some((o, _)) => format!("{}+{} (in an expansion)", self.paths.get(o.file as usize).map_or("?", String::as_str), o.off),
+            Some((o, off)) if o.exp == 0 => self.at(o.file, off),
+            Some((o, _)) => format!("{} (in an expansion)", self.at(o.file, o.off)),
             None => format!("byte {at}"),
+        }
+    }
+
+    /// Byte `off` of file `file`, as `path:line:column`.
+    fn at(&self, file: u32, off: u32) -> String {
+        let path = self.paths.get(file as usize).map_or("?", String::as_str);
+        match self.lines.get(file as usize).filter(|l| !l.is_empty()) {
+            Some(l) => {
+                let line = l.partition_point(|&s| s <= off);
+                format!("{path}:{line}:{}", off - l[line - 1] + 1)
+            }
+            None => format!("{path}+{off}"),
         }
     }
 }
@@ -75,7 +90,10 @@ impl Source {
 /// The preprocessing of this path: OpenCL C, its sub-groups 32 lanes, OpenCL's words spelled as C's grammar reads
 /// them (`SPELLINGS`).
 pub fn preprocess() -> rerail_ukl::Preprocess {
-    let mut p = rerail_ukl::Preprocess::new(rerail_ukl::Backend::OpenCl).define("UKL_OPENCL_SUBGROUPS", None).define("UKL_SIMD_WIDTH", Some("32u")).define("__UKL_VEC", None);
+    let mut p = rerail_ukl::Preprocess::new(rerail_ukl::Backend::OpenCl).define("UKL_OPENCL_SUBGROUPS", None).define("UKL_SIMD_WIDTH", Some("32u")).define("__UKL_VEC", None)
+        // A scan's tile is 16 values a thread, as the CPU backend's (decision 0527 §3): a group's operation is many
+        // of the vector tape's nodes, a thread's fold of a value a few.
+        .define("UKL_SCAN_VT", Some("16u"));
     for (word, spelled) in SPELLINGS {
         p = p.define(word, Some(spelled));
     }
@@ -94,7 +112,11 @@ pub fn source(path: &str, text: &str, dirs: &[&str]) -> Result<Source, Error> {
 /// `main` preprocessed by `p` (a `preprocess` with its files and defines).
 pub fn source_of(p: &rerail_ukl::Preprocess, main: &str) -> Result<Source, Error> {
     let (expanded, paths) = p.expanded(main).map_err(|e| Error(e.0.join("\n")))?;
-    Ok(Source { expanded, paths })
+    let lines = paths
+        .iter()
+        .map(|path| p.text_of(path).map_or_else(Vec::new, |t| std::iter::once(0).chain(t.iter().enumerate().filter(|&(_, &c)| c == b'\n').map(|(i, _)| i as u32 + 1)).collect()))
+        .collect();
+    Ok(Source { expanded, paths, lines })
 }
 
 /// The program of `main` preprocessed by `p`: its source, C tape and kernel tape.

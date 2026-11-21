@@ -1,18 +1,26 @@
-//! The kernel tape run by an interpreter at one lane (decision 0567, step 1): each group's threads in turn through
-//! a node with no sync point in it (the cut's), and all of the group's at once through one that has, its threads
-//! a mask. The kernel tape is read in place.
+//! A kernel's vector tape run by an interpreter at 32 lanes (decision 0567 §6, the first back end): each node over a
+//! SIMD group's lanes at once, its active lanes a mask. A uniform value with no effect is computed once for its SIMD
+//! group; a varying one lane by lane; a branch on a varying value runs each side under its lanes' mask, and a loop
+//! until its mask is empty. A node with a threadgroup barrier in it (`GSYNC`, the cut) runs for all of its group's
+//! SIMD groups at once, each region between barriers SIMD group by SIMD group. SIMD-group operations are the lanes'
+//! values permuted (a shuffle) or gathered (a ballot). The tapes are read in place.
 //!
-//! The barrier rule (0567 §3): a sync point is met by every thread of its group (a SIMD-group operation, of its SIMD
-//! group) that has not ended. A thread that is not at it is let off only if it then ends the kernel without
-//! reaching another sync point; else the kernel fails, naming both.
+//! A lane's variables are its own, once a lane in its SIMD group's frame (struct of arrays): the variable at offset
+//! `off` of `size` bytes is lane `l`'s at `off * W + l * size`.
+
+use std::cell::RefCell;
+use std::collections::HashMap;
 
 use crate::Error;
-use crate::k::{Builtin, Kind, M, Op, View};
+use crate::k::{Builtin, CHECK, EFFECT, Kind, Level, M, NO_SLOT, Op, View};
 use crate::lower::Program;
 use crate::ops;
+use crate::vector::Kernel;
 
 /// The SIMD group's lanes.
-pub const WIDTH: u32 = 32;
+pub const W: usize = 32;
+
+type Vals = [u64; W];
 
 /// A kernel argument: its bytes (a pointer's address, a structure's bytes), or an offset in the group's
 /// threadgroup memory past the kernel's own (`set_thread_group_memory`).
@@ -30,87 +38,112 @@ enum Flow {
     Return,
 }
 
-/// A thread: its frame and stack, its ids, where its control is.
-#[derive(Clone, Debug)]
-struct Th {
-    fp: u64,
-    sp: u64,
-    ret: u64,
-    flow: Flow,
-    lid: [u32; 3],
-    lin: u32,
-    /// It ended the kernel.
-    ended: bool,
-    /// It was not at a sync point its group met: it may only end.
-    owed: Option<u32>,
+/// A SIMD group: its lanes' control, the lanes that have ended, its frame.
+struct Sg {
+    index: u32,
+    flow: [Flow; W],
+    ended: u32,
+    frame: u64,
 }
 
-struct G {
-    th: Vec<Th>,
-    /// Group-wide calls entered: 0 in the kernel's own body.
-    depth: u32,
+impl Sg {
+    fn normal(&self) -> u32 {
+        let mut m = 0;
+        for (l, f) in self.flow.iter().enumerate() {
+            if *f == Flow::Normal {
+                m |= 1 << l;
+            }
+        }
+        m & !self.ended
+    }
 }
 
 type R<T> = Result<T, Error>;
 
-/// One dispatch's state the threads share.
+/// The lanes of a mask, in order.
+fn lanes(mut m: u32) -> impl Iterator<Item = usize> {
+    std::iter::from_fn(move || {
+        if m == 0 {
+            return None;
+        }
+        let l = m.trailing_zeros() as usize;
+        m &= m - 1;
+        Some(l)
+    })
+}
+
+fn first(m: u32) -> usize {
+    if m == 0 { 0 } else { m.trailing_zeros() as usize }
+}
+
+/// One dispatch's state.
 struct Run<'p> {
     p: &'p Program,
     v: View<'p>,
+    kernel: &'p str,
     data: u64,
     shared: u64,
     grid: [u32; 3],
     block: [u32; 3],
     group: [u32; 3],
+    /// Each checked branch's decisions in the group so far, by the first SIMD group to make them, and how many of
+    /// them each SIMD group has made.
+    agreed: RefCell<HashMap<usize, Decisions>>,
 }
 
-/// Runs kernel `kernel` of `p` over `grid` groups of `block` threads, with `args` for its parameters. `local` is
+/// A checked branch's decisions in the group, in order, and how many each SIMD group has made.
+type Decisions = (Vec<bool>, Vec<usize>);
+
+/// Runs `k` (a kernel of `p`) over `grid` groups of `block` threads, with `args` for its parameters. `local` is
 /// the threadgroup memory a group has past the kernel's own (its `Arg::Local` arguments').
-pub fn run(p: &Program, kernel: u32, args: &[Arg], grid: [u32; 3], block: [u32; 3], local: u64) -> R<()> {
-    let f = &p.funcs[kernel as usize];
-    let node = f.node.ok_or_else(|| Error(format!("{} has no body", f.name)))?;
-    let v = View::new(&p.tape);
-    if args.len() != f.params.len() {
-        return Err(Error(format!("{} takes {} arguments, given {}", f.name, f.params.len(), args.len())));
+pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3], local: u64) -> R<()> {
+    let v = View::new(&k.tape);
+    let root = 0;
+    let n_params = v.w(root, 4) as usize;
+    if args.len() != n_params {
+        return Err(Error(format!("{} takes {n_params} arguments, given {}", k.name, args.len())));
     }
     let threads = block.iter().map(|&b| b as usize).product::<usize>();
-    let stack = (p.stacks[kernel as usize] as usize).next_multiple_of(16).max(16);
-    let mut stacks = vec![0u128; threads * stack / 16];
-    let own = u64::from(v.w(node, 2)).next_multiple_of(16);
+    let nsg = threads.div_ceil(W);
+    let frame = (v.w(root, 1) as usize).next_multiple_of(16) * W;
+    let mut frames = vec![0u128; (nsg * frame).div_ceil(16).max(1)];
+    let own = u64::from(v.w(root, 2)).next_multiple_of(16);
     let mut shared = vec![0u128; (own + local).div_ceil(16) as usize + 1];
-    let data_node = v.children(0).last().expect("the program's data");
-    let data = v.ws(data_node, 1, 0).as_ptr() as u64;
-    let mut r = Run { p, v, data, shared: shared.as_mut_ptr() as u64, grid, block, group: [0; 3] };
-    let body = r.v.child(node, 0);
+    let pv = View::new(&p.tape);
+    let data_node = pv.children(0).last().expect("the program's data");
+    let data = pv.ws(data_node, 1, 0).as_ptr() as u64;
+    let mut r = Run { p, v, kernel: &k.name, data, shared: shared.as_mut_ptr() as u64, grid, block, group: [0; 3], agreed: RefCell::new(HashMap::new()) };
+    let body = r.v.child(root, 0);
     for gz in 0..grid[2] {
         for gy in 0..grid[1] {
             for gx in 0..grid[0] {
                 r.group = [gx, gy, gz];
+                r.agreed.borrow_mut().clear();
                 shared.fill(0);
-                stacks.fill(0);
-                let base = stacks.as_mut_ptr() as u64;
-                let mut g = G { th: Vec::with_capacity(threads), depth: 0 };
-                for t in 0..threads as u32 {
-                    let (bx, by) = (block[0], block[1]);
-                    let fp = base + u64::from(t) * stack as u64;
-                    let th = Th { fp, sp: fp + u64::from(r.v.w(node, 1)), ret: 0, flow: Flow::Normal, lid: [t % bx, t / bx % by, t / (bx * by)], lin: t, ended: false, owed: None };
+                frames.fill(0);
+                let base = frames.as_mut_ptr() as u64;
+                let mut g: Vec<Sg> = (0..nsg as u32).map(|s| Sg { index: s, flow: [Flow::Normal; W], ended: 0, frame: base + u64::from(s) * frame as u64 }).collect();
+                let mut masks = vec![0u32; nsg];
+                for (s, sg) in g.iter().enumerate() {
+                    let n = (threads - s * W).min(W);
+                    masks[s] = if n == W { u32::MAX } else { (1u32 << n) - 1 };
                     for (k, a) in args.iter().enumerate() {
-                        let (off, m) = (u64::from(r.v.w(node, 5 + 2 * k)), M(r.v.w(node, 6 + 2 * k)));
-                        let at = (fp + off) as usize as *mut u8;
-                        match a {
-                            // SAFETY: the parameter's place in the thread's frame, its type's bytes.
-                            Arg::Bytes(b) => unsafe { std::ptr::copy_nonoverlapping(b.as_ptr(), at, b.len().min(m.bytes() as usize)) },
-                            Arg::Local(o) => unsafe { ops::store(M::PTR, at as u64, r.shared + own + o) },
+                        let (off, m) = (u64::from(r.v.w(root, 5 + 2 * k)), M(r.v.w(root, 6 + 2 * k)));
+                        for l in lanes(masks[s]) {
+                            let at = sg.frame + off * W as u64 + l as u64 * u64::from(m.bytes());
+                            match a {
+                                // SAFETY: the parameter's place in the lane's frame, its type's bytes.
+                                Arg::Bytes(b) => unsafe { std::ptr::copy_nonoverlapping(b.as_ptr(), at as usize as *mut u8, b.len().min(m.bytes() as usize)) },
+                                Arg::Local(o) => unsafe { ops::store(M::PTR, at, r.shared + own + o) },
+                            }
                         }
                     }
-                    g.th.push(th);
                 }
-                if r.v.syncs(body) {
-                    let all: Vec<u32> = (0..threads as u32).collect();
-                    r.gexec(&mut g, body, &all)?;
+                if r.v.gsync(body) {
+                    r.gexec(&mut g, body, &masks)?;
                 } else {
-                    for t in &mut g.th {
-                        r.exec(t, body)?;
+                    for (s, sg) in g.iter_mut().enumerate() {
+                        r.vexec(sg, body, masks[s])?;
                     }
                 }
             }
@@ -120,221 +153,112 @@ pub fn run(p: &Program, kernel: u32, args: &[Arg], grid: [u32; 3], block: [u32; 
 }
 
 impl Run<'_> {
-    fn name(&self, site: u32) -> &str {
-        self.p.sites.get(site as usize).map_or("?", String::as_str)
+    fn site(&self, w: u32) -> &str {
+        self.p.sites.get(w as usize).map_or("?", String::as_str)
     }
 
-    fn konst(&self, n: usize) -> u64 {
-        let p = self.v.p(n);
-        u64::from(p[1]) | u64::from(p[2]) << 32
+    fn lid(&self, sg: &Sg, lane: usize) -> ([u32; 3], u32) {
+        let lin = sg.index * W as u32 + lane as u32;
+        let (bx, by) = (self.block[0], self.block[1]);
+        ([lin % bx, lin / bx % by, lin / (bx * by)], lin)
     }
 
-    fn func(&self, id: u32) -> R<usize> {
-        self.p.funcs[id as usize].node.ok_or_else(|| Error(format!("{} is called and has no body", self.p.funcs[id as usize].name)))
+    /// A variable's (a `Local`'s payload `p`) address in lane `l`.
+    fn local(&self, sg: &Sg, p: &[u32], l: usize) -> u64 {
+        sg.frame + u64::from(p[0]) * W as u64 + l as u64 * u64::from(p[1]) + u64::from(p[2])
     }
 
-    // One thread.
+    /// Whether node `n`'s value is computed once for its SIMD group: a value, uniform in it, without effect.
+    fn once(&self, n: usize) -> bool {
+        matches!(
+            self.v.kind(n),
+            Kind::Const | Kind::Global | Kind::Shared | Kind::Load | Kind::Bin | Kind::Un | Kind::Cast | Kind::Cond | Kind::Logic | Kind::Comma | Kind::Builtin
+        ) && self.v.level(n) <= Level::SimdGroup
+            && self.v.field(n) & EFFECT == 0
+    }
 
-    /// Node `n`'s value in thread `t`.
-    fn val(&self, t: &mut Th, n: usize) -> R<u64> {
+    /// A checked branch's decision `d`, by SIMD group `sg`: the same as the first SIMD group's, or the kernel fails.
+    fn agree(&self, n: usize, sg: &Sg, d: bool, site: u32) -> R<()> {
+        let mut a = self.agreed.borrow_mut();
+        let (ds, at) = a.entry(n).or_insert_with(|| (Vec::new(), Vec::new()));
+        let s = sg.index as usize;
+        if at.len() <= s {
+            at.resize(s + 1, 0);
+        }
+        let k = at[s];
+        at[s] += 1;
+        if k == ds.len() {
+            ds.push(d);
+        } else if ds[k] != d {
+            return Err(Error(format!(
+                "{}: {} decides differently in SIMD group {s} than in the first: an agreed value the barrier rule rests on differs across the group (decision 0567 §3)",
+                self.kernel,
+                self.site(site)
+            )));
+        }
+        Ok(())
+    }
+
+    // One lane.
+
+    /// Node `n`'s value in lane `l` (a value without effect).
+    fn sval(&self, sg: &Sg, n: usize, l: usize) -> R<u64> {
         let v = &self.v;
         let p = v.p(n);
         Ok(match v.kind(n) {
-            Kind::Const => self.konst(n),
-            Kind::Local => t.fp + u64::from(p[0]),
+            Kind::Const => u64::from(p[1]) | u64::from(p[2]) << 32,
+            Kind::Local => self.local(sg, p, l),
             Kind::Shared => self.shared + u64::from(p[0]),
             Kind::Global => self.data + u64::from(p[0]),
             Kind::Load => {
-                let a = self.val(t, v.child(n, 0))?;
+                let a = self.sval(sg, v.child(n, 0), l)?;
                 // SAFETY: the kernel's address (its buffers', frames' and threadgroup memory's are the dispatch's).
                 unsafe { ops::load(M(p[0]), a) }
             }
-            Kind::Store => {
-                let a = self.val(t, v.child(n, 0))?;
-                let x = self.val(t, v.child(n, 1))?;
-                unsafe { ops::store(M(p[0]), a, x) };
-                x
-            }
-            Kind::Zero => {
-                let a = self.val(t, v.child(n, 0))?;
-                unsafe { std::ptr::write_bytes(a as usize as *mut u8, 0, p[1] as usize) };
-                a
-            }
-            Kind::Copy => {
-                let d = self.val(t, v.child(n, 0))?;
-                let s = self.val(t, v.child(n, 1))?;
-                unsafe { std::ptr::copy(s as usize as *const u8, d as usize as *mut u8, p[0] as usize) };
-                d
-            }
             Kind::Bin => {
-                let a = self.val(t, v.child(n, 0))?;
-                let b = self.val(t, v.child(n, 1))?;
+                let a = self.sval(sg, v.child(n, 0), l)?;
+                let b = self.sval(sg, v.child(n, 1), l)?;
                 ops::bin(Op::of(p[0]), M(p[1]), a, b).map_err(|e| Error(e.to_string()))?
             }
-            Kind::Un => {
-                let a = self.val(t, v.child(n, 0))?;
-                ops::un(Op::of(p[0]), M(p[1]), a)
-            }
-            Kind::Cast => {
-                let a = self.val(t, v.child(n, 0))?;
-                ops::cast(M(p[0]), M(p[1]), a)
-            }
+            Kind::Un => ops::un(Op::of(p[0]), M(p[1]), self.sval(sg, v.child(n, 0), l)?),
+            Kind::Cast => ops::cast(M(p[0]), M(p[1]), self.sval(sg, v.child(n, 0), l)?),
             Kind::Cond => {
-                let c = self.val(t, v.child(n, 0))?;
-                self.val(t, v.child(n, if c != 0 { 1 } else { 2 }))?
+                let c = self.sval(sg, v.child(n, 0), l)?;
+                self.sval(sg, v.child(n, if c != 0 { 1 } else { 2 }), l)?
             }
             Kind::Logic => {
                 let and = p[0] != 0;
-                let a = self.val(t, v.child(n, 0))? != 0;
-                if a != and { u64::from(a) } else { u64::from(self.val(t, v.child(n, 1))? != 0) }
+                let a = self.sval(sg, v.child(n, 0), l)? != 0;
+                if a != and { u64::from(a) } else { u64::from(self.sval(sg, v.child(n, 1), l)? != 0) }
             }
-            Kind::Comma => {
-                self.val(t, v.child(n, 0))?;
-                self.val(t, v.child(n, 1))?
-            }
-            Kind::Update => self.update(t, n)?,
-            Kind::Call => {
-                let mut args = Vec::with_capacity(4);
-                for c in v.children(n) {
-                    args.push(self.val(t, c)?);
-                }
-                self.call(t, n, &args)?
-            }
+            Kind::Comma => self.sval(sg, v.child(n, 1), l)?,
             Kind::Builtin => {
-                let b = Builtin::of(p[0]);
-                if b.syncs() {
-                    return Err(Error(format!("{} run by one thread: the cut missed it", self.name(p[3]))));
-                }
                 let mut a = [0u64; 3];
                 for (k, c) in v.children(n).enumerate() {
-                    a[k] = self.val(t, c)?;
+                    a[k] = self.sval(sg, c, l)?;
                 }
-                self.builtin(t, n, b, a)?
+                self.builtin(sg, l, n, a)?
             }
-            Kind::Block | Kind::Expr => {
-                self.exec(t, n)?;
-                0
-            }
-            k => return Err(Error(format!("a {k:?} node as a value"))),
+            k => return Err(Error(format!("a {k:?} node computed once"))),
         })
     }
 
-    /// An assignment through an operation: `[op, lhs type, op type, post]`.
-    fn update(&self, t: &mut Th, n: usize) -> R<u64> {
-        let v = &self.v;
-        let a = self.val(t, v.child(n, 0))?;
-        let x = self.val(t, v.child(n, 1))?;
-        Ok(self.update_at(n, a, x))
-    }
-
-    fn update_at(&self, n: usize, a: u64, x: u64) -> u64 {
-        let v = &self.v;
-        let p = v.p(n);
-        let (op, lm, om, post) = (Op::of(p[0]), M(p[1]), M(p[2]), p[3] != 0);
-        // SAFETY: the kernel's address.
-        let old = unsafe { ops::load(lm, a) };
-        let r = ops::bin(op, om, ops::cast(lm, om, old), x).unwrap_or(0);
-        let new = ops::cast(om, lm, r);
-        unsafe { ops::store(lm, a, new) };
-        if post { old } else { new }
-    }
-
-    /// A call's frame: pushed, its parameters written from `args`; the callee's node.
-    fn enter(&self, t: &mut Th, n: usize, args: &[u64]) -> R<(usize, u64, u64)> {
-        let v = &self.v;
-        let p = v.p(n);
-        let f = self.func(p[0])?;
-        let (saved_fp, saved_sp) = (t.fp, t.sp);
-        let fp = t.sp.next_multiple_of(16);
-        let frame = u64::from(v.w(f, 1));
-        unsafe { std::ptr::write_bytes(fp as usize as *mut u8, 0, frame as usize) };
-        for (k, &a) in args.iter().enumerate() {
-            let (off, m) = (u64::from(v.w(f, 5 + 2 * k)), M(v.w(f, 6 + 2 * k)));
-            if m.is_agg() {
-                unsafe { std::ptr::copy_nonoverlapping(a as usize as *const u8, (fp + off) as usize as *mut u8, m.bytes() as usize) };
-            } else {
-                unsafe { ops::store(m, fp + off, a) };
-            }
-        }
-        (t.fp, t.sp) = (fp, fp + frame);
-        t.ret = 0;
-        Ok((f, saved_fp, saved_sp))
-    }
-
-    /// A call's frame popped: its result (an aggregate's copied to the caller's frame).
-    fn leave(&self, t: &mut Th, n: usize, saved: (u64, u64)) -> u64 {
+    /// A builtin with no effect beyond its lane, in lane `l`.
+    fn builtin(&self, sg: &Sg, l: usize, n: usize, a: [u64; 3]) -> R<u64> {
         let p = self.v.p(n);
-        (t.fp, t.sp) = saved;
-        let m = M(p[1]);
-        if m.is_agg() {
-            let to = t.fp + u64::from(p[2]);
-            unsafe { std::ptr::copy(t.ret as usize as *const u8, to as usize as *mut u8, m.bytes() as usize) };
-            to
-        } else {
-            t.ret
-        }
-    }
-
-    fn call(&self, t: &mut Th, n: usize, args: &[u64]) -> R<u64> {
-        let (f, fp, sp) = self.enter(t, n, args)?;
-        self.exec(t, self.v.child(f, 0))?;
-        Ok(self.leave(t, n, (fp, sp)))
-    }
-
-    /// A builtin that does not sync, in thread `t`.
-    fn builtin(&self, t: &Th, n: usize, b: Builtin, a: [u64; 3]) -> R<u64> {
-        let v = &self.v;
-        let p = v.p(n);
-        let m = M(p[1]);
+        let (b, m) = (Builtin::of(p[0]), M(p[1]));
+        let (lid, lin) = self.lid(sg, l);
         let d = a[0] as usize;
         let dim = |x: [u32; 3], or: u32| if d < 3 { x[d] } else { or };
         Ok(match b {
-            Builtin::LocalId => u64::from(dim(t.lid, 0)),
+            Builtin::LocalId => u64::from(dim(lid, 0)),
             Builtin::LocalSize => u64::from(dim(self.block, 1)),
             Builtin::GroupId => u64::from(dim(self.group, 0)),
             Builtin::NumGroups => u64::from(dim(self.grid, 1)),
-            Builtin::GlobalId => u64::from(dim(self.group, 0)) * u64::from(dim(self.block, 1)) + u64::from(dim(t.lid, 0)),
+            Builtin::GlobalId => u64::from(dim(self.group, 0)) * u64::from(dim(self.block, 1)) + u64::from(dim(lid, 0)),
             Builtin::GlobalSize => u64::from(dim(self.grid, 1)) * u64::from(dim(self.block, 1)),
-            Builtin::SubGroupLocalId => u64::from(t.lin % WIDTH),
-            Builtin::MemFence => 0,
-            Builtin::AtomicAdd
-            | Builtin::AtomicSub
-            | Builtin::AtomicAnd
-            | Builtin::AtomicOr
-            | Builtin::AtomicXor
-            | Builtin::AtomicXchg
-            | Builtin::AtomicMin
-            | Builtin::AtomicMax
-            | Builtin::AtomicCmpxchg
-            | Builtin::AtomicInc
-            | Builtin::AtomicDec => {
-                // One thread runs at a time: an atomic is its read and write.
-                let p = a[0];
-                let old = unsafe { ops::load(m, p) };
-                let new = match b {
-                    Builtin::AtomicAdd => old.wrapping_add(a[1]),
-                    Builtin::AtomicSub => old.wrapping_sub(a[1]),
-                    Builtin::AtomicAnd => old & a[1],
-                    Builtin::AtomicOr => old | a[1],
-                    Builtin::AtomicXor => old ^ a[1],
-                    Builtin::AtomicXchg => a[1],
-                    Builtin::AtomicInc => old.wrapping_add(1),
-                    Builtin::AtomicDec => old.wrapping_sub(1),
-                    Builtin::AtomicMin | Builtin::AtomicMax => {
-                        let less = ops::bin(Op::Lt, m, a[1], old).unwrap_or(0) != 0;
-                        if less == (b == Builtin::AtomicMin) { a[1] } else { old }
-                    }
-                    _ => {
-                        if ops::norm(m, old) == ops::norm(m, a[1]) {
-                            a[2]
-                        } else {
-                            old
-                        }
-                    }
-                };
-                unsafe { ops::store(m, p, new) };
-                old
-            }
+            Builtin::SubGroupLocalId => u64::from(lin % W as u32),
+            Builtin::MemFence | Builtin::Barrier | Builtin::SubGroupBarrier => 0,
             Builtin::Popcount => u64::from((ops::norm(m, a[0]) & mask(m)).count_ones()),
             Builtin::Clz => u64::from((ops::norm(m, a[0]) & mask(m)).leading_zeros() - (64 - m.bits())),
             Builtin::MulHi => {
@@ -346,341 +270,589 @@ impl Run<'_> {
                     ops::norm(m, (ops::norm(m, a[0]).wrapping_mul(ops::norm(m, a[1]))) >> m.bits())
                 }
             }
-            Builtin::As => {
-                let from = M(p[4]);
-                ops::norm(m, a[0] & mask(from))
-            }
+            Builtin::As => ops::norm(m, a[0] & mask(M(p[4]))),
             Builtin::Min | Builtin::Max => {
                 let less = ops::bin(Op::Lt, m, a[0], a[1]).unwrap_or(0) != 0;
                 if less == (b == Builtin::Min) { a[0] } else { a[1] }
             }
-            _ => return Err(Error(format!("{} run by one thread", self.name(p[3])))),
+            _ => return Err(Error(format!("{} as a lane's own", self.site(p[3])))),
         })
     }
 
-    /// Statement `n` in thread `t`.
-    fn exec(&self, t: &mut Th, n: usize) -> R<Flow> {
+    /// An atomic at `a[0]`, one lane's.
+    fn atomic(&self, n: usize, a: [u64; 3]) -> u64 {
+        let p = self.v.p(n);
+        let (b, m) = (Builtin::of(p[0]), M(p[1]));
+        let ptr = a[0];
+        // SAFETY: the kernel's address; the interpreter runs one lane at a time, so an atomic is its read and write.
+        let old = unsafe { ops::load(m, ptr) };
+        let new = match b {
+            Builtin::AtomicAdd => old.wrapping_add(a[1]),
+            Builtin::AtomicSub => old.wrapping_sub(a[1]),
+            Builtin::AtomicAnd => old & a[1],
+            Builtin::AtomicOr => old | a[1],
+            Builtin::AtomicXor => old ^ a[1],
+            Builtin::AtomicXchg => a[1],
+            Builtin::AtomicInc => old.wrapping_add(1),
+            Builtin::AtomicDec => old.wrapping_sub(1),
+            Builtin::AtomicMin | Builtin::AtomicMax => {
+                let less = ops::bin(Op::Lt, m, a[1], old).unwrap_or(0) != 0;
+                if less == (b == Builtin::AtomicMin) { a[1] } else { old }
+            }
+            _ => {
+                if ops::norm(m, old) == ops::norm(m, a[1]) {
+                    a[2]
+                } else {
+                    old
+                }
+            }
+        };
+        unsafe { ops::store(m, ptr, new) };
+        old
+    }
+
+    // A SIMD group.
+
+    /// Node `n`'s values in the lanes `mask` of `sg` (the others' unspecified).
+    fn vval(&self, sg: &mut Sg, n: usize, mask: u32) -> R<Vals> {
+        if self.once(n) {
+            return Ok([self.sval(sg, n, first(mask))?; W]);
+        }
         let v = &self.v;
         let p = v.p(n);
-        Ok(match v.kind(n) {
-            Kind::Block => {
-                for c in v.children(n) {
-                    let f = self.exec(t, c)?;
-                    if f != Flow::Normal {
-                        return Ok(f);
-                    }
-                }
-                Flow::Normal
-            }
-            Kind::Expr => {
-                self.val(t, v.child(n, 0))?;
-                Flow::Normal
-            }
-            Kind::Empty => Flow::Normal,
-            Kind::If => {
-                if self.val(t, v.child(n, 0))? != 0 {
-                    self.exec(t, v.child(n, 1))?
-                } else if v.children(n).count() > 2 {
-                    self.exec(t, v.child(n, 2))?
-                } else {
-                    Flow::Normal
+        let mut out = [0u64; W];
+        match v.kind(n) {
+            Kind::Local => {
+                for l in lanes(mask) {
+                    out[l] = self.local(sg, p, l);
                 }
             }
-            Kind::While | Kind::For | Kind::Do => {
-                let k = v.kind(n);
-                let (cond, body) = if k == Kind::Do { (v.child(n, 1), v.child(n, 0)) } else { (v.child(n, 0), v.child(n, 1)) };
-                let mut first = k == Kind::Do;
-                loop {
-                    if !first && self.val(t, cond)? == 0 {
-                        break;
-                    }
-                    first = false;
-                    match self.exec(t, body)? {
-                        Flow::Break => break,
-                        Flow::Return => return Ok(Flow::Return),
-                        _ => {}
-                    }
-                    if k == Kind::For {
-                        self.exec(t, v.child(n, 2))?;
-                    }
+            Kind::Cond => {
+                let c = self.vval(sg, v.child(n, 0), mask)?;
+                let yes = lanes(mask).filter(|&l| c[l] != 0).fold(0u32, |m, l| m | 1 << l);
+                let a = if yes != 0 { self.vval(sg, v.child(n, 1), yes)? } else { out };
+                let b = if mask & !yes != 0 { self.vval(sg, v.child(n, 2), mask & !yes)? } else { out };
+                for l in lanes(mask) {
+                    out[l] = if yes >> l & 1 != 0 { a[l] } else { b[l] };
                 }
-                Flow::Normal
             }
-            Kind::Return => {
-                if p[0] != 0 {
-                    t.ret = self.val(t, v.child(n, 0))?;
+            Kind::Logic => {
+                let and = p[0] != 0;
+                let a = self.vval(sg, v.child(n, 0), mask)?;
+                let rest = lanes(mask).filter(|&l| (a[l] != 0) == and).fold(0u32, |m, l| m | 1 << l);
+                let b = if rest != 0 { self.vval(sg, v.child(n, 1), rest)? } else { out };
+                for l in lanes(mask) {
+                    out[l] = u64::from(if rest >> l & 1 != 0 { b[l] != 0 } else { a[l] != 0 });
                 }
-                Flow::Return
             }
-            Kind::Break => Flow::Break,
-            Kind::Continue => Flow::Continue,
+            Kind::Inline => return self.vinline(sg, n, mask),
+            Kind::Block | Kind::Expr => {
+                self.vexec(sg, n, mask)?;
+            }
+            Kind::Builtin => {
+                let mut xs = [[0u64; W]; 3];
+                for (j, c) in v.children(n).enumerate() {
+                    xs[j] = self.vval(sg, c, mask)?;
+                }
+                self.vbuiltin(sg, n, mask, &xs, &mut out)?;
+            }
             _ => {
-                self.val(t, n)?;
-                Flow::Normal
+                let mut xs = [[0u64; W]; 3];
+                for (j, c) in v.children(n).enumerate() {
+                    xs[j] = self.vval(sg, c, mask)?;
+                }
+                self.vop(sg, n, mask, [&xs[0], &xs[1], &xs[2]], &mut out)?;
             }
-        })
+        }
+        Ok(out)
     }
 
-    // The group.
-
-    /// Statement `n` for the threads `act`, whatever it holds: each thread's control in its `flow`.
-    fn gstmt(&self, g: &mut G, n: usize, act: &[u32]) -> R<()> {
-        if self.v.syncs(n) {
-            return self.gexec(g, n, act);
-        }
-        for &t in act {
-            let th = &mut g.th[t as usize];
-            let f = self.exec(th, n)?;
-            th.flow = f;
-            if f == Flow::Return && g.depth == 0 {
-                th.ended = true;
+    /// Node `n`'s operation over the lanes `mask`, its operands' values `x` (a node whose operands are all evaluated
+    /// first): the node read once, its lanes in a loop.
+    fn vop(&self, sg: &Sg, n: usize, mask: u32, x: [&Vals; 3], out: &mut Vals) -> R<()> {
+        let p = self.v.p(n);
+        match self.v.kind(n) {
+            Kind::Const => out.fill(u64::from(p[1]) | u64::from(p[2]) << 32),
+            Kind::Shared => out.fill(self.shared + u64::from(p[0])),
+            Kind::Global => out.fill(self.data + u64::from(p[0])),
+            Kind::Local => {
+                let base = sg.frame + u64::from(p[0]) * W as u64 + u64::from(p[2]);
+                let size = u64::from(p[1]);
+                for l in lanes(mask) {
+                    out[l] = base + l as u64 * size;
+                }
+            }
+            Kind::Load => {
+                let m = M(p[0]);
+                for l in lanes(mask) {
+                    // SAFETY: the kernel's addresses.
+                    out[l] = unsafe { ops::load(m, x[0][l]) };
+                }
+            }
+            Kind::Store => {
+                let m = M(p[0]);
+                for l in lanes(mask) {
+                    unsafe { ops::store(m, x[0][l], x[1][l]) };
+                    out[l] = x[1][l];
+                }
+            }
+            Kind::Bin => {
+                let (op, m) = (Op::of(p[0]), M(p[1]));
+                for l in lanes(mask) {
+                    out[l] = ops::bin(op, m, x[0][l], x[1][l]).map_err(|e| Error(e.to_string()))?;
+                }
+            }
+            Kind::Un => {
+                let (op, m) = (Op::of(p[0]), M(p[1]));
+                for l in lanes(mask) {
+                    out[l] = ops::un(op, m, x[0][l]);
+                }
+            }
+            Kind::Cast => {
+                let (from, to) = (M(p[0]), M(p[1]));
+                for l in lanes(mask) {
+                    out[l] = ops::cast(from, to, x[0][l]);
+                }
+            }
+            Kind::Comma => *out = *x[1],
+            _ => {
+                for l in lanes(mask) {
+                    out[l] = self.lane_op(sg, n, l, [x[0][l], x[1][l], x[2][l]])?;
+                }
             }
         }
         Ok(())
     }
 
-    /// Node `n`'s values for the threads `act` (by thread; the others' 0).
-    fn gchild(&self, g: &mut G, n: usize, act: &[u32]) -> R<Vec<u64>> {
-        if self.v.syncs(n) {
-            return self.gval(g, n, act);
-        }
-        let mut out = vec![0u64; g.th.len()];
-        for &t in act {
-            out[t as usize] = self.val(&mut g.th[t as usize], n)?;
-        }
-        Ok(out)
+    /// Node `n`'s operation in lane `l`, its operands' values `x` (a node whose operands are all evaluated first).
+    fn lane_op(&self, sg: &Sg, n: usize, l: usize, x: [u64; 3]) -> R<u64> {
+        let p = self.v.p(n);
+        Ok(match self.v.kind(n) {
+            Kind::Const => u64::from(p[1]) | u64::from(p[2]) << 32,
+            Kind::Shared => self.shared + u64::from(p[0]),
+            Kind::Global => self.data + u64::from(p[0]),
+            Kind::Local => self.local(sg, p, l),
+            // SAFETY: the kernel's addresses.
+            Kind::Load => unsafe { ops::load(M(p[0]), x[0]) },
+            Kind::Store => {
+                unsafe { ops::store(M(p[0]), x[0], x[1]) };
+                x[1]
+            }
+            Kind::Zero => {
+                unsafe { std::ptr::write_bytes(x[0] as usize as *mut u8, 0, p[1] as usize) };
+                x[0]
+            }
+            Kind::Copy => {
+                unsafe { std::ptr::copy(x[1] as usize as *const u8, x[0] as usize as *mut u8, p[0] as usize) };
+                x[0]
+            }
+            Kind::Bin => ops::bin(Op::of(p[0]), M(p[1]), x[0], x[1]).map_err(|e| Error(e.to_string()))?,
+            Kind::Un => ops::un(Op::of(p[0]), M(p[1]), x[0]),
+            Kind::Cast => ops::cast(M(p[0]), M(p[1]), x[0]),
+            Kind::Comma => x[1],
+            Kind::Update => {
+                let (op, lm, om, post) = (Op::of(p[0]), M(p[1]), M(p[2]), p[3] != 0);
+                let old = unsafe { ops::load(lm, x[0]) };
+                let r = ops::bin(op, om, ops::cast(lm, om, old), x[1]).unwrap_or(0);
+                let new = ops::cast(om, lm, r);
+                unsafe { ops::store(lm, x[0], new) };
+                if post { old } else { new }
+            }
+            Kind::Builtin => self.builtin(sg, l, n, x)?,
+            k => return Err(Error(format!("a {k:?} node as a lane's operation"))),
+        })
     }
 
-    fn gexec(&self, g: &mut G, n: usize, act: &[u32]) -> R<()> {
+    /// A builtin over the lanes `mask`: a SIMD-group operation the lanes' values permuted or gathered, an atomic one
+    /// lane after another (once, for the SIMD group, when its value is uniform in it).
+    fn vbuiltin(&self, sg: &Sg, n: usize, mask: u32, xs: &[Vals; 3], out: &mut Vals) -> R<()> {
+        let p = self.v.p(n);
+        let b = Builtin::of(p[0]);
+        let from = |src: Option<usize>, or: u64| match src {
+            Some(s) if mask >> s & 1 != 0 => xs[0][s],
+            _ => or,
+        };
+        match b {
+            Builtin::SubGroupBallot => {
+                let m = lanes(mask).filter(|&l| xs[0][l] != 0).fold(0u64, |m, l| m | 1 << l);
+                for l in lanes(mask) {
+                    out[l] = m;
+                }
+            }
+            Builtin::SubGroupShuffle => {
+                for l in lanes(mask) {
+                    out[l] = from(Some(xs[1][l] as usize % W), 0);
+                }
+            }
+            Builtin::SubGroupShuffleXor => {
+                for l in lanes(mask) {
+                    out[l] = from(Some((l ^ xs[1][l] as usize) % W), 0);
+                }
+            }
+            Builtin::SubGroupShuffleUp => {
+                for l in lanes(mask) {
+                    out[l] = from(l.checked_sub(xs[1][l] as usize), xs[0][l]);
+                }
+            }
+            Builtin::SubGroupShuffleDown => {
+                for l in lanes(mask) {
+                    let s = l + xs[1][l] as usize;
+                    out[l] = from((s < W).then_some(s), xs[0][l]);
+                }
+            }
+            Builtin::SubGroupBarrier | Builtin::Barrier | Builtin::MemFence => {}
+            _ if crate::vector::is_atomic(b) => {
+                if self.v.level(n) <= Level::SimdGroup {
+                    let l = first(mask);
+                    let r = self.atomic(n, [xs[0][l], xs[1][l], xs[2][l]]);
+                    for l in lanes(mask) {
+                        out[l] = r;
+                    }
+                } else {
+                    for l in lanes(mask) {
+                        out[l] = self.atomic(n, [xs[0][l], xs[1][l], xs[2][l]]);
+                    }
+                }
+            }
+            _ => {
+                for l in lanes(mask) {
+                    out[l] = self.builtin(sg, l, n, [xs[0][l], xs[1][l], xs[2][l]])?;
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// An inlined call over the lanes `mask`: its parameters' stores and body, then its result, the lanes that
+    /// returned back.
+    fn vinline(&self, sg: &mut Sg, n: usize, mask: u32) -> R<Vals> {
+        let v = &self.v;
+        let mut live = mask;
+        for c in v.children(n) {
+            if live == 0 {
+                break;
+            }
+            self.vexec(sg, c, live)?;
+            live &= sg.normal();
+        }
+        for l in lanes(mask) {
+            if sg.flow[l] == Flow::Return {
+                sg.flow[l] = Flow::Normal;
+            }
+        }
+        Ok(self.result(sg, n, mask & !sg.ended))
+    }
+
+    /// An inlined call's result in the lanes `mask`: its slot's value, or an aggregate's copy's address.
+    fn result(&self, sg: &Sg, n: usize, mask: u32) -> Vals {
+        let p = self.v.p(n);
+        let m = M(p[0]);
+        let mut out = [0u64; W];
+        if m == M::VOID {
+            return out;
+        }
+        for l in lanes(mask) {
+            let slot = self.local(sg, &[p[1], m.bytes(), 0], l);
+            out[l] = if m.is_agg() {
+                let to = self.local(sg, &[p[2], m.bytes(), 0], l);
+                // SAFETY: two places of the lane's frame, the aggregate's bytes.
+                unsafe { std::ptr::copy(slot as usize as *const u8, to as usize as *mut u8, m.bytes() as usize) };
+                to
+            } else {
+                unsafe { ops::load(m, slot) }
+            };
+        }
+        out
+    }
+
+    /// A branch's decision on the lanes `mask` of `sg` from its condition's values `c`: the lanes it takes, the
+    /// decision checked (`CHECK`) against the group's.
+    fn decide(&self, sg: &Sg, n: usize, mask: u32, c: &Vals) -> R<u32> {
+        let yes = lanes(mask).filter(|&l| c[l] != 0).fold(0u32, |m, l| m | 1 << l);
+        if self.v.field(n) & CHECK != 0 && mask != 0 {
+            self.agree(n, sg, yes != 0, self.v.w(n, 0))?;
+        }
+        Ok(yes)
+    }
+
+    /// Statement `n` over the lanes `mask` of `sg`: each lane's control in its `flow`.
+    fn vexec(&self, sg: &mut Sg, n: usize, mask: u32) -> R<()> {
         let v = &self.v;
         let p = v.p(n);
         match v.kind(n) {
             Kind::Block => {
-                let mut live = act.to_vec();
+                let mut live = mask;
                 for c in v.children(n) {
-                    if live.is_empty() {
+                    if live == 0 {
                         break;
                     }
-                    self.gstmt(g, c, &live)?;
-                    live.retain(|&t| g.th[t as usize].flow == Flow::Normal);
+                    self.vexec(sg, c, live)?;
+                    live &= sg.normal();
                 }
             }
             Kind::Expr => {
-                self.gval(g, v.child(n, 0), act)?;
+                self.vval(sg, v.child(n, 0), mask)?;
+            }
+            Kind::Empty => {}
+            Kind::If => {
+                let c = self.vval(sg, v.child(n, 0), mask)?;
+                let yes = self.decide(sg, n, mask, &c)?;
+                if yes != 0 {
+                    self.vexec(sg, v.child(n, 1), yes)?;
+                }
+                if mask & !yes != 0 && v.children(n).count() > 2 {
+                    self.vexec(sg, v.child(n, 2), mask & !yes)?;
+                }
+            }
+            Kind::While | Kind::For | Kind::Do => {
+                let k = v.kind(n);
+                let (cond, body) = if k == Kind::Do { (v.child(n, 1), v.child(n, 0)) } else { (v.child(n, 0), v.child(n, 1)) };
+                let mut lp = mask;
+                let mut first = k == Kind::Do;
+                loop {
+                    if !first {
+                        let c = self.vval(sg, cond, lp)?;
+                        lp = self.decide(sg, n, lp, &c)?;
+                    }
+                    first = false;
+                    if lp == 0 {
+                        break;
+                    }
+                    self.vexec(sg, body, lp)?;
+                    lp = Self::rejoin(sg, lp);
+                    if k == Kind::For && lp != 0 {
+                        self.vexec(sg, v.child(n, 2), lp)?;
+                    }
+                }
+            }
+            Kind::Return => {
+                let x = if p[0] != 0 { self.vval(sg, v.child(n, 0), mask)? } else { [0; W] };
+                self.ret(sg, p, mask, &x);
+            }
+            Kind::Break => {
+                for l in lanes(mask) {
+                    sg.flow[l] = Flow::Break;
+                }
+            }
+            Kind::Continue => {
+                for l in lanes(mask) {
+                    sg.flow[l] = Flow::Continue;
+                }
+            }
+            _ => {
+                self.vval(sg, n, mask)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// The lanes of a loop's iteration that go on: a `break`'s leave, a `continue`'s come back, a `return`'s leave.
+    fn rejoin(sg: &mut Sg, lp: u32) -> u32 {
+        let mut next = 0;
+        for l in lanes(lp) {
+            match sg.flow[l] {
+                Flow::Break => sg.flow[l] = Flow::Normal,
+                Flow::Continue => {
+                    sg.flow[l] = Flow::Normal;
+                    next |= 1 << l;
+                }
+                Flow::Return => {}
+                Flow::Normal => next |= 1 << l,
+            }
+        }
+        next & !sg.ended
+    }
+
+    /// A `return` of the lanes `mask`, their values `x`: stored in its call's slot, or the lanes end.
+    fn ret(&self, sg: &mut Sg, p: &[u32], mask: u32, x: &Vals) {
+        let (slot, m) = (p[2], M(p[3]));
+        for l in lanes(mask) {
+            sg.flow[l] = Flow::Return;
+            if slot == NO_SLOT {
+                sg.ended |= 1 << l;
+            } else if p[0] != 0 {
+                let at = self.local(sg, &[slot, m.bytes(), 0], l);
+                if m.is_agg() {
+                    // SAFETY: the value is the aggregate's address; the slot, the lane's.
+                    unsafe { std::ptr::copy(x[l] as usize as *const u8, at as usize as *mut u8, m.bytes() as usize) };
+                } else {
+                    unsafe { ops::store(m, at, x[l]) };
+                }
+            }
+        }
+    }
+
+    // The group.
+
+    fn gstmt(&self, g: &mut [Sg], n: usize, masks: &[u32]) -> R<()> {
+        if self.v.gsync(n) {
+            return self.gexec(g, n, masks);
+        }
+        for (s, sg) in g.iter_mut().enumerate() {
+            if masks[s] != 0 {
+                self.vexec(sg, n, masks[s])?;
+            }
+        }
+        Ok(())
+    }
+
+    fn gchild(&self, g: &mut [Sg], n: usize, masks: &[u32]) -> R<Vec<Vals>> {
+        if self.v.gsync(n) {
+            return self.gval(g, n, masks);
+        }
+        let mut out = vec![[0u64; W]; g.len()];
+        for (s, sg) in g.iter_mut().enumerate() {
+            if masks[s] != 0 {
+                out[s] = self.vval(sg, n, masks[s])?;
+            }
+        }
+        Ok(out)
+    }
+
+    /// A branch's decision over the group: each SIMD group's lanes it takes.
+    fn gdecide(&self, g: &[Sg], n: usize, masks: &[u32], c: &[Vals]) -> R<Vec<u32>> {
+        let mut yes = vec![0u32; g.len()];
+        for (s, sg) in g.iter().enumerate() {
+            yes[s] = self.decide(sg, n, masks[s], &c[s])?;
+        }
+        Ok(yes)
+    }
+
+    fn normals(g: &[Sg], masks: &[u32]) -> Vec<u32> {
+        g.iter().zip(masks).map(|(sg, &m)| m & sg.normal()).collect()
+    }
+
+    /// Statement `n`, which has a threadgroup barrier in it, over the group's lanes `masks`.
+    fn gexec(&self, g: &mut [Sg], n: usize, masks: &[u32]) -> R<()> {
+        let v = &self.v;
+        let p = v.p(n);
+        match v.kind(n) {
+            Kind::Block => {
+                let mut live = masks.to_vec();
+                for c in v.children(n) {
+                    if live.iter().all(|&m| m == 0) {
+                        break;
+                    }
+                    self.gstmt(g, c, &live)?;
+                    live = Self::normals(g, &live);
+                }
+            }
+            Kind::Expr => {
+                self.gval(g, v.child(n, 0), masks)?;
             }
             Kind::If => {
-                let c = self.gchild(g, v.child(n, 0), act)?;
-                let (yes, no): (Vec<u32>, Vec<u32>) = act.iter().partition(|&&t| c[t as usize] != 0);
-                if !yes.is_empty() {
+                let c = self.gchild(g, v.child(n, 0), masks)?;
+                let yes = self.gdecide(g, n, masks, &c)?;
+                if yes.iter().any(|&m| m != 0) {
                     self.gstmt(g, v.child(n, 1), &yes)?;
                 }
-                if !no.is_empty() && v.children(n).count() > 2 {
+                let no: Vec<u32> = masks.iter().zip(&yes).map(|(m, y)| m & !y).collect();
+                if no.iter().any(|&m| m != 0) && v.children(n).count() > 2 {
                     self.gstmt(g, v.child(n, 2), &no)?;
                 }
             }
             Kind::While | Kind::For | Kind::Do => {
                 let k = v.kind(n);
                 let (cond, body) = if k == Kind::Do { (v.child(n, 1), v.child(n, 0)) } else { (v.child(n, 0), v.child(n, 1)) };
-                let mut lp = act.to_vec();
+                let mut lp = masks.to_vec();
                 let mut first = k == Kind::Do;
                 loop {
                     if !first {
                         let c = self.gchild(g, cond, &lp)?;
-                        lp.retain(|&t| c[t as usize] != 0);
+                        lp = self.gdecide(g, n, &lp, &c)?;
                     }
                     first = false;
-                    if lp.is_empty() {
+                    if lp.iter().all(|&m| m == 0) {
                         break;
                     }
                     self.gstmt(g, body, &lp)?;
-                    lp.retain(|&t| {
-                        let th = &mut g.th[t as usize];
-                        match th.flow {
-                            Flow::Break => {
-                                th.flow = Flow::Normal;
-                                false
-                            }
-                            Flow::Continue => {
-                                th.flow = Flow::Normal;
-                                true
-                            }
-                            Flow::Return => false,
-                            Flow::Normal => true,
-                        }
-                    });
-                    if k == Kind::For && !lp.is_empty() {
+                    for (s, sg) in g.iter_mut().enumerate() {
+                        lp[s] = Self::rejoin(sg, lp[s]);
+                    }
+                    if k == Kind::For && lp.iter().any(|&m| m != 0) {
                         self.gstmt(g, v.child(n, 2), &lp)?;
                     }
                 }
             }
             Kind::Return => {
-                let x = if p[0] != 0 { self.gchild(g, v.child(n, 0), act)? } else { vec![0; g.th.len()] };
-                for &t in act {
-                    let th = &mut g.th[t as usize];
-                    th.ret = x[t as usize];
-                    th.flow = Flow::Return;
-                    th.ended |= g.depth == 0;
+                let x = if p[0] != 0 { self.gchild(g, v.child(n, 0), masks)? } else { vec![[0; W]; g.len()] };
+                for (s, sg) in g.iter_mut().enumerate() {
+                    self.ret(sg, p, masks[s], &x[s]);
                 }
             }
             _ => {
-                self.gval(g, n, act)?;
+                self.gval(g, n, masks)?;
             }
         }
         Ok(())
     }
 
-    fn gval(&self, g: &mut G, n: usize, act: &[u32]) -> R<Vec<u64>> {
+    /// Expression `n`, which has a threadgroup barrier in it, over the group's lanes `masks`.
+    fn gval(&self, g: &mut [Sg], n: usize, masks: &[u32]) -> R<Vec<Vals>> {
         let v = &self.v;
         let p = v.p(n);
-        let k = v.kind(n);
-        match k {
-            Kind::Cond => {
-                let c = self.gchild(g, v.child(n, 0), act)?;
-                let (yes, no): (Vec<u32>, Vec<u32>) = act.iter().partition(|&&t| c[t as usize] != 0);
-                let a = if yes.is_empty() { vec![0; g.th.len()] } else { self.gchild(g, v.child(n, 1), &yes)? };
-                let mut b = if no.is_empty() { vec![0; g.th.len()] } else { self.gchild(g, v.child(n, 2), &no)? };
-                for &t in &yes {
-                    b[t as usize] = a[t as usize];
+        let mut out = vec![[0u64; W]; g.len()];
+        match v.kind(n) {
+            Kind::Inline => {
+                let mut live = masks.to_vec();
+                for c in v.children(n) {
+                    if live.iter().all(|&m| m == 0) {
+                        break;
+                    }
+                    self.gstmt(g, c, &live)?;
+                    live = Self::normals(g, &live);
                 }
-                return Ok(b);
+                for (s, sg) in g.iter_mut().enumerate() {
+                    for l in lanes(masks[s]) {
+                        if sg.flow[l] == Flow::Return {
+                            sg.flow[l] = Flow::Normal;
+                        }
+                    }
+                    out[s] = self.result(sg, n, masks[s] & !sg.ended);
+                }
             }
-            Kind::Logic => {
-                let and = p[0] != 0;
-                let mut a = self.gchild(g, v.child(n, 0), act)?;
-                let rest: Vec<u32> = act.iter().copied().filter(|&t| (a[t as usize] != 0) == and).collect();
-                if !rest.is_empty() {
-                    let b = self.gchild(g, v.child(n, 1), &rest)?;
-                    for &t in &rest {
-                        a[t as usize] = u64::from(b[t as usize] != 0);
+            Kind::Block | Kind::Expr => self.gexec(g, n, masks)?,
+            Kind::Cond | Kind::Logic => {
+                let cond = v.kind(n) == Kind::Cond;
+                let c = self.gchild(g, v.child(n, 0), masks)?;
+                // The lanes that take the second operand: a `?:`'s true ones, an `&&`'s true, an `||`'s false.
+                let take = cond || p[0] != 0;
+                let first: Vec<u32> = c.iter().zip(masks).map(|(c, &m)| lanes(m).filter(|&l| (c[l] != 0) == take).fold(0u32, |x, l| x | 1 << l)).collect();
+                let a = self.gchild(g, v.child(n, 1), &first)?;
+                let rest: Vec<u32> = masks.iter().zip(&first).map(|(m, f)| m & !f).collect();
+                let b = if cond { self.gchild(g, v.child(n, 2), &rest)? } else { c.clone() };
+                for s in 0..g.len() {
+                    for l in lanes(masks[s]) {
+                        let took = first[s] >> l & 1 != 0;
+                        out[s][l] = if cond {
+                            if took { a[s][l] } else { b[s][l] }
+                        } else {
+                            u64::from(if took { a[s][l] != 0 } else { c[s][l] != 0 })
+                        };
                     }
                 }
-                return Ok(a);
             }
-            Kind::Block | Kind::Expr => {
-                self.gexec(g, n, act)?;
-                return Ok(vec![0; g.th.len()]);
-            }
-            _ => {}
-        }
-        let mut xs: Vec<Vec<u64>> = Vec::with_capacity(3);
-        for c in v.children(n) {
-            xs.push(self.gchild(g, c, act)?);
-        }
-        let mut out = vec![0u64; g.th.len()];
-        match k {
-            Kind::Call => {
-                let mut saved = Vec::with_capacity(act.len());
-                let mut f = 0;
-                for &t in act {
-                    let args: Vec<u64> = xs.iter().map(|x| x[t as usize]).collect();
-                    let (callee, fp, sp) = self.enter(&mut g.th[t as usize], n, &args)?;
-                    f = callee;
-                    saved.push((fp, sp));
-                }
-                g.depth += 1;
-                let r = self.gexec(g, v.child(f, 0), act);
-                g.depth -= 1;
-                r?;
-                for (&t, s) in act.iter().zip(saved) {
-                    let th = &mut g.th[t as usize];
-                    th.flow = Flow::Normal;
-                    out[t as usize] = self.leave(th, n, s);
-                }
-            }
-            Kind::Builtin => {
-                let b = Builtin::of(p[0]);
-                if b.syncs() {
-                    self.meet(g, n, b, act, &xs, &mut out)?;
-                } else {
-                    for &t in act {
-                        let a = [0, 1, 2].map(|i| xs.get(i).map_or(0, |x| x[t as usize]));
-                        out[t as usize] = self.builtin(&g.th[t as usize], n, b, a)?;
-                    }
+            Kind::Builtin if Builtin::of(p[0]) == Builtin::Barrier => {
+                // The barrier: every SIMD group's region before it has run (the rule proven by the vector pass).
+                for c in v.children(n) {
+                    self.gchild(g, c, masks)?;
                 }
             }
             _ => {
-                for &t in act {
-                    let x = |i: usize| xs[i][t as usize];
-                    out[t as usize] = match k {
-                        Kind::Load => unsafe { ops::load(M(p[0]), x(0)) },
-                        Kind::Store => {
-                            unsafe { ops::store(M(p[0]), x(0), x(1)) };
-                            x(1)
-                        }
-                        Kind::Zero => {
-                            unsafe { std::ptr::write_bytes(x(0) as usize as *mut u8, 0, p[1] as usize) };
-                            x(0)
-                        }
-                        Kind::Copy => {
-                            unsafe { std::ptr::copy(x(1) as usize as *const u8, x(0) as usize as *mut u8, p[0] as usize) };
-                            x(0)
-                        }
-                        Kind::Bin => ops::bin(Op::of(p[0]), M(p[1]), x(0), x(1)).map_err(|e| Error(e.to_string()))?,
-                        Kind::Un => ops::un(Op::of(p[0]), M(p[1]), x(0)),
-                        Kind::Cast => ops::cast(M(p[0]), M(p[1]), x(0)),
-                        Kind::Comma => x(1),
-                        Kind::Update => self.update_at(n, x(0), x(1)),
-                        k => return Err(Error(format!("a {k:?} node that syncs"))),
-                    };
+                let mut xs = Vec::with_capacity(3);
+                for c in v.children(n) {
+                    xs.push(self.gchild(g, c, masks)?);
+                }
+                let none = [0u64; W];
+                for (s, sg) in g.iter().enumerate() {
+                    if masks[s] != 0 {
+                        let x = [0, 1, 2].map(|j| xs.get(j).map_or(&none, |x: &Vec<Vals>| &x[s]));
+                        self.vop(sg, n, masks[s], x, &mut out[s])?;
+                    }
                 }
             }
         }
         Ok(out)
-    }
-
-    /// A sync point met by the threads `act`: the barrier rule checked, and the operation's values.
-    fn meet(&self, g: &mut G, n: usize, b: Builtin, act: &[u32], xs: &[Vec<u64>], out: &mut [u64]) -> R<()> {
-        let p = self.v.p(n);
-        let site = p[3];
-        let mut at = vec![false; g.th.len()];
-        for &t in act {
-            at[t as usize] = true;
-            if let Some(s) = g.th[t as usize].owed {
-                return Err(Error(format!("thread {t} was not at {} (its group's threads met there without it), and then reached {}", self.name(s), self.name(site))));
-            }
-        }
-        // Who must be here: the group's threads, or the SIMD groups' lanes, that have not ended.
-        let whole = b == Builtin::Barrier;
-        let sgs: std::collections::BTreeSet<u32> = act.iter().map(|&t| t / WIDTH).collect();
-        for (t, th) in g.th.iter_mut().enumerate() {
-            let due = whole || sgs.contains(&(t as u32 / WIDTH));
-            if due && !th.ended && !at[t] {
-                th.owed = Some(site);
-            }
-        }
-        let lane_of = |t: u32| t % WIDTH;
-        let n_threads = g.th.len() as u32;
-        let src = |t: u32, lane: u32| -> Option<u32> {
-            let s = t / WIDTH * WIDTH + lane;
-            (s < n_threads && at[s as usize]).then_some(s)
-        };
-        for &t in act {
-            let x = |i: usize| xs.get(i).map_or(0, |x| x[t as usize]);
-            let own = x(0);
-            out[t as usize] = match b {
-                Builtin::Barrier | Builtin::SubGroupBarrier => 0,
-                Builtin::SubGroupBallot => {
-                    let base = t / WIDTH * WIDTH;
-                    let mut m = 0u64;
-                    for l in 0..WIDTH {
-                        let s = base + l;
-                        if s < n_threads && at[s as usize] && xs[0][s as usize] != 0 {
-                            m |= 1 << l;
-                        }
-                    }
-                    m
-                }
-                Builtin::SubGroupShuffle => src(t, (x(1) as u32) % WIDTH).map_or(0, |s| xs[0][s as usize]),
-                Builtin::SubGroupShuffleXor => src(t, (lane_of(t) ^ x(1) as u32) % WIDTH).map_or(0, |s| xs[0][s as usize]),
-                Builtin::SubGroupShuffleUp => lane_of(t).checked_sub(x(1) as u32).and_then(|l| src(t, l)).map_or(own, |s| xs[0][s as usize]),
-                Builtin::SubGroupShuffleDown => {
-                    let l = lane_of(t) + x(1) as u32;
-                    if l < WIDTH { src(t, l).map_or(own, |s| xs[0][s as usize]) } else { own }
-                }
-                _ => unreachable!("a builtin that syncs"),
-            };
-        }
-        Ok(())
     }
 }
 

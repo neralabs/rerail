@@ -8,7 +8,7 @@ use std::collections::HashMap;
 
 use crate::Error;
 use crate::ctape::C;
-use crate::k::{Builder, Builtin, Kind, M, Op, SYNCS};
+use crate::k::{Builder, Builtin, Kind, M, Op};
 use crate::ty::{I32, I64, Struct, Ty, U32, U64, lay_out};
 
 /// A function of the program.
@@ -71,7 +71,8 @@ impl Program {
 
 #[derive(Clone, Copy, Debug)]
 enum Place {
-    Local(u32),
+    /// A variable of the frame: its offset, size and number (a lane's own, decision 0567 §2.3).
+    Local(u32, u32, u32),
     Shared(u32),
     Global(u32),
 }
@@ -98,6 +99,8 @@ struct L<'a> {
     /// return type.
     at: u32,
     frame: u32,
+    /// The function's variables numbered so far (a `Local`'s fourth word).
+    decls: u32,
     shared: u32,
     ret: Ty,
     tys: HashMap<usize, Ty>,
@@ -122,6 +125,7 @@ pub fn lower(source: &crate::Source, tape: &rerail_c_lean::Tape) -> R<Program> {
         scopes: Vec::new(),
         at: 0,
         frame: 0,
+        decls: 0,
         shared: 0,
         ret: Ty::Void,
         tys: HashMap::new(),
@@ -141,58 +145,14 @@ pub fn lower(source: &crate::Source, tape: &rerail_c_lean::Tape) -> R<Program> {
     l.b.leaf(Kind::Data, &words);
     l.b.set_word(root, 0, l.funcs.len() as u32);
     l.b.close(root);
-    let stacks = cut(&mut l.b, &l.funcs)?;
+    let stacks = stacks(&l.b, &l.funcs)?;
     let globals = l.globals.iter().filter_map(|(n, v)| if let Place::Global(at) = v.place { Some((n.clone(), (v.ty.clone(), at))) } else { None }).collect();
     Ok(Program { tape: l.b.finish(), funcs: l.funcs, structs: l.structs, stacks, sites: l.sites, typedefs: l.typedefs, tags: l.tags, globals })
 }
 
-/// The cut (decision 0567 §2.3): each node whose subtree reaches a sync point flagged `SYNCS`, a call by whether its
-/// function's body does; and each function's stack, its frame and its deepest callee's.
-fn cut(b: &mut Builder, funcs: &[Func]) -> R<Vec<u32>> {
-    let n = b.len();
-    let kind = |b: &Builder, i: usize| Kind::of((b.key(i) & 0x3ff) as u16);
-    // Which functions sync, to a fixed point (a call may come before its callee's body).
-    let mut fsync = vec![false; funcs.len()];
-    let bodies: Vec<(usize, usize)> = funcs.iter().filter_map(|f| f.node).map(|at| (at, b.word(at, 0) as usize)).collect();
-    loop {
-        let mut changed = false;
-        for &(at, id) in &bodies {
-            if fsync[id] {
-                continue;
-            }
-            let s = (at..at + b.size(at)).any(|i| match kind(b, i) {
-                Kind::Builtin => Builtin::of(b.word(i, 0)).syncs(),
-                Kind::Call => fsync[b.word(i, 0) as usize],
-                _ => false,
-            });
-            if s {
-                fsync[id] = true;
-                changed = true;
-            }
-        }
-        if !changed {
-            break;
-        }
-    }
-    let mut flag = vec![false; n];
-    for i in (0..n).rev() {
-        let mut s = match kind(b, i) {
-            Kind::Builtin => Builtin::of(b.word(i, 0)).syncs(),
-            Kind::Call => fsync[b.word(i, 0) as usize],
-            _ => false,
-        };
-        let (mut at, end) = (i + 1, i + b.size(i));
-        while at < end && !s {
-            s |= flag[at];
-            at += b.size(at);
-        }
-        flag[i] = s && kind(b, i) != Kind::Func && kind(b, i) != Kind::Program;
-    }
-    for (i, f) in flag.iter().enumerate() {
-        if *f {
-            b.set_field(i, SYNCS);
-        }
-    }
+/// Each function's stack, its frame and its deepest callee's: no kernel recurses (a kernel's vector tape inlines
+/// every call, `vector`).
+fn stacks(b: &Builder, funcs: &[Func]) -> R<Vec<u32>> {
     // Stacks, callees first: a function's calls are of functions declared before it, or its own body's later ones;
     // no kernel recurses, so a depth-first walk ends.
     let mut stacks = vec![u32::MAX; funcs.len()];
@@ -547,13 +507,13 @@ impl L<'_> {
     /// A function declared: its index, the one already declared with its parameters if any.
     fn declare(&mut self, name: &str, ret: Ty, params: Vec<(String, Ty)>, kernel: bool) -> u32 {
         let types: Vec<Ty> = params.iter().map(|p| p.1.clone()).collect();
-        if let Some(ids) = self.fnames.get(name) {
-            if let Some(&id) = ids.iter().find(|&&id| self.funcs[id as usize].params == types) {
-                let f = &mut self.funcs[id as usize];
-                f.kernel |= kernel;
-                f.names = params.into_iter().map(|p| p.0).collect();
-                return id;
-            }
+        if let Some(ids) = self.fnames.get(name)
+            && let Some(&id) = ids.iter().find(|&&id| self.funcs[id as usize].params == types)
+        {
+            let f = &mut self.funcs[id as usize];
+            f.kernel |= kernel;
+            f.names = params.into_iter().map(|p| p.0).collect();
+            return id;
         }
         self.funcs.push(Func { name: name.to_string(), ret, params: types, node: None, kernel, names: params.into_iter().map(|p| p.0).collect() });
         let id = (self.funcs.len() - 1) as u32;
@@ -746,10 +706,11 @@ impl L<'_> {
         let x = self.c.child(e, "value").map_or_else(|| self.err(e, "sizeof of nothing"), Ok)?;
         let x = if self.c.kind(x) == "parenthesized_expression" { self.inner(x)? } else { x };
         // `sizeof(T)` of a typedef's name reads as an expression to C's grammar.
-        if self.c.kind(x) == "identifier" && self.lookup(self.c.text(x)).is_none() {
-            if let Some(t) = self.typedefs.get(self.c.text(x)) {
-                return Ok(self.size(&t.clone()));
-            }
+        if self.c.kind(x) == "identifier"
+            && self.lookup(self.c.text(x)).is_none()
+            && let Some(t) = self.typedefs.get(self.c.text(x))
+        {
+            return Ok(self.size(&t.clone()));
         }
         let t = self.ty(x)?;
         Ok(self.size(&t))
@@ -769,11 +730,13 @@ impl L<'_> {
         // [id, frame bytes, threadgroup bytes, return type, parameters, (offset, type) a parameter]
         let mut words = vec![id, 0, 0, self.m(&ret).0, params.len() as u32];
         self.scopes.push(HashMap::new());
-        (self.at, self.frame, self.shared, self.ret) = (0, 0, 0, ret);
+        (self.at, self.frame, self.shared, self.ret, self.decls) = (0, 0, 0, ret, 0);
         for (n, t) in &params {
             let at = self.alloc(t);
             words.extend([at, self.m(t).0]);
-            self.scopes.last_mut().expect("a scope").insert(n.clone(), Var { ty: t.clone(), place: Place::Local(at) });
+            let size = self.size(t) as u32;
+            let id = self.decl();
+            self.scopes.last_mut().expect("a scope").insert(n.clone(), Var { ty: t.clone(), place: Place::Local(at, size, id) });
         }
         let node = self.b.open(Kind::Func, &words);
         self.stmt(body)?;
@@ -786,6 +749,18 @@ impl L<'_> {
         }
         self.funcs[id as usize].node = Some(node);
         Ok(())
+    }
+
+    /// A site: what is at C node `at` (`what`) and its place in the source, for an error (`Program::sites`).
+    fn site(&mut self, at: usize, what: &str) -> u32 {
+        self.sites.push(format!("{what} at {}", self.src.place(self.c.start(at) as u32)));
+        (self.sites.len() - 1) as u32
+    }
+
+    /// The next variable's number.
+    fn decl(&mut self) -> u32 {
+        self.decls += 1;
+        self.decls - 1
     }
 
     /// A place in the frame for a value of `t`.
@@ -838,7 +813,8 @@ impl L<'_> {
                 _ => return self.err(s, "an expression statement"),
             },
             "if_statement" => {
-                let n = self.b.open(Kind::If, &[]);
+                let site = self.site(s, "if");
+                let n = self.b.open(Kind::If, &[site]);
                 self.cond(self.c.child(s, "condition").expect("a condition"))?;
                 self.stmt(self.c.child(s, "consequence").expect("a consequence"))?;
                 if let Some(e) = self.c.child(s, "alternative") {
@@ -848,13 +824,15 @@ impl L<'_> {
                 self.b.close(n);
             }
             "while_statement" => {
-                let n = self.b.open(Kind::While, &[]);
+                let site = self.site(s, "while");
+                let n = self.b.open(Kind::While, &[site]);
                 self.cond(self.c.child(s, "condition").expect("a condition"))?;
                 self.scoped(|l| l.stmt(l.c.child(s, "body").expect("a body")))?;
                 self.b.close(n);
             }
             "do_statement" => {
-                let n = self.b.open(Kind::Do, &[]);
+                let site = self.site(s, "do");
+                let n = self.b.open(Kind::Do, &[site]);
                 self.scoped(|l| l.stmt(l.c.child(s, "body").expect("a body")))?;
                 self.cond(self.c.child(s, "condition").expect("a condition"))?;
                 self.b.close(n);
@@ -871,7 +849,8 @@ impl L<'_> {
                             l.b.close(e);
                         }
                     }
-                    let f = l.b.open(Kind::For, &[]);
+                    let site = l.site(s, "for");
+                    let f = l.b.open(Kind::For, &[site]);
                     match l.c.child(s, "condition") {
                         Some(c) => l.cond(c)?,
                         None => {
@@ -896,10 +875,12 @@ impl L<'_> {
             }
             "return_statement" => match self.named(s).as_slice() {
                 [] => {
-                    self.b.leaf(Kind::Return, &[0]);
+                    let site = self.site(s, "return");
+                    self.b.leaf(Kind::Return, &[0, site]);
                 }
                 [x] => {
-                    let n = self.b.open(Kind::Return, &[1]);
+                    let site = self.site(s, "return");
+                    let n = self.b.open(Kind::Return, &[1, site]);
                     let ret = self.ret.clone();
                     if ret == Ty::Void {
                         self.rv(*x)?;
@@ -911,10 +892,12 @@ impl L<'_> {
                 _ => return self.err(s, "a return"),
             },
             "break_statement" => {
-                self.b.leaf(Kind::Break, &[]);
+                let site = self.site(s, "break");
+                self.b.leaf(Kind::Break, &[site]);
             }
             "continue_statement" => {
-                self.b.leaf(Kind::Continue, &[]);
+                let site = self.site(s, "continue");
+                self.b.leaf(Kind::Continue, &[site]);
             }
             ";" | "comment" => {
                 self.b.leaf(Kind::Empty, &[]);
@@ -947,10 +930,12 @@ impl L<'_> {
             }
             let at = self.alloc(&ty);
             let init = if self.c.kind(x) == "init_declarator" { self.c.child(x, "value") } else { None };
-            self.scopes.last_mut().expect("a scope").insert(name, Var { ty: ty.clone(), place: Place::Local(at) });
+            let size = self.size(&ty) as u32;
+            let id = self.decl();
+            self.scopes.last_mut().expect("a scope").insert(name, Var { ty: ty.clone(), place: Place::Local(at, size, id) });
             if let Some(i) = init {
                 let e = self.b.open(Kind::Expr, &[]);
-                self.init(i, &ty, at)?;
+                self.init(i, &ty, (at, size, id), 0)?;
                 self.b.close(e);
             }
         }
@@ -958,26 +943,27 @@ impl L<'_> {
         Ok(())
     }
 
-    /// The initializer `i` of a variable of `ty` at frame offset `at`, as one expression.
-    fn init(&mut self, i: usize, ty: &Ty, at: u32) -> R<()> {
+    /// The initializer `i` of the part of type `ty` at byte `inner` of the variable `var` (its offset and size), as
+    /// one expression.
+    fn init(&mut self, i: usize, ty: &Ty, var: (u32, u32, u32), inner: u32) -> R<()> {
         if self.c.kind(i) != "initializer_list" {
-            return self.assign_to(|l| l.b.leaf(Kind::Local, &[at]), ty, i);
+            return self.assign_to(|l| l.b.leaf(Kind::Local, &[var.0, var.1, inner, var.2]), ty, i);
         }
         // `{...}`: zero, then each element, as a comma's operands.
         let elements: Vec<(Ty, u32)> = match ty {
-            Ty::Array(e, n) => (0..*n).map(|k| ((**e).clone(), at + (k * self.size(e)) as u32)).collect(),
-            Ty::Struct(s) => self.structs[*s as usize].fields.iter().map(|f| (f.1.clone(), at + f.2 as u32)).collect(),
+            Ty::Array(e, n) => (0..*n).map(|k| ((**e).clone(), inner + (k * self.size(e)) as u32)).collect(),
+            Ty::Struct(s) => self.structs[*s as usize].fields.iter().map(|f| (f.1.clone(), inner + f.2 as u32)).collect(),
             _ => return self.err(i, "an initializer list for a scalar"),
         };
         let items = self.named(i);
         let c = self.b.open(Kind::Comma, &[]);
         let z = self.b.open(Kind::Zero, &[M::VOID.0, self.size(ty) as u32]);
-        self.b.leaf(Kind::Local, &[at]);
+        self.b.leaf(Kind::Local, &[var.0, var.1, inner, var.2]);
         self.b.close(z);
         let n = self.b.open(Kind::Block, &[]);
         for (x, (t, a)) in items.into_iter().zip(elements) {
             let e = self.b.open(Kind::Expr, &[]);
-            self.init(x, &t, a)?;
+            self.init(x, &t, var, a)?;
             self.b.close(e);
         }
         self.b.close(n);
@@ -1173,8 +1159,6 @@ impl L<'_> {
                 Some(2)
             } else if p.is_ptr() && (a.is_ptr() || a.is_int()) {
                 Some(if p.pointee() == a.pointee() || matches!(p.pointee(), Some(Ty::Void)) { 0 } else { 3 })
-            } else if p == a {
-                Some(0)
             } else {
                 None
             }
@@ -1245,7 +1229,7 @@ impl L<'_> {
 
     fn place(&mut self, p: Place) {
         match p {
-            Place::Local(at) => self.b.leaf(Kind::Local, &[at]),
+            Place::Local(at, size, id) => self.b.leaf(Kind::Local, &[at, size, 0, id]),
             Place::Shared(at) => self.b.leaf(Kind::Shared, &[at]),
             Place::Global(at) => self.b.leaf(Kind::Global, &[at]),
         };
@@ -1518,9 +1502,8 @@ impl L<'_> {
             }
             Callee::Builtin(b, params) => {
                 let ret = if b == Builtin::SubGroupBallot { M::U32 } else { self.m(t) };
-                let site = self.sites.len() as u32;
-                let name = self.c.text(self.c.child(e, "function").expect("a callee"));
-                self.sites.push(format!("{name} at {}", self.src.place(self.c.start(e) as u32)));
+                let name = self.c.text(self.c.child(e, "function").expect("a callee")).to_string();
+                let site = self.site(e, &name);
                 let mut words = vec![b as u32, ret.0, params.len() as u32, site];
                 words.extend(params.iter().map(|p| self.m(p).0));
                 let n = self.b.open(Kind::Builtin, &words);

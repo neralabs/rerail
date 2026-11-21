@@ -1,5 +1,6 @@
-//! The CPU device's kernels run by the vector path's interpreter (decision 0567, step 1), with `RERAIL_CPU_EXEC=vec`:
-//! the source preprocessed as OpenCL C (`rerail_ukl_vec`), lowered to its kernel tape, and each launch interpreted,
+//! The CPU device's kernels run by the vector path's interpreter (decision 0567, step 2), with `RERAIL_CPU_EXEC=vec`:
+//! the source preprocessed as OpenCL C (`rerail_ukl_vec`), lowered to its kernel tape, each kernel vectorized on its
+//! first launch (refused there if it breaks the barrier rule) and each launch interpreted at 32 lanes,
 //! where the CPU backend otherwise compiles the source with the host's compiler. Its kernels' arguments are their
 //! rows, as a compiled library's are (`rerail_device::rows`), read from the kernel tape's constants and types.
 
@@ -8,7 +9,9 @@ use crate::device::{ComputeFunctionLibrary, Device};
 use rerail_ukl_vec::lower::Program;
 use rerail_ukl_vec::run::Arg;
 use rerail_ukl_vec::ty::Ty;
-use std::sync::Arc;
+use rerail_ukl_vec::vector::Kernel;
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
 
 /// Whether `device`'s kernels are interpreted: the CPU's, with `RERAIL_CPU_EXEC=vec`.
 pub fn on(device: &Device) -> bool {
@@ -22,11 +25,13 @@ pub fn library(name: &str, path: &str, text: &str, defines: &[(&str, &str)]) -> 
         p = p.define(n, Some(v));
     }
     let program = rerail_ukl_vec::program(&p, path).map_err(|e| format!("{name}: {e}"))?;
-    Ok(ComputeFunctionLibrary::Cpu(CpuComputeFunctionLibrary::interpreted(Arc::new(Interpreted { program }), name)))
+    Ok(ComputeFunctionLibrary::Cpu(CpuComputeFunctionLibrary::interpreted(Arc::new(Interpreted { program, kernels: Mutex::default() }), name)))
 }
 
 struct Interpreted {
     program: Program,
+    /// Each kernel's vector tape, made on its first launch, or why it is refused.
+    kernels: Mutex<HashMap<String, Result<Arc<Kernel>, String>>>,
 }
 
 /// A type's size, alignment and code (`ukl_type_code`: `u`, `i`, `f`, `d`, `b`; another for a structure).
@@ -97,6 +102,7 @@ impl CpuInterpreter for Interpreted {
         // The entry's indirect counts (`__ukl_groups`, `__ukl_groups_at`): none, the device read them (`launch_indirect`).
         args.push(Arg::Bytes(vec![0; 8]));
         args.push(Arg::Bytes(vec![0; 4]));
-        rerail_ukl_vec::run::run(&self.program, k, &args, grid, block, shared).map_err(|e| e.0)
+        let vk = self.kernels.lock().map_err(|_| "a kernel's vectorizing panicked".to_string())?.entry(kernel.to_string()).or_insert_with(|| rerail_ukl_vec::vector::vectorize(&self.program, k).map(Arc::new).map_err(|e| e.0)).clone()?;
+        rerail_ukl_vec::run::run(&self.program, &vk, &args, grid, block, shared).map_err(|e| e.0)
     }
 }
