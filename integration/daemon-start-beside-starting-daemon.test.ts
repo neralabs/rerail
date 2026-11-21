@@ -31,4 +31,20 @@ describe("a start beside a daemon still in its start", () => {
       await place.end();
     }
   }, 120_000);
+
+  // `rerail status` named a daemon still in its start as one that does not answer, and told the person to stop it.
+  test("rerail status beside a daemon still in its start says it is starting, and names no stop", async () => {
+    const place = StartingDaemonHome.make();
+    try {
+      const start = place.run(["daemon", "start"]);
+      const held = await place.held();
+      const status = await place.run(["status"]).done;
+      place.release();
+      expect(status).toMatchObject({ code: 4, stdout: expect.stringContaining(`Rerail daemon (pid ${held}) is still starting and does not answer yet.`) });
+      expect(status.stdout).not.toContain("rerail daemon stop");
+      expect(await start.done).toMatchObject({ code: 0 });
+    } finally {
+      await place.end();
+    }
+  }, 120_000);
 });

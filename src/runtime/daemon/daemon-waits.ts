@@ -6,7 +6,8 @@
 
 /**
  * How long a start waits, each in turn: for the start lock, for a daemon that holds the home to record itself
- * (`lookupHomeDaemon`), and for the daemon it launched to answer (`readyDaemon`).
+ * (`lookupHomeDaemon`), and for the daemon it launched, or found still in its start, to answer (`readyDaemon`,
+ * `untilStarted`).
  */
 export const START_TIMEOUT_MS = 15_000;
 /** How long one health probe of the daemon, or its engine's proof on Windows, waits for an answer. */

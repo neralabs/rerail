@@ -148,7 +148,7 @@ export class StartingDaemonHome {
 }
 
 /** What a start says while it waits for a daemon still in its start. */
-export const WAITS_BESIDE_STARTING = /is still starting; this start waits until it answers/u;
+export const WAITS_BESIDE_STARTING = /is still starting; this start waits for it to answer/u;
 
 export interface TwoCommandsSeen {
   setup: Ran;
