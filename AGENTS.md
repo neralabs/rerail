@@ -79,8 +79,11 @@ run …` by default: the hosts take several test commands each at once, in a war
 checkout, and this machine stays free for the edit loop. A build here prints when a host has a free
 test slot. Run tests here only when no host is usable (test-remote then runs them here itself).
 A command that does not need macOS may go to a Linux host, as a Linux build and run (as CI's):
-`--os macos` keeps one on a Mac when its result must be macOS's. Each command gets a share of its
-host (twice its cores over its test slots) as its cargo jobs and test threads.
+`--os macos` keeps one on a Mac when its result must be macOS's. `--os linux` alone takes any Linux
+host, x86_64 PCs and a 6 GB VM included: say what the command needs with `--arch arm64` (or
+`x86_64`) and `--memory GB` (what a command there gets; `status` shows each host's), not by naming a
+host. Each command gets a share of its host (twice its cores over its test slots) as its cargo jobs
+and test threads.
 
 A test that takes 20 s or more belongs in the slow tier (the default profile's
 `default-filter`). Tests that read the packs' test data need it pulled first

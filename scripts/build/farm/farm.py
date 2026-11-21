@@ -24,7 +24,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 55
+VERSION = 56
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1085,6 +1085,24 @@ def host_os(host):
     return host.get("os", "macos")
 
 
+# `uname -m`'s names, as test-remote's --arch takes them.
+ARCHES = {"arm64": "arm64", "aarch64": "arm64", "x86_64": "x86_64", "amd64": "x86_64"}
+
+
+def host_arch(host):
+    """`host`'s CPU architecture ("arm64", "x86_64"), as its last health probe found it (`arch` in
+    the configuration for one never probed: a guest not yet started); None when unknown. A Windows
+    host's is its WSL's, the same machine's."""
+    return read_json(state("health", host["name"]), {}).get("arch") or host.get("arch")
+
+
+def host_memory_gb(host):
+    """The memory a command on `host` has, in GB: a VM's own (a guest's is less than its machine's),
+    from its last health probe (`memory_gb` in the configuration for one never probed); None when
+    unknown. A Windows host's is its WSL VM's, under what Windows itself has."""
+    return read_json(state("health", host["name"]), {}).get("memory_gb") or host.get("memory_gb")
+
+
 def entry(name):
     """`name`'s configuration entry, or {} (a name ssh knows that the farm does not)."""
     return next((h for h in hosts() if h["name"] == name), {})
@@ -1171,7 +1189,8 @@ def probe(host, cfg, fell_back=False, recovered=False):
     previous = read_json(state("health", name), {})
     h = {"checked": time.time(), "ok": False, "failures": previous.get("failures", 0),
          "mbps": previous.get("mbps"), "mbps_at": previous.get("mbps_at", 0),
-         "mbps_seen": [s for s in previous.get("mbps_seen", []) if time.time() - s[0] < MBPS_MEMORY_SECONDS]}
+         "mbps_seen": [s for s in previous.get("mbps_seen", []) if time.time() - s[0] < MBPS_MEMORY_SECONDS],
+         "arch": previous.get("arch"), "memory_gb": previous.get("memory_gb")}
     if previous.get("route") != route(name):
         h["mbps"], h["mbps_at"], h["mbps_seen"] = None, 0, []  # another path: its throughput is not known
     # Free disk: what macOS gives an important write (AVAILABLE_JS), then statvfs's, in KB.
@@ -1192,6 +1211,10 @@ def probe(host, cfg, fell_back=False, recovered=False):
         # Counted first; docker may be outside a plain ssh command's PATH on a Mac.
         script = ('echo "fleet $(PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin '
                   'docker ps -q --filter label=fleet.job 2>/dev/null | wc -l)"; ' + script)
+    # Its CPU architecture and memory (`host_arch`, `host_memory_gb`; test-remote's --arch and
+    # --memory), first: a VM's own, which is what a command there gets.
+    memory = "$(($(sysctl -n hw.memsize) / 1024))" if host_os(host) == "macos" else "$(awk '/^MemTotal:/ {print $2}' /proc/meminfo)"
+    script = f'echo "hw $(uname -m) {memory}"; ' + script
     # Asked twice before it counts as down, the second time with longer to answer: one lost or slow
     # connection (this Mac at a load of 90 can take seconds to start ssh) is not a host gone.
     for timeout in (10, 20):
@@ -1215,6 +1238,11 @@ def probe(host, cfg, fell_back=False, recovered=False):
         h["why"] = blocked or "unreachable (off, asleep, or off the network)"
         return h
     lines = out.stdout.splitlines()
+    if lines and lines[0].startswith("hw "):
+        words = lines.pop(0).split()
+        if len(words) == 3 and words[2].isdigit():
+            h["arch"] = ARCHES.get(words[1], words[1])
+            h["memory_gb"] = round(int(words[2]) / (1 << 20))
     fleet_jobs = None
     if lines and lines[0].startswith("fleet "):
         fleet_jobs = h["fleet_jobs"] = int(lines.pop(0).split()[1] or 0)

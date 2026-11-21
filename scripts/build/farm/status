@@ -73,7 +73,8 @@ def main(argv):
                                                             (None if h.get("busy") is None else f"{h['busy']}%", "of its CPU busy"),
                                                             (h.get("load"), "load average")) if v is not None)
             state = "usable" if h.get("ok") else f"not usable: {h.get('why')}"
-            print(f"  {host['name']}: {state} ({host.get('cores')} cores; {uses}{'; ' + facts if facts else ''})")
+            hw = " ".join(x for x in (farm.host_arch(host), f"{farm.host_memory_gb(host)} GB" if farm.host_memory_gb(host) else None) if x)
+            print(f"  {host['name']}: {state} ({host.get('cores')} cores{', ' + hw if hw else ''}; {uses}{'; ' + facts if facts else ''})")
             if speed(host["name"], base):
                 print(f"    {speed(host['name'], base)}")
             if h.get("arrival") and not farm.link_of(host):
