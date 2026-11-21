@@ -166,9 +166,10 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const audit = await runGitWithoutBlocking(work, AUDIT_DIFF);
 
     vi.stubEnv("GIT_TRACE2_EVENT", undefined);
-    // The checkout's config listing, its diff, its index's submodules, its `.gitmodules` and its top folder; then the
-    // submodule's config listing and its status, and no listing of the submodule's own index.
-    expect(readdirSync(trace)).toHaveLength(7);
+    // The checkout's config listing, its diff, its index's submodules and its top folder (the audit's diff names
+    // `--ignore-submodules=none`, so `.gitmodules` is not read); then the submodule's config listing and its status,
+    // and no listing of the submodule's own index.
+    expect(readdirSync(trace)).toHaveLength(6);
     expect(audit.stdout).toBe(git(work, ...AUDIT_DIFF));
   }, 60_000);
 
