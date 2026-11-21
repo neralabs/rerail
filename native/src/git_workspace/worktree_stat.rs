@@ -633,8 +633,9 @@ mod tests {
     /// (a function it lacks, a denial, a redirector that does not take the query) cannot tell.
     #[test]
     fn only_a_refusal_of_the_protocol_query_as_ntfs_gives_it_is_this_machine() {
-        assert!(on_this_machine(false, &Error::from_raw_os_error(87)));
-        assert!(!on_this_machine(true, &Error::from_raw_os_error(87)), "answered");
+        let invalid_parameter = Error::from_raw_os_error(87);
+        assert!(on_this_machine(false, &invalid_parameter));
+        assert!(!on_this_machine(true, &invalid_parameter), "answered");
         for code in [1, 5, 50, 120] {
             let refusal = Error::from_raw_os_error(code);
             assert!(!on_this_machine(false, &refusal), "{code}");
