@@ -641,13 +641,14 @@ function listed(commonDirectory: string, contents: string, result: GitResult): W
  * {@link worktreeRegistry} of `checkout` learnt without blocking the caller's thread: the checkout placed
  * ({@link placeWithoutBlocking}) and Git's list read as a process no thread waits on, stored as the registry stores it
  * ({@link keepList}), so the registry after it starts no Git while the registry's contents stand. Nothing is learnt
- * where that placement is left to the calls after it, for a checkout placed by an acceptance kept with no stamp, which
- * Git lists at each ask ({@link storedList}), nor from a list of another repository's registry ({@link listsRegistryOf}).
+ * where that placement is left to the calls after it, nor from a list of another repository's registry
+ * ({@link listsRegistryOf}). A checkout placed by an acceptance kept with no stamp, whose list Git gives at each ask
+ * ({@link storedList}), still has its listed worktrees placed from this list, as the registry stores it.
  */
 export async function learnWorktreeRegistry(checkout: string, options: GitReadOptions = {}): Promise<WorktreeRegistry | undefined> {
   if (!existsSync(checkout) || (await placeWithoutBlocking(checkout, options))?.git !== true) return undefined;
   const place = registryPlace(checkout);
-  if (place === undefined || place.unstamped) return undefined;
+  if (place === undefined) return undefined;
   const { commonDirectory } = place;
   let listing = listingWithoutBlocking.get(commonDirectory);
   if (listing === undefined) {
