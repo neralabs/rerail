@@ -589,7 +589,10 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   the proof for the whole limit leaves it unread, as does a process this user may not query, and the record is kept.
   `rerail install --remove` reads it through Windows PowerShell instead, since it deletes the folder the engine
   loads from next and Windows keeps a loaded DLL from being deleted; PowerShell is ended at what is left of the
-  lookup's limit (the stop's 10 s wait for a stop), and one ended there, or one that cannot run, reads nothing. So on a
+  lookup's limit, and one ended there, or one that cannot run, reads nothing. The lookup's limit counts from its start
+  and bounds this read for a busy daemon and for one whose engine has no proof alike: 2 s, which the proof shares, for
+  `rerail status`, set-up's look for a daemon to keep and a hook's start of the daemon; the stop's 10 s wait for
+  `rerail daemon stop`, set-up's stop of a daemon it replaces and both stops of `rerail install --remove`. So on a
   machine whose policy blocks `powershell.exe` itself, a busy daemon of 0.1.4 or earlier is not shown to be this
   home's in `rerail install --remove`, which stops with that error, having already taken Rerail out of the coding
   agents. The command that message gives runs PowerShell too, so there open Task Manager's Details tab, show its
