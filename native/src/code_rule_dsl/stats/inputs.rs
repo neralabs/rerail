@@ -1,4 +1,4 @@
-//! Plan inputs read in one batch from SQL-owned summaries (ast-index-spike S241).
+//! Plan inputs read in one batch from SQL-owned summaries (SQL index prototype S241).
 //! These immutable values describe a decision; they are not a second frequency owner.
 //! From Data-layer-rule-expressivity's `matcher/anchors/sql/statistics/mod.rs`: the summaries are
 //! the content store's (`kind_size`, `term_node_freq`, `term_kind_freq`), keyed by kind atom.

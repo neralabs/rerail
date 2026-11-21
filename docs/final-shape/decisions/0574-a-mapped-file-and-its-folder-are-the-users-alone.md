@@ -54,7 +54,8 @@ launch until it is `chmod 700`. Scripts that make one say `mkdir -m 700`.
 
 - `mapped::tests::a_shared_folder_is_refused`, `mapped_files_are_the_users_and_frozen_ones_read_only`.
 - `tools::launch_tests::a_shared_store_folder_refuses_the_launch`.
-- The engine's tests run with a umask of `077` (`lib.rs`, `private_test_folders`): a fixture's folder
+- The engine's tests run with a umask of `077` (`test_private_folders.rs`, set before `main` in every test binary:
+  the engine's, boot's and each test crate's): a fixture's folder
   (`tempfile::tempdir`, `create_dir_all`) is made with the umask's mode, and the farm's hosts' `002` made them
   `775`, which the rules refuse. The test harness's long-lived folders made before the rules have group and world
   bits taken away once a process (`test_store::harness_folder`).

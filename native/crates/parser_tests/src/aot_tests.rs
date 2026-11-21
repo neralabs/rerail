@@ -1,12 +1,12 @@
-//! Tier 2's Rust (`rerail_compiler::rust_stream`, the ahead-of-time backend) against the JIT on every grammar of
+//! Tier 2's Rust (`rerail_cpu_stream::rust_stream`, the ahead-of-time backend) against the JIT on every grammar of
 //! three sets: JSON's (`json_parser/`), `.rerail`'s (`rr_parser/rr.bitlex`), and probes whose words edit a node the
 //! writer's ops already have (`RETAGGED_ROOT`). Each grammar's Rust, in format 15 and in format 16 (decision 0434), is
 //! built by rustc with the rest of its set into one library, each grammar a module, run on the JIT's harness, and its
 //! tape compared with the JIT's byte for byte.
 
-use rerail_compiler::ladder::{Compiled, Lang, compile_step, documents_with, seed};
-use rerail_compiler::native_cpu_stream::Entry;
-use rerail_compiler::rust_stream;
+use rerail_cpu_stream::ladder::{Compiled, Lang, compile_step, documents_with, seed};
+use rerail_cpu_stream::native_cpu_stream::Entry;
+use rerail_cpu_stream::rust_stream;
 
 /// A set of grammars: each one's name and text, the bytes its documents' mutations write, and documents of its own.
 struct Set {
@@ -17,7 +17,7 @@ struct Set {
 }
 
 const SETS: [Set; 3] = [
-    Set { name: "json", grammars: rerail_compiler::ladder::grammars, alphabet: b" \nav9,eE-{}[]\":/*\\tu", fixed: json_fixed },
+    Set { name: "json", grammars: rerail_cpu_stream::ladder::grammars, alphabet: b" \nav9,eE-{}[]\":/*\\tu", fixed: json_fixed },
     Set { name: "rr", grammars: || vec![("rr".to_owned(), include_str!("../../rr_parser/rr.bitlex").to_owned())], alphabet: b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\", fixed: Vec::new },
     Set { name: "probe", grammars: || vec![("retagged-root".to_owned(), RETAGGED_ROOT.to_owned()), ("wrapped-twice".to_owned(), WRAPPED_TWICE.to_owned()), ("folded-chain".to_owned(), FOLDED_CHAIN.to_owned())], alphabet: b"();!? \nvraifus", fixed: probe_fixed },
 ];

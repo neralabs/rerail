@@ -579,7 +579,7 @@ pub(crate) unsafe fn index<const FORM: u8>(buf: *const u8, len: usize, indexes: 
         return Err(Code::Empty);
     }
     // `buf_block_reader<64>`.
-    let lenminusstep = if len < 64 { 0 } else { len - 64 };
+    let lenminusstep = len.saturating_sub(64);
     let mut idx = 0usize;
     // `json_structural_indexer`.
     let mut scanner = JsonScanner::new();

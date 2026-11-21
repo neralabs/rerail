@@ -1009,6 +1009,18 @@ const repositoryEnvironment = new Set([
 ]);
 
 /**
+ * Drops this process's repository variables ({@link repositoryEnvironment}): for a command whose arguments name the
+ * checkout it reads, run in a process of its own (a headless scan, from a Git hook too), so every Git it starts, and
+ * every placement it asks of Git or of the engine's reads, is of that checkout. A process serving other checkouts
+ * keeps them.
+ */
+export function leaveInheritedRepository(): void {
+  for (const key of Object.keys(process.env)) {
+    if (repositoryEnvironment.has(process.platform === "win32" ? key.toUpperCase() : key)) delete process.env[key];
+  }
+}
+
+/**
  * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
  * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
  * missing, never on a non-zero exit. When the Git kept for the process is gone, it runs once more with the Git found
@@ -1099,9 +1111,18 @@ async function runGitAsyncWith(executable: string, args: readonly string[], opti
   }, { timeoutMs: timeout, signal });
   // Git may exit before reading all of its input; the broken pipe is no failure of the read.
   child.stdin.on("error", () => undefined);
-  child.stdin.end(options.input ?? "");
+  endInput(child, options.input);
   const [result] = await Promise.all([promise, exited(child)]);
   return result;
+}
+
+/**
+ * Closes Git's stdin after `input`. With none it only closes it: a write of nothing to a Git that has already exited, as
+ * one outside any repository does at once, fails with EPIPE, and the error's stack is built for nothing.
+ */
+function endInput(child: GitProcess, input: string | undefined): void {
+  if (input === undefined || input === "") child.stdin.end();
+  else child.stdin.end(input);
 }
 
 /** Trimmed stdout of a successful `git -C <cwd> <args>`, or undefined when it fails. */
@@ -1481,23 +1502,39 @@ function crlfRule(attributes: LineEndingAttributes, config: LineEndingConfig, pl
   return textGetsCrlf(config, platform) ? declared : undefined;
 }
 
+/** The attributes `lineEndingAttributes` asks `check-attr` for, each of which it prints for every path it answers. */
+const LINE_ENDING_ATTRIBUTES = ["text", "crlf", "eol"] as const;
+
 /**
  * The `text`, `crlf` and `eol` attributes of each of `paths` (relative to `cwd`), by one `git check-attr --stdin`; empty
  * without Git, outside a repository or past the timeout.
  */
 async function lineEndingAttributes(cwd: string, paths: readonly string[], signal: AbortSignal | undefined): Promise<Map<string, LineEndingAttributes>> {
-  const attributes = new Map<string, { text: string; crlf: string; eol: string }>();
   const chunks: Buffer[] = [];
-  await streamGit(cwd, ["check-attr", "-z", "--stdin", "text", "crlf", "eol"], {
+  await streamGit(cwd, ["check-attr", "-z", "--stdin", ...LINE_ENDING_ATTRIBUTES], {
     input: paths.map(path => `${path}\0`).join(""), onData: chunk => chunks.push(chunk), signal,
   });
-  // `<path> NUL <attribute> NUL <value> NUL`, once per path and attribute.
-  const fields = Buffer.concat(chunks).toString("utf8").split("\0");
-  for (let at = 0; at + 2 < fields.length; at += 3) {
-    const [path, name, value] = [fields[at]!, fields[at + 1]!, fields[at + 2]!];
-    const entry = attributes.get(path) ?? { text: "unspecified", crlf: "unspecified", eol: "unspecified" };
-    if (name === "text" || name === "crlf" || name === "eol") entry[name] = value;
-    attributes.set(path, entry);
+  return lineEndingAttributesFrom(Buffer.concat(chunks).toString("utf8"));
+}
+
+/**
+ * `check-attr -z`'s output, `<path> NUL <attribute> NUL <value> NUL` once per path and attribute, by path: only the
+ * paths whose three attributes all arrived, each value with its closing NUL. Output cut at the timeout leaves its last
+ * path partly read, which says nothing of the attributes or the end of a value that did not arrive, so that path is not
+ * answered, as the paths after it are not.
+ */
+function lineEndingAttributesFrom(output: string): Map<string, LineEndingAttributes> {
+  const values = new Map<string, Map<string, string>>();
+  const fields = output.split("\0");
+  // A value's closing NUL arrived where a field follows it: the empty one after the output's last NUL, at the least.
+  for (let at = 0; at + 3 < fields.length; at += 3) {
+    const byName = values.get(fields[at]!) ?? new Map<string, string>();
+    values.set(fields[at]!, byName.set(fields[at + 1]!, fields[at + 2]!));
+  }
+  const attributes = new Map<string, LineEndingAttributes>();
+  for (const [path, byName] of values) {
+    if (LINE_ENDING_ATTRIBUTES.every(name => byName.has(name)))
+      attributes.set(path, { text: byName.get("text")!, crlf: byName.get("crlf")!, eol: byName.get("eol")! });
   }
   return attributes;
 }
@@ -1530,6 +1567,9 @@ export async function gitCrlfPaths(
   }
   return rules;
 }
+
+// The pieces of `gitCrlfPaths` a reader that keeps its answers by the stamps of their inputs asks again (`git-crlf-reader.ts`).
+export { crlfRule, lineEndingAttributes, lineEndingAttributesFrom, type LineEndingAttributes, type LineEndingConfig };
 
 /** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;

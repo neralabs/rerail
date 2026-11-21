@@ -17,6 +17,11 @@ pub struct AnalysisOwner {
     acquired_at: i64,
     #[serde(default)]
     pub(super) acquisition: i64,
+    /// A run's owner (decision 0547): whether its first write creates the scope's generation (`generation`, its
+    /// lease's), none being there when it started. A run writes nothing as it starts; each of its writes acquires
+    /// first (`acquire`).
+    #[serde(default)]
+    create: bool,
     #[serde(skip)]
     warning: Option<std::sync::Arc<std::sync::Mutex<RunWarning>>>,
 }
@@ -48,17 +53,117 @@ impl AnalysisOwner {
         self.warning.as_ref()?.lock().unwrap_or_else(|e| e.into_inner()).message.clone()
     }
 
+    /// Whether this owner may still publish. A run's lease (`scope_lease`) keeps it live: no deletion or stop that
+    /// would revoke it runs meanwhile, and collection keeps its staged rows under the run's collection lease.
     pub(super) fn current(&self, tx: &rusqlite::Connection) -> rusqlite::Result<bool> {
+        self.current_as(tx, false)
+    }
+
+    /// `current`, as it will be once the owner has acquired (`planned`): a run that has written nothing yet reads
+    /// the generation its first write would create.
+    fn current_as(&self, tx: &rusqlite::Connection, planned: bool) -> rusqlite::Result<bool> {
+        // A run's staging key closes as it finishes: a worker's late write finds its lease gone (decision 0547).
+        if self.pending.is_some() && !tx.path().is_some_and(|p| super::scope_lease::live(Path::new(p), Some(self.acquisition))) {
+            return Ok(false);
+        }
+        let mut now: i64 = tx.query_row_cached("SELECT coalesce((SELECT generation FROM analysis_scope_generation WHERE scope=?1),-1)",
+            [&self.scope], |row| row.get(0))?;
+        if planned && now < 0 && self.create {
+            now = planned_generation(tx, &self.scope, self.acquired_at, self.generation)?;
+        }
+        if now < 0 || now != self.generation {
+            return Ok(false);
+        }
         tx.query_row_cached(
-            "SELECT EXISTS (SELECT 1 FROM analysis_scope_generation WHERE scope=?1 AND generation=?2) \
-                AND (?5 IS NULL OR EXISTS (SELECT 1 FROM analysis_scope_pending WHERE id=?5)) \
-                AND (?6 IS NULL OR (SELECT id FROM store_identity WHERE singleton=1)=?6) \
-                AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE scope IN (SELECT value FROM json_each(?4)) AND before>=?3) \
-                AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE legacy_scope IN (SELECT value FROM json_each(?4))
-                    AND before>=?3 AND legacy_acquisition>=?7)",
-            (&self.scope, self.generation, self.acquired_at, receipt_scopes(&self.scope), self.pending.as_deref(), self.store_identity, self.acquisition), |row| row.get(0),
+            "SELECT (?4 IS NULL OR (SELECT id FROM store_identity WHERE singleton=1)=?4) \
+                AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE scope IN (SELECT value FROM json_each(?3)) AND before>=?2) \
+                AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE legacy_scope IN (SELECT value FROM json_each(?3))
+                    AND before>=?2 AND legacy_acquisition>=?5)",
+            (&self.scope, self.acquired_at, receipt_scopes(&self.scope), self.store_identity, self.acquisition), |row| row.get(0),
         )
     }
+
+    /// A run's acquisition, written by its first write (and again, idempotently, by each later one): what its start
+    /// read and planned (decision 0547). An owner that acquired as it began (`begin_analysis_scope_at`) has nothing
+    /// to write.
+    pub(super) fn acquire(&self, tx: &rusqlite::Connection) -> rusqlite::Result<()> {
+        if self.pending.is_none() {
+            return Ok(());
+        }
+        acquire_rows(tx, &self.scope, self.acquired_at, self.acquisition, self.create.then_some(self.generation))
+    }
+}
+
+/// The rows of an acquisition of `scope`: the generation it creates (`create`: none was there as the run started;
+/// a number of the acquisitions' sequence, so the seeding trigger leaves it), the directory's highest control
+/// generation, and the store's acquisition counter at least `acquisition` and the generation.
+fn acquire_rows(tx: &rusqlite::Connection, scope: &str, acquired_at: i64, acquisition: i64, create: Option<i64>) -> rusqlite::Result<()> {
+    let create = create.filter(|g| *g > 0);
+    if scope.starts_with("cwd:") {
+        // A legacy INSERT OR IGNORE clears the known bound even on conflict. Current
+        // acquisitions insert only when a new generation is actually required.
+        let inserted = if let Some(generation) = create {
+            tx.execute_cached("INSERT INTO analysis_scope_generation
+                SELECT ?1,?4 WHERE NOT EXISTS (SELECT 1 FROM analysis_scope_generation WHERE scope=?1)
+                AND NOT EXISTS (SELECT 1 FROM analysis_scope_release WHERE scope IN (SELECT value FROM json_each(?2)) AND before>=?3)",
+                (scope, receipt_scopes(scope), acquired_at, generation))?
+        } else {
+            0
+        };
+        if inserted != 0 {
+            tx.execute_cached("INSERT INTO analysis_directory_acquisition VALUES (?1,?2)", (scope, acquired_at))?;
+        } else {
+            tx.execute_cached("UPDATE analysis_directory_acquisition SET max_control_generation=?2 WHERE scope=?1 AND max_control_generation<?2",
+                (scope, acquired_at))?;
+        }
+    } else if let Some(generation) = create {
+        tx.execute_cached("INSERT OR IGNORE INTO analysis_scope_generation VALUES (?1,?2)", (scope, generation))?;
+    }
+    tx.execute_cached("UPDATE store_state SET analysis_acquisitions=max(analysis_acquisitions,?1,?2) WHERE singleton=1",
+        (acquisition, create.unwrap_or(0)))?;
+    Ok(())
+}
+
+/// The generation an acquisition of `scope` at `acquired_at` creates where none is: `made`, or for a directory a
+/// stop with a later cutoff has already covered, none (-1).
+fn planned_generation(tx: &rusqlite::Connection, scope: &str, acquired_at: i64, made: i64) -> rusqlite::Result<i64> {
+    if !scope.starts_with("cwd:") {
+        return Ok(made);
+    }
+    let covered: bool = tx.query_row_cached("SELECT EXISTS (SELECT 1 FROM analysis_scope_release
+        WHERE scope IN (SELECT value FROM json_each(?1)) AND before>=?2)", (receipt_scopes(scope), acquired_at), |row| row.get(0))?;
+    Ok(if covered { -1 } else { made })
+}
+
+/// Whether a deletion of `scope` (and of `subtree`'s scopes, and `legacy`'s, the same directories before scopes
+/// recorded their home) up to `before` (`None`: whatever the control generation) revokes the run that holds `held`.
+fn revokes(held: &super::scope_lease::Held, scope: &str, subtree: Option<&str>, legacy: Option<&str>, before: Option<i64>) -> bool {
+    let under = |root: &str, prefix: Option<&str>| held.scope == root || prefix.is_some_and(|p| held.scope.starts_with(p));
+    let legacy_prefix = legacy.map(scope_prefix);
+    (under(scope, subtree) || legacy.is_some_and(|l| under(l, legacy_prefix.as_deref())))
+        && before.is_none_or(|before| held.acquired_at <= before)
+}
+
+/// Whether `file` holds the release receipt `id` (read; a store without receipts holds none).
+fn delivered(file: &Path, id: &str) -> bool {
+    rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)
+        .and_then(|db| db.query_row("SELECT EXISTS (SELECT 1 FROM analysis_scope_release WHERE id=?1)", [id], |row| row.get::<_, bool>(0)))
+        .unwrap_or(false)
+}
+
+/// Runs `release` in a deletion of `file`'s scopes that fails while a run that it would revoke holds its lease
+/// (decision 0547). The runs it leaves have their acquisitions written first, as their own first writes would: a
+/// stop keeps a later writer's generation by what that writer acquired.
+fn deleting<T>(file: &Path, what: &str, scope: &str, subtree: Option<&str>, legacy: Option<&str>, before: Option<i64>,
+    release: impl FnOnce(&dyn Fn(&rusqlite::Connection) -> rusqlite::Result<()>) -> StoreResult<T>) -> StoreResult<T> {
+    let held = super::scope_lease::deleting(file, what, |h| revokes(h, scope, subtree, legacy, before))?;
+    let acquire_others = |tx: &rusqlite::Connection| -> rusqlite::Result<()> {
+        for h in &held.others {
+            acquire_rows(tx, &h.scope, h.acquired_at, h.acquisition, h.create.then_some(h.generation))?;
+        }
+        Ok(())
+    };
+    release(&acquire_others)
 }
 
 // A stop covers its directory and descendants, including stops at a volume root.
@@ -83,6 +188,8 @@ pub struct AnalysisRun {
     scope_value: String,
     source: Option<RunSource>,
     pub publication: Option<Publication>,
+    /// What another process sees of the run until it finishes (decision 0547).
+    scope_lease: Option<super::scope_lease::ScopeLease>,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -97,7 +204,7 @@ impl Publication {
     }
 }
 
-#[derive(Clone, Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq, serde::Serialize, serde::Deserialize)]
 pub enum RunSource {
     Directory(String),
     Git { repository: String, tree: String, commit: Option<String> },
@@ -162,73 +269,131 @@ impl AnalysisRun {
         Ok(run)
     }
 
+    /// A run of `scope` (decision 0547): it reads, and writes nothing. Its lease names it to other processes; its
+    /// acquisition is written by its first write, which the store's writer applies behind the run (its manifest's,
+    /// then its publication's, `finish`).
     pub fn begin_at(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
-        let lease = store.hold_collection()?;
-        let mut owner = store.begin_analysis_scope_at(scope, acquired_at)?;
-        let pending = format!("pending:{}:{}:{id}", store.connection.identity(), owner.acquisition);
-        store.immediate_transaction(|tx| {
-            store.check_scope_store(tx)?;
-            tx.execute_cached("INSERT INTO analysis_scope_pending(id) VALUES (?1)", [&pending])?;
-            Ok(())
-        })?;
-        owner.pending = Some(pending);
-        owner.warning = Some(Default::default());
-        let value = scope.strip_prefix("named:").or_else(|| scope.strip_prefix("cwd:")).unwrap_or(scope);
-        Ok(Self { owner, store, lease: Some(lease), scan_id: id.to_owned(), scope_value: value.to_owned(), source: None, publication: None })
+        super::hazards::around_the_run(|| Self::begin_now(store, scope, id, acquired_at))
     }
 
+    fn begin_now(store: ContentStore, scope: &str, id: &str, acquired_at: i64) -> StoreResult<Self> {
+        let lease = store.hold_collection()?;
+        let identity = store.identity();
+        let read = |f: &dyn Fn(&rusqlite::Connection) -> StoreResult<i64>| -> StoreResult<i64> {
+            let db = store.connection.lock().map_err(super::StoreError::Invalid)?;
+            f(&db)
+        };
+        let (scope_lease, made) = super::scope_lease::take(store.database_path(), scope, acquired_at,
+            || read(&|db| {
+                store.check_scope_store(db)?;
+                Ok(db.query_row_cached("SELECT analysis_acquisitions FROM store_state WHERE singleton=1", [], |row| row.get(0))?)
+            }),
+            || read(&|db| Ok(i64::from(db.query_row_cached("SELECT NOT EXISTS (SELECT 1 FROM analysis_scope_generation WHERE scope=?1)",
+                [scope], |row| row.get::<_, bool>(0))?))).map(|v| v != 0))?;
+        // The generation it publishes under: the one there, or the one its first write creates.
+        let generation = read(&|db| {
+            let there: i64 = db.query_row_cached("SELECT coalesce((SELECT generation FROM analysis_scope_generation WHERE scope=?1),-1)",
+                [scope], |row| row.get(0))?;
+            Ok(match made { Some(made) => planned_generation(db, scope, acquired_at, made)?, None => there })
+        })?;
+        let create = made.is_some();
+        let acquisition = scope_lease.acquisition;
+        let owner = AnalysisOwner {
+            scope: scope.to_owned(), generation, store_identity: Some(identity), pending: Some(format!("pending:{identity}:{acquisition}:{id}")),
+            acquired_at, acquisition, create, warning: Some(Default::default()),
+        };
+        let value = scope.strip_prefix("named:").or_else(|| scope.strip_prefix("cwd:")).unwrap_or(scope);
+        Ok(Self { owner, store, lease: Some(lease), scan_id: id.to_owned(), scope_value: value.to_owned(), source: None, publication: None,
+            scope_lease: Some(scope_lease) })
+    }
+
+    /// The run's outcome, published by the store's writer after the run's own writes (its manifests and their
+    /// staged memberships), as an item of its own (decision 0547). This waits for the writer: the outcome is the
+    /// caller's answer. A failed publication leaves the run open, to be finished again.
     pub fn finish(&mut self, succeeded: bool) -> StoreResult<()> {
+        super::hazards::around_the_run(|| self.finish_now(succeeded))
+    }
+
+    fn finish_now(&mut self, succeeded: bool) -> StoreResult<()> {
         if self.lease.is_none() {
             return Ok(());
         }
+        self.store.written()?;
         let owner = &self.owner;
-        let pending = owner.membership();
-        let (publication, mut warning) = self.store.immediate_transaction(|tx| {
-            self.store.check_scope_store(tx)?;
-            // Keep the same warning from the outcome decision through commit. A rollback leaves it open for retry.
-            let warning = owner.warning.as_ref().map(|warning| warning.lock().unwrap_or_else(|e| e.into_inner()));
-            let outcome = if warning.as_ref().is_some_and(|warning| warning.message.is_some()) { Publication::Unavailable }
-                else if !succeeded { Publication::Aborted }
-                else if !owner.current(tx)? { Publication::Released }
-                else { Publication::Published };
-            if outcome == Publication::Published {
-                if let Some(source) = &self.source {
-                    let (directory, repo, tree, commit) = match source {
-                        RunSource::Directory(path) => (Some(path), None, None, None),
-                        RunSource::Git { repository, tree, commit } => (None, Some(repository), Some(tree), commit.as_ref()),
-                    };
-                    tx.execute_cached("INSERT OR IGNORE INTO analysis_history_scope(scope,value,stop_scopes) VALUES (?1,?2,?3)",
-                        (&owner.scope, &self.scope_value, receipt_scopes(&owner.scope)))?;
-                    tx.execute_cached("INSERT INTO analysis_scope_run(scope,acquisition,acquired_at,scan_id,directory,repository,tree,git_commit)
-                        VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
-                        (&owner.scope, owner.acquisition, owner.acquired_at, &self.scan_id, directory, repo, tree, commit))?;
-                }
-                tx.execute_cached("INSERT INTO analysis_scope_manifest(scope,manifest_id,acquired_at,acquisition,recorded_run)
-                    SELECT ?1,manifest_id,acquired_at,acquisition,recorded_run FROM analysis_scope_manifest WHERE scope=?2
-                    ON CONFLICT(scope,manifest_id) DO UPDATE SET
-                      (acquired_at,acquisition,recorded_run)=(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)
-                    WHERE (acquired_at,acquisition,recorded_run)<(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)", (&owner.scope, pending))?;
-                let rows = tx.prepare_cached("SELECT workspace,snapshot_id FROM analysis_scope_workspace_snapshot WHERE scope=?1")?
-                    .query_map([pending], |r| Ok((r.get::<_, String>(0)?, SnapshotId(r.get(1)?))))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?;
-                for (workspace, snapshot) in rows {
-                    own_snapshot(tx, owner, &workspace, snapshot, &owner.scope)?;
-                    if self.source.is_some() {
-                        tx.execute_cached("INSERT OR IGNORE INTO analysis_run_workspace_snapshot(scope,acquisition,snapshot_id) VALUES (?1,?2,?3)",
-                            (&owner.scope, owner.acquisition, snapshot.0))?;
-                    }
-                }
-            }
-            release_memberships(tx, "scope=?1", [pending])?;
-            tx.execute_cached("DELETE FROM analysis_scope_pending WHERE id=?1", [pending])?;
-            Ok((outcome, warning))
-        })?;
+        // Keep the same warning from the outcome decision through the publication. A failure leaves it open.
+        let mut warning = owner.warning.as_ref().map(|warning| warning.lock().unwrap_or_else(|e| e.into_inner()));
+        let outcome = if warning.as_ref().is_some_and(|warning| warning.message.is_some()) { Publication::Unavailable }
+            else if !succeeded { Publication::Aborted }
+            else {
+                // Its lease holds off every deletion that would revoke it, so what this reads holds when the writer
+                // publishes.
+                let db = self.store.connection.lock().map_err(super::StoreError::Invalid)?;
+                self.store.check_scope_store(&db)?;
+                if owner.current_as(&db, true)? { Publication::Published } else { Publication::Released }
+            };
+        let body = Publishing { owner: owner.clone(), outcome: outcome.as_str().to_owned(), source: self.source.clone(),
+            scan_id: self.scan_id.clone(), scope_value: self.scope_value.clone() };
+        self.store.record("the analysis scope's publication", Vec::new(), &body, None, apply_publication);
+        self.store.written()?;
         if let Some(warning) = warning.as_mut() { warning.finished = true; }
         drop(warning);
-        self.publication = Some(publication);
+        self.publication = Some(outcome);
+        self.scope_lease.take();
         self.lease.take();
         Ok(())
     }
+}
+
+/// A run's publication, as the store's writer applies it (`finish`).
+#[derive(serde::Serialize, serde::Deserialize)]
+struct Publishing {
+    owner: AnalysisOwner,
+    outcome: String,
+    source: Option<RunSource>,
+    scan_id: String,
+    scope_value: String,
+}
+
+fn apply_publication(cx: &super::record::Apply<'_>, body: super::record::codec::Body) -> StoreResult<()> {
+    let p: Publishing = super::record::codec::from_body("the analysis scope's publication", body)?;
+    let store = cx.store;
+    let owner = &p.owner;
+    let pending = owner.membership();
+    store.immediate_transaction(|tx| {
+        store.check_scope_store(tx)?;
+        owner.acquire(tx)?;
+        // Decided as the run finished, under its lease: a publication that is no longer current releases.
+        if p.outcome == Publication::Published.as_str() && owner.current(tx)? {
+            if let Some(source) = &p.source {
+                let (directory, repo, tree, commit) = match source {
+                    RunSource::Directory(path) => (Some(path), None, None, None),
+                    RunSource::Git { repository, tree, commit } => (None, Some(repository), Some(tree), commit.as_ref()),
+                };
+                tx.execute_cached("INSERT OR IGNORE INTO analysis_history_scope(scope,value,stop_scopes) VALUES (?1,?2,?3)",
+                    (&owner.scope, &p.scope_value, receipt_scopes(&owner.scope)))?;
+                tx.execute_cached("INSERT INTO analysis_scope_run(scope,acquisition,acquired_at,scan_id,directory,repository,tree,git_commit)
+                    VALUES (?1,?2,?3,?4,?5,?6,?7,?8)",
+                    (&owner.scope, owner.acquisition, owner.acquired_at, &p.scan_id, directory, repo, tree, commit))?;
+            }
+            tx.execute_cached("INSERT INTO analysis_scope_manifest(scope,manifest_id,acquired_at,acquisition,recorded_run)
+                SELECT ?1,manifest_id,acquired_at,acquisition,recorded_run FROM analysis_scope_manifest WHERE scope=?2
+                ON CONFLICT(scope,manifest_id) DO UPDATE SET
+                  (acquired_at,acquisition,recorded_run)=(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)
+                WHERE (acquired_at,acquisition,recorded_run)<(excluded.acquired_at,excluded.acquisition,excluded.recorded_run)", (&owner.scope, pending))?;
+            let rows = tx.prepare_cached("SELECT workspace,snapshot_id FROM analysis_scope_workspace_snapshot WHERE scope=?1")?
+                .query_map([pending], |r| Ok((r.get::<_, String>(0)?, SnapshotId(r.get(1)?))))?
+                .collect::<rusqlite::Result<Vec<_>>>()?;
+            for (workspace, snapshot) in rows {
+                own_snapshot(tx, owner, &workspace, snapshot, &owner.scope)?;
+                if p.source.is_some() {
+                    tx.execute_cached("INSERT OR IGNORE INTO analysis_run_workspace_snapshot(scope,acquisition,snapshot_id) VALUES (?1,?2,?3)",
+                        (&owner.scope, owner.acquisition, snapshot.0))?;
+                }
+            }
+        }
+        release_memberships(tx, "scope=?1", [pending])?;
+        Ok(())
+    })
 }
 
 impl Drop for AnalysisRun {
@@ -333,9 +498,11 @@ pub fn acquisition_time() -> i64 {
     std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |t| t.as_micros() as i64)
 }
 
+/// An acquisition the store numbers itself: above its counter and above every run's lease (decision 0547).
 pub(super) fn next_acquisition(tx: &rusqlite::Connection) -> rusqlite::Result<i64> {
-    tx.query_row_cached("UPDATE store_state SET analysis_acquisitions=analysis_acquisitions+1
-        WHERE singleton=1 RETURNING analysis_acquisitions", [], |row| row.get(0))
+    let leased = tx.path().map_or(0, |p| super::scope_lease::highest(Path::new(p)));
+    tx.query_row_cached("UPDATE store_state SET analysis_acquisitions=max(analysis_acquisitions,?1)+1
+        WHERE singleton=1 RETURNING analysis_acquisitions", [leased], |row| row.get(0))
 }
 
 // Older memberships have only the scope key. An absolute directory can itself contain a colon.
@@ -450,12 +617,13 @@ impl ContentStore {
             let generation = tx.query_row_cached("SELECT coalesce((SELECT generation FROM analysis_scope_generation WHERE scope=?1),-1)",
                 [scope], |row| row.get(0))?;
             let acquisition = next_acquisition(tx)?;
-            Ok(AnalysisOwner { scope: scope.to_owned(), generation, store_identity: Some(self.identity()), pending: None, acquired_at, acquisition, warning: None })
+            Ok(AnalysisOwner { scope: scope.to_owned(), generation, store_identity: Some(self.identity()), pending: None, acquired_at, acquisition, create: false, warning: None })
         })
     }
 
     pub fn own_analysis_snapshot(&self, owner: &AnalysisOwner, workspace: &str, snapshot: SnapshotId) -> StoreResult<()> {
         self.immediate_transaction(|tx| {
+            owner.acquire(tx)?;
             if !owner.current(tx)? {
                 return Ok(());
             }
@@ -517,32 +685,44 @@ impl<'a> DirectoryRelease<'a> {
         Ok(Self { id, before: Some(before), home })
     }
 
-    fn apply_to(&self, tx: &rusqlite::Connection, path: &str) -> StoreResult<usize> {
+    /// Releases `path`'s scopes in `file`, through `run` (a transaction of it); fails while a run it would revoke
+    /// is running (decision 0547).
+    fn apply_in<T>(&self, file: &Path, path: &str, run: impl FnOnce(&dyn Fn(&rusqlite::Connection) -> StoreResult<usize>) -> StoreResult<T>) -> StoreResult<T> {
         let scope = recorded_directory(path, self.home);
         let subtree = scope_prefix(&scope);
         let legacy = self.home.map(|_| recorded_directory(path, None));
-        release_analysis_scopes(tx, &scope, Some(&subtree), self.id, self.before, legacy.as_deref())
+        // A receipt delivered already is a replay: it releases nothing, so no run is in its way.
+        if let Some(id) = self.id && delivered(file, id) {
+            return run(&|tx| release_analysis_scopes(tx, &scope, Some(&subtree), self.id, self.before, legacy.as_deref()));
+        }
+        deleting(file, "a directory's release", &scope, Some(&subtree), legacy.as_deref(), self.before, |acquire_others| {
+            run(&|tx| {
+                acquire_others(tx)?;
+                release_analysis_scopes(tx, &scope, Some(&subtree), self.id, self.before, legacy.as_deref())
+            })
+        })
     }
 
     /// Pin this existing database for identity validation, schema upgrade and release.
     pub fn deliver(&self, file: &Path, directory: &Path, expected: Option<i64>) -> StoreResult<usize> {
         let key = directory_value(directory);
-        with_existing_release_store(file, expected.as_slice(), |tx, _| self.apply_to(tx, &key))
+        self.apply_in(file, &key, |release| with_existing_release_store(file, expected.as_slice(), |tx, _| release(tx)))
     }
 
     pub fn deliver_recorded(&self, file: &Path, directory: &Path, expected: Option<i64>) -> StoreResult<usize> {
         let key = directory.to_str().ok_or_else(|| super::StoreError::Invalid("recorded directory scope key must be UTF-8".into()))?;
-        with_existing_release_store(file, expected.as_slice(), |tx, _| self.apply_to(tx, key))
+        self.apply_in(file, key, |release| with_existing_release_store(file, expected.as_slice(), |tx, _| release(tx)))
     }
 }
 
 pub fn release_named_scope(file: &Path, name: &str, expected: &[i64]) -> StoreResult<(i64, bool)> {
     let scope = named(name).ok_or_else(|| super::StoreError::Invalid("analysis scope name must not be empty".into()))?;
-    with_existing_release_store(file, expected, |tx, identity| {
+    deleting(file, "a named scope's release", &scope, None, None, None, |acquire_others| with_existing_release_store(file, expected, |tx, identity| {
+        acquire_others(tx)?;
         let history: bool = tx.query_row_cached("SELECT EXISTS (SELECT 1 FROM analysis_scope_run WHERE scope=?1)", [&scope], |row| row.get(0))?;
         let memberships = release_analysis_scopes(tx, &scope, None, None, None, None)?;
         Ok((identity, history || memberships > 0))
-    })
+    }))
 }
 
 /// Recover the registry update for one identified acquisition after a caller exits.
@@ -550,19 +730,22 @@ pub fn named_acquisition_state(file: &Path, name: &str, identity: i64, acquisiti
     let db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let scope = named(name).ok_or_else(|| super::StoreError::Invalid("analysis scope name must not be empty".into()))?;
     let pending = format!("pending:{identity}:{acquisition}:{scan}");
+    // A run's lease is its pending state (decision 0547); a pending row, an older writer's.
+    let leased = super::scope_lease::live(file, Some(acquisition));
     let state = db.query_row(
         "SELECT EXISTS(SELECT 1 FROM analysis_scope_pending WHERE id=?2),
                 EXISTS(SELECT 1 FROM analysis_scope_run WHERE scope=?3 AND acquisition=?4 AND scan_id=?5)
          FROM store_identity WHERE singleton=1 AND id=?1",
         (identity, pending, scope, acquisition, scan), |row| Ok((row.get::<_, bool>(0)?, row.get::<_, bool>(1)?)),
     )?;
-    Ok(match state { (_, true) => "published", (true, _) => "pending", _ => "absent" })
+    Ok(match state { (_, true) => "published", (true, _) => "pending", _ if leased => "pending", _ => "absent" })
 }
 
 /// Old registries recorded a store before a named run had published. Their pending IDs omit the scope.
 pub fn legacy_named_route_state(file: &Path, name: &str, identity: i64) -> StoreResult<&'static str> {
     let db = rusqlite::Connection::open_with_flags(file, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
     let scope = named(name).ok_or_else(|| super::StoreError::Invalid("analysis scope name must not be empty".into()))?;
+    let leased = super::scope_lease::live(file, None);
     Ok(db.query_row(
         "SELECT CASE WHEN EXISTS(SELECT 1 FROM analysis_scope_run WHERE scope=?2)
                        OR EXISTS(SELECT 1 FROM analysis_scope_manifest WHERE scope=?2)
@@ -570,7 +753,7 @@ pub fn legacy_named_route_state(file: &Path, name: &str, identity: i64) -> Store
                        OR EXISTS(SELECT 1 FROM analysis_scope_workspace_snapshot WHERE scope=?2) THEN 2
                      WHEN EXISTS(SELECT 1 FROM analysis_scope_pending) THEN 1 ELSE 0 END
          FROM store_identity WHERE singleton=1 AND id=?1",
-        (identity, scope), |row| Ok(match row.get::<_, i64>(0)? { 2 => "published", 1 => "pending", _ => "absent" }),
+        (identity, scope), |row| Ok(match row.get::<_, i64>(0)? { 2 => "published", 1 => "pending", _ if leased => "pending", _ => "absent" }),
     )?)
 }
 
@@ -622,14 +805,18 @@ impl ContentStore {
         Ok(store)
     }
 
+    /// Deletes `scope`; fails while a run of it is running (decision 0547).
     pub fn delete_analysis_scope(&self, scope: &str) -> StoreResult<usize> {
-        self.immediate_transaction(|tx| release_analysis_scopes(tx, scope, None, None, None, None))
+        deleting(self.database_path(), "a scope's deletion", scope, None, None, None, |acquire_others| self.immediate_transaction(|tx| {
+            acquire_others(tx)?;
+            release_analysis_scopes(tx, scope, None, None, None, None)
+        }))
     }
 
     pub fn delete_directory_analysis_scopes(&self, path: &Path, release: Option<&str>) -> StoreResult<usize> {
         let receipt = DirectoryRelease::parse(release)?;
         let directory = directory_value(path);
-        self.immediate_transaction(|tx| receipt.apply_to(tx, &directory))
+        receipt.apply_in(self.database_path(), &directory, |release| self.immediate_transaction(|tx| release(tx)))
     }
 
     pub(super) fn analysis_snapshot_due(&self, now: i64) -> StoreResult<bool> {

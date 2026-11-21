@@ -11,6 +11,7 @@ pub use rerail_compiler::clif_text::{body_of, carried_words, hot_loop, opcode, s
 pub use rerail_compiler::clif_text::{carried_params, loop_costs, machine_loop, sink_params};
 #[allow(unused_imports)]
 use rerail_compiler::*;
+use rerail_cpu_block::*;
 use rerail_compiler::block::BlockRun;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;

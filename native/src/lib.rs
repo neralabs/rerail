@@ -12,16 +12,6 @@ extern crate cranelift_jit_wasm as cranelift_jit;
 #[cfg(test)]
 mod build_identity;
 
-/// The tests' process makes its folders and files as a user who keeps the engine's stores private does: a mapped
-/// file's folder is the user's alone (decision 0574, `rerail_blocks::mapped`), and a fixture's folder
-/// (`tempfile::tempdir`, `create_dir_all`) is made with the umask's mode, as the farm's hosts' 002 made them 775. The
-/// rules' own refusals are tested by setting the modes they refuse (`mapped::tests`, `tools::launch_tests`).
-#[cfg(all(test, unix))]
-#[ctor::ctor(unsafe)]
-fn private_test_folders() {
-    // SAFETY: `umask` sets the process's file mode mask; it cannot fail and touches no memory.
-    unsafe { libc::umask(0o077) };
-}
 /// `build.rs` generates the language tables with this file; the library builds it only for tests,
 /// so `cargo test` checks how the build validates the language registry. The rest is the build script's.
 #[cfg(test)]
@@ -36,6 +26,9 @@ mod test_watchdog;
 // The test binary's stores flush nothing (`RERAIL_FLUSH=none`, decision 0481) unless the environment says otherwise.
 #[cfg(test)]
 mod test_flush;
+// The test binary's folders are the user's alone (a umask of 077, decision 0574).
+#[cfg(test)]
+mod test_private_folders;
 #[cfg(test)]
 mod text_readers_guard_tests;
 #[cfg(all(test, not(windows)))]
@@ -55,10 +48,10 @@ pub mod git_access {
 pub mod git_start;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
-pub use rerail_w::git_ignore;
+pub use rerail_classic::git_ignore;
 mod main_instance;
 mod model;
-pub use rerail_w::panic_boundary;
+pub use rerail_classic::panic_boundary;
 mod path_owner;
 pub mod process;
 pub use rerail_logic::threads;
@@ -158,15 +151,7 @@ pub(crate) fn install_store_functions() {
             .ok()
             .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
             .map_or(grammar, |id| Box::leak(id.into_boxed_str()));
-        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), grammar);
-        code_rule_dsl::install_devices();
-        code_rule_dsl::install_languages();
-        code_rule_dsl::logic::plan::corpus::install_git_inventory();
-        content_store::set_connection_functions(|db| {
-            code_rule_dsl::text::install(db)?;
-            code_rule_dsl::prefilter::tapes::install(db)
-        });
-        code_rule_dsl::sql_hazards::strict_on_every_connection();
+        code_rule_dsl::boot::install(code_rule_dsl::boot::BuildIds { engine: env!("RERAIL_ENGINE_BUILD_ID"), grammar });
     });
 }
 
@@ -299,11 +284,24 @@ pub fn content_store_file_name() -> &'static str {
     content_store::STORE_FILE_NAME
 }
 
+/// `f` on the entry point's shared object (the run under way's, else one of its own: `default_shared`), with the Git
+/// revisions it was handed pinned there (decision 0442): the runs `f` starts read the paths under their roots from them,
+/// and no other entry point's runs do.
+#[cfg(not(feature = "headless"))]
+fn on_revisions<'s, T>(snapshots: impl IntoIterator<Item = &'s git_workspace::snapshot::Snapshot>, f: impl FnOnce() -> T) -> T {
+    use code_rule_dsl::logic::profile;
+    let shared = profile::shared_object().unwrap_or_else(profile::default_shared);
+    let _in = profile::within(std::sync::Arc::clone(&shared));
+    let _pinned: Vec<_> = snapshots.into_iter().map(|snapshot| snapshot.pin(&shared)).collect();
+    f()
+}
+
 #[cfg(not(feature = "headless"))]
 #[napi]
-pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
-    code_rule_dsl::logic::plan::corpus::combined::inspect_separately(||
-        LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), None)?.inspection())
+pub fn inspect_rr_policy(path: String, source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+    let snapshot = source.map(|source| source.pinned_snapshot());
+    on_revisions(snapshot.as_deref(), || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(||
+        LoadedRrPolicy::read(&path, snapshot.clone(), None)?.inspection()))
 }
 
 #[cfg(not(feature = "headless"))]
@@ -360,7 +358,7 @@ impl LoadedRrPolicies {
     }
 
     #[napi]
-    pub fn load(&self, path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+    pub fn load(&self, path: String, source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
         let key = policy_file_path(&path)?;
         let read = || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(|| {
             let inspected = if source.is_none() && self.store.is_some() {
@@ -376,10 +374,11 @@ impl LoadedRrPolicies {
             self.programs.lock().unwrap_or_else(|err| err.into_inner()).entry(key.to_owned()).or_default().insert(origin, policy);
             Ok(inspection)
         });
-        match &self.store {
+        let snapshot = source.map(|source| source.pinned_snapshot());
+        on_revisions(snapshot.as_deref(), || match &self.store {
             Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, read),
             None => read(),
-        }
+        })
     }
 }
 
@@ -418,9 +417,9 @@ pub struct RrScanTarget {
 #[napi]
 pub fn scan_rr_policies_async(
     target: RrScanTarget,
-    analysis: Option<&rerail_w::code_rule_dsl::workspace::api::AnalysisScopeRun>,
-    source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
-    policy_source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
+    analysis: Option<&rerail_classic::code_rule_dsl::workspace::api::AnalysisScopeRun>,
+    source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>,
+    policy_source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>,
     loaded: Option<&LoadedRrPolicies>,
 ) -> Result<napi::bindgen_prelude::AsyncTask<ScanRrPolicies>> {
     let RrScanTarget { paths, root, store, output, source_paths } = target;
@@ -465,6 +464,23 @@ impl napi::Task for ScanRrPolicies {
     type JsValue = String;
 
     fn compute(&mut self) -> Result<String> {
+        // The scan's revisions, its loaded policies' among them, are its own (decision 0442).
+        let mut snapshots: Vec<_> = self.snapshot.iter().chain(&self.policy_snapshot).cloned().collect();
+        snapshots.extend(self.policies.iter().flatten().flatten().filter_map(|policy| match &policy.location {
+            PolicyLocation::Git { snapshot, .. } => Some(std::sync::Arc::clone(snapshot)),
+            PolicyLocation::Worktree { .. } => None,
+        }));
+        on_revisions(snapshots.iter().map(|snapshot| &**snapshot), || self.scan())
+    }
+
+    fn resolve(&mut self, _env: napi::Env, output: String) -> Result<String> {
+        Ok(output)
+    }
+}
+
+#[cfg(not(feature = "headless"))]
+impl ScanRrPolicies {
+    fn scan(&mut self) -> Result<String> {
         use content_store::analysis_scope::{self, AnalysisRun, RunSource};
         use code_rule_dsl::logic::plan::corpus;
         let path = Path::new(&self.store);
@@ -563,10 +579,6 @@ impl napi::Task for ScanRrPolicies {
             for report in &mut reports { report["cacheWarnings"] = serde_json::json!([warning]); }
         }
         serde_json::to_string(&reports).map_err(|e| Error::from_reason(e.to_string()))
-    }
-
-    fn resolve(&mut self, _env: napi::Env, output: String) -> Result<String> {
-        Ok(output)
     }
 }
 

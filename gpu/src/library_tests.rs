@@ -778,38 +778,71 @@ fn a_grid_past_residency_is_the_groups_that_run() {
     assert!(wrong.iter().all(|&w| w == 0), "{}: reads before the barrier's writes: {wrong:?}", crate::device::backend());
 }
 
+/// Decision 0540 §3 on the CPU backend (t51 item 4): its groups take turns at a yield, and it knows how many run at
+/// once (the launch's `resident`). A dispatch of four times that many has exactly that many in its grid (not the
+/// first group alone, as a window that yields nowhere gave), and its barriers pass.
+#[test]
+fn the_cpus_grid_is_its_resident_groups() {
+    let Some((p, mut q)) = setup() else { return };
+    if crate::device::backend() != "CPU" {
+        return;
+    }
+    let lsz = 256u32;
+    let f = p.function("t_grid_barrier").unwrap();
+    let resident = crate::shared::get().and_then(|s| s.device.resident_groups(lsz, f.threadgroup_bytes())).expect("the CPU's resident count") as u32;
+    let groups = 4 * resident;
+    let (ctl, slots, out) = (grid_ctl(), alloc::<u32>((groups * lsz) as usize).unwrap(), buffer_of(&vec![0u32; groups as usize]).unwrap());
+    launch(&q, f)
+        .value("args", &TestArgs { n: 4, w: groups })
+        .buffer("ctl", &ctl)
+        .buffer("slots", &slots)
+        .buffer("out", &out)
+        .run(&[groups as u64], &[lsz as u64])
+        .unwrap();
+    q.flush().await_().unwrap();
+    let c: Vec<u32> = read(&ctl, 4);
+    assert_eq!(c[2], 0, "a barrier failed");
+    assert_eq!(grid_joined(&c), resident, "the grid is the {resident} groups that run at once, of {groups}");
+    assert_eq!(c[1], 4 * 4, "the barriers' generation (two a barrier)");
+    let wrong: Vec<u32> = read(&out, groups as usize);
+    assert!(wrong.iter().all(|&w| w == 0), "reads before the barrier's writes: {wrong:?}");
+}
+
 /// R5 of decision 0468: the grid's exclusive scan equals the host's from 0 to 10^6 values, across tile and share
-/// boundaries, at 1, 8 and 32 groups and the device's resident count, its count read on the device.
+/// boundaries, at 1, 8 and 32 groups and the device's resident count of 32 and of 256 threads, its count read on the
+/// device.
 #[test]
 fn the_grid_scan_equals_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(41);
-    let lsz = 256u32.min(crate::device::max_threadgroup());
-    for groups in grid_sizes(p.function("t_grid_scan").unwrap(), lsz) {
-        for n in [0u32, 1, 255, 256, 257, 8 * 256 + 3, 65_537, 1_000_000] {
-            let vals: Vec<u32> = (0..n).map(|_| if n % 2 == 1 { rng.next() as u32 } else { rng.below(5) as u32 }).collect();
-            // The buffers have room past the count: the scan reads `count`, not their length.
-            let cap = n + 100;
-            let mut padded = vals.clone();
-            padded.resize(cap as usize, 7);
-            let (ctl, count, inb, out, sums) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&padded).unwrap(), alloc::<u32>(cap as usize + 1).unwrap(), alloc::<u32>(groups as usize + 1).unwrap());
-            launch(&q, p.function("t_grid_scan").unwrap())
-                .value("args", &TestArgs { n: cap, w: groups })
-                .buffer("ctl", &ctl)
-                .buffer("count", &count)
-                .buffer("in", &inb)
-                .buffer("out", &out)
-                .buffer("sums", &sums)
-                .run(&[groups as u64], &[lsz as u64])
-                .unwrap();
-            q.flush().await_().unwrap();
-            assert_eq!(read::<u32>(&ctl, 3)[2], 0, "{}: {groups} groups, {n}: a barrier failed", crate::device::backend());
-            let got: Vec<u32> = read(&out, n as usize + 1);
-            let mut run = 0u32;
-            for i in 0..=n as usize {
-                assert_eq!(got[i], run, "{}: {groups} groups, scan of {n}, at {i}", crate::device::backend());
-                if i < n as usize {
-                    run = run.wrapping_add(vals[i]);
+    // A group of one SIMD group (the CPU's: its scans one operation a tile), and a GPU's.
+    for lsz in [32u32, 256u32.min(crate::device::max_threadgroup())] {
+        for groups in grid_sizes(p.function("t_grid_scan").unwrap(), lsz) {
+            for n in [0u32, 1, 255, 256, 257, 8 * 256 + 3, 65_537, 1_000_000] {
+                let vals: Vec<u32> = (0..n).map(|_| if n % 2 == 1 { rng.next() as u32 } else { rng.below(5) as u32 }).collect();
+                // The buffers have room past the count: the scan reads `count`, not their length.
+                let cap = n + 100;
+                let mut padded = vals.clone();
+                padded.resize(cap as usize, 7);
+                let (ctl, count, inb, out, sums) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&padded).unwrap(), alloc::<u32>(cap as usize + 1).unwrap(), alloc::<u32>(groups as usize + 1).unwrap());
+                launch(&q, p.function("t_grid_scan").unwrap())
+                    .value("args", &TestArgs { n: cap, w: groups })
+                    .buffer("ctl", &ctl)
+                    .buffer("count", &count)
+                    .buffer("in", &inb)
+                    .buffer("out", &out)
+                    .buffer("sums", &sums)
+                    .run(&[groups as u64], &[lsz as u64])
+                    .unwrap();
+                q.flush().await_().unwrap();
+                assert_eq!(read::<u32>(&ctl, 3)[2], 0, "{}: {groups} groups of {lsz}, {n}: a barrier failed", crate::device::backend());
+                let got: Vec<u32> = read(&out, n as usize + 1);
+                let mut run = 0u32;
+                for i in 0..=n as usize {
+                    assert_eq!(got[i], run, "{}: {groups} groups of {lsz}, scan of {n}, at {i}", crate::device::backend());
+                    if i < n as usize {
+                        run = run.wrapping_add(vals[i]);
+                    }
                 }
             }
         }
@@ -817,36 +850,38 @@ fn the_grid_scan_equals_the_host() {
 }
 
 /// R5: the grid's segmented scans (add and max) equal the host's from 0 to 10^6 values, heads dense and sparse, at
-/// 1, 8 and 32 groups.
+/// 1, 8 and 32 groups of 32 and of 256 threads.
 #[test]
 fn the_grid_segmented_scans_equal_the_host() {
     let Some((p, mut q)) = setup() else { return };
     let mut rng = Rng(43);
-    let lsz = 256u32.min(crate::device::max_threadgroup());
-    for groups in grid_sizes(p.function("t_grid_seg").unwrap(), lsz) {
-        for n in [0u32, 1, 255, 257, 8 * 256 + 3, 65_537, 1_000_000] {
-            for op in [0u32, 1] {
-                let vals: Vec<u32> = (0..n).map(|_| rng.below(1000) as u32).collect();
-                let every = [2u64, 50, 100_000][rng.below(3) as usize];
-                let heads: Vec<u32> = (0..n).map(|_| u32::from(rng.below(every) == 0)).collect();
-                let (ctl, count, inb, hb, out, sums) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&vals).unwrap(), buffer_of(&heads).unwrap(), alloc::<u32>(n as usize).unwrap(), alloc::<u32>(2 * groups as usize).unwrap());
-                launch(&q, p.function("t_grid_seg").unwrap())
-                    .value("args", &TestArgs { n: n.max(1), w: groups | op << 16 })
-                    .buffer("ctl", &ctl)
-                    .buffer("count", &count)
-                    .buffer("in", &inb)
-                    .buffer("heads", &hb)
-                    .buffer("out", &out)
-                    .buffer("sums", &sums)
-                    .run(&[groups as u64], &[lsz as u64])
-                    .unwrap();
-                q.flush().await_().unwrap();
-                assert_eq!(read::<u32>(&ctl, 3)[2], 0, "{}: {groups} groups, {n}: a barrier failed", crate::device::backend());
-                let got: Vec<u32> = read(&out, n as usize);
-                let mut run = 0u32;
-                for i in 0..n as usize {
-                    run = if heads[i] != 0 || i == 0 { vals[i] } else if op == 0 { run.wrapping_add(vals[i]) } else { run.max(vals[i]) };
-                    assert_eq!(got[i], run, "{}: {groups} groups, op {op}, segmented scan of {n}, at {i}", crate::device::backend());
+    // A group of one SIMD group (the CPU's: its scans one operation a tile), and a GPU's.
+    for lsz in [32u32, 256u32.min(crate::device::max_threadgroup())] {
+        for groups in grid_sizes(p.function("t_grid_seg").unwrap(), lsz) {
+            for n in [0u32, 1, 255, 257, 8 * 256 + 3, 65_537, 1_000_000] {
+                for op in [0u32, 1] {
+                    let vals: Vec<u32> = (0..n).map(|_| rng.below(1000) as u32).collect();
+                    let every = [2u64, 50, 100_000][rng.below(3) as usize];
+                    let heads: Vec<u32> = (0..n).map(|_| u32::from(rng.below(every) == 0)).collect();
+                    let (ctl, count, inb, hb, out, sums) = (grid_ctl(), buffer_of(&[n]).unwrap(), buffer_of(&vals).unwrap(), buffer_of(&heads).unwrap(), alloc::<u32>(n as usize).unwrap(), alloc::<u32>(2 * groups as usize).unwrap());
+                    launch(&q, p.function("t_grid_seg").unwrap())
+                        .value("args", &TestArgs { n: n.max(1), w: groups | op << 16 })
+                        .buffer("ctl", &ctl)
+                        .buffer("count", &count)
+                        .buffer("in", &inb)
+                        .buffer("heads", &hb)
+                        .buffer("out", &out)
+                        .buffer("sums", &sums)
+                        .run(&[groups as u64], &[lsz as u64])
+                        .unwrap();
+                    q.flush().await_().unwrap();
+                    assert_eq!(read::<u32>(&ctl, 3)[2], 0, "{}: {groups} groups of {lsz}, {n}: a barrier failed", crate::device::backend());
+                    let got: Vec<u32> = read(&out, n as usize);
+                    let mut run = 0u32;
+                    for i in 0..n as usize {
+                        run = if heads[i] != 0 || i == 0 { vals[i] } else if op == 0 { run.wrapping_add(vals[i]) } else { run.max(vals[i]) };
+                        assert_eq!(got[i], run, "{}: {groups} groups of {lsz}, op {op}, segmented scan of {n}, at {i}", crate::device::backend());
+                    }
                 }
             }
         }

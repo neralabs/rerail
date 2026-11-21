@@ -213,7 +213,7 @@ mod lowering_time {
     #[test]
     #[ignore = "a measurement"]
     fn lowering_steps() {
-        use rerail_compiler::bitlex_masks as bc;
+        use rerail_bitlex::bitlex_masks as bc;
         for cpp in [false, true] {
             let t = std::time::Instant::now();
             let stmts = ::bitlex::syntax::parse(&super::grammar(cpp)).unwrap();

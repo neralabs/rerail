@@ -5,9 +5,11 @@
 use crate::block_tests::{Executors, inputs, runs};
 #[allow(unused_imports)]
 use rerail_compiler::*;
+use rerail_cpu_block::*;
+use rerail_cpu_stream::*;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
-use rerail_compiler::bitlex_masks as bitlex_compile;
+use rerail_bitlex::bitlex_masks as bitlex_compile;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_metal as metal_program_backend;
 
@@ -1322,10 +1324,10 @@ fn json_in_clusters_equals_one_function() {
         ("by traffic, at most 40 words", native_cpu_clusters::by_traffic(&native, &traffic, 40)),
         ("a function a rule, native calls", native_cpu_clusters::by_rules(&native)),
         ("a function a rule, optimized", native_cpu_clusters::Cut { speed: true, ..native_cpu_clusters::by_rules(&native) }),
-        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
+        ("a word a cluster", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: Vec::new(), reload: false, inline_span: false, pass: Vec::new(), speed: false, pick: rerail_cpu_stream::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
         // The state in registers: every field, in clusters and in the one function.
         ("by traffic, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),
-        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..23).collect(), reload: true, inline_span: true, pass: Vec::new(), speed: false, pick: rerail_compiler::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
+        ("a word a cluster, the state in registers", native_cpu_clusters::Cut { of: (0..n as u32).collect(), count: n as u32, held: (0..23).collect(), reload: true, inline_span: true, pass: Vec::new(), speed: false, pick: rerail_cpu_stream::native_cpu_clusters::Pick::Tree, pick_traffic: Default::default(), near: false, unsigned: false, calls: false }),
         ("one function, the state in registers", native_cpu_clusters::Cut { held: (0..23).collect(), ..native_cpu_clusters::Cut::one(n) }),
         ("one function, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::Cut::one(n) }),
         ("by traffic, ctx at each word", native_cpu_clusters::Cut { reload: true, ..native_cpu_clusters::by_traffic(&native, &traffic, 40) }),

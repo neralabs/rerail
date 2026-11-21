@@ -1,11 +1,11 @@
     use super::*;
-    use crate::code_rule_dsl::{CodeRuleDslRuntime, budget::Context, model::FileInput};
+    use crate::code_rule_dsl::{budget::Context, model::FileInput};
     use std::{
         collections::BTreeSet,
         sync::{Arc, atomic::AtomicBool},
     };
     fn rule() -> crate::code_rule_dsl::CompiledCodeRuleDsl {
-        CodeRuleDslRuntime::compile(serde_json::json!({"format":"rerail.policy/v1","id":"gate","revision":1,"mode":"log","clauses":[{"id":"gate","relational":{"requireNonemptyInput":"gate","inputs":{"gate":{"evidence":{"as":"n","query":{"ast":{"language":"python","syntax":"valid","rule":{"kind":"module"}}},"project":{"path":"file.path"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte FROM gate"},"violation":{"code":"GATE","message":"Gate","anchor":"witness.span"}}]}).to_string(),"json".into(),include_str!("../../../capabilities.json").into()).unwrap()
+        crate::code_rule_dsl::rule_api::compile(&serde_json::json!({"format":"rerail.policy/v1","id":"gate","revision":1,"mode":"log","clauses":[{"id":"gate","relational":{"requireNonemptyInput":"gate","inputs":{"gate":{"evidence":{"as":"n","query":{"ast":{"language":"python","syntax":"valid","rule":{"kind":"module"}}},"project":{"path":"file.path"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte FROM gate"},"violation":{"code":"GATE","message":"Gate","anchor":"witness.span"}}]}).to_string(), "json", include_str!("../../../capabilities.json")).unwrap()
     }
     fn cached() -> Inputs {
         Inputs {

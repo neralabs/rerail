@@ -1,7 +1,7 @@
 //! Tape v8 spike: v7 baseline (copied from rerail native/src/code_rule_dsl/tape.rs and tape/wire.rs)
 //! against regular column variants. Modes:
 //!   measure <corpus> <lang> <dir>...   storage, encode, Rust decode, invariant statistics (one JSON line)
-//!   sql <lang> <db> <maxfiles> <dir>... pure-SQL decoding (ast-index-spike technique) on bundled SQLite
+//!   sql <lang> <db> <maxfiles> <dir>... pure-SQL decoding (SQL index prototype technique) on bundled SQLite
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::time::Instant;

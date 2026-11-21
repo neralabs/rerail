@@ -1,0 +1,162 @@
+.policy "rerail-language-branching" revision 2
+.description "Branch on a language, family or embedding only in its Engine Adapter, embedder, the registry or the family's own modules; elsewhere ask the adapter or read the registry."
+.language rust
+.mode log
+.scope include "native/src/**/*.rs"
+.scope exclude "native/src/code_rule_dsl/language.rs", "native/src/code_rule_dsl/language/**", "native/src/build_languages.rs", "**/*tests.rs", "**/tests/**", "**/test_support.rs", "**/*.generated.rs", "native/src/build_identity.rs", "native/src/code_rule_dsl/tape/corpus_parity.rs", "native/src/code_rule_dsl/value/eslint_rules.rs", "native/src/code_rule_dsl/value/rules.rs", "native/src/code_rule_dsl/compile/parse/ruff.rs", "native/src/code_rule_dsl/compile/binds/ruff.rs", "native/src/code_rule_dsl/compile/binds/eslint.rs", "native/src/code_rule_dsl/compile/format_args/php.rs", "native/src/code_rule_dsl/compile/format_args/ruff.rs", "native/src/code_rule_dsl/suppress/ruff.rs", "native/src/code_rule_dsl/lines/eslint.rs", "native/src/code_rule_dsl/embed/test_script.rs"
+#include "rust/rerail-native.rerail"
+// A choice made per language, family or embedding belongs in the family's Engine Adapter (with_adapter!), the
+// registry's data, or an embedder (with_embedder!). The engine's Rust half; the host's TypeScript is
+// rerail-language-branching.typescript.rerail. Not reported in test code; LANGUAGE_BRANCH not in a family's own
+// modules (family_owned), EMBEDDING_BRANCH not in embed.rs or embed/.
+//   if grammar.lang == GrammarDialect::Blade { … }              LANGUAGE_BRANCH (a comparison with a variant)
+//   match family { Family::Python => …, … }                     LANGUAGE_BRANCH (a pattern naming a variant)
+//   if let Some(Family::Php) = family { … }                     LANGUAGE_BRANCH (and `let … else`, matches!)
+//   if language == "python" { … }   match label { "sql" => … }  LANGUAGE_BRANCH (a label against a language name)
+//   if via == Via::Markdown { … }                               EMBEDDING_BRANCH (the same, for Via)
+//   with_adapter!(Family::of(grammar.lang), A => A::parse(…))   not reported
+// A variant is a path ending in Family::X, GrammarDialect::X, CodeRuleLanguage::X, SupportLang::X or Lang::X
+// (Via::X for an embedding).
+
+// variant(v, c): v names a language's variant (c = "language") or an embedding's (c = "embedding").
+.decl variant(v: node, c: symbol)
+variant(v, "language") :- kind(v, "scoped_identifier"),
+    match("(?s:.*)(?:^|::)(?:Family|GrammarDialect|CodeRuleLanguage|SupportLang|Lang)::[A-Z][A-Za-z0-9_]*", v).
+variant(v, "embedding") :- kind(v, "scoped_identifier"), match("(?s:.*)(?:^|::)Via::[A-Z][A-Za-z0-9_]*", v).
+// operand(o, c): what a comparison tests against: a variant, Some(variant), dialect_by_label("python").
+.decl operand(o: node, c: symbol)
+operand(o, c) :- variant(o, c).
+operand(o, c) :- kind(o, "call_expression"), match("Some\\s*\\((?s:.*)", o), child(o, a, _), kind(a, "arguments"),
+    child(a, v, _), variant(v, c).
+operand(o, c) :- kind(o, "call_expression"), (c = "language" ; c = "embedding"),
+    match("(?:[A-Za-z_]+::)*dialect_by_label\\s*\\(\\s*\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\"\\s*\\)", o).
+// A label: "python", or Some("python").
+.decl label(n: node)
+label(n) :- native_label(n).
+label(n) :- kind(n, "call_expression"),
+    match("Some\\s*\\(\\s*\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\"\\s*\\)", n).
+// A comparison's side named for a language: `language`, `grammar.lang`, `dialect_by_label(x)`, `self.family`.
+.decl nameish(n: node)
+nameish(n) :- compare(e), child(e, n, _), !kind(n, "string_literal"),
+    match("(?s:.*)(?:^|[^A-Za-z0-9_])(?:language|lang|dialect|family|label)(?:_of_path|_by_label)?\\b(?s:.*)", n).
+
+// A pattern's variant or label, unless it is in a comparison of a match guard: `x if x == Family::Php`.
+.decl in_guard_test(v: node)
+in_guard_test(v) :- nearest(v, m, "match_pattern"), inside(v, b, "binary_expression"), within(b, m).
+.decl binds(p: node, c: symbol)  // pattern p is a variant or holds one
+binds(p, c) :- variant(p, c).
+binds(p, c) :- has(p, v, "scoped_identifier"), variant(v, c).
+.decl compare(e: node)  // e is `a == b` or `a != b`
+compare(e) :- kind(e, "binary_expression"), (op(e, "==") ; op(e, "!=")).
+
+// branch(n, c): n chooses by a language (c = "language") or an embedding (c = "embedding").
+.decl branch(n: node, c: symbol)
+branch(n, c) :- compare(n), child(n, o, _), operand(o, c).
+branch(n, c) :- kind(n, "match_pattern"), has(n, v, "scoped_identifier"), variant(v, c), !in_guard_test(v).
+branch(n, "language") :- kind(n, "macro_invocation"),
+    match("matches!\\s*[\\(\\[\\{][\\s\\S]*\\b(?:Family|GrammarDialect|CodeRuleLanguage|SupportLang|Lang)::[A-Z](?s:.*)", n).
+branch(n, "embedding") :- kind(n, "macro_invocation"), match("matches!\\s*[\\(\\[\\{][\\s\\S]*\\bVia::[A-Z](?s:.*)", n).
+branch(n, c) :- kind(n, "let_condition"), field(n, "pattern", p), binds(p, c).
+branch(n, c) :- kind(n, "let_declaration"), field(n, "alternative", b), kind(b, "block"), field(n, "pattern", p),
+    binds(p, c).
+branch(n, "language") :- compare(n), child(n, l, _), label(l), child(n, x, _), nameish(x).
+branch(n, "language") :- kind(n, "match_pattern"), has(n, l, label_kind), label(l), !in_guard_test(l),
+    inside(n, m, "match_expression"), field(m, "value", x),
+    match("(?s:.*)(?:^|[^A-Za-z0-9_])(?:language|lang|dialect|family|label)(?:_of_path|_by_label)?\\b(?s:.*)", x).
+branch(n, "language") :- kind(n, "macro_invocation"),
+    match("matches!\\s*[\\(\\[\\{]\\s*(?:[^,]*[^A-Za-z0-9_,])?(?:language|lang|dialect|family|label)\\b[^,]*,[\\s\\S]*\"(?:python|typescript|tsx|javascript|php|blade|sql|vue|rust|ecma)\"(?s:.*)", n).
+.decl label_kind(k: symbol)
+label_kind("string_literal"). label_kind("call_expression").
+
+.violation LANGUAGE_BRANCH(at: node) "Move this choice into the family's Engine Adapter (called through with_adapter!) or the registry's data. If the code serves one family only, move it to that family's module rather than drop the check."
+LANGUAGE_BRANCH(n) :- branch(n, "language"), !in_native_test(n), docof(n, d), !family_owned(d).
+
+.violation EMBEDDING_BRANCH(at: node) "Let this embedding's embedder in embed/ decide (an Embedder method, dispatched with with_embedder!) instead of branching on a Via here."
+EMBEDDING_BRANCH(n) :- branch(n, "embedding"), !in_native_test(n), docof(n, d), doc(d, p, _),
+    !match("(?s:.*)(?:(?:^|/)code_rule_dsl/embed(?:\\.rs$|/))(?s:.*)", p).
+
+// The pack's example (packs/rerail/pack.json).
+.test a_dialect_comparison_is_reported exactly
+    .fixture "native/src/code_rule_dsl/tape.rs" ```
+        impl FileImage {
+            pub(super) fn parse(
+                grammar: &Grammar,
+                source: &str,
+                budget: &impl Fn() -> bool,
+            ) -> Option<Result<FileImage, String>> {
+                if grammar.lang == GrammarDialect::Blade {
+                    return Some(Self::encode_template(grammar, source, budget));
+                }
+                None
+            }
+        }
+        ```
+    .expect LANGUAGE_BRANCH at "native/src/code_rule_dsl/tape.rs":7
+.end
+
+.test patterns_labels_and_embeddings_are_reported exactly
+    .fixture "native/src/code_rule_dsl/shared.rs" ```
+        fn a(family: Family, grammar: &Grammar, label: &str, via: Via) -> u8 {
+            match family {
+                Family::Python => 1,
+                other if other == Family::Php => 2,
+                _ => 0,
+            };
+            if let Some(Family::Php) = Some(family) {}
+            let Family::Sql = family else { return 0 };
+            if matches!(grammar.lang, GrammarDialect::Vue) {}
+            if label == "python" {}
+            match label {
+                "sql" => 3,
+                _ => 0,
+            };
+            if matches!(label, "rust" | "ecma") {}
+            if grammar.lang == dialect_by_label("tsx") {}
+            if via == Via::Markdown {}
+            match via {
+                Via::Markdown => 4,
+                _ => 0,
+            }
+        }
+        ```
+    .expect LANGUAGE_BRANCH at "native/src/code_rule_dsl/shared.rs":3
+    .expect LANGUAGE_BRANCH at "native/src/code_rule_dsl/shared.rs":4
+    .expect LANGUAGE_BRANCH at "native/src/code_rule_dsl/shared.rs":7
+    .expect LANGUAGE_BRANCH at "native/src/code_rule_dsl/shared.rs":8
+    .expect LANGUAGE_BRANCH at "native/src/code_rule_dsl/shared.rs":9
+    .expect LANGUAGE_BRANCH at "native/src/code_rule_dsl/shared.rs":10
+    .expect LANGUAGE_BRANCH at "native/src/code_rule_dsl/shared.rs":12
+    .expect LANGUAGE_BRANCH at "native/src/code_rule_dsl/shared.rs":15
+    .expect LANGUAGE_BRANCH at "native/src/code_rule_dsl/shared.rs":16
+    .expect EMBEDDING_BRANCH at "native/src/code_rule_dsl/shared.rs":16
+    .expect EMBEDDING_BRANCH at "native/src/code_rule_dsl/shared.rs":17
+    .expect EMBEDDING_BRANCH at "native/src/code_rule_dsl/shared.rs":19
+.end
+
+// The pack's passing example, test code, a family's own module, and the embedder's.
+.test adapters_tests_and_owners_pass exactly
+    .fixture "native/src/code_rule_dsl/tape.rs" ```
+        impl FileImage {
+            pub(super) fn parse(grammar: &Grammar, source: &str) -> Option<Result<FileImage, String>> {
+                with_adapter!(Family::of(grammar.lang), A => A::parse(grammar, source))
+            }
+        }
+
+        #[cfg(test)]
+        mod probe {
+            fn t(family: Family) -> bool {
+                family == Family::Python
+            }
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/python.rs" ```
+        fn t(family: Family) -> bool {
+            family == Family::Python
+        }
+        ```
+    .fixture "native/src/code_rule_dsl/embed/markdown.rs" ```
+        fn t(via: Via) -> bool {
+            via == Via::Markdown
+        }
+        ```
+.end

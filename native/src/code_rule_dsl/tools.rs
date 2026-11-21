@@ -1,5 +1,6 @@
 //! The engine's text tools without Node (list step 18; P `spec-tooling.md` §2.2.1–2.2.2): the
-//! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
+//! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these. Boot's: the engine
+//! adds the napi wrapper and boots the program before a command (`code_rule_dsl/tools/napi.rs`).
 
 #[allow(unused_imports)]
 use rerail_store::source_tree::Canonical as _;
@@ -29,15 +30,9 @@ pub fn launch_checks() -> Result<(), String> {
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings};
 pub use super::logic::settings::process_counters;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 
-/// The package CLI's SQL tool, sharing the standalone command's request and execution path.
-#[napi_derive::napi(catch_unwind)]
-pub fn execute_sql_request(store_path: String, request_json: String) -> napi::Result<String> {
-    sql(std::path::Path::new(&store_path), &request_json).map_err(napi::Error::from_reason)
-}
 
 /// A SQL extension request for the standalone tool. The same session serves the bindings,
 /// lowered rule program and subsequent SQL queries; no AST matcher is lowered to SQL.
@@ -204,7 +199,7 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
 }
 
 /// The capabilities rules compile against, as bundled with the engine.
-pub const CAPABILITIES: &str = include_str!("capabilities.json");
+pub const CAPABILITIES: &str = super::rule_api::CAPABILITIES;
 
 /// Read a public `.rerail` file, including its core prelude and libraries. The CLI and migration
 /// harness use the same reader as the engine; they never strip directives or run a lab interpreter.
@@ -918,7 +913,7 @@ pub fn dump(
     let compiled = policies
         .iter()
         .map(|(name, source, format)| {
-            CodeRuleDslRuntime::compile(source.clone(), format.clone(), capabilities.to_string())
+            crate::code_rule_dsl::rule_api::compile(source, format, capabilities)
                 .map(|rule| (name.clone(), rule))
                 .map_err(|error| format!("{name}: {}", error.reason))
         })
@@ -1165,7 +1160,7 @@ fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&s
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine delete-scope <store.sqlite> <name>\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>... [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -1232,8 +1227,8 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
 
 /// A command of `cli_in`, within its limits.
 fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
-    // Done as the library loaded, except where nothing runs then (the browser's build).
-    crate::install_store_functions();
+    // The program is booted before its first command: as the library loads, or by the engine's `cli`/`cli_in`
+    // (`code_rule_dsl/tools/napi.rs`) where nothing runs then (the browser's build, the CLI binary).
     let mut budgets = budget_options(args)?;
     for flag in ["--revision", "--analysis-scope"] {
         if budgets.iter().filter(|a| *a == flag).count() > 1 {
@@ -1535,7 +1530,7 @@ fn repeat_command(_: &str) -> Result<String, String> {
 }
 
 /// The memory budgets, set by any command's `--memory-mb <n>` (the overall budget, 1 GB by default) and
-/// `--metal-mb <n>` (the Metal budget, on top of it: half the overall budget by default) (decision 0126): the
+/// `--metal-mb <n>` (the Metal budget, on top of it: the overall budget by default) (decisions 0126, 0549): the
 /// arguments without them.
 fn budget_options(args: &[String]) -> Result<Vec<String>, String> {
     let mut rest = Vec::with_capacity(args.len());

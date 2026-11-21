@@ -1,5 +1,5 @@
 //! The in-memory overlay over the store (C7, C8, C18; docs/final-shape/03-architecture.md §4,
-//! §10.2), adapted from Y1's layered map (Moti-Velz/facts-engine `spikes/facts-b/src/lmap.rs`):
+//! §10.2), adapted from Y1's layered map (the facts-engine branch, `spikes/facts-b/src/lmap.rs`):
 //! frozen layers shared by reference, top first, under one mutable top map; an entry in a layer
 //! overrides every layer below it, and the top holds only entries that differ from what lies
 //! below. Here the bottom layer is SQLite, the frozen layers are columnar runs (`runs.rs`), and

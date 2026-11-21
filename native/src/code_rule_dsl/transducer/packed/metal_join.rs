@@ -253,10 +253,16 @@ pub(in crate::code_rule_dsl) struct Stage {
     /// lies); 0 for none. A binding whose key the filter refuses has no candidates, and reads no index group.
     pub(in crate::code_rule_dsl) screen: u32,
     pub(in crate::code_rule_dsl) screen_at: u32,
-    pub(in crate::code_rule_dsl) screen_pad: [u32; 2],
+    /// A `has` axis probed off the tape (decision 0353 step 5, `DevRel::has`): its set's kind atoms, ascending (their
+    /// device address), how it is probed (`DevIndex::walk`: 1 by its node, a climb; 2 by its ancestor, the subtree;
+    /// 0: not), and the atoms' count.
+    pub(in crate::code_rule_dsl) v_set: u64,
+    pub(in crate::code_rule_dsl) v_has: u32,
+    pub(in crate::code_rule_dsl) v_nset: u32,
+    pub(in crate::code_rule_dsl) has_pad: [u32; 2],
 }
 
-const _: () = assert!(std::mem::size_of::<Stage>() == 2336 && std::mem::size_of::<Stage>().is_multiple_of(16));
+const _: () = assert!(std::mem::size_of::<Stage>() == 2352 && std::mem::size_of::<Stage>().is_multiple_of(16));
 
 impl Default for Stage {
     fn default() -> Self {
@@ -421,6 +427,8 @@ pub(in crate::code_rule_dsl) struct DevRel {
     /// The relation's holder, for one read where it lies in its block (`in_block`): what an index built into it keeps
     /// until its batch is done (`Building`, Q268).
     kept: Option<crate::code_rule_dsl::facts::rows::Part>,
+    /// A `has` axis read off the tape (`DevRel::has`): its set's kind atoms, ascending, two words each.
+    has: Option<Words>,
 }
 
 impl DevRel {
@@ -436,7 +444,13 @@ impl DevRel {
     /// A relation of the device's own, of `cols` columns and `rows` rows, in a block of the device's
     /// (`Part::for_device`, decision 0325 step 5), every row the device's to write.
     pub(in crate::code_rule_dsl) fn empty(cols: usize, rows: usize) -> Result<DevRel, Error> {
-        let part = crate::code_rule_dsl::facts::rows::Part::for_device(cols, rows).map_err(|_| Error::BackendCapacity)?;
+        DevRel::empty_indexed(cols, rows, 1)
+    }
+
+    /// `empty` with room in its block for `indexes` indexes (`Part::for_device_indexed`): one for each key its readers
+    /// probe it by, so none of them copies it (`Batch::index`).
+    pub(in crate::code_rule_dsl) fn empty_indexed(cols: usize, rows: usize, indexes: usize) -> Result<DevRel, Error> {
+        let part = crate::code_rule_dsl::facts::rows::Part::for_device_indexed(cols, rows, indexes).map_err(|_| Error::BackendCapacity)?;
         DevRel::of_part(part, cols, rows)
     }
 
@@ -446,7 +460,7 @@ impl DevRel {
         let buffer = held_block(device, part.facts(), Box::new(part.facts().clone()))?;
         debug_assert_eq!(part.rows_at(), part.rel_at() + REL_ROWS as usize);
         let home = Some(part.facts().clone());
-        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None }.noted())
+        Ok(DevRel { buffer, rows, cols, at: part.rel_at() as u64, dead: 0, part: Some(part), home, view: None, made: (0, 0), kept: None, has: None }.noted())
     }
 
     /// A view of `cols` columns and `rows` rows read in place (decision 0353 step 4d): a relation of no columns of
@@ -467,6 +481,25 @@ impl DevRel {
         Ok(dev)
     }
 
+    /// A `has` axis read off the tape (decision 0353 step 5): the batch's `node` view in place (`view`, of `nodes`
+    /// rows) and its set's kind atoms `kinds`, ascending. It has no rows of its own: a stage probes it by one of its
+    /// columns only (`Batch::by_has`), each binding's rows walked on the tape.
+    pub(in crate::code_rule_dsl) fn has(nodes: usize, view: crate::code_rule_dsl::facts::vtab::ViewInPlace, kinds: &[i64]) -> Result<DevRel, Error> {
+        let mut dev = DevRel::view(2, nodes, view)?;
+        let set = Words::zeroed(2 * kinds.len())?;
+        for (i, &k) in kinds.iter().enumerate() {
+            set.set(2 * i, k as u32);
+            set.set(2 * i + 1, (k >> 32) as u32);
+        }
+        dev.has = Some(set);
+        Ok(dev)
+    }
+
+    /// Whether it is a `has` axis read off the tape (`has`).
+    pub(in crate::code_rule_dsl) fn is_has(&self) -> bool {
+        self.has.is_some()
+    }
+
     /// Makes the buffers a view's reads reach by address resident in `pass` (none for a relation).
     pub(in crate::code_rule_dsl) fn resident_in(&self, pass: &Pass) {
         if let Some(v) = &self.view {
@@ -475,6 +508,9 @@ impl DevRel {
             for cache in v.caches.iter().filter_map(|c| c.buffer.as_ref()) {
                 pass.use_read_write(cache);
             }
+        }
+        if let Some(set) = &self.has {
+            pass.use_read(&[&set.buffer.buffer]);
         }
     }
 
@@ -511,7 +547,7 @@ impl DevRel {
 
     /// The words of `buffer`, `words` of them (not a relation).
     fn raw(buffer: Held, words: usize) -> DevRel {
-        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None }
+        DevRel { buffer, rows: words, cols: 1, at: 0, dead: 0, part: None, home: None, view: None, made: (0, 0), kept: None, has: None }
     }
 
     /// Whether it is a relation read where it lies (`in_block`): it holds the relation's block while it lives.
@@ -527,7 +563,7 @@ impl DevRel {
         let device = rerail_accel::gpu::join::device().map_err(|_| Error::BackendCapacity)?;
         // The block, the relation and its pages: not given back while the device reads them (decisions 0342, Q76).
         let buffer = held_block(device, &b.facts, Box::new(b.clone()))?;
-        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone() }.noted())
+        Ok(DevRel { buffer, rows: b.rows as usize, cols, at: b.at as u64, dead: b.dead as u64, part: None, home: Some(b.facts.clone()), view: None, made: (0, 0), kept: b.part.clone(), has: None }.noted())
     }
 
     /// What holds its relation: its own, or the one read in its block (none for words, or a test's relation no
@@ -731,8 +767,9 @@ pub(in crate::code_rule_dsl) struct DevIndex {
     moved: Option<std::rc::Rc<DevRel>>,
     /// Whether this call built it (a sort made), or found it the relation's already.
     pub(in crate::code_rule_dsl) built: bool,
-    /// No index: the `child` view probed by its parent reads the parent's children off the tape (`by_parent`).
-    by_parent: bool,
+    /// No index, a walk on the tape: 1 the `child` view probed by its parent, the parent's children (`by_parent`); 2 a
+    /// `has` axis probed by its node, 3 by its ancestor (`by_has`); 0 an index.
+    walk: u32,
     /// Its block's buffer, taken once the index has its room: what its builder and its probes bind. A block with no
     /// slab of its own is bound by a wrap of its used extent (`Block::device_buffer`), which a buffer taken before the
     /// index was added (its relation's) does not reach.
@@ -740,6 +777,11 @@ pub(in crate::code_rule_dsl) struct DevIndex {
 }
 
 impl DevIndex {
+    /// Whether it copied its relation, whose block had no room for it (`moved`, 0353 step 6).
+    pub(in crate::code_rule_dsl) fn copied(&self) -> bool {
+        self.moved.is_some()
+    }
+
     /// The device memory it holds of its own: a moved relation's (the index lies in its relation's block).
     pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
         self.moved.as_ref().map_or(0, |m| m.bytes())
@@ -785,9 +827,11 @@ fn bind_right(stage: &mut Stage, rel: &DevRel, index: Option<&DevIndex>) {
     // A relation reads none: a stage bound before to a view reads its new relation, not the view.
     (stage.v_dir, stage.r_view) = rel.view.as_ref().map_or((0, 0), |v| (v.dir, v.kind));
     stage.v_parent = 0;
+    (stage.v_set, stage.v_nset, stage.v_has) = rel.has.as_ref().map_or((0, 0, 0), |set| (set.buffer.buffer.device_address().unwrap_or(0), (set.len / 2) as u32, 0));
     if let Some(ix) = index {
         stage.r_index = ix.index;
-        stage.v_parent = u32::from(ix.by_parent);
+        stage.v_parent = u32::from(ix.walk == 1);
+        stage.v_has = ix.walk.saturating_sub(1);
     }
 }
 
@@ -1236,7 +1280,23 @@ impl Batch {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, by_parent: true, buffer: bound(&home)? }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk: 1, buffer: bound(&home)? }))
+    }
+
+    /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
+    /// tape (the kernels' `by_has`), by its node `[0]` a climb, by its ancestor `[1]` the subtree. `None` for any
+    /// other relation; an error for any other probe of one, which reads it off the tape or not at all.
+    pub(in crate::code_rule_dsl) fn by_has(&self, rel: &DevRel, cols: &[usize]) -> Result<Option<DevIndex>, Error> {
+        if !rel.is_has() {
+            return Ok(None);
+        }
+        let walk = match cols {
+            [0] => 2,
+            [1] => 3,
+            _ => return Err(Error::UnsupportedFeature("a has axis probed by both its columns, or none")),
+        };
+        let home = rel.home.clone().expect("a view's relation of no columns");
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk, buffer: bound(&home)? }))
     }
 
     /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
@@ -1261,10 +1321,10 @@ impl Batch {
         let room = {
             let _g = home.ix.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(i) = r.find_index(&key, rel.rows as u32) {
-                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, by_parent: false, buffer: bound(&home)? });
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
             }
             if let Some(b) = self.building.iter().find(|b| std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.rows_n as usize == rel.rows) {
-                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, by_parent: false, buffer: bound(&home)? });
+                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
             }
             // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
             // before the build, which its passes order).
@@ -1284,8 +1344,24 @@ impl Batch {
             }
 // copy (0353 step 6): a second key's index copies the relation. It goes: a relation is made with room for
 // the indexes its readers probe (decision 0353).
-            const MOVED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a second key's index (DevIndex::moved)");
-            MOVED.copied(8 * rel.cols * rel.rows);
+            // By where the relation lies: the device's own (an upload, a fixpoint's delta) has room for its first key's
+            // index alone; one in a block of the run's shares the block's room with the relations beside it.
+            const MOVED_OWN: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a second key's index (DevIndex::moved): the device's own");
+            const MOVED_IN_BLOCK: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a key's index (DevIndex::moved): in a block with no room left");
+            (if rel.part.is_some() { &MOVED_OWN } else { &MOVED_IN_BLOCK }).copied(8 * rel.cols * rel.rows);
+            // Why its block refused the index: its directory full, or no bytes left; and what the relation is.
+            if rel.part.is_none() {
+                let full = r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize >= rerail_blocks::relation::ADDED_INDEXES;
+                let free = home.block.reserved().saturating_sub(home.block.used());
+                let why = format!(
+                    "device.moved in a block: {}, {}, {} of {} MB left",
+                    if full { "its directory full" } else { "no bytes for it" },
+                    if r.continues() { "a continuation" } else if rel.dead != 0 { "with dead rows" } else { "a relation" },
+                    if free < 1 << 20 { "< 1" } else if free < 16 << 20 { "1-16" } else { ">= 16" },
+                    (home.block.reserved() >> 20).next_power_of_two(),
+                );
+                crate::code_rule_dsl::prof::count_named(why, 8 * rel.cols * rel.rows);
+            }
             let copy = std::rc::Rc::new(DevRel::empty(rel.cols, rel.rows)?);
             let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
             self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
@@ -1327,7 +1403,7 @@ impl Batch {
         let index = room.index as u32;
         let before = Building::descriptor(std::ptr::from_ref(r));
         self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before });
-        Ok(DevIndex { index, rows: n, moved: None, built: true, by_parent: false, buffer })
+        Ok(DevIndex { index, rows: n, moved: None, built: true, walk: 0, buffer })
     }
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into

@@ -52,8 +52,8 @@ fn the_evaluator_copies_no_tape() {
 }
 
 /// §5 of decision 0468: the evaluator is UKL, launched through the lane: its source has no MSL
-/// (no Metal kernel, attribute, address space or SIMD function of its own), takes UKL's work queue
-/// and grid, and the preprocessor's MSL work queue is gone.
+/// (no Metal kernel, attribute, address space or SIMD function of its own) and takes UKL's grid.
+/// It runs in rounds (decision 0527), so it takes no work queue.
 #[test]
 fn the_evaluator_is_ukl() {
     let src = rerail_metal::pp_arena::source();
@@ -61,7 +61,8 @@ fn the_evaluator_is_ukl() {
         let code: Vec<&str> = src.lines().filter(|l| !l.trim_start().starts_with("//") && l.contains(msl)).take(3).collect();
         assert!(code.is_empty(), "the evaluator's source has MSL `{msl}`: {code:?}");
     }
-    assert!(src.contains("#include <ukl/workqueue.h>") && src.contains("#include <ukl/grid.h>"), "UKL's queue and grid");
+    assert!(src.contains("#include <ukl/grid.h>"), "UKL's grid");
+    assert!(!src.contains("#include <ukl/workqueue.h>") && !src.contains("ukl_wq_"), "no work queue: the rounds (decision 0527)");
     assert!(src.contains("DEFINE_KERNEL2(pp, pp_setup") && !src.contains("DEFINE_KERNEL2(pp, px_expand") && src.contains("DEFINE_KERNEL2(pp, pp_check"), "the grid's kernels are UKL's");
     let arena = include_str!("../../../metal/src/pp_arena.rs");
     assert!(arena.contains("lane::Command") && !arena.contains("new_compute_command_encoder"), "launched through the lane");
@@ -808,6 +809,15 @@ fn expanded(files: &[(&str, &str)], cpp: bool) -> DeviceRun {
 
 /// `expanded` under `cfg`, its search path `dirs`.
 fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> DeviceRun {
+    let (got, want, rung, launches, _) = expanded_run(files, cfg, dirs);
+    (got, want, rung, launches)
+}
+
+/// A device run's outputs (`DeviceRun`) and the givings back it made.
+type GivingRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, u32, usize, u32);
+
+/// `expanded_in`, and the givings back the run made (decision 0486 §10).
+fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, rerail_c_pp::files::DirKind)]) -> GivingRun {
     use rerail_c_pp::files::Search;
     let m: std::collections::HashMap<String, Vec<u8>> = files.iter().map(|(p, s)| (p.to_string(), s.as_bytes().to_vec())).collect();
     let dirs: Vec<(String, rerail_c_pp::files::DirKind)> = dirs.iter().map(|&(d, k)| (d.to_string(), k)).collect();
@@ -821,15 +831,16 @@ fn expanded_in(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str, 
     let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
     let x = &*s.part.x;
     if x.refused != 0 {
-        return (Err(x.refused), serial.0, x.rung, x.launches);
+        return (Err(x.refused), serial.0, x.rung, x.launches, x.gives);
     }
-    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches)
+    (Ok(part_tokens(&s.part, &s.loaded.files, &tapes)), serial.0, x.rung, x.launches, x.gives)
 }
 
 /// Decisions 0468 §4 and 0485 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
 /// text inside its P1 iterations) and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
-/// definitions, and one that runs again at a larger rung. A grid past the groups the device holds
-/// at once fails its barrier, never hangs, and runs again at half the groups to the same output.
+/// definitions, and one that runs again at a larger rung. A grid dispatched past the groups the
+/// device holds at once is the groups that join it (decision 0540 §3): it passes its barriers the
+/// first time, on fewer groups than dispatched, to the same output.
 #[test]
 fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut big = String::new();
@@ -854,10 +865,11 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
     let (unit, lay) = (&d.unit, &d.lay);
     let wide = rerail_metal::pp_expand::expand_at(unit, lay, 0, 4096).unwrap();
     let narrow = rerail_metal::pp_expand::expand_from(unit, lay, 0).unwrap();
-    assert!(wide.groups < 4096, "the grid past residency ran at {} groups", wide.groups);
-    same(wide.refused, 0, "the halved grid's refusals");
-    same(&wide.out, &narrow.out, "the halved grid's output");
-    eprintln!("past residency: ran again at {} groups", wide.groups);
+    same(wide.groups, 4096, "the grid past residency, run once: no barrier failed");
+    assert!((1..4096).contains(&wide.joined), "the grid is the groups that run: {} joined of 4096", wide.joined);
+    same(wide.refused, 0, "the joined grid's refusals");
+    same(&wide.out, &narrow.out, "the joined grid's output");
+    eprintln!("past residency: {} of 4096 groups joined", wide.joined);
 }
 
 /// A part's output spelled: each ref's token in its file (`files` and `tapes`, the unit's), each
@@ -1166,7 +1178,7 @@ fn pasting_is_the_serial_passes() {
 /// R6 of decision 0448, its fourth part: `__VA_OPT__` (C++20, C23): its content where the variadic
 /// argument, expanded, has tokens (an argument that expands to nothing has none), else a
 /// placemarker (so `##` beside it pastes with nothing); its content's parameters and pastes, and
-/// its space given to its content's first token.
+/// its space given to its content's first token; any number in a body.
 #[test]
 fn va_opt_is_the_serial_passes() {
     let shapes: &[&[(&str, &str)]] = &[
@@ -1174,6 +1186,8 @@ fn va_opt_is_the_serial_passes() {
         &[("main.c", "#define E\n#define G(...) [__VA_OPT__(x __VA_ARGS__ y)]\nG() G(E) G(a) G( a , b )\n")],
         &[("main.c", "#define H(x, ...) x ## __VA_OPT__(_v)\n#define K(x, ...) __VA_OPT__(x ## x)\nH(a) H(a, 1) K(b) K(b, 1)\n")],
         &[("main.c", "#define S(...) __VA_OPT__((__VA_ARGS__)) end\nS() S(()) S(a, (b))\n")],
+        // Five in a body (each body leaf marked once, decision 0527 §2: no bound on their count).
+        &[("main.c", "#define M(...) __VA_OPT__(a) __VA_OPT__(b) x __VA_OPT__(c) __VA_OPT__(d)__VA_OPT__( e )\nM() M(1) M(())\n")],
     ];
     let (tokens, launches) = shapes_agree(shapes);
     eprintln!("{} shapes, {tokens} tokens, at most {launches} launches an evaluation", shapes.len() * 2);
@@ -1446,6 +1460,13 @@ fn calls_past_an_end_are_the_serial_passes() {
         &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define W(z) f(1)(z) w\nW(2)\n")],
         &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define h(z) <z>\n#define W(z) f(1)(h(z)) w\nW(2) W(h(3))\n")],
         &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define t(a) a\nt(f(1))(2) t(f(1)(3))\n")],
+        // A list of many claims (the walk's doubling over them, decision 0527 §2): covered ones with
+        // claims of their own, its own exit's name last; then a claim past the list's end after two
+        // live ones; then claims that do not nest (`y`'s, covered, reaches past `g`'s), in a list
+        // and through to the top level.
+        &[("main.c", "#define f(a) g\n#define g(a) #a\n#define y k((\n#define k(a) {a}\n#define W(z) f(0)( y ) z ) ) f(2)( y ) z ) )\nW(1) end\n")],
+        &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define W(z) f(1)(f(2)(3)) f(4)(5) z f(6)(f(7)(8) f(9)) f(1)(2) f(3)(4) f(5)(6) f(7)(8) f\nW(0)(9) end\n")],
+        &[("main.c", "#define f(x) g\n#define g(y) [y]\n#define V(z) f(1)(2) z f(3)(4) f(5)\nV(0)(6) end V(f(7))(8)\n")],
         &[("main.c", "#define EMPTY()\n#define DEFER(id) id EMPTY()\n#define OBSTRUCT(...) __VA_ARGS__ DEFER(EMPTY)()\n#define EXPAND(...) __VA_ARGS__\n#define A() 123\nDEFER(A)() EXPAND(DEFER(A)()) OBSTRUCT(A)() EXPAND(OBSTRUCT(A)()) EXPAND(EXPAND(OBSTRUCT(A)()))\n")],
     ];
     let (tokens, launches) = shapes_agree(shapes);
@@ -1477,8 +1498,8 @@ fn a_unit_past_its_room_runs_again_larger() {
     // run both run it again larger before reading what the lines decided (a request made from
     // a line cut short is none).
     let fan = "#define A0 1+1+1+1+1+1+1+1\n#define A1 A0+A0+A0+A0+A0+A0+A0+A0\n#define A2 A1+A1+A1+A1+A1+A1+A1+A1\n\
-               #define A3 A2+A2+A2+A2+A2+A2+A2+A2\n#define A4 A3+A3+A3+A3+A3+A3+A3+A3\n";
-    let main = format!("{fan}#if A4 == 32768\n#include \"h.h\"\n#endif\nend\n");
+               #define A3 A2+A2+A2+A2+A2+A2+A2+A2\n";
+    let main = format!("{fan}#if A3 == 4096\n#include \"h.h\"\n#endif\nend\n");
     for cpp in [false, true] {
         let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
         let (got, want, rung, _) = expanded_in(&[("main.c", main.as_str()), ("h.h", "in h\n")], cfg, &[]);
@@ -1514,18 +1535,23 @@ fn a_flat_argument_is_read_in_place() {
     }
 }
 
-/// Decision 0486 §10: the expansion's tokens no item reads again are given back between the
-/// queue's runs. Chains of 150 calls each passing a state of 120 tokens on make more tokens than
-/// rung 0 holds, while few stay live: each settles at rung 0, the serial pass's. The state passed
-/// through plain calls, through an argument scanned at each level (a dead argument's list), and
-/// through an exit at each level (a join); `__LINE__` in it (its origin read from the lists'
-/// `lref`, not their tokens), `#` of it at the end, and in C and C++.
+/// Decision 0486 §10: the blocks no item reads again are given back between rounds, and used
+/// again. Chains of calls each passing a state of 120 tokens on, the blocks given back every 16
+/// units of a store's growth (`RERAIL_PP_GIVE_GAP`; a chain's pieces are a few a level, decision
+/// 0520, so at the default gap of a 32nd of the room a chain this short would give nothing back):
+/// each gives back, settles at rung 0 and gives the serial pass's tokens. The state passed through
+/// plain calls, through an argument scanned at each level (a dead argument's list), and through
+/// an exit at each level (a join); `__LINE__` in it (its origin read from the lists' `lref`, not
+/// their tokens), `#` of it at the end, and in C and C++.
 #[test]
 fn reclaimed_tokens_keep_a_chain_at_rung_0() {
+    // SAFETY: the variable is read when a run is sized; another test reading it then gives back
+    // more often, which changes no result.
+    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
-    let levels = 150;
+    let levels = 40;
     let chain = |body: &dyn Fn(usize) -> String, last: &str, tail: &str| {
-        let mut t = String::from("#define ID(x) x\n#define CAT(a, b) a ## b\n#define S(x) #x\n#define X(x) S(x)\n");
+        let mut t = String::from("#define ID(x) x\n#define CAT(a, b) a ## b\n#define S(x) #x\n#define X(x) S(x)\n#define G(x) -\n");
         t += &format!("#define L0(s) {last}\n");
         for k in 1..=levels {
             t += &format!("#define L{k}(s) {}\n", body(k));
@@ -1539,14 +1565,17 @@ fn reclaimed_tokens_keep_a_chain_at_rung_0() {
         ("an exit", chain(&|k| format!("CAT(L, {})(s)", k - 1), "<s>", "")),
         ("__LINE__", chain(&|k| format!("L{}(s)", k - 1), "[s]", " __LINE__")),
         ("stringized", chain(&|k| format!("L{}(ID(s))", k - 1), "X(s)", "")),
+        ("calls beside it", chain(&|k| format!("G(s) a L{}(s) b G(s) c", k - 1), "[s]", "")),
     ];
     for (what, text) in &shapes {
         let files = [("main.c", text.as_str())];
         for cpp in [false, true] {
-            let (got, want, rung, _) = expanded(&files, cpp);
+            let (got, want, rung, _, gives) = expanded_run(&files, rerail_c_pp::Config::new(crate::pp::options(cpp)), &[]);
             let got = got.unwrap_or_else(|why| panic!("{what}: refused {why}"));
             same(show(&got), show(&want), what);
             assert_eq!(rung, 0, "{what}: grew to rung {rung}");
+            assert!(gives > 0, "{what}: gave nothing back");
+            eprintln!("{what}: {gives} givings");
         }
     }
 }

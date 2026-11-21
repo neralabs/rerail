@@ -13,7 +13,7 @@ on-disk". In-memory structures a consumer builds from a tape while it works are 
 as in the spike, whose rule is "nothing may *store* one row per node" and whose dead end D14 was
 *persisted* sidecars.
 
-ast-index-spike is the reference (`notes/t4-ast-index-spike.md`):
+SQL index prototype is the reference (`notes/t4-sql-index-prototype.md`):
 - "Nothing may store one row per node" (§1.1; Representation rules 1–4; D S089 L4859-4959). Row per
   node measured 14.51× source on PG and 4.87× on SQLite.
 - Persisted sidecars were dead end D14: `t_nidx` (a row per node: parent, kind, size, ordinal,
@@ -61,7 +61,7 @@ Nothing stores a term id per node: the transducer's per-term results (`R[tid]`, 
 node sets above, built from the postings for the predicates the batch reads. No text hashes are
 stored.
 
-**Parent lookups, as ast-index-spike does them** (`notes/t4-ast-index-spike.md` §2.1, §2.5, §3,
+**Parent lookups, as the SQL index prototype does them** (`notes/t4-sql-index-prototype.md` §2.1, §2.5, §3,
 §8.5):
 - The shipped record, rec6, is `[kf:2][par:2][size:2]`: `par` is a **parent delta stored in the
   tape**, and the parent is `pre − par`, one subtraction (D S047 L2983-3005; HI L240). The delta

@@ -3,13 +3,13 @@
 {
     let program = &c.program.block_programs[0];
     let native = rerail_compiler::block_native::BlockNative::lower(program);
-    let inputs = rerail_compiler::rust_block::Inputs {
+    let inputs = rerail_cpu_stream::rust_block::Inputs {
         program,
         layout: c.parser.tier1.records.as_ref().map(|t| t.layout).unwrap_or_default(),
-        lazy: rerail_compiler::native_cpu_block::lazy_code_bits(&native),
+        lazy: rerail_cpu_block::native_cpu_block::lazy_code_bits(&native),
         token_names: &c.program.names.tokens,
         mark_names: &c.program.names.marks,
         unmade: native.records_made(),
     };
-    rerail_compiler::rust_block::rust_source(&inputs)
+    rerail_cpu_stream::rust_block::rust_source(&inputs)
 }

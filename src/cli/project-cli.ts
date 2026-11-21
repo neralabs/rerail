@@ -14,6 +14,7 @@ import { SqliteSessionReader } from "../runtime/session-store.js";
 import { parseJsonWithoutDuplicateKeys } from "../engine/json-duplicate-keys.js";
 import { listRepositories, lookupCheckout, repositoryHistoryIds } from "../engine/catalog/repository-registry.js";
 import { defaultRulesDumpPath, exportRulesDump, importRulesDump } from "../engine/catalog/rule-bootstrap.js";
+import { agentRunsText, agentSession } from "../engine/agent-session.js";
 
 /** Where `rerail update` leaves a consistent copy of the Rerail database before it switches versions. */
 export function preUpdateSnapshotPath(databasePath: string): string {
@@ -126,8 +127,15 @@ function keepSnapshot(staged: string | undefined, databasePath: string): void {
 /**
  * `rerail rules export|import`: the library and every repository's configuration, as a rules dump. `import --approve`
  * approves each imported rule as it is imported (`rule-approval.ts`): the person's own dump, so never pre-approved.
+ * Importing is a person's: it replaces rules created by you, approved ones included, so a coding agent's session
+ * (`agent-session.ts`) is refused.
  */
-export function runRulesCommand(args: readonly string[], usage: () => string, io: { stdout?: { write(text: string): unknown } } = {}): number {
+export function runRulesCommand(
+  args: readonly string[],
+  usage: () => string,
+  io: { stdout?: { write(text: string): unknown } } = {},
+  env: NodeJS.ProcessEnv = process.env,
+): number {
   const stdout = io.stdout ?? process.stdout;
   const action = args[0];
   const database = defaultRerailDatabasePath();
@@ -152,6 +160,8 @@ export function runRulesCommand(args: readonly string[], usage: () => string, io
     return 0;
   }
   if (action === "import") {
+    const session = agentSession(env);
+    if (session !== undefined) throw new Error(`${agentRunsText("rules import", session)}: it replaces your rules, approved ones included. Run it in a terminal of your own.`);
     const file = args[1];
     if (file === undefined || file.startsWith("--")) throw new Error(`rules import needs a dump file\n\n${usage()}`);
     const { flags } = parseArguments(args.slice(2), { flags: ["--approve"], options: [] }, argument => `Unknown rules import option: ${argument}\n\n${usage()}`);

@@ -14,6 +14,16 @@ fn st(p: &V) -> Vec<BTreeSet<String>> {
     s.sccs.iter().map(|scc| scc.iter().map(|&r| p.rel_name(r).to_owned()).collect()).collect()
 }
 
+/// The text of `count` inputs, each filtered into its result: a relation of rows, not a view of its input (a bare copy
+/// is one, Q37, and is never kept, Q421).
+fn fixture_text(count: usize) -> String {
+    let mut text = String::new();
+    for i in 0..count {
+        text += &format!(".decl input{i}(x:number)\n.input input{i}\n.decl result{i}(x:number)\nresult{i}(x) :- input{i}(x), x >= 0.\n");
+    }
+    text
+}
+
 /// An entry of `rows`, flat, of `types`' columns, at partition `part`: a relation's (part 0) in canonical order, a
 /// granule's or statistics' words as given (`retain::kept_flat`).
 fn put(rel: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>) -> KeptPut {
@@ -22,15 +32,6 @@ fn put(rel: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: 
 }
 fn gone(rel: &KeptRel, part: i64) -> KeptPut {
     KeptPut { rel: rel.name.clone(), ident: rel.ident, part, digest: 0, reads: vec![], types: vec![], what: crate::content_store::kept_facts::KeptWhat::Gone }
-}
-
-/// The text of `count` inputs, each copied to its result.
-fn fixture_text(count: usize) -> String {
-    let mut text = String::new();
-    for i in 0..count {
-        text += &format!(".decl input{i}(x:number)\n.input input{i}\n.decl result{i}(x:number)\nresult{i}(x) :- input{i}(x).\n");
-    }
-    text
 }
 
 fn fixture(store: &ContentStore, count: usize) -> (V, HashMap<String, u64>, InKept) {
@@ -102,7 +103,7 @@ fn k4_clean_outputs_are_admitted_together_without_rerunning_their_producers() {
     let span=profile::span(||"bulk output admission".into());
     let mut kept=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     assert!(prog.output_names().iter().all(|r|kept.holds(r,&pl(&prog))),"raw output facts are sufficient to keep a derivation");
-    let cut=Cut{clean:prog.output_names().into_iter().collect(),strata:(0,130),changed:vec![]};
+    let cut=Cut{clean:prog.output_names().into_iter().collect(),strata:(0,130),changed:vec![],views:Default::default()};
     assert_eq!(kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap(),Some((130,390)));
     for i in 0..130 {
         let rel=&kept.rels[&format!("result{i}")];
@@ -127,7 +128,7 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let computed=Retained{key:KEY,rels:HashMap::from([("result".into(),Kept{
         rel:InRel::flat(&[vec![1]],vec![b'i']),width:1,output:None,
     })]),..Default::default()};
-    assert_eq!(computed.write_kept(&store,empty.in_kept().unwrap(),&pl(&prog),&Default::default(),&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None,&HashMap::new(), &std::collections::BTreeMap::new()).unwrap(),1);
+    assert_eq!(computed.write_kept(&store,empty.in_kept().unwrap(),&pl(&prog),&Default::default(),&Locations::new(),&st(&prog),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None, &std::collections::BTreeMap::new()).unwrap(),1);
     let restored=Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap();
     assert_eq!(cut(Some(&restored),KEY,&pl(&prog),&st(&prog),&HashMap::new()).unwrap().strata,(0,1));
     let changed=rr::parse_version(&text.replace("literal(1).","literal(2).")).unwrap();
@@ -136,7 +137,7 @@ fn k4_retains_consumers_of_literal_facts_and_invalidates_them_when_the_literal_c
     let external=rr::parse_version(&format!("{text}\n.input literal\n")).unwrap();
     let empty=Retained::bind_kept(&store,[52;32],KEY,KEY,&pl(&external),&st(&external),&HashMap::new()).unwrap();
     let initial=cut(Some(&empty),KEY,&pl(&external),&st(&external),&HashMap::new()).unwrap();
-    assert_eq!(computed.write_kept(&store,empty.in_kept().unwrap(),&pl(&external),&Default::default(),&Locations::new(),&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None,&HashMap::new(), &std::collections::BTreeMap::new()).unwrap(),0,
+    assert_eq!(computed.write_kept(&store,empty.in_kept().unwrap(),&pl(&external),&Default::default(),&Locations::new(),&st(&external),&initial,&[],&HashMap::new(),&BTreeSet::new(),&HashMap::new(),HashMap::new(),None, &std::collections::BTreeMap::new()).unwrap(),0,
         "a relation with literal rows AND external inputs still needs a runtime dependency digest");
 }
 
@@ -203,7 +204,7 @@ fn failed_k4_admission_makes_a_clean_consumer_run_again() {
     let mut kept = Retained::bind_kept(&store,SPACE,KEY,KEY,&pl(&prog),&st(&prog), &HashMap::new()).unwrap();
     let changed = now.iter().map(|(r,d)|(r.clone(),d.wrapping_add(1))).collect();
     let cut = cut(Some(&kept),KEY,&pl(&prog),&st(&prog),&changed).unwrap();
-    assert!(kept.load(&store,&cut,&pl(&prog),&Locations::new(),false,None).unwrap().is_none());
+    assert!(kept.load(&store, &cut, &pl(&prog), &Locations::new(), false, None).unwrap().is_none());
     assert!(kept.input_srcs.is_empty() && kept.rels.is_empty());
     let rerun = cut_again(&kept, &prog, &now);
     assert!(rerun.clean.is_empty());
@@ -264,7 +265,7 @@ fn a_kept_input_is_bound_where_its_granules_lie() {
     let store = ContentStore::open(&dir.path().join("facts.sqlite")).unwrap();
     let (prog, _, frames) = fixture(&store, 2);
     let rels = ["input0".to_owned(), "input1".to_owned()];
-    let kept = kept_inputs(&store, SPACE, KEY, &pl(&prog), &rels, &BTreeSet::new()).unwrap().expect("the inputs' entries are as kept");
+    let kept = kept_inputs(&store, SPACE, KEY, &pl(&prog), &rels).unwrap().expect("the inputs' entries are as kept");
     let (good, other) = (&kept["input0"].source, &kept["input1"].source);
     assert_eq!((good.len(), other.len()), (3, 3), "each input's rows counted from its granules' entries");
     let one = kept["input1"].ranges().unwrap()[&3];
@@ -274,7 +275,7 @@ fn a_kept_input_is_bound_where_its_granules_lie() {
     assert_eq!(rows, (1..=3).map(|d| d << 32).collect::<Vec<i64>>(), "input0 read as kept");
     // input1's granule of document 2 holds two rows: more than its owner's.
     store.queue_kept(SPACE, vec![put(&frames.names["input1"], granule(2, None), 0, vec![], vec![b'i'], vec![(2 << 32) | 1, (7 << 32) | 1])]);
-    let Err(why) = kept_inputs(&store, SPACE, KEY, &pl(&prog), &rels, &BTreeSet::new()).unwrap() else { panic!("a granule not of its owners' rows is refused") };
+    let Err(why) = kept_inputs(&store, SPACE, KEY, &pl(&prog), &rels).unwrap() else { panic!("a granule not of its owners' rows is refused") };
     assert!(why.contains("input1") && why.contains("owners"), "{why}");
 }
 
@@ -293,7 +294,7 @@ fn a_relation_past_the_retain_budget_is_written_to_the_frames_and_let_go() {
     let mut next = after(None, KEY, now.clone(), &cut, derived, &BTreeMap::new(), &[], HashMap::new(), HashMap::new(), Default::default(), 0, false);
     assert_eq!(next.bytes(), 0, "nothing past the budget is held for the next run");
     assert_eq!(next.parts().1.len(), 2, "both are this run's to write");
-    let written = next.write_kept(&store, &was, &pl(&prog),&Default::default(), &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new(),HashMap::new(),None,&HashMap::new(), &std::collections::BTreeMap::new()).unwrap();
+    let written = next.write_kept(&store, &was, &pl(&prog),&Default::default(), &Locations::new(), &st(&prog), &cut, &[], &now, &BTreeSet::new(), &HashMap::new(),HashMap::new(),None, &std::collections::BTreeMap::new()).unwrap();
     assert_eq!(written, 8, "the rows past the budget are written to the frames");
     next.let_go_past();
     assert!(next.parts().1.is_empty(), "and then let go");

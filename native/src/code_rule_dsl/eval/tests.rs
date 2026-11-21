@@ -2,7 +2,7 @@ use super::ecma::DERIVED_MANIFESTS;
 use super::parse_snapshot;
 use crate::code_rule_dsl::module_graph::SUMMARIES;
 use crate::code_rule_dsl::test_support::CAPABILITIES;
-use crate::code_rule_dsl::{CodeRuleDslEditor, CodeRuleDslRuntime, CompiledCodeRuleDsl};
+use crate::code_rule_dsl::{CodeRuleDslEditor, CompiledCodeRuleDsl};
 use serde_json::{Value, json};
 
 #[test]
@@ -67,13 +67,9 @@ fn server_graph_rule() -> CompiledCodeRuleDsl {
             "forbid": { "ast": { "language": "typescript",
                 "file": { "package": { "serverGraph": member } }, "rule": { "kind": "program" } } } })
     };
-    CodeRuleDslRuntime::compile(
-        json!({ "format": "rerail.policy/v1", "id": "server-graph", "revision": 1, "mode": "block",
+    crate::code_rule_dsl::rule_api::compile(&json!({ "format": "rerail.policy/v1", "id": "server-graph", "revision": 1, "mode": "block",
             "clauses": [program("server", true), program("client", false)] })
-        .to_string(),
-        "json".to_owned(),
-        CAPABILITIES.to_owned(),
-    )
+        .to_string(), "json", CAPABILITIES)
     .expect("the code rule compiles")
 }
 

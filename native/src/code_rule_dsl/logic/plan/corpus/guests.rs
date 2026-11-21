@@ -102,7 +102,7 @@ pub(super) fn answered(v: &Version, req: &str) -> (Vec<String>, Vec<String>) {
 }
 
 /// `embed`'s demand: a string made a tape value and parsed (decision 0431 §8), answered in the fixpoint.
-pub(super) const DEMAND: &str = "rr_embed_req";
+pub(in crate::code_rule_dsl::logic::plan::corpus) const DEMAND: &str = "rr_embed_req";
 /// `@parse(g, x)`'s and `@splice(t, n, t2)`'s demands (decision 0058 §4, `rr::lower`).
 pub(super) const PARSE: &str = "rr_parse_req";
 pub(super) const SPLICE: &str = "rr_splice_req";
@@ -197,17 +197,23 @@ pub(super) fn hidden_file_key(keys: &GuestKeys, path: &str) -> u32 {
 pub(super) fn file_and_tree(parsed: Document, keys: &GuestKeys) -> [Document; 2] {
     let text = Arc::new(core::text_of(&parsed.facts));
     let file = parsed.key;
-    let whole = Placement::Copied { delta: 0, within: [0, u32::try_from(parsed.facts.source.len()).unwrap_or(u32::MAX)] };
     let grammar = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&parsed.facts)).and_then(crate::code_rule_dsl::language::label).unwrap_or_default().to_owned();
     let text_doc = Document { key: file, path: parsed.path.clone(), core: parsed.core.clone(), digest: core::digest(&text), facts: text, tape: None, guest: None, module: parsed.module.clone(), unpackaged: parsed.unpackaged };
     let tree = Document {
         key: hidden_file_key(keys, &parsed.path),
         core: format!("{}#file:{grammar}", parsed.core),
-        // No row reads a file tree's `at` (`Made::File` has no `sub_tape` or `parsed` row): its file's first position.
-        guest: Some(Arc::new(Guest { host: file, file, at: i64::from(file) << 32, grammar, role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File })),
+        guest: Some(Arc::new(file_tree_guest(file, grammar, parsed.facts.source.len()))),
         ..parsed
     };
     [text_doc, tree]
+}
+
+/// The place of the tree of file `file` (`file_and_tree`), of `grammar` and `len` bytes: its file's guest standing at
+/// its whole text. No row reads a file tree's `at` (`Made::File` has no `sub_tape` or `parsed` row): its file's first
+/// position.
+pub(super) fn file_tree_guest(file: u32, grammar: String, len: usize) -> Guest {
+    let whole = Placement::Copied { delta: 0, within: [0, u32::try_from(len).unwrap_or(u32::MAX)] };
+    Guest { host: file, file, at: i64::from(file) << 32, grammar, role: "file".to_owned(), root: 0, place: whole.clone(), in_file: whole, made: Made::File }
 }
 
 /// Whether `d` is a file the run reads for its programs, as parsed and not yet split (`file_and_tree`).

@@ -1,7 +1,7 @@
 //! The prefilter (docs/final-shape/03-architecture.md §6, §16; 05 Phase 3): SQL over per-tape
 //! access paths selects candidate (tape, preorder) sets; transducers confirm them. Adapted from
-//! Pulling-it-all-together's anchor store (`matcher/anchors/sql/store.rs`), which followed
-//! ast-index-spike's `tape_store.py`.
+//! PIAT's anchor store (`matcher/anchors/sql/store.rs`), which followed
+//! the SQL index prototype's `tape_store.py`.
 //!
 //! P's store owned a private database: a `file` table with a second copy of every tape, language,
 //! kind and field catalogs, overflow tables and decoded-property tables. Here a tape's index image
@@ -80,7 +80,7 @@ pub(in crate::code_rule_dsl) fn image(tape_id: TapeId, doc: &TapeDoc, interrupte
 }
 
 /// Builds and publishes the prefilter rows of `docs`, the tapes `tapes` name, 64 at a time.
-pub(in crate::code_rule_dsl) fn publish(store: &ContentStore, tapes: &[TapeId], docs: &[TapeDoc]) -> StoreResult<()> {
+pub fn publish(store: &ContentStore, tapes: &[TapeId], docs: &[TapeDoc]) -> StoreResult<()> {
     if tapes.len() != docs.len() {
         return Err(StoreError::Invalid("tape identity count does not match prefilter documents".to_owned()));
     }
@@ -210,5 +210,8 @@ pub(in crate::code_rule_dsl) fn fallback(
     }).collect())
 }
 
+// The tests' fixtures: this crate's tests and the engine's read them.
+#[cfg(any(test, feature = "test-hooks"))]
+pub mod fixtures;
 #[cfg(test)]
 pub(in crate::code_rule_dsl) mod tests;

@@ -96,6 +96,15 @@ pub const VIEW_LOC_COL: u32 = 7;
 pub const VIEW_LOC_DOCOF: u32 = 8;
 /// The `line` view (`View::Line`): each node's id and the line its start is on, by the facts' own lines.
 pub const VIEW_LINE: u32 = 9;
+/// The `tape`, `ast_depth` and `node_order` views (`View::Tape`, `View::Depth`, `View::Order`), read in place only
+/// (no device code makes their rows).
+pub const VIEW_TAPE: u32 = 10;
+pub const VIEW_DEPTH: u32 = 11;
+pub const VIEW_ORDER: u32 = 12;
+
+/// The views' reads' views (`rerail_clif::view_reads::VIEWS`): a directory's document has its first row in each.
+#[cfg(any(target_os = "macos", target_os = "linux"))]
+const NVIEWS: usize = rerail_clif::view_reads::VIEWS.len();
 
 /// A view's number in the views' reads (`vread`'s `kind`: 1 + its place in `rerail_clif::view_reads::VIEWS`), of its
 /// device code.
@@ -110,6 +119,9 @@ pub fn read_kind(view: u32) -> u32 {
         VIEW_LOC_END => 7,
         VIEW_LOC_COL => 8,
         VIEW_LOC_DOCOF => 9,
+        VIEW_TAPE => 10,
+        VIEW_DEPTH => 11,
+        VIEW_ORDER => 12,
         _ => panic!("view {view} has no read"),
     }
 }
@@ -126,6 +138,9 @@ pub fn device_view(view: View) -> Option<u32> {
         View::Loc(Place::Col) => VIEW_LOC_COL,
         View::Loc(Place::Docof) => VIEW_LOC_DOCOF,
         View::Line => VIEW_LINE,
+        View::Tape => VIEW_TAPE,
+        View::Depth => VIEW_DEPTH,
+        View::Order => VIEW_ORDER,
         _ => return None,
     })
 }

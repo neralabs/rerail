@@ -1,4 +1,4 @@
-    use super::super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
+    use super::super::{CompiledCodeRuleDsl};
     use super::*;
 
     const CAPABILITIES: &str = include_str!("../capabilities.json");
@@ -11,11 +11,7 @@
         let mut capabilities: Value = serde_json::from_str(CAPABILITIES).expect("capabilities");
         capabilities["factRelations"] = json!({ "symbols": {} });
         let document = json!({ "format": "rerail.policy/v1", "id": "p", "revision": 1, "mode": "block", "clauses": [clause] });
-        CodeRuleDslRuntime::compile(
-            document.to_string(),
-            "json".to_owned(),
-            capabilities.to_string(),
-        )
+        crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", &capabilities.to_string())
     }
 
     fn ast(rule: Value) -> Value {

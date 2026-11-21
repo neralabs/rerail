@@ -1,9 +1,9 @@
-//! Tempo's tree result segments as copied (94c50115, again in 5ebee3f9), test-only beside
+//! The predecessor's tree result segments as copied (94c50115, again in 5ebee3f9), test-only beside
 //! `tree_pages`, their adaptation (open item O19). Mutations: wrapped in `impl ContentStore`;
 //! G's schema 9 and 10 tables are created on first use (`IF NOT EXISTS`); the end of
 //! `complete_snapshot_trees` (8fe9ffed4 l.3072-3080, recording the workspace revision), which
 //! the fragment copy left out, is G's; the collection fragment is `collect_tree_result_segments`.
-// COPY: Tempo scale-test-the-re-railer@8fe9ffed4:tempo/native/src/content_store.rs, fragments verbatim:
+// COPY: the predecessor@8fe9ffed4 (a branch of the predecessor repository):<predecessor>/native/src/content_store.rs, fragments verbatim:
 // l.265-279 (SCHEMA_V10), l.523-542 (segment structs), l.2962-3071 (complete_snapshot_trees),
 // l.3161-3252 (tree_result_segments), l.3439-3446 (collection).
 #[allow(unused_imports)]

@@ -1,6 +1,6 @@
 //! `.rerail`'s `\\u` checks: tier 2's, at the string (tier 1's `gating_tests` has the gated regions).
 
-use rerail_compiler::native_cpu_block::State;
+use rerail_cpu_block::native_cpu_block::State;
 use rerail_compiler::block_native::Pass;
 
 /// `.rerail`'s `\\u` check is tier 2's (`CHECK`, a local check at the string token): tier 1 makes
