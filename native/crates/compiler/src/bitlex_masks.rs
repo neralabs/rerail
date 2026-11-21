@@ -434,6 +434,9 @@ pub struct Lowering {
     /// start, else in a kind's tokens), mask's name, what it reads as there, and whether the prover
     /// proved what tier 1 makes of it (else a test build checks it).
     pub assumed: Vec<(Option<String>, String, Expr, bool)>,
+    /// The masks assumed only at a region token's last byte (`assume … at ends`), each with
+    /// whether the prover proved it.
+    pub assumed_ends: Vec<(String, bool)>,
     /// The tree section's tables tier 2 as Rust reads (`bitlex_rust`).
     pub rust_tables: Option<RustTables>,
 }
@@ -573,6 +576,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         rust: None,
         lexer_rust: None,
         assumed: Vec::new(),
+        assumed_ends: Vec::new(),
         rust_tables: None,
     };
     // Every class's products first: the tables come before the operations.
@@ -796,7 +800,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
             let lexer = if t.mark_bits.iter().any(|b| b.0.is_some() && b.1 != 0) {
                 Err("tier 1 as Rust: a mark of one word is not written yet".to_owned())
             } else {
-                let x = crate::bitlex_lex_rust::Input { stmts, kinds: &r.kinds, row_kinds: &t.row_kinds, words: &r.words, mark_bits: &mark_bits, extra_bits: &t.extra_bits, own: r.own, token_bits: &t.token_bits, assumed: &low.assumed };
+                let x = crate::bitlex_lex_rust::Input { stmts, kinds: &r.kinds, row_kinds: &t.row_kinds, words: &r.words, mark_bits: &mark_bits, extra_bits: &t.extra_bits, own: r.own, token_bits: &t.token_bits, assumed: &low.assumed, assumed_ends: &low.assumed_ends };
                 crate::bitlex_lex_rust::tier1(&x)
             };
             low.lexer_rust = Some(lexer);
@@ -1097,7 +1101,7 @@ impl Lowering {
                 // Made first (`prefix_value`).
                 Stmt::Prefix(_) => {}
                 // Asked once the token rows are made (`assumptions`).
-                Stmt::Assume { .. } => {}
+                Stmt::Assume { .. } | Stmt::AssumeEnds { .. } => {}
                 Stmt::Skip(expr) => {
                     let x = self.expr(expr)?;
                     self.skip = Some(match self.skip {
@@ -2983,7 +2987,8 @@ pub fn statement(stmt: &Stmt) -> String {
 /// grammar, or one whose question is the same, proves nothing again.
 fn assumptions(low: &mut Lowering, stmts: &[Stmt], token_rows: &[(String, Val, Val)]) -> Result<(), String> {
     let asked: Vec<(&String, &Option<String>, &String, &Expr)> = stmts.iter().filter_map(|s| if let Stmt::Assume { why, scope, name, expr } = s { Some((why, scope, name, expr)) } else { None }).collect();
-    if asked.is_empty() {
+    let ends: Vec<(&String, &String)> = stmts.iter().filter_map(|s| if let Stmt::AssumeEnds { why, name } = s { Some((why, name)) } else { None }).collect();
+    if asked.is_empty() && ends.is_empty() {
         return Ok(());
     }
     // The rows the loop reads, in its order: not a region's parts, which tier 2 reads inside their
@@ -3076,6 +3081,36 @@ fn assumptions(low: &mut Lowering, stmts: &[Stmt], token_rows: &[(String, Val, V
             }
         };
         low.assumed.push((scope.clone(), name.clone(), expr.clone(), proved));
+    }
+    // At ends: the mask holds at no byte but a region token's last, of the rows the loop reads
+    // that read a region.
+    if !ends.is_empty() {
+        let mut lasts: Option<Val> = None;
+        let mut i = 0usize;
+        for st in stmts {
+            let Stmt::Token { rule, .. } = st else { continue };
+            let r = i;
+            i += 1;
+            if low.inside.get(r).copied().unwrap_or(false) || !matches!(rule, Some(::bitlex::syntax::TokenRule::Read(_) | ::bitlex::syntax::TokenRule::ReadParts(..))) {
+                continue;
+            }
+            let l = token_rows[r].2;
+            lasts = Some(match lasts {
+                Some(a) => low.or(a, l)?,
+                None => l,
+            });
+        }
+        let Some(lasts) = lasts else { return Err("`assume … at ends`: no row reads a region".into()) };
+        let off = low.not(lasts)?;
+        for (why, name) in ends {
+            let a = low.expr(&Expr::Name(name.clone()))?;
+            let at = low.and(a, off)?;
+            let proved = low.either_never(&mut settled, at);
+            if verbose {
+                eprintln!("assume {name} at ends: {} ({why})", if proved { "proved" } else { "not proved: a test build checks it" });
+            }
+            low.assumed_ends.push((name.clone(), proved));
+        }
     }
     Ok(())
 }

@@ -106,6 +106,7 @@ mask opens      = o_str | o_chr | o_tick | o_tail | o_rstr | o_rtail
 mask region     = hidden | o_line | o_block | opens
 # A template's `{`: its `$`'s token's, not code.
 mask t_brace    = t_lex & prev(hidden) & ~hidden
+assume "a template's `{` is the last byte of its string's token, after the `$` that closes it" at ends t_brace
 mask code       = ~region & ~t_brace
 
 # A template's code: not read yet with a brace, a template, a comment or a line break in it,

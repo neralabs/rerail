@@ -710,6 +710,11 @@ pub enum Stmt {
     /// `assume "WHY" in KIND NAME = E`: in every token of the kind, after its start through the byte
     /// its run ends at, mask `NAME` reads as `E`: the token's rule is read with `E` for it.
     Assume { why: String, scope: Option<String>, name: String, expr: Expr },
+    /// `assume "WHY" at ends NAME`: mask `NAME` holds only at the last byte of a token that
+    /// reads a region, so the token loop knows it there, from the region it read (a template's
+    /// `{`, after its string's `${`), and a fill from the byte after it (`fill(prev(NAME), E)`) is
+    /// the loop's to keep, from that token to the next byte of `E`.
+    AssumeEnds { why: String, name: String },
     /// `escape "WHY" at KIND when count(E) at least N` (or `run(E)`): a test of each token of
     /// the kind over its own bytes, as a lexer checks a token it reads (decision 0177): `count`,
     /// `E`'s bits in the token at least `N`; `run`, `E` at each of its first `N` bytes (the token
@@ -1884,6 +1889,9 @@ impl P {
                     Some(self.ident()?)
                 } else {
                     self.want_kw("at")?;
+                    if self.eat_kw("ends") {
+                        return Ok(Stmt::AssumeEnds { why, name: self.ident()? });
+                    }
                     self.want_kw("starts")?;
                     None
                 };
