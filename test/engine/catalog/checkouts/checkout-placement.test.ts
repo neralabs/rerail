@@ -254,6 +254,33 @@ describe("placeCheckout", () => {
     expect({ blocking: placing.blocking, placements: placing.notBlocking.map(args => args.includes("--show-toplevel")) }).toEqual({ blocking: [], placements: [true] });
   });
 
+  it("returns once every Git it started has exited when one of its reads fails, and places the others' worktrees", async () => {
+    const { checkouts } = repositoryWithWorktrees(4);
+    const [main, failing] = [checkouts[0]!, checkouts[1]!];
+    // The top level's submodule read and one worktree's fail at once, while the worktree list and the remote ask Git.
+    const learnt = await learntWhile(async () => {
+      vi.mocked(learnDeclaredSubmodules).mockImplementation(async (root, options) => {
+        if (root === main || root === failing) throw new Error("the submodule read failed");
+        const { learnDeclaredSubmodules: actual } = await vi.importActual<typeof import("../../../../src/engine/catalog/checkouts/declared-submodules.js")>(
+          "../../../../src/engine/catalog/checkouts/declared-submodules.js",
+        );
+        return await actual(root, options);
+      });
+      const spawn = vi.mocked(childProcess.spawn);
+      const before = spawn.mock.calls.length;
+      await placeCheckout(main);
+      const placedAt = spawn.mock.calls.length;
+      const running = spawn.mock.results.slice(before, placedAt).filter((result, i) => {
+        const child = result.value as childProcess.ChildProcess;
+        return /^git(\.exe)?$/iu.test(basename(String(spawn.mock.calls[before + i]![0]))) && child.exitCode === null && child.signalCode === null;
+      });
+      await new Promise(resolve => setTimeout(resolve, 200));
+      expect({ running: running.length, startedAfter: spawn.mock.calls.length - placedAt }).toEqual({ running: 0, startedAfter: 0 });
+    }, () => undefined);
+    // The top level and each of the four worktrees Git lists, the failing one among them.
+    expect(learnt).toBe(checkouts.length);
+  });
+
   it("starts no Git once its signal is aborted, and fails nothing for a folder that is gone or outside Git", async () => {
     const { root, checkouts } = repositoryWithWorktrees(2);
     const stopped = new AbortController();

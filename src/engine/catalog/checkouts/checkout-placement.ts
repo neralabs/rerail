@@ -46,13 +46,14 @@ async function placeFolder(folder: string, options: GitReadOptions): Promise<Rep
 
 /**
  * The checkout's top level, its clone's remote, Git's registry of its worktrees and its submodules, then each worktree
- * the registry lists ({@link placeListed}).
+ * the registry lists ({@link placeListed}). Each read settles before it returns, so none of its Git runs on after it,
+ * and one that fails leaves the others' answers kept.
  */
 async function placeRepository(location: RepositoryIdentityLocation, options: GitReadOptions): Promise<void> {
   const top = physicalPath(location.workspaceRoot);
   await placeWithoutBlocking(top, options);
-  const [registry] = await Promise.all([learnWorktreeRegistry(top, options), learnRemoteAddress(top, options), placeSubmodules(top, options)]);
-  if (registry !== undefined) await placeListed(registry, options);
+  const [registry] = await Promise.allSettled([learnWorktreeRegistry(top, options), learnRemoteAddress(top, options), placeSubmodules(top, options)]);
+  if (registry.status === "fulfilled" && registry.value !== undefined) await placeListed(registry.value, options);
 }
 
 /** The passes over a registry's worktrees under way, one per registry as Git listed it: sessions opening together share it. */
@@ -74,7 +75,7 @@ const PLACED_PER_TURN = 8;
  * Places each checkout that holds a `.git` entry, with its submodules, {@link PLACING_AT_ONCE} at a time. A checkout
  * placed from its files costs a few file reads on the caller's thread and no wait, so each worker gives the event loop
  * a turn every {@link PLACED_PER_TURN} checkouts, and the daemon answers between them. Stops once `options.signal` is
- * aborted.
+ * aborted. A checkout whose placement fails is left to the calls after it, and the workers go on with the others.
  */
 async function placeEach(checkouts: readonly string[], options: GitReadOptions): Promise<void> {
   const queue = [...checkouts];
@@ -83,7 +84,7 @@ async function placeEach(checkouts: readonly string[], options: GitReadOptions):
     for (let listed = next(), placed = 0; listed !== undefined; listed = next(), placed += 1) {
       if (placed % PLACED_PER_TURN === PLACED_PER_TURN - 1) await new Promise(resolve => setImmediate(resolve));
       const checkout = presentCheckout(listed);
-      if (checkout !== undefined) await placeWithSubmodules(checkout, options);
+      if (checkout !== undefined) await placeWithSubmodules(checkout, options).catch(() => undefined);
     }
   };
   await Promise.all(Array.from({ length: PLACING_AT_ONCE }, worker));
@@ -106,11 +107,14 @@ function presentCheckout(listed: string): string | undefined {
   }
 }
 
-/** The submodules `checkout` declares, learnt, and each one checked out there placed: Git asks a submodule's own checkout. */
+/**
+ * The submodules `checkout` declares, learnt, and each one checked out there placed: Git asks a submodule's own checkout.
+ * It returns once each placement settled, one that failed among them.
+ */
 async function placeSubmodules(checkout: string, options: GitReadOptions): Promise<void> {
   const declared = await learnDeclaredSubmodules(checkout, options);
   const checkedOut = await Promise.all(declared.map(path => lstat(join(checkout, path, ".git")).then(() => join(checkout, path), () => undefined)));
-  await Promise.all(checkedOut.filter((folder): folder is string => folder !== undefined).map(folder => placeWithoutBlocking(folder, options)));
+  await Promise.allSettled(checkedOut.filter((folder): folder is string => folder !== undefined).map(folder => placeWithoutBlocking(folder, options)));
 }
 
 /** How many checkouts one placement places at once: at most this many of its Git processes run together, a checkout's submodules apart. */
