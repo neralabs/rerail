@@ -6,7 +6,7 @@
 //! chunk once, and each row its own 16 low bits. Every other column is kept as narrow as its values let it, exactly:
 //! `Low16` (every value in its row's chunk), `I32`, or `I64`. A group is cut into tiles of 256 rows.
 
-use super::join::{Held, Pass, Pipe, pipeline};
+use super::join::{Held, Pass, Pipe, Scan, pipeline};
 use rerail_device::device::Buffer;
 use std::sync::Arc;
 
@@ -270,12 +270,14 @@ DEFINE_KERNEL2(join, tile_scatter,
     );
     let variant: String = (0..k).map(|i| format!("{:?}{:?}{}", left.forms[lkeys[i]], right.forms[rkeys[i]], narrow[i])).collect();
     let pipe = |name: &str| pipeline(&format!("tile {variant}"), name, || src.clone());
-    let (count, prefix, scatter) = (pipe("tile_count")?, super::join::fixed("rows_scan")?, pipe("tile_scatter")?);
+    let (count, scatter) = (pipe("tile_count")?, pipe("tile_scatter")?);
     let threads = tiles.len() * TILE;
     let tiles_buf = Held::of(tiles.iter().copied())?;
     let highs_buf = Held::of(highs.iter().copied())?;
     let counts = Held::new(4 * threads)?;
     let offsets = Held::new(4 * (threads + 1))?;
+    // The counts' scan, the library's: its levels the job's until the count's submission completed.
+    let scan = Scan::owned(threads)?;
     // SAFETY: the offsets' last word, the total, is read after completion; with no tiles nothing writes it.
     unsafe { *offsets.buffer.contents().cast::<u32>().add(threads) = 0 };
     let mut inputs: Vec<&Buffer> = vec![&tiles_buf.buffer, &highs_buf.buffer];
@@ -285,10 +287,10 @@ DEFINE_KERNEL2(join, tile_scatter,
         let mut with = inputs;
         with.push(&counts.buffer);
         pass.run(&count, &with, &[], &[], tiles.len());
-        pass.run(&prefix, &[&counts.buffer, &offsets.buffer], &[threads as u32], &[], 1);
+        scan.encode_into(pass, &counts.buffer, &offsets.buffer)?;
     }
     // Every buffer the passes read is the job's until its submissions completed.
-    Ok(TileJob { tiles: tiles.len(), threads, tiles_buf, highs_buf, _counts: counts, offsets, scatter_pipe: scatter, out: None, keep: Vec::new(), total: 0, compared })
+    Ok(TileJob { tiles: tiles.len(), threads, tiles_buf, highs_buf, _counts: counts, offsets, scatter_pipe: scatter, out: None, keep: scan.into_held(), total: 0, compared })
     }
 
     /// The scatter, encoded into `pass`, once the count's submission completed (the same sides and keys).

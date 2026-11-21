@@ -2255,7 +2255,7 @@ flat(x) :- kind(m, "identifier"), text(m, x).
 /// Decision 0431 R8: CPU and Metal give the same rows, the device reading the same tapes, with both kinds: tape values
 /// read in the fixpoint (R10's program: values, a value inside one, and a scan that lists none), and a file's programs
 /// (an HTML file's scripts), whose `docof` and lines are the file's (R1).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 fn cpu_and_metal_read_the_same_tape_values() {
     use crate::code_rule_dsl::typing::file_local::Binding;

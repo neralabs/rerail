@@ -15,11 +15,10 @@
 //!   splits its batch.
 //! - **Everything idle is dropped** with the residency slabs, two minutes after the last execution
 //!   (the engine's `residency::slabs::drop_all`).
-//! - **One command queue** for the solves that lease blocks (`queue`): the process's.
+//! - **One command queue** for the solves that lease blocks: the process's (`lane`).
 //!
 //! A lease's holder waits for every command that reads the block before dropping the lease.
 use crate::Error;
-use metal::Device;
 use rerail_accel::gpu::shared::{self, Pooled};
 use std::mem::size_of;
 
@@ -31,10 +30,6 @@ pub struct Block {
 }
 
 impl Block {
-    pub fn buffer(&self) -> &metal::BufferRef {
-        self.lease.buffer()
-    }
-
     /// The block's buffer in the device layer (decision 0440 step C), on any backend.
     pub fn device_buffer(&self) -> &rerail_device::device::Buffer {
         self.lease.device_buffer()
@@ -129,12 +124,6 @@ fn clear(block: Block, bytes: usize) -> Result<Block, Error> {
     // SAFETY: as `upload`.
     unsafe { std::ptr::write_bytes(block.host(), 0, bytes) };
     Ok(block)
-}
-
-/// The command queue for solves over blocks: the process's one (`rerail_accel::gpu::shared`, decision 0100 §2), so
-/// the engine's programs and the executor's lanes submit in one order.
-pub fn queue(_device: &Device) -> Result<metal::CommandQueue, Error> {
-    crate::queue()
 }
 
 /// Releases every idle buffer of the pool (the engine's drop: its blocks are the pool's).

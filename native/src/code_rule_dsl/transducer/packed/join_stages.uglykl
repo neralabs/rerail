@@ -44,9 +44,9 @@ typedef struct Stage {
     uint32_t v_parent;
 } Stage;
 UKL_STATIC_ASSERT(sizeof(Stage) == 2320, "Stage: size");
-UKL_STATIC_ASSERT(__builtin_offsetof(Stage, ops) == 208, "Stage.ops");
-UKL_STATIC_ASSERT(__builtin_offsetof(Stage, arith) == 2176, "Stage.arith");
-UKL_STATIC_ASSERT(__builtin_offsetof(Stage, v_dir) == 2304, "Stage.v_dir");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, ops) == 208, "Stage.ops");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, arith) == 2176, "Stage.arith");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Stage, v_dir) == 2304, "Stage.v_dir");
 
 typedef UKL_GLOBAL const Stage* StageP;
 typedef UKL_GLOBAL const int64_t* Longs;
@@ -1100,7 +1100,7 @@ typedef struct Copy {
     uint32_t v_pad;
 } Copy;
 UKL_STATIC_ASSERT(sizeof(Copy) == 256, "Copy: size");
-UKL_STATIC_ASSERT(__builtin_offsetof(Copy, v_dir) == 240, "Copy.v_dir");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(Copy, v_dir) == 240, "Copy.v_dir");
 
 DEFINE_KERNEL2(join, rows_copy,
                ROBUFFER, uint8_t,  S,      "[source]",
@@ -1282,7 +1282,7 @@ typedef struct IxP {
     uint64_t kind;
 } IxP;
 UKL_STATIC_ASSERT(sizeof(IxP) == 72, "IxP: size");
-UKL_STATIC_ASSERT(__builtin_offsetof(IxP, dir) == 56, "IxP.dir");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(IxP, dir) == 56, "IxP.dir");
 
 DEFINE_KERNEL2(join, ix_bucket,
                ROBUFFER, uint8_t,  B,   "[block]",

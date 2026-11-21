@@ -1536,8 +1536,10 @@ DEFINE_KERNEL2(serial, serial_write,
     (out, sw, counted)
 }
 
-/// Threads a file of the record pass: each takes every `RECORD_LANES`th token.
+/// Threads a file of the record pass: each takes every `RECORD_LANES`th token. A file's lanes are
+/// one threadgroup (the pass's barrier is theirs).
 const RECORD_LANES: usize = 64;
+const _: () = assert!(RECORD_LANES == THREADS, "a file's record lanes are one threadgroup");
 
 /// The record pass (`rerail_compiler::records`) in UKL: per program with records, its tables
 /// as constants and its function; the kernel `serial_records`, a file's tokens over
@@ -1663,8 +1665,16 @@ fn records_source(programs: &[&BlockNative]) -> String {
              \x20 if (bad) ukl_atomic_or(flag + f.tot_base + {x}u, 1u);\n\
              }}\n",
             // A file its totals refused (`serial_prefix`'s flag) goes to the fallback: no token
-            // of it is coded (`stop` at all of them).
-            refused = if n.totals.is_empty() { String::new() } else { format!("\n  if (tot[f.tot_base + {x}u] != 0u) {{ if (lane == 0u) ukl_atomic_store(stop, ~0u); return; }}") },
+            // of it is coded (`stop` at all of them). The pass's own refusal sets the same word
+            // (`flag` is `tot`), so every lane reads it before any lane can: a file's lanes are
+            // one threadgroup, and its barrier orders the reads first. Read as each lane started,
+            // a lane started after another refused returned uncoded: a 64th of the tokens lost
+            // each, the CPU's lanes running in turn (the rr marks test, roll-up 22).
+            refused = if n.totals.is_empty() {
+                String::new()
+            } else {
+                format!("\n  const bool before = tot[f.tot_base + {x}u] != 0u;\n  ukl_tg_barrier();\n  if (before) {{ if (lane == 0u) ukl_atomic_store(stop, ~0u); return; }}")
+            },
             kinds = list(&mut r.kinds.iter().map(|k| k.to_string())),
             // The token tests (`Records::checks`): by its first byte, the tests of a token's
             // rule, each a bit; a count over its words, a run from a window of one word or two.
@@ -2423,7 +2433,7 @@ fn run_serial_io(programs: &[&BlockNative], files: &[BatchFile<'_>], sources: &[
             .iter()
             .map(|p| {
                 let ms = encode_passes(std::slice::from_ref(p)).map(|s| s * 1e3).unwrap_or(f64::NAN);
-                let most = p.kernel.metal().map_or(0, |m| m.compute_pipeline_state.max_total_threads_per_threadgroup());
+                let most = crate::lane::limits(&p.kernel).map_or(0, |l| l.threads);
                 format!("{} {ms:.3} ms ({most} threads)", p.name)
             })
             .collect();

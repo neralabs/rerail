@@ -8,7 +8,7 @@ use rerail_compiler::*;
 use rerail_compiler::program::Words as Program;
 use rerail_compiler::rir_asm as rir;
 use rerail_compiler::bitlex_masks as bitlex_compile;
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 use rerail_metal as metal_program_backend;
 
 /// The masks the compiler handles so far: classes, logic, `prev`, `starts`, `after`, `span`,
@@ -197,7 +197,7 @@ fn every_total_is_one_flag_on_every_executor() {
 }
 
 /// The Metal executors' runs of a batch: generated MSL, and the forward carry in segments of three blocks.
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn metal_batch_runs(native: &block_native::BlockNative, batch: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
     use metal_program_backend::block_program::serial::{Segments, run_serial_split};
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, run_split};
@@ -207,8 +207,8 @@ fn metal_batch_runs(native: &block_native::BlockNative, batch: &[block::BatchFil
     ]
 }
 
-/// No Metal executors off macOS.
-#[cfg(not(target_os = "macos"))]
+/// No Metal executors off the device layer's targets.
+#[cfg(not(any(target_os = "macos", target_os = "linux")))]
 fn metal_batch_runs(_: &block_native::BlockNative, _: &[block::BatchFile<'_>]) -> Vec<(String, Vec<block::BlockRun>)> {
     Vec::new()
 }
@@ -335,7 +335,7 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
             // interpreter or generated kernels.
             #[allow(unused_mut)]
             let mut got = Executors::new(&p).run(&bytes, false).0;
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             {
                 use metal_program_backend::block_program::serial::{Segments, run_serial_split};
                 let native = native_ir::lower(&p, 0, 0).expect("lowers").block_programs.remove(0);
@@ -357,7 +357,7 @@ fn positions_after_a_backward_pass_equal_the_evaluator_on_every_executor() {
 /// The payoff on Metal of remaking values made from the position (doc 26 §1.10), run by hand:
 /// the row's slots and the forward carry's GPU seconds, best of 5, over 8 MB (1 MB for the
 /// numbers, whose stored row is over the device's capacity at 8).
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 #[test]
 #[ignore = "a measurement: run by hand"]
 fn positions_after_a_backward_pass_metal_payoff() {
@@ -449,7 +449,7 @@ fn json_stream_equals_the_evaluator_on_every_executor() {
 /// counted are those generated for the program, after the head every source shares
 /// (`block_program::head`: the carries, the sinks and the interpreter's helpers, 0440 step C).
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn json_ukl_is_one_kernel() {
         use metal_program_backend::block_program::{ClassStrategy, LaneWidth, generate_with};
     let grammar = tree_sitter::Language::new(tree_sitter_json::LANGUAGE);
@@ -488,7 +488,7 @@ fn json_ukl_is_one_kernel() {
 /// default polls it is one launch; with one poll per predecessor and none after it, groups leave unfinished and the launch is repeated; the
 /// results are the same.
 #[test]
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux"))]
 fn a_batch_of_files_and_programs_is_one_launch() {
     use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, SPINS, run_batch};
     let programs = batch_programs();
@@ -618,7 +618,7 @@ fn json_batch_cost_per_block() {
     println!("files to the fallback: {fallback}");
     let s = compiled.batch_cpu_seconds(&slices, 3);
     println!("cranelift, one call: {:.3} ns per block, {:.2} GB/s (CPU time, best of 3)", s / blocks as f64 * 1e9, total as f64 / s / 1e9);
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if std::env::var_os("RERAIL_CPU_ONLY").is_none() {
         use metal_program_backend::block_program::{ClassStrategy, Executor, LaneWidth, RepeatedLaunches, run_split};
         // The count is the run's (decision 0442).
@@ -847,7 +847,9 @@ fn json_loop_keeps_values_in_registers() {
 /// the loop has no general body. The branch's test is a load of the edge slot (+1), and the
 /// edge part reads two of the body's early words, the string's, which then live to the body's
 /// end (one spill, +2). The head's test, outside this loop, is one compare where it was two.
+#[cfg(target_arch = "aarch64")]
 const JSON_LOOP: usize = 673;
+#[cfg(target_arch = "aarch64")]
 const JSON_LOOP_STACK: usize = 7;
 
 // --- Tier 1 is simdjson's stage 1 (decision 0071) ---------------------------------------------
@@ -859,6 +861,7 @@ const JSON_LOOP_STACK: usize = 7;
 /// A tier-1 program's violations: more string state than simdjson's (one `escaped`, one
 /// `toggle`), a `fill` (a run is a token's; tier 2 reads it from the token's text), or a look-back
 /// past the byte before (a token start looks one byte back, as simdjson's `follows`).
+#[cfg(target_arch = "aarch64")]
 fn tier1_violations(p: &block::BlockProgram) -> Vec<String> {
     use rerail_compiler::block::BlockOp::*;
     let count = |f: fn(&block::BlockOp) -> bool| p.ops.iter().filter(|op| f(op)).count();

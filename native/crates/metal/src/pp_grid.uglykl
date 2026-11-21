@@ -232,7 +232,7 @@
 
 // A group's threadgroup memory: the barrier's flag, the scans' scratch, and the sorts' counts or
 // a sorted tile (the segmented scans' two rows alias them: no phase runs two of them).
-#define PP_TG_BIG (UKL_GRID_SORT_TILE_WORDS > UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS ? UKL_GRID_SORT_TILE_WORDS : UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS)
+#define PP_TG_BIG (UKL_GRID_SORT_TILE_WORDS > UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS + UKL_RADIX_SPILL ? UKL_GRID_SORT_TILE_WORDS : UKL_RADIX_GROUPS * UKL_RADIX_DIGITS + 3u * UKL_RADIX_DIGITS + UKL_RADIX_SPILL)
 typedef struct PpTg {
     uint32_t flag;
     uint32_t scratch[UKL_TG_SCRATCH];
@@ -263,7 +263,8 @@ typedef struct PpTg {
     uint32_t lane = lid % UKL_SIMD_WIDTH;                                                              \
     UklGridSortLocal sl;                                                                               \
     sl.counts = tg->big; sl.h = tg->big + UKL_RADIX_GROUPS * UKL_RADIX_DIGITS;                           \
-    sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS; sl.tile = tg->big;     \
+    sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS;                        \
+    sl.digits = sl.base + UKL_RADIX_DIGITS; sl.tile = tg->big;                                          \
     UKL_GLOBAL const PpFile* files = AT(const PpFile, FILES);                                              \
     uint32_t nf = W(N_FILES);                                                                              \
     uint32_t stop = 0u, phase = 0u;                                                                        \

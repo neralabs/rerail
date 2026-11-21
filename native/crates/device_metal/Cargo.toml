@@ -5,7 +5,7 @@ name = "rerail-device-metal"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Metal, as the logic's and the transducer's device (macOS only; registered by the engine)."
+description = "The GPU, as the logic's and the transducer's device, on the device layer's backends (macOS and Linux; registered by the engine)."
 
 [features]
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-facts/default", "rerail-lang/default", "rerail-logic/default", "rerail-rr/default", "rerail-transducer/default", "rerail-w/default"]
@@ -122,12 +122,16 @@ tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
+# The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+# The engine's GPU runtime, on the device layer.
+rerail-metal = { path = "../metal" }
+
 [target.'cfg(target_os = "macos")'.dependencies]
 block = "0.1.6"
 metal = "0.33.0"
-rerail-metal = { path = "../metal" }
 
-[target.'cfg(target_os = "macos")'.dev-dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dev-dependencies]
 # Python's pack, which the crate's tests register once (`test_languages`): their documents are parsed (0289, Q23).
 rerail-lang-python = { path = "../lang_python" }
 

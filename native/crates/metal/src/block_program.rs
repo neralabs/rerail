@@ -60,7 +60,14 @@ fn poll_rmw() -> bool {
     #[derive(Default)]
     struct PollRmw(std::sync::OnceLock<bool>);
     *rerail_context::machine::<PollRmw>().0.get_or_init(|| {
-        lane::device().is_ok_and(|d| d.metal().is_some()) && crate::device().is_ok_and(|d| !d.supports_family(metal::MTLGPUFamily::Apple9))
+        #[cfg(target_os = "macos")]
+        {
+            lane::device().is_ok_and(|d| d.metal().is_some()) && crate::device().is_ok_and(|d| !d.supports_family(metal::MTLGPUFamily::Apple9))
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            false
+        }
     })
 }
 
@@ -788,11 +795,8 @@ pub fn kernel_report(native: &BlockNative, width: LaneWidth) -> Result<String, E
     let device = ready()?;
     let kernel = lane::kernel(&source, "tempo_batch", None);
     // Metal's pipeline reports its limits; elsewhere the device's.
-    let (threads, simd, memory) = match kernel.metal() {
-        Some(m) => {
-            let p = &m.compute_pipeline_state;
-            (p.max_total_threads_per_threadgroup(), p.thread_execution_width(), p.static_threadgroup_memory_length())
-        }
+    let (threads, simd, memory) = match lane::limits(&kernel) {
+        Some(l) => (l.threads, l.simd, l.threadgroup_memory),
         None => (u64::from(device.max_threadgroup()), u64::from(device.simd_width()), 0),
     };
     Ok(format!(

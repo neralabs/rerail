@@ -1181,7 +1181,6 @@
         if !mj::available() {
             return;
         }
-        crate::test_languages();
         // Tapes held in vectors of their own, not where the device reads them (a parse not placed): the batch's views
         // are made, not read in place (decision 0353 step 4d).
         let lang = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
@@ -1277,7 +1276,6 @@
         if !mj::available() {
             return;
         }
-        crate::test_languages();
         let texts = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a, *b):\n        return [a for a in b if a]\n", "def f(a, b:\n    return [a for\n", "", "@d\ndef g():\n    try:\n        pass\n    except E as e:\n        raise\n"];
         let make = || -> Vec<Document> { texts.iter().enumerate().map(|(at, source)| {
             let path = format!("d{at}.py");
@@ -1333,11 +1331,10 @@
             }
         }
         assert_eq!(seen, 10);
-        // Read in place where the device's buffers have addresses, which the views' directory is of (Metal's, the
-        // CPU's); made elsewhere (decision 0440 step C: OpenCL 1.2's buffers have none), which the made branch above
-        // checked.
-        let addresses = rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, 1).device_address().is_some();
-        let read_in_place = if addresses { 10 } else { 0 };
+        // Read in place where every buffer has an address, memory wrapped in place too, which the views' directory is
+        // of (Metal's, CUDA's, the CPU's); made elsewhere (decision 0440 step C: OpenCL's wraps have none, though
+        // its allocations may, Intel's unified shared memory), which the made branch above checked.
+        let read_in_place = if device.has_addresses() { 10 } else { 0 };
         assert_eq!(in_place, read_in_place, "node, child, field, core_node and line read in place");
         // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
@@ -1368,14 +1365,14 @@
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
             // directory, its tapes and core.rerail's lines in the batch's block; a guest's (a copied stretch) through its
-            // host's lines and its placement. With the guest and without. Made where the device is not Metal (the
-            // directory's addresses are Metal's, decision 0440 step C).
+            // host's lines and its placement. With the guest and without. Made where the device's buffers have no
+            // addresses, which the directory is of (OpenCL 1.2's, decision 0440 step C).
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();
             for views in [&core_views, &own_views] {
                 for name in ["line", "end_line", "col", "docof"] {
                     let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
                     let d = src.device_view().unwrap_or_else(|| panic!("{name}: on the device"));
-                    assert_eq!(d.in_place.is_some(), device.metal().is_some(), "{name}: read in place on Metal alone");
+                    assert_eq!(d.in_place.is_some(), device.has_addresses(), "{name}: read in place where buffers have addresses");
                     let n = src.len();
                     assert!(n > 0, "{name}: rows");
                     for cols in [vec![0, 1], vec![1]] {

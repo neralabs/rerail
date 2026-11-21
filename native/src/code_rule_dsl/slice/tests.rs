@@ -178,7 +178,7 @@ fn slice_bench() {
         })
         .collect::<Vec<_>>();
     let backend = match std::env::var("RERAIL_S6_BACKEND").as_deref() {
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         Ok("metal") => ExecutionBackend::MetalJit,
         _ => ExecutionBackend::CpuJit,
     };
@@ -491,8 +491,8 @@ fn a_supertype_rule_finds_the_same_members_on_every_backend() {
     let dir = temp("supertype");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(dir.join("a.py"), "x = f(y)\nreturn g(x)\n").unwrap();
-    // The device's backends where there is one (Metal).
-    let device = if cfg!(target_os = "macos") { &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit][..] } else { &[] };
+    // The device's backends where there is one (the device layer's targets, decision 0440 step E).
+    let device = if cfg!(any(target_os = "macos", target_os = "linux")) { &[ExecutionBackend::MetalInterpreter, ExecutionBackend::MetalJit][..] } else { &[] };
     let backends = [ExecutionBackend::CpuInterpreter, ExecutionBackend::CpuJit].into_iter().chain(device.iter().copied());
     let mut reference = None;
     for backend in backends {
@@ -531,8 +531,8 @@ fn the_backends_find_the_same_keys_on_real_files() {
     assert!(paths.len() == 4 || std::env::var_os("RERAIL_S7_FIXTURES").is_some() || std::env::var_os("RERAIL_S7_FILES").is_some(), "{} files", paths.len());
     #[cfg_attr(not(target_os = "macos"), allow(unused_mut))]
     let mut stores = vec![dir.clone()];
-    // The device's backends where there is one (Metal).
-    let device = if cfg!(target_os = "macos") { &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)][..] } else { &[] };
+    // The device's backends where there is one (the device layer's targets, decision 0440 step E).
+    let device = if cfg!(any(target_os = "macos", target_os = "linux")) { &[("metal-interpreter", ExecutionBackend::MetalInterpreter), ("metal-jit", ExecutionBackend::MetalJit)][..] } else { &[] };
     let backends = [("interpreter", ExecutionBackend::CpuInterpreter), ("jit", ExecutionBackend::CpuJit)].into_iter().chain(device.iter().copied());
     // Each (policy, file)'s coverage.
     type Coverages = BTreeMap<(String, String), Coverage>;
@@ -616,7 +616,7 @@ fn the_slice_finds_ws_findings_on_real_files() {
     if wanted.contains("cpu") {
         backends.push(("cpu", ExecutionBackend::CpuBackground));
     }
-    #[cfg(target_os = "macos")]
+    #[cfg(any(target_os = "macos", target_os = "linux"))]
     if wanted.contains("metal") {
         backends.push(("metal", ExecutionBackend::MetalBackground));
     }
@@ -630,12 +630,12 @@ fn the_slice_finds_ws_findings_on_real_files() {
         let run = audit(&store, WS, root, &mut rules).unwrap();
         let (spent, wall) = (cpu() - cpu0, wall0.elapsed());
         eprintln!("S7 {name} footprint: {before} MB before the audit, {} MB after{}", footprint(), if w_run.is_none() { " (before W's run)" } else { "" });
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         eprintln!("S7 {name} Metal buffers: peak {} MB", crate::code_rule_dsl::transducer::packed::metal_backend::peak_mb());
         // `RERAIL_S7_HOLD=<path>`: wait here, the audit's state alive, until `path` exists (to
         // inspect the process's heap).
         if let Some(path) = std::env::var_os("RERAIL_S7_HOLD") {
-            #[cfg(target_os = "macos")]
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
             eprintln!(
                 "S7 Metal buffers alive: {} MB; the driver's allocation {} MB",
                 crate::code_rule_dsl::transducer::packed::metal_backend::reserved_mb(),
@@ -907,7 +907,7 @@ fn s8_measures_the_targets_on_s7s_sample() {
     for pass in 0..passes {
         for backend in backends.split(',') {
             let execution = match backend {
-                #[cfg(target_os = "macos")]
+                #[cfg(any(target_os = "macos", target_os = "linux"))]
                 "metal" => ExecutionBackend::MetalJit,
                 _ => ExecutionBackend::CpuJit,
             };
@@ -1112,7 +1112,7 @@ fn rer131_pack_keys() {
     let store = ContentStore::open(&temp("pack-keys-store").with_extension("sqlite")).unwrap();
     let backend = match std::env::var("RERAIL_BACKEND").as_deref() {
         Ok("jit") => ExecutionBackend::CpuJit,
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux"))]
         Ok("metal") => ExecutionBackend::MetalInterpreter,
         _ => ExecutionBackend::CpuInterpreter,
     };

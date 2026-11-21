@@ -321,7 +321,7 @@ UKL_INLINE bool ukl_grid_seg_scan_n(UklGrid g, uint32_t op, uint32_t n, UKL_COHE
 // Where a grid sort's rows end: in its first buffers when its digits (`bits` in bytes) are even.
 UKL_INLINE bool ukl_grid_sort_in_input(uint32_t bits) { return ((bits + 7u) / 8u) % 2u == 0u; }
 
-// The threadgroup memory a grid sort takes: `h`, `counts`, `before`, `base` (`ukl_radix_*_tile`'s), and `tile`,
+// The threadgroup memory a grid sort takes: `h`, `counts`, `before`, `base`, `digits` (`ukl_radix_*_tile`'s), and `tile`,
 // `UKL_GRID_SORT_TILE_WORDS` words (a tile's keys and values, for the sort of one tile).
 #define UKL_GRID_SORT_TILE_WORDS (3u * UKL_RADIX_TILE)
 typedef struct UklGridSortLocal {
@@ -329,6 +329,7 @@ typedef struct UklGridSortLocal {
     UKL_LOCAL uint32_t* counts;
     UKL_LOCAL uint32_t* before;
     UKL_LOCAL uint32_t* base;
+    UKL_LOCAL uint32_t* digits;
     UKL_LOCAL uint32_t* tile;
 } UklGridSortLocal;
 
@@ -450,7 +451,7 @@ UKL_INLINE bool ukl_grid_sort_u64_from(UklGrid g, uint32_t n, uint32_t low, uint
         if (!ukl_grid_scan_n(g, UKL_RADIX_DIGITS * tiles, hist, hist, hist + UKL_RADIX_DIGITS * tiles, sums, scratch, flag __UKL_ARGS))
             return false;
         for (uint32_t tile = first; tile < end; tile++)
-            ukl_radix_scatter_tile_u64_grid(ki, vi, hist, ko, vo, args, l.counts, l.before, l.base, tile, g.lid __UKL_ARGS);
+            ukl_radix_scatter_tile_u64_grid(ki, vi, hist, ko, vo, args, l.counts, l.before, l.base, l.digits, tile, g.lid __UKL_ARGS);
         if (!ukl_grid_barrier(g, flag))
             return false;
         passes++;

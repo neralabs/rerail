@@ -8321,3 +8321,76 @@ Merged 7070b2ecad4 (base be1fd41c80) on 2026-11-19. Theirs' items Q251 and Q252 
   - The Q367 ignores name the M1 Max's Metal. On the CPU those tests pass now, but on Metal they were not run.
   - `rerail-c-directives` is wholly in nextest's slow tier: each test process compiles a C grammar. That is the
     per-process cost Kotlin's suite had (Q371).
+
+### Q383. Roll-up 22 (cuda-device-layer onto Pulling-it-all-together): what the merge chose, and what stays open
+
+- **Merged** (2026-11-20): the CUDA branch at e88c939259, 10 commits past their merge base 6ba6565614. These are
+  0440's step D (accel's scans and sorts are the UKL library's), step E (the engine's GPU lane builds and runs on
+  Linux, CUDA submits as Metal does), OpenCL's sub-groups and Intel's unified shared memory (opt-in), and
+  `ukl_mask_t`. Their only decision is 0440, which keeps its number; its document merged without a conflict.
+- **Taken from theirs**:
+  - The GPU lane's targets are macOS and Linux (`cfg(any(target_os = "macos", target_os = "linux"))`). accel's
+    gate is `cfg(gpu_lane)`, which its build script sets. Metal's own tier stays macOS-only.
+  - `MappedBuffer`, `PrivateInputUpload` and `residency::metal` are deleted as dead; `HostMapped` replaces them.
+  - accel's radix sort and its prewarm, `gpu::library`'s passes, prof's `frames()`, and the test pool.
+  - The scatter tile's `digits` spill, where a rank group is not a SIMD group (`UKL_RADIX_SPILL`).
+  - The CUDA, OpenCL and CPU backends' `has_addresses`, which the in-place view tests now ask.
+- **Kept from ours**:
+  - 0442's machine-held state in every file both changed. In `runtime.rs` this is the device's pool and its most
+    (`DeviceState`), and `acquire`'s bound and drawn reservations (Q203). `buffer_room` stays, and `driver_mb`
+    opens no device.
+  - accel's `budget`, `upkeep` and `gpu::shared` (theirs' Metal-only fields kept macOS-only), and `PollRmw`.
+  - `ByScope` stays deleted (0442 step 4). Theirs' fix to its test goes with it.
+  - The C preprocessor's Result API, and the text kernels 0450 steps 2c and 2e removed. Theirs' `verdicts`,
+    `replace`, `text_map` and `hold_table` stay out, and so does the Batch doc's trim, since ours has no
+    `Resident::trim`.
+  - `view.h` keeps ours' layout (`ViewRow` 192 bytes, `ViewDoc.file` at 116), in theirs' `UKL_OFFSETOF`. The
+    test that generates it passes.
+- **Widened to the lane's targets**: ours' device code added since the merge base was macOS-only, and theirs'
+  widened callers reached it on Linux. These are:
+  - the in-place views' directory (`device_chunk`'s `DirDoc`, `views_over`, `build_dir`), `values.rs` and
+    `within.rs`;
+  - the matcher's wave decision, the corpus test of tape values, and `slice`'s backends;
+  - rr_parser's device tests, and the C directives' device paths and tests;
+  - device_metal's module paths (`cfg_attr(..., path = ...)`, ours' 7070b2ecad).
+- **Found and fixed on the way**:
+  - Two manifests (facts, device_metal) listed `rerail-blocks` twice, since both sides moved it out of the macOS
+    table. Cargo refused the workspace.
+  - The record pass lost tokens where a file was refused (`serial_records`). Its entry check read the file's
+    refusal word, `tot`, which the pass's own refusal also sets (`flag` is bound to the same buffer). A lane that
+    started after another had refused returned at once, uncoded. The CPU runs a group's lanes in turn, so lanes
+    38 to 63 of `syntax-literals.rerail` were lost: every 64th token from the 38th, 26 in all. On Metal it is a race
+    between SIMD groups. Every lane now reads the word before a threadgroup barrier, and a file's lanes are one
+    threadgroup (a const assert). The rr marks test caught it.
+  - The label kernels' warm-up read the machine's job walls outside its run: `as_job` records its wall after the
+    closure, so the `within` guard now holds around the whole job.
+  - `UKL_TABLE const` is `static const const` on the CPU. GCC refuses it, though clang only warns. The tables
+    drop the extra `const` (`UKL_TABLE` is read-only on every backend), and so does `backend.h`'s doc.
+  - A plan's launches missed each recursive group's anchors, which are evaluated once before its rounds. A plan
+    over the evaluation's 200 launches then had no way to fit, because a step's launches do not shrink with its
+    files. The plan now counts them. A segment refused for launches with more than one step runs as two, the
+    first's labels starting the second (`labels.launch_split`), as at a host sweep.
+  - A Metal-only pipeline check (`max_total_threads_per_threadgroup`) is gated to macOS.
+  - Clippy:
+    - In the Linux-only backends: an orphaned CUDA doc paragraph, OpenCL's `as_chunks`, its four transmutes
+      typed with named signatures (dropping the struct's `type_complexity` allow), and a collapsed `if`.
+    - Elsewhere: `token_automata`'s two complex types named (`Dfa`, `Reached`), prof's `is_multiple_of`,
+      accel's unused `OnceLock`, and the shared tests' `layer()`.
+- **Checked**, every run held to the CPU (`RERAIL_GPU=cpu`, `RERAIL_DEVICE=cpu`; no Metal):
+  - Clippy is clean on 14 crates on both a Linux DGX Spark and an M1 Max: `rerail-accel`, `-gpu`, `-device`,
+    `-metal`, `-ukl`, `-c-directives`, `-clif`, `-device-metal`, `-lang`, `-parser-tests`, `-prof`,
+    `-rr-parser`, `-blocks` and `-engine`.
+  - On the Spark:
+    - `rerail-device` 6, `-gpu` 20, `-ukl` 8, `-accel` 82, `-blocks` 39, `-prof` 30, `-clif` 21, `-metal` 22,
+      `-rr-parser` 49 and `-device-metal` 70.
+    - `rerail-c-directives` 21, its whole set on Linux bar the ignored ones.
+    - 15 of the engine's tests: slice, setfix's device, the matchers and the work queue.
+  - On the M1 Max: `rerail-accel` 108, `-gpu` 20, `-device` 6, `-ukl` 8 and `-blocks` 39.
+- **Open**:
+  - The device layer's CPU backend is slow, and it now carries tests that ran on Metal before:
+    - rr_parser's marks test takes 157 s; its device run reads about 25 KB a second.
+    - accel's `join_model` tests take 58-178 s on the M1 Max.
+    - The C directives' token tests take over 60 s.
+  - Metal was not run: the record pass's barrier and the launch split are checked on the CPU backend alone.
+  - The roots' anchors (`Runner::records`) are still not in a plan's count. Where they pass the budget, the
+    submission's check refuses and the split takes it, unless the last segment has one step.
