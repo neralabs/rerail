@@ -164,7 +164,8 @@ one is the batch header; each further line is a record:
 
 A `gap` record reports data Rerail could not send, instead of leaving a hole:
 
-- events deleted before sending (`rerail reset`);
+- events deleted before sending (`rerail reset`), or that a power cut or an operating system crash took before they
+  were sent (a remote that already holds them keeps them: later events take numbers past every remote's cursor);
 - a record larger than a batch (`reason: "too-large"`);
 - rejected batches.
 
