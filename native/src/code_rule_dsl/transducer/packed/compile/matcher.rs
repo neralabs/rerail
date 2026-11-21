@@ -519,6 +519,9 @@ impl LoweredMatcher {
                         .map(|(tape, sets)| tape.with_labels(Arc::clone(sets)))
                         .collect::<Vec<_>>();
                     let found = self.evaluate(self.labels.def(id), &views, sets, &facts)?;
+                    // The views share each file's sets: dropped first, the write below is in place, not a copy of
+                    // every label's set (decision 0353).
+                    drop(views);
                     for (sets, set) in sets.iter_mut().zip(found) {
                         let slot = &mut Arc::make_mut(sets)[usize::from(id - LABEL_BASE)];
                         if *slot != set {
@@ -576,7 +579,10 @@ impl LoweredMatcher {
                         for &id in &ordered {
                             let (Label::Roots(program, _) | Label::Targets(program, _)) = self.labels.def(id) else { unreachable!() };
                             let view = tape.with_labels(Arc::clone(sets));
-                            for output in program.execute_roots(&view, [node])? {
+                            let outputs = program.execute_roots(&view, [node])?;
+                            // Dropped first, the marks below are written in place (decision 0353).
+                            drop(view);
+                            for output in outputs {
                                 let nodes = match self.labels.def(id) {
                                     Label::Roots(..) => vec![output.start],
                                     _ => output.captures.iter().map(|capture| capture.node).collect(),
@@ -909,8 +915,8 @@ impl LoweredWave {
             // A label in no step (none is expected) keeps its own.
             for local in 0..labels.defs.len() {
                 let id = LABEL_BASE + labels.offset + local as u16;
-                if !map.contains_key(&id) {
-                    map.insert(id, fresh(&mut next)?);
+                if let std::collections::hash_map::Entry::Vacant(entry) = map.entry(id) {
+                    entry.insert(fresh(&mut next)?);
                 }
             }
             let rename = |label: u16| map.get(&label).copied().unwrap_or(label);
