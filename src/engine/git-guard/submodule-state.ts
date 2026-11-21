@@ -745,12 +745,11 @@ function linkOf(path: string): string | undefined {
 }
 
 /**
- * The Git folder the `.git` file `dotGit` (`stats`) names from `folder` ({@link namedFolder}); undefined when it is not
- * a regular file, which Git skips, or went before it could be read, and how it failed for one Git cannot read as a
- * `.git` file (too large, no `gitdir:`) or that names a folder that cannot be read.
+ * The Git folder the `.git` file `dotGit` (`stats`) names from `folder` ({@link namedFolder}); undefined when it is no
+ * regular file, which Git skips and {@link textOf} does not read, or went before it could be read, and how it failed
+ * for one Git cannot read as a `.git` file (too large, no `gitdir:`) or that names a folder that cannot be read.
  */
 function namedGitFolder(folder: string, dotGit: string, stats: Stats): string | GitFailure | undefined {
-  if (!stats.isFile()) return undefined;
   const text = stats.size <= MAX_GITFILE_BYTES ? textOf(dotGit) : "";
   if (text === undefined) return undefined;
   if (!text.startsWith("gitdir: ")) return notARepository(dotGit);
