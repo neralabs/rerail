@@ -228,19 +228,19 @@ describe("the records a power cut leaves, once the next daemon has started", () 
     expect(audits.every(audit => audit.finishedAt !== null)).toBe(true);
   });
 
-  // A check of a session another daemon still runs is that daemon's to finish.
-  it("leaves running a check of a daemon that still runs", { timeout: 120_000 }, async () => {
+  // A check of a session another daemon still runs is that daemon's to finish. Both kinds of check run when the next
+  // daemon starts: one of a daemon a kill stopped mid-check, as a power cut stops it, and one of a daemon that runs.
+  it("leaves running a check of a daemon that still runs, and closes the gone one's", { timeout: 120_000 }, async () => {
     const { root, databasePath, checkout } = await records();
     const { start, writes } = events(checkout);
-    const daemon = await daemonProcess(root, databasePath);
-    await daemon.send(start("s"));
-    await writes(daemon.send, "s", "t1", join(checkout, "a.ts"), "export const a = 1;\n");
-    await daemon.stop();
-    cutPower(databasePath, latestCommitWhere(databasePath, runningChecks("s")));
     const alive = await daemonProcess(root, databasePath);
+    const gone = await daemonProcess(root, databasePath);
+    await gone.send(start("s"));
+    await writes(gone.send, "s", "t1", join(checkout, "a.ts"), "export const a = 1;\n");
+    stillRunning(databasePath, "s");
+    await gone.stop();
     await alive.send(start("o"));
     await writes(alive.send, "o", "t1", join(checkout, "b.ts"), "export const b = 1;\n");
-    // Its check still runs, as one that takes long does.
     stillRunning(databasePath, "o");
     await nextDaemon(root, databasePath);
     const statuses = async (sessionId: string) =>
