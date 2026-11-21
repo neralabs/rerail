@@ -15,6 +15,7 @@ import { placeCheckout, PLACING_AT_ONCE } from "../../../../src/engine/catalog/c
 import { learnDeclaredSubmodules } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js";
 import { readRemoteAddress, repositoryIdentityLocation, worktreeRegistry } from "../../../../src/engine/catalog/repository-identity.js";
+import { standingGitAccess } from "../../../../src/engine/native/git-access.js";
 import { pathsOwnedByCurrentUser } from "../../../../src/engine/native/native.js";
 import { removeFolderSync } from "../../../support/platform/remove-folder.js";
 
@@ -247,6 +248,8 @@ describe("placeCheckout", () => {
     const subfolder = join(checkouts[1]!, "sub");
     mkdirSync(subfolder);
     takeOwnersAway();
+    // No owner of the engine's Git reads stands, so a remote read ahead would read Git's installation first.
+    expect(standingGitAccess()).toBeUndefined();
     expect(await gitStarts(() => placeCheckout(checkouts[1]!))).toEqual({ blocking: [], notBlocking: [] });
     expect(await gitStarts(() => placeCheckout(checkouts[0]!))).toEqual({ blocking: [], notBlocking: [] });
     // A session in a subfolder: Git places the subfolder, whose answer names the checkout above, and nothing more.

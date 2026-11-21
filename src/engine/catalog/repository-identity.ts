@@ -805,7 +805,8 @@ export interface RemoteAddress {
  * The checkout's `origin` remote, else its only remote; undefined with no remote or several and no `origin`. Git's
  * answer, "no remote" included, is kept while the configuration it comes from reads the same ({@link remoteSource}),
  * so a remote added later is found, and recording every worktree of a clone with no remote asks Git once, not twice
- * per worktree.
+ * per worktree. It is kept only while the engine's owner of its Git reads stands, or under `GIT_CONFIG_NOSYSTEM`:
+ * before that, as in a process that has made no engine read, each call asks Git.
  */
 export function readRemoteAddress(root: string): RemoteAddress | undefined {
   const source = remoteSource(root);
@@ -847,23 +848,23 @@ interface RemoteSource {
 }
 
 /**
- * Where `root`'s remotes come from, read now ({@link remoteFacts}). Undefined, so Git is asked each time, where Git's
- * placement of `root` is not read from its files ({@link placementInputs}), where another account owns it (Git reads
- * the repository's config only while a `safe.directory` entry trusts it, the system file's too), or where a fact
- * cannot be read or named.
- */
-/**
- * {@link remoteSource}; where it names none for a checkout placed from its files that the user owns while no engine
- * owner of its Git reads stands, the owner, which names the system files, is made first as Git processes no thread
- * waits on ({@link learnGitAccess}), and the source read again.
+ * {@link remoteSource}; where it names none for a checkout placed from its files that the user owns, the engine owner of
+ * its Git reads, which names the system files, is made first unless it stands, as Git processes no thread waits on
+ * ({@link learnGitAccess}), and the source read again.
  */
 async function remoteSourceWithoutBlocking(root: string, options: GitReadOptions): Promise<RemoteSource | undefined> {
   const source = remoteSource(root);
-  if (source !== undefined || standingGitAccess() !== undefined || placementInputs(resolve(root))?.owned !== true) return source;
+  if (source !== undefined || placementInputs(resolve(root))?.owned !== true) return source;
   await learnGitAccess(options);
   return remoteSource(root);
 }
 
+/**
+ * Where `root`'s remotes come from, read now ({@link remoteFacts}). Undefined, so Git is asked each time, where Git's
+ * placement of `root` is not read from its files ({@link placementInputs}), where another account owns it (Git reads
+ * the repository's config only while a `safe.directory` entry trusts it, the system file's too), where a fact cannot
+ * be read or named, or where no engine owner of its Git reads stands ({@link systemConfigFiles}).
+ */
 function remoteSource(root: string): RemoteSource | undefined {
   const inputs = placementInputs(resolve(root));
   if (inputs === undefined || !inputs.owned) return undefined;
