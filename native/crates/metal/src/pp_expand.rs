@@ -1018,6 +1018,12 @@ pub const X_PASTE: u32 = 8;
 pub const X_DEPTH: u32 = 16;
 pub const X_ROOM: u32 = 32;
 pub const X_QUEUE: u32 = 64;
+
+/// A piece's source kind (decision 0520 §1: `P_KIND`'s bits of its first column), its length.
+const P_TOP: u32 = 0;
+const P_BODY: u32 = 1 << 30;
+const P_KIND: u32 = 3 << 30;
+const PN_LEN: u32 = 0xff_ffff;
 pub const X_HASH: u32 = 128;
 pub const X_ACROSS: u32 = 256;
 pub const X_VA_OPT: u32 = 512;
@@ -1085,6 +1091,10 @@ pub struct Exp {
     xpos: Buf,
     xcover: Buf,
     vscan: Scan,
+    /// The output's pieces (decision 0520 §3): each top token's count, their scan.
+    opv: Buf,
+    opbase: Buf,
+    opscan: Scan,
     lists: Buf,
     /// The tokens' columns, `tok_cap` words each: the ref, the flags, the child, the depth and the
     /// ref `__LINE__` reads for it (+ 1; 0 its own); then the heads of the pool of blocks given
@@ -1214,6 +1224,9 @@ impl Exp {
             xpos: zeroed(top)?,
             xcover: zeroed(top)?,
             vscan: Scan::new(arena)?,
+            opv: zeroed(top)?,
+            opbase: zeroed(top)?,
+            opscan: Scan::new(arena)?,
             // Past the records: the pools of ids given back, a link an id, then their heads.
             lists: zeroed(lists * (LIST_WORDS + 1) + POOL_HEADS)?,
             tokens: zeroed(tok * 5 + POOL_HEADS)?,
@@ -1235,7 +1248,8 @@ impl Exp {
             cnt_cap: cnt_cap as u32,
             lb_cap: lb_cap as u32,
             // The refs, then each one's space flag.
-            out: zeroed(2 * out)?,
+            // The output's pieces: five columns, `out` words each (decision 0520 §3).
+            out: zeroed(5 * out)?,
         })
     }
 
@@ -1251,6 +1265,7 @@ impl Exp {
         l.at("OFLAG", &self.oflag).at("OID", &self.oid).at("OTOTAL", &self.oscan.total).at("LISTS", &self.lists).at("SLOTS", &self.slots);
         l.at("CTL", &self.ctl).at("QCTL", &self.qctl).at("XFLAG", &self.xflag).at("XAT", &self.xat).at("XTOTAL", &self.xscan.total);
         l.at("XPOS", &self.xpos).at("XCOVER", &self.xcover).at("V", &self.v).at("OBASE", &self.obase).at("VTOTAL", &self.vscan.total);
+        l.at("OPV", &self.opv).at("OPBASE", &self.opbase).at("OPTOTAL", &self.opscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("ARGS", &self.args).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
         l.word("LIST_CAP", self.list_cap).word("OUT_CAP", self.out_cap).word("Q_CAP", self.q_cap);
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
@@ -1287,7 +1302,7 @@ impl Exp {
             let q = ((*qc.add(1)).wrapping_sub(*qc.add(4)).max(*ctl.add(13)), self.q_cap);
             // The output: the pieces' total of the text and of each top before (the lines'), as
             // `pp_check` and the places compare it with the room.
-            [a, b, c, d, e, q, ((*self.vscan.total.host().cast::<u32>()).max(*ctl.add(14)), self.out_cap as u32)]
+            [a, b, c, d, e, q, ((*self.opscan.total.host().cast::<u32>()).max(*ctl.add(14)), self.out_cap as u32)]
         }
     }
 
@@ -1335,15 +1350,42 @@ impl Exp {
         unsafe { *self.trn.host().cast::<u32>().add(9) }
     }
 
-    pub fn read(&self) -> (u32, Vec<u32>) {
-        // SAFETY: the device finished; `out` holds at least `n_out` words where no room ran out.
+    /// The output's refs, made from its pieces (decision 0520 §3) for a caller that asks for
+    /// tokens: a top level's run each top token's node (the text's stretches, `top_ref`), a
+    /// definition's body item its ref, a produced token its own.
+    pub fn read(&self, front: &crate::pp_eval::Front, vis: &Vis, defs: &Defs) -> (u32, Vec<u32>) {
+        // SAFETY: the device finished; `out` holds `out_cap` words a column and its pieces' total
+        // where no room ran out; the text's stretches and the definitions are the same run's.
         unsafe {
             let refused = *self.ctl.host().cast::<u32>().add(2);
             if refused != 0 {
                 return (refused, Vec::new());
             }
             let n = *self.vscan.total.host().cast::<u32>() as usize;
-            (0, std::slice::from_raw_parts(self.out.host().cast::<u32>(), n).to_vec())
+            let cap = self.out_cap as usize;
+            let np = (*self.opscan.total.host().cast::<u32>() as usize).min(cap);
+            let o = self.out.host().cast::<u32>();
+            let n_gaps = *vis.n_gaps.host().cast::<u32>() as usize;
+            let gat = std::slice::from_raw_parts(vis.gat.host().cast::<u32>(), n_gaps);
+            let firsts = vis.gfirsts.host().cast::<u32>();
+            let nodes = front.text_nodes.host().cast::<u32>();
+            let d = defs.defs.host().cast::<PpDef>();
+            let mut out = Vec::with_capacity(n);
+            for i in 0..np {
+                let (src, len, st) = (*o.add(i), *o.add(cap + i) & PN_LEN, *o.add(2 * cap + i));
+                for k in st..st + len {
+                    out.push(match src & P_KIND {
+                        P_TOP => {
+                            let j = gat.partition_point(|&g| g <= k).max(1) - 1;
+                            *nodes.add((*firsts.add(j) + (k - gat[j])) as usize)
+                        }
+                        P_BODY => (*d.add((src & !P_KIND) as usize)).body + k,
+                        _ => k,
+                    });
+                }
+            }
+            debug_assert_eq!(out.len(), n, "the output's pieces hold its tokens");
+            (0, out)
         }
     }
 }
@@ -1471,7 +1513,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
             return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), def_rung });
         }
         vis.read()?;
-        let (refused, out) = exp.read();
+        let (refused, out) = exp.read(&front, &vis, &defs);
         // A run out of room runs again larger whatever else it refused: past the room that ran
         // out, its items read what was never written (a list cut short reads as a call past its
         // end), so its other refusals are the larger run's to give.

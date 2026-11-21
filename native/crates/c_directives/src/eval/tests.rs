@@ -1596,6 +1596,25 @@ fn a_chains_use_is_flat_in_its_length() {
     assert!(flat, "a store's use grows with the chain's length (above)");
 }
 
+/// §3 of decision 0520: the output is pieces. A top level's run of tokens no call covers is one
+/// piece, and a call's expansion its pieces: a text of 2,000 plain tokens on 200 lines, with a call
+/// after each 500 (`G`: `[`, `g`, `]`, `g`, each its own piece of `F`'s body or `G`'s), is its 5 runs
+/// and the calls' 4 pieces each, not a word a token, and equals the serial pass.
+#[test]
+fn the_output_is_pieces_that_refer_to_the_text() {
+    let line = (0..10).map(|i| format!("t{i}")).collect::<Vec<_>>().join(" ");
+    let mut text = String::from("#define F(x) [x] x\n#define G F(g)\n");
+    for k in 0..200 {
+        text += &line;
+        text += if k % 50 == 49 { " G\n" } else { "\n" };
+    }
+    let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+    let got = got.unwrap_or_else(|why| panic!("refused {why}"));
+    same(show(&got), show(&want), "the text");
+    let out = rerail_metal::pp_expand::ROOM_STORES.iter().position(|s| *s == "output").unwrap();
+    assert!(want.len() > 2000 && room[out].0 <= 5 + 4 * 4, "{} tokens in {} pieces", want.len(), room[out].0);
+}
+
 /// `expanded`, with the run's own figures (its rooms' use).
 fn expanded_x(files: &[(&str, &str)], cpp: bool) -> (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS]) {
     use rerail_c_pp::files::Search;
