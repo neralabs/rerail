@@ -65,11 +65,15 @@ use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
 
-// jemalloc does not build for MSVC targets; Windows keeps the system allocator. The test build declares it too
+// jemalloc does not build for MSVC targets; Windows takes mimalloc (below). The test build declares it too
 // (`rust_allocations_reach_the_profile_allocator` checks it).
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: Sampled = Sampled;
+
+#[cfg(all(windows, not(feature = "system-allocator")))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
 /// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
