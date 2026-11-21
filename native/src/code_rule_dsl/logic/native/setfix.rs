@@ -344,6 +344,7 @@ pub fn flush_symbols(conn: &Connection) -> Result<()> {
 }
 
 enum Pat { Any, Slot(usize), Int(i64), Sym(i64) }
+#[derive(Clone, Copy)]
 pub enum Term { Slot(usize), Const(i64), Cat(usize, usize) }
 
 fn hash_vals(vals: impl Iterator<Item = i64>) -> u64 {
@@ -2394,9 +2395,12 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
             visits += n;
             per[pi].1 += n;
         }
-        let k = store.rels[0].k;
-        store.rels[0].reserve(fresh[0].n);
-        for i in 0..fresh[0].n { store.rels[0].push(&fresh[0].data.row(i as u32, k)); }
+        // The seeds' rows, into their relation (the walk's; a reader has none, decision 0561).
+        for (r, f) in fresh.iter().enumerate() {
+            let k = store.rels[r].k;
+            store.rels[r].reserve(f.n);
+            for i in 0..f.n { store.rels[r].push(&f.data.row(i as u32, k)); }
+        }
         let prep = closure::prepare(&cl, store, &mut syms);
         match prep {
             None => closure_ran = Some(None),
@@ -2429,19 +2433,23 @@ pub fn run(conn: impl Scoped, name: &str, max_waves: u32) -> Result<String> {
         waves = 1;
         let mut guard = comp.store.write().unwrap();
         let store = &mut *guard;
-        let n = store.rels[0].n;
+        let ns: Vec<usize> = store.rels.iter().map(|r| r.n).collect();
         match ran {
             Some(r) => {
                 visits += r.nodes as u64 + r.rows as u64;
                 crate::code_rule_dsl::logic::profile::decision("closure (decision 0098 §1)", || format!("a walk along an edge run as its closure, by {}", r.how));
                 if wave_trace { eprintln!("      {name}: closure over {} nodes by {}, {} rows, {:.1} ms", r.nodes, r.how, r.rows, tp.elapsed().as_secs_f64() * 1e3); }
-                store.rels[0].set_delta(n, n);
+                for (rel, &n) in store.rels.iter_mut().zip(&ns) {
+                    rel.set_delta(n, n);
+                }
                 done = true;
             }
             None => {
                 crate::code_rule_dsl::logic::lanes::prof::count("closure", "closures run semi-naive (the edge search failed)", 1);
                 crate::code_rule_dsl::logic::profile::decision("closure (decision 0098 §1)", || format!("a walk's edge search failed: semi-naive from its seeds ({name})"));
-                store.rels[0].set_delta(0, n)
+                for (rel, &n) in store.rels.iter_mut().zip(&ns) {
+                    rel.set_delta(0, n);
+                }
             }
         }
     }

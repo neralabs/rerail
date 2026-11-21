@@ -577,6 +577,18 @@ CPU; the wall times are noisy between runs). On `all`, against 0523's run: 3.253
 lookup stage 12.61 → 11.74 s, `wstart` 5.06 s; every stage's rows as before (t50's known `ref` and `open_name`
 differences). The views' id translation and the index runs' probes are left.
 
+### Step 5, second part: the climb's readers in the climb, each test once (decision 0561)
+
+Where `walk`'s time went on s1000: its seed join about 0.1 s, the keyed climb 458 ms of probes. Storing its rows was
+a small part. `look` (about 0.1 s) asked again what the climb had asked: it scanned `bound_in` and probed `walk`, then
+asked `cls_late` once more. So the second part puts `look` and `miss` in the walk's stratum. Their rules run in the
+climb at each depth. A row's tests (`bound_in(s, x)`, `cls_late(n, x, s)`, `gbefore(n, x, s)`) are asked once,
+shared by every rest and sign. Readers alone, without the shared tests, were slower (lookup 1.65 s): they asked each
+row again. With them, s1000's lookup went 1.48 → 1.18 s and 321.9 → 311.0 G instructions, rows unchanged. On `all`
+it is even: 3.165 → 3.159 T instructions, lookup 11.74 → 12.19 s, peak memory 9.89 → 9.14 GB, rows unchanged.
+The shared tests cost about 260 ns each, the executor's per-row work around each probe. Asking a test as the index's
+probe alone is the next lever (0561, "Left"). `walk` is read only in its stratum now, and released after it.
+
 ### The rows on `all`: two rules fixed, the rest W's departures from Python
 
 `RERAIL_STAGE_DIFFS=1` listed every differing row. Each kind was cut down to a case of a few lines

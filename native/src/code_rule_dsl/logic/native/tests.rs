@@ -553,6 +553,95 @@ fn a_keyed_walk_along_an_edge_runs_as_a_closure_in_one_wave() {
     assert_eq!(waves(&report), 1, "the keyed closure runs in one wave: {report}");
 }
 
+/// The climb's ends (decision 0561): `look` and `miss`, each made from the walk's rows one at a time, are in the walk's
+/// component (after the walk in the relations' order, as a stratum's names sort). The keyed climb answers them at each
+/// row as it makes it: in one wave, with semi-naive's rows of all three relations.
+#[test]
+fn a_walks_readers_are_answered_in_its_climb() {
+    let hex = |s: &str| s.bytes().map(|b| format!("{b:02x}")).collect::<String>();
+    let up = [(2, 1), (3, 2), (4, 3), (5, 1), (6, 5), (7, 6), (8, 7)];
+    let bound = [(1, 100), (3, 200), (5, 100), (8, 300)];
+    let starts = [(1000, 100, 4), (1001, 200, 4), (1002, 100, 6), (1003, 300, 7), (1004, 400, 8), (1005, 200, 8), (1005, 200, 3)];
+    let late = [(1001, 200, 3)];
+    type Rows = (Vec<(i64, i64, i64)>, Vec<(i64, i64)>, Vec<(i64, i64, i64)>);
+    let rows = |semi_naive: bool| -> (Rows, String) {
+        let db = connection();
+        db.execute_batch("CREATE TABLE st(c0, c1, c2); CREATE TABLE up(c0, c1); CREATE TABLE bound(c0, c1); CREATE TABLE late(c0, c1, c2); CREATE TABLE look(c0, c1, c2); CREATE TABLE miss(c0, c1); CREATE TABLE walk(c0, c1, c2);").unwrap();
+        for (a, b, c) in starts {
+            db.execute("INSERT INTO st VALUES (?1, ?2, ?3)", [a, b, c]).unwrap();
+        }
+        for (a, b, c) in late {
+            db.execute("INSERT INTO late VALUES (?1, ?2, ?3)", [a, b, c]).unwrap();
+        }
+        for (a, b) in up {
+            db.execute("INSERT INTO up VALUES (?1, ?2)", [a, b]).unwrap();
+        }
+        for (a, b) in bound {
+            db.execute("INSERT INTO bound VALUES (?1, ?2)", [a, b]).unwrap();
+        }
+        let src = |t: &str, cols: &str, ty: &str| format!("t:b:{}:{}:{ty}", hex(t), hex(cols));
+        let (st, upr, bnd, lat) = (src("st", "c0, c1, c2", "iii"), src("up", "c0, c1", "ii"), src("bound", "c0, c1", "ii"), src("late", "c0, c1, c2", "iii"));
+        // walk is relation 2, look 0, miss 1.
+        let seed = format!("pos {st} v0 v1 v2\nhead v0 v1 v2");
+        let step = format!("pos d2 v0 v1 v2\nneg {bnd} v2 v1\npos {upr} v2 v3\nhead v0 v1 v3");
+        let past = format!("pos d2 v0 v1 v2\npos {lat} v0 v1 v2\npos {upr} v2 v3\nhead v0 v1 v3");
+        let look = format!("pos d2 v0 v1 v2\npos {bnd} v2 v1\nneg {lat} v0 v1 v2\nhead v0 v1 v2");
+        let miss = format!("pos d2 v0 v1 v2\nneg {bnd} v2 v1\nneg {upr} v2 _\nhead v0 v1");
+        super::setfix::closure::semi_naive_here(semi_naive);
+        let spec = format!("name ends\nrel look iii empty\nrel miss ii empty\nrel walk iii empty\nseed 2 {}\njoin 2 2 {}\njoin 2 2 {}\njoin 0 2 {}\njoin 1 2 {}", hex(&seed), hex(&step), hex(&past), hex(&look), hex(&miss));
+        super::setfix::open(&db, &spec).unwrap();
+        super::setfix::closure::semi_naive_here(false);
+        let report = super::setfix::run(&db, "ends", 0).unwrap();
+        assert!(report.ends_with(" 1"), "{report}");
+        let three = |t: &str| -> Vec<(i64, i64, i64)> {
+            let mut v: Vec<_> = db.prepare(&format!("SELECT c0, c1, c2 FROM {t}")).unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?, r.get(2)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+            v.sort();
+            v
+        };
+        let mut miss: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM miss").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().collect::<rusqlite::Result<_>>().unwrap();
+        miss.sort();
+        let got = (three("look"), miss, three("walk"));
+        super::setfix::close(&db, "ends").unwrap();
+        (got, report)
+    };
+    // By search: each read climbs while its scope does not bind the name or the read is late there; it is looked up
+    // where a scope binds it (not late), and missed where the climb leaves the root unbound.
+    let (mut look, mut miss, mut walk) = (Vec::new(), Vec::new(), Vec::new());
+    for (n, x, s0) in starts {
+        let mut s = s0;
+        loop {
+            walk.push((n, x, s));
+            let binds = bound.contains(&(s, x));
+            let is_late = late.contains(&(n, x, s));
+            if binds && !is_late {
+                look.push((n, x, s));
+            }
+            let parent = up.iter().find(|e| e.0 == s).map(|e| e.1);
+            if !binds && parent.is_none() {
+                miss.push((n, x));
+            }
+            match parent {
+                Some(p) if !binds || is_late => s = p,
+                _ => break,
+            }
+        }
+    }
+    for v in [&mut look, &mut walk] {
+        v.sort();
+        v.dedup();
+    }
+    miss.sort();
+    miss.dedup();
+    let want = (look, miss, walk);
+    let (semi, semi_report) = rows(true);
+    assert_eq!(semi, want, "semi-naive is the search");
+    let waves = |r: &str| r.split(' ').nth(1).unwrap().parse::<u32>().unwrap();
+    assert!(waves(&semi_report) > 2, "semi-naive climbs a scope a wave: {semi_report}");
+    let (keyed, report) = rows(false);
+    assert_eq!(keyed, semi, "the climb answers its readers with semi-naive's rows");
+    assert_eq!(waves(&report), 1, "the climb and its readers run in one wave: {report}");
+}
+
 /// A count step that many bindings reach is answered from a count table (decision 0098 §1), exactly as walking counts:
 /// per row of the join's first scan when the key comes from it, else from the relation's histogram by its key.
 #[test]

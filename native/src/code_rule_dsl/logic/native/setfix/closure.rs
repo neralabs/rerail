@@ -36,6 +36,7 @@
 //! wave, decision 0095 §5, `lanes::wave`).
 
 use super::{Body, Component, JoinRule, Key, SEED, Src, Step, Store, Term, run_join_each, run_join_each_row};
+use std::sync::Arc;
 use crate::code_rule_dsl::logic::lanes::prof;
 use rerail_accel::{Bits, Kernel, Output};
 use rustc_hash::FxHashMap as HashMap;
@@ -54,6 +55,71 @@ pub(super) struct Closure {
     rest: JoinRule,
     y: usize,
     keyed: Vec<Keyed>,
+    /// The walking relation's index in the component (0 unless it has readers).
+    w: usize,
+    /// The climb's ends (decision 0561): the component's other relations, each made from the walk's rows one at a
+    /// time, run in the keyed climb at each depth on the rows it made.
+    readers: Vec<Reader>,
+    /// The row tests the rests share (decision 0561): an atom keyed by the row's columns alone (`bound_in(s, x)`,
+    /// `cls_late(n, x, s)`), as a join of that one atom over the row's columns (slot `c`: column `c`), asked once a
+    /// row however many rests read it, with whichever sign.
+    tests: Vec<JoinRule>,
+}
+
+/// Whether two row tests ask the same: the same source by the same index, the same keys.
+fn same_test(a: &Step, b: &Step) -> bool {
+    let (Step::Atom { src: Src::In(ra, ia), keys: ka, .. }, Step::Atom { src: Src::In(rb, ib), keys: kb, .. }) = (a, b) else { return false };
+    Arc::ptr_eq(ra, rb) && ia.cols == ib.cols && ka.len() == kb.len() && ka.iter().zip(kb).all(|(x, y)| x.0 == y.0 && match (x.1, y.1) {
+        (Key::Slot(p), Key::Slot(q)) => p == q,
+        (Key::Const(p), Key::Const(q)) => p == q,
+        _ => false,
+    })
+}
+
+/// A rest's row tests taken out (decision 0561): each atom of an input that binds nothing and is keyed only by the
+/// row's slots (`slots`, by column) or constants, as a test over the row's columns, shared through `tests`. The rest
+/// left, and each test it needs with its sign.
+fn take_tests(rest: &[Step], slots: &[usize], tests: &mut Vec<Step>) -> (Vec<Step>, Vec<(usize, bool)>) {
+    let (mut left, mut need) = (Vec::new(), Vec::new());
+    for st in rest {
+        let test = match st {
+            Step::Atom { src: src @ Src::In(..), neg, keys, binds, tests: eqs } if binds.is_empty() && eqs.is_empty() => keys
+                .iter()
+                .map(|&(c, key)| match key {
+                    Key::Slot(x) => slots.iter().position(|&y| y == x).map(|col| (c, Key::Slot(col))),
+                    Key::Const(v) => Some((c, Key::Const(v))),
+                })
+                .collect::<Option<Vec<_>>>()
+                .map(|keys| (Step::Atom { src: src.clone(), neg: false, keys, binds: Vec::new(), tests: Vec::new() }, *neg)),
+            _ => None,
+        };
+        match test {
+            Some((t, neg)) => {
+                let at = match tests.iter().position(|u| same_test(u, &t)) {
+                    Some(at) => at,
+                    None => {
+                        tests.push(t);
+                        tests.len() - 1
+                    }
+                };
+                need.push((at, !neg));
+            }
+            None => left.push(st.clone()),
+        }
+    }
+    (left, need)
+}
+
+/// A reader of the walk's rows (decision 0561): its rest as a join to its head's terms, run with every column's slot
+/// (`slots`, by column) bound to a walk row's values, its rows into relation `head`.
+pub(super) struct Reader {
+    head: usize,
+    rest: JoinRule,
+    slots: Vec<usize>,
+    need: Vec<(usize, bool)>,
+    /// Its head's terms, as columns of the row or constants, when its rest is all row tests: then nothing is run for
+    /// it, and a row that passes them is its row.
+    direct: Option<Vec<Result<usize, i64>>>,
 }
 
 /// One recursive probe of a keyed closure: its rest as a join to the new value `z`, run with every column's slot
@@ -61,6 +127,8 @@ pub(super) struct Closure {
 pub(super) struct Keyed {
     rest: JoinRule,
     slots: Vec<usize>,
+    /// The row tests (decision 0561) its rest had, taken out of it: each a shared test and whether it must hold.
+    need: Vec<(usize, bool)>,
 }
 
 /// A recursive probe read as a walk: the walking column, each column's slot, the new value's slot, and whether the
@@ -75,8 +143,11 @@ struct Walk<'a> {
 
 /// Whether probe `j` of relation 0 (of `k` columns) is a walk: its delta atom first, a distinct slot in every column,
 /// the head the same slots but one column's, which is a slot the rest binds; the rest reads the relation nowhere.
-fn walk_of(j: &JoinRule, k: usize) -> Option<Walk<'_>> {
-    let Some(Step::Atom { src: Src::Delta(0), neg: false, keys, binds, tests }) = j.steps.first() else { return None };
+fn walk_of(j: &JoinRule, k: usize, w: usize, nrels: usize) -> Option<Walk<'_>> {
+    let Some(Step::Atom { src: Src::Delta(d), neg: false, keys, binds, tests }) = j.steps.first() else { return None };
+    if *d != w {
+        return None;
+    }
     if !keys.is_empty() || !tests.is_empty() || binds.len() != k {
         return None;
     }
@@ -105,7 +176,7 @@ fn walk_of(j: &JoinRule, k: usize) -> Option<Walk<'_>> {
     let rest = &j.steps[1..];
     let mut used = Vec::new();
     for s in rest {
-        if reads(s, 0) {
+        if (0..nrels).any(|r| reads(s, r)) {
             return None;
         }
         step_slots(s, &mut used);
@@ -117,11 +188,37 @@ fn walk_of(j: &JoinRule, k: usize) -> Option<Walk<'_>> {
     Some(Walk { col, slot_of, z, rest, keyed })
 }
 
+/// A reader's probe (decision 0561): its walk atom first, reading the walk's delta with a distinct slot in every
+/// column; its rest reads none of the component's relations. Each column's slot, and the rest.
+fn reader_of(j: &JoinRule, k: usize, w: usize, nrels: usize) -> Option<(Vec<usize>, &[Step])> {
+    let Some(Step::Atom { src: Src::Delta(d), neg: false, keys, binds, tests }) = j.steps.first() else { return None };
+    if *d != w || !keys.is_empty() || !tests.is_empty() || binds.len() != k {
+        return None;
+    }
+    let mut slot_of = vec![usize::MAX; k];
+    for &(c, s) in binds {
+        slot_of[c] = s;
+    }
+    if slot_of.contains(&usize::MAX) || (1..k).any(|i| slot_of[..i].contains(&slot_of[i])) {
+        return None;
+    }
+    let rest = &j.steps[1..];
+    if rest.iter().any(|s| (0..nrels).any(|r| reads(s, r))) {
+        return None;
+    }
+    Some((slot_of, rest))
+}
+
 /// A rest as its own join, to the new value `z`.
 fn rest_join(rest: &[Step], z: usize, nslots: usize) -> JoinRule {
+    rest_join_to(rest, vec![Term::Slot(z)], nslots)
+}
+
+/// A rest as its own join, to the terms `out`.
+fn rest_join_to(rest: &[Step], out: Vec<Term>, nslots: usize) -> JoinRule {
     let rest = JoinRule {
         steps: rest.to_vec(),
-        out: vec![Term::Slot(z)],
+        out,
         nslots,
         multi: Vec::new(),
         counts: (0..rest.len()).map(|_| Default::default()).collect(),
@@ -203,34 +300,71 @@ pub(super) fn recognize(c: &Component) -> Option<Closure> {
         return None;
     }
     let store = c.store.read().unwrap();
-    if store.rels.len() != 1 || !c.edges.is_empty() || !c.gates.is_empty() || !c.requests.is_empty() || !c.produced.is_empty() {
+    if !c.edges.is_empty() || !c.gates.is_empty() || !c.requests.is_empty() || !c.produced.is_empty() {
         return None;
     }
-    let k = store.rels[0].k;
+    let nrels = store.rels.len();
+    // The walking relation: the one a probe reads the delta of to make more of (with readers beside it, decision 0561).
+    let wi = c.probes.iter().find(|p| matches!(p.body, Body::Join(_)) && p.delta == p.head && p.delta != SEED).map(|p| p.head)?;
+    let ks: Vec<usize> = store.rels.iter().map(|r| r.k).collect();
     drop(store);
-    let mut walks = Vec::new();
+    let k = ks[wi];
+    let (mut walks, mut readers) = (Vec::new(), Vec::new());
     for p in &c.probes {
         match (&p.body, p.delta) {
-            (Body::Join(_), SEED) => {}
-            (Body::Join(j), 0) if p.head == 0 => walks.push((walk_of(j, k)?, j.nslots)),
+            (Body::Join(_), SEED) if p.head == wi => {}
+            (Body::Join(j), d) if d == wi && p.head == wi => walks.push((walk_of(j, k, wi, nrels)?, j.nslots)),
+            (Body::Join(j), d) if d == wi && j.out.len() == ks[p.head] => {
+                let (slots, rest) = reader_of(j, k, wi, nrels)?;
+                readers.push((p.head, slots, rest, j));
+            }
             _ => return None,
         }
+    }
+    // Each other relation is a reader's head, and only a reader's.
+    if (0..nrels).any(|r| r != wi && !readers.iter().any(|x| x.0 == r)) {
+        return None;
     }
     let col = walks.first()?.0.col;
     if walks.iter().any(|(w, _)| w.col != col) {
         return None;
     }
     // One walk whose rest reads only the walking column: the reach per node.
-    if let [(w, nslots)] = &walks[..] && !w.keyed {
-        return Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed: Vec::new() });
+    if let [(w, nslots)] = &walks[..] && !w.keyed && readers.is_empty() && wi == 0 {
+        return Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed: Vec::new(), w: 0, readers: Vec::new(), tests: Vec::new() });
     }
     // Keyed (decision 0523): `RERAIL_KEYED_CLOSURE=off` leaves it semi-naive.
     if std::env::var("RERAIL_KEYED_CLOSURE").is_ok_and(|v| v == "off") {
         return None;
     }
-    let keyed = walks.iter().map(|(w, nslots)| Keyed { rest: rest_join(w.rest, w.z, *nslots), slots: w.slot_of.clone() }).collect();
+    // The rests' row tests, shared (decision 0561): only where there is more than one rest to share them.
+    let share = walks.len() + readers.len() > 1 && std::env::var("RERAIL_ROW_TESTS").map_or(true, |v| v != "off");
+    let mut tests: Vec<Step> = Vec::new();
+    let mut split = |rest: &[Step], slots: &[usize]| if share { take_tests(rest, slots, &mut tests) } else { (rest.to_vec(), Vec::new()) };
+    let keyed = walks
+        .iter()
+        .map(|(w, nslots)| {
+            let (left, need) = split(w.rest, &w.slot_of);
+            Keyed { rest: rest_join(&left, w.z, *nslots), slots: w.slot_of.clone(), need }
+        })
+        .collect();
+    let readers = readers
+        .into_iter()
+        .map(|(head, slots, rest, j)| {
+            let (left, need) = split(rest, &slots);
+            let direct = left.is_empty().then(|| j.out.iter().map(|t| match *t {
+                Term::Slot(x) => slots.iter().position(|&y| y == x).map(Ok),
+                Term::Const(v) => Some(Err(v)),
+                Term::Cat(..) => None,
+            }).collect::<Option<Vec<_>>>()).flatten();
+            // A head the row's columns do not make keeps its rest (its tests too): it is run.
+            let (left, need) = if left.is_empty() && direct.is_none() { (rest.to_vec(), Vec::new()) } else { (left, need) };
+            Reader { head, rest: rest_join_to(&left, j.out.clone(), j.nslots), slots, need, direct }
+        })
+        .collect();
+    let tests = tests.iter().map(|t| rest_join_to(std::slice::from_ref(t), vec![Term::Const(1)], k)).collect();
     let (w, nslots) = &walks[0];
-    Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed })
+    Some(Closure { col, rest: rest_join(w.rest, w.z, *nslots), y: w.slot_of[col], keyed, w: wi, readers, tests })
 }
 
 /// What the closure did, for the run's report: nodes reached, rows made, and which way.
@@ -334,13 +468,14 @@ pub(super) fn prepare(cl: &Closure, store: &mut Store, syms: &mut super::Interne
 /// left to semi-naive (`None`), which gives each row its depth.
 fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<Prepared> {
     let _h = prof::host("closure", "keyed: each depth's rows through the steps");
-    if store.rels[0].level.len() == store.rels[0].n && store.rels[0].n > 0 {
+    let wi = cl.w;
+    if store.rels.iter().any(|r| r.level.len() == r.n && r.n > 0) {
         return None;
     }
-    let k = store.rels[0].k;
+    let k = store.rels[wi].k;
     let mut frontier: Vec<i64> = Vec::new();
     {
-        let rel = &store.rels[0];
+        let rel = &store.rels[wi];
         for id in 0..rel.n {
             if !rel.dead(id as u32) {
                 frontier.extend_from_slice(&rel.row(id));
@@ -349,32 +484,107 @@ fn keyed(cl: &Closure, store: &mut Store, syms: &mut super::Interner) -> Option<
     }
     let (mut rows, mut depths) = (0usize, 0usize);
     let mut made: Vec<i64> = Vec::new();
+    let all: Vec<usize> = (0..k).collect();
+    // Each shared test's answer for each row of the depth: 0 not asked yet, 1 holds, 2 does not.
+    let mut answers: Vec<Vec<u8>> = vec![Vec::new(); cl.tests.len()];
+    let mut ends: Vec<i64> = Vec::new();
     while !frontier.is_empty() {
         depths += 1;
         made.clear();
         let n = frontier.len() / k;
+        for a in &mut answers {
+            a.clear();
+            a.resize(n, 0);
+        }
+        // The rows that pass a rest's tests, each test asked of the rows not yet answered (decision 0561).
+        let passing = |need: &[(usize, bool)], answers: &mut Vec<Vec<u8>>, store: &Store, syms: &mut super::Interner| -> Option<Vec<u32>> {
+            let mut alive: Vec<u32> = (0..n as u32).collect();
+            for &(t, want) in need {
+                let ask: Vec<u32> = alive.iter().copied().filter(|&i| answers[t][i as usize] == 0).collect();
+                if !ask.is_empty() {
+                    let mut i = 0;
+                    let got = &mut answers[t];
+                    run_join_each_row(&cl.tests[t], store, syms, &all, &mut |out: &mut Vec<i64>, vals: &mut [i64]| {
+                        if i > 0 {
+                            got[ask[i - 1] as usize] = if out.is_empty() { 2 } else { 1 };
+                        }
+                        if i == ask.len() {
+                            return false;
+                        }
+                        let r = ask[i] as usize;
+                        vals.copy_from_slice(&frontier[r * k..(r + 1) * k]);
+                        i += 1;
+                        true
+                    })
+                    .ok()?;
+                }
+                let a = &answers[t];
+                alive.retain(|&i| (a[i as usize] == 1) == want);
+            }
+            Some(alive)
+        };
+        // The climb's ends: each reader over the rows this depth starts from (the seeds, then each depth's new rows).
+        let ends_h = (!cl.readers.is_empty()).then(|| prof::host("closure", "keyed: the readers (the climb's ends, decision 0561)"));
+        for rd in &cl.readers {
+            let alive = passing(&rd.need, &mut answers, store, syms)?;
+            ends.clear();
+            match &rd.direct {
+                Some(terms) => {
+                    for &i in &alive {
+                        let row = &frontier[i as usize * k..(i as usize + 1) * k];
+                        ends.extend(terms.iter().map(|t| match *t { Ok(c) => row[c], Err(v) => v }));
+                    }
+                }
+                None => {
+                    let mut i = 0;
+                    let got = &mut ends;
+                    run_join_each_row(&rd.rest, store, syms, &rd.slots, &mut |out: &mut Vec<i64>, vals: &mut [i64]| {
+                        if i > 0 {
+                            got.extend_from_slice(out);
+                        }
+                        if i == alive.len() {
+                            return false;
+                        }
+                        let r = alive[i] as usize;
+                        vals.copy_from_slice(&frontier[r * k..(r + 1) * k]);
+                        i += 1;
+                        true
+                    })
+                    .ok()?;
+                }
+            }
+            let rel = &mut store.rels[rd.head];
+            let hk = rel.k;
+            for row in ends.chunks(hk) {
+                rows += rel.push(row) as usize;
+            }
+        }
+        drop(ends_h);
         for kp in &cl.keyed {
+            let alive = passing(&kp.need, &mut answers, store, syms)?;
             let mut i = 0;
             run_join_each_row(&kp.rest, store, syms, &kp.slots, &mut |out: &mut Vec<i64>, vals: &mut [i64]| {
                 if i > 0 {
-                    let row = &frontier[(i - 1) * k..i * k];
+                    let r = alive[i - 1] as usize;
+                    let row = &frontier[r * k..(r + 1) * k];
                     for &z in out.iter() {
                         let at = made.len();
                         made.extend_from_slice(row);
                         made[at + cl.col] = z;
                     }
                 }
-                if i == n {
+                if i == alive.len() {
                     return false;
                 }
-                vals.copy_from_slice(&frontier[i * k..(i + 1) * k]);
+                let r = alive[i] as usize;
+                vals.copy_from_slice(&frontier[r * k..(r + 1) * k]);
                 i += 1;
                 true
             })
             .ok()?;
         }
         frontier.clear();
-        let rel = &mut store.rels[0];
+        let rel = &mut store.rels[wi];
         for row in made.chunks(k) {
             if rel.push(row) {
                 frontier.extend_from_slice(row);
