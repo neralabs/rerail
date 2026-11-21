@@ -2818,6 +2818,39 @@ fn a_probe_on_several_columns_reads_a_combinations_rows() {
     assert!((work - (100.0 + 100.0 * 1.0)).abs() < 1e-6, "work {work}");
 }
 
+/// Decision 0299's floor holds where the probed variables can determine each other: bound by one atom, or by atoms
+/// joined to each other. Bound by atoms nothing joins (a cross product), each pair of values is one of the bindings'
+/// product, and most pairs are in no row. corpus0 (2026-11-21): `open_tuple(t) :- kind(t, "tuple"), unparen(c, m),
+/// …, child(t, c, _)`, `$t` bound by `kind` and `$c` by `unparen`, priced `child` at a row a binding, so every one of
+/// the 2.1 M pairs had a witness: the order was priced at 753 rows and read 41 M, 790 of them a witness.
+#[test]
+fn a_probe_on_columns_bound_by_unjoined_atoms_is_not_floored_at_a_combination() {
+    let p = parse_version(".decl k(t: number)\n.decl u(c: number, m: number)\n.decl ch(t: number, c: number, o: number)\n.decl h(t: number)\nh(t) :- k(t), u(c, m), ch(t, c, o).\n.output h\n").unwrap();
+    let mut model = bare_model(&p);
+    for (rel, rows, cols) in [("k", 91.0, vec![(91.0, 1.0)]), ("u", 23_813.0, vec![(23_813.0, 1.0), (23_813.0, 1.0)]), ("ch", 70_000.0, vec![(23_000.0, 3.0), (70_000.0, 1.0), (10.0, 7_000.0)])] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 70_000.0;
+    let placed = body::Placed::whole(p.clone());
+    let pf = placed.fields().unwrap();
+    let b = body::nth(&p, 0);
+    let crossed: Vec<Step> = (0..3).map(|at| Step { at, mode: None }).collect();
+    let explain = explaining(true);
+    let x = model.explain_order(pf, &b, None, &crossed).expect("the order is priced");
+    drop(explain);
+    let (cross_work, rows) = (x.work, x.rows);
+    let pairs = 91.0 * 23_813.0;
+    // At most the least share a probe is priced at (a hundredth of its bindings), not a row each.
+    assert!(rows <= pairs / 100.0 * (1.0 + 1e-9), "few of the {pairs} pairs are rows of `ch`: priced {rows}");
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order[1], "ch($t, $c, $o)", "`ch` probed by `$t`, not a cross product: {order:?} at {work}");
+    assert!(cross_work > 10.0 * work, "the cross product prices over the joined order: {cross_work} against {work}");
+}
+
 #[test]
 fn live_statistics_invalidate_only_changed_distribution_slots() {
     let p=parse_version(".decl a(x:number,y:number)\n").unwrap();

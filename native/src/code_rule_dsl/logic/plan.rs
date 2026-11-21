@@ -3989,7 +3989,27 @@ impl Model {
             // each column's distinct values takes the columns as independent, and one often determines another:
             // `walk($n, $x, $s)` by `$n` and `$x`, `$x` being `$n`'s name, was priced at 0.0007 rows a binding for
             // about 2 (`annotated_on_chain`: 6.8 M rows of work for 0.03 M priced).
-            if cols.len() >= 2 && cols.len() < args.len() && cols.iter().all(|&c| b.constant(args[c]).is_none()) && card > 0.0 {
+            // Only where the variables can determine each other: bound by one atom, or by atoms joined to each other
+            // (`joined`). Bound by atoms nothing joins (a cross product), each pair of values is one of the bindings'
+            // product, and most pairs are in no row: `open_tuple`'s `child($t, $c, _)` after `kind($t, "tuple")`
+            // and `unparen($c, $m)` was floored at a row a binding, every one of 2.1 M pairs a witness (corpus0,
+            // 2026-11-21: priced 753 rows of work, ran 41 M).
+            let joined = || {
+                let vars: Vec<_> = cols.iter().filter_map(|&c| match args[c] { TermRef::Var(v) => Some(v), _ => None }).collect();
+                let mut reach = body::VarSet::of(vars.first().copied());
+                let mut grew = true;
+                while grew {
+                    grew = false;
+                    for (d, vs, _) in &binding_domains {
+                        if *d != i && vs.is_subset(bound) && !vs.is_disjoint(&reach) && !vs.is_subset(&reach) {
+                            reach.extend(vs);
+                            grew = true;
+                        }
+                    }
+                }
+                vars.iter().all(|&v| reach.contains(v))
+            };
+            if cols.len() >= 2 && cols.len() < args.len() && cols.iter().all(|&c| b.constant(args[c]).is_none()) && card > 0.0 && joined() {
                 let combinations = cols.iter().map(|&c| t.col(c, b, i, self).ndv1).product::<f64>().clamp(1.0, card);
                 rows = rows.max(card / combinations);
             }
