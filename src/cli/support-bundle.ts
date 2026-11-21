@@ -623,6 +623,8 @@ async function readDaemon(pending: Promise<DaemonLookup>, started: number, probl
 
 function daemonSection(lookup: DaemonLookup, started: number): SupportBundle["daemon"] {
   if (lookup.status !== "running") return { status: lookup.status };
+  // A daemon of a release before the engine's proof is asked nothing: its record says which release it is.
+  if (lookup.older === true) return { status: "older", version: lookup.state.version, ui: lookup.state.ui };
   const { version, ui, uptimeMs, native } = lookup.health;
   return {
     status: lookup.status,

@@ -6,7 +6,15 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { describe, expect, it, vi } from "vitest";
 import * as native from "../../src/engine/native/native.js";
-import { exitedEveryThread, processStartedAt, processStartedAtThroughEngine, processState, type ProcessSignal } from "../../src/engine/process-liveness.js";
+import {
+  endProcessStartedBy,
+  endProcessStartedByPowerShell,
+  exitedEveryThread,
+  processStartedAt,
+  processStartedAtThroughEngine,
+  processState,
+  type ProcessSignal,
+} from "../../src/engine/process-liveness.js";
 import { exitedEveryThread as removalExitedEveryThread } from "../support/platform/remove-folder.js";
 
 // Spies that call through, so a test can stand a program in for Windows PowerShell, and see whether the engine loads.
@@ -153,6 +161,28 @@ describe("processStartedAt on Windows, with a program standing in for Windows Po
     expect(seen.map(options => options.timeout)).toEqual([500]);
   });
 
+  // The uninstall ends a daemon of Rerail 0.1.4 or earlier this way, under the policy's mode too: the process object
+  // reads the start, ends the process and waits through the one handle it opened, so a pid that changed hands is spared.
+  it.runIf(process.platform === "win32")("ends a process through PowerShell only when it started no later than the time given", async () => {
+    const { spawnSync: runSync } = await vi.importActual<typeof childProcess>("node:child_process");
+    const constrained = ((program: string, args: readonly string[], options: childProcess.SpawnSyncOptions) => runSync(
+      program, args.map((arg, at) => (args[at - 1] === "-Command" ? `$ExecutionContext.SessionState.LanguageMode = 'ConstrainedLanguage'; ${arg}` : arg)), options,
+    )) as unknown as typeof childProcess.spawnSync;
+    const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
+    const closed = once(child, "close");
+    try {
+      const started = processStartedAtThroughEngine(child.pid!)!;
+      vi.mocked(childProcess.spawnSync).mockImplementationOnce(constrained);
+      expect(endProcessStartedByPowerShell(child.pid!, started - 1, 5_000)).toBe("later");
+      expect(child.exitCode).toBeNull();
+      vi.mocked(childProcess.spawnSync).mockImplementationOnce(constrained);
+      expect(endProcessStartedByPowerShell(child.pid!, started, 5_000)).toBe("ended");
+      await closed;
+    } finally {
+      child.kill();
+    }
+  });
+
   it("reads nothing from a PowerShell the machine cannot run, and starts none with no time left", async () => {
     await standIn(join(tmpdir(), "rerail-no-such-powershell", "powershell.exe"), []);
     expect(processStartedAt(process.pid, 30_000, "win32")).toBeUndefined();
@@ -184,53 +214,79 @@ describe("processStartedAtThroughEngine", () => {
         return pid === 7 ? 1_700_000_000_000 : null;
       },
     });
-    expect(processStartedAtThroughEngine(7, 2_000, "win32", engine)).toBe(1_700_000_000_000);
-    expect(processStartedAtThroughEngine(8, 2_000, "win32", engine)).toBeUndefined();
+    expect(processStartedAtThroughEngine(7, "win32", engine)).toBe(1_700_000_000_000);
+    expect(processStartedAtThroughEngine(8, "win32", engine)).toBeUndefined();
     expect(asked).toEqual([7, 8]);
     expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(spawned);
   });
 
-  // As the PowerShell read is: a lookup whose limit an engine silent to the proof used up keeps the record unread.
-  it("reads nothing on Windows with no time left, and asks the engine nothing", () => {
+  // A system call needs no limit: a lookup whose 2 s an engine slow to the proof used up still reads the start, so a
+  // daemon of Rerail 0.1.4 or earlier whose 404 came late is found, not dropped.
+  it("reads a Windows process's start through the engine however little of a lookup's limit is left", () => {
     const asked: number[] = [];
-    const engine = () => ({
-      processStartedAt: (pid: number) => {
-        asked.push(pid);
-        return 1_700_000_000_000;
+    expect(processStartedAtThroughEngine(7, "win32", answeringEngine(asked))).toBe(1_700_000_000_000);
+    expect(asked).toEqual([7]);
+  });
+
+  // A daemon keeps its stderr in its log, and a hook's in the hook failure log: without the engine's read a daemon of
+  // 0.1.4 or earlier is kept as it runs, and the first failure says why, once per process.
+  it("reports the first failure of the engine's read once, and reads nothing", async () => {
+    vi.resetModules();
+    const fresh = await import("../../src/engine/process-liveness.js");
+    const written = vi.spyOn(process.stderr, "write").mockImplementation(() => true);
+    try {
+      const failing = () => {
+        throw new Error("Unsupported platform or missing native addon");
+      };
+      expect(fresh.processStartedAtThroughEngine(7, "win32", failing)).toBeUndefined();
+      expect(fresh.endProcessStartedBy(7, 1_700_000_000_000, 5_000, failing)).toBe("unread");
+      expect(written.mock.calls.map(([text]) => String(text))).toEqual([
+        "rerail: the engine could not read or end a process, so a daemon of Rerail 0.1.4 or earlier is kept as it runs: Unsupported platform or missing native addon\n",
+      ]);
+    } finally {
+      written.mockRestore();
+    }
+  });
+
+  it("ends a process through the engine's one call, and takes any other answer, or none, for unread", () => {
+    const calls: number[][] = [];
+    const engine = (answer: string) => () => ({
+      endProcessStartedBy: (pid: number, startedAt: number, waitMs: number) => {
+        calls.push([pid, startedAt, waitMs]);
+        return answer;
       },
     });
-    expect(processStartedAtThroughEngine(7, 0, "win32", engine)).toBeUndefined();
-    expect(processStartedAtThroughEngine(7, -5, "win32", engine)).toBeUndefined();
-    expect(asked).toEqual([]);
+    expect(endProcessStartedBy(7, 1_700_000_000_000, 5_000, engine("ended"))).toBe("ended");
+    expect(endProcessStartedBy(7, 1_700_000_000_000, 5_000, engine("later"))).toBe("later");
+    expect(endProcessStartedBy(7, 1_700_000_000_000, 5_000, engine("gone"))).toBe("unread");
+    expect(endProcessStartedBy(7, 1_700_000_000_000, 5_000, () => ({}))).toBe("unread");
+    expect(calls).toEqual([[7, 1_700_000_000_000, 5_000], [7, 1_700_000_000_000, 5_000], [7, 1_700_000_000_000, 5_000]]);
   });
 
   it("reads nothing where the engine does not load or was built before the read", () => {
-    expect(processStartedAtThroughEngine(process.pid, 2_000, "win32", () => {
+    expect(processStartedAtThroughEngine(process.pid, "win32", () => {
       throw new Error("Unsupported platform or missing native addon");
     })).toBeUndefined();
-    expect(processStartedAtThroughEngine(process.pid, 2_000, "win32", () => ({}))).toBeUndefined();
+    expect(processStartedAtThroughEngine(process.pid, "win32", () => ({}))).toBeUndefined();
   });
 
   it("reads no start on a system it does not read, and asks the engine nothing", () => {
     const asked: number[] = [];
-    expect(processStartedAtThroughEngine(process.pid, 2_000, "darwin", answeringEngine(asked))).toBeUndefined();
+    expect(processStartedAtThroughEngine(process.pid, "darwin", answeringEngine(asked))).toBeUndefined();
     expect(asked).toEqual([]);
   });
 
-  it.runIf(process.platform === "linux")("reads Linux's start from /proc whatever time is left, and asks the engine nothing", () => {
+  it.runIf(process.platform === "linux")("reads Linux's start from /proc, and asks the engine nothing", () => {
     const asked: number[] = [];
-    // As processStartedAt does, with no time left and with time left, when a lookup would load the engine to ask it.
+    // As processStartedAt does, when a lookup would load the engine to ask it.
     // Each read counts the start back from the clock at its own moment, so the reads can differ by the time they took
     // and by /proc's 10 ms resolution, and no more.
     const before = Date.now();
-    const withNone = processStartedAtThroughEngine(process.pid, 0, "linux", answeringEngine(asked));
-    const withSome = processStartedAtThroughEngine(process.pid, 2_000, "linux", answeringEngine(asked));
+    const started = processStartedAtThroughEngine(process.pid, "linux", answeringEngine(asked));
     const again = processStartedAt(process.pid, 0, "linux");
     const took = Date.now() - before;
-    for (const started of [withNone, withSome]) {
-      expect(started).toBeDefined();
-      expect(Math.abs(started! - again!)).toBeLessThanOrEqual(took + 20);
-    }
+    expect(started).toBeDefined();
+    expect(Math.abs(started! - again!)).toBeLessThanOrEqual(took + 20);
     expect(asked).toEqual([]);
   });
 
@@ -240,13 +296,13 @@ describe("processStartedAtThroughEngine", () => {
     // child after the case asked for it. Windows stamps a creation with a clock that can read a timer tick (15.6 ms by
     // default) apart from Node's, so the child's lower bound allows two ticks.
     const asked = Date.now();
-    const started = processStartedAtThroughEngine(process.pid, 2_000);
+    const started = processStartedAtThroughEngine(process.pid);
     expect(started).toBeDefined();
     expect(started!).toBeLessThanOrEqual(asked);
     const spawning = Date.now();
     const child = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
     try {
-      const childStarted = processStartedAtThroughEngine(child.pid!, 2_000);
+      const childStarted = processStartedAtThroughEngine(child.pid!);
       expect(childStarted).toBeGreaterThan(started!);
       expect(childStarted!).toBeGreaterThanOrEqual(spawning - 32);
     } finally {
@@ -254,7 +310,7 @@ describe("processStartedAtThroughEngine", () => {
       child.kill();
       await closed;
     }
-    expect(processStartedAtThroughEngine(DEAD_PID, 2_000)).toBeUndefined();
+    expect(processStartedAtThroughEngine(DEAD_PID)).toBeUndefined();
     expect(vi.mocked(childProcess.spawnSync).mock.calls.length).toBe(spawned);
   });
 });

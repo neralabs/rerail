@@ -50,6 +50,7 @@ import {
   daemonNotRunningMessage,
   lookupDaemon,
   NOT_HOME_DAEMON_NOTE,
+  olderDaemonMessage,
   openInBrowser,
   openDashboard,
   startDaemon,
@@ -481,6 +482,11 @@ function printDaemonStatus(lookup: DaemonLookup): number {
   }
   if (lookup.status === "refused") {
     process.stdout.write(`Rerail daemon pid ${lookup.state.pid} at ${lookup.state.url} refused the access capability in daemon.json (401); run rerail daemon stop, then rerail daemon start.\n`);
+    return 4;
+  }
+  // A daemon of a release before the engine's proof is asked nothing, so it has no health to print.
+  if (lookup.older === true) {
+    process.stdout.write(`${olderDaemonMessage(lookup.state)}\n`);
     return 4;
   }
   printDaemon({ state: lookup.state, health: lookup.health });

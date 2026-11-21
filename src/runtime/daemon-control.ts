@@ -8,6 +8,7 @@ import { isAbsolute, join, resolve } from "node:path";
 import { Readable, type Duplex } from "node:stream";
 import { connect as tlsConnect, type ConnectionOptions } from "node:tls";
 import { setTimeout as sleep } from "node:timers/promises";
+import semver from "semver";
 import { spawn, spawnShown } from "../engine/child-process.js";
 import { programOnPath, windowsSystemProgram } from "../engine/system-programs.js";
 import { loadNativeBinding } from "../engine/native/native.js";
@@ -25,7 +26,15 @@ import { ensureSqlite, type SqliteRepairResult } from "./sqlite-repair.js";
 import { BUSY_DAEMON_WAIT_MS, PROBE_TIMEOUT_MS, START_TIMEOUT_MS } from "./daemon/daemon-waits.js";
 import { engineCapabilityProof, type EngineProofAnswer, type EngineProofOptions } from "./daemon/engine-proof.js";
 import { databasePipeListed, enginePipeListed, isNamedPipe, listPipes, pipeListed, pipeNameOf } from "./daemon/engine-pipe.js";
-import { processStartedAt, processStartedAtThroughEngine, processState, type ProcessSignal } from "../engine/process-liveness.js";
+import {
+  endProcessStartedBy,
+  endProcessStartedByPowerShell,
+  processStartedAt,
+  processStartedAtThroughEngine,
+  processState,
+  type ProcessEnd,
+  type ProcessSignal,
+} from "../engine/process-liveness.js";
 import {
   DAEMON_ACCESS_TOKEN_FILE,
   DAEMON_LOG_FILE,
@@ -322,15 +331,24 @@ const MAX_MACOS_UNIX_SOCKET_PATH_BYTES = 103;
 export interface RunningDaemon {
   state: DaemonState;
   health: DaemonHealth;
-  /** A daemon of a release before the engine's proof, as a lookup marks it ({@link DaemonLookup}). */
-  older?: true;
+  older?: undefined;
+}
+
+/**
+ * A daemon of a release before the engine's proof, Rerail 0.1.4 or earlier, as a lookup finds it on Windows by its
+ * process's start ({@link olderDaemon}). It proved nothing, so it is asked nothing and has no health, and its state
+ * holds neither capability: no caller can send it one. It is ended through its process ({@link endOlderDaemon}).
+ */
+export interface OlderDaemon {
+  state: DaemonState;
+  older: true;
 }
 
 /**
  * What the state file says, checked against reality.
  *
- * - `running`: the recorded pid is alive and `/healthz` answers with that pid. `older` marks a daemon of a release
- *   before the engine's proof, Rerail 0.1.4 or earlier, found by its process's start on Windows ({@link olderDaemon}).
+ * - `running`: the recorded pid is alive and `/healthz` answers with that pid; or, marked `older`, a daemon of a
+ *   release before the engine's proof found by its process's start on Windows, which is not asked ({@link OlderDaemon}).
  * - `unresponsive`: the pid is alive but the probe failed. The state is kept:
  *   a transient timeout must not orphan a live daemon, and `stop` still needs
  *   the pid. `start` refuses rather than spawning a second instance.
@@ -341,7 +359,7 @@ export interface RunningDaemon {
  *   home's daemon ({@link recordedProcess}).
  */
 export type DaemonLookup =
-  | { status: "running"; state: DaemonState; health: DaemonHealth; older?: true }
+  | ({ status: "running" } & (RunningDaemon | OlderDaemon))
   | { status: "unresponsive"; state: DaemonState }
   | { status: "refused"; state: DaemonState }
   | { status: "absent"; notDaemon?: number };
@@ -561,6 +579,11 @@ export interface DaemonMachine {
    * (`processStartedAt`).
    */
   processStartedAt(pid: number, timeoutMs: number): number | undefined;
+  /**
+   * Windows: ends the process holding `pid` if it started no later than `startedAt` (epoch ms), its start read and its
+   * end made through one handle, and waits up to `waitMs` for it to exit (`endProcessStartedBy`).
+   */
+  endProcessStartedBy(pid: number, startedAt: number, waitMs: number): ProcessEnd;
   /** The Node binary Rerail's own processes run under ({@link nodeExecutable}). */
   nodeExecutable(): string;
   /** Windows: starts a process through the native module's spawn ({@link launchDetached} says why). */
@@ -588,7 +611,8 @@ const THIS_MACHINE: DaemonMachine = {
   forgetMainInstanceHolder: pid => forgetMainInstanceHolder(pid),
   mainInstanceLockHeld: directory => mainInstanceLockHeld(directory),
   homeDaemonLockHeld: home => homeDaemonLockHeld(home),
-  processStartedAt: (pid, timeoutMs) => processStartedAtThroughEngine(pid, timeoutMs),
+  processStartedAt: pid => processStartedAtThroughEngine(pid),
+  endProcessStartedBy: (pid, startedAt, waitMs) => endProcessStartedBy(pid, startedAt, waitMs),
   nodeExecutable: () => nodeExecutable(),
   spawnDetached: nativeSpawnDetached,
   spawn: (command, args, options) => spawn(command, args, options),
@@ -598,9 +622,10 @@ const THIS_MACHINE: DaemonMachine = {
 /**
  * This machine as a process that must not load the engine reads it: one that deletes the engine's folder after it
  * stops the daemon, as the uninstall deletes `versions/`, since Windows keeps a loaded DLL from being deleted. It reads
- * a process's start through Windows PowerShell (`processStartedAt`), which takes about a second each time.
+ * a process's start, and ends a daemon of a release before the engine's proof, through Windows PowerShell
+ * (`processStartedAt`, `endProcessStartedByPowerShell`), which takes about a second each time.
  */
-export const MACHINE_WITHOUT_ENGINE: DaemonMachine = { ...THIS_MACHINE, processStartedAt };
+export const MACHINE_WITHOUT_ENGINE: DaemonMachine = { ...THIS_MACHINE, processStartedAt, endProcessStartedBy: endProcessStartedByPowerShell };
 
 /**
  * Whether the engine pipe `state` records exists. Windows ends a daemon without its shutdown handler (logoff, reboot,
@@ -711,28 +736,41 @@ async function lookedUpEngine(state: DaemonState, machine: DaemonMachine, deadli
  * without a capability is sent none, and the pid and pipe decide.
  *
  * An engine of Rerail 0.1.4 or earlier has no proof to give (`no-proof`), nor has a listener without the proof's path
- * on a gone daemon's pipe name. A lookup reads on for one only where this user may signal its pid, and so stop or
- * replace its daemon ({@link olderDaemon}); one it may not is `gone`, as before the proof's 404 was told apart.
+ * on the pipe name of a daemon that is gone or shutting down. A lookup reads on for one only where the record was
+ * written by a release before the proof ({@link predatesProof}) and this user may signal its pid, and so stop or
+ * replace its daemon ({@link olderDaemon}); any other is `gone`, as before the proof's 404 was told apart: a daemon of
+ * a release with the proof always gives it, and while one shuts down its pid lives on after its pipe and port are free.
  */
 async function windowsRecordedDaemon(state: DaemonState, signalable: boolean, machine: DaemonMachine, wait: ProofWait): Promise<ProofVerdict> {
   if (!enginePipeExists(state, machine)) return "gone";
   if (state.accessToken === undefined) return signalable ? "alive" : "gone";
   const answer = await machine.capabilityProof(state.kernelSocketPath, state.accessToken, wait.timeoutMs, wait);
-  return answer === "no-proof" && !signalable ? "gone" : PROOF_VERDICT[answer];
+  return answer === "no-proof" && !(signalable && predatesProof(state.version)) ? "gone" : PROOF_VERDICT[answer];
+}
+
+/** The first release whose engine gives the proof. */
+const PROOF_RELEASE = "0.1.5";
+
+/** Whether `version`, as a state records it, is of a release before the engine's proof; one that does not parse is not. */
+function predatesProof(version: string): boolean {
+  return semver.valid(version) !== null && semver.lt(version, PROOF_RELEASE);
 }
 
 /**
  * What a lookup makes of the daemon a Windows state records whose engine has no proof to give and whose pid this user
  * may signal ({@link lookedUpEngine}), from the start of the process holding that pid, read by `deadline`
  * ({@link startVerdict}). A process keeps its pid for life, so one that started no later than the record's `startedAt`
- * is the daemon that wrote it, and holds the recorded pipe and URL while it runs: `older`. Anything else is `gone`, and
- * the record is dropped: a process that took a gone daemon's pid, and a start that cannot be read or falls within
- * {@link START_CLOCK_SLACK_MS}. A record kept with nothing proved would have every hook wait for a daemon it may
- * neither use nor replace, and fail.
+ * is the daemon that wrote it: `older`, which is sent nothing ({@link OlderDaemon}). A process that took a gone
+ * daemon's pid, one that started later than `startedAt` by more than {@link START_CLOCK_SLACK_MS}, is `gone`, and the
+ * record is dropped. A start not read, or within the slack, proves neither: `silent`, so the record is kept and nothing
+ * is sent, as for a busy daemon.
  */
 function olderDaemon(state: DaemonState, machine: DaemonMachine, deadline: number): RecordedEngine {
-  return startVerdict(state, machine, deadline) === "ours" ? "older" : "gone";
+  return START_VERDICT_ENGINE[startVerdict(state, machine, deadline)];
 }
+
+/** What {@link olderDaemon} makes of each {@link RecordedProcess}. */
+const START_VERDICT_ENGINE: Readonly<Record<RecordedProcess, RecordedEngine>> = { ours: "older", "not-ours": "gone", unknown: "silent" };
 
 /**
  * What may be made now of the daemon `state` records ({@link recordedDaemon}), for a reader that tells a busy daemon
@@ -875,8 +913,16 @@ async function checkedLookup(stateFile: string, state: DaemonState, machine: Dae
   }
   // A busy daemon is waited for, not forgotten; its URL is not probed with a capability its engine has not proved.
   if (recorded === "silent") return { status: "unresponsive", state };
-  const found = await probedLookup(stateFile, state, Math.max(0, deadline - Date.now()));
-  return recorded === "older" && found.status === "running" ? { ...found, older: true } : found;
+  // A daemon of a release before the proof proved nothing, and its health route wants the capability: it is asked
+  // nothing, and its state goes on without either capability, so no caller can send it one.
+  if (recorded === "older") return { status: "running", state: withoutCapabilities(state), older: true };
+  return await probedLookup(stateFile, state, Math.max(0, deadline - Date.now()));
+}
+
+/** `state` without its access capability and native token. */
+function withoutCapabilities(state: DaemonState): DaemonState {
+  const { accessToken: _access, nativeToken: _native, ...rest } = state;
+  return rest;
 }
 
 /** What the health probe of the daemon `state` records, which may be sent the capability, makes of it within `timeoutMs`. */
@@ -892,10 +938,10 @@ async function probedLookup(stateFile: string, state: DaemonState, timeoutMs: nu
   return { status: "running", state, health: probe.health };
 }
 
-/** The healthy daemon recorded in `home`, or undefined when there is none to reuse. */
-export async function findRunningDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<RunningDaemon | undefined> {
+/** The daemon recorded in `home` that a lookup finds running, `older` marked as there, or undefined when there is none. */
+export async function findRunningDaemon(home: string, machine: DaemonMachine = THIS_MACHINE): Promise<RunningDaemon | OlderDaemon | undefined> {
   const lookup = await lookupDaemon(home, machine);
-  return lookup.status === "running" ? { state: lookup.state, health: lookup.health } : undefined;
+  return lookup.status === "running" ? lookup : undefined;
 }
 
 export interface StartLockOptions {
@@ -1085,10 +1131,19 @@ export async function startDaemon(
 ): Promise<StartDaemonResult> {
   return await startUnderLock(control.home, async () => {
     const lookup = await lookupHomeDaemon(control.home, machine, PROBE_TIMEOUT_MS, holderNotRecorded);
+    if (lookup.status === "running" && lookup.older === true) throw new Error(olderDaemonMessage(lookup.state));
     if (lookup.status === "running") return { started: false, daemon: { state: lookup.state, health: lookup.health } };
     if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
     return await spawnDaemon(control, options, machine);
   });
+}
+
+/**
+ * What a caller that may not end it says of a daemon of a release before the engine's proof ({@link OlderDaemon}): it
+ * is sent nothing, and the stop comes first, since a start beside it answers this.
+ */
+export function olderDaemonMessage(state: Pick<DaemonState, "pid" | "version">): string {
+  return `Rerail daemon pid ${state.pid} runs Rerail ${state.version}, a release before 0.1.5, which Rerail sends nothing; run rerail daemon stop, then rerail daemon start.`;
 }
 
 /**
@@ -1104,7 +1159,7 @@ export async function startDaemonForPackage(
   return await startUnderLock(control.home, async () => {
     const lookup = await lookupHomeDaemon(control.home, machine, PROBE_TIMEOUT_MS, holderNotRecorded);
     if (lookup.status === "running") {
-      if (await daemonServesPackage(lookup, control.packageRoot)) {
+      if (lookup.older === undefined && await daemonUsesPackageRoot(lookup.state, control.packageRoot)) {
         return { started: false, daemon: { state: lookup.state, health: lookup.health } };
       }
       await stopFoundDaemon(control.home, lookup, machine);
@@ -1120,7 +1175,7 @@ export async function startDaemonForPackage(
  * own package (`packageRoot`), unless it runs a release before the engine's proof (`older`, known on Windows), which
  * predates the fields the hook sends whichever package it ran from.
  */
-export async function daemonServesPackage(found: Pick<RunningDaemon, "state" | "older">, packageRoot: string): Promise<boolean> {
+export async function daemonServesPackage(found: RunningDaemon | OlderDaemon, packageRoot: string): Promise<boolean> {
   return found.older !== true && await daemonUsesPackageRoot(found.state, packageRoot);
 }
 
@@ -1225,7 +1280,7 @@ function otherPackageDaemon(env: NodeJS.ProcessEnv): Error {
  * (`patientLookup`); one that still does not answer, or refuses the capability, throws `LiveDaemonError` and is not
  * waited for again.
  */
-async function runningDaemon(home: string, deadline: number | undefined, machine: DaemonMachine): Promise<RunningDaemon | undefined> {
+async function runningDaemon(home: string, deadline: number | undefined, machine: DaemonMachine): Promise<RunningDaemon | OlderDaemon | undefined> {
   const lookup = await patientLookup(home, machine, deadline);
   if (lookup.status === "unresponsive" || lookup.status === "refused") throw new LiveDaemonError(lookup);
   return lookup.status === "running" ? lookup : undefined;
@@ -1242,7 +1297,7 @@ async function startedDaemon(
   replaceOtherPackage: boolean,
   deadline: number | undefined,
   machine: DaemonMachine,
-): Promise<RunningDaemon> {
+): Promise<RunningDaemon | OlderDaemon> {
   const start = replaceOtherPackage ? startDaemonForPackage : startDaemon;
   try {
     return (await start(control, { dev: false }, machine)).daemon;
@@ -1937,10 +1992,8 @@ async function endWhenStopped(home: string, pid: number, check: () => SignalVerd
  */
 export async function stopFoundDaemon(home: string, found: FoundDaemon, machine: DaemonMachine = THIS_MACHINE): Promise<StopDaemonResult> {
   const pid = found.state.pid;
-  const check = signalCheck(home, found, machine);
-  const asked = await askDaemonToStop(found.state, check, home, machine);
+  const asked = await endFoundDaemon(home, found, machine);
   if (asked !== "asked") return asked;
-  await endWhenStopped(home, pid, check, machine);
   // The daemon removes its own state file, main-instance record and home lock record on a clean shutdown; one killed, as
   // Windows always does, leaves them behind. A record naming a pid Windows reuses would keep the uninstall from the
   // cache, or have a later stop ask the home's lock.
@@ -1950,6 +2003,33 @@ export async function stopFoundDaemon(home: string, found: FoundDaemon, machine:
     forgetHomeDaemonHolder(home, pid);
   }
   return "stopped";
+}
+
+/**
+ * Ends the daemon `found` names as {@link stopFoundDaemon} does: a daemon of a release before the engine's proof through
+ * its process ({@link endOlderDaemon}); any other is asked to stop, then killed while it is proven the home's daemon.
+ */
+async function endFoundDaemon(home: string, found: FoundDaemon, machine: DaemonMachine): Promise<StopAsk> {
+  if (found.status === "running" && found.older === true) return await endOlderDaemon(home, found.state, machine);
+  const check = signalCheck(home, found, machine);
+  const asked = await askDaemonToStop(found.state, check, home, machine);
+  if (asked === "asked") await endWhenStopped(home, found.state.pid, check, machine);
+  return asked;
+}
+
+/**
+ * Ends a daemon of a release before the engine's proof ({@link OlderDaemon}), which is sent nothing, through its
+ * process, never by its pid's number: one call opens the process, reads its start and ends it through that handle, so
+ * the process ended is the one whose start shows it wrote the record, and waits up to {@link KILL_TIMEOUT_MS} on that
+ * handle for it to exit. A process that took the pid since, started later, is let alone and the record naming it goes;
+ * one whose start cannot be read while its pid runs is let alone with every record, and the stop says so.
+ */
+async function endOlderDaemon(home: string, state: DaemonState, machine: DaemonMachine): Promise<StopAsk> {
+  const end = machine.endProcessStartedBy(state.pid, state.startedAt, KILL_TIMEOUT_MS);
+  if (end === "running") throw new Error(stillRunningMessage(state.pid, machine.platform));
+  if (end === "later") return (await forgetRecordOf(home, state.pid)) ? "not-daemon" : "record-changed";
+  if (end === "unread" && processAlive(state.pid, machine.kill)) throw new Error(unprovenDaemonMessage(home, state.pid, machine.platform));
+  return "asked";
 }
 
 /**

@@ -122,6 +122,28 @@ pub fn process_started_at(pid: u32) -> Result<Option<f64>> {
     }
 }
 
+/// Windows only: ends the process holding `pid` if it started no later than `started_at` (milliseconds since the Unix
+/// epoch), and waits up to `wait_ms` for it to exit. It opens the process once, then reads its creation time, ends it
+/// and waits through that one handle, so the process ended is the one whose start was read: a pid Windows gives to
+/// another process between two calls is never ended for the one that held it. It answers `ended`, `running` (ended,
+/// still running after the wait), `later` (started after `started_at`, let alone) or `unread` (not opened, as when no
+/// process holds `pid`, or its start not read).
+#[napi]
+pub fn end_process_started_by(pid: u32, started_at: f64, wait_ms: u32) -> Result<String> {
+    #[cfg(windows)]
+    {
+        Ok(windows::end_process_started_by(pid, started_at, wait_ms).to_owned())
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = (pid, started_at, wait_ms);
+        Err(Error::new(
+            Status::GenericFailure,
+            "endProcessStartedBy is only needed on Windows, to end a daemon of Rerail 0.1.4 or earlier",
+        ))
+    }
+}
+
 #[cfg(windows)]
 mod windows {
     use super::{Error, HashMap, Result, Status, windows_command_line};
@@ -144,8 +166,9 @@ mod windows {
         DeleteProcThreadAttributeList, EXTENDED_STARTUPINFO_PRESENT, GetExitCodeProcess,
         GetProcessTimes, InitializeProcThreadAttributeList, LPPROC_THREAD_ATTRIBUTE_LIST,
         OpenProcess, PROC_THREAD_ATTRIBUTE_HANDLE_LIST, PROCESS_INFORMATION,
-        PROCESS_QUERY_LIMITED_INFORMATION, STARTF_USESTDHANDLES, STARTUPINFOEXW,
-        UpdateProcThreadAttribute, WaitForSingleObject,
+        PROCESS_QUERY_LIMITED_INFORMATION, PROCESS_SYNCHRONIZE, PROCESS_TERMINATE,
+        STARTF_USESTDHANDLES, STARTUPINFOEXW, TerminateProcess, UpdateProcThreadAttribute,
+        WaitForSingleObject,
     };
 
     /// The process handles of the children `spawn_detached` started, by pid. A handle keeps its process object, and
@@ -356,15 +379,45 @@ mod windows {
     const FILETIME_EPOCH_MS: u64 = 11_644_473_600_000;
 
     pub(super) fn process_started_at(pid: u32) -> Option<f64> {
-        // SAFETY: opens the process by id with only the right GetProcessTimes needs; a null handle is a refusal or a
-        // pid no process holds.
-        let handle = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid) };
+        created_ms(&open_process(PROCESS_QUERY_LIMITED_INFORMATION, pid)?)
+    }
+
+    /// `pid`'s process opened with only `access`; none where Windows refuses it or no process holds `pid`.
+    fn open_process(access: u32, pid: u32) -> Option<OwnedHandle> {
+        // SAFETY: opens the process by id with `access`; a null handle is a refusal or a pid no process holds.
+        let handle = unsafe { OpenProcess(access, 0, pid) };
         if handle.is_null() {
-            return None;
+            None
+        } else {
+            Some(OwnedHandle(handle))
         }
-        let handle = OwnedHandle(handle);
+    }
+
+    pub(super) fn end_process_started_by(pid: u32, started_at: f64, wait_ms: u32) -> &'static str {
+        let access = PROCESS_QUERY_LIMITED_INFORMATION | PROCESS_TERMINATE | PROCESS_SYNCHRONIZE;
+        let Some(handle) = open_process(access, pid) else {
+            return "unread";
+        };
+        match created_ms(&handle) {
+            None => return "unread",
+            Some(created) if created > started_at => return "later",
+            Some(_) => {}
+        }
+        // SAFETY: `handle` is open with PROCESS_TERMINATE. A process already ending refuses it, and the wait tells.
+        unsafe { TerminateProcess(handle.0, 1) };
+        // SAFETY: `handle` is open with PROCESS_SYNCHRONIZE.
+        if unsafe { WaitForSingleObject(handle.0, wait_ms) } == WAIT_OBJECT_0 {
+            "ended"
+        } else {
+            "running"
+        }
+    }
+
+    /// When the process `handle` names was created, in whole milliseconds since the Unix epoch; none where it is not read.
+    fn created_ms(handle: &OwnedHandle) -> Option<f64> {
         let [mut created, mut exited, mut kernel, mut user] = [FILETIME::default(); 4];
-        // SAFETY: `handle` is an open process handle with that right, and the four times outlive the call.
+        // SAFETY: `handle` is an open process handle with a right GetProcessTimes takes, and the four times outlive the
+        // call.
         let read =
             unsafe { GetProcessTimes(handle.0, &mut created, &mut exited, &mut kernel, &mut user) };
         if read == 0 {
@@ -442,5 +495,49 @@ mod tests {
         // The handle is closed once its exit code is read; the pid is no longer this process's to ask about.
         assert!(detached_exit_code(pid).is_err());
         let _ = std::fs::remove_file(log);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn reads_when_this_process_started_and_nothing_for_a_pid_no_process_holds() {
+        use std::time::{SystemTime, UNIX_EPOCH};
+
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("the clock is after 1970")
+            .as_millis() as f64;
+        let started = super::process_started_at(std::process::id())
+            .expect("the read runs")
+            .expect("this process's start");
+        assert!(
+            started <= now && now - started < 600_000.0,
+            "started {started}, now {now}"
+        );
+        // Pid 0 is the idle process, which OpenProcess refuses to every caller.
+        assert_eq!(super::process_started_at(0).expect("the read runs"), None);
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn ends_a_process_only_when_it_started_no_later_than_the_time_given() {
+        use super::{end_process_started_by, process_started_at};
+        use std::process::{Command, Stdio};
+
+        let mut child = Command::new("ping")
+            .args(["-n", "120", "127.0.0.1"])
+            .stdout(Stdio::null())
+            .spawn()
+            .expect("ping starts");
+        let started = process_started_at(child.id())
+            .expect("the read runs")
+            .expect("the child's start");
+        // A process that started after the time given is not the one that time names: it runs on.
+        let later = end_process_started_by(child.id(), started - 1.0, 5_000).expect("the call runs");
+        assert_eq!(later, "later");
+        assert!(child.try_wait().expect("the child is asked").is_none());
+        let ended = end_process_started_by(child.id(), started, 5_000).expect("the call runs");
+        assert_eq!(ended, "ended");
+        assert!(child.try_wait().expect("the child is asked").is_some());
+        assert_eq!(end_process_started_by(0, started, 0).expect("the call runs"), "unread");
     }
 }
