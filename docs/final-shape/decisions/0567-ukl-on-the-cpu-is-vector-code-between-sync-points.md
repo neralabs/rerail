@@ -172,8 +172,9 @@ slow". The answers below are the user's, given to the questions of the design pa
   - **A threadgroup barrier ends a SIMD group's turn.** Each runs to it or to its end, then the next. Once all
     have, they go on, and SIMD groups that wait at different barriers fail the kernel. This replaces the cut's
     group-at-once nodes.
-  - **x86:** the same loop compiled again with AVX2, chosen at run time (`is_x86_feature_detected`). It is not yet
-    built here: this Mac and the farm's Linux hosts are aarch64.
+  - **x86:** the same loop compiled again with AVX2, chosen at run time (`is_x86_feature_detected`). The gate was
+    run on two x86 Linux hosts with AVX2, the library's 19 tests on each, against the coroutine backend back to
+    back: 4.3 s against 6.6 s on one, and 6.2 s against 7.7 s on the other (the test harness's times).
   - Still to lower: `switch`, which the library's tests do not reach. Step 3's gate kernels need it.
 - **A scan's tile is 16 values a thread** on this path (`UKL_SCAN_VT`), as on the CPU backend (decision 0527 §3).
   A group operation costs hundreds of the tape's nodes, against a few for a thread's fold of one value. At 1 value
