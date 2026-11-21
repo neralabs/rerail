@@ -377,6 +377,29 @@ struct Shared {
     changed: Condvar,
 }
 
+impl Shared {
+    /// Waits, from `s`, until `done` holds. On a thread of a pool it runs the pool's jobs meanwhile: the writer is a
+    /// service of its starter's machine, so its parallel loops (`on_cores`: a kept block's columns) are jobs on that
+    /// machine's pool, and a pool thread that waited idle for the writer could hold the very thread they need. With
+    /// one thread (`RERAIL_THREADS=1`) that thread is the main one, `Machine::here`'s thread 0, and a run's end waited
+    /// in `written` for a write whose loop waited for it.
+    fn wait_until<'a>(&'a self, mut s: std::sync::MutexGuard<'a, State>, done: impl Fn(&State) -> bool) -> std::sync::MutexGuard<'a, State> {
+        let pool = rerail_accel::exec::on_pool();        while !done(&s) {
+            if !pool {
+                s = self.changed.wait(s).expect("the writer's state");
+                continue;
+            }
+            drop(s);
+            let helped = rerail_accel::exec::help_once();
+            s = self.state.lock().expect("the writer's state");
+            if !helped && !done(&s) {
+                s = self.changed.wait_timeout(s, Duration::from_millis(1)).expect("the writer's state").0;
+            }
+        }
+        s
+    }
+}
+
 /// A queued job, the bytes it holds, the keys it writes, and how it runs.
 type Queued = (Job, usize, Vec<Key>, Run, &'static str);
 
@@ -755,9 +778,7 @@ impl ContentStore {
                 let rows: Vec<String> = rows.iter().map(|(w, j, b, c)| format!("{w}: {j} jobs, {:.1} MB, {c:.3} s", *b as f64 / 1048576.0)).collect();
                 eprintln!("rerail: the writer's queue is full ({:.1} MB in {} jobs; {what} brings {:.1} MB): queued so far, by what: {}", s.bytes as f64 / 1048576.0, s.jobs, bytes as f64 / 1048576.0, rows.join("; "));
             }
-            while full(&s) {
-                s = w.shared.changed.wait(s).expect("the writer's state");
-            }
+            s = w.shared.wait_until(s, |s| !full(s));
             if let Some(t) = t {
                 let waited = t.elapsed().as_secs_f64();
                 s.held = (s.held.0 + 1, s.held.1 + waited);
@@ -1051,9 +1072,7 @@ impl ContentStore {
         }
         let mut s = w.shared.state.lock().expect("the writer's state");
         let t = s.keys.contains_key(key).then(std::time::Instant::now);
-        while s.keys.contains_key(key) {
-            s = w.shared.changed.wait(s).expect("the writer's state");
-        }
+        s = w.shared.wait_until(s, |s| !s.keys.contains_key(key));
         if let Some(t) = t {
             super::hazards::wait_in_wave("a read of a queued write (settle)", t.elapsed().as_secs_f64());
         }
@@ -1070,9 +1089,7 @@ impl ContentStore {
         let mut s = w.shared.state.lock().expect("the writer's state");
         let target = s.sealed;
         let t = (s.applied < target).then(std::time::Instant::now);
-        while s.applied < target {
-            s = w.shared.changed.wait(s).expect("the writer's state");
-        }
+        s = w.shared.wait_until(s, |s| s.applied >= target);
         if let Some(t) = t {
             super::hazards::wait_in_wave("every queued write (written)", t.elapsed().as_secs_f64());
         }

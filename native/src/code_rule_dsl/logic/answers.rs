@@ -509,4 +509,29 @@ pub mod tests {
         assert!(asks.iter().any(|r| r.body().any(|l| matches!(l.view(), Lit::Agg { .. }) && l.atom().unwrap().gated())), "an ask reads the earlier aggregate gated");
         assert!(asks.iter().all(|r| r.body().all(|l| !matches!(l.view(), Lit::Agg { .. }) || l.atom().unwrap().gated())), "no ask reads an aggregate raw");
     }
+
+    /// A rule with two negations inside a loading component: the second's ask reads the first gated, as the rule does,
+    /// never bare: a bare negation of the component in an ask made the program unstratifiable (PYI's `type_root`, past
+    /// `!typing_sym(h, "Literal")`, asking `annotated_meta`: "ask_annotated_meta_bb depends negatively on typing_sym
+    /// in its own component").
+    #[test]
+    fn an_ask_past_a_gated_negation_reads_it_gated() {
+        let prog = super::super::rr::parse_version(
+            ".decl want(x: symbol)\n.decl req(x: symbol)\n.decl got(x: symbol, y: symbol)\n.decl seen(x: symbol)\n.decl kept(x: symbol)\n.decl fresh(x: symbol)\n\
+             want(\"a\").\nwant(y) :- got(_, y).\nseen(y) :- got(_, y).\nkept(y) :- got(y, _).\n\
+             fresh(x) :- want(x), !seen(x), !kept(x).\nreq(x) :- fresh(x).\n",
+        )
+        .unwrap();
+        let answers: BTreeMap<String, Vec<String>> = [("req".to_owned(), vec!["got".to_owned()])].into();
+        let gated = gate(&Placed::whole(prog.clone()), &answers).unwrap();
+        let sccs = Placed::whole(gated.clone()).components().unwrap();
+        let loading = sccs.iter().find(|s| s.contains("req")).unwrap();
+        for rel in ["ask_seen_b", "done_seen_b", "ask_kept_b", "done_kept_b"] {
+            assert!(loading.contains(rel), "{rel} in {loading:?}");
+        }
+        let ask = gated.rules().find(|r| gated.rel_name(r.head().rel()) == "ask_kept_b").expect("kept's ask");
+        let negated: Vec<(&str, bool)> = ask.body().filter_map(|l| l.atom()).filter(|a| a.neg()).map(|a| (gated.rel_name(a.rel()), a.gated())).collect();
+        assert_eq!(negated, [("seen", true)], "the ask reads the earlier negation gated, never bare");
+        assert!(ask.body().filter_map(|l| l.atom()).any(|a| gated.rel_name(a.rel()) == "done_seen_b"), "behind its gate");
+    }
 }
