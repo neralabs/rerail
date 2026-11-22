@@ -39,6 +39,21 @@ fn the_hand_vectorized_nearest_is_the_scalar_one() {
     }
 }
 
+/// The hand-vectorized kernel with its threads in strided order: the scalar answers, at groups that leave cells
+/// past the last whole one.
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn the_strided_nearest_is_the_scalar_one() {
+    for f in forests() {
+        for block in [8, 64, 256] {
+            let mut state = f.start.clone();
+            let most = unsafe { crate::hand::nearest_jump_strided(state.as_mut_ptr(), f.nodes, f.cells(), block) };
+            assert_eq!(state, f.want, "{} nodes, {} sets, groups of {block}", f.nodes, f.sets);
+            assert!(most <= f.nodes);
+        }
+    }
+}
+
 /// rerail-ukl-vec's Rust of `nearest_jump` at 8 lanes: the scalar kernel's answers, at groups of 20, 32, 36, 64 and
 /// 256 threads (the last groups part full), and a thread's steps counted (`stats`) when any took one.
 #[cfg(target_arch = "aarch64")]

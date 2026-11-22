@@ -35,6 +35,8 @@ fn main() {
     #[cfg(target_arch = "aarch64")]
     {
         time("hand", &f, |s| unsafe { rerail_ukl_aot::hand::nearest_jump(s.as_mut_ptr(), nodes, f.cells()) });
+        time("strided256", &f, |s| unsafe { rerail_ukl_aot::hand::nearest_jump_strided(s.as_mut_ptr(), nodes, f.cells(), 256) });
+        time("strided64k", &f, |s| unsafe { rerail_ukl_aot::hand::nearest_jump_strided(s.as_mut_ptr(), nodes, f.cells(), 1 << 16) });
         let args = NearestArgs { nodes, cells: f.cells(), pad0: 0, pad1: 0 };
         time("ukl w8", &f, |s| unsafe { rerail_ukl_aot::nearest_run(rerail_ukl_aot::nearest_jump_w8::nearest_jump_w8, s, args, 256) });
     }
