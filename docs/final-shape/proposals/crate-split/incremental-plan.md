@@ -783,3 +783,34 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     one failure (fixed above, then 7 of 7 run-state and carrier tests pass). The other is the SQL profiling test,
     which needs `node`. On a Mac (an M3), device_metal's lattice, join, nearest, fixpoint and column-statistics
     tests: 21 pass, the recursive stratum's after its fix.
+- **Step 5j** (2026-11-21): the planner split in three. It was 38.2k production lines, and `plan.rs` alone was 15k.
+  The planner's children read the root of `plan.rs` and it reads them, so the cut went through the file:
+  - **`rerail-plan-base`** (`native/crates/plan_base`, 15.8k) holds the planner's vocabulary, `plan/base.rs`: the
+    errors, a rule's steps and their modes, a join's order and signature, a plan's key, the constants, the cells and
+    digests of stored rows, and the counts. It also holds the children that read only that vocabulary: the forms and
+    fields, the joins and their memo, the outputs, placement, tables, shapes, lowering, text and native demand,
+    wellfoundedness, the acyclic walks and the identity parts. Above setfix, it carries the pass manager with the
+    program's passes and analyses, the answers' gates, the program's text, the rank form and the profile's report
+    and watch. Its `plan` is a facade under the planner's path.
+  - **`rerail-plan-search`** (`native/crates/plan_search`, 10.8k) holds `plan/search.rs`: the planner's inputs and
+    statistics (`Inputs`, `Stats`, `LiveRel`), its model (`Model`), the search for a rule's plan, the plans kept
+    across a run's chunks and strata (`KeptPlans`, `OrderedPlans`, `in_view`), `make_plan`, the SQL expressions'
+    helpers, and a connection's state (`Left`). With it go the passes that read the model: `keeps`, `select`,
+    `prepared`, `choices`, `demand` and `replanning`.
+  - **`rerail-planner`** (11.9k) keeps `plan.rs`, the run: `Run`, `run_within`, the walker, the answers' reads, the
+    composed form, the issue of a stratum's work, the join specs (an `impl Run`), the emitted SQL's kernels, and
+    `KeepPlans`, which opens and closes a corpus run's keeping (the composed form's cache, the counts, a session's
+    plans). It re-exports both facades, so no path and no crate above changed.
+  - **One reference went up from the base's joins:** their chunk memo was read through the kept plans
+    (`with_plans(...).view.memo`). `plan::in_view` binds the memo in the run's context now, beside the chunk's kept
+    plans (`joins::InView`), and its jobs carry it. Nothing binds kept plans with no view inside a view (`KeepPlans`
+    opens a corpus run, around its chunks), so the two bindings always agree.
+  - The search reads helpers that sat among the run's items: `same_order`, `recursive`, `solving_of`, `line_id`,
+    `step_samples`, `prior_now`, `live_stats`, `source_order`, `unfounded_cross`, `Readiness`, `by_shift`,
+    `SMALL_NDV`. They are the search's now, and the census (`run_state::STATE`) names `search.rs` for `SEED`,
+    `OWN_PLANS` and `OWN_PLANNED`.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac, and the workspace's with
+    `code-rule-profile,p-anchor-corpus,test-hooks`; clippy clean on the three crates). On a Linux host, the three
+    crates in full, `rerail-run`'s run-state tests and `rerail-logic`'s `plan::` tests: 270 of 270 pass. Then
+    `rerail-tests-logic`'s `logic::plan::` tests: 278 of 279 pass. The one failure,
+    `programs_hidden_alone_keep_their_attribute_copies_declared`, reads pack test data the host has not pulled.

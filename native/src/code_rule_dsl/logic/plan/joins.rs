@@ -43,19 +43,19 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
 
 /// The search's runners-up kept per line.
-pub(super) const ALTERNATIVES: usize = 4;
+pub const ALTERNATIVES: usize = 4;
 /// Orders tried kept per line.
 const TRIED: usize = 8;
 /// Orders a wider search proposes per line.
-pub(super) const PROPOSALS: usize = 6;
+pub const PROPOSALS: usize = 6;
 /// The wider search's exact bound, in joins (the run's is `GREEDY`).
 pub(super) const WIDE_GREEDY: usize = 16;
 /// Random connected orders a wider search prices.
-pub(super) const RANDOM_ORDERS: usize = 48;
+pub const RANDOM_ORDERS: usize = 48;
 /// Lines noted, at most: the least important go first.
 const NOTES_MAX: usize = 4096;
 /// Rows a step's histogram reads at most (a stride beyond).
-pub(super) const HISTOGRAM_ROWS: usize = 1 << 20;
+pub const HISTOGRAM_ROWS: usize = 1 << 20;
 
 fn setting(name: &str, or: f64) -> f64 {
     std::env::var(name).ok().and_then(|v| v.parse().ok()).unwrap_or(or)
@@ -163,7 +163,7 @@ fn merge_tried(n: &mut Note, order: Vec<StoredStep>, ratio: f64, weight: f64) {
 
 /// Decision 0243: line `key`'s walked proposals, with their walked work, and the walked work of the order it ran;
 /// `None` where its search priced them, or made none.
-pub(super) fn walked(key: &PlanKey) -> Option<(f64, Vec<(Vec<Step>, f64)>)> {
+pub fn walked(key: &PlanKey) -> Option<(f64, Vec<(Vec<Step>, f64)>)> {
     read(|m| {
         let n = m.notes.get(key).filter(|n| n.walked > 0.0 && !n.proposals.is_empty())?;
         Some((n.walked, n.proposals.iter().map(|(o, w)| (o.iter().map(|&(at, mode)| Step { at: at as usize, mode }).collect(), *w)).collect()))
@@ -171,17 +171,17 @@ pub(super) fn walked(key: &PlanKey) -> Option<(f64, Vec<(Vec<Step>, f64)>)> {
 }
 
 /// Line `key`'s proposals from a wider search, as orders.
-pub(super) fn proposals(key: &PlanKey) -> Vec<Vec<Step>> {
+pub fn proposals(key: &PlanKey) -> Vec<Vec<Step>> {
     read(|m| m.notes.get(key).map(|n| n.proposals.iter().map(|(o, _)| o.iter().map(|&(at, mode)| Step { at: at as usize, mode }).collect()).collect()).unwrap_or_default())
 }
 
 /// `RERAIL_JOINS=off`: no memo, no flags, no exploration (the planner as before).
-pub(super) fn on() -> bool {
+pub fn on() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_JOINS").map_or(true, |v| v != "off"))
 }
 
 /// `RERAIL_JOINS_LOG`: each flag, choice and critical path to standard error.
-pub(super) fn logging() -> bool {
+pub fn logging() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_JOINS_LOG").is_some())
 }
 
@@ -303,9 +303,18 @@ pub fn file_ops(mut ops: Vec<Op>) {
     }
 }
 
+/// The memo of the chunk whose planning runs here (Q261), as `plan::in_view` binds it in the run's context, beside
+/// the chunk's kept plans: its jobs carry it. `None` outside a chunk's view.
+#[derive(Clone, Default)]
+pub struct InView(pub Option<Arc<ChunkMemo>>);
+
+fn in_view() -> Option<Arc<ChunkMemo>> {
+    rerail_prof::code_rule_dsl::logic::profile::with_bound(|m: &InView| m.0.clone())
+}
+
 /// The memo this thread reads: its chunk's, where a chunk's planning runs here, else the run's.
 fn read<R>(f: impl FnOnce(&Memo) -> R) -> R {
-    match super::chunk_memo() {
+    match in_view() {
         Some(c) => f(&c.memo.read()),
         None => f(&joins().memo.read()),
     }
@@ -314,7 +323,7 @@ fn read<R>(f: impl FnOnce(&Memo) -> R) -> R {
 /// Writes `op` for the run's memo alone: in a chunk, kept for its filing and not read by the chunk meanwhile, so what
 /// the chunk's strata read is the memo as filed when it began, whatever order its threads ran in.
 fn write_filed(op: Op) {
-    match super::chunk_memo() {
+    match in_view() {
         Some(c) => c.ops.lock().push(op),
         None => {
             op.apply(&mut joins().memo.write());
@@ -335,7 +344,7 @@ pub fn note_growth(rule: u64, stage: usize, ratio: f64) {
 
 /// Writes `op` to the memo this thread reads; in a chunk, kept for its filing too. What `op` answers.
 fn write(op: Op) -> bool {
-    match super::chunk_memo() {
+    match in_view() {
         Some(c) => {
             let r = op.apply(&mut c.memo.write());
             c.ops.lock().push(op);
@@ -535,13 +544,13 @@ pub fn steps(order: &[Step]) -> Vec<StoredStep> {
     order.iter().map(|s| (s.at as u16, s.mode)).collect()
 }
 
-pub(super) fn unstored(order: &[StoredStep]) -> Vec<Step> {
+pub fn unstored(order: &[StoredStep]) -> Vec<Step> {
     order.iter().map(|&(at, mode)| Step { at: at.into(), mode }).collect()
 }
 
 /// Raises column `c` of `rel` to keep its heavy values (decision 0209 §4), for line `key` where a line raised it
 /// (kept with its note); whether it was not yet.
-pub(super) fn raise(key: Option<PlanKey>, rel: &str, c: usize) -> bool {
+pub fn raise(key: Option<PlanKey>, rel: &str, c: usize) -> bool {
     joins().raised.store(true, Relaxed);
     write(Op::Raise { key, rel: rel.to_owned(), c })
 }
@@ -554,14 +563,14 @@ pub fn raised(rel: &str, c: usize) -> bool {
 
 /// The columns that keep their heavy values, read once (`Run::heavy_for` checks every shared column of every rule
 /// of a stratum, in every chunk: a read of the memo's lock and a key allocated for each was 0.4 s of a cold run).
-pub(super) fn raised_all() -> Vec<(String, usize)> {
+pub fn raised_all() -> Vec<(String, usize)> {
     if !joins().raised.load(Relaxed) {
         return Vec::new();
     }
     read(|m| m.raised.iter().cloned().collect())
 }
 
-pub(super) fn any_raised() -> bool {
+pub fn any_raised() -> bool {
     joins().raised.load(Relaxed)
 }
 
@@ -570,7 +579,7 @@ pub(super) fn noted(key: &PlanKey) -> bool {
     joins().noted.load(Relaxed) && read(|m| m.notes.contains_key(key))
 }
 
-pub(super) fn any_noted() -> bool {
+pub fn any_noted() -> bool {
     joins().noted.load(Relaxed)
 }
 
@@ -588,19 +597,19 @@ pub fn pending(key: &PlanKey) -> bool {
 }
 
 /// The epoch of `rule`'s exact statistics (0: none), digested into its plan keys.
-pub(super) fn epoch(rule: u64) -> u32 {
+pub fn epoch(rule: u64) -> u32 {
     if !joins().exact.load(Relaxed) {
         return 0;
     }
     read(|m| m.epochs.get(&rule).copied().unwrap_or(0))
 }
 
-pub(super) fn any_exact() -> bool {
+pub fn any_exact() -> bool {
     joins().exact.load(Relaxed)
 }
 
 /// `rule`'s exact statistics, read once per search.
-pub(super) fn exact_for(rule: u64) -> Option<Arc<HashMap<Sig, [i64; 2]>>> {
+pub fn exact_for(rule: u64) -> Option<Arc<HashMap<Sig, [i64; 2]>>> {
     if !joins().exact.load(Relaxed) {
         return None;
     }
@@ -635,7 +644,7 @@ pub fn check(key: PlanKey, work: f64, order: &[Step]) -> bool {
 
 /// The work at which line `key` is next checked (`check`), so the engine cuts its probe there (decision 0206);
 /// none once flagged in the order it runs (`order`).
-pub(super) fn next_due(key: PlanKey, order: &[Step]) -> Option<f64> {
+pub fn next_due(key: PlanKey, order: &[Step]) -> Option<f64> {
     read(|m| {
         if m.flagged.get(&key).is_some_and(|o| *o == steps(order)) {
             return None;
@@ -646,7 +655,7 @@ pub(super) fn next_due(key: PlanKey, order: &[Step]) -> Option<f64> {
 
 /// Decision 0206: a slow order replaced at its cut. `old`, its order; `per_row`, its work per delta row finished;
 /// `limit`, the work its replacement may do over the rows left before the two are compared.
-pub(in crate::code_rule_dsl::logic) struct Handoff { pub old: Vec<Step>, pub per_row: f64, pub limit: f64 }
+pub struct Handoff { pub old: Vec<Step>, pub per_row: f64, pub limit: f64 }
 
 /// Decision 0271: whether a slow seed's or whole plan's orders are measured after its check, by a trial (`sampled`: its
 /// sample has `TRIAL_LEAST` rows, and decision 0274's trial is due) or by the handoff it is in. Where not, it is
@@ -666,7 +675,7 @@ pub fn limit_again(rate: f64, base: f64, left: f64, work: f64) -> f64 {
 }
 
 /// A handoff made, or ended with the old order going on (`back`).
-pub(super) fn count_handoff(back: bool) {
+pub fn count_handoff(back: bool) {
     run_counts().counts[if back { HANDBACKS } else { HANDOFFS }].fetch_add(1, Relaxed);
 }
 
@@ -678,7 +687,7 @@ pub(super) fn count_handoff(back: bool) {
 /// it raises the order's kept ratio, never lowers it. Not kept, the next chunk's plan took the same order at the same
 /// price (`pre_546` on hogql: priced 360 to 513 for 102 K rows of work, at each of its trips).
 /// Whether line `key` is flagged in the order it runs (`flag_slow`): checked no more in it.
-pub(super) fn flagged(key: PlanKey, order: &[Step]) -> bool {
+pub fn flagged(key: PlanKey, order: &[Step]) -> bool {
     joins().memo.read().flagged.get(&key).is_some_and(|o| *o == steps(order))
 }
 
@@ -702,7 +711,7 @@ impl Miss {
 }
 
 
-pub(super) fn count_miss(m: &Miss) {
+pub fn count_miss(m: &Miss) {
     run_counts().misses[usize::from(matches!(m, Miss::Over { .. }))].fetch_add(1, Relaxed);
 }
 
@@ -773,7 +782,7 @@ pub fn over_measured(others: &[(Vec<Step>, f64)], ran: f64, done: u64, left: u64
 }
 
 /// Whether the line's replan skips the planning budget, once.
-pub(super) fn take_forced(key: &PlanKey) -> bool {
+pub fn take_forced(key: &PlanKey) -> bool {
     joins().noted.load(Relaxed) && write(Op::TakeForced { key: *key })
 }
 
@@ -816,7 +825,7 @@ fn take_proposals(m: &mut Memo, key: PlanKey, orders: Vec<(Vec<StoredStep>, f64)
 /// A search's context (decision 0203), handed down to it and read back by its caller: whether it is wide (exact up
 /// to `WIDE_GREEDY` joins, never the greedy order first), and its runners-up, best first.
 #[derive(Default)]
-pub(in crate::code_rule_dsl) struct SearchCx {
+pub struct SearchCx {
     pub wide: bool,
     pub runners_up: Vec<(Vec<Step>, f64)>,
     /// With a batch pricer (decision 0354): the best's and the runners-up's steps as the search priced them, each
@@ -830,7 +839,7 @@ pub(in crate::code_rule_dsl) struct SearchCx {
 }
 
 /// The greedy bound of a search, `wide` or not.
-pub(super) fn greedy_limit(run: usize, wide: bool) -> usize {
+pub fn greedy_limit(run: usize, wide: bool) -> usize {
     if wide { WIDE_GREEDY.max(run) } else { run }
 }
 
@@ -891,7 +900,7 @@ pub fn set_pricer(p: Option<Arc<dyn Pricer>>) {
 
 
 /// Whether a batch pricer is set: every searched line's choice is then made in its round.
-pub(super) fn pricing() -> bool {
+pub fn pricing() -> bool {
     pricer().1.load(Relaxed)
 }
 
@@ -900,7 +909,7 @@ pub struct Rng(pub u64);
 impl Rng {
     /// From `RERAIL_JOIN_SEED`, else a fixed seed, and `salt` (Q314: the clock and a count shared by every thread
     /// drew differently on every run).
-    pub(super) fn new(salt: u64) -> Rng {
+    pub fn new(salt: u64) -> Rng {
         let seed = rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_JOIN_SEED").ok().and_then(|v| v.parse().ok()).unwrap_or(0x2545_f491_4f6c_dd1du64));
         let mut x = seed ^ salt.wrapping_mul(0x9e37_79b9_7f4a_7c15);
         // A few rounds, so neighbouring salts draw apart.
@@ -1180,7 +1189,7 @@ pub fn random_orders(vars: &[u128], start: Option<usize>, n: usize, rng: &mut Rn
 }
 
 /// Decision 0247: how far below the order that ran a walked order must walk to be taken on its walk alone.
-pub(super) const WALK_MARGIN: f64 = 0.625;
+pub const WALK_MARGIN: f64 = 0.625;
 
 /// A wider search's result: its orders with their prices, or their walked work over the line, and the walked work of
 /// the order the line ran where it walked them (decision 0243).
@@ -1200,7 +1209,7 @@ const REQUESTS_MAX: usize = 64;
 const HOLDING_MAX: usize = 4;
 
 /// Whether a new request may hold its line's relations to walk them (`HOLDING_MAX`).
-pub(super) fn may_hold() -> bool {
+pub fn may_hold() -> bool {
     joins().requests.lock().iter().filter(|r| r.2).count() < HOLDING_MAX
 }
 
