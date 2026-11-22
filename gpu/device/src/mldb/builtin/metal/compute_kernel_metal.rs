@@ -561,3 +561,126 @@ impl Drop for MetalComputeQueue {
         Self::end(&mut self.open.borrow_mut());
     }
 }
+
+/// A placement sparse buffer (Metal 4, decision 0603's fewer reruns): `len` bytes of the GPU's address space, at one
+/// address for its life, whose pages are real memory only as `map` maps them, each from a heap of its own. Private
+/// storage (Metal refuses a shared one): the host reads none of it. The mapping is the host's, between launches: a
+/// kernel uses no page past `mapped`.
+pub struct Sparse {
+    pub buffer: metal::Buffer,
+    /// The Metal 4 queue the mappings are made on (retained), the event its updates signal, and the last value.
+    queue: *mut objc::runtime::Object,
+    event: metal::SharedEvent,
+    signaled: std::sync::Mutex<u64>,
+    heaps: std::sync::Mutex<Vec<metal::Heap>>,
+    /// Its pages mapped, the first ones.
+    pages: std::sync::atomic::AtomicUsize,
+}
+
+// SAFETY: the Metal objects it holds are thread-safe (Metal's), and its own state is behind a mutex or atomic.
+unsafe impl Send for Sparse {}
+unsafe impl Sync for Sparse {}
+
+/// `MTLSparsePageSize64`: a sparse page of 64 KB.
+const SPARSE_PAGE_SIZE: i64 = 102;
+pub const SPARSE_PAGE: usize = 64 << 10;
+
+impl Sparse {
+    /// `len` bytes of address space, none of it mapped; `None` where the device has no placement sparse buffers.
+    pub fn new(device: &DeviceRef, len: usize) -> Option<Sparse> {
+        let len = len.next_multiple_of(SPARSE_PAGE) as u64;
+        pooled(|| {
+            let sel = sel!(newBufferWithLength:options:placementSparsePageSize:);
+            // SAFETY: a selector check, then Metal's own calls on the device, each returning a retained object or nil.
+            unsafe {
+                let has: bool = msg_send![device, respondsToSelector: sel];
+                if !has {
+                    return None;
+                }
+                let b: *mut metal::MTLBuffer = msg_send![device, newBufferWithLength: len options: metal::MTLResourceOptions::StorageModePrivate placementSparsePageSize: SPARSE_PAGE_SIZE];
+                if b.is_null() {
+                    return None;
+                }
+                let queue: *mut objc::runtime::Object = msg_send![device, newMTL4CommandQueue];
+                use metal::foreign_types::ForeignType;
+                if queue.is_null() {
+                    drop(metal::Buffer::from_ptr(b));
+                    return None;
+                }
+                Some(Sparse {
+                    buffer: metal::Buffer::from_ptr(b),
+                    queue,
+                    event: device.new_shared_event(),
+                    signaled: std::sync::Mutex::new(0),
+                    heaps: std::sync::Mutex::new(Vec::new()),
+                    pages: std::sync::atomic::AtomicUsize::new(0),
+                })
+            }
+        })
+    }
+
+    /// Its bytes mapped, from its start.
+    pub fn mapped(&self) -> usize {
+        self.pages.load(std::sync::atomic::Ordering::Acquire) * SPARSE_PAGE
+    }
+
+    /// Its first `bytes` mapped (whole pages, within its length): the pages past those mapped so far from a new heap,
+    /// done when this returns. No work that uses the buffer may be running.
+    pub fn map(&self, device: &DeviceRef, bytes: usize) -> Result<(), String> {
+        let want = bytes.div_ceil(SPARSE_PAGE).min(self.buffer.length() as usize / SPARSE_PAGE);
+        let have = self.pages.load(std::sync::atomic::Ordering::Acquire);
+        if want <= have {
+            return Ok(());
+        }
+        let n = want - have;
+        pooled(|| {
+            // SAFETY: Metal's calls: a placement heap of `n` pages, then one update of the buffer's pages `have..want`
+            // to it, on the Metal 4 queue, waited for by its event.
+            unsafe {
+                let d: *mut objc::runtime::Object = msg_send![objc::class!(MTLHeapDescriptor), new];
+                let () = msg_send![d, setType: 1i64];
+                let () = msg_send![d, setStorageMode: metal::MTLStorageMode::Private];
+                let () = msg_send![d, setSize: (n * SPARSE_PAGE) as u64];
+                let () = msg_send![d, setMaxCompatiblePlacementSparsePageSize: SPARSE_PAGE_SIZE];
+                let heap: *mut metal::MTLHeap = msg_send![device, newHeapWithDescriptor: d];
+                let () = msg_send![d, release];
+                if heap.is_null() {
+                    return Err(format!("Metal: a placement heap of {} KB refused", (n * SPARSE_PAGE) >> 10));
+                }
+                use metal::foreign_types::ForeignType;
+                let heap = metal::Heap::from_ptr(heap);
+                #[repr(C)]
+                struct Op {
+                    mode: u64,
+                    location: u64,
+                    length: u64,
+                    heap_offset: u64,
+                }
+                let op = Op { mode: 0, location: have as u64, length: n as u64, heap_offset: 0 };
+                let heap_ref: &metal::HeapRef = &heap;
+                let buffer_ref: &metal::BufferRef = &self.buffer;
+                let () = msg_send![self.queue, updateBufferMappings: buffer_ref heap: heap_ref operations: &op as *const Op count: 1u64];
+                let mut signaled = self.signaled.lock().unwrap_or_else(|e| e.into_inner());
+                *signaled += 1;
+                let event: &metal::SharedEventRef = &self.event;
+                let () = msg_send![self.queue, signalEvent: event value: *signaled];
+                let done: bool = msg_send![event, waitUntilSignaledValue: *signaled timeoutMS: 10_000u64];
+                if !done {
+                    return Err("Metal: a sparse buffer's mapping not done in 10 s".into());
+                }
+                self.heaps.lock().unwrap_or_else(|e| e.into_inner()).push(heap);
+            }
+            self.pages.store(want, std::sync::atomic::Ordering::Release);
+            Ok(())
+        })
+    }
+}
+
+impl Drop for Sparse {
+    fn drop(&mut self) {
+        // SAFETY: the queue was retained at `new` and is released once.
+        unsafe {
+            let () = msg_send![self.queue, release];
+        }
+    }
+}

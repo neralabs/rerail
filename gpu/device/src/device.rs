@@ -728,6 +728,103 @@ pub unsafe fn wrap_host_memory(device: &Device, ptr: *mut u8, len: usize) -> Res
     }
 }
 
+/// Address space for `bytes` whose pages are real memory only as they are mapped (decision 0603's fewer reruns): the
+/// kernels use it at one address for its life, each page below `mapped()` only, and the host maps more between
+/// launches (`map`). Metal: a placement sparse buffer, its pages from heaps (private storage: the host reads none of
+/// it). The CPU backend: the host's address space, its pages committed as they are touched (`os::map_zeroed`), its
+/// mapped bytes a count `map` raises, so its kernels keep to them as Metal's do. CUDA, OpenCL, and Windows' CPU
+/// backend: an allocation of what `reserve` first maps, which `map` cannot grow (false past it).
+pub struct Reserved {
+    buffer: Buffer,
+    kind: ReservedKind,
+}
+
+enum ReservedKind {
+    #[cfg(target_os = "macos")]
+    Sparse(std::sync::Arc<crate::compute_kernel_metal::Sparse>, metal::Device),
+    /// The host's pages, at `ptr` (`os::map_zeroed`), `len` bytes, unmapped when the last clone of the buffer is gone;
+    /// and the bytes mapped.
+    Host(std::sync::Arc<HostPages>, std::sync::atomic::AtomicUsize),
+    Fixed(usize),
+}
+
+/// Pages `os::map_zeroed` gave, unmapped when dropped (after the buffers over them: `Reserved` holds both).
+struct HostPages {
+    ptr: *mut u8,
+    len: usize,
+}
+
+// SAFETY: plain memory, shared by address; its users order their accesses (the queue's work, then the host).
+unsafe impl Send for HostPages {}
+unsafe impl Sync for HostPages {}
+
+impl Drop for HostPages {
+    fn drop(&mut self) {
+        // SAFETY: the whole of one mapping `map_zeroed` gave; the buffer over it is dropped before (field order).
+        unsafe { crate::os::unmap(self.ptr, self.len) };
+    }
+}
+
+/// `bytes` of address space (`Reserved`), its first `mapped` bytes mapped.
+pub fn reserve(device: &Device, bytes: usize, mapped: usize) -> Result<Reserved, String> {
+    let mapped = mapped.min(bytes).max(16);
+    match device {
+        #[cfg(target_os = "macos")]
+        Device::Native(d) => {
+            if let Some(s) = crate::compute_kernel_metal::Sparse::new(d, bytes) {
+                s.map(d, mapped)?;
+                let buffer = Buffer::Native(s.buffer.clone());
+                return Ok(Reserved { buffer, kind: ReservedKind::Sparse(std::sync::Arc::new(s), d.clone()) });
+            }
+            Ok(Reserved { buffer: alloc_uninitialized_array_sync::<u8>(device, mapped), kind: ReservedKind::Fixed(mapped) })
+        }
+        #[cfg(unix)]
+        Device::Cpu(d) => {
+            let len = bytes.next_multiple_of(crate::os::page_bytes());
+            let ptr = crate::os::map_zeroed(len).ok_or_else(|| format!("{len} bytes of address space refused"))?;
+            let pages = std::sync::Arc::new(HostPages { ptr, len });
+            // SAFETY: the pages outlive the buffer: `Reserved` drops its buffer before them, and a clone of the buffer
+            // a queue's work holds is let go before its `Reserved` (the engine holds both together).
+            let buffer = Buffer::Cpu(unsafe { cpu::wrap_host_memory(d, ptr, len)? });
+            Ok(Reserved { buffer, kind: ReservedKind::Host(pages, std::sync::atomic::AtomicUsize::new(mapped)) })
+        }
+        _ => Ok(Reserved { buffer: alloc_uninitialized_array_sync::<u8>(device, mapped), kind: ReservedKind::Fixed(mapped) }),
+    }
+}
+
+impl Reserved {
+    pub fn buffer(&self) -> &Buffer {
+        &self.buffer
+    }
+
+    /// The bytes the kernels may use, from its start.
+    pub fn mapped(&self) -> usize {
+        match &self.kind {
+            #[cfg(target_os = "macos")]
+            ReservedKind::Sparse(s, _) => s.mapped(),
+            ReservedKind::Host(_, m) => m.load(std::sync::atomic::Ordering::Acquire),
+            ReservedKind::Fixed(n) => *n,
+        }
+    }
+
+    /// Its first `bytes` mapped, when no work that uses it is running: false where it cannot be (past its address
+    /// space, or an allocation that cannot grow).
+    pub fn map(&self, bytes: usize) -> Result<bool, String> {
+        if bytes <= self.mapped() {
+            return Ok(true);
+        }
+        match &self.kind {
+            #[cfg(target_os = "macos")]
+            ReservedKind::Sparse(s, d) if bytes as u64 <= s.buffer.length() => s.map(d, bytes).map(|()| true),
+            ReservedKind::Host(p, m) if bytes <= p.len => {
+                m.store(bytes, std::sync::atomic::Ordering::Release);
+                Ok(true)
+            }
+            _ => Ok(false),
+        }
+    }
+}
+
 /// `transferToDeviceImmutable`: memory holding `data`.
 pub fn transfer_to_device_immutable<T: crate::Pod>(device: &Device, data: &[T]) -> Buffer {
     match device {

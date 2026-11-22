@@ -137,12 +137,10 @@
         Ok(())
     }
 
-    /// A recursive stratum on the device: its rounds to the fixpoint there, the same rows as the CPU's waves.
-    #[test]
-    fn a_recursive_stratum_on_the_device_is_the_cpus_fixpoint() {
-        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
-            return;
-        }
+    /// A recursive stratum, a sparse graph's closure through a rule of two recursive atoms, run on the CPU and then on
+    /// the device (`sizes`: its program's switches, `metal_join::ProgramSizes`): the device's report, its rows the
+    /// CPU's.
+    fn closure(sizes: &[(&str, &str)]) -> super::Report {
         let store = crate::code_rule_dsl::fixtures::temp();
         drop(crate::code_rule_dsl::fixtures::open(&store));
         let db = Connection::open(&store).unwrap();
@@ -167,8 +165,7 @@
         let left = "pos d0 v0 v1\npos c0 v1 v2\nne v2 v0\nhead v0 v2".to_owned();
         let right = "pos c0 v0 v1\npos d0 v1 v2\nne v2 v0\nhead v0 v2".to_owned();
         let mut got = Vec::new();
-        let gpu_jobs = || crate::code_rule_dsl::logic::lanes::executor_for(true).score().units[rerail_accel::Lane::Gpu.index()].jobs;
-        let jobs0 = gpu_jobs();
+        let mut report = None;
         for device in [false, true] {
             db.execute_batch("DROP TABLE IF EXISTS temp.h0; CREATE TEMP TABLE h0 (c0, c1);").unwrap();
             let mut spec = vec!["name dev_rec".to_owned()];
@@ -180,20 +177,10 @@
             spec.push(format!("join 0 0 {}", hex(&left)));
             spec.push(format!("join 0 0 {}", hex(&right)));
             super::super::open(&db, &spec.join("\n")).unwrap();
+            let _sizes = device.then(|| crate::code_rule_dsl::logic::plan::corpus::switches::set(sizes));
             super::super::run(&db, "dev_rec", 0).unwrap();
-            let report = super::take_report();
             if device {
-                let r = report.as_ref().expect("a device report");
-                assert!(r.refused.is_none(), "{r:?}");
-                assert!(r.rounds > 5, "the closure takes rounds: {r:?}");
-                // Its rounds on the device, many a launch (decision 0603): its tables sized there, so no round stops
-                // for a table's room and goes back to the host.
-                assert!(r.dispatches < r.rounds, "the closure's launches fewer than its rounds: {r:?}");
-                // Written in place into the head's block (decision 0325 step 4): none read back.
-                assert!(r.placed > 1000 && r.placed == r.distinct, "the fixpoint's rows written in place: {r:?}");
-                // Its total is probed by `v1` (the left rule) and made distinct of by both columns, each round: its
-                // block has room for both indexes, so neither copies it (decision 0353 step 6, `DevIndex::moved`).
-                assert!(r.sorts > 0 && r.moved == 0, "every round's indexes in their relations' blocks: {r:?}");
+                report = super::take_report();
             }
             super::super::close(&db, "dev_rec").unwrap();
             let mut rows: Vec<(i64, i64)> = db.prepare("SELECT c0, c1 FROM temp.h0").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().map(Result::unwrap).collect();
@@ -202,7 +189,60 @@
         }
         assert!(got[0].len() > 1000, "{} rows", got[0].len());
         assert_eq!(got[0], got[1], "the device's fixpoint is the CPU's");
+        let r = report.expect("a device report");
+        assert!(r.refused.is_none(), "{r:?}");
+        r
+    }
+
+    /// A recursive stratum on the device: its rounds to the fixpoint there, the same rows as the CPU's waves.
+    #[test]
+    fn a_recursive_stratum_on_the_device_is_the_cpus_fixpoint() {
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        let gpu_jobs = || crate::code_rule_dsl::logic::lanes::executor_for(true).score().units[rerail_accel::Lane::Gpu.index()].jobs;
+        let jobs0 = gpu_jobs();
+        let r = closure(&[]);
+        assert!(r.rounds > 5, "the closure takes rounds: {r:?}");
+        // Its head's bound the rows it can reach (both its columns copied from e's: e's rows squared, within
+        // `REACH_BYTES`), and its arena mapped as its claims reach it: no round stops and goes back to the host.
+        assert_eq!(r.reruns, 0, "no round of the closure runs again: {r:?}");
+        // Written in place into the head's block (decision 0325 step 4): none read back.
+        assert!(r.placed > 1000 && r.placed == r.distinct, "the fixpoint's rows written in place: {r:?}");
+        // Its total is probed by `v1` (the left rule) and made distinct of by both columns, each round: its block has
+        // room for both indexes, so neither copies it (decision 0353 step 6, `DevIndex::moved`).
+        assert!(r.sorts > 0 && r.moved == 0, "every round's indexes in their relations' blocks: {r:?}");
         assert!(gpu_jobs() > jobs0, "the device's rounds are a job on the GPU lane's scoreboard");
+    }
+
+    /// Decision 0603's test: a stratum is one launch and its budget's relaunches, whatever its rules and rounds. The
+    /// closure's seed round and its rounds are one program; with a worker's budget of 8 items and a first arena of 16
+    /// bytes, its launches go again (each past its workers' budgets, with items left, or where a size script parked
+    /// past the arena's pages, mapped then), and nothing else launches; its rows are the CPU's.
+    #[test]
+    fn a_stratum_is_one_launch_and_its_budgets_relaunches() {
+        use crate::code_rule_dsl::transducer::packed::metal_join::PROGRAM_BUDGET;
+        if !crate::code_rule_dsl::transducer::packed::metal_join::available() {
+            return;
+        }
+        for (budget, arena) in [(None, None), (Some(8), Some(16))] {
+            let (bs, as_) = (budget.map(|b: u32| b.to_string()), arena.map(|a: usize| a.to_string()));
+            let mut sizes = Vec::new();
+            sizes.extend(bs.as_deref().map(|b| ("RERAIL_PROGRAM_BUDGET", b)));
+            sizes.extend(as_.as_deref().map(|a| ("RERAIL_PROGRAM_ARENA", a)));
+            let r = closure(&sizes);
+            let b = u64::from(budget.unwrap_or(PROGRAM_BUDGET));
+            assert_eq!(r.dispatches, 1 + r.relaunches + r.remaps, "budget {b}: one launch, and its relaunches: {r:?}");
+            assert_eq!(r.reruns, 0, "budget {b}: no round runs again: {r:?}");
+            // A launch that leaves items had a worker that spent its budget (`<ukl/workqueue.h>`).
+            assert!(u64::from(r.relaunches) * b <= r.taken, "budget {b}: a relaunch a budget's items at least: {r:?}");
+            if budget.is_some() {
+                assert!(r.relaunches > 0, "budget {b}: the closure's items past one launch's budgets: {r:?}");
+            }
+            if arena.is_some() {
+                assert!(r.remaps > 0, "a first arena of 16 bytes: its pages mapped as its claims reach them: {r:?}");
+            }
+        }
     }
 
     /// A recursive component that keeps levels (decision 0311): the device's rows and each row's level are the CPU's,

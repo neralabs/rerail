@@ -343,3 +343,66 @@ takes 8 rounds in 5 launches: the seed round, then programs of rounds that stopp
 (a program's first arena is twice its claims as guessed on the host: about 0.8 MB, then 31 MB, wanted), once a
 round's new rows passed its delta's room (3,120 rows in 1,024). Both are reruns step 5 left by design. Making them
 rare is next: a first arena and deltas' rooms from the rows a component can reach, not from the host's guesses.
+
+## Done (2026-11-22): a stratum is one launch and its budget's relaunches (point 5)
+
+The user's goal, 2026-11-22: size the first arena and the deltas' rooms from the rows a recursive component can
+reach, without committing real memory on Metal; give each worker a budget, with the host relaunching while items
+remain; and test that a stratum takes one launch plus its budget's relaunches, whatever its rules and rounds.
+
+- **The seed round is in the program.** `encode_program` encodes the seed round first (`encode_round`: it reads no
+  delta and writes the first side), then the two templates. `fixpoint_here` no longer runs a seed round on the host,
+  so a stratum is one program from its first round. `ProgP::first` is gone: the seeds start at `phases[0]`. So are
+  `SetRound`, `LatRound`, `Tail`, `encode_tail` and `union_floor`.
+- **A head's bound is the rows it can reach** (`setfix::device::reach`). This is a fixpoint over the rules: each head
+  column's set of base columns and constants, and a head's reach is the product of their rows (an input relation's
+  rows and its dead ones). Where the reach fits `REACH_BYTES` (64 MB), it is the bound. Otherwise the bound is twice
+  the rows and room now, at most the reach. Each delta reserves its head's slack (the bound less the rows), so a
+  round's new rows always fit their delta, and the head gate checks only the bound. Deltas and heads are blocks, and
+  a block's device buffer wraps its used extent, room included, so a block's room is wired on Metal. `REACH_BYTES`
+  caps that.
+- **The arena is address space, its pages mapped as claims reach them** (`device::Reserved`, `Batch::reserve_arena`).
+  The program's arena is `ARENA_MAX` of address space:
+  - Metal: a placement sparse buffer (Metal 4, `compute_kernel_metal::Sparse`). It is private storage, mapped from
+    placement heaps in 64 KB pages through the MTL4 queue's `updateBufferMappings`.
+  - The CPU backend: the host's lazily committed pages (`os::map_zeroed`), with a mapped extent that `map` raises, so
+    its kernels keep to it as Metal's do.
+  - CUDA, OpenCL and Windows' CPU backend: a fixed allocation, so a claim past it is still a rerun there.
+
+  A claim past the mapped bytes (`size_one`'s op 9, its room in `top[1]`) parks its item instead of stopping the
+  program. Its size script restores the top, counts what the rest of the level wants (`top[2]`) and returns false.
+  The worker leaves the item uncounted and unpushed (`ctl[9]`, `ctl[6]` bit 32). The host maps twice what is wanted
+  and puts the item back (`Ran::put_back`), and the program goes on where it parked: a remap, not a rerun.
+- **Probes on the mini (an M1, macOS 27.2.1):** `newBufferWithLength` commits its whole length at its first use on
+  the GPU. A no-copy buffer wires its whole range at residency (12 buffers of 2 GB made the last command buffer fail
+  out of memory), and `phys_footprint` hides that wiring. Every no-copy wrap of the same memory gets another GPU
+  address. Placement sparse buffers work on the M1 (tier 1) in private storage only: shared storage is refused by an
+  assertion. That is why the arena is a sparse buffer, and why a block (host-read, shared) is not.
+- **A worker's budget** (`PROGRAM_BUDGET`, 16 items): `join_run` sets `q.budget` and ends a worker once it has taken
+  that many items (`ukl_wq_spent`). After a launch with items left (queued, or seeds not taken), the host empties the
+  queue of what was taken (`Ran::compact`) and launches again (`Done::relaunches`). The round's yield
+  (`ROUNDS_A_LAUNCH`, `ctl[8]`/`ctl[9]` as rounds, bit 8) and `Batch::resume` are gone. `ctl[8]` now counts the items
+  taken (`Report::taken`). A program runs as many groups as its largest phase has items, not its total items, which
+  would bound nothing: a launch then takes its workers' budgets' items at most, so its GPU time is bounded by the
+  budget, not by its rounds.
+- **The test** (`a_stratum_is_one_launch_and_its_budgets_relaunches`): it runs the closure first at the program's
+  sizes, then at a budget of 8 with a first arena of 16 bytes (test switches `RERAIL_PROGRAM_BUDGET` and
+  `RERAIL_PROGRAM_ARENA`). It asserts:
+  - dispatches = 1 + relaunches + remaps;
+  - no reruns;
+  - relaunches × budget ≤ items taken;
+  - relaunches with the budget, and remaps with the arena;
+  - the CPU's rows.
+
+  The closure test now asserts no reruns too.
+- **Measured** (the closure, 8 rounds, about 2,660 items):
+  - spark2's CPU backend runs it in 1 launch with no reruns (before: 5 launches, 3 of them reruns). Its groups run one
+    after another there, so later groups take what earlier ones pushed.
+  - The mini's Metal, at the program's sizes: 50 launches, 45 of them relaunches and 4 remaps, with no reruns. At a
+    budget of 4 and an arena of 16 bytes: 126 launches. At a budget of 1, it passes the 200 launches.
+  - The setfix device and join tests: 36 of 36 on spark2's CPU backend and 36 of 36 on the mini's Metal.
+
+  On Metal a launch carries about one phase. Its groups run at once, so those that find the queue empty while a phase
+  is in flight end (`<ukl/workqueue.h>`: an idle worker never polls). The finisher pushes the next phase and takes on
+  alone, until its budget is spent. The relaunch then brings back the whole width. So Metal's launches follow the
+  phases a launch's finisher cannot carry, within the budget's bound (items over the budget).
