@@ -81,7 +81,7 @@ The description is the record: "How you tested it" holds the runs at `main` and 
 | Windows 11 | The home's own daemon stalled 25 to 29 s while 12 or 24 prompt hooks arrive, 4 rounds | 240 of 240 hooks answered at `main` and here; every event reached it with the capability. |
 | Windows 11 | One instance of the pipe held 45 s; the daemon stalled 40 s under 12 hooks | Held 45 s: the event arrived after 45.3 s at `main`, 45.4 s here. Stalled 40 s: 16 of 24 answered at both. |
 | Windows 11 | Real Rerail 0.1.4 and 0.1.5 daemons, and the live daemon of this build, named by the variable | 0.1.4 and 0.1.5 each recorded both events and the prompt at `main` and here, 2 of 2; this build's daemon took 16 hooks at once at both. |
-| Windows 11 | 50 hooks before a tool call to an idle daemon, 3 rounds | Median 185 ms at `main` and 191 ms here over 150 hooks a side; Windows asked, 194 and 189 ms; no process started. |
+| Windows 11 | 50 hooks before a tool call to an idle daemon, 3 rounds | Median 177 ms at `main` and 179 ms here over 150 hooks a side; Windows asked, 157 and 157 ms; no process started. |
 | Linux x64 | 6 one-line changes to the fix's lines, 20 runs each | 5 fail a case in every run; the hook's deadline taken at its lookup fails none. |
 | Linux x64 | The 96 importing test files, against `main` | The same 956 failures at both, from pack test data the machine lacks; none more. |
 | Linux x64 | At this head against `main` 1609ac3a3: the 97 test files that import a changed module, `integration/`, CI's lint and type-check job, rustfmt, clippy, the pipe lookup's Rust cases and the wasm32-wasip1 checks | 490 passed at `main` and 510 here, none failed; the rest all pass. |
