@@ -248,3 +248,36 @@ its launches: fewer than its rounds.
   service (`XPC_ERROR_CONNECTION_INTERRUPTED`, at each try). The offline check (`metal` to AIR) did not show it.
   So a table the script places (5c) is an offset from the arena, not a pointer it writes.
 - **Measured:** spark2's CPU backend, 45 of 45; the mini's Metal, 32 of 32.
+
+### Done (2026-11-22): 5c, a stage's tables are placed in the program's arena
+
+- **A table the device sizes is a place** (`Batch::table`, `Place`). Its record is two words: its offset in the arena
+  (in 8-byte units, plus one; 0 for none) and its room in rows. The kernels read a placed table at
+  `arena + offset`, not at a pointer the host gave. A job's descriptor holds the offsets it reads (`l_at`, `o_at`,
+  `v_at`, `h_at`, read as coherent words, as 5b's are). Its caps are sites the scripts write.
+- **The producer claims it.** After the level's scan, the producer's script (`made_sizes`) claims rows × slots × 8
+  bytes from its count (its rows, at most its room). It writes the record, its own output's offset and its caps. The
+  consumer's level script (`level_sizes`) copies the record into its input's offset and its caps. It also claims the
+  job's row values and, for a dedup, its places (5d's dedup half: twice its rows, a power of two, and the mask).
+- **Every scan is three levels** (`Program::scan_sized`). Its sums lie in the arena, and its tile items are
+  segments that stride. So a scan's room is its rows as counted, not a host bound.
+- **One arena a batch.** Every program of a batch claims from one arena (`Batch.pool`) and one top. The next
+  program inherits the top, so a table one program placed is read where it lies by the next. At the batch's
+  `finish`, each place made is fixed: read at its address from then on (`Table::lies`, `room`, `reach_by`). The
+  arena is then the batch's no more. Reading a place against another program's arena read the wrong rows (symbols
+  that were not).
+- **The arena's room** is twice what the program's claims were estimated to be, at least the batch's floor, at most
+  `ARENA_MAX` (4 GB). A claim past it stops the program (`Done::arena_full`, `arena_wanted`). The round runs again
+  from its first stage in an arena of twice what was wanted (the seed round's loop, `complete` in the rounds on
+  the device).
+- **A union over placed rows has a gate** (`append_rows`): its rows' total against its room. Past it, the round
+  stops, and the head's union floor is twice the rows seen (`union_floor`). A round's tail makes every head's union
+  first, then checks that the arena holds the rest (`room_check`, a `CHECK` op of the size script), before any
+  work that may not run twice (a lattice's fold).
+- **A count's words order the work.** A stage, a witness, a row's scatter and a dedup now list their totals as read
+  and written (`Job::order`). A union's sum read the count a dedup wrote in the same level once no host gate ended
+  the level between them: the stage gates are gone for placed tables (`round_gate` skips them).
+- **Not yet placed:** a lattice's fold reads its delta and its union from host tables (asserted: `lattice_fold`).
+  Its places are 5d's other half.
+- **Measured:** spark2's CPU backend, 45 of 45 (67 s); the mini's Metal (an M1), 32 of 32: its compiler takes the
+  kernel.
