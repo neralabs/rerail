@@ -231,26 +231,43 @@ pub mod f16 {
         if !i.is_multiple_of(K) { prev.wrapping_add(get(t, v, 1, i) as u32) } else { checkpoint(t, v, i / K) as u32 }
     }
 
-    /// The node's parent, or `NONE` at the root: the node before is the parent (an inner node), or a leaf naming
-    /// the previous sibling or, every `K`-th sibling, the parent. A step of 1 to `j` back, else the slot is no
-    /// tape's and the walk ends (decision 0463).
-    pub fn parent(t: &[u8], v: &TapeView, i: u32) -> u32 {
-        let mut j = i;
-        while j != 0 {
-            let s = get(t, v, 0, j - 1);
-            if s & 1 == 0 {
-                return j - 1;
-            }
-            let step = (s >> 2) as u32;
-            if step.wrapping_sub(1) >= j {
-                return NONE;
-            }
-            j -= step;
-            if s & 2 != 0 {
-                return j;
-            }
+    /// `parent_step`'s mark of a link: the walk goes on from the node in the low 32 bits.
+    pub const LINK: u64 = 1 << 32;
+
+    /// A parent walk's first step from node `i` (`NONE` at the root): the parent, or (`LINK` set) the node `j` the
+    /// walk goes on from, a previous sibling's. The node before is the parent (an inner node), or a leaf naming the
+    /// previous sibling or, every `K`-th sibling, the parent. A walk's only state is its node, so `i`'s parent is
+    /// `j`'s, and `j` is before `i`; a step that would not move back (a slot no tape's) ends the walk (decision 0463).
+    pub fn parent_step(t: &[u8], v: &TapeView, i: u32) -> u64 {
+        if i == 0 {
+            return u64::from(NONE);
         }
-        NONE
+        let s = get(t, v, 0, i - 1);
+        if s & 1 == 0 {
+            return u64::from(i - 1);
+        }
+        let step = (s >> 2) as u32;
+        if step.wrapping_sub(1) >= i {
+            return u64::from(NONE);
+        }
+        let j = i - step;
+        if s & 2 != 0 {
+            u64::from(j)
+        } else if j == 0 {
+            u64::from(NONE)
+        } else {
+            LINK | u64::from(j)
+        }
+    }
+
+    /// The node's parent, or `NONE` at the root: its walk's steps (`parent_step`), each to a node before the last
+    /// (at most `K - 1` siblings).
+    pub fn parent(t: &[u8], v: &TapeView, i: u32) -> u32 {
+        let mut r = parent_step(t, v, i);
+        while r & LINK != 0 {
+            r = parent_step(t, v, r as u32);
+        }
+        r as u32
     }
 
     // ---- lines: the newline index (`crate::newlines`) ------------------------------------------------------------

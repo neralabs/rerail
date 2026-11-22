@@ -140,7 +140,7 @@ fn the_kernels_rust_parent_is_the_hosts() {
     for d in crate::parent::documents(&lang) {
         let want = crate::parent::scalar(&d);
         for block in [8, 20, 32, 36, 256] {
-            let got = unsafe { crate::parent::run(crate::parent_all_w8::parent_all_w8, &d, block) };
+            let got = unsafe { crate::parent::run(crate::parent_step_w8::parent_step_w8, crate::parent_jump_w8::parent_jump_w8, &d, block) };
             if let Some(i) = (0..want.len()).find(|&i| got[i] != want[i]) {
                 panic!("{} ({} nodes), groups of {block}: node {i}'s parent {} (the host's {})", d.name, want.len(), got[i], want[i]);
             }
@@ -182,4 +182,25 @@ fn the_hand_vectorized_slot_read_is_the_hosts() {
         }
     }
     assert!(escaped > 100, "the documents escape {escaped} slots: too few to test the side lists' search");
+}
+
+/// A node's first step (`reads::f16::parent_step`) links it to a node before it at most 7 times in a row (every K-th
+/// sibling names the parent): `parent_jump`'s 3 rounds resolve every node of the documents, none left to the walk.
+#[test]
+fn every_chain_of_links_is_at_most_seven() {
+    use rerail_tape_format::reads::f16::{LINK, parent_step};
+    let lang = crate::parent::json_lang();
+    let mut longest = 0;
+    for d in crate::parent::documents(&lang) {
+        for i in 0..d.nodes() {
+            let (mut r, mut links) = (parent_step(&d.bytes, &d.view, i), 0);
+            while r & LINK != 0 {
+                links += 1;
+                r = parent_step(&d.bytes, &d.view, r as u32);
+            }
+            assert!(links <= 7, "{}: node {i}: {links} links", d.name);
+            longest = longest.max(links);
+        }
+    }
+    assert_eq!(longest, 7, "the documents hold a chain of the most links");
 }

@@ -57,7 +57,7 @@ fn main() {
                 #[cfg(target_arch = "aarch64")]
                 "scan" => unsafe { rerail_ukl_aot::hand::parent_all_scan(&d.bytes, &d.view, &mut out) },
                 #[cfg(target_arch = "aarch64")]
-                "ukl" => out = unsafe { parent::run(rerail_ukl_aot::parent_all_w8::parent_all_w8, &d, 256) },
+                "ukl" => out = unsafe { parent::run(rerail_ukl_aot::parent_step_w8::parent_step_w8, rerail_ukl_aot::parent_jump_w8::parent_jump_w8, &d, 256) },
                 _ => {}
             }
             std::hint::black_box(&out);
@@ -78,6 +78,6 @@ fn main() {
             unsafe { rerail_ukl_aot::hand::parent_all_scan(&d.bytes, &d.view, &mut out) };
             out
         });
-        time("ukl w8", &d, &want, || unsafe { parent::run(rerail_ukl_aot::parent_all_w8::parent_all_w8, &d, 256) });
+        time("ukl w8", &d, &want, || unsafe { parent::run(rerail_ukl_aot::parent_step_w8::parent_step_w8, rerail_ukl_aot::parent_jump_w8::parent_jump_w8, &d, 256) });
     }
 }

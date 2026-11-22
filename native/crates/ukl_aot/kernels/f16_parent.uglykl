@@ -1,22 +1,58 @@
-// A test kernel of rerail-ukl-aot (decision 0567 step 3): every node's parent, by format 16's own read
-// (`clif_f16_parent`, `<ukl/reads/tape_f16.h>`), over a tape in place. The parent is a walk back over the slots of
-// the node's previous siblings, each slot a load of the run-time width its array has, an escaped one read from its
-// side list; a lane ends its walk at its own step.
+// A test kernel of rerail-ukl-aot (decision 0567 step 3): every node's parent over a format 16 tape in place, by one
+// step a node and pointer jumping, no walk. A walk's only state is its node, so a node whose first step
+// (`clif_f16_parent_step`, `<ukl/reads/tape_f16.h>`) goes on from a previous sibling's node `j` has `j`'s parent:
+//
+// - `parent_step`: each node's step, its parent (`link` NONE) or the node it is linked to (`link`, and `res` its
+//   number too);
+// - `parent_jump`, 3 rounds, each from one pair of buffers to the other: a linked node takes its link's `res` and
+//   `link`, so after round `r` its link has passed `2^r` links. A chain is at most K - 1 = 7 links (every K-th
+//   sibling names the parent), so 3 rounds resolve every node of a tape's; the last round (`args.last`) gives a node
+//   still linked (a slot no tape's) to the walk (`clif_f16_parent`), as the host reads it.
+//
+// Every thread one node in every launch: no lane waits on another's walk.
 
 #define CLIF_VIEW_SPACE UKL_GLOBAL
 #include <ukl/backend.h>
 #include <ukl/reads/tape.h>
 
-typedef struct ParentArgs { uint32_t nodes, pad0, pad1, pad2; } ParentArgs;
-UKL_REFLECT_STRUCT(ParentArgs, nodes, pad0, pad1, pad2)
+typedef struct ParentArgs { uint32_t nodes, last, pad1, pad2; } ParentArgs;
+UKL_REFLECT_STRUCT(ParentArgs, nodes, last, pad1, pad2)
 
-DEFINE_KERNEL2(f16, parent_all,
+DEFINE_KERNEL2(f16, parent_step,
                ROBUFFER, uint8_t,    tape, "[bytes]",
                ROBUFFER, uint32_t,   view, "[words]",
-               RWBUFFER, uint32_t,   out,  "[args.nodes]",
+               RWBUFFER, uint32_t,   res,  "[args.nodes]",
+               RWBUFFER, uint32_t,   link, "[args.nodes]",
                ARGS,     ParentArgs, args, ,
                GID0,     uint32_t,   i,    )
 {
   if(i>=args.nodes)return;
-  out[i]=clif_f16_parent(tape,view,i);
+  uint64_t r=clif_f16_parent_step(tape,view,i);
+  res[i]=(uint32_t)r;
+  link[i]=(r&CLIF_T_LINK)!=0u?(uint32_t)r:CLIF_T_NONE;
+}
+
+DEFINE_KERNEL2(f16, parent_jump,
+               ROBUFFER, uint8_t,    tape,    "[bytes]",
+               ROBUFFER, uint32_t,   view,    "[words]",
+               ROBUFFER, uint32_t,   res,     "[args.nodes]",
+               ROBUFFER, uint32_t,   link,    "[args.nodes]",
+               RWBUFFER, uint32_t,   resOut,  "[args.nodes]",
+               RWBUFFER, uint32_t,   linkOut, "[args.nodes]",
+               ARGS,     ParentArgs, args,    ,
+               GID0,     uint32_t,   i,       )
+{
+  if(i>=args.nodes)return;
+  uint32_t l=link[i];
+  uint32_t r=res[i];
+  if(l!=CLIF_T_NONE){
+    r=res[l];
+    l=link[l];
+  }
+  if(l!=CLIF_T_NONE&&args.last!=0u){
+    r=clif_f16_parent(tape,view,i);
+    l=CLIF_T_NONE;
+  }
+  resOut[i]=r;
+  linkOut[i]=l;
 }
