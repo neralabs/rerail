@@ -13,6 +13,9 @@
 //!   tape holds.
 //! - `search_index_sets(tape_id, index_version, node_count, complete, has_errors)`: the search index's sets
 //!   (`content_store::search_index`).
+//! - `name_bindings(name_atom, digest, revision)`, `derivations(output_atom, producer, status, cost)` and
+//!   `derivation_inputs(output_atom, ordinal, name_atom, digest)`: the derivation graph (`content_store::derivation`),
+//!   one unit a name (a derivation's output); `name_atom` is null for an unnamed input.
 //!
 //! `tape_id = ?` (and `kind = ?`, `term = ?`, `lang = ?`) choose the rows; a table without `tape_id` reads every
 //! tape, one at a time. SQLite rechecks every constraint. Values are as the store numbers them: a term is the store's
@@ -20,6 +23,7 @@
 //! its files mapped once while the chain stays.
 use super::super::kept_facts::{ChainRows, KeptSpace, chain_rows};
 use super::kept;
+use super::super::derivation;
 use rusqlite::{
     Connection, Result, ffi,
     types::Value,
@@ -43,6 +47,9 @@ enum Which {
     TermFreq,
     Vocabulary,
     SearchSets,
+    Bindings,
+    Derivations,
+    Inputs,
 }
 
 impl Which {
@@ -58,13 +65,16 @@ impl Which {
             Which::TermFreq => c"CREATE TABLE x(lang INTEGER, term INTEGER, n INTEGER)",
             Which::Vocabulary => c"CREATE TABLE x(lang INTEGER, expression TEXT, term INTEGER)",
             Which::SearchSets => c"CREATE TABLE x(tape_id INTEGER, index_version INTEGER, node_count INTEGER, complete INTEGER, has_errors INTEGER)",
+            Which::Bindings => c"CREATE TABLE x(name_atom INTEGER, digest BLOB, revision INTEGER)",
+            Which::Derivations => c"CREATE TABLE x(output_atom INTEGER, producer BLOB, status INTEGER, cost INTEGER)",
+            Which::Inputs => c"CREATE TABLE x(output_atom INTEGER, ordinal INTEGER, name_atom INTEGER, digest BLOB)",
         }
     }
 
     /// The columns an equality chooses rows by, each with how much it narrows.
     fn keys(self) -> &'static [(c_int, f64)] {
         match self {
-            Which::Sets | Which::Covers | Which::SearchSets => &[(0, 10_000.0)],
+            Which::Sets | Which::Covers | Which::SearchSets | Which::Bindings | Which::Derivations | Which::Inputs => &[(0, 10_000.0)],
             Which::Kinds => &[(0, 10_000.0), (1, 100.0)],
             Which::Terms => &[(2, 10_000.0), (1, 1000.0), (0, 2.0)],
             Which::KindSize | Which::TermKindFreq => &[(0, 1000.0)],
@@ -78,6 +88,7 @@ impl Which {
         match self {
             Which::Vocabulary => super::vocabulary::space(),
             Which::SearchSets => super::super::search_index::space(),
+            Which::Bindings | Which::Derivations | Which::Inputs => super::super::derivation::space(),
             _ => kept::space(),
         }
     }
@@ -100,6 +111,9 @@ pub(in crate::content_store) fn install(connection: &Connection, store: &Path) -
         (c"term_freq", Which::TermFreq),
         (c"vocabulary_term", Which::Vocabulary),
         (c"search_index_sets", Which::SearchSets),
+        (c"name_bindings", Which::Bindings),
+        (c"derivations", Which::Derivations),
+        (c"derivation_inputs", Which::Inputs),
     ] {
         connection.create_module(name, &MODULE, Some((store.to_path_buf(), which)))?;
     }
@@ -212,7 +226,7 @@ fn int(v: &Option<Value>) -> Option<Option<i64>> {
 
 impl Cursor {
     fn per_tape(&self) -> bool {
-        matches!(self.which, Which::Sets | Which::Kinds | Which::Terms | Which::Covers | Which::SearchSets)
+        matches!(self.which, Which::Sets | Which::Kinds | Which::Terms | Which::Covers | Which::SearchSets | Which::Bindings | Which::Derivations | Which::Inputs)
     }
 
     /// The key slot's integer constraint: `Some(None)` none given, `None` one that matches nothing.
@@ -237,6 +251,19 @@ impl Cursor {
         let blob = |t: &kept::Tape<'_>, at: i64, len: i64| Value::Blob(t.bytes(at, len));
         match self.which {
             Which::SearchSets => super::super::search_index::set(view, unit).map(|s| vec![std::iter::once(unit).chain(s).map(Value::Integer).collect()]).unwrap_or_default(),
+            Which::Bindings => derivation::bound(view, unit).map(|(d, revision)| vec![vec![Value::Integer(unit), Value::Blob(d.to_vec()), Value::Integer(revision)]]).unwrap_or_default(),
+            Which::Derivations => derivation::stored(view, unit)
+                .map(|d| vec![vec![Value::Integer(unit), Value::Blob(d.producer.to_vec()), Value::Integer(d.status), Value::Integer(d.cost)]])
+                .unwrap_or_default(),
+            Which::Inputs => derivation::stored(view, unit)
+                .map(|d| {
+                    d.inputs
+                        .iter()
+                        .enumerate()
+                        .map(|(o, (name, digest))| vec![Value::Integer(unit), Value::Integer(o as i64), name.map_or(Value::Null, |n| Value::Integer(i64::from(n))), Value::Blob(digest.to_vec())])
+                        .collect()
+                })
+                .unwrap_or_default(),
             Which::Sets => kept::tape(view, unit).map(|t| vec![vec![Value::Integer(unit), Value::Integer(t.version), Value::Integer(t.nodes)]]).unwrap_or_default(),
             Which::Kinds => {
                 let Some(t) = kept::tape(view, unit) else { return Vec::new() };
@@ -363,6 +390,8 @@ unsafe impl VTabCursor for Cursor {
                     None => Vec::new(),
                     Some(Some(tape)) => vec![tape],
                     Some(None) if self.which == Which::SearchSets => super::super::search_index::tapes(&space.view()).collect(),
+                    Some(None) if self.which == Which::Bindings => derivation::names(&space.view()).collect(),
+                    Some(None) if matches!(self.which, Which::Derivations | Which::Inputs) => derivation::outputs(&space.view()).collect(),
                     Some(None) => kept::tapes(&space.view()).collect(),
                 }
             }

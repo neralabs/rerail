@@ -1622,6 +1622,15 @@ pub fn materialize_stored(connection: &Connection) -> StoreResult<()> {
     Ok(())
 }
 
+/// The store's kept facts as the SQL tables of their names (`prefilter::vtab`: the derivation graph, the search
+/// index, the prefilter's) on `connection`, a plain connection to a store's file: for checks of what a store holds on
+/// disk, beside `materialize_stored`.
+pub fn install_kept_tables(connection: &Connection) -> StoreResult<()> {
+    let path = connection.path().filter(|path| !path.is_empty()).ok_or_else(|| StoreError::Invalid("a connection to no store's file".to_owned()))?;
+    super::prefilter::vtab::install(connection, Path::new(path))?;
+    Ok(())
+}
+
 impl Drop for Atoms {
     /// The last holder of a database's atoms appends what is pending (a store or the planner's
     /// symbols closing). Atoms never written are lost, as in a crash; nothing durable names them.

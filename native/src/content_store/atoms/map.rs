@@ -493,10 +493,6 @@ impl Atoms {
 pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
     ("atom_blocks", "first", "the store's atoms themselves: their numbering is the store's"),
     ("atom_blocks", "upto", "the store's atoms themselves"),
-    ("name_bindings", "name_atom", "derivation.rs: mapped in the write transaction (`syms_to_store`), and back as read"),
-    ("derivations", "output_atom", "derivation.rs: mapped in the write transaction (`derivations_to_store`), and back as read"),
-    ("derivation_inputs", "output_atom", "derivation.rs: as `derivations`"),
-    ("derivation_inputs", "name_atom", "derivation.rs: as `derivations`"),
     ("source_objects", "frame", "content-addressed sources: their makers keep no atom (tapes, program texts, tree counts of integer constants, the planning choices' own string table)"),
 ];
 
@@ -513,8 +509,6 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("corpus_plans", &["plan_digest", "live"]),
     ("corpus_roots", &["root_id"]),
     ("corpus_state", &["singleton", "run", "history_bytes", "due", "archive_due"]),
-    ("derivation_inputs", &["ordinal", "digest"]),
-    ("derivations", &["producer", "status", "cost"]),
     ("facts_chain", &["space", "seq", "tag"]),
     ("file_documents", &["tape_id", "ordinal", "parent_ordinal", "role_id", "via_id", "document_tape_id", "source_map", "host_errors", "at_start", "at_end"]),
     // The per-file memo's entries (decision 0240 §4): their symbols are strings in the pack (memo/image.rs).
@@ -525,7 +519,6 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("git_tree_entries", &["tree_id", "name_string_id", "mode_id", "object_kind_id", "target_hash_id"]),
     ("git_trees", &["tree_id", "tree_hash_id", "complete", "entry_count"]),
     ("hashes", &["hash_id", "algorithm_id", "lane0", "lane1", "lane2", "lane3"]),
-    ("name_bindings", &["digest", "revision"]),
     ("object_archive", &["kind", "id", "frame"]),
     ("object_pins", &["object_kind_id", "object_id", "owner_string_id", "lease_until"]),
     ("paths", &["path_id", "string_id"]),

@@ -540,28 +540,8 @@ CREATE TABLE IF NOT EXISTS facts_chain (
     PRIMARY KEY(space, seq)
 ) STRICT;
 
--- The derivation graph (derivation.rs): fact names (atoms) bound to digests, and each
--- derivation's inputs with the digest it read. A derivation's output is a name too, so an
--- unchanged output rebinds nothing (early cutoff). Additive: older binaries never read these tables.
-CREATE TABLE IF NOT EXISTS name_bindings (
-    name_atom INTEGER PRIMARY KEY,
-    digest BLOB NOT NULL CHECK(length(digest) = 32),
-    revision INTEGER NOT NULL CHECK(revision >= 0)
-) STRICT;
-CREATE TABLE IF NOT EXISTS derivations (
-    output_atom INTEGER PRIMARY KEY,
-    producer BLOB NOT NULL CHECK(length(producer) = 32),
-    status INTEGER NOT NULL,
-    cost INTEGER NOT NULL CHECK(cost >= 0)
-) STRICT;
-CREATE TABLE IF NOT EXISTS derivation_inputs (
-    output_atom INTEGER NOT NULL REFERENCES derivations(output_atom) ON DELETE CASCADE,
-    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
-    name_atom INTEGER,
-    digest BLOB NOT NULL CHECK(length(digest) = 32),
-    PRIMARY KEY (output_atom, ordinal)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS derivation_inputs_by_name ON derivation_inputs(name_atom);
+-- The derivation graph (names bound to digests, derivations and their inputs) is kept facts of the store (t33
+-- step 1, `derivation`): `RETIRED_TABLES`.
 -- A push in progress (open-items O1): the row is committed before a push writes anything and
 -- deleted after its last write reaches SQLite, so a store that holds it may hold a prefix of a
 -- push's writes and is recovered before the next push.
@@ -755,7 +735,8 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 ///   metadata beside the chain (decision 0456 step 6a) has them.
 /// - The prefilter's per-tape access paths, its store-wide counts and its vocabularies, and the text layer's
 ///   vocabulary, and the search index (t33 steps 6 and 7): kept facts (`prefilter::kept`, `prefilter::vocabulary`,
-///   `search_index`), read through virtual tables of the same names (`prefilter::vtab`; the FTS tables none). Children first; their triggers go with them. A name a virtual table
+///   `search_index`), read through virtual tables of the same names (`prefilter::vtab`; the FTS tables none). The derivation
+///   graph (t33 step 1): kept facts (`derivation`), read through virtual tables of its tables' names too. Children first; their triggers go with them. A name a virtual table
 ///   has is dropped only while the store holds a table of it: SQLite refuses to drop an eponymous virtual table.
 const RETIRED_TABLES: &[&str] = &[
     "frames", "frame_segments", "frame_part_used", "frame_spaces", "frame_confirmed", "frame_used", "frame_program_used",
@@ -778,6 +759,9 @@ const RETIRED_TABLES: &[&str] = &[
     "search_kind_vocab",
     "search_kind_fts",
     "search_index_sets",
+    "derivation_inputs",
+    "derivations",
+    "name_bindings",
 ];
 
 /// Whether the store holds a table of `RETIRED_TABLES`.
@@ -992,7 +976,8 @@ mod schema_object_tests {
         applied.sort();
         read.sort();
         assert_eq!(read, applied);
-        // 95 once the prefilter's tables became kept facts (t33 steps 6 and 7).
-        assert!(read.len() > 90, "{} objects", read.len());
+        // 95 once the prefilter's tables became kept facts (t33 steps 6 and 7); 87 once the derivation graph did (t33
+        // step 1).
+        assert!(read.len() > 84, "{} objects", read.len());
     }
 }

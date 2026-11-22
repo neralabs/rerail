@@ -153,7 +153,7 @@ removed with nothing in its place but K1–K4.
 | `inputs.rs` `CONSULTED` | the inputs, artifacts and `base` revisions a run read | answers to the input requests (K3), whose rows are the record |
 | `git.rs` `STATE` | the index read once per run, its file's digest | the index file is a leaf (K2); `git_tracked` and `git_has` answers are rows keyed by it |
 | `constant_rows` | the programs, relations, options, root, engine; `World::still` | relations of the constants' space (no documents), stored in K1, maintained from `env`, `dir_entry` and `file_line` deltas |
-| `derivations`, `derivation_inputs`, `name_bindings` | names bound to digests; validity by a join | the corpus path's uses go (phases' granules: step 5; own counts: step 6). The tables go when the workspace pipeline's use goes (step 8) |
+| `derivations`, `derivation_inputs`, `name_bindings` | names bound to digests; validity by a join | the corpus path's uses go (phases' granules: step 5; own counts: step 6). **Moved** (2026-11-22): the derivation graph is kept facts of the store's derivation space (`content_store/derivation.rs`), one partition a name (its store atom): `name_binding(d0..d3, revision)`, `derivation(p0..p3, status, cost)`, `derivation_input(ordinal, named, name, d0..d3)` and `derivation_reader(output)`, the reverse index the frontier reads, kept with each write. A write is one `write_space` in the store's write transaction, its changes decided against the rows it replaces; validity is a probe of each input's binding. SQL reads the three tables through virtual tables of their names and columns (`prefilter::vtab`); a store of before drops them (`RETIRED_TABLES`), its graph recomputed by the next push |
 
 ### Step 2: rule files and programs
 
