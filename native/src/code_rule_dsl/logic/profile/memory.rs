@@ -142,9 +142,9 @@ pub(super) struct Sample {
 fn holders() -> [usize; 7] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
     // Relational work's device leases exist only where the device does (macOS).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     let (live, idle) = rerail_accel::gpu::shared::held_bytes();
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     let (live, idle) = (0, 0);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
     let (host, host_free) = rerail_accel::blocks::host_held();
@@ -186,7 +186,7 @@ pub(super) fn sample() {
         let every_ms = std::env::var("RERAIL_PROF_MEMORY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5u64).max(1);
         SAMPLED.lock().unwrap().every_ms = every_ms;
         // Relational work's device leases are sampled as the heap is, under the span that leased them.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         if rerail_prof::heap::on() {
             rerail_accel::gpu::shared::set_lease_hook(|ptr, len| {
                 if len == 0 {
@@ -436,7 +436,11 @@ pub fn physical_bytes() -> Option<u64> {
         let (pages, page) = unsafe { (libc::sysconf(libc::_SC_PHYS_PAGES), libc::sysconf(libc::_SC_PAGESIZE)) };
         (pages > 0 && page > 0).then(|| pages as u64 * page as u64)
     }
-    #[cfg(not(all(unix, not(target_family = "wasm"))))]
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_physical_bytes()
+    }
+    #[cfg(not(any(all(unix, not(target_family = "wasm")), windows)))]
     {
         None
     }
@@ -465,7 +469,11 @@ pub fn resident_bytes() -> Option<u64> {
         let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
         (page_size > 0).then(|| pages.saturating_mul(page_size as u64))
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_working_set()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         None
     }

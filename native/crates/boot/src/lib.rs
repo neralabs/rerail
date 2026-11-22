@@ -736,7 +736,7 @@ pub mod code_rule_dsl {
         }
     }
     // Metal as the engine's device (`rerail-device-metal`): registered as the library loads (`install_devices`).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub use rerail_device_metal::code_rule_dsl::device_metal;
     pub mod embed {
@@ -3004,7 +3004,7 @@ pub mod code_rule_dsl {
             }
         }
         // The slabs' tests store parsed documents: they run where the languages are registered.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         pub mod slabs {
             #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_device_metal::code_rule_dsl::residency::slabs::*;
@@ -3440,7 +3440,7 @@ pub mod code_rule_dsl {
             pub use rerail_transducer::code_rule_dsl::transducer::packed::*;
             pub mod compile_matcher {
                 pub use rerail_transducer::code_rule_dsl::transducer::packed::compile_matcher::*;
-                #[cfg(any(target_os = "macos", target_os = "linux"))]
+                #[cfg(any(target_os = "macos", target_os = "linux", windows))]
                 pub use rerail_device_metal::code_rule_dsl::transducer::packed::compile_matcher::matcher_metal;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::transducer::packed::*;
@@ -3455,24 +3455,24 @@ pub mod code_rule_dsl {
             #[cfg(any(test, feature = "test-hooks", not(target_family = "wasm")))]
             #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_lang_json::code_rule_dsl::transducer::packed::json_parser;
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub mod metal_backend {
                 #[cfg(any(test, feature = "test-hooks"))]
                 pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_backend::*;
                 // A launch-budget test that parses a document: it runs where the languages are registered.
             }
-            #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+            #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
             #[allow(unused_imports)]
             pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_join;
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub mod metal_program_backend {
                 pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_program_backend::*;
                 // The tape tests store parsed documents: they run where the languages are registered.
             }
             // Metal's semantic fixtures parse documents: they run where the languages are registered.
-            #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+            #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
             pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_rows;
-            #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+            #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
             pub use rerail_device_metal::code_rule_dsl::transducer::packed::metal_sort;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::tape::TapeDoc;
@@ -3502,21 +3502,21 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::transducer::packed::literal_anchors::*;
             #[allow(unused_imports)]
-            #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+            #[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
             pub use crate::code_rule_dsl::transducer::packed::metal_backend::launch::LaunchScope as MetalTestScope;
             #[allow(unused_imports)]
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub use crate::code_rule_dsl::transducer::packed::metal_program_backend::set_steps;
             #[allow(unused_imports)]
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub use crate::code_rule_dsl::transducer::packed::metal_program_backend::lattice as metal_lattice;
             #[allow(unused_imports)]
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub use crate::code_rule_dsl::transducer::packed::metal_program_backend::nearest as metal_nearest;
             #[allow(unused_imports)]
             pub use crate::code_rule_dsl::transducer::packed::device::{RootJobs, RootsFound};
             #[allow(unused_imports)]
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             pub use crate::code_rule_dsl::transducer::packed::compile_matcher::matcher_metal;
             #[allow(unused_imports)]
             pub use crate::code_rule_dsl::transducer::packed::compile_matcher::{Backend as MatcherBackend, LoweredMatcher, LoweredWave, WaveRun};

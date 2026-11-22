@@ -25,6 +25,9 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/body/lz4_decode.h", include_str!("../lib/ukl/body/lz4_decode.h")),
     ("ukl/body/histogram_part.h", include_str!("../lib/ukl/body/histogram_part.h")),
     ("ukl/body/radix_tile.h", include_str!("../lib/ukl/body/radix_tile.h")),
+    ("ukl/body/tape_f16.h", include_str!("../lib/ukl/body/tape_f16.h")),
+    ("ukl/body/tape_api.h", include_str!("../lib/ukl/body/tape_api.h")),
+    ("ukl/body/tape_read.h", include_str!("../lib/ukl/body/tape_read.h")),
     ("ukl/lz4.h", include_str!("../lib/ukl/lz4.h")),
     ("ukl/scan.h", include_str!("../lib/ukl/scan.h")),
     ("ukl/compact.h", include_str!("../lib/ukl/compact.h")),
@@ -35,9 +38,13 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/pool.h", include_str!("../lib/ukl/pool.h")),
     ("ukl/grid.h", include_str!("../lib/ukl/grid.h")),
     ("ukl/clif.h", include_str!("../lib/ukl/clif.h")),
-    // The tape's reads for the kernels, written by hand (decision 0524): one body, which `tape.h` reads formats 15
-    // and 16 through and `tape_z.h` 16z too.
-    ("ukl/reads/tape_body.h", include_str!("../lib/ukl/reads/tape_body.h")),
+    // The tape's reads for the kernels, written by hand (decisions 0524, 0576): each format's reads, the reads made of
+    // them (included once a format) and the public reads, which `tape.h` (formats 15 and 16) and `tape_z.h` (16z too)
+    // include.
+    ("ukl/reads/tape_common.h", include_str!("../lib/ukl/reads/tape_common.h")),
+    ("ukl/reads/tape_f15.h", include_str!("../lib/ukl/reads/tape_f15.h")),
+    ("ukl/reads/tape_f16.h", include_str!("../lib/ukl/reads/tape_f16.h")),
+    ("ukl/reads/tape_f16z.h", include_str!("../lib/ukl/reads/tape_f16z.h")),
     ("ukl/reads/tape.h", include_str!("../lib/ukl/reads/tape.h")),
     ("ukl/reads/tape_z.h", include_str!("../lib/ukl/reads/tape_z.h")),
     // The other reads written once in CLIF (decision 0310), as `rerail_clif::ukl` writes them: generated, held here
@@ -45,6 +52,7 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/reads/relation.h", include_str!("../lib/ukl/reads/relation.h")),
     ("ukl/reads/ids.h", include_str!("../lib/ukl/reads/ids.h")),
     ("ukl/reads/view.h", include_str!("../lib/ukl/reads/view.h")),
+    ("ukl/body/view_reads.h", include_str!("../lib/ukl/body/view_reads.h")),
     // The tape's writer's ops for the kernels, written by hand (decisions 0434 §6, 0524).
     ("ukl/writer.h", include_str!("../lib/ukl/writer.h")),
 ];

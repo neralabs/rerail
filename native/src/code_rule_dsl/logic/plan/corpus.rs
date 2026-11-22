@@ -16,8 +16,7 @@
 //! included (per kind its nodes and sizes, per parent kind its children, the postings of the program's constants:
 //! `Own`). The cross-file part plans with the chunks' sums. Nodes are written as `path:index`.
 
-#[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use super::{Error, Outcome, Result, lower, output};
 
 use crate::code_rule_dsl::facts::core::{self, Built};
@@ -132,6 +131,8 @@ pub const COMBINING: &[&str] = &[
     // (`lower::bounded`, decision 0511) and a group's first by an order (`lower::first`, decision 0515).
     "RERAIL_ASOF",
     "RERAIL_FIRST",
+    // A narrow copy derived again, `=off`, not diffed from its original (`combining::Diffed`, decision 0575).
+    "RERAIL_NARROW_DIFF",
 ];
 
 /// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
@@ -2683,6 +2684,12 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
 /// The root's runs whose files' tapes a run reads before its first wave (Q22): its own last, and the phases' between.
 const TAPE_RUNS: usize = 4;
 
+/// The root a manifest names: the fact root of a snapshot, else the canonical path.
+pub(super) fn manifest_root(root: &Path) -> String {
+    crate::git_workspace::snapshot::fact_root(root)
+        .or_else(|| root.canonical().ok()).unwrap_or_else(|| root.to_path_buf()).to_string_lossy().into_owned()
+}
+
 /// Records the run's manifest and relations, then starts collection if a pass is due: queued behind the run's
 /// writes (decision 0102), so the manifest names only what is written, and the lease on collection is let go
 /// once it is.
@@ -2694,9 +2701,7 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     let scope = owner.as_ref().map(|owner| owner.scope.clone())
         .or_else(|| crate::git_workspace::snapshot::analysis_scope(root))
         .or_else(|| (!phase0::active()).then(|| crate::content_store::analysis_scope::directory(root)));
-    let root = crate::git_workspace::snapshot::fact_root(root)
-        .or_else(|| dunce::canonicalize(root).ok()).unwrap_or_else(|| root.to_path_buf());
-    let (root, sources, also, relations) = (root.to_string_lossy().into_owned(), sources.to_vec(), also.to_vec(), relations.to_vec());
+    let (root, sources, also, relations) = (manifest_root(root), sources.to_vec(), also.to_vec(), relations.to_vec());
     let plan = memo::plan_digest(program);
     let batch = phases::batch_plans(&root, plan, &also);
     // A batch collects at its first run alone: the last batch's final manifest names all that batch's plans then. Later,
@@ -2706,7 +2711,8 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     let also: Vec<[u8; 32]> = also.into_iter().chain(batch.into_iter().flatten()).collect();
     // A run inside another (a phase's, as phase 1's while the outer run lists its files; the constants') leaves
     // collection to the outer run, which collects after its last wave: here it would run beside the outer run's waves.
-    let collect = !std::env::var("RERAIL_CORPUS_GC").is_ok_and(|v| v == "off") && outer && first_of_batch;
+    let policy = crate::content_store::CorpusPolicy::of_run();
+    let collect = policy.is_some() && outer && first_of_batch;
     // Every lane names a set (decision 0302 §4: a lane with none is an older binary's). A run inside another, or one
     // whose programs name none, is its lane's own set: never superseded, protected as before. A run inside another
     // would otherwise supersede the outer run's lane.
@@ -2716,11 +2722,12 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
     if collect {
         crate::content_store::upkeep::MemoSweep::register_once(store.database_path());
     }
+    // A run an analysis run owns (decision 0547) is read under its owner's lease, which holds every collection off
+    // until the owner finishes: the owner collects then (`AnalysisRun::finish`). Started here, each of ep2's runs
+    // found the lease held and collected nothing, its store growing by every run's plans.
+    let collect = collect && owner.is_none();
     // `also`: the outer run's names its nested runs' plans too (`Report::plans`).
-    let mut policy = crate::content_store::CorpusPolicy::default();
-    if let Some(mb) = std::env::var("RERAIL_CORPUS_HISTORY_MB").ok().and_then(|v| v.parse::<u64>().ok()) {
-        (policy.high_water, policy.low_water) = (mb << 20, (mb << 20) / 4 * 3);
-    }
+    let policy = policy.unwrap_or_default();
     // The sources stored by writes queued before the manifest's, and the texts named meanwhile: the record's item
     // takes them as the writer applies it (`take_named_sources`), with these, named on the run's side.
     let mut sources = sources;
@@ -4216,6 +4223,10 @@ fn run_observed_within(
     if durable.is_some() {
         program_plans.push(prepared_key);
     }
+    // What the program asks and puts of each kept space, recorded there under its key (decision 0401 step 8): a
+    // space's entries no live program's record names are collection's. A phase's run binds its own.
+    let readers = durable.is_some().then(|| Arc::new(crate::content_store::kept_facts::ReaderLog::new(prepared_key)));
+    let _readers = readers.clone().map(|log| crate::code_rule_dsl::logic::profile::bind(crate::content_store::kept_facts::KeptReader(Some(log))));
     let part_keys: std::sync::Mutex<Vec<[u8; 32]>> = Default::default();
     // The pipelines' runs the run keeps (decision 0333): the manifest names them, and the next run finds them so.
     let kept_runs: std::sync::Mutex<Vec<[u8; 32]>> = Default::default();
@@ -5462,7 +5473,17 @@ fn run_observed_within(
         };
         // The stat index (git's): a file whose stat is the one recorded when its source was last read is that
         // source, and on a memo hit is neither read nor hashed.
-        let stats: Vec<Option<crate::content_store::FileStat>> = crate::code_rule_dsl::logic::profile::on_cores(|| window.par_iter().map(|(_, path, _)| stat(path)).collect());
+        // Each job in the run (`run_state::Carry`, decision 0442): `stat` counts its work into the run's records.
+        let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
+        let stats: Vec<Option<crate::content_store::FileStat>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            window
+                .par_iter()
+                .map(|(_, path, _)| {
+                    let _in = carry.enter();
+                    stat(path)
+                })
+                .collect()
+        });
         let mut known: Vec<Option<crate::content_store::SourceId>> = window.iter().zip(&stats).map(|((_, path, _), stat)| stat.and_then(|now| stat_index.source(world::store_path(path), now))).collect();
         // An immutable Git source is identified by its blob, without statting or reading a checkout file.
         // A previously seen blob's SHA-256 lets the existing content memo answer before its bytes are fetched.
@@ -7490,7 +7511,7 @@ fn run_observed_within(
             // blocks wrote, which sizes the chunks.
             let held_mb = held.div_ceil(1 << 20);
             // The device pool's share of what the chunk was sized under: its blocks leased and idle, the rows' blocks.
-            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             crate::code_rule_dsl::logic::profile::decision("chunk size: the device pool", || {
                 let (live, idle) = rerail_accel::gpu::shared::held_bytes();
                 let h = crate::code_rule_dsl::facts::rows::held();
@@ -9144,6 +9165,9 @@ fn run_observed_within(
             totals.add_rows(rel, 0, empty.as_ref(), &types);
         }
     }
+    // `node`'s kind column's value counts, as its statistics were had (kept, patched or counted): the tree's kinds
+    // exactly (`Stats::kinds_counted`), which the cross part's plans read beside `node`'s own statistics.
+    let node_kinds: parking_lot::Mutex<Option<Vec<(i64, i64)>>> = parking_lot::Mutex::new(None);
     // A memoised run's base relations, as the cross-file part reads them: every file's rows, read from the memo or
     // evaluated, measured once (a file read from the memo has no chunk to measure them in).
     if memoised {
@@ -9493,6 +9517,12 @@ fn run_observed_within(
                 k.documents_scanned(source, &from, 1);
                 (k, "counted", true)
             });
+            if rel == "node"
+                && let Some(kind) = names.iter().position(|c| c == "kind")
+                && let Some(counts) = counted.exact(kind)
+            {
+                *node_kinds.lock() = Some(counts.collect());
+            }
             let by_name: HashMap<String, Stat> = counted.statistics(&|c| held.contains(c)).into_iter().map(|m| (m.0.clone(), m)).collect();
             // The corpus batch's probes of it estimated by them before its rows are made (decision 0494).
             if let Some(batch) = &corpus_batch {
@@ -9713,6 +9743,9 @@ fn run_observed_within(
     if own {
         if memo_tree_stats {
             own_totals.apply(&mut cross_stats);
+            if let Some(counts) = node_kinds.lock().take() {
+                cross_stats.kinds_counted(counts);
+            }
         } else {
             cross_stats.nodes = nodes as f64;
             cross_stats.docs = Some(own_totals.docs);
@@ -10755,6 +10788,10 @@ fn run_observed_within(
     drop(waves.take());
     if let Some((relations, reading)) = publish_later {
         let _s = crate::code_rule_dsl::logic::profile::span(|| "record the run in the store".into());
+        // What it only asked, recorded before the manifest that names its key.
+        if let Some(log) = &readers {
+            log.flush(store);
+        }
         collecting = record_run(store, root, &run_sources, &memo_program, &program_plans.iter().chain(&nested_plans).chain(part_keys.lock().expect("the parts' keys").iter()).chain(kept_runs.lock().expect("the kept runs").iter()).copied().collect::<Vec<_>>(), Some(lane), policy, &relations, &late_sources, reading, !phases::in_phase() && !phase0::active() && options.get(constants::OWN).is_none())?;
     }
     // The cross part's writes are one wave: its kept strata's frames, retained rows, rounds and statistics.
@@ -12045,7 +12082,8 @@ fn git_files(root: &Path) -> Option<(Vec<String>, usize)> {
     // Kept when Git sees no file under the root too (a corpus in an ignored directory): unkept, every run read the
     // work tree's whole status again to find none (decision 0285).
     let found = observe(|o| o.git(root)).map(|g| {
-        let prefix = real.strip_prefix(&g.worktree_root).map(|p| p.to_string_lossy().into_owned()).unwrap_or_default();
+        // With `/`, as Git spells the work tree's files.
+        let prefix = real.strip_prefix(&g.worktree_root).map(slashed).unwrap_or_default();
         let under: Vec<String> = g
             .worktree_files()
             .into_iter()
@@ -12211,17 +12249,23 @@ fn walked(root: &Path, enters: fn(&str) -> bool) -> Result<Vec<String>> {
             } else if path.is_file() {
                 // A document is named by its path in the repository, with `/` on Windows too: scopes' globs and
                 // findings read it.
-                out.push(slashed(&path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?.to_string_lossy(), std::path::MAIN_SEPARATOR));
+                out.push(slashed(path.strip_prefix(root).map_err(|e| Error::Plan(e.to_string()))?));
             }
         }
     }
     Ok(out)
 }
 
+/// A path under a root as a document's path is spelled on every OS (and a canonical one as phase 1 hands it on), Git's
+/// way: its parts joined with `/` (`slashed_by`, by the platform's separator).
+pub(super) fn slashed(relative: &Path) -> String {
+    slashed_by(&relative.to_string_lossy(), std::path::MAIN_SEPARATOR)
+}
+
 /// A relative path whose parts `separator` divides (the platform's: `\` on Windows), with `/` between them, as every
 /// reader of the corpus's paths takes them (scope globs, artifact digests, Git's listing). Elsewhere a `\` is a
 /// character of a name, and is kept.
-fn slashed(relative: &str, separator: char) -> String {
+fn slashed_by(relative: &str, separator: char) -> String {
     relative.split(separator).collect::<Vec<_>>().join("/")
 }
 
@@ -12399,8 +12443,8 @@ pub mod tests {
     /// elsewhere it is a character of a name.
     #[test]
     fn a_walked_path_is_named_with_slashes() {
-        assert_eq!(super::slashed(r"pkg\sub\a.py", '\\'), "pkg/sub/a.py");
-        assert_eq!(super::slashed(r"pkg/odd\name.py", '/'), r"pkg/odd\name.py");
+        assert_eq!(super::slashed_by(r"pkg\sub\a.py", '\\'), "pkg/sub/a.py");
+        assert_eq!(super::slashed_by(r"pkg/odd\name.py", '/'), r"pkg/odd\name.py");
     }
 
     /// A corpus in a directory Git ignores has no file Git sees, and that answer is kept too (`git_files`'s record):
@@ -13021,3 +13065,4 @@ fn once_keep<K: std::hash::Hash + Eq, T>(map: &mut HashMap<K, Once<T>>, key: K, 
         }
     }
 }
+

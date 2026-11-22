@@ -1,5 +1,6 @@
 //! Explicit Git requests in the corpus fixpoint. The handle belongs to this run.
 
+use rerail_store::Canonical as _;
 use super::front::Value;
 use crate::code_rule_dsl::logic::program_image::{Version, fields::ProgramFields};
 use crate::git_workspace::snapshot::{self, RawTreeEntry, storage};
@@ -259,7 +260,7 @@ fn location_rows(repo: &gix::Repository) -> Vec<(&'static str, &'static str, Str
     let paths = std::iter::once(("common-dir", repo.common_dir()))
         .chain(repo.workdir().map(|path| ("worktree", path)));
     paths.map(|(role, path)| {
-        let (encoding, value) = match path.canonicalize() {
+        let (encoding, value) = match path.canonical() {
             Ok(path) => location_value(&path),
             Err(error) => ("error", error.to_string()),
         };

@@ -1,3 +1,5 @@
+//! **Deprecated** (decision 0550): Rust from an intermediate form. A grammar's Rust is the Bitlex compiler's own (`bitlex_lex_rust`, `bitlex_rust`); no new use. Kept until Go-C-and-C-support and Parser-generators-final-shape remove theirs.
+//!
 //! The parser's Cranelift IR as Rust source: the translator is `rerail_clif::rust` (decision 0310), which the
 //! tape's reads share; what is the compiler's own is tier 1's source of a compiled parser.
 

@@ -358,7 +358,25 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
 
 // A kernel: its info kernel (the rows' layout, three numbers a row after their count, then the rows' text), its
 // body (inner), and its entry, which declares the threadgroup memory and the SIMD group's scratch.
-#define DEFINE_KERNEL2(Library, Name, ...) \
+//
+// A program of one kernel of a source (`UKL_ONE_KERNEL`, with `__UKL_ONLY_<name>` defined as `__UKL_PROBE`): every
+// other kernel of the source is only its body, a static function nothing calls, which the compiler does not emit. An
+// OpenCL driver builds every kernel of a program, and Intel's spent 436 s on the 21 join stages of one source.
+#if defined(UKL_ONE_KERNEL)
+#define __UKL_SECOND(a, b, ...) b
+#define __UKL_IS_PROBE(...) __UKL_SECOND(__VA_ARGS__, 0, 0)
+#define __UKL_PROBE ~, 1
+#define __UKL_CAT(a, b) __UKL_CAT_I(a, b)
+#define __UKL_CAT_I(a, b) a ## b
+#define __UKL_SELECTED(Name) __UKL_IS_PROBE(__UKL_CAT(__UKL_ONLY_, Name))
+#define DEFINE_KERNEL2(Library, Name, ...) __UKL_CAT(__UKL_KERNEL_, __UKL_SELECTED(Name))(Library, Name, __VA_ARGS__)
+#define __UKL_KERNEL_0(Library, Name, ...) \
+    static void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) __UKL_PARAMS )
+#define __UKL_KERNEL_1(Library, Name, ...) __UKL_DEFINE_KERNEL2(Library, Name, __VA_ARGS__)
+#else
+#define DEFINE_KERNEL2(Library, Name, ...) __UKL_DEFINE_KERNEL2(Library, Name, __VA_ARGS__)
+#endif
+#define __UKL_DEFINE_KERNEL2(Library, Name, ...) \
     __kernel void Name ## __ukl_info(__global ulong * __ukl_out) \
     { \
         __constant char * __ukl_text = #__VA_ARGS__; \

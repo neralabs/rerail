@@ -124,8 +124,8 @@ tikv-jemalloc-sys = { version = "=0.7.1", default-features = false }
 [target.'cfg(windows)'.dependencies]
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_Memory", "Win32_System_ProcessStatus", "Win32_System_Threading"] }
 
-# The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
-[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+# The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
 # The engine's GPU runtime, on the device layer.
 rerail-metal = { path = "../metal" }
 
@@ -133,12 +133,15 @@ rerail-metal = { path = "../metal" }
 block = "0.1.6"
 metal = "0.33.0"
 
-[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dev-dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dev-dependencies]
 # Python's pack, which the crate's tests register once (`test_languages`): their documents are parsed (0289, Q23).
 rerail-lang-python = { path = "../lang_python" }
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-device-metal = { path = ".", features = ["test-hooks"] }
+# The device tests read the store's cache by its reads (`rerail_clif::view::cache`: the text folds' test its
+# kept texts, `text_find`).
+rerail-clif = { path = "../clif" }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }

@@ -225,12 +225,12 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Securit
 block = "0.1.6"
 metal = "0.33.0"
 
-[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
 rerail-device-metal = { path = "../device_metal", default-features = false }
 # The Metal runtime, the slab residency's arena and the block programs' backend.
 rerail-metal = { path = "../metal" }
 
-# The device layer's targets (macOS and Linux): the GPU lane (decision 0440 step E).
+# The device layer's targets (macOS, Linux and Windows): the GPU lane (decision 0440 step E).
 
 [dev-dependencies]
 # JSON's parser, measured directly (`tape::tests::json_parse_costs`).
@@ -288,7 +288,7 @@ ast-grep-language = { version = "=0.51.0", default-features = false, features = 
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }
 tempfile = "=3.27.0"
 
-[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dev-dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dev-dependencies]
 # The tape's views run as UKL kernels, launched through the device layer (decision 0440 step C).
 rerail-gpu = { path = "../../../gpu" }
 # Per-thread buffer ledgers for the engine's tests (`rerail_metal::test_pool`).

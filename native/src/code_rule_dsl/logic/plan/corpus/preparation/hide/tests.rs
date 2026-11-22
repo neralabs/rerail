@@ -199,10 +199,51 @@
         assert!(v.declares("rr_narrow_asg"));
     }
 
+    /// A widened original whose every row is of one document, made from that document's rows alone, holds as hiding
+    /// left it the rows of the documents under the narrow bound: its narrow copy is those rows of it, not its rules
+    /// again (corpus0, one pack, 2026-11-21: 586 narrow copies, 15 s, beside their originals). One whose rows join
+    /// another widened original by a value (`pair(n)`, an `asg` of any document with `n`'s text) is made again under
+    /// the narrow bound, as #923 made it: widened, it would read the annotations' `asg`.
+    #[test]
+    fn a_narrow_copy_of_an_original_within_one_document_is_its_rows_under_the_narrow_bound() {
+        use crate::code_rule_dsl::facts::vtab::syntax::{HIDDEN_KEYS, RUN_VALUE_KEYS};
+        let v = hidden(
+            concat!(
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+                ".decl asg(n: node)\nasg(n) :- e(n), kind(n, \"identifier\").\n",
+                ".decl pair(n: node)\npair(n) :- e(n), text(n, t), asg(m), text(m, t).\n",
+                ".decl only(n: node)\nonly(r) :- parsed(_, \"annotation\", r).\n",
+                ".decl named(n: node)\nnamed(n) :- asg(n).\n",
+                ".decl paired(n: node)\npaired(n) :- pair(n).\n",
+                ".decl out(n: node)\n.output out\n",
+                "out(n) :- only(n), asg(n).\nout(n) :- only(n), pair(n).\nout(n) :- named(n).\nout(n) :- paired(n).\n",
+            ),
+            RUN_VALUE_KEYS,
+        );
+        let mut p = Pipeline::new("test", v);
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        p.program(&mut fold);
+        let (v, _) = p.finish().unwrap();
+        assert!(fold.folded > 0);
+        let all: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+        let (wide, narrow) = ((i64::from(HIDDEN_KEYS) << 32).to_string(), (i64::from(RUN_VALUE_KEYS) << 32).to_string());
+        let asg = rules_of(&v, "asg");
+        assert!(!asg.is_empty() && asg.iter().all(|r| r.contains(&wide)), "the original takes the annotations in: {all:#?}");
+        let copy = rules_of(&v, "rr_narrow_asg");
+        assert_eq!(copy.len(), 1, "{all:#?}");
+        assert!(copy[0].contains(" asg(") && copy[0].contains(&narrow) && !copy[0].contains("e(") && !copy[0].contains(&wide), "the original's rows under the narrow bound: {all:#?}");
+        assert!(rules_of(&v, "named").iter().all(|r| r.contains("rr_narrow_asg(")), "{all:#?}");
+        let pair = rules_of(&v, "rr_narrow_pair");
+        assert!(!pair.is_empty() && pair.iter().all(|r| r.contains("rr_narrow_asg(") && !r.contains(" pair(") && !r.contains(&wide)), "made again, narrow: {all:#?}");
+        assert!(rules_of(&v, "paired").iter().all(|r| r.contains("rr_narrow_pair(")), "{all:#?}");
+    }
+
     /// A tree axis read over a node that may be an annotation's is the clone's copy of the axis, over a copy of its kind
     /// set (`rr_inside_rr_in_annotation_<set>`). Folding the copied set folds the axis too: before, the set went and
     /// the axis stayed, naming no set, so the transducer made it with no rows, and the clone's `!inside(t, _, S)` held
     /// for every node, below S too (the Django rules' `within_stop` over a block found through `sym_of`; main's #862).
+    /// The output shows `t`'s text, not `t`: a clone whose head would show an annotation's node is dropped (decision
+    /// 0165), and one that reads it inside its body stays, as here.
     #[test]
     fn an_axis_over_a_folded_kind_set_reads_the_original_set() {
         use crate::code_rule_dsl::facts::vtab::syntax::RUN_VALUE_KEYS;
@@ -212,8 +253,8 @@
                 ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
                 ".decl body(b: node)\nbody(b) :- e(b).\nbody(r) :- parsed(_, \"annotation\", r).\n",
                 ".decl attempt(t: node)\nattempt(t) :- e(t).\n",
-                ".decl out(t: node)\n.output out\n",
-                "out(t) :- attempt(t), body(b), within(t, b), !inside(t, _, \"function_definition\").\n",
+                ".decl out(x: symbol)\n.output out\n",
+                "out(x) :- attempt(t), body(b), within(t, b), !inside(t, _, \"function_definition\"), text(t, x).\n",
             ),
             RUN_VALUE_KEYS,
         );

@@ -169,8 +169,12 @@ Still open on that pack. Each is its own fix, after the CUDA-support roll-up:
 
 - **A stratum's evaluation on one file.** `rr_narrow_p407_rr_up2` had run 20 s and allocated 50 GB, with the process
   at 7.9 GB resident.
-- **ARG004 under strict SQL.** On the first 100 rules, `RERAIL_SQL_STRICT=1` stops the run: the native engine declines
-  the stratum `dm_p67_ARG004_0` (`ruff-arg004-unused-static-method-argument.rerail`).
+- **ARG004 under strict SQL**, fixed after roll-up 40. On the first 100 rules, `RERAIL_SQL_STRICT=1` stopped the run: the
+  native engine declined the stratum `dm_p67_ARG004_0` (`ruff-arg004-unused-static-method-argument.rerail`). Its rule
+  is `dm_ARG004_0(v0) :- dm_ARG004_raw_0(v0), rr_d = @doc(v0), rr_d < RUN_VALUE_KEYS`: hiding's bound on the
+  translator's `doc(rr_d, rr_p, _)` stayed after that read was dropped, and the read was what typed `rr_d`. The join
+  spec now types `$d = @doc($n)`'s `$d` as what it is, a document key, an integer
+  (`a_documents_key_compared_with_a_bound_runs_natively`).
 
 ## Measured
 

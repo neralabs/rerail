@@ -1,8 +1,7 @@
 //! The `.rerail` front end: the rule-syntax files parse and pass `check_rr.py`'s checks, the spellings lower to the
 //! engine's forms, and every `.rdl` program translates to `.rerail` that lowers to the same program.
 
-#[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use super::*;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, TermRef, Version, about::About, analyses};
@@ -270,7 +269,7 @@ fn rr_files() -> Vec<PathBuf> {
 }
 
 fn short(p: &Path) -> String {
-    p.strip_prefix(rule_syntax()).unwrap_or(p).display().to_string()
+    p.strip_prefix(rule_syntax()).unwrap_or(p).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/")
 }
 
 #[test]
@@ -329,6 +328,13 @@ fn check_rr_finds_problems() {
     let cyclic = statements(".decl a(x: number)\n.decl b(x: number)\na(x) :- b(x), !a(x).\nb(x) :- a(x).\n");
     let refs: Vec<&from_tape::Stmt> = cyclic.iter().collect();
     assert_eq!(check::strata(&refs).len(), 1);
+    // A negation in a component that reads a world answer is the engine's gated negation (decision 0065 §2a, as
+    // `c/includes.rerail`'s `#include_next`); an aggregate there is still refused.
+    let world = ".decl dir_entry(d: symbol, n: symbol, k: number)\n.input dir_entry\n.decl a(x: symbol)\n.decl b(x: symbol)\n";
+    let gated = statements(&format!("{world}a(x) :- b(x), dir_entry(x, _, 0), !a(x).\nb(x) :- a(x).\n"));
+    assert!(check::strata(&gated.iter().collect::<Vec<_>>()).is_empty());
+    let counted = statements(&format!("{world}.decl c(x: symbol, n: number)\nc(x, n) :- b(x), dir_entry(x, _, 0), n = count : {{ c(x, _) }}.\nb(x) :- c(x, _).\n"));
+    assert_eq!(check::strata(&counted.iter().collect::<Vec<_>>()).len(), 1);
     let twice = vec![("a.rerail".to_owned(), statements(".decl a(x: number)")), ("b.rerail".to_owned(), statements(".decl a(x: number)\n.decl glob(x: symbol)"))];
     assert_eq!(check::declarations(&twice).len(), 2);
 }

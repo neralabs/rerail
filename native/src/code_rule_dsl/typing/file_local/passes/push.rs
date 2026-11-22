@@ -248,6 +248,7 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
         let _round = crate::code_rule_dsl::logic::profile::span(|| format!("a round of the push ({} rules held back)", level.len()));
         *rounds += 1;
         let mut used = std::collections::HashMap::new();
+        let mut by_content: std::collections::HashMap<String, String> = std::collections::HashMap::new();
         let mut decls: Vec<(String, Vec<(String, String)>)> = Vec::new();
         let mut made = Readers::default();
         let mut program: Vec<Made<'v>> = Vec::with_capacity(rules.len());
@@ -338,6 +339,13 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                         outside.extend(lit_vars(v, rule, *l));
                     }
                 }
+                // A bound (`$x < k`) is the reader's, its variable handed on: two rules that differ only in their
+                // bounds (a narrow copy, its original and its candidates, decision 0575) then push one join.
+                for &j in &lits {
+                    if let L::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, l: TermRef::Var(_), r: TermRef::Int(_) } = body[j].view() {
+                        outside.extend(lit_vars(v, rule, body[j]));
+                    }
+                }
                 let mut iface: Vec<String> = Vec::new();
                 for &j in &lits {
                     for x in lit_vars(v, rule, body[j]) {
@@ -388,11 +396,33 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
                     })
                     .collect();
                 let Some(typed) = typed else { continue };
-                let content = format!("{head_rel}({}) :- {}", iface.join(", "), lits.iter().map(|&j| v.show_lit(rule, body[j])).collect::<Vec<_>>().join(", "));
-                let helper = super::super::helper_name("fl", head_rel, &content, |n| decl_names.contains(n), &mut used);
+                // A test of the interface's values alone is the reader's: an order test (a bound, `t < k`), or a
+                // negation of a derived relation (the cross part holds no tree, so not of a base one). The join's rows
+                // are the same without it, so two rules that differ only in such tests (a narrow copy and its
+                // original, decision 0165) push one join, made once.
+                let in_iface: BTreeSet<String> = iface.iter().cloned().collect();
+                let reader_test = |l: LitRef<'_>| {
+                    let test = match l.view() {
+                        L::Cmp { op: CmpOp::Lt | CmpOp::Le | CmpOp::Gt | CmpOp::Ge, l: a, r: b } => [a, b].iter().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_))),
+                        L::Atom(a) => a.neg() && !a.gated() && !base(v.rel_name(a.rel())) && a.args().all(|t| matches!(t, TermRef::Var(_) | TermRef::Int(_) | TermRef::Str(_))),
+                        _ => false,
+                    };
+                    test && lit_vars(v, rule, l).is_subset(&in_iface)
+                };
+                lits.retain(|&j| !reader_test(body[j]));
+                // Named by the join alone, not the rule's head: every rule that pushes the same join reads one helper.
+                let content = format!("({}) :- {}", iface.join(", "), lits.iter().map(|&j| v.show_lit(rule, body[j])).collect::<Vec<_>>().join(", "));
+                let helper = match by_content.get(&content) {
+                    Some(h) => h.clone(),
+                    None => {
+                        let h = super::super::helper_name("fl", head_rel, &content, |n| decl_names.contains(n), &mut used);
+                        by_content.insert(content.clone(), h.clone());
+                        h
+                    }
+                };
                 let args: Vec<NOwned<'v>> = iface.iter().map(|x| NOwned::V(x.clone())).collect();
-                // A helper of the same content (two files' parts of one join, `by_node_group`) is the one made: read
-                // again, not made again.
+                // A helper of the same content (two files' parts of one join, `by_node_group`; a narrow copy and its
+                // original) is the one made: read again, not made again.
                 if !helpers.iter().any(|h| h.head.as_ref().is_some_and(|(name, _)| *name == helper)) {
                     decls.retain(|(r, _)| *r != helper);
                     decls.push((helper.clone(), typed));

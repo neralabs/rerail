@@ -391,6 +391,46 @@ fn ends_suffice(x: &Facts<'_>) -> bool {
     true
 }
 
+/// The number the document's own calls store, where the calls nest as the nodes (`OneFn::stacked`): the calls in the
+/// document's words (from word 0, no call followed), none of them in a rule's, all storing one number that no other
+/// call stores. Their return is the one that leaves the depth at 0, as the lean parser's `scope_end` ends the walk
+/// where `d == 0`, so it is told by the depth, not by the number.
+fn root_number(x: &Facts<'_>) -> Option<usize> {
+    let one = x.one.as_ref().filter(|o| o.stacked)?;
+    let words = &x.native.structural;
+    let reach = |from: usize| {
+        let mut seen = vec![false; words.len()];
+        let mut work = vec![from];
+        while let Some(w) = work.pop() {
+            if w < words.len() && !std::mem::replace(&mut seen[w], true) {
+                work.extend(plain_succ(x, w));
+            }
+        }
+        seen
+    };
+    let document = reach(0);
+    let mut rules = vec![false; words.len()];
+    for &(pc, _) in &one.sites {
+        for (w, r) in reach(crate::stream_analysis::callee(x.native, pc)).into_iter().enumerate() {
+            rules[w] |= r;
+        }
+    }
+    let mut root = None;
+    for &(pc, k) in &one.sites {
+        if document[pc] && rules[pc] {
+            return None;
+        }
+        if document[pc] {
+            if root.is_some_and(|r| r != k) {
+                return None;
+            }
+            root = Some(k);
+        }
+    }
+    let r = root?;
+    one.sites.iter().all(|&(pc, k)| document[pc] || k != r).then_some(r)
+}
+
 impl Facts<'_> {
     /// The function of the rule entered at `pc`.
     fn function(&self, pc: usize) -> String {
@@ -460,7 +500,7 @@ fn rust_name(name: &str, upper: bool) -> String {
     rust_name_of(name, upper)
 }
 
-/// `rust_name`, for the other generators (`rust_block`).
+/// `rust_name`.
 pub(crate) fn rust_name_of(name: &str, upper: bool) -> String {
     let mut out = String::new();
     for c in name.chars() {
@@ -637,8 +677,58 @@ fn w16(out: &mut String, x: &Facts<'_>) {
     let (a, b) = (src.find(from).expect("open_node"), src.find(to).expect("failed"));
     out.push_str(&src[..a]);
     out.push_str(W16_RESERVED);
-    out.push_str(&src[b..]);
+    // Its close too, where every close is of an open node (`sure_closes`).
+    let rest = &src[b..];
+    if sure_closes(x) {
+        let c = rest.find(W16_CLOSE_FROM).expect("close");
+        let e = c + rest[c..].find("\n    }\n").expect("close's end") + "\n    }\n".len();
+        out.push_str(&rest[..c]);
+        out.push_str(W16_CLOSE_RESERVED);
+        out.push_str(&rest[e..]);
+    } else {
+        out.push_str(rest);
+    }
 }
+
+/// Whether every `CLOSE` closes an open node, by the program's shape: one function with its stack (`OneFn::stacked`),
+/// where each close is its open's (the `SURE` of `S::close`). With the room reserved (`reserved`), a close then cannot
+/// fail, as the lean parser's `close`.
+fn sure_closes(x: &Facts<'_>) -> bool {
+    x.reserved && x.one.as_ref().is_some_and(|o| o.stacked)
+}
+
+/// Where `W16`'s close begins in `W16_SRC`.
+const W16_CLOSE_FROM: &str = "    /// The innermost open node's end (`w_close`)";
+
+/// `W16`'s close where nothing fails (`sure_closes`), as the lean parser's `close`: an open node to close, an end past
+/// its start and in the file, the walk's, asserted; its cells in its block's reserved area.
+const W16_CLOSE_RESERVED: &str = r#"    /// The innermost open node's end (`w_close`): its length, and an inner node's slot; its block made final
+    /// where a node past its end is made. Nothing here fails (`rust_stream::sure_closes`): the node is open, its end
+    /// past its start and in the file (the walk's, asserted), its cells in its block's reserved area.
+    #[inline(always)]
+    unsafe fn close(&mut self, end: u64) {
+        unsafe {
+            debug_assert!(self.open_len != 0, "a close of an open node");
+            self.open_len -= 1;
+            let t = self.open.add(self.open_len as usize * ops::OPEN as usize);
+            let (i, start) = (rd32(t, 0), rd64(t, 16));
+            debug_assert!(end >= start && end <= self.len, "a node's end past its start, in the file");
+            let (b, j) = (i / ops::Z, i % ops::Z);
+            let room = if b == self.block { self.room } else { self.room_of(b) };
+            let put = self.put(room, 2, i, j, end - start);
+            debug_assert!(put, "a length's side list in its block's area");
+            let size = self.n - i;
+            if size > 1 {
+                let put = self.put(room, 0, i, j, u64::from(size) << 1);
+                debug_assert!(put, "a size's side list in its block's area");
+            }
+            if self.n > (b + 1) * ops::Z {
+                let settled = self.settle(b, self.n);
+                debug_assert!(settled, "a block made final in its reserved room");
+            }
+        }
+    }
+"#;
 
 /// `W16`'s `open_node`, `open` and `leaf` where the writer's room is reserved (`reserved`), as the lean parser's
 /// `open` and `leaf`: no failure, no result.
@@ -2119,7 +2209,7 @@ $COMMIT_CLOSE        Ok(())
         )
     };
     let s = cells16(x, &s);
-    out.push_str(&s.replace("$CLASS_FIRST", &first).replace("$CLASS_BITS", &bits).replace(
+    let s = s.replace("$CLASS_FIRST", &first).replace("$CLASS_BITS", &bits).replace(
         "$COMMIT_CLOSE",
         if x.sixteen && x.coded {
             "        // SAFETY: the writer's state, its room reserved for the run (`f16::Writer::reserve_run`).\n        unsafe { self.wr.close(u64::from(end)) };\n"
@@ -2128,7 +2218,19 @@ $COMMIT_CLOSE        Ok(())
         } else {
             "        if self.nopen == 1 {\n            self.commit(at);\n        }\n"
         },
-    ));
+    );
+    // A close that cannot fail (`sure_closes`): no result, as `open16`'s and `leaf16`'s.
+    let s = if sure_closes(x) && x.sixteen && x.coded {
+        let (head, body) = (
+            "    fn close<const THIS: bool, const SURE: bool>(&mut self, end: u32) -> R {\n        if !SURE && self.wr.open_len == 0 {\n            return refuse(why::NODES);\n        }\n",
+            "        unsafe { self.wr.close(u64::from(end)) };\n        Ok(())\n    }\n",
+        );
+        assert!(s.contains(head) && s.contains(body), "the format 16 close's text");
+        s.replace(head, "    fn close<const THIS: bool, const SURE: bool>(&mut self, end: u32) {\n").replace(body, "        unsafe { self.wr.close(u64::from(end)) };\n    }\n")
+    } else {
+        s
+    };
+    out.push_str(&s);
     if x.sixteen {
         out.push_str(&PASS16.replace("$CLASS_FIRST", &first).replace("$CLASS_BITS", &bits).replace("$CLASS_ALL", &all));
         let (open16, leaf16) = if x.reserved {
@@ -3044,14 +3146,36 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             Op::Push { .. } => {
                 let k = one.sites.iter().find(|&&(p, _)| p == pc).expect("a site").1;
                 if one.stacked {
-                    // In its container's row, until the `CLOSE` before the return reads it.
-                    return Ok(format!("if s.depth == DEPTH {{ return refuse(why::DEPTH); }}\ns.depth += 1;\ns.keep_ret({k});\n{}", jump(0)?));
+                    // In its container's row, until the `CLOSE` before the return reads it; none for the document's
+                    // own calls, whose return the depth tells (`root_number`).
+                    let keep = if root_number(x) == Some(k) { String::new() } else { format!("s.keep_ret({k});\n") };
+                    return Ok(format!("if s.depth == DEPTH {{ return refuse(why::DEPTH); }}\ns.depth += 1;\n{keep}{}", jump(0)?));
                 }
                 return Ok(format!("if s.depth == DEPTH {{ return refuse(why::DEPTH); }}\ns.ret[s.depth as usize] = {k};\ns.depth += 1;\n{}", jump(0)?));
             }
             // A return: the site off the stack, then its place (`scope_end`).
             Op::Return { .. } => {
                 let arms = one.returns.get(&pc).map_or(&[][..], Vec::as_slice);
+                if one.stacked {
+                    // As the lean parser's `scope_end`: the document's own call's return where the depth is 0
+                    // (`root_number`), then the container's: a test of its number where there are two.
+                    let root = root_number(x).and_then(|r| arms.iter().position(|&(k, _)| k == r));
+                    let rest: Vec<(usize, usize)> = arms.iter().enumerate().filter(|&(i, _)| Some(i) != root).map(|(i, &(k, _))| (i, k)).collect();
+                    let inner = match rest.as_slice() {
+                        [] => None,
+                        [(i, _)] => Some(jump(*i)?),
+                        [(i, k), (j, _)] => Some(format!("if ret == {k} {{\n{}\n}} else {{\n{}\n}}", jump(*i)?, jump(*j)?)),
+                        _ => None,
+                    };
+                    if rest.len() <= 2 && (root.is_some() || !rest.is_empty()) {
+                        return Ok(match (root, inner) {
+                            (Some(r), None) => format!("s.depth -= 1;\n{}\n", jump(r)?),
+                            (Some(r), Some(c)) => format!("s.depth -= 1;\nif s.depth == 0 {{\n{}\n}} else {{\n{c}\n}}\n", jump(r)?),
+                            (None, Some(c)) => format!("s.depth -= 1;\n{c}\n"),
+                            (None, None) => unreachable!(),
+                        });
+                    }
+                }
                 let mut m = String::from(if one.stacked { "s.depth -= 1;\nmatch ret {\n" } else { "s.depth -= 1;\nmatch s.ret[s.depth as usize] {\n" });
                 for (i, &(k, _)) in arms.iter().enumerate() {
                     writeln!(m, "{k} => {{ {} }}", jump(i)?).unwrap();
@@ -3117,7 +3241,8 @@ fn word_with(x: &Facts<'_>, pc: usize, jump: &dyn Fn(usize) -> Result<String, St
             let take = if sure && before { "ret = s.taken_ret();\n" } else { "" };
             // The last token's end where `last_ends` finds it.
             let last = if x.ends.as_ref().is_some_and(|e| e.rec.contains(&pc)) { "t.rec_end" } else { "t.last_end" };
-            format!("{take}s.close::<{this}, {sure}>({})?;\n{}", if this { end } else { last }, jump(0)?)
+            let may = if sure_closes(x) && x.sixteen && x.coded { "" } else { "?" };
+            format!("{take}s.close::<{this}, {sure}>({}){may};\n{}", if this { end } else { last }, jump(0)?)
         }
         Op::Leaf { kind, deferred, extra } => {
             let f = u32::from(field_after(x, pc).unwrap_or(0)) << 16;

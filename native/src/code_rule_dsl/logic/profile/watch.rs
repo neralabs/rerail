@@ -86,53 +86,58 @@ fn stacks(out: &Path) -> String {
 }
 
 /// Takes the stop signals on a thread of its own, and the deadline; see the module. Call it before any other
-/// thread starts, so they inherit the blocked signals. A no-op off Unix.
+/// thread starts, so they inherit the blocked signals. Off Unix there are no signals: the memory ceiling and the
+/// deadline alone.
 pub fn watch() {
     // The process's `main`: the profile's account of its life starts here (`life`).
     super::life::entered();
-    #[cfg(all(unix, not(target_family = "wasm")))]
+    #[cfg(not(target_family = "wasm"))]
     {
         let started = std::time::Instant::now();
-        let signals = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP, libc::SIGUSR1];
-        // SAFETY: a set of the signals above, blocked in this thread, and so in every thread it starts.
-        let set = unsafe {
-            let mut set: libc::sigset_t = std::mem::zeroed();
-            libc::sigemptyset(&mut set);
-            for s in signals {
-                libc::sigaddset(&mut set, s);
-            }
-            libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
-            set
-        };
-        let _ = rerail_accel::exec::service("rerail-watch", None, move || {
-            // The snapshots this watcher has dumped: its thread's alone.
-            let mut snapshots = 0u32;
-            loop {
-                let mut sig = 0;
-                // SAFETY: waits for one of the blocked signals in `set`.
-                if unsafe { libc::sigwait(&set, &mut sig) } != 0 {
-                    return;
+        // The stop signals: Unix's alone (Windows has no signals to take).
+        #[cfg(unix)]
+        {
+            let signals = [libc::SIGTERM, libc::SIGINT, libc::SIGHUP, libc::SIGUSR1];
+            // SAFETY: a set of the signals above, blocked in this thread, and so in every thread it starts.
+            let set = unsafe {
+                let mut set: libc::sigset_t = std::mem::zeroed();
+                libc::sigemptyset(&mut set);
+                for s in signals {
+                    libc::sigaddset(&mut set, s);
                 }
-                let stop = sig != libc::SIGUSR1;
-                match destination() {
-                    Some(dir) => {
-                        let dir = if stop { dir.join("interrupted") } else { {
-                            snapshots += 1;
-                            dir.join(format!("snapshot-{snapshots}"))
-                        } };
-                        match dump(&dir, &format!("signal {sig}"), started) {
-                            Ok(()) => eprintln!("rerail-engine: signal {sig}: dumped the run into {}", dir.display()),
-                            Err(e) => eprintln!("rerail-engine: signal {sig}: the dump failed: {e}"),
-                        }
+                libc::pthread_sigmask(libc::SIG_BLOCK, &set, std::ptr::null_mut());
+                set
+            };
+            let _ = rerail_accel::exec::service("rerail-watch", None, move || {
+                // The snapshots this watcher has dumped: its thread's alone.
+                let mut snapshots = 0u32;
+                loop {
+                    let mut sig = 0;
+                    // SAFETY: waits for one of the blocked signals in `set`.
+                    if unsafe { libc::sigwait(&set, &mut sig) } != 0 {
+                        return;
                     }
-                    None if stop => eprintln!("rerail-engine: signal {sig}: stopped (set RERAIL_PROFILE or RERAIL_DUMP to dump the run first)"),
-                    None => eprintln!("rerail-engine: signal {sig}: nothing to dump into (set RERAIL_PROFILE or RERAIL_DUMP)"),
+                    let stop = sig != libc::SIGUSR1;
+                    match destination() {
+                        Some(dir) => {
+                            let dir = if stop { dir.join("interrupted") } else { {
+                                snapshots += 1;
+                                dir.join(format!("snapshot-{snapshots}"))
+                            } };
+                            match dump(&dir, &format!("signal {sig}"), started) {
+                                Ok(()) => eprintln!("rerail-engine: signal {sig}: dumped the run into {}", dir.display()),
+                                Err(e) => eprintln!("rerail-engine: signal {sig}: the dump failed: {e}"),
+                            }
+                        }
+                        None if stop => eprintln!("rerail-engine: signal {sig}: stopped (set RERAIL_PROFILE or RERAIL_DUMP to dump the run first)"),
+                        None => eprintln!("rerail-engine: signal {sig}: nothing to dump into (set RERAIL_PROFILE or RERAIL_DUMP)"),
+                    }
+                    if stop {
+                        std::process::exit(128 + sig);
+                    }
                 }
-                if stop {
-                    std::process::exit(128 + sig);
-                }
-            }
-        });
+            });
+        }
         if let Some(max) = memory_ceiling() {
             let _ = rerail_accel::exec::service("rerail-memory", None, move || {
                 // The run stops itself first, naming its relations: this stops what did not.

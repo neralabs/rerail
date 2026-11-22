@@ -2,9 +2,9 @@
 //! stream program's words lowered to Cranelift (`native_cpu_stream`), the tape they write (`native_cpu_tape`), and the
 //! parser of both tiers (`native_cpu_stream::Parser`). Tier 2 read over tier 1's records where the device left them is
 //! `tier2_on`. Where a direct format 16 run passes each node at its word is the front end's to decide
-//! (`stream_facts::direct_keys`, `open_bound`), as it is for the Rust's (`rerail-rust-stream`). `clif_rust` writes
-//! this parser's own Cranelift IR as Rust. The sources stay in the compiler's folder (`crates/compiler/src`); this
-//! crate mounts them.
+//! (`stream_facts::direct_keys`, `open_bound`), as it is for the Rust's (`rerail-rust-stream`). `clif_rust`, deprecated
+//! (decision 0550), writes this parser's own Cranelift IR as Rust. The sources stay in the compiler's folder
+//! (`crates/compiler/src`); this crate mounts them.
 
 // The compiler's passes hand each other plain tuples of tables; naming each would add nothing.
 #![allow(clippy::type_complexity)]
@@ -68,5 +68,5 @@ mod tier2_tests;
 mod ladder_tests;
 
 /// Tier 2 over tier 1's buffers as the Metal backend left them (the device layer's: Metal and Vulkan).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub mod tier2_on;

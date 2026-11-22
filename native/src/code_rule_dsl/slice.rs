@@ -134,7 +134,7 @@ pub fn apply(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules
 /// §20.10, decision 0032).
 fn run(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, cold: bool) -> StoreResult<Run> {
     let run = execute(store, scope, root, rules, cold);
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     crate::code_rule_dsl::residency::slabs::executed();
     run
 }

@@ -463,13 +463,16 @@ pub enum Mem {
     /// (0: none), and its closer's last byte.
     PartAt,
     PartEnd,
+    /// A split region's closer's first byte, and its reader (`SplitParts::readers`).
+    PartClose,
+    PartRd,
     /// An extra a mark lost (`SETTLE m=2`): its kind and field, plus one (0: none), made again
     /// by the next `TOKEN` that takes a token, of no width at the token taken.
     Lost,
 }
 
 impl Mem {
-    pub const COUNT: u32 = 29;
+    pub const COUNT: u32 = 31;
 }
 
 /// `Ctx::state`'s slots (`rust_stream` writes `Ctx` field for field).
@@ -527,14 +530,26 @@ pub fn token_gate(c: &crate::program::LocalCheck) -> Option<[u64; 4]> {
     (at_last && set != ALL).then_some(set)
 }
 
-/// A region read in parts that tier 2's `TOKEN` splits (`Split::Tier2`, decision 0323): its
-/// reader's opener (an output) and its closer's offset (its record's last is the closer's), its parts (each its start's
-/// output and its bytes, the shortest first), and the record pass's tables for the parts' codes
-/// (`native_cpu_block::plain_code`), which the code reads by address.
-pub struct SplitParts {
+/// A reader whose regions tier 2 splits: its opener and closer (outputs), its parts (each its start, its
+/// bytes or its last's output, and its own kind; the shortest first), its content's own kind,
+/// and its closers' own kinds by their first byte.
+pub struct SplitReader {
     pub opener: u16,
-    pub off: i8,
-    pub parts: Vec<(u16, u8)>,
+    pub closer: u16,
+    pub parts: Vec<(u16, u8, Option<u16>, Option<u8>)>,
+    pub content: Option<u8>,
+    pub closers: Vec<(u8, u8)>,
+    /// Its opener's token has the reader's tag (`Reader::retag`): the record's code, no word.
+    pub tagged: bool,
+}
+
+/// A region read in parts that tier 2's `TOKEN` splits (`Split::Tier2`, decision 0323): its
+/// readers, and the record pass's tables for the parts' codes (`native_cpu_block::plain_code`),
+/// which the code reads by address.
+pub struct SplitParts {
+    /// Each reader whose regions tier 2 splits, as the lean parser's string arm reads its
+    /// string's pieces (decision 0509): its pieces need no marks.
+    pub readers: Vec<SplitReader>,
     pub tables: crate::record_tables::RecordTables,
     /// Where the region reads as simdjson's `parse_string` (`sequential`): its closer's byte
     /// test and its part's (instructions of tier 1's block, read from the bytes in tier 2).
@@ -548,15 +563,24 @@ pub fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error>
     let Some(block) = native.block_programs.first() else { return Ok(None) };
     let Some(r) = &block.records else { return Ok(None) };
     let late: Vec<&crate::records::Reader> = r.readers.iter().filter(|rd| !rd.parts.is_empty() && rd.split == crate::records::Split::Tier2).collect();
-    let [rd] = late[..] else {
-        return if late.is_empty() { Ok(None) } else { Err(Error::UnsupportedFeature("two regions tier 2 splits")) };
-    };
-    if rd.parts.iter().any(|p| p.last.is_some()) || rd.arms.iter().any(|a| a.last.is_some()) {
-        return Err(Error::UnsupportedFeature("a region tier 2 splits, with a part to a last"));
+    let Some(&rd) = late.first() else { return Ok(None) };
+    // A piece's code is its kind and word: no mark holds in the region (`Reader::quiet`), or
+    // the program has none.
+    let marked = !r.marks.is_empty() || r.retags.iter().any(|t| !t.part) || r.gaps != 0;
+    if late.iter().any(|rd| rd.arms.len() != 1 || marked && !rd.quiet) {
+        return Err(Error::UnsupportedFeature("a region tier 2 splits, of two regions or with marks"));
     }
-    if rd.arms.len() != 1 || !r.marks.is_empty() || r.retags.iter().any(|t| !t.part) || rd.parts.iter().any(|p| p.kind.is_some()) || r.gaps != 0 {
-        return Err(Error::UnsupportedFeature("a region tier 2 splits, with marks or retags"));
-    }
+    let readers: Vec<SplitReader> = late
+        .iter()
+        .map(|rd| {
+            let a = &rd.arms[0];
+            let mut parts: Vec<(u16, u8, Option<u16>, Option<u8>)> = rd.parts.iter().map(|p| (p.start, p.bytes, p.last, p.kind)).collect();
+            parts.sort_by_key(|&(o, n, _, _)| (n, o));
+            SplitReader { opener: a.opener, closer: a.closer, parts, content: rd.content, closers: rd.closers.clone(), tagged: a.retag.or(rd.retag).is_some() }
+        })
+        .collect();
+    // simdjson's `parse_string`: one reader, its parts of bytes, no kinds of their own.
+    let simple = late.len() == 1 && rd.parts.iter().all(|p| p.last.is_none() && p.kind.is_none()) && rd.arms[0].last.is_none() && rd.content.is_none() && rd.closers.is_empty() && !marked;
     let tables = crate::record_tables::RecordTables::new(r, block)?;
     if tables.rest == crate::record_tables::WordRest::Tails {
         return Err(Error::UnsupportedFeature("a region tier 2 splits, with words past sixteen bytes"));
@@ -565,7 +589,7 @@ pub fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error>
     parts.sort_by_key(|&(o, n)| (n, o));
     let a = &rd.arms[0];
     // Sequential only where tier 2 makes the records: the region's record is then its opener.
-    let mut seq = if r.fetched_in_tier2() { sequential(block, a, &parts) } else { None };
+    let mut seq = if r.fetched_in_tier2() && simple { sequential(block, a, &parts) } else { None };
     if let Some(sq) = seq.as_mut() {
         let set = crate::byte_needs::exact_at(block, sq.e).map(|n| n.set).unwrap_or_default();
         let ones: Vec<u8> = (0..=255u8).filter(|&b| set[usize::from(b) / 64] >> (b % 64) & 1 == 1).collect();
@@ -577,7 +601,7 @@ pub fn split_parts(native: &Structure) -> Result<Option<Box<SplitParts>>, Error>
             sq.codes2 = Some(t);
         }
     }
-    Ok(Some(Box::new(SplitParts { opener: a.opener, off: a.off, parts, tables, seq })))
+    Ok(Some(Box::new(SplitParts { readers, tables, seq })))
 }
 
 /// Each token's record made by `TOKEN` from its start (`Records::fetched_in_tier2`, page 40), as

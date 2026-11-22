@@ -3,7 +3,7 @@ name = "rerail-rust-stream"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The parser's tiers as Rust source, ahead of time: tier 2's stream program (`rust_stream`) and tier 1's block program (`rust_block`), on the compiler's front end and tier 1's lowering."
+description = "Deprecated (decision 0550). Tier 2's stream program as Rust source, ahead of time (`rust_stream`), on the compiler's front end and tier 1's lowering."
 # The vendored Cranelift's cfgs (`cranelift_clmul`, `cranelift_preserve_most`), set as for the compiler's front end.
 build = "../compiler/build.rs"
 

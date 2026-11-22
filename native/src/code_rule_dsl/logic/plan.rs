@@ -733,6 +733,18 @@ impl Stats {
         self.steps_cache.0.lock().clear();
     }
 
+    /// The tree's nodes by kind atom, exactly: `node`'s kind column's value counts (decision 0458: kept and patched
+    /// by document, as every base relation's are). They replace `tree`'s, whose counts are a sample's, scaled. The
+    /// planner reads `kind`'s values against `node`'s statistics (`view_stats_held`), so the two must be counted
+    /// together. A kind's mean subtree size stays `tree`'s: it is a mean, not a count.
+    pub fn kinds_counted(&mut self, counts: impl IntoIterator<Item = (i64, i64)>) {
+        let mut counts: Vec<(i64, i64)> = counts.into_iter().filter(|&(_, n)| n > 0).collect();
+        counts.sort_unstable();
+        self.nodes = counts.iter().map(|&(_, n)| n).sum::<i64>() as f64;
+        self.kfreq = Arc::new(counts.into_iter().map(|(k, n)| (k.to_string(), n)).collect());
+        self.steps_cache.0.lock().clear();
+    }
+
     /// Whether any column of `rel` has statistics (read or measured).
     /// The documents and kinds the statistics hold, which a layout's `values` facts are priced by (decision 0361
     /// item 5).
@@ -4110,7 +4122,29 @@ impl Model {
             // each column's distinct values takes the columns as independent, and one often determines another:
             // `walk($n, $x, $s)` by `$n` and `$x`, `$x` being `$n`'s name, was priced at 0.0007 rows a binding for
             // about 2 (`annotated_on_chain`: 6.8 M rows of work for 0.03 M priced).
-            if cols.len() >= 2 && cols.len() < args.len() && cols.iter().all(|&c| b.constant(args[c]).is_none()) && card > 0.0 {
+            // Only where the placed atoms join the columns' variables (one reached from another): two variables bound by
+            // atoms sharing none are a cross product's pairs, independent, and most pairs are none of the relation's.
+            // `open_tuple`'s `child($t, $c, _)` after `kind($t, tuple)` and a scan of `unparen($c, $m)` was priced at a row
+            // a pair (10.7 M) for 790, and the tail's witness pricing (Q146) took the cross product as nearly free:
+            // 61 M rows, 19.7 s of ep2's cold run.
+            let joined_by_placed = || {
+                let vars: Vec<_> = cols.iter().filter_map(|&c| args[c].var()).collect();
+                let Some(&start) = vars.first() else { return false };
+                let mut reached = VarSet::new();
+                reached.insert(start);
+                let mut grew = true;
+                while grew {
+                    grew = false;
+                    for (d, dvars, _) in &binding_domains {
+                        if *d != i && dvars.is_subset(bound) && !dvars.is_disjoint(&reached) && !dvars.is_subset(&reached) {
+                            reached.extend(dvars);
+                            grew = true;
+                        }
+                    }
+                }
+                vars.iter().all(|v| reached.contains(*v))
+            };
+            if cols.len() >= 2 && cols.len() < args.len() && cols.iter().all(|&c| b.constant(args[c]).is_none()) && card > 0.0 && joined_by_placed() {
                 let combinations = cols.iter().map(|&c| t.col(c, b, i, self).ndv1).product::<f64>().clamp(1.0, card);
                 rows = rows.max(card / combinations);
             }
@@ -4815,7 +4849,17 @@ impl Model {
                     // (Q245 item 5, made apart from this one) left the share of witnesses always all, and Q240's
                     // documents no longer led (1 M rows where 1,200 come, Q411).
                     let raw = from.raw + w + filtered;
-                    let tail = from.tail.or_else(|| head_mask.is_some_and(|h| *bound & h == h).then_some((from.raw, left)));
+                    // A cross product in the tail is not discounted by its witnesses: its rows are not witnesses (no row
+                    // of what it follows vouched for them), and a binding with none reads all of them. It is paid in
+                    // full, and the tail starts again after it, its rows the bindings. Discounted, RUF007's climb seed
+                    // in main's pack crossed `child($p12, $c11, _)` and `child($p8, $c7, _)` after the head was bound
+                    // (71 K bindings, 2·10¹⁰ crossed rows, priced as 4,194) and ran past 90 s on one file.
+                    let head_bound = head_mask.is_some_and(|h| *bound & h == h);
+                    let tail = if crossed && (from.tail.is_some() || head_bound) {
+                        Some((raw, out))
+                    } else {
+                        from.tail.or_else(|| head_bound.then_some((from.raw, left)))
+                    };
                     let cand = Cell { work: witnessed(raw, tail, out), rows: out, prev, last: i, mode, unfounded, fan, basis: by, raw, tail };
                     if mask == full_mask {
                         finals.push((cand.work, prev, i, mode, fan, by));

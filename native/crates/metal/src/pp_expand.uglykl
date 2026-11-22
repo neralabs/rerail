@@ -735,7 +735,6 @@ typedef struct PxScratch { uint32_t start, end, kind; } PxScratch;
 #define LK_JOIN (2u)
 // The frames an exit reads (its own list's rest and each frame's after it); a chain of exits.
 #define MAX_SEGS (16u)
-#define MAX_EXITS (1u << 20)
 // The close table's keys: a depth (biased) above a top token's position. The bias puts the depths
 // near 0 (-128 to 127) in one byte of the 16, so their sort passes one digit (decision 0468).
 #define DEPTH_SPAN (1u << 16)
@@ -801,6 +800,8 @@ typedef struct PxList {
 #define F_AGIVEN (16u)
 #define F_FREEING (32u)
 #define F_FREE (64u)
+// A call an exit made (`px_ex_join`): its `)` in its parent is in the exits' table (`px_hx_put`).
+#define F_EXIT (128u)
 #define NO_CLS (0xffu)
 // A call's argument: its raw range in the call's parent (`lo..hi`) and its list (0 none, 1 being
 // made, `ARG_FLAT` none needed, else the list + 2).
@@ -1207,6 +1208,8 @@ typedef struct Ar {
     Tf tf;
     // The definitions each list's chain disables (`px_link`): `tlv` levels of 4 a list.
     PP_GLOBAL uint32_t* trie; uint32_t tlv;
+    // The exits' calls by their parent and `)` (`px_hx_*`): `hmask` + 1 slots.
+    PP_GLOBAL uint32_t* hx; uint32_t hmask;
 } Ar;
 
 // The rounds (decision 0527): an item made in a round runs in the next. `QCTL`: 0 the items the
@@ -1524,30 +1527,88 @@ UKL_INLINE bool px_peek_paren(Ux u, Ar a, uint32_t l) {
 
 // Child `c` of list `k` (or `TOP`) with its exits' chain in `k`: the last position of `k` the
 // chain covers, its sizes, and the exit that goes on past `k`'s end (+ 1; 0 none).
-typedef struct Claim { uint32_t end, size, through; } Claim;
-UKL_INLINE Claim px_claim(Ar a, uint32_t k, uint32_t c) {
-    Claim r;
-    r.end = a.lists[c].hi; r.size = a.lists[c].size; r.through = 0u;
-    uint32_t x = a.lists[c].exit;
-    for (uint32_t step = 0u; step < MAX_EXITS && x != 0u; step++) {
-        PP_GLOBAL PxList* N = &a.lists[x - 1u];
-        if (N->parent != k) { r.through = x; return r; }
-        r.end = N->hi; r.size += N->size;
-        x = N->exit;
+// --- A parent's chains of claims (decision 0527 §2) ----------------------------------------------
+// A call whose exit is a call of the same parent claims its exit's span too, and that one its
+// exit's, to the chain's last: the chain is its calls' sizes and pieces, its last's `)` and the
+// exit past the parent its last goes on by (0 none). Each exit's call is found by its parent and
+// its `)` there, in a table (`HX`: open addressing, `hmask` + 1 slots of the call + 1, its parent
+// and its `)`, written when the exit is made and again in each pause, without the dead ones).
+// Where a parent's calls are read (its walk; the top level's places; a pause), a thread a
+// position: each call at its `)` (`node`, the call + 1), its exit's `)` its next, and the chains'
+// sums from each call to its last by pointer doubling (`px_ch_jump`). A chain's calls are a
+// parent's own (each exit's call one list's of the parent, `px_ex_join`), so no two chains meet.
+#define CH_NONE (0xffffffffu)
+UKL_INLINE uint32_t px_hx_slot(uint32_t p, uint32_t hi, uint32_t mask) {
+    uint32_t h = (p * 0x9e3779b1u) ^ ((hi + 0x7f4a7c15u) * 0x85ebca77u);
+    return (h ^ (h >> 15)) & mask;
+}
+UKL_INLINE void px_hx_put(PP_GLOBAL uint32_t* hx, uint32_t mask, PP_GLOBAL uint32_t* ctl, uint32_t p, uint32_t hi, uint32_t id) {
+    uint32_t h = px_hx_slot(p, hi, mask);
+    for (uint32_t q = 0u; q <= mask; q++) {
+        if (ukl_atomic_cas(&hx[h], 0u, id + 1u) == 0u) { hx[mask + 1u + h] = p; hx[2u * (mask + 1u) + h] = hi; return; }
+        h = (h + 1u) & mask;
     }
-    return r;
+    px_refuse(ctl, X_ROOM);
+}
+// The exit's call of parent `p` whose `)` is at `hi` (+ 1), 0 none.
+UKL_INLINE uint32_t px_hx_find(PP_GLOBAL const uint32_t* hx, uint32_t mask, uint32_t p, uint32_t hi) {
+    uint32_t h = px_hx_slot(p, hi, mask);
+    for (uint32_t q = 0u; q <= mask; q++) {
+        uint32_t v = hx[h];
+        if (v == 0u) return 0u;
+        if (hx[mask + 1u + h] == p && hx[2u * (mask + 1u) + h] == hi) return v;
+        h = (h + 1u) & mask;
+    }
+    return 0u;
+}
+// In a pause, once the ids are given back: the table emptied, then each live exit's call put back.
+UKL_INLINE void px_hx_clear(PP_GLOBAL uint32_t* hx, uint32_t mask, uint32_t h) { if (h <= mask) hx[h] = 0u; }
+UKL_INLINE void px_hx_keep(PP_GLOBAL const PxList* lists, PP_GLOBAL uint32_t* hx, uint32_t mask, PP_GLOBAL uint32_t* ctl, uint32_t n, uint32_t i) {
+    if (i >= n) return;
+    PP_GLOBAL const PxList* L = &lists[i];
+    if ((L->flags & (F_EXIT | F_DEAD | F_FREE)) == F_EXIT) px_hx_put(hx, mask, ctl, L->parent, L->hi, i);
 }
 
-// The pieces of a child's claim (`px_claim`): its expansion's and its exits' chain's in `k`.
-UKL_INLINE uint32_t px_claim_pieces(Ar a, uint32_t k, uint32_t c) {
-    uint32_t size = a.lists[c].psize, x = a.lists[c].exit;
-    for (uint32_t step = 0u; step < MAX_EXITS && x != 0u; step++) {
-        PP_GLOBAL PxList* N = &a.lists[x - 1u];
-        if (N->parent != k) return size;
-        size += N->psize;
-        x = N->exit;
+// A chain's sums at each position (`nx` its next call's position, `CH_NONE` none; `sz`, `ps` the
+// tokens and pieces from it to its last; `ls` its last's position), two of them for the doubling.
+typedef struct Ch { PP_GLOBAL uint32_t* node; PP_GLOBAL uint32_t* nx; PP_GLOBAL uint32_t* sz; PP_GLOBAL uint32_t* ps; PP_GLOBAL uint32_t* ls; } Ch;
+UKL_INLINE Ch px_ch(PP_GLOBAL uint32_t* st, uint32_t cap, uint32_t side) {
+    Ch c;
+    c.node = st; c.nx = st + (1u + side) * cap; c.sz = st + (3u + side) * cap; c.ps = st + (5u + side) * cap; c.ls = st + (7u + side) * cap;
+    return c;
+}
+// Position `t` of the parent `p` whose positions start at `b` (`n` of them): its call, if any, its
+// own sums and its next (`links` counts the nexts).
+UKL_INLINE void px_ch_seed(PP_GLOBAL const PxList* lists, Ch c, uint32_t p, uint32_t b, uint32_t n, PP_GLOBAL uint32_t* links, uint32_t t) {
+    uint32_t x = c.node[t];
+    c.nx[t] = CH_NONE; c.ls[t] = t; c.sz[t] = 0u; c.ps[t] = 0u;
+    if (x == 0u) return;
+    PP_GLOBAL const PxList* X = &lists[x - 1u];
+    c.sz[t] = X->size; c.ps[t] = X->psize;
+    uint32_t e = X->exit;
+    if (e != 0u && lists[e - 1u].parent == p && lists[e - 1u].hi < n) {
+        c.nx[t] = b + lists[e - 1u].hi;
+        ukl_atomic_add(links, 1u);
     }
-    return size;
+}
+// A round of the doubling: each position's sums to twice as far.
+UKL_INLINE void px_ch_jump(Ch f, Ch t, uint32_t n, uint32_t x) {
+    if (x >= n) return;
+    uint32_t y = f.nx[x];
+    if (y == CH_NONE) { t.nx[x] = CH_NONE; t.sz[x] = f.sz[x]; t.ps[x] = f.ps[x]; t.ls[x] = f.ls[x]; return; }
+    t.nx[x] = f.nx[y]; t.sz[x] = f.sz[x] + f.sz[y]; t.ps[x] = f.ps[x] + f.ps[y]; t.ls[x] = f.ls[y];
+}
+// The exit past the parent the chain at `t` goes on by (0 none): its last's.
+UKL_INLINE uint32_t px_ch_through(PP_GLOBAL const PxList* lists, Ch c, uint32_t t) {
+    uint32_t x = c.node[c.ls[t]];
+    return x == 0u ? 0u : lists[x - 1u].exit;
+}
+// A chain's places: its first call's (written at its last's position, `hb` the pieces', `ht`
+// the tokens'), each of its calls' from there less its own sums (`px_ch_place`).
+UKL_INLINE void px_ch_first(Ch c, PP_GLOBAL uint32_t* hb, PP_GLOBAL uint32_t* ht, uint32_t h, uint32_t pb, uint32_t tb) {
+    uint32_t l = c.ls[h];
+    ht[l] = tb + c.sz[h];
+    hb[l] = pb + c.ps[h];
 }
 
 // Whether token `t` of list `k` is a name its chain disables (the scan's paint, found again: no
@@ -1918,66 +1979,90 @@ UKL_INLINE uint32_t px_counter_use(Ar a, uint32_t l) {
     return SCRATCH | id;
 }
 
-// A list's place in the serial reading, from its top call down (`MAX_CHAIN` levels at most):
-// each level's list and its order in the one above: an argument's by its expansion's order,
-// before every list the call's rescan makes (their order their place in it); a top call's its
-// top token. Root first; 0 where a list on it was rolled back (the serial pass reads it raw:
-// it is never placed), `CHAIN_PAST` where it is past the bound.
-#define CHAIN_PAST (0xffffffffu)
-UKL_INLINE uint32_t px_chain(PP_GLOBAL const PxList* lists, uint32_t l, UKL_PRIVATE uint32_t* at, UKL_PRIVATE uint32_t* ord) {
-    uint32_t n = 0u, k = l;
-    bool root = false;
-    for (; n < MAX_CHAIN && !root; n++) {
-        PP_GLOBAL const PxList* K = &lists[k];
-        at[n] = k;
-        if (K->kind == LK_ARG) {
-            ord[n] = K->order;
-            k = K->call;
-            continue;
-        }
-        if (K->order != ORDER_PLACED) return 0u;
-        if ((K->parent & TOP) != 0u) {
-            ord[n] = K->lo;
-            root = true;
-        } else {
-            // By its span's end: a forwarded exit's call starts where the call it took the place
-            // of did (`px_gv_forward`), and siblings' spans never overlap.
-            ord[n] = 0x80000000u | K->hi;
-            k = K->parent;
-        }
+// The serial reading's order of the lists (decision 0485 §3, 0527 §2): a tree, each list under the
+// list it is read in (an argument's under its call, any other under its parent; a top call a
+// root), its siblings in the reading's order (an argument's by its expansion's order, before the
+// lists its call's rescan makes, these by their `)`; the roots by their first token). A sort of
+// the lists by (the list above, that order) gives each one's first child and next sibling; their
+// tour (an arc into each list, then its children's, then an arc out) is summed from each arc to
+// its end by pointer doubling: once with each list rolled back counted in and out (a use under
+// one is no use, as the serial pass reads it raw), then the uses. A use's rank among its top
+// call's uses is the uses between the top call's arc in and its own.
+typedef struct Ct {
+    PP_GLOBAL uint64_t* keys; PP_GLOBAL uint32_t* perm;
+    // By list: its first child, next sibling, whether it is a use, whether one above it (or it) is
+    // rolled back. By arc: the tour's next, its weight. The first root.
+    PP_GLOBAL uint32_t* first; PP_GLOBAL uint32_t* next; PP_GLOBAL uint32_t* use; PP_GLOBAL uint32_t* bad;
+    PP_GLOBAL uint32_t* succ; PP_GLOBAL uint32_t* w; PP_GLOBAL uint32_t* root;
+    uint32_t n;
+} Ct;
+UKL_INLINE uint32_t px_ct_up(PP_GLOBAL const PxList* L) { return L->kind == LK_ARG ? L->call : (L->parent & TOP) != 0u ? CH_NONE : L->parent; }
+UKL_INLINE uint32_t px_ct_ord(PP_GLOBAL const PxList* L) { return L->kind == LK_ARG ? L->order : (L->parent & TOP) != 0u ? L->lo : 0x80000000u | L->hi; }
+UKL_INLINE void px_ct_key(PP_GLOBAL const PxList* lists, Ct t, uint32_t x) {
+    if (x >= t.n) return;
+    PP_GLOBAL const PxList* L = &lists[x];
+    uint32_t up = px_ct_up(L);
+    t.keys[x] = (((uint64_t)(up == CH_NONE ? 0xffffffffu : up)) << 32) | ((uint64_t)(px_ct_ord(L)));
+    t.first[x] = CH_NONE; t.use[x] = 0u;
+    if (x == 0u) t.root[0] = CH_NONE;
+}
+UKL_INLINE void px_ct_use(PP_GLOBAL const uint32_t* cnt, uint32_t cnt_cap, Ct t, uint32_t i) {
+    if (i >= ukl_min(cnt[1], cnt_cap)) return;
+    uint32_t l = cnt[2u + 2u * i];
+    if (l < t.n) t.use[l] = 1u;
+}
+// Sorted row `p`: a first child (or root), and its next sibling.
+UKL_INLINE void px_ct_sib(Ct t, uint32_t p) {
+    if (p >= t.n) return;
+    uint32_t x = t.perm[p], up = (uint32_t)(t.keys[p] >> 32);
+    if (p == 0u || (uint32_t)(t.keys[p - 1u] >> 32) != up) {
+        if (up == 0xffffffffu) t.root[0] = x;
+        else if (up < t.n) t.first[up] = x;
     }
-    if (!root) return CHAIN_PAST;
-    for (uint32_t i = 0u; i < n / 2u; i++) {
-        uint32_t t = at[i]; at[i] = at[n - 1u - i]; at[n - 1u - i] = t;
-        t = ord[i]; ord[i] = ord[n - 1u - i]; ord[n - 1u - i] = t;
-    }
-    return n;
+    t.next[x] = p + 1u < t.n && (uint32_t)(t.keys[p + 1u] >> 32) == up ? t.perm[p + 1u] : CH_NONE;
+}
+// List `x`'s arcs (`2x` in, `2x + 1` out): their next, and each rolled back list's in and out.
+UKL_INLINE void px_ct_arcs(PP_GLOBAL const PxList* lists, Ct t, PP_GLOBAL uint32_t* nx, PP_GLOBAL uint32_t* sm, uint32_t x) {
+    if (x >= t.n) return;
+    PP_GLOBAL const PxList* L = &lists[x];
+    uint32_t up = px_ct_up(L), d = 2u * x, e = d + 1u;
+    t.succ[d] = t.first[x] != CH_NONE ? 2u * t.first[x] : e;
+    t.succ[e] = t.next[x] != CH_NONE ? 2u * t.next[x] : up == CH_NONE || up >= t.n ? CH_NONE : 2u * up + 1u;
+    uint32_t b = L->kind != LK_ARG && L->order != ORDER_PLACED ? 1u : 0u;
+    t.w[d] = b; t.w[e] = 0u - b;
+    nx[d] = t.succ[d]; nx[e] = t.succ[e]; sm[d] = b; sm[e] = 0u - b;
+}
+// A round of the doubling: each arc's sum to twice as far.
+UKL_INLINE void px_ct_jump(uint32_t n, PP_GLOBAL const uint32_t* nf, PP_GLOBAL const uint32_t* sf, PP_GLOBAL uint32_t* nt, PP_GLOBAL uint32_t* st, uint32_t a) {
+    if (a >= n) return;
+    uint32_t y = nf[a];
+    st[a] = y == CH_NONE ? sf[a] : sf[a] + sf[y];
+    nt[a] = y == CH_NONE ? CH_NONE : nf[y];
+}
+// List `x`: the rolled back ones from the tour's start to its arc in (the ones above it and it,
+// as each is counted in and out); then a use under none counted at its arc in.
+UKL_INLINE void px_ct_good(Ct t, PP_GLOBAL const uint32_t* sum, PP_GLOBAL uint32_t* nx, PP_GLOBAL uint32_t* sm, uint32_t x) {
+    if (x >= t.n) return;
+    uint32_t d = 2u * x, e = d + 1u;
+    t.bad[x] = t.w[d] - sum[d] != 0u ? 1u : 0u;
+    nx[d] = t.succ[d]; nx[e] = t.succ[e];
+    sm[d] = t.use[x] != 0u && t.bad[x] == 0u ? 1u : 0u; sm[e] = 0u;
 }
 
 // `__COUNTER__`'s use `i` of this pass (`part`: 0 the text, 1 the lines) placed in the reading
 // (decision 0485 §3): its outermost invocation's slot (in the text its `)`'s; in a line the
 // directive's, then its call's first token in the line), then its rank among the uses of that
-// invocation (where their chains part). A use rolled back is no use (`PP_NONE`).
-UKL_INLINE void px_counter_place(Ux u, PP_GLOBAL const PxList* lists, PP_GLOBAL const uint32_t* cnt, uint32_t cnt_cap, Tf tf, uint32_t part, PP_GLOBAL uint32_t* ctl, uint32_t i) {
+// invocation (the tour's uses from its top call's arc in to its own, `sum` from each arc to the
+// end). A use rolled back is no use (`PP_NONE`).
+UKL_INLINE void px_counter_place(Ux u, PP_GLOBAL const PxList* lists, PP_GLOBAL const uint32_t* cnt, uint32_t cnt_cap, Tf tf, uint32_t part, PP_GLOBAL uint32_t* ctl, Ct t, PP_GLOBAL const uint32_t* sum, uint32_t i) {
     uint32_t n = ukl_min(cnt[1], cnt_cap);
     if (i == 0u) tf.n[2u + part] = n;
     if (i >= n) return;
-    uint32_t e = part * tf.cap + i;
-    uint32_t ai[MAX_CHAIN], oi[MAX_CHAIN], aj[MAX_CHAIN], oj[MAX_CHAIN];
-    uint32_t ni = px_chain(lists, cnt[2u + 2u * i], ai, oi);
+    uint32_t e = part * tf.cap + i, x = cnt[2u + 2u * i];
     tf.cslot[e] = PP_NONE;
-    if (ni == CHAIN_PAST) { px_refuse(ctl, X_DEPTH); return; }
-    if (ni == 0u) return;
-    uint32_t rank = 0u;
-    for (uint32_t j = 0u; j < n; j++) {
-        if (j == i) continue;
-        uint32_t nj = px_chain(lists, cnt[2u + 2u * j], aj, oj);
-        if (nj == 0u || nj == CHAIN_PAST || aj[0] != ai[0]) continue;
-        uint32_t k = 0u;
-        while (k + 1u < ni && k + 1u < nj && ai[k] == aj[k]) k++;
-        if (ai[k] != aj[k] && oj[k] < oi[k]) rank++;
-    }
-    PP_GLOBAL const PxList* R = &lists[ai[0]];
+    if (x >= t.n || t.bad[x] != 0u) return;
+    uint32_t rank = sum[2u * lists[x].top] - sum[2u * x];
+    PP_GLOBAL const PxList* R = &lists[lists[x].top];
     uint32_t p = pb_item_of(u.gat, u.n_gaps, R->lo);
     // A line not read counts nothing.
     if (u.sc.runs == 0u && tf.lread[p] == 0u) return;
@@ -1988,23 +2073,40 @@ UKL_INLINE void px_counter_place(Ux u, PP_GLOBAL const PxList* lists, PP_GLOBAL 
     tf.cunit[e] = u.nodes[u.tinst[p]].unit;
 }
 
-// `__COUNTER__`'s use `i` of this pass: its value, the uses of its unit at earlier places, the
-// text's and the lines' (the other pass's from its last run), its digits written.
-UKL_INLINE void px_counter_value(Tf tf, PP_GLOBAL const uint32_t* cnt, uint32_t cnt_cap, uint32_t part, PP_GLOBAL PxScratch* stoks, PP_GLOBAL uint8_t* sbytes, uint32_t i) {
+// The uses of both passes (the other's from its last run) in one order, by their unit, slot
+// and place there: a sort by the place, then a stable one by the unit and slot (`px_cv_*`); each
+// one's rank the uses before its run of equals in its unit's.
+UKL_INLINE uint32_t px_cv_f(Tf tf, uint32_t m0, uint32_t c) { return c < m0 ? c : tf.cap + (c - m0); }
+UKL_INLINE void px_cv_key(Tf tf, uint32_t m0, uint32_t m, PP_GLOBAL uint64_t* keys, uint32_t c) {
+    if (c >= m) return;
+    uint32_t f = px_cv_f(tf, m0, c);
+    keys[c] = tf.cslot[f] == PP_NONE ? 0xfffffffful : (uint64_t)(tf.csub[f]);
+}
+UKL_INLINE void px_cv_key2(Tf tf, uint32_t m0, uint32_t m, PP_GLOBAL uint64_t* keys, PP_GLOBAL const uint32_t* perm, uint32_t p) {
+    if (p >= m) return;
+    uint32_t f = px_cv_f(tf, m0, perm[p]), sl = tf.cslot[f];
+    keys[p] = sl == PP_NONE ? 0xfffffffffffffffful : ((((uint64_t)(tf.cunit[f])) << 32) | (uint64_t)(sl));
+}
+UKL_INLINE void px_cv_heads(Tf tf, uint32_t m0, uint32_t m, PP_GLOBAL const uint32_t* perm, PP_GLOBAL uint32_t* run, PP_GLOBAL uint32_t* unit, PP_GLOBAL uint32_t* heads, uint32_t p) {
+    if (p >= m) return;
+    heads[p] = p == 0u ? 1u : 0u;
+    if (p == 0u) { run[p] = 0u; unit[p] = 0u; return; }
+    uint32_t f = px_cv_f(tf, m0, perm[p]), b = px_cv_f(tf, m0, perm[p - 1u]);
+    bool su = tf.cunit[f] == tf.cunit[b];
+    run[p] = su && tf.cslot[f] == tf.cslot[b] && tf.csub[f] == tf.csub[b] ? 0u : p;
+    unit[p] = su ? 0u : p;
+}
+UKL_INLINE void px_cv_rank(uint32_t m, PP_GLOBAL const uint32_t* perm, PP_GLOBAL const uint32_t* run, PP_GLOBAL const uint32_t* unit, PP_GLOBAL uint32_t* rank, uint32_t p) {
+    if (p < m) rank[perm[p]] = run[p] - unit[p];
+}
+
+// `__COUNTER__`'s use `i` of this pass: its value (its rank, `px_cv_*`), its digits written.
+UKL_INLINE void px_counter_value(Tf tf, PP_GLOBAL const uint32_t* cnt, uint32_t cnt_cap, uint32_t part, PP_GLOBAL PxScratch* stoks, PP_GLOBAL uint8_t* sbytes, PP_GLOBAL const uint32_t* ranks, uint32_t i) {
     uint32_t n = ukl_min(cnt[1], cnt_cap);
     if (i >= n) return;
     uint32_t e = part * tf.cap + i;
-    uint32_t slot = tf.cslot[e], sub = tf.csub[e], unit = tf.cunit[e];
-    if (slot == PP_NONE) return;
-    uint32_t rank = 0u;
-    for (uint32_t h = 0u; h < 2u; h++) {
-        uint32_t m = ukl_min(tf.n[2u + h], tf.cap);
-        for (uint32_t j = 0u; j < m; j++) {
-            uint32_t f = h * tf.cap + j, s = tf.cslot[f];
-            if (s == PP_NONE || tf.cunit[f] != unit) continue;
-            if (s < slot || (s == slot && tf.csub[f] < sub)) rank++;
-        }
-    }
+    if (tf.cslot[e] == PP_NONE) return;
+    uint32_t rank = ranks[part == 0u ? i : ukl_min(tf.n[2], tf.cap) + i];
     PxScratch t = stoks[cnt[3u + 2u * i]];
     uint32_t nd = 1u;
     for (uint32_t v = rank; v >= 10u; v /= 10u) nd++;
@@ -3074,6 +3176,8 @@ UKL_INLINE void px_ex_join(Ux u, Ar a, Ex x, uint32_t e) {
     N->lo = lo; N->hi = end; N->src = jid; N->at = 0u; N->end = total - 1u;
     J->owner = px_owner(a, xf); N->owner = J->owner;
     px_link(a.lists, a.trie, a.tlv, jid); px_link(a.lists, a.trie, a.tlv, nid);
+    N->flags = F_EXIT;
+    px_hx_put(a.hx, a.hmask, a.ctl, xf, end, nid);
     if ((xf & TOP) == 0u) { ukl_atomic_add(&a.lists[xf].pending, 1u); ukl_atomic_min(&a.lists[xf].xhi, end); }
     L->xname = EXC(x, EX_J, e) + 1u; L->xcall = nid + 1u;
     EXC(x, EX_BASE, e) = base; EXC(x, EX_K, e) = nid;
@@ -3133,6 +3237,9 @@ typedef struct Wk {
     // The claims' count.
     PP_GLOBAL uint32_t* claims;
     uint32_t total;
+    // The chains of the lists' calls (`px_ch_*`): the doubling's two, its sums, the chains' first
+    // places at their lasts, the nexts' count.
+    Ch c0, c1, c; PP_GLOBAL uint32_t* hb; PP_GLOBAL uint32_t* ht; PP_GLOBAL uint32_t* links;
 } Wk;
 #define WK_OWN (0xffffffffu)
 #define WK_MINE (1u)
@@ -3151,13 +3258,29 @@ UKL_INLINE void px_wk_count(Ar a, Wk w, uint32_t i) {
     if (w.place && K->kind != LK_ARG) K->order = ORDER_PLACED;
 }
 
-// Token `t`: no child, no claim; a head where its list begins.
-UKL_INLINE void px_wk_clear(Wk w, uint32_t t) {
+// Token `t`: no child, no claim; a head where its list begins; the exit's call whose `)` it is.
+UKL_INLINE void px_wk_clear(Ar a, Wk w, uint32_t t) {
     if (t >= w.total) return;
     uint32_t i = px_wk_list(w, t);
     w.child[t] = 0u; w.xlive[t] = 0u; w.ends[t] = 0u; w.pi[t] = 0u;
     w.heads[t] = t == w.base[i] ? 1u : 0u;
-    if (t == 0u) ukl_atomic_store(&w.claims[0], 0u);
+    w.c0.node[t] = px_hx_find(a.hx, a.hmask, w.set[i], t - w.base[i]);
+    if (t == 0u) { ukl_atomic_store(&w.claims[0], 0u); ukl_atomic_store(&w.links[0], 0u); }
+}
+// Slot `j` of list `i` (a thread a token, as `px_wk_kid`): its child at its `)`; then each
+// position's chain (`px_ch_seed`).
+UKL_INLINE void px_wk_node(Ar a, Wk w, uint32_t t) {
+    if (t >= w.total) return;
+    uint32_t i = px_wk_list(w, t), b = w.base[i], j = t - b;
+    PP_GLOBAL PxList* K = &a.lists[w.set[i]];
+    if (j >= K->nkid) return;
+    uint32_t c = *px_kid(a.psrc, K, j);
+    if (a.lists[c].lo < K->len && a.lists[c].hi < K->len) w.c0.node[b + a.lists[c].hi] = c + 1u;
+}
+UKL_INLINE void px_wk_seed(Ar a, Wk w, uint32_t t) {
+    if (t >= w.total) return;
+    uint32_t i = px_wk_list(w, t);
+    px_ch_seed(a.lists, w.c0, w.set[i], w.base[i], a.lists[w.set[i]].len, w.links, t);
 }
 
 // Claims decided live (a list's, `px_wk_*`, and the top level's, `px_top_*`): in order, each is
@@ -3203,8 +3326,8 @@ UKL_INLINE void px_wk_kid(Ar a, Wk w, uint32_t t) {
         w.child[b + lo] = c + 1u;
         w.ends[b + lo] = a.lists[c].hi + 1u;
         if (a.lists[c].exit != 0u) {
-            Claim r = px_claim(a, k, c);
-            w.pi[b + lo] = WK_CLAIM; w.fl[b + lo] = r.end + 1u; w.off[b + lo] = r.through;
+            uint32_t h = b + a.lists[c].hi;
+            w.pi[b + lo] = WK_CLAIM; w.fl[b + lo] = w.c.ls[h] - b + 1u; w.off[b + lo] = px_ch_through(a.lists, w.c, h);
             ukl_atomic_add(&w.claims[0], 1u);
         }
     } else if (j == K->nkid && xj < n) {
@@ -3280,18 +3403,19 @@ UKL_INLINE void px_wk_tok(Ux u, Ar a, Wk w, uint32_t t) {
 // run's own tokens and break (`xlive`, `ends` taken again).
 UKL_INLINE void px_wk_piece(Ar a, Wk w, uint32_t t) {
     if (t >= w.total) return;
-    uint32_t i = px_wk_list(w, t), j = t - w.base[i], k = w.set[i], f = w.fl[t], c = w.child[t];
+    uint32_t i = px_wk_list(w, t), j = t - w.base[i], f = w.fl[t], c = w.child[t];
     bool mine = (f & WK_MINE) != 0u, alive = (f & WK_ALIVE) != 0u;
     uint32_t pf = j == 0u ? 0u : w.fl[t - 1u];
     bool start = mine && (j == 0u || (pf & WK_MINE) == 0u || w.pi[t] != w.pi[t - 1u] || (f & WK_PAINT) != 0u || (pf & WK_PAINT) != 0u);
     bool kid = alive && c != 0u && c != WK_OWN;
     uint32_t v = 0u, pv = 0u;
-    if (kid) { v = px_claim(a, k, c - 1u).size; pv = px_claim_pieces(a, k, c - 1u); }
+    if (kid) { uint32_t h = w.base[i] + a.lists[c - 1u].hi; v = w.c.sz[h]; pv = w.c.ps[h]; }
     else if (alive) { v = 1u; pv = start ? 1u : 0u; }
     w.v[t] = v; w.pv[t] = pv;
     if (start) w.fl[t] = f | WK_START;
     w.xlive[t] = mine ? 1u : 0u;
     w.ends[t] = j == 0u || start || !mine ? 1u : 0u;
+    w.hb[t] = WK_NONE;
 }
 
 // Token `t`: at a run's last token (its own, the next a break or past the list), the run's length
@@ -3327,21 +3451,25 @@ UKL_INLINE void px_wk_write(Ux u, Ar a, Wk w, uint32_t t) {
         else px_refuse(a.ctl, X_ROOM);
     }
     if ((f & WK_ALIVE) == 0u || c == 0u || c == WK_OWN) return;
-    // The live child and its chain (its exits made in this list), each placed after the one before.
-    uint32_t pushes = 1u, x = a.lists[c - 1u].exit;
-    for (uint32_t step = 0u; step < MAX_EXITS && x != 0u && a.lists[x - 1u].parent == k; step++) { pushes++; x = a.lists[x - 1u].exit; }
-    if (dest != 0u) ukl_atomic_add(&a.lists[dest - 1u].fpending, pushes);
-    uint32_t cc = c - 1u, b = poff, bt = off;
-    for (uint32_t step = 0u; step < pushes; step++) {
-        a.lists[cc].base = b;
-        a.lists[cc].tat = bt;
-        a.lists[cc].dest = dest;
-        b += a.lists[cc].psize;
-        bt += a.lists[cc].size;
-        px_fence();
-        px_set_later(a, 1u, cc);
-        cc = a.lists[cc].exit - 1u;
-    }
+    // The live child's chain (its exits made in this list) placed from its place, a thread a
+    // call (`px_wk_member`).
+    px_ch_first(w.c, w.hb, w.ht, w.base[i] + a.lists[c - 1u].hi, poff, off);
+}
+
+// Position `t` of a placed list: the call whose `)` it is, if a live child's chain's, placed
+// after the chain's calls before it; its place the next iteration's.
+UKL_INLINE void px_wk_member(Ar a, Wk w, uint32_t t) {
+    if (t >= w.total) return;
+    uint32_t x = w.c.node[t], l = w.c.ls[t];
+    if (x == 0u || w.hb[l] == WK_NONE) return;
+    uint32_t dest = a.lists[w.set[px_wk_list(w, t)]].dest;
+    if (dest != 0u) ukl_atomic_add(&a.lists[dest - 1u].fpending, 1u);
+    PP_GLOBAL PxList* X = &a.lists[x - 1u];
+    X->base = w.hb[l] - w.c.ps[t];
+    X->tat = w.ht[l] - w.c.sz[t];
+    X->dest = dest;
+    px_fence();
+    px_set_later(a, 1u, x - 1u);
 }
 
 // List `i`'s end. Final: its size, pieces and exit; an argument's list then starts its flatten
@@ -3421,16 +3549,25 @@ UKL_INLINE void px_gc_dead(PP_GLOBAL PxList* lists, PP_GLOBAL const uint32_t* hi
     if (dead || hit[i] != 0u) L->flags |= F_DEAD;
 }
 
-// The last position of list `i` that final call `C`'s exits cover (their calls' `)`), while they
-// are `i`'s; `NO_POS` where one goes on past `i`'s end (its tokens may be read from there).
-UKL_INLINE uint32_t px_claim_last(PP_GLOBAL const PxList* lists, uint32_t n, uint32_t i, PP_GLOBAL const PxList* C) {
-    uint32_t last = C->hi, x = C->exit;
-    for (uint32_t step = 0u; step < MAX_EXITS && x != 0u; step++) {
-        if (x - 1u >= n || lists[x - 1u].parent != i) return NO_POS;
-        last = lists[x - 1u].hi;
-        x = lists[x - 1u].exit;
-    }
-    return last;
+// The last position of its parent that each list's exits cover (their calls' `)`), while they are
+// its parent's (`Ch::ls`), and whether one goes on past its parent's end (`Ch::sz` 1: its tokens
+// may be read from there), by pointer doubling over the lists (a pause's, `px_gv_span`).
+UKL_INLINE void px_gv_xseed(PP_GLOBAL const PxList* lists, uint32_t n, Ch c, PP_GLOBAL uint32_t* links, uint32_t i) {
+    if (i >= n) return;
+    PP_GLOBAL const PxList* L = &lists[i];
+    uint32_t x = L->exit;
+    bool on = x != 0u && x - 1u < n && lists[x - 1u].parent == L->parent;
+    c.nx[i] = on ? x - 1u : WK_NONE;
+    c.ls[i] = L->hi;
+    c.sz[i] = x != 0u && !on ? 1u : 0u;
+    if (on) ukl_atomic_add(links, 1u);
+}
+UKL_INLINE void px_gv_xjump(Ch f, Ch t, uint32_t n, uint32_t x) {
+    if (x >= n) return;
+    uint32_t y = f.nx[x];
+    t.nx[x] = y == WK_NONE ? WK_NONE : f.nx[y];
+    t.ls[x] = y == WK_NONE ? f.ls[x] : f.ls[y];
+    t.sz[x] = y == WK_NONE ? f.sz[x] : f.sz[y];
 }
 
 
@@ -3470,6 +3607,8 @@ typedef struct Gv {
     PP_GLOBAL uint32_t* pa; PP_GLOBAL uint32_t* top; PP_GLOBAL uint32_t* rin; PP_GLOBAL uint32_t* heads;
     // The forwardable lists' count (0).
     PP_GLOBAL uint32_t* words;
+    // Each list's exits' last position in its parent, and whether they go past it (`px_gv_xseed`).
+    Ch xc;
 } Gv;
 
 UKL_INLINE bool px_gv_fw_ok(PP_GLOBAL const PxList* L) { return (L->flags & F_DEAD) == 0u && L->kind == LK_MACRO; }
@@ -3595,7 +3734,7 @@ UKL_INLINE void px_gv_span(Gv v, PP_GLOBAL uint32_t* j0, uint32_t g) {
     bool final = v.pend[g] == 0u, done = (C->flags & F_DONE) != 0u;
     uint32_t e = done ? C->hi + 1u : 0u, nx = r + 1u < nk ? g + 1u : WK_NONE;
     if (final && done && C->exit != 0u) {
-        uint32_t last = px_claim_last(v.lists, v.n, i, C);
+        uint32_t last = v.xc.sz[c] != 0u ? NO_POS : v.xc.ls[c];
         if (last == NO_POS) {
             // An exit past the list's end: no claim given, and none past it.
             nx = WK_NONE;
@@ -3795,11 +3934,9 @@ UKL_INLINE void px_top_xlist(PP_GLOBAL const uint32_t* xflag, PP_GLOBAL const ui
 // `px_live_jump`): call `i`'s claim's end (+ 1, `ends`), its next if it is live (`jump`), the
 // first marked (`on`) and a head (`heads`). Then the live ones' ends (`px_top_live`), whose max
 // scan is `xcover`, the cover through call `i`.
-UKL_INLINE void px_top_claim(PP_GLOBAL const uint32_t* xpos, PP_GLOBAL const uint32_t* n_x, PP_GLOBAL const uint32_t* oid, PP_GLOBAL PxList* lists, PP_GLOBAL uint32_t* ends, PP_GLOBAL uint32_t* heads, uint32_t i) {
+UKL_INLINE void px_top_claim(PP_GLOBAL const uint32_t* xpos, PP_GLOBAL const uint32_t* n_x, PP_GLOBAL const uint32_t* oid, PP_GLOBAL PxList* lists, Ch ch, PP_GLOBAL uint32_t* ends, PP_GLOBAL uint32_t* heads, uint32_t i) {
     if (i >= n_x[0]) return;
-    Ar a;
-    a.lists = lists;
-    ends[i] = px_claim(a, TOP, oid[xpos[i]]).end + 1u;
+    ends[i] = ch.ls[lists[oid[xpos[i]]].hi] + 1u;
     heads[i] = i == 0u ? 1u : 0u;
 }
 UKL_INLINE void px_top_next(PP_GLOBAL const uint32_t* xpos, PP_GLOBAL const uint32_t* n_x, PP_GLOBAL const uint32_t* ends, PP_GLOBAL uint32_t* jump, PP_GLOBAL uint32_t* on, uint32_t i) {
@@ -3827,8 +3964,9 @@ UKL_INLINE uint32_t px_lower_bound(PP_GLOBAL const uint32_t* v, uint32_t n, uint
 // Each top token's piece of the output: 0 inside a live exit's claim (its state made 2), else 1
 // for a token no call covers, its list's size and its exits' chain's for an outermost call's name,
 // 0 inside a call.
-UKL_INLINE void px_top_sizes(PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t* oid, PP_GLOBAL PxList* lists, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL uint32_t* v, PP_GLOBAL const uint32_t* xpos, PP_GLOBAL const uint32_t* n_x, PP_GLOBAL const uint32_t* xcover, uint32_t s) {
+UKL_INLINE void px_top_sizes(PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t* oid, PP_GLOBAL PxList* lists, Ch ch, PP_GLOBAL uint32_t* hb, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL uint32_t* v, PP_GLOBAL const uint32_t* xpos, PP_GLOBAL const uint32_t* n_x, PP_GLOBAL const uint32_t* xcover, uint32_t s) {
     if (s >= n_toks[0]) return;
+    hb[s] = WK_NONE;
     uint32_t i = px_lower_bound(xpos, n_x[0], s);
     if (i > 0u && xcover[i - 1u] > s) {
         state[s] = 2u;
@@ -3836,15 +3974,13 @@ UKL_INLINE void px_top_sizes(PP_GLOBAL uint32_t* state, PP_GLOBAL const uint32_t
         return;
     }
     uint32_t st = state[s];
-    Ar a;
-    a.lists = lists;
-    v[s] = st == 0u ? 1u : st == 1u ? px_claim(a, TOP, oid[s]).size : 0u;
+    v[s] = st == 0u ? 1u : st == 1u ? ch.sz[lists[oid[s]].hi] : 0u;
 }
 
 // The top level's pieces of the output at their places (`pbase`, `obase`: the scans of the pieces
 // and the sizes): a run of tokens no call covers one `P_TOP` piece from its first, and each live
 // outermost call's list's base and its exits' chain's, their PLACE pushed.
-UKL_INLINE void px_top_place(PP_GLOBAL const uint32_t* state, PP_GLOBAL const uint32_t* oid, PP_GLOBAL PxList* lists, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL const uint32_t* obase, PP_GLOBAL const uint32_t* pbase, PP_GLOBAL uint32_t* out, PP_GLOBAL uint32_t* slots, PP_GLOBAL uint32_t* qctl, PP_GLOBAL uint32_t* ctl, uint32_t out_cap, uint32_t q_cap, uint32_t s) {
+UKL_INLINE void px_top_place(PP_GLOBAL const uint32_t* state, PP_GLOBAL const uint32_t* oid, PP_GLOBAL PxList* lists, Ch ch, PP_GLOBAL uint32_t* hb, PP_GLOBAL uint32_t* ht, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL const uint32_t* obase, PP_GLOBAL const uint32_t* pbase, PP_GLOBAL uint32_t* out, PP_GLOBAL uint32_t* ctl, uint32_t out_cap, uint32_t s) {
     if (s >= n_toks[0]) return;
     uint32_t st = state[s];
     if (st == 0u) {
@@ -3856,31 +3992,43 @@ UKL_INLINE void px_top_place(PP_GLOBAL const uint32_t* state, PP_GLOBAL const ui
             px_refuse(ctl, X_ROOM);
         }
     } else if (st == 1u) {
-        uint32_t c = oid[s], b = obase[s], pb = pbase[s];
-        for (uint32_t step = 0u; step < MAX_EXITS; step++) {
-            lists[c].base = pb;
-            lists[c].tat = b;
-            lists[c].dest = 0u;
-            b += lists[c].size;
-            pb += lists[c].psize;
-            px_fence();
-            px_qpush(slots, qctl, q_cap, ctl, c | IT_PLACE);
-            uint32_t x = lists[c].exit;
-            if (x == 0u || lists[x - 1u].parent != TOP) break;
-            c = x - 1u;
-        }
+        // Its chain placed from its place, a thread a call (`px_top_member`).
+        px_ch_first(ch, hb, ht, lists[oid[s]].hi, pbase[s], obase[s]);
     }
+}
+// Top position `s`: the call whose `)` it is, if an outermost call's chain's, placed after the
+// chain's calls before it, and its PLACE pushed.
+UKL_INLINE void px_top_member(PP_GLOBAL PxList* lists, Ch ch, PP_GLOBAL const uint32_t* hb, PP_GLOBAL const uint32_t* ht, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL uint32_t* slots, PP_GLOBAL uint32_t* qctl, PP_GLOBAL uint32_t* ctl, uint32_t q_cap, uint32_t s) {
+    if (s >= n_toks[0]) return;
+    uint32_t x = ch.node[s], l = ch.ls[s];
+    if (x == 0u || hb[l] == WK_NONE) return;
+    PP_GLOBAL PxList* X = &lists[x - 1u];
+    X->base = hb[l] - ch.ps[s];
+    X->tat = ht[l] - ch.sz[s];
+    X->dest = 0u;
+    px_fence();
+    px_qpush(slots, qctl, q_cap, ctl, (x - 1u) | IT_PLACE);
+}
+// Top position `s`: the exit's call whose `)` it is (+ 1), 0 none; then an outermost call's at its
+// `)`; then its chain (`px_ch_seed`).
+UKL_INLINE void px_top_node0(PP_GLOBAL const uint32_t* hx, uint32_t hmask, Ch ch, PP_GLOBAL uint32_t* links, PP_GLOBAL const uint32_t* n_toks, uint32_t s) {
+    if (s >= n_toks[0]) return;
+    ch.node[s] = px_hx_find(hx, hmask, TOP, s);
+    if (s == 0u) ukl_atomic_store(links, 0u);
+}
+UKL_INLINE void px_top_node(PP_GLOBAL const uint32_t* state, PP_GLOBAL const uint32_t* oid, PP_GLOBAL const PxList* lists, Ch ch, PP_GLOBAL const uint32_t* n_toks, uint32_t s) {
+    if (s >= n_toks[0] || state[s] != 1u) return;
+    uint32_t c = oid[s];
+    if (lists[c].hi < n_toks[0]) ch.node[lists[c].hi] = c + 1u;
 }
 
 // Each top token's pieces of the output (decision 0520 §3): 1 where a run of tokens no call covers
 // begins (a `P_TOP` piece, its length found once every piece is placed: `px_out_run`), its list's
 // pieces and its exits' chain's for an outermost call's name, 0 else.
-UKL_INLINE void px_top_pieces(PP_GLOBAL const uint32_t* state, PP_GLOBAL const uint32_t* oid, PP_GLOBAL PxList* lists, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL uint32_t* pv, uint32_t s) {
+UKL_INLINE void px_top_pieces(PP_GLOBAL const uint32_t* state, PP_GLOBAL const uint32_t* oid, PP_GLOBAL PxList* lists, Ch ch, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL uint32_t* pv, uint32_t s) {
     if (s >= n_toks[0]) return;
     uint32_t st = state[s];
-    Ar a;
-    a.lists = lists;
-    pv[s] = st == 0u ? (s == 0u || state[s - 1u] != 0u ? 1u : 0u) : st == 1u ? px_claim_pieces(a, TOP, oid[s]) : 0u;
+    pv[s] = st == 0u ? (s == 0u || state[s - 1u] != 0u ? 1u : 0u) : st == 1u ? ch.ps[lists[oid[s]].hi] : 0u;
 }
 
 // A run's length (`PF_RUN`): to the next piece's place, or the output's end.

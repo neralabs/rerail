@@ -61,7 +61,7 @@ pub mod code_rule_dsl {
                 pub use rerail_corpus_memo::code_rule_dsl::logic::plan::corpus::*;
                 // `plan/corpus.rs`'s imports, for its children' `use super::*`.
                 #[allow(unused_imports)]
-                use rerail_store::source_tree::Canonical as _;
+                use rerail_store::Canonical as _;
                 #[allow(unused_imports)]
                 use super::{Error, Outcome, Result, lower, output};
                 #[allow(unused_imports)]

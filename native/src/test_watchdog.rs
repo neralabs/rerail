@@ -55,10 +55,13 @@ fn key(thread: &(u64, String)) -> &Key {
     &thread.1
 }
 
-/// The longest thread name the system reports (macOS: 64 bytes with its NUL; Linux: 16).
+/// The longest thread name the system reports (macOS: 64 bytes with its NUL; Linux: 16; Windows: a thread's
+/// description, whole).
 #[cfg(target_os = "macos")]
 const MAX_NAME: usize = 63;
-#[cfg(not(target_os = "macos"))]
+#[cfg(windows)]
+const MAX_NAME: usize = usize::MAX;
+#[cfg(not(any(target_os = "macos", windows)))]
 const MAX_NAME: usize = 15;
 
 /// Lets the calling test run for up to `limit` (capped by `RERAIL_TEST_TIMEOUT` when it is set).
@@ -86,6 +89,8 @@ fn configured() -> Option<Option<Duration>> {
 #[used]
 #[cfg_attr(target_os = "macos", unsafe(link_section = "__DATA,__mod_init_func"))]
 #[cfg_attr(target_os = "linux", unsafe(link_section = ".init_array"))]
+// The C runtime's initializers, which it calls before `main` (MSVC).
+#[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
 static START: extern "C" fn() = start;
 
 extern "C" fn start() {
@@ -200,7 +205,12 @@ fn threads() -> Vec<(u64, String)> {
         .collect()
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(windows)]
+fn threads() -> Vec<(u64, String)> {
+    rerail_prof::windows_threads().into_iter().map(|(id, name)| (u64::from(id), name)).collect()
+}
+
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn threads() -> Vec<(u64, String)> {
     Vec::new()
 }
@@ -253,7 +263,8 @@ mod tests {
             .unwrap();
         let err = String::from_utf8_lossy(&out.stderr);
         assert_eq!(out.status.code(), Some(124), "{err}");
-        // Named as the system reports the thread (`MAX_NAME` bytes: all of it on macOS, `test_watchdog::` on Linux).
+        // Named as the system reports the thread (`MAX_NAME` bytes: all of it on macOS and Windows, `test_watchdog::`
+        // on Linux).
         assert!(err.contains(&format!("`{}` ran", short("test_watchdog::tests::a_test_past_its_limit_ends_the_run"))), "{err}");
         assert!(t0.elapsed() < Duration::from_secs(20));
     }
