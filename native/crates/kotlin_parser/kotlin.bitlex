@@ -17,12 +17,14 @@
 # asks of the next token (`Lexer::asi`); the next tokens are a token mark's run, as the parser
 # peeks. No mask reads the bytes after it (no back fills, decision 0416).
 #
-# A raw string closes at its `"""` or at a template's `$` (`or t_dollar`: its closer is three
-# bytes, the `$` one). After the template's `}`, the string goes on as the kind of string the
-# template is in: a tail (`tail`) after a string, a raw tail (`rtail`) after a raw string. A
-# region kind's `after` says which: it opens only where the last region opened before, of the
-# kinds with no `after`, is one it names. A raw tail is read as the raw string's bytes are:
-# a run of them that reaches a quote first is a part of its own.
+# A string closes at its `"` or at a template's `$` (`or t_dollar`), a raw string at its `"""`
+# or at the `$` (its closer is three bytes, the `$` one). After the template's `}`, the string
+# goes on as the kind of string the template is in: a tail (`tail`) after a string, a raw tail
+# (`rtail`) after a raw string. A region kind's `after` says which: it opens only where the
+# last region closed at its `or` (the template's `$`) is one it names, as the lean lexer's
+# string reader goes back to its loop after the template's code. A string, a character or a
+# comment in the code closes at its own closer and leaves it so. A raw tail is read as the raw
+# string's bytes are: a run of them that reaches a quote first is a part of its own.
 #
 # A template's code ends at the first `}` on its line, found from the bytes before the
 # regions. A string or a character in the code is a region of its own, as anywhere in code.
@@ -30,9 +32,8 @@
 #
 # The reference is the lean parser (`rerail_kotlin_lean`), whose tapes are tree-sitter-kotlin's
 # (decision 0305). What the grammar does not read is refused, and goes to the lean parser: a
-# template's code holding a brace, a template or a line break; a string, a character or a
-# backtick name in a raw string's template's code, a raw string in a template's code;
-# `fun interface`, labels' definitions, and more.
+# template's code holding a brace, a template or a line break; `fun interface`, labels'
+# definitions, and more.
 
 lexer kotlin
 
@@ -95,10 +96,10 @@ regions hidden {
   line  = line_open .. lf outside
   block = block_open .. block_end
   rstr  = dq3 .. rclose bytes 3 or t_dollar
-  str   = dq & ~dq3 .. dq_close | t_dollar
+  str   = dq & ~dq3 .. dq_close or t_dollar
   chr   = sq .. sq_close
   tick  = bt .. bt
-  tail  = t_close .. dq_close | t_dollar after str chr tick
+  tail  = t_close .. dq_close | t_dollar after str
   rtail = t_close .. rclose bytes 3 or t_dollar after rstr
 }
 # Where a token in a region starts: a string's, a character's or a backtick name's opener.
@@ -115,13 +116,6 @@ mask code       = ~region & ~t_brace
 mask t_code     = fill(prev(t_brace), rbrace)
 escape "a `${…}` template with a brace, a template, a comment or a line break" when t_code & (lbrace | lf | line_open | block_open | dollar & next(lbrace))
 escape "a `${…}` template whose `}` is in a string of its code" when rbrace & prev(t_code) & ~o_tail & ~o_rtail
-# A raw string's template: its `$` closed a raw string or a raw tail. A string, a character or a
-# backtick name in its code would make its `}` a tail's; a raw string in a string's template's
-# code, a raw tail's.
-mask rt_brace   = t_brace & prev(f_rstr | f_rtail, 2)
-mask rt_code    = fill(prev(rt_brace), rbrace)
-escape "a string, a character or a backtick name in a raw string's template" when rt_code & (o_str | o_chr | o_tick)
-escape "a raw string in a template's code" when t_code & o_rstr
 escape "an empty `${}`" when prev(t_brace) & rbrace
 escape "a `$` outside a string" when code & dollar
 

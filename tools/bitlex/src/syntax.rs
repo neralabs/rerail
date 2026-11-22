@@ -422,9 +422,12 @@ pub struct Region {
     /// byte of either; one of `C2` is `M` bytes, the others `bytes N` (a raw string's `"""`, or
     /// its template's `$`).
     pub or: Option<(Expr, u8)>,
-    /// `after K …`: the region opens only where the last region opened before its opener, of
-    /// the kinds with no `after`, is one of `K …` (a template's tail goes back to the kind of
-    /// string the template is in). Such a kind has no `else` and no `outside`.
+    /// `after K …`: the region opens only where the last region closed at its second closer
+    /// (`or`, a template's `$`) before its opener, of the kinds with no `after`, is one of `K …`:
+    /// a template's tail goes back to the kind of string the template is in, as the lean lexer's
+    /// string reader returns to its loop after the template's code. A region in the template's
+    /// code, closed at its own closer, leaves it so. Such a kind has no `else` and no `outside`;
+    /// the kinds it names have an `or`.
     pub after: Vec<String>,
 }
 
@@ -445,8 +448,8 @@ impl Regions {
     /// from it: `c = prev(f_K) & ~f_K`, and `prev(f_K) | prev(c & ~C2) | … | prev(c & ~C2, N
     /// - 1) | prev(c & C2) | … | prev(c & C2, M - 1)`. A kind with `after A …`
     /// comes after the kinds with none, which it reads: its openers are where the last of
-    /// their openers before is an `A`, `o_K = O & ~H & prev(fill(o_A | …, o_B | …))`, the `B`s
-    /// the others.
+    /// their closers at a `C2` before (`c & C2`, `t_K`) is an `A`'s, `o_K = O & ~H &
+    /// prev(fill(t_A | …, t_B | …))`, the `B`s the other kinds with an `or`.
     pub fn body(&self) -> Vec<Stmt> {
         let name = |s: &str| Expr::Name(s.to_string());
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
@@ -464,12 +467,14 @@ impl Regions {
             Some(h) => Expr::Or(Box::new(h), Box::new(e)),
             None => e,
         });
-        let plain: Vec<&Region> = self.kinds.iter().filter(|r| r.after.is_empty()).collect();
+        let plain: Vec<&Region> = self.kinds.iter().filter(|r| r.after.is_empty() && r.or.is_some()).collect();
+        // Each plain kind's closers at its second closer: where a template opens.
+        let mut templates: Vec<(String, Expr)> = Vec::new();
         // Where two kinds open a byte the walk opens the first listed that may: each kind's
         // opener excludes the earlier kinds' taken.
         let mut earlier: Option<Expr> = None;
-        let any = |rs: Vec<&Region>| rs.iter().fold(None, |a: Option<Expr>, r| {
-            let o = name(&format!("o_{}", r.kind));
+        let any = |rs: Vec<&Region>, templates: &[(String, Expr)]| rs.iter().fold(None, |a: Option<Expr>, r| {
+            let o = templates.iter().find(|t| t.0 == r.kind).map(|t| t.1.clone()).expect("verified: a kind before");
             Some(match a {
                 Some(a) => Expr::Or(Box::new(a), Box::new(o)),
                 None => o,
@@ -478,8 +483,8 @@ impl Regions {
         for r in &self.kinds {
             let mut open = and(r.opener.clone(), not(name(&self.hidden)));
             if !r.after.is_empty() {
-                let named = any(plain.iter().copied().filter(|k| r.after.contains(&k.kind)).collect()).expect("verified: a kind named");
-                let others = any(plain.iter().copied().filter(|k| !r.after.contains(&k.kind)).collect()).unwrap_or(Expr::Empty);
+                let named = any(plain.iter().copied().filter(|k| r.after.contains(&k.kind)).collect(), &templates).expect("verified: a kind named");
+                let others = any(plain.iter().copied().filter(|k| !r.after.contains(&k.kind)).collect(), &templates).unwrap_or(Expr::Empty);
                 open = and(open, call("prev", vec![Arg::E(call("fill", vec![Arg::E(named), Arg::E(others)]))]));
             }
             if let Some(e) = &earlier {
@@ -511,6 +516,9 @@ impl Regions {
                 let pk = |e: Expr, k: u8| call("prev", vec![Arg::E(e), Arg::N(u64::from(k))]);
                 let c = and(prev(&f, 1), not(name(&f)));
                 let (l, l2) = (and(c.clone(), not(c2.clone())), and(c, c2.clone()));
+                if r.after.is_empty() {
+                    templates.push((r.kind.clone(), l2.clone()));
+                }
                 or(prev(&f, 1));
                 for k in 1..r.bytes {
                     or(pk(l.clone(), k));
@@ -1657,11 +1665,12 @@ impl P {
         if kinds.is_empty() {
             return self.err("a region");
         }
-        // `after` names kinds of these regions with no `after` of their own; at most 15 kinds.
+        // `after` names kinds of these regions with no `after` of their own and with an `or` (a
+        // template's closer); at most 15 kinds.
         for r in &kinds {
             for a in &r.after {
-                if !kinds.iter().any(|k| k.kind == *a && k.after.is_empty()) {
-                    return Err(format!("region {}: `after {a}`, not a kind of these regions with no `after`", r.kind));
+                if !kinds.iter().any(|k| k.kind == *a && k.after.is_empty() && k.or.is_some()) {
+                    return Err(format!("region {}: `after {a}`, not a kind of these regions with an `or` and no `after`", r.kind));
                 }
             }
         }

@@ -1331,19 +1331,22 @@ impl Lowering {
             me.names.insert(name, Val { v, d, dirty: true, set: None });
         };
         // In the walk's order, which is the regions' (`after` kinds last, verified): a kind with
-        // `after` reads the plain kinds' openers taken. Where two kinds open a byte the walk opens
+        // `after` reads the plain kinds' templates. Where two kinds open a byte the walk opens
         // the first listed of those that may open there, so each kind's opener excludes the
         // earlier kinds' taken (an `after` kind's with its condition: e3927f1d7, 0332 step 35).
         let mut opens: Vec<u16> = Vec::with_capacity(regions.kinds.len());
+        // Each plain kind's closers at its second closer (`c & C2`): where a template opens.
+        let mut templates: Vec<Option<u16>> = Vec::with_capacity(regions.kinds.len());
         for (at, (r, &(opener, closer, c_before, or))) in regions.kinds.iter().zip(&ins).enumerate() {
             let mut taken = self.op(BlockOp::And(opener, code));
             let mut after = 0u16;
             if !r.after.is_empty() {
-                // Taken where the last plain kind's opener taken before is one `after` names.
+                // Taken where the last template a plain kind's region closed at before is one of
+                // a kind `after` names (the lean lexer's string reader, back from the template).
                 let mut named = None;
                 let mut others = None;
                 for (k, q) in regions.kinds[..at].iter().enumerate().filter(|(_, q)| q.after.is_empty()) {
-                    let o = opens[k];
+                    let Some(o) = templates[k] else { continue };
                     let side = if r.after.contains(&q.kind) {
                         after |= 1 << k;
                         &mut named
@@ -1380,6 +1383,7 @@ impl Lowering {
                 None => (taken, None),
             };
             opens.push(open);
+            templates.push(None);
             let fill = self.op(BlockOp::Fill(open, closer));
             if r.outside {
                 let p = self.op(BlockOp::Prev(fill, 1));
@@ -1390,6 +1394,9 @@ impl Lowering {
                 hide.push(p);
                 let c = self.op(BlockOp::AndNot(p, fill));
                 let (one, two) = (self.op(BlockOp::AndNot(c, c2)), self.op(BlockOp::And(c, c2)));
+                if r.after.is_empty() {
+                    templates[at] = Some(two);
+                }
                 for k in 1..r.bytes {
                     hide.push(self.op(BlockOp::Prev(one, k)));
                 }

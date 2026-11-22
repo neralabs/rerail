@@ -65,15 +65,10 @@ fn the_template_spans_are_the_interpreters() {
     refused(&[
         "val a = \"${\"}\"}\"\n",
         "val a = \"${'}'}\"\n",
-        "val a = \"${\"\"\"x\"\"\"}\"\n",
-        "val a = \"\"\"${\"x\"}\"\"\"\n",
-        "val a = \"\"\"${'x'}\"\"\"\n",
-        "val a = \"\"\"${`x`}\"\"\"\n",
         // Where what follows still reads as tokens: the `}` a token of the code covered is
-        // punctuation, and the raw string's `}` opens the raw string's tail.
+        // punctuation.
         "val a = \"${\"}\"}\"\"\n",
         "val a = \"${'}'}\"\"\n",
-        "val a = \"${\"\"\"x\"\"\"}\"\"\"\n",
     ]);
     tier1_same(&[
         "val a = \"${b}\"\n",
@@ -579,15 +574,25 @@ fn raw_templates_are_the_lean_parsers() {
     same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
+/// A template's tail goes back to the kind of string the template is in, whatever its code
+/// holds (the lean lexer's string reader, back from the template's code): a string, a character
+/// or a backtick name in a raw string's template, a raw string in a string's template.
+#[test]
+fn a_tail_is_the_strings_whose_template_it_ends() {
+    same(&[
+        "val h = \"\"\"${f(\"a\")}\"\"\"\n",
+        "val h = \"\"\"${f('a')}\"\"\"\n",
+        "val h = \"\"\"${`a`}\"\"\"\n",
+        "val h = \"\"\"a ${f(\"b\")} \"c\" ${'d'}e\"\"\"\n",
+        "val h = \"${f(\"\"\"a\"\"\")}\"\n",
+        "val h = \"${f(\"\"\"a\"\"\")} b ${c}\" + \"\"\"${d}\"\"\"\n",
+    ]);
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
-        // A string, a character or a backtick name in a raw string's template: its `}` would
-        // open a tail; a raw string in a template, a raw tail.
-        "val h = \"\"\"${f(\"a\")}\"\"\"\n",
-        "val h = \"\"\"${f('a')}\"\"\"\n",
-        "val h = \"${f(\"\"\"a\"\"\")}\"\n",
         // The lean parser's `fun` leaf: a function's `fun` is implied, and the `interface`
         // after it comes too late to keep it.
         "fun interface A {\n    fun f()\n}\n",

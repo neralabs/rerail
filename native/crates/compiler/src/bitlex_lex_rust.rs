@@ -657,8 +657,8 @@ struct Gen<'a> {
     /// The escapes stage 1 tests: a bit of any refuses the file.
     sinks: Vec<(String, usize)>,
     /// The regions (`regions H { … }`) as the token loop opens them at a token's start: each kind,
-    /// its opener's local, the regions it is `after` (by index), and whether it has none (a region
-    /// of those is `plain`, the one the `after`s ask of). `None`: none, or one the loop does not
+    /// its opener's local, and the regions it is `after` (by index: a template in one of them is
+    /// the one the `after`s ask of, `template`). `None`: none, or one the loop does not
     /// open yet (`else E bytes M`).
     opens: Option<Vec<(String, String, Vec<usize>)>>,
     /// Each mask's expression, by name: what a token reads of one made of the regions.
@@ -2399,7 +2399,7 @@ impl Gen<'_> {
                     continue;
                 }
                 let at = if exact(k) { "true".to_owned() } else { format!("bit(&{local}, s)") };
-                let cond = if after.is_empty() { at } else { format!("({}) && {at}", after.iter().map(|a| format!("plain == {a}")).collect::<Vec<_>>().join(" || ")).replace(" && true", "") };
+                let cond = if after.is_empty() { at } else { format!("({}) && {at}", after.iter().map(|a| format!("template == {a}")).collect::<Vec<_>>().join(" || ")).replace(" && true", "") };
                 chain.push((cond, k.to_string()));
             }
             // The regions a token here may open: those tested, to the first that is no test, or none.
@@ -3616,7 +3616,7 @@ impl Gen<'_> {
                 let _ = writeln!(self.body, "    let mut m_{} = vec![0u64; nw];", ident(e));
             }
         }
-        let _ = writeln!(self.body, "    {{\n        let mut at = 0usize;\n        // The region opened last of the kinds with no `after`.\n        let mut plain = usize::MAX;\n        // Each kind's next opener, at or after where it was looked for (`n`: none).");
+        let _ = writeln!(self.body, "    {{\n        let mut at = 0usize;\n        // The kind of string the template is in: the region closed last at its second closer (a template's `$`), of the kinds with no `after`.\n        let mut template = usize::MAX;\n        // Each kind's next opener, at or after where it was looked for (`n`: none).");
         let firsts: Vec<String> = opens.iter().map(|o| format!("first_bit(&{o}, 0).unwrap_or(n)")).collect();
         let _ = writeln!(self.body, "        let mut nx = [{}];", firsts.join(", "));
         let _ = writeln!(self.body, "        loop {{\n            let (mut p, mut k) = (n, usize::MAX);");
@@ -3625,7 +3625,7 @@ impl Gen<'_> {
             if r.after.is_empty() {
                 let _ = write!(self.body, "            // `{}`\n{look}", r.kind);
             } else {
-                let after: Vec<String> = r.after.iter().map(|a| ks.iter().position(|q| q.kind == *a).map(|q| format!("plain == {q}")).ok_or_else(|| format!("tier 1 as Rust: region `{}` after no region `{a}`", r.kind))).collect::<Result<_, _>>()?;
+                let after: Vec<String> = r.after.iter().map(|a| ks.iter().position(|q| q.kind == *a).map(|q| format!("template == {q}")).ok_or_else(|| format!("tier 1 as Rust: region `{}` after no region `{a}`", r.kind))).collect::<Result<_, _>>()?;
                 let _ = write!(self.body, "            // `{}`, after {}\n            if {} {{\n{}            }}\n", r.kind, r.after.join(" "), after.join(" || "), indent(&look, "    "));
             }
         }
@@ -3641,12 +3641,14 @@ impl Gen<'_> {
                     Some((c2, m)) => format!("if bit(&{c2}, c) {{ c + {} }} else {{ c + {} }}", m - 1, r.bytes - 1),
                     None => format!("c + {}", r.bytes - 1),
                 };
+                // A plain kind's close at its second closer: a template opens in it.
+                let last = match &ors[k] {
+                    Some((c2, _)) if r.after.is_empty() => format!("{{\n                                if bit(&{c2}, c) {{\n                                    template = {k};\n                                }}\n                                {last}\n                            }}"),
+                    _ => last,
+                };
                 format!("                    match first_bit(&{c}, p + 1) {{\n                        Some(c) => {{\n                            let last = {last};\n                            set(&mut {f}, p, c);\n                            set(&mut {hidden}, p + 1, last + 1);\n                            at = last + 1;\n                        }}\n                        None => {{\n                            set(&mut {f}, p, n);\n                            set(&mut {hidden}, p + 1, n);\n                            at = n;\n                        }}\n                    }}\n")
             };
             let _ = write!(arm, "                    set(&mut {o}, p, p + 1);\n{close}");
-            if r.after.is_empty() {
-                let _ = writeln!(arm, "                    plain = {k};");
-            }
             let body = match &r.empty {
                 // `else E bytes M`: with no closer after it in the file, no region: `E`, its first `M` bytes.
                 Some((e, m)) => format!("                    if first_bit(&{c}, p + 1).is_none() {{\n                        set(&mut m_{e}, p, p + 1);\n                        set(&mut {hidden}, p + 1, p + {m});\n                        at = (p + {m}).max(p + 1);\n                    }} else {{\n{}                    }}\n", indent(&arm, "    "), e = ident(e)),
@@ -3697,6 +3699,17 @@ impl Gen<'_> {
         let o = self.bytes_at(&opener, 1, &mut HashMap::new());
         let c = self.bytes_at(&r.closers(), 0, &mut HashMap::new());
         !(0..256).any(|i| o[i] && c[i])
+    }
+
+    /// A read of a region of kind `kind` to its closer `c` (`found`, its last byte): where a kind
+    /// with `after` names it, a close at its second closer opens a template in it (`template`), as
+    /// the lean lexer's string reader keeps the string's kind over the template's code.
+    fn template_close(&mut self, kind: &str, found: String) -> Result<String, String> {
+        let Some(k) = self.kinds.iter().position(|q| q.kind == kind) else { return Ok(found) };
+        let named = self.kinds.iter().any(|q| q.after.iter().any(|a| a == kind));
+        let Some((c2, _)) = self.kinds[k].or.clone().filter(|_| named && self.kinds[k].after.is_empty()) else { return Ok(found) };
+        let c2 = self.val(&c2)?;
+        Ok(format!("{{\n                    if bit(&{c2}, c) {{\n                        template = {k};\n                    }}\n                    {}\n                }}", found.trim_start_matches(' ')))
     }
 
     fn closer_last(&mut self, r: &Region, closes: &[(String, Expr, u8)]) -> Result<String, String> {
@@ -4144,6 +4157,7 @@ impl Gen<'_> {
                         } else {
                             let found = self.closer_last(r, &[])?;
                             let some = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
+                            let some = self.template_close(&r.kind, some)?;
                             let some = if !self.spans.iter().any(|sp| sp.opens_at.iter().any(|(r, _)| r == row)) { some } else { with_close(&some) };
                             format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {some},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}")
                         };
@@ -4164,6 +4178,7 @@ impl Gen<'_> {
                     let found = self.closer_last(&r, &parts.closes)?;
                     let tests = self.region_tests(&r.kind);
                     let found = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
+                    let found = self.template_close(&r.kind, found)?;
                     let found = if !self.spans.iter().any(|sp| sp.opens_at.iter().any(|(r, _)| r == row)) { found } else { with_close(&found) };
                     (format!("read {} parts, to its closer", r.kind), format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {found},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}"))
                 }
@@ -4410,10 +4425,8 @@ impl Gen<'_> {
             }
         }
         let _ = write!(open_code, "        // The token's first byte's group, by the dispatch tables (simdjson's `classify`).\n        let c = src[s];\n        let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();\n");
-        let plain_kinds: Vec<String> = self.opens.as_ref().map(|o| o.iter().enumerate().filter(|(_, r)| r.2.is_empty()).map(|(k, _)| k.to_string()).collect()).unwrap_or_default();
-        if let Some(opens) = self.opens.as_ref().filter(|_| !picks.fused) {
-            let plain: Vec<String> = opens.iter().enumerate().filter(|(_, r)| r.2.is_empty()).map(|(k, _)| k.to_string()).collect();
-            let _ = write!(open_code, "        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the region opened last of those with none (`plain`) is one; of those whose opener may be the byte's.\n        let open = match group {{\n{}            _ => usize::MAX,\n        }};\n        if matches!(open, {}) {{\n            plain = open;\n        }}\n", picks.open, plain.join(" | "));
+        if self.opens.is_some() && !picks.fused {
+            let _ = write!(open_code, "        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the string the template is in (`template`) is one; of those whose opener may be the byte's.\n        let open = match group {{\n{}            _ => usize::MAX,\n        }};\n", picks.open);
         }
         let mut span_decl = String::new();
         let mut span_after = String::new();
@@ -4527,11 +4540,6 @@ impl Gen<'_> {
             let opens = &row_opens[p];
             let mut code = String::new();
             if picks.fused {
-                if let [k] = opens.as_slice()
-                    && plain_kinds.contains(k)
-                {
-                    let _ = writeln!(code, "            plain = {k};");
-                }
                 for (j, a) in accs.iter().enumerate() {
                     if a.here != "false" {
                         let _ = writeln!(code, "            here_{j} = {};", fold_open(&a.here, opens));
@@ -4761,7 +4769,7 @@ impl Gen<'_> {
         out.push_str(&self.stage1());
         out.push_str(&tables);
         out.push_str("/// `src`'s records.\npub fn lex(src: &[u8]) -> Lexed {\n    let n = src.len();\n    let nw = n.div_ceil(64);\n    // Each word's bits inside the file.\n    let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();\n");
-        let plain_decl_text = format!("{}{span_decl}", if self.opens.is_some() { "    // The region opened last of the kinds with no `after`.\n    let mut plain = usize::MAX;\n" } else { "" });
+        let plain_decl_text = format!("{}{span_decl}", if self.opens.is_some() { "    // The kind of string the template is in, as the lean lexer's string reader keeps it over the template's code: the region read last that closed at its second closer (a template's `$`), of the kinds with no `after`.\n    let mut template = usize::MAX;\n" } else { "" });
         let kept: Vec<String> = self.nodes.iter().filter(|n| n.kept).map(|n| n.name.clone()).chain(self.nodes.iter().flat_map(|n| &n.also).map(|a| format!("mut {a}"))).collect();
         let _ = writeln!(out, "    // Stage 1: the masks the regions and the tokens read, and whether an escape holds.\n    let Stage1 {{ {}, refused: escapes }} = stage1_best(src);", kept.join(", "));
         let rest = format!("{plain_decl_text}{fw_decl}{open_code}{branches}{token_code}{own_code}{gap_code}{acc_after}{span_after}{fields_init}");
