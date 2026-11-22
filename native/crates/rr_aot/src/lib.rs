@@ -15,9 +15,19 @@ mod tier1;
 #[allow(clippy::all, unused_parens, unused_mut, dead_code, unreachable_code, unused_variables)]
 mod tier2;
 
-pub use tier1::{Lexed, lex};
+pub use tier1::{Lexed, PADDING, lex};
 
-/// `src`'s tape, or the byte the parser refused it at (0: tier 1 sends it to the engine).
-pub fn parse(src: &[u8]) -> Result<rerail_tape_format::Columns, u32> {
-    tier2::parse(src, &tier1::lex(src))
+/// The tape of `buf[..n]`, or the byte the parser refused it at (0: tier 1 sends it to the engine). `buf` is the file
+/// padded, as simdjson's: `PADDING` spaces after it (`padded`), so that tier 1 loads each block where it is.
+pub fn parse(buf: &[u8], n: usize) -> Result<rerail_tape_format::Columns, u32> {
+    tier2::parse(&buf[..n], &tier1::lex(buf, n))
+}
+
+/// `src` padded for `parse` and `lex`: a buffer of it and `PADDING` spaces (a caller that reads files makes its buffer
+/// so).
+pub fn padded(src: &[u8]) -> Vec<u8> {
+    let mut b = Vec::with_capacity(src.len() + PADDING);
+    b.extend_from_slice(src);
+    b.resize(src.len() + PADDING, b' ');
+    b
 }

@@ -1517,8 +1517,8 @@ pub mod tests {
     fn token_rules_are_their_last_masks() {
         let old = crate::GRAMMAR
             .replace("start hash & directive run word", "start hash & directive last hashword & ~next(hashword & ~directive)")
-            .replace("start alpha & ident & ~prev(ident) run word", "start alpha & ident & ~prev(ident) last ident & ~next(ident)")
-            .replace("start digit & int & ~prev(int) run num_run once dot", "start digit & int & ~prev(int) last numeral & ~next(numeral)")
+            .replace("start id_first run word", "start id_first last ident & ~next(ident)")
+            .replace("start int_first run num_run once dot", "start int_first last numeral & ~next(numeral)")
             .replace("start punct & p_start pair two_start", "start punct & p_start last p_last")
             .replace("read str", "last prev(f_str) & ~f_str")
             .replace("read line | block", "last (f_line & ~next(f_line)) | (prev(f_block) & ~f_block)")

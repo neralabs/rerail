@@ -59,7 +59,7 @@ fn columns_nodes(t: &rerail_tape_format::Columns) -> Nodes {
 /// node that differs.
 fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
     let theirs = c.parser.image(text.as_bytes()).ok().map(|i| image_nodes(&i));
-    let ours = rerail_rr_aot::parse(text.as_bytes()).ok().map(|t| columns_nodes(&t));
+    let ours = rerail_rr_aot::parse(&rerail_rr_aot::padded(text.as_bytes()), text.len()).ok().map(|t| columns_nodes(&t));
     match (theirs, ours) {
         (None, None) => None,
         (Some(_), None) => Some("the JIT parses it, the parser as Rust refuses it".into()),
@@ -98,7 +98,7 @@ fn tier2_checked_marks() -> u32 {
 fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     let late = tier2_checked_marks() << 16;
     let run = c.program.block_programs[0].run(text.as_bytes());
-    let lx = rerail_rr_aot::lex(text.as_bytes());
+    let lx = rerail_rr_aot::lex(&rerail_rr_aot::padded(text.as_bytes()), text.len());
     let refused = run.totals.first().is_some_and(|&t| t != 0);
     // An escape the lowering makes a check of tier 2's at a token (`pending_checks`): the interpreter's tier 1 does
     // not refuse there, tier 1 as Rust does; either way the file is refused.
@@ -180,7 +180,7 @@ fn tier1s_records_are_the_interpreters() {
         if let Some(d) = tier1_differs(c, t) {
             panic!("case {k} ({:?}): {d}", &t[..t.len().min(60)]);
         }
-        if rerail_rr_aot::lex(t.as_bytes()).refused { refused += 1 } else { same += 1 }
+        if rerail_rr_aot::lex(&rerail_rr_aot::padded(t.as_bytes()), t.len()).refused { refused += 1 } else { same += 1 }
     }
     eprintln!("{same} files' records the interpreter's, {refused} refused by both");
     assert!(same > 0 && refused > 0);

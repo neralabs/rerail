@@ -407,13 +407,16 @@ impl<'a> G<'a> {
     /// The code of a decision among `arms` (each its tests and its code, unindented), as the lean
     /// parser decides at a token: the marks first, in their order (a mark is a token of no width
     /// before its token, tier 2's machine sees it first), consecutive ones that go to one arm one
-    /// test; then a `match` on the word, a kind's test a guard of its arm. `exits`: marks that
-    /// leave the decision (`exit`, the code after it takes them, or the level ends there). None
-    /// passes: `none`. An arm reached by two tests apart is numbered, its code written once.
-    /// `gated`: exits where the level ends at a hidden mark that ends levels and has questions,
-    /// tested only where the caller's level is the mark's (`asks`): elsewhere (inside
-    /// parentheses) the mark is passed, as the lean parser asks `asi` only where `stmt` is set.
-    fn decide(&self, arms: &[(Vec<First>, String)], exits: &[usize], unmarked: &[usize], gated: &[usize], exit: &str, none: &str, pad: &str) -> String {
+    /// test; then a `match` on the word, a kind's test a guard of its arm. `ex`: marks that
+    /// leave the decision (`exit`, the code after it takes them, or the level ends there,
+    /// `exits_ending`). None passes: `none`. An arm reached by two tests apart is numbered, its
+    /// code written once. Exits where the level ends at a hidden mark that ends levels and has
+    /// questions (`gated`) are tested only where the caller's level is the mark's (`asks`):
+    /// elsewhere (inside parentheses) the mark is passed, as the lean parser asks `asi` only where
+    /// `stmt` is set.
+    fn decide(&self, arms: &[(Vec<First>, String)], ex: &[(usize, bool)], unmarked: &[usize], exit: &str, none: &str, pad: &str) -> String {
+        let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
+        let gated = self.gated(ex);
         let n = arms.len();
         let mut marks: Vec<(usize, Option<String>, usize)> = Vec::new();
         let mut words: Vec<(u8, Option<String>, usize)> = Vec::new();
@@ -428,7 +431,7 @@ impl<'a> G<'a> {
                 }
             }
         }
-        for &m in exits {
+        for &m in &exits {
             if !marks.iter().any(|x| x.0 == m) {
                 marks.push((m, None, n));
             }
@@ -761,10 +764,9 @@ impl<'a> G<'a> {
             Gram::Opt(a) => {
                 let arms = self.arms(a, rest, rule)?;
                 let ex = self.exits_ending(rest, rule)?;
-                let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = self.after_mark(rest, rule)?;
-                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, &self.gated(&ex), "", "", pad)
+                self.asking(&arms, &ex, pad) + &self.decide(&arms, &ex, &unmarked, "", "", pad)
             }
             Gram::Star(a) | Gram::Plus(a) => {
                 let mut out = String::new();
@@ -775,10 +777,9 @@ impl<'a> G<'a> {
                 let r: Vec<&Gram> = std::iter::once(g).chain(rest.iter().copied()).collect();
                 let arms = self.arms(a, &r, rule)?;
                 let ex = self.exits_ending(rest, rule)?;
-                let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = self.after_mark(rest, rule)?;
-                let d = self.asking(&arms, &ex, &deeper) + &self.decide(&arms, &exits, &unmarked, &self.gated(&ex), "break;\n", "break;\n", &deeper);
+                let d = self.asking(&arms, &ex, &deeper) + &self.decide(&arms, &ex, &unmarked, "break;\n", "break;\n", &deeper);
                 let _ = write!(out, "{pad}loop {{\n{d}{pad}}}\n");
                 out
             }
@@ -790,10 +791,9 @@ impl<'a> G<'a> {
                     None => "return self.refuse();\n".to_owned(),
                 };
                 let ex = if empty.is_some() { self.exits_ending(rest, rule)? } else { Vec::new() };
-                let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = if empty.is_some() { self.after_mark(rest, rule)? } else { Vec::new() };
-                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, &self.gated(&ex), &none, &none, pad)
+                self.asking(&arms, &ex, pad) + &self.decide(&arms, &ex, &unmarked, &none, &none, pad)
             }
             Gram::Field(f, a) => {
                 let mut out = self.code(a, rest, rule, pad)?;
@@ -900,7 +900,7 @@ impl<'a> G<'a> {
             arms.push((self.first(a)?.0, body));
         }
         let none = "return self.refuse();\n";
-        Ok(self.asking(&arms, &[], pad) + &self.decide(&arms, &[], &[], &[], none, none, pad))
+        Ok(self.asking(&arms, &[], pad) + &self.decide(&arms, &[], &[], none, none, pad))
     }
 
     /// A token element: its test and its leaf's kind.

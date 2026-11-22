@@ -114,6 +114,7 @@ static HI_1: [u8; 16] = [0x80, 0x80, 0x04, 0x09, 0x12, 0x20, 0x02, 0x40, 0x00, 0
 static LO_2: [u8; 16] = [0x00, 0x00, 0x0d, 0x00, 0x08, 0x08, 0x04, 0x00, 0x00, 0x00, 0x00, 0x00, 0x02, 0x00, 0x04, 0x01];
 static HI_2: [u8; 16] = [0x00, 0x00, 0x01, 0x00, 0x00, 0x02, 0x04, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
+#[cfg(feature = "test-hooks")]
 /// Stage 1's masks a later stage reads, a bit a byte, and whether an escape holds.
 struct Stage1 {
     m_quote: Vec<u64>,
@@ -125,13 +126,9 @@ struct Stage1 {
     m_alpha: Vec<u64>,
     m_digit: Vec<u64>,
     m_dot: Vec<u64>,
-    m_lbrace: Vec<u64>,
     m_punct: Vec<u64>,
     m_tick: Vec<u64>,
     m_ff: Vec<u64>,
-    m_rbrace: Vec<u64>,
-    m_lbracket: Vec<u64>,
-    m_rbracket: Vec<u64>,
     m_q: Vec<u64>,
     m_line_open: Vec<u64>,
     m_block_open: Vec<u64>,
@@ -145,6 +142,8 @@ struct Stage1 {
     m_two_start: Vec<u64>,
     m_num_run: Vec<u64>,
     m_str_bad: Vec<u64>,
+    t10: Vec<u64>,
+    t11: Vec<u64>,
     t12: Vec<u64>,
     t13: Vec<u64>,
     t14: Vec<u64>,
@@ -154,6 +153,7 @@ struct Stage1 {
     refused: bool,
 }
 
+#[cfg(feature = "test-hooks")]
 /// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`, each mask of block `t - lag` (a `next` reads the block after its operand's), each mask a local of its block, the block before's where it is read, its last 4 words in a ring where older ones are.
 #[inline(always)]
 unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
@@ -212,13 +212,9 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut m_alpha = vec![0u64; nw];
     let mut m_digit = vec![0u64; nw];
     let mut m_dot = vec![0u64; nw];
-    let mut m_lbrace = vec![0u64; nw];
     let mut m_punct = vec![0u64; nw];
     let mut m_tick = vec![0u64; nw];
     let mut m_ff = vec![0u64; nw];
-    let mut m_rbrace = vec![0u64; nw];
-    let mut m_lbracket = vec![0u64; nw];
-    let mut m_rbracket = vec![0u64; nw];
     let mut m_q = vec![0u64; nw];
     let mut m_line_open = vec![0u64; nw];
     let mut m_block_open = vec![0u64; nw];
@@ -232,6 +228,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut m_two_start = vec![0u64; nw];
     let mut m_num_run = vec![0u64; nw];
     let mut m_str_bad = vec![0u64; nw];
+    let mut t10 = vec![0u64; nw];
+    let mut t11 = vec![0u64; nw];
     let mut t12 = vec![0u64; nw];
     let mut t13 = vec![0u64; nw];
     let mut t14 = vec![0u64; nw];
@@ -323,9 +321,6 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             p_m_lbrace = v_m_lbrace;
             // class lbrace
             v_m_lbrace = unsafe { S::eq_mask(v, 0x7b) & lv };
-            if q < nw {
-                m_lbrace[q] = v_m_lbrace;
-            }
             // class punct
             let v_m_punct = unsafe { S::to_bitmask(S::test(c1, S::splat(0x7c))) & lv };
             if q < nw {
@@ -355,19 +350,10 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             p_m_rbrace = v_m_rbrace;
             // class rbrace
             v_m_rbrace = unsafe { S::eq_mask(v, 0x7d) & lv };
-            if q < nw {
-                m_rbrace[q] = v_m_rbrace;
-            }
             // class lbracket
             let v_m_lbracket = unsafe { S::eq_mask(v, 0x5b) & lv };
-            if q < nw {
-                m_lbracket[q] = v_m_lbracket;
-            }
             // class rbracket
             let v_m_rbracket = unsafe { S::eq_mask(v, 0x5d) & lv };
-            if q < nw {
-                m_rbracket[q] = v_m_rbracket;
-            }
             p_m_pair_byte_3a = v_m_pair_byte_3a;
             // class pair_byte_3a
             v_m_pair_byte_3a = unsafe { S::eq_mask(v, 0x3a) & lv };
@@ -419,6 +405,16 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             let v_m_str_bad = (v_m_ctl | v_m_escaped & (!v_m_jesc & lv));
             if q < nw {
                 m_str_bad[q] = v_m_str_bad;
+            }
+            // lbrace | lbracket
+            let v_t10 = (v_m_lbrace | v_m_lbracket);
+            if q < nw {
+                t10[q] = v_t10;
+            }
+            // (lbrace | lbracket) | (rbrace | rbracket)
+            let v_t11 = ((v_m_lbrace | v_m_lbracket) | (v_m_rbrace | v_m_rbracket));
+            if q < nw {
+                t11[q] = v_t11;
             }
         }
         // The masks 1 block behind the classes.
@@ -542,13 +538,9 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
         m_alpha,
         m_digit,
         m_dot,
-        m_lbrace,
         m_punct,
         m_tick,
         m_ff,
-        m_rbrace,
-        m_lbracket,
-        m_rbracket,
         m_q,
         m_line_open,
         m_block_open,
@@ -562,6 +554,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
         m_two_start,
         m_num_run,
         m_str_bad,
+        t10,
+        t11,
         t12,
         t13,
         t14,
@@ -572,6 +566,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     }
 }
 
+#[cfg(feature = "test-hooks")]
 rerail_simd8::dispatch! {
     fn stage1_best(src: &[u8]) -> Stage1 = stage1, on stage1_on;
 }
@@ -580,18 +575,111 @@ rerail_simd8::dispatch! {
 static DISPATCH_LO: [u16; 16] = [0x1d04, 0xf01, 0xf20, 0xf40, 0xf00, 0xf01, 0xf01, 0xf00, 0xf01, 0xf01, 0xe03, 0x21b, 0x213, 0x21b, 0x21b, 0x680];
 static DISPATCH_HI: [u16; 16] = [0x0, 0x0, 0xe1, 0x102, 0x204, 0x408, 0x1200, 0x810, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0];
 
-/// `src`'s records.
-pub fn lex(src: &[u8]) -> Lexed {
-    let n = src.len();
+/// `src`'s records, in one pass over its blocks (decision 0619): stage 1 makes each block's masks as the token loop
+/// comes to need them, and the token loop reads its tokens from them, as the lean lexer's `lex_blocks` reads its
+/// blocks' masks.
+#[inline(always)]
+unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
     let nw = n.div_ceil(64);
-    // Each word's bits inside the file.
-    let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
-    // Stage 1: the masks the regions and the tokens read, and whether an escape holds.
-    let Stage1 { m_quote, m_ws, m_lf, m_slash, m_hash, m_word, m_alpha, m_digit, m_dot, m_lbrace, m_punct, m_tick, m_ff, m_rbrace, m_lbracket, m_rbracket, m_q, m_line_open, m_block_open, m_block_end, m_tt, m_ttt, m_tick1, m_tick2, m_tick3, t7, m_two_start, m_num_run, m_str_bad, t12, t13, t14, t15, t16, t17, refused: escapes } = stage1_best(src);
-    let mut refused = escapes;
+    const RING: usize = 4;
+    let mut v_m_slash = 0u64;
+    let mut p_m_slash = 0u64;
+    let mut v_m_star = 0u64;
+    let mut p_m_star = 0u64;
+    let mut v_m_digit = 0u64;
+    let mut p_m_digit = 0u64;
+    let mut r_m_digit = [0u64; RING];
+    let mut v_m_dot = 0u64;
+    let mut p_m_dot = 0u64;
+    let mut v_m_hex = 0u64;
+    let mut p_m_hex = 0u64;
+    let mut v_m_c_d = 0u64;
+    let mut p_m_c_d = 0u64;
+    let mut v_m_upper_hex = 0u64;
+    let mut p_m_upper_hex = 0u64;
+    let mut v_m_one = 0u64;
+    let mut p_m_one = 0u64;
+    let mut v_m_lbrace = 0u64;
+    let mut p_m_lbrace = 0u64;
+    let mut v_m_minus = 0u64;
+    let mut p_m_minus = 0u64;
+    let mut v_m_tick = 0u64;
+    let mut p_m_tick = 0u64;
+    let mut v_m_zero = 0u64;
+    let mut p_m_zero = 0u64;
+    let mut v_m_rbrace = 0u64;
+    let mut p_m_rbrace = 0u64;
+    let mut v_m_pair_byte_3a = 0u64;
+    let mut p_m_pair_byte_3a = 0u64;
+    let mut v_m_pair_byte_2d = 0u64;
+    let mut p_m_pair_byte_2d = 0u64;
+    let mut v_m_pair_byte_3d = 0u64;
+    let mut p_m_pair_byte_3d = 0u64;
+    let mut v_m_pair_byte_3e = 0u64;
+    let mut p_m_pair_byte_3e = 0u64;
+    let mut v_m_pair_byte_21 = 0u64;
+    let mut p_m_pair_byte_21 = 0u64;
+    let mut v_m_pair_byte_3c = 0u64;
+    let mut p_m_pair_byte_3c = 0u64;
+    let mut c_m_escaped = 0u64;
+    let mut v_m_uesc = 0u64;
+    let mut p_m_uesc = 0u64;
+    let mut c_t8 = 0u64;
+    let mut m_quote = vec![0u64; nw];
+    let mut m_ws = vec![0u64; nw];
+    let mut m_lf = vec![0u64; nw];
+    let mut m_slash = vec![0u64; nw];
+    let mut m_hash = vec![0u64; nw];
+    let mut m_word = vec![0u64; nw];
+    let mut m_alpha = vec![0u64; nw];
+    let mut m_digit = vec![0u64; nw];
+    let mut m_dot = vec![0u64; nw];
+    let mut m_punct = vec![0u64; nw];
+    let mut m_tick = vec![0u64; nw];
+    let mut m_ff = vec![0u64; nw];
+    let mut m_q = vec![0u64; nw];
+    let mut m_line_open = vec![0u64; nw];
+    let mut m_block_open = vec![0u64; nw];
+    let mut m_block_end = vec![0u64; nw];
+    let mut m_tt = vec![0u64; nw];
+    let mut m_ttt = vec![0u64; nw];
+    let mut m_tick1 = vec![0u64; nw];
+    let mut m_tick2 = vec![0u64; nw];
+    let mut m_tick3 = vec![0u64; nw];
+    let mut t7 = vec![0u64; nw];
+    let mut m_two_start = vec![0u64; nw];
+    let mut m_num_run = vec![0u64; nw];
+    let mut m_str_bad = vec![0u64; nw];
+    let mut t10 = vec![0u64; nw];
+    let mut t11 = vec![0u64; nw];
+    let mut t12 = vec![0u64; nw];
+    let mut t13 = vec![0u64; nw];
+    let mut t14 = vec![0u64; nw];
+    let mut t15 = vec![0u64; nw];
+    let mut t16 = vec![0u64; nw];
+    let mut t17 = vec![0u64; nw];
+    let mut lv_1 = 0u64;
+    let mut refused = false;
+    // Stage 1's next step, the blocks whose masks it has made, and those the token loop waits for.
+    let mut t = 0usize;
+    let mut made = 0usize;
+    let mut wait = nw.min(1);
+    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
+    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);
+    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);
+    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);
+    let mut at = 0usize;
+    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.
+    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);
+    let mut c_depth = 0u32;
+    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).
+    let mut b = at / 64;
     // The regions' walk and the masks made of it: only a test build's checks read them.
     #[cfg(feature = "test-hooks")]
     let (m_o_line, m_o_block, m_o_t1, m_o_t2, m_e_t2, m_o_t3, t1, t2, t3) = {
+        let Stage1 { m_quote, m_ws, m_lf, m_slash, m_hash, m_word, m_alpha, m_digit, m_dot, m_punct, m_tick, m_ff, m_q, m_line_open, m_block_open, m_block_end, m_tt, m_ttt, m_tick1, m_tick2, m_tick3, t7, m_two_start, m_num_run, m_str_bad, t10, t11, t12, t13, t14, t15, t16, t17, refused: _ } = stage1_best(&src[..n]);
+        // Each word's bits inside the file.
+        let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
         // regions hidden { … }: the first opener not hidden opens its region, to its closer.
         let mut m_hidden = vec![0u64; nw];
         let mut m_o_str = vec![0u64; nw];
@@ -815,40 +903,314 @@ pub fn lex(src: &[u8]) -> Lexed {
         let m_int_first: Vec<u64> = (0..nw).map(|i| m_digit[i] & m_int[i] & (!prev(&m_int, i, 1) & lv[i])).collect();
         // mask numeral = (int | f_dot) | frac
         let m_numeral: Vec<u64> = (0..nw).map(|i| ((m_int[i] | m_f_dot[i]) | m_frac[i])).collect();
-        let t10: Vec<u64> = (0..nw).map(|i| m_code[i] & (m_lbrace[i] | m_lbracket[i])).collect();
-        let t11: Vec<u64> = (0..nw).map(|i| (m_code[i] & (m_lbrace[i] | m_lbracket[i]) | m_code[i] & (m_rbrace[i] | m_rbracket[i]))).collect();
-        // scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 127
-        {
-            let mut c = 0u32;
-            'count: for (q, &word) in t11.iter().enumerate() {
-                let mut bits = word;
-                while bits != 0 {
-                    let i = bits.trailing_zeros();
-                    bits &= bits - 1;
-                    if t10[q] >> i & 1 == 1 {
-                        c += 1;
-                        if c > 127 {
-                            refused = true;
-                            break 'count;
-                        }
-                    } else {
-                        c = c.saturating_sub(1);
-                    }
-                }
-            }
-        }
         (m_o_line, m_o_block, m_o_t1, m_o_t2, m_e_t2, m_o_t3, t1, t2, t3)
     };
-    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
-    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);
-    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);
-    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);
-    let mut at = 0usize;
-    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.
-    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);
-    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).
-    let mut b = at / 64;
-    'tokens: while b < nw {
+    'pass: loop {
+        // Stage 1, to the blocks the token loop waits for: every one where it waits for the file's end.
+        while t < nw + 1 && (made < wait || wait == nw) {
+            // The block's bits inside the file (none past its end).
+            let lv_0 = if 64 * t + 64 <= n { !0u64 } else if t < nw { (1u64 << (n % 64)) - 1 } else { 0 };
+            // The classes, and the masks no blocks behind the classes.
+            if t <= nw {
+                let q = t;
+                let lv = lv_0;
+                const NONE: [u8; 64] = [0u8; 64];
+                let b: &[u8; 64] = if q < nw { src[64 * q..64 * q + 64].try_into().expect("a padded block") } else { &NONE };
+                let v = unsafe { S::load(b) };
+                let c0 = unsafe { S::classify(v, &LO_0, &HI_0) };
+                let c1 = unsafe { S::classify(v, &LO_1, &HI_1) };
+                let c2 = unsafe { S::classify(v, &LO_2, &HI_2) };
+                // class quote
+                let v_m_quote = unsafe { S::eq_mask(v, 0x22) & lv };
+                if q < nw {
+                    m_quote[q] = v_m_quote;
+                }
+                // class backslash
+                let v_m_backslash = unsafe { S::eq_mask(v, 0x5c) & lv };
+                // class ws
+                let v_m_ws = unsafe { S::to_bitmask(S::test(c0, S::splat(0x03))) & lv };
+                if q < nw {
+                    m_ws[q] = v_m_ws;
+                }
+                // class lf
+                let v_m_lf = unsafe { S::eq_mask(v, 0x0a) & lv };
+                if q < nw {
+                    m_lf[q] = v_m_lf;
+                }
+                p_m_slash = v_m_slash;
+                // class slash
+                v_m_slash = unsafe { S::eq_mask(v, 0x2f) & lv };
+                if q < nw {
+                    m_slash[q] = v_m_slash;
+                }
+                p_m_star = v_m_star;
+                // class star
+                v_m_star = unsafe { S::eq_mask(v, 0x2a) & lv };
+                // class hash
+                let v_m_hash = unsafe { S::eq_mask(v, 0x23) & lv };
+                if q < nw {
+                    m_hash[q] = v_m_hash;
+                }
+                // class word
+                let v_m_word = unsafe { S::to_bitmask(S::test(c0, S::splat(0x3c))) & lv };
+                if q < nw {
+                    m_word[q] = v_m_word;
+                }
+                // class alpha
+                let v_m_alpha = unsafe { S::to_bitmask(S::test(c0, S::splat(0x38))) & lv };
+                if q < nw {
+                    m_alpha[q] = v_m_alpha;
+                }
+                p_m_digit = v_m_digit;
+                // class digit
+                v_m_digit = unsafe { S::to_bitmask(S::test(c0, S::splat(0x04))) & lv };
+                r_m_digit[q % RING] = v_m_digit;
+                if q < nw {
+                    m_digit[q] = v_m_digit;
+                }
+                p_m_dot = v_m_dot;
+                // class dot
+                v_m_dot = unsafe { S::eq_mask(v, 0x2e) & lv };
+                if q < nw {
+                    m_dot[q] = v_m_dot;
+                }
+                // class u
+                let v_m_u = unsafe { S::eq_mask(v, 0x75) & lv };
+                p_m_hex = v_m_hex;
+                // class hex
+                v_m_hex = unsafe { S::to_bitmask(S::test(c0, S::splat(0x44))) & lv };
+                p_m_c_d = v_m_c_d;
+                // class c_d
+                v_m_c_d = unsafe { S::to_bitmask(S::test(c0, S::splat(0x80))) & lv };
+                p_m_upper_hex = v_m_upper_hex;
+                // class upper_hex
+                v_m_upper_hex = unsafe { S::to_bitmask(S::test(c1, S::splat(0x03))) & lv };
+                p_m_one = v_m_one;
+                // class one
+                v_m_one = unsafe { S::eq_mask(v, 0x31) & lv };
+                p_m_lbrace = v_m_lbrace;
+                // class lbrace
+                v_m_lbrace = unsafe { S::eq_mask(v, 0x7b) & lv };
+                // class punct
+                let v_m_punct = unsafe { S::to_bitmask(S::test(c1, S::splat(0x7c))) & lv };
+                if q < nw {
+                    m_punct[q] = v_m_punct;
+                }
+                p_m_minus = v_m_minus;
+                // class minus
+                v_m_minus = unsafe { S::eq_mask(v, 0x2d) & lv };
+                p_m_tick = v_m_tick;
+                // class tick
+                v_m_tick = unsafe { S::eq_mask(v, 0x60) & lv };
+                if q < nw {
+                    m_tick[q] = v_m_tick;
+                }
+                // class ctl
+                let v_m_ctl = unsafe { S::to_bitmask(S::test(c1, S::splat(0x80))) & lv };
+                // class jesc
+                let v_m_jesc = unsafe { S::to_bitmask(S::test(c2, S::splat(0x0f))) & lv };
+                // class ff
+                let v_m_ff = unsafe { S::eq_mask(v, 0x0c) & lv };
+                if q < nw {
+                    m_ff[q] = v_m_ff;
+                }
+                p_m_zero = v_m_zero;
+                // class zero
+                v_m_zero = unsafe { S::eq_mask(v, 0x30) & lv };
+                p_m_rbrace = v_m_rbrace;
+                // class rbrace
+                v_m_rbrace = unsafe { S::eq_mask(v, 0x7d) & lv };
+                // class lbracket
+                let v_m_lbracket = unsafe { S::eq_mask(v, 0x5b) & lv };
+                // class rbracket
+                let v_m_rbracket = unsafe { S::eq_mask(v, 0x5d) & lv };
+                p_m_pair_byte_3a = v_m_pair_byte_3a;
+                // class pair_byte_3a
+                v_m_pair_byte_3a = unsafe { S::eq_mask(v, 0x3a) & lv };
+                p_m_pair_byte_2d = v_m_pair_byte_2d;
+                // class pair_byte_2d
+                v_m_pair_byte_2d = unsafe { S::eq_mask(v, 0x2d) & lv };
+                p_m_pair_byte_3d = v_m_pair_byte_3d;
+                // class pair_byte_3d
+                v_m_pair_byte_3d = unsafe { S::eq_mask(v, 0x3d) & lv };
+                p_m_pair_byte_3e = v_m_pair_byte_3e;
+                // class pair_byte_3e
+                v_m_pair_byte_3e = unsafe { S::eq_mask(v, 0x3e) & lv };
+                p_m_pair_byte_21 = v_m_pair_byte_21;
+                // class pair_byte_21
+                v_m_pair_byte_21 = unsafe { S::eq_mask(v, 0x21) & lv };
+                p_m_pair_byte_3c = v_m_pair_byte_3c;
+                // class pair_byte_3c
+                v_m_pair_byte_3c = unsafe { S::eq_mask(v, 0x3c) & lv };
+                // mask escaped = escaped(backslash)
+                let v_m_escaped = {
+                        const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
+                        let bs = v_m_backslash;
+                        let potential = bs & !c_m_escaped;
+                        let series = ((potential << 1) | ODD).wrapping_sub(potential);
+                        let escape_and_terminal = series ^ ODD;
+                        let escaped = escape_and_terminal ^ (bs | c_m_escaped);
+                        c_m_escaped = (escape_and_terminal & bs) >> 63;
+                        escaped & lv
+                    };
+                // mask q = quote & ~escaped
+                let v_m_q = v_m_quote & (!v_m_escaped & lv);
+                if q < nw {
+                    m_q[q] = v_m_q;
+                }
+                // mask block_end = slash & prev(star)
+                let v_m_block_end = v_m_slash & (v_m_star << 1 | p_m_star >> 63) & lv;
+                if q < nw {
+                    m_block_end[q] = v_m_block_end;
+                }
+                p_m_uesc = v_m_uesc;
+                // mask uesc = escaped & u
+                v_m_uesc = v_m_escaped & v_m_u;
+                // ~digit
+                let v_t7 = !v_m_digit & lv;
+                if q < nw {
+                    t7[q] = v_t7;
+                }
+                // mask str_bad = ctl | (escaped & ~jesc)
+                let v_m_str_bad = (v_m_ctl | v_m_escaped & (!v_m_jesc & lv));
+                if q < nw {
+                    m_str_bad[q] = v_m_str_bad;
+                }
+                // lbrace | lbracket
+                let v_t10 = (v_m_lbrace | v_m_lbracket);
+                if q < nw {
+                    t10[q] = v_t10;
+                }
+                // (lbrace | lbracket) | (rbrace | rbracket)
+                let v_t11 = ((v_m_lbrace | v_m_lbracket) | (v_m_rbrace | v_m_rbracket));
+                if q < nw {
+                    t11[q] = v_t11;
+                }
+            }
+            // The masks 1 block behind the classes.
+            if t >= 1 && t - 1 <= nw {
+                let q = t - 1;
+                let lv = lv_1;
+                // mask line_open = slash & next(slash)
+                let v_m_line_open = p_m_slash & (p_m_slash >> 1 | v_m_slash << 63);
+                if q < nw {
+                    m_line_open[q] = v_m_line_open;
+                }
+                // mask block_open = slash & next(star)
+                let v_m_block_open = p_m_slash & (p_m_star >> 1 | v_m_star << 63);
+                if q < nw {
+                    m_block_open[q] = v_m_block_open;
+                }
+                // mask tt = tick & next(tick)
+                let v_m_tt = p_m_tick & (p_m_tick >> 1 | v_m_tick << 63);
+                if q < nw {
+                    m_tt[q] = v_m_tt;
+                }
+                // mask ttt = tt & next(tick, 2)
+                let v_m_ttt = v_m_tt & (p_m_tick >> 2 | v_m_tick << 62);
+                if q < nw {
+                    m_ttt[q] = v_m_ttt;
+                }
+                // mask tick1 = tick & ~next(tick)
+                let v_m_tick1 = p_m_tick & (!(p_m_tick >> 1 | v_m_tick << 63) & lv);
+                if q < nw {
+                    m_tick1[q] = v_m_tick1;
+                }
+                // mask tick2 = tt & ~next(tick, 2)
+                let v_m_tick2 = v_m_tt & (!(p_m_tick >> 2 | v_m_tick << 62) & lv);
+                if q < nw {
+                    m_tick2[q] = v_m_tick2;
+                }
+                // mask tick3 = ttt & ~next(tick, 3)
+                let v_m_tick3 = v_m_ttt & (!(p_m_tick >> 3 | v_m_tick << 61) & lv);
+                if q < nw {
+                    m_tick3[q] = v_m_tick3;
+                }
+                // mask h4 = ((next(hex) & next(hex, 2)) & next(hex, 3)) & next(hex, 4)
+                let v_m_h4 = (p_m_hex >> 1 | v_m_hex << 63) & (p_m_hex >> 2 | v_m_hex << 62) & (p_m_hex >> 3 | v_m_hex << 61) & (p_m_hex >> 4 | v_m_hex << 60);
+                // mask u_four = h4 & ~(next(c_d) & next(upper_hex, 2))
+                let v_m_u_four = v_m_h4 & (!((p_m_c_d >> 1 | v_m_c_d << 63) & (p_m_upper_hex >> 2 | v_m_upper_hex << 62)) & lv);
+                // mask u_brace = next(lbrace)
+                let v_m_u_brace = (p_m_lbrace >> 1 | v_m_lbrace << 63);
+                // mask b_short = ((next(hex, 2) & next(rbrace, 3)) | ((next(hex, 2) & next(hex, 3)) & next(rbrace, 4))) | (((next(hex, 2) & next(hex, 3)) & next(hex, 4)) & next(rbrace, 5))
+                let v_m_b_short = (((p_m_hex >> 2 | v_m_hex << 62) & (p_m_rbrace >> 3 | v_m_rbrace << 61) | (p_m_hex >> 2 | v_m_hex << 62) & (p_m_hex >> 3 | v_m_hex << 61) & (p_m_rbrace >> 4 | v_m_rbrace << 60)) | (p_m_hex >> 2 | v_m_hex << 62) & (p_m_hex >> 3 | v_m_hex << 61) & (p_m_hex >> 4 | v_m_hex << 60) & (p_m_rbrace >> 5 | v_m_rbrace << 59));
+                // mask b_four = ((((next(hex, 2) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)) & next(rbrace, 6)) & ~(next(c_d, 2) & next(upper_hex, 3))
+                let v_m_b_four = (p_m_hex >> 2 | v_m_hex << 62) & (p_m_hex >> 3 | v_m_hex << 61) & (p_m_hex >> 4 | v_m_hex << 60) & (p_m_hex >> 5 | v_m_hex << 59) & (p_m_rbrace >> 6 | v_m_rbrace << 58) & (!((p_m_c_d >> 2 | v_m_c_d << 62) & (p_m_upper_hex >> 3 | v_m_upper_hex << 61)) & lv);
+                // mask b_five = (((((next(hex, 2) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)) & next(hex, 6)) & next(rbrace, 7)) & ~next(zero, 2)
+                let v_m_b_five = (p_m_hex >> 2 | v_m_hex << 62) & (p_m_hex >> 3 | v_m_hex << 61) & (p_m_hex >> 4 | v_m_hex << 60) & (p_m_hex >> 5 | v_m_hex << 59) & (p_m_hex >> 6 | v_m_hex << 58) & (p_m_rbrace >> 7 | v_m_rbrace << 57) & (!(p_m_zero >> 2 | v_m_zero << 62) & lv);
+                // mask b_six = (((((((next(hex, 2) & next(hex, 3)) & next(hex, 4)) & next(hex, 5)) & next(hex, 6)) & next(hex, 7)) & next(rbrace, 8)) & next(one, 2)) & next(zero, 3)
+                let v_m_b_six = (p_m_hex >> 2 | v_m_hex << 62) & (p_m_hex >> 3 | v_m_hex << 61) & (p_m_hex >> 4 | v_m_hex << 60) & (p_m_hex >> 5 | v_m_hex << 59) & (p_m_hex >> 6 | v_m_hex << 58) & (p_m_hex >> 7 | v_m_hex << 57) & (p_m_rbrace >> 8 | v_m_rbrace << 56) & (p_m_one >> 2 | v_m_one << 62) & (p_m_zero >> 3 | v_m_zero << 61);
+                // mask u_ok = (u_four & ~u_brace) | (u_brace & (((b_short | b_four) | b_five) | b_six))
+                let v_m_u_ok = (v_m_u_four & (!v_m_u_brace & lv) | v_m_u_brace & (((v_m_b_short | v_m_b_four) | v_m_b_five) | v_m_b_six));
+                // ((((((pair_byte_3a & next(pair_byte_2d)) | (pair_byte_3d & next(pair_byte_3e))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3a))) | (pair_byte_3e & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3e))
+                let v_t9 = ((((((p_m_pair_byte_3a & (p_m_pair_byte_2d >> 1 | v_m_pair_byte_2d << 63) | p_m_pair_byte_3d & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) | p_m_pair_byte_21 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3a >> 1 | v_m_pair_byte_3a << 63)) | p_m_pair_byte_3e & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2d & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63));
+                // escaped(t9)
+                let v_t8 = {
+                        const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
+                        let bs = v_t9;
+                        let potential = bs & !c_t8;
+                        let series = ((potential << 1) | ODD).wrapping_sub(potential);
+                        let escape_and_terminal = series ^ ODD;
+                        let escaped = escape_and_terminal ^ (bs | c_t8);
+                        c_t8 = (escape_and_terminal & bs) >> 63;
+                        escaped & lv
+                    };
+                // mask two_start = (((((((pair_byte_3a & next(pair_byte_2d)) | (pair_byte_3d & next(pair_byte_3e))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3a))) | (pair_byte_3e & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3e))) & ~escaped(((((((pair_byte_3a & next(pair_byte_2d)) | (pair_byte_3d & next(pair_byte_3e))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3a))) | (pair_byte_3e & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3e)))
+                let v_m_two_start = ((((((p_m_pair_byte_3a & (p_m_pair_byte_2d >> 1 | v_m_pair_byte_2d << 63) | p_m_pair_byte_3d & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) | p_m_pair_byte_21 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3a >> 1 | v_m_pair_byte_3a << 63)) | p_m_pair_byte_3e & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2d & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) & (!v_t8 & lv);
+                if q < nw {
+                    m_two_start[q] = v_m_two_start;
+                }
+                // mask num_run = digit | ((dot & prev(digit)) & next(digit))
+                let v_m_num_run = (p_m_digit | p_m_dot & (p_m_digit << 1 | r_m_digit[(q + RING - 1) % RING] >> 63) & lv & (p_m_digit >> 1 | v_m_digit << 63));
+                if q < nw {
+                    m_num_run[q] = v_m_num_run;
+                }
+                // uesc & ~h4
+                let v_t12 = p_m_uesc & (!v_m_h4 & lv);
+                if q < nw {
+                    t12[q] = v_t12;
+                }
+                // uesc & ~u_ok
+                let v_t13 = p_m_uesc & (!v_m_u_ok & lv);
+                if q < nw {
+                    t13[q] = v_t13;
+                }
+                // line_open | block_open
+                let v_t14 = (v_m_line_open | v_m_block_open);
+                if q < nw {
+                    t14[q] = v_t14;
+                }
+                // (tick1 | tick2) | tick3
+                let v_t15 = ((v_m_tick1 | v_m_tick2) | v_m_tick3);
+                if q < nw {
+                    t15[q] = v_t15;
+                }
+                // zero & next(digit)
+                let v_t16 = p_m_zero & (p_m_digit >> 1 | v_m_digit << 63);
+                if q < nw {
+                    t16[q] = v_t16;
+                }
+                // minus & ~next(digit)
+                let v_t17 = p_m_minus & (!(p_m_digit >> 1 | v_m_digit << 63) & lv);
+                if q < nw {
+                    t17[q] = v_t17;
+                }
+            }
+            lv_1 = lv_0;
+            t += 1;
+            made = t.saturating_sub(1).min(nw);
+        }
+        if t == nw + 1 {
+        }
+    'tokens: loop {
+        if b >= made {
+            if made < nw {
+                // A block stage 1 has not made: it makes it first.
+                wait = (b + 1).min(nw);
+                continue 'pass;
+            }
+            break 'tokens;
+        }
         let base = b * 64;
         let mut firsts = !m_ws[b] & (!0u64 << at.saturating_sub(base));
         while firsts != 0 {
@@ -893,11 +1255,20 @@ pub fn lex(src: &[u8]) -> Lexed {
                     let l = match first_bit(&m_q, s + 1) {
                         Some(c) => c + 0,
                         None => {
+                            if made < nw {
+                                wait = (2 * made - b).min(nw);
+                                continue 'pass;
+                            }
                             refused = true;
                             break 'tokens;
                         }
                     };
                     let l = l.max(s);
+                    // The byte after the token in a block stage 1 has not made: it makes more, and the token is read again.
+                    if l + 1 >= 64 * made && made < nw {
+                        wait = (2 * made - b).min(nw);
+                        continue 'pass;
+                    }
                     if count_in(&m_str_bad, s, l) >= 1 {
                         hits |= 1 << 28;
                     }
@@ -929,16 +1300,29 @@ pub fn lex(src: &[u8]) -> Lexed {
                         match first_bit(&m_block_end, s + 1) {
                             Some(c) => c + 0,
                             None => {
+                                if made < nw {
+                                    wait = (2 * made - b).min(nw);
+                                    continue 'pass;
+                                }
                                 refused = true;
                                 break 'tokens;
                             }
                         }
 
                     } else {
+                        if made < nw {
+                            wait = (2 * made - b).min(nw);
+                            continue 'pass;
+                        }
                         refused = true;
                         break 'tokens;
                     };
                     let l = l.max(s);
+                    // The byte after the token in a block stage 1 has not made: it makes more, and the token is read again.
+                    if l + 1 >= 64 * made && made < nw {
+                        wait = (2 * made - b).min(nw);
+                        continue 'pass;
+                    }
                     if count_in(&t14, s, l) >= 1 {
                         hits |= 1 << 28;
                     }
@@ -955,6 +1339,10 @@ pub fn lex(src: &[u8]) -> Lexed {
                         match first_bit(&m_tick, s + 1) {
                             Some(c) => c + 0,
                             None => {
+                                if made < nw {
+                                    wait = (2 * made - b).min(nw);
+                                    continue 'pass;
+                                }
                                 refused = true;
                                 break 'tokens;
                             }
@@ -978,16 +1366,29 @@ pub fn lex(src: &[u8]) -> Lexed {
                         match first_bit(&m_ttt, s + 1) {
                             Some(c) => c + 2,
                             None => {
+                                if made < nw {
+                                    wait = (2 * made - b).min(nw);
+                                    continue 'pass;
+                                }
                                 refused = true;
                                 break 'tokens;
                             }
                         }
 
                     } else {
+                        if made < nw {
+                            wait = (2 * made - b).min(nw);
+                            continue 'pass;
+                        }
                         refused = true;
                         break 'tokens;
                     };
                     let l = l.max(s);
+                    // The byte after the token in a block stage 1 has not made: it makes more, and the token is read again.
+                    if l + 1 >= 64 * made && made < nw {
+                        wait = (2 * made - b).min(nw);
+                        continue 'pass;
+                    }
                     (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
                 }
 ,
@@ -995,6 +1396,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `hash_word`: run word
                     let l = run_last(&m_word, s);
                     let l = l.max(s);
+                    // The byte after the token in a block stage 1 has not made: it makes more, and the token is read again.
+                    if l + 1 >= 64 * made && made < nw {
+                        wait = (2 * made - b).min(nw);
+                        continue 'pass;
+                    }
                     (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
                 }
 ,
@@ -1002,6 +1408,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `identifier`: run word
                     let l = run_last(&m_word, s);
                     let l = l.max(s);
+                    // The byte after the token in a block stage 1 has not made: it makes more, and the token is read again.
+                    if l + 1 >= 64 * made && made < nw {
+                        wait = (2 * made - b).min(nw);
+                        continue 'pass;
+                    }
                     (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
                 }
 ,
@@ -1009,6 +1420,25 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `number`: run num_run once dot
                     let l = run_once_last(&m_num_run, &m_dot, s);
                     let l = l.max(s);
+                    // The byte after the token in a block stage 1 has not made: it makes more, and the token is read again.
+                    if l + 1 >= 64 * made && made < nw {
+                        wait = (2 * made - b).min(nw);
+                        continue 'pass;
+                    }
+                    // scan depth: its bits in the token's bytes, all of them code
+                    let mut q = s;
+                    while let Some(i) = first_in(&t11, q, l) {
+                        if bit(&t10, i) {
+                            c_depth += 1;
+                            if c_depth > 127 {
+                                refused = true;
+                                break 'tokens;
+                            }
+                        } else {
+                            c_depth = c_depth.saturating_sub(1);
+                        }
+                        q = i + 1;
+                    }
                     if count_in(&m_dot, s, l) >= 1 {
                         hits |= 1 << 16;
                     }
@@ -1027,6 +1457,25 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `punct`: pair
                     let l = pair_6(src, s);
                     let l = l.max(s);
+                    // The byte after the token in a block stage 1 has not made: it makes more, and the token is read again.
+                    if l + 1 >= 64 * made && made < nw {
+                        wait = (2 * made - b).min(nw);
+                        continue 'pass;
+                    }
+                    // scan depth: its bits in the token's bytes, all of them code
+                    let mut q = s;
+                    while let Some(i) = first_in(&t11, q, l) {
+                        if bit(&t10, i) {
+                            c_depth += 1;
+                            if c_depth > 127 {
+                                refused = true;
+                                break 'tokens;
+                            }
+                        } else {
+                            c_depth = c_depth.saturating_sub(1);
+                        }
+                        q = i + 1;
+                    }
                     if l + 1 - s >= 1 && first_clear(&t17, s, s + 1).is_none() {
                         hits |= 1 << 12;
                     }
@@ -1114,6 +1563,8 @@ pub fn lex(src: &[u8]) -> Lexed {
         }
         b += 1;
     }
+    break 'pass;
+    }
     // `float_after`, else escape: a float the file ends with
     if pending >> 0 & 1 == 1 {
         refused = true;
@@ -1127,6 +1578,19 @@ pub fn lex(src: &[u8]) -> Lexed {
         },
         refused,
     }
+}
+
+rerail_simd8::dispatch! {
+    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;
+}
+
+/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.
+pub const PADDING: usize = 64;
+
+/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.
+pub fn lex(buf: &[u8], n: usize) -> Lexed {
+    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].iter().all(|&b| b == b' '), "the source padded with spaces");
+    lex_best(buf, n)
 }
 
 /// Block `q`'s 64 bytes; the last block's past the file are 0x00.

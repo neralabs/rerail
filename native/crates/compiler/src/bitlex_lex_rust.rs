@@ -665,6 +665,29 @@ struct Node {
 
 /// A row of the token loop, for `dispatch`: its start, the test build's checks where the loop
 /// first reads an assumption, and its code (a block that makes its record).
+/// Stage 1's code in its parts (`Gen::stage1_parts`).
+struct Stage1Text {
+    /// The classes' nibble tables and the byte-pair errors' tables.
+    tables: String,
+    /// `Stage1`, the masks it gives out.
+    record: String,
+    /// `write_indexes`, where it writes the records.
+    indexes: String,
+    /// Its function's first lines, to `nw`.
+    header: String,
+    /// The words it keeps over the blocks, and the masks it writes.
+    decls: String,
+    /// Its steps (`t`), as an expression, and how many blocks its last masks are behind the classes.
+    steps: String,
+    most: u32,
+    /// A step's code: block `t`'s classes, and each mask of its own block behind them.
+    body: String,
+    /// The tests once after the last step.
+    finals: String,
+    /// The `Stage1` it gives, and its function's end.
+    ret: String,
+}
+
 struct RowArm {
     row: usize,
     /// Its first bytes, and those after its first it may hold.
@@ -854,6 +877,25 @@ fn gate_walk(body: &str, rest: &str) -> String {
         ns => format!("({})", ns.join(", ")),
     };
     let _ = write!(out, "    // The regions' walk and the masks made of it: only a test build's checks read them.\n    #[cfg(feature = \"test-hooks\")]\n    let {tuple} = {{\n{inner}        {tuple}\n    }};\n");
+    out
+}
+
+/// `code` with each refusal (`refused = true;` then `break;`) first a pause where stage 1 has blocks left to make
+/// (decision 0619): what refuses the blocks made so far may hold past them.
+fn pause_refusals(code: &str) -> String {
+    let lines: Vec<&str> = code.lines().collect();
+    let mut out = String::new();
+    for (i, line) in lines.iter().enumerate() {
+        if line.trim() == "refused = true;" && lines.get(i + 1).is_some_and(|n| n.trim() == "break;") {
+            let pad = &line[..line.len() - line.trim_start().len()];
+            let _ = writeln!(out, "{pad}if made < nw {{\n{pad}    wait = (2 * made - b).min(nw);\n{pad}    continue 'pass;\n{pad}}}");
+        }
+        out.push_str(line);
+        out.push('\n');
+    }
+    if !code.ends_with('\n') {
+        out.pop();
+    }
     out
 }
 
@@ -1199,13 +1241,14 @@ impl Gen<'_> {
             return full;
         }
         fn go(g: &Gen, e: &Expr, top: bool) -> String {
-            if !top && !matches!(e, Expr::Name(_)) {
-                if let Some(&id) = g.node_of.get(&format!("{e:?}")) {
-                    return g.nodes[id].name.clone();
-                }
+            if !top
+                && !matches!(e, Expr::Name(_))
+                && let Some(&id) = g.node_of.get(&format!("{e:?}"))
+            {
+                return g.nodes[id].name.clone();
             }
             let inner = |a: &Expr| match a {
-                Expr::And(..) | Expr::Or(..) | Expr::Xor(..) if g.node_of.get(&format!("{a:?}")).is_none() => format!("({})", go(g, a, false)),
+                Expr::And(..) | Expr::Or(..) | Expr::Xor(..) if !g.node_of.contains_key(&format!("{a:?}")) => format!("({})", go(g, a, false)),
                 _ => go(g, a, false),
             };
             match e {
@@ -1351,6 +1394,14 @@ impl Gen<'_> {
     /// at a time, each `lag` blocks behind the classes (`next` reads the block after), keeping
     /// the file's words of those read later and testing the escapes.
     fn stage1(&self) -> String {
+        let p = self.stage1_parts(self.index.is_some());
+        format!("{}{}{}{}{}    let mut refused = false;\n    for t in 0..{} {{\n{}    }}\n{}{}", p.tables, p.record, p.indexes, p.header, p.decls, p.steps, p.body, p.finals, p.ret)
+    }
+
+    /// Stage 1's code in its parts (`Stage1Text`): `stage1` writes them as a function of its own, and the one pass
+    /// (decision 0619) writes its block's code where the token loop needs the block. `padded`: the source is padded,
+    /// each block loaded where it is.
+    fn stage1_parts(&self, padded: bool) -> Stage1Text {
         let mut out = String::new();
         // The masks stage 1 writes: those an escape, the records or a later stage reads (tier 2's words, `also`, among
         // them), and their operands.
@@ -1406,6 +1457,7 @@ impl Gen<'_> {
             );
         }
         let kept: Vec<&Node> = self.nodes.iter().filter(|n| n.kept).collect();
+        let tables = std::mem::take(&mut out);
         out.push_str("/// Stage 1's masks a later stage reads, a bit a byte, and whether an escape holds.\nstruct Stage1 {\n");
         for n in &kept {
             let _ = writeln!(out, "    {}: Vec<u64>,", n.name);
@@ -1417,6 +1469,7 @@ impl Gen<'_> {
             let _ = writeln!(out, "    {a}: Vec<u64>,");
         }
         out.push_str("    refused: bool,\n}\n\n");
+        let record = std::mem::take(&mut out);
         let most = self.nodes.iter().zip(&live).filter(|(_, l)| **l).map(|(n, _)| n.lag).max().unwrap_or(0);
         // Each mask's words where its readers read them, by age (the blocks between its write and the read): this
         // block's a local (`v_`), the block before's another (`p_`), older ones a ring. A reader two stages or more
@@ -1465,6 +1518,7 @@ impl Gen<'_> {
             let _ = write!(out, "/// Block bits `bits` from `base` as indexes at `si[*count..]` (simdjson's `bit_indexer::write`).\n///\n/// # Safety\n/// `si` has room for `*count` and 64 more.\n#[inline(always)]\nunsafe fn write_indexes(si: *mut u32, count: &mut usize, base: u32, mut bits: u64) {{\n    if bits == 0 {{\n        return;\n    }}\n    let cnt = bits.count_ones() as usize;\n    // SAFETY: the caller's: each write within `*count + 64`.\n    let mut one = |k: usize| unsafe {{\n        *si.add(k) = base.wrapping_add(bits.trailing_zeros());\n        bits &= bits.wrapping_sub(1);\n    }};\n    for k in 0..4 {{\n        one(*count + k);\n    }}\n    if 4 < cnt {{\n{}    }}\n    if 24 < cnt {{\n        for k in 24..cnt {{\n            one(*count + k);\n        }}\n    }}\n    *count += cnt;\n}}\n\n", indent(&stepped, "        "));
         }
         let off = |q: &str| if bare && self.prefix.is_some() { format!("off + 64 * {q}") } else { format!("64 * {q}") };
+        let indexes = std::mem::take(&mut out);
         let _ = writeln!(
             out,
             "/// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`{}, each mask a local of its block{}.\n#[inline(always)]\nunsafe fn stage1<S: rerail_simd8::Simd8x64>({}) -> Stage1 {{\n{}    let nw = n.div_ceil(64);",
@@ -1478,6 +1532,7 @@ impl Gen<'_> {
             out.truncate(out.len() - "    let nw = n.div_ceil(64);\n".len());
             let _ = writeln!(out, "    // `prefix`: a file that starts with these bytes is read from after them, its blocks from there (as simdjson\n    // reads past a byte order mark).\n    let off = if src.starts_with(&[{bytes}]) {{ {} }} else {{ 0 }};\n    let nw = (n - off).div_ceil(64);", b.len());
         }
+        let header = std::mem::take(&mut out);
         if rings {
             let _ = writeln!(out, "    const RING: usize = {ring};");
         }
@@ -1536,7 +1591,8 @@ impl Gen<'_> {
         if most == 0 && self.index.is_some() {
             out.push_str("    // The block before's records, written at the next block (simdjson's `prev_structurals`).\n    let mut prev_structurals = 0u64;\n");
         }
-        let _ = writeln!(out, "    let mut refused = false;\n    for t in 0..{} {{", if most == 0 { "nw".to_owned() } else { format!("nw + {most}") });
+        let decls = std::mem::take(&mut out);
+        let steps = if most == 0 { "nw".to_owned() } else { format!("nw + {most}") };
         if !bare {
             let _ = writeln!(out, "        // The block's bits inside the file (none past its end).\n        let lv_0 = {};", indent(&lv_of("t", most > 0), "        ").trim());
         }
@@ -1558,7 +1614,7 @@ impl Gen<'_> {
                 let _ = writeln!(out, "            let lv = {lv};");
             }
             if lag == 0 {
-                if self.index.is_some() {
+                if padded {
                     // The source padded: each block of the file loaded where it is (`PADDING` past its end).
                     if most == 0 {
                         let _ = writeln!(out, "            let b: &[u8; 64] = src[{0}..{0} + 64].try_into().expect(\"a padded block\");\n            let v = unsafe {{ S::load(b) }};", off("q"));
@@ -1629,7 +1685,7 @@ impl Gen<'_> {
         if most > 0 {
             out.push_str("        lv_1 = lv_0;\n");
         }
-        out.push_str("    }\n");
+        let body = std::mem::take(&mut out);
         if most == 0 && self.index.is_some() {
             let base = if bare && self.prefix.is_some() { "((off + 64 * nw) as u32).wrapping_sub(64)" } else { "(64 * nw as u32).wrapping_sub(64)" };
             let _ = writeln!(out, "    // The last block's records (simdjson's `finish`).\n    unsafe {{ write_indexes(si, &mut count, {base}, prev_structurals) }};");
@@ -1662,6 +1718,7 @@ impl Gen<'_> {
             // simdjson's: the index ends in `n`, `n` and 0, so that stage 2 reads past its last record unchecked.
             out.push_str("    // SAFETY: `count` records written, and room for three more.\n    unsafe {\n        *si.add(count) = n as u32;\n        *si.add(count + 1) = n as u32;\n        *si.add(count + 2) = 0;\n        starts.set_len(count + 3);\n    }\n");
         }
+        let finals = std::mem::take(&mut out);
         out.push_str("    Stage1 {\n");
         for n in &kept {
             let _ = writeln!(out, "        {},", n.name);
@@ -1673,7 +1730,7 @@ impl Gen<'_> {
             out.push_str("        starts,\n        count,\n");
         }
         let _ = write!(out, "        refused,\n    }}\n}}\n\nrerail_simd8::dispatch! {{\n    fn stage1_best({}) -> Stage1 = stage1, on stage1_on;\n}}\n\n", if self.index.is_some() { "src: &[u8], n: usize" } else { "src: &[u8]" });
-        out
+        Stage1Text { tables, record, indexes, header, decls, steps, most, body, finals, ret: out }
     }
 
     /// A local holding `e`'s words: stage 1's (kept), or, made of the regions, its own after them.
@@ -2293,8 +2350,8 @@ impl Gen<'_> {
         let mut out = Vec::new();
         for b in 0..=255u8 {
             let sig: Vec<bool> = self.class_bytes.values().map(|c| c[usize::from(b)]).collect();
-            if !seen.contains_key(&sig) {
-                seen.insert(sig, b);
+            if let std::collections::hash_map::Entry::Vacant(v) = seen.entry(sig) {
+                v.insert(b);
                 out.push(b);
             }
         }
@@ -2484,7 +2541,7 @@ impl Gen<'_> {
     /// `e` in a token of region `k`'s body: at its bytes 1 to 4 after the token's first, and from
     /// its byte 5 on.
     fn body_parts(&self, e: &Expr, k: usize) -> Option<Vec<Expr>> {
-        (1..=4).map(|q| body_part(q)).chain([BODY_LATE]).map(|p| self.in_region_of(e, Some(k), p, &Ctx::all(), &mut HashMap::new())).collect()
+        (1..=4).map(body_part).chain([BODY_LATE]).map(|p| self.in_region_of(e, Some(k), p, &Ctx::all(), &mut HashMap::new())).collect()
     }
 
     /// `in_region` where the byte is one of `ctx` (the bytes the rest of a `&` holds at): a mask
@@ -4621,6 +4678,14 @@ impl Gen<'_> {
                 other => return Err(format!("tier 1 as Rust: `{}` is not written yet", crate::bitlex_masks::statement(other))),
             }
         }
+        // One pass (decision 0619): stage 1 makes the blocks as the token loop comes to need them, where the loop keeps
+        // nothing over a token but its records and counts (no template's string, no fill kept over regions, no region
+        // read in parts for tier 2), and the file is read from its first byte (no `prefix`).
+        let fused = skip.is_some()
+            && self.prefix.is_none()
+            && x.assumed_ends.is_empty()
+            && self.kinds.iter().all(|r| !r.resumes && r.or.is_none() && r.after.is_empty())
+            && !x.stmts.iter().any(|s| matches!(s, Stmt::Token { rule: Some(TokenRule::ReadParts(..)), .. }));
         // The escapes and errors: a bit of any sends the file to tree-sitter.
         // Those not made of the regions, stage 1 tests a block at a time.
         // Those made of the regions where they hold only in a region a token reads: tests there.
@@ -4801,6 +4866,30 @@ impl Gen<'_> {
         }
         // A count: its bits in order, as the token loop reads the starts, up one at `up` (where both hold, `up`'s),
         // down one at `down` and never below 0; past its bound, the file goes to tree-sitter.
+        // A count in the token loop, where it has one (decision 0619): its bits in each token of code, whose bytes
+        // hold no region's mask (a region opens only at a token's start, and its bytes are its token's), and at none of
+        // the skipped bytes. Its name, its masks (`up`, then both) as stage 1 makes them, and its bound.
+        let mut token_scans: Vec<(String, String, String, u32, [bool; 256])> = Vec::new();
+        if skip.is_some() {
+            let regional: Vec<String> = self.kinds.iter().flat_map(|r| [format!("o_{}", r.kind), format!("f_{}", r.kind)].into_iter().chain(r.empty.iter().map(|(e, _)| e.clone()))).chain(std::iter::once(self.hidden.clone())).collect();
+            let none: Vec<(&str, &Expr)> = regional.iter().map(|n| (n.as_str(), &Expr::Empty)).collect();
+            let skipped = skip.as_ref().map(|k| self.bytes_at(k, 0, &mut HashMap::new())).unwrap_or([false; 256]);
+            counts.retain(|(name, up, down, max, at)| {
+                let (u, d) = (substitute(up, &none, &self.defs), substitute(down, &none, &self.defs));
+                let both = Expr::Or(Box::new(u.clone()), Box::new(d));
+                let bytes = self.bytes_at(&both, 0, &mut HashMap::new());
+                if self.regional(&both) || (0..256).any(|i| skipped[i] && bytes[i]) {
+                    return true;
+                }
+                match self.in_scope(at, &both, |g| Ok((g.val(&u)?, g.val(&both)?))) {
+                    Ok((u, b)) => {
+                        token_scans.push((name.to_string(), u, b, *max, bytes));
+                        false
+                    }
+                    Err(_) => true,
+                }
+            });
+        }
         for (name, up, down, max, at) in &counts {
             let both = Expr::Or(Box::new((*up).clone()), Box::new((*down).clone()));
             let (u, b) = self.in_scope(at, &both, |g| Ok((g.val(up)?, g.val(&both)?)))?;
@@ -5103,7 +5192,7 @@ impl Gen<'_> {
                     let at = self.bytes_at(&a.code, 0, &mut HashMap::new());
                     if (0..256).any(|i| at[i] && tail[i]) {
                         let v = self.val(&a.code)?;
-                        let _ = write!(hits, "            tail_{j} = any_in(&{v}, s + 1, l);\n");
+                        let _ = writeln!(hits, "            tail_{j} = any_in(&{v}, s + 1, l);");
                         tails.insert(j);
                     }
                 }
@@ -5147,9 +5236,9 @@ impl Gen<'_> {
             // The fills the loop keeps, at this token's last byte.
             for (i, f) in self.fills.iter().enumerate() {
                 if let Some((_, fl, xl)) = f.rows.iter().find(|r| r.0 == *row) {
-                    let _ = write!(hits, "            fill_{i} = {fl};\n");
+                    let _ = writeln!(hits, "            fill_{i} = {fl};");
                     if f.prev {
-                        let _ = write!(hits, "            xl_{i} = {xl};\n");
+                        let _ = writeln!(hits, "            xl_{i} = {xl};");
                     }
                 }
             }
@@ -5225,7 +5314,23 @@ impl Gen<'_> {
                 }
                 _ => None,
             };
-            row_arms.push(RowArm { resume, row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n            //~passed\n{hits}            (l, {k}, {extra}, "), bits });
+            // In one pass (decision 0619): a token whose byte after it is in a block stage 1 has not made is read
+            // again once it has made more (its distance from the token's block, again), as is one the blocks made so
+            // far refuse; the token changed nothing yet.
+            let (l, pause) = if fused {
+                (pause_refusals(&l), "            // The byte after the token in a block stage 1 has not made: it makes more, and the token is read again.\n            if l + 1 >= 64 * made && made < nw {\n                wait = (2 * made - b).min(nw);\n                continue 'pass;\n            }\n".to_owned())
+            } else {
+                (l, String::new())
+            };
+            // The counts in the token loop, at a token of code whose bytes may hold its: its bits in the token's bytes,
+            // in order.
+            let mut scans = String::new();
+            if !matches!(rule, Some(TokenRule::Read(_) | TokenRule::ReadParts(..))) {
+                for (name, u, both, max, _) in token_scans.iter().filter(|c| (0..256).any(|i| (sb[i] || tail[i]) && c.4[i])) {
+                    let _ = write!(scans, "            // scan {name}: its bits in the token's bytes, all of them code\n            let mut q = s;\n            while let Some(i) = first_in(&{both}, q, l) {{\n                if bit(&{u}, i) {{\n                    c_{name} += 1;\n                    if c_{name} > {max} {{\n                        refused = true;\n                        break;\n                    }}\n                }} else {{\n                    c_{name} = c_{name}.saturating_sub(1);\n                }}\n                q = i + 1;\n            }}\n", name = ident(name));
+                }
+            }
+            row_arms.push(RowArm { resume, row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n{pause}{scans}            //~passed\n{hits}            (l, {k}, {extra}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -5295,7 +5400,7 @@ impl Gen<'_> {
         }
         let mut fw_decl = String::new();
         for fw in self.field_writes.iter().filter(|fw| fw.outside.is_none()) {
-            let _ = writeln!(fw_decl, "    // `{}` for tier 2, written over each region token.\n    let mut {} = {};", fw.parts.first().map_or("", |p| p.why.as_str()).trim_start_matches('`').split('`').next().unwrap_or(""), fw.var, "vec![0u64; nw]");
+            let _ = writeln!(fw_decl, "    // `{}` for tier 2, written over each region token.\n    let mut {} = vec![0u64; nw];", fw.parts.first().map_or("", |p| p.why.as_str()).trim_start_matches('`').split('`').next().unwrap_or(""), fw.var);
         }
         // The region a token's start opens, as the walk opens them (`regions`): the first declared whose
         // opener holds there, a kind `after` others where the region opened last of those with none is one.
@@ -5577,9 +5682,9 @@ impl Gen<'_> {
             for i in 0..nf {
                 if live[i] {
                     let text = format!("{} {}", own_of[i], formula_of[i]);
-                    for j in 0..nf {
-                        if !live[j] && reads(&text, j) {
-                            live[j] = true;
+                    for (j, l) in live.iter_mut().enumerate() {
+                        if !*l && reads(&text, j) {
+                            *l = true;
                             grew = true;
                         }
                     }
@@ -5695,25 +5800,89 @@ impl Gen<'_> {
         }
         let _ = write!(out, "/// A token's word: the code of the word its bytes are, 0 for none.\nfn word(b: &[u8]) -> u32 {{\n    match b {{\n{words}        _ => 0,\n    }}\n}}\n\n");
         out.push_str(&pair_fns);
-        out.push_str(&self.stage1());
+        let s1 = self.stage1_parts(fused);
+        if fused {
+            let alone = self.stage1_parts(false);
+            // Stage 1 as a function of its own too, for the test build's walk alone.
+            let test = "#[cfg(feature = \"test-hooks\")]\n";
+            let _ = write!(
+                out,
+                "{}{test}{}{test}{}{}    let mut refused = false;\n    for t in 0..{} {{\n{}    }}\n{}{}",
+                alone.tables,
+                alone.record,
+                alone.header,
+                alone.decls,
+                alone.steps,
+                alone.body,
+                alone.finals,
+                alone.ret.replacen("rerail_simd8::dispatch!", &format!("{test}rerail_simd8::dispatch!"), 1)
+            );
+        } else {
+            out.push_str(&self.stage1());
+        }
         out.push_str(&tables);
-        out.push_str(&self.lex_head());
+        if fused {
+            let _ = write!(
+                out,
+                "/// `src`'s records, in one pass over its blocks (decision 0619): stage 1 makes each block's masks as the token loop\n/// comes to need them, and the token loop reads its tokens from them, as the lean lexer's `lex_blocks` reads its\n/// blocks' masks.\n#[inline(always)]\nunsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {{\n    let nw = n.div_ceil(64);\n{}    let mut refused = false;\n    // Stage 1's next step, the blocks whose masks it has made, and those the token loop waits for.\n    let mut t = 0usize;\n    let mut made = 0usize;\n    let mut wait = nw.min(1);\n",
+                s1.decls
+            );
+        } else {
+            out.push_str(&self.lex_head());
+        }
         let open_decl = if self.kinds.iter().any(|q| q.resumes) { "    // The string's record a template left open (decision 0600), over the template's code.\n    let mut held: Option<usize> = None;\n" } else { "" };
         let span_decl = format!("{open_decl}{span_decl}");
         let plain_decl_text = format!("{}{span_decl}", if self.opens.is_some() { "    // The kind of string the template is in, as the lean lexer's string reader keeps it over the template's code: the region read last that closed at its second closer (a template's `$`), of the kinds with no `after`.\n    let mut template = usize::MAX;\n" } else { "" });
         let kept: Vec<String> = self.nodes.iter().filter(|n| n.kept).map(|n| n.name.clone()).chain(self.nodes.iter().flat_map(|n| &n.also).map(|a| format!("mut {a}"))).collect();
-        let _ = writeln!(out, "    // Stage 1: the masks the regions and the tokens read, and whether an escape holds.\n    let Stage1 {{ {}, refused: escapes }} = stage1_best(src);", kept.join(", "));
+        if !fused {
+            let _ = writeln!(out, "    // Stage 1: the masks the regions and the tokens read, and whether an escape holds.\n    let Stage1 {{ {}, refused: escapes }} = stage1_best(src);", kept.join(", "));
+        }
         let rest = format!("{plain_decl_text}{fw_decl}{open_code}{branches}{token_code}{own_code}{gap_code}{acc_after}{span_after}{fields_init}");
         // A refusal in the token loop leaves both its loops.
         let tokens = |t: &str| t.replace("break;\n", "break 'tokens;\n");
         let (open_code, branches, token_code, own_code, gap_code, acc_after) = (tokens(&open_code), tokens(&branches), tokens(&token_code), tokens(&own_code), tokens(&gap_code), tokens(&acc_after));
-        out.push_str(&gate_walk(&self.body, &rest));
+        let walk = gate_walk(&self.body, &rest);
+        // The counts' words over the tokens.
+        let scan_decl: String = token_scans.iter().map(|(name, ..)| format!("    let mut c_{} = 0u32;\n", ident(name))).collect();
+        let (walk, loop_head, pass_end) = if fused {
+            // Stage 1 to the blocks the token loop waits for (every one, once it waits for the file's end), then its
+            // tests once after its last step; a test build's walk; then the token loop, to a token in a block not made.
+            let walk = walk.replacen("    let mut refused = escapes;\n", "", 1);
+            let (keep, walk) = match walk.find("    // The regions' walk") {
+                Some(k) => walk.split_at(k),
+                None => (walk.as_str(), ""),
+            };
+            let keep = if keep.trim().is_empty() { String::new() } else { format!("        // The escapes after stage 1, once it has made every block.\n        if made == nw {{\n{}        }}\n", indent(keep, "        ")) };
+            // The test build's walk, of its own stage 1 over the file: the pass reads it only in its checks.
+            let walk = walk.replacen(
+                " = {\n",
+                &format!(" = {{\n        let Stage1 {{ {}, refused: _ }} = stage1_best(&src[..n]);\n        // Each word's bits inside the file.\n        let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n {{ !0 }} else {{ (1u64 << (n % 64)) - 1 }}).collect();\n", kept.join(", ")),
+                1,
+            );
+            let steps = &s1.steps;
+            let stage = format!(
+                "{walk}    'pass: loop {{\n        // Stage 1, to the blocks the token loop waits for: every one where it waits for the file's end.\n        while t < {steps} && (made < wait || wait == nw) {{\n{}            t += 1;\n            made = t.saturating_sub({}).min(nw);\n        }}\n        if t == {steps} {{\n{}        }}\n{keep}",
+                indent(&s1.body, "    "),
+                s1.most,
+                indent(&s1.finals, "        ")
+            );
+            (stage, "    'tokens: loop {\n        if b >= made {\n            if made < nw {\n                // A block stage 1 has not made: it makes it first.\n                wait = (b + 1).min(nw);\n                continue 'pass;\n            }\n            break 'tokens;\n        }\n".to_owned(), "    break 'pass;\n    }\n")
+        } else {
+            (walk, "    'tokens: while b < nw {\n".to_owned(), "")
+        };
+        if !fused {
+            out.push_str(&walk);
+        }
         let _ = write!(
             out,
-            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).\n    let mut b = at / 64;\n    'tokens: while b < nw {{\n        let base = b * 64;\n        let mut firsts = !{skip}[b] & (!0u64 << at.saturating_sub(base));\n        while firsts != 0 {{\n        let s = base + firsts.trailing_zeros() as usize;\n        if s >= n {{\n            break 'tokens;\n        }}\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches};\n        let word = if extra {{ 0 }} else {{ word(&src[s..=l]) }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n        if at >= base + 64 {{\n            b = at / 64;\n            continue 'tokens;\n        }}\n        firsts &= !0u64 << (at - base);\n        }}\n        b += 1;\n    }}\n{unplaced_code}    let _ = (from, from_record, before, pending);\n{span_after}    Lexed {{\n        starts,\n        lasts,\n        codes,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n",
+            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}{scan_decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).\n    let mut b = at / 64;\n{stage}{loop_head}        let base = b * 64;\n        let mut firsts = !{skip}[b] & (!0u64 << at.saturating_sub(base));\n        while firsts != 0 {{\n        let s = base + firsts.trailing_zeros() as usize;\n        if s >= n {{\n            break 'tokens;\n        }}\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches};\n        let word = if extra {{ 0 }} else {{ word(&src[s..=l]) }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n        if at >= base + 64 {{\n            b = at / 64;\n            continue 'tokens;\n        }}\n        firsts &= !0u64 << (at - base);\n        }}\n        b += 1;\n    }}\n{pass_end}{unplaced_code}    let _ = (from, from_record, before, pending);\n{span_after}    Lexed {{\n        starts,\n        lasts,\n        codes,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n",
             own = own_code,
             plain_decl = plain_decl_text,
+            stage = if fused { walk.as_str() } else { "" },
         );
+        if fused {
+            out.push_str("\nrerail_simd8::dispatch! {\n    fn lex_best(src: &[u8], n: usize) -> Lexed = lex_on, on lex_on_best;\n}\n\n/// The spaces after a file `lex` reads, as simdjson's `SIMDJSON_PADDING`: each block of it is loaded where it is.\npub const PADDING: usize = 64;\n\n/// The records of `buf[..n]`, its `PADDING` bytes after it spaces.\npub fn lex(buf: &[u8], n: usize) -> Lexed {\n    assert!(buf.len() >= n + PADDING && buf[n..n + PADDING].iter().all(|&b| b == b' '), \"the source padded with spaces\");\n    lex_best(buf, n)\n}\n");
+        }
         out.push_str(HELPERS);
         if self.body.contains("toggle(&") {
             out.push_str(TOGGLE);

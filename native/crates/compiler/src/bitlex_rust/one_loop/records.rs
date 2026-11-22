@@ -249,10 +249,9 @@ impl Rl<'_, '_> {
     /// mark after it leaves it, `none` where no arm passes. `ending`: the level may end at the marks after it.
     fn decision(&self, arms: Vec<(Vec<First>, String, bool)>, rest: &[&Gram], rule: &str, exit: &str, none: &str, ending: bool) -> Result<String, String> {
         let ex = if ending { self.g.exits_ending(rest, rule)? } else { Vec::new() };
-        let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
         let unmarked = if ending { self.g.after_mark(rest, rule)? } else { Vec::new() };
         let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
-        Ok(self.g.asking(&arms, &ex, "") + &self.g.decide(&arms, &exits, &unmarked, &self.g.gated(&ex), exit, none, ""))
+        Ok(self.g.asking(&arms, &ex, "") + &self.g.decide(&arms, &ex, &unmarked, exit, none, ""))
     }
 
     /// A node of rule `n`'s kind opened at the token: one of no tape kind (always retagged inside) a placeholder until
