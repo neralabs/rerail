@@ -20,7 +20,7 @@ import { existsSync, readdirSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import Database from "better-sqlite3";
 import type { AuditRecord, AuditRuleProvenance } from "../engine/audit/audit.js";
-import { isUnreadableList, SqliteAuditReader } from "../engine/audit/audit-store.js";
+import { SqliteAuditReader } from "../engine/audit/audit-store.js";
 import { loadRuleCatalog } from "../engine/catalog/rule-catalog.js";
 import { parseRuleDocument } from "../engine/catalog/rule-documents.js";
 import { worktreeRulesDirectory } from "../engine/catalog/worktree-pack.js";
@@ -81,7 +81,7 @@ export interface SyncResult {
   readonly remote: string;
   readonly batches: number;
   readonly records: number;
-  /** Set when the last attempt failed, and the remote is retried after `nextAttemptAt`, or when an audit was held back. */
+  /** Set when the last attempt failed; the remote is retried after `nextAttemptAt`. */
   readonly error?: string;
   /** Nothing was attempted: another process holds this remote's lock, or its backoff has not passed. */
   readonly skipped?: "locked" | "backoff" | "no-token" | "removed";
@@ -186,8 +186,6 @@ class BatchBuilder {
   readonly oversized: OutboxRecord[] = [];
   /** `stream\0id` of every record taken, so a rule many audits name goes in once. */
   readonly ids = new Set<string>();
-  /** The id of each audit collecting this batch held back (`#addAudit`). */
-  readonly heldBack = new Set<string>();
 
   #sendable = 0;
 
@@ -275,8 +273,6 @@ interface BatchSending extends RemoteSync {
   records: number;
   maxSendable: number;
   skipped: number;
-  /** The audits the last batch's collecting held back (`#addAudit`). */
-  heldBack: ReadonlySet<string>;
 }
 
 type PostOutcome = { kind: "accepted" } | { kind: "rejected"; error: string } | { kind: "unauthorized"; error: string } | { kind: "retry"; error: string };
@@ -449,33 +445,21 @@ export class RemoteOutbox {
 
   /** Sends batches until nothing is left, the sync's limit, or one that ends the sync. */
   async #sendBatches(sync: RemoteSync): Promise<SyncResult> {
-    const { options } = sync;
+    const { state, remote, options, key, configHash } = sync;
     const rerail = this.#openRerail();
     try {
-      const sending: BatchSending = {
-        ...sync, rerail, rules: new RuleDocuments(rerail), batches: 0, records: 0, maxSendable: Number.POSITIVE_INFINITY, skipped: 0, heldBack: new Set(),
-      };
+      const sending: BatchSending = { ...sync, rerail, rules: new RuleDocuments(rerail), batches: 0, records: 0, maxSendable: Number.POSITIVE_INFINITY, skipped: 0 };
       for (let index = 0; index < (options.maxBatches ?? 50); index += 1) {
         if (options.signal?.aborted === true) break;
         const step = await this.#sendBatch(sending);
         if (step === "done") break;
         if (step !== "next") return step;
       }
-      return this.#ended(sending);
+      if (sending.batches === 0) this.#recordSuccess(state, key, configHash, 0, null);
+      return { remote: remote.name, batches: sending.batches, records: sending.records };
     } finally {
       rerail?.close();
     }
-  }
-
-  /**
-   * The result of a sync that sent what it could. The audits it held back (`#addAudit`) are named in its error and in the
-   * remote's status, with no backoff: everything else goes on being sent.
-   */
-  #ended(sending: BatchSending): SyncResult {
-    const { state, key, configHash, remote, batches, records } = sending;
-    const error = heldBackError(sending.heldBack);
-    if (batches === 0 || error !== undefined) this.#recordSuccess(state, key, configHash, 0, error ?? null);
-    return { remote: remote.name, batches, records, ...(error === undefined ? {} : { error }) };
   }
 
   /** One batch collected and sent: what comes next, or the result that ends the sync. */
@@ -483,8 +467,6 @@ export class RemoteOutbox {
     const { state, rerail, rules, remote, exclusions, options, key, token } = sending;
     const budget = options.batchBytes ?? MAX_BATCH_BYTES;
     const batch = this.#collect(state, rerail, rules, remote, exclusions, budget, sending.maxSendable);
-    // Each batch's collecting reads the audits not sent from the first, so the last one's names all the sync held back.
-    sending.heldBack = batch.heldBack;
     if (isEmptyBatch(batch)) return "done";
     const sendable = batch.records.filter(item => item.line !== "").length;
     if (sendable === 0) {
@@ -643,31 +625,20 @@ export class RemoteOutbox {
     unsent: (item: OutboxRecord) => boolean,
   ): boolean {
     const rows = rerail.prepare("SELECT audit_id, session_id, origin, status, started_at, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as FinishedAuditRow[];
-    const pending = rows.flatMap(row => {
-      const hash = auditHash(row);
-      return isExcluded(row.session_id, row.started_at) || !unsent({ line: "", stream: "audit", id: row.audit_id, hash }) ? [] : [{ auditId: row.audit_id, hash }];
-    });
-    if (pending.length === 0) return true;
     const sink: AuditSink = { rerail, rules, batch, addSnapshot, unsent };
+    // Opens the database at its first read: a sync with no audit to test or send opens none.
     const reader = new SqliteAuditReader(join(this.#home, RERAIL_DATABASE_FILE));
     try {
+      const pending = rows.flatMap(row => (isExcluded(row.session_id, row.started_at) ? [] : pendingAudit(row, reader, unsent)));
       return pending.every(({ auditId, hash }) => this.#addAudit(sink, reader.get(auditId), hash));
     } finally {
       reader.close();
     }
   }
 
-  /**
-   * One audit with the rules it ran and its violations, all in one batch or the audit waits for the next; false once the
-   * batch is full. An audit whose record reads a stored list as none (`isUnreadableList`) is held back: sent so, the
-   * remote would keep it so, since its hash leaves those lists out; held back, it goes whole once they are mended.
-   */
+  /** One audit with the rules it ran and its violations, all in one batch or the audit waits for the next; false once the batch is full. */
   #addAudit(sink: AuditSink, audit: AuditRecord | undefined, hash: string): boolean {
     if (audit === undefined) return true;
-    if (audit.failures.some(isUnreadableList)) {
-      sink.batch.heldBack.add(audit.auditId);
-      return true;
-    }
     for (const provenance of audit.ruleProvenance) {
       const rule = provenanceRule(provenance, audit.workspaceRoot);
       if (rule !== undefined && !this.#addRule(sink.rules, rule, sink.batch, sink.unsent)) return false;
@@ -828,20 +799,26 @@ function violationKeysOf(rerail: Database.Database, audit: AuditRecord): Readonl
 interface FinishedAuditRow { audit_id: string; session_id: string; origin: string; status: string; started_at: number; finished_at: number; size: number }
 
 /**
- * What decides whether an audit is sent again: a change to its status, end or violations, or its marking as a scan.
- * An ongoing audit's hash leaves `origin` out, so the update that added it resends none of them; a scan sent before
- * then goes again, with `origin: "scan"`.
+ * What decides whether an audit is sent again: a change to its status, end or violations, its marking as a scan, or
+ * whether it was sent with a stored list its record reads as none (`unreadable`). An ongoing audit's hash leaves
+ * `origin` out, so the update that added it resends none of them; a scan sent before then goes again, with
+ * `origin: "scan"`. A readable audit's hash leaves `unreadable` out the same way, so no audit sent before goes again.
  */
-function auditHash(row: FinishedAuditRow): string {
-  return hashOf([row.status, row.finished_at, row.size, ...(row.origin === "scan" ? ["scan"] : [])]);
+function auditHash(row: FinishedAuditRow, unreadable: boolean): string {
+  return hashOf([row.status, row.finished_at, row.size, ...(row.origin === "scan" ? ["scan"] : []), ...(unreadable ? ["unreadable"] : [])]);
 }
 
-/** The error that names the audits a sync held back (`#addAudit`); undefined when it held back none. */
-function heldBackError(heldBack: ReadonlySet<string>): string | undefined {
-  const [first] = heldBack;
-  if (first === undefined) return undefined;
-  const others = heldBack.size === 1 ? "" : ` and ${heldBack.size - 1} more`;
-  return `audit ${first}${others} not sent: a list stored for it is not a JSON array Rerail can read, and its failures say which; it is sent whole once that list is mended`;
+/**
+ * `row`'s audit with the hash it goes under, or none when the remote holds it so. Only an audit the remote does not
+ * hold under its readable hash has its lists tested, in SQL: one not sent yet, sent with a list that did not read, or
+ * changed since. So an audit sent with such a list goes again, whole, once the list is mended; and one sent whole is
+ * not sent again for damage to its paths, failures, rule revisions or rule provenance, which its hash leaves out.
+ */
+function pendingAudit(row: FinishedAuditRow, reader: SqliteAuditReader, unsent: (item: OutboxRecord) => boolean): Array<{ auditId: string; hash: string }> {
+  const held = (hash: string): boolean => !unsent({ line: "", stream: "audit", id: row.audit_id, hash });
+  if (held(auditHash(row, false))) return [];
+  const hash = auditHash(row, reader.unreadableListCount(row.audit_id) > 0);
+  return held(hash) ? [] : [{ auditId: row.audit_id, hash }];
 }
 
 /** The rule document a provenance names, for `#addRule`; undefined for one stored without a payload hash. */

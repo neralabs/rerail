@@ -141,6 +141,9 @@ one is the batch header; each further line is a record:
   Node's binary form sends `"content":"unrepresentable"` and a null payload.
 - **Rule documents** are sent for rules that audits and scans ran, if the exact content is still findable: an
   installed or bundled pack, a rule you created, a worktree's `.rerail/rules/`. A rule changed since is not sent.
+- **Damaged audits.** An audit whose stored paths, failures, violations, rule revisions or rule provenance Rerail
+  cannot read (a damaged file or a hand edit) is sent with that list empty and a failure naming it, and sent again
+  whole once the list is mended. An audit a remote already holds whole is not sent again for such damage.
 
 </details>
 

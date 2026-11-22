@@ -148,15 +148,6 @@ function unreadable(list: StoredList): AuditFailure {
     message: `The audit's ${name} in the database ${plural ? "are" : "is"} not a JSON array of ${ITEMS[item]}, which only a damaged file or a hand edit leaves, so ${plural ? "they read" : "it reads"} as none.`,
   };
 }
-/** The message of each failure `unreadable` makes. */
-const UNREADABLE_MESSAGES = new Set((Object.keys(STORED_LISTS) as StoredList[]).map(list => unreadable(list).message));
-/**
- * Whether `failure` is one an audit record lists because a stored list of it does not read (`unreadable`): its record
- * reads that list as none, so it is not the audit as recorded.
- */
-export function isUnreadableList(failure: AuditFailure): boolean {
-  return UNREADABLE_MESSAGES.has(failure.message);
-}
 
 /** The JSON array of `list`'s items `text` holds, as an audit record reads it, or why it holds none. */
 export function parsedList(text: string, list: StoredList): unknown[] | string {
@@ -1037,6 +1028,12 @@ export class SqliteAuditReader implements AuditReader {
   latestSummary(sessionId: string): AuditSummary | undefined {
     const database = this.#database.open();
     return database === undefined ? undefined : latestAuditSummary(database, sessionId);
+  }
+
+  /** How many of the audit's stored lists its record reads as none (`unreadableLists`), in SQL: no list is parsed in JavaScript. */
+  unreadableListCount(auditId: string): number {
+    const row = this.#database.open()?.select({ count: unreadableLists() }).from(audits).where(eq(audits.auditId, auditId)).get();
+    return row?.count ?? 0;
   }
 
   close(): void {
