@@ -369,14 +369,15 @@ mark ann_lf     = lf & code unless after ";", unless before "}" | "," | "." | ".
 # `;`): the lean lexer's `asi` reads it through, then decides by the token after it, as `semi`'s
 # questions do at that token (decision 0451), the comment's record holding `semi`'s bit of its
 # own gap.
-# - Before a word that starts with `a`, `e` or `w` (`abstract`, `external`), and that is not
-#   `as`, `else` or `where`, the scanner swallows the comment into the semicolon it inserts
+# - Before a word that starts with `a`, `e` or `w` (`abstract`, `external`, a `when` entry's
+#   `else ->`), and that is not `as`, `where` or an `if`'s `else`, the scanner swallows the comment into the semicolon it inserts
 #   after it (`Asi::Swallow`), and the tree loses it: the semicolon drops it (`drops`), and the
 #   nodes it closes end at the word, where the semicolon of no width is. Wherever the parser's
 #   state takes a semicolon: elsewhere (a call's arguments, after an operator) the comment is
 #   any other. Right after a delegation specifier or a property with no initializer, a word
 #   with `b` does the same (open, 0332).
-# - Where what follows goes on (a byte of `goes_on`, `!=`, `as`, `where`, `by`), the scanner
+# - Where what follows goes on (a byte of `goes_on`, `!=`, `as`, `where`, `by`, an `if`'s
+#   `else`), the scanner
 #   reads the comment as part of the line, and tree-sitter loses its bytes: a comment of no
 #   width at the token after it (`asi`'s `lost`). Wherever tier 2 asks for `semi` (`loses`), as
 #   the lean parser asks `asi` only where its state takes a semicolon.
@@ -386,15 +387,15 @@ mark ann_lf     = lf & code unless after ";", unless before "}" | "," | "." | ".
 #   that one. After a line comment a line break comes, and the next line decides as the line
 #   break after a token does: `semi`'s other questions, at the token. After a block comment a
 #   token may come on its line, where the scanner inserts none: refused there.
-# - Before `catch`, `finally` or `else`, the scanner reads the comment through and the tree
-#   keeps it where the grammar does not say yet: the file is refused there (`refuses`), as the
-#   lean lexer reads them where `asi` is asked.
+# - Before `catch` or `finally`, the scanner inserts a semicolon of no width before the
+#   comment, which the parser of a `try` never asks: the comment is the `try`'s, as any other.
 mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally", unless before "else" ~"->", unless before "else" end, end, settles, ends,
   drops after ~";" multiline_comment with semi before starting "aew",
-  drops unless after multiline_comment before "as" | "where" | "else",
+  drops unless after multiline_comment before "as" | "where",
+  drops unless after multiline_comment before "else" ~"->",
   loses after ~";" multiline_comment with semi before starting ",.:*%><={[(?|&/",
   loses after ~";" multiline_comment with semi before "!=" | "!==" | "as" | "where" | "by",
-  refuses after ~";" multiline_comment with semi before "catch" | "finally" | "else",
+  loses after ~";" multiline_comment with semi before "else" ~"->",
   loses since ~";" multiline_comment with semi line_comment,
   refuses since ~";" multiline_comment with semi multiline_comment
 mark semi_close = close_at, before "}", settles, ends

@@ -788,7 +788,6 @@ fn small_readings_are_the_lean_parsers() {
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
         "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
-        "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
         "val s = \"${f(\"${x}\")}\"\n",
         "val s = \"${if (a) { 1 } else 2}\"\n",
         "val s = 'x\n",
@@ -802,8 +801,8 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val x = 1_\n",
         "val x = 0x\n",
         "class A { val x = 1 }\n",
-        // A comment lost before `catch`, `finally` or `else` (not `else ->`): not read yet.
-        "fun f() {\n    try { a() }\n    /* c */ catch (e: E) {}\n}\n",
+        // Two comments before an `if`'s `else`: not read yet.
+        "fun f() {\n    if (a) b()\n    /* c */\n    /* e */\n    else d()\n}\n",
     ]);
 }
 
@@ -1871,6 +1870,21 @@ fn asked_comments_are_the_lean_parsers() {
         "val x = \"\"\"\n  a/*/\n\"\"\"\n    .trimIndent()\n",
         "fun f() = g(a, 0 /*r*/, b)\n",
         "fun f() {\n    g(\n        true /* s */,\n        x,\n    )\n}\n",
+        // Before `catch` or `finally`: the `try`'s comment. Before a `when` entry's `else ->`:
+        // swallowed, the entry to the `else`. Before an `if`'s `else`: lost, of no width there.
+        "fun f() {\n    try { a() }\n    /* c */ catch (e: E) {}\n}\n",
+        "fun f() {\n    try { a() }\n    /* c */\n    catch (e: E) {}\n}\n",
+        "fun f() {\n    try { a() } catch (e: E) {}\n    /* c */ finally {}\n}\n",
+        "val x = try { a() }\n/* c */ catch (e: E) { b }\n",
+        "fun f() {\n    try {\n        a()\n    }\n    /* c */\n    finally {\n        b()\n    }\n}\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */ else -> d\n}\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */\n    else\n    -> d\n}\n",
+        "val x = when (a) {\n    1 -> b\n    /* c */\n    2 -> d\n}\n",
+        "fun f() {\n    if (a) b()\n    /* c */\n    else d()\n}\n",
+        "fun f() {\n    if (a) { b() }\n    /* c */ else { d() }\n}\n",
+        "val x = if (a) b\n/* c */ else d\n",
+        "fun f() {\n    if (a) b()\n    /* c */ elsewhere()\n}\n",
     ]);
 }
 

@@ -9387,22 +9387,22 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn drops_semi_1(&self, here: usize) -> bool {
         ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) } })
-            && ({ let j = here + 0; j < self.n && ((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::AS_10) || (!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::WHERE_28) || (!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::ELSE_54)) })
+            && ({ let j = here + 0; j < self.n && ((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::AS_10) || (!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::WHERE_28)) })
+    }
+
+    #[allow(unused_variables)]
+    fn drops_semi_2(&self, here: usize) -> bool {
+        ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) } })
+            && ({ let j = here + 0; j < self.n && ((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::ELSE_54)) })
+            && ({ let j = here + 1; j < self.n && !((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::MINUS_GT_41)) })
     }
 
     fn drops_semi(&self) -> bool {
-        self.i < self.n && !self.drops_semi_1(self.i) && (self.drops_semi_0(self.i))
+        self.i < self.n && !self.drops_semi_1(self.i) && !self.drops_semi_2(self.i) && (self.drops_semi_0(self.i))
     }
 
     #[allow(unused_variables)]
     fn refuses_semi_0(&self, here: usize) -> bool {
-        ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) && self.codes[j] >> 19 & 1 == 1 } })
-            && ({ let j = here + 0; j < self.n && ((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::CATCH_57) || (!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::FINALLY_58) || (!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::ELSE_54)) })
-    }
-
-    #[allow(unused_variables)]
-    fn refuses_semi_1(&self, here: usize) -> bool {
         let g = self.prev_tok(here);
         let g = if g >= self.n { 0 } else { g + 1 };
         ({ let j = g as isize + 0 - 1; if j < 0 { true } else { let j = j as usize; j < here && !((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::SEMI_33)) } })
@@ -9411,7 +9411,7 @@ impl P<'_> {
     }
 
     fn refuses_semi(&self) -> bool {
-        (self.refuses_semi_0(self.i) || self.refuses_semi_1(self.i))
+        (self.refuses_semi_0(self.i))
     }
 
     #[allow(unused_variables)]
@@ -9428,8 +9428,16 @@ impl P<'_> {
             && ({ let j = here + 0; j < self.n && ((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::BANG_EQ_69) || (!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::BANG_EQ_EQ_70) || (!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::AS_10) || (!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::WHERE_28) || (!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::BY_25)) })
     }
 
+    #[allow(unused_variables)]
+    fn loses_semi_2(&self, here: usize) -> bool {
+        ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::SEMI_33)) } })
+            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.codes[j]) && extra_kind(self.codes[j]) == k::MULTILINE_COMMENT)) && self.codes[j] >> 19 & 1 == 1 } })
+            && ({ let j = here + 0; j < self.n && ((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::ELSE_54)) })
+            && ({ let j = here + 1; j < self.n && !((!is_extra(self.codes[j]) && self.codes[j] >> 8 & 0xff == w::MINUS_GT_41)) })
+    }
+
     fn loses_semi(&self) -> bool {
-        self.i < self.n && (self.loses_semi_0(self.i) || self.loses_semi_1(self.i))
+        self.i < self.n && (self.loses_semi_0(self.i) || self.loses_semi_1(self.i) || self.loses_semi_2(self.i))
     }
 
     #[allow(unused_variables)]
