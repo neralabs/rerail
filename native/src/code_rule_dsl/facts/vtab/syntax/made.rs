@@ -741,7 +741,6 @@ impl Batch {
         Arc::clone(&self.rows.state.lock().rels[rel])
     }
 
-    /// The groups holding the documents `keys` name, made if they are not.
     /// The keys of the documents whose paths' atoms are `values` (a read of `doc` by its path): its documents' paths
     /// interned once, none made. `None` where they could not be.
     fn keys_of_paths(&self, values: &[i64]) -> Option<Vec<u32>> {
@@ -803,6 +802,7 @@ impl Batch {
             .as_ref()
     }
 
+    /// The groups holding the documents `keys` name, made if they are not.
     fn groups_of(&self, keys: impl IntoIterator<Item = u32>) -> Vec<Arc<Group>> {
         let docs: BTreeSet<usize> = keys.into_iter().filter_map(|k| self.docs.position(k)).collect();
         let docs: Vec<usize> = docs.into_iter().collect();
@@ -1010,6 +1010,29 @@ impl Source for MadeRows {
     }
     fn for_rows_in(&self, range: Range<usize>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) {
         self.target().for_rows_in(range, columns, each)
+    }
+    /// The rows whose `column` is one of `keys`, of the documents the keys name (a semi-join's rows at the nodes the
+    /// exports hold, decision 0458): those documents made, no other. Refused for a column that names no document.
+    fn for_rows_keyed(&self, column: usize, keys: &rustc_hash::FxHashSet<i64>, columns: &[usize], each: &mut dyn FnMut(usize, &[i64]) -> bool) -> bool {
+        let by = self.by();
+        if by.column() != Some(column) || matches!(by, ByDocument::Host(_)) {
+            return false;
+        }
+        // Its documents' groups, made if they are not: their ranges hold every row a key names.
+        let docs: BTreeSet<u32> = keys.iter().filter_map(|&v| by.document(v)).collect();
+        let groups = self.batch.groups_of(docs);
+        let r = self.batch.made_so_far(self.rel);
+        let (rel, mut row) = (r.as_ref(), vec![0i64; columns.len()]);
+        for at in groups.iter().flat_map(|g| g.ranges[self.rel].clone()) {
+            if !keys.contains(&Source::value(rel, at, column)) {
+                continue;
+            }
+            Source::row_at(rel, at, columns, &mut row);
+            if !each(at, &row) {
+                return true;
+            }
+        }
+        true
     }
     fn documents_of(&self, column: usize, each: &mut dyn FnMut(usize, i64)) {
         self.target().documents_of(column, each)

@@ -70,6 +70,26 @@ pub struct Keeper {
     fresh: HashSet<String>,
     /// This run's `RERAIL_KEPT_DOCS` trace (`Trace`): not kept in the blob.
     trace: Trace,
+    /// This run's: the values the export rows of the files counted out hold (an edited file's old entry, a gone
+    /// file's), and of those counted in (its new entry, a new file's): the held nodes an edit took and gave, which a
+    /// semi-join's statistics at the held nodes are patched by (decision 0458). `None` when the files were not counted
+    /// against a last run's (a first run, every file counted from scratch, or the keeper given up).
+    held: Option<HeldChange>,
+}
+
+/// The values an edit's files' export rows held before and hold now (`Keeper::held_change`).
+#[derive(Default)]
+pub struct HeldChange {
+    pub out: rustc_hash::FxHashSet<i64>,
+    pub r#in: rustc_hash::FxHashSet<i64>,
+}
+
+impl HeldChange {
+    fn add(set: &mut rustc_hash::FxHashSet<i64>, entry: &memo::Entry) {
+        for (_, values) in entry.rows.values() {
+            set.extend(values.iter().copied());
+        }
+    }
 }
 
 /// What a session's keeper keeps of its files beyond their statistics (0096 step 3): the exports. (A base
@@ -111,6 +131,8 @@ impl Keeper {
                 }
             }
         }
+        // Counted against a last run's files: what this run counts out and in is the edit's.
+        self.held = (!self.docs.is_empty()).then(HeldChange::default);
         self.ids = rels.iter().filter_map(|(r, _)| ids.get(r).map(|id| (r.clone(), *id))).collect();
         for (rel, columns) in rels {
             if self.rels.get(rel).is_some_and(|s| s.columns() != columns.as_slice()) {
@@ -170,6 +192,11 @@ impl Keeper {
         !self.fresh.is_empty()
     }
 
+    /// The held nodes this run's edit took and gave (`held`), once its files were all counted (`end`).
+    pub fn take_held_change(&mut self) -> Option<HeldChange> {
+        self.held.take().filter(|_| self.failed.is_none())
+    }
+
     /// Whether this run has given the keeper up.
     pub fn failed(&self) -> bool {
         self.failed.is_some()
@@ -177,6 +204,7 @@ impl Keeper {
 
     pub fn fail(&mut self, why: impl Into<String>) {
         self.failed.get_or_insert_with(|| why.into());
+        self.held = None;
         self.exports = None;
         self.building = false;
     }
@@ -219,6 +247,10 @@ impl Keeper {
                     // definition's) is counted out and in again to no effect: left as counted. Each relation's
                     // statistics are its own rows', so this is exact; within a relation the rows are counted out and
                     // in whole, as its per-document statistics need.
+                    if let Some(h) = &mut self.held {
+                        HeldChange::add(&mut h.out, &before);
+                        HeldChange::add(&mut h.r#in, entry);
+                    }
                     let (before, now_rows) = changed_only(&before, entry);
                     if std::env::var_os("RERAIL_STATS_KEEP_TRACE").is_some() {
                         // What a row-level count would leave out: the rows the old and new share at either end.
@@ -271,6 +303,9 @@ impl Keeper {
                 }
             }
             None => {}
+        }
+        if let Some(h) = &mut self.held {
+            HeldChange::add(&mut h.r#in, entry);
         }
         self.count(entry, 1);
         self.patch_exports(path, entry, 1);
@@ -368,6 +403,9 @@ impl Keeper {
                 let (c, k) = self.docs.remove(&path).expect("listed");
                 match old(&path, c, k) {
                     Some(before) => {
+                        if let Some(h) = &mut self.held {
+                            HeldChange::add(&mut h.out, &before);
+                        }
                         let fresh = std::mem::take(&mut self.fresh);
                         self.count_where(&before, -1, &|r| !fresh.contains(r));
                         self.fresh = fresh;

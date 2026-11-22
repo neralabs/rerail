@@ -5878,10 +5878,6 @@ fn run_observed_within(
             if let Some((path, rel)) = publish.iter().find_map(|(_, p, _, e, _, _)| e.rows.keys().find(|k| k.starts_with("base:") || stored.iter().any(|(r, _)| r == *k)).map(|k| (p, k))) {
                 return Err(Error::Plan(format!("{path}'s memo entry keeps rows of the base relation {rel} (decision 0458 R4)")));
             }
-            // Decision 0458 R4: no entry keeps a base relation's rows; the cross part reads them off the corpus batch.
-            if let Some((path, rel)) = publish.iter().find_map(|(_, p, _, e, _, _)| e.rows.keys().find(|k| k.starts_with("base:") || stored.iter().any(|(r, _)| r == *k)).map(|k| (p, k))) {
-                return Err(Error::Plan(format!("{path}'s memo entry keeps rows of the base relation {rel} (decision 0458 R4)")));
-            }
             if let Some(memo) = memo {
                 let n = publish.len();
                 let _publish = crate::code_rule_dsl::logic::profile::span(|| format!("publish {n} documents' entries"));
@@ -7540,6 +7536,8 @@ fn run_observed_within(
             }
             crate::code_rule_dsl::logic::profile::decision("exports' statistics kept by file", || format!("{from_kept} kept; {} measured from the rows held: {}", measured_held.len(), measured_held.join(", ")));
         }
+        // The held nodes the edit took and gave: a semi-join's statistics' patch (below).
+        let held_change = keeper.as_mut().and_then(keptstats::Keeper::take_held_change);
         match (session.as_ref(), keeper.take(), memo) {
             (Some(s), Some(k), _) => {
                 s.stats.lock().expect("the session's statistics").insert(memo_program, (memo_whole, k));
@@ -7639,7 +7637,10 @@ fn run_observed_within(
         // step 4's copy 2): the nodes a semi-join's relation is looked up at. Made once, before the relations are
         // counted, when a semi-join's statistics are not kept of these documents.
         let held_kept = |rel: &str| kept_stats.get(&held_stats_name(rel)).is_some_and(|(d, _)| *d == base_digest(rel));
-        let held_nodes: rustc_hash::FxHashSet<i64> = if base_rows.keys().any(|r| semijoin.contains(r) && !held_kept(r)) {
+        // Kept of the table's documents, with the edit's documents and its held nodes known: patched (`held_counted`).
+        let held_patched = |rel: &str| held_change.is_some() && base_wholes.contains_key(rel) && kept_stats.get(&held_stats_name(rel)).is_some_and(|(d, _)| Some(*d) == table_digest.map(|t| t ^ tag(rel)));
+        let verify = std::env::var_os("RERAIL_STATS_VERIFY").is_some();
+        let held_nodes: rustc_hash::FxHashSet<i64> = if base_rows.keys().any(|r| semijoin.contains(r) && !held_kept(r) && (verify || !held_patched(r))) {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the nodes the exports hold".into());
             let mut held = rustc_hash::FxHashSet::default();
             let exports = exports.borrow();
@@ -7665,46 +7666,80 @@ fn run_observed_within(
                 columns.iter().map(|c| by_name.get(c).cloned().unwrap_or((c.clone(), rows, rows, rows, rows))).collect()
             };
             let rows = |k: &super::statkeep::RelStats| usize::try_from(k.rows()).unwrap_or(0);
-            if let Some((d, k)) = kept
-                && d == base_digest(rel)
-            {
+            let kept = match kept {
                 // The session holds every one it was given, the kept ones too.
-                return (of(&k), rows(&k), "kept at the held nodes", session_binds.is_some().then_some(k));
-            }
-            let looked = (|| {
-                let input = super::super::sql::select::input_columns(rel)?;
+                Some((d, k)) if d == base_digest(rel) => return (of(&k), rows(&k), "kept at the held nodes", session_binds.is_some().then_some(k)),
+                kept => kept,
+            };
+            // The input's columns, where each is in the source's, and its node's: a row's document is its first
+            // column's, as `RelStats` reads it, the source's documents column.
+            let input = super::super::sql::select::input_columns(rel).and_then(|input| {
                 let at: Vec<usize> = input.iter().map(|n| columns.iter().position(|h| h == n)).collect::<Option<_>>()?;
                 let n_at = input.iter().position(|n| *n == "n")?;
-                // A row's document is its first column's, as `RelStats` reads it: the source's documents column.
-                if columns.first().map(String::as_str) != input.first().copied() {
-                    return None;
-                }
-                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{rel}'s rows at the held nodes, counted"));
-                // The rows in the input's column order, as `for_rows_keyed` hands them; a node's row once, though two
-                // chunks read it (a guest's document in each).
+                (columns.first().map(String::as_str) == input.first().copied()).then(|| (input.iter().map(|n| (*n).to_owned()).collect::<Vec<String>>(), at, n_at))
+            });
+            // A source's rows at `keys`, flat in the input's column order, as `for_rows_keyed` hands them; a node's
+            // row once, though two chunks read it (a guest's document in each). `None`: its walk refused.
+            let at_keys = |source: &dyn crate::code_rule_dsl::facts::vtab::Source, keys: &rustc_hash::FxHashSet<i64>| -> Option<Vec<i64>> {
+                let (_, at, n_at) = input.as_ref()?;
                 let (mut flat, mut seen): (Vec<i64>, rustc_hash::FxHashSet<i64>) = Default::default();
                 source
-                    .for_rows_keyed(at[n_at], &held_nodes, &at, &mut |_, row| {
-                        if seen.insert(row[n_at]) {
+                    .for_rows_keyed(at[*n_at], keys, at, &mut |_, row| {
+                        if seen.insert(row[*n_at]) {
                             flat.extend_from_slice(row);
                         }
                         true
                     })
-                    .then_some(())?;
-                let mut k = super::statkeep::RelStats::new(input.iter().map(|n| (*n).to_owned()).collect());
+                    .then_some(flat)
+            };
+            let counted = |source: &dyn crate::code_rule_dsl::facts::vtab::Source| -> Option<super::statkeep::RelStats> {
+                let (names, at, _) = input.as_ref()?;
+                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{rel}'s rows at the held nodes, counted"));
+                let flat = at_keys(source, &held_nodes)?;
+                let mut k = super::statkeep::RelStats::new(names.clone());
                 k.documents(&flat, at.len(), 1);
                 Some(k)
+            };
+            // Kept of the table's documents (0096 §3's patch, at the held nodes): each changed document's old rows at
+            // the nodes its old exports held counted out, its new rows at those its exports hold now counted in; an
+            // unchanged document's rows, and the exports' values of its nodes, are as they were (a row of a file's
+            // entry names its own document's nodes, `input_delta`). Not where a version holds a guest: a value
+            // document's rows are each asker's, and an unchanged asker may hold its nodes still.
+            let patched = (|| {
+                let (d, mut k) = kept?;
+                let (names, at, n_at) = input.as_ref()?;
+                if Some(d) != table_digest.map(|t| t ^ tag(rel)) || k.columns() != names.as_slice() {
+                    return None;
+                }
+                let (change, (old, new)) = (held_change.as_ref()?, base_wholes.get(rel)?);
+                let _s = crate::code_rule_dsl::logic::profile::span(|| format!("{rel}'s statistics at the held nodes, patched"));
+                for (version, keys, sign) in [(old, &change.out, -1), (new, &change.r#in, 1)] {
+                    let Some(version) = version else { continue };
+                    let flat = at_keys(version.as_ref(), keys)?;
+                    if flat.chunks_exact(at.len()).any(|r| r[*n_at] >> 32 >= 1 << 30) {
+                        return None;
+                    }
+                    k.documents(&flat, at.len(), sign);
+                }
+                Some(k)
             })();
-            let (k, how) = match looked {
-                Some(k) => (k, "counted at the held nodes"),
+            if let Some(k) = patched {
+                if verify {
+                    let again = counted(source).map(|c| of(&c));
+                    assert_eq!(Some(of(&k)), again, "RERAIL_STATS_VERIFY: {rel}'s statistics at the held nodes, patched and counted again");
+                }
+                return (of(&k), rows(&k), "patched by the changed documents at the held nodes", keeps.then_some(k));
+            }
+            match counted(source) {
+                Some(k) => (of(&k), rows(&k), "counted at the held nodes", keeps.then_some(k)),
                 None => {
+                    // Every row, not the held nodes' alone: not kept, so no later run patches them as theirs.
                     let _m = crate::code_rule_dsl::logic::profile::span(|| format!("a base relation counted whole ({} rows)", source.len()));
                     let mut k = super::statkeep::RelStats::new(columns.to_vec());
                     k.documents_scanned(source, &(0..columns.len()).collect::<Vec<_>>(), 1);
-                    (k, "counted whole: its keyed walk refused")
+                    (of(&k), rows(&k), "counted whole: its keyed walk refused", None)
                 }
-            };
-            (of(&k), rows(&k), how, keeps.then_some(k))
+            }
         };
         // A base relation read off the corpus batch, to count: its source, the columns its rules read, its kept
         // statistics.

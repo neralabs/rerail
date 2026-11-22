@@ -47,19 +47,25 @@ struct Corpus {
     dir: PathBuf,
     marker: String,
     program: String,
+    outputs: &'static [&'static str],
     runs: usize,
 }
 
 impl Corpus {
     fn new(name: &str) -> Corpus {
+        Corpus::with(name, PROGRAM, OUTPUTS)
+    }
+
+    /// A corpus of `FILES` under `program`, whose outputs are `outputs`.
+    fn with(name: &str, program: &str, outputs: &'static [&'static str]) -> Corpus {
         let dir = crate::code_rule_dsl::fixtures::temp().with_extension(format!("cross-views-{name}"));
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).unwrap();
         let marker = format!("# {name} {:?}\n", std::time::SystemTime::now());
         let rule = dir.join("program.rerail");
-        std::fs::write(&rule, PROGRAM).unwrap();
+        std::fs::write(&rule, program).unwrap();
         let program = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&rule).unwrap()).unwrap();
-        let c = Corpus { dir, marker, program, runs: 0 };
+        let c = Corpus { dir, marker, program, outputs, runs: 0 };
         for (file, body) in FILES {
             c.write(file, body);
         }
@@ -82,7 +88,7 @@ impl Corpus {
         let out = self.dir.join(format!("out{}", self.runs));
         super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(store.to_owned()));
         let report = super::run(&self.program, &self.dir.join("src"), None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
-        let rows = OUTPUTS.iter().map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap_or_default().into_iter().collect()).collect();
+        let rows = self.outputs.iter().map(|r| crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap_or_default().into_iter().collect()).collect();
         (report, rows)
     }
 
@@ -108,8 +114,8 @@ impl Drop for Corpus {
 
 /// Every output has rows: the program reads each base relation across files, so a test of no rows tests nothing.
 fn every_output_has_rows(rows: &[BTreeSet<Vec<String>>]) {
-    for (rel, rows) in OUTPUTS.iter().zip(rows) {
-        assert!(!rows.is_empty(), "{rel} has no rows: the corpus does not exercise it");
+    for (i, rows) in rows.iter().enumerate() {
+        assert!(!rows.is_empty(), "output {i} has no rows: the corpus does not exercise it");
     }
 }
 
@@ -206,12 +212,10 @@ fn r4_a_base_relations_statistics_are_kept_and_patched_by_an_edit() {
     c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
     let edit = how(&mut c);
     profile::set(false);
-    let patched = |x: &String| x.ends_with(": patched by the changed documents");
     assert!(all(&cold, "counted", "counted"), "a cold run counts them: {cold:?}");
     assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
-    assert!(edit.iter().any(patched), "an edit patches them: {edit:?}");
-    // A semi-join's held rows are counted again after an edit, over the documents the run holds (`held_counted`).
-    assert!(edit.iter().all(|x| patched(x) || x.ends_with(": counted at the held nodes")) || inside, "counted again after an edit only inside another run's waves: {edit:?}");
+    // A semi-join's at its held nodes too, by the nodes the changed files' exports held and hold (`held_counted`).
+    assert!(all(&edit, "patched by the changed documents", "patched by the changed documents") || inside, "an edit patches them, but inside another run's waves: {edit:?}");
 }
 
 /// A session (0077) holds its corpus batch from run to run, its changed files' documents replaced (decision 0458), and
@@ -246,10 +250,91 @@ fn a_session_holds_its_corpus_batch_and_keeps_its_base_statistics() {
     assert_eq!(cold_batch, BTreeSet::from(["4 documents made, none held".to_owned()]), "and makes every document");
     assert!(all(&warm, "kept", "kept"), "the run after it takes them as kept: {warm:?}");
     assert_eq!(warm_batch, BTreeSet::from(["0 documents made, 4 held from the session's last run".to_owned()]), "and makes none");
-    assert!(all(&edit, "patched by the changed documents", "counted"), "an edit patches them: {edit:?}");
+    assert!(all(&edit, "patched by the changed documents", "patched by the changed documents"), "an edit patches them: {edit:?}");
     assert_eq!(edit_batch, BTreeSet::from(["1 documents made, 3 held from the session's last run".to_owned()]), "and makes the changed file's alone");
     every_output_has_rows(&rows);
     assert_eq!(rows, c.fresh(), "the session's outputs after the edit are a fresh run's");
+}
+
+/// `line` and `col` read only at the nodes `uses` holds, each alone in its rule (a join of two would be pushed into the
+/// file-local part whole), and a span read (`src_line`), which makes `line` and `col` rows of the batch's documents
+/// rather than views of the tape (`Extra::spans`), as the data layer's are, so each is a semi-join input whose first column is the node,
+/// not the document (the data layer's `line`, `col`, `op`, `visit_index`): its count at the held nodes was refused a
+/// walk of the corpus batch by its documents, and read it whole, making every document (t43 step 21).
+const AT_HELD: &str = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl uses(n: node, f: node)
+uses(n, f) :- imp(n, q), def(f, q).
+.decl at_line(f: node, l: number)
+at_line(f, l) :- uses(_, f), line(f, l).
+.decl at_col(f: node, c: number)
+at_col(f, c) :- uses(_, f), col(f, c).
+.decl lines(d: number, l: number)
+lines(d, l) :- src_line(d, l, _).
+.output at_line
+.output at_col
+.output lines
+"#;
+const AT_HELD_OUTPUTS: &[&str] = &["at_line", "at_col", "lines"];
+
+/// An edit pays for the changed documents, not the corpus (t43 step 21): a semi-join input's statistics (its rows at
+/// the nodes the exports hold, Q396) are patched by the changed documents as a base relation's are, their old rows at
+/// their old held nodes counted out and their new rows at the held nodes now counted in; so no read of the corpus
+/// batch makes an unchanged document. `RERAIL_STATS_VERIFY` counts each patched relation again at the held nodes and
+/// fails the run where the two differ. In a session and in a new process over the kept store alike.
+#[test]
+fn an_edit_patches_a_semi_join_inputs_statistics_and_makes_no_unchanged_document() {
+    use crate::code_rule_dsl::logic::profile;
+    // SAFETY: nextest runs each test in a process of its own; nothing else reads the environment here.
+    unsafe { std::env::set_var("RERAIL_STATS_VERIFY", "1") };
+    // Every case's failures, said together.
+    let mut failed: Vec<String> = Vec::new();
+    for (program, outputs, session) in [(PROGRAM, OUTPUTS, false), (PROGRAM, OUTPUTS, true), (AT_HELD, AT_HELD_OUTPUTS, false), (AT_HELD, AT_HELD_OUTPUTS, true)] {
+        let mut c = Corpus::with(&format!("semi-patch-{}-{}", outputs[0], session), program, outputs);
+        let handle = session.then(|| super::session::Handle::open(&c.dir.join("session")).unwrap());
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::set(true);
+        let run = |c: &mut Corpus| {
+            let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+            profile::take_decisions();
+            let (_, rows) = {
+                let _bound = handle.as_ref().map(|h| h.bind());
+                c.run()
+            };
+            let made = profile::take_decisions();
+            let of = |topic: &str| made.keys().filter(|(t, _)| t == topic).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
+            (of("the base relations' statistics (decision 0458)"), of("a batch's every document made by a whole read of a relation (decision 0494)"), rows)
+        };
+        let (cold, _, _) = run(&mut c);
+        run(&mut c);
+        c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
+        let (edit, whole, rows) = run(&mut c);
+        profile::set(false);
+        let route = format!("{}, {}", if session { "a session" } else { "a new process" }, outputs[0]);
+        // The semi-join inputs: those the cold run counted at the held nodes.
+        let held: BTreeSet<&str> = cold.iter().filter(|x| x.contains("at the held nodes") || x.contains("keyed walk")).filter_map(|x| x.split(':').next()).collect();
+        if held.is_empty() {
+            failed.push(format!("{route}: the program has semi-join inputs: {cold:?}"));
+        }
+        for rel in &held {
+            if !edit.contains(&format!("{rel}: patched by the changed documents at the held nodes")) {
+                failed.push(format!("{route}: an edit patches {rel}'s held statistics: {edit:?}"));
+            }
+        }
+        // A whole read makes at most the changed file's document (1 of the batch's).
+        let unmade = |x: &String| x.rsplit_once(": ").and_then(|(_, t)| t.split(' ').next()?.parse::<usize>().ok()).unwrap_or(0);
+        if !whole.iter().all(|x| unmade(x) <= 1) {
+            failed.push(format!("{route}: no read makes an unchanged document: {whole:?}"));
+        }
+        every_output_has_rows(&rows);
+        if rows != c.fresh() {
+            failed.push(format!("{route}: the outputs after the edit are a fresh run's"));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
 
 /// R5: the runs pass in strict mode (`RERAIL_SQL_STRICT`): no SQL inside the waves (decision 0104), for the memo
