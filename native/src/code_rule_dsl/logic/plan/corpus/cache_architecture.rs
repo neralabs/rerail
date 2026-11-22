@@ -60,8 +60,6 @@ const RELATIONS: &[&str] = &["facts_chain", "memo_entries", "memo_packs"];
 const NOT_YET_MOVED: &[&str] = &[
     // Tapes, documents and their indexes.
     "tape_objects", "file_documents",
-    // The whole run's record.
-    "run_record",
     // The derivation graph: what it records is the keys of §7.
     "name_bindings", "derivations", "derivation_inputs",
 ];

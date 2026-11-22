@@ -132,7 +132,6 @@ const SCRATCH: &[&str] = &[
 const NOT_YET_TABLES: &[(&str, &str)] = &[
     // The cost model fitted from `samples`, per machine (planning's placement).
     ("models", "6"),
-    ("run_record", "1"),
     ("derivations", "1"),
     ("derivation_inputs", "1"),
     ("name_bindings", "1"),
@@ -160,8 +159,9 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// fact (t33 step 6); 30 when the corpus path's statistics (`stat_blob`) became kept relations, one partition a memo
 /// plan (t33 step 6); 14 when the prefilter's per-tape access paths, its store-wide counts and both vocabularies became
 /// kept facts of the store, read through virtual tables of their names (t33 steps 6 and 7); 13 when the search index
-/// did (t33 step 7).
-const NOT_YET_TABLES_PIN: usize = 13;
+/// did (t33 step 7); 12 when the observer's run records (the Git files' listing, the cone's rounds, the Git functors'
+/// answers, the constants, the whole-run cutoff) became kept facts of the observer's space (t33 step 1).
+const NOT_YET_TABLES_PIN: usize = 12;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.

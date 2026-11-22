@@ -1,6 +1,6 @@
-//! The observer's answers, canonical forms and settings as kept facts (t33 K2, decisions 0104 and 0456): three
-//! relations of one space in the content store whose observer it is, where its own SQLite file kept them as the
-//! `observed` and `observer_meta` tables and the `canonical:` records of `run_record`.
+//! The observer's answers, canonical forms, settings and run records as kept facts (t33 K2 and step 1, decisions 0104
+//! and 0456): relations of one space in the content store whose observer it is, where its own SQLite file kept them
+//! as the `observed`, `observer_meta` and `run_record` tables.
 //!
 //! - `observed(path, kind, dev, ino, size, mtime_ns, ctime_ns, digest, listed, listing, recorded_ns)` and
 //!   `canonical(path, canonical, recorded_ns)`, one partition per directory: the answers and forms for the paths in
@@ -8,6 +8,10 @@
 //!   parent's, as the tables were read by a range of paths.
 //! - `observer_meta(key, is_text, number, text)`, one partition: each root's journal cursor, the observer's own
 //!   journal's generation and floor, its own output directories.
+//! - `run_record(key, list, at, text)` and `run_output(key, at, word)`, one partition per record's key: a record's
+//!   lists of texts (each list's `at` -1 row names it, so an empty one is kept too) and its outputs' bytes (`at` -1
+//!   their length, then each word, eight bytes, little-endian). The records of what a run read and found: the Git
+//!   files' listing, the cone's rounds' cursors, the Git functors' answers, the constants, the whole-run cutoff.
 //!
 //! A change is applied as one put of the space (`apply`): the partitions it touches, read as they are, edited and
 //! written whole, with the settings when they change. So the answers forgotten under a root and the cursor that
@@ -29,6 +33,16 @@ use std::path::{Path, PathBuf};
 const META: &str = "observer_meta";
 /// `observer_meta`'s column types: `s` an atom of the store.
 const META_TYPES: &[u8] = b"siis";
+
+const RECORD: &str = "run_record";
+/// `run_record`'s column types: key, list, at (-1: the list's own row), text.
+const RECORD_TYPES: &[u8] = b"siis";
+const OUTPUT: &str = "run_output";
+/// `run_output`'s column types: key, at (-1: the length), word.
+const OUTPUT_TYPES: &[u8] = b"sii";
+
+/// A run's record: its lists of texts, and its outputs' bytes.
+pub(super) type Record = (Vec<Vec<String>>, Vec<u8>);
 
 /// An answer as the table held it: path, kind, stat, digest, listing (encoded), when recorded.
 pub(super) type Row = (String, i64, Stat, Vec<u8>, Option<Vec<u8>>, i64);
@@ -115,11 +129,13 @@ pub(super) struct Change {
     pub canon: Edit<Canon>,
     pub meta_put: Vec<(String, rusqlite::types::Value)>,
     pub meta_delete: Vec<String>,
+    /// Records put (`Some`) or gone (`None`), by key.
+    pub records: Vec<(String, Option<Record>)>,
 }
 
 impl Change {
     fn is_empty(&self) -> bool {
-        self.answers.is_empty() && self.canon.is_empty() && self.meta_put.is_empty() && self.meta_delete.is_empty()
+        self.answers.is_empty() && self.canon.is_empty() && self.meta_put.is_empty() && self.meta_delete.is_empty() && self.records.is_empty()
     }
 }
 
@@ -203,6 +219,16 @@ impl Facts {
         self.with(|o| o.all()).unwrap_or_default()
     }
 
+    /// The record kept under `key`.
+    pub(super) fn record(&self, key: &str) -> Option<Record> {
+        self.with(|o| o.record(key)).flatten()
+    }
+
+    /// Every record whose key starts with `prefix`, by key, with its lists (not its outputs).
+    pub(super) fn records(&self, prefix: &str) -> Vec<(String, Vec<Vec<String>>)> {
+        self.with(|o| o.records(prefix)).unwrap_or_default()
+    }
+
     /// Writes `change` as one put, a job called `what` (`Open::apply`).
     pub(super) fn apply(&self, change: Change, what: &'static str) {
         self.with(|o| o.apply(change, what));
@@ -273,6 +299,73 @@ impl Open<'_> {
         out
     }
 
+    fn record(&self, key: &str) -> Option<Record> {
+        let space = self.store.kept_space(&self.space).ok()??;
+        let chain = space.view();
+        let at = part(key);
+        let output = chain.get(&FactKey { rel: OUTPUT, ident: &ident(OUTPUT), part: at })?;
+        // Rows of another key in the same partition (a hash's collision) are not this record's.
+        let sym = (0..output.rows.len()).map(|i| output.rows.get(i, 0)).find(|&s| self.text(s).as_deref() == Some(key))?;
+        let mut bytes: Option<(usize, Vec<u8>)> = None;
+        for i in 0..output.rows.len() {
+            if output.rows.get(i, 0) != sym {
+                continue;
+            }
+            let (at, word) = (output.rows.get(i, 1), output.rows.get(i, 2));
+            match (&mut bytes, at) {
+                (None, -1) => bytes = Some((usize::try_from(word).ok()?, Vec::new())),
+                (Some((_, out)), at) if at == (out.len() / 8) as i64 => out.extend_from_slice(&word.to_le_bytes()),
+                _ => return None,
+            }
+        }
+        let (n, mut outputs) = bytes?;
+        (outputs.len() == n.div_ceil(8) * 8).then_some(())?;
+        outputs.truncate(n);
+        let lists = chain.get(&FactKey { rel: RECORD, ident: &ident(RECORD), part: at }).map_or(Some(Vec::new()), |kept| self.lists(&kept, sym))?;
+        Some((lists, outputs))
+    }
+
+    /// The lists `kept` holds of the record whose key is atom `sym`, as `put` gave them: each list's own row, then its
+    /// texts in order.
+    fn lists(&self, kept: &rerail_blocks::kept::Kept<'_>, sym: i64) -> Option<Vec<Vec<String>>> {
+        let mut lists: Vec<Vec<String>> = Vec::new();
+        for i in 0..kept.rows.len() {
+            if kept.rows.get(i, 0) != sym {
+                continue;
+            }
+            let (list, at) = (kept.rows.get(i, 1), kept.rows.get(i, 2));
+            if at == -1 {
+                (list == lists.len() as i64).then_some(())?;
+                lists.push(Vec::new());
+                continue;
+            }
+            (list == lists.len() as i64 - 1).then_some(())?;
+            let last = lists.last_mut()?;
+            (at == last.len() as i64).then_some(())?;
+            last.push(self.text(kept.rows.get(i, 3))?);
+        }
+        Some(lists)
+    }
+
+    fn records(&self, prefix: &str) -> Vec<(String, Vec<Vec<String>>)> {
+        let Ok(Some(space)) = self.store.kept_space(&self.space) else { return Vec::new() };
+        let chain = space.view();
+        let mut out = Vec::new();
+        // Each record has its outputs' length row: the records are the keys `run_output` holds.
+        for output in chain.of(OUTPUT) {
+            let mut syms: Vec<i64> = (0..output.rows.len()).filter(|&i| output.rows.get(i, 1) == -1).map(|i| output.rows.get(i, 0)).collect();
+            syms.dedup();
+            let lists = chain.get(&FactKey { rel: RECORD, ident: &ident(RECORD), part: output.key.part });
+            for sym in syms {
+                let Some(key) = self.text(sym).filter(|k| k.starts_with(prefix)) else { continue };
+                let Some(record) = lists.as_ref().map_or(Some(Vec::new()), |kept| self.lists(kept, sym)) else { continue };
+                out.push((key, record));
+            }
+        }
+        out.sort();
+        out
+    }
+
     fn all(&self) -> (Vec<Row>, Vec<Canon>) {
         let Ok(Some(space)) = self.store.kept_space(&self.space) else { return Default::default() };
         let chain = space.view();
@@ -293,7 +386,7 @@ impl Open<'_> {
         let chain = space.as_ref().map(|s| s.view());
         let chain = chain.as_ref().map(|c| c as &dyn KeptRead);
         let mut puts = Vec::new();
-        if !self.edit(chain, change.answers, &mut puts) || !self.edit(chain, change.canon, &mut puts) {
+        if !self.edit(chain, change.answers, &mut puts) || !self.edit(chain, change.canon, &mut puts) || !self.edit_records(chain, change.records, &mut puts) {
             return;
         }
         if !change.meta_put.is_empty() || !change.meta_delete.is_empty() {
@@ -386,6 +479,78 @@ impl Open<'_> {
                 flat.extend(r.words(s));
             }
             puts.push(KeptPut { rel: R::REL.to_owned(), ident, part: part(&dir), digest: digest_of(&flat), reads: Vec::new(), types: R::TYPES.to_vec(), what: KeptWhat::Picked(Box::new(BlockFlat::of_rows(&flat, R::TYPES.len(), true))) });
+        }
+        true
+    }
+}
+
+impl Open<'_> {
+    /// `records`' partitions, read as kept (the other keys a partition holds kept as they are), edited and pushed to
+    /// `puts` whole. False if their atoms could not be interned (nothing is written then).
+    fn edit_records(&self, chain: Option<&dyn KeptRead>, records: Vec<(String, Option<Record>)>, puts: &mut Vec<KeptPut>) -> bool {
+        if records.is_empty() {
+            return true;
+        }
+        // Each partition touched, with its records by key: those kept, then those this change puts or drops.
+        let mut parts: BTreeMap<i64, BTreeMap<String, Record>> = BTreeMap::new();
+        for (key, record) in records {
+            let at = part(&key);
+            let held = parts.entry(at).or_insert_with(|| {
+                let mut held = BTreeMap::new();
+                if let Some(output) = chain.and_then(|c| c.get(&FactKey { rel: OUTPUT, ident: &ident(OUTPUT), part: at })) {
+                    let mut syms: Vec<i64> = (0..output.rows.len()).filter(|&i| output.rows.get(i, 1) == -1).map(|i| output.rows.get(i, 0)).collect();
+                    syms.dedup();
+                    for sym in syms {
+                        if let Some(k) = self.text(sym)
+                            && let Some(r) = self.record(&k)
+                        {
+                            held.insert(k, r);
+                        }
+                    }
+                }
+                held
+            });
+            match record {
+                Some(r) => held.insert(key, r),
+                None => held.remove(&key),
+            };
+        }
+        for (at, held) in parts {
+            if held.is_empty() {
+                for (rel, types) in [(RECORD, RECORD_TYPES), (OUTPUT, OUTPUT_TYPES)] {
+                    puts.push(KeptPut { rel: rel.to_owned(), ident: ident(rel), part: at, digest: 0, reads: Vec::new(), types: types.to_vec(), what: KeptWhat::Gone });
+                }
+                continue;
+            }
+            let mut texts: Vec<&str> = Vec::new();
+            for (key, (lists, _)) in &held {
+                texts.push(key);
+                texts.extend(lists.iter().flatten().map(String::as_str));
+            }
+            texts.push("");
+            let Ok(syms) = self.store.intern_atoms(&texts) else { return false };
+            let empty = i64::from(*syms.last().expect("the empty text"));
+            let mut syms = syms.iter().map(|&s| i64::from(s));
+            let (mut lists_flat, mut output_flat) = (Vec::new(), Vec::new());
+            for (lists, outputs) in held.values() {
+                let key = syms.next().expect("interned");
+                for (l, list) in lists.iter().enumerate() {
+                    lists_flat.extend([key, l as i64, -1, empty]);
+                    for (i, _) in list.iter().enumerate() {
+                        lists_flat.extend([key, l as i64, i as i64, syms.next().expect("interned")]);
+                    }
+                }
+                output_flat.extend([key, -1, outputs.len() as i64]);
+                for (i, c) in outputs.chunks(8).enumerate() {
+                    let mut w = [0u8; 8];
+                    w[..c.len()].copy_from_slice(c);
+                    output_flat.extend([key, i as i64, i64::from_le_bytes(w)]);
+                }
+            }
+            for (rel, types, flat) in [(RECORD, RECORD_TYPES, lists_flat), (OUTPUT, OUTPUT_TYPES, output_flat)] {
+                let what = if flat.is_empty() { KeptWhat::Gone } else { KeptWhat::Picked(Box::new(BlockFlat::of_rows(&flat, types.len(), true))) };
+                puts.push(KeptPut { rel: rel.to_owned(), ident: ident(rel), part: at, digest: digest_of(&flat), reads: Vec::new(), types: types.to_vec(), what });
+            }
         }
         true
     }

@@ -21,7 +21,7 @@ use std::path::Path;
 
 /// Whether the cutoff applies to a run with these options and typing inputs.
 pub fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Path>) -> bool {
-    let asked = options.get("reuse").and_then(serde_json::Value::as_bool).unwrap_or(false);
+    let asked = options.get("reuse").and_then(serde_json::Value::as_bool).unwrap_or(false) && std::env::var_os("RERAIL_CUTOFF_OFF").is_none();
     // A run asked for a debugging dump runs: kept outputs carry none. A profile does not turn the cutoff off: a
     // profiled warm run is measured as it runs, and its profile says the cutoff applied.
     let side_output = std::env::vars_os().any(|(k, _)| k.to_str().is_some_and(|k| k.starts_with("RERAIL_DUMP_")));

@@ -1,6 +1,9 @@
 # t33: Every cache moved to facts, one by one (decision 0104's moves)
 
-Status: plan (2026-11-10). Built so far: K1 for the cross-file strata (step 4, below), and K3's rule for the cone of requests (below, "A native step is a relation"). It takes decision 0104's eight steps and says, for each
+Status (2026-11-22): K1, K2 and K3 built; K4 built for the cross-file part, the per-document memo, the statistics and
+the phases, and the records it keeps beside them are kept facts (step 1, below); what is left of K4 is an unchanged
+run's fixed cost, after which the whole-run cutoff goes ("K4: what is left", below). Steps 2, 4, 5, 7 and 8 done; 3 and 6
+mostly. It takes decision 0104's eight steps and says, for each
 table and map that 0104's checks (`logic::facts_only`) list as "not yet facts", what replaces it.
 
 ## A native step is a relation (built)
@@ -146,7 +149,7 @@ removed with nothing in its place but K1–K4.
 | Today | Key and check today | Becomes |
 |---|---|---|
 | `observed`, `observer_meta` | a path's stat; reused while `stat` is equal; a rotating validation counter | K2's base relations; the stat cache written as `file_stat(path, dev, ino, size, mtime_ns, ctime_ns, recorded_ns, digest)` in K1; the counter is one fact |
-| `run_record`, `corpus::reuse`, `World::still`, `inputs::still`, `git::still`, `unchanged`, `unchanged_phase`, `changes` | the run's text, options, root, modes and engine; each consulted read compared in Rust | goes: K4 with empty leaf deltas |
+| `run_record`, `corpus::reuse`, `World::still`, `inputs::still`, `git::still`, `unchanged`, `unchanged_phase`, `changes` | the run's text, options, root, modes and engine; each consulted read compared in Rust | goes: K4 with empty leaf deltas. `run_record`: **moved** (2026-11-22) to `run_record(key, list, at, text)` and `run_output(key, at, word)` of the observer's space (`observe/facts.rs`), one partition a record, its texts atoms: every record it held (the Git files' listing, the cone's rounds' cursors, the Git functors' answers, the constants, the whole-run cutoff) is lists of texts and bytes. The cutoff's record goes with the cutoff |
 | `inputs.rs` `CONSULTED` | the inputs, artifacts and `base` revisions a run read | answers to the input requests (K3), whose rows are the record |
 | `git.rs` `STATE` | the index read once per run, its file's digest | the index file is a leaf (K2); `git_tracked` and `git_has` answers are rows keyed by it |
 | `constant_rows` | the programs, relations, options, root, engine; `World::still` | relations of the constants' space (no documents), stored in K1, maintained from `env`, `dir_entry` and `file_line` deltas |
@@ -313,3 +316,18 @@ Decided (user, 2026-11-21):
    7) once the hub brings in those branches' work and `engine-crating`'s matcher crate, so it builds on them. The
    `corpus_*` tables are collection's bookkeeping, not caches (kept facts' own collection reads `corpus_plans`), and
    stay; `run_record` goes with K4, not as a move of its own.
+
+   Corrected 2026-11-22: K4 is this branch's (no other is building it). The table `run_record` held more than the
+   cutoff's records (the Git files' listing, the cone's rounds, the Git functors' answers, the constants), K4's own
+   bookkeeping among them, so it moved to kept facts whole; the cutoff's own record goes with the cutoff.
+
+## K4: what is left (2026-11-22)
+
+Measured over 30 files of the 300-file corpus, all 317 rules, the profiling build (load 8 to 13): a warm unchanged run
+costs 0.14 s CPU with the whole-run cutoff, 0.93 s without it (`RERAIL_CUTOFF_OFF`, a measurement switch). Every
+stratum is clean without it; what it costs is the program and its statistics made again in a new process, which a
+one-file edit pays too: the kept statistics read (0.12 s, each 8-byte word of their bytes a row and a map entry: read
+now as columns, decoded once), the prepared program's passes (0.19 s: the memo's program, the semijoin bases, the
+measures' keys, the base relations' columns, each made again from the prepared program the store keeps), the
+parse's own (0.03 s), the combine (0.05 s), the cross part's binding (0.05 s). The cutoff goes once an unchanged run
+costs about what it does.

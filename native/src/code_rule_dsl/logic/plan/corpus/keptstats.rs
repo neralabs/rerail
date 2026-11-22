@@ -505,19 +505,31 @@ impl Keeper {
         use rerail_blocks::kept::KeptRead as _;
         let part = plan_part(plan);
         let chain = kept.view();
-        let rows = |rel: &str| -> Vec<Vec<i64>> {
+        // Each relation's columns, each decoded once in order (`Col::for_each`): no row made of its own.
+        let cols = |rel: &str| -> Cols {
             let ident = ident(rel);
-            chain.get(&rerail_blocks::kept::FactKey { rel, ident: &ident, part }).map_or_else(Vec::new, |e| (0..e.rows.len()).map(|i| e.row(i)).collect())
+            chain.get(&rerail_blocks::kept::FactKey { rel, ident: &ident, part }).map_or_else(Cols::default, |e| {
+                let cols = (0..e.rows.arity as usize)
+                    .map(|c| {
+                        let col = e.rows.col(c);
+                        let mut v = Vec::with_capacity(col.len());
+                        col.for_each(|x| v.push(x));
+                        v
+                    })
+                    .collect();
+                Cols { n: e.rows.len(), cols }
+            })
         };
+        let rows = |rel: &str| -> Vec<Vec<i64>> { cols(rel).rows().collect() };
         let words = |d: &[u8; 32]| d.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)).collect::<Vec<_>>();
         let build: [u8; 32] = sha2::Sha256::digest(crate::code_rule_dsl::build_ids::engine().as_bytes()).into();
         let want: Vec<i64> = std::iter::once(FORMAT).chain(words(plan)).chain(words(&build)).collect();
         if rows(BUILD).first() != Some(&want) {
             return None;
         }
-        let names: HashMap<i64, String> = bytes_of(&rows(NAME))?.into_iter().map(|(r, b)| Some((r, String::from_utf8(b).ok()?))).collect::<Option<_>>()?;
+        let names: HashMap<i64, String> = bytes_of(&cols(NAME))?.into_iter().map(|(r, b)| Some((r, String::from_utf8(b).ok()?))).collect::<Option<_>>()?;
         let name = |r: i64| names.get(&r).cloned();
-        let mut paths = bytes_of(&rows(PATH))?;
+        let mut paths = bytes_of(&cols(PATH))?;
         let mut k = Keeper::default();
         for row in rows(DOC) {
             let [d, kind, w0, w1, w2, w3, key] = row[..] else { return None };
@@ -534,18 +546,18 @@ impl Keeper {
             };
             k.docs.insert(String::from_utf8(paths.remove(&d)?).ok()?, (content, key));
         }
-        for (r, b) in bytes_of(&rows(STATS))? {
+        for (r, b) in bytes_of(&cols(STATS))? {
             k.rels.insert(name(r)?, RelStats::decode(&b, &mut 0)?);
         }
-        let exact_rows = rows(EXACT);
-        let mut values: Vec<i64> = exact_rows.iter().map(|row| row.get(2).copied()).collect::<Option<_>>()?;
-        if !values.is_empty() {
-            to_local(&mut values).ok()?;
-        }
+        let exact_cols = cols(EXACT);
         let mut exact: BTreeMap<(i64, usize), Vec<(i64, i64)>> = BTreeMap::new();
-        for (row, v) in exact_rows.iter().zip(values) {
-            let [r, c, _, n] = row[..] else { return None };
-            exact.entry((r, usize::try_from(c).ok()?)).or_default().push((v, n));
+        if exact_cols.n > 0 {
+            let [r, c, values, n] = &exact_cols.cols[..] else { return None };
+            let mut values = values.clone();
+            to_local(&mut values).ok()?;
+            for i in 0..exact_cols.n {
+                exact.entry((r[i], usize::try_from(c[i]).ok()?)).or_default().push((values[i], n[i]));
+            }
         }
         for ((r, c), pairs) in exact {
             k.rels.get_mut(&name(r)?)?.put_exact(c, pairs);
@@ -666,25 +678,44 @@ fn push_bytes(key: i64, bytes: &[u8], push: &mut dyn FnMut(i64)) {
     }
 }
 
-/// `push_bytes`' rows back, by key; `None` if a key's are not whole.
-fn bytes_of(rows: &[Vec<i64>]) -> Option<HashMap<i64, Vec<u8>>> {
-    let mut by: BTreeMap<i64, (Option<usize>, BTreeMap<i64, i64>)> = BTreeMap::new();
-    for row in rows {
-        let [key, at, w] = row[..] else { return None };
-        let e = by.entry(key).or_default();
-        if at < 0 {
-            e.0 = Some(usize::try_from(w).ok()?);
-        } else {
-            e.1.insert(at, w);
-        }
+/// A kept relation's columns, each decoded whole (`Keeper::of_kept`).
+#[derive(Default)]
+struct Cols {
+    n: usize,
+    cols: Vec<Vec<i64>>,
+}
+
+impl Cols {
+    fn rows(&self) -> impl Iterator<Item = Vec<i64>> + '_ {
+        (0..self.n).map(|i| self.cols.iter().map(|c| c[i]).collect())
     }
-    by.into_iter()
-        .map(|(key, (n, words))| {
-            let n = n?;
-            (words.len() == n.div_ceil(8) && words.keys().copied().eq(0..words.len() as i64)).then_some(())?;
-            Some((key, words.values().flat_map(|w| w.to_le_bytes()).take(n).collect()))
-        })
-        .collect()
+}
+
+/// `push_bytes`' rows back, by key; `None` if a key's are not whole. The rows are as `push_bytes` gave them (a kept
+/// put keeps them as given): each key's length, then its words in order, so each key's bytes are one pass.
+fn bytes_of(rows: &Cols) -> Option<HashMap<i64, Vec<u8>>> {
+    let mut out: HashMap<i64, Vec<u8>> = HashMap::new();
+    if rows.n == 0 {
+        return Some(out);
+    }
+    let [keys, ats, words] = &rows.cols[..] else { return None };
+    let mut i = 0;
+    while i < rows.n {
+        let (key, n) = (keys[i], usize::try_from(words[i]).ok()?);
+        (ats[i] == -1).then_some(())?;
+        let nwords = n.div_ceil(8);
+        let end = i + 1 + nwords;
+        (end <= rows.n).then_some(())?;
+        let mut bytes = Vec::with_capacity(nwords * 8);
+        for (at, j) in (i + 1..end).enumerate() {
+            (keys[j] == key && ats[j] == at as i64).then_some(())?;
+            bytes.extend_from_slice(&words[j].to_le_bytes());
+        }
+        bytes.truncate(n);
+        out.insert(key, bytes).is_none().then_some(())?;
+        i = end;
+    }
+    Some(out)
 }
 
 /// Keeps `whole` as the last program of the memo space whose key is `key` (`memo::last_program`), `under_way` when a
