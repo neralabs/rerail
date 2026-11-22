@@ -578,9 +578,11 @@ function byteOrder(left: string, right: string): number {
 
 /**
  * Whether the submodule at `folder` has a changed worktree as `is_submodule_modified` finds it: its `git status` lists
- * any entry, without untracked files when `untrackedLeftOut`. False when it is not checked out (no `.git`, or one that
- * is neither a folder nor a regular file); how it failed when its `.git` names no repository or is a file Git cannot
- * read as one, as Git's diff fails then; true, with no Git started in it, when the guard cannot ask it ({@link UNASKED}).
+ * any entry, without untracked files when `untrackedLeftOut`. False when it is not checked out (no `.git`, one that is
+ * neither a folder nor a regular file, or a `.git` file that cannot be opened or read, which Rerail meets only once
+ * Git's own diff in Rerail read it, as that diff fails on one); how it failed when its `.git` names no repository or is
+ * a file Git cannot read as one, as Git's diff fails then; true, with no Git started in it, when the guard cannot ask
+ * it ({@link UNASKED}).
  */
 export async function submoduleChanged(folder: string, untrackedLeftOut: boolean, open: SubmoduleOpener, depth: number): Promise<boolean | GitFailure> {
   const gitFolder = submoduleGitFolder(folder);
@@ -597,9 +599,10 @@ const MAX_GITFILE_BYTES = 1024 * 1024;
 /**
  * The Git folder of the submodule checked out at `folder`, as `is_submodule_modified` finds it: `.git` when it is a
  * folder, else the folder a `.git` file's `gitdir: <path>` names, relative to `folder`. Undefined when there is no
- * `.git`, it is neither a folder nor a regular file (a FIFO, a socket), which Git's diff never opens, or it went or
- * cannot be opened or read ({@link gitfileText} says why): the submodule is not checked out, as Git's diff takes it.
- * How it failed for a `.git` file Git cannot read as one (it holds more than {@link MAX_GITFILE_BYTES}, no `gitdir:` or
+ * `.git`, or it is neither a folder nor a regular file (a FIFO, a socket), which Git's diff never opens: the submodule
+ * is not checked out, as Git's diff takes it. Undefined too when it went or cannot be opened or read, where Git's diff
+ * fails instead ({@link gitfileText}): Rerail meets such a file only once Git's own diff in Rerail read it, and takes
+ * the submodule as not checked out. How it failed for a `.git` file Git cannot read as one (it holds more than {@link MAX_GITFILE_BYTES}, no `gitdir:` or
  * no path), or a Git folder that holds no repository ({@link holdsRepository}), each of which fails Git's diff. Read once for each
  * question and never handed to Git as a file, so the guard's listing and the status after it open this one folder
  * whatever `.git` names by then.
