@@ -650,6 +650,33 @@ reaches no edge and no open definition. It is W's scope model departing from Pyt
   - a class annotation naming a class the function binds later.
 - `open_name` (1 row).
 
+## The product run, 2026-11-22: W's Rust, 0483's rules and this branch's head on one host
+
+Every step above was measured in the stage harness. The product run, `rerail-engine logic` with `internal_dead_code`
+on `all`, was last measured at 0483's end. Here are the three binaries on one farm host (M1 Max), cold, profiling
+builds, `RERAIL_PROFILE` on, one after another (load 3–7). Each old binary was given its own commit's library and
+phase programs. The findings are the same in all three runs, apart from 0483's `rr_embed_req`:
+
+| Run | CPU s | wall s | instructions | peak |
+|---|---|---|---|---|
+| W's Rust (`6970a3e539`) | 51.1 | 14.7 | 486 G | 1.2 GB |
+| 0483's rules (`fbd029a20b`) | 151.0 | 43.6 | 1,572 G | 1.9 GB |
+| head (`55a8000980`) | 265.0 | 100.8 | 2,607 G | 4.8 GB |
+
+The head is 1.7 times 0483's end, and 5.2 times W's. CPU by phase (the run's thread plus the pool's), 0483 → head:
+
+| Phase | 0483 s | head s | What grew |
+|---|---|---|---|
+| `wait` (the chunks) | 89 | 111 | |
+| `local` | 23 | 48 | the run's thread: `hold the export` 9.7 s, `totals` 5.9 s, `attribute to files` 3.1 s |
+| `stats` | 0.7 | 42 | new, and 33 s of it serial: `measure the base rows held` (0458's base relations for the cross part): the matcher wave again over the corpus 8.3 s, `the nodes the exports hold` 7.5 s, `docof` and `node_order` at the held nodes 7.1 s, node rows 2.3 s |
+| `cross` | 28 | 52 | |
+
+The stage harness's gains (steps 1–5) are real, but on this run the merges since 0483 cost more than they removed. The
+`stats` phase and the export's serial work are the first things to fix, before the plan's remaining operators.
+
+Script: `tmp/refs/three/three.sh` (run with `--tree` for each binary, library and programs directory).
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.
