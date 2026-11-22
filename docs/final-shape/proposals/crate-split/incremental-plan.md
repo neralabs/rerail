@@ -862,3 +862,51 @@ decision record. There are no A/B triples. One run per state, with the host's lo
       test data the host has not pulled.
 
     On a Mac (a mini), device-metal's lattice, join, nearest, fixpoint and statistics tests: 21 of 21.
+- **Step 6e** (2026-11-22): the admission over the code rules, as the plan had it (6c had made them one crate).
+  rerail-rules was 25.3k production lines. Its cycle ran through the admission's plans and two calls:
+  - The model holds a relational clause's plan (`ClauseKind::Relational(relational::Plan)`).
+  - The compiler compiles that plan (`relational::compile::compile`).
+  - The evaluator hands the admission its clauses (`relational::evaluate_batch`, with `Job` and `Inputs`) and
+    installs its syntax pool (`syntax::Pool::install`).
+
+  Now **`rerail-rules-base`** (`native/crates/rules_base`, 18.4k) holds the model, the compiler, the evaluation over
+  a file, the hooks and functions, P's and D's anchor copies and `waves::relational` (test-only), and the
+  admission's base:
+  - `residency/admission/relational/base.rs`: the plan (`Plan`, `Stage`, `References`) and its stages' specs
+    (`syntax::Spec` and `Owner`, `Reachability`, `ordered_first::Spec`, `ast_stage::Spec`), plain data the model
+    keeps;
+  - the admission's `database.rs` and `storage.rs`, which P's anchor store opens (`Database::from_connection`).
+
+  **`rerail-rules`** (7.1k) is the admission: `relational.rs` and its children, `census`, `memory`. It re-exports
+  the base by glob, so the crates above read every path as before, and each moved type is re-exported where it was
+  (`syntax.rs`, `reachability.rs`, `ordered_first.rs`, `ast_stage.rs`).
+  - **The admission is a registered trait.** `base::Admission` has `compile`, `evaluate` (its jobs as `ClauseRun`:
+    the clause, its snapshot and budget; the admission makes them its `Job`s) and `syntax_pool`. `ADMISSION` is a
+    `rerail_registry::Slot` that boot registers (`relational::Relational`), and every test binary above boot is
+    booted.
+    - The compiler calls `registered().compile(...)`.
+    - The evaluator calls `registered().evaluate(...)` only where some clause is relational. It installs the pool
+      where an admission is registered (`ADMISSION.try_get()`), so the base's own tests, which compile no
+      relational clause, need none.
+  - What the admission reads of the base was crate-private: widened (`Database`'s methods and `hooks`, `Hooks`,
+    `Limits`' and `FactQuery`'s fields, `compile_relation`, `stateless_rows_to`, the projections' methods).
+  - **Found on the way, with `code-rule-profile`:**
+    - P's and D's `sql/retention_spikes.rs` read `super::tests`, which only rerail-tests-matcher mounts. The rules
+      crate mounted them itself, so its test build with the profile did not compile. They are mounted beside
+      `tests` in rerail-tests-matcher now, with `replay::{SCHEMA, experiment}` widened.
+    - The workspace read the matcher's `estimated_bytes`, which was crate-private: widened.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; the two crates with
+    `code-rule-profile,p-anchor-corpus,test-hooks` clean; clippy clean on both, the matcher, the workspace, boot
+    and rerail-tests-matcher; check_dev_features and the lock clean). On a Linux host:
+    - `rerail-rules-base` and `rerail-rules` in full: 157 of 157.
+    - `rerail-tests-logic`'s residency and waves tests and `rerail-tests-compile`'s eval, findings, compile and
+      relational tests: 402 of 402.
+    - The relational, data-layer, census and admission tests of every test crate: 115 of 117.
+    - rerail-tests-matcher with `code-rule-profile`, the anchors' SQL tests and the spikes: 55 of 55.
+    - `rerail-logic`'s `facts_only` and run-state census: 8 of 8.
+
+    The two failures are rerail-tests-transducer's Metal parity tests
+    (`wildcard_and_missing_flags_preserve_native_node_meaning`,
+    `sqlite_virtual_table_drives_batched_matching_and_relational_composition`). That host's matcher device refuses
+    the Metal JIT (`UnsupportedBackend`), and so does every packed test's Metal leg there. On a Mac (an M3) both
+    pass.

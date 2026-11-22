@@ -1059,7 +1059,7 @@ pub struct Captures {
 }
 
 impl Captures {
-    pub(crate) fn owned_heap_bytes(&self) -> usize {
+    pub fn owned_heap_bytes(&self) -> usize {
         self.spans.capacity() * std::mem::size_of::<(Box<str>, Vec<Span>)>()
             + self
                 .spans
@@ -1096,7 +1096,7 @@ impl Captures {
 
     // Read by P's relational inputs (test-only, open item O18).
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-    pub(crate) fn take_projection(&mut self) -> Option<projection::Row> {
+    pub fn take_projection(&mut self) -> Option<projection::Row> {
         self.projection.take()
     }
 

@@ -27,9 +27,9 @@ pub const INPUT_LIMIT: &str = "input-limit";
 
 #[derive(Clone)]
 pub struct Limits {
-    pub(super) max_ast_pattern_bytes: usize,
+    pub max_ast_pattern_bytes: usize,
     pub max_files: usize,
-    pub(super) max_regex_pattern_bytes: usize,
+    pub max_regex_pattern_bytes: usize,
     pub max_source_bytes: usize,
     pub max_visited_nodes: usize,
     /// `maxVisitsPerNode` (optional, 0 without it): in the indexed workspace a file's node and
@@ -473,12 +473,12 @@ pub enum ProjectionSource {
 #[derive(Clone)]
 pub struct FactQuery {
     pub(super) alias: String,
-    pub(super) predicate: Option<Value>,
+    pub predicate: Option<Value>,
     /// Rows projected from an AST query's matches in every file of the code rule's scope.
     pub ast: Arc<AstRelation>,
     /// Consumer columns are independent of the shared matcher and file domain.
     pub project: Arc<[Projection]>,
-    pub(super) closure: Vec<NameClosure>,
+    pub closure: Vec<NameClosure>,
     pub(super) each: Option<String>,
     pub anchor: Anchor,
 }

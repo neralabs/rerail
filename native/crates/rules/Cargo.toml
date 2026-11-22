@@ -4,14 +4,14 @@ name = "rerail-rules"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The code rules (W's): their model, compiler and evaluation over a file, and the relational admission."
+description = "The relational admission: P's relational clauses compiled and evaluated over SQLite sessions, over the code rules (rerail-rules-base)."
 
 [features]
-default = ["rerail-matcher/default", "rerail-adapters/default", "rerail-facts/default", "rerail-lang/default"]
-headless = ["napi-derive/noop", "rerail-matcher/headless", "rerail-adapters/headless", "rerail-facts/headless", "rerail-lang/headless"]
-code-rule-profile = ["rerail-matcher/code-rule-profile", "rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile"]
-p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus"]
-test-hooks = ["rerail-matcher/test-hooks", "rerail-adapters/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-blocks/test-hooks", "dep:tempfile"]
+default = ["rerail-matcher/default", "rerail-adapters/default", "rerail-facts/default", "rerail-lang/default", "rerail-rules-base/default"]
+headless = ["napi-derive/noop", "rerail-matcher/headless", "rerail-adapters/headless", "rerail-facts/headless", "rerail-lang/headless", "rerail-rules-base/headless"]
+code-rule-profile = ["rerail-matcher/code-rule-profile", "rerail-facts/code-rule-profile", "rerail-lang/code-rule-profile", "rerail-rules-base/code-rule-profile"]
+p-anchor-corpus = ["rerail-facts/p-anchor-corpus", "rerail-lang/p-anchor-corpus", "rerail-rules-base/p-anchor-corpus"]
+test-hooks = ["rerail-matcher/test-hooks", "rerail-adapters/test-hooks", "rerail-facts/test-hooks", "rerail-lang/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-blocks/test-hooks", "dep:tempfile", "rerail-rules-base/test-hooks"]
 
 [dependencies]
 ast-grep-core = "=0.51.0"
@@ -42,6 +42,7 @@ rerail-lang = { path = "../lang", default-features = false }
 rerail-matcher = { path = "../matcher", default-features = false }
 rerail-prof = { path = "../prof" }
 rerail-rr-syntax = { path = "../rr_syntax" }
+rerail-rules-base = { path = "../rules_base", default-features = false }
 rerail-store = { path = "../store" }
 
 [target.'cfg(unix)'.dependencies]

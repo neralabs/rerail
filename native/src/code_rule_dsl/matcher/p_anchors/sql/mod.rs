@@ -164,7 +164,6 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
 }
 
 // preparation_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
-#[cfg(all(test, feature = "code-rule-profile"))]
-pub mod retention_spikes;
+// retention_spikes: a test the engine hosts, beside `tests`, which it reads (rerail-tests-matcher)
 // cratify: `lab` is rerail-engine's (it mounts it)
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)

@@ -547,7 +547,7 @@ fn compile_clause(
             }
         }
         "relational" => ClauseKind::Relational(
-            crate::code_rule_dsl::residency::admission::relational::compile::compile(
+            crate::code_rule_dsl::residency::admission::relational::registered().compile(
                 &clause["relational"],
                 &format!("{path}/relational"),
                 capabilities,

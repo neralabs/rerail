@@ -17,33 +17,7 @@ use std::{
     },
 };
 
-#[derive(Clone, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Owner {
-    pub kind: String,
-    #[serde(default)]
-    pub outermost: bool,
-}
-#[derive(Clone, serde::Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Spec {
-    pub name: String,
-    pub gate: String,
-    #[serde(default)]
-    pub fields: Vec<String>,
-    #[serde(default)]
-    pub columns: Vec<String>,
-    #[serde(skip)]
-    pub field_codes: BTreeMap<String, u16>,
-    #[serde(default, rename = "excludeKinds")]
-    pub exclude_kinds: Vec<String>,
-    #[serde(default, rename = "emptyTextKinds")]
-    pub empty_text_kinds: Vec<String>,
-    pub edges: Option<String>,
-    pub ownership: Option<String>,
-    #[serde(default)]
-    pub owners: BTreeMap<String, Owner>,
-}
+pub use super::base::syntax::{Owner, Spec};
 
 pub trait Source: Send + Sync {
     fn columns(&self) -> Vec<String>;
