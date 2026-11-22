@@ -208,6 +208,11 @@ struct Em<'a> {
     /// buffers that only their own threads write (each at its own element), so no thread writes another's.
     writes: Vec<(Option<u32>, bool)>,
     disjoint: std::collections::BTreeSet<u32>,
+    /// Whether the code written since it was cleared may read where no lane of it runs (a gather whose lanes that
+    /// do not run take a running one's address: with none running, an address none named); the instances that may,
+    /// as the last pass found them.
+    risky: bool,
+    risky_insts: std::collections::BTreeSet<u32>,
     again: bool,
     out: String,
     ind: usize,
@@ -228,7 +233,7 @@ pub fn kernel(k: &crate::vector::Kernel, w: u32) -> R<String> {
             bodies.insert(v.w(i, 0), i);
         }
     }
-    let mut e = Em { v, w, p: w / 4, bodies, lanes: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new() };
+    let mut e = Em { v, w, p: w / 4, bodies, lanes: HashMap::new(), params: Default::default(), seen: Default::default(), insts: BTreeMap::new(), rets: HashMap::new(), top: 0, hoisted: HashMap::new(), memo: Vec::new(), valid: Vec::new(), writes: Vec::new(), disjoint: Default::default(), risky: false, risky_insts: Default::default(), again: true, out: String::new(), ind: 0, n: 0, vars: BTreeMap::new() };
     // Each pass finds lanes the one before did not (a variable written a lane's value, or apart); until none.
     for _ in 0..16 {
         if !e.again {
@@ -312,7 +317,7 @@ impl Em<'_> {
     fn module(&mut self, name: &str) -> R<()> {
         let (w, p) = (self.w, self.p);
         self.line(format!("//! `{name}` at {w} lanes ({p} NEON registers), written by rerail-ukl-vec's Rust (`rs.rs`) from its vector tape: do"));
-        self.line("//! not edit; `UKL_RS_WRITE=1 cargo test -p rerail-ukl-vec the_nearest_kernels_rust` writes it again.");
+        self.line("//! not edit; `UKL_RS_WRITE=1 cargo test -p rerail-ukl-vec _kernels_rust_is` writes it again.");
         self.line("");
         self.line("#![allow(unused, unused_mut, unused_parens, unused_unsafe, unreachable_code, non_snake_case, clippy::all, unsafe_op_in_unsafe_fn)]");
         self.line("");
@@ -493,7 +498,12 @@ impl Em<'_> {
             Some(("res".to_string(), ret, rl))
         };
         let cx = Cx { cur: "live".into(), divergent: false, live: "live".into(), res: res.clone(), brk: None, cont: None, kernel: false, ctx, body: id, full, looped: None, region: None, chunk: false };
+        self.risky = false;
         self.stmt(self.v.child(n, 0), &cx)?;
+        if self.risky != self.risky_insts.contains(&ctx) {
+            if self.risky { self.risky_insts.insert(ctx) } else { self.risky_insts.remove(&ctx) };
+            self.again = true;
+        }
         if res.is_some() && !self.out.ends_with("return res;\n") {
             self.line("res");
         }
@@ -651,44 +661,64 @@ impl Em<'_> {
             }
             Kind::While | Kind::For => {
                 let (cond, body, step) = (kids[0], kids[1], kids.get(2).copied());
-                // Each round: the lanes still in it, those whose condition holds; none, it ends.
-                let lm = self.tmp();
-                self.line(format!("let mut {lm} = {};", cx.cur));
-                let has = |k: Kind| (n..n + self.v.size(n)).any(|i| self.v.kind(i) == k);
-                let (hb, hc) = (has(Kind::Break), has(Kind::Continue));
-                let brk = self.tmp();
-                if hb {
-                    self.line(format!("let mut {brk} = {};", self.zeros()));
+                // Where all lanes run, a condition with no effects and a body none leaves but by it: rounds unmasked
+                // while every lane's condition holds, then (the chunk's last rounds) each lane its own. Its test is
+                // the loop's own where the condition is one value, or consecutive lanes against one; it is worth
+                // another where the hint says the lanes go on together (`UKL_LIKELY`), and not otherwise (lanes
+                // that part early make it a second branch of each chunk's that the processor guesses wrong).
+                // A condition of one value, and nothing in the loop that ends some lanes' rounds: all its lanes go on
+                // or none, so its rounds are Rust's, their lanes the statement's.
+                let leaves = (n..n + self.v.size(n)).any(|i| matches!(self.v.kind(i), Kind::Break | Kind::Continue | Kind::Return));
+                if v.level(cond) == crate::k::Level::Uniform && !leaves && !self.effects(cond) {
+                    self.line("loop {");
+                    self.ind += 1;
+                    self.line("// Rounds of one condition: every lane goes on.");
+                    match self.expr(cond, cx)? {
+                        V::S(c, _) => self.line(format!("if !({}) {{ break; }}", truth(&c, M::B))),
+                        c => return err(format!("a uniform loop's condition of lanes: {c:?}")),
+                    }
+                    self.stmt(body, cx)?;
+                    if let Some(s) = step {
+                        self.stmt(s, cx)?;
+                    }
+                    self.ind -= 1;
+                    self.line("}");
+                    return Ok(());
                 }
-                self.line("loop {");
-                self.ind += 1;
-                self.line("// Lanes part: each its own rounds.");
-                let head = Cx { cur: lm.clone(), divergent: true, brk: hb.then(|| brk.clone()), cont: None, full: false, looped: Some(n), region: Some(n), ..cx.clone() };
-                let c = self.expr(cond, &head)?;
-                let k = self.mask(&c)?;
-                if hb {
-                    self.line(format!("{lm} = [{}];", (0..self.p).map(|r| format!("vandq_u32(vbicq_u32({lm}[{r}], {brk}[{r}]), {k}[{r}])")).collect::<Vec<_>>().join(", ")));
-                } else {
-                    self.line(format!("{lm} = [{}];", (0..self.p).map(|r| format!("vandq_u32({lm}[{r}], {k}[{r}])")).collect::<Vec<_>>().join(", ")));
+                let (at, top) = (self.out.len(), self.top);
+                if cx.full && !self.effects(cond) && !self.exits(body) && step.is_none_or(|s| !self.exits(s)) {
+                    self.line("loop {");
+                    self.ind += 1;
+                    self.line("// Full rounds: every lane goes on.");
+                    let round = Cx { looped: Some(n), ..cx.clone() };
+                    let c = self.expr(cond, &round)?;
+                    let together = self.v.w(n, 1) == crate::k::IF_LIKELY;
+                    let test = match &c {
+                        V::S(c, _) => Some(format!("!({})", truth(c, M::B))),
+                        V::Cmp { .. } => Some(self.mask(&c)?),
+                        c if together => Some(self.mask(c)?),
+                        _ => None,
+                    }
+                    .map(|k| if k.starts_with("!(") { k } else { format!("!{}", self.all(&k)) });
+                    let Some(test) = test else {
+                        // No full rounds: what was written of them goes (after what the function's top gained
+                        // since), and with it what it found.
+                        self.out.truncate(at + (self.top - top));
+                        self.ind -= 1;
+                        let d = self.ind;
+                        self.memo.retain(|m| m.2 <= d);
+                        self.valid.retain(|m| m.1 <= d);
+                        return self.stmt_loop(n, cx);
+                    };
+                    self.line(format!("if {test} {{ break; }}"));
+                    self.stmt(body, &round)?;
+                    if let Some(s) = step {
+                        self.stmt(s, &round)?;
+                    }
+                    self.ind -= 1;
+                    self.line("}");
                 }
-                self.line(format!("if !({}) {{ break; }}", self.any(&lm)));
-                let cont = self.tmp();
-                if hc {
-                    self.line(format!("let mut {cont} = {};", self.zeros()));
-                }
-                let inner = Cx { cur: lm.clone(), divergent: true, brk: hb.then(|| brk.clone()), cont: hc.then(|| cont.clone()), full: false, looped: Some(n), region: Some(n), ..cx.clone() };
-                self.stmt(body, &inner)?;
-                if let Some(s) = step {
-                    let t = self.refresh(&Cx { cont: None, ..inner.clone() });
-                    self.stmt(s, &Cx { cur: t, cont: None, ..inner.clone() })?;
-                }
-                // The lanes that returned leave it too.
-                if cx.live != lm && self.returns(body) {
-                    let live = cx.live.clone();
-                    self.line(format!("{lm} = [{}];", (0..self.p).map(|r| format!("vandq_u32({lm}[{r}], {live}[{r}])")).collect::<Vec<_>>().join(", ")));
-                }
-                self.ind -= 1;
-                self.line("}");
+                self.stmt_loop(n, cx)?;
             }
             Kind::Return => {
                 let has = v.w(n, 0) != 0;
@@ -746,6 +776,50 @@ impl Em<'_> {
             }
             k => return err(format!("a {k:?} statement")),
         }
+        Ok(())
+    }
+
+    /// Loop `n`'s rounds, each lane its own: the lanes still in it, those whose condition holds; none, it ends.
+    fn stmt_loop(&mut self, n: usize, cx: &Cx) -> R<()> {
+        let kids: Vec<usize> = self.v.children(n).collect();
+        let (cond, body, step) = (kids[0], kids[1], kids.get(2).copied());
+        let lm = self.tmp();
+        self.line(format!("let mut {lm} = {};", cx.cur));
+        let has = |k: Kind| (n..n + self.v.size(n)).any(|i| self.v.kind(i) == k);
+        let (hb, hc) = (has(Kind::Break), has(Kind::Continue));
+        let brk = self.tmp();
+        if hb {
+            self.line(format!("let mut {brk} = {};", self.zeros()));
+        }
+        self.line("loop {");
+        self.ind += 1;
+        self.line("// Lanes part: each its own rounds.");
+        let head = Cx { cur: lm.clone(), divergent: true, brk: hb.then(|| brk.clone()), cont: None, full: false, looped: Some(n), region: Some(n), ..cx.clone() };
+        let c = self.expr(cond, &head)?;
+        let k = self.mask(&c)?;
+        if hb {
+            self.line(format!("{lm} = [{}];", (0..self.p).map(|r| format!("vandq_u32(vbicq_u32({lm}[{r}], {brk}[{r}]), {k}[{r}])")).collect::<Vec<_>>().join(", ")));
+        } else {
+            self.line(format!("{lm} = [{}];", (0..self.p).map(|r| format!("vandq_u32({lm}[{r}], {k}[{r}])")).collect::<Vec<_>>().join(", ")));
+        }
+        self.line(format!("if !({}) {{ break; }}", self.any(&lm)));
+        let cont = self.tmp();
+        if hc {
+            self.line(format!("let mut {cont} = {};", self.zeros()));
+        }
+        let inner = Cx { cur: lm.clone(), divergent: true, brk: hb.then(|| brk.clone()), cont: hc.then(|| cont.clone()), full: false, looped: Some(n), region: Some(n), ..cx.clone() };
+        self.stmt(body, &inner)?;
+        if let Some(s) = step {
+            let t = self.refresh(&Cx { cont: None, ..inner.clone() });
+            self.stmt(s, &Cx { cur: t, cont: None, ..inner.clone() })?;
+        }
+        // The lanes that returned leave it too.
+        if cx.live != lm && self.returns(body) {
+            let live = cx.live.clone();
+            self.line(format!("{lm} = [{}];", (0..self.p).map(|r| format!("vandq_u32({lm}[{r}], {live}[{r}])")).collect::<Vec<_>>().join(", ")));
+        }
+        self.ind -= 1;
+        self.line("}");
         Ok(())
     }
 
@@ -876,23 +950,60 @@ impl Em<'_> {
             return Ok(());
         }
         let k = self.mask(&c)?;
-        let cur = cx.cur.clone();
-        let t = if cx.full { k.clone() } else { self.map(|r| format!("vandq_u32({cur}[{r}], {k}[{r}])")) };
-        self.line(format!("if {} {{", self.any(&t)));
-        self.ind += 1;
-        let inner = Cx { cur: t, divergent: true, full: false, looped: None, region: Some(kids[1]), ..cx.clone() };
-        self.stmt(kids[1], &inner)?;
-        self.ind -= 1;
-        self.line("}");
-        if kids.len() > 2 {
-            let e = if cx.full { self.map(|r| format!("vmvnq_u32({k}[{r}])")) } else { self.map(|r| format!("vbicq_u32({cur}[{r}], {k}[{r}])")) };
-            self.line(format!("if {} {{", self.any(&e)));
+        let hint = self.v.w(n, 1);
+        if cx.full && hint != 0 && !self.exits(n) {
+            // A chunk whose lanes all go the way the hint says runs that side unmasked; another, both masked.
+            let (test, side) = if hint == crate::k::IF_LIKELY { (self.all(&k), Some(kids[1])) } else { (format!("!{}", self.any(&k)), kids.get(2).copied()) };
+            self.line(format!("if {test} {{"));
             self.ind += 1;
-            let inner = Cx { cur: e, divergent: true, full: false, looped: None, region: Some(kids[2]), ..cx.clone() };
-            self.stmt(kids[2], &inner)?;
+            if let Some(side) = side {
+                self.stmt(side, cx)?;
+            }
+            self.ind -= 1;
+            self.line("} else {");
+            self.ind += 1;
+            self.line("// Lanes part: the chunk's lanes go both ways.");
+            self.sides(n, &k, &Cx { full: false, ..cx.clone() })?;
             self.ind -= 1;
             self.line("}");
+            return Ok(());
         }
+        self.sides(n, &k, cx)
+    }
+
+    /// `if` statement `n`'s sides, the lanes of `cx` whose mask `k` holds taking the first, the others the second.
+    /// Where it rejoins, each side runs masked, whether or not a lane takes it, unless it may read where no lane
+    /// runs; where it may end lanes, each side runs where some lane takes it.
+    fn sides(&mut self, n: usize, k: &str, cx: &Cx) -> R<()> {
+        let kids: Vec<usize> = self.v.children(n).collect();
+        let cur = cx.cur.clone();
+        let rejoins = !self.exits(n);
+        let t = if cx.full { k.to_string() } else { self.map(|r| format!("vandq_u32({cur}[{r}], {k}[{r}])")) };
+        let inner = Cx { cur: t.clone(), divergent: true, full: false, looped: None, region: Some(kids[1]), ..cx.clone() };
+        self.side(kids[1], &t, &inner, rejoins)?;
+        if kids.len() > 2 {
+            let e = if cx.full { self.map(|r| format!("vmvnq_u32({k}[{r}])")) } else { self.map(|r| format!("vbicq_u32({cur}[{r}], {k}[{r}])")) };
+            let inner = Cx { cur: e.clone(), divergent: true, full: false, looped: None, region: Some(kids[2]), ..cx.clone() };
+            self.side(kids[2], &e, &inner, rejoins)?;
+        }
+        Ok(())
+    }
+
+    /// One side `s` of an `if`, its lanes `t`: run masked, or (where it may end lanes, or read where none runs)
+    /// where any lane takes it.
+    fn side(&mut self, s: usize, t: &str, cx: &Cx, rejoins: bool) -> R<()> {
+        let at = self.out.len();
+        self.line("{");
+        let open = self.out[at..].to_string();
+        let before = std::mem::replace(&mut self.risky, false);
+        self.ind += 1;
+        self.stmt(s, cx)?;
+        self.ind -= 1;
+        self.line("}");
+        if !rejoins || self.risky {
+            self.out.replace_range(at..at + open.len(), &open.replacen('{', &format!("if {} {{", self.any(t)), 1));
+        }
+        self.risky |= before;
         Ok(())
     }
 
@@ -1256,6 +1367,9 @@ impl Em<'_> {
                 };
                 self.seen.insert((id, shapes.clone(), cx.full, valid.clone()));
                 let ctx = self.inst(id, &shapes, cx.full, &valid);
+                if self.risky_insts.contains(&ctx) {
+                    self.risky = true;
+                }
                 // Its first statement's access, through a parameter of every lane's own element, where all lanes run.
                 let first: Vec<u32> = (0..shapes.len()).filter(|&k| matches!(shapes[k], Sh::At(_, Ix::Gid, Some(_))) && self.first_access(b, k)).filter_map(|k| shapes[k].root()).collect();
                 for (k, a) in vals.into_iter().enumerate() {
@@ -1700,6 +1814,7 @@ impl Em<'_> {
             let ix = self.map(|r| format!("vbslq_u32({cur}[{r}], {l}[{r}], {own}[{r}])"));
             return self.gather_all(base, &ix);
         }
+        self.risky = true;
         let mut e = format!("vandq_u32({cur}[0], {l}[0])");
         for r in 1..self.p {
             e = format!("vmaxq_u32({e}, vandq_u32({cur}[{r}], {l}[{r}]))");

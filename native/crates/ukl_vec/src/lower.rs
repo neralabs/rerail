@@ -905,8 +905,9 @@ impl L<'_> {
             }
             "while_statement" => {
                 let site = self.site(s, "while");
-                let n = self.b.open(Kind::While, &[site]);
-                self.cond(self.c.child(s, "condition").expect("a condition"))?;
+                let (hint, c) = self.hinted(self.c.child(s, "condition").expect("a condition"))?;
+                let n = self.b.open(Kind::While, &[site, hint]);
+                self.cond(c)?;
                 self.scoped(|l| l.stmt(l.c.child(s, "body").expect("a body")))?;
                 self.b.close(n);
             }
@@ -930,8 +931,15 @@ impl L<'_> {
                         }
                     }
                     let site = l.site(s, "for");
-                    let f = l.b.open(Kind::For, &[site]);
-                    match l.c.child(s, "condition") {
+                    let (hint, c) = match l.c.child(s, "condition") {
+                        Some(c) => {
+                            let (h, c) = l.hinted(c)?;
+                            (h, Some(c))
+                        }
+                        None => (0, None),
+                    };
+                    let f = l.b.open(Kind::For, &[site, hint]);
+                    match c {
                         Some(c) => l.cond(c)?,
                         None => {
                             l.b.leaf(Kind::Const, &words_of(M::B, 1));
@@ -1315,7 +1323,6 @@ impl L<'_> {
 
     // Expressions' nodes.
 
-    /// A condition: `e` as a `bool`.
     /// Condition `e`'s hint (`IF_LIKELY`, `IF_UNLIKELY`, else 0) and the condition it hints.
     fn hinted(&self, e: usize) -> R<(u32, usize)> {
         let x = if self.c.kind(e) == "parenthesized_expression" { self.inner(e)? } else { e };
@@ -1333,6 +1340,7 @@ impl L<'_> {
         Ok((0, e))
     }
 
+    /// A condition: `e` as a `bool`.
     fn cond(&mut self, e: usize) -> R<()> {
         let e = if self.c.kind(e) == "parenthesized_expression" { self.inner(e)? } else { e };
         self.rv_as(e, &Ty::Bool)

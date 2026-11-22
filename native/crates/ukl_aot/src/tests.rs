@@ -55,3 +55,36 @@ fn the_kernels_rust_nearest_is_the_scalar_one() {
         }
     }
 }
+
+/// rerail-ukl-vec's Rust of `mix_lanes` at 8 lanes: the scalar answers, on values whose lanes agree (chunks of
+/// only odd, only small, none zero, one loop bound) and part (random, some zero, some past the likely bound), at
+/// groups that end in part of a chunk.
+#[cfg(target_arch = "aarch64")]
+#[test]
+fn the_kernels_rust_mix_is_the_scalar_one() {
+    let mut r = 0x9E37_79B9u32;
+    let mut next = move || {
+        r ^= r << 13;
+        r ^= r >> 17;
+        r ^= r << 5;
+        r
+    };
+    let inputs: Vec<Vec<u32>> = vec![
+        vec![],
+        vec![0],
+        (0..37).map(|i| 2 * i + 1).collect(),
+        (0..64).map(|_| 0x13).collect(),
+        (0..100).map(|i| i % 3).collect(),
+        (0..1000).map(|_| next()).collect(),
+        (0..333).map(|i| if i % 7 == 0 { 0 } else if i % 5 == 0 { 0xF000_0000 + i } else { next() & 0xFF }).collect(),
+    ];
+    for input in &inputs {
+        for rounds in [0, 1, 5] {
+            let want: Vec<u32> = input.iter().map(|&x| scalar::mix(x, rounds)).collect();
+            for block in [8, 20, 32, 36, 256] {
+                let got = unsafe { crate::mix_run(crate::mix_lanes_w8::mix_lanes_w8, input, rounds, block) };
+                assert_eq!(got, want, "{} values, {rounds} rounds, groups of {block}", input.len());
+            }
+        }
+    }
+}

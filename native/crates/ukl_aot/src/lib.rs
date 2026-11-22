@@ -13,6 +13,8 @@
 #[cfg(target_arch = "aarch64")]
 pub mod hand;
 #[cfg(target_arch = "aarch64")]
+pub mod mix_lanes_w8;
+#[cfg(target_arch = "aarch64")]
 pub mod nearest_jump_w8;
 pub mod scalar;
 #[cfg(test)]
@@ -123,4 +125,30 @@ pub unsafe fn nearest_run(k: Kernel, state: &mut [u32], args: NearestArgs, block
     let groups = args.cells.div_ceil(block);
     unsafe { launch(k, &argv, groups, block) };
     stats
+}
+
+/// `mix_lanes`'s arguments' struct (`MixArgs`, `kernels/mix.uglykl`), as its kernel reads its bytes.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct MixArgs {
+    pub n: u32,
+    pub rounds: u32,
+    pub pad1: u32,
+    pub pad2: u32,
+}
+
+/// `mix_lanes` (its Rust `k`) over `input`, `rounds` its uniform loop's, in groups of `block` threads: each value's
+/// answer.
+///
+/// # Safety
+///
+/// `k` is a kernel of `mix_lanes`'s arguments.
+pub unsafe fn mix_run(k: Kernel, input: &[u32], rounds: u32, block: u32) -> Vec<u32> {
+    let mut out = vec![0u32; input.len()];
+    let (ip, op) = (input.as_ptr(), out.as_mut_ptr());
+    let args = MixArgs { n: input.len() as u32, rounds, pad1: 0, pad2: 0 };
+    let (counts, first): (*const u32, u32) = (std::ptr::null(), 0);
+    let argv = [(&raw const ip).cast::<u8>(), (&raw const op).cast::<u8>(), (&raw const args).cast::<u8>(), (&raw const counts).cast::<u8>(), (&raw const first).cast::<u8>()];
+    unsafe { launch(k, &argv, args.n.div_ceil(block), block) };
+    out
 }

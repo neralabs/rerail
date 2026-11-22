@@ -162,7 +162,8 @@ pub enum Kind {
 /// A `Return`'s slot when it ends the thread (the kernel's own body's).
 pub const NO_SLOT: u32 = u32::MAX;
 
-/// An `if`'s second word: its condition's hint (`UKL_LIKELY`, `UKL_UNLIKELY`), else 0.
+/// An `if`'s, a `while`'s or a `for`'s second word: its condition's hint (`UKL_LIKELY`, `UKL_UNLIKELY`), else 0.
+/// A loop's `UKL_LIKELY`: its lanes go on together, so rounds where all do are worth a test.
 pub const IF_LIKELY: u32 = 1;
 pub const IF_UNLIKELY: u32 = 2;
 

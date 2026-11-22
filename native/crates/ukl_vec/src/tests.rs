@@ -1379,13 +1379,17 @@ fn the_nearest_kernels_rust_masks_only_where_its_lanes_part() {
                 }
                 continue;
             }
-            let masked = ["vbslq_u32", "vbicq_u32", "select_unpredictable", "any(&", "all(&", "live[", "vcgtq_u32"].iter().find(|t| l.contains(*t));
+            // A full round's end, where some lane's condition fails, is the one test of a mask.
+            let round = l.trim_start().starts_with("if !all(&") && l.ends_with("{ break; }");
+            let masked = ["vbslq_u32", "vbicq_u32", "select_unpredictable", "any(&", "all(&", "live[", "vcgtq_u32"].iter().find(|t| l.contains(*t) && !round);
             assert!(masked.is_none(), "{name}: a mask ({}) where all lanes run: {l}\n{rust}", masked.unwrap());
             i += 1;
         }
     }
     // `nearest_jump`'s own, its load of `state[cell]` and its maximum: the gather and the store run in the loop only.
     assert!(full == 3, "{full} functions of all lanes:\n{rust}");
+    // Its loop's lanes part early, and it says nothing of them: no full rounds, whose test would be a second branch.
+    assert!(!rust.contains("// Full rounds"), "full rounds of a loop not said to go on together:\n{rust}");
     // A chunk whose lanes all return runs nothing after.
     let after: Vec<&[&str]> = lines.windows(2).filter(|w| w[0].trim() == "return;" && !w[1].trim().starts_with('}')).collect();
     assert!(after.is_empty(), "statements after a return: {after:?}\n{rust}");
@@ -1408,4 +1412,58 @@ fn the_nearest_kernels_rust_masks_only_where_its_lanes_part() {
         assert!(!f.contains("vdupq_n_u32(vmaxvq_u32(") && !f.contains("select_unpredictable"), "{n}: a running lane's address for one that does not run, or a store of each lane:\n{f}");
     }
     assert!(owned.iter().any(|(_, f)| f.contains("vst1q_u32(") && f.contains("vbslq_u32(") && f.contains("vld1q_u32(")), "no store of the registers, its lanes that do not run what is there:\n{rust}");
+}
+
+/// `mix.uglykl` (rerail-ukl-aot's test kernel) as Rust at 8 lanes, checked in as `nearest` is.
+fn mix_rust() -> String {
+    let text = include_str!("../../ukl_aot/kernels/mix.uglykl");
+    let src = super::source("/<kernels>/mix.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("mix_lanes").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    super::rs::kernel(&k, 8).unwrap_or_else(|e| panic!("{}\n{}", e.0, super::k::View::new(&k.tape).listing()))
+}
+
+#[test]
+fn the_mix_kernels_rust_is_the_checked_in_one() {
+    let rust = mix_rust();
+    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_aot/src/mix_lanes_w8.rs");
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}
+
+/// Where the lanes of `mix` part (decision 0567 step 3):
+/// - an `if` that rejoins runs both sides, each masked, with no test of whether any lane takes it;
+/// - `UKL_LIKELY(c)` runs its side unmasked in a chunk whose lanes all take it, `UKL_UNLIKELY(c)` the other side
+///   in a chunk none of whose lanes do; any other chunk runs both sides masked;
+/// - a loop of each lane's own bound, said to go on together (`UKL_LIKELY`), runs unmasked rounds while every lane
+///   goes on, then masked rounds; a loop of one bound runs unmasked rounds, its test the loop's own.
+#[test]
+fn the_mix_kernels_rust_runs_both_sides_and_full_rounds() {
+    let rust = mix_rust();
+    let lines: Vec<&str> = rust.lines().map(str::trim).collect();
+    // The tests of whether any lane runs: those that return (`i >= args.n`), and the rest after them.
+    let guarded: Vec<&[&str]> = lines.windows(2).filter(|w| w[0].starts_with("if any(") && w[0] != "if any(&live) {" && !w[1].starts_with("live = [vbicq_u32(live[0]")).collect();
+    assert!(guarded.is_empty(), "a side guarded by whether any lane takes it: {guarded:?}\n{rust}");
+    assert!(lines.iter().any(|l| l.starts_with("if all(&") && l.ends_with('{')), "no unmasked side of the likely `if`:\n{rust}");
+    assert!(lines.iter().any(|l| l.starts_with("if !any(&") && l.ends_with('{')), "no unmasked side of the unlikely `if`:\n{rust}");
+    let f = rust.split("\nunsafe fn ").find(|f| f.starts_with("b0_") && f.contains("_f(")).unwrap_or_else(|| panic!("no kernel function of all lanes:\n{rust}"));
+    let lines: Vec<&str> = f.lines().map(str::trim).collect();
+    let full: Vec<usize> = lines.iter().enumerate().filter(|(_, l)| **l == "// Full rounds: every lane goes on.").map(|(i, _)| i).collect();
+    assert!(full.len() == 1, "{} loops of full rounds, not 1:\n{rust}", full.len());
+    // The hinted loop: its full rounds end where a lane's condition fails, then each lane its own.
+    let part = lines[full[0]..].iter().position(|l| l.starts_with("// Lanes part: each its own rounds.")).unwrap_or_else(|| panic!("no masked rounds after the full ones:\n{rust}"));
+    assert!(lines[full[0]..full[0] + part].iter().any(|l| l.starts_with("if !all(&") && l.ends_with("{ break; }")), "full rounds that do not end where a lane does:\n{rust}");
+    assert!(!lines[full[0]..full[0] + part].iter().any(|l| l.contains("vbslq_u32(")), "a masked write in a full round:\n{rust}");
+    // The loop of one bound, in every instance: its test the condition itself, its counter one value.
+    for f in rust.split("\nunsafe fn ").filter(|f| f.starts_with("b0_")) {
+        let lines: Vec<&str> = f.lines().map(str::trim).collect();
+        let one = lines.iter().position(|l| *l == "// Rounds of one condition: every lane goes on.").unwrap_or_else(|| panic!("no rounds of one condition:\n{f}"));
+        let end = lines[one..].iter().position(|l| *l == "}").unwrap() + one;
+        assert!(lines[one..end].iter().any(|l| l.starts_with("if !(") && l.ends_with("{ break; }") && !l.contains("any(") && !l.contains("all(")), "the loop of one bound tests its lanes:\n{f}");
+        assert!(lines[one..end].iter().any(|l| l.contains("wrapping_add(1") || l.contains("+ 1")), "the loop of one bound counts in lanes:\n{f}");
+    }
 }
