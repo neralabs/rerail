@@ -4,7 +4,7 @@
 //   parsed(v, "vue-expression", program)      a directive's value or a {{ }}'s text, wrapped as `( … )`
 //   parsed(v, "vue-statements", program)      a v-on value, as statements: @click="n++; done()"
 //   parsed(v, "vue-params", program)          v-slot, #name, slot-scope, scope: parameters, wrapped `( … )=>0`
-//   parsed(v, "vue-for-alias", program)       v-for's alias as an array pattern, holes kept: `let [v, , i]=0`;
+//   parsed(v, "vue-for-alias", program)       v-for's alias as an array pattern, holes kept: `const [v, , i]=0`;
 //   parsed(v, "vue-for-source", program)      v-for's list, an expression
 // vue-eslint-parser reads the template the same way: VExpressionContainer holds an expression, a v-on's statements,
 // a VSlotScopeExpression's params or a VForExpression's left and right.
@@ -18,6 +18,8 @@
 //                           at 0 and i at 1)
 //   vcode_el(a, e)          the element whose code a is: the attribute's element, or the interpolation's parent
 //   tvar(e, x, id, k)       element e declares template variable x at identifier id; k is "v-for" or "scope"
+//   tvar_at(id, a)          the attribute a whose code declares the variable at id: where a finding at it stands (a
+//                           piece is a document never shown, decision 0597)
 //   tdestructured(id)       the variable is destructured: `{ a }`, `[a]` inside an alias or a parameter
 //   tref(r, x, a)           identifier r of a's code reads x, which nothing inside that code declares
 //   tbind(r, id)            r reads the template variable declared at id (the nearest element declaring its name)
@@ -56,7 +58,7 @@ vexpr(a, x) :- vcode(a, g, role), (role = "vue-expression" ; role = "vue-for-sou
 .decl vparams(a: node, f: node)
 vparams(a, f) :- vcode(a, g, "vue-params"),
     child(g, s, 0), kind(s, "expression_statement"), child(s, f, 0), kind(f, "arrow_function").
-.decl vfor_pattern(a: node, l: node)  // `let [v, i]=0`: the array pattern
+.decl vfor_pattern(a: node, l: node)  // `const [v, i]=0`: the array pattern
 vfor_pattern(a, l) :- vcode(a, g, "vue-for-alias"), child(g, s, 0), kind(s, "lexical_declaration"),
     child(s, d, 0), field(d, "name", l), kind(l, "array_pattern").
 .decl vfor(e: node, a: node, l: node, src: node)
@@ -72,6 +74,8 @@ tvar(e, x, id, "v-for") :- vdir(e, a, "for", _), vfor_pattern(a, l), has(l, id, 
 .decl tvar_kind(k: symbol)
 tvar_kind("identifier"). tvar_kind("shorthand_property_identifier_pattern").
 tvar(e, x, id, "scope") :- vattr(e, a), vparams(a, f), !vdir(e, a, "for", _), decl_site(f, x, id, "param", "value").
+.decl tvar_at(id: node, a: node)
+tvar_at(id, a) :- tvar(e, _, id, _), vattr(e, a), vcode(a, g, _), within(id, g).
 .decl tdestructured(id: node)
 tdestructured(id) :- tvar(e, _, id, "v-for"), vdir(e, a, "for", _), vfor_pattern(a, l), inside(id, q, tpattern_kind),
     q != l.

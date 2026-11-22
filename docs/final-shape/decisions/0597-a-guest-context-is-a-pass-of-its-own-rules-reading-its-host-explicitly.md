@@ -324,7 +324,7 @@ The template's findings stand at the file's lines.
      it out, `demand_embeds()` lists it, and a demand embedding has no places. A rule's `parsed(v, "vue-expression",
      g)` asks for it at its place (a constant grammar, `rr_embed_req`); the run builds the host's pieces of that
      kind once (`guests::demanded`, `embed::vue_code`) and gives the one at the place, its `Guest.grammar` the name
-     asked. A piece's code is copied byte for byte between written wrappers (`(E)`, `(P)=>0`, `let [A]=0`), so its
+     asked. A piece's code is copied byte for byte between written wrappers (`(E)`, `(P)=>0`, `const [A]=0`: `let [x]=0` reads as an assignment to `let[x]`), so its
      nodes stand at the file's bytes; its `docof` is its file's (0431 §4). Test:
      `a_components_code_is_pieces_made_where_a_rule_asks`; the registry's `a_demand_embedding_is_listed_apart`.
    - **Grammars that share their kinds join to their label.** `vcode`'s `g` is filled from five roles, each its
@@ -353,6 +353,29 @@ The template's findings stand at the file's lines.
      1). They move into the context `expression`, exported by piece and read at the directive's node. Asking the
      scripts by a grammar name of their own (`vue-script`) kept the two contexts' grammars apart but never ended
      hide's rounds (two names, one label); the scripts stay `typescript`.
+
+   As built (2026-11-22), rungs 5.6-5.7:
+   - 5.6: no-template-shadow reads `vue/expression`'s `vtemplate_var(e, x, a, k, l, c)` (a template variable by the
+     attribute declaring it and its line and column) and `vue/script`'s names (`vscript_option_name`,
+     `vscript_prop_name`, and `vscript_name` under `<script setup>`); `vue/script` reads the host's `vscript`
+     (`.from vue vscript for script`), so `vue/component`'s `vcomp` and `vname` find the script's component.
+   - **A guest copy runs above the answers.** A request is answered where a stratum reads what it produces
+     (`parsed`); the answer admits the documents (the pieces), and the strata above read their rows. A copy hiding
+     makes for a guest's grammar (`rr_in_typescript_0_decl_site`, only base atoms) depended on no derived relation
+     and could be placed below, seeing no piece: `vue/code`'s `tvar` was empty unless another rule happened to place
+     it above. `front::graph` now orders each copy (`GUEST_COPY`) after each produced relation, never negatively,
+     and not where the answer reaches the copy (a cycle). Test: `a_guest_copy_reads_the_pieces_a_request_made_in_its_run`.
+   - A v-for alias is `const [A]=0`: `let [x]=0` is an assignment to `let[x]`, no declaration.
+   - `earlier` is CPython's visit order (`visit_index`, Python documents only): no-unused-vars orders a piece's
+     declarations by their bytes. Its finding stands at the declaring attribute (`tvar_at`).
+   - 5.7: `the_vue_packs_template_policies_find_their_examples`, alone and beside a plain program: no-unused-vars,
+     no-use-v-if-with-v-for, valid-v-for, no-unused-refs, no-template-shadow.
+   - **Found, open: a pack's Vue policies beside a context.** Beside no-template-shadow, which brings the contexts
+     `script` and `expression`, a policy reading the script's or the template code's nodes in host rules finds
+     nothing (rule 1: those nodes are the contexts'), and no-unused-refs fails (`no such table: main.vname`). 15 of
+     the pack's 23 policies read them so (11 through `vue/component` or `vue/mutation`, 4 through `vue/code`). Rule 5
+     needs each to read the contexts: their rules over the script and the template code run in the contexts, and
+     their findings stand at the host's bytes (rule 6's context policy, not built).
 6. **Measure.** corpus0 × B-now against the targets (one pack 0.786 T, normal packs 2.428 T, 463 findings,
    d067ec2ebf6f).
 

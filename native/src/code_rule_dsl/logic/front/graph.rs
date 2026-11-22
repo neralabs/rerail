@@ -72,10 +72,56 @@ pub fn components(v: &Version, about: &About) -> (Vec<RelId>, Edges, Vec<(RelId,
             edges.push((head, a.rel(), (a.neg() || agg) && !a.gated()));
         }
     }
+    guest_copies_after_requests(v, about, &derived, &mut edges);
     aggs.sort_unstable();
     aggs.dedup();
     let derived = (0..n as u32).map(RelId).filter(|r| derived[r.index()]).collect();
     (derived, Edges::of(edges), aggs)
+}
+
+/// The prefix of a relation hiding copies for a guest's grammar (`rr_in_<grammar>_<relation>`, decision 0058 §2): its
+/// rules read the nodes of that grammar's documents.
+pub const GUEST_COPY: &str = "rr_in_";
+
+/// A guest copy runs after each answer the run gives (decision 0597): a request is answered where a stratum reads
+/// what it produces (`parsed`), and the answer admits documents (a Vue template's pieces, a string's tape) whose rows
+/// the strata above read. A copy made only of base atoms (`decl_site` over `kind` and `field`) depends on no derived
+/// relation, so it could be placed below and never see them (vue/code's `tvar` was empty unless another rule happened
+/// to place it above). The edge orders only: it is never negative, and it is not added where the answer reaches the
+/// copy (a nested guest's ask reads it), which would close a cycle.
+fn guest_copies_after_requests(v: &Version, about: &About, derived: &[bool], edges: &mut Vec<(RelId, RelId, bool)>) {
+    let mut answers: Vec<RelId> = about.produced().map(|(p, _)| p).collect();
+    answers.sort_unstable();
+    answers.dedup();
+    if answers.is_empty() {
+        return;
+    }
+    let copies: Vec<RelId> = (0..derived.len() as u32).map(RelId).filter(|r| derived[r.index()] && v.rel_name(*r).starts_with(GUEST_COPY)).collect();
+    if copies.is_empty() {
+        return;
+    }
+    let mut deps: Vec<Vec<RelId>> = vec![Vec::new(); derived.len()];
+    for &(h, w, _) in edges.iter() {
+        deps[h.index()].push(w);
+    }
+    for answer in answers {
+        let mut reached = vec![false; derived.len()];
+        let mut todo = vec![answer];
+        reached[answer.index()] = true;
+        while let Some(r) = todo.pop() {
+            for &w in &deps[r.index()] {
+                if !reached[w.index()] {
+                    reached[w.index()] = true;
+                    todo.push(w);
+                }
+            }
+        }
+        // The next answer's reach counts these edges too: through one, it could reach a copy.
+        for &c in copies.iter().filter(|c| !reached[c.index()]) {
+            edges.push((c, answer, false));
+            deps[c.index()].push(answer);
+        }
+    }
 }
 
 /// The dependency edges by name, as `analyses::strata` gives them: each derived relation's dependencies among the derived

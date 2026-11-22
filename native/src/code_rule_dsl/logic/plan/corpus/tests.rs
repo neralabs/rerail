@@ -3001,4 +3001,63 @@ names(x) :- vscript(p, \"true\"), decl_site(p, x, _, _, _).
     assert_eq!(sorted(alone_and_together("vue-names", file, program, VUE_PLAIN, "names")), [row(&["count"]), row(&["inc"])]);
 }
 
+/// 0597 rung 5.7: the Vue pack's policies that read the template's code find on the examples their headers give what
+/// those say (before step 5 the engine parsed no template code: each found nothing there). Each case: the policy, a
+/// component, its violation, and the last column of each finding, alone and beside a plain program.
+#[test]
+fn the_vue_packs_template_policies_find_their_examples() {
+    let t = |body: &str| format!("<template>\n  {body}\n</template>\n");
+    let cases: Vec<(&str, String, &str, Vec<&str>)> = vec![
+        ("no-unused-vars", t("<ul><li v-for=\"(item, i) in items\">{{ i }}</li></ul>"), "unused_var", vec![]),
+        ("no-unused-vars", t("<ul><li v-for=\"(item, i) in items\">{{ item }}</li></ul>"), "unused_var", vec!["i"]),
+        ("no-unused-vars", t("<comp v-slot=\"{ a, b }\">{{ b }}</comp>"), "unused_var", vec!["a"]),
+        ("no-use-v-if-with-v-for", t("<ul><li v-for=\"u in users\" v-if=\"u.active\">{{ u }}</li></ul>"), "v_if_with_v_for", vec!["*"]),
+        ("no-use-v-if-with-v-for", t("<ul><li v-for=\"u in users\" v-if=\"shown\">{{ u }}</li></ul>"), "v_if_with_v_for", vec!["*"]),
+        ("valid-v-for", t("<div><my-item v-for=\"x in xs\" /></div>"), "valid_v_for", vec!["*"]),
+        ("valid-v-for", t("<ul><li v-for=\"x in xs\" :key=\"id\" /></ul>"), "valid_v_for", vec!["*"]),
+        ("valid-v-for", t("<ul><li v-for=\"x in xs\" :key=\"x\" /></ul>"), "valid_v_for", vec![]),
+        ("no-unused-refs", t("<div ref=\"box\" />"), "unused_ref", vec!["box"]),
+        ("no-template-shadow", t("<ul><li v-for=\"item in items\"><p v-for=\"item in item.parts\" /></li></ul>"), "shadow", vec!["item"]),
+        (
+            "no-template-shadow",
+            format!("<script>\nexport default {{ data() {{ return {{ item: 1 }} }} }}\n</script>\n{}", t("<ul><li v-for=\"item in items\" /></ul>")),
+            "shadow",
+            vec!["item"],
+        ),
+        ("no-template-shadow", t("<ul><li v-for=\"item in items\" /></ul>"), "shadow", vec![]),
+    ];
+    let read = |policy: &str| std::fs::read_to_string(crate::source_tree::native().join(format!("../docs/rule-syntax/packs/vue/eslint-plugin-vue-{policy}.rerail"))).unwrap();
+    let mut wrong = Vec::new();
+    for (policy, text, rel, want) in &cases {
+        let program = read(policy);
+        let run = std::panic::catch_unwind(|| alone_and_together(&format!("vue-pack-{policy}"), ("a.vue", text.as_str()), &program, VUE_PLAIN, rel));
+        let Ok((found, together)) = run else {
+            let e = run.err().unwrap();
+            let e = e.downcast_ref::<String>().cloned().or_else(|| e.downcast_ref::<&str>().map(|s| (*s).to_owned())).unwrap_or_default();
+            wrong.push(format!("{policy} on {text:?}: {e}"));
+            continue;
+        };
+        let mut got: Vec<String> = found.iter().map(|r| if want.first() == Some(&"*") { "*".to_owned() } else { r.last().cloned().unwrap_or_default() }).collect();
+        got.sort();
+        let mut both = together.clone();
+        both.sort();
+        let mut alone = found.clone();
+        alone.sort();
+        if got != *want || both != alone {
+            wrong.push(format!("{policy} on {text:?}: {found:?} (together {together:?}), wanted {want:?}"));
+        }
+    }
+    assert!(wrong.is_empty(), "{}", wrong.join("\n"));
+}
 
+/// A guest copy made only of base atoms (`rr_in_typescript_0_decl_site`, over `kind` and `field`) runs above the
+/// request whose answer makes the documents it reads (decision 0597): a Vue template's pieces are made where a rule
+/// asks, in the run, and `tvar`, vue/code's alone, found nothing until another rule of the program happened to place
+/// the copy above the request.
+#[test]
+fn a_guest_copy_reads_the_pieces_a_request_made_in_its_run() {
+    let file = ("a.vue", "<template>\n  <ul><li v-for=\"x in xs\" :key=\"x\" /></ul>\n</template>\n");
+    let program = ".language vue\n#include \"vue/code.rerail\"\n.decl o(x: symbol)\no(x) :- tvar(_, x, _, _).\n.output o\n";
+    let (alone, together) = alone_and_together("guest-copy-after-request", file, program, VUE_PLAIN, "o");
+    assert_eq!((alone, together), (vec![vec!["x".to_owned()]], vec![vec!["x".to_owned()]]));
+}

@@ -3,8 +3,9 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/script.rerail"
-//   tvar(e, x, id, k), vsetup_doc(d), vscript_name(d, x), vscript_option_name(d, g, x), vscript_prop_name(d, x)
+#include "vue/expression.rerail"
+//   vtemplate_var(e, x, a, k, l, c), vsetup_doc(d), vscript_name(d, x), vscript_option_name(d, g, x),
+//   vscript_prop_name(d, x)
 
 // eslint-plugin-vue's no-template-shadow: a template variable (v-for alias, slot parameter) whose name is already
 // taken by
@@ -17,11 +18,13 @@
 //   data() { return { item: 1 } } … <li v-for="item in items" />       reported
 .violation shadow(at: node, x: symbol) code "vue/no-template-shadow" "Variable '{x}' is already declared in the upper scope."
     suppress eslint "vue/no-template-shadow"
-shadow(id, x) :- tvar(e, x, id, _), !option_item("allow", _, x), taken(e, id, x).
-.decl taken(e: node, id: node, x: symbol)
-taken(e, id, x) :- tvar(e, x, id, _), within(e, p), tvar(p, x, _, _).
-taken(e, id, x) :- tvar(e, x, id, _), tvar(e, x, j, _), earlier(j, id).
-taken(e, id, x) :- tvar(e, x, id, _), docof(id, d), script_name(d, x).
+// The template variables are the context `expression`'s (vue/expression): a finding stands at the attribute that
+// declares the variable.
+shadow(a, x) :- vtemplate_var(e, x, a, _, l, c), !option_item("allow", _, x), taken(e, x, l, c).
+.decl taken(e: node, x: symbol, l: number, c: number)
+taken(e, x, l, c) :- vtemplate_var(e, x, _, _, l, c), within(e, p), vtemplate_var(p, x, _, _, _, _).
+taken(e, x, l, c) :- vtemplate_var(e, x, _, _, l, c), vtemplate_var(e, x, _, _, l2, c2), (l2 < l ; l2 = l, c2 < c).
+taken(e, x, l, c) :- vtemplate_var(e, x, _, _, l, c), docof(e, d), script_name(d, x).
 // script_name(d, x): what document d's scripts declare for the template, the context `script`'s exports.
 .decl script_name(d: number, x: symbol)
 script_name(d, x) :- vscript_option_name(d, g, x), group(g).

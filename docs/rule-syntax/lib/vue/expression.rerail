@@ -3,29 +3,42 @@
 // through the context `script`'s export (vue/script).
 //
 // The extraction is the host's (rule 3):
-//   vexpr_root(g)           g is a program of the template's code (vue/code's vcode): the roots
+//   vexpr_root(g, role)     g is a program of the template's code in role (vue/code's vcode): the roots
 // The context's, exported (its rules are tsx/names', over the template code's nodes alone), each by its piece's root:
 //   vexpr_ref(g, x)         piece g reads x, which nothing inside it declares
 //   vexpr_script_ref(g, x)  the same, x declared by a script of g's document (`script`'s vscript_decl)
+//   vexpr_bind(g, x, l, c)  piece g, a v-for's alias or a slot's parameters, declares the template variable x, its
+//                           identifier at line l, column c
 // The host's, what it reads of them (rule 5), for policies, by the piece's host node (vcode's a: the attribute, the
 // {{ }}):
 //   vtemplate_ref(a, x), vtemplate_script_ref(a, x)
+//   vtemplate_var(e, x, a, k, l, c)   element e declares template variable x in its attribute a, of kind k ("v-for"
+//                                     or "scope"), at line l, column c (vue/code's tvar, read through the context)
 //
 //   <script setup>const count = base</script> <template>{{ count + other }}</template>
 //     vtemplate_ref: count, other (never the script's `base`); vtemplate_script_ref: count
 #include "vue/script.rerail"
-.decl vexpr_root(g: node)
-vexpr_root(g) :- vcode(_, g, _).
-.context expression of vue roots vexpr_root exports vexpr_ref, vexpr_script_ref
+.decl vexpr_root(g: node, role: symbol)
+vexpr_root(g, role) :- vcode(_, g, role).
+.context expression of vue roots vexpr_root exports vexpr_ref, vexpr_script_ref, vexpr_bind
 .from script vscript_decl as vexpr_script_decl for expression
-.from expression vexpr_ref as vexpr_q_ref, vexpr_script_ref as vexpr_q_script_ref
+.from expression vexpr_ref as vexpr_q_ref, vexpr_script_ref as vexpr_q_script_ref, vexpr_bind as vexpr_q_bind
 .decl vtemplate_ref(a: node, x: symbol)
 vtemplate_ref(a, x) :- vcode(a, g, _), vexpr_q_ref(g, x).
 .decl vtemplate_script_ref(a: node, x: symbol)
 vtemplate_script_ref(a, x) :- vcode(a, g, _), vexpr_q_script_ref(g, x).
+.decl vtemplate_var(e: node, x: symbol, a: node, k: symbol, l: number, c: number)
+vtemplate_var(e, x, a, "v-for", l, c) :- vdir(e, a, "for", _), vcode(a, g, "vue-for-alias"), vexpr_q_bind(g, x, l, c).
+vtemplate_var(e, x, a, "scope", l, c) :- vattr(e, a), !vdir(e, a, "for", _), vcode(a, g, "vue-params"),
+    vexpr_q_bind(g, x, l, c).
 
 // ---- the context's rules --------------------------------------------------------------------------------------------
 .decl vexpr_ref(g: node, x: symbol)
-vexpr_ref(g, x) :- vexpr_root(g), has(g, r, tref_kind), ref(r, x, "value"), !ref_site(r, _).
+vexpr_ref(g, x) :- vexpr_root(g, _), has(g, r, tref_kind), ref(r, x, "value"), !ref_site(r, _).
 .decl vexpr_script_ref(g: node, x: symbol)
 vexpr_script_ref(g, x) :- vexpr_ref(g, x), docof(g, d), vexpr_script_decl(d, x).
+.decl vexpr_bind(g: node, x: symbol, l: number, c: number)
+vexpr_bind(g, x, l, c) :- vexpr_root(g, "vue-for-alias"), has(g, id, tvar_kind), decl_site(_, x, id, "pattern", "value"),
+    line(id, l), col(id, c).
+vexpr_bind(g, x, l, c) :- vexpr_root(g, "vue-params"), child(g, s, 0), kind(s, "expression_statement"), child(s, f, 0),
+    kind(f, "arrow_function"), decl_site(f, x, id, "param", "value"), line(id, l), col(id, c).

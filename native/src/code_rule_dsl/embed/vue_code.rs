@@ -10,7 +10,7 @@
 //! | `vue-expression` | `(E)`: a `{{ E }}`, a directive's value (but v-on's, v-slot's and v-for's), a dynamic argument `:[E]` | the `raw_text`, the value, the argument's inner value |
 //! | `vue-statements` | `S`: a v-on value, as written | the value |
 //! | `vue-params` | `(P)=>0`: v-slot, `#x`, slot-scope, scope (`template::Directive`'s) | the value |
-//! | `vue-for-alias` | `let [A]=0`: v-for's alias, its own parentheses stripped, holes kept (`let [v, , i]=0`) | the value |
+//! | `vue-for-alias` | `const [A]=0`: v-for's alias, its own parentheses stripped, holes kept (`const [v, , i]=0`); `let [x]=0` reads as an assignment to `let[x]` | the value |
 //! | `vue-for-source` | `(L)`: v-for's list (compiler-core's `parseFor`); a value it does not split is `vue-expression` | the value |
 //!
 //! The code is copied byte for byte, so its nodes stand at the file's bytes; the wrappers are written, each over the
@@ -154,7 +154,7 @@ fn program(f: &Found, source: &str, budget: &dyn Fn() -> bool) -> Option<Program
         Piece::Script | Piece::Statements => ("", ""),
         Piece::Expression | Piece::ForSource => ("(", ")"),
         Piece::Params => ("(", ")=>0"),
-        Piece::ForAlias => ("let [", "]=0"),
+        Piece::ForAlias => ("const [", "]=0"),
     };
     let text = format!("{open}{code}{close}");
     let mut segments = SegmentMap::new();
