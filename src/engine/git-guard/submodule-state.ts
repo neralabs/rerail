@@ -246,14 +246,14 @@ function namedPath(base: string, named: string): string {
 
 /**
  * What Git's discovery finds at the folder `at`, read in process: the Git folder its `.git` names; null where Git is
- * to be asked, for a `.git` that holds no repository (Git would look further up) or a file Git rejects as one, which
- * fails Git's discovery, or a folder that is a Git folder itself; else undefined, and Git looks in the folder above. A
- * `.git` file that cannot be opened is undefined too, though it fails Git's discovery: the Git the call starts fails so.
+ * to be asked, for a `.git` that holds no repository (Git would look further up) or a file Git rejects as one, or a
+ * regular file that cannot be opened or read, each of which fails Git's discovery, or a folder that is a Git folder
+ * itself; else undefined, and Git looks in the folder above.
  */
 function discoveredAt(at: string): string | null | undefined {
   const gitFolder = submoduleGitFolder(at);
   if (gitFolder !== undefined) return typeof gitFolder === "string" ? gitFolder : null;
-  return holdsRepository(at) ? null : undefined;
+  return holdsRepository(at) || statOf(join(at, ".git"))?.isFile() === true ? null : undefined;
 }
 
 /** The submodules a repository's index records, each path from its top, and whether its `.gitmodules` is in conflict. */

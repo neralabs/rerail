@@ -9,6 +9,7 @@ import {
   definesNoDriver, nameDiff, readStatus, recordsNoSubmodule, submoduleChanged, UNASKED, worktreeGitFolder, worktreeIndex,
 } from "../../../src/engine/git-guard/submodule-state.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { unopenable } from "../../support/platform/unopenable-file.js";
 
 vi.mock("node:fs", { spy: true });
 vi.mock("node:fs/promises", { spy: true });
@@ -133,6 +134,19 @@ describe("worktreeGitFolder", () => {
     expect(worktreeGitFolder(work, {})).toBeDefined();
     expect(worktreeGitFolder(work, { [name]: join(work, ".git") })).toBeUndefined();
   });
+
+  it("answers as Git's discovery from a folder whose own `.git` file cannot be opened", async () => {
+    const { work } = repositories(await folder());
+    const inner = join(work, "inner");
+    mkdirSync(inner);
+    writeFileSync(join(inner, ".git"), "gitdir: ../.git\n");
+    const giveBack = unopenable(join(inner, ".git"));
+    try {
+      expect(worktreeGitFolder(inner, {})).toBe(gitFolderFound(inner));
+    } finally {
+      giveBack();
+    }
+  });
 });
 
 describe("a file of a Git folder whose close fails", () => {
@@ -195,6 +209,15 @@ function repositories(root: string): { readonly work: string; readonly linked: s
   git("-C", work, "commit", "--quiet", "-m", "seed");
   git("-C", work, "worktree", "add", "--quiet", "--detach", linked);
   return { work, linked };
+}
+
+/** The Git folder the test's own Git finds from `folder`, by its real path; undefined where its discovery fails. */
+function gitFolderFound(folder: string): string | undefined {
+  try {
+    return realFs.realpathSync.native(execFileSync("git", ["-C", folder, "rev-parse", "--absolute-git-dir"], { encoding: "utf8", stdio: "pipe" }).trimEnd());
+  } catch {
+    return undefined;
+  }
 }
 
 /** Makes each close of a file named `name` fail once the file is closed, as a close on a network share that went fails. */
