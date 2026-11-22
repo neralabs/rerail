@@ -380,6 +380,28 @@ pub(super) struct Group {
     pub(super) docs: Vec<usize>,
     /// Each relation's rows of the group, in `Rows::names`' order.
     pub(super) ranges: Vec<Range<usize>>,
+    /// Per (relation, column) probed: the group's rows by their value there, made at the first probe (an index in
+    /// its relation's block, decision 0353). A group's rows never change, so it stands. A probe without it walked the
+    /// group's every row: a maintained join's probes of `docof`, one document's group each, were quadratic.
+    index: parking_lot::Mutex<HashMap<(usize, usize), Arc<rustc_hash::FxHashMap<i64, Vec<u32>>>>>,
+}
+
+impl Group {
+    fn new(docs: Vec<usize>, ranges: Vec<Range<usize>>) -> Self {
+        Group { docs, ranges, index: Default::default() }
+    }
+
+    /// The group's rows of relation `rel` (held in `r`) whose `column` is a key of the index, made if it is not.
+    fn index(&self, rel: usize, column: usize, r: &Relation) -> Arc<rustc_hash::FxHashMap<i64, Vec<u32>>> {
+        let mut index = self.index.lock();
+        Arc::clone(index.entry((rel, column)).or_insert_with(|| {
+            let mut by: rustc_hash::FxHashMap<i64, Vec<u32>> = Default::default();
+            for row in self.ranges[rel].clone() {
+                by.entry(Source::value(r, row, column)).or_default().push(row as u32);
+            }
+            Arc::new(by)
+        }))
+    }
 }
 
 /// The batch's rows (decision 0494): each relation one block relation (`Relation::grown`), which every group goes on
@@ -563,7 +585,7 @@ impl Rows {
             for &i in &docs {
                 state.of[i] = Some(0);
             }
-            state.groups.push(Arc::new(Group { docs, ranges }));
+            state.groups.push(Arc::new(Group::new(docs, ranges)));
         }
         let by: Vec<ByDocument> = names.iter().zip(&template).map(|(n, t)| ByDocument::of(n, &Source::columns(t.as_ref()))).collect();
         let distinct = names.iter().map(|_| OnceLock::new()).collect();
@@ -646,7 +668,10 @@ impl Batch {
                 (need, waits, Claim { rows: &self.rows, me, docs })
             };
             let made = self.make_rows(&need, self.rows.first(), &[]).and_then(|m| self.group_rels(m, &need));
-            self.rows.makes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            let makes = self.rows.makes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            if makes < 4 && std::env::var_os("RERAIL_WHOLE_READ_TRACE").is_some() {
+                eprintln!("RERAIL_WHOLE_READ_TRACE group {makes} of {} documents: {}", need.len(), std::backtrace::Backtrace::force_capture());
+            }
             let mut s = self.rows.state.lock();
             if need.iter().any(|&i| s.of[i].is_some()) {
                 drop(s);
@@ -672,7 +697,7 @@ impl Batch {
                 s.of[i] = Some(g);
             }
             profile::decision("a batch's documents made by group (decision 0494)", || format!("{} of {} documents", need.len(), self.docs.len()));
-            s.groups.push(Arc::new(Group { docs: need, ranges }));
+            s.groups.push(Arc::new(Group::new(need, ranges)));
             drop(s);
             drop(claim);
             if !waits {
@@ -889,8 +914,12 @@ impl MadeRows {
         let r = self.batch.made_so_far(self.rel);
         let mut rows = Vec::new();
         for g in groups {
-            rows.extend(g.ranges[self.rel].clone().filter(|&row| values.contains(&Source::value(r.as_ref(), row, column)) && keep(&r, row)));
+            // A group's rows by the column's value, found by its index, not a walk of every row of it.
+            let index = g.index(self.rel, column, &r);
+            rows.extend(values.iter().filter_map(|v| index.get(v)).flatten().map(|&row| row as usize).filter(|&row| keep(&r, row)));
         }
+        rows.sort_unstable();
+        rows.dedup();
         Some((r, rows))
     }
 }

@@ -383,3 +383,17 @@ fn r5_the_runs_read_no_sql_inside_the_waves() {
     run(1);
     run(2);
 }
+
+/// A semi-join's distinct values, as its estimates take them (`held_distinct`): its node column as many as its every
+/// row, a node's row one; its other columns as its held nodes have them. Scaled to every row as the node's are, a
+/// document column estimated one row a document, and a maintained join probed `docof` by its document, making every
+/// one of the data layer's 518 (t43 step 21).
+#[test]
+fn a_semi_joins_estimates_scale_its_node_column_alone() {
+    let stat = |c: &str, distinct: i64| (c.to_owned(), 0, distinct, 0, 0);
+    // docof(n, d) at 1,000 held nodes of 300 documents; 50,000 rows in all.
+    assert_eq!(super::held_distinct("docof", &[stat("n", 1_000), stat("d", 300)], 50_000), vec![Some(50_000), Some(300)]);
+    // node(d, n, kind, start, end_): its node is its second column.
+    let node = super::held_distinct("node", &[stat("d", 300), stat("n", 1_000), stat("kind", 40), stat("start", 900), stat("end_", 900)], 50_000);
+    assert_eq!(node, vec![Some(300), Some(50_000), Some(40), Some(900), Some(900)]);
+}

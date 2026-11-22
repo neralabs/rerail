@@ -479,6 +479,16 @@ fn held_stats_name(rel: &str) -> String {
     format!("{rel} at the held nodes")
 }
 
+/// A semi-join's distinct values by column, for the corpus batch's estimates (`give_distinct`), of its statistics at
+/// the held nodes (`st`: name, rows, distinct, ...) and its every row's count (`total`). Its node's column (`n`) holds
+/// one row a node, so as many values as rows; another column's values (a document, a line) are about as many at the
+/// held nodes as over every node, so they are the held ones. (Scaled to every row as the node's are, a document
+/// column had one row a document: a maintained join then probed `docof` by its document, making every one.)
+pub fn held_distinct(rel: &str, st: &[(String, i64, i64, i64, i64)], total: i64) -> Vec<Option<usize>> {
+    let node = super::super::sql::select::input_columns(rel).and_then(|input| input.iter().position(|n| *n == "n").map(|i| input[i]));
+    st.iter().map(|m| usize::try_from(if node == Some(m.0.as_str()) { total.max(m.2) } else { m.2 }).ok()).collect()
+}
+
 fn rename(measured: Vec<(String, i64, i64, i64, i64)>, columns: &[String]) -> Vec<(String, i64, i64, i64, i64)> {
     measured.into_iter().zip(columns).map(|((_, a, b, c, d), name)| (name.clone(), a, b, c, d)).collect()
 }
@@ -7757,13 +7767,11 @@ fn run_observed_within(
             k
         };
         let keeps = base_binds.is_some() || session_binds.is_some();
-        // A semi-join's distinct values, as the corpus batch's estimates take them (`give_distinct`): its held nodes'
-        // scaled to its every row (`held_total`), a node's column one row a node, as a base relation's are its kept
-        // statistics'. Without them its estimate is a document's rows.
-        let give_held = |rel: &str, st: &[Stat], held_rows: usize, total: i64| {
+        // A semi-join's distinct values, as the corpus batch's estimates take them (`give_distinct`, `held_distinct`).
+        // Without them its estimate is a document's rows.
+        let give_held = |rel: &str, st: &[Stat], total: i64| {
             if let Some(batch) = &corpus_batch {
-                let (h, t) = (held_rows.max(1) as u128, u128::try_from(total.max(0)).unwrap_or(0));
-                batch.give_distinct(rel, st.iter().map(|m| usize::try_from((u128::try_from(m.2.max(0)).unwrap_or(0) * t).div_ceil(h).min(t)).ok()).collect());
+                batch.give_distinct(rel, held_distinct(rel, st, total));
             }
         };
         // A base relation read off the corpus batch, to count: its source, the columns its rules read, its kept
@@ -7782,13 +7790,13 @@ fn run_observed_within(
             // owners', its statistics the keeper's.
             if let Some(source) = base_layered.remove(&rel) {
                 let statistics = if semijoin.contains(&rel) {
-                    let (st, held_rows, how, keep) = held_counted(&rel, &source.columns(), source.as_ref(), kept_stats.remove(&held_stats_name(&rel)));
+                    let (st, _, how, keep) = held_counted(&rel, &source.columns(), source.as_ref(), kept_stats.remove(&held_stats_name(&rel)));
                     crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
                     if let Some(k) = keep {
                         base_stats_out.push((held_stats_name(&rel), base_digest(&rel), k));
                     }
                     let total = held_total(&rel, source.as_ref(), kept_stats.remove(&rel));
-                    give_held(&rel, &st, held_rows, total.rows());
+                    give_held(&rel, &st, total.rows());
                     if keeps {
                         base_stats_out.push((rel.clone(), base_digest(&rel), total));
                     }
@@ -7880,7 +7888,7 @@ fn run_observed_within(
                         base_stats_out.push((held_stats_name(&rel), base_digest(&rel), k));
                     }
                     let total = held_total(&rel, source.as_ref(), kept_stats.remove(&rel));
-                    give_held(&rel, &st, rows, total.rows());
+                    give_held(&rel, &st, total.rows());
                     if keeps {
                         base_stats_out.push((rel.clone(), base_digest(&rel), total));
                     }
