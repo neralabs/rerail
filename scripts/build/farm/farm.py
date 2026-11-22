@@ -24,7 +24,7 @@ import time
 
 # The farm's version: the mirror daemon, its callers and the agents on the hosts are one version
 # (mirror.py). `setup` installs only a version at least as new as the installed one.
-VERSION = 57
+VERSION = 58
 HOME = os.path.expanduser("~")
 SHARE = os.path.join(HOME, ".local/share/rerail-farm")
 CONFIG = os.path.join(HOME, ".config/rerail-farm")
@@ -1184,6 +1184,26 @@ def cpu_env(cpu):
 def entry(name):
     """`name`'s configuration entry, or {} (a name ssh knows that the farm does not)."""
     return next((h for h in hosts() if h["name"] == name), {})
+
+
+def bench_cores(name):
+    """The job count `bench` rates `name` at: its cores as the farm counts them (the configuration's
+    `cores`, SMT threads included; this Mac's logical CPUs for `local`), the load the farm gives it."""
+    if name == "local":
+        return os.cpu_count() or 8
+    return int(entry(name).get("cores") or 8)
+
+
+def bench_rating(name):
+    """(jobs, seconds) of `name`'s compile benchmark (`bench`) at its own cores (`bench_cores`), else
+    at the most jobs measured; None when it has not been measured. With SMT a host's 8-job time
+    undersold it: the Ryzen 7 7735HS PC's Linux side took 46.4 s at 8 jobs and 34.6 s at its 16 (2026-11-22)."""
+    runs = {int(j): x for j, x in read_json(state("bench", name + ".json"), {}).get("runs", {}).items()
+            if x.get("s") is not None}
+    if not runs:
+        return None
+    j = bench_cores(name) if bench_cores(name) in runs else max(runs)
+    return j, runs[j]["s"]
 
 
 def shared_base(host):
