@@ -319,7 +319,8 @@ async function readEntriesInto(discovery: SourceDiscovery, root: string, unmerge
 /**
  * Each of `roots`, checkouts whose `HEAD` the session keeps, whose `.git` entry stands. A read of one whose entry is
  * absent asks Git, one Git after another inside the walk a shell command's result waits for, and Git finds no checkout
- * there: a checkout deleted inside the session folder, or one whose `.git` was moved aside for a while. Its `HEAD` and
+ * there: a checkout deleted inside the session folder, one whose `.git` was moved aside for a while, or a worktree
+ * removed while the session was suspended, whose `HEAD` it carried over (`SessionWalkResume.gitSeen`). Its `HEAD` and
  * unmerged entries stay as the last walk read them, as a failed read leaves them, so a checkout whose entry comes back
  * is read against them again.
  */
