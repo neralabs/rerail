@@ -31,6 +31,12 @@ The work is the machinery that keeps 0.03% of the nodes apart from the rest. The
 hiding leaves it, `tmp/l4/hidden.py`) found no cycle that crosses host and guest but the tree comparisons, so the
 guest's analysis can be ordered after the host facts it reads, and the host facts that read the guest's after it.
 
+What it would recover, measured (corpus0 × B-now, off, one thread, an M1 Max, 2026-11-21): the same build with no
+narrow copy, every reader reading the widened originals (a temporary switch, the semantics before #923, the cost a
+host program with a handful of annotation rows has): one pack 0.983 T to 0.801 T instructions (the target before the
+hub is 0.786 T), the normal packs 2.179 T to 1.828 T; 463 findings, the same set. The narrow copies are 0.18 T of the
+one pack's 0.197 T gap.
+
 ## Decision
 
 1. **A context is a program of its own, run as a pass.** A context is a grammar and a role: `python` (a file),
@@ -72,7 +78,13 @@ guest's analysis can be ordered after the host facts it reads, and the host fact
    it, through `guest_place` (0431 §3, R9); at a region root, at the node itself. A policy is a host policy whose rules
    read a context's exports, or a context policy (`.context python/annotation`), placed so.
 
-7. **A pass's tape-local facts are kept by its tape.** A context relation that reads only its own tape (an
+7. **A pass runs only on what changed in its inputs.** Its inputs are its roots (its host's extraction rows) and the
+   relations it names in `.from`, nothing else: that is what the explicit reads buy. A pass with no roots makes nothing
+   (on corpus0 and most files, no file holds an annotation). Maintained (0331), a pass's strata run on the deltas of
+   those inputs alone: an edit that changes no extraction row and no row of a `.from` relation the pass reads runs
+   none of its strata. An annotation unchanged in text is not enough: renaming the class `"Foo"` names changes its
+   resolution, through `python.binding`'s delta.
+8. **A pass's tape-local facts are kept by its tape.** A context relation that reads only its own tape (an
    annotation's `unparen`, its kinds, a SQL statement's shape) is the same for every string holding that text: it is
    kept by the tape's key and made once per text, in a run and across runs (0431's "kept in the facts the program
    produces"). One that reads a host's export (name resolution) is the host's place's, maintained by that export's
@@ -126,5 +138,6 @@ The template's findings stand at the file's lines.
 - The declarations' names (`.context`, `.from`, `.export`, `.root`) and the qualified read (`annotation.ann_type`),
   against Soufflé's own components (`.comp`, `.init`, `inst.rel`), which instantiate rules textually but say nothing
   of a document set.
-- Whether a pass is planned as one program with its host (its strata interleaved in one plan, the simpler engine
-  change) or as a program of its own with its own plan and image (cached by the context program's text alone).
+- Planning: decided interleaved (2026-11-21, the user: "try interleaved planning then"): a pass's strata are planned
+  in one plan with its host's, ordered by rule 4; a program of its own, with its own plan and image, stays the
+  alternative if one plan's size or its replanning costs show.
