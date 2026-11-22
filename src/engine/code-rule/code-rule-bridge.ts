@@ -854,6 +854,21 @@ function takeFirstSightListings(findings: WorktreeFindings, listed: Map<string, 
 }
 
 /**
+ * Whether a file of the worktree at `root` (physical), named relative to it, holds Git's own text by the listings of
+ * the walk that first shows it to a session (`WorktreeFindings.notAtHead`): a file of the worktree's own checkout that
+ * no listing names and that the walk read. `#firstSightVerdicts` gives such a file that verdict without Git, and it
+ * changes nothing the session holds, so its first sight leaves it to the snapshot rather than take it as a change. None
+ * is where the listings did not print, or in a checkout inside the worktree, whose files Git's reading judges.
+ */
+function heldByGitAtFirstSight(root: string, findings: WorktreeFindings): (path: string, source: ObservedSource) => boolean {
+  const listed = findings.notAtHead.get(root);
+  if (listed === undefined) return () => false;
+  const named = new Set(listed);
+  const inner = [...findings.checkouts].filter(checkout => checkout !== root).map(checkout => relative(root, checkout).split(sep).join("/"));
+  return (path, source) => source.readError === undefined && !named.has(path) && !inner.some(folder => path === folder || path.startsWith(`${folder}/`));
+}
+
+/**
  * Whether `edit`, of the file at `path` in its checkout, is one the walk's listings (`listed`) leave out: a file there
  * that holds what its index holds, where the index holds what `HEAD` holds. A deletion they leave out is of a path
  * neither the index nor `HEAD` has, which a reading with no `HEAD` known before takes for Git's too (`removedByGit`).
@@ -3152,7 +3167,7 @@ export class CodeRuleBridge {
     const next = findings.snapshot;
     const takes = takenFrom(root, discovery.root);
     const paths = discovery.worktrees.fresh.has(worktree)
-      ? this.#firstSightPaths(discovery, next)
+      ? this.#firstSightPaths(discovery, next, heldByGitAtFirstSight(root, findings))
       : changedPaths(this.#worktreeView.snapshot(worktree), next);
     for (const path of new Set([...paths.filter(takes).map(path => inWorktree(worktree, path)), ...kept])) {
       const before = this.#observedSource(path);
@@ -3165,15 +3180,17 @@ export class CodeRuleBridge {
 
   /**
    * The sources of a worktree new to the session that its first walk may say something of: those stamped since the
-   * session opened, which may be its writes, and the `.gitignore` files, whose rules it remembers. Every other is a
-   * baseline the snapshot holds as it is; a source Git lists as changed is read for its text (`#readTakenTexts`).
+   * session opened, which may be its writes, but those the walk's listings say hold Git's own text (`heldByGit`), and
+   * the `.gitignore` files, whose rules it remembers. Every other is a baseline the snapshot holds as it is; a source
+   * Git lists as changed is read for its text (`#readTakenTexts`). Every file of a worktree Git added while the session
+   * ran is stamped since it opened, and each one taken is judged on the daemon's thread as the take is applied.
    */
-  #firstSightPaths(discovery: SourceDiscovery, snapshot: WorktreeSnapshot): string[] {
-    const paths: string[] = [];
+  #firstSightPaths(discovery: SourceDiscovery, snapshot: WorktreeSnapshot, heldByGit: (path: string, source: ObservedSource) => boolean): string[] {
     const ignoreFiles = this.#onIgnoreRulesChanged !== undefined;
-    for (const [path, source] of snapshot.sources) {
-      if ((source.modifiedAt ?? -Infinity) >= discovery.startedAt || (ignoreFiles && basename(path) === GITIGNORE)) paths.push(path);
-    }
+    const taken = (path: string, source: ObservedSource): boolean => (ignoreFiles && basename(path) === GITIGNORE)
+      || ((source.modifiedAt ?? -Infinity) >= discovery.startedAt && !heldByGit(path, source));
+    const paths: string[] = [];
+    for (const [path, source] of snapshot.sources) if (taken(path, source)) paths.push(path);
     return paths;
   }
 

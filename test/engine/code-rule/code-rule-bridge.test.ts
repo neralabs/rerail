@@ -5178,6 +5178,36 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
+  // Judged without Git, each file of such a worktree was still taken as a change, and each change is judged on the
+  // daemon's thread as the take is applied, its checkout asked once (`sourceRoot`): with eleven worktrees of 100,000
+  // files each, two sessions' first sights took 1,100,033 files each and held that thread for minutes, and every hook
+  // gave up waiting for the daemon. The walk asks for a checkout only at a `.git` entry it passes.
+  it("takes none of the files of a worktree it first sees whose Git lists no file as changed", async () => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    const asked: string[] = [];
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      sourceRoot: path => {
+        asked.push(resolve(root, path));
+        return roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root;
+      },
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0 });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const place = join(await workspace(), "w");
+    git(root, "worktree", "add", "--quiet", place, "other");
+    const worktree = await realpath(place);
+    roots.push(worktree);
+    asked.length = 0;
+    await shellInWorktree(bridge, () => undefined);
+    expect(asked.filter(path => path.startsWith(`${join(worktree, "src")}${sep}`))).toEqual([]);
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
   it("records a file a command added to a worktree before its first walk, which Git lists as untracked", async () => {
     const root = await twoBranches();
     const roots: string[] = [];
