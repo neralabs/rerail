@@ -126,6 +126,8 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_RULE_ORDER",
     // Guests' copies kept unfolded (`combining::FoldOwn`).
     "RERAIL_SHOWN_COPIES",
+    // A narrow copy as its original less the annotations' change (decision 0575), `=off` to derive every copy again.
+    "RERAIL_NARROW_DIFF",
 ];
 
 pub mod phase0;
@@ -12542,7 +12544,9 @@ Hit(n) :- e(n).
         let git = |args: &[&str]| assert!(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(work.path()).args(args).output().unwrap().status.success(), "git {args:?}");
         git(&["init", "-q"]);
         make(work.path());
-        git(&["add", "-A"]);
+        // Each file by name (a shell may refuse `add -A`), but those under `.git`, which no commit holds.
+        let named: Vec<&str> = listed.iter().copied().chain(skipped.iter().map(String::as_str)).filter(|p| !p.split('/').any(|c| c == ".git")).collect();
+        git(&[&["add", "--"][..], &named].concat());
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "every directory committed"]);
         assert_eq!(files(work.path()), listed, "Git's listing");
         let site = tempfile::tempdir().unwrap();
