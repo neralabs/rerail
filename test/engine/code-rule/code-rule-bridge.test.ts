@@ -5780,6 +5780,55 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(recordedIn(root, worktree, auditGeneratedEdits.mock.calls.map(([, batch]) => batch))).toEqual([["a.py", FIRST_SIGHT]]);
   });
 
+  // Each start of the walk the sessions of a repository share lists the worktrees again for every session watching, so
+  // Git can stop listing a worktree, and list another one at its path, while the evaluator weighs a change a walk found
+  // in it: when the evaluator then fails, what the session saw of the removed worktree is not put back, and the walk
+  // after takes the new one as a first sight.
+  it("takes as a first sight a worktree Git listed again at its path while the evaluator weighed a walk's change there, then failed", async () => {
+    const root = await twoBranches();
+    git(root, "branch", "third", "main");
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const file = join(worktree, "src", "a.py");
+    const walks = new WorktreeWalks({ gapMs: 0 });
+    const other = createBridge(root, { ...auditor(async (_sessionId, batch) => response(batch)), ...extra }, { worktreeWalks: walks });
+    const listing: { synced?: PromiseWithResolvers<void> } = {};
+    const worktreeRoots = () => {
+      listing.synced?.resolve();
+      return roots;
+    };
+    const turns: Array<Promise<unknown>> = [];
+    /** Starts `turn`, and waits until this session has listed the worktrees as `roots` holds them. */
+    const listedBy = async (turn: () => Promise<unknown>): Promise<void> => {
+      listing.synced = Promise.withResolvers<void>();
+      turns.push(turn());
+      await listing.synced.promise;
+    };
+    const batches: CodeRuleEditBatch[] = [];
+    const auditGeneratedEdits = async (_sessionId: string, batch: CodeRuleEditBatch) => {
+      batches.push(batch);
+      if (turns.length > 0 || !batch.edits.some(edit => edit.path === repositoryPath(root, file))) return response(batch);
+      // This session's folder walk lets go of the worktree as it begins; the walk the other session asks for lists the
+      // new one as it begins.
+      roots.length = 0;
+      await listedBy(() => bridge.checkpoint("turn"));
+      await addedAgain(root, worktree);
+      roots.push(worktree);
+      await listedBy(() => other.checkpoint("turn"));
+      throw new Error("evaluator unavailable");
+    };
+    const bridge = createBridge(root, { ...auditor(auditGeneratedEdits), ...extra, worktreeRoots }, { worktreeWalks: walks });
+    for (const [session, sessionId] of [[bridge, "session-1"], [other, "session-2"]] as const) {
+      await session.openWorkspace(sessionId);
+      await session.checkpoint("turn");
+      await session.settleWorktreeWalk();
+    }
+    await shell(bridge, () => writeFile(file, "old\nviolation\nmine\n"));
+    await bridge.settleWorktreeWalk();
+    await Promise.all(turns);
+    await bridge.settleWorktreeWalk();
+    expect(recordedIn(root, worktree, batches)).toEqual([["a.py", "none"], ["a.py", FIRST_SIGHT]]);
+  });
+
   // A checkout inside the session folder can be deleted, or a file can take its folder's place: whichever way a kept
   // checkout's `.git` entry went, the walks after read no `HEAD` of it.
   it("reads no `HEAD` of a checkout it kept once that checkout's `.git` entry is gone", async () => {
