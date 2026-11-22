@@ -21,6 +21,8 @@ pub mod scope;
 pub mod syntax;
 // The language pack interface the core asks (generated from the traits above: tools/cratify/packgen.py).
 pub mod pack;
+// A workspace's project context, as a family keeps it (ECMAScript's manifests).
+pub mod project;
 pub mod value;
 // cratify: `vue` is rerail-lang-ecma's (it mounts it)
 

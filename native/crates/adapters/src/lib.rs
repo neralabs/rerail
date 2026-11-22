@@ -73,7 +73,7 @@ pub mod code_rule_dsl {
         pub use rerail_facts::code_rule_dsl::logic::strings;
     }
     /// What of the matcher the adapters name: the file context names resolve in, the argument slots, a clause's
-    /// steps. The matcher (rerail-classic) re-exports them.
+    /// steps. The matcher (rerail-matcher) re-exports them.
     #[path = "matcher"]
     pub mod matcher {
         pub mod arguments;

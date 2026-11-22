@@ -715,3 +715,27 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     `rerail-rules`, `rerail-matcher` and `rerail-classic` in full, 206 pass; `rerail-tests-compile` and
     `rerail-tests-matcher` in full and the admission's tests of `rerail-tests-logic`, 1391 pass (four are pack
     data tests).
+- **Step 6d** (2026-11-21): the packs off the workspace. After 6c, classic holds the workspace alone (`workspace`,
+  `placement`, `rule_api`, `stats`, `facts::facts_a`, the P table, `git_ignore`): it is the plan's
+  `rerail-workspace`, under its old name. The transducer, `rerail-device-metal` and the six language packs
+  depended on it; they depend on `rerail-rules` now (`cargo tree`: none reaches classic, dev dependencies
+  included), so an edit to the workspace rebuilds none of them. Boot and the test crates stay above it.
+  - Their facades re-exported every module of classic; they re-export rules' now, and none of the workspace's.
+    Their sources read two of the workspace's:
+    - `findings` (117 lines: finding identity and the SQL shape; lang-python mounts S's async reference test in
+      it) reads nothing of the workspace: it is rules' now.
+    - ECMAScript's project context (`workspace::ingest::ecma`, lang-ecma's) implemented the workspace's
+      `ProjectState` and `RepositoryContext` and read the `WorkspaceState`. The traits, their registries, the
+      wire file and `path_is_below` are `language::adapter::project` now (rerail-adapters, 0.2k lines), which
+      `workspace::ingest` re-exports. What the context read of the state is a view there, `ProjectFiles` (whether
+      a rule reads a server graph, the files below a directory, one file's input), which the workspace
+      implements: `refresh` takes `&dyn ProjectFiles`.
+  - The transducer's `residency.rs` and `transducer.rs` re-exported classic's admission and semantic facts: they
+    name rules' now. The packs' facades no longer copy `code_rule_dsl/mod.rs`'s `rule_api` imports.
+  - The cratify comments that 6a–6c left naming classic (the anchors, `language::adapter`, the budget's
+    callers) name the crates that mount them now.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac, and classic's with
+    `code-rule-profile,p-anchor-corpus,test-hooks`; clippy clean on the changed crates): on a Linux host,
+    `rerail-tests-matcher` (the 74 project-context tests among them), `rerail-lang-ecma`, `rerail-adapters`,
+    `rerail-rules`, `rerail-classic` in full and lang-python's findings tests (S's 18 async reference tests),
+    855 pass.

@@ -1,9 +1,9 @@
 pub mod analysis;
 pub mod anchors;
-// cratify: `p_anchors` is rerail-classic's (it mounts it: it reads the model and the admission's database), with
+// cratify: `p_anchors` is rerail-rules' (it mounts it: it reads the model and the admission's database), with
 // its corpus's re-exports
 pub use rerail_adapters::code_rule_dsl::matcher::arguments;
-// cratify: `d_anchors` is rerail-classic's (it mounts it: it reads the model and the admission's database)
+// cratify: `d_anchors` is rerail-rules' (it mounts it: it reads the model and the admission's database)
 // cratify: `arguments_sql` is rerail-lang-sql's (it mounts it)
 pub mod binding;
 pub mod binds;

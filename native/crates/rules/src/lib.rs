@@ -24,6 +24,7 @@ pub mod code_rule_dsl {
     pub mod compile;
     pub mod crypto;
     pub mod eval;
+    pub mod findings;
     pub mod hooks;
     pub mod logic {
         pub mod front {

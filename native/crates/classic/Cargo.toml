@@ -5,7 +5,7 @@ name = "rerail-classic"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Classic (W, main's engine before the final shape): the matcher, scopes, values, suppressions, demand and the workspace's model."
+description = "Classic (W, main's engine before the final shape): its workspace, over the code rules (rerail-rules), the matcher (rerail-matcher) and the adapters (rerail-adapters)."
 
 [features]
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-facts/default", "rerail-lang/default", "rerail-adapters/default", "rerail-matcher/default", "rerail-rules/default"]
