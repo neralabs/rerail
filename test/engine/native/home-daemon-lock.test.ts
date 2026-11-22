@@ -40,12 +40,26 @@ vi.mock("../../../src/engine/file-replace.js", async importActual => {
   };
 });
 
+/** Whether the file system gives no id for a daemon's lock file, as a file system with no file ids gives none. */
+const fileIds = vi.hoisted(() => ({ hidden: false }));
+
+vi.mock("node:fs", async importActual => {
+  const real = await importActual<typeof import("node:fs")>();
+  // The cast keeps statSync's overloads: the wrapper passes every argument on. Node gives such a file the id 0.
+  const statSync = ((...args: Parameters<typeof real.statSync>) => {
+    const found = real.statSync(...args);
+    return fileIds.hidden && String(args[0]).endsWith("daemon.lock") ? Object.assign(found!, { ino: 0n }) : found;
+  }) as typeof real.statSync;
+  return { ...real, statSync };
+});
+
 const children: ChildProcess[] = [];
 const leases: HomeDaemonLease[] = [];
 const homes: string[] = [];
 
 afterEach(async () => {
   writes.failing = 0;
+  fileIds.hidden = false;
   vi.restoreAllMocks();
   for (const lease of leases.splice(0)) lease.release();
   for (const child of children.splice(0)) {
@@ -131,7 +145,7 @@ describe("the daemon lock of a Rerail home", () => {
   });
 
   // The record said `starting` for the daemon's whole life when its rewrite at the end of the start failed: the rewrite
-  // was made only after a read of the record, which can fail, and a failed write was neither tried again nor logged.
+  // was made only after a read of the record, which can fail, and a failed write was not logged.
   it("records its start as over though its record does not read", async () => {
     const home = await temporaryHome();
     const lease = await holdHomeDaemonLock(home);
@@ -141,25 +155,35 @@ describe("the daemon lock of a Rerail home", () => {
     expect(homeDaemonHolder(home)).toBe(process.pid);
   });
 
-  it("records its start as over at a second try when the first write fails, and logs nothing", async () => {
+  // Where the file system gives no file ids, nothing tells whether the home at the path is still this daemon's: the end
+  // of its start wrote over the record of another daemon in its start, in a home made again at that path.
+  it.each(["from the lock on", "once the lock is taken"])("where the file system gives no file id %s, records its start as over in its own record or one that does not read, and leaves another process's", async when => {
+    const home = await temporaryHome();
+    fileIds.hidden = when === "from the lock on";
+    const lease = await holdHomeDaemonLock(home);
+    leases.push(lease!);
+    fileIds.hidden = true;
+    expect(lease!.holdsHome()).toBe(true);
+    lease!.started();
+    expect(homeDaemonStarting(home)).toBeUndefined();
+    expect(homeDaemonHolder(home)).toBe(process.pid);
+    const record = join(home, LOCKS_DIR, "daemon.json");
+    const other = { pid: process.pid + 1, logOffset: 0 };
+    await writeFile(record, JSON.stringify({ ...other, starting: true }));
+    lease!.started();
+    expect(homeDaemonStarting(home)).toEqual(other);
+    await writeFile(record, "not a record");
+    lease!.started();
+    expect(homeDaemonHolder(home)).toBe(process.pid);
+  });
+
+  // The daemon calls it once it serves: a throw there would end a daemon that serves.
+  it("says in its log that it could not record its start as over when its write fails, and returns", async () => {
     const home = await temporaryHome();
     const lease = await holdHomeDaemonLock(home);
     leases.push(lease!);
     const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
     writes.failing = 1;
-    lease!.started();
-    expect(homeDaemonHolder(home)).toBe(process.pid);
-    expect(homeDaemonStarting(home)).toBeUndefined();
-    expect(log).not.toHaveBeenCalled();
-  });
-
-  // The daemon calls it once it serves: a throw there would end a daemon that serves.
-  it("says in its log that it could not record its start as over when both writes fail, and returns", async () => {
-    const home = await temporaryHome();
-    const lease = await holdHomeDaemonLock(home);
-    leases.push(lease!);
-    const log = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-    writes.failing = 2;
     expect(() => lease!.started()).not.toThrow();
     expect(log.mock.calls).toEqual([[`rerail daemon: could not record in ${join(home, LOCKS_DIR, "daemon.json")} that this daemon's start is over\n`]]);
   });

@@ -161,14 +161,13 @@ export interface TwoCommandsSeen {
 
 /**
  * `rerail setup --answer start`, then `rerail daemon start`, as a script runs them, while the daemon set-up starts is
- * held in its start: until set-up says it waits for it, or until set-up has ended; then until the start says it waits,
- * or has ended.
+ * held in its start: until set-up has ended, after its 15 s wait for the daemon it launched; then until the start says
+ * it waits, or has ended.
  */
 export async function setupThenStart(place: StartingDaemonHome): Promise<TwoCommandsSeen> {
   const setup = place.run(["setup", "--answer", "start"]);
   await place.held();
-  await until(() => setup.ended() || WAITS_BESIDE_STARTING.test(setup.stderr()), "set-up waiting, or ending");
-  if (!setup.ended()) place.release();
+  await until(() => setup.ended(), "set-up ending");
   const setupRan = await setup.done;
   const startBesideHeld = !place.released();
   const start = place.run(["daemon", "start"]);

@@ -1091,8 +1091,8 @@ async function answeredLaunch(launched: LaunchedDaemon, records: LaunchRecords, 
 }
 
 /**
- * Waits for the daemon `coming` names, still in its start, telling `control.onWaiting` first when another process
- * launched it, as a start waits for the daemon it launched (`readyDaemon`): until it answers, until it exits, which
+ * Waits for the daemon `coming` names, still in its start, as a start waits for the daemon it launched (`readyDaemon`),
+ * telling `control.onWaiting` first only when another process launched it: until it answers, until it exits, which
  * fails the start with its log and launches nothing more, or until `coming.deadline`, where it fails as
  * {@link unansweredLaunch} says and is left running.
  */

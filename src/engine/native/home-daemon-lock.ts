@@ -46,7 +46,7 @@ export interface HomeDaemonLease {
   /**
    * Records that the daemon's start is over: it has written daemon.json and answers. Until then its record beside the
    * lock says it is starting, so a start that finds it waits for it ({@link homeDaemonStarting}). A record it cannot
-   * write at a second try is said in the daemon's log, and the daemon goes on.
+   * write is said in the daemon's log, and the daemon goes on.
    */
   started(): void;
   /** Gives the lock up before process exit, once the daemon has closed. */
@@ -67,6 +67,22 @@ function fileAt(path: string): Pick<BigIntStats, "dev" | "ino"> | "none" | undef
     const code = (error as NodeJS.ErrnoException).code;
     return code === "ENOENT" || code === "ENOTDIR" ? "none" : undefined;
   }
+}
+
+/**
+ * Whether `locked`, the file this process locked at `path`, is still the one there; undefined where the file system
+ * cannot tell, at the lock or now ({@link fileAt}).
+ */
+function lockedFileAt(path: string, locked: ReturnType<typeof fileAt>): boolean | undefined {
+  if (locked === undefined || locked === "none") return undefined;
+  const now = fileAt(path);
+  return now === undefined ? undefined : now !== "none" && now.dev === locked.dev && now.ino === locked.ino;
+}
+
+/** Whether `home`'s record reads and names a process other than this one, as a daemon of a home made again there. */
+function recordNamesAnother(home: string): boolean {
+  const pid = homeDaemonHolder(home);
+  return pid !== undefined && pid !== process.pid;
 }
 
 /** Module state keeps the native handle reachable: a collected handle would close, and so release, the lock. */
@@ -151,17 +167,18 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
   held = taken;
   // The file this process locked, read by path just after: only a home moved in that instant could give another.
   const locked = fileAt(path);
-  const lease: HomeDaemonLease = {
+  return {
     holdsHome() {
-      if (locked === undefined || locked === "none") return true;
-      const now = fileAt(path);
-      return now === undefined || (now !== "none" && now.dev === locked.dev && now.ino === locked.ino);
+      return lockedFileAt(path, locked) ?? true;
     },
     started() {
       // Whether this process still holds the home decides, not a read of the record, which can fail: a home moved and
-      // made again at its path holds another daemon's record. A failed write gets one more try, then a line in the log.
-      if (held !== taken || !lease.holdsHome()) return;
-      if (recordHolder(home, false) || recordHolder(home, false)) return;
+      // made again at its path holds another daemon's record. Only where the file system cannot tell does the record
+      // decide, when it reads and names another process.
+      if (held !== taken || !(lockedFileAt(path, locked) ?? !recordNamesAnother(home))) return;
+      // One write: replaceFileSync already tries a held rename again for 2 s on Windows, and elsewhere a second write
+      // fails as the first did.
+      if (recordHolder(home, false)) return;
       process.stderr.write(`rerail daemon: could not record in ${homeDaemonHolderFile(home)} that this daemon's start is over\n`);
     },
     release() {
@@ -178,7 +195,6 @@ export async function holdHomeDaemonLock(home: string): Promise<HomeDaemonLease 
       }
     },
   };
-  return lease;
 }
 
 /**
