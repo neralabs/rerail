@@ -2718,7 +2718,7 @@ fn run_observed_within(
         let by_rows: BTreeSet<&str> = reads.iter().copied().filter(|r| phased.contains_key(*r)).collect();
         if by_rows.is_empty() { digest } else { memo::with_rows(digest, by_rows.iter().map(|r| (*r, &phased[*r]))) }
     };
-    let memo_local = memo::program_digest(&local_v);
+    let memo_local = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the file-local program's digest".into()); memo::program_digest(&local_v) };
     let memo_program = {
         let digest = memo_local;
         let reads_options = local_v.rules().flat_map(|r| r.reads()).any(|a| crate::code_rule_dsl::typing::file_local::option_input(local_v.rel_name(a.rel())));
@@ -2754,9 +2754,9 @@ fn run_observed_within(
     // The tree's projection: `core.rerail`'s for a program that includes it, T's for one that declares its base relations
     // itself (decision 0046); relations no rule reads are not made. Made before the memo's identities: an entry's
     // rows are its relations' only under the projection they were made under (`Projection::rows_digest`).
-    let read: BTreeSet<String> = prepared_placed.v.rules().flat_map(|r| r.reads().map(|a| prepared_placed.v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect();
-    let projection = super::text_demand::projection(source, read.clone(), matchers);
-    let base_rows = projection.rows_digest();
+    let read: BTreeSet<String> = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the relations read".into()); prepared_placed.v.rules().flat_map(|r| r.reads().map(|a| prepared_placed.v.rel_name(a.rel()).to_owned()).collect::<Vec<_>>()).collect() };
+    let projection = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the tree's projection".into()); super::text_demand::projection(source, read.clone(), matchers) };
+    let base_rows = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the projection's digest".into()); projection.rows_digest() };
     let memo_ids = {
         let rels: BTreeSet<String> = split.exports.iter().cloned().chain(local_v.outputs().map(|o| local_v.text(o).to_owned())).collect();
         // The strata are the prepared program's, for its file-local part: made once, kept with it.
@@ -2769,20 +2769,21 @@ fn run_observed_within(
             }
             None => {
                 crate::code_rule_dsl::prof::count(if shared_strata.get().is_some() { "corpus.memo_strata_other_part" } else { "corpus.memo_strata_made" }, 1);
-                made = memo::strata(&local_placed, &rels).map_err(Error::Plan)?;
+                made = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the memo's strata, made".into()); memo::strata(&local_placed, &rels).map_err(Error::Plan)? };
                 let _ = shared_strata.set((memo_local, made.clone()));
                 &made
             }
         };
         debug_assert!(phased.keys().all(|r| local_v.rel(r).is_none_or(|id| local_v.heads(id).next().is_none())), "an earlier phase's export the file-local part derives");
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "the memo's identities".into());
         strata.identities(options, &phased, &base_rows)
     };
-    let memo_space = memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref());
+    let memo_space = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the memo's space".into()); memo::space_digest(&memo_ids, &local_placed, phases::current().as_deref()) };
     // The file-local outputs, whose memo entries hold lines (recorded for a SQL session below).
     let local_outputs: Vec<String> = local_f.outputs().map(str::to_owned).collect();
     // `declared_ret` rows come from outside the memo's key (`corpus::typing`): a program whose rules still read them
     // after pruning is not memoised (a round of `world` does not read them).
-    let reads_declared = source.rules().any(|r| r.body().filter_map(|l| l.atom()).any(|a| source.rel_name(a.rel()) == "declared_ret"));
+    let reads_declared = { let _s = crate::code_rule_dsl::logic::profile::span(|| "whether declared_ret is read".into()); source.rules().any(|r| r.body().filter_map(|l| l.atom()).any(|a| source.rel_name(a.rel()) == "declared_ret")) };
     // The memo: the session's, in memory, or the tape cache's (decision 0052).
     let memo = match (&session, &tapes) {
         (Some(s), _) => Some(memo::Memo::Held(&s.memo)),

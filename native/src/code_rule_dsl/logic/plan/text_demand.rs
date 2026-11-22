@@ -17,19 +17,21 @@ pub type Matchers = [(String, String, Vec<String>)];
 /// The projection of the program `v`, reading `reads`, with its long text and anchors (`projection_of`, then
 /// `Projection::with_long_text_parts`).
 pub fn projection(v: &Version, reads: BTreeSet<String>, matchers: &Matchers) -> Projection {
-    let demand = text_kind_demand(v, matchers);
-    let anchors = if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|x| x == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(v, &v.settings().expect("a version's settings are read"), matchers) };
-    projection_of(v, reads).with_long_text_parts(demand, anchors)
+    let demand = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the text kinds demanded".into()); text_kind_demand(v, matchers) };
+    let anchors = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the node anchors".into()); if std::env::var("RERAIL_NODE_ANCHORS").is_ok_and(|x| x == "off") { Err("RERAIL_NODE_ANCHORS=off".into()) } else { node_anchors(v, &v.settings().expect("a version's settings are read"), matchers) } };
+    let p = projection_of(v, reads);
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the long text's parts".into());
+    p.with_long_text_parts(demand, anchors)
 }
 
 /// The projection of the program `v` reading `reads`, before its long text and anchors: `core.rerail`'s shape for a
 /// program that includes `core.rerail` (declares every relation it declares as an input), T's for one that declares its
 /// base relations itself (T's programs, the converter's, O74).
 pub fn projection_of(v: &Version, reads: BTreeSet<String>) -> Projection {
-    let (spans, token_text) = span_text_demand(v);
+    let (spans, token_text) = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the spans whose text is read".into()); span_text_demand(v) };
     let derived: BTreeSet<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
     let outputs: BTreeSet<String> = v.output_names().into_iter().collect();
-    crate::code_rule_dsl::logic::profile::projection_plan_of(|| users(v), &outputs, &reads);
+    { let _s = crate::code_rule_dsl::logic::profile::span(|| "the projection's plan, for the profile".into()); crate::code_rule_dsl::logic::profile::projection_plan_of(|| users(v), &outputs, &reads); }
     let core = crate::code_rule_dsl::facts::core::core_names();
     let core_shape = !core.is_empty() && core.iter().all(|r| v.declares(r));
     let partial: BTreeSet<String> = v
@@ -45,6 +47,7 @@ pub fn projection_of(v: &Version, reads: BTreeSet<String>) -> Projection {
     let rx_spans = v.rx_spans().expect("a version's spans are read");
     let ast_patterns = v.ast_patterns().expect("a version's patterns are read");
     let parts = ProjectionParts { spans, token_text, core_shape, partial, error_triple, derived, rx_spans: rx_spans.into_iter().collect(), ast_patterns: ast_patterns.into_iter().collect() };
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "the projection, of its parts".into());
     Projection::of_parts(parts, reads)
 }
 
