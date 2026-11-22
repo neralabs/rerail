@@ -249,10 +249,10 @@ without hooks or network.
     processor), in the Git folder its `.git` named when Rerail read it. Another `runGit` call that would look into
     submodules runs as it is, Git looking into them with their own drivers; Rerail makes none. Rerail
     first reads that folder in process as Git does before it starts a status there (a `HEAD` Git takes, `objects`
-    and `refs` in its common directory): a `.git` that names no repository, or a `.git` file that cannot be opened or
-    read, holds more than Git's 1 MiB or holds no path, fails the diff with Git's message, as Git's own diff fails, and
-    one that is neither a folder nor a regular file is a submodule not checked out, as Git takes it, and is never
-    opened, as Git opens none.
+    and `refs` in its common directory): a `.git` that names no repository, or a `.git` file that holds more than
+    Git's 1 MiB or no path, fails the diff with Git's message, as Git's own diff fails; one Git cannot open fails
+    Rerail's diff in Git, before Rerail reads it, as it fails Git's own; and one that is neither a folder nor a regular
+    file is a submodule not checked out, as Git takes it, and is never opened, as Git opens none.
     When the listing shows no config of the repository's own, Rerail reads the folder again in process and lists that
     one config file with Git (`git config --list --file`): a repository whose config file is absent or holds no entry
     to Git is asked, and any other submodule is listed as changed with no Git started in it, so a Git folder that held

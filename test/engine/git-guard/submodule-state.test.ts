@@ -9,7 +9,6 @@ import {
   definesNoDriver, nameDiff, readStatus, recordsNoSubmodule, submoduleChanged, UNASKED, worktreeGitFolder, worktreeIndex,
 } from "../../../src/engine/git-guard/submodule-state.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
-import { unopenable } from "../../support/platform/unopenable-file.js";
 
 vi.mock("node:fs", { spy: true });
 vi.mock("node:fs/promises", { spy: true });
@@ -116,18 +115,6 @@ describe("submoduleChanged", () => {
     const read = vi.mocked(readSync).mock.results.reduce((sum, result) => sum + (result.type === "return" ? result.value : 0), 0);
     expect([changed, read <= 1024 * 1024 + 1]).toEqual([{ status: 128, stdout: "", stderr: `fatal: too large to be a .git file: '${gitfile}'\n` }, true]);
   });
-
-  it("fails for a submodule whose `.git` file cannot be read, with Git's message", async () => {
-    const { linked } = repositories(await folder());
-    // The first read is the `.git` file's, after its stat and its open.
-    vi.mocked(readSync).mockImplementationOnce(() => {
-      throw Object.assign(new Error("EIO: i/o error, read"), { code: "EIO", syscall: "read" });
-    });
-
-    const changed = await submoduleChanged(linked, false, async () => await Promise.resolve(UNASKED), 1);
-
-    expect(changed).toEqual({ status: 128, stdout: "", stderr: `fatal: error reading ${join(linked, ".git")}\n` });
-  });
 });
 
 describe("worktreeIndex", () => {
@@ -145,19 +132,6 @@ describe("worktreeGitFolder", () => {
 
     expect(worktreeGitFolder(work, {})).toBeDefined();
     expect(worktreeGitFolder(work, { [name]: join(work, ".git") })).toBeUndefined();
-  });
-
-  it("leaves to Git a folder in a checkout whose own `.git` file cannot be opened, where Git's discovery fails", async () => {
-    const { work } = repositories(await folder());
-    const inner = join(work, "inner");
-    mkdirSync(inner);
-    writeFileSync(join(inner, ".git"), "gitdir: ../.git\n");
-    const giveBack = unopenable(join(inner, ".git"));
-    try {
-      expect([gitFinds(inner), worktreeGitFolder(inner, {})]).toEqual([false, undefined]);
-    } finally {
-      giveBack();
-    }
   });
 });
 
@@ -221,16 +195,6 @@ function repositories(root: string): { readonly work: string; readonly linked: s
   git("-C", work, "commit", "--quiet", "-m", "seed");
   git("-C", work, "worktree", "add", "--quiet", "--detach", linked);
   return { work, linked };
-}
-
-/** Whether the test's own Git finds a repository from `folder`. */
-function gitFinds(folder: string): boolean {
-  try {
-    execFileSync("git", ["-C", folder, "rev-parse", "--git-dir"], { stdio: "ignore" });
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 /** Makes each close of a file named `name` fail once the file is closed, as a close on a network share that went fails. */

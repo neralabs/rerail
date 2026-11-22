@@ -19,7 +19,6 @@ import {
 } from "node:fs";
 import { open } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { getSystemErrorMessage } from "node:util";
 import { lastValue, type ListedEntry } from "./filter-drivers.js";
 
 /** How a diff treats a submodule's worktree: Git's `--ignore-submodules` values. */
@@ -246,9 +245,9 @@ function namedPath(base: string, named: string): string {
 
 /**
  * What Git's discovery finds at the folder `at`, read in process: the Git folder its `.git` names; null where Git is
- * to be asked, for a `.git` that holds no repository (Git would look further up) or is a file Git cannot read as one,
- * which fails Git's discovery, or a folder that is a Git folder itself; else undefined, and Git looks in the folder
- * above.
+ * to be asked, for a `.git` that holds no repository (Git would look further up) or a file Git rejects as one, which
+ * fails Git's discovery, or a folder that is a Git folder itself; else undefined, and Git looks in the folder above. A
+ * `.git` file that cannot be opened is undefined too, though it fails Git's discovery: the Git the call starts fails so.
  */
 function discoveredAt(at: string): string | null | undefined {
   const gitFolder = submoduleGitFolder(at);
@@ -562,10 +561,10 @@ const MAX_GITFILE_BYTES = 1024 * 1024;
 /**
  * The Git folder of the submodule checked out at `folder`, as `is_submodule_modified` finds it: `.git` when it is a
  * folder, else the folder a `.git` file's `gitdir: <path>` names, relative to `folder`. Undefined when there is no
- * `.git`, it is neither a folder nor a regular file (a FIFO, a socket), or it went before it could be read: the
- * submodule is not checked out, as Git's diff takes it, which never opens it. How it failed for a `.git` file Git
- * cannot read as one (it cannot be opened or read, holds more than {@link MAX_GITFILE_BYTES}, no `gitdir:` or no path),
- * or a Git folder that holds no repository ({@link holdsRepository}), each of which fails Git's diff. Read once for each
+ * `.git`, it is neither a folder nor a regular file (a FIFO, a socket), which Git's diff never opens, or it went or
+ * cannot be opened or read ({@link gitfileText} says why): the submodule is not checked out, as Git's diff takes it.
+ * How it failed for a `.git` file Git cannot read as one (it holds more than {@link MAX_GITFILE_BYTES}, no `gitdir:` or
+ * no path), or a Git folder that holds no repository ({@link holdsRepository}), each of which fails Git's diff. Read once for each
  * question and never handed to Git as a file, so the guard's listing and the status after it open this one folder
  * whatever `.git` names by then.
  */
@@ -657,15 +656,14 @@ const READ_WITHOUT_WAITING = constants.O_RDONLY | (constants.O_NONBLOCK ?? 0);
 /**
  * The file at `path` opened to read, without waiting: a pipe a writer put there opens at once and, as no file, is not
  * read, so it holds no thread, where Git's own read of it would wait to the call's time limit. "absent" when there is
- * nothing at `path`, the error when it cannot be opened otherwise, else undefined when it is not a file.
+ * nothing at `path`, else undefined when it cannot be opened or is not a file.
  */
-function openedFile(path: string): number | "absent" | NodeJS.ErrnoException | undefined {
+function openedFile(path: string): number | "absent" | undefined {
   let file: number;
   try {
     file = openSync(path, READ_WITHOUT_WAITING);
   } catch (error) {
-    const failure = error as NodeJS.ErrnoException;
-    return failure.code === "ENOENT" ? "absent" : failure;
+    return (error as NodeJS.ErrnoException).code === "ENOENT" ? "absent" : undefined;
   }
   // Not a file: it is closed, and a close that fails changes nothing.
   return isFile(file) ? file : readClosing(file, () => undefined);
@@ -750,8 +748,8 @@ function linkOf(path: string): string | undefined {
 /**
  * The Git folder the `.git` file `dotGit` (`stats`) names from `folder` ({@link namedFolder}); undefined when it is no
  * regular file, which Git skips without opening it, or is none by the read ({@link gitfileText}), and how it failed
- * for one Git cannot read as a `.git` file (it cannot be opened or read, is too large, holds no `gitdir:` or no path),
- * with Git's message (`read_gitfile_error_die`), or that names a folder that cannot be read.
+ * for one Git cannot read as a `.git` file (too large, no `gitdir:` or no path), with Git's message
+ * (`read_gitfile_error_die`), or that names a folder that cannot be read.
  */
 function namedGitFolder(folder: string, dotGit: string, stats: Stats): string | GitFailure | undefined {
   if (!stats.isFile()) return undefined;
@@ -773,16 +771,16 @@ function statOf(path: string): Stats | undefined {
 
 /**
  * The text of the `.git` file at `path`, read from the file opened ({@link openedFile}) to at most
- * {@link MAX_GITFILE_BYTES}, so a file put in its place after its stat is not read past that. Undefined when it went or
- * is no regular file by then, as Git's stat would find it; how Git's diff fails when it cannot be opened or read, or
- * holds more.
+ * {@link MAX_GITFILE_BYTES}, so a file put in its place after its stat is not read past that; how Git's diff fails when
+ * it holds more. Undefined when it went, is no regular file by then, or cannot be opened or read. Git's diff opens a
+ * submodule's `.git` to find its commit before it asks the submodule, and a `.git` it cannot open or read fails that
+ * diff, Rerail's included, with Git's message; so Rerail meets one only where Git's diff never opens it (a submodule
+ * marked assume-unchanged), and Git's diff answers without that submodule, as Rerail's does.
  */
 function gitfileText(path: string): string | GitFailure | undefined {
   const file = openedFile(path);
-  if (typeof file === "object") return fatal(`error opening '${path}': ${getSystemErrorMessage(file.errno ?? 0)}`);
   if (typeof file !== "number") return undefined;
-  const text = readClosing(file, opened => readWithin(opened, MAX_GITFILE_BYTES)?.toString("utf8") ?? fatal(`too large to be a .git file: '${path}'`));
-  return text ?? fatal(`error reading ${path}`);
+  return readClosing(file, opened => readWithin(opened, MAX_GITFILE_BYTES)?.toString("utf8") ?? fatal(`too large to be a .git file: '${path}'`));
 }
 
 /** The text of the file at `path`, opened without waiting ({@link openedFile}); undefined when it is no file that can be read. */

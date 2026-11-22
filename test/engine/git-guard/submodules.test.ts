@@ -497,32 +497,38 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect(answers.map(answer => answer.status === 0)).toEqual([true, true]);
   }, 60_000);
 
-  // Each row: what the `.git` file is, how it is made (and given back), and Git's message for it, `%s` its path.
-  it.each<[string, (work: string, gitfile: string, named: string) => Promise<() => void>, string]>([
-    ["holds more than 1 MiB", async (_work, gitfile, named) => await written(gitfile, named.padEnd(1024 * 1024 + 1, "\n")), String.raw`too large to be a \.git file: '%s'`],
-    ["holds no `gitdir: `", async (_work, gitfile) => await written(gitfile, "nothing\n"), "invalid gitfile format: %s"],
-    ["holds no path", async (_work, gitfile) => await written(gitfile, "gitdir: \n"), "no path in gitfile: %s"],
-    ["cannot be opened", async (_work, gitfile, named) => {
-      await writeFile(gitfile, `${named}\n`);
-      return unopenable(gitfile);
-    }, "error opening '%s': .+"],
-    // Git's diff then compares no submodule's commit, which opens its `.git` too, before it asks the submodule.
-    ["cannot be opened, the submodule marked unchanged in the index", async (work, gitfile, named) => {
-      git(work, "update-index", "--assume-unchanged", "sub");
-      await writeFile(gitfile, `${named}\n`);
-      return unopenable(gitfile);
-    }, "error opening '%s': .+"],
-  ])("and fail a diff where a submodule's `.git` file %s, with Git's message, as Git's own diff fails", async (_what, make, said) => {
+  // Each row: what the `.git` file is, its text from the line that named the Git folder, and Git's message, `%s` its path.
+  it.each<[string, (named: string) => string, string]>([
+    ["holds more than 1 MiB", named => named.padEnd(1024 * 1024 + 1, "\n"), String.raw`too large to be a \.git file: '%s'`],
+    ["holds no `gitdir: `", () => "nothing\n", "invalid gitfile format: %s"],
+    ["holds no path", () => "gitdir: \n", "no path in gitfile: %s"],
+  ])("and fail a diff where a submodule's `.git` file %s, with Git's message, as Git's own diff fails", async (_what, text, said) => {
     const root = await folder();
     const { work, gitfile, named } = await submoduleGitfile(root);
-    const giveBack = await make(work, gitfile, named);
+    await writeFile(gitfile, text(named));
+
+    const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
+    const gits = [gitStderr(work, AUDIT_DIFF), gitStderr(work, SCAN_DIFF)];
+
+    const message = new RegExp(`^fatal: ${said.replace("%s", String.raw`(?:.+[\\/])?sub[\\/]\.git`)}\n$`, "u");
+    expect([...gits, ...answers.map(answer => answer.stderr)]).toEqual(Array.from({ length: 4 }, () => expect.stringMatching(message)));
+    expect(answers.map(answer => [answer.status === 0, answer.stdout])).toEqual([[false, ""], [false, ""]]);
+  }, 60_000);
+
+  // Git's diff opens a submodule's `.git` to find its commit before it asks the submodule, so Rerail's own diff fails
+  // there first, with Git's message; one marked assume-unchanged is not opened, and Git's diff answers without it.
+  it.each([false, true])("and answer as Git's own diff where a submodule's `.git` file cannot be opened (marked assume-unchanged: %s)", async marked => {
+    const root = await folder();
+    const { work, gitfile, named } = await submoduleGitfile(root);
+    await writeFile(gitfile, `${named}\n`);
+    if (marked) git(work, "update-index", "--assume-unchanged", "sub");
+    const giveBack = unopenable(gitfile);
     try {
       const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
       const gits = [gitStderr(work, AUDIT_DIFF), gitStderr(work, SCAN_DIFF)];
 
-      const message = new RegExp(`^fatal: ${said.replace("%s", String.raw`(?:.+[\\/])?sub[\\/]\.git`)}\n$`, "u");
-      expect([...gits, ...answers.map(answer => answer.stderr)]).toEqual(Array.from({ length: 4 }, () => expect.stringMatching(message)));
-      expect(answers.map(answer => [answer.status === 0, answer.stdout])).toEqual([[false, ""], [false, ""]]);
+      expect(answers.map(answer => answer.status === 0 ? undefined : answer.stderr)).toEqual(gits);
+      expect(gits.map(stderr => stderr === undefined)).toEqual([marked, marked]);
     } finally {
       giveBack();
     }
@@ -709,12 +715,6 @@ async function submoduleGitfile(root: string): Promise<{ work: string; gitfile: 
   const named = readFileSync(gitfile, "utf8").trimEnd();
   unlinkSync(gitfile);
   return { work, gitfile, named };
-}
-
-/** Makes `path` hold `text`; what gives it back does nothing. */
-async function written(path: string, text: string): Promise<() => void> {
-  await writeFile(path, text);
-  return () => undefined;
 }
 
 /** What the test's own Git prints to its error stream for `git <args>` in `cwd`; undefined when it answers. */
