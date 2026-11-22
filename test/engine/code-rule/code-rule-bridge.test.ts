@@ -5579,6 +5579,23 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect((await gitReads(bothWalks)).heads).toBe(1);
   });
 
+  // Git can stop listing a worktree whose folder and `.git` entry stay, as when the auditor no longer runs there: the
+  // session lets go of its `HEAD` with its files, so its walks no longer read it.
+  it("reads no `HEAD` of a worktree Git no longer lists whose folder and `.git` entry stay", async () => {
+    const root = await twoBranches();
+    const { roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge } = await opened(root, extra);
+    const bothWalks = async () => {
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+    };
+    expect((await gitReads(bothWalks)).heads).toBe(2);
+    roots.length = 0;
+    await bothWalks();
+    expect((await gitReads(bothWalks)).heads).toBe(1);
+    expect((await gitReads(bothWalks)).heads).toBe(1);
+  });
+
   // Git lists a worktree again under the same path after `git worktree add` there, or once a `.git` entry that was away
   // is back: the session sees it as a worktree new to it, reads its `HEAD` again and records a write in it.
   it("walks again a worktree Git lists again under the same path after it stopped listing it", async () => {
@@ -5597,6 +5614,35 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     roots.push(worktree);
     await bothWalks();
     expect((await gitReads(bothWalks)).heads).toBe(2);
+    await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "again.py"), "violation\n"));
+    const recorded = auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => [edit.path, batch.mode]));
+    expect(recorded).toContainEqual([repositoryPath(root, join(worktree, "src", "again.py")), "log"]);
+  });
+
+  // A walk of the other worktrees that began while Git listed a worktree hands the session that worktree's `HEAD` and
+  // unmerged entries, which a suspended session carries on. Git can stop listing it before the session takes the walk:
+  // the session lets go of them as it takes it, and a worktree added again at that path is new to it.
+  it("lets go of the `HEAD` of a worktree Git stopped listing while a walk of it ran, and walks it as new once added again", async () => {
+    const root = await twoBranches();
+    git(root, "branch", "third", "main");
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    const bothWalks = async () => {
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+    };
+    const file = join(worktree, "src", "a.py");
+    // The walk read the worktree's `HEAD` as it began; Git stops listing the worktree as the walk looks at its changed file.
+    discovery.lstats.set(file, [async () => { roots.length = 0; }]);
+    await writeFile(file, "old\nviolation\nmine\n");
+    await bothWalks();
+    expect(discovery.lstats.get(file)).toEqual([]);
+    const seen = (await bridge.walkResume())?.gitSeen;
+    expect([seen?.heads.has(worktree), seen?.unmerged.has(worktree)]).toEqual([false, false]);
+    expect((await gitReads(bothWalks)).heads).toBe(1);
+    git(root, "worktree", "remove", "--force", worktree);
+    git(root, "worktree", "add", "--quiet", worktree, "third");
+    roots.push(worktree);
     await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "again.py"), "violation\n"));
     const recorded = auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => [edit.path, batch.mode]));
     expect(recorded).toContainEqual([repositoryPath(root, join(worktree, "src", "again.py")), "log"]);
