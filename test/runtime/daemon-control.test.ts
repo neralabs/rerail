@@ -351,6 +351,25 @@ describe("Rerail daemon control", () => {
     expect(told).toEqual([DEAD_PID]);
   });
 
+  // A record whose place in the log is no place a read can start from, as only a hand-edited one holds, made a found
+  // daemon's failure show none of its lines: the read failed, and the start showed nothing.
+  it.each([["a negative", -10], ["a fractional", 0.5]])("shows a found daemon's log from its beginning when its record holds %s place in it", async (_kind, logOffset) => {
+    waits.startMs = 1_000;
+    await writeFile(join(home, DAEMON_LOG_FILE), "rerail daemon: this daemon's failure\n");
+    await holdHomeStarting(DEAD_PID, logOffset);
+    let gone = false;
+    const kill = (): true => {
+      if (gone) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+      return true;
+    };
+    const onWaiting = (): void => {
+      gone = true;
+    };
+    const control = { home, packageRoot: "/nowhere/rerail", onWaiting };
+    await expect(startDaemon(control, { dev: true }, fakeMachine("linux", { kill, homeDaemonLockHeld: () => true })))
+      .rejects.toThrow(new Error(`Rerail daemon (pid ${DEAD_PID}) exited before it was ready:\nrerail daemon: this daemon's failure`));
+  });
+
   // A launcher that found a daemon in its start ended its autostart claim before it waited for that daemon, so each
   // hook that found no daemon.json meanwhile launched one more start.
   it("keeps its launcher's autostart claim while it waits for a daemon still in its start, and ends it with the start", async () => {

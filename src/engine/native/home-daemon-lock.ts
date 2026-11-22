@@ -74,14 +74,16 @@ let held: NativeExclusiveFileLock | undefined;
 
 /**
  * What the holder of `home`'s lock recorded: its pid, and `starting` until its start is over, with where its output
- * starts in the home's log, `logOffset` (0, the log's beginning, when the record does not say).
+ * starts in the home's log, `logOffset`: 0, the log's beginning, when the record says none or names a place no read
+ * can start from (a read starts only at a safe integer of 0 or more).
  */
 function holderRecord(home: string): { pid: number; starting: boolean; logOffset: number } | undefined {
   try {
     // JSON null throws here too, and is no record.
     const { pid, starting, logOffset } = JSON.parse(readFileSync(join(home, LOCKS_DIR, HOLDER_FILE), "utf8")) as { pid?: unknown; starting?: unknown; logOffset?: unknown };
     if (typeof pid !== "number" || !Number.isInteger(pid)) return undefined;
-    return { pid, starting: starting === true, logOffset: typeof logOffset === "number" ? logOffset : 0 };
+    // Only a hand-edited record holds such a place. Number() is for the type: isSafeInteger does not narrow `unknown`.
+    return { pid, starting: starting === true, logOffset: Number.isSafeInteger(logOffset) ? Math.max(0, Number(logOffset)) : 0 };
   } catch {
     return undefined;
   }
