@@ -2341,7 +2341,7 @@ impl SemijoinLayout {
         let width = usize::try_from(get(2)).ok().filter(|&w| w > 0)?;
         let n = usize::try_from(get(3)).ok()?;
         let end = 4usize.checked_add(n).filter(|&e| e <= len)?;
-        ((len - end) % width == 0).then_some(SemijoinLayout { exports, width, held: 4..end, rows: end..len })
+        (len - end).is_multiple_of(width).then_some(SemijoinLayout { exports, width, held: 4..end, rows: end..len })
     }
 }
 

@@ -108,9 +108,9 @@ fn put_idents(p: &KeptPut) -> impl Iterator<Item = [u8; 32]> + '_ {
         KeptWhat::Flat { rows, n, .. } => &rows[..(4 * n).min(rows.len())],
         _ => &[],
     };
-    rows.chunks_exact(4).map(|r| {
+    rows.as_chunks::<4>().0.iter().map(|r| {
         let mut id = [0u8; 32];
-        for (w, v) in id.chunks_exact_mut(8).zip(r) {
+        for (w, v) in id.as_chunks_mut::<8>().0.iter_mut().zip(r) {
             w.copy_from_slice(&v.to_le_bytes());
         }
         id

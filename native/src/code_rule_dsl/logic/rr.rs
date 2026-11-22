@@ -1960,6 +1960,20 @@ fn noted(file: &LibraryFile) {
     });
 }
 
+/// Whether library file `path` still reads as of digest `sha256` (`LibraryFile::unchanged`): what a text's kept
+/// modules (`Modules::files`) need, to stand for reading the text again.
+pub(in crate::code_rule_dsl) fn file_holds(path: &Path, sha256: &[u8; 32]) -> bool {
+    LibraryFile { path: path.to_owned(), sha256: Some(*sha256) }.unchanged()
+}
+
+/// The library files of a text's kept modules noted as read, in their order, as reading the text notes them
+/// (`resolve_shared`): a run that takes the modules kept records the same reads.
+pub(in crate::code_rule_dsl) fn note_files(modules: &Modules) {
+    for (path, sha256, _) in &modules.files {
+        noted(&LibraryFile { path: path.clone(), sha256: Some(*sha256) });
+    }
+}
+
 impl LibraryFile {
     pub(in crate::code_rule_dsl) fn inputs_match(files: &[Self]) -> bool {
         files.iter().all(Self::unchanged)
