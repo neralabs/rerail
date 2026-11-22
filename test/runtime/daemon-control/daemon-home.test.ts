@@ -1,6 +1,6 @@
 import { execFile, spawn, type ChildProcess } from "node:child_process";
 import { once } from "node:events";
-import { closeSync, existsSync, openSync } from "node:fs";
+import { closeSync, existsSync, openSync, readFileSync } from "node:fs";
 import type * as FileSystem from "node:fs/promises";
 import { mkdir, mkdtemp, rename, rm, utimes, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -16,6 +16,7 @@ import { enginePipeName } from "../../../src/runtime/daemon/engine-pipe.js";
 import {
   type DaemonState,
   AUTOSTART_CLAIM_FILE,
+  DAEMON_LOG_FILE,
   DAEMON_STATE_FILE,
   findRunningDaemon,
   processAlive,
@@ -202,6 +203,30 @@ describe("the daemons of a Rerail home", () => {
       await later.exited;
       expect(launchers(home)).toHaveLength(1);
     });
+    await until(async () => await findRunningDaemon(home) !== undefined && launchersEnded(home), 60_000, "a daemon running and every start ended");
+    expect(launchers(home)).toHaveLength(1);
+    expect(liveDaemons(home)).toEqual([await recordedPid(home)]);
+  }, 120_000);
+
+  // A launcher ended its claim once the daemon it launched said it was in its start, before it waited for that daemon:
+  // each hook that found no daemon.json during that wait launched one more start.
+  it("keeps the claim of a launcher that waits for the daemon it launched in its start, so hooks meanwhile launch nothing", async () => {
+    await writeFile(join(home, DAEMON_PORT_FILE), JSON.stringify({ port: await freePort() }));
+    const slowStart = join(home, "slow-start");
+    env = watchedEnvironment(home, undefined, slowStart);
+    // The daemon holds right after it first listens, before it can write daemon.json, until the test lets it go on.
+    await writeFile(slowStart, "");
+    const first = hookFindingNoDaemon();
+    const later = Array.from({ length: 3 }, () => hookFindingNoDaemon());
+    await Promise.all([first, ...later].map(async hook => await hook.ready));
+    first.go();
+    await first.exited;
+    const log = join(home, DAEMON_LOG_FILE);
+    const waiting = (): boolean => existsSync(log) && readFileSync(log, "utf8").includes("this start waits for it to answer");
+    await until(() => existsSync(`${slowStart}.held`) && waiting(), 40_000, "the launcher waiting for its daemon in its start");
+    for (const hook of later) hook.go();
+    await Promise.all(later.map(async hook => await hook.exited));
+    releaseSlowStart(slowStart);
     await until(async () => await findRunningDaemon(home) !== undefined && launchersEnded(home), 60_000, "a daemon running and every start ended");
     expect(launchers(home)).toHaveLength(1);
     expect(liveDaemons(home)).toEqual([await recordedPid(home)]);

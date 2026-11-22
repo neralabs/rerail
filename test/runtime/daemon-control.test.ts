@@ -333,6 +333,27 @@ describe("Rerail daemon control", () => {
     expect(told).toEqual([DEAD_PID]);
   });
 
+  // A launcher that found a daemon in its start ended its autostart claim before it waited for that daemon, so each
+  // hook that found no daemon.json meanwhile launched one more start.
+  it("keeps its launcher's autostart claim while it waits for a daemon still in its start, and ends it with the start", async () => {
+    const daemon = await recordedStartingDaemon();
+    const claim = join(home, AUTOSTART_CLAIM_FILE);
+    // The claim names its launcher, here this process, which runs the start.
+    await writeFile(claim, String(process.pid));
+    try {
+      const claimed: string[] = [];
+      const onWaiting = (): void => {
+        claimed.push(existsSync(claim) ? readFileSync(claim, "utf8") : "gone");
+        daemon.answer();
+      };
+      await startDaemon({ home, packageRoot: "/nowhere/rerail", onWaiting }, { dev: true }, { ...posix, homeDaemonLockHeld: () => true });
+      expect(claimed).toEqual([String(process.pid)]);
+      expect(existsSync(claim)).toBe(false);
+    } finally {
+      daemon.close();
+    }
+  });
+
   it("stops an unresponsive daemon that holds the home and clears its state file", async () => {
     const stateFile = join(home, DAEMON_STATE_FILE);
     let daemonPid: number | undefined;

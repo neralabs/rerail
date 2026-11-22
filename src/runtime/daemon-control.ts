@@ -909,21 +909,10 @@ async function repairSqlite(control: DaemonControl, machine: DaemonMachine): Pro
   if (result.rebuilt) process.stderr.write(`Rebuilt better-sqlite3 in ${result.prefix}\n`);
 }
 
-/**
- * Runs `start` under the start lock in `home`, then ends the autostart claim (`claimAutostart`) if it names this
- * process, the launcher an autostart started, however the start ended: the launch it held other processes off for is
- * over, so the next process to find the daemon down launches again at once, after a start that failed too. While the
- * daemon cannot start, that is one launch after another, never one per process that finds it down. A claim naming
- * another process is that launcher's, still running its start: a start that gave up waiting for the start lock it
- * holds, or one a person ran beside it, leaves the claim to it.
- */
+/** Runs `start` under the start lock in `home`. */
 async function startUnderLock<T>(home: string, start: () => Promise<T>): Promise<T> {
   makeRerailHome(home);
-  try {
-    return await withStartLock(home, start);
-  } finally {
-    await endOwnClaim(home);
-  }
+  return await withStartLock(home, start);
 }
 
 /**
@@ -1115,19 +1104,30 @@ async function untilStarted(control: DaemonControl, coming: ComingUp, machine: D
  * lock. The daemon this start launched is reported as started once it answers. One another process launched is looked
  * up again under the lock once it answers, so a start replaces it as it would a running one; a second wait after that
  * look is the last.
+ *
+ * Once the whole start is over, both looks and both waits, it ends the autostart claim (`claimAutostart`) if it names
+ * this process, the launcher an autostart started, however the start ended: the launch it held other processes off for
+ * is over, so the next process to find the daemon down launches again at once, after a start that failed too. While the
+ * daemon cannot start, that is one launch after another, never one per process that finds it down. A claim naming
+ * another process is that launcher's, still running its start: a start that gave up waiting for the start lock it
+ * holds, or one a person ran beside it, leaves the claim to it.
  */
 async function startBesideStarting(
   control: DaemonControl,
   machine: DaemonMachine,
   locked: () => Promise<StartDaemonResult | ComingUp>,
 ): Promise<StartDaemonResult> {
-  let outcome = await startUnderLock(control.home, locked);
-  if ("status" in outcome && !outcome.launched) {
-    await untilStarted(control, outcome, machine);
-    outcome = await startUnderLock(control.home, locked);
+  try {
+    let outcome = await startUnderLock(control.home, locked);
+    if ("status" in outcome && !outcome.launched) {
+      await untilStarted(control, outcome, machine);
+      outcome = await startUnderLock(control.home, locked);
+    }
+    if (!("status" in outcome)) return outcome;
+    return { started: outcome.launched, daemon: await untilStarted(control, outcome, machine) };
+  } finally {
+    await endOwnClaim(control.home);
   }
-  if (!("status" in outcome)) return outcome;
-  return { started: outcome.launched, daemon: await untilStarted(control, outcome, machine) };
 }
 
 export async function startDaemon(
@@ -1574,8 +1574,8 @@ function claimHolds(path: string, kill: ProcessSignal): boolean {
  * Whether this process launches the autostart: it created the claim in `home`, or replaced one that no longer holds
  * (`claimHolds`), such as one whose launcher died before its start. Sessions and hooks each run in a process of their
  * own, and the ones that find the daemon gone arrive together; the claim is created exclusively, so one launches and the
- * rest leave the start to it. The launcher's start ends the claim as it ends (`startUnderLock`). Two processes that both
- * replace a claim at once can both launch; the start lock still lets only one launcher start a daemon.
+ * rest leave the start to it. The launcher's start ends the claim as it ends (`startBesideStarting`). Two processes
+ * that both replace a claim at once can both launch; the start lock still lets only one launcher start a daemon.
  */
 function claimAutostart(home: string, kill: ProcessSignal): boolean {
   const claim = join(home, AUTOSTART_CLAIM_FILE);
