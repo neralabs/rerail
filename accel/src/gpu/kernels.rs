@@ -339,7 +339,12 @@ fn elsewhere(source: &str, name: &str, constant: Option<u32>) -> Result<Arc<Func
     let label = if one { format!("{}.{name}.ukl", &hex(&k.library)[..16]) } else { format!("{}.ukl", &hex(&k.library)[..16]) };
     let program = rerail_gpu::kernels::program_with(&label, source, &defines)?;
     let shared = rerail_gpu::shared::get().ok_or("no device")?;
+    let started = std::time::Instant::now();
     let f = Arc::new(program.library().get_function(&shared.device, name)?);
+    // `RERAIL_GPU_TIMES` (rerail_gpu::kernels): the function's build or load, on stderr.
+    if std::env::var_os("RERAIL_GPU_TIMES").is_some() {
+        eprintln!("gpu function {label} {name}: {:.3} s", started.elapsed().as_secs_f64());
+    }
     // Compiled, or loaded from the device layer's store: either way made, not this process's memory's.
     count(|c| c.compiled += 1);
     // Made here, not found in this process's memory: as Metal's kernels are counted (`made_here`).

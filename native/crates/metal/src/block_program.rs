@@ -1095,11 +1095,10 @@ fn levels(p: usize, native: &BlockNative, values: &BlockNative, plan: &Plan, wid
     // the counted outputs' counts, exchanged together, their positions and their totals.
     for (k, v) in native.outputs.iter().enumerate() {
         match native.output_delays[k] {
-            // A warm-up lane writes zeros to the output's last word, which no useful lane holds (a group's last
-            // lanes are its next group's warm-up) and whose bytes are past the file: zero is its word. The
-            // stream's last 64-bit word can reach it (a file of one group, its last word partly filled: at 16 lanes
-            // of 16 bytes, a file of 200), so a warm-up lane's own word there read as the stream's bits.
-            0 => out.push_str(&format!("  out[f.out_base + {k}u * lanes + SEL(lanes - 1u, gl, keep)] = SEL(BMC(0), stream_cut(v{v}, gl, len, 0u), keep);\n")),
+            // Only a useful lane writes its word (the buffer starts zeroed). A warm-up lane's store, sent to the
+            // output's last word, raced the last group's: groups of a file run at once on a GPU, and on an Arc at 16
+            // lanes a later group's zero landed after the last word's bits (a JSON file of three groups).
+            0 => out.push_str(&format!("  if (keep) out[f.out_base + {k}u * lanes + gl] = stream_cut(v{v}, gl, len, 0u);\n")),
             d => out.push_str(&format!("  write_output(out, f.out_base + {k}u * lanes, gl, len, {d}u, SEL(BMC(0), v{v}, keep));\n")),
         }
     }

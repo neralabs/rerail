@@ -124,12 +124,13 @@ format 16's reads alone.
    at 32 lanes, 13 at 16), which changes how much a wrong start runs again, never what a run gives.
    At 16 lanes a test found a bug from before: a delay-0 output's warm-up lanes wrote their own word to the output's
    last word, taken for one no stream reaches. A file of one group whose last 64-bit word is partly filled reaches
-   it (200 bytes at 16 lanes of 16 bytes; at 32 lanes, about 433-496 bytes): a warm-up lane now writes zeros there.
+   it (200 bytes at 16 lanes of 16 bytes; at 32 lanes, about 433-496 bytes). A warm-up lane now stores nothing (the
+   buffer starts zeroed). Sending its store to that word instead, as zeros, raced the last group's own store of it:
+   a file's groups run at once on a GPU, and on the Arc a JSON file of three groups lost its last word.
    Tests: the block, serial and directive tests on the CPU at 16 and 32 lanes (`RERAIL_CPU_SIMD_WIDTH`), the parser
-   tests' 117 at 16; on Metal (M3) and CUDA at 32. On the Arc at 16 all but three pass:
-   `a_batch_of_files_and_programs_is_one_launch` misreads file 22 (3000 bytes, a `Lookup` program: a look-back across
-   several groups), and `prev_equals_reference_on_every_executor` and `binary_operators_equal_reference_on_every_executor`
-   run past 240 s. Open.
+   tests' 117 at 16; on Metal (M3) and CUDA at 32; on the Arc at 16. There `prev_equals_reference_on_every_executor`
+   and `binary_operators_equal_reference_on_every_executor` pass in 34 s and 49 s with their kernels built; cold they
+   build about 150 kernels each (14 a program, 0.3-0.5 s of Intel's compiler each), past a minute.
 18. **The tape's load is one read.** `clif_t_ld`, the one load of the tape in place, chose a load by the value's
    width at run time (four loads), and it is inlined at each of a read's loads (38 in `tape_end`, 152 loads): one
    read of the words that hold the value, masked to its width, as 16z's block load (§15). `stage_count` 5.9 → 3.7 s,
@@ -176,8 +177,20 @@ format 16's reads alone.
    tests on the CPU, Metal (M3), CUDA and the Arc give the same results as before: the failures left are the pack
    data's (not pulled on the hosts), the anchors' and the evaluation budget's (on every backend, the CPU's too), and on
    the Arc `regex_block`'s and `nested_optional_types`' (before too). On the Arc
-   `all_backends_execute_every_verified_instruction_and_mode` takes 194-202 s: the same with the side read called and
-   with no sub-group size required, so it is the kernels' compile as it was (24 s on 2026-11-21, before §13); open.
+   `all_backends_execute_every_verified_instruction_and_mode` took 194-202 s, the same with the side read called and
+   with no sub-group size required: its JIT kernels' compile (§23; its 24 s of 2026-11-21 were the driver's cache).
+23. **The JIT's kernel reads its programs from a table, over the batch's format.** `all_backends_…` passes in 1.9 s
+   on the Arc with its kernels built; cold, its JIT kernels compiled 45.8 s each. A JIT kernel held every tape
+   format's reads (16z's too: `TAPE_PREFIX`), a function a program (a switch over its steps, each case a call of the
+   opcode's step) and an output wrapper a program, each the same call of `apply_output`: 116 programs, about 260
+   called functions. The steps were calls, so the cases' constant operands were never folded into them: the code per
+   program bought nothing. Now the kernel is compiled for the batch's format (`tape_view`, as the interpreter's, §8:
+   the run's format ahead, a batch of another its own at its launch), the programs' steps are one table
+   (`JIT_START`, `JIT_STEPS`: opcode, mode and operand a step, as the interpreter's words), read by one switch that
+   calls each opcode's step once (each inlined: 11.2 s, 10.3 s called), and `apply_output` is called as the
+   interpreter calls it. That kernel 45.8 → 11.2 s (`clc build`, cold); the test cold 200 → about 88 s on the Arc,
+   on CUDA 41 → 10 s, on Metal (M3) 18 s, on the CPU 6.9 s. A JIT kernel is the interpreter's runtime and 3-4 s more;
+   the runtime's own compile is what is left (§9-§21).
 
 ## Measured
 

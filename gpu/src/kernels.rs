@@ -58,8 +58,14 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
     let slot: Slot = std::sync::Arc::clone(PROGRAMS.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).entry(key.clone()).or_default());
     slot.get_or_init(|| {
         let shared = crate::shared::get().ok_or("no device")?;
+        let started = std::time::Instant::now();
         let source = preprocess_with(name, text, defines)?;
+        let preprocessed = started.elapsed();
         let library = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?;
+        // `RERAIL_GPU_TIMES`, a measurement aid: each program's preprocessing and compile (or load), on stderr.
+        if std::env::var_os("RERAIL_GPU_TIMES").is_some() {
+            eprintln!("gpu program {name}: preprocessed {:.3} s ({} bytes), compiled {:.3} s", preprocessed.as_secs_f64(), source.len(), (started.elapsed() - preprocessed).as_secs_f64());
+        }
         Ok(&*Box::leak(Box::new(Program { name: key, library, functions: Default::default() })))
     })
     .clone()

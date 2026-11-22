@@ -109,7 +109,7 @@ impl<'a> Executors<'a> {
         let mut keep = |name: String, got: Result<Vec<Vec<u64>>, Error>| match got {
             Ok(got) => out.push((name, got)),
             Err(Error::BackendLaunchLimit) => skipped.push(name),
-            // A device whose SIMD groups are not 32 lanes runs no block program (`block_program::ready`).
+            // A device whose SIMD groups are neither 16 nor 32 lanes runs no block program (`block_program::ready`).
             Err(Error::UnsupportedBackend) if metal_program_backend::block_program::ready().is_err() => {}
             Err(e) => panic!("{name} runs: {e:?}"),
         };
