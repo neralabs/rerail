@@ -240,7 +240,9 @@ impl CudaDevice {
         match Self::open() {
             Ok(d) => Some(d),
             Err(e) => {
-                if std::env::var_os("RERAIL_CUDA_DEBUG").is_some() {
+                // A process that asked for CUDA (`RERAIL_GPU=cuda`) says why it has none, as one that asked for OpenCL
+                // does: without it every unit after was refused as over capacity, with no word of the device.
+                if std::env::var_os("RERAIL_CUDA_DEBUG").is_some() || crate::device::chosen() == "cuda" {
                     eprintln!("no CUDA device: {e}");
                 }
                 None

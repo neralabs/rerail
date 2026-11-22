@@ -355,8 +355,12 @@ impl Committed {
     /// Waits for the command: `BackendFailure` when it did not complete.
     pub fn wait(self) -> Result<Times, Error> {
         if let Err(e) = self.event.await_() {
-            if std::env::var_os("RERAIL_LAUNCHES").is_some() {
+            if std::env::var_os("RERAIL_LAUNCHES").is_some() || std::env::var_os("RERAIL_PP_WHY").is_some() {
                 eprintln!("{}: {e}", self.label);
+            }
+            // The system took the GPU back (its watchdog, for the display): the work is not at fault.
+            if e.starts_with("preempted: ") {
+                return Err(Error::BackendPreempted);
             }
             return Err(Error::BackendFailure);
         }

@@ -960,6 +960,41 @@ UKL_INLINE bool px_pops_at(Ux u, Tf tf, uint32_t lo, uint32_t hi, uint64_t key, 
     return false;
 }
 
+// A name's answer at `slot` (`visible_walk`'s) and whether the invocation pops it there (`px_pops_at`'s),
+// from the rows `[lo, hi)` of its key's upper half (`lo` a row of the sort, not `IR_NONE`). A name has a few
+// rows in a unit: at most `PX_LOOK_ROWS`, every row and its permutation are read at once, then every row's
+// name, value and type at once, and the answer is the latest row before `slot` (at or past `floor`, or of
+// slot 0) of the name, past a `V_SKIP`: two reads deep, where the walk and the pops' search each read
+// one after the other. Past them, the walk and the search. `over`: the walk past its bound (`WALK`).
+#define PX_LOOK_ROWS (8u)
+#define PX_LOOK_LOAD(i) \
+    uint32_t r##i = lo + ukl_min(i##u, n - 1u); \
+    uint64_t s##i = u.sorted[r##i]; uint32_t p##i = u.perm[r##i];
+#define PX_LOOK_ROW(i) \
+    { \
+        uint64_t nk = u.name_keys[p##i]; uint32_t v = u.values[p##i]; uint32_t rt = tf.rtypes[p##i]; \
+        uint32_t at = (uint32_t)(s##i); \
+        bool in = i##u < n && nk == key; \
+        if (in && s##i < q && (at == 0u || at >= floor) && v != V_SKIP) { m = v; found = true; } \
+        if (in && s##i == q && rt == RT_POP) *pops = true; \
+    }
+UKL_INLINE uint32_t px_look(Ux u, Tf tf, uint32_t lo, uint32_t hi, uint64_t key, uint32_t slot, uint32_t floor, UKL_PRIVATE bool* over, UKL_PRIVATE bool* pops) {
+    *over = false; *pops = false;
+    uint32_t n = hi - lo;
+    if (n == 0u) return L_NONE;
+    if (n > PX_LOOK_ROWS) {
+        uint32_t w = visible_walk(u.sorted, u.perm, u.name_keys, u.values, lo, hi, key, slot, floor, over);
+        *pops = px_pops_at(u, tf, lo, hi, key, slot);
+        return w;
+    }
+    uint64_t q = (key & 0xffffffff00000000ul) | ((uint64_t)(slot));
+    PX_LOOK_LOAD(0) PX_LOOK_LOAD(1) PX_LOOK_LOAD(2) PX_LOOK_LOAD(3) PX_LOOK_LOAD(4) PX_LOOK_LOAD(5) PX_LOOK_LOAD(6) PX_LOOK_LOAD(7)
+    uint32_t m = 0u;
+    bool found = false;
+    PX_LOOK_ROW(0) PX_LOOK_ROW(1) PX_LOOK_ROW(2) PX_LOOK_ROW(3) PX_LOOK_ROW(4) PX_LOOK_ROW(5) PX_LOOK_ROW(6) PX_LOOK_ROW(7)
+    return !found || m == V_UNDEF ? L_NONE : m;
+}
+
 // --- Pieces (decision 0520) ------------------------------------------------------------------------
 //
 // A list's tokens, an argument's expansion and a join are each an array of pieces: runs of tokens
@@ -1007,21 +1042,47 @@ UKL_INLINE Tk pc_tok_in(Ux u, PP_GLOBAL const uint32_t* cols, uint32_t cap, uint
 // The output (decision 0520 §3): its `np` pieces in five columns from `out`, `cap` words each (and
 // their order, the sixth, and the loop's chunks, the seventh: `lp_flush`), the
 // top level's runs and each call's expansion. Token `k` of it: its piece found by its place.
-typedef struct Ov { PP_GLOBAL const uint32_t* cols; uint32_t cap, np; } Ov;
-// The pieces are where the loop made them, in its order by `ORDER` (the sixth column, `lp_place`).
-UKL_INLINE Tk ov_tok(Ux u, Ov o, uint32_t k) {
-    PP_GLOBAL const uint32_t* pat = o.cols + 3u * o.cap;
-    PP_GLOBAL const uint32_t* ord = o.cols + 5u * o.cap;
-    uint32_t lo = 0u, hi = ukl_min(o.np, o.cap);
-    for (uint32_t step = 0u; step < 32u && hi - lo > 1u; step++) {
-        uint32_t mid = (lo + hi) / 2u;
-        if (pat[ord[mid]] <= k) lo = mid; else hi = mid;
-    }
-    uint32_t e = ord[lo];
-    return pc_tok_in(u, o.cols, o.cap, e, k - pat[e]);
+// `ci`: the piece a reader read last (its number in the order, `OV_NONE` none), its first token's place
+// `cp` and its tokens `cn`: a reader walks forward, so a token is in it or the next, a jump ahead a
+// gallop from it, and only a jump back a search of them all.
+#define OV_NONE (0xffffffffu)
+typedef struct Ov { PP_GLOBAL const uint32_t* cols; uint32_t cap, np, ci, cp, cn; } Ov;
+UKL_INLINE Ov ov_new(PP_GLOBAL const uint32_t* cols, uint32_t cap, uint32_t np) {
+    Ov o; o.cols = cols; o.cap = cap; o.np = ukl_min(np, cap); o.ci = OV_NONE; o.cp = 0u; o.cn = 0u;
+    return o;
 }
-UKL_INLINE uint32_t ov_ref(Ux u, Ov o, uint32_t k) { return ov_tok(u, o, k).ref; }
-UKL_INLINE uint32_t ov_flags(Ux u, Ov o, uint32_t k) { return ov_tok(u, o, k).flags; }
+// The pieces are where the loop made them, in its order by `ORDER` (the sixth column, `lp_place`).
+UKL_INLINE void ov_at(UKL_PRIVATE Ov* o, uint32_t i) {
+    PP_GLOBAL const uint32_t* pat = o->cols + 3u * o->cap;
+    PP_GLOBAL const uint32_t* ord = o->cols + 5u * o->cap;
+    o->ci = i; o->cp = pat[ord[i]];
+    o->cn = i + 1u < o->np ? pat[ord[i + 1u]] - o->cp : 0xffffffffu - o->cp;
+}
+UKL_INLINE bool ov_in(UKL_PRIVATE const Ov* o, uint32_t k) { return o->ci != OV_NONE && k >= o->cp && k - o->cp < o->cn; }
+UKL_INLINE Tk ov_tok(Ux u, UKL_PRIVATE Ov* o, uint32_t k) {
+    if (!ov_in(o, k) && o->ci != OV_NONE && o->ci + 1u < o->np && k >= o->cp) ov_at(o, o->ci + 1u);
+    if (!ov_in(o, k)) {
+        PP_GLOBAL const uint32_t* pat = o->cols + 3u * o->cap;
+        PP_GLOBAL const uint32_t* ord = o->cols + 5u * o->cap;
+        uint32_t lo = 0u, hi = o->np;
+        // Forward of the piece read last (a reader's window ahead): galloped from it, then searched.
+        if (o->ci != OV_NONE && k >= o->cp) {
+            lo = o->ci;
+            for (uint32_t d = 1u; d < 32u && lo + d < o->np; d *= 2u) {
+                if (pat[ord[lo + d]] > k) { hi = lo + d; break; }
+                lo += d;
+            }
+        }
+        for (uint32_t step = 0u; step < 32u && hi - lo > 1u; step++) {
+            uint32_t mid = (lo + hi) / 2u;
+            if (pat[ord[mid]] <= k) lo = mid; else hi = mid;
+        }
+        ov_at(o, lo);
+    }
+    return pc_tok_in(u, o->cols, o->cap, o->cols[5u * o->cap + o->ci], k - o->cp);
+}
+UKL_INLINE uint32_t ov_ref(Ux u, UKL_PRIVATE Ov* o, uint32_t k) { return ov_tok(u, o, k).ref; }
+UKL_INLINE uint32_t ov_flags(Ux u, UKL_PRIVATE Ov* o, uint32_t k) { return ov_tok(u, o, k).flags; }
 
 // A number token in the scratch: its ref.
 UKL_INLINE uint32_t px_number(Ar a, uint32_t value) {
