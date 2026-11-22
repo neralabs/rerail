@@ -18,7 +18,47 @@ impl<'a> Rows<'a> {
     /// scan of a whole view (a range of its rows) reads them in one walk (`Source::for_rows_in`): a view of the
     /// tape then finds each row's node, id and parent as it walks, where a row at a time is a select, a granule
     /// search and a parent search (decision 0353 step 2).
-    pub(super) fn each(self, cands: Cands<'_>, need: u64, mut f: impl FnMut(u32, RowRef<'a>) -> bool) -> bool {
+    ///
+    /// A probe read as found (`Cands::Stream`) gives each match to `f` as the source finds it, and keeps the matches in
+    /// the step's list (`last`) for its next probe of the same key; where the source refuses the read, its ids.
+    pub(super) fn each(self, cands: Cands<'_>, need: u64, last: &mut LastProbe, mut f: impl FnMut(u32, RowRef<'a>) -> bool) -> bool {
+        if let Cands::Stream(s) = cands {
+            // A lone match is kept as itself; the step's list (the probe before's, where nothing holds it now) from
+            // a second match on, as `View::find_read` keeps them.
+            let mut list = last.spare.take().filter(|l| Arc::strong_count(l) == 1);
+            let (mut first, mut n, mut hit) = (None, 0usize, false);
+            let read = s.view.read_each(&s, need, &mut last.cursor, &mut |id, vals| {
+                n += 1;
+                if n == 1 {
+                    first = Some((id, vals));
+                } else {
+                    let rows = Arc::get_mut(list.get_or_insert_with(|| Arc::new(Vec::new()))).expect("the step's own list");
+                    if n == 2 {
+                        rows.clear();
+                        rows.extend(first);
+                    }
+                    rows.push((id, vals));
+                }
+                if !hit {
+                    hit = f(id, RowRef::Read(vals, id as usize));
+                }
+            });
+            let answer = if read {
+                match (n, first) {
+                    (0, _) | (_, None) => { last.spare = list; Found::None }
+                    (1, Some(one)) => { last.spare = list; Found::One(one) }
+                    _ => Found::Many(list.expect("a list of several matches")),
+                }
+            } else {
+                last.spare = list;
+                let ids = s.view.find_keyed(s.cols, &s.key[..s.len], s.lead);
+                hit = ids.iter().any(|&id| f(id, self.row_need(id, need)));
+                if let Some((_, q)) = &mut last.memo { *q = Probed::Ids(ids); }
+                return hit;
+            };
+            if let Some((_, q)) = &mut last.memo { *q = Probed::Read(answer, need); }
+            return hit;
+        }
         if let (Rows::In(r), &Cands::Range(lo, hi)) = (self, &cands)
             && hi - lo >= WALK_SCAN
             && let Some(v) = &r.view
@@ -56,7 +96,10 @@ impl<'a> Rows<'a> {
     }
 }
 
-pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within) -> (Rows<'a>, Cands<'a>) {
+/// `stream`: the caller reads the candidates through `Rows::each`, which reads a view's probe as the source finds its
+/// rows (`Cands::Stream`); else a read probe's rows are listed first (`Cands::Read`).
+#[allow(clippy::too_many_arguments)]
+pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: &[(usize, Key)], hints: &mut [u32; runs::HINTS], last: &mut LastProbe, need: u64, within: Within, stream: bool) -> (Rows<'a>, Cands<'a>) {
     match src {
         Src::In(rel, ix) => {
             if !keys.is_empty() { probed::note(rel.name.get().map_or("?input", String::as_str), ix.cols.iter().copied()); }
@@ -101,7 +144,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
             }
             else if ix.source && let Some(v) = &rel.view {
                 let probed = match &mut last.memo {
-                    Some((k, p)) if k.as_slice() == key && !matches!(&*p, Probed::Read(_, n) if *n != need) => p.clone(),
+                    Some((k, p)) if k.as_slice() == key && !matches!(&*p, Probed::Pending) && !matches!(&*p, Probed::Read(_, n) if *n != need) => p.clone(),
                     _ => {
                         // A step's rows are read as the probe finds them, with the columns it reads (none for
                         // a test): a source that reads in place answers without a list of ids; one that does
@@ -112,6 +155,21 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                             && let Probed::Read(Found::Many(rows), _) = std::mem::replace(q, Probed::Ids(Vec::new()))
                         {
                             last.spare = Some(rows);
+                        }
+                        // Read into the step as found: the memo is its key, pending, until `Rows::each` reads it.
+                        if stream && key.len() <= STREAM_KEY && v.streams(&ix.cols) {
+                            let mut k = [0i64; STREAM_KEY];
+                            k[..key.len()].copy_from_slice(key);
+                            match &mut last.memo {
+                                Some((mk, q)) => {
+                                    mk.clear();
+                                    // copy: not block data (a probe key's values, kept to compare the next probe with)
+                                    mk.extend_from_slice(key);
+                                    *q = Probed::Pending;
+                                }
+                                None => last.memo = Some((key.to_vec(), Probed::Pending)),
+                            }
+                            return (Rows::Source(v), Cands::Stream(Stream { view: v, cols: &ix.cols, lead: ix.lead, key: k, len: key.len() }));
                         }
                         let read = v.find_read(&ix.cols, key, ix.lead, need, &mut last.cursor, &mut last.spare);
                         let p = match read {
@@ -133,6 +191,7 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                 match probed {
                     Probed::Ids(ids) => (Rows::Source(v), Cands::Owned(ids)),
                     Probed::Read(rows, _) => (Rows::Source(v), Cands::Read(rows)),
+                    Probed::Pending => unreachable!("a pending probe is no memo's answer"),
                 }
             }
             else { (Rows::In(rel), Cands::Slice(ix.get(rel, key))) }
@@ -219,8 +278,8 @@ pub(super) fn holds(step: &Step, store: &Store, slots: &[i64], asked: &mut Asked
         _ => 0,
     };
     let need: u64 = keys.iter().filter(|&&(c, _)| exact >> c & 1 == 0).fold(0u64, |m, &(c, _)| m | 1 << c) | tests.iter().fold(0u64, |m, &(c, c0)| m | 1 << c | 1 << c0);
-    let (rows, cands) = candidates(src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None);
-    rows.each(cands, need, |id, row| {
+    let (rows, cands) = candidates(src, store, &asked.key, keys, &mut asked.hints, &mut asked.last, need, None, true);
+    rows.each(cands, need, &mut asked.last, |id, row| {
         !rows.dead(id) && keys.iter().all(|&(c, k)| exact >> c & 1 != 0 || row.at(c) == val(k)) && tests.iter().all(|&(c, c0)| row.at(c) == row.at(c0))
     })
 }
