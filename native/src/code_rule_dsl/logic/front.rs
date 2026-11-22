@@ -19,6 +19,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 
+pub mod answers;
 pub mod caches;
 pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
 pub use name::{List, Lists, Name};
@@ -228,6 +229,8 @@ pub fn finish_checks_given(v: &crate::code_rule_dsl::logic::program_image::Versi
     };
     // A cache is two rules (decision 0103): a broken form refuses the program.
     caches::caches(v)?;
+    // A request a native step answers is declared so (t33 K3).
+    answers::answers(v)?;
     drop(checking);
     Ok(())
 }

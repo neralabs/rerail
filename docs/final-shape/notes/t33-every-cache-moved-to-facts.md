@@ -107,6 +107,18 @@ wrote them. The aged cursor, a write a warm run may make, is a job of its own un
 `observed_changes` stay as planned; `run_record`'s other records (the Git file lists, the cutoffs, the constants,
 the cone's rounds) are step 1's.
 
+### K3 in detail (2026-11-21, Typing-support)
+
+The native steps were three lists in Rust (`rr::lower`'s `FILE_SYSTEM` and `ENGINE_ANSWERS`, and the languages'
+`Answerer`s), with `load` beside them in `corpus::world`, and nothing in the library said which request a native
+step answers. Built: each is declared where its relations are, as `.answer REQ -> R1, R2` (`core.rerail`,
+`git/*.rerail`, `analysis.rerail`, `c/preprocess.rerail`, `c/compile-commands.rerail`), read like `.cache` and
+linted by `front::answers` (its relations declared, none answered by two requests).
+`language::tests::every_native_answer_is_declared_in_the_library` holds the engine's answerers and the library's
+declarations to one list, so an answerer is registered only for a request the library declares, and the reverse.
+An answer that is an object is a value naming it already: `parse_of`'s and `splice_of`'s tapes are `tape` columns,
+and a digest or a blob is a column of its type (t32 1.4).
+
 **A relation's identity.** A relation of a program is stored under the digest of the rules it is derived from,
 the identities of what they read, and the engine (`plan::identities`). A rule edit makes it another relation,
 empty, so it is derived again and its readers see the delta; a relation two programs derive alike is one frame.

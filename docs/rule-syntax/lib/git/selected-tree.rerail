@@ -5,6 +5,7 @@
 .decl inventory_directory(repo: symbol, path: symbol, tree: symbol)
 .decl git_inventory_child_request(repo: symbol, selection: symbol, directory: symbol, name: symbol, mode: number, encoding: symbol)
 .decl git_inventory_child_of(repo: symbol, selection: symbol, directory: symbol, name: symbol, mode: number, encoding: symbol, path: symbol)
+.answer git_inventory_child_request -> git_inventory_child_of
 
 inventory_directory(r, "", t) :- git_source_tree(r, t).
 git_object_request(r, tree) :- inventory_directory(r, _, tree).
