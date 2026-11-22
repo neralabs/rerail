@@ -99,7 +99,10 @@ impl Slab {
         // The device first, whatever its backend: making it installs the one block policy (decision 0342), without
         // which no block is a device slab (`alloc::plain` refuses `Device::Must`). A process that leases a slab before
         // anything else touched the device (the parser crate's tests) had every lease refused as over capacity.
-        let device = crate::lane::device()?;
+        let device = crate::lane::device().map_err(|e| {
+            let _ = refused(&format!("no device: {e:?}"));
+            e
+        })?;
         // From the one block policy (decision 0342): a device slab, room made within the Metal budget.
         let need = rerail_blocks::alloc::Need { kind: rerail_blocks::block::kind::CHUNK, bytes, writes: rerail_blocks::alloc::Writes::Once, device: rerail_blocks::alloc::Device::Must, ..rerail_blocks::alloc::Need::SLAB };
         // Refused for room; `RERAIL_PP_WHY` says by what.
@@ -461,7 +464,10 @@ impl State {
                         rerail_prof::count("residency.slabs", 1);
                         return Ok((self.slabs.len() - 1, offset));
                     }
-                    Err(_) => rerail_prof::count("capacity.residency_slab", 1),
+                    Err(e) => {
+                        rerail_prof::count("capacity.residency_slab", 1);
+                        refused(&format!("a slab of {length} bytes refused: {e:?}"));
+                    }
                 }
             }
             if !self.retire(keep) {

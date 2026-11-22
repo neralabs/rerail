@@ -1522,14 +1522,16 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
             }
             uint32_t at0 = ukl_sg_exclusive_sum(len, ln __UKL_ARGS);
             uint32_t tot = ukl_sg_shuffle(at0 + len, UKL_SIMD_WIDTH - 1u __UKL_ARGS);
-            // This lane's token's entry: the last whose first place is at or before it.
-            uint32_t j = 0u;
-            for (uint32_t b = UKL_SIMD_WIDTH / 2u; b != 0u; b >>= 1u)
-                if (ukl_sg_shuffle(at0, j + b __UKL_ARGS) <= ln) j += b;
+            // This lane's token's entry: the last whose first place is at or before it. The entries'
+            // first places are distinct, so their bits' sum is the row's starts, one reduction: the entry
+            // is the starts at or before the lane's place, counted, and its first place the last of them.
+            uint32_t starts = ukl_sg_sum(len != 0u && at0 < UKL_SIMD_WIDTH ? 1u << at0 : 0u __UKL_ARGS);
+            uint32_t upto = starts & (0xffffffffu >> (31u - ln));
+            uint32_t j = upto != 0u ? ukl_popcount32(upto) - 1u : 0u;
+            uint32_t yat = upto != 0u ? 31u - ukl_clz32(upto) : 0u;
             LpTok y;
             y.src = ukl_sg_shuffle(x.src, j __UKL_ARGS); y.st = ukl_sg_shuffle(x.st, j __UKL_ARGS);
             y.flags = ukl_sg_shuffle(x.flags, j __UKL_ARGS); y.org = ukl_sg_shuffle(x.org, j __UKL_ARGS);
-            uint32_t yat = ukl_sg_shuffle(at0, j __UKL_ARGS);
             bool ylong = ukl_sg_shuffle(longe ? 1u : 0u, j __UKL_ARGS) != 0u;
             bool tok = ln < tot, ok = true;
             if (tok) {
@@ -1540,11 +1542,31 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
             uint32_t bad = ukl_min((uint32_t)ukl_ctz64((uint64_t)(ukl_sg_ballot(tok && !ok __UKL_ARGS))), (uint32_t)UKL_SIMD_WIDTH);
             bool plain = p < q_end && !longe && at0 + len <= bad;
             uint32_t k = ukl_min(ukl_ctz64((uint64_t)(ukl_sg_ballot(!plain __UKL_ARGS))), q_end - q_at);
-            for (uint32_t j = 0u; j < k; j++) {
-                LpTok y;
-                y.src = ukl_sg_shuffle(x.src, j __UKL_ARGS); y.st = ukl_sg_shuffle(x.st, j __UKL_ARGS);
-                y.flags = ukl_sg_shuffle(x.flags, j __UKL_ARGS); y.org = ukl_sg_shuffle(x.org, j __UKL_ARGS);
-                if (me && rp->stop == 0u) lp_list_take(rp, &o, u, a, y);
+            // Into an argument's expansion: the entries as they are (a span's tokens are its, its first's
+            // flags its own: `lp_span_tok`), each written by its lane at once, in the room the thread made.
+            bool spans = ukl_sg_ballot(ln < k && lp_is_span(x) __UKL_ARGS) != 0u;
+            uint32_t dst = LP_NONE;
+            if (me && k != 0u && rp->nc != 0u && rp->stop == 0u) {
+                uint32_t at = lp_alloc(rp, a, 1u, k);
+                if (at != LP_NONE) {
+                    dst = rp->mem[1].base + at;
+                    rp->fr[(rp->sp - 1u) & (LP_DEPTH - 1u)].at += k;
+                    // A span taken was a frame pushed and popped (`lp_list_take`): its mark freed.
+                    if (spans && rp->collecting) rp->cfree = ukl_min(rp->cfree, rp->mem[0].top);
+                }
+            }
+            dst = ukl_sg_shuffle(dst, lead __UKL_ARGS);
+            bool whole = ukl_sg_shuffle(me && k != 0u && rp->nc != 0u ? 1u : 0u, lead __UKL_ARGS) != 0u;
+            if (whole) {
+                if (dst != LP_NONE && ln < k) { a.psrc[dst + ln] = x.src; a.pst[dst + ln] = x.st; a.pn[dst + ln] = x.flags; a.pexp[dst + ln] = x.org; }
+                ukl_sg_barrier();
+            } else {
+                for (uint32_t j = 0u; j < k; j++) {
+                    LpTok y;
+                    y.src = ukl_sg_shuffle(x.src, j __UKL_ARGS); y.st = ukl_sg_shuffle(x.st, j __UKL_ARGS);
+                    y.flags = ukl_sg_shuffle(x.flags, j __UKL_ARGS); y.org = ukl_sg_shuffle(x.org, j __UKL_ARGS);
+                    if (me && rp->stop == 0u) lp_list_take(rp, &o, u, a, y);
+                }
             }
             if (me) rp->noask = k == 0u;
         } else {
