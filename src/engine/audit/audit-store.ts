@@ -1044,15 +1044,13 @@ export class SqliteAuditReader implements AuditReader {
    * parsed in JavaScript: each stored rule provenance copy they name is tested once, however many of them name it.
    */
   readableAudits(auditIds: readonly string[]): Set<string> {
-    const database = this.#database.open();
-    if (database === undefined) return new Set();
     const ids = sql`(SELECT value FROM json_each(${JSON.stringify(auditIds)}))`;
     // A copy's test joined by its id, as `ruleProvenanceText` reads the copy; the audit's own text where it names none.
-    const rows = database.all<{ auditId: string }>(sql`WITH copies AS MATERIALIZED (
+    const rows = this.#database.open()?.all<{ auditId: string }>(sql`WITH copies AS MATERIALIZED (
         SELECT provenance_id, ${holdsList(sql`rule_provenance_json`, "object")} AS held FROM ${auditRuleProvenances}
         WHERE provenance_id IN (SELECT rule_provenance_id FROM ${audits} WHERE audit_id IN ${ids}))
       SELECT ${audits.auditId} AS auditId FROM ${audits} LEFT JOIN copies ON copies.provenance_id = ${audits.ruleProvenanceId}
-      WHERE ${audits.auditId} IN ${ids} AND ${unreadableLists(sql`coalesce(copies.held, ${holdsList(audits.ruleProvenance, "object")})`)} = 0`);
+      WHERE ${audits.auditId} IN ${ids} AND ${unreadableLists(sql`coalesce(copies.held, ${holdsList(audits.ruleProvenance, "object")})`)} = 0`) ?? [];
     return new Set(rows.map(row => row.auditId));
   }
 
