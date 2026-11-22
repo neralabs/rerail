@@ -5123,6 +5123,57 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(changes).toEqual([{ path: join(worktree, ".gitignore"), via: "observed", ignoresMore: ["scratch/"] }]);
   });
 
+  // Every file of a worktree Git adds while the session runs is stamped after the session opened, so the session took
+  // each one at the worktree's first walk as a change for Git to judge: inside the session's queue, which a shell
+  // command's result waits on, a reading of the file's blob (`cat-file`) and of HEAD's moves (`reflog`), Git starts
+  // each, for every such worktree and every session watching it. The walk's listing of what Git sees changed in the
+  // worktree already says that none of its files was.
+  it("asks Git nothing of a worktree it first sees whose Git lists no file as changed", async () => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0 });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const place = join(await workspace(), "w");
+    git(root, "worktree", "add", "--quiet", place, "other");
+    roots.push(await realpath(place));
+    asyncGitCalls.args.length = 0;
+    await shellInWorktree(bridge, () => undefined);
+    const named = (name: string) => asyncGitCalls.args.filter(args => args.includes(name)).length;
+    expect({ blobs: named("cat-file"), moves: named("reflog") }).toEqual({ blobs: 0, moves: 0 });
+    expect(auditGeneratedEdits).not.toHaveBeenCalled();
+  });
+
+  it("records a file a command added to a worktree before its first walk, which Git lists as untracked", async () => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0 });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const place = join(await workspace(), "w");
+    git(root, "worktree", "add", "--quiet", place, "other");
+    const worktree = await realpath(place);
+    await writeFile(join(worktree, "src", "added.py"), "violation\n");
+    roots.push(worktree);
+    await shellInWorktree(bridge, () => undefined);
+    const path = relative(root, join(worktree, "src", "added.py")).split(sep).join("/");
+    expect(auditGeneratedEdits.mock.calls.map(([, batch]) => [batch.edits, batch.mode])).toEqual([
+      [[{ path, language: "python", previousReadError: "Source changed during initial discovery without a captured preimage", generatedText: "violation\n" }], "log"],
+    ]);
+  });
+
   it("walks a worktree inside the session's folder once", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(root, "wt"));
