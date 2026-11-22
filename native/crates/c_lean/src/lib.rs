@@ -86,6 +86,15 @@ pub fn tape(src: &[u8], dialect: Dialect) -> Result<Tape, Refusal> {
     parse::parse(src, dialect)
 }
 
+/// [`tape`], the parser's writer writing to `finish`'s target and finished by it: format 15's columns (`tape`), or
+/// format 16 written by its ops as the parse goes (`Writer::finish_16`, decision 0434).
+pub fn tape_into<T>(src: &[u8], dialect: Dialect, finish: &mut dyn rerail_tape_format::Sink<T>) -> Result<T, Refusal> {
+    if src.len() >= u32::MAX as usize / 2 {
+        return Err(Refusal::TooLarge);
+    }
+    parse::parse_into(src, dialect, finish)
+}
+
 /// The tape of `src` read from `toks` (ending in `Eof`), which are `src`'s tokens as the lexer
 /// would make them: a preprocessor's tokens over its expanded text (decision 0327), parsed with no
 /// lexing of the text.

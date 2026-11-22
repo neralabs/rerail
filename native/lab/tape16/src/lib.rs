@@ -31,6 +31,8 @@ pub mod disk;
 pub mod edits;
 pub mod huff;
 pub mod inplace;
+/// Each tag's kind and field ids (`kinds.tsv`).
+pub mod ids;
 pub mod prim;
 pub mod ralz;
 pub mod events;

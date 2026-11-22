@@ -1831,32 +1831,33 @@ fn cmd_gcodes(path: &str) {
     }
 }
 
-/// Decision 0293 §3: each language's format 16 choices, from every capture given, written for the engine to ship.
+/// Decisions 0293 §3 and 0626: each language's format 16 choices, from its grammar, written for the engine to ship.
 #[cfg(feature = "grammar")]
-fn cmd_table(caps: &[&str], out: &str) {
-    let mut files = Vec::new();
-    for c in caps {
-        files.extend(capture::read(std::path::Path::new(c)).unwrap_or_else(|e| die(&e)));
-    }
-    let mut by_tag: BTreeMap<u8, Vec<&capture::File>> = BTreeMap::new();
-    for f in &files {
-        by_tag.entry(f.tag).or_default().push(f);
-    }
+fn cmd_table(tags: &[&str], out: &str) {
+    // Every tape tag the engine stores (the languages' registry, `languages/*.json`), or those named.
+    const ALL: [u8; 31] = [1, 2, 3, 6, 7, 8, 9, 10, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32, 33, 34];
+    let tags: Vec<u8> = if tags.is_empty() || tags == ["all"] { ALL.to_vec() } else { tags.iter().map(|t| t.parse().unwrap_or_else(|_| die(&format!("{t}: not a tape tag")))).collect() };
     let scratch = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../../tmp/e25");
     let out = std::path::Path::new(out);
-    println!("| language | tag | files | nodes | codes | seen | seen, not in the grammar's list (nodes) | widths |");
-    println!("|---|---|---|---|---|---|---|---|");
-    let mut written = Vec::new();
-    for (tag, fs) in &by_tag {
-        match rerail_tape_lab::table::run(*tag, fs, &scratch, out) {
-            Ok(r) => {
-                println!("| {}{} | {tag} | {} | {} | {} | {} | {} ({}) | {:?} |", capture::language(*tag), if r.bound { " (bound)" } else { "" }, r.files, r.nodes, r.codes, r.seen, r.holes, r.hole_nodes, r.widths);
-                written.push(*tag);
+    println!("| language | tag | codes |");
+    println!("|---|---|---|");
+    let mut failed = Vec::new();
+    for &tag in &tags {
+        match rerail_tape_lab::table::run(tag, &scratch, out) {
+            Ok(r) => println!("| {}{} | {tag} | {} |", capture::language(tag), if r.bound { " (bound)" } else { "" }, r.codes),
+            Err(e) => {
+                println!("| {} | {tag} | {e} |", capture::language(tag));
+                failed.push(tag);
             }
-            Err(e) => println!("| {} | {tag} | {} | | | | {e} | |", capture::language(*tag), fs.len()),
         }
     }
-    rerail_tape_lab::table::index(&written, out).unwrap_or_else(|e| die(&e));
+    if !failed.is_empty() {
+        die(&format!("no table written for tags {failed:?}"));
+    }
+    // The index names every table the crate ships, the ones written now and those already there.
+    let mut shipped: Vec<u8> = std::fs::read_dir(out).into_iter().flatten().flatten().filter_map(|e| e.path().file_stem()?.to_str()?.parse().ok()).collect();
+    shipped.sort_unstable();
+    rerail_tape_lab::table::index(&shipped, out).unwrap_or_else(|e| die(&e));
 }
 
 /// E26 (t39 step 18): format 16's fixed blocks decoded on Metal (`f16_gpu.rs`).
@@ -1984,8 +1985,8 @@ fn main() {
         #[cfg(feature = "grammar")]
         "table" => {
             let out = args.iter().position(|a| a == "--out").and_then(|i| args.get(i + 1)).map_or("../../crates/tape_format/tables", String::as_str);
-            let caps: Vec<&str> = args[1..].iter().take_while(|a| *a != "--out").map(String::as_str).collect();
-            cmd_table(&caps, out)
+            let tags: Vec<&str> = args[1..].iter().take_while(|a| *a != "--out").map(String::as_str).collect();
+            cmd_table(&tags, out)
         }
         #[cfg(target_os = "macos")]
         "inplace-gpu" => cmd_inplace_gpu(path),

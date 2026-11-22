@@ -1,6 +1,6 @@
 //! A C or C++ file's tape from the lean parser (`rerail_c_lean`): tree-sitter-c's or
 //! tree-sitter-cpp's tape, written as the parse goes, with nothing packed again
-//! (`TapeImage::written`). The tape is the one tree-sitter's tree encodes to, node for node
+//! (`formats::lean`: the run's format, written in one pass). The tape is the one tree-sitter's tree encodes to, node for node
 //! (`c_tapes_from_the_lean_parser_are_tree_sitters`, `cpp_tapes_from_the_lean_parser_are_tree_sitters`).
 //!
 //! One parser reads both languages (`rerail_c_lean::Dialect`). Its keys name kinds, fields and
@@ -63,25 +63,20 @@ fn dialect(grammar: &Grammar) -> Option<rerail_c_lean::Dialect> {
 /// the file; `Ok(Err)` where the tape cannot be made.
 pub fn encode(grammar: &Grammar, source: &str, budget: &dyn Fn() -> bool) -> Result<Result<TapeImage, String>, rerail_c_lean::Refusal> {
     let Some(dialect) = dialect(grammar) else { return Ok(Err(format!("the lean C parser reads no {:?}", grammar.lang))) };
-    let tape = rerail_c_lean::tape(source.as_bytes(), dialect)?;
     let ids = ids(dialect);
-    let lacks = |what: &str, i: usize| format!("tree-sitter-{dialect:?} lacks the lean parser's {what} {i}");
-    let codes: Result<Vec<Code>, String> = tape
-        .keys
-        .iter()
-        .map(|&key| {
-            let (kind, field, class, extra) = rerail_c_lean::unkey(key);
-            let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
-            let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
-            let classes: &[u16] = if extra { &[] } else { ids.classes[usize::from(class)].as_deref().ok_or_else(|| lacks("supertype set", usize::from(class)))? };
-            let mut code = Code::plain(kind, field, classes)?;
-            if extra {
-                code.flags |= CODE_EXTRA;
-            }
-            Ok(code)
-        })
-        .collect();
-    Ok(codes.and_then(|codes| TapeImage::written(tape.code, tape.size, tape.base, tape.off, tape.tail, tape.widths, codes, None, grammar, source, budget)))
+    let lacks = move |what: &str, i: usize| format!("tree-sitter-{dialect:?} lacks the lean parser's {what} {i}");
+    let code_of = move |&key: &u32| -> Result<Code, String> {
+        let (kind, field, class, extra) = rerail_c_lean::unkey(key);
+        let kind = ids.kinds[usize::from(kind)].ok_or_else(|| lacks("kind", usize::from(kind)))?;
+        let field = ids.fields[usize::from(field)].ok_or_else(|| lacks("field", usize::from(field)))?;
+        let classes: &[u16] = if extra { &[] } else { ids.classes[usize::from(class)].as_deref().ok_or_else(|| lacks("supertype set", usize::from(class)))? };
+        let mut code = Code::plain(kind, field, classes)?;
+        if extra {
+            code.flags |= CODE_EXTRA;
+        }
+        Ok(code)
+    };
+    rerail_c_lean::tape_into(source.as_bytes(), dialect, &mut super::formats::lean(grammar, source, budget, code_of))
 }
 
 /// C's and C++'s tree parser: the lean parser, standing in for tree-sitter where it reads the file.
