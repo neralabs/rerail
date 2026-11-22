@@ -2875,9 +2875,10 @@ export class CodeRuleBridge {
   /** One walk of the session folder; the other worktrees' walk is shared (`#scheduleWorktreeWalk`), and neither changes what the other owns. */
   async #walkSources(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): Promise<void> {
     // What the worktrees' list would ask Git is learnt first, as a process no thread waits on, so the list below starts
-    // none; while the stored list stands there is nothing to wait for.
-    const learning = this.#auditor.learnWorktreeRoots?.(discovery.git);
-    if (learning !== undefined) await learning;
+    // none; while the stored list stands there is nothing to wait for. A session that closed meanwhile has its walk stop
+    // there, as at the walk's other waits.
+    const learning = this.#learnWorktrees(discovery);
+    if (learning !== undefined && !(await learning)) return;
     const worktrees = this.#syncWorktrees(discovery);
     const walk: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),
@@ -2892,6 +2893,15 @@ export class CodeRuleBridge {
     await this.#enqueue(() => this.#applyWalk(discovery, walk, scan));
     // Reconcile changes to already-observed files made during the initial traversal.
     if (walk.baseline && discovery.requested === undefined) discovery.requested = checkpoint;
+  }
+
+  /**
+   * What the worktrees' list would ask Git, learnt through the session's Git reads (`learnWorktreeRoots`): resolves
+   * whether the session's walk goes on, false once the session closed meanwhile; undefined, with nothing to wait for,
+   * when there is nothing to learn.
+   */
+  #learnWorktrees(discovery: SourceDiscovery): Promise<boolean> | undefined {
+    return this.#auditor.learnWorktreeRoots?.(discovery.git)?.then(() => !this.#abandoned(discovery));
   }
 
   #abandoned(discovery: SourceDiscovery): boolean {
