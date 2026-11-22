@@ -483,7 +483,7 @@ UKL_INLINE bool textop_one(uint32_t op, Txt x, uint32_t xs, uint32_t lx, Txt y, 
 // `strings::test` splits it): Y passes when any one does. The separators are found a word of eight at a time (an exact
 // mask of the bytes equal to 0x1f), each member compared as one pattern. A bound pattern (`TEXT_BOUND`, agg[0] bit 6)
 // that holds the separator is no set: `host` set, and the stratum runs on the host. A constant set is split.
-UKL_INLINE bool textop_pass(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D, UKL_GLOBAL uint32_t* A, UKL_PRIVATE bool* unheld,
+UKL_COLD bool textop_pass(StageP s, Longs L, uint32_t t, UKL_GLOBAL const uint8_t* D, UKL_GLOBAL uint32_t* A, UKL_PRIVATE bool* unheld,
                             UKL_PRIVATE bool* host) {
     Txt x = txt_of(s, L, t, D, A, 0, s->agg[1] & 15, unheld), y = txt_of(s, L, t, D, A, 2, s->agg[1] >> 4, unheld);
     uint32_t lx = txt_len(x), ly = txt_len(y);
@@ -671,7 +671,7 @@ DEFINE_KERNEL2(join, stage_scatter,
 
 // A witness's probe (decision 0277): whether relation R has a row of `b`'s keys (a binding's slots, constants or the
 // candidate's columns) and column tests; an anti-join's, whether it has none. One loop over the keys' run.
-UKL_INLINE bool witness_probe(StageP b, Longs L, uint32_t t, uint32_t cap_in, StageP a, Longs RA, uint32_t ra, Longs R) {
+UKL_COLD bool witness_probe(StageP b, Longs L, uint32_t t, uint32_t cap_in, StageP a, Longs RA, uint32_t ra, Longs R) {
     int64_t kv[8];
     for (uint32_t i = 0; i < b->nkeys && i < 8; i++) {
         uint32_t k = b->key_kind[i];

@@ -97,6 +97,13 @@ format 16's reads alone.
    interpreters', the sweep's and the join view kernels' over format 15 or 16 (`simd_group_free`), and the tape
    tests' writer and format 15's and 16's reads. Over 16z they do not: its block decode is a SIMD group's. The label
    walks (`label_group`, `label_micro`, `label_phase`) and the sorts use SIMD groups.
+15. **16z's block lookup is called, and a 16z block's load is one read.** `clif_z_block` (the cache's lookup or
+   decode of a block, 13 KB expanded) was the compiler's to inline (`UKL_CALLED`), and Intel's inlined it at every
+   read: 16 copies in the tape reads' test kernel. It is called (`UKL_COLD`). And format 16's body over a decoded
+   block read each value through one load per width (`clif_f16b_ld`: four coherent reads, each two 64-bit words
+   read by atomics on OpenCL), inlined at each of 142 loads: one coherent read of the words that hold the value,
+   masked to its width. The join stages call `witness_probe` (3 copies in `witness_count`: 4.1 → 2.1 s) and
+   `textop_pass` (`stage_count` 7.8 → 6.0 s).
 
 ## Measured
 
@@ -131,6 +138,11 @@ With the opcode cases called and no sub-group size where no SIMD group is used (
 (17.6 s at §11's start), the interpreter over format 15's tapes 5.8 s (132 s at §9's), the resident interpreter
 12.5 s; 4 at a time (the host loaded by other work): `stage_scatter` 7.8 s, `witness_count` 14.6 s,
 `tape_writer_replay` 19.6 → 11.5 s; every fixed kernel in 110 s.
+
+Every fixed kernel one at a time, the host loaded by other work (`rows_copy` 4.2 s here, 1.5 s on a quiet host),
+before and after §15: the tape reads' 16z test kernel 31.2 → 20.8 s, `witness_count` 10.1 → 6.2 s; `stage_count`
+12 s either way; the interpreters 11–16 s, the sweeps 13–16 s, the label passes 16 s (15) and 21 s (16, nine
+kernels); every fixed kernel 277 → 263 s one at a time, 99 s 4 at a time.
 
 Not yet every kernel in seconds: the resident interpreter (12.5 s alone, twice the interpreter over tapes), the
 sweep, the label passes' walks (which use SIMD groups), `stage_count` and `witness_count`, and the tape tests' reads

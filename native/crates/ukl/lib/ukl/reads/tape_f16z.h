@@ -523,7 +523,7 @@ UKL_INLINE uint64_t clif_tc_get(CLIF_T_ARGS, uint64_t cache, uint64_t key, uint3
 // The address of the cache entry that holds the tape's block `block` decoded: found in the cache the view names, or
 // decoded into its head. The dead entry (its zeros) where the cache had no room, or for a block past the tape's last
 // (a node read that is no node of it: a failure counted, so its run is refused, decision 0463).
-UKL_CALLED uint64_t clif_z_block(CLIF_T_ARGS, uint32_t block)
+UKL_COLD uint64_t clif_z_block(CLIF_T_ARGS, uint32_t block)
 {
     uint64_t cache = clif_tz_cache(v);
     uint32_t blocks = (clif_view(v, CLIF_T_NODES) + (CLIF_T_Z_BLOCK - 1u)) >> 10;
@@ -594,13 +594,10 @@ UKL_INLINE uint32_t clif_f16b_view(CLIF_ZB_ARGS, uint32_t a) { return ukl_ldc_u3
 UKL_INLINE uint64_t clif_f16b_ld(CLIF_ZB_ARGS, uint32_t base, uint32_t off, uint32_t w)
 {
     uint64_t a = e + CLIF_T_SLOT_BYTES + (((uint64_t)base + (uint64_t)off) & m);
-    if (w == 1u)
-        return ukl_ldc_u8(clif_coherent(t), a);
-    if (w == 2u)
-        return ukl_ldc_u16(clif_coherent(t), a);
-    if (w == 4u)
-        return ukl_ldc_u32(clif_coherent(t), a);
-    return ukl_ldc_u64(clif_coherent(t), a);
+    // One coherent read, of the words that hold the `w` bytes (decision 0576 §15): a read for each width was the
+    // same read four times, and inlined at each of a 16z kernel's loads (142 in the tape reads' test kernel).
+    uint64_t x = ukl_ldc_window(clif_coherent(t), a, w);
+    return w >= 8u ? x : x & ukl_mask64(8u * w);
 }
 
 #define CLIF_16(name) clif_f16b_##name
