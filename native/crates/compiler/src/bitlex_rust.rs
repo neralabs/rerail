@@ -1053,8 +1053,8 @@ impl<'a> G<'a> {
                     Some(id) => pos.push(format!("(!is_extra(self.recs[{j}].code) && self.recs[{j}].code >> 8 & 0xff == w::{})", self.word_const(id))),
                     None => pos.push("false".into()),
                 },
-                TokenElem::With(m) => and.push(format!("self.recs[{j}].code >> {} & 1 == 1", 16 + self.bit_num(m)?)),
-                TokenElem::Without(m) => and.push(format!("self.recs[{j}].code >> {} & 1 == 0", 16 + self.bit_num(m)?)),
+                TokenElem::With(m) => and.push(format!("self.marks_hold({j}, 1 << {})", self.bit_num(m)?)),
+                TokenElem::Without(m) => and.push(format!("!self.marks_hold({j}, 1 << {})", self.bit_num(m)?)),
                 TokenElem::Starting(bytes) => and.push(format!("matches!(self.src[self.recs[{j}].start as usize], {})", bytes.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | "))),
                 TokenElem::End | TokenElem::Not(_) | TokenElem::Many(..) => return Err(format!("a gap question's element {c:?}")),
             }
@@ -1510,7 +1510,7 @@ impl<'a> G<'a> {
             for (a, b) in [
                 ("    asks: u64,\n", "    asks: u64,\n    /// The marks the level open refuses (`refuse M in L`), their bits in a record's code: a token it takes with one\n    /// refuses the file. A call's are its own, the caller's again where it returns.\n    refusing: u32,\n"),
                 ("marked: false, asks: 0,", "marked: false, asks: 0, refusing: 0,"),
-                ("        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n", "        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n        // A mark the level refuses, at the token it takes (`refuse M in L`).\n        if self.k == 0 && self.recs[self.i].code >> 16 & self.refusing != 0 {\n            return self.refuse();\n        }\n"),
+                ("        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n", "        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n        // A mark the level refuses, at the token it takes (`refuse M in L`).\n        if self.k == 0 && self.refusing != 0 && self.marks_hold(self.i, self.refusing) {\n            return self.refuse();\n        }\n"),
             ] {
                 if out.matches(a).count() != 1 {
                     return Err(format!("tier 2 as Rust: `refuse`'s place in the runtime: {a:?}"));
@@ -1830,9 +1830,37 @@ impl<'a> P<'a> {
         if j < self.n { self.code_at(j) >> 8 & 0xff } else { 0 }
     }
 
+    /// Mark `b` at record `j`: its code's bit, else, for a gap mark tier 1 leaves to tier 2 (`tier1::ASKED`), the bytes.
     #[inline(always)]
     fn bit_at(&self, j: usize, b: u32) -> bool {
-        j < self.n && self.code_at(j) >> (16 + b) & 1 == 1
+        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b))
+    }
+
+    /// Gap mark `b` at record `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
+    /// gap and the lean parser asks whether a token is on a line.
+    /// An extra keeps none of them.
+    fn gap(&self, j: usize, b: u32) -> bool {
+        if is_extra(self.recs[j].code) {
+            return false;
+        }
+        let p = self.prev_tok(j);
+        let (from, before) = if p < self.n { (self.recs[p].start as usize + 1, self.word_at(p)) } else { (0, 0) };
+        crate::tier1::gap(self.src, from, self.recs[j].start as usize, before, b)
+    }
+
+    /// Whether one of the marks `bits` holds at record `j`: its code's, and the gap marks tier 2 asks of the bytes.
+    fn marks_hold(&self, j: usize, bits: u32) -> bool {
+        if self.recs[j].code >> 16 & bits != 0 {
+            return true;
+        }
+        let mut ask = crate::tier1::ASKED & bits;
+        while ask != 0 {
+            if self.gap(j, ask.trailing_zeros()) {
+                return true;
+            }
+            ask &= ask - 1;
+        }
+        false
     }
 
     #[inline(always)]

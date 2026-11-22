@@ -72,6 +72,14 @@ fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
     }
 }
 
+/// The gap marks tier 2 asks of the bytes (`tier1::ASKED`, decision 0623 step 5), by their bits.
+fn tier2_asked_marks() -> u32 {
+    let tier1 = std::fs::read_to_string(format!("{}/../rr_aot/src/tier1.rs", env!("CARGO_MANIFEST_DIR"))).expect("reads");
+    let Some(at) = tier1.find("pub const ASKED: u32 = 0x") else { return 0 };
+    let rest = &tier1[at + 25..];
+    u32::from_str_radix(&rest[..rest.find(';').expect("the constant's end")], 16).expect("the bits")
+}
+
 /// The mark bits of the hidden marks only refused (`refuse M in L`): the lowering checks their local token tests in
 /// tier 2, in the refusing levels (`bitlex_masks`, `kind_checks`), so the interpreter's records lack those bits; tier
 /// 1 as Rust tests them in the token loop and records them. Each bit is the one tier 1 as Rust gives the mark.
@@ -96,7 +104,9 @@ fn tier2_checked_marks() -> u32 {
 /// engine, and where neither does, each token's first and last byte and code. In the bits of the marks tier 2 checks
 /// (`tier2_checked_marks`), the Rust's are the interpreter's and those tier 2 tests.
 fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
-    let late = tier2_checked_marks() << 16;
+    // The gap marks tier 2 asks of the bytes (decision 0623 step 5) are in no record of tier 1's: the tapes test them.
+    let asked = tier2_asked_marks() << 16;
+    let late = tier2_checked_marks() << 16 & !asked;
     let run = c.program.block_programs[0].run(text.as_bytes());
     let lx = rerail_rr_aot::lex(&rerail_rr_aot::padded(text.as_bytes()), text.len());
     let refused = run.totals.first().is_some_and(|&t| t != 0);
@@ -116,7 +126,7 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
         let rec = lx.recs.get(k);
         let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
-        let kept = |c: Option<&u32>| c.map(|&c| c & !late);
+        let kept = |c: Option<&u32>| c.map(|&c| c & !late & !asked);
         let late_ok = run.codes.get(k).zip(ours.2).is_none_or(|(&t, &o)| t & late & !o == 0);
         if (theirs.0, theirs.1, kept(theirs.2)) != (ours.0, ours.1, kept(ours.2)) || !late_ok {
             let at = |s: Option<&u32>| s.map_or(String::new(), |&s| text[s as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));

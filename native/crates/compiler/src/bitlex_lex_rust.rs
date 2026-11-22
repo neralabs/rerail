@@ -4948,6 +4948,9 @@ impl Gen<'_> {
             name: String,
             /// The loop's accumulator of its mask (`GapAcc`), where it keeps one.
             acc: Option<usize>,
+            /// Its mask's one byte, where tier 2 may ask it of the bytes (decision 0623 step 5): kept by no
+            /// accumulator, an extra keeps none of it, and no `else escape` reads it at the file's end.
+            byte: Option<u8>,
         }
         /// A gap mark's mask made of the regions, kept by the loop as it reads (the lean lexer's
         /// "a line break since the token before"): whether it held since the grammar token before
@@ -5044,7 +5047,14 @@ impl Gen<'_> {
             for c in checks {
                 tests.push((c.kind.clone(), c.after, c.test, c.expr.clone(), c.least, bit));
             }
-            gaps.push(Gap { bit, mask, unless, name: kind.clone(), acc });
+            let byte = match (&mask, acc, unplaced, x.own >> bit & 1) {
+                (Some(_), None, None, 0) => bytes_of_expr(at, x.stmts).and_then(|set| {
+                    let mut one = (0..=255u8).filter(|&b| set[usize::from(b)]);
+                    one.next().filter(|_| one.next().is_none())
+                }),
+                _ => None,
+            };
+            gaps.push(Gap { bit, mask, unless, name: kind.clone(), acc, byte });
         }
         let skip = match &skip {
             Some(e) => self.val(e)?,
@@ -5378,6 +5388,9 @@ impl Gen<'_> {
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
         let mut own_code = String::new();
+        // The same where tier 2 asks the one-byte gap marks (`asked`) of the bytes: only the token tests' hits of them.
+        let mut gap_asked = String::new();
+        let mut asked: Vec<(u8, u8, String, String)> = Vec::new();
         for g in &gaps {
             let since = match (&g.mask, g.acc) {
                 (_, Some(j)) => format!("tested >> {0} & 1 == 1 || acc_{j}{1}", g.bit, if accs[j].here == "false" { String::new() } else { format!(" || here_{j}") }),
@@ -5386,6 +5399,15 @@ impl Gen<'_> {
             };
             let unless = if g.unless.is_empty() { String::new() } else { format!(" && !matches!(before, {})", g.unless.iter().map(|w| w.to_string()).collect::<Vec<_>>().join(" | ")) };
             let _ = write!(gap_code, "                // `{}`\n                if ({since}){unless} {{\n                    marks |= 1 << {};\n                }}\n", g.name, g.bit);
+            match g.byte {
+                Some(b) => {
+                    let _ = write!(gap_asked, "                // `{}`\n                // Its gap's byte tier 2 asks (`gap`): here only the token tests' hits.\n                if (tested >> {1} & 1 == 1){unless} {{\n                    marks |= 1 << {1};\n                }}\n", g.name, g.bit);
+                    asked.push((g.bit, b, unless.clone(), g.name.clone()));
+                }
+                None => {
+                    let _ = write!(gap_asked, "                // `{}`\n                if ({since}){unless} {{\n                    marks |= 1 << {};\n                }}\n", g.name, g.bit);
+                }
+            }
             if x.own >> g.bit & 1 == 1 {
                 if let Some(j) = g.acc {
                     let here = if accs[j].here == "false" { String::new() } else { format!(" || here_{j}") };
@@ -5898,7 +5920,7 @@ impl Gen<'_> {
             let mut by = bytes::Bytes::new(x.stmts, locals, class_code);
             let mut go = || -> Result<_, String> {
                 let mut pieces = Vec::new();
-                for t in [&open_code, &branches, &token_code, &own_code, &gap_code, &acc_after] {
+                for t in [&open_code, &branches, &token_code, &own_code, if readers(x.stmts).is_empty() { &gap_asked } else { &gap_code }, &acc_after] {
                     let t = by.rewrite(&bytes::strip_pauses(t))?;
                     if uses(&t, "made") || uses(&t, "wait") || t.contains("'pass") {
                         return Err("a pause the loop still reads".into());
@@ -5992,6 +6014,20 @@ impl Gen<'_> {
         if let Some(t) = &word_table {
             out = out.replacen(&word_fn, "", 1);
             out.push_str(t);
+        }
+        // The gap marks tier 2 asks of the bytes (decision 0623 step 5): where the loop reads the bytes, and no region is
+        // read in parts (a piece's start is not its record's).
+        let asked = if from_bytes.is_some() && readers(x.stmts).is_empty() { asked } else { Vec::new() };
+        let bits = asked.iter().fold(0u32, |m, a| m | 1 << a.0);
+        let _ = write!(out, "\n/// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's\n/// records hold only its token tests' hits of them.\npub const ASKED: u32 = {bits:#x};\n\n/// Whether gap mark `b` holds over `src[from..to]`, the bytes since the grammar token before's first byte (`before` its\n/// word), as the lean parser asks whether a token is on a line.\n#[inline]\npub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {{\n");
+        if asked.is_empty() {
+            out.push_str("    let _ = (src, from, to, before, b);\n    false\n}\n");
+        } else {
+            out.push_str("    let _ = before;\n    match b {\n");
+            for (bit, byte, unless, name) in &asked {
+                let _ = writeln!(out, "        // `{name}`\n        {bit} => src[from..to].contains(&{byte:#04x}){unless},");
+            }
+            out.push_str("        _ => false,\n    }\n}\n");
         }
         out.push_str(HELPERS);
         if self.body.contains("toggle(&") {

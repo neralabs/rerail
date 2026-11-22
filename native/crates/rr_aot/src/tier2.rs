@@ -470,9 +470,37 @@ impl<'a> P<'a> {
         if j < self.n { self.code_at(j) >> 8 & 0xff } else { 0 }
     }
 
+    /// Mark `b` at record `j`: its code's bit, else, for a gap mark tier 1 leaves to tier 2 (`tier1::ASKED`), the bytes.
     #[inline(always)]
     fn bit_at(&self, j: usize, b: u32) -> bool {
-        j < self.n && self.code_at(j) >> (16 + b) & 1 == 1
+        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b))
+    }
+
+    /// Gap mark `b` at record `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
+    /// gap and the lean parser asks whether a token is on a line.
+    /// An extra keeps none of them.
+    fn gap(&self, j: usize, b: u32) -> bool {
+        if is_extra(self.recs[j].code) {
+            return false;
+        }
+        let p = self.prev_tok(j);
+        let (from, before) = if p < self.n { (self.recs[p].start as usize + 1, self.word_at(p)) } else { (0, 0) };
+        crate::tier1::gap(self.src, from, self.recs[j].start as usize, before, b)
+    }
+
+    /// Whether one of the marks `bits` holds at record `j`: its code's, and the gap marks tier 2 asks of the bytes.
+    fn marks_hold(&self, j: usize, bits: u32) -> bool {
+        if self.recs[j].code >> 16 & bits != 0 {
+            return true;
+        }
+        let mut ask = crate::tier1::ASKED & bits;
+        while ask != 0 {
+            if self.gap(j, ask.trailing_zeros()) {
+                return true;
+            }
+            ask &= ask - 1;
+        }
+        false
     }
 
     #[inline(always)]
@@ -541,7 +569,7 @@ impl<'a> P<'a> {
             return self.refuse();
         }
         // A mark the level refuses, at the token it takes (`refuse M in L`).
-        if self.k == 0 && self.recs[self.i].code >> 16 & self.refusing != 0 {
+        if self.k == 0 && self.refusing != 0 && self.marks_hold(self.i, self.refusing) {
             return self.refuse();
         }
         if let Some((kind, None)) = self.lost {

@@ -144,5 +144,23 @@ statement asks it (step 5).
 `rr_parser`'s 51 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes and records included. JSON's files
 are unchanged.
 
-The gap marks (`any_in` of the newline and form feed at each token) are still tier 1's. They move to where tier 2
-asks them in step 5's second part.
+## Step 5, second part: the gap marks asked where tier 2 asks them (done)
+
+`.rerail`'s gap marks are `line` and `newline` (a newline since the grammar token before) and `json_bad`'s form feed.
+Tier 1 searched each gap for both bytes at every token, and made their two words at every block. Lean's lexer sets no
+mark: the few statements that ask whether a token is on a line read the bytes from the last token to it (`on_line`).
+
+- **Tier 1 leaves a gap mark of one byte to tier 2**, in the bytes form, where no region is read in parts. That holds
+  where the loop keeps no accumulator of the mark, no extra keeps it, and no `else escape` reads it at the file's end.
+  Its records hold only the hits of the mark that the token tests give (`json_bad` at a number's `0` or a bare `-`).
+  The block makes neither byte's word.
+- **Tier 1's file says which marks, and how to ask them**: `ASKED` (their bits), and `gap(src, from, to, before, b)`,
+  generated from the grammar. It tests `src[from..to].contains(&byte)`, and the mark's `unless after` on the word
+  before.
+- **Tier 2 asks them where it asks a mark**: `bit_at`, a gap question's `with` and `without` (`marks_hold`), and the
+  marks a level refuses at the token it takes. Each asks the bytes from the grammar token before's first byte, as
+  tier 1's gap did. A mark is asked once a token (`held`).
+- **Kotlin's files** carry `ASKED = 0` and a `gap` that holds nowhere, so its tier 2 reads its records as before.
+
+`rr_parser`'s 51 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes and records included. The records
+test leaves the asked bits out of what it compares (`tier2_asked_marks`); the tapes test them.

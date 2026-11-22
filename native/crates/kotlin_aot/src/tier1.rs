@@ -2988,6 +2988,18 @@ pub fn lex(src: &[u8]) -> Lexed {
     }
 }
 
+/// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
+/// records hold only its token tests' hits of them.
+pub const ASKED: u32 = 0x0;
+
+/// Whether gap mark `b` holds over `src[from..to]`, the bytes since the grammar token before's first byte (`before` its
+/// word), as the lean parser asks whether a token is on a line.
+#[inline]
+pub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {
+    let _ = (src, from, to, before, b);
+    false
+}
+
 /// Block `q`'s 64 bytes; the last block's past the file are 0x00.
 #[inline(always)]
 fn block(src: &[u8], q: usize) -> [u8; 64] {

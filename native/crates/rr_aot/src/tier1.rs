@@ -756,8 +756,6 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
         let k_m_dot = unsafe { w_m_dot::<S>(src, n, base as isize, &mut 0) };
         let k_t11 = unsafe { w_t11::<S>(src, n, base as isize, &mut 0) };
         let k_m_digit = unsafe { w_m_digit::<S>(src, n, base as isize, &mut 0) };
-        let k_m_lf = unsafe { w_m_lf::<S>(src, n, base as isize, &mut 0) };
-        let k_m_ff = unsafe { w_m_ff::<S>(src, n, base as isize, &mut 0) };
         let k_m_ws = unsafe { w_m_ws::<S>(src, n, base as isize, &mut 0) };
         let mut firsts = !k_m_ws & (!0u64 << at.saturating_sub(base));
         while firsts != 0 {
@@ -1025,15 +1023,18 @@ unsafe fn lex_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Lexed {
                     marks |= 1 << 0;
                 }
                 // `line`
-                if (tested >> 1 & 1 == 1 || bfirst_in(n, base, k_m_lf, from, s, |p: isize, esc: &mut u64| unsafe { w_m_lf::<S>(src, n, p, esc) }).is_some()) {
+                // Its gap's byte tier 2 asks (`gap`): here only the token tests' hits.
+                if (tested >> 1 & 1 == 1) {
                     marks |= 1 << 1;
                 }
                 // `newline`
-                if (tested >> 10 & 1 == 1 || bfirst_in(n, base, k_m_lf, from, s, |p: isize, esc: &mut u64| unsafe { w_m_lf::<S>(src, n, p, esc) }).is_some()) && !matches!(before, 12) {
+                // Its gap's byte tier 2 asks (`gap`): here only the token tests' hits.
+                if (tested >> 10 & 1 == 1) && !matches!(before, 12) {
                     marks |= 1 << 10;
                 }
                 // `json_bad`
-                if (tested >> 12 & 1 == 1 || bfirst_in(n, base, k_m_ff, from, s, |p: isize, esc: &mut u64| unsafe { w_m_ff::<S>(src, n, p, esc) }).is_some()) {
+                // Its gap's byte tier 2 asks (`gap`): here only the token tests' hits.
+                if (tested >> 12 & 1 == 1) {
                     marks |= 1 << 12;
                 }
             from = s + 1;
@@ -1729,28 +1730,6 @@ unsafe fn w_m_digit<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, e
     unsafe { cls_digit::<S>(src, n, p) }
 }
 
-/// Class `ff`'s bits in the 64 bytes from `p`: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-unsafe fn cls_ff<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
-    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
-    // SAFETY: the caller's.
-    let b = unsafe { S::eq_mask(v, 0x0c) };
-    held(b, q, n, p)
-}
-
-/// `m_ff`'s bits in the 64 bytes from `p`, from the bytes: none past the file or before it.
-///
-/// # Safety
-/// The CPU runs `S`'s backend.
-#[inline(always)]
-#[allow(unused_variables)]
-unsafe fn w_m_ff<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize, esc: &mut u64) -> u64 {
-    unsafe { cls_ff::<S>(src, n, p) }
-}
-
 /// Class `ws`'s bits in the 64 bytes from `p`: none past the file or before it.
 ///
 /// # Safety
@@ -2044,6 +2023,26 @@ fn word_at(src: &[u8], s: usize, len: usize) -> u32 {
     if key == k && l == len && (len <= 8 || src[s + 8..s + len] == *tail) { code } else { 0 }
 }
 
+
+/// The gap marks tier 2 asks of the bytes, where a rule asks one (decision 0623 step 5), by their bits: tier 1's
+/// records hold only its token tests' hits of them.
+pub const ASKED: u32 = 0x1402;
+
+/// Whether gap mark `b` holds over `src[from..to]`, the bytes since the grammar token before's first byte (`before` its
+/// word), as the lean parser asks whether a token is on a line.
+#[inline]
+pub fn gap(src: &[u8], from: usize, to: usize, before: u32, b: u32) -> bool {
+    let _ = before;
+    match b {
+        // `line`
+        1 => src[from..to].contains(&0x0a),
+        // `newline`
+        10 => src[from..to].contains(&0x0a) && !matches!(before, 12),
+        // `json_bad`
+        12 => src[from..to].contains(&0x0c),
+        _ => false,
+    }
+}
 
 /// Block `q`'s 64 bytes; the last block's past the file are 0x00.
 #[inline(always)]

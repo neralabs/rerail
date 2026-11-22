@@ -759,9 +759,37 @@ impl<'a> P<'a> {
         if j < self.n { self.code_at(j) >> 8 & 0xff } else { 0 }
     }
 
+    /// Mark `b` at record `j`: its code's bit, else, for a gap mark tier 1 leaves to tier 2 (`tier1::ASKED`), the bytes.
     #[inline(always)]
     fn bit_at(&self, j: usize, b: u32) -> bool {
-        j < self.n && self.code_at(j) >> (16 + b) & 1 == 1
+        j < self.n && (self.code_at(j) >> (16 + b) & 1 == 1 || crate::tier1::ASKED >> b & 1 == 1 && self.gap(j, b))
+    }
+
+    /// Gap mark `b` at record `j`, asked of the bytes since the grammar token before's first byte, as tier 1 reads a
+    /// gap and the lean parser asks whether a token is on a line.
+    /// An extra keeps none of them.
+    fn gap(&self, j: usize, b: u32) -> bool {
+        if is_extra(self.recs[j].code) {
+            return false;
+        }
+        let p = self.prev_tok(j);
+        let (from, before) = if p < self.n { (self.recs[p].start as usize + 1, self.word_at(p)) } else { (0, 0) };
+        crate::tier1::gap(self.src, from, self.recs[j].start as usize, before, b)
+    }
+
+    /// Whether one of the marks `bits` holds at record `j`: its code's, and the gap marks tier 2 asks of the bytes.
+    fn marks_hold(&self, j: usize, bits: u32) -> bool {
+        if self.recs[j].code >> 16 & bits != 0 {
+            return true;
+        }
+        let mut ask = crate::tier1::ASKED & bits;
+        while ask != 0 {
+            if self.gap(j, ask.trailing_zeros()) {
+                return true;
+            }
+            ask &= ask - 1;
+        }
+        false
     }
 
     #[inline(always)]
@@ -8929,7 +8957,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn refuses_taken_head_ctor_0(&self, here: usize) -> bool {
         ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.recs[j].code >> 19 & 1 == 1 } })
+            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
     }
 
     fn refuses_taken_head_ctor(&self) -> bool {
@@ -9005,7 +9033,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn drops_semi_0(&self, here: usize) -> bool {
         ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.recs[j].code >> 19 & 1 == 1 } })
+            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
             && ({ let j = here + 0; j < self.n && true && matches!(self.src[self.recs[j].start as usize], 0x61 | 0x65 | 0x77) })
     }
 
@@ -9022,7 +9050,7 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn refuses_semi_0(&self, here: usize) -> bool {
         ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.recs[j].code >> 19 & 1 == 1 } })
+            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
             && ({ let j = here + 0; j < self.n && ((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::CATCH_57) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::FINALLY_58) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::ELSE_54)) })
     }
 
@@ -9031,7 +9059,7 @@ impl P<'_> {
         let g = self.prev_tok(here);
         let g = if g >= self.n { 0 } else { g + 1 };
         ({ let j = g as isize + 0 - 1; if j < 0 { true } else { let j = j as usize; j < here && !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = g as isize + 1 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.recs[j].code >> 19 & 1 == 1 } })
+            && ({ let j = g as isize + 1 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
             && ({ let j = g as isize + 2 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) } })
     }
 
@@ -9042,14 +9070,14 @@ impl P<'_> {
     #[allow(unused_variables)]
     fn loses_semi_0(&self, here: usize) -> bool {
         ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.recs[j].code >> 19 & 1 == 1 } })
+            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
             && ({ let j = here + 0; j < self.n && true && matches!(self.src[self.recs[j].start as usize], 0x2c | 0x2e | 0x3a | 0x2a | 0x25 | 0x3e | 0x3c | 0x3d | 0x7b | 0x5b | 0x28 | 0x3f | 0x7c | 0x26 | 0x2f) })
     }
 
     #[allow(unused_variables)]
     fn loses_semi_1(&self, here: usize) -> bool {
         ({ let j = here as isize + -2; if j < 0 { true } else { let j = j as usize; !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.recs[j].code >> 19 & 1 == 1 } })
+            && ({ let j = here as isize + -1; if j < 0 { false } else { let j = j as usize; ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
             && ({ let j = here + 0; j < self.n && ((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::BANG_EQ_69) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::BANG_EQ_EQ_70) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::AS_10) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::WHERE_28) || (!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::BY_25)) })
     }
 
@@ -9062,7 +9090,7 @@ impl P<'_> {
         let g = self.prev_tok(here);
         let g = if g >= self.n { 0 } else { g + 1 };
         ({ let j = g as isize + 0 - 1; if j < 0 { true } else { let j = j as usize; j < here && !((!is_extra(self.recs[j].code) && self.recs[j].code >> 8 & 0xff == w::SEMI_33)) } })
-            && ({ let j = g as isize + 1 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.recs[j].code >> 19 & 1 == 1 } })
+            && ({ let j = g as isize + 1 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::MULTILINE_COMMENT)) && self.marks_hold(j, 1 << 3) } })
             && ({ let j = g as isize + 2 - 1; if j < 0 { false } else { let j = j as usize; j < here && ((is_extra(self.recs[j].code) && extra_kind(self.recs[j].code) == k::LINE_COMMENT)) } })
     }
 
