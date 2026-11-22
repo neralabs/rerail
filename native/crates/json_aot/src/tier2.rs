@@ -63,6 +63,14 @@ fn leaf_in(d: *mut u8, number: u32, child: u32, start: u64, cs: u64, ce: u64, en
     debug_assert_eq!(r, 0, "the writer's node of one leaf, its room reserved");
 }
 
+/// A token's leaf from `s` to `end`, the next record taken: its end (the lean parser's `leaf`, for each place's arm).
+#[inline(always)]
+fn token(d: *mut u8, i: &mut usize, number: u32, s: usize, end: usize) -> usize {
+    *i += 1;
+    leaf(d, number, s as u64, end as u64);
+    end
+}
+
 /// The innermost open node closed at `end`, as `open`.
 #[inline(always)]
 fn close(d: *mut u8, end: u64) {
@@ -91,26 +99,15 @@ fn at(src: &[u8], starts: &[u32], i: usize) -> u32 {
     unsafe { *starts.get_unchecked(i) }
 }
 
-/// The 64 bytes from `p` of the padded source: the bits of byte `a` and of byte `b` (simdjson's `backslash_quote`, a
-/// block at a time).
+/// The 32 bytes from `p` of the padded source: the bits of byte `a` and of byte `b` (simdjson's `backslash_quote`).
+///
+/// # Safety
+/// The CPU runs `S`'s backend (`run_best` chose it).
 #[inline(always)]
-fn marks(src: &[u8], p: usize, a: u8, b: u8) -> (u64, u64) {
-    let block: &[u8; 64] = src[p..p + 64].try_into().expect("the padded source");
-    marks_best(block, a, b)
-}
-
-/// `marks` on a backend.
-#[inline(always)]
-unsafe fn marks_in<S: rerail_simd8::Simd8x64>(block: &[u8; 64], a: u8, b: u8) -> (u64, u64) {
-    // SAFETY: the caller's backend runs.
-    unsafe {
-        let v = S::load(block);
-        (S::eq_mask(v, a), S::eq_mask(v, b))
-    }
-}
-
-rerail_simd8::dispatch! {
-    fn marks_best(block: &[u8; 64], a: u8, b: u8) -> (u64, u64) = marks_in, on marks_on;
+unsafe fn marks<S: rerail_simd8::Simd8x64>(src: &[u8], p: usize, a: u8, b: u8) -> (u32, u32) {
+    let block: &[u8; 32] = src[p..p + 32].try_into().expect("the padded source");
+    // SAFETY: the caller's.
+    unsafe { S::marks32(block, a, b) }
 }
 
 /// Whether byte `b` is of row `r` (its number, one past the row's): a byte a token of the row runs over.
@@ -170,15 +167,28 @@ j += 1;
 Some(j)
 }
 
+/// A `number`'s end from its first byte at `s`: its check's match, the byte after it none of its row's (the lean
+/// parser's `number_end`), or the byte it is refused at.
+#[inline(always)]
+fn number_end(src: &[u8], s: usize) -> Result<usize, u32> {
+match check_number(&src[s..]) {
+Some(j) if !in_row(src[s + j], 3) => Ok(s + j),
+_ => Err(s as u32),
+}
+}
+
 /// `string`, its pieces leaves, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its
 /// caller's key, as each place gives them.
+///
+/// # Safety
+/// The CPU runs `S`'s backend (`run_best` chose it).
 #[inline(always)]
-fn string(src: &[u8], len: usize, starts: &[u32], d: *mut u8, ip: &mut usize, n: [u32; 1]) -> Result<usize, u32> {
+unsafe fn string<S: rerail_simd8::Simd8x64>(src: &[u8], len: usize, starts: &[u32], d: *mut u8, ip: &mut usize, n: [u32; 1]) -> Result<usize, u32> {
 let mut i = *ip;
 let mut e = 0usize;
 let s = starts[i] as usize;
 i += 1;
-let (lead, quote) = marks(src, s + 1, 0x5c, 0x22);
+let (lead, quote) = unsafe { marks::<S>(src, s + 1, 0x5c, 0x22) };
 // A closer before every piece in the first block (simdjson's likely case): the node and its content at once,
 // or the node a leaf where it is empty.
 if lead.wrapping_sub(1) & quote != 0 {
@@ -193,7 +203,7 @@ leaf_in(d, n[0], 5, s as u64, (s + 1) as u64, c as u64, e as u64);
 return Ok(e);
 }
 open(d, n[0], s as u64);
-// The content from `p`, read from `x` a block at a time: its pieces' first bytes and its closers.
+// The content from `p`, read from `x` 32 bytes at a time (`backslash_quote`): its pieces' first bytes and its closers.
 let (mut p, mut x) = (s + 1, s + 1);
 let (mut lead, mut quote) = (lead, quote);
 // `high` at the string's pieces before, a bit a byte back from the last one's second byte (`y2`).
@@ -209,11 +219,11 @@ e = c + 1;
 break;
 }
 if lead == 0 {
-x += 64;
+x += 32;
 if x >= len {
 return Err(s as u32);
 }
-(lead, quote) = marks(src, x, 0x5c, 0x22);
+(lead, quote) = unsafe { marks::<S>(src, x, 0x5c, 0x22) };
 continue;
 }
 let q = x + lead.trailing_zeros() as usize;
@@ -252,7 +262,7 @@ x = p;
 if x >= len {
 return Err(s as u32);
 }
-(lead, quote) = marks(src, x, 0x5c, 0x22);
+(lead, quote) = unsafe { marks::<S>(src, x, 0x5c, 0x22) };
 }
 close(d, e as u64);
 *ip = i;
@@ -276,15 +286,19 @@ w.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * 3 + 1);
 // Each node final as written: no commit after each.
 w.final_as_written();
 let d = w.state_address();
-run(src, lx, d)?;
+run_best(src, lx, d)?;
 match w.failure() {
 None => Ok(()),
 Some(_) => Err(u32::MAX),
 }
 }
 
-/// `parse`'s walk, on the writer's state `d`.
-fn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {
+/// `parse`'s walk, on the writer's state `d`, its byte reads on `S`'s backend (chosen once, `run_best`).
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn run<S: rerail_simd8::Simd8x64>(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {
 // The records, then the index's three last entries; their count; the file's length (`src` is it padded).
 let (starts, count, len) = (&lx.starts[..], lx.count, lx.len);
 // The next record, the last token's end, by depth the place each open level returns to (the lean parser's `object[d]`), the levels open, the place.
@@ -342,35 +356,24 @@ continue 'run;
 }
 }
 0x22 => {
-e = string(src, len, starts, d, &mut i, [7])?;
+e = unsafe { string::<S>(src, len, starts, d, &mut i, [7]) }?;
 }
 // `number`: its words by their bytes, then its own.
 0x74 if src[s..s + 4] == *b"true" && !in_row(src[s + 4], 3) => {
 let end = s + 4;
-i += 1;
-e = end;
-leaf(d, 8, s as u64, e as u64);
+e = token(d, &mut i, 8, s, end);
 }
 0x66 if src[s..s + 5] == *b"false" && !in_row(src[s + 5], 3) => {
 let end = s + 5;
-i += 1;
-e = end;
-leaf(d, 9, s as u64, e as u64);
+e = token(d, &mut i, 9, s, end);
 }
 0x6e if src[s..s + 4] == *b"null" && !in_row(src[s + 4], 3) => {
 let end = s + 4;
-i += 1;
-e = end;
-leaf(d, 10, s as u64, e as u64);
+e = token(d, &mut i, 10, s, end);
 }
 0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-let end = match check_number(&src[s..]) {
-Some(j) if !in_row(src[s + j], 3) => s + j,
-_ => return Err(s as u32),
-};
-i += 1;
-e = end;
-leaf(d, 11, s as u64, e as u64);
+let end = number_end(src, s)?;
+e = token(d, &mut i, 11, s, end);
 }
 _ => {
 return Err(at(src, starts, i));
@@ -395,7 +398,7 @@ match peek(src, starts, i) {
 0x22 => {}
 _ => return Err(at(src, starts, i)),
 }
-e = string(src, len, starts, d, &mut i, [18])?;
+e = unsafe { string::<S>(src, len, starts, d, &mut i, [18]) }?;
 match peek(src, starts, i) {
 0x3a => {
 let s = starts[i] as usize;
@@ -445,35 +448,24 @@ continue 'run;
 }
 }
 0x22 => {
-e = string(src, len, starts, d, &mut i, [13])?;
+e = unsafe { string::<S>(src, len, starts, d, &mut i, [13]) }?;
 }
 // `number`: its words by their bytes, then its own.
 0x74 if src[s..s + 4] == *b"true" && !in_row(src[s + 4], 3) => {
 let end = s + 4;
-i += 1;
-e = end;
-leaf(d, 14, s as u64, e as u64);
+e = token(d, &mut i, 14, s, end);
 }
 0x66 if src[s..s + 5] == *b"false" && !in_row(src[s + 5], 3) => {
 let end = s + 5;
-i += 1;
-e = end;
-leaf(d, 15, s as u64, e as u64);
+e = token(d, &mut i, 15, s, end);
 }
 0x6e if src[s..s + 4] == *b"null" && !in_row(src[s + 4], 3) => {
 let end = s + 4;
-i += 1;
-e = end;
-leaf(d, 16, s as u64, e as u64);
+e = token(d, &mut i, 16, s, end);
 }
 0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-let end = match check_number(&src[s..]) {
-Some(j) if !in_row(src[s + j], 3) => s + j,
-_ => return Err(s as u32),
-};
-i += 1;
-e = end;
-leaf(d, 17, s as u64, e as u64);
+let end = number_end(src, s)?;
+e = token(d, &mut i, 17, s, end);
 }
 _ => {
 return Err(at(src, starts, i));
@@ -575,35 +567,24 @@ continue 'run;
 }
 }
 0x22 => {
-e = string(src, len, starts, d, &mut i, [7])?;
+e = unsafe { string::<S>(src, len, starts, d, &mut i, [7]) }?;
 }
 // `number`: its words by their bytes, then its own.
 0x74 if src[s..s + 4] == *b"true" && !in_row(src[s + 4], 3) => {
 let end = s + 4;
-i += 1;
-e = end;
-leaf(d, 8, s as u64, e as u64);
+e = token(d, &mut i, 8, s, end);
 }
 0x66 if src[s..s + 5] == *b"false" && !in_row(src[s + 5], 3) => {
 let end = s + 5;
-i += 1;
-e = end;
-leaf(d, 9, s as u64, e as u64);
+e = token(d, &mut i, 9, s, end);
 }
 0x6e if src[s..s + 4] == *b"null" && !in_row(src[s + 4], 3) => {
 let end = s + 4;
-i += 1;
-e = end;
-leaf(d, 10, s as u64, e as u64);
+e = token(d, &mut i, 10, s, end);
 }
 0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-let end = match check_number(&src[s..]) {
-Some(j) if !in_row(src[s + j], 3) => s + j,
-_ => return Err(s as u32),
-};
-i += 1;
-e = end;
-leaf(d, 11, s as u64, e as u64);
+let end = number_end(src, s)?;
+e = token(d, &mut i, 11, s, end);
 }
 _ => {
 return Err(at(src, starts, i));
@@ -666,4 +647,8 @@ return Ok(());
 _ => unreachable!(),
 }
 }
+}
+
+rerail_simd8::dispatch! {
+    fn run_best(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> = run, on run_on;
 }

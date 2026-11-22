@@ -346,10 +346,10 @@ impl Lp<'_, '_> {
         Ok(match end {
             End::One => "s + 1".to_owned(),
             End::Run => {
-                let (rk, _) = self.token(name)?;
                 if self.checked.iter().any(|c| c == name) {
-                    format!("match check_{}(&src[s..]) {{\nSome(j) if !in_row(src[s + j], {}) => s + j,\n_ => return Err(s as u32),\n}}", ident(name), rk + 1)
+                    format!("{}_end(src, s)?", ident(name))
                 } else {
+                    let (rk, _) = self.token(name)?;
                     format!("{{\nlet mut x = s + 1;\nwhile in_row(src[x], {}) {{\nx += 1;\n}}\nx\n}}", rk + 1)
                 }
             }
@@ -485,6 +485,13 @@ impl Lp<'_, '_> {
         let run_checked = matches!(end, End::Run) && self.checked.contains(&name.to_owned());
         let body = |t: T| -> Result<String, String> {
             // A word's decision bound its start and its end.
+            // A leaf of its own with no check after its end: one call, written once (`token`), as `walk`'s `leaf`.
+            if let Some(k) = kind
+                && !(self.checked.iter().any(|c| c == k) && !(run_checked && k == name))
+            {
+                let n = self.number(k, key)?;
+                return Ok(if t == T::Word { format!("e = token(d, &mut i, {n}, s, end);\n") } else { format!("let s = starts[i] as usize;\ne = token(d, &mut i, {n}, s, {});\n", self.end_code(&name, &end)?) });
+            }
             let mut body = if t == T::Word { "i += 1;\ne = end;\n".to_owned() } else { format!("let s = starts[i] as usize;\ni += 1;\ne = {};\n", self.end_code(&name, &end)?) };
             if let Some(k) = kind {
                 if self.checked.iter().any(|c| c == k) && !(run_checked && k == name) {
@@ -565,7 +572,7 @@ impl Lp<'_, '_> {
             Ok(format!(
             "let s = starts[i] as usize;\n\
              i += 1;\n\
-             let (lead, quote) = marks(src, s + 1, {lead:#04x}, {quote:#04x});\n\
+             let (lead, quote) = unsafe {{ marks::<S>(src, s + 1, {lead:#04x}, {quote:#04x}) }};\n\
              // A closer before every piece in the first block (simdjson's likely case): the node and its content at once,\n\
              // or the node a leaf where it is empty.\n\
              if lead.wrapping_sub(1) & quote != 0 {{\n\
@@ -576,7 +583,7 @@ impl Lp<'_, '_> {
              return Ok(e);\n\
              }}\n\
              open(d, {node}, s as u64);\n\
-             // The content from `p`, read from `x` a block at a time: its pieces' first bytes and its closers.\n\
+             // The content from `p`, read from `x` 32 bytes at a time (`backslash_quote`): its pieces' first bytes and its closers.\n\
              let (mut p, mut x) = (s + 1, s + 1);\n\
              let (mut lead, mut quote) = (lead, quote);\n\
              {state}\
@@ -588,7 +595,7 @@ impl Lp<'_, '_> {
              e = c + 1;\n\
              break;\n\
              }}\n\
-             if lead == 0 {{\nx += 64;\nif x >= len {{\nreturn Err(s as u32);\n}}\n(lead, quote) = marks(src, x, {lead_b:#04x}, {quote_b:#04x});\ncontinue;\n}}\n\
+             if lead == 0 {{\nx += 32;\nif x >= len {{\nreturn Err(s as u32);\n}}\n(lead, quote) = unsafe {{ marks::<S>(src, x, {lead_b:#04x}, {quote_b:#04x}) }};\ncontinue;\n}}\n\
              let q = x + lead.trailing_zeros() as usize;\n\
              if q > p {{\nleaf(d, {content}, p as u64, q as u64);\n}}\n\
              p = q;\n{check}\
@@ -596,7 +603,7 @@ impl Lp<'_, '_> {
              p += {len};\n\
              x = p;\n\
              if x >= len {{\nreturn Err(s as u32);\n}}\n\
-             (lead, quote) = marks(src, x, {lead_b:#04x}, {quote_b:#04x});\n\
+             (lead, quote) = unsafe {{ marks::<S>(src, x, {lead_b:#04x}, {quote_b:#04x}) }};\n\
              }}\n\
              close(d, e as u64);\n",
             lead_b = lead,
@@ -694,7 +701,7 @@ impl Lp<'_, '_> {
         let code = code?;
         let n = if ns.is_empty() { "_n" } else { "n" };
         self.method_code.borrow_mut().push(format!(
-            "/// {what}, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its\n/// caller's key, as each place gives them.\n#[inline(always)]\nfn {name}(src: &[u8], len: usize, starts: &[u32], d: *mut u8, ip: &mut usize, {n}: [u32; {}]) -> Result<usize, u32> {{\nlet mut i = *ip;\nlet mut e = 0usize;\n{code}*ip = i;\nOk(e)\n}}\n\n",
+            "/// {what}, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its\n/// caller's key, as each place gives them.\n///\n/// # Safety\n/// The CPU runs `S`'s backend (`run_best` chose it).\n#[inline(always)]\nunsafe fn {name}<S: rerail_simd8::Simd8x64>(src: &[u8], len: usize, starts: &[u32], d: *mut u8, ip: &mut usize, {n}: [u32; {}]) -> Result<usize, u32> {{\nlet mut i = *ip;\nlet mut e = 0usize;\n{code}*ip = i;\nOk(e)\n}}\n\n",
             ns.len()
         ));
         self.methods.borrow_mut().insert(name.to_owned(), ns.clone());
@@ -709,7 +716,8 @@ impl Lp<'_, '_> {
             classes.extend(extra.iter().copied());
             args.push(self.number(kind, &Key { field: key.field, classes })?);
         }
-        Ok(format!("e = {name}(src, len, starts, d, &mut i, [{}])?;\n", args.join(", ")))
+        // SAFETY (in the code): the caller's backend, `run_best`'s.
+        Ok(format!("e = unsafe {{ {name}::<S>(src, len, starts, d, &mut i, [{}]) }}?;\n", args.join(", ")))
     }
 
     /// `a` then `star` as a list `A (sep A)*`: its separator's parts.
@@ -1094,6 +1102,14 @@ fn leaf_in(d: *mut u8, number: u32, child: u32, start: u64, cs: u64, ce: u64, en
     debug_assert_eq!(r, 0, "the writer's node of one leaf, its room reserved");
 }
 
+/// A token's leaf from `s` to `end`, the next record taken: its end (the lean parser's `leaf`, for each place's arm).
+#[inline(always)]
+fn token(d: *mut u8, i: &mut usize, number: u32, s: usize, end: usize) -> usize {
+    *i += 1;
+    leaf(d, number, s as u64, end as u64);
+    end
+}
+
 /// The innermost open node closed at `end`, as `open`.
 #[inline(always)]
 fn close(d: *mut u8, end: u64) {
@@ -1127,26 +1143,15 @@ fn bit(x: &[u64], i: usize) -> bool {
     x.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
 }
 
-/// The 64 bytes from `p` of the padded source: the bits of byte `a` and of byte `b` (simdjson's `backslash_quote`, a
-/// block at a time).
+/// The 32 bytes from `p` of the padded source: the bits of byte `a` and of byte `b` (simdjson's `backslash_quote`).
+///
+/// # Safety
+/// The CPU runs `S`'s backend (`run_best` chose it).
 #[inline(always)]
-fn marks(src: &[u8], p: usize, a: u8, b: u8) -> (u64, u64) {
-    let block: &[u8; 64] = src[p..p + 64].try_into().expect("the padded source");
-    marks_best(block, a, b)
-}
-
-/// `marks` on a backend.
-#[inline(always)]
-unsafe fn marks_in<S: rerail_simd8::Simd8x64>(block: &[u8; 64], a: u8, b: u8) -> (u64, u64) {
-    // SAFETY: the caller's backend runs.
-    unsafe {
-        let v = S::load(block);
-        (S::eq_mask(v, a), S::eq_mask(v, b))
-    }
-}
-
-rerail_simd8::dispatch! {
-    fn marks_best(block: &[u8; 64], a: u8, b: u8) -> (u64, u64) = marks_in, on marks_on;
+unsafe fn marks<S: rerail_simd8::Simd8x64>(src: &[u8], p: usize, a: u8, b: u8) -> (u32, u32) {
+    let block: &[u8; 32] = src[p..p + 32].try_into().expect("the padded source");
+    // SAFETY: the caller's.
+    unsafe { S::marks32(block, a, b) }
 }
 
 /// Whether byte `b` is of row `r` (its number, one past the row's): a byte a token of the row runs over.
@@ -1261,6 +1266,10 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     let mut check_fns = String::new();
     for (k, b) in &checks {
         check_fns.push_str(&lp.check_fn(k, b)?);
+        // A run's end, its check's (the lean parser's `number_end`): written once, read at each place.
+        if let Ok((rk, End::Run)) = lp.token(k) {
+            let _ = write!(check_fns, "/// A `{k}`'s end from its first byte at `s`: its check's match, the byte after it none of its row's (the lean\n/// parser's `number_end`), or the byte it is refused at.\n#[inline(always)]\nfn {name}_end(src: &[u8], s: usize) -> Result<usize, u32> {{\nmatch check_{name}(&src[s..]) {{\nSome(j) if !in_row(src[s + j], {r}) => Ok(s + j),\n_ => Err(s as u32),\n}}\n}}\n\n", name = ident(k), r = rk + 1);
+        }
     }
     let places = lp.places.borrow();
     // A place that takes a token and goes on to a list's loop is one arm with it, as `walk`'s `ObjectBegin |
@@ -1322,7 +1331,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     }
     let _ = write!(
         out,
-        "/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and the bytes, or the byte it was\n/// refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\n// A file with no token: simdjson's `EMPTY`.\nif lx.count == 0 {{\nreturn Err(lx.len as u32);\n}}\nw.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * {frames} + 1);\n// Each node final as written: no commit after each.\nw.final_as_written();\nlet d = w.state_address();\nrun(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`.\nfn run(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {{\n// The records, then the index's three last entries; their count; the file's length (`src` is it padded).\nlet (starts, count, len) = (&lx.starts[..], lx.count, lx.len);\n// The next record, the last token's end, by depth the place each open level returns to (the lean parser's `object[d]`), the levels open, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut ret: [{ty}; DEPTH] = [0; DEPTH];\nlet mut depth = 0usize;\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n"
+        "/// `src`'s tape into `w` (`src` the file padded, `lx.len` its length), from tier 1's records (each token's first byte) and the bytes, or the byte it was\n/// refused at.\n/// The run's room is reserved once: a node a record, or a byte in a region's pieces, and the root; the levels' nodes\n/// open at once ({frames} a level), and the root's.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed, w: &mut Writer) -> Result<(), u32> {{\n// Where tier 1 sends the file to tree-sitter.\nif lx.refused {{\nreturn Err(0);\n}}\n// A file with no token: simdjson's `EMPTY`.\nif lx.count == 0 {{\nreturn Err(lx.len as u32);\n}}\nw.reserve_run(1 + lx.count + lx.len, (DEPTH + 1) * {frames} + 1);\n// Each node final as written: no commit after each.\nw.final_as_written();\nlet d = w.state_address();\nrun_best(src, lx, d)?;\nmatch w.failure() {{\nNone => Ok(()),\nSome(_) => Err(u32::MAX),\n}}\n}}\n\n/// `parse`'s walk, on the writer's state `d`, its byte reads on `S`'s backend (chosen once, `run_best`).\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn run<S: rerail_simd8::Simd8x64>(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> {{\n// The records, then the index's three last entries; their count; the file's length (`src` is it padded).\nlet (starts, count, len) = (&lx.starts[..], lx.count, lx.len);\n// The next record, the last token's end, by depth the place each open level returns to (the lean parser's `object[d]`), the levels open, the place.\nlet mut i = 0usize;\nlet mut e = 0usize;\nlet mut ret: [{ty}; DEPTH] = [0; DEPTH];\nlet mut depth = 0usize;\nlet mut st: {ty} = 0;\n'run: loop {{\nmatch st {{\n{arms}_ => unreachable!(),\n}}\n}}\n}}\n\nrerail_simd8::dispatch! {{\n    fn run_best(src: &[u8], lx: &crate::tier1::Lexed, d: *mut u8) -> Result<(), u32> = run, on run_on;\n}}\n"
     );
     let _ = &x.tokens;
     // The parser's own code, but for what nothing in it calls.
@@ -1339,7 +1348,7 @@ fn drop_uncalled(mut out: String, parts: &[String]) -> String {
             let Some(n) = name(p) else { continue };
             let Some(at) = out.find(p.as_str()) else { continue };
             let without = format!("{}{}", &out[..at], &out[at + p.len()..]);
-            let called = without.lines().filter(|l| !l.trim_start().starts_with("//")).any(|l| l.contains(&format!("{n}(")) || l.contains(&format!("{n},")) || l.contains(&format!("= {n}")));
+            let called = without.lines().filter(|l| !l.trim_start().starts_with("//")).any(|l| l.contains(&format!("{n}(")) || l.contains(&format!("{n}::<")) || l.contains(&format!("{n},")) || l.contains(&format!("= {n}")));
             if !called {
                 out = without;
                 dropped = true;

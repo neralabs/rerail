@@ -1227,11 +1227,11 @@ fn json_utf8_is_simdjsons_lookup() {
     assert_eq!(l.xor, Some((0xe0, 0xf0)));
     assert_eq!(l.open, [Some(0xc0), Some(0xe0), Some(0xf0)]);
     let (tier1, _) = json_rust();
-    for part in ["static BYTE_1_HIGH", "static BYTE_1_LOW", "static BYTE_2_HIGH", "let must23 =", "if unsafe { S::to_bitmask(v) } == 0 {", "prev_incomplete = b[63] >= 0xc0 || b[62] >= 0xe0 || b[61] >= 0xf0;"] {
+    for part in ["static BYTE_1_HIGH", "static BYTE_1_LOW", "static BYTE_2_HIGH", "let must23 =", "if unsafe { S::to_bitmask(v) } == 0 {", "prev_incomplete = unsafe { S::gt_bits(v, max_value) };", "0xff, 0xef, 0xdf, 0xbf];"] {
         assert!(tier1.contains(part), "tier 1 has no `{part}`");
     }
     for class in ["cont", "lead3", "lead4", "e0", "ed", "f0", "f4", "below_a0", "from_a0", "below_90", "from_90", "not_cont", "lead", "c0c1", "f5ff", "third", "fourth"] {
-        assert!(!tier1.contains(&format!("r_m_{class}[")), "tier 1 still makes the mask `{class}`");
+        assert!(!tier1.contains(&format!("r_m_{class}[")) && !tier1.contains(&format!("v_m_{class} ")), "tier 1 still makes the mask `{class}`");
     }
 }
 
@@ -1260,13 +1260,18 @@ fn json_tier2_is_walks_shape() {
     assert_eq!(sites.len(), 3, "a value's decision a place");
     for site in &sites {
         let arms = site.split("\n_ => {\nreturn Err(at(src, starts, i));\n}\n}\n").next().expect("the match");
-        for arm in ["0x7b => {", "0x5b => {", "0x22 => {\ne = string(", "0x74 if src[s..s + 4] == *b\"true\"", "check_number(&src[s..])"] {
+        for arm in ["0x7b => {", "0x5b => {", "0x22 => {\ne = unsafe { string::<S>(", "0x74 if src[s..s + 4] == *b\"true\"", "let end = number_end(src, s)?;\ne = token(d, &mut i, "] {
             assert!(arms.contains(arm), "`{arm}` an arm of the one match:\n{arms}");
         }
         assert!(!arms.contains("match peek("), "the byte matched again:\n{arms}");
     }
+    // Each primitive's arm a call of code written once (`token`, `number_end`, `string`), as `walk` calls `primitive`.
+    assert_eq!(tier2.matches("fn number_end(").count(), 1, "a number's end written once");
+    assert!(!tier2.contains("i += 1;\ne = end;\nleaf("), "a token's leaf written out at a place");
+    // A string read 32 bytes at a time on the backend chosen once (`run_best`), as `backslash_quote`.
+    assert!(tier2.contains("x += 32;") && tier2.contains("S::marks32(") && tier2.contains("fn run_best("), "32 bytes a step, one dispatch");
     // A string with no escape: the node and its content at once.
-    let string = tier2.split("fn string(").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
+    let string = tier2.split("fn string<S").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
     assert!(string.contains("leaf_in(d, "), "a plain string at once:\n{string}");
 }
 
@@ -1278,7 +1283,7 @@ fn json_escape_checks_are_tier2s() {
     for m in ["unicode", "r_m_hex", "r_m_dee", "high_2", "low_2", "r_m_low", "lone"] {
         assert!(!tier1.contains(m), "tier 1 still has `{m}`");
     }
-    let string = tier2.split("fn string(").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
+    let string = tier2.split("fn string<S").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
     let at = string.split("let y = p + 1;\n").nth(1).expect("the checks at an escape");
     assert!(at.starts_with("if matches!(src[y], 0x75) {\n"), "at a `\\u` alone:\n{at}");
     for why in ["// \\u without four hex digits", "// a lone high surrogate", "// a lone low surrogate"] {

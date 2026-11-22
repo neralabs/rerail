@@ -725,11 +725,12 @@ impl Gen<'_> {
             let whys: Vec<String> = l.covers.iter().map(|(_, w)| format!("`{w}`")).collect();
             let _ = writeln!(
                 out,
-                "/// The byte-pair errors ({}) as simdjson's `check_special_cases`: each rule a bit of the byte before's high\n/// nibble's table, its low nibble's, and this byte's high nibble's.\nstatic BYTE_1_HIGH: [u8; 16] = [{}];\nstatic BYTE_1_LOW: [u8; 16] = [{}];\nstatic BYTE_2_HIGH: [u8; 16] = [{}];\n",
+                "/// The byte-pair errors ({}) as simdjson's `check_special_cases`: each rule a bit of the byte before's high\n/// nibble's table, its low nibble's, and this byte's high nibble's.\nstatic BYTE_1_HIGH: [u8; 16] = [{}];\nstatic BYTE_1_LOW: [u8; 16] = [{}];\nstatic BYTE_2_HIGH: [u8; 16] = [{}];\n/// `is_incomplete`'s `max_value`: past it, a block's last bytes leave a sequence open (255: never).\nstatic MAX_VALUE: [u8; 64] = [{}];\n",
                 whys.join(", "),
                 list(&l.byte_1_high),
                 list(&l.byte_1_low),
-                list(&l.byte_2_high)
+                list(&l.byte_2_high),
+                (0..64).map(|i| format!("{:#04x}", if i >= 61 { l.open[63 - i].map_or(0xff, |t| t - 1) } else { 0xff })).collect::<Vec<_>>().join(", ")
             );
         }
         let kept: Vec<&Node> = self.nodes.iter().filter(|n| n.kept).collect();
@@ -808,7 +809,7 @@ impl Gen<'_> {
             let _ = writeln!(out, "    let mut {} = vec![0u64; nw];", n.name);
         }
         if self.lookup.is_some() {
-            out.push_str("    // The byte-pair errors' check, simdjson's `utf8_checker`: the block before, the errors, and whether the block before left\n    // a sequence open.\n    let mut prev_input = unsafe { S::splat(0) };\n    let mut error = unsafe { S::splat(0) };\n    let mut prev_incomplete = false;\n");
+            out.push_str("    // The byte-pair errors' check, simdjson's `utf8_checker`: the block before, the errors, and whether the block before left\n    // a sequence open.\n    let mut prev_input = unsafe { S::splat(0) };\n    let mut error = unsafe { S::splat(0) };\n    let mut prev_incomplete = unsafe { S::splat(0) };\n    let max_value = unsafe { S::load(&MAX_VALUE) };\n");
         }
         // The file's bits of each block (`lv`), once a block: a stage behind takes the block before's.
         if let Some(b) = &self.prefix {
@@ -925,7 +926,7 @@ impl Gen<'_> {
         }
         if self.lookup.is_some() {
             // The block past the file's end is zeros: an ASCII block, so the same test as there.
-            out.push_str("    // The byte-pair errors (simdjson's `errors()`), and a sequence the file's last block leaves open (`check_eof`).\n    refused |= unsafe { S::nonzero(error) } != 0 || prev_incomplete;\n");
+            out.push_str("    // The byte-pair errors (simdjson's `errors()`), and a sequence the file's last block leaves open (`check_eof`).\n    refused |= unsafe { S::nonzero(S::or(error, prev_incomplete)) } != 0;\n");
         }
         if self.index.is_some() {
             // simdjson's: the index ends in `n`, `n` and 0, so that stage 2 reads past its last record unchecked.
@@ -1877,7 +1878,7 @@ impl Gen<'_> {
 /// The byte-pair errors' check of block `q` (its bytes `b`, its vector `v`), as simdjson's `utf8_checker::check_next_input`.
 fn lookup_code(l: &crate::bitlex_pair_lookup::Lookup) -> String {
     let mut out = String::new();
-    out.push_str("            // The byte-pair errors, as simdjson's `utf8_checker`: a block of ASCII holds one only where the block before left a\n            // sequence open.\n            if unsafe { S::to_bitmask(v) } == 0 {\n                refused |= prev_incomplete;\n            } else {\n");
+    out.push_str("            // The byte-pair errors, as simdjson's `utf8_checker`: a block of ASCII holds one only where the block before left a\n            // sequence open.\n            if unsafe { S::to_bitmask(v) } == 0 {\n                error = unsafe { S::or(error, prev_incomplete) };\n            } else {\n");
     out.push_str("                // The byte before's nibbles and this byte's high nibble, each rule a bit (`check_special_cases`).\n                let p1 = unsafe { S::prev(v, prev_input, 1) };\n                let sc = unsafe { S::and(S::and(S::lookup_16(S::high_nibbles(p1), &BYTE_1_HIGH), S::lookup_16(S::low_nibbles(p1), &BYTE_1_LOW)), S::lookup_16(S::high_nibbles(v), &BYTE_2_HIGH)) };\n");
     match l.xor {
         Some((x, y)) => {
@@ -1885,12 +1886,7 @@ fn lookup_code(l: &crate::bitlex_pair_lookup::Lookup) -> String {
         }
         None => out.push_str("                error = unsafe { S::or(error, sc) };\n"),
     }
-    let tests: Vec<String> = l.open.iter().enumerate().filter_map(|(k, t)| t.map(|t| format!("b[{}] >= {t:#04x}", 63 - k))).collect();
-    let _ = writeln!(
-        out,
-        "                // A sequence the block's last bytes leave open (`is_incomplete`).\n                prev_incomplete = {};\n            }}\n            prev_input = v;",
-        if tests.is_empty() { "false".to_owned() } else { tests.join(" || ") }
-    );
+    out.push_str("                // A sequence the block's last bytes leave open (`is_incomplete`): the bytes above `MAX_VALUE`'s.\n                prev_incomplete = unsafe { S::gt_bits(v, max_value) };\n            }\n            prev_input = v;\n");
     out
 }
 

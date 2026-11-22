@@ -22,6 +22,8 @@ static HI_0: [u8; 16] = [0x05, 0x04, 0x0a, 0x10, 0x00, 0x20, 0x00, 0x20, 0x00, 0
 static BYTE_1_HIGH: [u8; 16] = [0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x08, 0x80, 0x80, 0x80, 0x80, 0x05, 0x04, 0x34, 0x46];
 static BYTE_1_LOW: [u8; 16] = [0xdd, 0x8d, 0x8c, 0x8c, 0x8e, 0xce, 0xce, 0xce, 0xce, 0xce, 0xce, 0xce, 0xce, 0xee, 0xce, 0xce];
 static BYTE_2_HIGH: [u8; 16] = [0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0xd9, 0x9b, 0xab, 0xab, 0x04, 0x04, 0x04, 0x04];
+/// `is_incomplete`'s `max_value`: past it, a block's last bytes leave a sequence open (255: never).
+static MAX_VALUE: [u8; 64] = [0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xef, 0xdf, 0xbf];
 
 /// Stage 1's masks a later stage reads, a bit a byte, and whether an escape holds.
 struct Stage1 {
@@ -46,7 +48,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
     // a sequence open.
     let mut prev_input = unsafe { S::splat(0) };
     let mut error = unsafe { S::splat(0) };
-    let mut prev_incomplete = false;
+    let mut prev_incomplete = unsafe { S::splat(0) };
+    let max_value = unsafe { S::load(&MAX_VALUE) };
     // `prefix`: a file that starts with these bytes is read from after them.
     let prefix = src.starts_with(&[0xef, 0xbb, 0xbf]);
     // The errors' bits in the blocks so far, ORed.
@@ -68,7 +71,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
             // The byte-pair errors, as simdjson's `utf8_checker`: a block of ASCII holds one only where the block before left a
             // sequence open.
             if unsafe { S::to_bitmask(v) } == 0 {
-                refused |= prev_incomplete;
+                error = unsafe { S::or(error, prev_incomplete) };
             } else {
                 // The byte before's nibbles and this byte's high nibble, each rule a bit (`check_special_cases`).
                 let p1 = unsafe { S::prev(v, prev_input, 1) };
@@ -76,8 +79,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
                 // A continuation needed 2 or 3 bytes after a lead byte (`must_be_2_3_continuation`), against two in a row (bit 0x80).
                 let must23 = unsafe { S::and(S::or(S::ge(S::prev(v, prev_input, 2), 0xe0), S::ge(S::prev(v, prev_input, 3), 0xf0)), S::splat(0x80)) };
                 error = unsafe { S::or(error, S::xor(sc, must23)) };
-                // A sequence the block's last bytes leave open (`is_incomplete`).
-                prev_incomplete = b[63] >= 0xc0 || b[62] >= 0xe0 || b[61] >= 0xf0;
+                // A sequence the block's last bytes leave open (`is_incomplete`): the bytes above `MAX_VALUE`'s.
+                prev_incomplete = unsafe { S::gt_bits(v, max_value) };
             }
             prev_input = v;
             // class quote
@@ -164,7 +167,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
     // a string open at the end of the file: at the file's last byte, once (its block's word, the pass's last).
     refused |= n > 0 && !(prefix && n <= 3) && v_m_f_str >> ((n - 1) % 64) & 1 != 0;
     // The byte-pair errors (simdjson's `errors()`), and a sequence the file's last block leaves open (`check_eof`).
-    refused |= unsafe { S::nonzero(error) } != 0 || prev_incomplete;
+    refused |= unsafe { S::nonzero(S::or(error, prev_incomplete)) } != 0;
     // SAFETY: `count` records written, and room for three more.
     unsafe {
         *si.add(count) = n as u32;
