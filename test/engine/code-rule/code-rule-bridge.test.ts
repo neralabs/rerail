@@ -5811,6 +5811,9 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
       // new one as it begins.
       roots.length = 0;
       await listedBy(() => bridge.checkpoint("turn"));
+      // The other session takes the same walk meanwhile, in the worktree: on Windows `git worktree remove` fails while
+      // that take still holds it, and the failure would stay inside this evaluator.
+      await other.settleWorktreeWalk();
       await addedAgain(root, worktree);
       roots.push(worktree);
       await listedBy(() => other.checkpoint("turn"));
