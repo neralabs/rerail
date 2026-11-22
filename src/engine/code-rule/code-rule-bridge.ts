@@ -1602,6 +1602,12 @@ function inWorktrees(discovery: SourceDiscovery, root: string): boolean {
 function withinRoots(roots: ReadonlySet<string>, path: string): boolean {
   return roots.has(path) || underBaselineRoot(roots, path);
 }
+/** Lets go of the `HEAD` and unmerged entries the walks kept of each checkout that is, or lies inside, one of `worktrees`. */
+function forgetSnapshots(discovery: SourceDiscovery, worktrees: ReadonlySet<string>): void {
+  for (const snapshots of [discovery.heads, discovery.unmerged]) {
+    for (const root of [...snapshots.keys()]) if (withinRoots(worktrees, sessionPath(discovery.root, root))) snapshots.delete(root);
+  }
+}
 /**
  * Whether `path` lies below one of `roots` (`""` holds every path). Each folder above `path` is looked up in `roots`, so
  * a walk that asks this of every file costs the depth of the file, not the number of the repository's worktrees.
@@ -2824,8 +2830,7 @@ export class CodeRuleBridge {
   #forgetWorktrees(discovery: SourceDiscovery, removed: ReadonlySet<string>): void {
     for (const worktree of removed) discovery.worktrees.fresh.delete(worktree);
     for (const path of this.#observed.keys()) if (underBaselineRoot(removed, path)) this.#observed.delete(path);
-    const gone = (root: string): boolean => withinRoots(removed, sessionPath(discovery.root, root));
-    for (const snapshots of [discovery.heads, discovery.unmerged]) for (const root of [...snapshots.keys()]) if (gone(root)) snapshots.delete(root);
+    forgetSnapshots(discovery, removed);
     this.#worktreeView.forget(removed);
   }
 
