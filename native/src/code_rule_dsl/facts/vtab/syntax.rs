@@ -1940,6 +1940,9 @@ pub struct Batch {
     rows: made::Rows,
     /// Each relation's rows, by name, as its kept statistics count them (`give_totals`, decision 0494).
     given_rows: OnceLock<HashMap<String, usize>>,
+    /// Each text test's passing strings, by its test (`give_passed`): the run's chunks', which answer a whole read of
+    /// the test without the batch's vocabulary (every document made).
+    given_passed: parking_lot::Mutex<HashMap<usize, Vec<i64>>>,
     /// Its documents' keys by their paths' atoms (`keys_of_paths`), once a read by a path asked.
     by_path: OnceLock<Option<HashMap<i64, Vec<u32>>>>,
     /// Its documents' keys by their `doc` rows' modules' atoms (`keys_of_modules`), once a read by a module asked.
@@ -3058,6 +3061,21 @@ impl Batch {
         self.rows.give_distinct(rel, distinct);
     }
 
+    /// Text test `k`'s passing strings, as the run's chunks found them over the same documents' strings (each chunk's
+    /// distinct passing strings, unioned): a whole read of the test (`made::TextTest`) takes them, and makes no
+    /// document for the batch's vocabulary. A chunk reads at least the batch's strings of its documents, so a string
+    /// past those passes the test and joins nothing the cross part reads.
+    pub fn give_passed(&self, k: usize, mut passed: Vec<i64>) {
+        passed.sort_unstable();
+        passed.dedup();
+        self.given_passed.lock().insert(k, passed);
+    }
+
+    /// Text test `k`'s passing strings, given (`give_passed`).
+    pub(super) fn passed_given(&self, k: usize) -> Option<Vec<i64>> {
+        self.given_passed.lock().get(&k).cloned()
+    }
+
     /// Relation `rel`'s rows as `give_totals` gave them.
     fn given_rows(&self, rel: &str) -> Option<usize> {
         self.given_rows.get().and_then(|t| t.get(rel).copied())
@@ -3208,6 +3226,7 @@ impl Batch {
             wave,
             rows: made::Rows::new(n, Vec::new(), Vec::new(), Vec::new(), None, &HashMap::new()),
             given_rows: OnceLock::new(),
+            given_passed: Default::default(),
             by_path: OnceLock::new(),
             guests_of: OnceLock::new(),
             by_module: OnceLock::new(),

@@ -677,6 +677,64 @@ The stage harness's gains (steps 1–5) are real, but on this run the merges sin
 
 Script: `tmp/refs/three/three.sh` (run with `--tree` for each binary, library and programs directory).
 
+### The same run after the fixes (2026-11-22)
+
+Each step was measured on the same host and corpus, cold, profiling builds (`tmp/refs/three/head.sh`; the rows check
+on s1000, `check.sh`). Every run's rows are the first head's (all 17 relations), and s1000's are the same throughout.
+Loads were 5–27; at load 16 and over, the wall is not comparable (time ready with no core is in the profile).
+
+| Step | CPU s | wall s | instructions | peak | Load |
+|---|---|---|---|---|---|
+| head before (`55a8000980`) | 265.0 | 100.8 | 2,607 G | 4.78 GB | 3 |
+| the export's serial work on the workers (item 2) | 266.8 | 82.5 | 2,745 G | 3.99 GB | 6 |
+| the cross part's statistics from the chunks (item 1) | 262.1 | 67.1 | 2,711 G | 3.78 GB | 7 |
+| the batch's matcher wave by parts on the cores | 247.5 | 66.6 | 2,571 G | 3.76 GB | 14 |
+| a matcher's projection exported, not read off the batch | 226.8 | 59.8 | 2,376 G | 3.71 GB | 5 |
+| a text test takes the chunks' passing strings | 237.8 | 84.5 | 2,384 G | 3.65 GB | 17 |
+| `text` is a node's attribute in the file-local push | 182.7 | 55.2 | 1,819 G | 3.23 GB | 11 |
+
+What each step found:
+
+1. **The export (item 2).** Each chunk now measures its own exports' rows on its worker
+   (`Totals::measure_rows`), and the run merges the results. A row of the chunk's own documents is held unchecked;
+   only another chunk's go through the once-only table (`Exports::add_owned`). File attribution runs on the pool.
+   `local` on the run's thread went from 25.5 to 8–10 s.
+2. **Statistics (item 1).** Each chunk counts the base relations the cross part reads, over its own files' rows
+   where they lie. A semi-join's are counted at the nodes its own exports hold. A text test's are its distinct
+   passing strings, unioned across chunks. The stats phase merges the counts (`RelStats::merge`) and walks no corpus
+   batch: 32.5 → 1.5 s on the run's thread. Counted both ways in one run (`RERAIL_CHUNK_COUNTS_CHECK`), they are
+   equal on s100 and s1000, except for `node.start`'s within-document sum. That column's exact map is given up past
+   256 values, so the chunks take each document's own squares, and the batch each window's.
+3. **The second matcher wave.** With the statistics gone, the batch was still made whole, now in `cross`. Its
+   reader was `raw_all_name`, a file-local relation whose one rule reads a matcher's relation (`rr_ast_15_2`). The
+   split took it for a projection of an input and derived it in the cross part from the batch, which ran the
+   matcher wave again over every file and made every document's node rows for it. A matcher's relation is no
+   longer a projection's input (`on_version::crossing`), so the relation is exported: 21 s of CPU gone. The
+   batch's wave on the cores also runs by parts of 256 tapes or more. Making the batch's groups side by side
+   (`complete`) was tried and taken out: a maker that runs a pool job reading the batch makes what that job reads,
+   and one run grew past 20 GB.
+4. **A text test's whole read** (`export_names` reads `strtest_4`) made every document for the batch's vocabulary.
+   It now takes the chunks' union of passing strings (`Batch::give_passed`). The next whole read was `text`,
+   which the planner's empty-relation check (`native_stratum`, `len()`) asks for. Giving the batch the chunks' row
+   counts avoided that read, but the joins' probes then made the documents in groups, at +411 G instructions. So
+   the whole read stays, and its cost (node rows and annotations, 3.5 s on the run's thread) is still open.
+5. **The per-file `rf_ref` (item 3).** The doubling was `fl812190886_rf_ref`, `fl59458866_rf_unq_bare` and
+   `xd_…_rf_ref`: the file-local push made, for `rf_ref`'s `rf_named(e, t), text(e, x), docof(e, d),
+   rf_module(d, m)`, a component of everything but `rf_named`. That is a row for every node with text, 4.3 M on
+   `all`, which every chunk made, exported, measured and remembered. `text` is a node's attribute (a row a node,
+   read by its key), and the push already declines a component of attributes alone. With `text` in `ATTRIBUTES`,
+   the per-file strata fell from 145 to 117 s of CPU.
+
+Against 0483's end (151 s CPU, 1,572 G), the head now takes 183 s and 1,819 G. Its spans' own CPU by part: per-file
+strata 99.9 → 117.2 s, cross 24.8 → 36.8 s, the rest 18.1 → 14.4 s. Next by size:
+
+- `pre_401` and `pre_402` (2.4 and 2.6 s per file): `field(f, _, p), kind(f, K), rr_nearest_lscope(n, f),
+  within(n, p), nameref(n, _)`. The plan expands each scope to every node under it, 29 k → 3.1 M rows, before
+  `nameref` narrows them. A node has one nearest scope, so the plan should start from the name references.
+- `look`, `parsed`, `pre_227`, `pre_152` (3–4 s each): the converted rules' per-file strata, not yet examined.
+- `rf_unq_bare` in the cross part (5.2 s), now reading `text` at the named nodes there.
+- The batch's whole read for `text` (above).
+
 ## Open
 
 - The dead-code program's own per-file strata (6.8 s) and its `demand_*` rules have not been examined here.

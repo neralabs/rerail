@@ -9250,6 +9250,18 @@ fn run_observed_within(
         }
         _ => Versions::new(),
     };
+    // Each text test's passing strings, as the chunks found them over every file (`ChunkCounts::unions`): the corpus
+    // batch answers a whole read of the test by them, and makes no document for its vocabulary (every file's node
+    // rows and annotations, 4 s on one core on t50's product run).
+    if let Some(batch) = &corpus_batch
+        && std::env::var("RERAIL_CHUNK_COUNTS").map_or(true, |v| v != "off")
+    {
+        for (rel, (n, set)) in &chunk_counts.unions {
+            if let (true, Some(set), Some(k)) = (*n == docs.len(), set, cross_vocabulary.tests.iter().position(|(t, _)| t == rel)) {
+                batch.give_passed(k, set.iter().copied().collect());
+            }
+        }
+    }
     // Each base relation's rows, as its kept statistics count them (decision 0494): kept of these documents, or of
     // the table's and patched by the changed documents' old and new rows. The corpus batch answers its `len` by them,
     // and fails a relation whose made rows are not them.

@@ -1329,6 +1329,12 @@ impl TextTest {
         if let Some(w) = self.whole.get() {
             return w;
         }
+        // The run's chunks' passing strings, given (`Batch::give_passed`): no document made for them.
+        if let Some(passed) = self.batch.passed_given(self.k) {
+            profile::decision("a text test read whole (decision 0494)", || format!("{}: the chunks' passing strings, no document made", self.tested.tests.tests[self.k].0));
+            let r = Relation::from_rows(&["s"], &mut passed.iter().map(|&v| vec![v]));
+            return self.whole.get_or_init(|| r);
+        }
         self.tested.scan(&self.batch, &self.scanned);
         let s = self.tested.state.lock();
         let r = Relation::from_rows(&["s"], &mut s.passed[self.k].rows.iter().map(|&v| vec![v]));
