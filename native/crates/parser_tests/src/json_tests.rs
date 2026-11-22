@@ -1252,10 +1252,19 @@ fn json_tier2_is_walks_shape() {
     assert_eq!(tier2.lines().filter(|l| l.strip_suffix(" => {").and_then(|p| p.split_once(" | ")).is_some_and(|(a, b)| a.parse::<usize>().is_ok() && b.parse::<usize>().is_ok())).count(), 2, "a begin and its loop one arm, each container");
     // No place that only closes a node and goes on: a pair is closed where its value ends.
     assert!(!tier2.contains("=> {\nclose(d, e as u64);\nst = "), "a place of a pair's close alone");
-    // A value's alternatives: `_` of the place's decision, and one `match` in `value`.
-    let value = tier2.split("fn value(").nth(1).expect("value").split("\nOk(e)\n}").next().expect("its body");
-    assert_eq!(value.matches("match src[").count() + value.matches("match peek(").count(), 1, "one match on the byte in value:\n{value}");
-    assert!(tier2.contains("_ => {\ne = value(src, len, starts, d, &mut i, ["), "the value the `_` arm");
+    // A value's byte matched once: at each of its three places (the root, a pair's value, an element), one `match` on
+    // the byte whose arms are the containers', the string's, the atoms' and the number's; no method that matches it
+    // again.
+    assert!(!tier2.contains("fn value("), "no method of the value's alternatives");
+    let sites: Vec<&str> = tier2.split("match src[s] {\n").skip(1).collect();
+    assert_eq!(sites.len(), 3, "a value's decision a place");
+    for site in &sites {
+        let arms = site.split("\n_ => {\nreturn Err(at(src, starts, i));\n}\n}\n").next().expect("the match");
+        for arm in ["0x7b => {", "0x5b => {", "0x22 => {\ne = string(", "0x74 if src[s..s + 4] == *b\"true\"", "check_number(&src[s..])"] {
+            assert!(arms.contains(arm), "`{arm}` an arm of the one match:\n{arms}");
+        }
+        assert!(!arms.contains("match peek("), "the byte matched again:\n{arms}");
+    }
     // A string with no escape: the node and its content at once.
     let string = tier2.split("fn string(").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
     assert!(string.contains("leaf_in(d, "), "a plain string at once:\n{string}");

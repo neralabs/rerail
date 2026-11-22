@@ -37,7 +37,13 @@ Page 40's reading after 0591 ("After the seven fixes") found these differences f
 4. **A value decided once** (fix 9):
    - `decide` writes one `match` on the token's first byte. A split kind's words are guarded arms of it, and the
      kind's own arm is its row's bytes.
-   - An arm that calls a method deciding every byte itself (`value`, a choice's alternatives) becomes the `_` arm.
+   - Each alternative of a choice is its own arm of the place's decision: the containers', the string's, the atoms'
+     and the number's. The byte is matched once, at each of the value's three places.
+   - So the `value` method of 0582 is gone, and each primitive's arm is written at each place (`string` stays a
+     method). The lean parser's `match *v` takes `{` and `[`, then `primitive` tests the byte again; here one `match`
+     takes them all.
+   - Later, the same day: a first version kept `value` as the place's `_` arm, which matched the byte a second time.
+     It was replaced by the above.
 5. **A string with no escape written in one go** (fix 12):
    - The first block's `marks` are read before the loop.
    - If a closer comes before every piece, the string and its content are written as one op, `leaf_in`: one leaf when
@@ -96,7 +102,8 @@ Implementer's choices:
     - two labeled loops, each separator going back inside its own;
     - two begin-and-loop arms;
     - no place made of a pair's close alone;
-    - one match on the byte in `value`, and `value` as the `_` arm;
+    - no `value` method, and at each of the three value places one `match` on the byte with the containers', the
+      string's, `true`'s and the number's arms, and no second match in it;
     - `leaf_in` in `string`.
   - The new `json_escape_checks_are_tier2s`: no `\u` class or mask in tier 1, and the three errors in `string` behind
     `if matches!(src[y], 0x75)`.

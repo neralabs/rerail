@@ -676,7 +676,7 @@ Tier 1 against `index`:
 8. Tier 2's cycles as loops: a list's head and cycle one inner loop inside the place of its level, the opener taken in it,
    and a pair's close written where its value ends. Only a level's call and its end go through `match st`. Done.
 9. A value decided once: `value`'s alternatives as the arms of the place's own `match`, so the byte is matched once.
-   Done.
+   Done: one `match src[s]` at each value place, `{`, `[`, `"`, the atoms and the number its arms; no `value` method.
 10. `\u`'s digits and surrogates checked where tier 2 reads an escape, with tier 1's five classes and its second stage
     gone. This is a grammar question too: the checks are the grammar's `error` statements over masks. Done
     (`bitlex_piece_checks`).
@@ -693,7 +693,8 @@ Tier 2 against `walk`:
 | | `walk` | `tier2.rs` |
 |---|---|---|
 | A container's cycle | an inner `loop`; `ObjectBegin \| ObjectKey` one arm | the same: `'l2: loop` and `'l5: loop`, `1 \| 2` and `4 \| 5` |
-| A pair's close, a value's byte | after the value; one `match` | the same |
+| A pair's close | after the value | the same |
+| A value's byte | `match *v` for `{` and `[`, then `primitive` tests it again | one `match src[s]`, every alternative its arm |
 | A string with no escape | its node and its content at once, from 32 bytes | the same, from 64 bytes (`marks`) |
 | `\u`'s digits and surrogates | in `escaped_string`: the four digits read as a number, the surrogates tested on it | at a `\u` in `string`: each digit's class, `D`, and the third byte's class; a low one's high one from a word of the pieces before |
 | A node's write | the columns' stores, through pointers in `Walk`'s locals | the writer's ops on its state (`d`): `open`, `leaf`, `leaf_in`, `close` |

@@ -12,6 +12,10 @@ type Cells = Fixed<1, 1, 1>;
 /// The code table the numbers below are of: each number's kind, field and supertypes.
 pub const ENTRIES: &[(u16, u16, &[u16])] = &[
     (10, 0, &[]),
+    (12, 0, &[]),
+    (16, 2, &[9]),
+    (16, 0, &[9]),
+    (19, 0, &[9]),
     (3, 0, &[]),
     (4, 0, &[]),
     (1, 0, &[9]),
@@ -19,16 +23,12 @@ pub const ENTRIES: &[(u16, u16, &[u16])] = &[
     (7, 0, &[9]),
     (8, 0, &[9]),
     (5, 0, &[9]),
-    (12, 0, &[]),
+    (19, 2, &[9]),
     (1, 2, &[9]),
     (6, 2, &[9]),
     (7, 2, &[9]),
     (8, 2, &[9]),
     (5, 2, &[9]),
-    (16, 2, &[9]),
-    (16, 0, &[9]),
-    (19, 0, &[9]),
-    (19, 2, &[9]),
     (1, 1, &[]),
 ];
 
@@ -187,7 +187,7 @@ e = c + 1;
 if c == s + 1 {
 leaf(d, n[0], s as u64, e as u64);
 } else {
-leaf_in(d, n[0], 1, s as u64, (s + 1) as u64, c as u64, e as u64);
+leaf_in(d, n[0], 5, s as u64, (s + 1) as u64, c as u64, e as u64);
 }
 *ip = i;
 return Ok(e);
@@ -203,7 +203,7 @@ loop {
 if lead.wrapping_sub(1) & quote != 0 {
 let c = x + quote.trailing_zeros() as usize;
 if c > p {
-leaf(d, 1, p as u64, c as u64);
+leaf(d, 5, p as u64, c as u64);
 }
 e = c + 1;
 break;
@@ -218,7 +218,7 @@ continue;
 }
 let q = x + lead.trailing_zeros() as usize;
 if q > p {
-leaf(d, 1, p as u64, q as u64);
+leaf(d, 5, p as u64, q as u64);
 }
 p = q;
 if !matches!(&src[p..p + 2], b"\x5c\x22" | b"\x5c\x5c" | b"\x5c\x2f" | b"\x5cb" | b"\x5cf" | b"\x5cn" | b"\x5cr" | b"\x5ct" | b"\x5cu") {
@@ -246,7 +246,7 @@ return Err(y as u32);
 }
 (w2, y2) = (h2 | u64::from(m2), y);
 }
-leaf(d, 2, p as u64, (p + 2) as u64);
+leaf(d, 6, p as u64, (p + 2) as u64);
 p += 2;
 x = p;
 if x >= len {
@@ -255,53 +255,6 @@ return Err(s as u32);
 (lead, quote) = marks(src, x, 0x5c, 0x22);
 }
 close(d, e as u64);
-*ip = i;
-Ok(e)
-}
-
-/// `value`'s alternatives that call no level, read at the next record (`ip`): the token's end. `n`: the numbers of its nodes written with its
-/// caller's key, as each place gives them.
-#[inline(always)]
-fn value(src: &[u8], len: usize, starts: &[u32], d: *mut u8, ip: &mut usize, n: [u32; 5]) -> Result<usize, u32> {
-let mut i = *ip;
-let mut e = 0usize;
-let s = starts[i] as usize;
-match src[s] {
-0x22 => {
-e = string(src, len, starts, d, &mut i, [n[0]])?;
-}
-// `number`: its words by their bytes, then its own.
-0x74 if src[s..s + 4] == *b"true" && !in_row(src[s + 4], 3) => {
-let end = s + 4;
-i += 1;
-e = end;
-leaf(d, n[1], s as u64, e as u64);
-}
-0x66 if src[s..s + 5] == *b"false" && !in_row(src[s + 5], 3) => {
-let end = s + 5;
-i += 1;
-e = end;
-leaf(d, n[2], s as u64, e as u64);
-}
-0x6e if src[s..s + 4] == *b"null" && !in_row(src[s + 4], 3) => {
-let end = s + 4;
-i += 1;
-e = end;
-leaf(d, n[3], s as u64, e as u64);
-}
-0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
-let end = match check_number(&src[s..]) {
-Some(j) if !in_row(src[s + j], 3) => s + j,
-_ => return Err(s as u32),
-};
-i += 1;
-e = end;
-leaf(d, n[4], s as u64, e as u64);
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
 *ip = i;
 Ok(e)
 }
@@ -344,7 +297,8 @@ let mut st: u8 = 0;
 match st {
 0 => {
 open(d, 0, at(src, starts, i) as u64);
-match peek(src, starts, i) {
+let s = starts[i] as usize;
+match src[s] {
 0x7b => {
 if src[starts[count - 1] as usize] != 0x7d {
 return Err(at(src, starts, i));
@@ -357,9 +311,9 @@ if peek(src, starts, i + 1) == 0x7d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 15, s as u64, e as u64);
+leaf(d, 3, s as u64, e as u64);
 } else {
-open(d, 15, at(src, starts, i) as u64);
+open(d, 3, at(src, starts, i) as u64);
 ret[depth] = 7;
 depth += 1;
 st = 1;
@@ -378,17 +332,48 @@ if peek(src, starts, i + 1) == 0x5d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 16, s as u64, e as u64);
+leaf(d, 4, s as u64, e as u64);
 } else {
-open(d, 16, at(src, starts, i) as u64);
+open(d, 4, at(src, starts, i) as u64);
 ret[depth] = 7;
 depth += 1;
 st = 4;
 continue 'run;
 }
 }
+0x22 => {
+e = string(src, len, starts, d, &mut i, [7])?;
+}
+// `number`: its words by their bytes, then its own.
+0x74 if src[s..s + 4] == *b"true" && !in_row(src[s + 4], 3) => {
+let end = s + 4;
+i += 1;
+e = end;
+leaf(d, 8, s as u64, e as u64);
+}
+0x66 if src[s..s + 5] == *b"false" && !in_row(src[s + 5], 3) => {
+let end = s + 5;
+i += 1;
+e = end;
+leaf(d, 9, s as u64, e as u64);
+}
+0x6e if src[s..s + 4] == *b"null" && !in_row(src[s + 4], 3) => {
+let end = s + 4;
+i += 1;
+e = end;
+leaf(d, 10, s as u64, e as u64);
+}
+0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
+let end = match check_number(&src[s..]) {
+Some(j) if !in_row(src[s + j], 3) => s + j,
+_ => return Err(s as u32),
+};
+i += 1;
+e = end;
+leaf(d, 11, s as u64, e as u64);
+}
 _ => {
-e = value(src, len, starts, d, &mut i, [3, 4, 5, 6, 7])?;
+return Err(at(src, starts, i));
 }
 }
 close(d, len as u64);
@@ -405,7 +390,7 @@ e = s + 1;
 }
 // The list: its element, then its separator back to the element, or what follows it.
 'l2: loop {
-open(d, 8, at(src, starts, i) as u64);
+open(d, 1, at(src, starts, i) as u64);
 match peek(src, starts, i) {
 0x22 => {}
 _ => return Err(at(src, starts, i)),
@@ -421,7 +406,8 @@ _ => {
 return Err(at(src, starts, i));
 }
 }
-match peek(src, starts, i) {
+let s = starts[i] as usize;
+match src[s] {
 0x7b => {
 if depth == DEPTH {
 return Err(at(src, starts, i));
@@ -431,9 +417,9 @@ if peek(src, starts, i + 1) == 0x7d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 14, s as u64, e as u64);
+leaf(d, 2, s as u64, e as u64);
 } else {
-open(d, 14, at(src, starts, i) as u64);
+open(d, 2, at(src, starts, i) as u64);
 ret[depth] = 3;
 depth += 1;
 st = 1;
@@ -449,17 +435,48 @@ if peek(src, starts, i + 1) == 0x5d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 17, s as u64, e as u64);
+leaf(d, 12, s as u64, e as u64);
 } else {
-open(d, 17, at(src, starts, i) as u64);
+open(d, 12, at(src, starts, i) as u64);
 ret[depth] = 3;
 depth += 1;
 st = 4;
 continue 'run;
 }
 }
+0x22 => {
+e = string(src, len, starts, d, &mut i, [13])?;
+}
+// `number`: its words by their bytes, then its own.
+0x74 if src[s..s + 4] == *b"true" && !in_row(src[s + 4], 3) => {
+let end = s + 4;
+i += 1;
+e = end;
+leaf(d, 14, s as u64, e as u64);
+}
+0x66 if src[s..s + 5] == *b"false" && !in_row(src[s + 5], 3) => {
+let end = s + 5;
+i += 1;
+e = end;
+leaf(d, 15, s as u64, e as u64);
+}
+0x6e if src[s..s + 4] == *b"null" && !in_row(src[s + 4], 3) => {
+let end = s + 4;
+i += 1;
+e = end;
+leaf(d, 16, s as u64, e as u64);
+}
+0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
+let end = match check_number(&src[s..]) {
+Some(j) if !in_row(src[s + j], 3) => s + j,
+_ => return Err(s as u32),
+};
+i += 1;
+e = end;
+leaf(d, 17, s as u64, e as u64);
+}
 _ => {
-e = value(src, len, starts, d, &mut i, [9, 10, 11, 12, 13])?;
+return Err(at(src, starts, i));
 }
 }
 close(d, e as u64);
@@ -519,7 +536,8 @@ e = s + 1;
 }
 // The list: its element, then its separator back to the element, or what follows it.
 'l5: loop {
-match peek(src, starts, i) {
+let s = starts[i] as usize;
+match src[s] {
 0x7b => {
 if depth == DEPTH {
 return Err(at(src, starts, i));
@@ -529,9 +547,9 @@ if peek(src, starts, i + 1) == 0x7d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 15, s as u64, e as u64);
+leaf(d, 3, s as u64, e as u64);
 } else {
-open(d, 15, at(src, starts, i) as u64);
+open(d, 3, at(src, starts, i) as u64);
 ret[depth] = 6;
 depth += 1;
 st = 1;
@@ -547,17 +565,48 @@ if peek(src, starts, i + 1) == 0x5d {
 let s = starts[i] as usize;
 e = starts[i + 1] as usize + 1;
 i += 2;
-leaf(d, 16, s as u64, e as u64);
+leaf(d, 4, s as u64, e as u64);
 } else {
-open(d, 16, at(src, starts, i) as u64);
+open(d, 4, at(src, starts, i) as u64);
 ret[depth] = 6;
 depth += 1;
 st = 4;
 continue 'run;
 }
 }
+0x22 => {
+e = string(src, len, starts, d, &mut i, [7])?;
+}
+// `number`: its words by their bytes, then its own.
+0x74 if src[s..s + 4] == *b"true" && !in_row(src[s + 4], 3) => {
+let end = s + 4;
+i += 1;
+e = end;
+leaf(d, 8, s as u64, e as u64);
+}
+0x66 if src[s..s + 5] == *b"false" && !in_row(src[s + 5], 3) => {
+let end = s + 5;
+i += 1;
+e = end;
+leaf(d, 9, s as u64, e as u64);
+}
+0x6e if src[s..s + 4] == *b"null" && !in_row(src[s + 4], 3) => {
+let end = s + 4;
+i += 1;
+e = end;
+leaf(d, 10, s as u64, e as u64);
+}
+0x00..=0x08 | 0x0b..=0x0c | 0x0e..=0x1f | 0x21 | 0x23..=0x2b | 0x2d..=0x39 | 0x3b..=0x5a | 0x5c | 0x5e..=0x7a | 0x7c | 0x7e..=0xff => {
+let end = match check_number(&src[s..]) {
+Some(j) if !in_row(src[s + j], 3) => s + j,
+_ => return Err(s as u32),
+};
+i += 1;
+e = end;
+leaf(d, 11, s as u64, e as u64);
+}
 _ => {
-e = value(src, len, starts, d, &mut i, [3, 4, 5, 6, 7])?;
+return Err(at(src, starts, i));
 }
 }
 match peek(src, starts, i) {
