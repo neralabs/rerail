@@ -63,8 +63,19 @@ They are the work below, not tests to change.
 
 ## The work this sets
 
-- A stratum's launches independent of its rules: one launch a stage kind for all its rules, one scan, one dedup.
-- A recursive stratum's rounds on the device, as a work queue's loop (as `label_phase`'s, 0540 step 7).
+- **Done (2026-11-22): a stratum's launches independent of its rules: a level.** `metal_join::Batch` queues each
+  stage, map, row stage, dedup, copy and index as a job (`Job`, its buffers by device address, `JobDesc`), and
+  launches a level at once (`Batch::flush`): one launch a kernel kind (and view format) for all its jobs, each
+  launch's table naming each threadgroup's job and group, and one scan of every job's counts (each job's from its
+  `base`). A level's copies launch first, then its indexes (every index's keys bucketed in one launch, from its
+  first bucket; one sort of them all, `encode_order`; placed in one launch), then the rest. A job that reads what a
+  queued one of its phase or a later one writes, or writes what one reads, ends the level first (`Batch::queue`);
+  copies into one table's rows apart are one launch. A stratum's rules are encoded level-major
+  (`setfix::device::encode_levels`): each rule's stage at a depth, then the next depth, then the heads' dedups.
+  The device-sized grids (`Scan::size`, `sized_min`) are removed; a level's grids are its capacities.
+  - *Measured* (spark2, the CPU backend; the mini's Metal for the seeds test): 33 of the 36 setfix device tests
+    pass, the six tests of the table above but the recursive three among them. The seeds' stratum fits.
+- A recursive stratum's rounds on the device, and a level's launches one: decision 0603.
 
 ## Tests
 
