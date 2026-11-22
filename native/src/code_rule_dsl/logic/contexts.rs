@@ -57,6 +57,9 @@ pub struct Context {
     /// What a made pass reads of other passes, by the names the made program gives them (`reads` on its `.pass`):
     /// relations its instance reads as they are, never made its own.
     pub reads: BTreeSet<String>,
+    /// A made pass's roots in the other members of a combined program, each member's instance whole in its part
+    /// (`p1_ann_tree` beside `roots`' `p0_ann_tree`): one pass, each instance under its member's names.
+    pub other_roots: BTreeSet<String>,
 }
 
 /// A read of one pass by another (`.from`): `local` in `reader`'s rules is `rel` of `source`.
@@ -152,7 +155,7 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
             Some((r, list)) if r == "reads" && key == "pass" => names(list, "")?.0.into_iter().map(|(r, _)| r).collect(),
             _ => return Err(shape(text)),
         };
-        let c = Context { name: name.clone(), host: host.clone(), roots: rel.clone(), exports: rels.into_iter().map(|(r, _)| r).collect(), made: key == "pass", reads };
+        let c = Context { name: name.clone(), host: host.clone(), roots: rel.clone(), exports: rels.into_iter().map(|(r, _)| r).collect(), made: key == "pass", reads, other_roots: BTreeSet::new() };
         // A context is declared where its exports are written (each library file adds its own, 3.1): a declaration
         // of a context declared already, of the same host and roots, adds its exports and reads.
         match d.contexts.get_mut(name) {
@@ -163,7 +166,13 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
                 was.exports.extend(c.exports);
                 was.reads.extend(c.reads);
             }
-            Some(_) => return bad(format!(".{key} {name}: declared twice, of other roots, another host or made")),
+            // Only the engine writes a `.pass`: two of one context and host are two members' instances, combined.
+            Some(was) if was.made && c.made && was.host == c.host => {
+                was.exports.extend(c.exports);
+                was.reads.extend(c.reads);
+                was.other_roots.insert(c.roots);
+            }
+            Some(was) => return bad(format!(".{key} {name}: declared twice, of other roots, another host or made: of {} roots {}{}, and of {} roots {}{}", was.host, was.roots, if was.made { " (made)" } else { "" }, c.host, c.roots, if c.made { " (made)" } else { "" })),
         }
     }
     for (_, text) in settings.iter().filter(|(k, _)| k == "from") {
@@ -223,13 +232,17 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
         if c.name == d.language {
             return bad(format!(".context {}: the program's language is its own pass", c.name));
         }
-        match v.columns_of(&c.roots).or_else(|| c.made.then(|| v.columns_of(&instance(&c.host, &c.roots))).flatten()) {
-            Some(cols) if cols.first().is_some_and(|(_, t)| t == "node") => {}
-            Some(_) => return bad(format!(".context {}: its roots {} have no node as their first column", c.name, c.roots)),
-            None => return bad(format!(".context {}: its roots {} are not declared", c.name, c.roots)),
+        for roots in std::iter::once(&c.roots).chain(&c.other_roots) {
+            match v.columns_of(roots).or_else(|| c.made.then(|| v.columns_of(&instance(&c.host, roots))).flatten()) {
+                Some(cols) if cols.first().is_some_and(|(_, t)| t == "node") => {}
+                Some(_) => return bad(format!(".context {}: its roots {roots} have no node as their first column", c.name)),
+                None => return bad(format!(".context {}: its roots {roots} are not declared", c.name)),
+            }
         }
         for e in &c.exports {
-            if !(if c.made { held(&instance(&c.name, e)) } else { heads.contains(e.as_str()) }) {
+            // A written export no rule derives is refused where it is declared nowhere (a misspelt name): a program
+            // lowered without its rules (`lower_version(false)`, the runner's) keeps a library's declarations.
+            if !(if c.made { held(&instance(&c.name, e)) || v.declares(&instance(&c.name, e)) } else { heads.contains(e.as_str()) || v.rel(e).is_some() || v.declares(e) }) {
                 return bad(format!(".context {} exports {e}: no rule derives it", c.name));
             }
         }

@@ -516,14 +516,11 @@ pub const GUEST_POLICY: &str = "guest_policy";
 
 /// The first guest document's key. A key's range is what the document is to the run, by role and grammar, never by
 /// language (decisions 0058 §1, 0512): files take `1..GUEST_KEYS` (`corpus::memo::doc_keys`), a file read for its
-/// programs among them (its text); code guests in the run's language (programs) `GUEST_KEYS..RUN_VALUE_KEYS`; tape
-/// values in the run's language (a string a rule parses in it: Python's string annotations in a Python run, any
-/// language's in its own) `RUN_VALUE_KEYS..HIDDEN_KEYS`; and every other document (a guest in another grammar, a file's
-/// own tree in another grammar, a value) `HIDDEN_KEYS..2^31`. What a rule sees is a bound on these keys: a rule that
-/// does not name a guest sees files and code guests; a relation a run value's rows reach
-/// (`corpus::preparation::combining::FoldOwn`) sees run values too.
+/// programs among them (its text); code guests in the run's language (programs) `GUEST_KEYS..HIDDEN_KEYS`; and every
+/// other document (a guest in another grammar, a file's own tree in another grammar, a value: a string a rule parses,
+/// Python's string annotations among them) `HIDDEN_KEYS..2^31`. What a rule sees is a bound on these keys: a rule that
+/// does not name a guest sees files and code guests. A value's rules are a context's (decision 0597), over its roots.
 pub const GUEST_KEYS: u32 = 1 << 30;
-pub const RUN_VALUE_KEYS: u32 = (1 << 30) + (1 << 28);
 pub const HIDDEN_KEYS: u32 = (1 << 30) + (1 << 29);
 
 /// A guest document's place (decision 0055): the host document and the node or span it stands at, its grammar and

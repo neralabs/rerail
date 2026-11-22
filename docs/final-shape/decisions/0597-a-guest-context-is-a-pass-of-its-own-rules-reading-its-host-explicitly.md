@@ -247,6 +247,51 @@ The template's findings stand at the file's lines.
        listed after what it includes.
 4. **Removal.** Hiding's annotation range and copies, `FoldOwn`, the narrow copies, `combining::one_document`, and
    their tests, ported to the passes' (removal is removal: no switch to the old path).
+
+   As built (2026-11-22), in two commits:
+   - **Part 1: a guest of a context is read by the context's rules alone.** `Hide` drops, in a rule of no context,
+     the facts of a guest whose grammar a made pass's roots carry (`hide::as_read`). Such a rule carries the guest's
+     nodes as values (a root, an export's row) and is neither cloned nor copied for them. The leak was the library's
+     shared rules: `pt_amem(t, r) :- pt_amem(t, s), host_node(s, _), pt_qann(s, r)` made dozens of
+     `rr_in_annotation_` copies of points-to in the host.
+     - The made passes (`PREFIX`, `of_a_context`, `made`) are `passes_made`, in rerail-planner, below hiding and the
+       contexts, which re-export them.
+     - A pack completes a library's context over the combined program: `Tail::Many` runs `Passes`, then
+       `CrossingCycles`. A member's rule of the library's context (#923's `anns`, `.context annotation … exports
+       ann_list`) reads the library's rules as the context's. A member's own context, made whole in its part, is left
+       as it is.
+     - Instances are recognised under a pack's prefix (`p0_rr_cx_quoted_…`). The link renames a member's `.pass`
+       roots and reads as it renames its relations.
+     - A view is guarded though a combined program derives it (`kind` from `node`). A guard is on base reads only.
+     - `CrossingCycles`, made in rung 2.2, was never run; it runs after `Passes` on both paths.
+     - A program's metadata leaves out the passes' settings: they are structure, not metadata.
+   - **Part 2: the removal.**
+     - The run values' key range is gone (`RUN_VALUE_KEYS`, `Range::RunValue`, `Seen::Annotations`,
+       `guests::widened`). Code guests in the run's language take `GUEST_KEYS..HIDDEN_KEYS`. Every value, an
+       annotation among them, is hidden. Hiding's `BOUND` is `HIDDEN_KEYS`.
+     - `combining`'s fold is gone, about 1,800 lines: `FoldOwn`, `fold_own_guests`, `Unnarrow`, `Narrowing`, `Diffed`,
+       `one_document`, `filters_of`, `ANN_NODE` and `ANN_DOC`. So are the preparation's fold step and the switches
+       `RERAIL_SHOWN_COPIES` and `RERAIL_NARROW_DIFF`.
+     - A copy hiding makes for a code guest in the run's language now stays a copy. Its rows are its guest's, so it
+       holds the same rows the fold gave.
+     - **Tests.** Five fold tests went with the fold. `an_axis_over_a_guests_kind_set_names_a_set_of_the_program`
+       keeps #862's check, an axis that names no set, on hiding alone. Rung 2.4's test checks hiding alone. Q407's
+       ignored test, `a_partial_hit_makes_only_the_guests_its_cone_can_see`, passes now: `ids` over `idents` reads
+       no annotation.
+   - **Results.**
+     - The probe gives 20 findings, the baseline's.
+     - corpus0 × B-now gives 463 findings, digest 75193ca656bd, identical to the baseline.
+     - The targeted set passes (102), and so do the contexts tests (13) and the hide and guest-key tests (7 and 2).
+     - The quick tier of rerail-logic and rerail-tests-logic (1,230 tests) found three failures since step 3, which
+       the targeted set had not run. Each is fixed:
+       - A program lowered without its rules (`lower_version(false)`) keeps the library's declarations. A written
+         or made export that is declared is not refused; the refusal is for a name declared nowhere.
+       - Two flat members of a pack (`print_version`'s text) each carry their whole made `annotation` pass, under
+         their own prefixes (`p0_ann_tree`, `p1_ann_tree`). These are one pass with two instances. Made passes of one
+         context and host merge, and each member's roots are checked (`Context::other_roots`).
+       - A refused twice-declared context names both declarations.
+       The fourth failure, `programs_hidden_alone_keep_their_attribute_copies_declared`, needs pack test data that
+       is not pulled here.
 5. **f-strings and Vue.** `python/format-spec` and SQL in a template; `vue/expression` reading the script's bindings.
 6. **Measure.** corpus0 × B-now against the targets (one pack 0.786 T, normal packs 2.428 T, 463 findings,
    d067ec2ebf6f).

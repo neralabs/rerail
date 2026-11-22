@@ -135,8 +135,6 @@ pub const COMBINING: &[&str] = &[
     // (`lower::bounded`, decision 0511) and a group's first by an order (`lower::first`, decision 0515).
     "RERAIL_ASOF",
     "RERAIL_FIRST",
-    // A narrow copy derived again, `=off`, not diffed from its original (`combining::Diffed`, decision 0575).
-    "RERAIL_NARROW_DIFF",
 ];
 
 /// The engine switches read while a program is lowered and prepared (`run_observed`, before the prepared program is
@@ -167,10 +165,6 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
     "RERAIL_RULE_ORDER",
-    // Guests' copies kept unfolded (`combining::FoldOwn`).
-    "RERAIL_SHOWN_COPIES",
-    // A narrow copy as its original less the annotations' change (decision 0575), `=off` to derive every copy again.
-    "RERAIL_NARROW_DIFF",
 ];
 
 pub mod phase0;
@@ -2660,10 +2654,6 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
         // `parsed` holds the request that asks for it, and its context (decision 0431 §8).
         let about = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::program_image::About>(&v).expect("a version's about rows are read");
         let requests: Vec<(String, String)> = about.answers.iter().map(|(req, by)| (v.rel_name(*by).to_owned(), v.rel_name(*req).to_owned())).collect();
-        // A rule whose bound `FoldOwn` widened reads the annotations' documents, which their requests make (`DEMAND`,
-        // answered in the fixpoint): it reads the request too. Without it, `ids(m, x) :- idents(m, x)` over the
-        // widened `idents` had no annotation in a cone of its own, where a full run's `names` asked for them.
-        let demand = v.rel(guests::DEMAND).map(|_| guests::DEMAND.to_owned());
         let cone = closure(&|cone| {
             v.rules()
                 .filter(|r| cone.contains(v.rel_name(r.head().rel())))
@@ -2671,7 +2661,6 @@ fn wanted_cone(local: &lower::Lowered, wanted: &BTreeSet<String>) -> lower::Lowe
                     r.body()
                         .filter_map(|l| match l.view() {
                             Lit::Atom(a) | Lit::Agg { atom: a, .. } => Some(v.rel_name(a.rel()).to_owned()),
-                            Lit::Cmp { l, r, .. } if guests::widened(l) || guests::widened(r) => demand.clone(),
                             _ => None,
                         })
                         .collect::<Vec<_>>()
@@ -4157,9 +4146,6 @@ fn run_observed_within(
     // The program as this run prepares it, kept for the process (`Prepared`): a session or a test running one program
     // over many roots prepares it once. The key is what preparing reads besides the store's atoms, which are asked
     // again below.
-    // The copies hiding made for guests in the run's own language are folded where the program is prepared (decision
-    // 0058, `FoldOwn`): a function of the combined program and the run's language, which the prepared key names, so a
-    // program read prepared is not folded first.
     let loading_run = world::wanted(&*v, &shape);
     // A program that reads the import closure's relations (`rr_cx_reach`: a closure-local lookup) has its rules
     // (`import_closure`, `components.rerail`).
@@ -4377,16 +4363,6 @@ fn run_observed_within(
             // What preparing decides is the prepared program's, kept with it (decision 0269).
             let deciding = crate::code_rule_dsl::logic::profile::Deciding::open();
             let mut interned: Vec<(Vec<String>, Vec<u32>)> = Vec::new();
-            // The copies hiding made for guests in the run's own language, now that it is known (decision 0058).
-            if v.declared_names().iter().any(|r| r.starts_with("rr_in_")) {
-                let _fold = crate::code_rule_dsl::logic::profile::span(|| "fold the copies of guests in the run's language".into());
-                v = preparation::combining::fold_own_guests(v, label).map_err(Error::Plan)?;
-                #[cfg(debug_assertions)]
-                {
-                    // What the run read of the program before the fold, the same after it.
-                    assert_eq!(world::wanted(&*v, &shape::Shape::of(&v)), loading_run, "folding changed whether the run loads");
-                }
-            }
             // The prepared program's one image (decision 0281's path, step 6): made here, from the program as the rule
             // texts give it; every pass after it runs on the manager over the version (the functors only CPython gives,
             // the base inputs, the prunes and `simplify`, the reach form, the demand, the text passes, steps 6c–6e; the
@@ -7141,9 +7117,8 @@ fn run_observed_within(
         // Each request answered with a value, in order: the chunk's entries keep them (`memo::VALUES`).
         let mut answered: Vec<memo::Answered> = Vec::new();
         // The values a chunk of partial hits' files answered before (`memo::VALUES`), admitted before its run where its
-        // cone can see them (`made.admit` asks `seen`): a cone that reads a relation hiding widened to annotations
-        // (`FoldOwn`) and asks none itself reads their rows, as the full run's did. No entry keeps their rows (decision
-        // 0458 step 4): they are made again, each found by its text's sha or parsed once a run.
+        // cone can see them (`made.admit` asks `seen`). No entry keeps their rows (decision 0458 step 4): they are made
+        // again, each found by its text's sha or parsed once a run.
         if let (false, Some((made, docs)), Some(values), Some(grower)) = (asked_before.is_empty(), kept_guests.as_mut(), values.as_ref(), grower.as_mut()) {
             let _span = crate::code_rule_dsl::logic::profile::span(|| "tape values asked before, admitted".into());
             for asked in &asked_before {

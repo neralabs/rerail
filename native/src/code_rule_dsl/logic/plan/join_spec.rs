@@ -364,7 +364,7 @@ impl<'a> Run<'a, '_> {
                                 .and_then(|c| pf.column_type(b.rel(a), c).map(str::to_owned)),
                             Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: r @ TermRef::Call(..) } if v == n && numeric_call(b, r) => Some("int".to_owned()),
                             // A node's document (`$d = @doc($n)`, `JoinItem::DocOf`) is a document key, an integer: what
-                            // hiding's bound on it (`$d < RUN_VALUE_KEYS`) compares, once the `doc` read that typed it is
+                            // hiding's bound on it (`$d < HIDDEN_KEYS`) compares, once the `doc` read that typed it is
                             // gone.
                             Lit::Cmp { l: TermRef::Var(v), op: CmpOp::Eq, r: TermRef::Call(f, args) } if v == n && b.v.text(f) == "doc" && args.count() == 1 => Some("int".to_owned()),
                             // A variable equal to a constant (`0 = $r`, an inlined `fneed(f, 0)`) has the constant's type.
