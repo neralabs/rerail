@@ -408,7 +408,6 @@ const ANNOTATED_OUTPUTS: &[&str] = &["names", "flag_col", "ids"];
 /// through `parsed`, admits them. Either way the rows
 /// are a full run's. Before, every chunk made every guest its entries asked for (27,373 on an edit of ep2, 1.6 s).
 #[test]
-#[ignore = "Q407: a cone that sees annotations only through FoldOwn's widened bound (`ids` over `idents`) asks for no parse, and under 0431 §8 no annotation is admitted for it"]
 fn a_partial_hit_makes_only_the_guests_its_cone_can_see() {
     let marker = format!("{:?}", std::time::SystemTime::now());
     let dir = corpus("guests-seen", &marker, ANNOTATED);

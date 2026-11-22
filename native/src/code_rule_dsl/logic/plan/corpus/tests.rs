@@ -1523,7 +1523,6 @@ fn a_python_file_no_package_holds_is_unpackaged() {
 /// file. Its context was the inputs alone (`str_node`), and a module of 111k string pairs (netbox's `un_locode.py`)
 /// asked for every one: 297k parses, past 25 minutes and 33 GB.
 #[test]
-#[ignore = "Q322: python/typing's file-local `pyi_sym` and the guests answered in the fixpoint (0431 §8) make one component that negates `typing_sym`"]
 fn a_parse_request_asks_only_for_the_strings_its_rule_reads() {
     let base = crate::code_rule_dsl::fixtures::temp().with_extension("request-context");
     let _ = std::fs::remove_dir_all(&base);
@@ -1842,7 +1841,6 @@ fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
 /// the combined program's readers; each part lowered alone made `rr_value_req` read `literal_leaf`, recursive
 /// with `value` through that negation, and the pair was refused as not stratifiable.
 #[test]
-#[ignore = "Q322: python/typing's file-local `pyi_sym` and the guests answered in the fixpoint (0431 §8) make one component that negates `typing_sym`"]
 fn a_pair_of_programs_asking_for_an_attribute_through_the_library_stratifies() {
     use crate::code_rule_dsl::typing::file_local::Binding;
     let dir = std::env::temp_dir().join(format!("rerail-pyi062-pyi059-{}", std::process::id()));

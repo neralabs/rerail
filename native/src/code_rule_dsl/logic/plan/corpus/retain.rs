@@ -2851,7 +2851,6 @@ impl Retained {
             crate::code_rule_dsl::logic::profile::decision("fact admission", || "frames changed during admission; recompute the cut and derive again".into());
             return Ok(None);
         };
-        super::maintain::shape::rows_decoded(rows);
         let count = rels.len() + sources.len();
         // A relation whose statistics part was stored for the rows it has now takes them, under the address it has
         // in this process: it is not counted or measured again (decision 0120 §3).
