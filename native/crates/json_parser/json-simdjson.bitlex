@@ -107,11 +107,16 @@ mask q          = quote & ~escaped
 regions hidden {
   str = q .. q
 }
-mask body       = f_str & ~o_str                 # between the quotes
+# simdjson's `json_string_scanner`: `in_string` from a string's quote up to its closer, and
+# `string_tail` after its quote through its closer (`in_string ^ quote`).
+mask in_string   = f_str
+mask string_tail = in_string ^ q
+mask body       = f_str & ~o_str                 # between the quotes (the region's inside)
 mask esc        = backslash & body & ~escaped    # an escape's backslash
 mask esc_last   = escaped & body                 # the byte it escapes
 mask unicode    = esc_last & u
-error "a control byte in a string" when body & control
+# simdjson's `non_quote_inside_string(unescaped)`.
+error "a control byte in a string" when in_string & control
 # Each `\u`'s own test, at its `u`, of the bytes after it: tier 2 runs it at the escape's
 # token, and tier 1 makes the `u`s only (decision 0399).
 error "\\u without four hex digits" when unicode & ~(next(hex, 1) & next(hex, 2) & next(hex, 3) & next(hex, 4))
@@ -121,28 +126,29 @@ mask low        = unicode & next(dee, 1) & next(low_2, 2)
 # bytes'.
 error "a lone high surrogate" when high & ~(next(backslash, 5) & next(u, 6) & next(dee, 7) & next(low_2, 8))
 error "a lone low surrogate" when low & ~prev(high, 6)
-error "a string open at the end of the file" when f_str & last_byte
+error "a string open at the end of the file" when in_string & last_byte
 
-mask code       = ~hidden & ~o_str
-# A word's bytes: none of a string's quote, a structural byte, white space. The rule reads no
-# `code`: the loop starts each token after the one before, never inside a string.
-mask wordbyte   = ~(ws | op | quote)
-mask word       = code & wordbyte
+# simdjson's `json_scanner`: a scalar is a byte of no structural and no white space; a word
+# (`nonquote_scalar`) none of a quote either, and a byte `follows` one where the byte before is.
+mask scalar          = ~(op | ws)
+mask nonquote_scalar = scalar & ~quote
+mask follows         = prev(nonquote_scalar)
 
 # --- Tokens ------------------------------------------------------------------------------------
 
 # A string, read in parts from its quote, as a lexer reads one: the quotes are `'"'`, each
 # escape's two bytes an escape_sequence (its kind's words check them), the other bytes
 # string_content.
-token '"'             = start quote & o_str read str parts { escape_sequence = esc bytes 2 } else string_content
+# Each token's start is outside a string's tail, as simdjson's `structural_start`.
+token '"'             = start q & ~string_tail read str parts { escape_sequence = esc bytes 2 } else string_content
 keywords escape_sequence {
   "\\\"" -> escape_sequence  "\\\\" -> escape_sequence  "\\/" -> escape_sequence
   "\\b" -> escape_sequence   "\\f" -> escape_sequence   "\\n" -> escape_sequence
   "\\r" -> escape_sequence   "\\t" -> escape_sequence   "\\u" -> escape_sequence
 } required
-token punctuation     = start code & op pair empty
+token punctuation     = start op & ~string_tail pair empty
 keywords punctuation { "{"  "}"  "["  "]"  ","  ":" } required
-token number          = start word & ~prev(word) run wordbyte
+token number          = start nonquote_scalar & ~follows & ~string_tail run nonquote_scalar
 keywords number { "true" -> true  "false" -> false  "null" -> null }
 check number = ['-'] ('0' | nonzero digit*) ['.' digit+] [expo ['+' | '-'] digit+]
 

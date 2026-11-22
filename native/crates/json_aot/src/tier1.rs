@@ -43,7 +43,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
     let mut c_m_escaped = 0u64;
     let mut v_m_f_str = 0u64;
     let mut c_m_f_str = 0u64;
-    let mut v_m_word = 0u64;
+    let mut v_m_nonquote_scalar = 0u64;
     // The byte-pair errors' check, simdjson's `utf8_checker`: the block before, the errors, and whether the block before left
     // a sequence open.
     let mut prev_input = unsafe { S::splat(0) };
@@ -119,25 +119,21 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
                     c_m_f_str = x >> 63;
                     x & lv
                 };
-            // o_str: its openers
-            let v_m_o_str = v_m_q & v_m_f_str;
-            // hidden: after its opener to its closer
-            let v_m_hidden = (v_m_f_str ^ v_m_q);
-            // mask body = f_str & ~o_str
-            let v_m_body = v_m_f_str & (!v_m_o_str & lv);
-            // mask code = ~hidden & ~o_str
-            let v_m_code = (!v_m_hidden & lv) & (!v_m_o_str & lv);
-            // mask wordbyte = ~((ws | op) | quote)
-            let v_m_wordbyte = !((v_m_ws | v_m_op) | v_m_quote) & lv;
-            let p_m_word = v_m_word;
-            // mask word = code & wordbyte
-            v_m_word = v_m_code & v_m_wordbyte;
-            // body & control
-            let v_t2 = v_m_body & v_m_control;
+            // mask string_tail = in_string ^ q
+            let v_m_string_tail = (v_m_f_str ^ v_m_q);
+            // mask scalar = ~(op | ws)
+            let v_m_scalar = !(v_m_op | v_m_ws) & lv;
+            let p_m_nonquote_scalar = v_m_nonquote_scalar;
+            // mask nonquote_scalar = scalar & ~quote
+            v_m_nonquote_scalar = v_m_scalar & (!v_m_quote & lv);
+            // mask follows = prev(nonquote_scalar)
+            let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63) & lv;
+            // in_string & control
+            let v_t2 = v_m_f_str & v_m_control;
             // a control byte in a string
             errors |= v_t2;
-            // ((quote & o_str) | (code & op)) | (word & ~prev(word))
-            let v_t3 = ((v_m_quote & v_m_o_str | v_m_code & v_m_op) | v_m_word & (!(v_m_word << 1 | p_m_word >> 63) & lv));
+            // ((q | op) | (nonquote_scalar & ~follows)) & ~string_tail
+            let v_t3 = ((v_m_q | v_m_op) | v_m_nonquote_scalar & (!v_m_follows & lv)) & (!v_m_string_tail & lv);
             // The records: the block's bits as indexes (simdjson's `bit_indexer::write`).
             let (base, cnt, mut bits) = (64 * q as u32, v_t3.count_ones() as usize, v_t3);
             // SAFETY: `count + cnt` is at most `n`; the room is `n + 64 + 3`.

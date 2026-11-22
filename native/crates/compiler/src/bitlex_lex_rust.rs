@@ -1368,7 +1368,7 @@ impl Gen<'_> {
                 None => start.clone(),
             });
         }
-        let all_e = all.ok_or("tier 1 as Rust: no token")?;
+        let all_e = factored(&all.ok_or("tier 1 as Rust: no token")?);
         let all = if in_pass {
             self.index = Some(self.node(&all_e)?);
             String::new()
@@ -1888,6 +1888,48 @@ fn lookup_code(l: &crate::bitlex_pair_lookup::Lookup) -> String {
     }
     out.push_str("                // A sequence the block's last bytes leave open (`is_incomplete`): the bytes above `MAX_VALUE`'s.\n                prev_incomplete = unsafe { S::gt_bits(v, max_value) };\n            }\n            prev_input = v;\n");
     out
+}
+
+/// `a | b | …` with the conjuncts every term has taken out once: `(a' | b' | …) & c` (simdjson's `structural_start`,
+/// `… & ~string_tail` once).
+fn factored(e: &Expr) -> Expr {
+    fn terms<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+        match e {
+            Expr::Or(a, b) => {
+                terms(a, out);
+                terms(b, out);
+            }
+            e => out.push(e),
+        }
+    }
+    fn conj(e: &Expr, out: &mut Vec<Expr>) {
+        match e {
+            Expr::And(a, b) => {
+                conj(a, out);
+                conj(b, out);
+            }
+            e => out.push(e.clone()),
+        }
+    }
+    let mut ts = Vec::new();
+    terms(e, &mut ts);
+    let cs: Vec<Vec<Expr>> = ts
+        .iter()
+        .map(|t| {
+            let mut c = Vec::new();
+            conj(t, &mut c);
+            c
+        })
+        .collect();
+    let key = |e: &Expr| format!("{e:?}");
+    let common: Vec<Expr> = cs[0].iter().filter(|c| cs.iter().all(|t| t.iter().any(|x| key(x) == key(c)))).cloned().collect();
+    // Each term keeps something past the common part, or the factoring says nothing.
+    if ts.len() < 2 || common.is_empty() || cs.iter().any(|t| t.len() <= common.len()) {
+        return e.clone();
+    }
+    let and = |v: Vec<Expr>| v.into_iter().reduce(|a, b| Expr::And(Box::new(a), Box::new(b))).expect("a conjunct");
+    let rest = cs.into_iter().map(|t| and(t.into_iter().filter(|x| !common.iter().any(|c| key(c) == key(x))).collect())).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a term");
+    Expr::And(Box::new(rest), Box::new(and(common)))
 }
 
 /// Class `set`'s code in stage 1: one compare where it is one byte, else its nibble-table bits, each a product of high

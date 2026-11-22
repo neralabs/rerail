@@ -1309,11 +1309,25 @@ fn json_tier1_masks_are_block_locals() {
     assert!(!stage1.contains("NONE"), "no block past the file");
     assert_eq!(stage1.matches("src.starts_with(").count(), 1, "the byte order mark tested once");
     assert_eq!(stage1.matches("let lv_0 = ").count(), 1, "the file's bits made once a block");
-    // The words read past their block's code: `word`, for the block before's (a local of its code there), and the
-    // string open at the end's `f_str`.
+    // The words read past their block's code: `nonquote_scalar`, for the block before's (`follows`; a local of its
+    // code there), and the string open at the end's `f_str`.
     let outer: Vec<&str> = stage1.lines().filter(|l| l.starts_with("    let mut v_") || l.starts_with("    let mut p_")).collect();
-    assert_eq!(outer, ["    let mut v_m_f_str = 0u64;", "    let mut v_m_word = 0u64;"]);
-    assert!(stage1.contains("            let p_m_word = v_m_word;\n"), "the block before's `word`, a local");
+    assert_eq!(outer, ["    let mut v_m_f_str = 0u64;", "    let mut v_m_nonquote_scalar = 0u64;"]);
+    assert!(stage1.contains("            let p_m_nonquote_scalar = v_m_nonquote_scalar;\n"), "the block before's `nonquote_scalar`, a local");
+    // The string and token masks are `index`'s (`json_scanner`, `json_string_scanner`): `scalar`, `nonquote_scalar`,
+    // `follows`, `string_tail`, and the starts one expression, `~string_tail` once, as `structural_start`.
+    for part in [
+        "let v_m_scalar = !(v_m_op | v_m_ws) & lv;",
+        "v_m_nonquote_scalar = v_m_scalar & (!v_m_quote & lv);",
+        "let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63) & lv;",
+        "let v_m_string_tail = (v_m_f_str ^ v_m_q);",
+        "let v_t3 = ((v_m_q | v_m_op) | v_m_nonquote_scalar & (!v_m_follows & lv)) & (!v_m_string_tail & lv);",
+    ] {
+        assert!(stage1.contains(part), "no `{part}`:\n{stage1}");
+    }
+    for name in ["v_m_word", "v_m_code", "v_m_wordbyte", "v_m_hidden", "v_m_o_str"] {
+        assert!(!stage1.contains(name), "stage 1 still makes `{name}`");
+    }
     let after = stage1.split("\n    }\n").nth(1).expect("after the pass");
     assert!(after.contains("// a string open at the end of the file: at the file's last byte, once"), "the end's test after the pass:\n{after}");
     assert!(!stage1.contains("last_byte"), "no mask of the last byte");
