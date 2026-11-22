@@ -1283,7 +1283,6 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
         let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
-        rep.moved += u32::from(ix.copied());
         return Ok((dev, Some(ix), place, Vec::new()));
     }
     // A `has` axis probed by one of its columns is read off the tape (decision 0353 step 5): a stage walks each
@@ -1323,6 +1322,23 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
         return Ok((dev, Some(ix), place, consts));
     }
+    // A view filtered by constants of a source in a block is read there whole (decision 0353 step 6), as a view the
+    // device reads in place is: its constants keys its stage adds.
+    if let Some(view) = rel.view.as_ref().filter(|v| rel.ndead == 0 && !v.whole() && !v.eqs().is_empty() && cols.len() + v.eqs().len() <= mj::MAX_KEYS)
+        && matches!(mode, mj::JOIN | mj::SEMI | mj::ANTI | mj::AGG | mj::WITNESS)
+        && let Some(b) = view.src.in_block().filter(|b| b.rows as usize == view.src.len())
+    {
+        let ncols = view.src.columns().len();
+        let dev = Rc::new(mj::DevRel::in_block(&b, ncols).map_err(|e| format!("{e:?}: a filtered relation in its block"))?);
+        rep.in_place += 1;
+        crate::code_rule_dsl::prof::count("device.view_read.filtered.in_block", b.rows as usize);
+        let place: Vec<u32> = (0..rel.k).map(|c| view.column(c) as u32).collect();
+        let consts: Consts = view.eqs().iter().map(|&(c, v)| (c as u32, v)).collect();
+        let keyed: Vec<usize> = cols.iter().map(|&c| place[c] as usize).chain(consts.iter().map(|&(c, _)| c as usize)).collect();
+        let ix = Rc::new(batch.index(&dev, &keyed).map_err(|e| format!("{e:?}: an index of a filtered relation's {} rows", dev.rows))?);
+        if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+        return Ok((dev, Some(ix), place, consts));
+    }
     let whole = matches!(&rel.view, Some(v) if v.whole() && rel.ndead == 0);
     let n = rel.len() - rel.ndead;
     // A whole view the device reads in place (decision 0353 step 4).
@@ -1353,7 +1369,13 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
         None => {
             let why = match &rel.view {
                 _ if rel.ndead > 0 => "dead rows",
-                Some(view) if !view.whole() => "filtered by constants",
+                Some(view) if !view.whole() => match (view.src.in_block().is_some(), view.src.device_view().is_some(), mode) {
+                    (_, true, mj::JOIN | mj::SEMI | mj::ANTI | mj::AGG | mj::WITNESS) => "filtered by constants, more keys than a stage holds",
+                    (_, true, _) => "filtered by constants, a stage of no keys",
+                    (true, _, mj::JOIN | mj::SEMI | mj::ANTI | mj::AGG | mj::WITNESS) => "filtered by constants, in a block",
+                    (true, _, _) => "filtered by constants, in a block, a stage of no keys",
+                    (false, false, _) => "filtered by constants, in no block",
+                },
                 Some(view) if view.src.in_block().is_some() => "in a block of other rows",
                 Some(view) if view.src.device_view().is_some() => "read in place, of other rows",
                 Some(_) => "in no block, not read in place",
@@ -1381,7 +1403,6 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], mode: u32, batch: 
     let ix = Rc::new(batch.index(&dev, &by).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
     // Found where a stratum before built it (a view's, in its block), or built here.
     if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
-    rep.moved += u32::from(ix.copied());
     Ok((dev, Some(ix), place, Vec::new()))
 }
 
@@ -2167,22 +2188,12 @@ impl PlacedHeads {
 /// relation of their own (`Part::for_writes`) that becomes its tail. The rows' place, and the relation bound for the
 /// writes.
 fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Result<(super::Placed, mj::DevRel, usize), String> {
-    // A block with no room for them: the relation's rows moved into one with room (`Part::moved_room`), which the
-    // claim makes its tail, so it stays one relation.
-    let moved = |l: Option<crate::code_rule_dsl::facts::rows::Lent>, why: &'static str| l.inspect(|_| crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", why, 1));
+    // Past an earlier lot's rows where its block has room for them (the relation stays one, and a reader binds it
+    // whole).
     let room = match fresh.last_placed() {
-        Some(super::Placed::Part(p)) => p.room(n).or_else(|| moved(Some(p.moved_room(p.len(), n)), "heads' relations moved to room for a next lot")),
-        Some(super::Placed::Tail { lent, n: written }) => lent.after(*written, n).or_else(|| moved(Some(lent.moved(*written, n)), "heads' relations moved to room for a next lot")),
-        // Past its rows, in the wave's room the CPU's rows of the wave are written into too (decision 0353 step 6):
-        // its tail's own, where its block has room (the relation stays one, and a reader binds it whole).
-        Some(super::Placed::Wave { .. }) | None => {
-            let wave = rel.wave_room();
-            let (r, row) = wave.claim(u32::try_from(n).map_err(|_| format!("{n} rows of a head"))?);
-            let dst = mj::DevRel::in_block(&wave.part(r).in_block(row + n as u32), k).map_err(|e| format!("{e:?}: a head's wave room in its block"))?;
-            crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into their wave's room", 1);
-            // `n`: the slots claimed, until the rows written are known (`written`).
-            return Ok((super::Placed::Wave { room: wave, r, row, n: n as u32 }, dst, row as usize));
-        }
+        Some(super::Placed::Part(p)) => p.room(n),
+        Some(super::Placed::Tail { lent, n: written }) => lent.after(*written, n),
+        Some(super::Placed::Wave { .. }) | None => None,
     };
     if let Some(lent) = room {
         let at = lent.at;
@@ -2190,19 +2201,16 @@ fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Resu
         crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into their own tail", 1);
         return Ok((super::Placed::Tail { lent: std::sync::Arc::new(lent), n: 0 }, dst, at as usize));
     }
-    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into a relation of their own (no tail with rows)", 1);
-    // A large one alone in a block with room past its rows for the indexes its readers probe it by (decision 0353
-    // step 6): in the run's shared block, a later probe found no room there and copied it (`DevIndex::moved`, 766.4
-    // MB in 247 copies on the M3's 300-file run, ab110). Its block is memory only as it is written. A small one
-    // shares the run's block, its copy as small.
-    let part = if n >= ALONE_ROWS { Part::with_index_room(crate::code_rule_dsl::facts::rows::Life::Run, k, n, (k + 1).min(rerail_blocks::relation::ADDED_INDEXES)) } else { Part::for_writes(k, n) };
-    let dst = mj::DevRel::in_block(&part.in_block(n as u32), k).map_err(|e| format!("{e:?}: a head's rows in their block"))?;
-    Ok((super::Placed::Part(part), dst, 0))
+    // Else in the wave's room the CPU's rows of the wave are written into too (decision 0353 step 6): its tail's own
+    // where its block has room, else regions of its own, nothing moved.
+    let wave = rel.wave_room();
+    let (r, row) = wave.claim(u32::try_from(n).map_err(|_| format!("{n} rows of a head"))?);
+    let dst = mj::DevRel::in_block(&wave.part(r).in_block(row + n as u32), k).map_err(|e| format!("{e:?}: a head's wave room in its block"))?;
+    crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into their wave's room", 1);
+    // `n`: the slots claimed, until the rows written are known (`written`).
+    Ok((super::Placed::Wave { room: wave, r, row, n: n as u32 }, dst, row as usize))
 }
 
-/// The rows from which a head's relation the device writes is alone in a block with room for its indexes
-/// (`head_room`).
-const ALONE_ROWS: usize = 4096;
 
 /// `room` (`head_room`'s) with its `n` rows written: the rows the store takes.
 ///
@@ -2344,8 +2352,8 @@ struct Own {
     /// component's own order, before the run's memo as filed (decision 0478 step 7).
     growth: HashMap<(u64, usize), f64>,
     /// Each relation's keys (`delta`: its last round's), every one a stage of the component's plans probes it by: its
-    /// deltas are made with room for an index of each, so no probe copies them (decision 0353 step 6,
-    /// `DevIndex::moved`). A total grows in a block with room for its indexes (`SetHead`).
+    /// deltas are made with room for an index of each, so no probe is refused for want of room
+    /// (decision 0353 step 6). A total grows in a block with room for its indexes (`SetHead`).
     keys: HashMap<(usize, bool), Vec<Vec<usize>>>,
 }
 
@@ -2391,7 +2399,6 @@ impl Own {
         }
         let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
-        rep.moved += u32::from(ix.copied());
         self.sorts.insert(key, ix.clone());
         Ok(Some((dev, Some(ix))))
     }

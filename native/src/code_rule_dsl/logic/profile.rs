@@ -392,7 +392,6 @@ pub struct GpuTotal {
     pub in_place: u64,
     pub sorts: u64,
     pub sort_hits: u64,
-    pub moved: u64,
     pub rows: u64,
     pub distinct: u64,
     /// Head rows written in place into their head's block (decision 0325 step 4).
@@ -426,7 +425,6 @@ impl GpuTotal {
         self.in_place += o.in_place;
         self.sorts += o.sorts;
         self.sort_hits += o.sort_hits;
-        self.moved += o.moved;
         self.rows += o.rows;
         self.distinct += o.distinct;
         self.placed += o.placed;
@@ -2219,8 +2217,8 @@ pub fn device_strata(r: &mut String, all: &BTreeMap<String, PlacedTotal>) {
         ms(sum.gpu), sum.submissions, sum.dispatches, sum.reruns, sum.arena_reruns, sum.waved, sum.sized, sum.screened);
     let _ = writeln!(r, "  host CPU {:.1} ms: encode {:.1}, wait {:.1} ({:.1} ms wall), rows back into the store {:.1}",
         ms(sum.host()), ms(sum.encode), ms(sum.wait), ms(sum.wait_wall), ms(sum.decode));
-    let _ = writeln!(r, "  relations read in place {}; sorts made {}, found in their blocks {}, copied for a key past their blocks' room {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
-        sum.in_place, sum.sorts, sum.sort_hits, sum.moved, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
+    let _ = writeln!(r, "  relations read in place {}; sorts made {}, found in their blocks {}; bindings {}, head rows {} ({} distinct, made so on the device; {} written in place into their heads' blocks); texts made {}",
+        sum.in_place, sum.sorts, sum.sort_hits, sum.bindings, sum.rows, sum.distinct, sum.placed, sum.made);
     let mut top = ran.clone();
     top.sort_by(|a, b| b.1.cpu.total_cmp(&a.1.cpu));
     // A stratum runs once per chunk and may run some on each side: its GPU runs' CPU and work beside its CPU runs'.
@@ -3117,8 +3115,6 @@ pub struct Report {
     pub in_place: u32,
     pub sorts: u32,
     pub sort_hits: u32,
-    /// Indexes that copied their relation, its block having no room for them (`DevIndex::moved`, 0353 step 6).
-    pub moved: u32,
     /// Rows the heads made (before the store's set), and bindings the stages made.
     pub rows: u64,
     pub bindings: u64,

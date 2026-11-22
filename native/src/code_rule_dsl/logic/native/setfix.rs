@@ -4220,6 +4220,10 @@ impl View {
     pub fn whole(&self) -> bool {
         self.ids.is_none()
     }
+    /// Whether it reads its source's columns each at its own place, every one of them.
+    fn identity(&self) -> bool {
+        self.cols.len() == self.src.columns().len() && self.cols.iter().enumerate().all(|(i, &c)| i == c)
+    }
     /// Its constant filters, each a column of its source and the value it holds (`WHERE c = v`).
     pub fn eqs(&self) -> &[(usize, i64)] {
         &self.eqs
@@ -5447,6 +5451,23 @@ impl Derived {
 }
 impl crate::code_rule_dsl::facts::vtab::Source for Derived {
     fn as_any(&self) -> Option<&dyn std::any::Any> { Some(self) }
+    // Its relation's rows where they lie (decision 0353 step 6: nothing is uploaded): in their block, or a whole view's
+    // source's, which the device reads in place as the relation's own readers do. None for some of its rows (`live`).
+    fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
+        match &self.0.view {
+            _ if self.2.is_some() => None,
+            Some(v) if self.0.ndead == 0 && v.whole() && v.eqs.is_empty() && v.identity() => v.src.in_block(),
+            Some(_) => None,
+            None => self.0.in_block(),
+        }
+    }
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    fn device_view(&self) -> Option<crate::code_rule_dsl::facts::vtab::DeviceView> {
+        match &self.0.view {
+            Some(v) if self.2.is_none() && self.0.ndead == 0 && v.whole() && v.eqs.is_empty() && v.identity() => v.src.device_view(),
+            _ => None,
+        }
+    }
     fn columns(&self) -> Vec<String> { self.1.clone().unwrap_or_else(|| (0..self.0.k).map(|i| format!("c{i}")).collect()) }
     fn len(&self) -> usize { self.2.as_ref().map_or_else(|| self.0.len(), Vec::len) }
     fn estimated_matches(&self, c: usize, batch: bool) -> usize {

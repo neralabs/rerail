@@ -884,11 +884,12 @@ pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     InBlock { facts, at, rows: rows as u32, dead: 0, kills: None, part: None }
 }
 
-/// The room `indexes` indexes of a relation of `rows` rows take past its rows (`Part::with_index_room`).
-fn index_room(rows: usize, indexes: usize) -> usize {
+/// The room a relation of `rows` rows takes past its rows for an index at every entry of its directory, and the
+/// directory (`Part::with_index_room`).
+fn index_room(rows: usize) -> usize {
     let cap = rows.next_power_of_two().max(1);
     let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
-    indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>()
+    rerail_blocks::relation::ADDED_INDEXES * (one + size_of::<rerail_blocks::relation::Index>())
 }
 
 /// The run table of a relation under key runs (`Part::over_key_runs`), for its writer.
@@ -1512,29 +1513,24 @@ impl Part {
         Part::new(Life::Run, k, rows)
     }
 
-    /// A relation of `k` columns living `life` long, room for `rows` rows alone in a block, and past them for
-    /// `indexes` indexes of its own over its rows, one for each key its readers probe it by (`Rows::with_index_room`'s
-    /// part; an axis's, by `n` and by `a`, decision 0353 step 5): a key past them copies the relation
-    /// (`DevIndex::moved`). The room is the block's address space: its pages are taken as an index is written. Not
-    /// leased from the device's budget.
-    pub fn with_index_room(life: Life, k: usize, rows: usize, indexes: usize) -> Part {
-        Part::try_new_with(life, k, rows, index_room(rows, indexes), false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+    /// A relation of `k` columns living `life` long, room for `rows` rows alone in a block, and past them for an index
+    /// of its own over its rows at each entry of its directory (`ADDED_INDEXES`), whatever keys its readers probe it by
+    /// (`Rows::with_index_room`'s part): no reader's key copies the relation (decision 0353 step 6; room for a count
+    /// guessed by its maker, its columns' and two, copied a filtered source probed by its constants' columns too). The
+    /// room is the block's address space: its pages are taken as an index is written. Not leased from the device's
+    /// budget.
+    pub fn with_index_room(life: Life, k: usize, rows: usize) -> Part {
+        Part::try_new_with(life, k, rows, index_room(rows), false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
     }
-
-    /// The indexes an axis's relation has room for (`over_key_runs`): every key its two columns can be probed by, `n`,
-    /// `a`, and both either way (`!within(n, a)` probes both). Its room is address space, taken as an index is written,
-    /// so no reader's key copies the relation (decision 0353 step 6; with room for two, hogql's `(n, a)` probe copied
-    /// it).
-    pub const AXIS_INDEXES: usize = 4;
 
     /// `with_index_room` of `k` columns of ids under key runs (an axis's solve, decision 0494 step 7): each column 4
     /// bytes a row, its ids' low bits, their high bits (a document's key) the runs' of one table of `runs` runs in
     /// the relation's block (`rows::ColDir`'s `runs`), which every column reads. The writer sets each run (`KeyRuns::put`)
     /// before it writes a row.
-    pub fn over_key_runs(life: Life, k: usize, rows: usize, indexes: usize, runs: usize) -> (Part, KeyRuns) {
+    pub fn over_key_runs(life: Life, k: usize, rows: usize, runs: usize) -> (Part, KeyRuns) {
         let spec = Spec { widths: vec![4; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG };
         let table = 8 * (runs + 2) + 64;
-        let part = Part::try_new_spec(life, spec, rows, index_room(rows, indexes) + table, false).unwrap_or_else(|e| panic!("an axis of {rows} rows: {e}"));
+        let part = Part::try_new_spec(life, spec, rows, index_room(rows) + table, false).unwrap_or_else(|e| panic!("an axis of {rows} rows: {e}"));
         let t = rerail_blocks::rows::alloc_runs(&part.facts.block, runs);
         for c in 0..k {
             // SAFETY: the table is in the relation's block, which it lives as long as; its runs are set before a row.
@@ -1964,11 +1960,11 @@ impl Rows {
     }
 
     /// No rows yet, of `k` values each, living `life` long, with room for `rows` rows alone in a block, and past them
-    /// for `indexes` indexes of the relation's own over its rows (`InBlock::own_index_for`): a source held so is
+    /// for an index of the relation's own at every entry of its directory (`InBlock::own_index_for`): a source held so is
     /// probed by its own indexes, not host tables (decision 0325 step 5). The room is the block's address space: its
     /// pages are taken as an index is written.
-    pub fn with_index_room(k: usize, life: Life, rows: usize, indexes: usize) -> Rows {
-        let part = Part::with_index_room(life, k, rows, indexes);
+    pub fn with_index_room(k: usize, life: Life, rows: usize) -> Rows {
+        let part = Part::with_index_room(life, k, rows);
         Rows { k, life, hint: rows, tail: Some(part), ..Rows::default() }
     }
 

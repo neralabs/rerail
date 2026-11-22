@@ -449,15 +449,15 @@ impl Within {
             chain(v, &mut |_| len += 1);
         }
         start.push(len);
-        // A derived fact like a rule's head, in a run's block alone, with room for an index by every key of its
-        // columns (`Part::AXIS_INDEXES`), as the device's solve writes it. File-local: a row's `n` and `a` are of
+        // A derived fact like a rule's head, in a run's block alone, with room for an index at every entry of its
+        // directory (`Part::over_key_runs`), as the device's solve writes it. File-local: a row's `n` and `a` are of
         // one document, so each column holds its ids' low bits, their key a run's, one run a document that has rows
         // (decision 0494 step 7).
         let offsets = self.batch.nodes();
         let first = |doc: usize| start[offsets.at(doc)];
         let has_rows = |doc: usize| first(doc + 1) > first(doc);
         let runs = (0..self.batch.docs.len()).filter(|&d| has_rows(d)).count();
-        let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, Part::AXIS_INDEXES, runs);
+        let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, len as usize, runs);
         for (k, (doc, key)) in self.batch.docs.keys().enumerate().filter(|&(d, _)| has_rows(d)).enumerate() {
             keys.put(k, first(doc), key);
         }

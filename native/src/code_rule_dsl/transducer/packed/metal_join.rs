@@ -484,9 +484,9 @@ pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nod
     };
     let mut runs = 0;
     runs_of(&mut |_, _| runs += 1);
-    // Alone in its block, with room for an index by every key of its columns (`Part::AXIS_INDEXES`). Each column
+    // Alone in its block, with room for an index at every entry of its directory (`Part::over_key_runs`). Each column
     // its ids' low bits, under the documents' keys.
-    let (out_rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, Part::AXIS_INDEXES, runs);
+    let (out_rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, runs);
     let mut k = 0;
     runs_of(&mut |first, key| {
         keys.put(k, first, key);
@@ -866,12 +866,12 @@ impl IxParams {
 }
 
 /// A relation's index on key columns, the relation's own (decision 0325 step 5): its number in the relation's
-/// directory, read by `rel_group`. A relation whose block had no room for it was copied once into a block that has
-/// (`moved`), which the probes then read.
+/// directory, read by `rel_group`. A view's relation of no values whose block had no room for it is a new one
+/// (`fresh`), which the probes then read: the view's rows are read through the view's reads, as before.
 pub(in crate::code_rule_dsl) struct DevIndex {
     pub(in crate::code_rule_dsl) index: u32,
     pub(in crate::code_rule_dsl) rows: usize,
-    moved: Option<std::rc::Rc<DevRel>>,
+    fresh: Option<std::rc::Rc<DevRel>>,
     /// Whether this call built it (a sort made), or found it the relation's already.
     pub(in crate::code_rule_dsl) built: bool,
     /// No index, a walk on the tape: 1 the `child` view probed by its parent, the parent's children (`by_parent`); 2 a
@@ -884,19 +884,9 @@ pub(in crate::code_rule_dsl) struct DevIndex {
 }
 
 impl DevIndex {
-    /// Whether it copied its relation, whose block had no room for it (`moved`, 0353 step 6).
-    pub(in crate::code_rule_dsl) fn copied(&self) -> bool {
-        self.moved.is_some()
-    }
-
-    /// The device memory it holds of its own: a moved relation's (the index lies in its relation's block).
-    pub(in crate::code_rule_dsl) fn bytes(&self) -> usize {
-        self.moved.as_ref().map_or(0, |m| m.bytes())
-    }
-
-    /// The relation its probes read: `rel`, or the copy it was built on.
+    /// The relation its probes read: `rel`, or a view's new relation of no values it was built on.
     pub(in crate::code_rule_dsl) fn of<'a>(&'a self, rel: &'a DevRel) -> &'a DevRel {
-        self.moved.as_deref().unwrap_or(rel)
+        self.fresh.as_deref().unwrap_or(rel)
     }
 
     /// The buffer its probes bind: its block's, which reaches the index.
@@ -1387,7 +1377,7 @@ impl Batch {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk: 1, buffer: bound(&home)? }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk: 1, buffer: bound(&home)? }))
     }
 
     /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
@@ -1403,13 +1393,14 @@ impl Batch {
             _ => return Err(Error::UnsupportedFeature("a has axis probed by both its columns, or none")),
         };
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk, buffer: bound(&home)? }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, fresh: None, built: false, walk, buffer: bound(&home)? }))
     }
 
     /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
     /// before (by any batch, kept with the relation), else built by this batch's work into the relation's block
     /// (read by the stages after it), and marked built when the batch is done. A relation whose block has no room for
-    /// it is copied once into a block of its own that has (with no dead rows: their bits lie in the old block).
+    /// it is refused (`Error::BackendCapacity`), nothing copied (decision 0353 step 6); a view's relation of no values
+    /// is made anew.
     pub(in crate::code_rule_dsl) fn index(&mut self, rel: &DevRel, cols: &[usize]) -> Result<DevIndex, Error> {
         let home = rel.home.clone().expect("an index of a relation, not of words");
         let r = rel.relation();
@@ -1428,10 +1419,10 @@ impl Batch {
         let room = {
             let _g = home.ix.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(i) = r.find_index(&key, rel.rows as u32) {
-                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)? });
             }
             if let Some(b) = self.building.iter().find(|b| std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.rows_n as usize == rel.rows) {
-                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
+                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, fresh: None, built: false, walk: 0, buffer: bound(&home)? });
             }
             // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
             // before the build, which its passes order).
@@ -1447,33 +1438,23 @@ impl Batch {
             if let Some(view) = &rel.view {
                 let fresh = std::rc::Rc::new(DevRel::view(rel.cols, rel.rows, view.clone())?);
                 let ix = self.index(&fresh, cols)?;
-                return Ok(DevIndex { moved: Some(fresh), ..ix });
+                return Ok(DevIndex { fresh: Some(fresh), ..ix });
             }
-// copy (0353 step 6): a second key's index copies the relation. It goes: a relation is made with room for
-// the indexes its readers probe (decision 0353).
-            // By where the relation lies: the device's own (a fixpoint's delta) has room for its first key's
-            // index alone; one in a block of the run's shares the block's room with the relations beside it.
-            const MOVED_OWN: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a second key's index (DevIndex::moved): the device's own");
-            const MOVED_IN_BLOCK: rerail_prof::copies::Site = rerail_prof::copies::Site::new(9, "6", "a relation copied for a key's index (DevIndex::moved): in a block with no room left");
-            (if rel.part.is_some() { &MOVED_OWN } else { &MOVED_IN_BLOCK }).copied(8 * rel.cols * rel.rows);
-            // Why its block refused the index: its directory full, or no bytes left; and what the relation is.
-            if rel.part.is_none() {
-                let full = r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize >= rerail_blocks::relation::ADDED_INDEXES;
-                let free = home.block.reserved().saturating_sub(home.block.used());
-                let why = format!(
-                    "device.moved in a block: {}, {}, {} of {} MB left",
-                    if full { "its directory full" } else { "no bytes for it" },
-                    if r.continues() { "a continuation" } else if rel.dead != 0 { "with dead rows" } else { "a relation" },
-                    if free < 1 << 20 { "< 1" } else if free < 16 << 20 { "1-16" } else { ">= 16" },
-                    (home.block.reserved() >> 20).next_power_of_two(),
-                );
-                crate::code_rule_dsl::prof::count_named(why, 8 * rel.cols * rel.rows);
-            }
-            let copy = std::rc::Rc::new(DevRel::empty(rel.cols, rel.rows)?);
-            let ident: Vec<Col> = (0..rel.cols).map(Col::From).collect();
-            self.copy_rows(Rows::Rel(rel), rel.rows, &ident, Rows::Rel(&copy), 0)?;
-            let ix = self.index(&copy, cols)?;
-            return Ok(DevIndex { moved: Some(copy), ..ix });
+            // Nothing is copied for a key (decision 0353 step 6): a relation whose block has no room for the index
+            // refuses its stratum, which runs on the CPU, reading it where it lies. Counted by why its block refused
+            // it, its directory full or no bytes left, and by where the relation lies.
+            let full = r.nindex.load(std::sync::atomic::Ordering::Relaxed) as usize >= rerail_blocks::relation::ADDED_INDEXES;
+            let free = home.block.reserved().saturating_sub(home.block.used());
+            let why = format!(
+                "device.no_index_room: {}, {}, {}, {} of {} MB left",
+                if full { "its directory full" } else { "no bytes for it" },
+                if rel.part.is_some() { "the device's own" } else { "in a block" },
+                if r.continues() { "a continuation" } else { "a relation" },
+                if free < 1 << 20 { "< 1" } else if free < 16 << 20 { "1-16" } else { ">= 16" },
+                (home.block.reserved() >> 20).next_power_of_two(),
+            );
+            crate::code_rule_dsl::prof::count_named(why, rel.rows);
+            return Err(Error::BackendCapacity);
         };
         let n = rel.rows;
         let buffer = bound(&home)?;
@@ -1510,7 +1491,7 @@ impl Batch {
         let index = room.index as u32;
         let before = Building::descriptor(std::ptr::from_ref(r));
         self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before });
-        Ok(DevIndex { index, rows: n, moved: None, built: true, walk: 0, buffer })
+        Ok(DevIndex { index, rows: n, fresh: None, built: true, walk: 0, buffer })
     }
 
     /// A stage from `left` into `out`, over `right` (its relation and, read by keys, its index): count, scan,
@@ -1879,13 +1860,10 @@ pub mod tests {
         }
     }
 
-    /// Q265: a relation `Batch::index` moves for an index (its directory full, or its block) is the batch's until its
-    /// work, which builds the index into it, completes: a stage's handle to it dropped meanwhile does not give back
-    /// its relation, and the index the batch marks built is still its own. The batch holds it as the index it builds
-    /// (`Building`, which `finish` checks against the descriptor as it was reserved); its buffers, as every launch's,
-    /// its passes' fences hold (decision 0491 step 2).
+    /// A key past the room of a relation's block is refused, nothing copied (decision 0353 step 6): its stratum runs on
+    /// the CPU. The indexes built before it are still the relation's, built by the batch, which finishes.
     #[test]
-    fn a_relation_moved_for_an_index_lives_until_its_batch_is_done() {
+    fn a_key_past_a_relations_room_is_refused_not_copied() {
         if rerail_accel::gpu::join::device().is_err() {
             return;
         }
@@ -1894,20 +1872,21 @@ pub mod tests {
         let rel = DevRel::written(4, n, |c, r| cols[c][r]).unwrap();
         let mut batch = Batch::new().unwrap();
         let keys: [&[usize]; 9] = [&[0], &[1], &[2], &[3], &[0, 1], &[0, 2], &[0, 3], &[1, 2], &[1, 3]];
-        let mut moved = None;
+        let mut built = Vec::new();
+        let mut refused = false;
         for key in keys {
-            let ix = batch.index(&rel, key).unwrap();
-            if let Some(m) = ix.moved.clone() {
-                moved = Some(m);
-                break;
+            match batch.index(&rel, key) {
+                Ok(ix) => built.push(ix),
+                Err(e) => {
+                    assert!(matches!(e, Error::BackendCapacity), "refused for want of room: {e:?}");
+                    refused = true;
+                    break;
+                }
             }
         }
-        let moved = moved.expect("a key past the relation's directory moves it");
-        assert_eq!(std::rc::Rc::strong_count(&moved), 1, "no handle of the stage's is left but this one");
-        drop(moved);
-        // A relation made meanwhile takes the room a moved relation given back would have left.
-        let _after = DevRel::written(4, n, |_, _| -1).unwrap();
-        batch.finish().expect("its index built into the relation it moved, still held");
+        assert!(refused, "a key past the relation's room is refused");
+        assert!(!built.is_empty() && built.iter().all(|ix| ix.fresh.is_none()), "every index built in the relation's own block");
+        batch.finish().expect("the indexes built before the refusal");
     }
 
     /// A two-stage plan on the device against the same plan by nested loops: a scan of `a` (slots 0, 1), a join of
@@ -2110,7 +2089,7 @@ pub mod tests {
         for (dev, cols) in [(&dev0, vec![0usize]), (&dev1, vec![1, 0]), (&placed, vec![0]), (&placed, vec![1, 0])] {
             let mut batch = Batch::new().unwrap();
             let ix = batch.index(dev, &cols).unwrap();
-            assert!(ix.built && ix.moved.is_none(), "built in the relation's own block");
+            assert!(ix.built && ix.fresh.is_none(), "built in the relation's own block");
             let again = batch.index(dev, &cols).unwrap();
             assert!(!again.built && again.index == ix.index, "one build a batch");
             batch.finish().unwrap();
@@ -2185,7 +2164,7 @@ pub mod tests {
         for cols in [vec![0usize], vec![1, 0]] {
             let mut batch = Batch::new().unwrap();
             let ix = batch.index(&dev, &cols).unwrap();
-            assert!(ix.built && ix.moved.is_none(), "built in the fork's own block");
+            assert!(ix.built && ix.fresh.is_none(), "built in the fork's own block");
             batch.finish().unwrap();
             let key: Vec<u16> = cols.iter().map(|&c| c as u16).collect();
             let (r, h) = (dev.relation(), host.relation());

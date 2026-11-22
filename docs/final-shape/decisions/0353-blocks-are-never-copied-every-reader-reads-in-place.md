@@ -387,7 +387,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 6 | Gone (step 5, 2026-11-18): an axis's pairs copied into the chunk, then expanded to ids. The solve writes ids once into a relation of its own, which every reader reads where it lies; `put_pairs` and `VIEW_AXIS` are deleted. `has` probed by its node or its ancestor is walked on the tape on the device (6fdbc1eb2, `DevRel::has`); read whole or by both columns it is still uploaded (row 5). Measured (ab98, 2026-11-20, the M3, 300 files, `--metal`, 1 GB, load 5–9; each arm with 960374749f's planner fix): 463 violations each run; instructions 544 G without the walk, 554 G with it (means of three runs, within their spread of about 30 G), wall 24 s each; `has` walked 6 times a run; row 5's uploads rose from 312.1 MB in 863 calls to 454.3 MB in 949, since strata a keyed `has` kept on the CPU now run on the device and upload their other inputs | — | — | Done |
 | 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`). In core.rerail's shape a node's `text` is read in place (2026-11-22); left: T's shape's `NodeRows` (Q121) and `text` of a span or of a node only a cross-file relation binds | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.0 MB, 0.3 ms on cold hogql (0.45–0.49 s of CPU a run before) | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | 0: gone (21 MB in 972 calls on cold hogql before: push_fresh 15.6, absorb 5.3, the device's staged 0.1) | Done (step 6, 2026-11-22) |
-| 9 | A second key's index copies the relation (`DevIndex::moved`); a relation of many parts merged for the device (`in_block`). Since 0384 (steps 1–8, 2026-11-18) a relation is one relation or a chain of continuations read in place, so the merge is left only where a part is appended after another relation's rows (`append_part`, counted), with a chain's newest two segments compacted past `MAX_SEGMENTS`. A recursive component's deltas on the device are made with room for an index of each key its plans probe them by (`Own::keyed`, `Part::for_device_indexed`, 2026-11-20), and its totals grow in a block with room for theirs (row 10). That was not most of the row: on the M3's 300-file run it copied 852.4 MB in 279 copies before (ab108) and 901.8 MB in 322 after (ab109). The site now says where the relation copied lies, the device's own (an upload, a delta) or in a block of the run's with no room left, and the device's report counts each (`moved`): 766.4 MB in 247 copies were in a block with no room (ab110). A head relation the device writes of 4,096 rows or more is now alone in a block with room for its indexes (`head_room`, `Part::with_index_room`, anonymous memory taken as written): 621.7 MB in 114 copies left (ab111), each about 5 MB, of relations not yet told apart | `metal_join.rs`; `facts/rows.rs`; `device.rs` | Q85 counts them; 0 merges on cold 300-file runs; 0 on cold hogql since 2026-11-22 (8.3 MB in 2 before: the axis relation, room for 2 indexes, probed by 3 keys) | Step 6 |
+| 9 | A relation of many parts merged for the device (`in_block`). The key's copy is gone (step 6, 2026-11-22): a key past a block's room refuses its stratum, and a relation alone in a block has room for its whole directory. Before: a second key's index copied the relation (`DevIndex::moved`). Since 0384 (steps 1–8, 2026-11-18) a relation is one relation or a chain of continuations read in place, so the merge is left only where a part is appended after another relation's rows (`append_part`, counted), with a chain's newest two segments compacted past `MAX_SEGMENTS`. A recursive component's deltas on the device are made with room for an index of each key its plans probe them by (`Own::keyed`, `Part::for_device_indexed`, 2026-11-20), and its totals grow in a block with room for theirs (row 10). That was not most of the row: on the M3's 300-file run it copied 852.4 MB in 279 copies before (ab108) and 901.8 MB in 322 after (ab109). The site now says where the relation copied lies, the device's own (an upload, a delta) or in a block of the run's with no room left, and the device's report counts each (`moved`): 766.4 MB in 247 copies were in a block with no room (ab110). A head relation the device writes of 4,096 rows or more is now alone in a block with room for its indexes (`head_room`, `Part::with_index_room`, anonymous memory taken as written): 621.7 MB in 114 copies left (ab111), each about 5 MB, of relations not yet told apart | `metal_join.rs`; `facts/rows.rs`; `device.rs` | Q85 counts them; 0 merges on cold 300-file runs; 0 on cold hogql since 2026-11-22 (8.3 MB in 2 before: the axis relation, room for 2 indexes, probed by 3 keys) | Step 6 |
 | 10 | Gone (2026-11-20): a device fixpoint's total copied into a run's block at its end, and each round's total made anew with the last round's rows copied into it (rounds × rows). A set head's relation is now one relation in a block of the run's life from its first round, each round's new rows written past its rows, its indexes forgotten as it grows, taken by the store as it lies (`SetHead`), as a lattice head's is (decision 0384 step 5). Measured before: 187.4 MB in 225 copies at the end on the M3's 300-file run (ab109); the rounds' copies were not counted | `device.rs` (0325 step 4) | 0 | Step 6 |
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
@@ -1069,6 +1069,36 @@ Cold hogql on the M1 Max, Metal: 1,629 findings, the CPU run's digest, and 6.6 M
 
 The extension's fixpoint (`logic/native/extension/setfix.rs`) is a second engine whose relations are vectors, not
 blocks. Its `Fresh` is not this row's.
+
+**Step 6, row 9: nothing is copied for a key** (2026-11-22). `DevIndex::moved` is deleted, and so is the report's
+`moved` count. A relation whose block has no room for a key's index now refuses its stratum, which runs on the CPU
+reading the relation where it lies, as row 5's uploads do. `device.no_index_room` counts each refusal, by why the
+block refused (its directory full, or no bytes left) and by where the relation lies. A view's relation of no values
+whose block is full is still made anew (`DevIndex::fresh`): it holds no rows.
+
+- **Room for the directory.** A relation alone in a host block (`Part::with_index_room`, `over_key_runs`: a kept
+  source, an axis) now has room for an index at every entry of its directory (`ADDED_INDEXES`, 16). Before, each
+  maker guessed a count: its columns and two, its columns and one, or four. The room is the block's address space,
+  and its pages are taken only as an index is written. `Part::AXIS_INDEXES` is deleted.
+- **Measuring it.** Run with `--metal`, the 300-file bench now binds the device (before it, the bench's strata ran
+  on the CPU and the earlier "0 moved" measured nothing). Two kinds of read were added so the device reads more in
+  place:
+  - a filtered view of a source in a block, whose constants are keys the stage adds;
+  - a derived relation's rows, which `Derived` now gives as its relation's block or its whole view's.
+
+  One run copied 8.9 MB in 8 relations (`DevIndex::moved`). The next run of the same build copied none, since the
+  copies depend on which strata the device takes.
+- **A head's later lots.** Where an earlier lot's block has no room past it, a head's next lot goes on in the wave's
+  room (row 8), not in a relation moved to a block with room (`Part::moved_room`). The device's large head lots no
+  longer get a block of their own (`ALONE_ROWS` is deleted): they are written into the wave room like the CPU's.
+
+The 300-file bench on the M1 Max (`--metal`, load 8–10): 463 violations, as before. Copies 52.9 MB: row 7
+(step 3) 49.9 MB and row 17 3.0 MB. No row 9 copies, no index refusals, and no relations merged. Cold hogql: 1,629
+findings with the CPU run's digest, and 6.5 MB copied, all row 17.
+
+Test: `a_key_past_a_relations_room_is_refused_not_copied` replaces `a_relation_moved_for_an_index_lives_until_its_batch_is_done`.
+
+Left in row 9: `Rows::merged`, and a chain's compaction past `MAX_SEGMENTS`.
 
 ## What it replaces
 
