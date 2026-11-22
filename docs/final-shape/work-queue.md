@@ -10281,3 +10281,8 @@ The preprocessor's grid is theirs' (0568, 0588; 0540 leaves its waits to its own
 files theirs changed only through its merges of hub roll-up 38 and CUDA-support take ours. A function's call is
 named `UKL_ONCE` (forced) or `UKL_FUNC` (the compiler's choice). The setup's call depth is 4, since 0576's tape
 reads are one forced call shallower (`notes/roll-up-56-go-c.md`).
+
+### Q478. Roll-up 57 (sync-integration-hub-tape 3c058416f0 onto Pulling-it-all-together): what the merge chose
+
+Theirs' 0563 A (`may_embed`, `Report::unfillable`) is placed where ours' split keeps `Report` (`corpus/base.rs`), and
+reads the existing `observe::unhex` (`notes/roll-up-57-sync-hub-tape.md`).

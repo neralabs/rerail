@@ -2866,18 +2866,18 @@ fn run_observed_within(
     let answering = guests::answering(&local_version);
     let parsing = !answering.is_empty();
     // Decision 0563 A: a run admits no guest where its file-local part answers no request (0431 §8), it is not
-    // `.embedded on` (0512), and no language of its documents embeds another (0431 §4: an HTML file's scripts, a
-    // Python call's HTML argument are programs of their file, made at its load). Its guest relations are then empty
-    // in both parts, so the rules no row can reach go, and what only they read (`Prune`). Both parts are a function of
-    // the split's, whose digests the memo's and the components' keys are.
-    let embeds = {
-        let labels: BTreeSet<&str> = docs.iter().filter_map(|(_, p)| crate::code_rule_dsl::language::label_of_path(p)).collect();
-        std::iter::once(dialect).chain(labels.into_iter().filter_map(crate::code_rule_dsl::language::dialect_by_label)).any(|d| !d.embeds().is_empty())
-    };
-    let (local_version, cross_version) = if !parsing && !embeds && !embedded_on(&*local_version) {
-        (preparation::unfillable(local_version, "file-local", &split.exports).map_err(Error::Plan)?, preparation::unfillable(cross_version, "cross-file", &[]).map_err(Error::Plan)?)
+    // `.embedded on` (0512), and none of its documents embeds a program (0431 §4: an HTML file's scripts, a Python
+    // call's HTML argument are programs of their file, made at its load). A document whose language embeds nothing
+    // has none; one whose language does has none where the store records its text, in its grammar, as loaded with no
+    // programs (`programs_counts`). A text not loaded yet (a new file, an edit, an empty store) may have some. The
+    // guest relations are then empty in both parts, so the rules no row can reach go, and what only they read.
+    let embeds = may_embed(&docs, &consulted, store, &|path| source_texts.text(&root.join(path), false).or_else(|| crate::git_workspace::snapshot::read_to_string(root.join(path)).ok()));
+    let (local_version, cross_version, unfillable) = if !parsing && !embeds && !embedded_on(&*local_version) {
+        let (local, l) = preparation::unfillable(local_version, "file-local", &split.exports).map_err(Error::Plan)?;
+        let (cross, c) = preparation::unfillable(cross_version, "cross-file", &[]).map_err(Error::Plan)?;
+        (local, cross, l + c)
     } else {
-        (local_version, cross_version)
+        (local_version, cross_version, 0)
     };
     let local_version = if parsing {
         let answers: BTreeMap<String, Vec<String>> = answering.iter().map(|(r, (produced, _))| (r.clone(), produced.clone())).collect();
@@ -9418,7 +9418,7 @@ fn run_observed_within(
         CorpusDocs { from_tape: built(&hit_docs_built.0), parsed: built(&hit_docs_built.1), held: corpus_held, made, documents }
     };
     crate::code_rule_dsl::logic::profile::decision("the corpus batch's documents (Q332)", || format!("{corpus_docs:?}"));
-    let report = Report { corpus_docs, parsed: core::parses(), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, cross_unseen, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { corpus_docs, parsed: core::parses(), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, cross_unseen, unfillable, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }
@@ -10276,6 +10276,43 @@ pub fn sampled_statistics_unanswered(rel: &str, source: &dyn crate::code_rule_ds
             None => counted.remove(&c).expect("counted"),
         })
         .collect()
+}
+
+/// Whether a document of `docs` may embed a program (decision 0563 A). Not where its language embeds none; nor where
+/// the store records its text (its digest in `consulted`), in its grammar, as loaded with no programs
+/// (`ContentStore::programs_counts`); nor, for a text the store does not know (a new file, an edit, an empty
+/// store), where its language embeds only by call argument and the text (`text`, as the run reads it) names none of
+/// the places' callees: the embedder's own test (`embed::call_argument`, which then builds nothing). Any other
+/// embedding (an HTML file's scripts, a Vue file's blocks) is of the file's structure, so such a text may.
+fn may_embed(docs: &[(i64, String)], consulted: &[(String, String, String)], store: &ContentStore, text: &dyn Fn(&str) -> Option<String>) -> bool {
+    use crate::code_rule_dsl::language::{Via, dialect_by_label, label_of_path};
+    let digests: HashMap<&str, &str> = consulted.iter().filter(|c| c.0 == "doc").map(|c| (c.1.as_str(), c.2.as_str())).collect();
+    let mut asked: Vec<(&str, crate::code_rule_dsl::language::GrammarDialect, Option<(crate::content_store::HashKey, i64)>)> = Vec::new();
+    for (_, path) in docs {
+        let Some(dialect) = label_of_path(path).and_then(dialect_by_label) else { continue };
+        if dialect.embeds().is_empty() {
+            continue;
+        }
+        let key = digests.get(path.as_str()).and_then(|h| crate::content_store::observe::unhex(h)).zip(label_of_path(path).and_then(crate::code_rule_dsl::facts::core::label_tag)).map(|(d, tag)| (crate::content_store::HashKey::from_sha256_digest(d), tag));
+        asked.push((path, dialect, key));
+    }
+    if asked.is_empty() {
+        return false;
+    }
+    let (gv, fv) = (crate::code_rule_dsl::build_ids::grammar_version(), i64::from(crate::code_rule_dsl::tape::formats::stored_version()));
+    let keys: Vec<(crate::content_store::HashKey, i64)> = asked.iter().filter_map(|(_, _, k)| *k).collect();
+    let Ok(counts) = store.programs_counts(&keys, gv, fv) else { return true };
+    let mut counts = counts.into_iter();
+    asked.iter().any(|(path, dialect, key)| {
+        if key.is_some() && counts.next().flatten() == Some(0) {
+            return false;
+        }
+        if !dialect.embeds().iter().all(|(via, _)| *via == Via::CallArgument) {
+            return true;
+        }
+        let Some(text) = text(path) else { return true };
+        dialect.embed_places().iter().any(|(_, _, callee, _)| callee.rsplit('.').next().is_some_and(|last| memchr::memmem::find(text.as_bytes(), last.as_bytes()).is_some()))
+    })
 }
 
 /// Rows held as columns that keep no statistics of their own (`Rows`), for a test of a measurement.
