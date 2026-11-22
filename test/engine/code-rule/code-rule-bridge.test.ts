@@ -5345,7 +5345,8 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
   });
 
   // The session's reading measures a change in a worktree it knew from the `HEAD` it last saw there, which the walk's
-  // listings know nothing of. Git takes a file marked assume-unchanged as the index holds it, so neither listing names it.
+  // listings know nothing of. Git takes a file marked assume-unchanged as the index holds it, so `ls-files --modified` does
+  // not name it.
   it("asks Git of a change in a worktree it knew whose walk is the first to read a folder there", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(await workspace(), "w"));

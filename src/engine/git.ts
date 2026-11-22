@@ -1580,27 +1580,56 @@ export interface FirstSightListing {
   /** The files `gitModifiedOrUntrackedPaths` answers. */
   readonly changed: string[] | undefined;
   /**
-   * The files whose text may differ from what the commit `head` holds: those `ls-files --modified --others` printed,
-   * which compares each file with the index, and those whose index entry differs from `head`'s tree (`diff-index
-   * --cached`). Every other file holds what the index holds, and the index what `head` holds, but a file marked
-   * assume-unchanged or skip-worktree: the first listing leaves it out whatever it holds. Undefined when either listing
-   * failed or ran past its time limit, without `head`, and when `HEAD`'s newest move is a commit
-   * (`headMovedOnlyByCommits` with no `from`): that commit may hold what a command wrote. A reflog Git cannot read counts
-   * as a newest move that is no commit, as the session's reading of `HEAD`'s moves takes it.
+   * The files whose text may differ from what the commit `head` holds, named by three listings: those `ls-files
+   * --modified --others` printed, which compares each file with the index; those whose index entry differs from
+   * `head`'s tree (`diff-index --cached`); and those whose index entry is marked assume-unchanged or skip-worktree
+   * (`markedListing`), which the first leaves out whatever they hold. Every other file holds what the index holds, and
+   * the index what `head` holds. Undefined when any listing failed, ran past its time limit or passed
+   * `MAX_LISTED_PATH_BYTES`, without `head`, and when `HEAD`'s newest move is a commit (`headMovedOnlyByCommits` with no
+   * `from`): that commit may hold what a command wrote. A reflog Git cannot read counts as a newest move that is no
+   * commit, as the session's reading of `HEAD`'s moves takes it.
    */
   readonly notAtHead: string[] | undefined;
 }
 
 /**
+ * The path of an entry `ls-files -v` printed as `<tag> <path>` whose tag is not `H` (tracked, with neither mark): `h`
+ * assume-unchanged, `S` skip-worktree, `s` both, and `M` or `m` unmerged, which `ls-files --modified` names already.
+ */
+function markedPath(entry: string): string[] {
+  return entry.startsWith("H ") ? [] : [entry.slice(entry.indexOf(" ") + 1)];
+}
+
+/**
+ * The files of the checkout at `cwd` whose index entry is marked assume-unchanged or skip-worktree (`markedPath`), by
+ * one `ls-files -v` of the whole index: Git prints no count or list of the marked entries alone.
+ */
+async function markedListing(cwd: string, options: GitReadOptions): Promise<ChangedPathsListing> {
+  const listing = listedPaths(await readGit(cwd, ["ls-files", "-z", "-v"], options.signal, MAX_LISTED_PATH_BYTES));
+  return listing.ended === "printed" ? { ended: "printed", paths: listing.paths.flatMap(markedPath) } : listing;
+}
+
+/**
+ * The files of the checkout at `cwd` whose index entry differs from the commit `head` (`diff-index --cached`), then
+ * those marked so that `ls-files --modified` leaves them out (`markedListing`): ended as the first that did not print.
+ */
+async function indexListings(cwd: string, head: string, options: GitReadOptions): Promise<ChangedPathsListing> {
+  const staged = listedPaths(await readGit(cwd, ["diff-index", "-z", "--cached", "--name-only", head, "--"], options.signal, MAX_LISTED_PATH_BYTES));
+  if (staged.ended !== "printed") return staged;
+  const marked = await markedListing(cwd, options);
+  return marked.ended === "printed" ? { ended: "printed", paths: [...staged.paths, ...marked.paths] } : marked;
+}
+
+/**
  * The files of the checkout at `cwd` that `gitModifiedOrUntrackedPaths` answers, and those whose text may differ from
- * the commit `head` (`FirstSightListing`): one Git process, and two more once the first printed and `head` is known.
+ * the commit `head` (`FirstSightListing`): one Git process, and three more once the first printed and `head` is known.
  */
 export async function gitFirstSightListing(cwd: string, head: string | undefined, options: GitReadOptions = {}): Promise<FirstSightListing> {
   const listing = await gitModifiedOrUntrackedListing(cwd, options);
   const changed = modifiedOrUntracked(listing);
   if (listing.ended !== "printed" || head === undefined || await headMovedOnlyByCommits(cwd, undefined, options)) return { changed, notAtHead: undefined };
-  const staged = listedPaths(await readGit(cwd, ["diff-index", "-z", "--cached", "--name-only", head, "--"], options.signal, MAX_LISTED_PATH_BYTES));
-  return { changed, notAtHead: staged.ended === "printed" ? [...listing.paths, ...staged.paths] : undefined };
+  const fromIndex = await indexListings(cwd, head, options);
+  return { changed, notAtHead: fromIndex.ended === "printed" ? [...listing.paths, ...fromIndex.paths] : undefined };
 }
 
 /**
