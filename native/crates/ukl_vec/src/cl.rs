@@ -171,6 +171,10 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
     let mut fbc = FunctionBuilderContext::new();
     let mut ctx = module.make_context();
     let mut kept = Some(Kept::new(w, ssa.funcs.len() + 1));
+    // A development hook: each machine instruction's SSA value, to the file `RERAIL_UKL_VEC_CL_MAP` names (appended),
+    // for a profile of the compiled code: `start end kernel function value operation`.
+    let map = std::env::var("RERAIL_UKL_VEC_CL_MAP").ok();
+    let mut spans: Vec<(usize, Vec<(u32, u32, u32)>)> = Vec::new();
     for (k, f) in ssa.funcs.iter().enumerate() {
         ctx.func.signature = sigs[k].clone();
         ctx.func.name = ir::UserFuncName::user(0, k as u32);
@@ -194,6 +198,11 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
             let _ = std::fs::write(format!("{dir}/{name}.w{w}.{k}.s"), format!("; {}\n{v}", f.name));
         }
         kept = kept.and_then(|kp| kp.add(&ctx));
+        if map.is_some() {
+            if let Some(cc) = ctx.compiled_code() {
+                spans.push((k, cc.buffer.get_srclocs_sorted().iter().map(|l| (l.start, l.end, l.loc.bits())).collect::<Vec<_>>()));
+            }
+        }
         module.clear_context(&mut ctx);
     }
     // The entry: each chunk of the SIMD group's lanes that has a lane, its kernel's function.
@@ -214,6 +223,22 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
     module.finalize_definitions().map_err(|e| Error(format!("{name}: {e}")))?;
     // SAFETY: a finalized function of `Entry`'s signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(module.get_finalized_function(eid)) };
+    if let Some(path) = &map {
+        use std::fmt::Write as _;
+        let mut out = String::new();
+        for (k, ls) in &spans {
+            let base = module.get_finalized_function(ids[*k]) as u64;
+            let f = &ssa.funcs[*k];
+            for &(a, b, v) in ls {
+                let op = if (v as usize) < f.insts.len() { format!("{:?}/{}", f.insts[v as usize].op, f.insts[v as usize].sub) } else { "-".into() };
+                let _ = writeln!(out, "{:x} {:x} {name} {} {v} {op}", base + u64::from(a), base + u64::from(b), f.name);
+            }
+        }
+        if let Ok(mut fh) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+            use std::io::Write as _;
+            let _ = fh.write_all(out.as_bytes());
+        }
+    }
     Ok((Compiled { _module: module, entry, width: w }, kept.map(|k| k.out)))
 }
 
@@ -593,6 +618,7 @@ impl<'a, 'b> Cg<'a, 'b> {
             let blk = &f.blocks[bk];
             for &x in &blk.insts {
                 let i = *f.inst(x);
+                self.b.set_srcloc(ir::SourceLoc::new(x));
                 let r = match i.op {
                     O::Entry => Rp::K(entry_mask.clone()),
                     O::Arg if !self.kernel => args[i.a as usize].clone(),

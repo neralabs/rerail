@@ -79,12 +79,44 @@ struct Cx<'p> {
     fault: RefCell<Option<Error>>,
 }
 
+/// Each lane of `mask`'s `size` bytes at `base + lane * size` set to `b`'s first bytes (zero past them): a
+/// parameter's value in its lanes' frame.
+///
+/// # Safety
+///
+/// The 32 lanes' places are writable.
+unsafe fn fill(base: u64, size: usize, b: &[u8], mask: u32) {
+    let mut v = [0u8; 8];
+    if size <= 8 {
+        let n = b.len().min(size);
+        v[..n].copy_from_slice(&b[..n]);
+    }
+    let x = u64::from_le_bytes(v);
+    for l in 0..W {
+        if mask >> l & 1 == 0 {
+            continue;
+        }
+        let at = (base + (l * size) as u64) as usize;
+        // SAFETY: the caller's.
+        unsafe {
+            match size {
+                1 => (at as *mut u8).write(x as u8),
+                2 => (at as *mut u16).write_unaligned(x as u16),
+                4 => (at as *mut u32).write_unaligned(x as u32),
+                8 => (at as *mut u64).write_unaligned(x),
+                _ => std::ptr::copy_nonoverlapping(b.as_ptr(), at as *mut u8, b.len().min(size)),
+            }
+        }
+    }
+}
+
 thread_local! {
     /// The thread's last launches' slots, by their shape, the latest first.
     static SLOTS: RefCell<Vec<([usize; 7], Vec<Slot>)>> = const { RefCell::new(Vec::new()) };
 }
 
-const KEPT_SHAPES: usize = 4;
+/// The shapes of slots a thread keeps (a pipeline's kernels each have their own).
+const KEPT_SHAPES: usize = 16;
 
 pub(crate) fn places() -> Places {
     Places {
@@ -250,18 +282,17 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
             (sg.done, sg.wait, sg.entry) = (false, Wait::Run, Some(entry));
             for (j, a) in args.iter().enumerate() {
                 let (off, m) = (u64::from(params[2 * j]), M(params[2 * j + 1]));
-                for l in 0..W {
-                    if mask >> l & 1 == 0 {
-                        continue;
+                let base = sg.frame + off * W as u64;
+                let local;
+                let b: &[u8] = match a {
+                    Arg::Bytes(b) => b,
+                    Arg::Local(o) => {
+                        local = (sh + own + o).to_le_bytes();
+                        &local
                     }
-                    let at = sg.frame + off * W as u64 + l as u64 * u64::from(m.bytes());
-                    match a {
-                        // SAFETY: the parameter's place in the lane's frame, its type's bytes.
-                        Arg::Bytes(b) => unsafe { std::ptr::copy_nonoverlapping(b.as_ptr(), at as usize as *mut u8, b.len().min(m.bytes() as usize)) },
-                        // SAFETY: the same, a pointer's.
-                        Arg::Local(o) => unsafe { ops::store(M::PTR, at, sh + own + o) },
-                    }
-                }
+                };
+                // SAFETY: the parameter's places in the lanes' frame, its type's bytes each.
+                unsafe { fill(base, m.bytes() as usize, b, mask) };
             }
             let sgp = &mut **sg as *mut Sg;
             // SAFETY: the stack is the SIMD group's, kept while its fiber runs; `fiber_start` never returns.

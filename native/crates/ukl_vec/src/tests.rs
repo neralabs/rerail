@@ -168,6 +168,9 @@ fn the_written_sources_lower_and_vectorize() {
                     let t = std::time::Instant::now();
                     let names = |id: u32| if id == u32::MAX { vk.name.clone() } else { p.funcs[id as usize].name.clone() };
                     let ssa = super::ssa::build(&vk.tape, &names);
+                    if let (Ok(dir), Ok(s)) = (std::env::var("RERAIL_UKL_VEC_SSA"), &ssa) {
+                        std::fs::write(format!("{dir}/{f}.ssa"), s.listing()).unwrap();
+                    }
                     let st = t.elapsed().as_secs_f64();
                     let t = std::time::Instant::now();
                     let c = ssa.as_ref().map_err(|e| e.0.clone()).and_then(|s| super::cl::compile(s, &vk.name, 8, &super::exec::places()).map(|_| ()).map_err(|e| e.0));

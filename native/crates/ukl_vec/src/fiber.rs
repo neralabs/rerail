@@ -12,23 +12,45 @@ pub struct Ctx {
     sp: u64,
 }
 
-/// A stack: its memory, kept while the fiber is.
+/// A stack: its memory, kept while the fiber is. A thread keeps the stacks its fibers are done with (`POOL`), so a
+/// launch takes its SIMD groups' stacks from there rather than mapping (and faulting in) new ones.
 pub struct Stack {
-    mem: Vec<u128>,
+    mem: Box<[std::mem::MaybeUninit<u128>]>,
 }
 
 /// A stack's bytes: the compiled code's frames (no recursion: a call chain is the kernel's call graph's depth) and
 /// the helpers it calls.
 pub const STACK: usize = 1 << 20;
 
+/// The stacks a thread keeps for its next fibers, at most.
+const POOLED: usize = 256;
+
+thread_local! {
+    static POOL: std::cell::RefCell<Vec<Box<[std::mem::MaybeUninit<u128>]>>> = const { std::cell::RefCell::new(Vec::new()) };
+}
+
 impl Stack {
     pub fn new() -> Stack {
-        Stack { mem: vec![0u128; STACK / 16] }
+        let kept = POOL.try_with(|p| p.borrow_mut().pop()).ok().flatten();
+        // A stack's memory needs no value: a fiber writes it before it reads it.
+        Stack { mem: kept.unwrap_or_else(|| Box::new_uninit_slice(STACK / 16)) }
     }
 
     fn top(&mut self) -> u64 {
         // SAFETY: one past the end of the allocation.
         unsafe { self.mem.as_mut_ptr().add(self.mem.len()) as u64 }
+    }
+}
+
+impl Drop for Stack {
+    fn drop(&mut self) {
+        let mem = std::mem::take(&mut self.mem);
+        let _ = POOL.try_with(|p| {
+            let mut p = p.borrow_mut();
+            if p.len() < POOLED {
+                p.push(mem);
+            }
+        });
     }
 }
 

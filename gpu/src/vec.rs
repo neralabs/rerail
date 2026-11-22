@@ -147,9 +147,25 @@ impl CpuInterpreter for Interpreted {
         }
         if exec == rerail_ukl_vec::run::Exec::Ssa {
             // Its SSA's compiled code: the store's (`cl::load` links it), else compiled and kept there.
-            let width = rerail_ukl_vec::exec::kept_width().to_string();
-            let key = rerail_device::store::key(&[self.key.as_bytes(), kernel.as_bytes(), b"ssa", width.as_bytes(), rerail_ukl_vec::cl::host().as_bytes()]);
-            rerail_ukl_vec::exec::compiled_kept(&self.program, &vk, || rerail_device::store::load("vec", &key, "ssa"), |b| rerail_device::store::save("vec", &key, "ssa", b)).map_err(|e| e.0)?;
+            // The key is made only for a kernel not compiled yet in this process (`compiled_kept` calls neither
+            // closure once it is).
+            let key = || {
+                let width = rerail_ukl_vec::exec::kept_width().to_string();
+                rerail_device::store::key(&[self.key.as_bytes(), kernel.as_bytes(), b"ssa", width.as_bytes(), rerail_ukl_vec::cl::host().as_bytes()])
+            };
+            let saved = std::cell::RefCell::new(None);
+            rerail_ukl_vec::exec::compiled_kept(
+                &self.program,
+                &vk,
+                || {
+                    let k = key();
+                    let b = rerail_device::store::load("vec", &k, "ssa");
+                    *saved.borrow_mut() = Some(k);
+                    b
+                },
+                |b| rerail_device::store::save("vec", saved.borrow().as_ref().expect("the key, made by the load"), "ssa", b),
+            )
+            .map_err(|e| e.0)?;
         }
         rerail_ukl_vec::run::run(&self.program, &vk, &args, rerail_ukl_vec::run::Launch { grid, block, local: shared, resident, exec }).map_err(|e| e.0)
     }

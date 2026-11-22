@@ -218,6 +218,17 @@ pub struct Launch {
 /// poll another's progress (`Yield`). So a persistent grid of up to `resident` groups meets its barriers, and a
 /// larger one fails their bound, as on a GPU that holds fewer; a run is the same every time.
 pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
+    // A development hook: each launch's kernel, executor, groups and time, with `RERAIL_UKL_VEC_TIMES`.
+    if std::env::var_os("RERAIL_UKL_VEC_TIMES").is_some() {
+        let t = std::time::Instant::now();
+        let r = run_in(p, k, args, launch);
+        eprintln!("LAUNCH {} {:?} {:?}x{:?} {:.1} us", k.name, launch.exec, launch.grid, launch.block, t.elapsed().as_secs_f64() * 1e6);
+        return r;
+    }
+    run_in(p, k, args, launch)
+}
+
+fn run_in(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
     if launch.exec == Exec::Ssa {
         return crate::exec::run(p, k, args, launch);
     }
