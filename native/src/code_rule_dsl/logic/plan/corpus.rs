@@ -7583,15 +7583,13 @@ fn run_observed_within(
                 let (live, idle) = rerail_accel::gpu::shared::held_bytes();
                 let h = crate::code_rule_dsl::facts::rows::held();
                 format!(
-                    "{} MB leased, {} MB idle; rows' blocks: a run's {} ({} MB written of {} MB), sources' {} ({} MB of {} MB), kept rows' {} ({} MB of {} MB); {} MB of dead relations' pages given back; {} relations of many parts merged into one ({} MB copied); {} moved out of a full block ({} MB copied); the footprint {} MB",
+                    "{} MB leased, {} MB idle; rows' blocks: a run's {} ({} MB written of {} MB), sources' {} ({} MB of {} MB), kept rows' {} ({} MB of {} MB); {} MB of dead relations' pages given back; {} moved out of a full block ({} MB copied); the footprint {} MB",
                     live >> 20,
                     idle >> 20,
                     h[0].0, h[0].1 >> 20, h[0].2 >> 20,
                     h[1].0, h[1].1 >> 20, h[1].2 >> 20,
                     h[2].0, h[2].1 >> 20, h[2].2 >> 20,
                     crate::code_rule_dsl::facts::rows::given_back() >> 20,
-                    crate::code_rule_dsl::facts::rows::merged().0,
-                    crate::code_rule_dsl::facts::rows::merged().1 >> 20,
                     crate::code_rule_dsl::facts::rows::moved().0,
                     crate::code_rule_dsl::facts::rows::moved().1 >> 20,
                     crate::code_rule_dsl::prof::footprint_mb(),

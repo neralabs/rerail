@@ -139,6 +139,15 @@ structure! {
         pub pend_used: AtomicU64,
         /// A continuation's base (`CONTINUES`): its descriptor's offset from this one's, in the same block; 0 for none.
         pub base_off: AtomicI64,
+        /// A continuation's jump: an ancestor down its chain in the same block (Myers' skew-binary jumps), its
+        /// descriptor's offset from this one's; 0 for none (a relation of its own, or a base in another block). A read
+        /// of an id below `jump_rows` goes there at once, so a read down a chain of `n` takes O(log n) steps, and a
+        /// chain needs no length bound (decision 0353 step 6: none of it is merged).
+        pub jump_off: AtomicI64,
+        /// The jump's `base_rows`: an id below them lies at or past the jump.
+        pub jump_rows: u32,
+        /// Its depth in its block's chain: 0 for a relation that continues none here (a full one, or a far base's link).
+        pub depth: u32,
         /// Its row ranges known to be in an order already (decision 0180), written once when it is frozen into an
         /// input (decision 0478 step 5c), in row order; and the bytes of their chunk, given back at its release.
         pub known: Span<Known>,
@@ -242,6 +251,23 @@ impl Relation {
         }
         let off = std::ptr::from_ref(base) as i64 - std::ptr::from_ref(rel) as i64;
         rel.base_off.store(off, Release);
+        // Its jump (Myers 1983): the base's jump's jump when the base's two jumps are as long, else the base. A base
+        // with none (depth 0) jumps to itself.
+        let jump = |r: &Relation| -> *const Relation {
+            let o = r.jump_off.load(Relaxed);
+            if o == 0 { r } else { std::ptr::from_ref(r).cast::<u8>().wrapping_offset(o as isize).cast() }
+        };
+        // SAFETY: a chain's jumps lie in its block, before it (each made with its base there).
+        let (j, depth_of) = (jump(base), |p: *const Relation| unsafe { (*p).depth });
+        let jj = unsafe { jump(&*j) };
+        let to = if base.depth - depth_of(j) == depth_of(j) - depth_of(jj) && base.depth > 0 { jj } else { std::ptr::from_ref(base) };
+        // SAFETY: just made, this caller's alone; `to` is a descriptor of the chain in this block.
+        unsafe {
+            let me = std::ptr::from_ref(rel).cast_mut();
+            (*me).depth = base.depth + 1;
+            (*me).jump_rows = (*to).base_rows;
+        }
+        rel.jump_off.store(to as i64 - std::ptr::from_ref(rel) as i64, Release);
         rel.flags.fetch_or(DELTA | CONTINUES, Release);
         Some(rel)
     }
@@ -332,7 +358,11 @@ impl Relation {
             if id >= rel.base_rows || off == 0 {
                 break;
             }
-            rel = if rel.far_base() {
+            let jump = rel.jump_off.load(Relaxed);
+            rel = if jump != 0 && id < rel.jump_rows {
+                // SAFETY: its jump lies in its block `jump` bytes from it, an ancestor its holder keeps.
+                unsafe { &*std::ptr::from_ref(rel).cast::<u8>().offset(jump as isize).cast::<Relation>() }
+            } else if rel.far_base() {
                 let far = far.expect("a relation whose base lies in another block, read with that block");
                 // SAFETY: its base's descriptor lies `off` bytes into `far`, kept while it is (its holder's).
                 unsafe { &*far.ptr::<Relation>(off as usize) }
