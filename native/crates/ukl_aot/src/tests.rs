@@ -147,3 +147,17 @@ fn the_kernels_rust_parent_is_the_hosts() {
         }
     }
 }
+
+/// The hand-vectorized NEON read (`hand::parent_all`) on every node of every document: the host's parents.
+#[test]
+fn the_hand_vectorized_parent_is_the_hosts() {
+    let lang = crate::parent::json_lang();
+    for d in crate::parent::documents(&lang) {
+        let want = crate::parent::scalar(&d);
+        let mut got = vec![0u32; want.len()];
+        unsafe { crate::hand::parent_all(&d.bytes, &d.view, &mut got) };
+        if let Some(i) = (0..want.len()).find(|&i| got[i] != want[i]) {
+            panic!("{} ({} nodes): node {i}'s parent {} (the host's {})", d.name, want.len(), got[i], want[i]);
+        }
+    }
+}
