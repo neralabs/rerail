@@ -216,8 +216,10 @@ fn check_lowering(name: &str, p: &Program) {
 }
 
 /// A program function's control lines, each the same in every lane: those that leave the group
-/// unfinished, and the full group's bodies.
-const CONTROL: [&str; 6] = ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink(", "if (sg_any(", "if (g > 0u && (g + 1u) * ", "if (sg_all(ascii __UKL_ARGS))"];
+/// unfinished, and the full group's bodies. And one predicated store, no branch around code: a
+/// delay-0 output's word, which a warm-up lane does not store (decision 0576 §17).
+const CONTROL: [&str; 7] =
+    ["if (!look_back(", "if (!halo_exchange(", "if (!count_sink(", "if (sg_any(", "if (g > 0u && (g + 1u) * ", "if (sg_all(ascii __UKL_ARGS))", "if (keep) out["];
 
 /// The SIMD-group operations of the generated code (`block_common.uglykl`'s and UKL's).
 const SIMD_GROUP_OPERATIONS: [&str; 8] = ["ukl_sg_", "sg_any(", "sg_all(", "sg_bcast", "sg_up64(", "sg_down64(", "SG_UP_BM(", "SG_BCAST_BM("];
@@ -232,7 +234,7 @@ const LOOPING: [&str; 9] = ["look_back", "halo_exchange", "exchange_word", "coun
 /// are left out.
 fn lane_code(msl: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    for marker in ["UKL_INLINE "] {
+    for marker in ["UKL_INLINE ", "UKL_LARGE "] {
         for (at, _) in msl.match_indices(marker) {
             let code = &msl[at..];
             // A function on one line ends with it; any other at its closing brace.
