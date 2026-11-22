@@ -343,17 +343,22 @@ describe("remote sink outbox", () => {
     expect(tests.mock.calls).toEqual([[[auditId]]]);
   });
 
-  it("tests the stored lists of the audits it sent naming a damaged stored rule provenance in one statement a sync, however many", async () => {
+  it("tests the stored lists of the audits it sent naming a damaged stored rule provenance in one statement a sync, however many, and reads none", async () => {
     const { sessionId, auditId } = seed();
     addAudits(sessionId, 20);
     setProvenanceCopyText(auditId, "[");
     addRemote({ url: sink.url, token: "test-token", content: true }, home);
     await outbox().sync({ force: true });
     const prepared = vi.spyOn(Database.prototype, "prepare");
-    onTestFinished(() => prepared.mockRestore());
+    const reads = vi.spyOn(SqliteAuditReader.prototype, "get");
+    onTestFinished(() => {
+      prepared.mockRestore();
+      reads.mockRestore();
+    });
     await outbox().sync({ force: true });
     // Each list test in SQL (`holdsList`) begins with `json_valid`; no other statement of a sync has it.
     expect(prepared.mock.calls.filter(([source]) => source.includes("json_valid"))).toHaveLength(1);
+    expect(reads).not.toHaveBeenCalled();
     expect(sink.requests).toHaveLength(1);
   });
 
