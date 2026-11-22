@@ -1346,6 +1346,8 @@ impl Exp {
         l.at("OPV", &self.opv).at("OPBASE", &self.opbase).at("OPTOTAL", &self.opscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("ARGS", &self.args).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
         l.word("LIST_CAP", self.list_cap).word("OUT_CAP", self.out_cap).word("Q_CAP", self.q_cap);
+        // The text's expansion as a loop (decision 0588); `RERAIL_PP_LOOP=0` keeps the rounds alone, to compare.
+        l.word("LOOP", u32::from(std::env::var("RERAIL_PP_LOOP").map_or(true, |v| v != "0")));
         l.at("TRIE", &self.trie).word("TRIE_LV", self.trie_lv);
         l.at("HX", &self.hx).word("HX_MASK", self.hx_mask).at("CH", &self.ch).at("CHW", &self.chw).at("TCH", &self.tch).word("TCH_CAP", self.tch_cap);
         l.at("CNT", &self.cnt).word("CNT_CAP", self.cnt_cap).word("LB_CAP", self.lb_cap);
@@ -1433,6 +1435,12 @@ impl Exp {
         unsafe { *self.ctl.host().cast::<u32>().add(2) }
     }
 
+    /// The last text pass's runs the loop did not cover and did (`TRN[12]`, `TRN[13]`, decision 0588).
+    pub fn loop_runs(&self) -> (u32, u32) {
+        // SAFETY: the device finished; `trn` holds 16 words.
+        unsafe { (*self.trn.host().cast::<u32>().add(12), *self.trn.host().cast::<u32>().add(13)) }
+    }
+
     /// P1's iterations and the text passes the run made (`TRN[11]`, `TRN[10]`).
     pub fn passes(&self) -> (u32, u32) {
         // SAFETY: the device finished; `trn` holds 16 words.
@@ -1473,9 +1481,16 @@ impl Exp {
         // SAFETY: as `words`, of `PpDef` records.
         let d = unsafe { std::slice::from_raw_parts(defs.defs.host().cast::<PpDef>(), defs.defs.byte_length() / std::mem::size_of::<PpDef>()) };
         let mut out = Vec::with_capacity(n);
+        let show = std::env::var_os("RERAIL_PP_PIECES").is_some();
         for i in 0..np {
             let (src, len, st) = (o[i], o[cap + i] & PN_LEN, o[2 * cap + i]);
+            if show {
+                eprintln!("piece {i}: kind {} def {} start {st} len {len} at {}", src >> 30, src & !P_KIND, words(&self.out).get(3 * cap + i).copied().unwrap_or(0));
+            }
             if out.len() + len as usize > n {
+                if std::env::var_os("RERAIL_PP_WHY").is_some() {
+                    eprintln!("pp: the output's piece {i} of {np} (room {cap}) passes its count {n}");
+                }
                 return Err(Error::BackendFailure);
             }
             for k in st..st.checked_add(len).ok_or(Error::BackendFailure)? {
@@ -1491,6 +1506,9 @@ impl Exp {
             }
         }
         if out.len() != n {
+            if std::env::var_os("RERAIL_PP_WHY").is_some() {
+                eprintln!("pp: the output's {np} pieces (room {cap}) hold {} tokens, its count {n}", out.len());
+            }
             return Err(Error::BackendFailure);
         }
         Ok((0, out))
@@ -1599,6 +1617,14 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
             Err(e) => return Err(e),
         }
         let (launches, gpu_seconds) = on_grid(&arena, unit, &front, &l, groups)?;
+        if std::env::var_os("RERAIL_PP_LOOP_LOG").is_some() {
+            let (left, done) = exp.loop_runs();
+            // SAFETY: the device finished; `trn` holds 16 words, 14 the reasons' bits (`LP_*` in `pp_loop.uglykl`).
+            let why = unsafe { *exp.trn.host().cast::<u32>().add(14) };
+            let names = ["", "room", "paste", "#", "va_opt", "built-in", "overrun", "deep"];
+            let why: Vec<&str> = (1..8).filter(|b| why >> b & 1 != 0).map(|b| names[b]).collect();
+            eprintln!("pp loop: {done} pieces looped, {left} left to the rounds ({why:?})");
+        }
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
         // SAFETY: the device finished writing `room`.
         if unsafe { *defs.room.host().cast::<u32>() } != 0 {

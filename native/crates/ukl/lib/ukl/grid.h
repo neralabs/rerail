@@ -15,7 +15,8 @@
 //
 // `UklGrid.ctl`: four words, zero before the dispatch: 0 the groups' arrivals at every barrier so far, never reset
 // (barrier `n`, counting from 0, is complete when it reaches `G * (n + 1)`, modulo 2^32); 1 the generation, twice
-// the barriers passed, with the failure bit (bit 0); 2 the failure word, for a phase's quick test; 3 the tickets
+// the barriers passed, with the failure bit (bit 0); 2 the failure word, for a phase's quick test (bit 0; the bits
+// above it are the beats, `ukl_grid_beat`); 3 the tickets
 // taken, with `UKL_GRID_CLOSED` once the count is closed (`ukl_grid_join`). The arrivals are never reset: a reset is
 // a second write of the last arrival's besides the generation's step, and a GPU that showed the step first would let
 // a group pass, arrive at the next barrier, and have its arrival wiped, so that barrier never fills. A barrier's
@@ -23,6 +24,10 @@
 // failure bit, and a group past its bound sets the bit only by a compare-and-swap that finds the generation it waited
 // on. So either every group passes a barrier or none does. One form on every backend (CUDA's too, until the device
 // layer makes cooperative launches).
+//
+// A wait's bound counts the polls since the grid last showed progress: a group that runs a long phase (one thread's
+// loop over a large piece of work) beats (`ukl_grid_beat`), and a group waiting for it starts its count again at each
+// beat. Every group of the grid is running (the join), so only a wait with no progress is a failure.
 //
 // The grid's control words are read by polls (`ukl_atomic_poll`): a relaxed load in a loop may never see another
 // group's store on Apple's GPUs (Q123; the reason the barrier failed at 8 groups, Q367).
@@ -54,7 +59,12 @@ typedef struct UklGrid {
 } UklGrid;
 
 // Whether the grid has failed a barrier (in every thread alike after a barrier).
-UKL_INLINE bool ukl_grid_failed(UklGrid g) { return ukl_atomic_poll(&g.ctl[2]) != 0u; }
+UKL_INLINE bool ukl_grid_failed(UklGrid g) { return (ukl_atomic_poll(&g.ctl[2]) & 1u) != 0u; }
+
+// Progress, from a thread in a long phase: a barrier's waiting groups start their bound's count again. `ctl` is the
+// grid's (`UklGrid.ctl`, or the same words through a coherent pointer: a macro, so either's atomic is the one); a beat
+// now and then (every few thousand steps) is enough.
+#define ukl_grid_beat(ctl) ((void)ukl_atomic_add(&(ctl)[2], 2u))
 
 // The grid of the groups that are running (decision 0540 §3): a group of a dispatch of `dispatched` groups takes a
 // ticket, and is the grid's (true: `g.group` its ticket, `g.groups` the grid's count) if it took it before the count
@@ -106,7 +116,7 @@ UKL_INLINE bool ukl_grid_join(UKL_PRIVATE UklGrid* g, uint32_t dispatched, UKL_L
         }
         // Not closed (the first's closing lost every race, or the wait ran out): the grid fails, its barriers false.
         if (ticket != UKL_GRID_CLOSED && count == 0u) {
-            ukl_atomic_store(&g->ctl[2], 1u);
+            ukl_atomic_or(&g->ctl[2], 1u);
             ukl_atomic_or(&g->ctl[1], 1u);
             count = ticket + 1u;
         }
@@ -144,11 +154,16 @@ UKL_ONCE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
                 ukl_fence_device();
                 failed = ukl_atomic_cas(&g.ctl[1], gen, gen + 2u) == gen ? 0u : 1u;
             } else {
-                uint32_t now = gen, spins = 0u;
+                uint32_t now = gen, spins = 0u, beat = ukl_atomic_poll(&g.ctl[2]);
                 while (now == gen && spins < UKL_GRID_SPINS) {
                     ukl_poll_yield();
                     now = ukl_atomic_poll(&g.ctl[1]);
                     spins++;
+                    // A beat since the last look: the grid progresses, and the count starts again.
+                    if ((spins & 1023u) == 0u) {
+                        uint32_t b = ukl_atomic_poll(&g.ctl[2]);
+                        if ((b & ~1u) != (beat & ~1u)) { beat = b; spins = 0u; }
+                    }
                 }
                 if (now == gen) {
                     // The bound: fail the barrier, unless it stepped meanwhile.
@@ -158,7 +173,7 @@ UKL_ONCE bool ukl_grid_barrier(UklGrid g, UKL_LOCAL uint32_t* flag)
                 failed = now & 1u;
             }
             if (failed != 0u)
-                ukl_atomic_store(&g.ctl[2], 1u);
+                ukl_atomic_or(&g.ctl[2], 1u);
             ukl_fence_device();
         }
         *flag = failed;

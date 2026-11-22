@@ -1510,11 +1510,12 @@ fn past_its_room_runs_again_larger(what: &str, text: &str) {
     }
 }
 
-/// R8: an 8⁴ fan-out used three times wants more than rung 0's arena of tokens.
+/// R8: an 8⁴ fan-out of a one-token body used three times: 12,288 expansions, each a piece of the output
+/// (decision 0588: the loop's room), and more than rung 0's arena of tokens (the rounds').
 #[test]
 fn a_unit_past_its_token_room_runs_again_larger() {
-    let fan = "#define A0 x x x x x x x x\n#define A1 A0 A0 A0 A0 A0 A0 A0 A0\n#define A2 A1 A1 A1 A1 A1 A1 A1 A1\n#define A3 A2 A2 A2 A2 A2 A2 A2 A2\n";
-    past_its_room_runs_again_larger("tokens", &format!("{fan}A3 A3 A3\n"));
+    let fan = "#define A0 x\n#define A1 A0 A0 A0 A0 A0 A0 A0 A0\n#define A2 A1 A1 A1 A1 A1 A1 A1 A1\n#define A3 A2 A2 A2 A2 A2 A2 A2 A2\n#define A4 A3 A3 A3 A3 A3 A3 A3 A3\n";
+    past_its_room_runs_again_larger("tokens", &format!("{fan}A4 A4 A4\n"));
 }
 
 /// R8: a `#` of 512 long names wants more scratch bytes than rung 0's 64 KB.

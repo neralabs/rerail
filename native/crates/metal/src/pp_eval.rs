@@ -369,7 +369,7 @@ impl Front {
     /// Whether the run's grid failed a barrier (after it).
     pub fn barrier_failed(&self) -> bool {
         // SAFETY: the device finished writing the grid's words.
-        unsafe { *self.grid.host().cast::<u32>().add(2) != 0 }
+        unsafe { *self.grid.host().cast::<u32>().add(2) & 1 != 0 }
     }
 
     /// The trace a run at `STOP` = `PP_TRACE_ON` wrote (after it): each phase's source line and device clock (ns).

@@ -745,8 +745,9 @@ fn grid_barriers_see_every_groups_writes() {
         let wrong: Vec<u32> = read(&out, groups as usize);
         eprintln!("{}: {groups} groups dispatched, {} took part; arrived {}, generation {} (barrier {}), failed {}", crate::device::backend(), c[3] & 0x7fff_ffff, c[0], c[1], c[1] / 2, c[2]);
         assert_eq!(c[2], 0, "{}: {groups} groups: a barrier failed, at generation {} of {}", crate::device::backend(), c[1], 4 * rounds);
-        grid_joined(&c);
-        assert_eq!(c[1], 4 * rounds, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
+        // A grid of one group waits at its threadgroup's barrier, and writes no control word (`ukl/grid.h`).
+        let want = if grid_joined(&c) == 1 { 0 } else { 4 * rounds };
+        assert_eq!(c[1], want, "{}: {groups} groups: the barriers' generation (two a barrier)", crate::device::backend());
         assert!(wrong.iter().all(|&w| w == 0), "{}: {groups} groups: reads before the barrier's writes: {wrong:?}", crate::device::backend());
     }
 }
@@ -774,7 +775,8 @@ fn a_grid_past_residency_is_the_groups_that_run() {
     eprintln!("{}: {groups} groups of {lsz}: {joined} took part, failed {}, after {:?}", crate::device::backend(), c[2], start.elapsed());
     assert_eq!(c[2], 0, "{}: a grid of {joined} of {groups} groups of {lsz} failed a barrier", crate::device::backend());
     assert!((1..=groups).contains(&joined), "{}: {joined} groups of {groups}", crate::device::backend());
-    assert_eq!(c[1], 4 * 4, "{}: the barriers' generation (two a barrier)", crate::device::backend());
+    // A grid of one group writes no control word at a barrier (its threadgroup's: `ukl/grid.h`).
+    assert_eq!(c[1], if joined == 1 { 0 } else { 4 * 4 }, "{}: the barriers' generation (two a barrier)", crate::device::backend());
     assert!(wrong.iter().all(|&w| w == 0), "{}: reads before the barrier's writes: {wrong:?}", crate::device::backend());
 }
 

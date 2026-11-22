@@ -170,7 +170,7 @@ impl Bound for Buffer {
 pub fn source() -> &'static str {
     static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
         format!(
-            "#include <ukl/backend.h>\n{PP_GLOBAL}#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/pool.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}",
+            "#include <ukl/backend.h>\n{PP_GLOBAL}#define CLIF_VIEW_SPACE UKL_GLOBAL\n{}#include <ukl/reads/tape.h>\n#include <ukl/bits.h>\n#include <ukl/grid.h>\n#include <ukl/pool.h>\n{}{}\n{}\n{}\n{}\n{}\n{}\n{}\n{}",
             rerail_clif::view::ukl(),
             SLOTS.iter().enumerate().map(|(k, s)| format!("#define S_{s} {k}u\n")).collect::<String>(),
             include_str!("pp_eval.uglykl"),
@@ -178,6 +178,7 @@ pub fn source() -> &'static str {
             include_str!("pp_expand.uglykl"),
             include_str!("pp_p1.uglykl"),
             include_str!("pp_if.uglykl"),
+            include_str!("pp_loop.uglykl"),
             include_str!("pp_grid.uglykl"),
             include_str!("pp_probes.uglykl")
         )
@@ -421,7 +422,7 @@ pub const SLOTS: &[&str] = &[
     "THEADS", "DELTA", "DEPTH", "CLOSE", "CLOSE_AT", "CLOSE_TOTAL", "CLOSE_KEYS", "CSORT_KB", "CSORT_VA", "CSORT_VB", "CSORT_HIST",
     "CLOSE_BITS", "CEND", "EHEADS", "REACH", "STATE", "OFLAG", "OID", "OTOTAL", "LISTS", "SLOTS", "CTL", "QCTL", "XFLAG", "XAT",
     "XTOTAL", "XPOS", "XCOVER", "V", "OBASE", "VTOTAL", "OPV", "OPBASE", "OPTOTAL", "OUT", "SCANS", "SUBS", "CALLS", "SB_L", "FINS", "PLACES", "SC_N", "SC_BASE", "SC_XJ", "SC_TOTAL", "SC_M", "SC_K", "SC_E", "SC_DELTA", "SC_HEADS", "SC_DEPTH", "SC_CLOSE", "SC_CAT",
-    "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK", "SC_CTOTAL", "SC_LTOTAL", "SC_CKEYS", "SC_FIRST", "SC_KB", "SC_VA", "SC_VB", "SC_HIST", "SC_CAP", "TOKENS", "ARGS", "WORDS", "SCRATCH", "LIST_CAP", "OUT_CAP", "Q_CAP",
+    "SC_CEND", "SC_REACH", "SC_LIVE", "SC_RANK", "SC_CTOTAL", "SC_LTOTAL", "SC_CKEYS", "SC_FIRST", "SC_KB", "SC_VA", "SC_VB", "SC_HIST", "SC_CAP", "TOKENS", "ARGS", "WORDS", "SCRATCH", "LIST_CAP", "OUT_CAP", "Q_CAP", "LOOP",
     "TRIE", "TRIE_LV", "HX", "HX_MASK", "CH", "CHW", "TCH", "TCH_CAP",
 ];
 

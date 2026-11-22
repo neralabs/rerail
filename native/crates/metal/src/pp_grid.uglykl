@@ -1321,8 +1321,52 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         // The facts this pass writes start empty; the last pass's key stays to compare.
         // The refusals so far are the lines' (the rounds read them; the text's are the expansion's).
         // [10] counts the text passes (for measurements).
-        ONE(x) { PP_GLOBAL uint32_t* n_ = AT(uint32_t, TRN); n_[0] = 0u; n_[1] = 0u; n_[4] = 0u; n_[5] = 0u; n_[8] = 0u; n_[9] = AT(const uint32_t, CTL)[2]; n_[10] += 1u; }
+        // [12] and [13]: the loop's pieces it did not cover and did, [14] the reasons' bits (decision 0588).
+        ONE(x) { PP_GLOBAL uint32_t* n_ = AT(uint32_t, TRN); n_[0] = 0u; n_[1] = 0u; n_[4] = 0u; n_[5] = 0u; n_[8] = 0u; n_[9] = AT(const uint32_t, CTL)[2]; n_[10] += 1u; n_[12] = 0u; n_[13] = 0u; n_[14] = 0u; }
         uint32_t nt = N(GTOTAL);
+        // The loop (decision 0588): a run a thread, counted, placed, written. A top with a run it
+        // does not cover yet is the rounds'.
+        bool looped = false;
+        if (W(LOOP) != 0u) {
+            BARRIER();
+            // The pieces (`lp_marks`, `lp_starts`): the depth, each token's marks, the starts.
+            {
+                PX_UA(TEXT, AT(const uint64_t, CLOSE_KEYS));
+                EACH(s, nt) lp_parens(xu, AT(const uint32_t, RSTART), AT(const uint32_t, RUNX), AT(uint32_t, THEADS), AT(uint32_t, DELTA), s);
+            }
+            BARRIER();
+            SEG(UKL_SEG_ADD, nt, DELTA, THEADS, DEPTH);
+            EACH(s, nt) lp_marks(AT(const uint32_t, THEADS), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), AT(const uint32_t, GTOTAL), AT(uint32_t, OFLAG), s);
+            BARRIER();
+            EACH(s, nt) lp_starts(AT(const uint32_t, OFLAG), AT(const uint32_t, GTOTAL), AT(uint32_t, XFLAG), s);
+            BARRIER();
+            {
+                PX_UA(TEXT, AT(const uint64_t, CLOSE_KEYS));
+                EACH(s, nt) lp_run(xu, xa, AT(const uint32_t, RUN_END), AT(const uint32_t, RSTART), AT(const uint32_t, RUNX), AT(const uint32_t, SSLOT), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),
+                                   AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, OBASE), AT(const uint32_t, OPBASE),
+                                   AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), g.ctl, false, s);
+            }
+            BARRIER();
+            if (AT(const uint32_t, TRN)[12] == 0u) {
+                // The tokens' store again from its front for the second pass (its first's use is the room's: `CTL` 8).
+                // The scratch's too: the second pass makes the same tokens again.
+                ONE(x) { PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL); c_[8] = ukl_max(c_[8], c_[0]); c_[0] = 0u; c_[4] = c_[6]; c_[5] = c_[7]; }
+                // The pieces' joins (`lp_join`): the first pass's ends and join words, in the stores the marks no longer need.
+                EACH(s, nt) lp_join(AT(const uint32_t, GTOTAL), AT(const uint32_t, XFLAG), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, OPV), s);
+                BARRIER();
+                SCAN(nt, V, OBASE, VTOTAL);
+                SCAN(nt, OPV, OPBASE, OPTOTAL);
+                {
+                    PX_UA(TEXT, AT(const uint64_t, CLOSE_KEYS));
+                    EACH(s, nt) lp_run(xu, xa, AT(const uint32_t, RUN_END), AT(const uint32_t, RSTART), AT(const uint32_t, RUNX), AT(const uint32_t, SSLOT), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),
+                                   AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, OBASE), AT(const uint32_t, OPBASE),
+                                   AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), g.ctl, true, s);
+                }
+                BARRIER();
+                looped = true;
+            }
+        }
+        if (!looped) {
         EACH(s, nt) px_top_parens(files, data, AT(const uint32_t, BASES), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, GTOTAL), TEXT_SCOPE, AT(uint32_t, THEADS), AT(uint32_t, DELTA), AT(uint32_t, CLOSE), nf, s);
         BARRIER();
         SEG(UKL_SEG_ADD, nt, DELTA, THEADS, DEPTH);
@@ -1346,6 +1390,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         PX_PLACES(TEXT, AT(const uint32_t, GTOTAL), nt);
         PX_DRAIN_CALL(false, closes);
         PX_OUT_RUNS();
+        }
         {
             TEXT_UX(u);
             PX_COUNTERS(u, 0u);
@@ -1388,7 +1433,8 @@ DEFINE_KERNEL2(pp, pp_check,
     PP_GLOBAL uint32_t* ctl = AT(uint32_t, CTL);
     PP_GLOBAL const uint32_t* grid = AT(const uint32_t, GRID);
     if (grid[PG_STOP] != 0u) return;
-    if (grid[2] != 0u) px_refuse(ctl, X_BARRIER);
+    // The failure bit (`ukl/grid.h`: the bits above it are the beats).
+    if ((grid[2] & 1u) != 0u) px_refuse(ctl, X_BARRIER);
     else px_check(AT(uint32_t, QCTL), AT(const uint32_t, OPTOTAL), ctl, W(OUT_CAP), 0u);
-    if (grid[2] == 0u && grid[PG_STAGE] != 2u) px_refuse(ctl, X_QUEUE);
+    if ((grid[2] & 1u) == 0u && grid[PG_STAGE] != 2u) px_refuse(ctl, X_QUEUE);
 }
