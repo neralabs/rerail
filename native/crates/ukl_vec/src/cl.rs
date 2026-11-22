@@ -1149,6 +1149,34 @@ impl<'a, 'b> Cg<'a, 'b> {
         self.b.ins().uextend(I64, c)
     }
 
+    /// The lanes where bool `x` is true, as a mask, where it is known: a compare's (`raw`), a uniform's.
+    fn bool_mask(&mut self, x: V) -> Option<Vec<Value>> {
+        if let Some(k) = self.raw.get(&x) {
+            return Some(k.clone());
+        }
+        match self.vals[x as usize].clone() {
+            Rp::U(u) => {
+                let t = self.b.ins().icmp_imm(IntCC::NotEqual, u, 0);
+                let s = self.b.ins().bmask(I32, t);
+                Some(if self.w == 1 { vec![s] } else { vec![self.b.ins().splat(I32X4, s); mask_parts(self.w)] })
+            }
+            _ => None,
+        }
+    }
+
+    /// Nonzero where a lane of `mask` is on (a branch's test, at 4 lanes or more): its lanes (each 0 or all ones,
+    /// so no two sum to 0) added pairwise, the low 64 bits: `addp`, `fmov`, as written by hand.
+    fn any_nonzero(&mut self, mask: V) -> Value {
+        let k = self.mask(mask);
+        let mut a = k[0];
+        for &x in &k[1..] {
+            a = self.b.ins().bor(a, x);
+        }
+        let p = self.b.ins().iadd_pairwise(a, a);
+        let d = self.b.ins().bitcast(I64X2, le(), p);
+        self.b.ins().extractlane(d, 0)
+    }
+
     fn konst_u(&mut self, m: M, x: u64) -> Value {
         match m {
             M::F32 => self.b.ins().f32const(f32::from_bits(x as u32)),
@@ -3447,6 +3475,10 @@ impl<'a, 'b> Cg<'a, 'b> {
             }
         }
         if to == M::B && !from.float() {
+            // Where it is not 0: known already (a compare's mask, carried by its casts), or made.
+            if let Some(k) = self.raw.get(&a).cloned() {
+                return self.bools_of(&k);
+            }
             let z = self.zero_lanes(from);
             let k = self.cmp_lanes(Op::Ne, from, &p, &z);
             self.raw.insert(a, k.clone());
@@ -4161,6 +4193,14 @@ impl<'a, 'b> Cg<'a, 'b> {
                     if let Some(r) = self.group_bin(op, om, i.a, i.b, x) {
                         return Ok(Rp::L(r));
                     }
+                    if matches!(op, Op::And | Op::Or) && om == M::B {
+                        // Of bools whose masks are known (a compare's, a uniform's): the masks combined.
+                        if let (Some(ka), Some(kb)) = (self.bool_mask(i.a), self.bool_mask(i.b)) {
+                            let k: Vec<Value> = ka.iter().zip(&kb).map(|(&a, &b)| if op == Op::And { self.b.ins().band(a, b) } else { self.b.ins().bor(a, b) }).collect();
+                            self.raw.insert(x, k.clone());
+                            return Ok(Rp::L(self.bools_of(&k)));
+                        }
+                    }
                     let (r, k) = self.bin_lanes(op, om, i.a, i.b, i.c);
                     if let Some(k) = k {
                         self.raw.insert(x, k);
@@ -4217,7 +4257,10 @@ impl<'a, 'b> Cg<'a, 'b> {
                         }
                     }
                     let r = self.cast_lanes(from, m, i.a);
-                    if let Some(k) = self.raw.get(&i.a).cloned().filter(|_| m == M::B && from != M::B) {
+                    // Its mask (where it is not 0) its operand's: of a value to a bool, or of a bool to an integer (its
+                    // 0 or 1).
+                    let keeps = (m == M::B && from != M::B) || (from == M::B && !m.float() && !m.is_agg());
+                    if let Some(k) = self.raw.get(&i.a).cloned().filter(|_| keeps) {
                         self.raw.insert(x, k);
                     }
                     Rp::L(r)
@@ -4232,6 +4275,11 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let mk = self.mask(i.b);
                 match self.vals[i.a as usize].clone() {
                     Rp::U(u) => Rp::U(u),
+                    Rp::L(p) if w >= 4 && !m.float() && !wide(m) => {
+                        // The mask's lanes' maximum: a lane's value (each lane's the same, or the code takes any one),
+                        // in registers. With no lane of the mask, no lane uses it.
+                        Rp::U(self.reduce_lanes(Builtin::SubGroupReduceMax, m, i.b, p))
+                    }
                     Rp::L(p) => {
                         // A chunk whose mask has no lane (another chunk's has): its entry's first lane, whose value
                         // the code computed; no lane uses it.
@@ -4914,6 +4962,10 @@ impl<'a, 'b> Cg<'a, 'b> {
                         self.b.ins().jump(self.blocks[t as usize], &[]);
                     }
                     None => {
+                        // On whether a lane of a mask is on, at 4 lanes or more: a test of its lanes themselves.
+                        let any = *self.f.inst(i.a);
+                        let group = self.chunked && self.group_dec[self.cur_block];
+                        let c = if any.op == O::Any && self.w >= 4 && !group { self.any_nonzero(any.a) } else { c };
                         self.b.ins().brif(c, self.blocks[i.b as usize], &[], self.blocks[i.c as usize], &[]);
                     }
                 }

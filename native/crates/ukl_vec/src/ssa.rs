@@ -1976,6 +1976,18 @@ impl<'a, 't> Fb<'a, 't> {
         let mc = self.mask_of(c);
         let t = self.mask_op(O::MAnd, s0, mc);
         let e = self.mask_op(O::MAndNot, s0, mc);
+        let pure = (kids[1]..kids[1] + v.size(kids[1]))
+            .all(|j| matches!(v.kind(j), Kind::Const | Kind::Local | Kind::Global | Kind::Shared | Kind::Load | Kind::Bin | Kind::Un | Kind::Cast | Kind::Logic | Kind::Cond));
+        if logic && pure && !self.exits[n] {
+            // The second side has no effect: made under the lanes the first leaves it (its loads and divisions
+            // theirs), with no branch, and the two combined, as written by hand.
+            self.set_cur(if and { t } else { e });
+            let x = self.value(kids[1])?;
+            let xm = self.m_of(x);
+            let x = self.cast(x, xm, M::B);
+            self.set_cur(s0);
+            return Ok(self.bin(if and { Op::And } else { Op::Or }, M::B, c, x));
+        }
         if logic {
             self.write(d, c);
             self.set_cur(if and { t } else { e });

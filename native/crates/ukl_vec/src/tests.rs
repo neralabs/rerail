@@ -382,6 +382,15 @@ fn short_circuits_that_vary_are_each_lanes() {
     assert_eq!(out, want);
 }
 
+/// A `&&` and a `||` whose second side has no effect, made with no branch: its load is only the lanes' that read
+/// it, so the lanes where the pointer is null (the first side false, or true for `||`) never read through it.
+#[test]
+fn a_short_circuit_with_no_effect_reads_only_in_the_lanes_it_runs() {
+    let out = ran("    UKL_GLOBAL uint32_t* p = lid < 8u ? out : (UKL_GLOBAL uint32_t*)0;\n    uint32_t r = (lid < 8u && p[lid] == 0u) ? 1u : 2u;\n    uint32_t q = (lid >= 8u || p[lid] == 0u) ? 4u : 8u;\n    out[lid] = r | q;");
+    let want: Vec<u32> = (0..64u32).map(|l| if l < 8 { 1 | 4 } else { 2 | 4 }).collect();
+    assert_eq!(out, want);
+}
+
 /// A `continue` under nested branches that vary, beside lanes that go on in the body: the lanes that continued
 /// leave the rest of the body (`if_number`'s digits loop, whose decimal lanes took lane 0's suffix).
 #[test]
@@ -1238,6 +1247,13 @@ fn the_nearest_kernels_atomics_are_loads_stores_and_one_maximum() {
             let (c, _) = super::cl::compile_listed(&ssa, &k.name, w, &super::exec::places()).unwrap();
             let code = c.listing.last().expect("the kernel's code for a chunk whose lanes all run");
             assert!(read_modify_writes(code) <= 1, "w{w}: {} addresses read and written back:\n{code}", read_modify_writes(code));
+            // A branch on whether a lane is on: a test of the mask's lanes, not of a bool made of them.
+            let lines: Vec<&str> = code.lines().map(str::trim_start).collect();
+            let remade = lines.windows(3).filter(|l| l[0].starts_with("cset ") && l[1].starts_with("uxtb ") && l[2].starts_with("cbnz ")).count();
+            assert!(w < 4 || remade == 0, "w{w}: {remade} branches on a bool made of the mask's lanes:\n{code}");
+            // A compare's lanes as a mask: the compare's own, not one made again of its bool.
+            let again = lines.windows(2).filter(|l| l[0].starts_with("ushr v") && l[0].ends_with("#31") && l[1].starts_with("cmeq v") && l[1].ends_with("#0")).count();
+            assert!(w < 4 || again == 0, "w{w}: {again} masks made again of a compare's bools:\n{code}");
         }
     }
 }
