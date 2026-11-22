@@ -1634,8 +1634,9 @@ export interface CodeRuleAuditor {
   worktreeRoots?(): readonly string[];
   /**
    * Learns what {@link CodeRuleAuditor.worktreeRoots} would ask Git, through `git` as processes no thread waits on, so its
-   * next call finds it kept while nothing changed meanwhile; undefined, with nothing started, when it would ask Git
-   * nothing. Never rejects.
+   * next call finds it kept while nothing changed meanwhile. Undefined, with nothing started, while the stored list
+   * stands, and for a checkout placed by a kept acceptance, whose list the registry reads as before. Never throws or
+   * rejects.
    */
   learnWorktreeRoots?(git: GitReads): Promise<void> | undefined;
   /**

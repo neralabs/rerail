@@ -13,7 +13,7 @@ import { existsSync } from "node:fs";
 import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
-import { learnWorktreeList, worktreeRegistry } from "../catalog/repository-identity.js";
+import { learnWorktreeList, worktreeRegistry, type WorktreeRegistry } from "../catalog/repository-identity.js";
 import type { GitReads } from "../git.js";
 import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
 import type { NativeGitAccess, NativeGitIgnoreMatcher } from "../native/native.js";
@@ -87,6 +87,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   readonly #sessionRoot: string;
   /** Where Git registers the worktrees, as `worktreeRoots` last read them (`worktreeRegistry`). */
   #registryFolder: string | undefined;
+  /**
+   * The list stored for the registry that the last `learnWorktreeRoots` read while it stood, taken by the next
+   * `worktreeRoots` (the walk's own), so a walk places the checkout and reads the registry once. Each call of either
+   * takes it or puts its own in its place, so no ask takes a list read before the last one's.
+   */
+  #learntRegistry: WorktreeRegistry | undefined;
   readonly #lanes = new Map<string, Lane>();
   readonly #eligibility = new Map<string, CheckoutEligibility>();
   /** The daemon's Git ignore matchers (`gitIgnoreMatchers`), or the router's own. */
@@ -546,7 +552,8 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
    */
   worktreeRoots(): string[] {
     const starting = this.#options.startingCheckout;
-    const registry = worktreeRegistry(starting);
+    const registry = this.#learntRegistry ?? worktreeRegistry(starting);
+    this.#learntRegistry = undefined;
     this.#registryFolder = registry === undefined ? undefined : join(registry.commonDirectory, "worktrees");
     return (registry?.worktrees ?? [])
       .map(worktree => storedPath(worktree))
@@ -556,10 +563,13 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * Git's list of the worktrees `worktreeRoots` reads, learnt through `git` as a process no thread waits on and kept as
    * the registry keeps it (`learnWorktreeList`): a worktree added since the last list costs the daemon's thread no Git.
-   * Undefined while the stored list stands.
+   * Undefined while the stored list stands, which the next `worktreeRoots` takes as read here, and for a checkout placed
+   * by a kept acceptance, whose list the registry reads as before.
    */
   learnWorktreeRoots(git: GitReads): Promise<void> | undefined {
-    return learnWorktreeList(this.#options.startingCheckout, git);
+    const learnt = learnWorktreeList(this.#options.startingCheckout, git);
+    this.#learntRegistry = learnt?.kind === "stored" ? learnt.registry : undefined;
+    return learnt?.kind === "learning" ? learnt.done : undefined;
   }
 
   /** The folder where Git registers the worktrees `worktreeRoots` last named (`worktrees` in the common Git folder). */

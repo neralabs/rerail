@@ -24,6 +24,7 @@ import { CheckoutOwners } from "../../../../src/engine/catalog/checkout-owner.js
 import { declaredSubmodulePaths } from "../../../../src/engine/catalog/checkouts/declared-submodules.js";
 import {
   learnRemoteAddress,
+  learnWorktreeList,
   learnWorktreeRegistry,
   placeWithoutBlocking,
   readRemoteAddress,
@@ -34,7 +35,7 @@ import {
 } from "../../../../src/engine/catalog/repository-identity.js";
 import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
-import { gitText, runGit, runGitAsync } from "../../../../src/engine/git.js";
+import { GitReads, gitText, runGit, runGitAsync } from "../../../../src/engine/git.js";
 import { pathsOwnedByCurrentUser } from "../../../../src/engine/native/native.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
 import { linkFolder, symlinkOrSkip } from "../../../support/platform/links.js";
@@ -47,7 +48,7 @@ vi.mock("../../../../src/engine/git.js", async importOriginal => {
 
 vi.mock("../../../../src/engine/catalog/checkout-control.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/catalog/checkout-control.js")>();
-  return { ...actual, checkoutRealpath: vi.fn(actual.checkoutRealpath) };
+  return { ...actual, checkoutRealpath: vi.fn(actual.checkoutRealpath), physicalPath: vi.fn(actual.physicalPath) };
 });
 
 // Every lstat and stat passes through, so a case can count what Rerail reads and stand in for what a folder's lstat
@@ -403,6 +404,82 @@ describe("a placement asked without blocking the caller's thread", () => {
 
     expect(await learnWorktreeRegistry(main)).toBeUndefined();
     expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
+  });
+});
+
+describe("a walk's learn step of Git's list of the worktrees", () => {
+  /** How many Git processes have started on the caller's thread and as processes no thread waits on. */
+  const gitRuns = () => ({ blocking: vi.mocked(runGit).mock.calls.length, waiting: vi.mocked(runGitAsync).mock.calls.length });
+
+  it("gives the list stored for the registry's contents, with no Git started, while those contents stand", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
+    expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
+    const before = gitRuns();
+
+    expect(learnWorktreeList(main, new GitReads())).toEqual({ kind: "stored", registry: expect.objectContaining({ worktrees: gitsRegistry(main) }) });
+    expect(gitRuns()).toEqual(before);
+  });
+
+  it("learns nothing, and starts no Git, for a checkout placed by a kept acceptance, whose list the registry reads as before", async () => {
+    const root = await temporaryRoot();
+    // A folder its files cannot describe: Git's acceptance places it, kept for the registry.
+    const folder = join(repository(join(root, "main")), "src");
+    expect(worktreeRegistry(folder)?.worktrees).toEqual(gitsRegistry(folder));
+    const before = gitRuns();
+
+    expect(learnWorktreeList(folder, new GitReads())).toBeUndefined();
+    expect(gitRuns()).toEqual(before);
+  });
+
+  it("learns nothing, and throws nothing, where the checkout's placement cannot be read", async () => {
+    const root = await temporaryRoot();
+    const main = repository(join(root, "main"));
+    expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
+    const common = join(main, ".git").toLowerCase();
+    const real = vi.mocked(physicalPath).getMockImplementation()!;
+    // As the system fails a real path for a reason other than a refusal, which the placement throws.
+    vi.mocked(physicalPath).mockImplementation((path, platform) => {
+      if (resolve(path).toLowerCase() === common) throw Object.assign(new Error(`EIO: i/o error, realpath '${path}'`), { code: "EIO" });
+      return real(path, platform);
+    });
+    try {
+      expect(learnWorktreeList(main, new GitReads())).toBeUndefined();
+    } finally {
+      vi.mocked(physicalPath).mockImplementation(real);
+    }
+  });
+
+  it("has the router take the list its learn step read once, and read the registry again at its next ask", async () => {
+    const root = await temporaryRoot();
+    const databasePath = join(root, "rerail.sqlite");
+    const main = repository(join(root, "main"));
+    setUpTestRepository(main, {}, databasePath);
+    const [first, later] = [join(root, "first"), join(root, "later")];
+    git(main, "worktree", "add", "--quiet", "-b", "first", first);
+    const catalogs = new CheckoutCatalogs(databasePath);
+    const owners = new CheckoutOwners(() => catalogs.recordedCheckoutsVersion());
+    const auditor = new CheckoutCodeRuleRouter({
+      sessionRoot: main,
+      startingCheckout: startingCheckout(owners, main).checkoutRoot,
+      owners,
+      catalogs,
+      steerDelivery: { requestSteer: async () => undefined },
+      audits: { start: () => "0", finish: () => undefined, progress: () => undefined, interrupt: () => undefined },
+    });
+    cleanups.push(async () => {
+      await auditor.close();
+      catalogs.close();
+    });
+    await auditor.openWorkspace("start");
+    expect(auditor.worktreeRoots()).toEqual([first]);
+    expect(auditor.learnWorktreeRoots(new GitReads())).toBeUndefined();
+    expect(auditor.worktreeRoots()).toEqual([first]);
+
+    // A worktree added after the list the learn step read was taken: the next ask reads the registry again.
+    git(main, "worktree", "add", "--quiet", "-b", "later", later);
+    expect(auditor.worktreeRoots().toSorted()).toEqual([first, later].toSorted());
   });
 });
 

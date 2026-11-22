@@ -691,30 +691,46 @@ export async function learnWorktreeRegistry(checkout: string, options: GitReadOp
 }
 
 /**
- * {@link learnWorktreeRegistry} of `checkout` through `git`, where the registry's next ask would start Git and would take
- * what it learns. Undefined, with nothing started and nothing to wait for, while the list stored for the registry's
- * contents stands ({@link storedListStands}), and for a checkout placed by a kept acceptance, which a placement without
- * blocking places by Git again and whose list, kept with no stamp, Git gives at each ask: the registry places and lists
- * that one as before. Never rejects.
+ * What {@link learnWorktreeList} found: the list stored for the registry's contents as they are now, read with the
+ * checkout's placement and no Git, or Git's list being learnt as a process no thread waits on.
  */
-export function learnWorktreeList(checkout: string, git: GitReads): Promise<void> | undefined {
-  if (gitAcceptances.has(resolve(checkout)) || storedListStands(checkout)) return undefined;
-  return git.run(async signal => {
+export type WorktreeListLearning =
+  | { readonly kind: "stored"; readonly registry: WorktreeRegistry }
+  | { readonly kind: "learning"; readonly done: Promise<void> };
+
+/**
+ * {@link learnWorktreeRegistry} of `checkout` through `git`, where the registry's next ask would start Git and would take
+ * what it learns. While the list stored for the registry's contents stands, that list, with nothing started
+ * ({@link storedRegistry}): the caller takes it in place of placing the checkout and reading the registry again.
+ * Undefined, with nothing started, for a checkout placed by a kept acceptance, whose list the registry reads as before,
+ * and where the checkout's placement cannot be read, which the registry then meets as before. Never throws, and what it
+ * gives to wait on never rejects.
+ */
+export function learnWorktreeList(checkout: string, git: GitReads): WorktreeListLearning | undefined {
+  if (gitAcceptances.has(resolve(checkout))) return undefined;
+  let registry: WorktreeRegistry | undefined;
+  try {
+    registry = storedRegistry(checkout);
+  } catch {
+    return undefined;
+  }
+  if (registry !== undefined) return { kind: "stored", registry };
+  return { kind: "learning", done: git.run(async signal => {
     await learnWorktreeRegistry(checkout, { signal }).catch(() => undefined);
-  });
+  }) };
 }
 
 /**
- * Whether the list stored for the registry of `checkout` stands for that registry's contents now, told with no Git:
- * false where the checkout's placement is not known from its files or a kept answer ({@link keptOrFromFiles}).
+ * The list stored for the registry of `checkout` while it stands for that registry's contents now, told with no Git:
+ * undefined where the checkout's placement is not known from its files or a kept answer ({@link keptOrFromFiles}).
  */
-function storedListStands(checkout: string): boolean {
+function storedRegistry(checkout: string): WorktreeRegistry | undefined {
   const requested = resolve(checkout);
   const inputs = placementInputs(requested);
   const location = inputs === undefined ? undefined : keptOrFromFiles(requested, inputs, false);
-  if (location?.git !== true) return false;
+  if (location?.git !== true) return undefined;
   const commonDirectory = physicalPath(dirname(location.identityPath));
-  return storedList({ commonDirectory, unstamped: false }, registryContents(commonDirectory)) !== undefined;
+  return storedList({ commonDirectory, unstamped: false }, registryContents(commonDirectory));
 }
 
 /** The lists of a registry read without blocking, by common directory: sessions opening together share one Git process. */
