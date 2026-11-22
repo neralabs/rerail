@@ -26,7 +26,7 @@ pub mod compute_kernel_cpu;
 pub mod compute_kernel_opencl;
 pub mod device;
 pub mod os;
-mod rows;
+pub mod rows;
 pub mod store;
 pub mod grid;
 

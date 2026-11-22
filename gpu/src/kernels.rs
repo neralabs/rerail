@@ -58,8 +58,12 @@ pub fn program_with(name: &str, text: &str, defines: &[(&str, &str)]) -> Result<
     let slot: Slot = std::sync::Arc::clone(PROGRAMS.get_or_init(Default::default).lock().unwrap_or_else(|p| p.into_inner()).entry(key.clone()).or_default());
     slot.get_or_init(|| {
         let shared = crate::shared::get().ok_or("no device")?;
-        let source = preprocess_with(name, text, defines)?;
-        let library = ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?;
+        let library = if crate::vec::on(&shared.device) {
+            crate::vec::library(name, &format!("/<kernels>/{name}"), text, defines)?
+        } else {
+            let source = preprocess_with(name, text, defines)?;
+            ComputeFunctionLibrary::compile_from_source(&shared.device, &source, name)?
+        };
         Ok(&*Box::leak(Box::new(Program { name: key, library, functions: Default::default() })))
     })
     .clone()

@@ -27,6 +27,8 @@
 use rerail_c_pp::files::{DirKind, Search};
 use rerail_c_pp::sink::{At, Diag, Sink, TextSink};
 use rerail_c_pp::{Config, Options, Pp};
+/// A frontend's input (`Preprocess::expanded`).
+pub use rerail_c_pp::tokens::Expanded;
 use std::collections::HashMap;
 
 /// The root the carried headers are found under; no file system path starts so.
@@ -147,9 +149,9 @@ pub struct Preprocess {
     defines: Vec<(String, Option<String>)>,
 }
 
-/// The output text, and the paths of the files diagnostics name (by file id).
-struct Out {
-    text: TextSink,
+/// The output (text, or the frontends' tokens), and the paths of the files diagnostics name (by file id).
+struct Out<S> {
+    text: S,
     paths: Vec<String>,
     errors: Vec<(u32, u32, String)>,
     /// The compiler's `long` is 32 bits (`long_is_32`): an integer literal's `l` suffix is written `ll`.
@@ -177,7 +179,7 @@ fn long_long(text: &[u8]) -> Option<Vec<u8>> {
     Some([number, if unsigned { b"ull" } else { b"ll" }].concat())
 }
 
-impl Sink for Out {
+impl<S: Sink> Sink for Out<S> {
     fn wants_lines(&self) -> bool {
         true
     }
@@ -247,6 +249,32 @@ impl Preprocess {
 
     /// `main` preprocessed: the backend's source text, with line markers to the original files.
     pub fn run(&self, main: &str) -> Result<String, Error> {
+        let (text, _) = self.pass(main, TextSink::default())?;
+        Ok(String::from_utf8_lossy(&text.out).into_owned())
+    }
+
+    /// `main` preprocessed for a frontend (decision 0327, mode (b)): the expanded text, the C parser's tokens over
+    /// it and where each part came from (no line markers), and the paths of the files those name, by file id.
+    pub fn expanded(&self, main: &str) -> Result<(rerail_c_pp::tokens::Expanded, Vec<String>), Error> {
+        let (tokens, paths) = self.pass(main, rerail_c_pp::tokens::TokenSink::new(self.backend != Backend::OpenCl))?;
+        Ok((tokens.finish(), paths))
+    }
+
+    /// The text of file `path` as a pass reads it, a given file's or a carried header's (a path the files of an
+    /// `expanded` name): for telling a place's line.
+    pub fn text_of(&self, path: &str) -> Option<Vec<u8>> {
+        if let Some(t) = self.files.get(path) {
+            return Some(t.clone());
+        }
+        let carried = HEADERS.iter().find(|(p, _)| format!("{ROOT}/{p}") == path).or_else(|| LIBRARY.iter().find(|(p, _)| format!("{ROOT}/lib/{p}") == path));
+        if let Some((_, t)) = carried {
+            return Some(t.as_bytes().to_vec());
+        }
+        if path.starts_with(ROOT) { None } else { std::fs::read(path).ok() }
+    }
+
+    /// One pass of the preprocessor over `main` into `sink`: the sink, and the paths of the files, by file id.
+    fn pass<S: Sink>(&self, main: &str, sink: S) -> Result<(S, Vec<String>), Error> {
         // OpenCL C is C (C99 with clang's extensions); every other backend's language is C++.
         let mut cfg = if self.backend == Backend::OpenCl {
             Config::new(Options::c(99, true))
@@ -281,7 +309,7 @@ impl Preprocess {
         };
         let mut io = Search::new(self.search(), read);
         let long_32 = self.backend.long_is_32();
-        let mut out = Out { text: TextSink::default(), paths: Vec::new(), errors: Vec::new(), long_32 };
+        let mut out = Out { text: sink, paths: Vec::new(), errors: Vec::new(), long_32 };
         // A `__has_*` test the configuration does not answer reads as 0, as on a compiler without the feature.
         let ok = Pp::new(cfg, &mut io, &mut out).run(main);
         if !ok || !out.errors.is_empty() {
@@ -295,7 +323,7 @@ impl Preprocess {
             }
             return Err(Error(msgs));
         }
-        Ok(String::from_utf8_lossy(&out.text.out).into_owned())
+        Ok((out.text, out.paths))
     }
 }
 

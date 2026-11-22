@@ -329,6 +329,18 @@ impl Fielded {
     pub fn edges(&self, k: &str, f: &str, parent: bool) -> Option<f64> {
         self.field.contains_key(f).then(|| if parent { &self.parent } else { &self.child }.get(&(k.to_owned(), f.to_owned())).copied().unwrap_or(0.0))
     }
+    /// The mean subtree size of the child by field `f` of a node of kind `pk`: its child kinds' sizes (`size`),
+    /// weighed by how often each is that child. `None` without such edges, or without a size for any of their kinds.
+    pub fn part_size(&self, pk: &str, f: &str, size: &HashMap<String, f64>) -> Option<f64> {
+        let (mut edges, mut nodes) = (0.0, 0.0);
+        for ((p, c, field), &n) in &self.joint {
+            if p == pk && field == f && let Some(&s) = size.get(c) {
+                edges += n;
+                nodes += n * s;
+            }
+        }
+        (edges > 0.0).then(|| nodes / edges)
+    }
     fn is_empty(&self) -> bool {
         self.field.is_empty()
     }
@@ -2138,7 +2150,7 @@ impl Model {
     /// hogql, 4,877 rows a key planned and none made, its stratum planned at 2.6 G units for 0.7 M done (Q44). Other
     /// relations keep one: what is kept or inlined (`keeps`) is chosen on these estimates, and the prior there
     /// inlined kept `pre_` relations (`rr_ctx282` read one at 0.8 M units, and inlined did 39 M).
-    fn ndv_or_default(&self, rel: &str, c: usize) -> f64 {
+    pub(crate) fn ndv_or_default(&self, rel: &str, c: usize) -> f64 {
         const DEFAULT_NUM_DISTINCT: f64 = 200.0;
         // Unmeasured: its layout's estimate (decision 0361 step 4), else the prior.
         let unseen = || {
@@ -3532,26 +3544,33 @@ impl Model {
                 });
             }
         }
-        // var → the kind of the node it is a part of: `field($p, f, $c)` or `child($p, $c, i)` with $p's kind known and
-        // $c's not. A part's subtree is at most its parent's, so `within($n, $c)` read from $c is priced at the
-        // parent's size (t50 step 4: a function's body, `field($g, "body", $b)`, was priced as a node with children,
-        // 3 to 5 nodes, and the plan enumerated every function's body from it).
-        let mut part_of: HashMap<VarSlot, String> = HashMap::new();
+        // var → the subtree size of a part: `field($p, f, $c)` or `child($p, $c, i)` with $p's kind known and $c's
+        // not. A part's subtree is at most its parent's, so `within($n, $c)` read from $c is priced at the parent's
+        // size (t50 step 4: a function's body, `field($g, "body", $b)`, was priced as a node with children, 3 to 5
+        // nodes, and the plan enumerated every function's body from it). A field's part is priced closer: the mean
+        // size of the kinds that field's children have under a parent of that kind (`Fielded::part_size`). A
+        // function's `body` is about the function; its `parameters` are a few nodes, and priced at the function's
+        // size they tied with the function's every node by `nearest`, which the plan of `def_outside` then read.
+        let mut part_of: HashMap<VarSlot, f64> = HashMap::new();
         for l in 0..b.len() {
             if let Some(a) = b.plain_atom(l)
                 && !a.neg()
             {
                 let args = b.args(l);
-                let (p, c) = match (b.rel(a), args.len()) {
-                    ("field", 3) => (args[0], args[2]),
-                    ("child", 3) => (args[0], args[1]),
+                let (p, c, f) = match (b.rel(a), args.len()) {
+                    ("field", 3) => (args[0], args[2], b.constant(args[1])),
+                    ("child", 3) => (args[0], args[1], None),
                     _ => continue,
                 };
                 if let (TermRef::Var(p), TermRef::Var(c)) = (p, c)
                     && !kinds.contains_key(&c)
                     && let Some(k) = kinds.get(&p)
                 {
-                    part_of.insert(c, k.clone());
+                    let field = f.map(|f| match f { Constant::Str(s) => s, Constant::Int(i) => i.to_string() });
+                    let size = field.and_then(|f| self.stats.fields.part_size(k, &f, &self.stats.size)).or_else(|| self.stats.size.get(k).copied());
+                    if let Some(size) = size {
+                        part_of.insert(c, size);
+                    }
                 }
             }
         }
@@ -3770,7 +3789,7 @@ impl Model {
                 && cols == [1]
                 && stats.nodes > 0.0
                 && let Some(size) = match args[1] {
-                    TermRef::Var(v) => kinds.get(&v).or_else(|| part_of.get(&v)).and_then(|k| stats.size.get(k)).copied().or_else(|| stats.subtree_fan()),
+                    TermRef::Var(v) => kinds.get(&v).and_then(|k| stats.size.get(k)).copied().or_else(|| part_of.get(&v).copied()).or_else(|| stats.subtree_fan()),
                     _ => stats.subtree_fan(),
                 }
             {

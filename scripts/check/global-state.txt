@@ -25,6 +25,7 @@ native/crates/blocks/src/mem.rs::RESERVED	stays	the process's own mappings, coun
 native/crates/blocks/src/windows.rs::HANDLER	stays	code registered at load (the one fault handler a Windows process has, which commits a reservation's pages as they are touched)
 native/crates/blocks/src/windows.rs::REGIONS	stays	the process's reservations, which its one fault handler commits the pages of: the process's own address space
 native/crates/c_directives/src/expand.rs::UKL	stays	computed once from the engine's own expansion program
+native/crates/ukl_vec/src/vector.rs::V	stays	computed once from the environment (a debugging trace's variable)
 native/crates/c_directives/src/expand.rs::PROGRAM	stays	computed once from the engine's own expansion program
 native/crates/c_directives/src/expand.rs::SAME	stays	computed once from the engine's own constants (the ahead-of-time build against its source)
 native/crates/c_directives/src/lib.rs::LOWERED	stays	computed once from the engine's own grammar

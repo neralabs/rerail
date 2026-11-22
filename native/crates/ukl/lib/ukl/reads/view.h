@@ -8,21 +8,36 @@
 #include <ukl/backend.h>
 typedef struct ViewRow {
     uint64_t entry;
-    UKL_GLOBAL const uint8_t* tape;
-    UKL_GLOBAL const uint8_t* lines;
+    uint64_t tape;
+    uint64_t lines;
+    uint32_t homes[2];
     uint32_t rows[12];
     uint32_t view[32];
 } ViewRow;
+typedef struct ViewHome {
+    uint64_t host;
+    UKL_GLOBAL const uint8_t* gpu;
+} ViewHome;
 typedef struct ViewDir {
-    UKL_GLOBAL const uint8_t* chunk;
+    uint64_t at;
     uint32_t ndocs;
-    uint32_t pad;
-    UKL_GLOBAL const ViewRow* rows;
+    uint32_t nhomes;
+    uint64_t rows;
+    uint64_t homes;
+    uint64_t cache;
 } ViewDir;
-UKL_STATIC_ASSERT(sizeof(ViewRow) == 200, "ViewRow: size");
-UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == 72, "ViewRow.view");
-UKL_STATIC_ASSERT(sizeof(ViewDir) == 24, "ViewDir: size");
+UKL_STATIC_ASSERT(sizeof(ViewRow) == 208, "ViewRow: size");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, homes) == 24, "ViewRow.homes");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewRow, view) == 80, "ViewRow.view");
+UKL_STATIC_ASSERT(sizeof(ViewHome) == 16, "ViewHome: size");
+UKL_STATIC_ASSERT(sizeof(ViewDir) == 40, "ViewDir: size");
 UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, rows) == 16, "ViewDir.rows");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(ViewDir, cache) == 32, "ViewDir.cache");
+UKL_INLINE UKL_GLOBAL const uint8_t* view_block(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const uint8_t*)d - d->at; }
+UKL_INLINE UKL_GLOBAL const ViewRow* view_rows(UKL_GLOBAL const ViewDir* d) { return (UKL_GLOBAL const ViewRow*)(view_block(d) + d->rows); }
+UKL_INLINE UKL_GLOBAL const uint8_t* view_home(UKL_GLOBAL const ViewDir* d, uint32_t h, uint64_t at) { return ((UKL_GLOBAL const ViewHome*)(view_block(d) + d->homes))[h].gpu + at; }
+UKL_INLINE UKL_GLOBAL const uint8_t* view_tape(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[0], e->tape); }
+UKL_INLINE UKL_GLOBAL const uint8_t* view_lines(UKL_GLOBAL const ViewDir* d, UKL_GLOBAL const ViewRow* e) { return view_home(d, e->homes[1], e->lines); }
 typedef struct ViewDoc {
     uint32_t key;
     uint32_t tag;

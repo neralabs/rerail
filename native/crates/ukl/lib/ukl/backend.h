@@ -453,6 +453,20 @@ uint32_t __ukl_simd_group_in_a_kernel_declared_without_one(void);
 #define ukl_sg_ballot(...) ((ukl_mask_t)__ukl_simd_group_in_a_kernel_declared_without_one())
 #define ukl_sg_barrier(...) ((void)__ukl_simd_group_in_a_kernel_declared_without_one())
 #endif
+#if defined(__UKL_VEC)
+// The CPU's vector code (rerail-ukl-vec, decision 0567): the group's reductions in one operation each, whose value
+// is the group's (the butterfly of shuffles is every lane's too, but that it agrees is not the shuffles' to show).
+#define UKL_NATIVE_SG_REDUCE 1
+UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_add(v); }
+UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_min(v); }
+UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_max(v); }
+// A poll of another group's progress: the group yields to the groups that run with it, as the CPU's coroutines
+// do (a persistent grid's barrier is met there by its resident groups taking turns).
+#define ukl_poll_yield() __ukl_vec_yield()
+#ifndef UKL_GRID_SPINS
+#define UKL_GRID_SPINS 1000u
+#endif
+#endif
 #elif UKL_SIMD_WIDTH == 1
 // A group of one lane: every lane reads its own value.
 UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return v; }
@@ -507,7 +521,8 @@ UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t 
 // work-item's own accesses alone; OpenCL C 3.0 (the device's sub-groups, `UKL_OPENCL_SUBGROUPS`) has a fence of device
 // scope. Without it, on an Arc 140V a pool's taker read a pushed block's link from before its push, and a block was
 // handed out twice (`ukl/pool.h`).
-#if defined(UKL_OPENCL_SUBGROUPS)
+// The CPU's vector code (rerail-ukl-vec, decision 0567) reads OpenCL 1.2's fence, its one fence.
+#if defined(UKL_OPENCL_SUBGROUPS) && !defined(__UKL_VEC)
 UKL_INLINE void ukl_fence_device() { atomic_work_item_fence(CLK_GLOBAL_MEM_FENCE, memory_order_seq_cst, memory_scope_device); }
 #else
 UKL_INLINE void ukl_fence_device() { mem_fence(CLK_GLOBAL_MEM_FENCE); }

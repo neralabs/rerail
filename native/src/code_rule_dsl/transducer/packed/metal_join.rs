@@ -625,7 +625,7 @@ impl DevRel {
         if let Some(v) = &self.view {
             let buffers: Vec<&Buffer> = v.buffers.iter().collect();
             pass.use_read(&buffers);
-            if let Some(cache) = &v.cache {
+            if let Some(cache) = v.cache.as_ref().and_then(|c| c.buffer.as_ref()) {
                 pass.use_read_write(cache);
             }
         }

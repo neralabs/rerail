@@ -39,6 +39,7 @@ rerail-cpu-block	core
 rerail-cpu-pp	core
 rerail-vue-lean	core
 rerail-ukl	core
+rerail-ukl-vec	core
 rerail-gpu	core
 rerail-forest	core
 rerail-accel	core
