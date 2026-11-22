@@ -1794,8 +1794,8 @@ impl<'a, 't> Fb<'a, 't> {
                 self.extra[e as usize] = self.resolve(x);
             }
         }
-        // Simplified: a select under the entry's lanes is its new value, under none its old, of a value never set its
-        // new; then the phis made trivial by that. Shapes are found after, from none (a parameter is lanes only if an
+        // Simplified: a mask with none or of one mask twice; a select under the entry's lanes is its new value, under
+        // none its old, of a value never set its new; then the phis made trivial by that. Shapes are found after, from none (a parameter is lanes only if an
         // operand is), and a first lane of a value then uniform is it.
         loop {
             let mut changed = false;
@@ -1804,7 +1804,14 @@ impl<'a, 't> Fb<'a, 't> {
                     continue;
                 }
                 let i = self.insts[x as usize];
+                let no = |u: V| self.insts[u as usize].op == O::NoLanes;
                 let to = match i.op {
+                    // Masks with none, or of one mask twice (a loop's exits, found none once its phis are).
+                    O::MAnd | O::MAndNot if no(i.a) => Some(i.a),
+                    O::MAnd if no(i.b) => Some(i.b),
+                    O::MOr | O::MAndNot if no(i.b) => Some(i.a),
+                    O::MOr if no(i.a) => Some(i.b),
+                    O::MAnd | O::MOr if i.a == i.b => Some(i.a),
                     O::Select if i.a == self.entry => Some(i.b),
                     O::Select if self.insts[i.a as usize].op == O::NoLanes => Some(i.c),
                     O::Select if i.b == i.c => Some(i.b),
