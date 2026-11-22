@@ -9517,7 +9517,16 @@ fn run_observed_within(
         for &(name, cpu) in &process_phases { *totals.entry(name).or_default() += cpu; }
         serde_json::json!({"root":root,"phases":totals}).to_string()
     });
-    if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory().map(|d| if phase0::active() { d.join("phase-0") } else { d }) {
+    // `RERAIL_PROFILE_EACH` (a measurement aid): each run's report in a directory of its own (`run-NN`, in the order
+    // the runs end), where a command of several runs (`run-policies`) kept only its last run's.
+    let each_run = |d: std::path::PathBuf| -> std::path::PathBuf {
+        if std::env::var_os("RERAIL_PROFILE_EACH").is_none() {
+            return d;
+        }
+        let n = std::fs::read_dir(&d).map_or(0, |r| r.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().starts_with("run-")).count());
+        d.join(format!("run-{n:02}"))
+    };
+    if profiling && let Some(dir) = crate::code_rule_dsl::logic::profile::directory().map(|d| if phase0::active() { d.join("phase-0") } else { d }).map(each_run) {
         let mut header = format!(
             "Profile of a corpus run: {} files, {nodes} nodes, {chunks} chunks; text tests {} relations, {tested} strings, {text_cpu:.3} s CPU\n\n== Phases (CPU = user + system; worker phases run beside the main thread)\n",
             docs.len(),

@@ -38,7 +38,7 @@ pub fn wanted(options: &serde_json::Value, typing: &Typing, t_facts: Option<&Pat
 const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_REUSE_TRACE", "RERAIL_DEADLINE", "RERAIL_SQL_STRICT", "RERAIL_WARM", "RERAIL_WRITE_QUEUE_MB", "RERAIL_WRITES", "RERAIL_STATS_KEEP_TRACE", "RERAIL_JOURNAL_TRACE", "RERAIL_UPKEEP", "RERAIL_UPKEEP_CPU", "RERAIL_UPKEEP_MB", "RERAIL_UPKEEP_IDLE", "RERAIL_UPKEEP_BATTERY", "RERAIL_UPKEEP_JOBS", "RERAIL_UPKEEP_LOG", "RERAIL_JOINS", "RERAIL_JOINS_LOG", "RERAIL_JOIN_SLOW", "RERAIL_JOIN_SLOW_ROWS", "RERAIL_JOIN_CRITICAL", "RERAIL_JOIN_EXPLORE", "RERAIL_JOIN_MARGIN", "RERAIL_JOIN_SEED", "RERAIL_OBSERVE_TRACE",
     // A profile's and the heap sampler's (`profile::memory`, `rerail_prof`): a measurement's cold runs sample the heap
     // and its warm runs do not, so with these in the key no warm run found the cold run's record (decision 0376).
-    "RERAIL_PROF", "RERAIL_WIDTH_CENSUS", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
+    "RERAIL_PROF", "RERAIL_WIDTH_CENSUS", "RERAIL_PROFILE_EACH", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
     // The stores a measurement keeps apart (the cost model's, the rule images'): a plan's costs and a program's stored
     // form, never the run's outputs.
     "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_EXPORT_IMAGES",
