@@ -4790,6 +4790,26 @@ async function withWorktree(root: string, place: string, branch = "other") {
   return { worktree, roots, extra };
 }
 
+/**
+ * Puts a worktree of `third` at `worktree` in place of the one there, as `git worktree remove` then `git worktree add`
+ * do, with an untracked file stamped before the session opened (`src/before.py`) and a write made since (`src/a.py`).
+ */
+async function addedAgain(root: string, worktree: string): Promise<void> {
+  git(root, "worktree", "remove", "--force", worktree);
+  git(root, "worktree", "add", "--quiet", worktree, "third");
+  const before = join(worktree, "src", "before.py");
+  await writeFile(before, "violation\n");
+  await utimes(before, new Date(2020, 0, 1), new Date(2020, 0, 1));
+  await writeFile(join(worktree, "src", "a.py"), "old\nmine\n");
+}
+/** The edits of `batches` in `worktree`, each as its file's name and why its preimage is missing. */
+function recordedIn(root: string, worktree: string, batches: readonly CodeRuleEditBatch[]): string[][] {
+  const prefix = `${repositoryPath(root, worktree)}/`;
+  return batches.flatMap(batch => batch.edits).filter(edit => edit.path.startsWith(prefix))
+    .map(edit => [basename(edit.path), edit.previousReadError ?? "none"]);
+}
+const FIRST_SIGHT = "Source changed during initial discovery without a captured preimage";
+
 describe("CodeRuleBridge and every worktree of the repository", () => {
   /** Runs `run` as a shell call, then lets the walk of the other worktrees, which the call does not wait for, find it. */
   async function shellInWorktree(bridge: CodeRuleBridge, run: () => void | Promise<void>): Promise<void> {
@@ -5691,7 +5711,8 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
 
   // Git can stop listing a worktree as the session's take of a walk re-syncs, and list another one at that path while the
   // take waits on the evaluator (`git worktree add` there, which a session folder walk's re-sync sees): what the walk read
-  // of the removed worktree is none of the new one's, and what it read of a worktree Git kept listing stays.
+  // of the removed worktree is none of the new one's, which the walk after takes as a first sight, and what it read of a
+  // worktree Git kept listing stays.
   it("keeps no `HEAD` a walk read of a worktree Git listed again at its path while the session took the walk", async () => {
     const root = await twoBranches();
     git(root, "branch", "third", "main");
@@ -5706,10 +5727,11 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
       taking.listed?.resolve();
       return roots;
     };
+    const batches: CodeRuleEditBatch[] = [];
     const auditGeneratedEdits = async (_sessionId: string, batch: CodeRuleEditBatch) => {
+      batches.push(batch);
       if (taking.listed === undefined && batch.edits.some(edit => edit.path === repositoryPath(root, file))) {
-        git(root, "worktree", "remove", "--force", worktree);
-        git(root, "worktree", "add", "--quiet", worktree, "third");
+        await addedAgain(root, worktree);
         roots.push(worktree);
         taking.listed = Promise.withResolvers<void>();
         taking.turn = bridge.checkpoint("turn");
@@ -5727,9 +5749,38 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     await taking.turn;
     await bridge.settleWorktreeWalk();
     expect([seen?.heads.has(kept), seen?.heads.has(worktree), seen?.unmerged.has(worktree)]).toEqual([true, false, false]);
-    // The walk that begins once Git lists the new worktree keeps its `HEAD`.
+    // The walk that begins once Git lists the new worktree keeps its `HEAD`, and records of it only the write made since
+    // the session opened, as a first sight does.
     const third = execFileSync("git", ["rev-parse", "third"], { cwd: root, encoding: "utf8" }).trim();
     expect((await bridge.walkResume())?.gitSeen.heads.get(worktree)).toBe(third);
+    expect(recordedIn(root, worktree, batches)).toEqual([["a.py", FIRST_SIGHT]]);
+  });
+
+  // A session folder walk re-syncs the worktrees while a walk of the other worktrees reads them, so Git can stop listing
+  // a worktree the walk has read, and list another one at its path, before the session takes the walk: what the walk
+  // found of the removed worktree is none of the new one's, which the walk after takes as a first sight.
+  it("takes as a first sight a worktree Git listed again at its path while a walk of the other worktrees ran", async () => {
+    const root = await twoBranches();
+    git(root, "branch", "third", "main");
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const place = join(await workspace(), "kept");
+    git(root, "worktree", "add", "--quiet", "--detach", place, "main");
+    const kept = await realpath(place);
+    roots.push(kept);
+    const file = join(kept, "src", "a.py");
+    const { bridge, auditGeneratedEdits } = await opened(root, extra);
+    // The walk reads the worktrees in the order Git lists them: the first is read by the time it looks at the file.
+    discovery.lstats.set(file, [async () => {
+      roots.splice(roots.indexOf(worktree), 1);
+      await bridge.checkpoint("turn");
+      await addedAgain(root, worktree);
+      roots.push(worktree);
+      await bridge.checkpoint("turn");
+    }]);
+    await shell(bridge, () => writeFile(file, "old\nmine\n"));
+    await bridge.settleWorktreeWalk();
+    expect(discovery.lstats.get(file)).toEqual([]);
+    expect(recordedIn(root, worktree, auditGeneratedEdits.mock.calls.map(([, batch]) => batch))).toEqual([["a.py", FIRST_SIGHT]]);
   });
 
   // A checkout inside the session folder can be deleted, or a file can take its folder's place: whichever way a kept
