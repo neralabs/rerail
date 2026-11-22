@@ -5174,6 +5174,29 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     ]);
   });
 
+  it("records another writer's change in a worktree Git added during the session whose first walk's listing ran past its time", async () => {
+    const root = await twoBranches();
+    const roots: string[] = [];
+    const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
+    const bridge = createBridge(root, {
+      ...auditor(auditGeneratedEdits),
+      sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      worktreeRoots: () => roots,
+    }, { worktreeWalkGapMs: 0 });
+    await bridge.openWorkspace("session-1");
+    await bridge.checkpoint("turn");
+    await bridge.settleWorktreeWalk();
+    const place = join(await workspace(), "w");
+    git(root, "worktree", "add", "--quiet", place, "other");
+    const worktree = await realpath(place);
+    await writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n");
+    roots.push(worktree);
+    listings.late.push(worktree);
+    await shellInWorktree(bridge, () => undefined);
+    const path = relative(root, join(worktree, "src", "a.py")).split(sep).join("/");
+    expect(auditGeneratedEdits.mock.calls.flatMap(([, batch]) => batch.edits.map(edit => [edit.path, batch.mode]))).toContainEqual([path, "log"]);
+  });
+
   it("walks a worktree inside the session's folder once", async () => {
     const root = await twoBranches();
     const { worktree, extra } = await withWorktree(root, join(root, "wt"));
