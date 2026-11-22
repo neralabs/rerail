@@ -631,3 +631,17 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on it,
     `rerail-rr` and `rerail-logic`): on a Linux host, the JSON rules' tests and the language reader's and settings'
     tests, 210 pass.
+- **Step 5, the top** (2026-11-21): `rerail-logic` now holds 35.5k production lines, not the table's 15k:
+  - the corpus's root (`corpus.rs`, 13k), the run's world (phase 0, the phases, Git, constants, reuse, the analysis
+    history, the test store) and the modules that read the root (`retain`, `kept_strata`, `input_delta`,
+    `maintained`, `inputs`, `session`, `cone_rounds`, `prepared`, `combined`, `import_closure`, `link`,
+    `kept_link`, `connections`, `source_languages`), 26.5k;
+  - the language's root (`rr.rs` and the files it mounts, `settings`), 9.1k;
+  - the facades over the crates below, and the tests that read the language or the corpus.
+
+  The table's `rerail-corpus` is not apart from what is left, because the language's root and the corpus's are one
+  cycle. Reading a file reads the runner: includes resolve through phase 0 (`phase0::{graph, graphs, active, Seed,
+  Graph}`), a file's bytes and digest come from the run's observer (`corpus::observe`), a lowered program is kept in
+  and read from the combined memo (`combined::{record_version, read_before_the_run}`), and the reader takes the
+  stores (`phases::reading_store`, `build_store`), the lowering's switches (`COMBINING`) and a cone's copy
+  (`cone_on_version`). About 40 references.
