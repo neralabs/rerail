@@ -35,7 +35,7 @@ cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
 cranelift-jit-wasm = { path = "../../wasm/cranelift-jit" }
 
 # Tier 2 over tier 1's buffers where the device layer left them (`tier2_on`).
-[target.'cfg(any(target_os = "macos", target_os = "linux"))'.dependencies]
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
 rerail-metal = { path = "../metal" }
 
 [dev-dependencies]

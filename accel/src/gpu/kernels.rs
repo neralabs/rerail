@@ -325,11 +325,19 @@ fn elsewhere(source: &str, name: &str, constant: Option<u32>) -> Result<Arc<Func
         return Ok(Arc::clone(f));
     }
     let value = constant.map(|c| format!("{c}u"));
-    let defines: Vec<(&str, &str)> = value.as_deref().map(|v| ("UKL_CONSTANT_0", v)).into_iter().collect();
+    let mut defines: Vec<(&str, &str)> = value.as_deref().map(|v| ("UKL_CONSTANT_0", v)).into_iter().collect();
     // One program a source (its library's key), whichever of its kernels is asked for first: keyed by
     // the kernel's name, each kernel of one source was preprocessed and loaded again (130 ms each on
-    // the CPU, three for the preprocessor's first evaluation).
-    let program = rerail_gpu::kernels::program_with(&format!("{}.ukl", &hex(&k.library)[..16]), source, &defines)?;
+    // the CPU, three for the preprocessor's first evaluation). On OpenCL, one program a kernel: a driver builds
+    // every kernel of a program, and Intel's took 436 s over the 21 join stages of one source
+    // (`UKL_ONE_KERNEL`, the OpenCL shim).
+    let only = format!("__UKL_ONLY_{name}");
+    let one = rerail_gpu::device::backend() == "OpenCL";
+    if one {
+        defines.extend([("UKL_ONE_KERNEL", "1"), (only.as_str(), "__UKL_PROBE")]);
+    }
+    let label = if one { format!("{}.{name}.ukl", &hex(&k.library)[..16]) } else { format!("{}.ukl", &hex(&k.library)[..16]) };
+    let program = rerail_gpu::kernels::program_with(&label, source, &defines)?;
     let shared = rerail_gpu::shared::get().ok_or("no device")?;
     let f = Arc::new(program.library().get_function(&shared.device, name)?);
     // Compiled, or loaded from the device layer's store: either way made, not this process's memory's.

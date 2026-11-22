@@ -1335,6 +1335,11 @@ fn pipeline_of(source: &str, name: &str, format: u32) -> Result<LabelKernel, Err
     Ok(LabelKernel::of(&lane::kernel_fixed(source, name, Some(format))))
 }
 
+/// The label kernels of tape format `format` compiled (`metal_program_backend::kernels_ahead`), as a wave asks for them.
+pub(in crate::code_rule_dsl) fn compile_labels(format: u32) -> Result<(), Error> {
+    pipelines(format).map(drop)
+}
+
 /// Releases the compiled label and pattern kernels (the residency's drop).
 pub(in crate::code_rule_dsl) fn drop_pipelines() {
     let held_ = crate::code_rule_dsl::logic::profile::machine::<LabelPipelines>();
@@ -1836,13 +1841,12 @@ fn run_in_pool(plan: &Plan<'_>, files: &[TapeDoc]) -> Result<Outcome, Error> {
 /// `RERAIL_FOOTPRINT`: the footprint now and its high-water mark at a point in a run.
 fn mark(at: &str) {
     if std::env::var_os("RERAIL_FOOTPRINT").is_some() {
-        let _ = tikv_jemalloc_ctl::epoch::advance();
         eprintln!(
             "  FOOTPRINT {at}: {} MB (high-water {} MB); Metal buffers {} MB; heap live {} MB",
             crate::code_rule_dsl::prof::footprint_mb(),
             crate::code_rule_dsl::prof::max_footprint_mb(),
             super::super::metal_backend::reserved_mb(),
-            tikv_jemalloc_ctl::stats::allocated::read().unwrap_or(0) >> 20
+            crate::code_rule_dsl::prof::live_heap_mb()
         );
         #[derive(Default)]
         struct HoldSeen(std::sync::atomic::AtomicUsize);

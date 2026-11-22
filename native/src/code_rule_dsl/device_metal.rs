@@ -27,7 +27,7 @@ pub fn register() {
 mod test_load {
     extern "C" fn load() {
         super::register();
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         crate::test_languages();
     }
     #[used]
@@ -198,6 +198,12 @@ pub mod matcher {
 
         fn warm_labels(&self) {
             matcher_metal::warm();
+        }
+
+        fn kernels_ahead(&self) -> Vec<crate::code_rule_dsl::transducer::packed::device::KernelAhead> {
+            let mut v = crate::code_rule_dsl::transducer::packed::metal_join::kernels_ahead();
+            v.extend(programs::kernels_ahead());
+            v
         }
 
         fn drop_label_pipelines(&self) {

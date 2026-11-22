@@ -26,5 +26,6 @@ libc = "0.2.189"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Security", "Win32_Storage_FileSystem", "Win32_System_IO", "Win32_System_Ioctl", "Win32_System_Threading"] }
 
 [dev-dependencies]
-# The tests name scratch folders canonically, as the watcher names its paths (Windows: not verbatim).
+# The tests name scratch folders canonically, as the watcher names its paths: `/private/var`, not `/var`, as FSEvents
+# reports them; on Windows not verbatim.
 dunce = "=1.0.5"

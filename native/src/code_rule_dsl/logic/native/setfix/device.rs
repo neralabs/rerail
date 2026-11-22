@@ -1299,16 +1299,16 @@ fn resident(rel: &Arc<InRel>, need: &[usize], cols: &[usize], probed: bool, batc
         rep.moved += u32::from(ix.copied());
         return Ok((dev, Some(ix), place, Vec::new()));
     }
-    // A `has` axis probed by one of its columns: nothing made or uploaded, a stage walks each binding's rows on the
-    // tape (decision 0353 step 5, `mj::Batch::by_has`). Read otherwise, its rows are uploaded below.
+    // A `has` axis probed by one of its columns is read off the tape (decision 0353 step 5): a stage walks each
+    // binding's rows there (`mj::Batch::by_has`), nothing made or uploaded. Read otherwise, its rows are uploaded.
     let walked = rel.ndead == 0 && matches!(cols.iter().map(|&c| owner_col(rel, c)).collect::<Vec<_>>()[..], [0] | [1]);
-    if walked && let Some(w) = rel.view.as_ref().and_then(|v| v.src.has_walk()) {
+    if let Some(w) = rel.view.as_ref().filter(|_| walked).and_then(|v| v.src.has_walk()) {
         let dev = Rc::new(mj::DevRel::has(w.nodes, w.view, &w.kinds).map_err(|e| format!("{e:?}: a has axis read off the tape"))?);
         rep.in_place += 1;
         crate::code_rule_dsl::prof::count("device.view_read.has", 1);
-        let place: Vec<u32> = (0..rel.k).map(|c| match owner_col(rel, c) { w @ (0 | 1) => w as u32, _ => mj::NONE }).collect();
+        let place: Vec<u32> = (0..rel.k).map(|c| match owner_col(rel, c) { at @ (0 | 1) => at as u32, _ => mj::NONE }).collect();
         let by: Vec<usize> = cols.iter().map(|&c| place[c] as usize).collect();
-        let ix = batch.by_has(&dev, &by).map_err(|e| format!("{e:?}: a has probe"))?.expect("a has axis's walk");
+        let ix = batch.by_has(&dev, &by).map_err(|e| format!("{e:?}: a has probe"))?.ok_or("a has axis probed by neither of its columns")?;
         return Ok((dev, Some(Rc::new(ix)), place, Vec::new()));
     }
     let c0 = thread_cpu();
@@ -1751,7 +1751,7 @@ impl<'p> Run<'p> {
             return Some("a text test of a bound pattern holding the set separator (a set of patterns)".to_owned());
         }
         // A 16z view's blocks: a read that found no room in its batch's cache read the dead entry (0353 step 4b).
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         if self.rels.iter().flatten().filter_map(|(r, _)| r.view.as_ref()).any(|v| v.cache_failed() > v.failed) {
             return Some("a 16z block found no room in its batch's cache".to_owned());
         }

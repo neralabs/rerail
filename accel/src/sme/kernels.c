@@ -19,7 +19,7 @@
 // A worker enters streaming mode once per submission (`rr_sme_run`) and takes tiles of work from a
 // shared counter until none are left, so a streaming block is as long as the worker's whole share.
 //
-// Built with -mcpu=apple-m4: -march=armv9.2-a makes the compiler emit SVE outside streaming mode,
+// Built with -march=armv8.6-a+sme2 (build/sme.rs): -march=armv9.2-a makes the compiler emit SVE outside streaming mode,
 // which faults on Apple silicon. No MATCH/HISTCNT/COMPACT/BDEP here: they fault in streaming mode
 // (no FEAT_SME_FA64).
 #include <arm_sme.h>

@@ -638,6 +638,7 @@ pub fn child_next(b: &mut B<'_, '_>) -> Value {
     })
 }
 
+#[cfg(feature = "ir")]
 /// `view_up(l)`: numbered node `l`'s nearest numbered strict tape ancestor, or `NO_ROW` (decision 0353 step 5: `has`
 /// probed by its node, a climb of the tape's parents, kept where the projection numbers them, as the host's
 /// `Within::containers_on`). The loop ends: each parent is above the last, and the root's is `NO_ROW`.
@@ -673,6 +674,7 @@ pub fn up(b: &mut B<'_, '_>) -> Value {
     b.f.block_params(done)[0]
 }
 
+#[cfg(feature = "ir")]
 /// `view_end(l)`: the number past numbered node `l`'s numbered descendants, which are `l + 1 .. view_end(l)` (the
 /// numbered nodes before its subtree's end on the tape; decision 0353 step 5: `has` probed by its ancestor, as the
 /// host's `Within::contained_on`).

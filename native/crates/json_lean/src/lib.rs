@@ -14,8 +14,8 @@
 //! `Parser::stage1` its `stage1_only` (simdjson's stage 1): each copies the source into its padded
 //! buffer first, as the kernel does. JSONC is left out.
 //!
-//! arm64 only (the implementation translated), and not with MSVC, where simdjson, which it is read against and whose
-//! tape it writes, is not built (`rerail_simdjson`); elsewhere the crate is empty.
+//! arm64 only (the implementation translated), and not on MSVC, where its references are empty
+//! (`rerail-simdjson`); elsewhere the crate is empty.
 
 #![cfg(all(target_arch = "aarch64", not(all(windows, target_env = "msvc"))))]
 

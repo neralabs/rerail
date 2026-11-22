@@ -143,16 +143,38 @@ It is the same change. Theirs' comment line is taken.
 - **The edit bench** (`scripts/profiling/edit-bench.sh`) called `/usr/bin/time -l`, which is BSD's. On Linux it ran
   nothing (rc 125). It now takes GNU's `-v` there and reads either report.
 
-## Found on the way, not fixed in this roll-up (both sides, before the merge)
+## Found on the way: main's whole Python pack (both sides, before the merge)
 
-The bench over main's whole Python pack (537 rules, `docs/rule-syntax/packs/python-main`) runs on neither side:
+The bench over main's whole Python pack (537 rules, `docs/rule-syntax/packs/python-main`) ran on neither side: a
+cold run of one file was still preparing after 113 s. Fixed in the commit after this roll-up's:
 
-- **The push pass on 537 rules.** "pass preparation: push the file-local joins into the chunks" (`typing/file_local/
-  passes/push.rs`) was still open after 40 s on one file. It had used 27 s of CPU on one thread and allocated 28.8 GB.
-  Each round of `push_with` rebuilds and re-splits the whole program (`super::candidate`), and no span marks a round.
-  On the 49 bandit rules the pass takes 0.53 s.
-- **ARG004 under strict SQL.** On the first 100 rules, `RERAIL_SQL_STRICT=1` stops the run: the native engine
-  declines the stratum `dm_p67_ARG004_0` (`ruff-arg004-unused-static-method-argument.rerail`).
+- **The push pass held back one reader of a refused join a round.** "push the file-local joins into the chunks"
+  (`typing/file_local/passes/push.rs`) was still open after 40 s on one file, 27 s of CPU on one thread and
+  28.8 GB allocated. Two causes:
+  - A helper of one content is made once for every rule whose component it is, but it was recorded against its
+    first reader only. When the split refused it, that rule alone was held back a level. Each other reader made it
+    again the next round and failed again, so the pass took a round per reader, each a split of the whole program
+    (31,384 relations, 1.2 s).
+  - Now every reader is recorded (`Readers`), and a refusal holds back all of them at once. A rule with several
+    refused helpers goes back one level a round.
+  - Traced on the pack: the two pushes (14,361 and 17,289 helpers made) take 3 rounds each. Without the fix neither
+    ended within 50 s.
+  - A span marks each round, and `PushLocalJoins::rounds` counts them.
+- **The well-founded analysis scanned every helper for each atom.** "well-founded components (decision 0364 §5)"
+  summarized 83,170 rules' helpers past 31 s. `order` scanned the whole helper map, every (relation, i, j), for each
+  atom of each rule it read, and `summarize` calls it for each pair of node columns, each rule and each of three
+  passes. The helpers are keyed by relation now, one lookup an atom.
+
+Still open on that pack. Each is its own fix, after the CUDA-support roll-up:
+
+- **A stratum's evaluation on one file.** `rr_narrow_p407_rr_up2` had run 20 s and allocated 50 GB, with the process
+  at 7.9 GB resident.
+- **ARG004 under strict SQL**, fixed after roll-up 40. On the first 100 rules, `RERAIL_SQL_STRICT=1` stopped the run: the
+  native engine declined the stratum `dm_p67_ARG004_0` (`ruff-arg004-unused-static-method-argument.rerail`). Its rule
+  is `dm_ARG004_0(v0) :- dm_ARG004_raw_0(v0), rr_d = @doc(v0), rr_d < RUN_VALUE_KEYS`: hiding's bound on the
+  translator's `doc(rr_d, rr_p, _)` stayed after that read was dropped, and the read was what typed `rr_d`. The join
+  spec now types `$d = @doc($n)`'s `$d` as what it is, a document key, an integer
+  (`a_documents_key_compared_with_a_bound_runs_natively`).
 
 ## Measured
 

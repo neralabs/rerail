@@ -344,11 +344,12 @@ impl World {
             return None;
         }
         let identity = if crate::git_workspace::snapshot::contains(&self.root) {
-            Path::new(&path).strip_prefix(&self.root).ok().and_then(Path::to_str).unwrap_or(&path)
+            Path::new(&path).strip_prefix(&self.root).map(super::slashed).unwrap_or_else(|_| super::slashed(Path::new(&path)))
         } else {
-            &path
+            // Spelled with `/` on every OS, as the rules split and join it (`corpus::slashed`).
+            super::slashed(Path::new(&path))
         };
-        let loaded = Loaded { path: identity.to_owned(), module: module.to_owned(), grammar: grammar.to_owned() };
+        let loaded = Loaded { path: identity, module: module.to_owned(), grammar: grammar.to_owned() };
         self.beyond += usize::from(!own);
         self.loads.insert(path, loaded.clone());
         Some(loaded)

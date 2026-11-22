@@ -729,6 +729,18 @@ impl Stats {
         self.steps_cache.0.lock().clear();
     }
 
+    /// The tree's nodes by kind atom, exactly: `node`'s kind column's value counts (decision 0458: kept and patched
+    /// by document, as every base relation's are). They replace `tree`'s, whose counts are a sample's, scaled. The
+    /// planner reads `kind`'s values against `node`'s statistics (`view_stats_held`), so the two must be counted
+    /// together. A kind's mean subtree size stays `tree`'s: it is a mean, not a count.
+    pub fn kinds_counted(&mut self, counts: impl IntoIterator<Item = (i64, i64)>) {
+        let mut counts: Vec<(i64, i64)> = counts.into_iter().filter(|&(_, n)| n > 0).collect();
+        counts.sort_unstable();
+        self.nodes = counts.iter().map(|&(_, n)| n).sum::<i64>() as f64;
+        self.kfreq = Arc::new(counts.into_iter().map(|(k, n)| (k.to_string(), n)).collect());
+        self.steps_cache.0.lock().clear();
+    }
+
     /// Whether any column of `rel` has statistics (read or measured).
     /// The documents and kinds the statistics hold, which a layout's `values` facts are priced by (decision 0361
     /// item 5).
@@ -4877,7 +4889,17 @@ impl Model {
                     // (Q245 item 5, made apart from this one) left the share of witnesses always all, and Q240's
                     // documents no longer led (1 M rows where 1,200 come, Q411).
                     let raw = from.raw + w + filtered;
-                    let tail = from.tail.or_else(|| head_mask.is_some_and(|h| *bound & h == h).then_some((from.raw, left)));
+                    // A cross product in the tail is not discounted by its witnesses: its rows are not witnesses (no row
+                    // of what it follows vouched for them), and a binding with none reads all of them. It is paid in
+                    // full, and the tail starts again after it, its rows the bindings. Discounted, RUF007's climb seed
+                    // in main's pack crossed `child($p12, $c11, _)` and `child($p8, $c7, _)` after the head was bound
+                    // (71 K bindings, 2·10¹⁰ crossed rows, priced as 4,194) and ran past 90 s on one file.
+                    let head_bound = head_mask.is_some_and(|h| *bound & h == h);
+                    let tail = if crossed && (from.tail.is_some() || head_bound) {
+                        Some((raw, out))
+                    } else {
+                        from.tail.or_else(|| head_bound.then_some((from.raw, left)))
+                    };
                     let cand = Cell { work: witnessed(raw, tail, out), rows: out, prev, last: i, mode, unfounded, fan, basis: by, raw, tail };
                     if mask == full_mask {
                         finals.push((cand.work, prev, i, mode, fan, by));
@@ -11639,7 +11661,7 @@ impl Reach<'_, '_> {
 /// nearest ancestor, an AST match, a function term): then every column but a `_` is read.
 fn var_uses(rule: super::program_image::RuleRef<'_>) -> Option<HashMap<VarSlot, usize>> {
     let mut uses: HashMap<VarSlot, usize> = HashMap::new();
-    let mut count = |t: TermRef<'_>, uses: &mut HashMap<VarSlot, usize>| match t {
+    let count = |t: TermRef<'_>, uses: &mut HashMap<VarSlot, usize>| match t {
         TermRef::Var(x) => {
             *uses.entry(x).or_default() += 1;
             true

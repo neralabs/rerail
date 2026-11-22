@@ -229,5 +229,11 @@ fn a_warm_run_builds_no_unchanged_host_files_documents() {
 fn a_warm_edit_of_a_host_file_reads_as_a_cold_run() {
     let (_, warm, fresh) = Corpus::of("hosts-edit", HOSTED, HOSTS, "named").then_warm(2 * HOSTS.len() - 1, Some(("c.html", "<p>y</p>\n<p>z</p>\n<script>solo(); foo(4)</script>\n")));
     assert_eq!(warm.rows, fresh, "the warm edit's outputs are a cold run's");
+    // Q332 for host files: the run's batch builds no unchanged host file's documents from their tape, and makes the
+    // changed file's three alone (its text, its tree and its script's: `d.js`'s one and each host file's three are
+    // the batch's 10). Its plans' statistics of `kind` are `node`'s kind column's, patched by the edit
+    // (`Stats::kinds_counted`), not counted off every document.
+    assert_eq!(warm.main.from_tape, 0, "Q332: the run's batch builds no unchanged host file's documents: {:?} (warm run: {warm:?})", warm.main);
+    assert!(warm.main.made <= 3, "Q332: the run's batch makes the changed file's three documents' rows alone: {:?} (warm run: {warm:?})", warm.main);
     assert!(fresh.contains(&vec!["foo".to_owned(), "4".to_owned()]), "the edit's call of foo, at c.html's line 4 (its marker's, two paragraphs, its script): {fresh:?}");
 }

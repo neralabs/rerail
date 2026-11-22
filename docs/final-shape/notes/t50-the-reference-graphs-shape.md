@@ -436,7 +436,7 @@ above and lost about as much in strata that check the same nodes again, where th
 made (`tscope` 0.21 → 1.62 s, `rf_fcond` 0.10 → 1.42 s). The projection's `size` opens no reader, and that loss is
 gone.
 
-On `all` (m1max, both sides in one session, rows unchanged), instructions retired went 3.677 T → 3.538 T and the
+On `all` (M1 Max, both sides in one session, rows unchanged), instructions retired went 3.677 T → 3.538 T and the
 rules' own CPU 312.9 → 272.0 s. By stratum: `rf_in` 6.56 → 4.32 s, `rf_fn_in` 2.24 → 0.86 s, and the generated
 `pre_379` 10.57 → 2.82 s, `pre_380` 6.23 → 1.29 s, `pre_378` 4.81 → 2.67 s. On s1000: 371.1 G → 349.6 G
 instructions. The hosts were loaded (load 4 to 31 on 10 cores), so wall and CPU moved by 10–40% from one run to the

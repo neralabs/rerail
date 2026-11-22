@@ -22,11 +22,10 @@ fn thread_cpu() -> f64 {
     t.tv_sec as f64 + t.tv_nsec as f64 / 1e9
 }
 
-/// Without a thread clock, the wall clock's seconds since first asked.
-#[cfg(not(unix))]
+/// The calling thread's CPU seconds (`GetThreadTimes`).
+#[cfg(windows)]
 fn thread_cpu() -> f64 {
-    static START: std::sync::LazyLock<std::time::Instant> = std::sync::LazyLock::new(std::time::Instant::now);
-    START.elapsed().as_secs_f64()
+    rerail_prof::thread_cpu().as_secs_f64()
 }
 
 /// Work a span starts on threads that open no span of their own (rayon's, a helper thread) is in the report: the

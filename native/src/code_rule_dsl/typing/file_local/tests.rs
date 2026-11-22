@@ -210,9 +210,9 @@ fn nearest_costs(cap: usize) {
     // Both timed results held (the device's runs, macOS only, are compared with `cpu`).
     std::hint::black_box((&cpu, &one));
     println!("NEAREST {n} nodes, max depth {depth}, {} copies; CPU worklist {:.2} ms, one preorder pass {:.3} ms", sys.copies.len(), cpu_worklist.as_secs_f64() * 1e3, one_pass.as_secs_f64() * 1e3);
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     use crate::code_rule_dsl::transducer::packed::metal_nearest;
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     for how in [metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks, metal_nearest::Buffers::Fresh, metal_nearest::Buffers::Blocks] {
         let target: Vec<u32> = parent.clone();
         let done: Vec<u8> = parent.iter().map(|&p| u8::from(p == NONE || sets[0].contains(&kind[p as usize]))).collect();
@@ -235,7 +235,7 @@ fn nearest_costs(cap: usize) {
             assert_eq!(solved.targets, one);
         }
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     for round in 0..3 {
         use crate::code_rule_dsl::transducer::packed::metal_lattice;
         let device = metal_lattice::System { seeds: &sys.seeds, copies: &sys.copies, bins: &[] };
@@ -847,12 +847,13 @@ fn a_local_join_can_export_a_node_bound_by_equality() {
     "#;
     // The version pass alone (0276 step 6: the tree twin it was compared with is gone). `push_equal_columns`'s
     // switch, read as it reads it (the test is compiled in crates that see only `rerail-logic`'s public items).
+    let equal_columns = push_equal_columns();
     let (result, made) = pushed(read(text));
     for m in &made {
         assert!(result.rules().any(|r| reads(&result, r).contains(m)), "{m} is read:\n{}", result.show());
     }
     let helpers: Vec<_> = made.iter().filter(|name| name.ends_with("_observed")).collect();
-    assert_eq!(helpers.len(), usize::from(push_equal_columns()), "{}", result.show());
+    assert_eq!(helpers.len(), usize::from(equal_columns), "{}", result.show());
     if let [helper] = helpers.as_slice() {
         assert!(result.show().contains(&format!("observed($answer) :- {helper}(")));
     }
@@ -908,4 +909,23 @@ fn the_split_of_a_version_reads_an_undeclared_axis() {
     let split = split_of(&v);
     assert!(!split.local.contains("out"), "{:?}", split.local);
     assert!(axes.iter().any(|a| split.causes.get("out").is_some_and(|why| why.contains(a.as_str()))), "{:?}", split.causes);
+}
+
+/// A pushed join the split does not take holds back every rule that reads it in one round, not one reader a round
+/// (`passes::push::Readers`). Held against its first reader only, each other reader made it again the next round: on
+/// main's Python pack the two pushes (14,361 and 17,289 helpers) never ended; held against all, 3 rounds each.
+#[test]
+fn a_refused_join_holds_back_all_its_readers_in_one_round() {
+    let mut made = Readers::default();
+    // Six rules read one helper (one component's content); rule 9 reads another, taken; rule 2 reads both.
+    for rule in 0..6 {
+        made.read(rule, "fl1_violation".to_owned());
+    }
+    made.read(9, "fl2_violation".to_owned());
+    made.read(2, "fl2_violation".to_owned());
+    made.read(2, "fl1_violation".to_owned());
+    let taken = std::collections::BTreeSet::from(["fl2_violation".to_owned()]);
+    assert_eq!(made.refused(&taken), (0..6).collect(), "every reader of the refused helper, each once");
+    assert!(made.refused(&std::collections::BTreeSet::from(["fl1_violation".to_owned(), "fl2_violation".to_owned()])).is_empty());
+    assert_eq!(made.names(), ["fl1_violation", "fl2_violation"], "each helper once, in the order made");
 }

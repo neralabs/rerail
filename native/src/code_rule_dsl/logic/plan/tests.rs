@@ -1041,7 +1041,7 @@ fn open_files() -> Vec<std::path::PathBuf> {
             })
             .collect()
     }
-    #[cfg(not(any(target_os = "linux", target_os = "macos")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
     {
         Vec::new()
     }
@@ -1436,6 +1436,40 @@ late(f, k) :- r(f, k), v = max x : { l(f, x) }, k >= v.
     assert_eq!(got["q"], [["1", "a.fi"], ["2", "b"]]);
     assert_eq!(got["early"], [["1", "2"], ["2", "1"]]);
     assert_eq!(got["late"], [["2", "9"]]);
+}
+
+/// A node's document compared with a bound (`d = @doc(n), d < B`: hiding's bound on a `doc` read, kept once the read
+/// itself is dropped, as in main's pack's ARG004) runs natively: `d` is a document key, an integer. The native engine
+/// declined it ("comparison <": `d` had no type), and a strict run stopped.
+#[test]
+fn a_documents_key_compared_with_a_bound_runs_natively() {
+    use crate::code_rule_dsl::logic::profile;
+    // `named` reads `total`, a count over every file: a cross-file stratum, which the native set engine plans.
+    let program = r#"
+.decl ids(n: node)
+ids(n) :- kind(n, "identifier").
+.decl total(c: number)
+total(c) :- c = count : { ids(_) }.
+.decl named(n: node, c: number)
+named(n, c) :- total(c), ids(n), d = @doc(n), d < 1342177280.
+.output named
+"#;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("doc_bound");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a.py"), "x = y\n").unwrap();
+    std::fs::write(dir.join("b.py"), "z = 1\n").unwrap();
+    let _scratch = super::corpus::switches::set(&[("RERAIL_CROSS_K4", "off"), ("RERAIL_KEPT_PART", "off")]);
+    let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    profile::set(true);
+    let ran = super::corpus::run(program, &dir, None, &dir.join("out"), "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
+    let declined = profile::declined();
+    profile::set(false);
+    let rows = ran.as_ref().ok().map(|_| crate::code_rule_dsl::logic::plan::output::shown(&dir.join("out"), "named").unwrap());
+    let _ = std::fs::remove_dir_all(&dir);
+    ran.unwrap();
+    assert!(!declined.keys().any(|k| k.contains("named")), "{declined:?}");
+    let rows = rows.unwrap();
+    assert!(rows.len() == 3 && rows.iter().all(|r| r[1] == "3"), "x, y and z, each with the count: {rows:?}");
 }
 
 // ---- violations ----
