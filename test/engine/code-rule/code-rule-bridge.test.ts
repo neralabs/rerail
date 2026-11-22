@@ -5559,6 +5559,26 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(auditGeneratedEdits).not.toHaveBeenCalled();
   });
 
+  // A read of a `HEAD` whose checkout is gone asks Git, one Git at a time, inside the walk a shell command's result waits
+  // for: a session that kept reading every worktree it had known made each walk one Git start longer per worktree removed.
+  it("reads no `HEAD` of a worktree it knew once Git no longer lists it", async () => {
+    const root = await twoBranches();
+    const { worktree, roots, extra } = await withWorktree(root, join(await workspace(), "w"));
+    const { bridge } = await opened(root, extra);
+    const bothWalks = async () => {
+      await bridge.checkpoint("turn");
+      await bridge.settleWorktreeWalk();
+    };
+    // The session checkout's `HEAD` and the worktree's.
+    expect((await gitReads(bothWalks)).heads).toBe(2);
+    git(root, "worktree", "remove", "--force", worktree);
+    roots.length = 0;
+    await bothWalks();
+    // The session checkout's alone, at every walk after the one that found the worktree gone.
+    expect((await gitReads(bothWalks)).heads).toBe(1);
+    expect((await gitReads(bothWalks)).heads).toBe(1);
+  });
+
   // A walk of a worktree the session already knew that reads Git once `git worktree remove` has deleted the worktree's
   // files and its `.git` entry finds each file it saw there deleted, and, with no checkout left for Git to read them
   // against, recorded every deletion. Inside the session's folder the Git of the checkout around the worktree answers,
