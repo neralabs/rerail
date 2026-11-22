@@ -1144,13 +1144,17 @@ pub fn record_run(store: &ContentStore, root: &Path, sources: &[crate::content_s
             Err(e) => return Some((0, Err(e.to_string()))),
         }
         drop(store);
-        let started = std::time::Instant::now();
+        // The passes' budget is this thread's CPU time, the work behind the run: time spent waiting out another
+        // writer (the memo sweep a decision starts, the run's writer) or for a core on a loaded machine is none of it.
+        // On the wall clock, one pass that waited (10 s, a writer's busy deadline) spent it, and the pass after a
+        // decision's work, which ends the pass's due state, never ran.
+        let started = rerail_prof::thread_cpu();
         let mut passes = 0;
         let outcome = (|| -> std::result::Result<String, crate::content_store::StoreError> {
             let store = ContentStore::open(&path)?;
             let (mut idle, mut kept, mut plan_rows, mut tapes, mut sources) = (0, None, 0, 0, 0);
             let mut observer = None;
-            while idle < 2 && started.elapsed() < std::time::Duration::from_millis(200) {
+            while idle < 2 && rerail_prof::thread_cpu() - started < std::time::Duration::from_millis(200) {
                 let pass = store.collect_corpus_pass(&policy, now)?;
                 passes += 1;
                 idle = if pass.did_work() { 0 } else { idle + 1 };
@@ -10511,8 +10515,10 @@ pub mod tests {
         super::record_run(&store, &root, &[source], &program, &[], None, None, &[], &Default::default(), None, true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
         assert!(store.corpus_collection_due().unwrap());
         // Same files and plan: the manifest is unchanged, but pending collection must still run.
-        super::record_run(&store, &root, &[source], &program, &[], None, None, &[], &Default::default(), Some(reader), true).unwrap().unwrap().join().unwrap().unwrap().1.unwrap();
-        assert!(!store.corpus_collection_due().unwrap());
+        let started = std::time::Instant::now();
+        let (passes, outcome) = super::record_run(&store, &root, &[source], &program, &[], None, None, &[], &Default::default(), Some(reader), true).unwrap().unwrap().join().unwrap().unwrap();
+        let outcome = outcome.unwrap();
+        assert!(!store.corpus_collection_due().unwrap(), "collection still due after {passes} passes in {:?}: {outcome}", started.elapsed());
         assert_eq!(store.source_by_hash(orphan_hash).unwrap(), None);
     }
 
