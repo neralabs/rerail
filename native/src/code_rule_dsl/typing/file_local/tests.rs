@@ -742,6 +742,43 @@ fn exports_are_cut_on_a_version() {
     }
 }
 
+/// A demand whose location only a `top` superset cuts is `top` itself when what is left of its chain names every node
+/// (`unwrap(n, n) :- kind(n, k), k != "paren"`, as `unparen` is): no superset of it is made and stored. The export is
+/// still cut by its reader's own key (`xk_text_0`). Left with an atom that names some nodes only (`called`), the
+/// superset is made.
+#[test]
+fn a_demand_cut_only_by_a_top_superset_is_top() {
+    let program = |unwrap: &str| {
+        format!(
+            ".decl node(d: number, n: node, kind: symbol, start: number, end: number)\n.decl text(n: node, s: symbol)\n\
+             .decl kind(n: node, k: symbol)\n.decl calls(n: node, c: node)\n\
+             .decl within(c: node, n: node)\n.input node, text, kind, calls, within\n\
+             .decl fl_later(n: node, c: node)\nfl_later(n, c) :- within(c, n), node(_, c, \"call\", _, _).\n\
+             .decl named(n: node, s: symbol)\nnamed(n, s) :- text(n, s).\n\
+             .decl unwrap(n: node, m: node)\n{unwrap}\n\
+             .decl pair(n: node, m: node)\npair(n, m) :- named(n, s), named(m, s), n != m.\n\
+             .decl demand(n: node, m: node)\ndemand(n, m) :- unwrap(n, x), pair(x, m).\n\
+             .decl later(n: node, c: node)\nlater(n, c) :- demand(n, _), fl_later(n, c), text(c, _).\n.output later\n"
+        )
+    };
+    let cut = |unwrap: &str| {
+        let mut pass = DemandExports::default();
+        let mut p = Pipeline::new("test", read(&program(unwrap)));
+        p.program(&mut pass);
+        let (out, _) = p.finish().unwrap();
+        (out.show(), pass.lines)
+    };
+    let (shown, lines) = cut("unwrap(n, n) :- kind(n, k), k != \"paren\".");
+    assert!(lines[0].contains("through 0 supersets (2 top of 2 explored"), "{lines:?}");
+    for not in ["dm_demand_0(", "dm_pair_0("] {
+        assert!(!shown.contains(not), "{not} in\n{shown}\n{lines:?}");
+    }
+    assert!(shown.contains("xd_fl_later($n, $c) :- fl_later($n, $c), xk_text_0($c)."), "{shown}");
+    let (shown, lines) = cut("unwrap(n, n) :- calls(n, _).");
+    assert!(lines[0].contains("through 1 supersets (1 top of 2 explored"), "{lines:?}");
+    assert!(shown.contains("dm_demand_0("), "{shown}");
+}
+
 /// An export joining two parts at a key its head projects away is handed on as its parts on a version: one line, the
 /// product gone, and the parts and their keys named from the part's content.
 #[test]
