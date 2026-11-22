@@ -707,6 +707,96 @@ fn a_matrix_product_is_each_rows_columns_in_lanes() {
     }
 }
 
+/// A matrix product of floats stored apart: each entry's sign a bit (32 to a word, entry `e` bit `e % 32` of word
+/// `e / 32`), its exponent a byte, its fraction 3 bytes (low byte first, the top bit 0). Each lane unpacks its
+/// operands to floats, sums their products as `fma` (each rounded once), and packs its result the same way, the
+/// sign bits of a row a ballot of its 32 lanes. The result's bits are a 32-bit `fma` product's.
+#[test]
+fn a_matrix_product_of_split_floats_is_a_floating_one() {
+    const N: usize = 32;
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\n\
+#define UNPACK(sg, ex, mt, x) as_float(((sg[(x) >> 5u] >> ((x) & 31u)) << 31) | ((uint32_t)ex[x] << 23) | (uint32_t)mt[3u * (x)] | ((uint32_t)mt[3u * (x) + 1u] << 8) | ((uint32_t)mt[3u * (x) + 2u] << 16))\n\
+DEFINE_KERNEL2(rule, t_mms,\n\
+               ROBUFFER, uint32_t, asg, \"[32]\",\n\
+               ROBUFFER, uint8_t, aex, \"[1024]\",\n\
+               ROBUFFER, uint8_t, amt, \"[3072]\",\n\
+               ROBUFFER, uint32_t, bsg, \"[32]\",\n\
+               ROBUFFER, uint8_t, bex, \"[1024]\",\n\
+               ROBUFFER, uint8_t, bmt, \"[3072]\",\n\
+               RWBUFFER, uint32_t, csg, \"[32]\",\n\
+               RWBUFFER, uint8_t, cex, \"[1024]\",\n\
+               RWBUFFER, uint8_t, cmt, \"[3072]\",\n\
+               LID0,     uint32_t, j, ,\n\
+               LID1,     uint32_t, i, )\n\
+{\n\
+    float s = 0.0f;\n\
+    for (uint32_t k = 0; k < 32u; ++k) {\n\
+        uint32_t x = i * 32u + k;\n\
+        uint32_t y = k * 32u + j;\n\
+        s += UNPACK(asg, aex, amt, x) * UNPACK(bsg, bex, bmt, y);\n\
+    }\n\
+    uint32_t r = as_uint(s);\n\
+    uint32_t z = i * 32u + j;\n\
+    cex[z] = (uint8_t)(r >> 23);\n\
+    cmt[3u * z] = (uint8_t)r;\n\
+    cmt[3u * z + 1u] = (uint8_t)(r >> 8);\n\
+    cmt[3u * z + 2u] = (uint8_t)((r >> 16) & 0x7fu);\n\
+    uint32_t sign = sub_group_ballot((r >> 31) != 0u).x;\n\
+    if (j == 0u)\n\
+        csg[i] = sign;\n\
+}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_mms").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    // Fractions that use all 23 bits, both signs, exponents around 1.
+    let float = |x: usize, salt: u32| {
+        let h = (x as u32).wrapping_mul(0x9e37_79b9).wrapping_add(salt).rotate_left(13).wrapping_mul(0x85eb_ca6b);
+        f32::from_bits((h & 0x807f_ffff) | ((124 + (h >> 23) % 6) << 23))
+    };
+    let a: Vec<f32> = (0..N * N).map(|x| float(x, 1)).collect();
+    let b: Vec<f32> = (0..N * N).map(|x| float(x, 2)).collect();
+    let mut want = vec![0u32; N * N];
+    for i in 0..N {
+        for j in 0..N {
+            want[i * N + j] = (0..N).fold(0f32, |s, k| a[i * N + k].mul_add(b[k * N + j], s)).to_bits();
+        }
+    }
+    let split = |v: &[f32]| {
+        let mut sg = vec![0u32; v.len() / 32];
+        let (mut ex, mut mt) = (Vec::new(), Vec::new());
+        for (e, f) in v.iter().enumerate() {
+            let r = f.to_bits();
+            sg[e / 32] |= (r >> 31) << (e % 32);
+            ex.push((r >> 23) as u8);
+            mt.extend_from_slice(&(r & 0x7f_ffff).to_le_bytes()[..3]);
+        }
+        (sg, ex, mt)
+    };
+    let ((asg, aex, amt), (bsg, bex, bmt)) = (split(&a), split(&b));
+    let run = |k: &super::vector::Kernel, exec| {
+        let (mut csg, mut cex, mut cmt) = (vec![0u32; N], vec![0u8; N * N], vec![0u8; 3 * N * N]);
+        let ptr = |p: *const u8| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args = [
+            ptr(asg.as_ptr().cast()), ptr(aex.as_ptr()), ptr(amt.as_ptr()),
+            ptr(bsg.as_ptr().cast()), ptr(bex.as_ptr()), ptr(bmt.as_ptr()),
+            ptr(csg.as_mut_ptr().cast()), ptr(cex.as_mut_ptr()), ptr(cmt.as_mut_ptr()),
+            super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4]),
+        ];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [32, 32, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        (0..N * N)
+            .map(|e| ((csg[e / 32] >> (e % 32)) & 1) << 31 | u32::from(cex[e]) << 23 | u32::from_le_bytes([cmt[3 * e], cmt[3 * e + 1], cmt[3 * e + 2], 0]))
+            .collect::<Vec<u32>>()
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+    }
+}
+
 /// A floating `a * a - b` is contracted to one multiply-add, rounded once (OpenCL C's `FP_CONTRACT`), on the
 /// interpreter and the compiled SSA alike: with `a = 1 + 2^-12` and `b = 1 + 2^-11` it is `2^-24`, where rounding the
 /// product first (to `b`) would give 0. Also `+=` of a product, and `fma` called by name.
