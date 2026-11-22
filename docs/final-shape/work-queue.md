@@ -5699,6 +5699,11 @@ place of the views: copies of tape answers. The views already cover the whole so
   `granules::span_of`); then `Extra` makes no place rows, and `made` binds no place relation.
 - **Check**: the view's rows equal the rows made today, for a program reading each span relation.
 - **Done when**: no place row is made for a node or token in core.rerail's shape.
+- **Its cost on an edit** (2026-11-21, ep2's `body` on the M1 Max, Q332): a node's place in a made relation is a
+  probe that makes the node's document, every relation of its group (decision 0494). The strata derived again over
+  `line` (its rows after the edited line moved) probe the lines of every document's diagnostics: 38 unchanged
+  documents made, `line` by node 32 times and `visit_index` 4 (the profile's "a batch's documents made by a probe"),
+  about 0.09 s of the edit's 4.0 s. The view reads a node's place off the tape and makes nothing.
 
 
 ### Q264. (Q124 on Native-and-GPU-strata until 2026-11-18; Q185 on oscar until 2026-11-18) The device's `str_cmp` of made texts loses rows under load — done 2026-11-18

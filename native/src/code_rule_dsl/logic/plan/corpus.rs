@@ -355,6 +355,9 @@ pub struct Report {
     pub cross_quiet: (usize, usize),
     /// A session's maintained run: the strata it skipped, no read of them changed (0364 R9; `Outcome::walked`).
     pub cross_skipped: usize,
+    /// Of those, the strata a changed read reached that no rule of saw a row of its delta, by kind or key (decision
+    /// 0563 B; `Outcome::unseen`), by their keys.
+    pub cross_unseen: Vec<String>,
     /// The cross-file relations handed off as the run went, their frames made once no later stratum read them and
     /// their rows let go (Q74): a run not driven by deltas.
     pub cross_handed: usize,
@@ -4531,6 +4534,20 @@ fn run_observed_within(
     // the fixpoint). The memo's keys are the split's, made before.
     let answering = guests::answering(&local_version);
     let parsing = !answering.is_empty();
+    // Decision 0563 A: a run admits no guest where its file-local part answers no request (0431 §8), it is not
+    // `.embedded on` (0512), and no language of its documents embeds another (0431 §4: an HTML file's scripts, a
+    // Python call's HTML argument are programs of their file, made at its load). Its guest relations are then empty
+    // in both parts, so the rules no row can reach go, and what only they read (`Prune`). Both parts are a function of
+    // the split's, whose digests the memo's and the components' keys are.
+    let embeds = {
+        let labels: BTreeSet<&str> = docs.iter().filter_map(|(_, p)| crate::code_rule_dsl::language::label_of_path(p)).collect();
+        std::iter::once(dialect).chain(labels.into_iter().filter_map(crate::code_rule_dsl::language::dialect_by_label)).any(|d| !d.embeds().is_empty())
+    };
+    let (local_version, cross_version) = if !parsing && !embeds && !embedded_on(&*local_version) {
+        (preparation::unfillable(local_version, "file-local", &split.exports).map_err(Error::Plan)?, preparation::unfillable(cross_version, "cross-file", &[]).map_err(Error::Plan)?)
+    } else {
+        (local_version, cross_version)
+    };
     let local_version = if parsing {
         let answers: BTreeMap<String, Vec<String>> = answering.iter().map(|(r, (produced, _))| (r.clone(), produced.clone())).collect();
         crate::code_rule_dsl::logic::answers::gate(&super::body::Placed::whole(local_version), &answers).map_err(Error::Plan)?
@@ -9683,6 +9700,7 @@ fn run_observed_within(
     let mut cross_derived_again = 0;
     let mut cross_quiet = (0, 0);
     let mut cross_skipped = 0;
+    let mut cross_unseen = Vec::new();
     // What the cross part binds as rows it holds (`Stats::held`): the exports. Its base relations are the corpus
     // batch's (decision 0458), views and made relations of the tapes, no held rows (`setfix::held_rel`).
     cross_stats.held = Arc::new(split.exports.iter().cloned().collect());
@@ -10231,7 +10249,7 @@ fn run_observed_within(
                     // The relations whose rows are as they were (decision 0117 step 4): their frames are not written.
                     let unchanged_rels = std::mem::take(&mut got.unchanged);
                     let run_deltas = std::mem::take(&mut got.deltas);
-                    let (run_quiet, run_skipped) = (got.quiet, got.walked.1);
+                    let (run_quiet, run_skipped, run_unseen) = (got.quiet, got.walked.1, std::mem::take(&mut got.unseen));
                     step("ran");
                     step("collected");
                     if spike {
@@ -10470,6 +10488,7 @@ fn run_observed_within(
                     cross_derived_again = maintained.derived_again;
                     cross_quiet = run_quiet;
                     cross_skipped = run_skipped;
+                    cross_unseen = run_unseen;
                     cross_changed = cut.changed.clone();
                     cross_again = maintained.again.iter().fold(BTreeMap::new(), |mut m, (_, why)| {
                         *m.entry(*why).or_insert(0) += 1;
@@ -10905,7 +10924,7 @@ fn run_observed_within(
         CorpusDocs { from_tape: built(&hit_docs_built.0), parsed: built(&hit_docs_built.1), held: corpus_held, made, documents }
     };
     crate::code_rule_dsl::logic::profile::decision("the corpus batch's documents (Q332)", || format!("{corpus_docs:?}"));
-    let report = Report { corpus_docs, parsed: core::parses(), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { corpus_docs, parsed: core::parses(), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, cross_unseen, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }

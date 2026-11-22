@@ -34,6 +34,8 @@ pub struct PushLocalJoins {
     /// Whether the cross-file part reads a base relation after the first push: the program's mode (a part's, its
     /// share of the run's, decision 0345 stage 2).
     pub reads_base: bool,
+    /// The rounds its pushes took: each writes the program and splits it again.
+    pub rounds: usize,
 }
 
 const ATTRIBUTES: [&str; 8] = ["docof", "line", "end_line", "col", "visit_index", "node_order", "node", "doc"];
@@ -196,7 +198,7 @@ fn node_read(v: &Version, rule: RuleRef<'_>, l: LitRef<'_>) -> Option<(String, S
 
 /// A round of `PushLocalJoins`: the relations made, and the split of the program as it is left; `None` where it makes
 /// nothing.
-fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, keep_unrestricted: bool) -> Result<Option<Pushed<'v>>, String> {
+fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, keep_unrestricted: bool, rounds: &mut usize) -> Result<Option<Pushed<'v>>, String> {
     let equal_columns = push_equal_columns();
     let rules: Vec<RuleRef<'v>> = v.rules().collect();
     let decl_names: HashSet<String> = f.decls().iter().map(|d| v.text(d.name()).to_owned()).collect();
@@ -415,21 +417,32 @@ fn push_with<'v>(v: &'v Arc<Version>, f: Fields<'v>, local: &BTreeSet<String>, k
         }
         program.extend(helpers);
         let round = Round { decls, undeclared: Vec::new(), rules: program, no_inline: Vec::new(), nullary: Vec::new() };
+        *rounds += 1;
         let (candidate, split) = super::candidate(v, &round)?;
         let now = split.local.clone();
-        let failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();
+        // A rule reading two helpers left outside the chunks goes back one level, not two.
+        let mut failed: Vec<usize> = made.iter().filter(|(_, n)| !now.contains(n)).map(|(i, _)| *i).collect();
+        failed.dedup();
+        // Each helper once, as it was first made.
+        let mut names: Vec<String> = Vec::with_capacity(made.len());
+        for (_, n) in &made {
+            if !names.contains(n) {
+                names.push(n.clone());
+            }
+        }
         crate::code_rule_dsl::logic::profile::decision("file-local joins pushed: rounds", || {
-            let names: Vec<String> = made.iter().filter(|(_, n)| !now.contains(n)).take(3).map(|(i, n)| format!("{n} of {}", v.show_rule(rules[*i]))).collect();
-            format!("a round (keep_unrestricted {keep_unrestricted}): {} helpers made, {} not file-local: {}", made.len(), failed.len(), names.join(" | "))
+            let out: Vec<&str> = names.iter().filter(|n| !now.contains(*n)).map(String::as_str).collect();
+            let why = out.first().and_then(|n| split.causes.get(*n)).map_or("", String::as_str);
+            let readers: Vec<String> = made.iter().filter(|(_, n)| !now.contains(n)).take(3).map(|(i, n)| format!("{n} of {}", v.show_rule(rules[*i]))).collect();
+            format!(
+                "a round (keep_unrestricted {keep_unrestricted}): {} helpers made, {} not file-local, read by {} rules; the first's cause: {why}: {}",
+                names.len(),
+                out.len(),
+                failed.len(),
+                readers.join(" | ")
+            )
         });
         if failed.is_empty() {
-            // Each helper once, as it was first made.
-            let mut names: Vec<String> = Vec::with_capacity(made.len());
-            for (_, n) in made {
-                if !names.contains(&n) {
-                    names.push(n);
-                }
-            }
             return Ok(Some(Pushed { round, made: names, local: now, candidate }));
         }
         for i in failed {
@@ -454,7 +467,7 @@ impl ProgramPass for PushLocalJoins {
         let f = Fields::over(v, &d);
         let split = cx.get::<FileLocal>()?;
         let inputs: BTreeSet<&str> = f.inputs().collect();
-        let first = push_with(v, f, &split.local, false)?;
+        let first = push_with(v, f, &split.local, false, &mut self.rounds)?;
         let reads_base = match &first {
             Some(p) => cross_reads_base(&p.candidate, &inputs, &p.local),
             None => cross_reads_base(v, &inputs, &split.local),
@@ -470,7 +483,7 @@ impl ProgramPass for PushLocalJoins {
         // A part pushes in the run's mode (decision 0345 stage 2): every part's reads together decide it.
         use crate::code_rule_dsl::logic::plan::fields::{PART_WHOLE, PUSH_BASE, PUSH_DECIDED};
         let mode = if f.qualified(PART_WHOLE, PUSH_DECIDED) { f.qualified(PART_WHOLE, PUSH_BASE) } else { reads_base };
-        let pushed = if mode { push_with(v, f, &split.local, true)? } else { first };
+        let pushed = if mode { push_with(v, f, &split.local, true, &mut self.rounds)? } else { first };
         if let Some(p) = pushed {
             self.made = p.made;
             write(w.derive()?, v, &p.round)?;

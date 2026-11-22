@@ -2651,6 +2651,38 @@ fn the_search_prices_the_steps_past_a_bound_head_as_one_witness() {
     assert!(work < 2_000.0, "a row a document through each step: {work} {order:?}");
 }
 
+/// The greedy order is taken without a search only at its price as the walk runs it (`witnessed`), not at one witness
+/// a step. ep2 (corpus0, 300 files) after the hub's hiding bound: `x(d) :- dem(d), nd(d, s), gp(v, s, l), k(d)`, a
+/// document shown where one of its nodes places a guest. The greedy order must join `nd` before `gp` (no cross product
+/// while a connected step remains) and priced `nd` past the bound head at a row a document; but `gp` is empty, so no
+/// node is a witness and the walk read every node of each document: 400,983 rows a chunk in 329 programs' strata, 131 M
+/// rows of the run. Priced so, the greedy order costs more than a search, and the search reads `gp` first.
+#[test]
+fn a_greedy_order_is_taken_at_its_witnessed_price() {
+    let p = parse(".decl dem(d: number)\n.decl nd(d: number, s: number)\n.decl gp(v: number, s: number, l: number)\n.decl k(d: number)\n.decl x(d: number)\nx(d) :- dem(d), nd(d, s), gp(v, s, l), k(d).\n.output x\n").unwrap();
+    let mut model = bare_model(&p);
+    // A later chunk's: 40 documents of 1,742 nodes each, no guest place.
+    for (rel, rows, cols) in [
+        ("dem", 40.0, vec![(40.0, 1.0)]),
+        ("nd", 69_690.0, vec![(40.0, 1_742.25), (69_690.0, 1.0)]),
+        ("gp", 0.0, vec![(1.0, 1.0), (1.0, 1.0), (1.0, 1.0)]),
+        ("k", 40.0, vec![(40.0, 1.0)]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, (ndv, fan)) in cols.into_iter().enumerate() {
+            model.ndv.insert((rel, c), ndv);
+            model.stats.fan.insert((rel, c), fan);
+        }
+    }
+    model.stats.nodes = 69_690.0;
+    // Led by the demand's wave, as the stratum's probe of it is planned.
+    let (order, work, _) = model.plan_rule(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, 0), Some(0)).unwrap();
+    let order: Vec<String> = order.iter().map(|s| lit_at(&p, 0, s.at)).collect();
+    let at = |name: &str| order.iter().position(|l| l.starts_with(name)).unwrap_or(usize::MAX);
+    assert!(at("gp(") < at("nd("), "the empty guest places before the documents' nodes: {order:?} at {work}");
+}
+
+
 /// Decision 0299: `within(n, a)` read from its container yields the container's descendants: the mean size of a
 /// node with children (`Stats::subtree_fan`), not the view's fanout, which is of the lookups made so far.
 #[test]
@@ -3750,6 +3782,36 @@ fn a_probe_bounded_by_comparisons_reads_a_range() {
     assert_eq!(order, ["ctx", "line"], "{order:?}, work={work}");
     // A pair's lines between its ends, a ninth of its file's as the comparisons are priced (a third each).
     assert!(work < 5e6, "a range a pair: {work}");
+}
+
+/// A probe by two columns whose variables atoms joined by nothing bound is not priced at a row a binding (decision
+/// 0299's floor of one combination is for columns one row binds together). `pyflakes`' `open_tuple(t) :- kind(t,
+/// "tuple"), child(t, c, _), unparen(c, m), !py_literal(m)` was planned as the tuples crossed with every `unparen` row,
+/// then `child` by both: priced at a row a pair, every tuple looked witnessed and the tail (Q146) free, and 1,106 tuples
+/// read 47 M rows (ep2's cold run, 32 s of 95). From the tuples, `child` by its parent, then `unparen` by the child.
+#[test]
+fn a_probe_by_two_columns_crossed_in_is_not_a_row_a_pair() {
+    let p = parse(".decl tk(t:number)\n.decl un(c:number,m:number)\n.decl ch(p:number,c:number,i:number)\n.decl lit(m:number)\n.input tk, un, ch, lit\n.decl ot(t:number)\not(t) :- tk(t), un(c,m), !lit(m), ch(t,c,_).\n.output ot\n").unwrap();
+    let inputs = Inputs { facts:"main.".into(), stats:"main.".into(), atoms:Some([0;3]), native:BTreeSet::new(), batch:HashMap::new(), given:None, kept:BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(),docs_by_shift:false,analysis:Default::default(),stats:Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()),ndv: Default::default(),docof: Default::default(),view_src: Default::default(),inputs: inputs.into(),derived: derived.into()};
+    for (rel, rows, ndv) in [
+        ("tk", 198.0, vec![198.0]),
+        ("un", 64_447.0, vec![64_447.0, 64_000.0]),
+        ("ch", 65_741.0, vec![22_000.0, 65_741.0, 50.0]),
+        ("lit", 30_000.0, vec![30_000.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel, c), n);
+            model.stats.fan.insert((rel, c), rows / n);
+        }
+    }
+    let r = p.rules().position(|r| p.rel_name(r.head().rel()) == "ot").unwrap();
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), None).unwrap();
+    let b = body::nth(&p, r);
+    let order: Vec<&str> = order.iter().filter_map(|s| b.atom(s.at)).filter(|a| !a.neg()).map(|a| b.rel(a)).collect();
+    assert_eq!(order, ["tk", "ch", "un"], "{order:?}, work={work}");
 }
 
 /// Decision 0361 step 5, derived relations: one the facts do not size is sized from its rules' plans, in dependency
