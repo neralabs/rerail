@@ -565,6 +565,37 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
   it.each(["assume-unchanged", "skip-worktree"].flatMap(mark => MARKED_STATES.map(([what, made]) => [mark, what, made] as const)))(
     "and answer as Git's own diff for a submodule marked %s %s", async (mark, _what, made) => {
       const root = await folder();
+  // A scan from a folder: Git's diff from a commit reads the rules of, and looks into, the submodule outside that folder
+  // too, and prints none of it; the audit's diff, of the worktree with the index, does neither. Each row: the state, and
+  // whether Git's own audit and scan from the folder answer.
+  it.each<[string, (work: string) => void, [boolean, boolean]]>([
+    ["whose `.gitmodules` Git cannot read", work => writeFileSync(join(work, ".gitmodules"), "[submodule\n"), [true, false]],
+    ["whose submodule's `.git` file holds no `gitdir: `", work => writeFileSync(join(work, "sub", ".git"), "nothing\n"), [true, false]],
+    ["whose submodule's worktree changed", work => writeFileSync(join(work, "sub", "inner.txt"), "two\n"), [true, true]],
+    // The folder's own file `sub` changed, and Git reads no rule of the marked submodule `sub` outside the folder.
+    ["whose marked submodule shares its path with a changed file of the folder, and whose `.gitmodules` Git cannot read", work => {
+      git(work, "update-index", "--assume-unchanged", "sub");
+      writeFileSync(join(work, ".gitmodules"), "[submodule\n");
+      writeFileSync(join(work, "dir", "sub"), "changed\n");
+    }, [true, true]],
+  ])("and answer as Git's own diffs from a folder with no submodule below it, in a checkout %s", async (_what, made, answered) => {
+    const root = await folder();
+    const { work, gitfile, named } = await submoduleGitfile(root);
+    await writeFile(gitfile, `${named}\n`);
+    mkdirSync(join(work, "dir"));
+    writeFileSync(join(work, "dir", "sub"), "one\n");
+    git(work, "add", "dir");
+    git(work, "commit", "--quiet", "-m", "dir");
+    made(work);
+    const dir = join(work, "dir");
+
+    const answers = [await runGitWithoutBlocking(dir, AUDIT_DIFF), await runGitWithoutBlocking(dir, SCAN_DIFF)];
+    const gits = [gitAnswer(dir, AUDIT_DIFF), gitAnswer(dir, SCAN_DIFF)];
+
+    expect(answers.map(answer => [answer.status === 0, answer.stdout])).toEqual(gits);
+    expect(gits.map(([ok]) => ok)).toEqual(answered);
+  }, 60_000);
+
       const { work, gitfile, named } = await submoduleGitfile(root);
       await writeFile(gitfile, `${named}\n`);
       await writeFile(join(work, "sub", "inner.txt"), "two\n");

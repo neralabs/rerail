@@ -85,6 +85,11 @@ export interface NameDiff {
   readonly ignore: SubmoduleIgnore | undefined;
   /** Whether its `--diff-filter` lets a changed entry (`M`) through. */
   readonly listsModified: boolean;
+  /**
+   * Whether it compares a commit with the worktree (`git diff <commit>`), not the index: with `--relative`, Git's diff
+   * then reads the rules of, and looks into, each submodule outside its folder too, and only prints none of them.
+   */
+  readonly fromCommit: boolean;
 }
 
 /** The options of a diff: its arguments after `diff` and before `--`. */
@@ -100,7 +105,10 @@ function diffOptions(args: readonly string[]): readonly string[] {
 export function nameDiff(args: readonly string[]): NameDiff | undefined {
   if (!namesOnly(args)) return undefined;
   const options = diffOptions(args);
-  return { relative: options.includes("--relative"), ignore: ignoreOption(options), listsModified: listsModified(options) };
+  return {
+    relative: options.includes("--relative"), ignore: ignoreOption(options), listsModified: listsModified(options),
+    fromCommit: options.some(option => !option.startsWith("-")),
+  };
 }
 
 /**
@@ -391,16 +399,21 @@ function readEntry(read: StatusRead, entry: string): void {
 /** How far submodules inside submodules are followed; past it the call fails. */
 const MAX_DEPTH = 16;
 
-/** One submodule of a diff: its path from the repository's top, and as the diff names it. */
+/** One submodule of a diff: its path from the repository's top, as the diff names it, and whether the diff prints it. */
 interface Shown {
   readonly path: string;
   readonly name: string;
+  readonly printed: boolean;
 }
 
-/** The submodules of `paths` the diff names, each as it names it: below its folder and from there with `--relative`. */
-function shownSubmodules(paths: readonly string[], prefix: string, relative: boolean): Shown[] {
-  if (!relative) return paths.map(path => ({ path, name: path }));
-  return paths.filter(path => path.startsWith(prefix)).map(path => ({ path, name: path.slice(prefix.length) }));
+/**
+ * The submodules of `paths` a diff decides on, each as it names it: with `--relative`, those below its folder, named
+ * from there, and for a diff from a commit ({@link NameDiff.fromCommit}) the others too, which it does not print.
+ */
+function shownSubmodules(paths: readonly string[], prefix: string, diff: NameDiff): Shown[] {
+  if (!diff.relative) return paths.map(path => ({ path, name: path, printed: true }));
+  const shown = paths.map(path => path.startsWith(prefix) ? { path, name: path.slice(prefix.length), printed: true } : { path, name: path, printed: false });
+  return shown.filter(each => each.printed || diff.fromCommit);
 }
 
 /** `.gitmodules` as Git reads it for submodule config: the worktree's file, else the index's, else `HEAD`'s. */
@@ -480,23 +493,25 @@ interface DiffSubmodules {
  */
 async function changedSubmodules(stdout: string, { diff, gitlinks, top, open }: DiffSubmodules): Promise<string | GitFailure> {
   const named = new Set(stdout.split("\0").filter(name => name !== ""));
-  const decided = decidedSubmodules(gitlinks, named, top.places.prefix, diff.relative);
+  const decided = decidedSubmodules(gitlinks, named, top.places.prefix, diff);
   if (decided.length === 0) return stdout;
   const rules = await topRules(top, gitlinks, diff);
   if (!("base" in rules)) return rules;
   const state: DiffState = { named, changed: false, rules, diff, top, open };
-  const failures = await Promise.all(decided.map(async shown => await submoduleChange(shown, state)));
+  // One the diff does not print is decided in a state of its own, whose names are none and go nowhere.
+  const failures = await Promise.all(decided.map(async shown => await submoduleChange(shown, shown.printed ? state : { ...state, named: new Set() })));
   return failures.find(failure => failure !== undefined) ?? (state.changed ? namesText(stdout, state.named) : stdout);
 }
 
 /**
- * The submodules of `gitlinks` a diff decides on, each as it names them ({@link shownSubmodules}): each one Git's diff
- * looks into, and a marked one ({@link Gitlinks.marked}) only where Git's diff in Rerail `named` it, as its commit
- * changed, so that its rules may leave it out, as they leave it out of Git's own diff. Git reads no rule of a marked
- * one it does not name, and none of a submodule outside the folder a `--relative` diff runs in.
+ * The submodules of `gitlinks` a diff decides on ({@link shownSubmodules}): each one Git's diff looks into, and a marked
+ * one ({@link Gitlinks.marked}) only where Git's diff in Rerail `named` it, as its commit changed, so that its rules may
+ * leave it out, as they leave it out of Git's own diff. Git reads no rule of a marked one it does not name. A
+ * `--relative` diff of the worktree with the index reads none of a submodule outside its folder either, so where it
+ * decides on none no rule is read; one from a commit reads them, and fails where they cannot be read, as Git's does.
  */
-function decidedSubmodules(gitlinks: Gitlinks, named: ReadonlySet<string>, prefix: string, relative: boolean): Shown[] {
-  return shownSubmodules(gitlinks.paths, prefix, relative).filter(shown => !gitlinks.marked.has(shown.path) || named.has(shown.name));
+function decidedSubmodules(gitlinks: Gitlinks, named: ReadonlySet<string>, prefix: string, diff: NameDiff): Shown[] {
+  return shownSubmodules(gitlinks.paths, prefix, diff).filter(shown => !gitlinks.marked.has(shown.path) || (shown.printed && named.has(shown.name)));
 }
 
 /** How the diff treats each submodule: as its option says, else as the config and `.gitmodules` of `top` say. */

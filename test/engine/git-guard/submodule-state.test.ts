@@ -31,11 +31,11 @@ afterEach(async () => {
 
 describe("nameDiff and readStatus", () => {
   it.each([
-    [AUDIT_DIFF, { relative: true, ignore: "none", listsModified: true }],
-    [SCAN_DIFF, { relative: true, ignore: undefined, listsModified: true }],
-    [["diff", "--name-only", "-z", "--diff-filter=d", "--"], { relative: false, ignore: undefined, listsModified: true }],
-    [["diff", "--name-only", "-z", "--diff-filter=AD", "--"], { relative: false, ignore: undefined, listsModified: false }],
-    [["diff", "--name-only", "-z", "--merge-base", "main", "--"], { relative: false, ignore: undefined, listsModified: true }],
+    [AUDIT_DIFF, { relative: true, ignore: "none", listsModified: true, fromCommit: false }],
+    [SCAN_DIFF, { relative: true, ignore: undefined, listsModified: true, fromCommit: true }],
+    [["diff", "--name-only", "-z", "--diff-filter=d", "--"], { relative: false, ignore: undefined, listsModified: true, fromCommit: false }],
+    [["diff", "--name-only", "-z", "--diff-filter=AD", "--"], { relative: false, ignore: undefined, listsModified: false, fromCommit: false }],
+    [["diff", "--name-only", "-z", "--merge-base", "main", "--"], { relative: false, ignore: undefined, listsModified: true, fromCommit: true }],
     [["diff", "--name-only", "-z", "--", "a.txt"], undefined],
     [["diff", "--name-only", "-z"], undefined],
     [["diff", "--name-status", "-z", "--"], undefined],
