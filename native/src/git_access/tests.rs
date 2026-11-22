@@ -1356,6 +1356,52 @@ fn a_linked_worktree_lists_what_git_status_lists_there() {
     std::fs::remove_dir_all(root).unwrap();
 }
 
+/// Removes a file when it goes out of scope, also when a check before failed.
+struct RemovedAtEnd(PathBuf);
+
+impl Drop for RemovedAtEnd {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_file(&self.0);
+    }
+}
+
+/// An include named `~/...` or `%(prefix)/...` reads in a linked worktree what it reads in the
+/// main checkout: the home folder and the folder of the running program, as gix's own open names
+/// them, and `~/` as Git names it. The home folder is the process's `HOME`, so the checks run in a
+/// child of the test binary that has the fixture's.
+#[test]
+fn a_linked_worktree_follows_includes_named_from_home_and_prefix() {
+    const NAME: &str = "a_linked_worktree_follows_includes_named_from_home_and_prefix";
+    if in_child(NAME) {
+        for checkout in [fixture().join("main"), fixture().join("linked")] {
+            let place = checkout.display();
+            let (home, git_home) = setting(&checkout, "home");
+            assert_eq!(home.as_deref(), Some("yes"), "test.home in {place}");
+            assert_eq!(git_home.as_deref(), Some("yes"), "Git: test.home in {place}");
+            let prefix = setting(&checkout, "prefix").0;
+            assert_eq!(prefix.as_deref(), Some("yes"), "test.prefix in {place}");
+        }
+        return;
+    }
+    let (root, main, _linked) = linked_fixture("linked-home");
+    let home = root.join("home");
+    write(&home, &[("home.gitconfig", b"[test]\n\thome = yes\n")]);
+    git(&main, &["config", "--add", "include.path", "~/home.gitconfig"]);
+    let program = std::env::current_exe().unwrap();
+    let prefixed = format!("rerail-git-access-{}.gitconfig", std::process::id());
+    let beside_program = RemovedAtEnd(program.parent().unwrap().join(&prefixed));
+    std::fs::write(&beside_program.0, "[test]\n\tprefix = yes\n").unwrap();
+    let path = format!("%(prefix)/{prefixed}");
+    git(&main, &["config", "--add", "include.path", &path]);
+    let mut env = clean_env();
+    env.extend([
+        ("HOME", Some(home.into())),
+        (FIXTURE, Some(root.clone().into())),
+    ]);
+    run_child(NAME, &env);
+    std::fs::remove_dir_all(root).unwrap();
+}
+
 /// An include loop under a condition only the linked worktree meets stops Git there, and the
 /// opener refuses that worktree as Git does; the main checkout, where Git reads no loop, opens.
 #[test]
