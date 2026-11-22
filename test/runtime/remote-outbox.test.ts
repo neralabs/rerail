@@ -66,16 +66,6 @@ function setPathsText(auditId: string, text: string): void {
   database.close();
 }
 
-/** `run`'s result, with the line the audit reader writes for damaged paths kept out of the test's output. */
-async function quietly<T>(run: () => Promise<T>): Promise<T> {
-  const stderr = vi.spyOn(process.stderr, "write").mockReturnValue(true);
-  try {
-    return await run();
-  } finally {
-    stderr.mockRestore();
-  }
-}
-
 function addEvent(sessionId: string, eventId: string): void {
   const store = new SqliteSessionStore(databasePath(), { repositoryId: REPOSITORY });
   store.append({ sessionId, eventId, kind: "user-prompt", observedAt: 600_000, payload: { text: "secret plans" } });
@@ -187,7 +177,7 @@ describe("remote sink outbox", () => {
     const { auditId } = seed();
     setPathsText(auditId, '["a.ts"');
     addRemote({ url: sink.url, token: "test-token", content: true }, home);
-    const [held] = await quietly(() => outbox().sync({ force: true }));
+    const [held] = await outbox().sync({ force: true });
     expect(held!.error).toContain(`audit ${auditId} not sent`);
     expect(outbox().status()[0]).toMatchObject({ lastError: held!.error, consecutiveFailures: 0, pendingEvents: 0 });
     expect(storedRecords(sink).filter(item => item.type === "audit" || item.type === "violation")).toEqual([]);
@@ -197,7 +187,7 @@ describe("remote sink outbox", () => {
     const { auditId } = seed();
     setPathsText(auditId, '["a.ts"');
     addRemote({ url: sink.url, token: "test-token", content: true }, home);
-    await quietly(() => outbox().sync({ force: true }));
+    await outbox().sync({ force: true });
     setPathsText(auditId, "[]");
     const [mended] = await outbox().sync({ force: true });
     expect(mended!.error).toBeUndefined();
