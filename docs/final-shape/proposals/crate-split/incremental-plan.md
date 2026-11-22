@@ -679,3 +679,19 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     arguments, `resolves`, scopes and options in adapters, classic, the packs and the matcher, compile, demand,
     transducer and logic test crates: 499 pass, and the suppression contract test on a Mac. The rest are pack data
     tests (`fixtures:pull`) and the four above.
+- **Step 6b** (2026-11-21): `rerail-matcher` (`native/crates/matcher`), 21.6k lines over `rerail-adapters`: the
+  matcher, the syntax errors' soundness (`soundness`, which the matcher reads and which reads it), the code-rule
+  profile (`profile`, with `code-rule-profile`; it describes matchers), `walks` (test hooks) and the semantic facts
+  the binds read (`transducer::semantic_facts`).
+  - Its one production read above it was a file's `FileInput` through `model`: it reads `file_input` now.
+  - P's and D's SQL anchor engines (`matcher::{p_anchors, d_anchors}`, 19.4k lines, test-only copies, O19/O20)
+    read the model and the admission's database, so they are classic's: its matcher facade mounts them, with the
+    P corpus's re-exports, and repeats `matcher/mod.rs`'s imports for them.
+  - What classic's compiler reads of the matcher (the rules' fields, constructors, the utility tables' fill and
+    draft) was crate-private: widened (`pub`), as the split's facades are.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on it and
+    classic): on a Linux host, every test of `rerail-matcher`, `rerail-adapters`, `rerail-tests-matcher` and
+    `rerail-tests-compile`, 1352 pass (four are pack data tests); the anchor, soundness, syntax error, memo and
+    `each` tests of classic, boot and the logic, demand, transducer and language test crates, 158 pass (one a pack
+    data test). The other is a transducer test the device lane refuses (`UnsupportedBackend`) on a Linux host:
+    there seven of `transducer::packed::tests` are refused so; they read no code this step moved.

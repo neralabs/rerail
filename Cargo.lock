@@ -3419,6 +3419,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-facts",
  "rerail-lang",
+ "rerail-matcher",
  "rerail-prof",
  "rerail-rr-parser",
  "rerail-rr-syntax",
@@ -4808,6 +4809,36 @@ dependencies = [
  "rerail-markdown-lean",
  "rerail-simd8",
  "rerail-tape-format",
+]
+
+[[package]]
+name = "rerail-matcher"
+version = "0.1.0"
+dependencies = [
+ "ast-grep-core",
+ "ast-grep-language",
+ "foldhash",
+ "libc",
+ "memchr",
+ "napi",
+ "num-traits",
+ "parking_lot",
+ "regex",
+ "regex-syntax",
+ "rerail-adapters",
+ "rerail-blocks",
+ "rerail-facts",
+ "rerail-lang",
+ "rerail-matcher",
+ "rerail-prof",
+ "rerail-rr-syntax",
+ "rerail-store",
+ "rusqlite",
+ "rustc-hash",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "tree-sitter",
 ]
 
 [[package]]

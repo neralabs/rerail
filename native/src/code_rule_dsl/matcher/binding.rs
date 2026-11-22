@@ -25,24 +25,24 @@ use std::sync::Arc;
 /// sub-rules share the caller's environment, as `has` does, so they may bind captures.
 #[derive(Clone)]
 pub struct BindingTest {
-    pub(crate) language: GrammarDialect,
+    pub language: GrammarDialect,
     /// How the binding is read: through `global` or not, and whether it must be the first.
-    pub(crate) lookup: Lookup,
+    pub lookup: Lookup,
     /// TypeScript: whether a destructured name's literal element is its value (the default);
     /// `destructuredValue: false` gives it none, as `ReferenceTracker` and `getStaticValue` read.
-    pub(crate) destructured_value: bool,
+    pub destructured_value: bool,
     /// `resolves.write: "last"`: the node is where ESLint reports its variable (the last write
     /// from the variable's own function scope, else the first definition's name), a reference or
     /// a binding's name node.
-    pub(crate) write_last: bool,
+    pub write_last: bool,
     /// Kinds a binding's name node can have, for `write_last`.
-    pub(crate) name_kinds: BTreeSet<u16>,
+    pub name_kinds: BTreeSet<u16>,
     /// Kinds a reference can have.
-    pub(crate) reference_kinds: BTreeSet<u16>,
+    pub reference_kinds: BTreeSet<u16>,
     /// Parenthesized expressions, which are transparent.
-    pub(crate) paren_kinds: BTreeSet<u16>,
-    pub(crate) options: Option<Arc<LanguageOptions>>,
-    pub(crate) python: Option<Arc<PythonOptions>>,
+    pub paren_kinds: BTreeSet<u16>,
+    pub options: Option<Arc<LanguageOptions>>,
+    pub python: Option<Arc<PythonOptions>>,
     /// Filters over the binding, as `binds` has.
     pub filter: BindingFilter,
     /// Matches the construct that binds the name (`Site::node`).
@@ -207,7 +207,7 @@ impl BindingTest {
     }
 
     /// The sub-rules, which may bind captures.
-    pub(crate) fn sub_rules(&self) -> impl Iterator<Item = &AstMatcher> {
+    pub fn sub_rules(&self) -> impl Iterator<Item = &AstMatcher> {
         [&self.site, &self.value, &self.annotation, &self.occurrence]
             .into_iter()
             .flatten()

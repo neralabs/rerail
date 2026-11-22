@@ -25,7 +25,7 @@ pub(super) type Scope = Arc<[Arc<str>]>;
 /// of the query shapes them (`context_free`): their verdicts are one (`UtilRef::memo_term`).
 #[derive(Clone, Copy, Debug)]
 pub struct UtilOrigin {
-    pub(crate) digest: [u8; 32],
+    pub digest: [u8; 32],
 }
 
 /// The `utils` of one ast query, or a document's shared utilities (`define`), compiled for one
@@ -68,7 +68,7 @@ struct Slot {
 }
 
 impl UtilTable {
-    pub(crate) fn new(
+    pub fn new(
         names: Arc<[String]>,
         framed: Arc<[bool]>,
         origins: Vec<Option<UtilOrigin>>,
@@ -78,7 +78,7 @@ impl UtilTable {
 
     /// A table that shares its names, parameter flags and origins with the other shared tables
     /// of its define (`compile::shared`).
-    pub(crate) fn sharing(
+    pub fn sharing(
         names: Arc<[String]>,
         framed: Arc<[bool]>,
         origins: Arc<[Option<UtilOrigin>]>,
@@ -109,7 +109,7 @@ impl UtilTable {
     }
 
     /// Fills utility `index` with its compiled rule.
-    pub(crate) fn fill(&self, index: usize, rule: AstMatcher) {
+    pub fn fill(&self, index: usize, rule: AstMatcher) {
         let slot = self
             .slot_or_new(index)
             .expect("a filled utility is the table's");
@@ -119,14 +119,14 @@ impl UtilTable {
     }
 
     /// Fills every utility, in index order.
-    pub(crate) fn fill_all(&self, rules: Vec<AstMatcher>) {
+    pub fn fill_all(&self, rules: Vec<AstMatcher>) {
         for (index, rule) in rules.into_iter().enumerate() {
             self.fill(index, rule);
         }
     }
 
     /// Drafts utility `index` with a first compilation of its rule.
-    pub(crate) fn draft(&self, index: usize, rule: AstMatcher) {
+    pub fn draft(&self, index: usize, rule: AstMatcher) {
         let slot = self
             .slot_or_new(index)
             .expect("a drafted utility is the table's");
@@ -136,7 +136,7 @@ impl UtilTable {
     }
 
     /// Drafts every utility, in index order.
-    pub(crate) fn draft_all(&self, rules: Vec<AstMatcher>) {
+    pub fn draft_all(&self, rules: Vec<AstMatcher>) {
         for (index, rule) in rules.into_iter().enumerate() {
             self.draft(index, rule);
         }
@@ -144,18 +144,18 @@ impl UtilTable {
 
     /// Begins compiling utilities of the table: `was_unfilled` then tells whether this
     /// compilation's walks met one they could not read yet.
-    pub(crate) fn begin_compilation(&self) {
+    pub fn begin_compilation(&self) {
         self.unfilled.store(false, Ordering::Relaxed);
     }
 
     /// Whether a walk met a utility it could not read yet.
-    pub(crate) fn was_unfilled(&self) -> bool {
+    pub fn was_unfilled(&self) -> bool {
         self.unfilled.load(Ordering::Relaxed)
     }
 
     /// The compiled utilities among `indices` that run in their caller's environment (no
     /// parameters).
-    pub(crate) fn shared_rules<'t>(
+    pub fn shared_rules<'t>(
         &'t self,
         indices: &'t [usize],
     ) -> impl Iterator<Item = &'t AstMatcher> {
@@ -166,7 +166,7 @@ impl UtilTable {
     }
 
     /// Records a call; false once more than `MAX_UTIL_INSTANCES` distinct ones were recorded.
-    pub(crate) fn record_instance(&self, index: usize, args: &[(String, String)]) -> bool {
+    pub fn record_instance(&self, index: usize, args: &[(String, String)]) -> bool {
         let mut instances = self
             .instances
             .lock()
@@ -192,7 +192,7 @@ pub struct UtilCall {
 impl UtilCall {
     /// The caller's names for the parameters among `names` (the utility's own): what the call binds
     /// or reads, seen from its caller.
-    pub(crate) fn outward<S: AsRef<str>>(
+    pub fn outward<S: AsRef<str>>(
         &self,
         names: impl IntoIterator<Item = S>,
     ) -> BTreeSet<&str> {
@@ -265,7 +265,7 @@ impl<K: Ord + Clone, T: Clone + PartialEq> UtilitySummary<K, T> {
     }
 
     /// The summary of `key`, which `walk` computes from the summaries it asks of `self`.
-    pub(crate) fn summarize(
+    pub fn summarize(
         &mut self,
         key: K,
         initial: T,

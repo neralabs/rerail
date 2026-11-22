@@ -62,7 +62,7 @@ impl CaptureAnalysis {
     /// The names counts bind their values under (`as`) in the environment a matcher runs in: not
     /// under `not` or inside a count (a probe each), in a stop rule (a fresh environment), or in a
     /// call's frame. Messages and source-text comparisons read them.
-    pub(in crate::code_rule_dsl) fn counts(&mut self, matcher: &AstMatcher) -> Names {
+    pub fn counts(&mut self, matcher: &AstMatcher) -> Names {
         let mut names = Names::new();
         collect_counts(matcher, &mut self.counts, &mut names);
         names

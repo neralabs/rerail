@@ -68,7 +68,7 @@ pub struct FormatArgs {
     /// Matched on the template's fields (placeholders and stars for `%`) no argument fills.
     pub missing: Option<AstMatcher>,
     /// The captures `missing` may bind, exported to the host.
-    pub(crate) exports: Vec<String>,
+    pub exports: Vec<String>,
     /// How a PHP format that is no string literal is read: its value through bindings (`printf`
     /// and `scanf`); `None` for Python's styles, which read a literal only.
     pub reading: Option<Reading>,
