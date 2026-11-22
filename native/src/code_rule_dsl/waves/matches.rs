@@ -540,10 +540,13 @@ impl Wave {
         use rayon::prelude::*;
         // Each clause's starts per file: its set's nodes where its root program starts, ascending
         // (the set's order). Held through the labels and the roots: no growth slack.
+        // Each clause's item in the caller's run (decision 0442): a pool thread that takes it reads the run's records.
+        let carry = crate::code_rule_dsl::logic::profile::carry();
         crate::code_rule_dsl::logic::profile::on_cores(|| {
             sets.into_par_iter()
                 .enumerate()
                 .map(|(clause, set)| {
+                    let _in = carry.enter("candidates.clause");
                     let out = (0..tapes.len())
                         .map(|file| {
                             let mut nodes = set.file_nodes(&space, file).filter(|&node| self.lowered.starts(clause, &tapes[file].doc, node)).collect::<Vec<_>>();

@@ -269,11 +269,15 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
     // (the pool's work, which the caller's does not hold: Q135). Not a `labels.` stage: those take process CPU too,
     // which tapes in parallel would count again.
     let block = &*rows.block;
+    // Each tape's item in the caller's run (decision 0442): a pool thread that takes it reads the run's records.
+    let carry = crate::code_rule_dsl::logic::profile::carry();
     rows.found = crate::code_rule_dsl::prof::time("labels.facts", || {
         crate::code_rule_dsl::logic::profile::on_cores(|| {
             tapes
                 .par_iter()
-                .flat_map_iter(|tape| crate::code_rule_dsl::prof::time("fact_rows.tape", || {
+                .flat_map_iter(|tape| {
+                  let _in = carry.enter("fact_rows.tape");
+                  crate::code_rule_dsl::prof::time("fact_rows.tape", || {
                     let file = ast_grep_core::AstGrep::doc(tape.clone());
                     let _scopes = crate::code_rule_dsl::matcher::FileScopeSlot::install(Vec::new(), None, !tape.syntax_error_ranges().is_empty());
                     // The tape's parents' gaps for its facts' gap tests, each parent's made once (Q135).
@@ -289,7 +293,8 @@ pub fn fact_rows<'a>(facts: impl Iterator<Item = &'a Arc<crate::code_rule_dsl::m
                             ((Arc::as_ptr(fact) as usize, source), found)
                         })
                         .collect::<Vec<_>>()
-                }))
+                  })
+                })
                 .collect()
         })
     });
