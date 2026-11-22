@@ -375,21 +375,28 @@ stub_file(d) :- doc(d, p, _), suffix(".pyi", p).
 path_module(d, @replace_all(@replace_all(p, "\\.pyi?$", ""), "/", ".")) :- doc(d, p, _), match(".*\\.pyi?", p).
 
 // ---- 7. annotations ----------------------------------------------------------------------------------------------
-// ann_root(t) (python/names): the root of an annotation: a parameter's, a return's, an annotated assignment's.
-// names' parsed_in(e, s) gives the trees parsed from its strings, and `annotation` every node below either.
-// ann_node(a, e): e is in annotation a, or in a tree parsed from one of its strings.
+// ann_root(t) (python/annotation): the root of an annotation: a parameter's, a return's, an annotated assignment's.
+// The annotation context's ann_in(e, s) gives the trees of its strings, and `annotation` every node below either.
+// ann_node(a, e): e is in annotation a, or in a tree of one of its strings.
 .decl ann_node(a: node, e: node)
 ann_node(a, e) :- ann_root(a), (e = a ; within(e, a)).
-ann_node(a, e) :- ann_root(a), (s = a ; within(s, a)), parsed_in(e, s).
+ann_node(a, e) :- ann_root(a), (s = a ; within(s, a)), ann_in(e, s).
 // in_string_ann(e): e is in the tree parsed from a string annotation. Ruff skips some expression rules there
 // (its in_string_type_definition), as SIM222 and SIM223 do.
 //   def f(a: "'' and 'b'"): ...      in_string_ann(<'' and 'b'>), in_string_ann(<''>)
 .decl in_string_ann(e: node)
-in_string_ann(e) :- parsed_in(e, _).
+in_string_ann(e) :- ann_in(e, _).
 // ann_name(a, s): every dotted name mentioned in annotation a: `Optional[db.Conn] | "Txn"` gives "Optional",
 // "db.Conn" and "Txn". Only whole chains: "db" alone is not listed.
 .decl ann_name(a: node, s: symbol)
 ann_name(a, s) :- ann_node(a, e), dotted_expr(e, s), !field(_, "object", e).
+// A string's names are the annotation context's (python/annotation): ann_dotted(s, x), the whole chains of the trees
+// of string annotation s.
+ann_name(a, x) :- ann_root(a), (s = a ; within(s, a)), ann_dotted(s, x).
+.decl ann_dotted(s: node, x: symbol)
+ann_dotted(s, x) :- ann_in(e, s), dotted_expr(e, x), !field(_, "object", e).
+.context annotation of python roots ann_tree exports ann_dotted
+.from annotation ann_dotted
 // ann_head(a, s): the head type: `Optional[Conn]` gives "Optional"; `A | B` gives both A's head and B's.
 .decl ann_head(a: node, s: symbol)
 ann_head(a, s) :- ann_root(a), head_of(a, s).

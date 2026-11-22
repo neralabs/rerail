@@ -106,6 +106,21 @@ impl W {
 
 type Facts = BTreeMap<Slot, Fact>;
 
+/// The grammars a context reads (decision 0597): those of its roots, as `carried` knows them.
+fn context_grammars(passes: &[crate::code_rule_dsl::logic::passes_made::Made], carried: &HashMap<String, Vec<Fact>>) -> BTreeSet<String> {
+    passes.iter().filter_map(|p| carried.get(p.roots.as_str())?.first().filter(|f| f.scoped)?.grammar.clone()).filter(|g| !g.is_empty()).collect()
+}
+
+/// What a rule reads of a guest (decision 0597 step 4): a guest a context reads is read by the context's rules alone.
+/// A host rule carries its nodes as values (the context's roots, an export's rows), but reads none: its facts drop
+/// them, so it is not cloned or copied for them, and its views of them are bounded, as of any node not shown.
+fn as_read(rule: &W, mut facts: Facts, grammars: &BTreeSet<String>) -> Facts {
+    if !grammars.is_empty() && !crate::code_rule_dsl::logic::passes_made::of_a_context(&rule.head) {
+        facts.retain(|_, f| !(f.scoped && f.grammar.as_ref().is_some_and(|g| grammars.contains(g))));
+    }
+    facts
+}
+
 /// Bounds `prog`'s unscoped location variables to its shown documents (`bound`), and names the kinds and fields of
 /// scoped nodes in their grammar.
 /// With `bound` from `hiding::bound`.
@@ -141,6 +156,7 @@ impl ProgramPass for Hide {
         let mut rules: Vec<W> = v.rules().map(|r| W::of(v, r)).collect();
         let (views, base_locations) = bases(&prog);
         let view = |rel: &str| views.contains(rel);
+        let passes = crate::code_rule_dsl::logic::passes_made::made(v);
         let mut seeds: Vec<Facts> = vec![Facts::new(); rules.len()];
         // A derived relation read with a scoped variable of a known grammar is specialized to it (decision 0058 §2, O98):
         // `rr_in_<grammar>_<column>_<relation>`, its rules copied with that head column seeded, so a node set's kinds are
@@ -162,6 +178,7 @@ impl ProgramPass for Hide {
             let looked = delta.round(&rules, &prog.b, &seeds, &base_locations, &view, &touched);
             let reaches = &delta.reaches;
             let carried = &delta.carried;
+            let grammars = context_grammars(&passes, carried);
             // The round reads the rules as they were when it began, and records its edits, applied after it: a copy is
             // made from its original as it was (no snapshot of every rule each round, which was a fifth of hiding a pack).
             let mut edits: Vec<(usize, usize, Edit)> = Vec::new();
@@ -185,7 +202,7 @@ impl ProgramPass for Hide {
                     if view(&rule.head) || !reaches[i] {
                         return Facts::new();
                     }
-                    analyse(rule, &base_locations, carried, &seeds[i])
+                    as_read(rule, analyse(rule, &base_locations, carried, &seeds[i]), &grammars)
                 })
                 .collect();
             for (i, facts) in looked.iter().copied().zip(analysed) {
@@ -398,6 +415,7 @@ impl ProgramPass for Hide {
         // alone (`rr_ctx3(s) :- kind(s, "string")`), so bounded, the string inside `"Opt['Baz']"` was never asked for,
         // and no rule reached it through the annotation either.
         let asking = asking(&prog, &rules);
+        let grammars = context_grammars(&passes, &carried);
         let mut finals: Vec<Final> = vec![Final::default(); rules.len()];
         // An annotation is a tape value (decision 0431 §3), shown to no rule that does not name a guest (decision
         // 0165): a clone whose head would carry an annotation's node into a column an output shows (`shown_columns`)
@@ -410,7 +428,7 @@ impl ProgramPass for Hide {
             if VIEWS.contains(&rule.head.as_str()) || asking.contains(&rule.head) {
                 continue;
             }
-            let facts: Facts = if reaches[i] { analyse(rule, &base_locations, &carried, &seeds[i]) } else { Facts::new() };
+            let facts: Facts = if reaches[i] { as_read(rule, analyse(rule, &base_locations, &carried, &seeds[i]), &grammars) } else { Facts::new() };
             if clones.contains(&i) && shows_an_annotation(rule, &facts, &shown) {
                 gone.insert(i);
                 continue;

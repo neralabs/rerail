@@ -10407,3 +10407,10 @@ Decision 0588, the expansion as one loop phase and §6's teams (`notes/roll-up-6
 - **Roll-up 65's coherent atomics** are not defined on the vector path, which has one memory and whose C reader saw
   them as defined twice. rerail-ukl-vec's 35 tests pass again.
 - **`fiber.rs`' `PREPARED`** is listed as `Thread`.
+
+### Q489. Roll-up 68 (cost-classifier-metal-rf 480a02cc10 onto Pulling-it-all-together): what the merge chose
+
+Decision 0597's contexts, steps 2 to 4 (`notes/roll-up-68-cost-classifier.md`):
+- **`passes_made` is rerail-plan-base's**, beside `answers`, below its readers in rerail-rr-root and
+  rerail-corpus-prep.
+- **The combine's context passes** are in ours' `corpus/base.rs`, the combine's tail.

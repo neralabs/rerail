@@ -1155,6 +1155,9 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
         for (own, stated, own_stated) in appended {
             p.program(&mut lowering_tail::AppendModule { own, stated, own_stated });
         }
+        // A guest context's passes (decision 0597): made before the declarations are checked, since a `.from` name
+        // is declared by its pass.
+        p.program(&mut super::contexts::Passes).program(&mut super::contexts::CrossingCycles);
         if declared {
             p.program(&mut lowering_tail::Declared);
         }
@@ -1446,7 +1449,9 @@ fn builtin_resolve(statements: Vec<Stmt>) -> Result<(Files, Vec<Stmt>), Error> {
 pub fn metadata(program: &(impl super::program_image::fields::ProgramFields + ?Sized)) -> Result<serde_json::Value, Error> {
     use syntax::Tok;
     let mut policies = program.policies();
-    let settings = program.settings();
+    // A program's passes (decision 0597: `.context` and `.from` as written, `.pass` as made) are its structure, not
+    // its metadata: a pack's member's header holds its library's as written, its run alone the made ones.
+    let settings: Vec<(String, String)> = program.settings().into_iter().filter(|(key, _)| !matches!(key.as_str(), "context" | "from" | "pass")).collect();
     for (_, text) in settings.iter().filter(|(key, _)| key == "policy") {
         let tokens = syntax::tokens(text)?;
         let Some((Tok::Str(id), _, _)) = tokens.first() else {
