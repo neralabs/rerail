@@ -137,6 +137,11 @@ vi.mock("node:child_process", async importOriginal => {
   const actual = await importOriginal<typeof ChildProcess>();
   // `git.ts` starts the Git of each read that does not block through `spawn`, with `-C <checkout>`; any other process
   // goes through unchanged.
+  // The option Git does not know goes before a `--`, past which Git takes every argument for a path.
+  const withUnknownOption = (args: readonly string[]): string[] => {
+    const end = args.includes("--") ? args.indexOf("--") : args.length;
+    return [...args.slice(0, end), "--no-such-option", ...args.slice(end)];
+  };
   const spawn = (...call: Parameters<typeof actual.spawn>) => {
     if (Array.isArray(call[1]) && call[1].includes("-C")) {
       const args = call[1] as readonly string[];
@@ -146,7 +151,7 @@ vi.mock("node:child_process", async importOriginal => {
       }
       const fails = asyncGitCalls.failing !== undefined && args.includes(asyncGitCalls.failing);
       const hangs = asyncGitCalls.hanging?.every(part => args.includes(part)) === true;
-      const forwarded = hangs ? [...args.slice(0, args.indexOf("-C") + 2), "cat-file", "--batch"] : fails ? [...args, "--no-such-option"] : [...args];
+      const forwarded = hangs ? [...args.slice(0, args.indexOf("-C") + 2), "cat-file", "--batch"] : fails ? withUnknownOption(args) : [...args];
       call[1] = forwarded;
       asyncGitCalls.args.push(forwarded);
       asyncGitCalls.before?.(forwarded);
@@ -5205,16 +5210,18 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
 
   /**
    * A bridge on `twoBranches`, first `prepare`d, whose session opened before Git added a worktree of `other`; it walks
-   * the worktree once `roots` holds it. `named` gives a file of the worktree as the session names it.
+   * the worktree once `roots` holds it, and the worktree owns its files once `roots` or `owned` holds it. `named` gives a
+   * file of the worktree as the session names it.
    */
   async function worktreeAddedLater(prepare: (root: string) => Promise<void> = async () => undefined) {
     const root = await twoBranches();
     await prepare(root);
     const roots: string[] = [];
+    const owned: string[] = [];
     const auditGeneratedEdits = vi.fn(async (_sessionId: string, batch: CodeRuleEditBatch) => response(batch));
     const bridge = createBridge(root, {
       ...auditor(auditGeneratedEdits),
-      sourceRoot: path => roots.find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
+      sourceRoot: path => [...roots, ...owned].find(known => resolve(root, path).startsWith(`${known}${sep}`)) ?? root,
       worktreeRoots: () => roots,
     }, { worktreeWalkGapMs: 0 });
     await bridge.openWorkspace("session-1");
@@ -5224,7 +5231,7 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     git(root, "worktree", "add", "--quiet", place, "other");
     const worktree = await realpath(place);
     const named = (file: string): string => relative(root, join(worktree, file)).split(sep).join("/");
-    return { root, roots, bridge, auditGeneratedEdits, worktree, named };
+    return { root, roots, owned, bridge, auditGeneratedEdits, worktree, named };
   }
   /** Each edit the auditor was given, as its path and its audit's mode. */
   function editModes(auditGeneratedEdits: { readonly mock: { readonly calls: ReadonlyArray<readonly [string, CodeRuleEditBatch]> } }) {
@@ -5267,6 +5274,35 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     expect(editModes(auditGeneratedEdits)).toContainEqual([named("src/a.py"), "log"]);
   });
 
+  it("records a file a command added and staged in a worktree before its first walk whose listing of the index failed", async () => {
+    const { roots, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater();
+    await writeFile(join(worktree, "src", "added.py"), "violation\n");
+    git(worktree, "add", "src/added.py");
+    roots.push(worktree);
+    asyncGitCalls.failing = "diff-index";
+    try {
+      await shellInWorktree(bridge, () => undefined);
+    } finally {
+      asyncGitCalls.failing = undefined;
+    }
+    expect(editModes(auditGeneratedEdits)).toContainEqual([named("src/added.py"), "log"]);
+  });
+
+  // A binary file of no listed language is observed without a read: it has no read error, and no digest to judge it by.
+  it("records nothing of a binary file of no listed language that a worktree Git added during the session holds as committed", async () => {
+    const { roots, bridge, auditGeneratedEdits, worktree } = await worktreeAddedLater(async root => {
+      git(root, "switch", "--quiet", "other");
+      await writeFile(join(root, "src", "blob.raw"), "x\0y\n");
+      git(root, "add", "src/blob.raw");
+      git(root, "commit", "--quiet", "-m", "binary");
+      git(root, "switch", "--quiet", "main");
+      await awaitClockAfter(join(root, "src", "a.py"), join(root, "src", "gone.py"));
+    });
+    roots.push(worktree);
+    await shellInWorktree(bridge, () => undefined);
+    expect(editModes(auditGeneratedEdits)).toEqual([]);
+  });
+
   // A committed source holding binary data, which Git's listings leave out as they do any file the index holds.
   it("records a file of a worktree Git added during the session that its first walk could not read as text", async () => {
     const { roots, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater(async root => {
@@ -5299,6 +5335,56 @@ describe("CodeRuleBridge and every worktree of the repository", () => {
     discovery.directories.delete(join(worktree, "deep"));
     await shellInWorktree(bridge, () => writeFile(join(worktree, "src", "a.py"), "old\nviolation\nmine\n"));
     expect(editModes(auditGeneratedEdits)).toContainEqual([repositoryPath(root, join(worktree, "src", "a.py")), "log"]);
+  });
+
+  /** Has the session observe the file at `path` through a write tool call that leaves it as it was: it audits nothing. */
+  async function observedByCall(bridge: CodeRuleBridge, path: string): Promise<void> {
+    await bridge.begin("write-1", "write", { path });
+    await bridge.finish("write-1");
+  }
+
+  // The session keeps the `HEAD` it last saw of a worktree Git removed. Added again at that commit, the worktree's `HEAD`
+  // has not moved, so a file the session saw there that is gone at the walk's next first sight of it was deleted by no
+  // Git command, which only a reading that knows that `HEAD` can say.
+  it("records a file it saw in a worktree removed and added again at one commit that a command deleted before the next walk", async () => {
+    const root = await twoBranches();
+    const place = join(await workspace(), "w");
+    const { worktree, roots } = await withWorktree(root, place);
+    // The worktree owns its files while Git does not list it.
+    const { bridge, auditGeneratedEdits } = await opened(root, {
+      sourceRoot: path => resolve(root, path).startsWith(`${worktree}${sep}`) ? worktree : root,
+      worktreeRoots: () => roots,
+    });
+    await shellInWorktree(bridge, () => {
+      git(root, "worktree", "remove", worktree);
+      roots.length = 0;
+    });
+    git(root, "worktree", "add", "--quiet", place, "other");
+    const notes = join(worktree, "src", "notes.py");
+    await writeFile(notes, "notes\n");
+    await observedByCall(bridge, notes);
+    await shellInWorktree(bridge, async () => {
+      await rm(notes);
+      roots.push(worktree);
+    });
+    expect(editModes(auditGeneratedEdits)).toContainEqual([repositoryPath(root, notes), "log"]);
+  });
+
+  // A deletion neither listing names is of a path neither the index nor `HEAD` holds, which a reading with no `HEAD`
+  // known before takes for Git's too (`removedByGit`).
+  it("takes a file it saw in a worktree Git added during the session that a command deleted before its first walk for Git's, reading no blob", async () => {
+    const { roots, owned, bridge, auditGeneratedEdits, worktree, named } = await worktreeAddedLater();
+    owned.push(worktree);
+    const notes = join(worktree, "src", "notes.py");
+    await writeFile(notes, "notes\n");
+    await observedByCall(bridge, notes);
+    asyncGitCalls.args.length = 0;
+    await shellInWorktree(bridge, async () => {
+      await rm(notes);
+      roots.push(worktree);
+    });
+    const blobs = asyncGitCalls.args.filter(args => args.includes("cat-file")).length;
+    expect({ deleted: editModes(auditGeneratedEdits).filter(([path]) => path === named("src/notes.py")), blobs }).toEqual({ deleted: [], blobs: 0 });
   });
 
   it("walks a worktree inside the session's folder once", async () => {
