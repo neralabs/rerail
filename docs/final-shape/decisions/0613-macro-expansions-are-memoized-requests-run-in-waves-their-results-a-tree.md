@@ -284,17 +284,18 @@ So:
      - **Done since:** the model in steps, against the device's slowest piece; the corpus with the system's
        headers; the arguments' edges, statically and taken.
      - **Done since:** a child taking its arguments as references, run by continuations (the model's `Lazy`).
-     - **Next:** step 2, a CPU executor that produces the tokens, checked against the serial pass's.
-2. **A CPU reference of the waves**, test-only: the serial pass's reader, run as requests with the memo, the holes,
-   the edge checks and the continuations. Its output must equal the serial pass's on the eval tests, the corpus
-   and Boost.Preprocessor. This proves the semantics (painting, tails, `(` from a child, `#`/`##` on unexpanded
-   arguments, `__VA_OPT__`) before any device code.
-3. **The device:**
+     - **Next:** step 2, the device.
+2. **The device**, with no CPU version of the waves: the serial pass is already the CPU preprocessor, and it is
+   the oracle. Each piece is checked against it, token for token, on the eval tests, the corpus and
+   Boost.Preprocessor, which covers the semantics (painting, tails, `(` from a child, `#`/`##` on unexpanded
+   arguments, `__VA_OPT__`). The pieces:
    - the memo table and the nodes in the batch's block;
    - 0588's loop as a request's executor;
    - the queue's continuations;
    - the roll-up's two passes.
-4. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
+
+   Written once in UKL, so the small tests run on UKL's CPU backend and the rest on Metal on a farm Mac.
+3. **Measure the result.** The slowest piece's chain against today's 1.35 ms; the batch's GPU time against the
    serial pass on all cores.
 
 ## Tests
