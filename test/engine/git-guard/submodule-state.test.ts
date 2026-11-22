@@ -89,7 +89,7 @@ describe("submoduleChanged", () => {
     writeFileSync(join(root, "sub", ".git", "HEAD"), "ref: refs/heads/main\n");
     const opened: string[] = [];
 
-    const changed = await submoduleChanged(join(root, "sub"), false, async folder => {
+    const changed = await submoduleChanged({ top: root, path: "sub" }, false, async folder => {
       opened.push(folder);
       return await Promise.resolve(UNASKED);
     }, 0);
@@ -108,13 +108,14 @@ describe("submoduleChanged", () => {
       return realFs.openSync(path, flags, mode);
     });
 
-    const changed = await submoduleChanged(join(root, "sub"), false, async () => await Promise.resolve(UNASKED), 1);
+    const changed = await submoduleChanged({ top: root, path: "sub" }, false, async () => await Promise.resolve(UNASKED), 1);
 
     expect([changed, opened]).toEqual([false, []]);
   });
 
   it("reads a `.git` file put in place of a smaller one after its stat to Git's 1 MiB and one byte at most, and fails as too large", async () => {
-    const { linked } = repositories(await folder());
+    const root = await folder();
+    const { linked } = repositories(root);
     const gitfile = join(linked, ".git");
     const larger = realFs.readFileSync(gitfile, "utf8").padEnd(4 * 1024 * 1024, "\n");
     vi.mocked(openSync).mockImplementation((path, flags, mode) => {
@@ -127,14 +128,15 @@ describe("submoduleChanged", () => {
     });
     vi.mocked(readSync).mockClear();
 
-    const changed = await submoduleChanged(linked, false, async () => await Promise.resolve(UNASKED), 1);
+    const changed = await submoduleChanged({ top: root, path: "linked" }, false, async () => await Promise.resolve(UNASKED), 1);
 
     const read = vi.mocked(readSync).mock.results.reduce((sum, result) => sum + (result.type === "return" ? result.value : 0), 0);
-    expect([changed, read <= 1024 * 1024 + 1]).toEqual([{ status: 128, stdout: "", stderr: `fatal: too large to be a .git file: '${gitfile}'\n` }, true]);
+    expect([changed, read <= 1024 * 1024 + 1]).toEqual([{ status: 128, stdout: "", stderr: `fatal: too large to be a .git file: 'linked/.git'\n` }, true]);
   });
 
   it("reads a `.git` file that grew after its stat to Git's 1 MiB and one byte at most, and fails as too large", async () => {
-    const { linked } = repositories(await folder());
+    const root = await folder();
+    const { linked } = repositories(root);
     const gitfile = join(linked, ".git");
     const opened: number[] = [];
     vi.mocked(openSync).mockImplementation((path, flags, mode) => {
@@ -148,10 +150,10 @@ describe("submoduleChanged", () => {
       return realFs.readSync(...args);
     });
 
-    const changed = await submoduleChanged(linked, false, async () => await Promise.resolve(UNASKED), 1);
+    const changed = await submoduleChanged({ top: root, path: "linked" }, false, async () => await Promise.resolve(UNASKED), 1);
 
     const read = vi.mocked(readSync).mock.results.reduce((sum, result) => sum + (result.type === "return" ? result.value : 0), 0);
-    expect([changed, read <= 1024 * 1024 + 1]).toEqual([{ status: 128, stdout: "", stderr: `fatal: too large to be a .git file: '${gitfile}'\n` }, true]);
+    expect([changed, read <= 1024 * 1024 + 1]).toEqual([{ status: 128, stdout: "", stderr: `fatal: too large to be a .git file: 'linked/.git'\n` }, true]);
   });
 });
 
@@ -236,12 +238,13 @@ describe("a file Git reads whole, each read of it cut short", () => {
     ["its `.git` file", linked => join(linked, ".git"), 7],
     ["its Git folder's `HEAD`", linked => join(gitFolderFound(linked) ?? "", "HEAD"), 3],
   ])("opens a submodule whose %s is read on after a read cut short, as Git reads it", async (_what, file, most) => {
-    const { linked } = repositories(await folder());
+    const root = await folder();
+    const { linked } = repositories(root);
     const found = gitFolderFound(linked);
     shortReads(file(linked), most);
     const opened: string[] = [];
 
-    const changed = await submoduleChanged(linked, false, async (_folder, gitFolder) => {
+    const changed = await submoduleChanged({ top: root, path: "linked" }, false, async (_folder, gitFolder) => {
       opened.push(gitFolder);
       return await Promise.resolve(UNASKED);
     }, 1);

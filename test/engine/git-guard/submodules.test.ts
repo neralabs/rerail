@@ -483,22 +483,25 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect([printed.status, printed.error?.message]).toEqual([null, "Git printed more than maxBuffer (1 bytes) to stdout"]);
   }, 60_000);
 
-  it("and fail a diff where a submodule's `.git` file names no repository, as Git's own diff fails", async () => {
+  // Each row: what is at a submodule's `.git`, made from that path, and Git's message, which names the submodule by its
+  // path from the top and a folder a `.git` file names as Git joins it from there.
+  it.each<[string, (dotGit: string) => void, string]>([
+    ["a `.git` file that names no folder", dotGit => writeFileSync(dotGit, "gitdir: ../missing\n"), "not a git repository: sub/../missing"],
+    ["a `.git` file that names a folder that holds no repository", dotGit => {
+      mkdirSync(join(dotGit, "..", "..", "..", "outside"));
+      writeFileSync(dotGit, "gitdir: ../../outside\n");
+    }, "not a git repository: sub/../../outside"],
+    ["a `.git` folder that holds no repository", dotGit => mkdirSync(dotGit), "'sub/.git' not recognized as a git repository"],
+  ])("and fail a diff where a submodule's `.git` is %s, with Git's message, as Git's own diff fails", async (_what, made, said) => {
     const root = await folder();
-    const source = await repository(root, "source", { "inner.txt": "one\n" });
-    const work = await repository(root, "work", { "top.txt": "top\n" });
-    git(work, "submodule", "add", "--quiet", source, "sub");
-    git(work, "commit", "--quiet", "-m", "submodule");
-    // Git for Windows hides a submodule's `.git` file, and Windows refuses to open a hidden file for writing.
-    unlinkSync(join(work, "sub", ".git"));
-    await writeFile(join(work, "sub", ".git"), "gitdir: ../missing\n");
+    const { work, gitfile } = await submoduleGitfile(root);
+    made(gitfile);
 
-    const audit = await runGitWithoutBlocking(work, AUDIT_DIFF);
+    const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
+    const gits = [gitStderr(work, AUDIT_DIFF), gitStderr(work, SCAN_DIFF)];
 
-    expect(() => git(work, ...AUDIT_DIFF)).toThrow();
-    expect([audit.status === 0, audit.stdout]).toEqual([false, ""]);
-    // The path as Git joins it from the submodule's folder, so a diff with many submodules names the one that failed.
-    expect(audit.stderr).toMatch(/^fatal: not a git repository: .+[\\/]sub\/\.\.\/missing\n$/u);
+    expect([...gits, ...answers.map(answer => answer.stderr)]).toEqual(Array.from({ length: 4 }, () => `fatal: ${said}\n`));
+    expect(answers.map(answer => [answer.status === 0, answer.stdout])).toEqual([[false, ""], [false, ""]]);
   }, 60_000);
 
   it.skipIf(process.platform === "win32")("and take a submodule whose `.git` is a pipe for one not checked out, as Git's own diff takes it", async () => {
@@ -529,11 +532,11 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect(answers.map(answer => answer.status === 0)).toEqual([true, true]);
   }, 60_000);
 
-  // Each row: what the `.git` file is, its text from the line that named the Git folder, and Git's message, `%s` its path.
+  // Each row: what the `.git` file is, its text from the line that named the Git folder, and Git's message.
   it.each<[string, (named: string) => string, string]>([
-    ["holds more than 1 MiB", named => named.padEnd(1024 * 1024 + 1, "\n"), String.raw`too large to be a \.git file: '%s'`],
-    ["holds no `gitdir: `", () => "nothing\n", "invalid gitfile format: %s"],
-    ["holds no path", () => "gitdir: \n", "no path in gitfile: %s"],
+    ["holds more than 1 MiB", named => named.padEnd(1024 * 1024 + 1, "\n"), "too large to be a .git file: 'sub/.git'"],
+    ["holds no `gitdir: `", () => "nothing\n", "invalid gitfile format: sub/.git"],
+    ["holds no path", () => "gitdir: \n", "no path in gitfile: sub/.git"],
   ])("and fail a diff where a submodule's `.git` file %s, with Git's message, as Git's own diff fails", async (_what, text, said) => {
     const root = await folder();
     const { work, gitfile, named } = await submoduleGitfile(root);
@@ -542,8 +545,7 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
     const gits = [gitStderr(work, AUDIT_DIFF), gitStderr(work, SCAN_DIFF)];
 
-    const message = new RegExp(`^fatal: ${said.replace("%s", String.raw`(?:.+[\\/])?sub[\\/]\.git`)}\n$`, "u");
-    expect([...gits, ...answers.map(answer => answer.stderr)]).toEqual(Array.from({ length: 4 }, () => expect.stringMatching(message)));
+    expect([...gits, ...answers.map(answer => answer.stderr)]).toEqual(Array.from({ length: 4 }, () => `fatal: ${said}\n`));
     expect(answers.map(answer => [answer.status === 0, answer.stdout])).toEqual([[false, ""], [false, ""]]);
   }, 60_000);
 

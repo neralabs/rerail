@@ -279,7 +279,8 @@ function namedPath(base: string, named: string): string {
  * itself; else undefined, and Git looks in the folder above.
  */
 function discoveredAt(at: string): string | null | undefined {
-  const gitFolder = submoduleGitFolder(at);
+  // The discovery reads no failure's message, which names the folder as it is here.
+  const gitFolder = submoduleGitFolder(at, at);
   if (gitFolder !== undefined) return typeof gitFolder === "string" ? gitFolder : null;
   return holdsRepository(at) || statOf(join(at, ".git"))?.isFile() === true ? null : undefined;
 }
@@ -570,7 +571,7 @@ async function submoduleChange(shown: Shown, state: DiffState): Promise<GitFailu
   if (ignore === undefined) return refused(`submodule.${shown.path}.ignore`);
   if (ignore === "all") leaveOut(state, shown.name);
   if (!askedOf(state, shown.name, ignore)) return undefined;
-  const changed = await submoduleChanged(join(state.top.places.top, shown.path), ignore === "untracked", state.open, MAX_DEPTH);
+  const changed = await submoduleChanged({ top: state.top.places.top, path: shown.path }, ignore === "untracked", state.open, MAX_DEPTH);
   if (typeof changed !== "boolean") return changed;
   if (changed) addName(state, shown.name);
   return undefined;
@@ -599,16 +600,23 @@ function byteOrder(left: string, right: string): number {
   return Buffer.compare(Buffer.from(left), Buffer.from(right));
 }
 
+/** A submodule of a repository: the repository's top folder, and the submodule's path from it, as its index names it. */
+export interface SubmodulePlace {
+  readonly top: string;
+  readonly path: string;
+}
+
 /**
- * Whether the submodule at `folder` has a changed worktree as `is_submodule_modified` finds it: its `git status` lists
+ * Whether the submodule at `place` has a changed worktree as `is_submodule_modified` finds it: its `git status` lists
  * any entry, without untracked files when `untrackedLeftOut`. False when it is not checked out (no `.git`, one that is
  * neither a folder nor a regular file, or a `.git` file that cannot be opened or read, which Rerail meets only once
  * Git's own diff in Rerail read it, as that diff fails on one); how it failed when its `.git` names no repository or is
  * a file Git cannot read as one, as Git's diff fails then; true, with no Git started in it, when the guard cannot ask
  * it ({@link UNASKED}).
  */
-export async function submoduleChanged(folder: string, untrackedLeftOut: boolean, open: SubmoduleOpener, depth: number): Promise<boolean | GitFailure> {
-  const gitFolder = submoduleGitFolder(folder);
+export async function submoduleChanged(place: SubmodulePlace, untrackedLeftOut: boolean, open: SubmoduleOpener, depth: number): Promise<boolean | GitFailure> {
+  const folder = join(place.top, place.path);
+  const gitFolder = submoduleGitFolder(folder, place.path);
   if (typeof gitFolder !== "string") return gitFolder ?? false;
   if (depth === 0) return failed(new Error(`Rerail follows submodules ${MAX_DEPTH} levels deep, and ${folder} is deeper`));
   const repository = await open(folder, gitFolder);
@@ -626,16 +634,16 @@ const MAX_GITFILE_BYTES = 1024 * 1024;
  * is not checked out, as Git's diff takes it. Undefined too when it went or cannot be opened or read, where Git's diff
  * fails instead ({@link gitfileText}): Rerail meets such a file only once Git's own diff in Rerail read it, and takes
  * the submodule as not checked out. How it failed for a `.git` file Git cannot read as one (it holds more than {@link MAX_GITFILE_BYTES}, no `gitdir:` or
- * no path), or a Git folder that holds no repository ({@link holdsRepository}), each of which fails Git's diff. Read once for each
+ * no path), or a Git folder that holds no repository ({@link holdsRepository}), each of which fails Git's diff, with
+ * Git's message, which names the submodule by `path`, its path from its repository's top. Read once for each
  * question and never handed to Git as a file, so the guard's listing and the status after it open this one folder
  * whatever `.git` names by then.
  */
-export function submoduleGitFolder(folder: string): string | GitFailure | undefined {
+export function submoduleGitFolder(folder: string, path: string): string | GitFailure | undefined {
   const dotGit = join(folder, ".git");
   const stats = statOf(dotGit);
-  if (stats === undefined) return undefined;
-  const gitFolder = stats.isDirectory() ? dotGit : namedGitFolder(folder, dotGit, stats);
-  return typeof gitFolder === "string" && !holdsRepository(gitFolder) ? notARepository(gitFolder) : gitFolder;
+  if (stats?.isDirectory() === true) return holdsRepository(dotGit) ? dotGit : fatal(`'${path}/.git' not recognized as a git repository`);
+  return stats?.isFile() === true ? namedGitFolder(folder, path, stats.size) : undefined;
 }
 
 /**
@@ -842,19 +850,21 @@ function linkOf(path: string): string | undefined {
 }
 
 /**
- * The Git folder the `.git` file `dotGit` (`stats`) names from `folder` ({@link namedFolder}); undefined when it is no
- * regular file, which Git skips without opening it, or is none by the read ({@link gitfileText}), and how it failed
- * for one Git cannot read as a `.git` file (too large, no `gitdir:` or no path), with Git's message
- * (`read_gitfile_error_die`), or that names a folder that cannot be read.
+ * The Git folder the `.git` file of `size` bytes by its stat in `folder` names from there ({@link namedFolder});
+ * undefined when it is none by the read ({@link gitfileText}), and how it failed for one Git cannot read as a `.git`
+ * file (too large, no `gitdir:` or no path), or that names a folder that holds no repository, with Git's message
+ * (`read_gitfile_error_die`): it names the file `<path>/.git`, `path` the submodule's path from its repository's top,
+ * and the folder named from there, as Git's diff joins them from the index.
  */
-function namedGitFolder(folder: string, dotGit: string, stats: Stats): string | GitFailure | undefined {
-  if (!stats.isFile()) return undefined;
-  const text = gitfileText(dotGit, stats.size);
+function namedGitFolder(folder: string, path: string, size: number): string | GitFailure | undefined {
+  const dotGit = `${path}/.git`;
+  const text = gitfileText(join(folder, ".git"), size, dotGit);
   if (typeof text !== "string") return text;
   if (!text.startsWith("gitdir: ")) return fatal(`invalid gitfile format: ${dotGit}`);
   const named = text.slice("gitdir: ".length).replace(/[\r\n]+$/u, "");
   if (named === "") return fatal(`no path in gitfile: ${dotGit}`);
-  return namedFolder(folder, named) ?? notARepository(namedPath(folder, named));
+  const gitFolder = namedFolder(folder, named);
+  return gitFolder !== undefined && holdsRepository(gitFolder) ? gitFolder : notARepository(namedPath(path, named));
 }
 
 function statOf(path: string): Stats | undefined {
@@ -868,14 +878,14 @@ function statOf(path: string): Stats | undefined {
 /**
  * The text of the `.git` file at `path`, of `size` bytes by its stat, read from the file opened ({@link openedFile}) to
  * at most {@link MAX_GITFILE_BYTES}, so a file put in its place after its stat is not read past that; how Git's diff
- * fails when it holds more. Undefined when it went, is no regular file by then, or cannot be opened or read. Git's diff opens a
+ * fails when it holds more, naming it `dotGit`. Undefined when it went, is no regular file by then, or cannot be opened or read. Git's diff opens a
  * submodule's `.git` to find its commit before it asks the submodule, and a `.git` it cannot open or read fails that
  * diff, Rerail's included, with Git's message; so Rerail meets one only where it became so after Git's diff read it.
  */
-function gitfileText(path: string, size: number): string | GitFailure | undefined {
+function gitfileText(path: string, size: number, dotGit: string): string | GitFailure | undefined {
   const file = openedFile(path);
   if (typeof file !== "number") return undefined;
-  return readClosing(file, opened => readWithin(opened, MAX_GITFILE_BYTES, size, UNTIL_SIZE)?.toString("utf8") ?? fatal(`too large to be a .git file: '${path}'`));
+  return readClosing(file, opened => readWithin(opened, MAX_GITFILE_BYTES, size, UNTIL_SIZE)?.toString("utf8") ?? fatal(`too large to be a .git file: '${dotGit}'`));
 }
 
 /** The text of the file at `path`, opened without waiting ({@link openedFile}); undefined when it is no file that can be read. */
@@ -970,5 +980,5 @@ async function nestedSubmoduleChanged(path: string, nested: Nested): Promise<boo
   if (ignore === "all") return false;
   if (nested.read.submodules.get(path)?.moved === true) return true;
   if (!lookedInto(ignore)) return false;
-  return await submoduleChanged(join(nested.repository.places.top, path), ignore === "untracked", nested.open, nested.depth - 1);
+  return await submoduleChanged({ top: nested.repository.places.top, path }, ignore === "untracked", nested.open, nested.depth - 1);
 }
