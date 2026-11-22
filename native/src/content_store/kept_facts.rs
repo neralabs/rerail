@@ -247,6 +247,15 @@ fn sweep(dir: &Path, rows: &ChainRows) {
 /// dead nor the run's), or a granule's flat rows; atom columns (`types` `s`) mapped through `map` (a forked process's
 /// ids to the store's).
 fn columns(what: &KeptWhat, types: &[u8], map: Option<MapIds>) -> StoreResult<Columns> {
+    // copy (0353 step 8): a kept relation's rows, or a granule's, read into columns for the packer. It goes: the
+    // packer encodes each column read where it lies, in canonical order (0353).
+    const RELATION: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "a kept relation's rows read into columns for the writer (kept_facts::columns)");
+    const FLAT: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "a granule's rows read into columns for the writer (kept_facts::columns)");
+    match what {
+        KeptWhat::Rows(r) => RELATION.copied(8 * r.relation().len_all() as usize * r.relation().arity as usize),
+        KeptWhat::Flat { rows, .. } => FLAT.copied(8 * rows.len()),
+        _ => {}
+    }
     let (mut cols, n, a, levels) = match what {
         KeptWhat::Rows(r) => {
             let rel = r.relation();

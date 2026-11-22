@@ -1637,6 +1637,8 @@ impl FramedDocs {
                 // copy (0353 step 8): an input's documents read into a table by document, a lookup a run probes.
                 let mut docs = DocDigests::default();
                 entry.each_rows(&mut |rows| docs.extend(rows.as_chunks::<3>().0.iter().map(|r| (r[0], (r[1] as u64, r[2] as u64)))));
+                const DOCS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "an input's documents read into a table by document (InKept docs)");
+                DOCS.copied(24 * entry.len());
                 (docs.len() == entry.len() && (self.counted || digest_of_docs(&docs) == self.digest)).then(|| Arc::new(docs))
             })
             .as_ref()
@@ -1657,6 +1659,8 @@ fn entry_words(entry: &kept_read::Entry) -> Vec<i64> {
     // copy (0353 step 8): a kept entry's words read for their decoder (statistics, a few hundred words).
     let mut words = Vec::with_capacity(entry.len());
     entry.each_rows(&mut |w| words.extend_from_slice(w));
+    const WORDS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "a kept entry's words read for their decoder (entry_words)");
+    WORDS.copied(8 * words.len());
     words
 }
 
@@ -1975,6 +1979,8 @@ fn lay_out(rel: &str, frame: &kept_read::Entry, digest: u64, atoms: &crate::cont
     // copy (0353 step 8): an input's documents read into its layout (each owner's range, each granule's owners).
     let mut rows: Vec<i64> = Vec::with_capacity(frame.len() * 3);
     frame.each_rows(&mut |r| rows.extend_from_slice(r));
+    const LAID: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "an input's documents read into its layout (lay_out)");
+    LAID.copied(8 * rows.len());
     let docs: DocDigests = rows.as_chunks::<3>().0.iter().map(|r| (r[0], (r[1] as u64, r[2] as u64))).collect();
     if docs.len() != frame.len() || digest_of_docs(&docs) != digest {
         return Err(format!("{rel}: its documents' entry does not match its digest"));
@@ -2067,6 +2073,8 @@ fn documents_table(store: &ContentStore, entry: &kept_read::Entry) -> Result<Opt
     // copy (0353 step 8): a documents' table's words read for their decoder (a row a file).
     let mut rows: Vec<i64> = Vec::with_capacity(entry.len() * width);
     entry.each_rows(&mut |r| rows.extend_from_slice(r));
+    const TABLE: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "a documents' table's words read for their decoder");
+    TABLE.copied(8 * rows.len());
     let mut out = Vec::with_capacity(entry.len());
     for r in rows.chunks_exact(width) {
         let Ok(atom) = u32::try_from(r[0]) else { return Ok(None) };
@@ -3319,6 +3327,8 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
             // the kept facts' rows of their own); an input's owners are spread through its source's rows.
             let mut granule_rows: Vec<i64> = Vec::with_capacity(n * width);
             each(&mut |w: &[i64]| granule_rows.extend_from_slice(w));
+            const GRANULE: rerail_prof::copies::Site = rerail_prof::copies::Site::new(12, "8", "a granule's rows gathered into its kept entry");
+            GRANULE.copied(8 * granule_rows.len());
             kept.push(kept_flat(name, part, 0, Vec::new(), types.clone(), granule_rows, n));
         }
         let mut table: Vec<(i64, (u64, u64))> = docs.iter().map(|(d, v)| (*d, *v)).collect();
