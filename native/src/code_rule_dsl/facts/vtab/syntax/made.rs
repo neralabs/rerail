@@ -860,7 +860,7 @@ impl Batch {
     /// The batch's vocabulary, every document made: its strings and their symbols, each string once.
     pub(super) fn vocabulary(&self) -> (Vec<String>, Vec<u32>) {
         if self.rows.complete.get().is_none() {
-            profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || "the batch's vocabulary (a text test)".to_owned());
+            profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || format!("the batch's vocabulary (a text test), read in {}", profile::here().unwrap_or_default()));
         }
         self.complete();
         let shared = self.shared.lock();
@@ -897,7 +897,8 @@ impl MadeRows {
     /// What a read reads once every document is made: the relation, whole.
     fn target(&self) -> &dyn Source {
         if self.batch.rows.complete.get().is_none() {
-            profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || self.batch.rows.names[self.rel].clone());
+            // With the span that read it whole: a measure's (none since its sample, `MadeRows::sampled`) or a run's.
+            profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || format!("{}, read in {}", self.batch.rows.names[self.rel], profile::here().unwrap_or_default()));
         }
         &*self.batch.complete()[self.rel]
     }
