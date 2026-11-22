@@ -606,3 +606,17 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     crate and `rerail-logic`): on a Linux host, the memo crate's 17, and the memo layer's, the root's, the
     statistics' and `combined`'s tests in `rerail-logic` and tests_logic: 144 of 145. The one that failed is 5c's,
     which needs pack test data.
+- **Step 5f** (2026-11-21): `rerail-corpus-prep` (`native/crates/corpus_prep`): the corpus's `preparation` (simplify,
+  parts, lowering's tail, hide, magic, merge, prune, rank, combining, …) and `product_demand`, 16.8k lines, over the
+  memo. The root re-exports them through facades that mount their tests: all of them parse `.rerail` or read the
+  product demand's tests, so the crate has no tests of its own. Ten inline test modules are now files.
+  - `link` and `kept_link` read the language's root (`rr::{Text, Library, Scoped}`, `rr.rs`'s), so they stay with
+    the corpus's root, though they read the preparation.
+  - **What the preparation read of the top.** `simplify` read the core's relation names (`rr::core_names`); it reads
+    them through the planner's slot (`plan::keeps::core_names`, which `keeps` reads too). `rr::aggregate_demand` is
+    `rerail-rr`'s, which the planner's `rr` facade now re-exports. The product demand's test-only reads
+    (`Program::{shown, changed}`) are `cfg(any(test, feature = "test-hooks"))`.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on the corpus
+    crates, the planner and `rerail-logic`): on a Linux host, the preparation's, product demand's, link's and magic
+    sets' tests (72), and the corpus root's, maintain and cache tests (78 of 79; the one that failed is 5c's, which
+    needs pack test data).

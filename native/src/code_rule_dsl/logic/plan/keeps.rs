@@ -573,13 +573,18 @@ fn input_projection(f: &Fields<'_>, base: &Placed, ks: &[usize]) -> bool {
 /// the program's composition registers the reader (boot, or a crate's own test binary as it loads).
 pub static CORE_NAMES: rerail_registry::Slot<fn() -> &'static std::collections::BTreeSet<String>> = rerail_registry::Slot::new("the core's relation names (plan::keeps::CORE_NAMES)");
 
+/// The relations `core.rerail` declares, through the registered reader (`CORE_NAMES`).
+pub fn core_names() -> &'static std::collections::BTreeSet<String> {
+    CORE_NAMES.get().unwrap_or_else(|missing| panic!("{missing}: no program registered the core's names"))()
+}
+
 pub fn refusals(f: &Fields<'_>, base: &Placed, n: usize, rules_of: &BTreeMap<&str, Vec<usize>>, sccs: &[BTreeSet<String>]) -> BTreeMap<String, &'static str> {
     use super::super::program_image::{Lit, NativeKind, TermRef};
     let v: &Version = &base.v;
     let mut why: BTreeMap<String, &'static str> = BTreeMap::new();
     let natives_read = f.natives_read();
     let recursive: BTreeSet<&str> = sccs.iter().filter(|s| s.len() > 1).flatten().map(String::as_str).collect();
-    let core = CORE_NAMES.get().unwrap_or_else(|missing| panic!("{missing}: no program registered the core's names"))();
+    let core = core_names();
     for (rel, ks) in rules_of {
         let rel = *rel;
         let rules = || ks.iter().map(|&k| base.rule(k));

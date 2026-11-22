@@ -18,15 +18,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 type Result<T> = std::result::Result<T, String>;
 
 /// The guards and the canonical relations of the policies combined (`scoping`'s module says what each is).
-pub(in crate::code_rule_dsl::logic::plan::corpus) struct FactSpaces<'a> {
+pub struct FactSpaces<'a> {
     pub(in crate::code_rule_dsl::logic::plan::corpus) policies: &'a [Policy],
-    pub(in crate::code_rule_dsl::logic::plan::corpus) report: Report,
+    pub report: Report,
     /// What `again` reads back (decision 0393): the canonical and shared relations, when guards were written.
     kept: Option<(BTreeSet<String>, BTreeSet<String>)>,
 }
 
 impl<'a> FactSpaces<'a> {
-    pub(in crate::code_rule_dsl::logic::plan::corpus) fn new(policies: &'a [Policy]) -> Self {
+    pub fn new(policies: &'a [Policy]) -> Self {
         FactSpaces { policies, report: Report::default(), kept: None }
     }
 
@@ -466,7 +466,7 @@ impl Guards<'_> {
 /// does not keep a relation from its twin. The merge's renaming can make rules repeat; they are dropped after it, and
 /// make nothing more mergeable. (A loop of merges until no rule repeated was 2-3 congruences a call, 1.5 s of the dl1
 /// batch's 13.8 s CPU.) `RERAIL_SAME=off` keeps them apart.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn same_relations(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<()> {
+pub fn same_relations(p: &mut crate::code_rule_dsl::logic::program_image::manager::Pipeline<'_>) -> Result<()> {
     if std::env::var("RERAIL_SAME").is_ok_and(|x| x == "off") {
         return Ok(());
     }
@@ -486,7 +486,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn same_relations(p: &mut crat
 /// The copies of `label`'s own guests folded into their originals (`FoldOwn`), and then the rules that repeat another
 /// dropped and the relations that are one merged, as `preparation::run` merges (decision 0058): the run's edit, once
 /// its language is known.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::sync::Arc<Version>, label: &str) -> Result<std::sync::Arc<Version>> {
+pub fn fold_own_guests(v: std::sync::Arc<Version>, label: &str) -> Result<std::sync::Arc<Version>> {
     let mut p = crate::code_rule_dsl::logic::program_image::manager::Pipeline::new("fold own guests", v);
     let mut fold = FoldOwn { label, folded: 0 };
     p.program(&mut fold);
@@ -514,9 +514,9 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn fold_own_guests(v: std::syn
 /// qualified kind of `label` is written plainly; a clone (O110) is then its rule again, dropped as a repeat by
 /// `DropRepeated`.
 /// `folded`: how many copies and kind sets it folded. `RERAIL_SHOWN_COPIES=on` keeps them (to measure what they cost).
-pub(in crate::code_rule_dsl::logic::plan::corpus) struct FoldOwn<'a> {
-    pub(in crate::code_rule_dsl::logic::plan::corpus) label: &'a str,
-    pub(in crate::code_rule_dsl::logic::plan::corpus) folded: usize,
+pub struct FoldOwn<'a> {
+    pub label: &'a str,
+    pub folded: usize,
 }
 
 impl ProgramPass for FoldOwn<'_> {

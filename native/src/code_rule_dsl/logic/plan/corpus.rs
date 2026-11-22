@@ -186,8 +186,204 @@ pub mod owner {
     mod tests;
 }
 pub use rerail_corpus_memo::code_rule_dsl::logic::plan::corpus::matchers;
-pub mod preparation;
-pub(super) mod product_demand;
+// cratify: the preparation (`preparation`, `product_demand`) is rerail-corpus-prep's, under this
+// root; its tests that read the root or the language are mounted here.
+pub mod preparation {
+    pub use rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::preparation::*;
+    // `preparation.rs`'s imports, for its tests' `use super::*`.
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::logic::program_image::manager::{self, Run, Cx, Pipeline, ProgramPass, ProgramW};
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::logic::program_image::Version;
+    #[allow(unused_imports)]
+    use std::collections::{BTreeSet, HashSet};
+    #[allow(unused_imports)]
+    use std::sync::Arc;
+    #[cfg(test)]
+    mod tests;
+    pub mod merge {
+        pub use rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::preparation::merge::*;
+        // `preparation/merge.rs`'s imports, for its tests' `use super::*`.
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::build::{Rewrite, T};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, Cell, Lit as L, RelId, RuleId, RuleRef, Slot, TermRef, Version};
+        #[allow(unused_imports)]
+        use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+        #[cfg(test)]
+        mod tests;
+    }
+    pub mod hide {
+        pub use rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::preparation::hide::*;
+        // `preparation/hide.rs`'s imports, for its tests' `use super::*`.
+        #[allow(unused_imports)]
+        use super::super::hiding::{ENTRIES, Fact, VIEWS, dialect_label, qualified};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::front::{self, Value};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::fields::{Edit as Staged, FieldsMut, ProgramFields};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::manager::{Cx, Last, ProgramPass, ProgramW, Reads, Row};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::{AtomId, AtomRef, CmpOp, Lit, RuleId, Slot, TermRef, Version};
+        #[allow(unused_imports)]
+        use rustc_hash::FxHashMap as HashMap;
+        #[allow(unused_imports)]
+        use std::collections::{BTreeMap, BTreeSet};
+        #[cfg(test)]
+        mod tests;
+    }
+    pub mod lowering_tail {
+        pub use rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::preparation::lowering_tail::*;
+        // `preparation/lowering_tail.rs`'s imports, for its tests' `use super::*`.
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::plan::body::{Body, VarSet, lit_vars};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::build::T;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::{Lit as L, RuleId, Slot, TermRef, Version};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::fields::{FieldsMut, ProgramFields};
+        #[allow(unused_imports)]
+        use std::collections::{BTreeMap, BTreeSet};
+        #[cfg(test)]
+        mod tests;
+    }
+    pub mod prune {
+        pub use rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::preparation::prune::*;
+        // `preparation/prune.rs`'s imports, for its tests' `use super::*`.
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::{About, RuleRef};
+        #[allow(unused_imports)]
+        use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+        #[cfg(test)]
+        mod tests;
+    }
+    pub mod rank {
+        pub use rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::preparation::rank::*;
+        // `preparation/rank.rs`'s imports, for its tests' `use super::*`.
+        #[allow(unused_imports)]
+        use super::demand::{about_p, edit_native_rows, is_input, qualified};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::{About, Cell, Version};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::rank_form::{self, NO_RANK};
+        #[allow(unused_imports)]
+        use std::collections::HashSet;
+        #[cfg(test)]
+        mod tests;
+    }
+    pub mod simplify {
+        pub use rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::preparation::simplify::*;
+        // `preparation/simplify.rs`'s imports, for its tests' `use super::*`.
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::plan::fields::{Fields, FieldsData};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::build::{Rewrite, Site, T};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW, RuleOut, RulePass, Select, Step};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::{AggRef, AtomId, AtomRef, Builder, Cell, CmpOp, Lit, LitRef, RuleBuilder, RuleRef, Slot, TermRef, Version};
+        #[allow(unused_imports)]
+        use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+        #[allow(unused_imports)]
+        use std::sync::Arc;
+        #[cfg(test)]
+        mod tests;
+    }
+}
+pub mod product_demand {
+    pub use rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::product_demand::*;
+    // `product_demand.rs`'s imports, for its tests' `use super::*`.
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::logic::front::{LatticeDecl, Native, Value};
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::logic::front::name::List;
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_vars};
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::logic::program_image::fields::ProgramFields as F;
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::logic::program_image::{AtomRef, Builder, CmpOp, Lit, RuleBuilder, RuleId, RuleRef, Slot, T, TermRef, Version, t_of};
+    #[allow(unused_imports)]
+    use std::collections::{BTreeMap, BTreeSet};
+    #[allow(unused_imports)]
+    use std::sync::Arc;
+    #[allow(unused_imports)]
+    use crate::code_rule_dsl::logic::plan::body::{DEFERRED_PAIRS, PRODUCT_DEMAND as PREFIX};
+    #[cfg(test)]
+    mod tests;
+    pub mod nullable {
+        pub use rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::product_demand::nullable::*;
+        // `product_demand/nullable.rs`'s imports, for its tests' `use super::*`.
+        #[allow(unused_imports)]
+        use super::{Program, plain, rewritten, same};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit, LitRef, RuleId, RuleRef, T, TermRef, t_of};
+        #[allow(unused_imports)]
+        use std::collections::{BTreeMap, BTreeSet};
+        #[cfg(test)]
+        mod tests;
+    }
+    pub mod upstream {
+        pub use rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::product_demand::upstream::*;
+        // `product_demand/upstream.rs`'s imports, for its tests' `use super::*`.
+        #[allow(unused_imports)]
+        use super::{Context, PREFIX as PRODUCT, Part, Program, connect, plain, rewritten, same, value, write_demand};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::front::name::List;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::front::Value;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_vars};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_facts::Field;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::{AggRef, AtomRef, Lit, RuleId, RuleRef, T, TermRef, Version, t_of};
+        #[allow(unused_imports)]
+        use std::collections::{BTreeMap, BTreeSet};
+        #[cfg(test)]
+        mod tests;
+    }
+    pub mod deferred {
+        pub use rerail_corpus_prep::code_rule_dsl::logic::plan::corpus::product_demand::deferred::*;
+        // `product_demand/deferred.rs`'s imports, for its tests' `use super::*`.
+        #[allow(unused_imports)]
+        use super::{DEFERRED_PAIRS, PREFIX, Program, plain, rewritten, same, upstream};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_vars};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::plan::corpus::preparation::Deferral;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::profile::author_joins::{Access, Join, TOPIC};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_facts::Field;
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::logic::program_image::{CmpOp, Lit, RuleRef, T, TermRef, Version};
+        #[allow(unused_imports)]
+        use std::collections::{BTreeMap, BTreeSet};
+        #[allow(unused_imports)]
+        use std::sync::Arc;
+        #[cfg(test)]
+        mod tests;
+    }
+}
 /// The prefix of an `ast` matcher's relation (decision 0106).
 pub(in crate::code_rule_dsl) const AST_MATCHES: &str = matchers::PREFIX;
 pub use matchers::columns as ast_columns;

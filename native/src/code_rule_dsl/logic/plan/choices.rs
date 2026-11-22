@@ -277,7 +277,7 @@ fn queued(prepared: &[u8; 32], key: &[u8; 32]) -> crate::content_store::write_ba
     crate::content_store::write_back::Key::of(&[b"facts_memo/choices", prepared, key])
 }
 
-fn keep(key: [u8; 32], chosen: Chosen) {
+pub fn keep(key: [u8; 32], chosen: Chosen) {
     let held = kept();
     let mut kept = held.0.lock().expect("the kept choices");
     if kept.len() >= KEPT_PROGRAMS && !kept.contains_key(&key) {
@@ -286,7 +286,7 @@ fn keep(key: [u8; 32], chosen: Chosen) {
     kept.insert(key, chosen);
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 

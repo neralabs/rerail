@@ -1154,7 +1154,7 @@ impl Model {
     }
 
     /// Whether `rel` is one of the program's inputs (`f`, its version's: a set read once per version).
-    fn is_input(&self, f: Fields<'_>, rel: &str) -> bool {
+    pub fn is_input(&self, f: Fields<'_>, rel: &str) -> bool {
         f.is_input(rel)
     }
 

@@ -1223,7 +1223,7 @@ impl ProgramPass for InlineFilters {
         for r in v.rules() {
             rules_of.entry(v.rel_name(r.head().rel())).or_default().push(r);
         }
-        let core = crate::code_rule_dsl::logic::rr::core_names();
+        let core = crate::code_rule_dsl::logic::plan::keeps::core_names();
         let mut candidates: BTreeSet<&str> = rules_of
             .iter()
             .filter(|(rel, rules)| {
@@ -3211,5 +3211,4 @@ impl ProgramPass for CpythonFunctors {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)
