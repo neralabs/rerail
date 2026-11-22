@@ -766,7 +766,7 @@ What still differs:
   a node in a block before. `walk` writes simdjson's columns.
 - **The numbers accepted.** `number_end` keeps no value, but works one out where it decides the answer: it refuses a
   float past the doubles' range (`1e400`) and an integer past 64 bits. The grammar states neither bound, so tier 2
-  and the JIT accept those numbers.
+  and the JIT accept those numbers. This is the user's choice (2026-11-22): JSON accepts them, as RFC 8259 states it.
 
 ## Step 58, done: the benchmark on the generated Rust, `rust_stream`'s tests gone (decision 0555)
 

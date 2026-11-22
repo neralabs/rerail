@@ -125,7 +125,8 @@ Implementer's choices:
 - **The number's value.** `number_end` keeps no value either (`no_values`). It works the value out only where the
   value decides the answer: it refuses a float past the doubles' range (`1e400`) and an integer past 64 bits
   (`BigintError`). The grammar's check states neither bound, so tier 2 and the JIT accept those numbers. This is a
-  difference in the files accepted, not in the code's shape.
+  difference in the files accepted, not in the code's shape. The user's answer (2026-11-22): keep accepting them,
+  JSON as RFC 8259 states it.
 - **Generic over the grammar.** The proofs, the returns' loop and the separator rule are generic over a grammar's
   statements. Only JSON's grammar meets their conditions here: Kotlin's and `.rerail`'s Rust is unchanged (their
   tier 1s have stages behind).
