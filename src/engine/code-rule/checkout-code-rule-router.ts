@@ -88,9 +88,10 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /** Where Git registers the worktrees, as `worktreeRoots` last read them (`worktreeRegistry`). */
   #registryFolder: string | undefined;
   /**
-   * The list stored for the registry that the last `learnWorktreeRoots` read while it stood, taken by the next
-   * `worktreeRoots` (the walk's own), so a walk places the checkout and reads the registry once. Each call of either
-   * takes it or puts its own in its place, so no ask takes a list read before the last one's.
+   * The list stored for the registry that the last `learnWorktreeRoots` read while it stood, taken by a `worktreeRoots`
+   * in the same synchronous run, so a walk that asks right after its learn step places the checkout and reads the
+   * registry once. Dropped as that run ends: an ask after an await (a walk's start behind another session's learn step,
+   * a taken walk's resync) reads the registry as it is then, a worktree added meanwhile included.
    */
   #learntRegistry: WorktreeRegistry | undefined;
   readonly #lanes = new Map<string, Lane>();
@@ -563,12 +564,15 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   /**
    * Git's list of the worktrees `worktreeRoots` reads, learnt through `git` as a process no thread waits on and kept as
    * the registry keeps it (`learnWorktreeList`): a worktree added since the last list costs the daemon's thread no Git.
-   * Undefined while the stored list stands, which the next `worktreeRoots` takes as read here, and for a checkout placed
-   * by a kept acceptance, whose list the registry reads as before.
+   * Undefined while the stored list stands, which a `worktreeRoots` in the same synchronous run takes as read here, and
+   * for a checkout placed by a kept acceptance, whose list the registry reads as before.
    */
   learnWorktreeRoots(git: GitReads): Promise<void> | undefined {
     const learnt = learnWorktreeList(this.#options.startingCheckout, git);
     this.#learntRegistry = learnt?.kind === "stored" ? learnt.registry : undefined;
+    queueMicrotask(() => {
+      this.#learntRegistry = undefined;
+    });
     return learnt?.kind === "learning" ? learnt.done : undefined;
   }
 
