@@ -1061,9 +1061,10 @@ export function runGit(cwd: string, args: readonly string[], options: RunGitOpti
  */
 export async function runGitWithoutBlocking(cwd: string, args: readonly string[], options: RunGitOptions = {}): Promise<GitResult> {
   const git = laterWithinCallLimit(options.timeout ?? DEFAULT_TIMEOUT_MS);
-  if (worktreeRead(args) === "none" || !(await guardWorksLater(async () => await gitVersionLater(git, cwd)))) return await git(cwd, args, options);
+  const covering = worktreeRead(args) === "none" ? undefined : await guardWorksLater(async () => await gitVersionLater(git, cwd));
+  if (covering === undefined) return await git(cwd, args, options);
   const guarded = definesNoDriverAt(cwd, options.env) ? unlisted(git, cwd, options.env) : await guardedLater(git, cwd, options.env);
-  return "env" in guarded ? await diffOutsideSubmodules({ git, cwd, args, options }, guarded) : guarded;
+  return "env" in guarded ? await diffOutsideSubmodules({ git, cwd, args, options }, guarded, covering.looksOutside) : guarded;
 }
 
 /** Starts one Git of a {@link runGitWithoutBlocking} call, within what is left of the call's time limit. */
@@ -1223,10 +1224,11 @@ function unanswered(failure: GitFailure): GitResult {
  * answered as Git answers it with Git looking into none: run with `--ignore-submodules=dirty`, then each submodule it
  * would have looked into asked through the guard, opened as Git opens a submodule (`git-guard/submodule-state.ts`). Any
  * other call runs as it is, so one that would look into submodules (Rerail makes none) has Git look into each with
- * that submodule's drivers as they are.
+ * that submodule's drivers as they are. `looksOutside` says whether the Git the guard covers the call with looks outside
+ * the folder of a `--relative` diff against a commit ({@link GuardGit.looksOutside}).
  */
-async function diffOutsideSubmodules({ git, cwd, args, options }: GuardedCall, guarded: Guarded | UnlistedGuard): Promise<GitResult> {
-  const diff = nameDiff(args, looksOutside());
+async function diffOutsideSubmodules({ git, cwd, args, options }: GuardedCall, guarded: Guarded | UnlistedGuard, looksOutside: boolean): Promise<GitResult> {
+  const diff = nameDiff(args, looksOutside);
   if (diff === undefined) return await git(cwd, args, { ...options, env: guarded.env });
   const outside = await git(cwd, outsideSubmodules(args), { ...options, env: guarded.env });
   if (outside.status !== 0 || outside.error !== undefined) return outside;
@@ -1390,14 +1392,6 @@ function guardGitFrom(version: string): GuardGit {
 }
 
 /**
- * Whether the Git this process runs looks outside the folder of a `--relative` diff against a commit, as the guard
- * asked it; false when no Git is kept, as for one whose version was not read.
- */
-function looksOutside(): boolean {
-  return knownGuardGit()?.looksOutside === true;
-}
-
-/**
  * Whether the guard covers this process's Git calls: a Git it works with (2.31 or later), asked once for each Git. With
  * an older one every call runs as it ran before the guard, so each answers as that Git answers, and the first call the
  * guard would cover says why on the process's error stream, which for the daemon is its log.
@@ -1406,12 +1400,20 @@ function guardWorks(git: CallGit, cwd: string): boolean {
   return guardCovers(knownGuardGit() ?? keptGuardGit(askedGuardGitSync(git, cwd)));
 }
 
-/** {@link guardWorks} for a call that does not block, asking Git's version with `version` when no call has asked this Git. */
-async function guardWorksLater(version: () => Promise<GuardGit | undefined>): Promise<boolean> {
+/**
+ * {@link guardWorks} for a call that does not block, asking Git's version with `version` when no call has asked this
+ * Git: the Git the guard decided on, which the call takes as it is, kept or not, and a Git whose version was not read
+ * ({@link UNREAD_GIT}) where it did not answer; undefined where the guard does not cover the call.
+ */
+async function guardWorksLater(version: () => Promise<GuardGit | undefined>): Promise<Pick<GuardGit, "looksOutside"> | undefined> {
   // Read before the question: while the Git kept answers, another call may find it gone and keep another.
   const executable = readerGit(undefined);
-  return guardCovers(knownGuardGit() ?? keptGuardGit(await version(), executable));
+  const decided = knownGuardGit() ?? keptGuardGit(await version(), executable);
+  return guardCovers(decided) ? decided ?? UNREAD_GIT : undefined;
 }
+
+/** A Git whose version was not read: the guard covers its calls, and takes it as one that looks outside no folder. */
+const UNREAD_GIT = { looksOutside: false } as const;
 
 /** {@link GuardGit} from `git version` asked in `cwd` within a {@link runGitWithoutBlocking} call. */
 async function gitVersionLater(git: LaterGit, cwd: string): Promise<GuardGit | undefined> {
@@ -1722,7 +1724,7 @@ interface ReadLimit {
  */
 async function readerGuard(cwd: string, args: readonly string[], { signal, left }: ReadLimit): Promise<{ readonly env: GitVariables } | GitReadEnd> {
   const read = worktreeRead(args);
-  if (read === "none" || !(await guardWorksLater(async () => await askedGuardGit(cwd, { signal, timeoutMs: left() })))) return { env: {} };
+  if (read === "none" || (await guardWorksLater(async () => await askedGuardGit(cwd, { signal, timeoutMs: left() }))) === undefined) return { env: {} };
   if (definesNoDriverAt(cwd)) return { env: {} };
   const listing = await readGitWith(cwd, CONFIG_LISTING, { signal, maxBuffer: MAX_LISTING_BYTES, env: { GIT_CONFIG: undefined }, timeoutMs: left() });
   return listing.ended === "printed" ? guardedBy(listing.stdout, {}) : listing;

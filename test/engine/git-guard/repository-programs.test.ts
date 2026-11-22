@@ -648,6 +648,40 @@ describe.skipIf(process.platform === "win32")("on a Git older than the guard wor
     expect(said.mock.calls.map(([text]) => String(text)).filter(text => text.startsWith("rerail: Git 2.25.1 is older than 2.31"))).toHaveLength(1);
   }, 60_000);
 
+  it("a daemon whose Git is replaced while a Git before 2.56 answers its version decides a scan from a folder as that Git does", async () => {
+    const root = await folder();
+    const source = await repository(root, "source", { "inner.txt": "one\n" });
+    const work = await repository(root, "work", { "top.txt": "top\n" });
+    git(work, "submodule", "add", "--quiet", source, "sub");
+    await mkdir(join(work, "dir"));
+    await writeFile(join(work, "dir", "file.txt"), "one\n");
+    git(work, "add", ".");
+    git(work, "commit", "--quiet", "-m", "submodule");
+    // A Git before 2.56 reads the rules of the submodule outside the folder for a diff against a commit, and fails here.
+    await writeFile(join(work, ".gitmodules"), "[submodule\n");
+    const [one, two] = [join(root, "one"), join(root, "two")];
+    await Promise.all([mkdir(one), mkdir(two)]);
+    const [asked, answer] = [join(root, "version-asked"), join(root, "version-answer")];
+    // The Git kept answers its version only once this test has had it found gone and another kept.
+    const waits = `touch '${asked}'; while [ ! -e '${answer}' ]; do sleep 0.05; done;`;
+    vi.stubEnv("PATH", [await olderGit(one, "2.53.0", waits), await olderGit(two, "2.53.0"), process.env.PATH ?? ""].join(delimiter));
+    vi.resetModules();
+    const rerail = await import("../../../src/engine/git.js");
+    rerail.gitLivesOn();
+    const scan = rerail.runGitWithoutBlocking(join(work, "dir"), SCAN_DIFF);
+    for (let waited = 0; !existsSync(asked); waited += 1) {
+      if (waited === 400) throw new Error("the Git kept was not asked its version");
+      await new Promise(resolve => setTimeout(resolve, 25));
+    }
+    await rm(rerail.gitExecutable());
+    await rerail.runGitAsync(root, ["--version"]);
+    await writeFile(answer, "");
+
+    const answered = await scan;
+
+    expect([answered.status === 0, answered.stdout]).toEqual([false, ""]);
+  }, 60_000);
+
   it("a daemon whose Git is found gone as a call asks its version keeps that answer for no Git, and asks the Git it runs next", async () => {
     const root = await folder();
     const [one, two] = [join(root, "one"), join(root, "two")];
