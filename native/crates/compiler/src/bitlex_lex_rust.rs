@@ -1247,7 +1247,16 @@ impl Gen<'_> {
         {
             let (f, o) = (format!("f_{}", r.kind), format!("o_{}", r.kind));
             let inside = Expr::Call("toggle".into(), vec![Arg::E(r.opener.clone())]);
-            self.make_node(format!("={f}"), format!("m_{}", ident(&f)), format!("{f}: a region's opener to its closer, `toggle({})`", show(&r.opener)), &inside)?;
+            // Its word named as the grammar names it, where a mask is it alone (`in_string = f_str`, as simdjson's).
+            let alias = self.x.stmts.iter().find_map(|s| match s {
+                Stmt::Mask(m, Expr::Name(n)) if *n == f && !self.x.stmts.iter().any(|t| matches!(t, Stmt::Mask(m2, _) | Stmt::Class(m2, _) if m2 == m && !matches!(t, Stmt::Mask(_, Expr::Name(n2)) if *n2 == f))) => Some(m.clone()),
+                _ => None,
+            });
+            let (local, what) = match &alias {
+                Some(m) => (format!("m_{}", ident(m)), format!("{m}: the region `{}`'s opener to its closer, `toggle({})`", r.kind, show(&r.opener))),
+                None => (format!("m_{}", ident(&f)), format!("{f}: a region's opener to its closer, `toggle({})`", show(&r.opener))),
+            };
+            self.make_node(format!("={f}"), local, what, &inside)?;
             let opener = Expr::And(Box::new(r.opener.clone()), Box::new(Expr::Name(f.clone())));
             self.make_node(format!("={o}"), format!("m_{}", ident(&o)), format!("{o}: its openers"), &opener)?;
             let hidden = Expr::Xor(Box::new(Expr::Name(f.clone())), Box::new(r.opener.clone()));

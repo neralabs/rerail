@@ -1342,9 +1342,9 @@ fn json_tier1_masks_are_block_locals() {
     assert!(!stage1.contains("lv"), "a mask of the file's bits:\n{stage1}");
     assert!(stage1.contains("let off = if src.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };\n    let nw = (n - off).div_ceil(64);"), "the blocks after the mark");
     // The words read past their block's code: `nonquote_scalar`, for the block before's (`follows`; a local of its
-    // code there), and the string open at the end's `f_str`.
+    // code there), and the string open at the end's `in_string` (the region's `f_str`, as the grammar names it).
     let outer: Vec<&str> = stage1.lines().filter(|l| l.starts_with("    let mut v_") || l.starts_with("    let mut p_")).collect();
-    assert_eq!(outer, ["    let mut v_m_f_str = 0u64;", "    let mut v_m_nonquote_scalar = 0u64;"]);
+    assert_eq!(outer, ["    let mut v_m_in_string = 0u64;", "    let mut v_m_nonquote_scalar = 0u64;"]);
     assert!(stage1.contains("            let p_m_nonquote_scalar = v_m_nonquote_scalar;\n"), "the block before's `nonquote_scalar`, a local");
     // The string and token masks are `index`'s (`json_scanner`, `json_string_scanner`): `scalar`, `nonquote_scalar`,
     // `follows`, `string_tail`, and the records `structural_start` itself (proved equal to the tokens' starts but where
@@ -1353,7 +1353,7 @@ fn json_tier1_masks_are_block_locals() {
         "let v_m_scalar = !(v_m_op | v_m_ws);",
         "v_m_nonquote_scalar = v_m_scalar & !v_m_quote;",
         "let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63);",
-        "let v_m_string_tail = (v_m_f_str ^ v_m_q);",
+        "let v_m_string_tail = (v_m_in_string ^ v_m_q);",
         "let v_m_structural_start = (v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail;",
         "let (base, cnt, mut bits) = ((off + 64 * q) as u32, v_m_structural_start.count_ones() as usize, v_m_structural_start);",
         // A string right after a scalar, refused: simdjson's stage 2 refuses it at the number's or the atom's end.

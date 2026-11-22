@@ -44,8 +44,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
     let si = starts.as_mut_ptr();
     let mut count = 0usize;
     let mut c_m_escaped = 0u64;
-    let mut v_m_f_str = 0u64;
-    let mut c_m_f_str = 0u64;
+    let mut v_m_in_string = 0u64;
+    let mut c_m_in_string = 0u64;
     let mut v_m_nonquote_scalar = 0u64;
     // The byte-pair errors' check, simdjson's `utf8_checker`: the block before, the errors, and whether the block before left
     // a sequence open.
@@ -101,8 +101,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
                 };
             // mask q = quote & ~escaped
             let v_m_q = v_m_quote & !v_m_escaped;
-            // f_str: a region's opener to its closer, `toggle(q)`
-            v_m_f_str = {
+            // in_string: the region `str`'s opener to its closer, `toggle(q)`
+            v_m_in_string = {
                     let mut x = v_m_q;
                     x ^= x << 1;
                     x ^= x << 2;
@@ -110,12 +110,12 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
                     x ^= x << 8;
                     x ^= x << 16;
                     x ^= x << 32;
-                    let x = x ^ 0u64.wrapping_sub(c_m_f_str);
-                    c_m_f_str = x >> 63;
+                    let x = x ^ 0u64.wrapping_sub(c_m_in_string);
+                    c_m_in_string = x >> 63;
                     x
                 };
             // mask string_tail = in_string ^ q
-            let v_m_string_tail = (v_m_f_str ^ v_m_q);
+            let v_m_string_tail = (v_m_in_string ^ v_m_q);
             // mask scalar = ~(op | ws)
             let v_m_scalar = !(v_m_op | v_m_ws);
             let p_m_nonquote_scalar = v_m_nonquote_scalar;
@@ -148,7 +148,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
             }
             count += cnt;
             // in_string & control
-            let v_t2 = v_m_f_str & v_m_control;
+            let v_t2 = v_m_in_string & v_m_control;
             // a control byte in a string
             errors |= v_t2;
             // (q & follows) & ~string_tail
@@ -160,7 +160,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
     // The errors, once.
     refused |= errors != 0;
     // a string open at the end of the file: at the file's last byte, once (its block's word, the pass's last).
-    refused |= n > off && v_m_f_str >> ((n - 1 - off) % 64) & 1 != 0;
+    refused |= n > off && v_m_in_string >> ((n - 1 - off) % 64) & 1 != 0;
     // The byte-pair errors (simdjson's `errors()`), and a sequence the file's last block leaves open (`check_eof`).
     refused |= unsafe { S::nonzero(S::or(error, prev_incomplete)) } != 0;
     // SAFETY: `count` records written, and room for three more.
