@@ -1,4 +1,7 @@
-//! The engine's facts: the virtual tables, text, strings, producers, SQL profiles.
+//! The engine's facts: the syntax table (`facts::vtab::syntax`: a batch's documents, their views, their families'
+//! relations and the kind-set axes) and the families' store reads (`facts::families`), over the facts' base
+//! (rerail-facts-base: the other virtual tables, text, strings, producers, SQL profiles), which it re-exports, so a
+//! reader above reads every facts path here, as before.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
@@ -12,119 +15,19 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
-// cratify: mounts (tools/cratify/mounts.py; generated, do not edit) begin
-pub use rerail_store::content_store;
-pub use rerail_store::git_access;
-pub use rerail_store::git_workspace;
-extern crate self as rerail_facts;
+pub use rerail_facts_base::{content_store, git_access, git_workspace};
 #[path = "../../../src/code_rule_dsl"]
 pub mod code_rule_dsl {
-    pub use rerail_lang::code_rule_dsl::budget;
-    pub use rerail_lang::code_rule_dsl::build_ids;
-    pub use rerail_lang::code_rule_dsl::embed;
-    pub mod facts;
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub use rerail_lang::code_rule_dsl::fixtures;
-    pub use rerail_lang::code_rule_dsl::json;
-    pub use rerail_lang::code_rule_dsl::regexes;
-    pub use rerail_lang::code_rule_dsl::language;
-    pub use rerail_lang::code_rule_dsl::lines;
-    #[path = "logic"]
-    pub mod logic {
-        pub mod front {
-            pub use rerail_rr_syntax::code_rule_dsl::logic::front::ast;
-            pub use rerail_rr_syntax::code_rule_dsl::logic::front::name;
-            #[allow(unused_imports)]
-            use std::collections::{BTreeMap, BTreeSet};
-            #[allow(unused_imports)]
-            use std::fmt;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::name::Name;
-            #[allow(unused_imports)]
-            pub(in crate::code_rule_dsl) use crate::code_rule_dsl::logic::front::ast::{AXIS, AggOp, DESCENDANTS, EVERY_KIND, GLOBAL, LIBRARY, LatticeDecl, NEAREST, Native, OPTION_GLOB, QUALIFIERS, RESERVED, SCOPE_NOT, SpanIn, Value, axis, globals, is_axis, is_transduced};
-            #[allow(unused_imports)]
-            pub(crate) use crate::code_rule_dsl::facts::core::PYTHON_CONTEXTS;
+    pub use rerail_facts_base::code_rule_dsl::*;
+    #[path = "facts"]
+    pub mod facts {
+        pub use rerail_facts_base::code_rule_dsl::facts::*;
+        #[allow(dead_code)]
+        pub mod families;
+        #[path = "vtab"]
+        pub mod vtab {
+            pub use rerail_facts_base::code_rule_dsl::facts::vtab::*;
+            pub mod syntax;
         }
-        #[path = "plan"]
-        pub mod plan {
-            pub mod sketch;
-            #[allow(unused_imports)]
-            use std::sync::Arc;
-            #[allow(unused_imports)]
-            use indexmap::IndexMap;
-            #[allow(unused_imports)]
-            use rusqlite::Connection;
-            #[allow(unused_imports)]
-            use rusqlite::types::Value as SqlValue;
-            #[allow(unused_imports)]
-            use std::cell::RefCell;
-            #[allow(unused_imports)]
-            use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
-            #[allow(unused_imports)]
-            use std::fmt;
-            #[allow(unused_imports)]
-            use std::path::Path;
-        }
-        pub mod crypto;
-        pub use rerail_prof::code_rule_dsl::logic::profile;
-        pub mod strings;
     }
-    pub use rerail_lang::code_rule_dsl::module_path;
-    pub use rerail_prof::code_rule_dsl::phase_clock;
-    pub mod producers;
-    pub use rerail_prof::code_rule_dsl::prof;
-    pub mod search_index;
-    pub use rerail_lang::code_rule_dsl::semver;
-    #[path = "profile/sql.rs"]
-    pub mod sql_profile;
-    pub mod sql_admission;
-    #[path = "stats"]
-    pub mod stats {
-        pub mod identity;
-    }
-    pub mod suppress {
-        pub use rerail_lang::code_rule_dsl::suppress::kinds;
-        #[allow(unused_imports)]
-        use ast_grep_core::{Doc, Node};
-        #[allow(unused_imports)]
-        pub(crate) use crate::code_rule_dsl::suppress::kinds::*;
-    }
-    pub use rerail_lang::code_rule_dsl::tape;
-    pub mod text;
-    pub use rerail_lang::code_rule_dsl::tree;
-    pub mod value {
-        pub use rerail_lang::code_rule_dsl::value::text_regex;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::language::{Family, GrammarDialect};
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::tape::TapeDoc;
-        #[allow(unused_imports)]
-        use ast_grep_core::tree_sitter::StrDoc;
-        #[allow(unused_imports)]
-        use ast_grep_core::{Doc, Node};
-        #[allow(unused_imports)]
-        pub(crate) use num_bigint::BigInt;
-        #[allow(unused_imports)]
-        use num_traits::{FromPrimitive, Signed, ToPrimitive, Zero};
-        #[allow(unused_imports)]
-        use std::cmp::Ordering;
-        #[allow(unused_imports)]
-        use std::ops::Range;
-        #[allow(unused_imports)]
-        pub(crate) use crate::code_rule_dsl::value::text_regex::MAX_STRING_BYTES;
-    }
-    #[allow(unused_imports)]
-    #[cfg(any(test, feature = "test-hooks"))]
-    pub(crate) use crate::code_rule_dsl::fixtures::{fixtures_dir, oracle};
-    #[allow(unused_imports)]
-    use crate::code_rule_dsl::json::{canonicalize_value, hex_digest, invalid, json_error};
-    #[allow(unused_imports)]
-    use napi::Result;
-    #[allow(unused_imports)]
-    use napi_derive::napi;
-    #[allow(unused_imports)]
-    use serde_json::Value;
-    #[allow(unused_imports)]
-    use std::sync::Arc;
 }
-// cratify: mounts end

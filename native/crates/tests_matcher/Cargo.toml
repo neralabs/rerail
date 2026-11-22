@@ -1,4 +1,4 @@
-# The engine's tests of matching: the matcher, the workspace, findings, suppressions and violations (docs/final-shape/proposals/crate-split/incremental-plan.md, step 2).
+# The engine's tests of the matcher: its anchors, comparisons, counts, relations, transforms and the rest of its parts, and the suppressions (docs/final-shape/proposals/crate-split/incremental-plan.md, step 7i).
 # A test crate: its library is its tests (`#![cfg(test)]`). Its manifest is boot's, with boot below it
 # (tools/cratify/split_test_crates.py), and kept by hand since.
 [package]
@@ -6,7 +6,7 @@ name = "rerail-tests-matcher"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The engine's tests of matching: the matcher, the workspace, findings, suppressions and violations."
+description = "The engine's tests of the matcher: its anchors, comparisons, counts, relations, transforms and the rest of its parts, and the suppressions."
 
 [features]
 # Every registry language (`languages/<id>.json`) is built by default. A build without `lang-<id>` keeps the

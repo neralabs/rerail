@@ -57,12 +57,12 @@ pub(in crate::code_rule_dsl) struct FileFactDescriptor {
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::code_rule_dsl) struct DocumentMapSpan {
-    pub(in crate::code_rule_dsl) source_document: usize,
-    pub(in crate::code_rule_dsl) generated_document: usize,
-    pub(in crate::code_rule_dsl) source_start: usize,
-    pub(in crate::code_rule_dsl) source_end: usize,
-    pub(in crate::code_rule_dsl) generated_start: usize,
-    pub(in crate::code_rule_dsl) generated_end: usize,
+    pub source_document: usize,
+    pub generated_document: usize,
+    pub source_start: usize,
+    pub source_end: usize,
+    pub generated_start: usize,
+    pub generated_end: usize,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -1440,11 +1440,11 @@ struct CaptureData {
 #[cfg(any(test, feature = "test-hooks"))]
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct TestProducerStatusRow {
-    pub(in crate::code_rule_dsl) producer: i64,
-    pub(in crate::code_rule_dsl) file: i64,
+    pub producer: i64,
+    pub file: i64,
     pub complete: i64,
-    pub(in crate::code_rule_dsl) verdict: Option<i64>,
-    pub(in crate::code_rule_dsl) work_used: Option<i64>,
+    pub verdict: Option<i64>,
+    pub work_used: Option<i64>,
     pub error: Option<String>,
 }
 

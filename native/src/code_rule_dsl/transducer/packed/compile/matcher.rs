@@ -21,8 +21,41 @@ use crate::code_rule_dsl::matcher::{Axis, MatchTree, Stop};
 use crate::code_rule_dsl::transducer::packed::evaluation_costs as costs;
 use crate::code_rule_dsl::transducer::packed::{self as transducer_packed, WorkBudget};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use super::device::{ClauseRoots, Outcome, RootJobs};
 
 use crate::code_rule_dsl::tape::DERIVED_CLASS_BASE as LABEL_BASE;
+
+/// What a device runs of a lowered matcher or wave (its label passes and root programs, W's), beside what the
+/// transducer runs on it (`device::MatcherDevice`): the device registers both (`WAVES`).
+pub trait WaveDevice: Send + Sync {
+    /// A matcher's roots over the batch, every pass in one command buffer, pattern leaves included.
+    fn matcher_roots(&self, matcher: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error>;
+    /// Each clause's matches of the batch from `roots`, every pass and root in one command buffer.
+    fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error>;
+    /// Every clause's labels over the batch, as views of its tapes the root programs read, with `roots`' records.
+    fn wave_labelled(&self, wave: &LoweredWave, tapes: &[TapeDoc], active: &[Vec<bool>], roots: Option<&RootJobs<'_>>) -> Result<(Vec<TapeDoc>, Outcome), Error>;
+    /// The sources of the wave's generated kernels (its patterns'), in the plan's order, for a batch of tapes of
+    /// `format` (0: mixed): a source reads the tape through the format's view (decision 0353 step 4b).
+    fn wave_pattern_sources(&self, wave: &LoweredWave, format: u32) -> Result<Vec<String>, Error>;
+}
+
+/// The registered wave device.
+pub static WAVES: rerail_registry::Slot<&'static dyn WaveDevice> =
+    rerail_registry::Slot::new("the device's matchers and waves (transducer::packed::compile_matcher::WAVES)");
+
+/// The sibling positions and `nthChild` answers of `index`'s tape, for facts that are node sets: made on the first read.
+fn siblings(index: &super::compile_sets::Index) -> &crate::code_rule_dsl::matcher::SiblingPositions {
+    index
+        .facts
+        .get_or_init(|| Box::new(crate::code_rule_dsl::matcher::SiblingPositions::default()))
+        .downcast_ref()
+        .expect("an index's facts are the matcher's sibling positions")
+}
+
+/// The registered wave device, or `UnsupportedBackend`.
+fn waves() -> Result<&'static dyn WaveDevice, Error> {
+    WAVES.try_get().ok_or(Error::UnsupportedBackend)
+}
 
 // The label passes on Metal (`rerail-device-metal`), behind `transducer::packed::device`.
 // cratify: `matcher_metal` is rerail-device-metal's (it mounts it)
@@ -780,33 +813,6 @@ impl LoweredMatcher {
     }
 }
 
-impl Program {
-    /// The program with every label it tests renamed by `map`.
-    fn relabelled(&self, map: &dyn Fn(u16) -> u16) -> Self {
-        let mut program = self.clone();
-        for word in &mut program.words {
-            if let (SUPERTYPE, mode, class) = split(*word)
-                && class >= LABEL_BASE
-            {
-                *word = super::word(SUPERTYPE, mode, map(class));
-            }
-        }
-        program
-    }
-
-    /// The program with every label it tests `by` higher (a clause's place in a wave).
-    fn shifted(&self, by: u16) -> Self {
-        let mut program = self.clone();
-        for word in &mut program.words {
-            if let (SUPERTYPE, mode, class) = split(*word)
-                && class >= LABEL_BASE
-            {
-                *word = super::word(SUPERTYPE, mode, class + by);
-            }
-        }
-        program
-    }
-}
 
 impl LoweredMatcher {
     /// The clause with its labels `by` higher.
@@ -1208,9 +1214,9 @@ impl LoweredWave {
     /// (decision 0395), for a batch of tapes of `format` (0: mixed), the kernels' function constant. A wave whose
     /// kernels are not runs on the CPU meanwhile; they are compiled as the mode says.
     pub fn metal_ready(&self, format: u32) -> bool {
-        let Some(device) = super::device::matcher() else { return true };
+        let (Some(device), Some(waves)) = (super::device::matcher(), WAVES.try_get()) else { return true };
         // The sources by the tape view the batch's format reads (`pattern_variant`).
-        match self.metal_sources[device.pattern_variant(format)].get_or_init(|| device.wave_pattern_sources(self, format)) {
+        match self.metal_sources[device.pattern_variant(format)].get_or_init(|| waves.wave_pattern_sources(self, format)) {
             Ok(sources) => device.patterns_ready(sources, format),
             // No Metal form of its patterns: the Metal run says why (`roots_batch`).
             Err(_) => true,
@@ -1304,7 +1310,7 @@ impl LoweredWave {
     /// the batch on its own where the whole outgrows a workspace or the launch bound (a file's labels read only that
     /// file).
     fn roots_metal_split(&self, tapes: &[TapeDoc], active: &[Vec<bool>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, WaveRun), Error> {
-        let found = super::device::required().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active)));
+        let found = waves().and_then(|device| device.wave_roots(self, tapes, super::device::ClauseRoots::Rule(active)));
         // Past the device's room at one tape, in as few lanes and states as it runs in: its workspace was admitted as
         // a stratum's tables are and refused (`label_passes`: no lease coming back makes the room, or waiting for it
         // costs more than the cores take, `placement::admission_patience`), so the price has chosen the cores (0334).
@@ -1609,7 +1615,7 @@ fn run(
 impl LoweredMatcher {
     /// The batch's roots with every pass on the device in one command buffer, pattern leaves included.
     pub fn roots_metal(&self, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, super::device::Outcome), Error> {
-        super::device::required()?.matcher_roots(self, tapes)
+        waves()?.matcher_roots(self, tapes)
     }
 }
 
@@ -1757,12 +1763,12 @@ impl LoweredWave {
 
     /// Every clause's labels over the batch on the device, as views of its tapes the root programs read.
     pub fn labelled_metal(&self, tapes: &[TapeDoc], active: &[Vec<bool>], roots: Option<&super::device::RootJobs<'_>>) -> Result<(Vec<TapeDoc>, super::device::Outcome), Error> {
-        super::device::required()?.wave_labelled(self, tapes, active, roots)
+        waves()?.wave_labelled(self, tapes, active, roots)
     }
 
     /// Each clause's matches of the batch from `roots`, every clause's passes and roots in one command buffer.
     pub fn roots_metal(&self, tapes: &[TapeDoc], roots: &[Vec<Vec<u32>>]) -> Result<(Vec<Vec<BTreeSet<u32>>>, super::device::Outcome), Error> {
-        super::device::required()?.wave_roots(self, tapes, super::device::ClauseRoots::Listed(roots))
+        waves()?.wave_roots(self, tapes, super::device::ClauseRoots::Listed(roots))
     }
 }
 
@@ -2157,7 +2163,7 @@ fn formulas(
                     .filter(|&(at, plan)| plan.is_some() && on[at][tape])
                     .map(|(at, plan)| {
                         let bits = match plan.as_ref().expect("a plan") {
-                            Plan::Fact(fact) => Some(Arc::unwrap_or_clone(fact.nth_bits(view, &index.siblings).expect("a node set"))),
+                            Plan::Fact(fact) => Some(Arc::unwrap_or_clone(fact.nth_bits(view, siblings(index)).expect("a node set"))),
                             Plan::Set { walk, program, domain, set } => walk.texts(program, view).map(|texts| {
                                 let bits = Reader { tape: view, index, labels: &sets[tape], texts: &texts }.eval(set);
                                 if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_SETS_CHECK").is_some()) {

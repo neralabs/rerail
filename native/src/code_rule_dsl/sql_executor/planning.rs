@@ -172,7 +172,7 @@ impl Evaluation {
         self.gate_statistics = run
             .temporal
             .values()
-            .filter_map(temporal::Trace::planning_statistics)
+            .filter_map(|trace| trace.planning_statistics())
             .collect();
     }
     pub fn choose(&mut self, strategy: Strategy, compare_retained: bool) {

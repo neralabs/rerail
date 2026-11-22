@@ -8,7 +8,7 @@
 use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
-use super::{BatchOutcome, Error, ExecutionBackend, LoweredMatcher, LoweredWave, PackedExecution, Program};
+use super::{BatchOutcome, Error, ExecutionBackend, PackedExecution, Program};
 use crate::code_rule_dsl::tape::TapeDoc;
 
 /// Which of the device's program engines runs a batch.
@@ -34,7 +34,22 @@ pub enum ClauseRoots<'r> {
 /// (`rerail_gpu::kernels::Ahead`, which the engine makes of it).
 pub type KernelAhead = (String, Box<dyn Fn() -> Result<(), String> + Send + Sync>);
 
-/// What the transducer runs on a device.
+/// A step over slots: a slot is the space's nodes, a bit each.
+#[derive(Clone, Copy, Debug)]
+pub enum SetStep {
+    Clear { out: u32 },
+    /// Every node of the space.
+    Fill { out: u32 },
+    Copy { out: u32, a: u32 },
+    Or { out: u32, a: u32, b: u32 },
+    And { out: u32, a: u32, b: u32 },
+    AndNot { out: u32, a: u32, b: u32 },
+    /// `out`'s nodes kept in files where `test` has a node.
+    Within { out: u32, test: u32 },
+}
+
+/// What the transducer runs on a device. What it runs of a matcher or a wave (W's, lowered) is the wave device's
+/// (`compile_matcher::WaveDevice`, rerail-transducer's), which the device registers beside this.
 pub trait MatcherDevice: Send + Sync {
     /// The device's fixed kernels (the same for every rule set), to compile ahead of their first use: the engine's
     /// `kernels compile`, and its warm-up as a run starts.
@@ -54,15 +69,6 @@ pub trait MatcherDevice: Send + Sync {
     fn compile_interpreter(&self) -> Result<(), Error>;
     /// The sweep and the batch's programs compiled: the background compilation of `MetalBackground`.
     fn compile_background(&self, programs: &[Program]) -> Result<(), Error>;
-    /// A matcher's roots over the batch, every pass in one command buffer, pattern leaves included.
-    fn matcher_roots(&self, matcher: &LoweredMatcher, tapes: &[TapeDoc]) -> Result<(Vec<BTreeSet<u32>>, Outcome), Error>;
-    /// Each clause's matches of the batch from `roots`, every pass and root in one command buffer.
-    fn wave_roots(&self, wave: &LoweredWave, tapes: &[TapeDoc], roots: ClauseRoots<'_>) -> Result<(Vec<Vec<BTreeSet<u32>>>, Outcome), Error>;
-    /// Every clause's labels over the batch, as views of its tapes the root programs read, with `roots`' records.
-    fn wave_labelled(&self, wave: &LoweredWave, tapes: &[TapeDoc], active: &[Vec<bool>], roots: Option<&RootJobs<'_>>) -> Result<(Vec<TapeDoc>, Outcome), Error>;
-    /// The sources of the wave's generated kernels (its patterns'), in the plan's order, for a batch of tapes of
-    /// `format` (0: mixed): a source reads the tape through the format's view (decision 0353 step 4b).
-    fn wave_pattern_sources(&self, wave: &LoweredWave, format: u32) -> Result<Vec<String>, Error>;
     /// Which of the kernels' tape views a batch of `format` reads (0 or 1): the sources differ by it alone.
     fn pattern_variant(&self, format: u32) -> usize;
     /// Whether the kernels of `sources` are at hand without a compile (decision 0395); each missing one is
@@ -77,6 +83,9 @@ pub trait MatcherDevice: Send + Sync {
     /// threads of their own (the cores run the batch meanwhile: no launch waits on the compiler). Any other failure is
     /// the run's error (decision 0382: no fallback on an error).
     fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Result<Option<Vec<Vec<u64>>>, Error>;
+    /// A node-set program (the prefilter's sets, `SetStep`s over `slots` slots of a space of `len` nodes in `files`,
+    /// each file its first node and count), with `leaves` written in their slots: the words of each of `outputs`.
+    fn set_steps(&self, files: &[(u32, u32)], len: u32, slots: usize, leaves: &[(usize, &[u64])], steps: &[SetStep], outputs: &[usize]) -> Result<Vec<Vec<u64>>, Error>;
     /// This thread's program invocations and host events since the last reset (tests count them).
     fn execution_metrics(&self) -> (usize, usize);
     /// Resets this thread's `execution_metrics`.

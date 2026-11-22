@@ -1,4 +1,4 @@
-//! The engine's tests of the languages: tapes, the language registry, facts, trees, Blade and Vue (docs/final-shape/proposals/crate-split/incremental-plan.md, step 2).
+//! The engine's tests of the languages: their adapters and kit, the facts and their producers and virtual tables, Vue and the tree (docs/final-shape/proposals/crate-split/incremental-plan.md, step 7i).
 //!
 //! A test crate above boot: it mounts the test files in place, under the facades the engine hosted them through,
 //! and reads every other module through boot. Its test binary is booted as it loads (`boot::install_for_tests`), as
@@ -424,57 +424,6 @@ pub mod code_rule_dsl {
         use std::borrow::Cow;
         #[allow(unused_imports)]
         use std::sync::LazyLock;
-    }
-    #[cfg_attr(test, path = "tape")]
-    mod tape {
-        pub use rerail_boot::code_rule_dsl::tape::*;
-        pub mod resident {
-            pub use rerail_boot::code_rule_dsl::tape::resident::*;
-            #[cfg(test)]
-            #[path = "tests.rs"]
-            pub mod tests;
-            #[allow(unused_imports)]
-            use super::*;
-        }
-        #[cfg(test)]
-        pub mod tests;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::embed::segments::SegmentMap;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::embed::Program;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::language::{GrammarDialect, KindCatalog, Via};
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::lines::LineTable;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::lines::Terminators;
-        #[allow(unused_imports)]
-        use ast_grep_core::Position;
-        #[allow(unused_imports)]
-        use ast_grep_core::source::{Doc, Edit, SgNode};
-        #[allow(unused_imports)]
-        use ast_grep_language::LanguageExt;
-        #[allow(unused_imports)]
-        use sha2::{Digest, Sha256};
-        #[allow(unused_imports)]
-        use std::borrow::Cow;
-        #[allow(unused_imports)]
-        use std::ops::Range;
-        #[allow(unused_imports)]
-        use std::sync::{Arc, Weak};
-        #[allow(unused_imports)]
-        use tree_sitter::{Language, Node as TsNode, TreeCursor};
-        #[allow(unused_imports)]
-        pub(in crate::code_rule_dsl) use crate::code_rule_dsl::tape::index::IndexImage;
-        #[allow(unused_imports)]
-        pub(super) use crate::code_rule_dsl::tape::wire::index_span;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::tape::wire::{CHECKPOINT_STRIDE, WIDTH};
-        #[cfg(test)]
-            pub mod corpus_parity;
-        #[cfg(test)]
-        #[path = "tokens_tests.rs"]
-        pub mod tokens_tests;
     }
     pub mod tree {
         pub use rerail_boot::code_rule_dsl::tree::*;

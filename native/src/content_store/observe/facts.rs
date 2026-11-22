@@ -14,12 +14,16 @@
 //! vouches for the rest are written together, as the table's transaction wrote them. A put waits for this process's
 //! earlier puts of the space (`ContentStore::kept_row` settles them first), so each reads the last.
 //!
+//! The store is above the observer (rerail-store over rerail-observe): the observer reaches it through what it
+//! needs of it (`observer_store::base`: `Store`, `Kept`), which the store registers at load (`STORE`). With none
+//! registered, nothing is kept.
+//!
 //! The space is the observer's path's (`<store>.files`, or a test thread's own): two observers of one store keep
 //! apart, as their files did.
 
 use super::{Meta, Stat};
-use crate::content_store::ContentStore;
-use crate::content_store::kept_facts::{BlockFlat, KeptPut, KeptWhat};
+use crate::content_store::kept_facts::base::{BlockFlat, KeptPut, KeptWhat};
+use crate::content_store::observer_store::base::{Kept, STORE};
 use rerail_blocks::kept::{FactKey, KeptRead};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -128,12 +132,12 @@ impl Change {
 pub(super) struct Facts {
     path: PathBuf,
     space: [u8; 32],
-    store: Mutex<Option<ContentStore>>,
+    store: Mutex<Option<Box<dyn Kept>>>,
 }
 
 /// The facts read and written through an open store.
 struct Open<'s> {
-    store: &'s ContentStore,
+    store: &'s dyn Kept,
     space: [u8; 32],
 }
 
@@ -174,7 +178,7 @@ impl Facts {
         let text = observer.to_string_lossy();
         let at = text.rfind(".files")?;
         let path = PathBuf::from(&text[..at]);
-        let store = ContentStore::open_images(&path).ok()?;
+        let store = STORE.try_get()?.open(&path)?;
         let space = Sha256::digest(format!("rerail.observer-space/v1\0{text}").as_bytes()).into();
         Some(Facts { path, space, store: Mutex::new(Some(store)) })
     }
@@ -183,9 +187,9 @@ impl Facts {
     fn with<T>(&self, f: impl FnOnce(&Open<'_>) -> T) -> Option<T> {
         let mut held = self.store.lock();
         if held.is_none() {
-            *held = Some(ContentStore::open_images(&self.path).ok()?);
+            *held = Some(STORE.try_get()?.open(&self.path)?);
         }
-        Some(f(&Open { store: held.as_ref()?, space: self.space }))
+        Some(f(&Open { store: held.as_deref()?, space: self.space }))
     }
 
     /// Every setting kept.
@@ -211,41 +215,45 @@ impl Facts {
     /// Waits until every put queued is written, reading nothing (so a thread may ask it as it ends).
     pub(super) fn written(&self) {
         if let Some(store) = self.store.lock().as_ref() {
-            store.settle_kept(&self.space);
+            store.settle(&self.space);
         }
     }
 
     /// Waits until every put queued is written, and closes the store (the outermost run's end).
     pub(super) fn close(&self) {
         if let Some(store) = self.store.lock().take() {
-            store.settle_kept(&self.space);
+            store.settle(&self.space);
         }
     }
 }
 
 impl Open<'_> {
     fn text(&self, sym: i64) -> Option<String> {
-        self.store.atom_value(u32::try_from(sym).ok()?).ok().flatten()
+        self.store.text(u32::try_from(sym).ok()?)
     }
 
     fn meta(&self) -> Meta {
         let mut meta = Meta::new();
-        let Ok(Some(space)) = self.store.kept_space(&self.space) else { return meta };
-        let chain = space.view();
-        let Some(kept) = chain.get(&FactKey { rel: META, ident: &ident(META), part: 0 }) else { return meta };
-        for i in 0..kept.rows.len() {
-            let row = kept.row(i);
-            let Some(key) = self.text(row[0]) else { continue };
-            let value = if row[1] == 1 { rusqlite::types::Value::Text(self.text(row[3]).unwrap_or_default()) } else { rusqlite::types::Value::Integer(row[2]) };
-            meta.insert(key, value);
-        }
+        self.store.read(&self.space, &mut |chain| {
+            let Some(kept) = chain.and_then(|c| c.get(&FactKey { rel: META, ident: &ident(META), part: 0 })) else { return };
+            for i in 0..kept.rows.len() {
+                let row = kept.row(i);
+                let Some(key) = self.text(row[0]) else { continue };
+                let value = if row[1] == 1 { rusqlite::types::Value::Text(self.text(row[3]).unwrap_or_default()) } else { rusqlite::types::Value::Integer(row[2]) };
+                meta.insert(key, value);
+            }
+        });
         meta
     }
 
     fn under(&self, unit: &str) -> (Vec<Row>, Vec<Canon>) {
-        let Ok(Some(space)) = self.store.kept_space(&self.space) else { return Default::default() };
-        let chain = space.view();
-        (self.rows_under(&chain, unit), self.rows_under(&chain, unit))
+        let mut out = Default::default();
+        self.store.read(&self.space, &mut |chain| {
+            if let Some(chain) = chain {
+                out = (self.rows_under(chain, unit), self.rows_under(chain, unit));
+            }
+        });
+        out
     }
 
     fn rows_under<R: ByDir>(&self, chain: &dyn KeptRead, unit: &str) -> Vec<R> {
@@ -274,9 +282,13 @@ impl Open<'_> {
     }
 
     fn all(&self) -> (Vec<Row>, Vec<Canon>) {
-        let Ok(Some(space)) = self.store.kept_space(&self.space) else { return Default::default() };
-        let chain = space.view();
-        (self.all_of(&chain), self.all_of(&chain))
+        let mut out = Default::default();
+        self.store.read(&self.space, &mut |chain| {
+            if let Some(chain) = chain {
+                out = (self.all_of(chain), self.all_of(chain));
+            }
+        });
+        out
     }
 
     fn all_of<R: ByDir>(&self, chain: &dyn KeptRead) -> Vec<R> {
@@ -284,27 +296,31 @@ impl Open<'_> {
     }
 
     /// Writes `change`: the partitions it touches, and the settings when they change, as one put, a job called `what`
-    /// (`ContentStore::queue_kept_as`).
+    /// (`Kept::queue`).
     fn apply(&self, change: Change, what: &'static str) {
         if change.is_empty() {
             return;
         }
-        let space = self.store.kept_space(&self.space).ok().flatten();
-        let chain = space.as_ref().map(|s| s.view());
-        let chain = chain.as_ref().map(|c| c as &dyn KeptRead);
+        let Change { answers, canon, meta_put, meta_delete } = change;
+        let (mut answers, mut canon) = (Some(answers), Some(canon));
         let mut puts = Vec::new();
-        if !self.edit(chain, change.answers, &mut puts) || !self.edit(chain, change.canon, &mut puts) {
+        let mut edited = false;
+        self.store.read(&self.space, &mut |chain| {
+            let (Some(answers), Some(canon)) = (answers.take(), canon.take()) else { return };
+            edited = self.edit(chain, answers, &mut puts) && self.edit(chain, canon, &mut puts);
+        });
+        if !edited {
             return;
         }
-        if !change.meta_put.is_empty() || !change.meta_delete.is_empty() {
+        if !meta_put.is_empty() || !meta_delete.is_empty() {
             let mut meta: HashMap<String, rusqlite::types::Value> = self.meta();
-            for k in &change.meta_delete {
+            for k in &meta_delete {
                 meta.remove(k);
             }
-            meta.extend(change.meta_put);
+            meta.extend(meta_put);
             let ordered: BTreeMap<String, rusqlite::types::Value> = meta.into_iter().collect();
             let texts: Vec<String> = ordered.iter().flat_map(|(k, v)| [k.clone(), match v { rusqlite::types::Value::Text(t) => t.clone(), _ => String::new() }]).collect();
-            let Ok(syms) = self.store.intern_atoms(&texts.iter().map(String::as_str).collect::<Vec<_>>()) else { return };
+            let Some(syms) = self.store.intern(&texts.iter().map(String::as_str).collect::<Vec<_>>()) else { return };
             let mut flat = Vec::new();
             for ((_, v), s) in ordered.iter().zip(syms.chunks_exact(2)) {
                 let (is_text, number) = match v {
@@ -318,7 +334,7 @@ impl Open<'_> {
             let rows_or_gone = if n == 0 { KeptWhat::Gone } else { KeptWhat::Picked(Box::new(BlockFlat::of_rows(&flat, META_TYPES.len(), true))) };
             puts.push(KeptPut { rel: META.to_owned(), ident: ident(META), part: 0, digest: digest_of(&flat), reads: Vec::new(), types: META_TYPES.to_vec(), what: rows_or_gone });
         }
-        self.store.queue_kept_as(self.space, puts, what);
+        self.store.queue(self.space, puts, what);
     }
 
     /// `edit`'s partitions of `R`, read as kept, edited and pushed to `puts` whole. False if their atoms could not be
@@ -380,7 +396,7 @@ impl Open<'_> {
                 continue;
             }
             let texts: Vec<String> = rows.values().flat_map(|r| r.texts().into_iter().take(R::TEXTS)).collect();
-            let Ok(syms) = self.store.intern_atoms(&texts.iter().map(String::as_str).collect::<Vec<_>>()) else { return false };
+            let Some(syms) = self.store.intern(&texts.iter().map(String::as_str).collect::<Vec<_>>()) else { return false };
             let mut flat = Vec::with_capacity(rows.len() * R::TYPES.len());
             for (r, s) in rows.values().zip(syms.chunks_exact(R::TEXTS)) {
                 flat.extend(r.words(s));

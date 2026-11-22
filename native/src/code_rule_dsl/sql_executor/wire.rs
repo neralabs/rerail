@@ -12,7 +12,7 @@ pub fn integer(n: i64) -> Value {
     }
 }
 
-pub(super) fn exact(value: &Value) -> Result<i64> {
+pub fn exact(value: &Value) -> Result<i64> {
     if let Some(n) = value.as_i64() {
         return Ok(n);
     }
@@ -27,7 +27,7 @@ pub(super) fn exact(value: &Value) -> Result<i64> {
     Err(error("expected an integer or {integer: decimal-string}"))
 }
 
-pub(super) fn fact(symbols: &BTreeMap<&str, u32>, value: &Value, ty: Option<&str>) -> Result<i64> {
+pub fn fact(symbols: &BTreeMap<&str, u32>, value: &Value, ty: Option<&str>) -> Result<i64> {
     if let Some(s) = value.as_str() {
         if ty.is_some_and(|t| t != "symbol") {
             return Err(error("string fact values require a symbol column"));
@@ -37,7 +37,7 @@ pub(super) fn fact(symbols: &BTreeMap<&str, u32>, value: &Value, ty: Option<&str
     exact(value)
 }
 
-pub(super) fn register(db: &rusqlite::Connection) -> Result<()> {
+pub fn register(db: &rusqlite::Connection) -> Result<()> {
     let flags = FunctionFlags::SQLITE_UTF8 | FunctionFlags::SQLITE_DETERMINISTIC;
     for (function, field) in [(c"kind_name", false), (c"field_name", true)] {
         db.create_scalar_function(function, 2, flags, move |ctx| {

@@ -711,7 +711,9 @@ fn a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it
     use super::compile_matcher::{Backend, LoweredWave};
     use crate::code_rule_dsl::transducer::packed::WorkBudget;
     use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
-    // One large file (the fixtures' sources one after another) and a few small ones.
+    // One large file (the fixtures' sources one after another) and a few small ones. The fixtures are pack test data:
+    // without them the file is too small for any walk to outrun its budget.
+    crate::code_rule_dsl::test_support::pack_test_data("packs/python/upstream/ruff/fixtures");
     let mut sources = Vec::new();
     files(pack().join("upstream").as_path(), "py", &mut sources);
     // Without them the large file is empty, and no evaluation outruns its budget: say so.
@@ -1822,7 +1824,7 @@ const BINDING_FIXTURES: &[&str] = &[
     "flake8_bugbear/B006_B008.py", "flake8_return/RET504.py",
 ];
 fn binding_fixtures() -> Vec<(String, TapeDoc)> {
-    let root = crate::source_tree::native().join("../packs/python/upstream/ruff/fixtures");
+    let root = crate::code_rule_dsl::test_support::pack_test_data("packs/python/upstream/ruff/fixtures");
     BINDING_FIXTURES
         .iter()
         .map(|path| {

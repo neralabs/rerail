@@ -1724,6 +1724,314 @@ pub unsafe fn w_leaf(desc: *const u8, number: u32, start: u64, end: u64) -> u32 
     unsafe { code(state(desc).leaf(number, start, end)) }
 }
 
+/// A walk's hold on the writer, as the lean parser's `Walk` holds its tape's columns: the block it writes (its room
+/// and side area), the next node, the start before, and the open nodes' frames, kept by the walk as its own. An open,
+/// a leaf and a close store the node's cells through them, at the widths `X` (`Fixed`: a store of the cell's width at
+/// a constant offset), with no test of their bounds: as `Walk`'s, the caller's are in order (`begin`). The state is
+/// reached only to begin a block (and settle the one before) and to close a node of a block before: then its own op
+/// writes the node, the cursor's fields given to it and taken back. The bytes are the state's ops'.
+pub struct Cursor<X: CellWidths> {
+    s: *mut State,
+    room: usize,
+    area: usize,
+    n: u32,
+    prev_start: u64,
+    source_len: u64,
+    opens: usize,
+    open_len: u32,
+    x: core::marker::PhantomData<X>,
+}
+
+impl<X: CellWidths> Cursor<X> {
+    /// The writer's state `desc`, held.
+    ///
+    /// # Safety
+    /// `desc` is a writer's state, its room reserved for the walk (`Writer::reserve_run`: each node, each open frame),
+    /// of widths `X`; nothing else writes it while the cursor is held. The walk's nodes are in order, as a parser's
+    /// are: each start at or past the one before, each end at or past its node's start, every one within the source,
+    /// and a node is open for each node but the first (a debug build checks each).
+    #[inline(always)]
+    pub unsafe fn begin(desc: *mut u8) -> Self {
+        // SAFETY: the caller's.
+        let s: *mut State = unsafe { state(desc) };
+        // SAFETY: as above; the block of the node before is made.
+        unsafe {
+            let st = &*s;
+            let (room, area) = if st.n == 0 {
+                (0, 0)
+            } else {
+                let b = st.block((st.n - 1) / Z);
+                (b.room, b.area)
+            };
+            Cursor { s, room, area, n: st.n, prev_start: st.prev_start, source_len: st.source_len, opens: st.part(part::OPEN), open_len: st.open_len, x: core::marker::PhantomData }
+        }
+    }
+
+    /// The state, its fields the cursor's.
+    #[inline(always)]
+    fn give(&mut self) -> &mut State {
+        // SAFETY: `begin`'s: the state is the cursor's while held.
+        let st = unsafe { &mut *self.s };
+        st.n = self.n;
+        st.prev_start = self.prev_start;
+        st.open_len = self.open_len;
+        st
+    }
+
+    /// The fields back from the state, after its op: the block of the node before's.
+    #[inline(always)]
+    fn take(&mut self) {
+        // SAFETY: as `give`'s; a node is written, its block made.
+        unsafe {
+            let st = &*self.s;
+            self.n = st.n;
+            self.prev_start = st.prev_start;
+            self.open_len = st.open_len;
+            if st.n != 0 && st.bad == 0 {
+                let b = st.block((st.n - 1) / Z);
+                (self.room, self.area) = (b.room, b.area);
+            }
+        }
+    }
+
+    #[inline(always)]
+    fn block(&self) -> Block {
+        Block { room: self.room, area: self.area }
+    }
+
+    /// Row `j`'s value `v` in array `a` of the held block.
+    #[inline(always)]
+    unsafe fn put(&mut self, a: usize, j: u32, v: u64) {
+        let block = self.block();
+        // SAFETY: the held block is made, `j` a row of it.
+        unsafe { (*self.s).put_at_x::<X>(a, j, v, block) }
+    }
+
+    /// Block `n / Z` made and held, its first node next (`walk`'s `base[n / STRIDE]` at a stride's first node): format
+    /// 16's room, table entry, side area and presence (`new_block`).
+    #[inline(always)]
+    unsafe fn start_block(&mut self) {
+        let b = self.n / Z;
+        // SAFETY: `begin`'s: the parts' room reserved; `new_block` reads none of the cursor's fields.
+        unsafe {
+            let st = &mut *self.s;
+            let r = st.new_block(b);
+            debug_assert!(r.is_ok(), "the writer's block, its room reserved");
+            let block = st.block(b);
+            (self.room, self.area) = (block.room, block.area);
+        }
+    }
+
+    /// The block before the held one final where it is (`settle`), once the held block's first node is written.
+    #[inline(always)]
+    unsafe fn settle_before(&mut self) {
+        let b = (self.n - 1) / Z;
+        // SAFETY: `begin`'s; the state's fields the cursor's for it.
+        unsafe {
+            self.give();
+            let r = (*self.s).settle(b - 1);
+            debug_assert!(r.is_ok(), "the writer's settle, its room reserved");
+        }
+    }
+
+    /// Node `n` of `number` at `start`, in the held block, its first where `FIRST` (its block made by `start_block`):
+    /// the slot of the node before, its code, gap and checkpoint; its frame pushed where `push`. Its row.
+    #[inline(always)]
+    unsafe fn node<const FIRST: bool>(&mut self, number: u32, start: u64, push: bool) -> u32 {
+        let i = self.n;
+        let j = i % Z;
+        debug_assert!(start >= self.prev_start && start <= self.source_len, "the walk's starts in order, in the source");
+        debug_assert!((j == 0) == FIRST && i != 0 && self.open_len != 0 && i + 1 < MAX_NODES, "the cursor's node is in its block, inside the root");
+        // SAFETY: the caller's: the held block is node `i`'s; each frame in the OPEN part's reserved room.
+        unsafe {
+            if self.open_len != 0 {
+                let t = self.opens + (self.open_len as usize - 1) * OPEN as usize;
+                let (p, idx, last) = (ld32(t), ld32(t + 4), ld32(t + 8));
+                st32(t + 4, idx.wrapping_add(1));
+                st32(t + 8, i);
+                if i.wrapping_sub(1) != p {
+                    let v = if idx.is_multiple_of(K) { u64::from(i.wrapping_sub(p)) << 2 | 3 } else { u64::from(i.wrapping_sub(last)) << 2 | 1 };
+                    if FIRST {
+                        // The node before is the block before's last.
+                        let r = (*self.s).put_x::<X>(0, i - 1, v);
+                        debug_assert!(r.is_ok());
+                    } else {
+                        self.put(0, j - 1, v);
+                    }
+                }
+            }
+            let block = self.block();
+            (*self.s).put_code_at(j, number, block);
+            self.put(1, j, start - self.prev_start);
+            if j.is_multiple_of(K) {
+                (*self.s).put_checkpoint_x::<X>(self.room, j, start);
+            }
+            self.prev_start = start;
+            self.n = i + 1;
+            if push {
+                let t = self.opens + self.open_len as usize * OPEN as usize;
+                st32(t, i);
+                st32(t + 4, 0);
+                st32(t + 8, NONE);
+                st64(t + 16, start);
+                self.open_len += 1;
+            }
+        }
+        j
+    }
+
+    /// A node opened at `start` (`w_open`).
+    ///
+    /// # Safety
+    /// As `begin`'s.
+    #[inline(always)]
+    pub unsafe fn open(&mut self, number: u32, start: u64) {
+        // SAFETY: the caller's.
+        unsafe {
+            if self.n == 0 {
+                // The root: the file's first node, its block the first (`walk`'s document).
+                let r = self.give().open_node_x::<X>(number, start, true);
+                debug_assert!(r.is_ok(), "the writer's open, its room reserved");
+                self.take();
+            } else if self.n.is_multiple_of(Z) {
+                self.start_block();
+                self.node::<true>(number, start, true);
+                self.settle_before();
+            } else {
+                self.node::<false>(number, start, true);
+            }
+        }
+    }
+
+    /// A leaf from `start` to `end` (`w_leaf`).
+    ///
+    /// # Safety
+    /// As `begin`'s.
+    #[inline(always)]
+    pub unsafe fn leaf(&mut self, number: u32, start: u64, end: u64) {
+        debug_assert!(end >= start && end <= self.source_len, "a leaf's end past its start, in the source");
+        // SAFETY: the caller's.
+        unsafe {
+            if self.n == 0 {
+                // The file's one node.
+                let r = self.give().leaf_x::<X>(number, start, end);
+                debug_assert!(r.is_ok(), "the writer's leaf, its room reserved");
+                self.take();
+            } else if self.n.is_multiple_of(Z) {
+                self.start_block();
+                let j = self.node::<true>(number, start, false);
+                self.put(2, j, end - start);
+                self.settle_before();
+            } else {
+                let j = self.node::<false>(number, start, false);
+                self.put(2, j, end - start);
+            }
+        }
+    }
+
+    /// A node of one leaf child, both at once (`w_leaf_in`): the node from `start` to `end`, its child from `cs` to
+    /// `ce`.
+    ///
+    /// # Safety
+    /// As `begin`'s.
+    #[inline(always)]
+    pub unsafe fn leaf_in(&mut self, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) {
+        debug_assert!(cs >= start && ce >= cs && end >= ce && end <= self.source_len, "the node's and its child's bounds in order");
+        // SAFETY: the caller's.
+        unsafe {
+            if self.n == 0 {
+                // The file's one node and its child.
+                let r = self.give().leaf_in_x::<X>(number, child, start, cs, ce, end);
+                debug_assert!(r.is_ok(), "the writer's node of one leaf, its room reserved");
+                self.take();
+                return;
+            }
+            let first = self.n.is_multiple_of(Z);
+            let j = if first {
+                self.start_block();
+                self.node::<true>(number, start, false)
+            } else {
+                self.node::<false>(number, start, false)
+            };
+            self.put(2, j, end - start);
+            self.put(0, j, 2 << 1);
+            if first {
+                self.settle_before();
+            }
+            // The child: the node's first, so no slot of the node before describes it; its block's first where the
+            // node is the block's last.
+            let cj = j + 1;
+            let child_first = cj == Z;
+            if child_first {
+                self.start_block();
+            }
+            let cj = cj % Z;
+            let block = self.block();
+            (*self.s).put_code_at(cj, child, block);
+            self.put(1, cj, cs - start);
+            if cj.is_multiple_of(K) {
+                (*self.s).put_checkpoint_x::<X>(self.room, cj, cs);
+            }
+            self.put(2, cj, ce - cs);
+            self.prev_start = cs;
+            self.n += 1;
+            if child_first {
+                self.settle_before();
+            }
+        }
+    }
+
+    /// The innermost open node closed at `end` (`w_close`): its length, and an inner node's size.
+    ///
+    /// # Safety
+    /// As `begin`'s; a node is open.
+    #[inline(always)]
+    pub unsafe fn close(&mut self, end: u64) {
+        debug_assert!(self.open_len != 0, "a node is open");
+        // SAFETY: the caller's: the innermost open frame.
+        unsafe {
+            let t = self.opens + (self.open_len as usize - 1) * OPEN as usize;
+            let (i, start) = (ld32(t), ld64(t + 16));
+            debug_assert!(end >= start && end <= self.source_len, "a close's end past its node's start, in the source");
+            // The node in the held block: its cells there, and no block to settle.
+            if i / Z == (self.n - 1) / Z {
+                self.open_len -= 1;
+                let j = i % Z;
+                self.put(2, j, end - start);
+                let size = self.n - i;
+                if size > 1 {
+                    self.put(0, j, u64::from(size) << 1);
+                }
+                return;
+            }
+            // A node in a block before (`walk`'s close at `ord`): its cells stored in its block, made already; then
+            // the block final once a node past it is made and its nodes are closed (`settle`, format 16's).
+            self.open_len -= 1;
+            let (b, j) = (i / Z, i % Z);
+            let st = &mut *self.s;
+            let block = st.block(b);
+            st.put_at_x::<X>(2, j, end - start, block);
+            let size = self.n - i;
+            if size > 1 {
+                st.put_at_x::<X>(0, j, u64::from(size) << 1, block);
+            }
+            if self.n > (b + 1) * Z {
+                self.give();
+                let r = (*self.s).settle(b);
+                debug_assert!(r.is_ok(), "the writer's settle, its room reserved");
+                self.take();
+            }
+        }
+    }
+}
+
+impl<X: CellWidths> Drop for Cursor<X> {
+    /// The state's fields the walk's.
+    fn drop(&mut self) {
+        self.give();
+    }
+}
+
 /// `w_open`, the language's widths `X`'s (`Fixed`): a caller that knows them, as a generated parser knows its own.
 ///
 /// # Safety

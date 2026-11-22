@@ -50,6 +50,7 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/c_directives/src/expand.rs", "JIT", Thread, "this thread's Cranelift code of the process's pp words (0348), without a rustc build of them; the same on any thread"),
     ("crates/ukl_vec/src/exec.rs", "SLOTS", Thread, "this thread's last launches' slots, by their shape: storage the next launch of one reuses, written before it is read"),
     ("crates/ukl_vec/src/fiber.rs", "POOL", Thread, "this thread's spare fiber stacks, each emptied at its next use"),
+    ("crates/ukl_vec/src/fiber.rs", "PREPARED", Thread, "the fibers this thread prepared, a count of its own work its tests read"),
     ("crates/ukl_vec/src/run.rs", "SLOTS", Thread, "this thread's last launches' slots, by their shape: storage the next launch of one reuses, written before it is read"),
     ("crates/clif/src/rust.rs", "ADDRESSES", Thread, "this thread's scratch or counters in a backend"),
     ("crates/compiler/src/pp_words.rs", "HOST_RUNS", Thread, "a count of this thread's work, read by tests and the profile"),

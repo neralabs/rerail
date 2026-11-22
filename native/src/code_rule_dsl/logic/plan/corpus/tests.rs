@@ -2605,7 +2605,7 @@ fn the_git_programs_read_their_library_once() {
     }
 }
 
-/// Decision 0597 (`logic::contexts`), through the library: an annotation context holds its own instance of the library's `unparen` (and what it reads),
+/// Decision 0597 (`logic::contexts`), through the library: a context of quoted annotations holds its own instance of the library's `unparen` (and what it reads),
 /// while the host keeps its own for its own rules; the roots are the annotations' trees the host parses.
 #[test]
 fn a_context_holds_the_librarys_rules_it_reaches_as_its_own() {
@@ -2614,26 +2614,223 @@ fn a_context_holds_the_librarys_rules_it_reaches_as_its_own() {
     let text = "\
 .language python
 #include \"python/ast.rerail\"
-.decl ann_root(r: node)
-ann_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
-.decl ann_inner(r: node, e: node)
-ann_inner(r, e) :- ann_root(r), unparen(r, e).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl quoted_inner(r: node, e: node)
+quoted_inner(r, e) :- quoted_root(r), unparen(r, e).
 .decl host_inner(e: node)
 host_inner(e) :- kind(n, \"parenthesized_expression\"), unparen(n, e).
 .decl seen(e: node)
 seen(e) :- quoted(_, e).
 seen(e) :- host_inner(e).
 .output seen
-.context annotation of python roots ann_root exports ann_inner
-.from python ann_root for annotation
-.from annotation ann_inner as quoted
+.context quoted of python roots quoted_root exports quoted_inner
+.from python quoted_root for quoted
+.from quoted quoted_inner as quoted
 ";
     let v = parse_version(text).unwrap();
     let all = v.show();
-    assert!(!rules_of(&v, "rr_cx_annotation_unparen").is_empty(), "the context's own unparen: {all}");
-    assert!(rules_of(&v, "rr_cx_annotation_ann_inner").iter().all(|r| r.contains("rr_cx_annotation_unparen(") && r.contains(" ann_root(")), "{all}");
+    assert!(!rules_of(&v, "rr_cx_quoted_unparen").is_empty(), "the context's own unparen: {all}");
+    assert!(rules_of(&v, "rr_cx_quoted_quoted_inner").iter().all(|r| r.contains("rr_cx_quoted_unparen(") && r.contains(" quoted_root(")), "{all}");
     assert!(!rules_of(&v, "unparen").is_empty() && rules_of(&v, "host_inner").iter().all(|r| r.contains(" unparen(")), "the host's own: {all}");
-    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_annotation_ann_inner(")), "{all}");
+    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_quoted_quoted_inner(")), "{all}");
+}
+
+// ---- decision 0597: a guest context is a pass of its own rules (step 2's ladder) ----
+
+/// A host whose annotations are a context: the context's identifiers, read back by the host (`quoted_names`).
+const ANNOTATION_PASS: &str = "\
+.language python
+#include \"python/ast.rerail\"
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_ident(x: symbol)
+ann_ident(x) :- kind(i, \"identifier\"), text(i, x).
+.decl quoted_names(x: symbol)
+quoted_names(x) :- names(x).
+.output quoted_names
+.context quoted of python roots quoted_root exports ann_ident
+.from quoted ann_ident as names
+";
+
+/// A program of no context, for a pack beside one.
+const PLAIN_PASS: &str = ".language python\n#include \"python/ast.rerail\"\n.decl inner(e: node)\ninner(m) :- unparen(_, m).\n.output inner\n";
+
+/// `program` over one file read as a policy file is (`parse_file_version`), printed, and run (`corpus::run`): the rows
+/// of `rel`.
+fn printed_run(name: &str, file: (&str, &str), program: &str, rel: &str) -> Vec<Vec<String>> {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(file.0), file.1).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, program).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let out = dir.join("out");
+    super::run(&printed, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    rows
+}
+
+/// 0597 rung 2.2: a program whose host reads a context's export runs on each path a program is read by: a policy
+/// file read and printed, a run of it alone, and a pack beside a program of no context.
+#[test]
+fn a_host_reading_a_contexts_export_runs_on_every_reading_path() {
+    let file = ("a.py", "x: \"List[int]\" = []\n");
+    let printed = printed_run("pass-printed", file, ANNOTATION_PASS, "quoted_names");
+    let (alone, together) = alone_and_together("pass-paths", file, ANNOTATION_PASS, PLAIN_PASS, "quoted_names");
+    for (path, rows) in [("printed", &printed), ("alone", &alone), ("in a pack", &together)] {
+        assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "{path}: {rows:?}");
+    }
+}
+
+/// 0597 rung 2.3: a context's views give its roots' nodes alone: the annotation's identifiers are `List` and `int`,
+/// never the host's `x`.
+#[test]
+fn a_contexts_views_are_its_roots_nodes_alone() {
+    let file = ("a.py", "x: \"List[int]\" = []\ndef f(y: float): ...\n");
+    let (alone, together) = alone_and_together("pass-views", file, ANNOTATION_PASS, PLAIN_PASS, "quoted_names");
+    assert_eq!(alone, [["List"], ["int"]]);
+    assert_eq!(together, alone);
+}
+
+/// A host whose classes a context reads (`.from python defined`), and whose classes the context's names reach back.
+const RESOLVING_PASS: &str = "\
+.language python
+#include \"python/ast.rerail\"
+.decl defined(x: symbol)
+defined(x) :- kind(c, \"class_definition\"), field(c, \"name\", n), text(n, x).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_ident(x: symbol)
+ann_ident(x) :- kind(i, \"identifier\"), text(i, x).
+.decl resolved(x: symbol)
+resolved(x) :- ann_ident(x), defined(x).
+.decl quoted_resolved(x: symbol)
+quoted_resolved(x) :- res(x).
+.decl unnamed(x: symbol)
+unnamed(x) :- defined(x), !res(x).
+.output quoted_resolved, unnamed
+.context quoted of python roots quoted_root exports resolved
+.from python defined for quoted
+.from quoted resolved as res
+";
+
+/// 0597 rung 2.5: a context reads its host's finished rows: `x: \"Foo\"` resolves to the class `Foo`, `y: \"Bar\"`
+/// names no class and resolves to none.
+#[test]
+fn a_context_reads_its_hosts_finished_rows() {
+    let file = ("a.py", "class Foo: ...\nclass Baz: ...\nx: \"Foo\" = 1\ny: \"Bar\" = 1\n");
+    let (alone, together) = alone_and_together("pass-from", file, RESOLVING_PASS, PLAIN_PASS, "quoted_resolved");
+    assert_eq!(alone, [["Foo"]]);
+    assert_eq!(together, alone);
+}
+
+/// 0597 rung 2.6: host, context, host in one plan: the classes no annotation names (`Baz`) are the host's rows after
+/// the context's, which are after the host's classes.
+#[test]
+fn a_host_reads_a_context_that_read_the_host() {
+    let file = ("a.py", "class Foo: ...\nclass Baz: ...\nx: \"Foo\" = 1\ny: \"Bar\" = 1\n");
+    let (alone, together) = alone_and_together("pass-order", file, RESOLVING_PASS, PLAIN_PASS, "unnamed");
+    assert_eq!(alone, [["Baz"]]);
+    assert_eq!(together, alone);
+}
+
+/// 0597 rung 2.7: an annotation inside an annotation (`q: "Opt['Baz']"`): a pass's roots are its host's and its own,
+/// the roots relation's rules over the pass's own nodes, so the inner string's tree is the context's too.
+#[test]
+fn an_annotation_inside_an_annotation_is_the_contexts_own_root() {
+    let file = ("a.py", "class Baz: ...\nclass Opt: ...\nq: \"Opt['Baz']\" = 1\n");
+    let (alone, together) = alone_and_together("pass-nested", file, RESOLVING_PASS, PLAIN_PASS, "quoted_resolved");
+    assert_eq!(alone, [["Baz"], ["Opt"]]);
+    assert_eq!(together, alone);
+}
+
+/// 0597 rung 2.8: a finding at a context's node stands at its string's line in the file (0431 §3, R9's
+/// `guest_place`): the unresolved name of `y: "Bar"`, on line 3.
+#[test]
+fn a_finding_at_a_contexts_node_stands_at_its_strings_line() {
+    let root = crate::code_rule_dsl::fixtures::temp().with_extension("pass-place");
+    let (src, rules) = (root.join("src"), root.join("rules"));
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::create_dir_all(&rules).unwrap();
+    std::fs::write(src.join("a.py"), "class Foo: ...\nx: \"Foo\" = 1\ny: \"Bar\" = 1\n").unwrap();
+    let policy = rules.join("unresolved.rerail");
+    std::fs::write(
+        &policy,
+        "\
+.policy \"t:unresolved\" revision 1
+.language python
+#include \"python/ast.rerail\"
+.decl defined(x: symbol)
+defined(x) :- kind(c, \"class_definition\"), field(c, \"name\", n), text(n, x).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_unresolved(i: node)
+ann_unresolved(i) :- kind(i, \"identifier\"), text(i, x), !defined(x).
+.violation Unresolved(at: node) code \"unresolved\" \"an annotation names no class\"
+Unresolved(i) :- unresolved(i).
+.context quoted of python roots quoted_root exports ann_unresolved
+.from python defined for quoted
+.from quoted ann_unresolved as unresolved
+",
+    )
+    .unwrap();
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &src, &root.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&root);
+    let found: Vec<(u64, String)> = report["diagnostics"].as_array().unwrap().iter().map(|d| (d["line"].as_u64().unwrap_or(0), d["code"].as_str().unwrap_or("").to_owned())).collect();
+    assert_eq!(found, [(3, "unresolved".to_owned())], "{report:#}");
+}
+
+/// 0597 rung 2.10: a run over files with no root runs no rule of the context (0563 A: no rule can fill it): its nodes
+/// are empty, so each of its strata is held empty, no component opened. With a root, its rules run. The profile is the
+/// process's, so each run is a child process of its own (`context_root_child`), its heads read from its `heads.tsv`.
+#[test]
+fn a_run_with_no_root_runs_no_stratum_of_the_context() {
+    let ran = |source: &str| -> Vec<String> {
+        let directory = tempfile::tempdir().unwrap();
+        let profile = directory.path().join("profile");
+        let mut child = std::process::Command::new(std::env::current_exe().unwrap());
+        child
+            .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::context_root_child", "--ignored", "--nocapture"])
+            .env("RERAIL_PROFILE", &profile)
+            .env("CONTEXT_ROOT_SOURCE", source);
+        let status = crate::code_rule_dsl::logic::plan::corpus::switches::started(|| child.status()).unwrap();
+        assert!(status.success());
+        // part, head, cpu_s, work (rows into the head's steps), plans
+        let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
+        heads.lines().skip(1).filter(|l| l.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_cx_quoted_"))).map(str::to_owned).collect()
+    };
+    let none = ran("x = 1\ndef f(y: int): ...\n");
+    assert!(none.is_empty(), "no root, no rule of the context runs: {none:?}");
+    let some = ran("x: \"List[int]\" = []\n");
+    assert!(some.iter().any(|h| h.split('\t').nth(1) == Some("rr_cx_quoted_ann_ident")), "with a root they run: {some:?}");
+}
+
+#[test]
+#[ignore = "child process of a_run_with_no_root_runs_no_stratum_of_the_context"]
+fn context_root_child() {
+    let source = std::env::var("CONTEXT_ROOT_SOURCE").unwrap();
+    printed_run("pass-root", ("a.py", &source), ANNOTATION_PASS, "quoted_names");
+}
+
+/// 0597 rung 2.12: one mechanism on the CPU and the device: 2.3's context views and 2.5's `.from` read give Metal's
+/// rows equal to the CPU's, every stratum the device can run placed there.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[test]
+fn a_contexts_rows_on_metal_are_the_cpus() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let file = [("a.py", "class Foo: ...\nx: \"List[int]\" = []\ny: \"Foo\" = 1\nz: \"Bar\" = 1\ndef f(w: float): ...\n")];
+    for (name, program, output) in [("views", ANNOTATION_PASS, "quoted_names"), ("from", RESOLVING_PASS, "quoted_resolved")] {
+        let (_, cpu) = batch_run_on(&format!("pass-{name}-cpu"), &file, program, output, Binding::Cpu);
+        let bound = crate::code_rule_dsl::logic::plan::placement::set_binding(crate::code_rule_dsl::logic::plan::placement::Binding::Always);
+        let (_, metal) = batch_run_on(&format!("pass-{name}-metal"), &file, program, output, Binding::Metal);
+        drop(bound);
+        assert!(!cpu.is_empty(), "{name}: rows");
+        assert_eq!(metal, cpu, "{name}: the device's rows are the CPU's");
+    }
 }
 
 /// The texts the combine last read (`kept_texts`): a text's kept modules stand while the text and each library file

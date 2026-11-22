@@ -17,7 +17,7 @@ pub(in crate::code_rule_dsl::prefilter) fn save(store: &ContentStore, statement:
 }
 
 /// Writes the capture of `statement` into `directory`; returns its JSON's path.
-pub(in crate::code_rule_dsl::prefilter) fn save_to(
+pub fn save_to(
     store: &ContentStore,
     statement: &Statement,
     directory: &std::path::Path,

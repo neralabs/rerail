@@ -167,7 +167,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
 }
 
 // preparation_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
-// retention_spikes: a test the engine hosts, beside `tests`, which it reads (rerail-tests-matcher)
+// retention_spikes: a test the engine hosts, beside `tests`, which it reads (rerail-tests-anchors)
 // tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
 #[path = "corpus/cache.rs"]

@@ -22,7 +22,7 @@ thread_local! {
 }
 
 /// The bytes of the frames this thread has made so far ([`compress`]).
-pub(crate) fn encoded_here() -> usize {
+pub fn encoded_here() -> usize {
     ENCODED.with(Cell::get)
 }
 

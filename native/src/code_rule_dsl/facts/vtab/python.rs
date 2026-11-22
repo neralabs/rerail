@@ -1,5 +1,6 @@
 //! Semantic facts consume an immutable demand frame, once per SQL cursor.
 //! Targets are a scalar JSON array from the query's target relation, not row callbacks.
+use crate::code_rule_dsl::facts::vtab::syntax::PythonBatch as _;
 use super::*;
 use crate::code_rule_dsl::facts::vtab::syntax::{candidates::PythonCandidates as _, python_demand::PythonProject as _};
 #[cfg(any(test, feature = "test-hooks"))]

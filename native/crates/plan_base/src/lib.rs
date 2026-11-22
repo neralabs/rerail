@@ -43,6 +43,9 @@ pub mod code_rule_dsl {
         pub use rerail_logic_core::code_rule_dsl::logic::{analysis, bloom, costs, crypto, derived, join_size, liveness, reach_form, sql, version_trace};
         pub use rerail_setfix::code_rule_dsl::logic::{device, lanes, native, run, run_state};
         pub mod answers;
+        /// The passes a program was made into (decision 0597): what the contexts (rerail-rr-root's) and the
+        /// combine's hiding (rerail-corpus-prep's) read.
+        pub mod passes_made;
         /// The planner's base under the planner's path: what its search (`plan.rs`, rerail-planner's) reads, and
         /// the root's vocabulary (`base`). The search, its model and runs, and the passes that read the model are
         /// rerail-planner's.

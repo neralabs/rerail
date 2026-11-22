@@ -44,8 +44,8 @@ impl Places {
 }
 
 impl Source for Places {
-    fn python_batch(&self) -> Option<Arc<super::Batch>> {
-        self.view.python_batch()
+    fn syntax_batch(&self) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+        self.view.syntax_batch()
     }
     fn columns(&self) -> Vec<String> {
         self.view.columns()

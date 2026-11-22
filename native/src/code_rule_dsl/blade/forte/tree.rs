@@ -965,7 +965,7 @@ impl<'r> BladeNode<'r> {
         (index != NONE).then_some(Self { index, ..*self })
     }
     /// The field this node is its parent's, if any.
-    pub(crate) fn field_name(&self) -> Option<&'static str> {
+    pub fn field_name(&self) -> Option<&'static str> {
         match self.rec().field {
             0 => None,
             field => FIELD_NAMES.get(usize::from(field)).copied(),
@@ -976,7 +976,7 @@ impl<'r> BladeNode<'r> {
         self.rec().field
     }
     /// The template's bytes this node spans.
-    pub(crate) fn bytes(&self) -> &'r [u8] {
+    pub fn bytes(&self) -> &'r [u8] {
         self.tree
             .source
             .get_range(self.rec().start as usize..self.rec().end as usize)

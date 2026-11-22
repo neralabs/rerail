@@ -84,14 +84,14 @@ pub fn volume(path: &Path) -> Option<[u8; 16]> {
 }
 
 /// FSEvents' latest event id: a test's cursor taken now (`observe`'s Q189 test).
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
 pub fn current_id() -> u64 {
     fsevents::current_id()
 }
 
 /// Drops this process's streams, as a new process starts with none: its next question is a replay from the cursor
 /// it gives (`observe`'s Q189 test, which moves a stored cursor past an edit as a merged replay does).
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
 pub fn forget_streams() {
     fsevents::forget_streams();
 }
@@ -99,7 +99,7 @@ pub fn forget_streams() {
 /// An id every change under `root` made before now has (FSEvents'): the cookie id of a replay from `from`, which
 /// comes after each change's event (`fsevents::sync`), where `current_id` may be taken before a late event's id is
 /// given (`observe`'s Q189 test, on a loaded host).
-#[cfg(all(test, target_os = "macos"))]
+#[cfg(all(any(test, feature = "test-hooks"), target_os = "macos"))]
 pub fn id_past(root: &Path, from: u64, cookie_dir: &Path) -> Option<u64> {
     match fsevents::since(std::slice::from_ref(&root.to_path_buf()), Some(from), cookie_dir, std::time::Duration::from_secs(20)) {
         Since::Changed { cursor, .. } | Since::Behind { cursor } => Some(cursor),
@@ -509,7 +509,7 @@ mod fsevents {
         all.iter().flat_map(|l| l.shared.seen.lock().unwrap_or_else(|e| e.into_inner()).flags.iter().filter(|(p, _)| *p == path).map(|(_, f)| *f).collect::<Vec<_>>()).collect()
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn forget_streams() {
         streams().0.lock().unwrap_or_else(|e| e.into_inner()).clear();
     }
@@ -622,7 +622,7 @@ mod fsevents {
     }
 
     /// The system's latest event id (a test's stand-in for a cursor taken now).
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn current_id() -> u64 {
         // SAFETY: no arguments; returns the latest id.
         unsafe { FSEventsGetCurrentEventId() }
@@ -684,7 +684,7 @@ mod fsevents {
         }
     }
 
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     pub(super) fn since(roots: &[PathBuf], cursor: Option<u64>, cookie_dir: &Path, settle: Duration) -> Since {
         since_within(roots, cursor, cookie_dir, settle, None)
     }

@@ -1,38 +1,34 @@
-//! The engine's content store and the git workspace it reads, as a crate of their own.
+//! The engine's content store (`content_store`): sources, tapes, memos and run records in SQLite, the
+//! `ContentStore` and every module that writes and reads through it. Over its base (rerail-store-base) and its
+//! observer and git (rerail-observe), which it re-exports at their old paths (`content_store::*`, `git_access`,
+//! `git_workspace`), so no caller changed.
 //!
-//! The sources are the engine's, in place (`native/src/content_store`, `native/src/git_workspace.rs`): only
-//! the build moved. The engine re-exports both modules at their old paths (`crate::content_store`,
-//! `crate::git_workspace`), so no caller changed. What the store needs of the engine, the engine hands it as
-//! it loads: the SQL functions every connection gets ([`content_store::set_connection_functions`]).
+//! The sources are the engine's, in place (`native/src/content_store`): only the build moved. What the store needs
+//! of the engine, the engine hands it as it loads: the SQL functions every connection gets
+//! ([`content_store::set_connection_functions`]).
 
-// The store's files name the trait below as `rerail_store::Canonical`, as every crate that compiles them does.
+// The store's files name the base's trait as `rerail_store::Canonical`, as every crate that compiles them does.
 extern crate self as rerail_store;
 
-/// A path's canonical name: absolute, its links resolved, and the one name the engine gives it on every system. On
-/// Windows that is the drive's name (`C:\a\b`), not the verbatim one std's `canonicalize` returns (`\\?\C:\a\b`), in
-/// which `/` is no separator and which compares unequal to the drive's (`dunce`). Elsewhere it is std's. The engine's
-/// and the store's every canonical path (`.canonical()`, not `.canonicalize()`), of anything that names a path.
-pub trait Canonical {
-    fn canonical(&self) -> std::io::Result<std::path::PathBuf>;
-}
-
-impl<P: AsRef<std::path::Path> + ?Sized> Canonical for P {
-    fn canonical(&self) -> std::io::Result<std::path::PathBuf> {
-        dunce::canonicalize(self)
-    }
-}
+pub use rerail_observe::{Canonical, git_access, git_workspace, probes, source_tree};
+/// Git and worktree discovery's tests (rerail-observe's `git_workspace`): they publish to the store.
+#[cfg(test)]
+#[path = "../../../src/git_workspace_tests.rs"]
+mod git_workspace_tests;
 
 #[path = "../../../src/content_store/mod.rs"]
 pub mod content_store;
-/// Every in-process Git read: the one opener, its setup and its pool (`native/src/git_access`). Its Node-API
-/// owner (`owner.rs`) is the engine's, which installs the setup.
-#[path = "../../../src/git_access/mod.rs"]
-pub mod git_access;
-#[path = "../../../src/git_workspace.rs"]
-pub mod git_workspace;
-/// The checkout the engine runs from, found as it runs (decision 0224).
-#[path = "../../../src/source_tree.rs"]
-pub mod source_tree;
-/// A regex's literal probe (the prefilter's; the store's vocabulary uses it too).
-#[path = "../../../src/code_rule_dsl/prefilter/probes.rs"]
-pub mod probes;
+
+/// This crate's own test binary, which boot does not load: the store is registered with the observer and git below it
+/// (`content_store::observer_store::STORE`) as the binary loads, as boot registers it (`install_with`).
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        crate::content_store::observer_store::register();
+    }
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}

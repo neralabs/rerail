@@ -37,6 +37,22 @@ Four crates change; each is crates.io's 0.125.4 with the branch's diff for it:
     and rerail's `compiler/build.rs` sets the cfg `cranelift_preserve_most` from it;
   - a load or store whose base is `get_pinned_reg` reads the pinned register in place (aarch64
     `amode`, x64 `to_amode`), as `sp`, where it was first moved to a register of its own.
+  - for UKL's vector code on the CPU (decision 0567 step 3, `rerail-ukl-vec`), what its lowering cannot shape:
+    - the elaboration (`egraph/elaborate.rs`): a pure value is placed no deeper than its uses' common dominator, so
+      sibling blocks share it. A value made in a loop stays where its arguments are, shared by its uses in and
+      after the loop. Each block's walk starts from its parent's loop stack: a sibling outside the loop had popped
+      it, and LICM hoisted nothing;
+    - the rewrites (`opts.rs`, `opts/arithmetic.isle`, `prelude_opt.isle`): `((a + b) + k) + d` is not rebalanced
+      to `(a + b) + (k + d)` when `k` is a constant, whose sum would be made in the loop. An add of a constant is
+      not rematerialized in a loop deeper than where it is;
+    - AArch64's addresses (`isa/aarch64/lower.isle`, `machinst/lower.rs`, `prelude_lower.isle`): a sum with a
+      constant offset is one register and an immediate, shared by the loads at offsets. A sum that several loads
+      and stores use (`value_is_multiply_used`, by the CLIF's direct uses) is their base register at no offset;
+    - pairs (`machinst/vcode.rs`, `machinst/mod.rs`, `isa/aarch64/inst/mod.rs`): two 128-bit loads or stores 16
+      bytes apart from one base, adjacent once registers are allocated, are emitted as one `ldp` or `stp`
+      (`MachInst::pair`, at emission; loads that cannot trap only);
+    - reductions: a 32-bit lanes' sum of two pairwise sums of a vector with itself is one `addv` on AArch64, and
+      x86-64 lowers 64-bit lanes' pairwise sums (`iadd_pairwise` of `i64x2`).
 - `cranelift-codegen-meta-0.125.4`: the instruction, and the two ISA flags.
 - `cranelift-assembler-x64-meta-0.125.4`: `pclmulqdq`, and its CPU feature.
 - `cranelift-native-0.125.4`: detects `pmull` and `pclmulqdq` on the host.

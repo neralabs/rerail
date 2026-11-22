@@ -35,7 +35,7 @@ struct Cursor {
     pre: u32,
     done: bool,
 }
-pub(super) fn install(db: &Connection) -> Result<()> {
+pub fn install(db: &Connection) -> Result<()> {
     const MODULE: Module<Table> = Module::eponymous_only_module();
     db.create_module(c"nera_postings", &MODULE, None::<()>)?;
     const SEGMENTS: Module<SegmentTable> = Module::eponymous_only_module();

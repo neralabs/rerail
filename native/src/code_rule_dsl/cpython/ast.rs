@@ -18,15 +18,15 @@ use ruff_text_size::{Ranged, TextRange};
 /// A CPython `ast` node: its class, its fields in `_fields` order, and its span (UTF-8 bytes; `None` for a class
 /// with no location: `arguments`, `comprehension`, `withitem`, `match_case`, operators, contexts).
 #[derive(Debug)]
-pub(crate) struct Node {
-    pub(crate) class: &'static str,
+pub struct Node {
+    pub class: &'static str,
     pub(crate) fields: Vec<(&'static str, F)>,
-    pub(crate) span: Option<(u32, u32)>,
+    pub span: Option<(u32, u32)>,
 }
 
 /// A field's value.
 #[derive(Debug)]
-pub(crate) enum F {
+pub enum F {
     Node(Box<Node>),
     List(Vec<F>),
     /// `None` (an optional field without a value, or a list's `None`).
@@ -43,7 +43,7 @@ pub(crate) enum F {
 
 /// A constant's value.
 #[derive(Debug)]
-pub(crate) enum Const {
+pub enum Const {
     None,
     Bool(bool),
     Int(Int),
@@ -60,7 +60,7 @@ impl Node {
     }
 
     /// Field `name` (`Absent` where the class has none).
-    pub(crate) fn get(&self, name: &str) -> &F {
+    pub fn get(&self, name: &str) -> &F {
         self.fields.iter().find(|(n, _)| *n == name).map_or(&F::Absent, |(_, f)| f)
     }
 
@@ -95,7 +95,7 @@ fn bare(class: &'static str) -> F {
 }
 
 /// The CPython tree of `source`, `None` where `ast.parse` rejects it (or raises another exception).
-pub(crate) fn module(source: &str) -> Option<Node> {
+pub fn module(source: &str) -> Option<Node> {
     if !matches!(super::syntax::syntax_error(source), Ok(None)) {
         return None;
     }

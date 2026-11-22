@@ -1060,6 +1060,13 @@ pub struct Held {
     /// free (`Part::reserve_keeping`), and moves it to a block of its own with as much room past its rows when the
     /// block has no more; 0 for none.
     ix_room: u8,
+    /// The span it was made in, under `RERAIL_WIDTH_CENSUS` (`width_census::by_span`).
+    made_in: Option<Box<str>>,
+}
+
+/// The span a part is made in, for the width census only.
+fn made_in() -> Option<Box<str>> {
+    crate::code_rule_dsl::logic::profile::memory::width_census::on().then(|| crate::code_rule_dsl::logic::profile::here().unwrap_or_else(|| "(no span)".into()).into_boxed_str())
 }
 
 /// Room past a relation's rows lent to another writer (the device, `Part::room`): rows `at..` of it, which the writer
@@ -1138,6 +1145,7 @@ impl Drop for Held {
             let rel = unsafe { &*self.rel };
             let n = rel.len_all();
             if n > 0 {
+                width_census::by_span(self.made_in.as_deref().unwrap_or("(no span)"), u64::from(n) * u64::from(rel.arity) * 8);
                 for c in 0..rel.arity as usize {
                     let (mut lo, mut hi, mut dlo, mut dhi, mut low) = (i64::MAX, i64::MIN, i64::MAX, i64::MIN, 0u64);
                     for id in 0..n {
@@ -1149,6 +1157,31 @@ impl Drop for Held {
                         low = low.max(v as u64 & 0xffff_ffff);
                     }
                     width_census::column(u64::from(n), lo, hi, (dlo, dhi, low));
+                    // Per range of 4,096 rows, as written and sorted: the blocks' own chooser (`col::choose`), each
+                    // column as it is or split at the granule (bit 18), whichever is smaller, and its descriptors.
+                    if !width_census::ranges() {
+                        continue;
+                    }
+                    let mut buf: Vec<i64> = Vec::with_capacity(4096);
+                    let (mut written, mut sorted) = (0u64, 0u64);
+                    let size = |v: &[i64]| -> u64 {
+                        let whole = rerail_blocks::col::choose(v).bytes() as u64 + 48;
+                        let hi: Vec<i64> = v.iter().map(|x| x >> 18).collect();
+                        let lo: Vec<i64> = v.iter().map(|x| x & ((1 << 18) - 1)).collect();
+                        let split = rerail_blocks::col::choose(&hi).bytes() as u64 + rerail_blocks::col::choose(&lo).bytes() as u64 + 96;
+                        whole.min(split)
+                    };
+                    let mut at = 0u32;
+                    while at < n {
+                        let end = (at + 4096).min(n);
+                        buf.clear();
+                        buf.extend((at..end).map(|id| rel.get(id, c)));
+                        written += size(&buf);
+                        buf.sort_unstable();
+                        sorted += size(&buf);
+                        at = end;
+                    }
+                    width_census::ranged(written, sorted);
                 }
             }
         }
@@ -1246,6 +1279,10 @@ impl Drop for FactsBloom {
 }
 
 impl Part {
+    /// The span it was made in, under the width census.
+    pub fn made_in(&self) -> Option<&str> {
+        self.held.made_in.as_deref()
+    }
     /// An empty relation of `k` columns with room for `rows` rows, in the open block or a new one.
     fn new(life: Life, k: usize, rows: usize) -> Part {
         Part::try_new(life, k, rows).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
@@ -1317,7 +1354,7 @@ impl Part {
                 }
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0, ix_room: 0 }), cap: u32::MAX });
+                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0, ix_room: 0, made_in: made_in() }), cap: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -1677,7 +1714,7 @@ impl Part {
         let rel = Relation::try_continue(&base.facts.block, &spec(k), base.rel(), base.reads())?;
         let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
         let held = Held { facts: base.facts.clone(), life: base.life, rel: std::ptr::from_ref(rel), cols, lent: std::sync::atomic::AtomicU32::new(0),
-                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0, ix_room: base.ix_room };
+                          free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0, ix_room: base.ix_room, made_in: made_in() };
         Some(Part { held: Arc::new(held), cap: u32::MAX })
     }
 
@@ -1745,6 +1782,9 @@ pub struct Rows {
     /// The rows its tail held when it was taken as the writer of a frozen relation's (`shared`): given back free at
     /// them when these rows are dropped with none written past them (a run abandoned, its relation not kept).
     took: Option<Took>,
+    /// Segments gathered from other relations (`append_segment`): a tail past them is a relation of its own, never a
+    /// continuation of theirs in their blocks (which may have no room, and would move every row).
+    gathered: bool,
 }
 
 /// A frozen relation's writer taken (`Rows::shared`), and the rows its relation held then: given back free at them
@@ -1884,7 +1924,7 @@ impl Clone for Rows {
             segs.push((from, t.prefix()));
             from += t.len();
         }
-        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, ..Rows::default() }
+        Rows { segs, from, tail: None, k: self.k, hint: self.hint, life: self.life, gathered: self.gathered, ..Rows::default() }
     }
 }
 
@@ -1961,7 +2001,7 @@ impl Rows {
     /// relation however many relations went on from the same rows (forks, copies); where that block has no room, a
     /// relation of its own holding every row (a growth move, `Part::moved_all`), which `absorbed` makes the only part.
     fn opened(&self, rows: usize) -> Part {
-        if self.segs.is_empty() {
+        if self.segs.is_empty() || self.gathered {
             return Part::new(self.life, self.k, rows);
         }
         let Some(end) = self.chain() else {
@@ -2243,6 +2283,30 @@ impl Rows {
             self.from = next;
         }
         self.tail = Some(part);
+    }
+
+    /// `part`'s rows as they are now after these, as a segment of their own, not copied and never written: rows gathered
+    /// from many relations (a chunk's export, `Exports::add`), read where they lie, the relation they lie in still its
+    /// own. Unlike `append_part` it does not become the tail: rows pushed after it go in a tail of these rows' own.
+    pub fn append_segment(&mut self, part: &Part) {
+        let part = part.prefix();
+        let n = part.len();
+        if n == 0 {
+            return;
+        }
+        let k = part.rel().rows.ncols as usize;
+        debug_assert!(self.k == 0 || self.k == k, "a part of {k} columns after rows of {}", self.k);
+        self.k = k;
+        self.merged.take();
+        *self.kills.get_mut().unwrap_or_else(|e| e.into_inner()) = None;
+        if let Some(t) = self.tail.take().filter(|t| t.len() > 0) {
+            let next = self.from + t.len();
+            self.segs.push((self.from, t.prefix()));
+            self.from = next;
+        }
+        self.segs.push((self.from, part));
+        self.from += n;
+        self.gathered = true;
     }
 
     /// Room for `n` rows past the tail's, for a writer other than the host (the device, decision 0384 step 3): the
