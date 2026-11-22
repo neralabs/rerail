@@ -1574,8 +1574,11 @@ function errorMessage(error: unknown): string {
  * session folder: a worktree around the session folder does not take the session's checkout, nor one inside its folder.
  */
 function inWorktrees(discovery: SourceDiscovery, root: string): boolean {
-  const path = sessionPath(discovery.root, root);
-  return discovery.worktrees.roots.has(path) || underBaselineRoot(discovery.worktrees.roots, path);
+  return withinRoots(discovery.worktrees.roots, sessionPath(discovery.root, root));
+}
+/** Whether `path` is one of `roots` or lies below one. */
+function withinRoots(roots: ReadonlySet<string>, path: string): boolean {
+  return roots.has(path) || underBaselineRoot(roots, path);
 }
 /**
  * Whether `path` lies below one of `roots` (`""` holds every path). Each folder above `path` is looked up in `roots`, so
@@ -2790,9 +2793,17 @@ export class CodeRuleBridge {
     return worktrees;
   }
 
+  /**
+   * Lets go of the worktrees Git no longer lists, and of the checkouts inside them: their files, and the `HEAD` and
+   * unmerged entries the walks kept of them. The session folder's walk reads every kept `HEAD` outside the worktrees
+   * (`#readCheckouts`), and one whose checkout is gone asks Git, one Git start at a time, inside the walk a shell
+   * command's result waits for.
+   */
   #forgetWorktrees(discovery: SourceDiscovery, removed: ReadonlySet<string>): void {
     for (const worktree of removed) discovery.worktrees.fresh.delete(worktree);
     for (const path of this.#observed.keys()) if (underBaselineRoot(removed, path)) this.#observed.delete(path);
+    const gone = (root: string): boolean => withinRoots(removed, sessionPath(discovery.root, root));
+    for (const snapshots of [discovery.heads, discovery.unmerged]) for (const root of [...snapshots.keys()]) if (gone(root)) snapshots.delete(root);
     this.#worktreeView.forget(removed);
   }
 
