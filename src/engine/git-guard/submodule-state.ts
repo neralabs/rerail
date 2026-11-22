@@ -146,11 +146,12 @@ export function outsideSubmodules(args: readonly string[]): string[] {
 }
 
 /**
- * The arguments that list a repository's whole index, each path from its top: `<mode> <object> <stage> TAB <path> NUL`.
- * `--no-literal-pathspecs` keeps `:/` the top of the worktree where the environment sets `GIT_LITERAL_PATHSPECS=1`,
- * under which Git takes it for a file named `:/` and lists nothing.
+ * The arguments that list a repository's whole index, each path from its top: `<tag> <mode> <object> <stage> TAB <path>
+ * NUL`, the tag `H` for an entry marked neither assume-unchanged (a lower case tag) nor skip-worktree (`S`), as Git
+ * reads the index for a diff. `--no-literal-pathspecs` keeps `:/` the top of the worktree where the environment sets
+ * `GIT_LITERAL_PATHSPECS=1`, under which Git takes it for a file named `:/` and lists nothing.
  */
-export const GITLINK_LISTING = ["--no-literal-pathspecs", "ls-files", "-z", "--stage", "--full-name", "--", ":/"] as const;
+export const GITLINK_LISTING = ["--no-literal-pathspecs", "ls-files", "-z", "-v", "--stage", "--full-name", "--", ":/"] as const;
 
 /** A gitlink's mode, 0160000, as every entry of an index file stores its mode: one big-endian word. */
 const GITLINK_MODE = Buffer.from([0x00, 0x00, 0xe0, 0x00]);
@@ -258,6 +259,11 @@ function discoveredAt(at: string): string | null | undefined {
 /** The submodules a repository's index records, each path from its top, and whether its `.gitmodules` is in conflict. */
 export interface Gitlinks {
   readonly paths: readonly string[];
+  /**
+   * Those marked assume-unchanged or skip-worktree: Git's diff, and the `git status` it runs in a submodule, look into
+   * none of them (`run_diff_files`, `do_oneway_diff`).
+   */
+  readonly marked: ReadonlySet<string>;
   readonly gitmodulesUnmerged: boolean;
 }
 
@@ -265,11 +271,13 @@ export interface Gitlinks {
 export function readGitlinks(listing: string): Gitlinks {
   const entries = listing.split("\0").filter(entry => entry !== "").map(entry => {
     const tab = entry.indexOf("\t");
-    const [mode, , stage] = entry.slice(0, tab).split(" ");
-    return { mode, stage, path: entry.slice(tab + 1) };
+    const [tag, mode, , stage] = entry.slice(0, tab).split(" ");
+    return { tag, mode, stage, path: entry.slice(tab + 1) };
   });
+  const gitlinks = entries.filter(entry => entry.mode === "160000" && entry.stage === "0");
   return {
-    paths: entries.filter(entry => entry.mode === "160000" && entry.stage === "0").map(entry => entry.path),
+    paths: gitlinks.map(entry => entry.path),
+    marked: new Set(gitlinks.filter(entry => entry.tag !== "H").map(entry => entry.path)),
     gitmodulesUnmerged: entries.some(entry => entry.path === ".gitmodules" && entry.stage !== "0"),
   };
 }
@@ -471,11 +479,24 @@ interface DiffSubmodules {
  * answer is the one Git's diff, which asks them in index order, gives: the first failure in that order, else the names.
  */
 async function changedSubmodules(stdout: string, { diff, gitlinks, top, open }: DiffSubmodules): Promise<string | GitFailure> {
+  const named = new Set(stdout.split("\0").filter(name => name !== ""));
+  const decided = decidedSubmodules(gitlinks, named, top.places.prefix, diff.relative);
+  if (decided.length === 0) return stdout;
   const rules = await topRules(top, gitlinks, diff);
   if (!("base" in rules)) return rules;
-  const state: DiffState = { named: new Set(stdout.split("\0").filter(name => name !== "")), changed: false, rules, diff, top, open };
-  const failures = await Promise.all(shownSubmodules(gitlinks.paths, top.places.prefix, diff.relative).map(async shown => await submoduleChange(shown, state)));
+  const state: DiffState = { named, changed: false, rules, diff, top, open };
+  const failures = await Promise.all(decided.map(async shown => await submoduleChange(shown, state)));
   return failures.find(failure => failure !== undefined) ?? (state.changed ? namesText(stdout, state.named) : stdout);
+}
+
+/**
+ * The submodules of `gitlinks` a diff decides on, each as it names them ({@link shownSubmodules}): each one Git's diff
+ * looks into, and a marked one ({@link Gitlinks.marked}) only where Git's diff in Rerail `named` it, as its commit
+ * changed, so that its rules may leave it out, as they leave it out of Git's own diff. Git reads no rule of a marked
+ * one it does not name, and none of a submodule outside the folder a `--relative` diff runs in.
+ */
+function decidedSubmodules(gitlinks: Gitlinks, named: ReadonlySet<string>, prefix: string, relative: boolean): Shown[] {
+  return shownSubmodules(gitlinks.paths, prefix, relative).filter(shown => !gitlinks.marked.has(shown.path) || named.has(shown.name));
 }
 
 /** How the diff treats each submodule: as its option says, else as the config and `.gitmodules` of `top` say. */
@@ -774,8 +795,8 @@ function statOf(path: string): Stats | undefined {
  * {@link MAX_GITFILE_BYTES}, so a file put in its place after its stat is not read past that; how Git's diff fails when
  * it holds more. Undefined when it went, is no regular file by then, or cannot be opened or read. Git's diff opens a
  * submodule's `.git` to find its commit before it asks the submodule, and a `.git` it cannot open or read fails that
- * diff, Rerail's included, with Git's message; so Rerail meets one only where Git's diff never opens it (a submodule
- * marked assume-unchanged), and Git's diff answers without that submodule, as Rerail's does.
+ * diff, Rerail's included, with Git's message; so Rerail meets one only where it became so after Git's diff read it,
+ * or where Git for Windows answers for it (a `.git` another program holds open sharing nothing), and Rerail answers too.
  */
 function gitfileText(path: string): string | GitFailure | undefined {
   const file = openedFile(path);
@@ -842,10 +863,12 @@ async function nestedChanged(
   const listing = await repository.ask(GITLINK_LISTING);
   if (typeof listing !== "string") return listing;
   const gitlinks = readGitlinks(listing);
-  if (gitlinks.paths.length === 0) return false;
+  // That status looks into no marked submodule, and the ones whose index differs from HEAD made it changed already.
+  const paths = gitlinks.paths.filter(path => !gitlinks.marked.has(path));
+  if (paths.length === 0) return false;
   const rules = await ignoreRules(repository, gitlinks, statusBase(repository.entries, !untrackedLeftOut && showsUntracked(repository.entries)));
   if (!("base" in rules)) return rules;
-  return await firstChanged(gitlinks.paths, { repository, read, rules, ...deeper });
+  return await firstChanged(paths, { repository, read, rules, ...deeper });
 }
 
 /**
