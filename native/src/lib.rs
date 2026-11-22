@@ -412,7 +412,17 @@ impl LoadedRrPolicies {
         });
         let snapshot = source.map(|source| source.pinned_snapshot());
         on_revisions(snapshot.as_deref(), || match &self.store {
-            Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, read),
+            Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, || {
+                let inspection = read()?;
+                // The load is a command (decision 0441): what it queued for the store (its program's version) is in
+                // the store as it returns, not applied behind a later command, whose store may by then be another file.
+                if let Ok(handle) = content_store::ContentStore::open(store)
+                    && let Err(error) = handle.written()
+                {
+                    eprintln!("rerail: {}: the policy load's writes: {error}", store.display());
+                }
+                Ok(inspection)
+            }),
             None => read(),
         })
     }

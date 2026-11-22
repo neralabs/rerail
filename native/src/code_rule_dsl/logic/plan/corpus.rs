@@ -1237,6 +1237,11 @@ pub struct Prepared {
     /// The sources its programs' texts are kept under, by the store that keeps them (its path): a run that takes it
     /// from memory names them in its manifest as one that read it from the store does.
     pub documents: Arc<parking_lot::Mutex<Vec<(std::path::PathBuf, Vec<crate::content_store::SourceId>)>>>,
+    /// The pipelines' runs its preparing run kept (decision 0333): a run that takes it from memory names them, as the
+    /// preparing run's manifest did, though that manifest is gone (its scope deleted), and keeps them again in a store
+    /// that no longer has them (collected), as `documents` are. None for one read from the store, whose runs the root's
+    /// newest manifest of its lane names (`corpus_lane_also`).
+    pub runs: Option<Arc<PreparationRuns>>,
     /// The cone of requests of `split`'s cross-file part (`cone_of`), made by the first run that loads documents
     /// and shared by the later ones: it is the split's, as the split is the program's.
     pub(in crate::code_rule_dsl) cone: std::sync::OnceLock<std::result::Result<Arc<Cone>, String>>,
@@ -1250,6 +1255,23 @@ pub struct Prepared {
     /// (`memo::program_digest`): made by the first run, or read with the prepared program from the store (decision
     /// 0246 §4); a run whose part is that one adds its options, phases' rows and projection to them.
     pub(in crate::code_rule_dsl) memo_strata: std::sync::OnceLock<([u8; 32], memo::Strata)>,
+}
+
+/// A preparing run's pipelines' runs (decision 0333), under their digest (`preparation::runs_digest`).
+pub struct PreparationRuns {
+    pub named: [u8; 32],
+    front: crate::code_rule_dsl::logic::program_image::manager::Run,
+    prepared: crate::code_rule_dsl::logic::program_image::manager::Run,
+}
+
+impl PreparationRuns {
+    /// Kept in `store` (`program_text::record_runs`): its manifest names their sources once the writer stores them.
+    fn record(&self, store: &ContentStore) {
+        crate::code_rule_dsl::logic::program_text::record_runs(store, &[
+            (preparation::run_key(preparation::FRONT, &self.named), &self.front),
+            (preparation::run_key(preparation::PREPARATION, &self.named), &self.prepared),
+        ]);
+    }
 }
 
 impl Prepared {
@@ -3262,19 +3284,30 @@ pub(super) fn run_read_handing(
 /// including when another evaluation calls this phase before it publishes its own manifest.
 #[derive(Clone, Copy, Default)]
 struct FactPhase<'a> {
-    program_entry: Option<[u8; 32]>,
+    program_entry: Option<&'a combined::Embedded>,
     _run: std::marker::PhantomData<&'a ()>,
 }
 
 fn run_fact_image(source: &str, root: &Path, options: &serde_json::Value) -> Result<Vec<u8>> {
+    run_fact_image_planned(source, root, options).map(|(image, _)| image)
+}
+
+/// `run_fact_image`, with the memo plans its run (and the phases it ran) recorded manifests of: what a later run that
+/// reuses its image in memory (a Git view's inventory) owns again for its own scope (`own_recorded_manifests`).
+fn run_fact_image_planned(source: &str, root: &Path, options: &serde_json::Value) -> Result<(Vec<u8>, Vec<[u8; 32]>)> {
     let store = if cfg!(feature = "tape-cache") { phases::reading_store() } else { None };
     let _reading = store.as_ref().map(|store| store.hold_collection()).transpose()?;
     let (program, program_entry) = combined::embedded_program(source, store.as_deref())?;
+    let program_entry = program_entry.as_ref();
     let key = read_key(&program)?;
     let mut image = Vec::new();
-    run_handed(&[key.as_str()], Some(&program), None, root, None, Path::new(""), "program",
+    let report = run_handed(&[key.as_str()], Some(&program), None, root, None, Path::new(""), "program",
         Binding::Cpu, 1 << 18, &Typing::default(), options, Some(&mut image), FactPhase { program_entry, _run: std::marker::PhantomData })?;
-    Ok(image)
+    let mut plans = report.plans.clone();
+    plans.extend(report.phase_runs.iter().flat_map(|r| r.report.plans.iter().copied()));
+    plans.sort();
+    plans.dedup();
+    Ok((image, plans))
 }
 
 /// A handed program's key, in the place of a text: its version's digest (`choices::key`, decision 0173 §7), named so
@@ -4248,9 +4281,9 @@ fn run_observed_within(
     // The pipelines' runs the run keeps (decision 0333): the manifest names them, and the next run finds them so.
     let kept_runs: std::sync::Mutex<Vec<[u8; 32]>> = Default::default();
     // The last run's, found through the root's newest manifest, which named them.
+    // Under the root the manifests are recorded under (`manifest_root`): a Git view's are its fact root's.
     let last_named: Vec<[u8; 32]> = if durable.is_some() {
-        let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-        store.corpus_run_also(&root.to_string_lossy()).map_err(|e| Error::Plan(e.to_string()))?
+        store.corpus_run_also(&manifest_root(root)).map_err(|e| Error::Plan(e.to_string()))?
     } else {
         Vec::new()
     };
@@ -4266,8 +4299,11 @@ fn run_observed_within(
     // And the rule files' entries read before the run (`rr::read_file`, decision 0275), by the outermost run: a nested
     // one (phase 0's) did not read them.
     let mut rule_files = if durable.is_some() && !nested && !phase0::active() { combined::take_read_before() } else { Vec::new() };
-    if durable.is_some() {
-        rule_files.extend(given.phase.program_entry);
+    if durable.is_some()
+        && let Some(entry) = given.phase.program_entry
+    {
+        entry.record(store);
+        rule_files.push(entry.key);
     }
     let _rule_file_pins: Vec<combined::Pins> = rule_files.iter().map(|k| combined::Pins::new(store, k)).collect();
     if durable.is_some() {
@@ -4360,12 +4396,21 @@ fn run_observed_within(
             // the last runs of its lane, as that run's manifest named them. Named by the preparing run alone, they made
             // the next run's record differ (Q101), and a manifest recorded without them lost them to the run after.
             if durable.is_some() {
-                let root = dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-                for d in store.corpus_lane_also(&root.to_string_lossy(), &lane).map_err(|e| Error::Plan(e.to_string()))? {
+                let mut also: Vec<[u8; 32]> = p.runs.iter().map(|r| r.named).collect();
+                for d in store.corpus_lane_also(&manifest_root(root), &lane).map_err(|e| Error::Plan(e.to_string()))? {
+                    if !also.contains(&d) {
+                        also.push(d);
+                    }
+                }
+                for d in also {
                     let sources = |name: &'static str| crate::code_rule_dsl::logic::program_text::run_sources(store, &preparation::run_key(name, &d)).map_err(Error::Plan);
                     if let (Some(front), Some(prepared)) = (sources(preparation::FRONT)?, sources(preparation::PREPARATION)?) {
                         kept_runs.lock().expect("the kept runs").push(d);
                         program_sources.extend(front.into_iter().chain(prepared));
+                    } else if let Some(runs) = p.runs.as_ref().filter(|r| r.named == d) {
+                        // Gone from this store (collected): kept again, from this process's.
+                        runs.record(store);
+                        kept_runs.lock().expect("the kept runs").push(d);
                     }
                 }
             }
@@ -4472,6 +4517,7 @@ fn run_observed_within(
                 let (v, f, run) = preparation::run(version, factorizing, last_run(preparation::PREPARATION), bound).map_err(Error::Plan)?;
                 (v, f, Some(run))
             };
+            let mut preparation_runs = None;
             // Both runs kept behind the run, under one digest of this one's, which its manifest names (decision 0333).
             if durable.is_some()
                 && let Some(front_run) = front_run
@@ -4480,7 +4526,9 @@ fn run_observed_within(
                 let named = preparation::runs_digest(&front_run);
                 kept_runs.lock().expect("the kept runs").push(named);
                 // Encoded here, written by the store's writer as data (decision 0306).
-                crate::code_rule_dsl::logic::program_text::record_runs(store, &[(preparation::run_key(preparation::FRONT, &named), &front_run), (preparation::run_key(preparation::PREPARATION, &named), &prepared_run)]);
+                let runs = PreparationRuns { named, front: front_run, prepared: prepared_run };
+                runs.record(store);
+                preparation_runs = Some(Arc::new(runs));
             }
             let sets = found.sets.clone();
             let factorized = found.factorized.clone();
@@ -4534,7 +4582,7 @@ fn run_observed_within(
             // One prepared program, shared by the process's cache, the store's writer and this run (each a copy before:
             // three of a 16 k-rule program's four forms at once, about 0.4 GB of the Python pack's peak).
             let decided = deciding.close();
-            let prepared = Arc::new(Prepared { source, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, documents: Default::default(), cone: Default::default(), maintained: Default::default(), parts: Default::default(), decided, memo_strata });
+            let prepared = Arc::new(Prepared { source, vocabulary: Arc::new(vocabulary), lowered, sets, matchers, demanded, pushed, factorized, located, merged, split, interned, documents: Default::default(), runs: preparation_runs, cone: Default::default(), maintained: Default::default(), parts: Default::default(), decided, memo_strata });
             if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
                 eprintln!("RERAIL_PREPARED_TRACE ({}) {} {label}: prepared, durable {:?}", phases::current().unwrap_or_else(|| "main".into()), prepared_key[..6].iter().map(|b| format!("{b:02x}")).collect::<String>(), durable.map(|d| d.is_some()));
             }
@@ -4550,7 +4598,7 @@ fn run_observed_within(
         (false, _) if durable.is_some() => "prepared, and stored for later processes (decision 0073)".to_owned(),
         (false, _) => "prepared".to_owned(),
     });
-    let Prepared { source, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, documents: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts, decided: _, memo_strata: shared_strata } = &*prepared;
+    let Prepared { source, vocabulary, lowered, sets, matchers, demanded, pushed, factorized, located, merged: (remerged, reshared), split: shared_split, interned: _, documents: _, runs: _, cone: shared_cone, maintained: shared_maintained, parts: shared_parts, decided: _, memo_strata: shared_strata } = &*prepared;
     let (remerged, reshared) = (*remerged, *reshared);
     // The prepared program's fields besides its rules, read from its source's version (decision 0276 §3).
     let head: &crate::code_rule_dsl::logic::program_image::Version = source;
