@@ -10,6 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { gitModifiedOrUntrackedPaths, runGit, runGitWithoutBlocking, type GitResult } from "../../../src/engine/git.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { unopenable } from "../../support/platform/unopenable-file.js";
 
 vi.mock("node:child_process", { spy: true });
 const actualChildProcess = await vi.importActual<typeof import("node:child_process")>("node:child_process");
@@ -483,23 +484,48 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, git(work, ...AUDIT_DIFF)], [0, git(work, ...SCAN_DIFF)]]);
   }, 60_000);
 
-  it.each([[100 * 1024, true], [1024 * 1024 + 1, false]])("and read a submodule's `.git` file of %i bytes as Git reads it, which fails past 1 MiB (answers: %s)", async (size, answered) => {
+  it("and read a submodule's `.git` file of 100 KiB as Git reads it", async () => {
     const root = await folder();
-    const source = await repository(root, "source", { "inner.txt": "one\n" });
-    const work = await repository(root, "work", { "top.txt": "top\n" });
-    git(work, "submodule", "add", "--quiet", source, "sub");
-    git(work, "commit", "--quiet", "-m", "submodule");
-    const gitfile = join(work, "sub", ".git");
-    const named = readFileSync(gitfile, "utf8").trimEnd();
-    // Git takes off every line end after the path. Git for Windows hides the file, which Windows refuses to open for writing.
-    unlinkSync(gitfile);
-    await writeFile(gitfile, named.padEnd(size, "\n"));
+    const { work, gitfile, named } = await submoduleGitfile(root);
+    // Git takes off every line end after the path.
+    await writeFile(gitfile, named.padEnd(100 * 1024, "\n"));
     await writeFile(join(work, "sub", "inner.txt"), "two\n");
 
     const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
 
     expect(answers.map(answer => [answer.status === 0, answer.stdout])).toEqual([gitAnswer(work, AUDIT_DIFF), gitAnswer(work, SCAN_DIFF)]);
-    expect(answers.map(answer => answer.status === 0)).toEqual([answered, answered]);
+    expect(answers.map(answer => answer.status === 0)).toEqual([true, true]);
+  }, 60_000);
+
+  // Each row: what the `.git` file is, how it is made (and given back), and Git's message for it, `%s` its path.
+  it.each<[string, (work: string, gitfile: string, named: string) => Promise<() => void>, string]>([
+    ["holds more than 1 MiB", async (_work, gitfile, named) => await written(gitfile, named.padEnd(1024 * 1024 + 1, "\n")), String.raw`too large to be a \.git file: '%s'`],
+    ["holds no `gitdir: `", async (_work, gitfile) => await written(gitfile, "nothing\n"), "invalid gitfile format: %s"],
+    ["holds no path", async (_work, gitfile) => await written(gitfile, "gitdir: \n"), "no path in gitfile: %s"],
+    ["cannot be opened", async (_work, gitfile, named) => {
+      await writeFile(gitfile, `${named}\n`);
+      return unopenable(gitfile);
+    }, "error opening '%s': .+"],
+    // Git's diff then compares no submodule's commit, which opens its `.git` too, before it asks the submodule.
+    ["cannot be opened, the submodule marked unchanged in the index", async (work, gitfile, named) => {
+      git(work, "update-index", "--assume-unchanged", "sub");
+      await writeFile(gitfile, `${named}\n`);
+      return unopenable(gitfile);
+    }, "error opening '%s': .+"],
+  ])("and fail a diff where a submodule's `.git` file %s, with Git's message, as Git's own diff fails", async (_what, make, said) => {
+    const root = await folder();
+    const { work, gitfile, named } = await submoduleGitfile(root);
+    const giveBack = await make(work, gitfile, named);
+    try {
+      const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
+      const gits = [gitStderr(work, AUDIT_DIFF), gitStderr(work, SCAN_DIFF)];
+
+      const message = new RegExp(`^fatal: ${said.replace("%s", String.raw`(?:.+[\\/])?sub[\\/]\.git`)}\n$`, "u");
+      expect([...gits, ...answers.map(answer => answer.stderr)]).toEqual(Array.from({ length: 4 }, () => expect.stringMatching(message)));
+      expect(answers.map(answer => [answer.status === 0, answer.stdout])).toEqual([[false, ""], [false, ""]]);
+    } finally {
+      giveBack();
+    }
   }, 60_000);
 
   it.skipIf(process.platform === "win32")("in the Git folder a submodule's `.git` named when Rerail looked, though it names a placed one by the status", async () => {
@@ -667,6 +693,38 @@ async function afterSubmoduleListing(root: string, work: string, command: string
   vi.resetModules();
   const fresh = await import("../../../src/engine/git.js");
   return await fresh.runGitWithoutBlocking(work, AUDIT_DIFF);
+}
+
+/**
+ * A checkout `work` with a checked-out submodule `sub` whose `.git` file `gitfile`, which named its Git folder with
+ * `named`, is taken away for the test to write: Git for Windows hides it, and Windows refuses to open a hidden file for
+ * writing.
+ */
+async function submoduleGitfile(root: string): Promise<{ work: string; gitfile: string; named: string }> {
+  const source = await repository(root, "source", { "inner.txt": "one\n" });
+  const work = await repository(root, "work", { "top.txt": "top\n" });
+  git(work, "submodule", "add", "--quiet", source, "sub");
+  git(work, "commit", "--quiet", "-m", "submodule");
+  const gitfile = join(work, "sub", ".git");
+  const named = readFileSync(gitfile, "utf8").trimEnd();
+  unlinkSync(gitfile);
+  return { work, gitfile, named };
+}
+
+/** Makes `path` hold `text`; what gives it back does nothing. */
+async function written(path: string, text: string): Promise<() => void> {
+  await writeFile(path, text);
+  return () => undefined;
+}
+
+/** What the test's own Git prints to its error stream for `git <args>` in `cwd`; undefined when it answers. */
+function gitStderr(cwd: string, args: readonly string[]): string | undefined {
+  try {
+    execFileSync("git", args, { cwd, encoding: "utf8", stdio: "pipe" });
+    return undefined;
+  } catch (error) {
+    return (error as { stderr: string }).stderr;
+  }
 }
 
 /** Makes `file` hold `text`, then removes it, as fast as it can. */

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { closeSync, mkdirSync, openSync, writeFileSync } from "node:fs";
+import { closeSync, mkdirSync, openSync, readSync, writeFileSync } from "node:fs";
 import { mkdtemp, open } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
@@ -9,6 +9,7 @@ import {
   definesNoDriver, nameDiff, readStatus, recordsNoSubmodule, submoduleChanged, UNASKED, worktreeGitFolder, worktreeIndex,
 } from "../../../src/engine/git-guard/submodule-state.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
+import { unopenable } from "../../support/platform/unopenable-file.js";
 
 vi.mock("node:fs", { spy: true });
 vi.mock("node:fs/promises", { spy: true });
@@ -78,6 +79,42 @@ describe("submoduleChanged", () => {
 
     expect([typeof changed === "object" && changed.error?.message, opened]).toEqual([`Rerail follows submodules 16 levels deep, and ${join(root, "sub")} is deeper`, []]);
   });
+
+  // Windows has no pipe in a folder. Opening a pipe with a writer waiting in its open would end that writer's wait.
+  it.skipIf(process.platform === "win32")("opens no `.git` that is no regular file, as Git opens none, and takes the submodule as not checked out", async () => {
+    const root = await folder();
+    mkdirSync(join(root, "sub"));
+    execFileSync("mkfifo", [join(root, "sub", ".git")]);
+    const opened: unknown[] = [];
+    vi.mocked(openSync).mockImplementation((path, flags, mode) => {
+      opened.push(path);
+      return realFs.openSync(path, flags, mode);
+    });
+
+    const changed = await submoduleChanged(join(root, "sub"), false, async () => await Promise.resolve(UNASKED), 1);
+
+    expect([changed, opened]).toEqual([false, []]);
+  });
+
+  it("reads a `.git` file put in place of a smaller one after its stat to Git's 1 MiB and one byte at most, and fails as too large", async () => {
+    const { linked } = repositories(await folder());
+    const gitfile = join(linked, ".git");
+    const larger = realFs.readFileSync(gitfile, "utf8").padEnd(4 * 1024 * 1024, "\n");
+    vi.mocked(openSync).mockImplementation((path, flags, mode) => {
+      if (path === gitfile) {
+        // Git for Windows hides the file, which Windows refuses to open for writing.
+        realFs.unlinkSync(gitfile);
+        realFs.writeFileSync(gitfile, larger);
+      }
+      return realFs.openSync(path, flags, mode);
+    });
+    vi.mocked(readSync).mockClear();
+
+    const changed = await submoduleChanged(linked, false, async () => await Promise.resolve(UNASKED), 1);
+
+    const read = vi.mocked(readSync).mock.results.reduce((sum, result) => sum + (result.type === "return" ? result.value : 0), 0);
+    expect([changed, read <= 1024 * 1024 + 1]).toEqual([{ status: 128, stdout: "", stderr: `fatal: too large to be a .git file: '${gitfile}'\n` }, true]);
+  });
 });
 
 describe("worktreeIndex", () => {
@@ -95,6 +132,19 @@ describe("worktreeGitFolder", () => {
 
     expect(worktreeGitFolder(work, {})).toBeDefined();
     expect(worktreeGitFolder(work, { [name]: join(work, ".git") })).toBeUndefined();
+  });
+
+  it("leaves to Git a folder in a checkout whose own `.git` file cannot be opened, where Git's discovery fails", async () => {
+    const { work } = repositories(await folder());
+    const inner = join(work, "inner");
+    mkdirSync(inner);
+    writeFileSync(join(inner, ".git"), "gitdir: ../.git\n");
+    const giveBack = unopenable(join(inner, ".git"));
+    try {
+      expect([gitFinds(inner), worktreeGitFolder(inner, {})]).toEqual([false, undefined]);
+    } finally {
+      giveBack();
+    }
   });
 });
 
@@ -158,6 +208,16 @@ function repositories(root: string): { readonly work: string; readonly linked: s
   git("-C", work, "commit", "--quiet", "-m", "seed");
   git("-C", work, "worktree", "add", "--quiet", "--detach", linked);
   return { work, linked };
+}
+
+/** Whether the test's own Git finds a repository from `folder`. */
+function gitFinds(folder: string): boolean {
+  try {
+    execFileSync("git", ["-C", folder, "rev-parse", "--git-dir"], { stdio: "ignore" });
+    return true;
+  } catch {
+    return false;
+  }
 }
 
 /** Makes each close of a file named `name` fail once the file is closed, as a close on a network share that went fails. */
