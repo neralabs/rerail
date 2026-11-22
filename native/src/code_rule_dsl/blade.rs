@@ -9,7 +9,8 @@
 //! the view's data, which Blade defines outside the template, so a variable the template does not
 //! define is unknown there, never undefined.
 
-pub mod forte;
+// Its parser (rerail-forte's).
+pub use rerail_forte::code_rule_dsl::blade::forte;
 // oracle_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 // cratify: `tests` is rerail-engine's (it mounts it)
 pub mod view;

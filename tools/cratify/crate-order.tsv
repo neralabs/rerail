@@ -70,6 +70,7 @@ rerail-setfix	core
 rerail-rules	core
 rerail-plan-base	core
 rerail-lang-ecma	provider
+rerail-forte	provider
 rerail-lang-php	provider
 rerail-lang-python	provider
 rerail-lang-rust	provider

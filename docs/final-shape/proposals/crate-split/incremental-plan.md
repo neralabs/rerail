@@ -1054,3 +1054,16 @@ decision record. There are no A/B triples. One run per state, with the host's lo
       - `rerail-tests-transducer` in full: 184 of 187. The Metal parity tests and the SQLite test pass there; the 3
         failures are the pack-data tests.
       - The Metal device's test binary, filtered (`block_rows_tests`, `regex_relocation`): 4 of 4.
+- **Step 7e** (2026-11-22): the PHP pack, 30.9k production lines, is now two crates.
+  - **rerail-forte** (`native/crates/forte`, 11.2k, a provider): Blade's Forte parser (`blade::forte`: its lexer,
+    parser, directives, scan and trees).
+    - It reads only the language's metavariables (rerail-lang) and the literal trees' ids
+      (`literal::{ID_FLAG, NEXT_TREE, TREE_MASK}`, rerail-adapters'). `NEXT_TREE` is one counter, shared with the
+      literal trees.
+    - `blade.rs` re-exports it, so `blade::view`, `blade::tape` and `php_view` read it where they did.
+    - Its tests stay rerail-tests-compile's: they compile and evaluate rules over Blade documents.
+  - **rerail-lang-php** (19.7k) keeps the rest: PHP's scopes, values, calls, phpdoc, the suppressions, the Blade view
+    and its tape.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the two crates.
+    - On a Linux host, lang-php's own tests and rerail-tests-compile's Blade, Forte and PHP-view tests: 61 of 61.
