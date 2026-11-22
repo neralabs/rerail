@@ -208,6 +208,14 @@ format 16's reads alone.
    (16 and 32 lanes), Metal (M3) and CUDA the eight batched block and compile tests pass, in 8-9 s, 15 s and 9 s.
    What is left is the compiler's slowdown within a process (above, "Measured"): the same 47 KB interpreter source
    builds in 0.7, 0.4 and 1.6 s as the test goes on, `tempo_batch` in 1.0, 2.8 and 5.1 s.
+25. **Format 16's value read and start are shared reads.** `get` (a value of an array, or its escaped side list's)
+   and `start_stated` (a checkpoint and the gaps after it, `get` in its loop) were `UKL_INLINE`, so every `tape_*`
+   read that reaches them (start, end, end of, size, the line reads, the sibling walks: each its own function on
+   OpenCL and CUDA, §22) compiled its own copy, with the side read inlined in each on OpenCL (§19). They are
+   `UKL_SHARED` (§22) now: one body each on OpenCL and CUDA, inlined on Metal and the CPU as before. Each source of
+   `all_backends_execute_every_verified_instruction_and_mode` built in a fresh process on the Arc 140V (`clc builds`,
+   the driver's cache off), the reads inlined and called: the JIT kernel 12.2 → 9.1 s, the interpreter 5.2 → 3.8 s.
+   The test passes on the Arc, and on CUDA with `wildcard_and_missing_flags_…` in 12.8 s (each kernel 1.3-2.3 s).
 
 ## Measured
 
