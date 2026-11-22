@@ -456,7 +456,7 @@ pub(crate) fn changes(programs: &[&str], graphs: &[Option<[u8; 32]>], read: Opti
     changes_of(programs, graphs, read, root, typing, options, consulted, None)
 }
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 /// Rows of values as a relation of atoms (`c0`, `c1`, …), the store's atoms for strings.
 fn atoms_source<'a>(store: &ContentStore, width: usize, rows: impl Iterator<Item = &'a Vec<front::Value>> + Clone) -> Result<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>> {
@@ -6912,6 +6912,11 @@ fn run_observed_within(
     }
     // The changed files' documents now, guests with them (decision 0458): a base relation's new version.
     let mut changed_docs: Vec<syntax::Input> = Vec::new();
+    // The documents of the corpus batch now, and (a session's) of its last run's, by key and digest: a document the
+    // other holds alike is unchanged, whichever file's path it is filed under (a guest two files ask for is one
+    // document, under either's path), so it is no version's (decision 0458).
+    let mut corpus_ids: HashSet<(u32, [u8; 32])> = HashSet::new();
+    let mut held_ids: Option<HashSet<(u32, [u8; 32])>> = None;
     let mut corpus_digest = 0u64;
     let mut corpus_batch: Option<Arc<syntax::Batch>> = None;
     // The memo hits' documents built from a kept tape, and parsed again, made then or when first read (`syntax::Pending`);
@@ -7076,7 +7081,9 @@ fn run_observed_within(
             let changed: BTreeSet<String> = was.keys().chain(now_docs.keys()).filter(|p| was.get(*p).map(|(c, _)| c) != now_docs.get(*p)).cloned().collect();
             let olds = changed.iter().filter_map(|p| was.get(p)).flat_map(|(_, docs)| docs.iter().cloned()).collect();
             session_old = Some((changed, olds));
+            held_ids = Some(was.values().flat_map(|(_, docs)| docs.iter().map(|d| (d.key(), d.digest()))).collect());
         }
+        corpus_ids = all.iter().map(|d| (d.key(), d.digest())).collect();
         if let Some(changed) = old_base.as_ref().map(|(c, _)| c).or(session_old.as_ref().map(|(c, _)| c)) {
             changed_docs = all.iter().filter(|d| changed.contains(d.path())).cloned().collect();
         }
@@ -7154,6 +7161,14 @@ fn run_observed_within(
                 docs.dedup_by_key(|d| d.key());
                 Ok(syntax::with_matchers(store, docs, sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &HashMap::new()).map_err(|e| Error::Plan(e.to_string()))?.into_iter().collect())
             };
+            // A document alike in the other corpus is in neither version: a shared guest filed under a changed file's
+            // path in one run and an unchanged one's in the other was counted in and never out (the data layer's
+            // `child`, 43 rows at an edit, its patch refused). The kept route rebuilds a changed file's guests from its
+            // old entry, so its old documents stand for the last run's.
+            let mut old_docs = old_docs;
+            let old_ids: HashSet<(u32, [u8; 32])> = held_ids.take().unwrap_or_else(|| old_docs.iter().map(|d| (d.key(), d.digest())).collect());
+            old_docs.retain(|d| !corpus_ids.contains(&(d.key(), d.digest())));
+            changed_docs.retain(|d| !old_ids.contains(&(d.key(), d.digest())));
             let changed_keys: BTreeSet<i64> = old_docs.iter().chain(changed_docs.iter()).map(|d| i64::from(d.key())).collect();
             let changed_documents: BTreeSet<u32> = changed_keys.iter().filter_map(|&k| u32::try_from(k).ok()).collect();
             let (old_batch, new_batch) = (batch_of(old_docs)?, batch_of(std::mem::take(&mut changed_docs))?);
@@ -7626,6 +7641,17 @@ fn run_observed_within(
                             // The changed documents' rows in the corpus batch, against their new version's.
                             let keys: BTreeSet<u32> = new.iter().chain(old.iter()).flat_map(|v| { let mut ks = BTreeSet::new(); v.documents_of(0, &mut |_, d| { ks.insert(d as u32); }); ks }).collect();
                             let here = source.rows_of_documents(&keys).map(|r| r.len());
+                            // Each document's rows in either version, where they differ.
+                            let per = |v: &Option<Arc<dyn crate::code_rule_dsl::facts::vtab::Source>>| -> BTreeMap<i64, usize> {
+                                let mut by = BTreeMap::new();
+                                if let Some(v) = v {
+                                    v.documents_of(0, &mut |_, d| *by.entry(d).or_default() += 1);
+                                }
+                                by
+                            };
+                            let (was, now) = (per(old), per(new));
+                            let differ: Vec<(i64, usize, usize)> = was.keys().chain(now.keys()).collect::<BTreeSet<_>>().into_iter().map(|d| (*d, was.get(d).copied().unwrap_or(0), now.get(d).copied().unwrap_or(0))).filter(|(_, a, b)| a != b).collect();
+                            eprintln!("rerail: {rel}'s versions by document, where they differ (document, old, new): {differ:?}");
                             eprintln!("rerail: {rel}'s patch refused: kept {} rows, old version {:?}, new {:?}, patched {}, the relation {}; the changed documents {keys:?}: {here:?} rows in the corpus batch", k.rows() + old.as_ref().map_or(0, |s| s.len() as i64) - new.as_ref().map_or(0, |s| s.len() as i64), old.as_ref().map(|s| s.len()), new.as_ref().map(|s| s.len()), k.rows(), source.len());
                         }
                         (k.rows() == source.len() as i64).then_some((k, "patched by the changed documents", true))

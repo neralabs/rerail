@@ -462,8 +462,13 @@ fn an_edit_of_a_file_with_guests_patches_every_base_relations_statistics() {
             failed.push(format!("{}: the corpus batch holds the files' guests: {batch:?}", if session { "a session" } else { "a new process" }));
         }
         run(&mut c);
+        // Two edits of the same file, each with annotations new to it: the second's old documents are the first's,
+        // its guests among them.
         c.write("a.py", "def f(x: \"Tuple[int, str]\", z: \"B\"):\n    return x\n\ndef k(y: \"Dict[str, int]\"):\n    pass\n");
+        let (first, _, _) = run(&mut c);
+        c.write("a.py", "def f(x: \"Set[bytes]\", z: \"Optional[B]\"):\n    return x\n\ndef k(y: \"Dict[str, float]\", w: \"C\"):\n    pass\n");
         let (edit, rows, _) = run(&mut c);
+        let edit: BTreeSet<String> = edit.into_iter().chain(first).collect();
         profile::set(false);
         let route = if session { "a session" } else { "a new process" };
         if edit.is_empty() || !edit.iter().all(|x| x.contains(": patched by the changed documents")) {
