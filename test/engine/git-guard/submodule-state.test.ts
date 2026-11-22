@@ -24,6 +24,7 @@ const roots: string[] = [];
 afterEach(async () => {
   vi.mocked(openSync).mockReset();
   vi.mocked(closeSync).mockReset();
+  vi.mocked(readSync).mockReset();
   vi.mocked(open).mockReset();
   await Promise.all(roots.splice(0).map(root => removeFolder(root)));
 });
@@ -114,6 +115,18 @@ describe("submoduleChanged", () => {
 
     const read = vi.mocked(readSync).mock.results.reduce((sum, result) => sum + (result.type === "return" ? result.value : 0), 0);
     expect([changed, read <= 1024 * 1024 + 1]).toEqual([{ status: 128, stdout: "", stderr: `fatal: too large to be a .git file: '${gitfile}'\n` }, true]);
+  });
+
+  it("fails for a submodule whose `.git` file cannot be read, with Git's message", async () => {
+    const { linked } = repositories(await folder());
+    // The first read is the `.git` file's, after its stat and its open.
+    vi.mocked(readSync).mockImplementationOnce(() => {
+      throw Object.assign(new Error("EIO: i/o error, read"), { code: "EIO", syscall: "read" });
+    });
+
+    const changed = await submoduleChanged(linked, false, async () => await Promise.resolve(UNASKED), 1);
+
+    expect(changed).toEqual({ status: 128, stdout: "", stderr: `fatal: error reading ${join(linked, ".git")}\n` });
   });
 });
 
