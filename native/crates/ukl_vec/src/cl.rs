@@ -39,6 +39,12 @@ pub struct Places {
     pub live: i32,
     pub args: i32,
     pub lid: i32,
+    /// A chunk's (a SIMD group run as chunks of its lanes, each a fiber: a cross-lane kernel below 32 lanes): its
+    /// first lane (`u32`), its SIMD group's exchange area's address (`u64`, two halves of `XHALF` bytes: the lanes'
+    /// values, 8 bytes a lane, then their bits, a `u32` at `XWORD`), and the half its next exchange uses (`u32`).
+    pub lane0: i32,
+    pub xbuf: i32,
+    pub xpar: i32,
     /// The environment's: the constant memory's address, the threadgroup memory's, the grid's, group's and group
     /// id's sizes (`[u32; 3]` each), a scratch area's address (64 bytes, what a lane that does not run reads and
     /// writes), and the helpers' addresses (`H_*`).
@@ -52,14 +58,21 @@ pub struct Places {
 }
 
 /// The runtime's helpers, by their place in the environment's table: `bar(sg, site)`, `poll(sg)`, `agree(sg, node,
-/// decision, site)`, `fail(sg, what)` (which never returns), `copy(to, from, bytes)`, `zero(to, bytes)`.
+/// decision, site)`, `fail(sg, what)` (which never returns), `copy(to, from, bytes)`, `zero(to, bytes)`,
+/// `xbar(sg)`.
 pub const H_BAR: i32 = 0;
 pub const H_YIELD: i32 = 1;
 pub const H_AGREE: i32 = 2;
 pub const H_FAIL: i32 = 3;
 pub const H_COPY: i32 = 4;
 pub const H_ZERO: i32 = 5;
-pub const HELPERS: usize = 6;
+/// `xbar(sg)`: a chunk waits for its SIMD group's other chunks (each at the same exchange), then goes on.
+pub const H_XBAR: i32 = 6;
+pub const HELPERS: usize = 7;
+
+/// An exchange area's half: the lanes' values (8 bytes a lane), then their bits at `XWORD`.
+pub const XHALF: i32 = 512;
+const XWORD: i32 = 256;
 
 /// `fail`'s reasons.
 pub const FAIL_DIV: i64 = 1;
@@ -73,6 +86,8 @@ pub struct Compiled {
     _module: cranelift_jit::JITModule,
     pub entry: Entry,
     pub width: u32,
+    /// Whether its SIMD groups run as chunks of `width` lanes, a fiber each (a cross-lane kernel below 32 lanes).
+    pub chunked: bool,
 }
 
 // SAFETY: the module's code is finalized and never written again.
@@ -158,12 +173,10 @@ fn width_mask(m: M) -> i64 {
 }
 
 /// Compiles kernel `ssa` (named `name`) at width `w`, or for `w` 0 the width its register pressure chooses
-/// (`pressure`; 32 if it has a cross-lane operation): the code, and its kept form (`load`), if its relocations are
-/// ones it can hold.
+/// (`pressure`): the code, and its kept form (`load`), if its relocations are ones it can hold. A kernel with a
+/// cross-lane operation below 32 lanes runs its SIMD groups as chunks (`Compiled::chunked`).
 pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, Option<Vec<u8>>)> {
-    let w = if ssa.funcs[0].cross {
-        32
-    } else if w == 0 {
+    let w = if w == 0 {
         let ps = crate::pressure::of(ssa);
         let files = crate::pressure::Files::host();
         let w = crate::pressure::width(&ps, files);
@@ -185,13 +198,14 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
     if !matches!(w, 1 | 2 | 4 | 8 | 16 | 32) {
         return Err(Error(format!("{name}: a width of {w} lanes")));
     }
+    let chunked = ssa.funcs[0].cross && w < 32;
     let mut module = module()?;
     let cc = module.isa().default_call_conv();
     let sigs: Vec<Signature> = ssa.funcs.iter().enumerate().map(|(k, f)| signature(f, k == 0, w, cc)).collect();
     let ids: Vec<FuncId> = sigs.iter().enumerate().map(|(k, s)| module.declare_function(&format!("f{k}"), Linkage::Local, s)).collect::<Result<_, _>>().map_err(|e| Error(format!("{name}: {e}")))?;
     let mut fbc = FunctionBuilderContext::new();
     let mut ctx = module.make_context();
-    let mut kept = Some(Kept::new(w, ssa.funcs.len() + 1));
+    let mut kept = Some(Kept::new(w | u32::from(chunked) << 16, ssa.funcs.len() + 1));
     // A development hook: each machine instruction's SSA value, to the file `RERAIL_UKL_VEC_CL_MAP` names (appended),
     // for a profile of the compiled code: `start end kernel function value operation`.
     let map = std::env::var("RERAIL_UKL_VEC_CL_MAP").ok();
@@ -203,6 +217,10 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
             let b = FunctionBuilder::new(&mut ctx.func, &mut fbc);
             let refs = Vec::new();
             let mut g = Cg::new(b, ssa, f, k == 0, w, places, cc, refs);
+            if chunked && f.cross {
+                g.chunked = true;
+                g.group_dec = crate::ssa::group_decisions(ssa, f);
+            }
             g.callees = ids.iter().map(|&id| module.declare_func_in_func(id, g.b.func)).collect();
             g.function().map_err(|e| Error(format!("{name}: {}: {e}", f.name)))?;
             g.b.seal_all_blocks();
@@ -234,7 +252,7 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
     {
         let mut b = FunctionBuilder::new(&mut ctx.func, &mut fbc);
         let kernel = module.declare_func_in_func(ids[0], b.func);
-        entry(&mut b, kernel, w, places);
+        entry(&mut b, kernel, w, chunked, places);
         b.seal_all_blocks();
         b.finalize();
     }
@@ -260,7 +278,7 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
             let _ = fh.write_all(out.as_bytes());
         }
     }
-    Ok((Compiled { _module: module, entry, width: w }, kept.map(|k| k.out)))
+    Ok((Compiled { _module: module, entry, width: w, chunked }, kept.map(|k| k.out)))
 }
 
 /// What the compiled code is: the host's target and features, and the compiler's own source (the SSA's, this back
@@ -338,7 +356,8 @@ pub fn load(bytes: &[u8]) -> Option<Compiled> {
         return None;
     }
     let u32_of = |b: &[u8]| u32::from_le_bytes(b.try_into().expect("4 bytes"));
-    let w = u32_of(take(4)?);
+    let wc = u32_of(take(4)?);
+    let (w, chunked) = (wc & 0xffff, wc >> 16 == 1);
     let n = u32_of(take(4)?) as usize;
     if n == 0 {
         return None;
@@ -370,7 +389,7 @@ pub fn load(bytes: &[u8]) -> Option<Compiled> {
     module.finalize_definitions().ok()?;
     // SAFETY: the kept form's last function is its entry, of `Entry`'s signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(module.get_finalized_function(*ids.last()?)) };
-    Some(Compiled { _module: module, entry, width: w })
+    Some(Compiled { _module: module, entry, width: w, chunked })
 }
 
 /// The address space a kernel's code is in: one arena, so a call of one of its functions by another is in a direct
@@ -450,14 +469,32 @@ fn push_shape(to: &mut Vec<AbiParam>, m: M, sh: Shape, w: u32) {
 }
 
 /// The entry's body: for each chunk of `w` lanes, its lanes of the SIMD group's (`live`), the kernel's function
-/// called if it has one.
-fn entry(b: &mut FunctionBuilder, kernel: ir::FuncRef, w: u32, pl: &Places) {
+/// called if it has one; `chunked`, the one chunk the state's first lane (`lane0`) names.
+fn entry(b: &mut FunctionBuilder, kernel: ir::FuncRef, w: u32, chunked: bool, pl: &Places) {
     let e = b.create_block();
     b.append_block_params_for_function_params(e);
     b.switch_to_block(e);
     let sg = b.block_params(e)[0];
     let live = b.ins().uload32(mf(), sg, pl.live);
     let fp = b.ins().load(I64, mf(), sg, pl.frame);
+    if chunked {
+        let lane0 = b.ins().uload32(mf(), sg, pl.lane0);
+        let shifted = b.ins().ushr(live, lane0);
+        let bits = b.ins().band_imm(shifted, (1i64 << w) - 1);
+        let body = b.create_block();
+        let done = b.create_block();
+        b.ins().brif(bits, body, &[], done, &[]);
+        b.switch_to_block(body);
+        let bits32 = b.ins().ireduce(I32, bits);
+        let mask = mask_of_bits(b, bits32, w);
+        let mut args = vec![sg, fp, lane0];
+        args.extend(mask);
+        b.ins().call(kernel, &args);
+        b.ins().jump(done, &[]);
+        b.switch_to_block(done);
+        b.ins().return_(&[]);
+        return;
+    }
     let head = b.create_block();
     let body = b.create_block();
     let next = b.create_block();
@@ -545,6 +582,11 @@ struct Cg<'a, 'b> {
     /// The function's entry's lanes as bits (`mask_bits`).
     entry_bits: Value,
     helper_sigs: HashMap<usize, ir::SigRef>,
+    /// Whether the function runs a chunk of its SIMD group's lanes, as a fiber of its own (`Compiled::chunked`), and
+    /// then which blocks' branches are the group's (`ssa::group_decisions`); the block being made.
+    chunked: bool,
+    group_dec: Vec<bool>,
+    cur_block: usize,
 }
 
 impl<'a, 'b> Cg<'a, 'b> {
@@ -576,6 +618,9 @@ impl<'a, 'b> Cg<'a, 'b> {
             fail: None,
             entry_bits: dummy,
             helper_sigs: HashMap::new(),
+            chunked: false,
+            group_dec: Vec::new(),
+            cur_block: 0,
         }
     }
 
@@ -636,6 +681,7 @@ impl<'a, 'b> Cg<'a, 'b> {
             }
             self.splats.clear();
             self.masks64.clear();
+            self.cur_block = bk;
             let blk = &f.blocks[bk];
             for &x in &blk.insts {
                 let i = *f.inst(x);
@@ -864,6 +910,159 @@ impl<'a, 'b> Cg<'a, 'b> {
         let at = self.b.ins().load(I64, mf(), self.env, self.pl.helpers + 8 * h);
         let call = self.b.ins().call_indirect(sig, at, args);
         self.b.inst_results(call).to_vec()
+    }
+
+
+    // A chunk's exchanges with its SIMD group's other chunks (`chunked`): it writes its lanes' part of the
+    // exchange area's next half, waits for the others (`xbar`), and reads the whole SIMD group's.
+
+    /// The exchange area's next half (the chunk's next exchange uses the other).
+    fn x_half(&mut self) -> Value {
+        let par = self.b.ins().uload32(mf(), self.sg, self.pl.xpar);
+        let next = self.b.ins().bxor_imm(par, 1);
+        self.b.ins().istore32(mf(), next, self.sg, self.pl.xpar);
+        let buf = self.b.ins().load(I64, mf(), self.sg, self.pl.xbuf);
+        let off = self.b.ins().imul_imm(par, i64::from(XHALF));
+        self.b.ins().iadd(buf, off)
+    }
+
+    fn x_wait(&mut self) {
+        let sg = self.sg;
+        self.helper(H_XBAR, 1, 0, &[sg]);
+    }
+
+    /// The chunk's lanes of mask `k` as its lanes' bits of the half's word.
+    fn x_put_bits(&mut self, at: Value, k: &[Value]) {
+        let bits = self.mask_bits(k);
+        let word = self.b.ins().load(I32, mf(), at, XWORD);
+        let l0 = self.b.ins().ireduce(I32, self.lane0);
+        let ours = self.b.ins().iconst(I32, ((1u64 << self.w) - 1) as i64);
+        let ours = self.b.ins().ishl(ours, l0);
+        let keep = self.b.ins().band_not(word, ours);
+        let mine = self.b.ins().ishl(bits, l0);
+        let word = self.b.ins().bor(keep, mine);
+        self.b.ins().store(mf(), word, at, XWORD);
+    }
+
+    /// The chunk's lanes of a value of `m` (parts `p`) at their lanes' places of the half (4 or 8 bytes a lane).
+    fn x_put_lanes(&mut self, at: Value, p: &[Value], m: M) {
+        let size: i64 = if wide(m) { 8 } else { 4 };
+        let off = self.b.ins().imul_imm(self.lane0, size);
+        let base = self.b.ins().iadd(at, off);
+        let per = 16 / size as u32;
+        if self.w >= per {
+            for (k, &v) in p.iter().enumerate() {
+                self.b.ins().store(mf(), v, base, 16 * k as i32);
+            }
+        } else {
+            for j in 0..self.w {
+                let v = self.extract(p, m, j);
+                self.b.ins().store(mf(), v, base, (j as i64 * size) as i32);
+            }
+        }
+    }
+
+    /// The SIMD group's decision `v` (uniform) under mask `mask`: the value of the chunk that has the group's first
+    /// lane of the mask (none in any chunk: the first chunk's), so every chunk takes it.
+    fn x_leader(&mut self, v: Value, mask: V) -> Value {
+        let k = if mask == NONE { self.mask(self.entry_v) } else { self.mask(mask) };
+        let at = self.x_half();
+        let t = self.b.func.dfg.value_type(v);
+        let v64 = if t == I64 { v } else if t.is_float() { self.b.ins().bitcast(if t == F32 { I32 } else { I64 }, MemFlags::new(), v) } else { self.b.ins().uextend(I64, v) };
+        let v64 = if self.b.func.dfg.value_type(v64) == I32 { self.b.ins().uextend(I64, v64) } else { v64 };
+        let off = self.b.ins().imul_imm(self.lane0, 8);
+        let mine = self.b.ins().iadd(at, off);
+        self.b.ins().store(mf(), v64, mine, 0);
+        self.x_put_bits(at, &k);
+        self.x_wait();
+        let word = self.b.ins().load(I32, mf(), at, XWORD);
+        let lead = self.x_lead(word);
+        let off = self.b.ins().imul_imm(lead, 8);
+        let theirs = self.b.ins().iadd(at, off);
+        let r = self.b.ins().load(I64, mf(), theirs, 0);
+        if t == I64 {
+            r
+        } else if t.is_float() {
+            let r = if t == F32 { self.b.ins().ireduce(I32, r) } else { r };
+            self.b.ins().bitcast(t, MemFlags::new(), r)
+        } else {
+            self.b.ins().ireduce(t, r)
+        }
+    }
+
+    /// The first lane of the chunk that has the group's first lane of `word`'s (0 for none), an `I64`.
+    fn x_lead(&mut self, word: Value) -> Value {
+        let none = self.b.ins().icmp_imm(IntCC::Equal, word, 0);
+        let first = self.b.ins().ctz(word);
+        let first = self.b.ins().band_imm(first, !(i64::from(self.w) - 1) & 31);
+        let zero = self.b.ins().iconst(I32, 0);
+        let first = self.b.ins().select(none, zero, first);
+        self.b.ins().uextend(I64, first)
+    }
+
+    /// Whether the SIMD group has a lane of mask `mask` (each chunk's lanes of it), a uniform `bool`.
+    fn x_any(&mut self, mask: V) -> Value {
+        let k = self.mask(mask);
+        let at = self.x_half();
+        self.x_put_bits(at, &k);
+        self.x_wait();
+        let word = self.b.ins().load(I32, mf(), at, XWORD);
+        let c = self.b.ins().icmp_imm(IntCC::NotEqual, word, 0);
+        self.b.ins().uextend(I64, c)
+    }
+
+    /// The SIMD group's lanes of mask `mask`, their bits (each chunk's lanes of it), an `I32`.
+    fn x_bits(&mut self, mask: V) -> Value {
+        let k = self.mask(mask);
+        let at = self.x_half();
+        self.x_put_bits(at, &k);
+        self.x_wait();
+        self.b.ins().load(I32, mf(), at, XWORD)
+    }
+
+    /// A branch's decision `c` (of block `cur_block`'s `Br` or `Switch`, its mask `mask`), the SIMD group's where
+    /// the function runs a chunk and what it branches to reaches the group's operations: a lane of a mask any of the
+    /// group's chunks has; an agreed one or a constant as it is; any other value the leading chunk's.
+    fn decided(&mut self, c: V, mask: V) -> Value {
+        let v = self.u(c);
+        if !self.chunked || !self.group_dec[self.cur_block] {
+            return v;
+        }
+        let i = *self.f.inst(c);
+        match i.op {
+            O::Any => self.x_any(i.a),
+            O::Agree | O::Const | O::AnyGroup => v,
+            _ => self.x_leader(v, mask),
+        }
+    }
+
+    /// A SIMD group reduction (`bi`: a sum, a minimum or a maximum) of `n` lanes of `m`, each lane's `(runs, value)`
+    /// from `lane`: the running lanes' sum, or their least or greatest from the first running lane's (0 for none).
+    fn fold(&mut self, bi: Builtin, m: M, n: u32, lane: &mut dyn FnMut(&mut Self, u32) -> (Value, Value)) -> Value {
+        if bi == Builtin::SubGroupReduceAdd {
+            let mut acc = self.konst_u(m, 0);
+            for l in 0..n {
+                let (on, v) = lane(self, l);
+                let sum = self.u_bin(Op::Add, m, acc, v);
+                acc = self.b.ins().select(on, sum, acc);
+            }
+            return acc;
+        }
+        let mut have = self.b.ins().iconst(I8, 0);
+        let mut best = self.konst_u(m, 0);
+        for l in 0..n {
+            let (on, v) = lane(self, l);
+            let less = self.u_bin(Op::Lt, m, v, best);
+            let better = if bi == Builtin::SubGroupReduceMin { less } else { self.b.ins().bxor_imm(less, 1) };
+            let better = self.b.ins().icmp_imm(IntCC::NotEqual, better, 0);
+            let none = self.b.ins().icmp_imm(IntCC::Equal, have, 0);
+            let take = self.b.ins().bor(none, better);
+            let take = self.b.ins().band(take, on);
+            best = self.b.ins().select(take, v, best);
+            let on8 = self.b.ins().uextend(I8, on);
+            have = self.b.ins().bor(have, on8);
+        }
+        best
     }
 
     /// A branch to the kernel's failure (`fail(sg, what)`, which does not return) if `c` is true.
@@ -1920,9 +2119,14 @@ impl<'a, 'b> Cg<'a, 'b> {
                         .collect(),
                 )
             }
+            O::AnyGroup if self.chunked => Rp::U(self.x_any(i.a)),
             O::Any | O::AnyGroup => {
                 let k = self.mask(i.a);
                 Rp::U(self.any(&k))
+            }
+            O::Bits if self.chunked => {
+                let bits = self.x_bits(i.a);
+                Rp::U(self.b.ins().uextend(I64, bits))
             }
             O::Bits => {
                 let k = self.mask(i.a);
@@ -2126,20 +2330,33 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let k = self.mask(i.c);
                 let px = self.lanes(i.a, m);
                 let pl = self.lanes(i.b, M::U32);
-                let bits = self.mask_bits(&k);
-                for (p, &v) in px.iter().enumerate() {
+                let (bits, base) = if self.chunked {
+                    // The SIMD group's lanes, from the exchange area.
+                    let at = self.x_half();
+                    self.x_put_lanes(at, &px, m);
+                    self.x_put_bits(at, &k);
+                    self.x_wait();
+                    (self.b.ins().load(I32, mf(), at, XWORD), at)
+                } else {
+                    let bits = self.mask_bits(&k);
+                    for (p, &v) in px.iter().enumerate() {
+                        let sl = self.slot();
+                        self.b.ins().stack_store(v, sl, 16 * p as i32);
+                    }
                     let sl = self.slot();
-                    self.b.ins().stack_store(v, sl, 16 * p as i32);
-                }
-                let sl = self.slot();
-                let base = self.b.ins().stack_addr(I64, sl, 0);
+                    (bits, self.b.ins().stack_addr(I64, sl, 0))
+                };
+                let l0 = if self.chunked { Some(self.b.ins().ireduce(I32, self.lane0)) } else { None };
                 let size = if wide(m) { 8 } else { 4 };
                 let (_, lt) = parts(m, 1);
                 let mut out = Vec::new();
                 for l in 0..w {
                     let idx = self.extract(&pl, M::U32, l);
                     let own = self.extract(&px, m, l);
-                    let lv = self.b.ins().iconst(I32, i64::from(l));
+                    let lv = match l0 {
+                        Some(l0) => self.b.ins().iadd_imm(l0, i64::from(l)),
+                        None => self.b.ins().iconst(I32, i64::from(l)),
+                    };
                     let (src, inrange, keep) = match bi {
                         Builtin::SubGroupShuffle => (self.b.ins().band_imm(idx, 31), None, false),
                         Builtin::SubGroupShuffleXor => {
@@ -2185,68 +2402,76 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let bi = Builtin::of(u32::from(i.sub));
                 let k = self.mask(i.b);
                 let px = self.lanes(i.a, m);
-                let mut acc: Option<Value> = None;
-                let anyv = self.any(&k);
-                for l in 0..w {
-                    let on = self.mask_lane(&k, l);
-                    let s = self.extract(&px, m, l);
-                    let v = self.uniform_of(s, m);
-                    let next = match acc {
-                        None => v,
-                        Some(a) => match bi {
-                            Builtin::SubGroupReduceAdd => self.u_bin(Op::Add, m, a, v),
-                            _ => {
-                                let less = self.u_bin(Op::Lt, m, v, a);
-                                let take = if bi == Builtin::SubGroupReduceMin { less } else { self.b.ins().bxor_imm(less, 1) };
-                                self.b.ins().select(take, v, a)
-                            }
-                        },
-                    };
-                    acc = Some(match acc {
-                        None => {
-                            // The first running lane's.
-                            let z = self.konst_u(m, 0);
-                            let _ = z;
-                            next
-                        }
-                        Some(a) => self.b.ins().select(on, next, a),
-                    });
-                    if l == 0 {
-                        // Lane 0 counts only if it runs: else the first running lane starts the fold.
-                        let first = acc.expect("the fold");
-                        let z = if bi == Builtin::SubGroupReduceAdd { self.konst_u(m, 0) } else { first };
-                        acc = Some(self.b.ins().select(on, first, z));
-                    }
-                }
-                let r = acc.expect("the fold");
-                if bi == Builtin::SubGroupReduceAdd {
-                    Rp::U(r)
+                if self.chunked {
+                    // The SIMD group's lanes, from the exchange area, folded in each chunk alike.
+                    let at = self.x_half();
+                    self.x_put_lanes(at, &px, m);
+                    self.x_put_bits(at, &k);
+                    self.x_wait();
+                    let word = self.b.ins().load(I32, mf(), at, XWORD);
+                    let size = if wide(m) { 8 } else { 4 };
+                    let (_, lt) = parts(m, 1);
+                    Rp::U(self.fold(bi, m, 32, &mut |g, l| {
+                        let on = g.b.ins().ushr_imm(word, i64::from(l));
+                        let on = g.b.ins().band_imm(on, 1);
+                        let on = g.b.ins().icmp_imm(IntCC::NotEqual, on, 0);
+                        let s = g.b.ins().load(lt, mf(), at, (l * size) as i32);
+                        (on, g.uniform_of(s, m))
+                    }))
                 } else {
-                    // A minimum or maximum from the first running lane, not lane 0's: folded again over the lanes in
-                    // order with a flag of whether one has been taken.
-                    let mut have = self.b.ins().iconst(I8, 0);
-                    let mut best = self.konst_u(m, 0);
-                    for l in 0..w {
-                        let on = self.mask_lane(&k, l);
-                        let s = self.extract(&px, m, l);
-                        let v = self.uniform_of(s, m);
-                        let less = self.u_bin(Op::Lt, m, v, best);
-                        let better = if bi == Builtin::SubGroupReduceMin { less } else { self.b.ins().bxor_imm(less, 1) };
-                        let better = self.b.ins().icmp_imm(IntCC::NotEqual, better, 0);
-                        let none = self.b.ins().icmp_imm(IntCC::Equal, have, 0);
-                        let take = self.b.ins().bor(none, better);
-                        let take = self.b.ins().band(take, on);
-                        best = self.b.ins().select(take, v, best);
-                        let on8 = self.b.ins().uextend(I8, on);
-                        have = self.b.ins().bor(have, on8);
-                    }
-                    let _ = (r, anyv);
-                    Rp::U(best)
+                    let w = self.w;
+                    Rp::U(self.fold(bi, m, w, &mut |g, l| {
+                        let on = g.mask_lane(&k, l);
+                        let s = g.extract(&px, m, l);
+                        (on, g.uniform_of(s, m))
+                    }))
                 }
             }
             O::Atomic => {
                 let bi = Builtin::of(u32::from(i.sub));
-                if i.shape == Shape::Uniform {
+                if i.shape == Shape::Uniform && self.chunked {
+                    // Once for the SIMD group: by the chunk that has its first lane of the mask, whose result every
+                    // chunk reads.
+                    let k = self.mask(i.d);
+                    let at = self.x_half();
+                    self.x_put_bits(at, &k);
+                    self.x_wait();
+                    let word = self.b.ins().load(I32, mf(), at, XWORD);
+                    let lead = self.x_lead(word);
+                    let some = self.b.ins().icmp_imm(IntCC::NotEqual, word, 0);
+                    let mine = self.b.ins().icmp(IntCC::Equal, lead, self.lane0);
+                    let go = self.b.ins().band(some, mine);
+                    let (does, join) = (self.b.create_block(), self.b.create_block());
+                    let rt = uty(m);
+                    self.b.append_block_param(join, rt);
+                    let none = self.konst_u(m, 0);
+                    self.b.ins().brif(go, does, &[], join, &[BlockArg::Value(none)]);
+                    self.b.switch_to_block(does);
+                    let p = self.u(i.a);
+                    let xv = if i.b != NONE { self.u(i.b) } else { self.konst_u(m, 0) };
+                    let yv = if i.c != NONE { self.u(i.c) } else { self.konst_u(m, 0) };
+                    let r = self.atomic_u(bi, m, p, xv, yv);
+                    self.b.ins().jump(join, &[BlockArg::Value(r)]);
+                    self.b.switch_to_block(join);
+                    let r = self.b.block_params(join)[0];
+                    // The leader's result: each chunk's own at its place, the leader's read.
+                    let at2 = self.x_half();
+                    let r64 = if rt == I64 { r } else { self.b.ins().bitcast(if rt == F32 { I32 } else { I64 }, MemFlags::new(), r) };
+                    let r64 = if self.b.func.dfg.value_type(r64) == I32 { self.b.ins().uextend(I64, r64) } else { r64 };
+                    let off = self.b.ins().imul_imm(self.lane0, 8);
+                    let mine_at = self.b.ins().iadd(at2, off);
+                    self.b.ins().store(mf(), r64, mine_at, 0);
+                    self.x_wait();
+                    let off = self.b.ins().imul_imm(lead, 8);
+                    let theirs = self.b.ins().iadd(at2, off);
+                    let r = self.b.ins().load(I64, mf(), theirs, 0);
+                    Rp::U(if rt == I64 {
+                        r
+                    } else {
+                        let r = if rt == F32 { self.b.ins().ireduce(I32, r) } else { r };
+                        self.b.ins().bitcast(rt, MemFlags::new(), r)
+                    })
+                } else if i.shape == Shape::Uniform {
                     let p = self.u(i.a);
                     let xv = if i.b != NONE { self.u(i.b) } else { self.konst_u(m, 0) };
                     let yv = if i.c != NONE { self.u(i.c) } else { self.konst_u(m, 0) };
@@ -2293,7 +2518,9 @@ impl<'a, 'b> Cg<'a, 'b> {
                 }
             }
             O::Agree => {
+                // A chunk's decision is its SIMD group's (the leading chunk's) before the groups compare theirs.
                 let d = self.u(i.c);
+                let d = if self.chunked { self.x_leader(d, i.d) } else { d };
                 let node = self.b.ins().iconst(I64, i64::from(i.a));
                 let site = self.b.ins().iconst(I64, i64::from(i.b));
                 let sg = self.sg;
@@ -2306,8 +2533,14 @@ impl<'a, 'b> Cg<'a, 'b> {
                 self.helper(H_BAR, 2, 0, &[sg, site]);
                 Rp::None
             }
-            // At the group's width its lanes run in step: what one wrote, the others read after it.
-            O::SgBar => Rp::None,
+            // At the group's width its lanes run in step: what one wrote, the others read after it; a chunk waits for
+            // the others.
+            O::SgBar => {
+                if self.chunked {
+                    self.x_wait();
+                }
+                Rp::None
+            }
             O::Yield => {
                 let sg = self.sg;
                 self.helper(H_YIELD, 1, 0, &[sg]);
@@ -2355,18 +2588,18 @@ impl<'a, 'b> Cg<'a, 'b> {
                 Rp::None
             }
             O::Br => {
-                let c = self.u(i.a);
+                let c = self.decided(i.a, i.d);
                 let c = self.cond(c);
                 self.b.ins().brif(c, self.blocks[i.b as usize], &[], self.blocks[i.c as usize], &[]);
                 Rp::None
             }
             O::Switch => {
-                let xv = self.u(i.a);
+                let xv = self.decided(i.a, i.d);
                 let mut sw = cranelift_frontend::Switch::new();
                 for (val, t) in self.f.labels(i) {
                     sw.set_entry(u128::from(val), self.blocks[t as usize]);
                 }
-                sw.emit(&mut self.b, xv, self.blocks[i.d as usize]);
+                sw.emit(&mut self.b, xv, self.blocks[self.f.default_of(i) as usize]);
                 Rp::None
             }
             O::Ret => {

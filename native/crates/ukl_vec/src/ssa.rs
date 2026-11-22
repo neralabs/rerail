@@ -120,7 +120,7 @@ pub enum O {
     /// `[address, x, y, mask]`, sub the `Builtin`: an atomic, once for the SIMD group (`Uniform`'s shape) or each
     /// lane's in order.
     Atomic,
-    /// `[node, site, decision]` (words, a value): the group decides an agreed branch alike (cross-lane: the group's);
+    /// `[node, site, decision, mask]` (words, values): the group decides an agreed branch alike (cross-lane: the group's);
     /// its value (of `m`, else none) is the group's decision, which the branch takes.
     Agree,
     /// `[site]` (a word): a threadgroup barrier.
@@ -195,9 +195,9 @@ impl Inst {
             O::Copy | O::Shuffle => [Some(a), Some(b), Some(c), None],
             O::LaneOp => [Some(a), Some(b), None, None],
             O::Atomic => [Some(a), Some(b), Some(c), Some(d)],
-            O::Agree => [Some(c), None, None, None],
+            O::Agree => [Some(c), Some(d), None, None],
             O::Call => [Some(d), None, None, None],
-            O::Br | O::Switch => [Some(a), None, None, None],
+            O::Br | O::Switch => [Some(a), None, None, Some(d)],
             O::Ret => [Some(a), None, None, None],
         };
         u.into_iter().flatten().filter(|&x| x != NONE)
@@ -211,10 +211,11 @@ impl Inst {
             O::Const | O::Arg | O::Entry | O::NoLanes | O::Undef | O::Param | O::Global | O::Shared | O::FrameAddr | O::Lane | O::Bar | O::Yield | O::SgBar | O::Jump | O::Halt => vec![],
             O::Bin => vec![a, b, c],
             O::MAnd | O::MOr | O::MAndNot | O::First | O::Load | O::Zero | O::Reduce | O::LaneOp => vec![a, b],
-            O::Un | O::Cast | O::MaskOf | O::Any | O::AnyGroup | O::Bits | O::Lid | O::Gid | O::GroupInfo | O::Br | O::Switch | O::Ret => vec![a],
+            O::Un | O::Cast | O::MaskOf | O::Any | O::AnyGroup | O::Bits | O::Lid | O::Gid | O::GroupInfo | O::Ret => vec![a],
+            O::Br | O::Switch => vec![a, d],
             O::Select | O::Store | O::Copy | O::Shuffle => vec![a, b, c],
             O::Atomic => vec![a, b, c, d],
-            O::Agree => vec![c],
+            O::Agree => vec![c, d],
             O::Call => vec![d],
         };
         v.into_iter().filter(|x| **x != NONE).collect()
@@ -271,6 +272,11 @@ impl Func {
         self.extra[i.b as usize..][..3 * i.c as usize].chunks(3).map(|t| (u64::from(t[0]) | u64::from(t[1]) << 32, t[2]))
     }
 
+    /// A `Switch`'s default block (its extra word after its labels).
+    pub fn default_of(&self, i: &Inst) -> u32 {
+        self.extra[(i.b + 3 * i.c) as usize]
+    }
+
     /// Block `b`'s successors.
     pub fn succs(&self, b: usize) -> Vec<u32> {
         let t = self.inst(*self.blocks[b].insts.last().expect("a block's terminator"));
@@ -279,7 +285,7 @@ impl Func {
             O::Br => vec![t.b, t.c],
             O::Switch => {
                 let mut s: Vec<u32> = self.labels(t).map(|(_, b)| b).collect();
-                s.push(t.d);
+                s.push(self.default_of(t));
                 s
             }
             _ => vec![],
@@ -652,7 +658,8 @@ impl<'a, 't> Fb<'a, 't> {
     fn br(&mut self, c: V) -> (u32, u32) {
         let (t, e) = (self.block(), self.block());
         let from = self.cur;
-        self.ins(O::Br, M::VOID, c, t, e, 0);
+        let mask = self.cur();
+        self.ins(O::Br, M::VOID, c, t, e, mask);
         self.ended[from as usize] = true;
         self.preds[t as usize].push(from);
         self.preds[e as usize].push(from);
@@ -1041,7 +1048,8 @@ impl<'a, 't> Fb<'a, 't> {
     /// same as `c` wherever the code runs the SIMD group's lanes at once).
     fn agree(&mut self, n: usize, site: u32, c: V) -> V {
         let m = self.insts[c as usize].m;
-        let x = self.ins(O::Agree, m, n as u32, site, c, 0);
+        let mask = self.cur();
+        let x = self.ins(O::Agree, m, n as u32, site, c, mask);
         self.shaped(x, Shape::Uniform)
     }
 
@@ -1180,7 +1188,9 @@ impl<'a, 't> Fb<'a, 't> {
         for &(val, t) in &labels {
             self.extra.extend_from_slice(&[val as u32, (val >> 32) as u32, t]);
         }
-        self.ins(O::Switch, M::VOID, x, at, labels.len() as u32, dflt);
+        self.extra.push(dflt);
+        let mask = self.cur();
+        self.ins(O::Switch, M::VOID, x, at, labels.len() as u32, mask);
         self.ended[from as usize] = true;
         for &(t, _) in &trampolines {
             self.preds[t as usize].push(from);
@@ -1904,7 +1914,7 @@ impl<'a, 't> Fb<'a, 't> {
                 O::Br => vec![i.b, i.c],
                 O::Switch => {
                     let mut s: Vec<u32> = self.extra[i.b as usize..][..3 * i.c as usize].chunks(3).map(|t| t[2]).collect();
-                    s.push(i.d);
+                    s.push(self.extra[(i.b + 3 * i.c) as usize]);
                     s
                 }
                 _ => vec![],
@@ -2043,8 +2053,8 @@ impl<'a, 't> Fb<'a, 't> {
                         for t in self.extra[i.b as usize..][..3 * i.c as usize].chunks(3) {
                             extra.extend_from_slice(&[t[0], t[1], bnum[t[2] as usize]]);
                         }
+                        extra.push(bnum[self.extra[(i.b + 3 * i.c) as usize] as usize]);
                         i.b = at;
-                        i.d = bnum[i.d as usize];
                     }
                     O::Call => {
                         let at = extra.len() as u32;
@@ -2210,6 +2220,116 @@ pub fn verify(f: &Func) -> Result<(), String> {
 }
 
 /// The blocks reached, in reverse postorder.
+/// Whether each block of function `f` of `ssa` has an operation that reads the SIMD group's lanes as a whole: a
+/// cross-lane one, a uniform atomic (made once for the group), a call of a function that has one.
+pub fn cross_blocks(ssa: &Ssa, f: &Func) -> Vec<bool> {
+    f.blocks
+        .iter()
+        .map(|blk| {
+            blk.insts.iter().any(|&x| {
+                let i = f.inst(x);
+                i.op.cross_lane() || (i.op == O::Atomic && i.shape == Shape::Uniform) || (i.op == O::Call && ssa.funcs[i.a as usize].cross)
+            })
+        })
+        .collect()
+}
+
+/// Whether each block's branch (`Br`, `Switch`) must be the SIMD group's decision where its lanes run as chunks of
+/// their own (decision 0567, step 3): whether what it branches to reaches an operation of the group's lanes as a
+/// whole (`cross_blocks`) before the blocks join again (its immediate post-dominator), so every chunk meets the
+/// group's operations in one order. A block with no such branch is false.
+pub fn group_decisions(ssa: &Ssa, f: &Func) -> Vec<bool> {
+    let nb = f.blocks.len();
+    let cross = cross_blocks(ssa, f);
+    let succs: Vec<Vec<u32>> = (0..nb).map(|b| f.succs(b)).collect();
+    let ipdom = post_dominators(&succs);
+    (0..nb)
+        .map(|b| {
+            let t = f.inst(*f.blocks[b].insts.last().expect("a terminator"));
+            if !matches!(t.op, O::Br | O::Switch) {
+                return false;
+            }
+            let stop = ipdom[b];
+            let mut seen = vec![false; nb];
+            let mut stack: Vec<usize> = succs[b].iter().map(|&s| s as usize).collect();
+            while let Some(x) = stack.pop() {
+                if Some(x) == stop || seen[x] {
+                    continue;
+                }
+                seen[x] = true;
+                if cross[x] {
+                    return true;
+                }
+                stack.extend(succs[x].iter().map(|&s| s as usize));
+            }
+            false
+        })
+        .collect()
+}
+
+/// Each block's immediate post-dominator (none: the function's exit, or a block that reaches no exit), by the
+/// dominators of the reversed graph from a virtual exit every block without successors goes to.
+fn post_dominators(succs: &[Vec<u32>]) -> Vec<Option<usize>> {
+    let nb = succs.len();
+    let exit = nb;
+    let mut preds: Vec<Vec<usize>> = vec![Vec::new(); nb + 1];
+    for (b, s) in succs.iter().enumerate() {
+        for &t in s {
+            preds[t as usize].push(b);
+        }
+        if s.is_empty() {
+            preds[exit].push(b);
+        }
+    }
+    // The reversed graph's reverse postorder from the exit (its successors a block's predecessors).
+    let mut seen = vec![false; nb + 1];
+    let mut post = Vec::new();
+    let mut stack = vec![(exit, 0usize)];
+    seen[exit] = true;
+    while let Some(&mut (b, ref mut k)) = stack.last_mut() {
+        if *k < preds[b].len() {
+            let n = preds[b][*k];
+            *k += 1;
+            if !seen[n] {
+                seen[n] = true;
+                stack.push((n, 0));
+            }
+        } else {
+            post.push(b);
+            stack.pop();
+        }
+    }
+    post.reverse();
+    let mut order = vec![usize::MAX; nb + 1];
+    for (k, &b) in post.iter().enumerate() {
+        order[b] = k;
+    }
+    let mut idom = vec![usize::MAX; nb + 1];
+    idom[exit] = exit;
+    loop {
+        let mut changed = false;
+        for &b in post.iter().skip(1) {
+            // The reversed graph's predecessors of b: its successors (the exit for one with none).
+            let rp: Vec<usize> = if succs[b].is_empty() { vec![exit] } else { succs[b].iter().map(|&s| s as usize).collect() };
+            let mut new = usize::MAX;
+            for p in rp {
+                if idom[p] == usize::MAX {
+                    continue;
+                }
+                new = if new == usize::MAX { p } else { intersect(&idom, &order, p, new) };
+            }
+            if new != usize::MAX && idom[b] != new {
+                idom[b] = new;
+                changed = true;
+            }
+        }
+        if !changed {
+            break;
+        }
+    }
+    (0..nb).map(|b| if idom[b] == usize::MAX || idom[b] == exit { None } else { Some(idom[b]) }).collect()
+}
+
 pub fn rpo(f: &Func) -> Vec<usize> {
     let nb = f.blocks.len();
     let mut seen = vec![false; nb];

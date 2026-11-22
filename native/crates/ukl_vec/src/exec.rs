@@ -40,6 +40,8 @@ enum Wait {
     Run,
     Bar(u32),
     Yield,
+    /// A chunk at an exchange with its SIMD group's other chunks (`h_xbar`).
+    X,
 }
 
 /// A SIMD group: the compiled code's part first (`places`), then the runtime's.
@@ -51,7 +53,13 @@ struct Sg {
     _pad: u32,
     args: u64,
     lid: [[u32; W]; 3],
+    /// A chunk's first lane, its exchange area's half, the area (`cl::Places`).
+    lane0: u32,
+    xpar: u32,
+    xbuf: u64,
+    /// Its place among the group's fibers, and its SIMD group's.
     index: u32,
+    group_of: u32,
     done: bool,
     wait: Wait,
     /// The compiled kernel its fiber runs.
@@ -64,6 +72,8 @@ struct Sg {
 /// A resident group's slot.
 struct Slot {
     _frames: Vec<u128>,
+    /// The SIMD groups' exchange areas (two halves of `cl::XHALF` bytes each), for chunks.
+    xbufs: Vec<u128>,
     shared: Vec<u128>,
     g: Vec<Box<Sg>>,
     agreed: HashMap<u32, (Vec<u64>, Vec<usize>)>,
@@ -112,7 +122,7 @@ unsafe fn fill(base: u64, size: usize, b: &[u8], mask: u32) {
 
 thread_local! {
     /// The thread's last launches' slots, by their shape, the latest first.
-    static SLOTS: RefCell<Vec<([usize; 7], Vec<Slot>)>> = const { RefCell::new(Vec::new()) };
+    static SLOTS: RefCell<Vec<([usize; 8], Vec<Slot>)>> = const { RefCell::new(Vec::new()) };
 }
 
 /// The shapes of slots a thread keeps (a pipeline's kernels each have their own).
@@ -125,6 +135,9 @@ pub(crate) fn places() -> Places {
         live: std::mem::offset_of!(Sg, live) as i32,
         args: std::mem::offset_of!(Sg, args) as i32,
         lid: std::mem::offset_of!(Sg, lid) as i32,
+        lane0: std::mem::offset_of!(Sg, lane0) as i32,
+        xbuf: std::mem::offset_of!(Sg, xbuf) as i32,
+        xpar: std::mem::offset_of!(Sg, xpar) as i32,
         data: std::mem::offset_of!(Env, data) as i32,
         shared: std::mem::offset_of!(Env, shared) as i32,
         grid: std::mem::offset_of!(Env, grid) as i32,
@@ -220,7 +233,15 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
         group: [0; 3],
         _pad: 0,
         scratch: 0,
-        helpers: [h_bar as *const () as u64, h_yield as *const () as u64, h_agree as *const () as u64, h_fail as *const () as u64, h_copy as *const () as u64, h_zero as *const () as u64],
+        helpers: [
+            h_bar as *const () as u64,
+            h_yield as *const () as u64,
+            h_agree as *const () as u64,
+            h_fail as *const () as u64,
+            h_copy as *const () as u64,
+            h_zero as *const () as u64,
+            h_xbar as *const () as u64,
+        ],
         // SAFETY: the launch's state outlives every call of the compiled code, all within this function.
         cx: unsafe { std::mem::transmute::<*const Cx<'_>, *const Cx<'static>>(&cx) },
         scratch_mem: [0; 4],
@@ -228,19 +249,26 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
     env.scratch = env.scratch_mem.as_mut_ptr() as u64;
     let envp = &mut *env as *mut Env as u64;
     let (bx, by) = (block[0].max(1), block[1].max(1));
-    let shape = [nsg, frame, (own + local) as usize, threads, bx as usize, by as usize, resident.clamp(1, groups)];
+    // A SIMD group's chunks, a fiber each, where the kernel runs them so (else the SIMD group is one).
+    let (chunks, cw) = if c.chunked { (W / c.width as usize, c.width) } else { (1, W as u32) };
+    let xhalf = cl::XHALF as usize;
+    let shape = [nsg, frame, (own + local) as usize, threads, bx as usize, by as usize, resident.clamp(1, groups), chunks];
     let kept = SLOTS.with(|c| {
         let mut c = c.borrow_mut();
         let at = c.iter().position(|e| e.0 == shape)?;
         Some(c.remove(at).1)
     });
+    let xwords = if chunks > 1 { 2 * xhalf / 16 } else { 0 };
     let mut slots: Vec<Slot> = kept.filter(|v| !v.is_empty()).unwrap_or_else(|| {
         (0..resident.clamp(1, groups))
             .map(|_| {
                 let mut frames = vec![0u128; (nsg * frame).div_ceil(16).max(1)];
                 let base = frames.as_mut_ptr() as u64;
-                let g = (0..nsg as u32)
-                    .map(|s| {
+                let mut xbufs = vec![0u128; (nsg * xwords).max(1)];
+                let xb = xbufs.as_mut_ptr() as u64;
+                let g = (0..(nsg * chunks) as u32)
+                    .map(|f| {
+                        let (s, ch) = (f / chunks as u32, f % chunks as u32);
                         let lin = |l: usize| s * W as u32 + l as u32;
                         Box::new(Sg {
                             env: 0,
@@ -249,7 +277,11 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
                             _pad: 0,
                             args: 0,
                             lid: [std::array::from_fn(|l| lin(l) % bx), std::array::from_fn(|l| lin(l) / bx % by), std::array::from_fn(|l| lin(l) / (bx * by))],
-                            index: s,
+                            lane0: ch * cw,
+                            xpar: 0,
+                            xbuf: xb + u64::from(s) * (xwords * 16) as u64,
+                            index: f,
+                            group_of: s,
                             done: false,
                             wait: Wait::Run,
                             entry: None,
@@ -259,7 +291,7 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
                         })
                     })
                     .collect();
-                Slot { _frames: frames, shared: vec![0u128; (own + local).div_ceil(16) as usize + 1], g, agreed: HashMap::new(), group: [0; 3], busy: false }
+                Slot { _frames: frames, xbufs, shared: vec![0u128; (own + local).div_ceil(16) as usize + 1], g, agreed: HashMap::new(), group: [0; 3], busy: false }
             })
             .collect()
     });
@@ -273,13 +305,18 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
         sl.group = [(at % gx) as u32, (at / gx % gy) as u32, (at / (gx * gy)) as u32];
         sl.agreed.clear();
         sl.shared.fill(0);
+        sl.xbufs.fill(0);
         let sh = sl.shared.as_mut_ptr() as u64;
-        for (s, sg) in sl.g.iter_mut().enumerate() {
-            let mask = live(s);
+        for sg in sl.g.iter_mut() {
+            let all = live(sg.group_of as usize);
+            let ours = if cw as usize == W { u32::MAX } else { ((1u32 << cw) - 1) << sg.lane0 };
+            let mask = all & ours;
             sg.env = envp;
-            sg.live = mask;
+            sg.live = all;
             sg.args = argv.as_ptr() as u64;
-            (sg.done, sg.wait, sg.entry) = (false, Wait::Run, Some(entry));
+            sg.xpar = 0;
+            // A chunk with no lane has nothing to run, and no exchange waits for it.
+            (sg.done, sg.wait, sg.entry) = (mask == 0, Wait::Run, Some(entry));
             for (j, a) in args.iter().enumerate() {
                 let (off, m) = (u64::from(params[2 * j]), M(params[2 * j + 1]));
                 let base = sg.frame + off * W as u64;
@@ -387,10 +424,39 @@ fn group_run(cx: &Cx, g: &mut [Box<Sg>]) -> R<bool> {
                 return Err(e);
             }
         }
+        // Chunks at an exchange: each SIMD group's go on once all its chunks are at it.
+        if g.iter().any(|sg| !sg.done && sg.wait == Wait::X) {
+            let mut released = false;
+            let mut stuck = None;
+            let groups = g.iter().map(|sg| sg.group_of).max().map_or(0, |m| m as usize + 1);
+            for s in 0..groups as u32 {
+                let mut ours = g.iter_mut().filter(|sg| sg.group_of == s && !sg.done).peekable();
+                if ours.peek().is_none() {
+                    continue;
+                }
+                let fs: Vec<&mut Box<Sg>> = ours.collect();
+                let at_x = fs.iter().filter(|sg| sg.wait == Wait::X).count();
+                if at_x == fs.len() {
+                    for sg in fs {
+                        sg.wait = Wait::Run;
+                    }
+                    released = true;
+                } else if at_x > 0 {
+                    stuck = Some(s);
+                }
+            }
+            if released {
+                continue;
+            }
+            if let Some(s) = stuck {
+                return Err(Error(format!("{}: SIMD group {s}'s chunks wait at different places: an exchange some of them do not reach (decision 0567, step 3)", cx.kernel)));
+            }
+        }
         let mut at: Option<u32> = None;
         let (mut polls, mut waits) = (false, false);
         for sg in g.iter().filter(|sg| !sg.done) {
             match sg.wait {
+                Wait::X => unreachable!("a chunk at an exchange its SIMD group released"),
                 Wait::Yield => polls = true,
                 Wait::Bar(site) => {
                     waits = true;
@@ -436,6 +502,15 @@ unsafe extern "C" fn h_bar(sg: u64, site: u64) {
     // SAFETY: on the SIMD group's fiber.
     unsafe {
         (*sg).wait = Wait::Bar(site as u32);
+        back(sg);
+    }
+}
+
+unsafe extern "C" fn h_xbar(sg: u64) {
+    let sg = sg as *mut Sg;
+    // SAFETY: on the chunk's fiber.
+    unsafe {
+        (*sg).wait = Wait::X;
         back(sg);
     }
 }

@@ -173,7 +173,7 @@ fn the_written_sources_lower_and_vectorize() {
                     }
                     let st = t.elapsed().as_secs_f64();
                     let t = std::time::Instant::now();
-                    let c = ssa.as_ref().map_err(|e| e.0.clone()).and_then(|s| super::cl::compile(s, &vk.name, 8, &super::exec::places()).map(|_| ()).map_err(|e| e.0));
+                    let c = ssa.as_ref().map_err(|e| e.0.clone()).and_then(|s| super::cl::compile(s, &vk.name, std::env::var("RERAIL_UKL_WIDTH").ok().and_then(|w| w.parse().ok()).unwrap_or(8), &super::exec::places()).map(|_| ()).map_err(|e| e.0));
                     if std::env::var("RERAIL_UKL_VEC_TIMES").is_ok() {
                         let values = ssa.as_ref().map_or(0, |s| s.funcs.iter().map(|f| f.insts.len()).sum::<usize>());
                         eprintln!("TIME {f}: vectorized {vt:.2} s ({} nodes), SSA {st:.3} s ({values} values), compiled {:.3} s", super::k::View::new(&vk.tape).len(), t.elapsed().as_secs_f64());
@@ -414,11 +414,18 @@ fn ssa_of(p: &super::lower::Program, k: &super::vector::Kernel) -> super::ssa::S
 }
 
 
+/// The chunked runs `ssa_runs_equal` made (a cross-lane kernel below 32 lanes).
+static CHUNKED: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+
 /// Kernel `k`'s SSA compiled (`cl`) at each width runs as the interpreter did (`want`).
 fn ssa_runs_equal(p: &super::lower::Program, k: &super::vector::Kernel, want: &[u32]) {
     for w in [1u32, 2, 4, 8, 16, 32] {
         let ssa = ssa_of(p, k);
         let (c, bytes) = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap_or_else(|e| panic!("{}: {e}", k.name));
+        assert_eq!(c.chunked, ssa.funcs[0].cross && w < 32, "{} at width {w}: its SIMD groups as chunks", k.name);
+        if c.chunked {
+            CHUNKED.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
         // Its kept form, loaded, runs the same.
         let loaded = super::cl::load(&bytes.expect("a kept form")).expect("the kept form loads");
         let back = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
@@ -562,4 +569,40 @@ fn thirty_two_bit_lanes_divide_as_each_lanes_integer() {
         .collect();
     // Lane 6's `k` read `out[63]` before any lane wrote it.
     assert_eq!(out, want);
+}
+
+/// A cross-lane kernel run as chunks of its SIMD groups' lanes (every width below 32, `ran`'s), as the interpreter
+/// runs it: lanes that end before the group's operations, a branch that varies between them (each chunk its own
+/// way), a loop whose count is a group's maximum (its test the group's decision), shuffles across chunks in it, a
+/// ballot and a sum of the lanes left.
+#[test]
+fn a_cross_lane_kernel_runs_as_chunks_of_its_lanes() {
+    let before = CHUNKED.load(std::sync::atomic::Ordering::Relaxed);
+    let out = ran(concat!(
+        "    if (lid % 5u == 3u) { out[lid] = 1000u + lid; return; }\n",
+        "    uint32_t r = 0u;\n",
+        "    if ((lid & 1u) != 0u) { r = lid * lid; } else { r = r - 3u; }\n",
+        "    uint32_t s = ukl_sg_sum(r __UKL_ARGS);\n",
+        "    uint32_t n = ukl_sg_max(lid % 6u __UKL_ARGS);\n",
+        "    uint32_t acc = 0u;\n",
+        "    for (uint32_t k = 0u; k < n; k++) acc += ukl_sg_shuffle(lid + k, (lane + k * 9u) % 32u __UKL_ARGS);\n",
+        "    uint32_t b = ukl_sg_ballot(lid % 3u == 0u __UKL_ARGS);\n",
+        "    out[lid] = s ^ acc * 3u ^ b;"
+    ));
+    assert!(CHUNKED.load(std::sync::atomic::Ordering::Relaxed) > before, "the kernel ran as chunks");
+    for l in 0..64u32 {
+        if l % 5 == 3 {
+            assert_eq!(out[l as usize], 1000 + l, "lane {l} ended first");
+        }
+    }
+    // The SIMD group's sum of the lanes left: lane 0's is in its value (b and acc beside it).
+    let left: Vec<u32> = (0..32u32).filter(|l| l % 5 != 3).collect();
+    let s = left.iter().fold(0u32, |a, &l| a.wrapping_add(if l & 1 != 0 { l * l } else { 0u32.wrapping_sub(3) }));
+    let b = left.iter().filter(|&&l| l % 3 == 0).fold(0u32, |a, &l| a | 1 << l);
+    let n = left.iter().map(|l| l % 6).max().unwrap();
+    let acc = (0..n).fold(0u32, |a, k| {
+        let src = (k * 9) % 32;
+        a.wrapping_add(if src % 5 != 3 { src + k } else { 0 })
+    });
+    assert_eq!(out[0], s ^ acc.wrapping_mul(3) ^ b, "lane 0");
 }
