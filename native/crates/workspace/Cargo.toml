@@ -1,11 +1,11 @@
 # Written first by tools/cratify/apply.py (the crate split) and kept by hand since: its sources are where they were,
 # mounted in place (src/lib.rs).
 [package]
-name = "rerail-classic"
+name = "rerail-workspace"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "Classic (W, main's engine before the final shape): its workspace, over the code rules (rerail-rules), the matcher (rerail-matcher) and the adapters (rerail-adapters)."
+description = "The workspace (W's: main's engine before the final shape), over the code rules (rerail-rules), the matcher (rerail-matcher) and the adapters (rerail-adapters)."
 
 [features]
 default = ["all-languages", "dump-cli", "python-syntax-error", "tape-cache", "rerail-facts/default", "rerail-lang/default", "rerail-adapters/default", "rerail-matcher/default", "rerail-rules/default"]
@@ -130,6 +130,6 @@ metal = "0.33.0"
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
-rerail-classic = { path = ".", features = ["test-hooks"] }
+rerail-workspace = { path = ".", features = ["test-hooks"] }
 ast-grep-language = { version = "=0.51.0", default-features = false, features = ["tree-sitter-bash", "tree-sitter-c", "tree-sitter-cpp", "tree-sitter-c-sharp", "tree-sitter-css", "tree-sitter-go", "tree-sitter-html", "tree-sitter-java", "tree-sitter-json", "tree-sitter-kotlin", "tree-sitter-lua", "tree-sitter-php", "tree-sitter-ruby", "tree-sitter-rust", "tree-sitter-scala", "tree-sitter-swift"] }
 rusqlite = { version = "=0.41.1", features = ["bundled", "limits", "hooks", "array"] }

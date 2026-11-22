@@ -1,7 +1,7 @@
 //! The matcher (W's): a clause's ast rules over a document's tape (`matcher`): its anchors, values, relations,
 //! counts, captures and memo; the syntax errors' soundness (`soundness`), the code-rule profile (`profile`, with
 //! `code-rule-profile`) and the semantic facts its binds read (`transducer::semantic_facts`). Over the adapters
-//! (`rerail-adapters`), below the code rules (rerail-rules) and the workspace (rerail-classic).
+//! (`rerail-adapters`), below the code rules (rerail-rules) and the workspace (rerail-workspace).
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items

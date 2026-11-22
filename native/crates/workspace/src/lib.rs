@@ -1,5 +1,6 @@
-//! Classic: the matcher, scopes, values, suppressions, demand and the workspace's model. This is the engine main ran
-//! before the final-shape work, which the plans call "W" (`docs/final-shape/05-implementation-plan.md`, wolfeel 5cf4246e).
+//! The workspace of W, the engine main ran before the final-shape work (`docs/final-shape/05-implementation-plan.md`,
+//! wolfeel 5cf4246e): its files, requests, cross-file state, storage and results, over the code rules
+//! (`rerail-rules`), the matcher (`rerail-matcher`) and the adapters (`rerail-adapters`).
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
@@ -17,7 +18,7 @@ extern crate cranelift_jit_wasm as cranelift_jit;
 pub use rerail_store::content_store;
 pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
-extern crate self as rerail_classic;
+extern crate self as rerail_workspace;
 #[path = "../../../src/code_rule_dsl"]
 pub mod code_rule_dsl {
     pub use rerail_lang::code_rule_dsl::budget;

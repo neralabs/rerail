@@ -2,7 +2,7 @@
 //! `query`, `violations`, `resolution`) and the relational admission (`residency::admission`), with the SQLite
 //! hooks and functions it registers (`hooks`, `crypto`). One crate, because they are one cycle: the model holds
 //! the admission's plans, the compiler compiles them, the admission evaluates through `eval`. Over the matcher
-//! (`rerail-matcher`), below the workspace (rerail-classic). The matcher's facade here mounts P's and D's SQL anchor
+//! (`rerail-matcher`), below the workspace (rerail-workspace). The matcher's facade here mounts P's and D's SQL anchor
 //! engines and `waves::relational` (test-only copies), which read the model and the admission's database.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.

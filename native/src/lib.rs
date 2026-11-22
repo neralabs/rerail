@@ -46,10 +46,10 @@ pub mod git_access {
 pub mod git_start;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
-pub use rerail_classic::git_ignore;
+pub use rerail_workspace::git_ignore;
 mod main_instance;
 mod model;
-pub use rerail_classic::panic_boundary;
+pub use rerail_workspace::panic_boundary;
 mod path_owner;
 pub mod process;
 pub use rerail_logic::threads;
@@ -300,7 +300,7 @@ fn on_revisions<'s, T>(snapshots: impl IntoIterator<Item = &'s git_workspace::sn
 
 #[cfg(not(feature = "headless"))]
 #[napi]
-pub fn inspect_rr_policy(path: String, source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+pub fn inspect_rr_policy(path: String, source: Option<&rerail_workspace::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
     let snapshot = source.map(|source| source.pinned_snapshot());
     on_revisions(snapshot.as_deref(), || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(||
         LoadedRrPolicy::read(&path, snapshot.clone(), None)?.inspection()))
@@ -360,7 +360,7 @@ impl LoadedRrPolicies {
     }
 
     #[napi]
-    pub fn load(&self, path: String, source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+    pub fn load(&self, path: String, source: Option<&rerail_workspace::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
         let key = policy_file_path(&path)?;
         let read = || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(|| {
             let inspected = if source.is_none() && self.store.is_some() {
@@ -419,9 +419,9 @@ pub struct RrScanTarget {
 #[napi]
 pub fn scan_rr_policies_async(
     target: RrScanTarget,
-    analysis: Option<&rerail_classic::code_rule_dsl::workspace::api::AnalysisScopeRun>,
-    source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>,
-    policy_source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>,
+    analysis: Option<&rerail_workspace::code_rule_dsl::workspace::api::AnalysisScopeRun>,
+    source: Option<&rerail_workspace::code_rule_dsl::workspace::api::GitRevisionSource>,
+    policy_source: Option<&rerail_workspace::code_rule_dsl::workspace::api::GitRevisionSource>,
     loaded: Option<&LoadedRrPolicies>,
 ) -> Result<napi::bindgen_prelude::AsyncTask<ScanRrPolicies>> {
     let RrScanTarget { paths, root, store, output, source_paths } = target;

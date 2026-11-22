@@ -44,7 +44,7 @@ pub mod wire;
 pub mod tokens;
 mod token_automata;
 // tokens_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
-// cratify: `token_readers` is rerail-classic's (it mounts it)
+// cratify: `token_readers` is rerail-workspace's (it mounts it)
 pub mod resident;
 pub mod validated;
 /// A document's tape through one API, in the run's format (decision 0293).

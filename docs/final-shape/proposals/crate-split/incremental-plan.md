@@ -739,3 +739,9 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     `rerail-tests-matcher` (the 74 project-context tests among them), `rerail-lang-ecma`, `rerail-adapters`,
     `rerail-rules`, `rerail-classic` in full and lang-python's findings tests (S's 18 async reference tests),
     855 pass.
+- **The rename** (2026-11-21): `rerail-classic` is `rerail-workspace` (`native/crates/workspace`), the name the
+  plan gave the crate that holds the workspace. Every manifest, facade and `rerail_classic` path names it so, and
+  so do the cratify tool's maps (`tools/cratify`), which still describe the split before 6a. The log above keeps
+  the old name. `cargo check --tests --workspace` is clean on Linux and on a Mac, and so is the workspace's
+  check with `code-rule-profile,p-anchor-corpus,test-hooks`. On a Linux host 47 pass: the crate's own tests and
+  boot's workspace tests.
