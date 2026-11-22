@@ -353,7 +353,8 @@ const DEPTH: u32 = 400;
 pub struct P<'a> {
     src: &'a [u8],
     starts: &'a [u32],
-    lasts: &'a [u32],
+    /// The source padded (`PADDING` spaces after it): what each token's last byte is read from (`token_last`).
+    buf: &'a [u8],
     codes: &'a [u32],
     n: usize,
     /// The next grammar token's record; the first record not written yet (the comments before it).
@@ -406,10 +407,10 @@ pub struct P<'a> {
 
 #[allow(dead_code)]
 impl<'a> P<'a> {
-    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
-        let (starts, lasts, codes) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..]);
+    fn new(src: &'a [u8], buf: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
+        let (starts, codes) = (&lx.starts[..], &lx.codes[..]);
         let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, gone: Vec::new(), dead: Vec::new(), lost: None, moved: None, strings: 0, stack: Vec::with_capacity(64) };
+        let mut p = P { src, buf, starts, codes, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, gone: Vec::new(), dead: Vec::new(), lost: None, moved: None, strings: 0, stack: Vec::with_capacity(64) };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -529,7 +530,7 @@ impl<'a> P<'a> {
     fn extra_span(&self, j: usize) -> (u32, u32) {
         match self.moved {
             Some((m, s)) if m == j => (s, s),
-            _ => (self.starts[j], self.lasts[j] + 1),
+            _ => (self.starts[j], self.last(j) + 1),
         }
     }
 
@@ -564,7 +565,7 @@ impl<'a> P<'a> {
             self.last_end = l + 1;
             return Ok((s, l + 1));
         }
-        let (s, e) = (self.starts[self.i], self.lasts[self.i] + 1);
+        let (s, e) = (self.starts[self.i], self.last(self.i) + 1);
         self.advance(e as usize)?;
         self.last_end = e;
         Ok((s, e))
@@ -7080,15 +7081,386 @@ impl P<'_> {
     }
 }
 
-/// The tape of `src` from tier 1's records (each token's first and last bytes and code), or the byte it was refused at.
-pub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {
+impl P<'_> {
+    /// Record `j`'s last byte, read from the bytes at its first.
+    #[inline(always)]
+    fn last(&self, j: usize) -> u32 {
+        token_last(self.buf, self.src.len(), self.starts[j] as usize) as u32
+    }
+}
+
+/// The 64 bytes from `p` as loaded, and the byte they start at: at the file's first byte for a window before it. None
+/// for a window past the file's end.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn window<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> Option<(S::V, isize)> {
+    if p >= n as isize || p <= -64 {
+        return None;
+    }
+    let q = p.max(0);
+    let block: &[u8; 64] = src[q as usize..q as usize + 64].try_into().expect("the padded source");
+    // SAFETY: the caller's.
+    Some((unsafe { S::load(block) }, q))
+}
+
+/// The bits `b` of the window loaded at `q`, as the window from `p`'s: none past the file or before it.
+#[inline(always)]
+fn held(b: u64, q: isize, n: usize, p: isize) -> u64 {
+    let b = if p < q { b << (q - p) } else { b };
+    b & valid(n, p)
+}
+
+/// The bits of the window from `p` that are the file's bytes.
+#[inline(always)]
+fn valid(n: usize, p: isize) -> u64 {
+    let left = n as isize - p;
+    let hi = if left >= 64 { !0 } else if left <= 0 { 0 } else { (1u64 << left) - 1 };
+    if p < 0 { hi & (!0u64 << (-p).min(63)) } else { hi }
+}
+
+/// One window's escaped bytes (`escaped`), each after an odd run of `bs`'s; `carry`, the run's escape over the window
+/// before.
+#[inline(always)]
+fn escaped_step(bs: u64, carry: &mut u64) -> u64 {
+    const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
+    if bs == 0 {
+        return std::mem::take(carry);
+    }
+    let potential = bs & !*carry;
+    let series = ((potential << 1) | ODD).wrapping_sub(potential);
+    let escape_and_terminal = series ^ ODD;
+    let escaped = escape_and_terminal ^ (bs | *carry);
+    *carry = (escape_and_terminal & bs) >> 63;
+    escaped
+}
+
+/// Class `quote`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_quote<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x22) };
+    held(b, q, n, p)
+}
+
+/// Class `backslash`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_backslash<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x5c) };
+    held(b, q, n, p)
+}
+
+/// Class `lf`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_lf<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x0a) };
+    held(b, q, n, p)
+}
+
+/// Class `slash`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_slash<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x2f) };
+    held(b, q, n, p)
+}
+
+/// Class `star`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_star<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x2a) };
+    held(b, q, n, p)
+}
+
+/// Class `tick`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_tick<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x60) };
+    held(b, q, n, p)
+}
+
+/// Class `word`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_word<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { (S::to_bitmask(S::ge(v, 0x61)) & !S::to_bitmask(S::ge(v, 0x7b))) | (S::to_bitmask(S::ge(v, 0x41)) & !S::to_bitmask(S::ge(v, 0x5b))) | (S::to_bitmask(S::ge(v, 0x30)) & !S::to_bitmask(S::ge(v, 0x3a))) | S::eq_mask(v, 0x5f) };
+    held(b, q, n, p)
+}
+
+/// Class `digit`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_digit<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { (S::to_bitmask(S::ge(v, 0x30)) & !S::to_bitmask(S::ge(v, 0x3a))) };
+    held(b, q, n, p)
+}
+
+/// Class `dot`'s bits in the 64 bytes from `p`: none past the file or before it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[inline(always)]
+unsafe fn cls_dot<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {
+    let Some((v, q)) = (unsafe { window::<S>(src, n, p) }) else { return 0 };
+    // SAFETY: the caller's.
+    let b = unsafe { S::eq_mask(v, 0x2e) };
+    held(b, q, n, p)
+}
+
+/// The last byte of the token tier 1 starts at `s`, from the bytes (decision 0619 step 4, as 0586's): the first
+/// rule whose start holds there, as tier 1's dispatch takes it, and its end as tier 1's token loop finds it.
+///
+/// # Safety
+/// The CPU runs `S`'s backend.
+#[allow(unused_unsafe, clippy::all)]
+unsafe fn token_last_on<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, s: usize) -> usize {
+    let c = |i: usize| if i < n { src[i] } else { 0 };
+    let _ = c;
+    // `string`
+    if matches!(src[s], 0x22) {
+        return match {
+            let mut esc = 0u64;
+            let mut p = (s + 1) as isize;
+            loop {
+                if p >= n as isize {
+                    break None;
+                }
+                let w = (unsafe { cls_quote::<S>(src, n, p) } & (!escaped_step(unsafe { cls_backslash::<S>(src, n, p) }, &mut esc) & valid(n, p)));
+                if w != 0 {
+                    break Some(p as usize + w.trailing_zeros() as usize);
+                }
+                p += 64;
+            }
+        } {
+            Some(c) => c + 0,
+            None => n - 1,
+        };
+    }
+    // `comment`
+    if (matches!(src[s], 0x2f) && ((matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2f))) || (matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2a))))) {
+        return if (matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2f))) {
+            ({
+                let mut p = (s + 1) as isize;
+                loop {
+                    if p >= n as isize {
+                        break None;
+                    }
+                    let w = unsafe { cls_lf::<S>(src, n, p) };
+                    if w != 0 {
+                        break Some(p as usize + w.trailing_zeros() as usize);
+                    }
+                    p += 64;
+                }
+            }).unwrap_or(n) - 1
+        } else if (matches!(src[s], 0x2f) && ((s + 1) < n && matches!(src[(s + 1)], 0x2a))) {
+            match {
+                let mut p = (s + 1) as isize;
+                loop {
+                    if p >= n as isize {
+                        break None;
+                    }
+                    let w = (unsafe { cls_slash::<S>(src, n, p) } & unsafe { cls_star::<S>(src, n, (p - 1)) });
+                    if w != 0 {
+                        break Some(p as usize + w.trailing_zeros() as usize);
+                    }
+                    p += 64;
+                }
+            } {
+                Some(c) => c + 0,
+                None => n - 1,
+            }
+        } else {
+            s
+        };
+    }
+    // `code_literal`
+    if (matches!(src[s], 0x60) && (((matches!(src[s], 0x60) && !((s + 1) < n && matches!(src[(s + 1)], 0x60))) || ((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && !((s + 2) < n && matches!(src[(s + 2)], 0x60)))) || (((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && ((s + 2) < n && matches!(src[(s + 2)], 0x60))) && !((s + 3) < n && matches!(src[(s + 3)], 0x60))))) {
+        return if (matches!(src[s], 0x60) && !((s + 1) < n && matches!(src[(s + 1)], 0x60))) {
+            match {
+                let mut p = (s + 1) as isize;
+                loop {
+                    if p >= n as isize {
+                        break None;
+                    }
+                    let w = unsafe { cls_tick::<S>(src, n, p) };
+                    if w != 0 {
+                        break Some(p as usize + w.trailing_zeros() as usize);
+                    }
+                    p += 64;
+                }
+            } {
+                Some(c) => c + 0,
+                None => n - 1,
+            }
+        } else if ((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && !((s + 2) < n && matches!(src[(s + 2)], 0x60))) {
+            match {
+                let mut p = (s + 1) as isize;
+                loop {
+                    if p >= n as isize {
+                        break None;
+                    }
+                    let w = (unsafe { cls_tick::<S>(src, n, p) } & unsafe { cls_tick::<S>(src, n, (p + 1)) });
+                    if w != 0 {
+                        break Some(p as usize + w.trailing_zeros() as usize);
+                    }
+                    p += 64;
+                }
+            } {
+                Some(c) => c + 1,
+                None => s + 1,
+            }
+        } else if (((matches!(src[s], 0x60) && ((s + 1) < n && matches!(src[(s + 1)], 0x60))) && ((s + 2) < n && matches!(src[(s + 2)], 0x60))) && !((s + 3) < n && matches!(src[(s + 3)], 0x60))) {
+            match {
+                let mut p = (s + 1) as isize;
+                loop {
+                    if p >= n as isize {
+                        break None;
+                    }
+                    let w = ((unsafe { cls_tick::<S>(src, n, p) } & unsafe { cls_tick::<S>(src, n, (p + 1)) }) & unsafe { cls_tick::<S>(src, n, (p + 2)) });
+                    if w != 0 {
+                        break Some(p as usize + w.trailing_zeros() as usize);
+                    }
+                    p += 64;
+                }
+            } {
+                Some(c) => c + 2,
+                None => n - 1,
+            }
+        } else {
+            s
+        };
+    }
+    // `hash_word`
+    if matches!(src[s], 0x23) {
+        return {
+            let mut p = s as isize + 1;
+            loop {
+                let ones = (!unsafe { cls_word::<S>(src, n, p) }).trailing_zeros() as isize;
+                if ones < 64 {
+                    break (p + ones - 1) as usize;
+                }
+                p += 64;
+            }
+        };
+    }
+    // `identifier`
+    if matches!(src[s], 0x61..=0x7a | 0x41..=0x5a | 0x5f) {
+        return {
+            let mut p = s as isize + 1;
+            loop {
+                let ones = (!unsafe { cls_word::<S>(src, n, p) }).trailing_zeros() as isize;
+                if ones < 64 {
+                    break (p + ones - 1) as usize;
+                }
+                p += 64;
+            }
+        };
+    }
+    // `number`
+    if matches!(src[s], 0x30..=0x39) {
+        return {
+            let l = {
+            let mut p = s as isize + 1;
+            loop {
+                let ones = (!(unsafe { cls_digit::<S>(src, n, p) } | ((unsafe { cls_dot::<S>(src, n, p) } & unsafe { cls_digit::<S>(src, n, (p - 1)) }) & unsafe { cls_digit::<S>(src, n, (p + 1)) }))).trailing_zeros() as isize;
+                if ones < 64 {
+                    break (p + ones - 1) as usize;
+                }
+                p += 64;
+            }
+        };
+            match ({
+            let mut p = (s + 1) as isize;
+            loop {
+                if p >= n as isize {
+                    break None;
+                }
+                let w = unsafe { cls_dot::<S>(src, n, p) };
+                if w != 0 {
+                    break Some(p as usize + w.trailing_zeros() as usize);
+                }
+                p += 64;
+            }
+        }).filter(|&p| p <= l).and_then(|p| {
+            let mut p = (p + 1) as isize;
+            loop {
+                if p >= n as isize {
+                    break None;
+                }
+                let w = unsafe { cls_dot::<S>(src, n, p) };
+                if w != 0 {
+                    break Some(p as usize + w.trailing_zeros() as usize);
+                }
+                p += 64;
+            }
+        }).filter(|&q| q <= l) {
+                Some(q) => q - 1,
+                None => l,
+            }
+        };
+    }
+    // `punct`
+    if matches!(src[s], 0x28 | 0x29 | 0x2c | 0x2e | 0x3b | 0x3a | 0x3d | 0x3c | 0x3e | 0x21 | 0x7c | 0x40 | 0x2a | 0x5b | 0x5d | 0x2d | 0x2b | 0x2f | 0x25 | 0x7e | 0x5e | 0x26 | 0x7b | 0x7d) {
+        return match [c(s), c(s + 1)] {
+            [0x3a, 0x2d] | [0x3d, 0x3e] | [0x21, 0x3d] | [0x3c, 0x3d] | [0x3c, 0x3a] | [0x3e, 0x3d] | [0x2d, 0x3e] => s + 1 + 0,
+            _ => s,
+        };
+    }
+    s
+}
+
+rerail_simd8::dispatch! {
+    /// `token_last_on` on the CPU's best backend.
+    pub fn token_last(src: &[u8], n: usize, s: usize) -> usize = token_last_on, on token_last_on_best;
+}
+
+/// The tape of `src` from tier 1's records (each token's first byte and code, its last read from the bytes), or the byte it was refused at.
+pub fn parse(buf: &[u8], n: usize, lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {
+    let src = &buf[..n];
     // Where tier 1 sends the file to tree-sitter.
     if lx.refused {
         return Err(0);
     }
     let mut widths = Widths::guess(src.len());
     loop {
-        let mut p = P::new(src, lx, widths)?;
+        let mut p = P::new(src, buf, lx, widths)?;
         p.run()?;
         match p.w.finish_columns() {
             Ok(c) => return Ok(c),

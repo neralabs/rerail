@@ -69,7 +69,7 @@ no template's string, no fill kept over a region (`assume … at ends`), no regi
 `prefix`. That is `.rerail`'s loop. Kotlin's keeps its two passes and its file is unchanged, and so is JSON's (the
 index form, 0585).
 
-What stays: the records hold each token's last byte and its code, because tier 2 reads them (0618). Stage 1 keeps the
+What stays: the records hold each token's code, because tier 2 reads it (0618), and, until step 4, its last byte. Stage 1 keeps the
 masks the token loop reads for the file's blocks, as the lean lexer's `Blocks::of` does.
 
 ## Step 3: tier 1 hands tier 2 no mask (0586's part)
@@ -88,16 +88,35 @@ Now, where no region is read in parts:
 
 Kotlin reads regions in parts, so it keeps its masks, and its file is unchanged.
 
-0586's other half, tier 2 reading from the bytes, has nothing to apply to here:
+## Step 4: tier 2 reads each token's end from the bytes (0586's other half)
 
-- 0586's point 1 reads a region in parts from the bytes. `.rerail` reads no region in parts.
-- Point 2 takes a run's end from the bytes, in place of a mask. `.rerail`'s tier 2 reads no mask for an end, because
-  tier 1's records hold each token's last byte.
-- Point 3 decides a split kind's words by their bytes. `.rerail`'s words are in the records' codes.
+0586 made JSON's tier 2 read from the bytes what tier 1 had found for it. In `.rerail`, after step 3, that was each
+token's last byte (`lasts`). Tier 2 now reads it from the bytes, and tier 1's records hold only each token's first
+byte and its code. The codes stay, as the goal's first item asks (0618).
 
-The records and codes are what tier 2 reads, as the goal's first item asks (0618). Reading a token's end from the
-bytes again would make tier 2 read each region (strings, comments, backtick literals) a second time. Tier 2 reads
-no byte of the file, only its length: the root's end.
+- **Tier 2's `token_last(src, n, s)`** gives the last byte of the token tier 1 starts at `s`
+  (`bitlex_lex_rust/byte_ends.rs`).
+  - Its rule is the first whose start holds at `s`, as tier 1's dispatch takes it, with the grammar's assumptions at a
+    start read in.
+  - Its end is the rule's, as tier 1's token loop finds it: a run's last byte, a pair's, or a region's closer after the
+    opener.
+- **Each mask the end reads is made of the bytes, 64 at a time** (`rerail_simd8`'s backends), in place of stage 1's:
+  - a class, by its byte ranges;
+  - `prev` and `next`, as the window a byte back or on;
+  - `escaped`, word by word with its carry, as tier 1's (a string's closer, `quote & ~escaped`).
+  So `/*`'s closer `slash & prev(star)`, the backticks' `tt` and `ttt`, and a number's `num_run` are read as the
+  grammar states them.
+- **The source tier 2 reads is the padded one.** `parse(buf, n, lx)` takes it as tier 1's `lex` does.
+- **Only where every rule has its byte form** (`ends_from_bytes`): no region read in parts, no second closer (`or`),
+  no region `after` another. Elsewhere tier 1 keeps its last bytes. So Kotlin's files are unchanged.
+
+Tier 1 still finds each end in its own pass, since the next token starts after it, and its checks read the token's
+bytes. So a region's bytes are read twice: by tier 1's masks, and by tier 2's search for the closer. That is 0586's
+shape: there too, tier 1 still makes `q` and `esc` for its own tests, and tier 2 finds the string's end from the bytes.
+
+The record tests (`tier1s_records_are_the_interpreters`, the samples and the corpus) compare each token's last byte as
+`token_last` reads it with the interpreter's. A last byte moved by one in a string's end fails them at the first
+string.
 
 The farm run also took in four probes and benchmarks of the JIT, which are run by hand (`#[ignore]`). One passes run as
 its note says (`rr_words_text`, with `RR_WORDS`). Three fail: `rr_tier1_split`, `rr_sparse_marks_bound` and
@@ -108,11 +127,13 @@ and the native code, not the generated Rust, so these steps did not cause them.
 
 On a Linux arm64 farm host:
 
-- `rr_parser`: all 51 library tests, the corpus's two (the tapes and tier 1's records, 1,784 files), and
-  `rust_is_current`.
+- `rr_parser`: all 51 library tests, the corpus's two (the tapes and tier 1's records, 1,831 files since step 4;
+  1,784 before), and `rust_is_current`.
 - `rerail-rr-aot` builds without `test-hooks`.
 - JSON's, Kotlin's, the compiler's and bitlex's library tests pass, and their files are unchanged.
 - Each generator file I changed is clean under clippy. That includes the warnings that were there before:
   `decide` takes the exits as `exits_ending` finds them, which also drops an argument.
 
-Not run: x86 backends, Metal, the slow tier.
+On a Linux x86_64 farm host, after step 4: `rr_parser`'s tape and record tests, the corpus's included.
+
+Not run: Metal, the slow tier.

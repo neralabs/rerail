@@ -3,7 +3,8 @@
 //! the tree rules as one loop over tier 1's records (`rerail_bitlex::bitlex_rust`'s `tier2_loop`, decision 0618). It is
 //! the compile's that `rerail_rr_parser::compiled` makes, so its codes are the JIT's. `rerail-rr-parser`'s `rust_is_current`
 //! checks they are the compiler's output, and writes them again with `RERAIL_BLESS=1`; its tests check tier 1's
-//! records against the interpreter's, and the tapes against the JIT's.
+//! records against the interpreter's (each token's last byte as tier 2 reads it from the bytes, `token_last`, decision
+//! 0619 step 4), and the tapes against the JIT's.
 //!
 //! This replaces the crate's lowerings of the JIT's IR (`clif_rust`, `rust_stream`, decision 0550).
 
@@ -16,11 +17,12 @@ mod tier1;
 mod tier2;
 
 pub use tier1::{Lexed, PADDING, lex};
+pub use tier2::token_last;
 
 /// The tape of `buf[..n]`, or the byte the parser refused it at (0: tier 1 sends it to the engine). `buf` is the file
-/// padded, as simdjson's: `PADDING` spaces after it (`padded`), so that tier 1 loads each block where it is.
+/// padded, as simdjson's: `PADDING` spaces after it (`padded`), so that each tier loads each block of 64 where it is.
 pub fn parse(buf: &[u8], n: usize) -> Result<rerail_tape_format::Columns, u32> {
-    tier2::parse(&buf[..n], &tier1::lex(buf, n))
+    tier2::parse(buf, n, &tier1::lex(buf, n))
 }
 
 /// `src` padded for `parse` and `lex`: a buffer of it and `PADDING` spaces (a caller that reads files makes its buffer
