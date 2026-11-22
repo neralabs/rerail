@@ -7,6 +7,7 @@
 
 #include <ukl/backend.h>
 #include <ukl/simd.h>
+#include <ukl/workqueue.h>
 
 // Threads a threadgroup of the 1-D kernels.
 #define REL_TG 256u
@@ -218,7 +219,10 @@ UKL_REFLECT_STRUCT(ClosureArgs, n, words)
 //
 // 1. cl_init: each node sets, in its component's row, its own bit when the component is cyclic, and the bit of
 //    every successor in another component (device atomics on u32 halves: the result is the same in any order);
-// 2. cl_level, once per level from 1 up: each component ORs in its successors' rows, which are final (lower levels);
+// 2. cl_run, one launch (decisions 0601, 0603): a component is ready once each of its successors' rows is final. The
+//    queue starts with the components that have none; a worker takes a ready one, ORs its successors' rows into its
+//    row, and counts it done at each predecessor, pushing the predecessor whose last successor it was. A worker that
+//    finds nothing ready ends: the one that finishes a predecessor's last successor pushes it, and takes on;
 // 3. cl_gather: node v's row is its component's.
 DEFINE_KERNEL2(relational, cl_init,
                ROBUFFER, uint32_t, off,    "[n + 1]",
@@ -239,30 +243,49 @@ DEFINE_KERNEL2(relational, cl_init,
   }
 }
 
-typedef struct LevelArgs { uint32_t lo; uint32_t hi; uint32_t words; } LevelArgs;
-UKL_REFLECT_STRUCT(LevelArgs, lo, hi, words)
+typedef struct ClRunArgs { uint32_t components; uint32_t words; uint32_t budget; uint32_t pad; } ClRunArgs;
+UKL_REFLECT_STRUCT(ClRunArgs, components, words, budget, pad)
 
-// One SIMD group per component of the level; lanes stride over the row's words.
-DEFINE_KERNEL2(relational, cl_level,
-               RWBUFFER, uint64_t, R,     "[components * words]",
-               ROBUFFER, uint32_t, order, "[components]",
-               ROBUFFER, uint32_t, soff,  "[components + 1]",
-               ROBUFFER, uint32_t, sdst,  "[soff[components]]",
-               ARGS,     LevelArgs, args, ,
-               TGID0,    uint32_t, tg,    ,
-               LID0,     uint32_t, lid,   ,
-               LSZ0,     uint32_t, lsz,   )
+// A thread a worker. `pending[c]`: c's successors not yet final. `control` and `slots`: the queue
+// (`ukl/workqueue.h`), each component pushed once, so its capacity is the components'. The rows another worker wrote
+// are read through the coherent space, after its fence and the count that made them ready.
+DEFINE_KERNEL2(relational, cl_run,
+               RWBUFFER, uint64_t, R,       "[components * words]",
+               ROBUFFER, uint32_t, soff,    "[components + 1]",
+               ROBUFFER, uint32_t, sdst,    "[soff[components]]",
+               ROBUFFER, uint32_t, poff,    "[components + 1]",
+               ROBUFFER, uint32_t, pdst,    "[poff[components]]",
+               RWBUFFER, uint32_t, pending, "[components]",
+               RWBUFFER, uint32_t, slots,   "[components]",
+               RWBUFFER, uint32_t, control, "[5]",
+               ARGS,     ClRunArgs, args, ,
+               GID0,     uint32_t, id,      )
 {
-  const uint32_t lane = lid % UKL_SIMD_WIDTH, sg = lid / UKL_SIMD_WIDTH, nsg = lsz / UKL_SIMD_WIDTH;
-  const uint32_t idx = args.lo + tg * nsg + sg;
-  if (idx >= args.hi) return;
-  const uint32_t c = order[idx];
-  const uint32_t s0 = soff[c], s1 = soff[c + 1u];
-  UKL_GLOBAL uint64_t* row = R + (uint64_t)c * args.words;
-  for (uint32_t w = lane; w < args.words; w += UKL_SIMD_WIDTH) {
-    uint64_t acc = row[w];
-    for (uint32_t k = s0; k < s1; k++) acc |= R[(uint64_t)sdst[k] * args.words + w];
-    row[w] = acc;
+  (void)id;
+  UklWorkQueue q;
+  q.slots = slots;
+  q.control = control;
+  q.capacity = args.components;
+  q.ring = 0u;
+  q.budget = args.budget;
+  UKL_COHERENT uint64_t* CR = (UKL_COHERENT uint64_t*)R;
+  for (uint32_t taken = 0u; !ukl_wq_spent(q, taken); taken++) {
+    uint32_t c = 0u;
+    if (!ukl_wq_take(q, &c)) return;
+    // The rows its successors' workers wrote, seen after the take (each one's fence before its count).
+    ukl_fence_device();
+    const uint32_t s0 = soff[c], s1 = soff[c + 1u];
+    for (uint32_t w = 0u; w < args.words; w++) {
+      uint64_t acc = CR[(uint64_t)c * args.words + w];
+      for (uint32_t k = s0; k < s1; k++) acc |= CR[(uint64_t)sdst[k] * args.words + w];
+      CR[(uint64_t)c * args.words + w] = acc;
+    }
+    ukl_fence_device();
+    for (uint32_t k = poff[c]; k < poff[c + 1u]; k++) {
+      const uint32_t p = pdst[k];
+      if (ukl_atomic_sub(&pending[p], 1u) == 1u) (void)ukl_wq_push(q, p);
+    }
+    ukl_wq_done(q);
   }
 }
 

@@ -66,11 +66,11 @@ enum Pipe {
     CtCount,
     CtScatter,
     ClInit,
-    ClLevel,
+    ClRun,
     ClGather,
 }
 
-const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_level", "cl_gather"];
+const PIPES: [&str; 7] = ["bp_tile", "bp_scatter", "ct_count", "ct_scatter", "cl_init", "cl_run", "cl_gather"];
 
 /// `f`, a compile that is fatal where it fails (decision 0382), as a result: what compiling ahead reports (its use
 /// still stops the run, naming the kernel).
@@ -423,6 +423,26 @@ impl GpuBackend {
             let stage = [Stage { steps: rerun }];
             self.execute(std::iter::once(&stage[..]), &mut stats)?;
         }
+        // A work queue's items left where its workers spent their budgets: its stages again, a bounded number of times.
+        for j in &jobs {
+            let Some(again) = &j.again else { continue };
+            let mut launches = 0;
+            loop {
+                let control = read::<u32>(&again.control, 5);
+                if control[3] != 0 {
+                    return Err("closure: its work queue ran out of room".into());
+                }
+                if control[2] == 0 {
+                    break;
+                }
+                if launches > again.bound {
+                    return Err(format!("closure: work left after {launches} launches, past its bound"));
+                }
+                let _rerun = launch::rerun();
+                self.execute(std::iter::once(&again.stages[..]), &mut stats)?;
+                launches += 1;
+            }
+        }
         let _read = ReadPhase(crate::score::thread_cpu(), std::time::Instant::now());
         let t = std::time::Instant::now();
         let mut outs = Vec::with_capacity(jobs.len());
@@ -534,10 +554,11 @@ struct ClosureArgs {
 }
 #[repr(C)]
 #[derive(Clone, Copy)]
-struct LevelArgs {
-    lo: u32,
-    hi: u32,
+struct ClRunArgs {
+    components: u32,
     words: u32,
+    budget: u32,
+    pad: u32,
 }
 
 #[derive(Clone)]
@@ -675,11 +696,22 @@ struct Job {
     read: Read,
     /// A flag the device sets on invalid input.
     bad: Option<Buffer>,
+    /// A work queue's job (the closure): its control words, and the stages to run again while its workers left items
+    /// queued (a budget spent, `ukl/workqueue.h`).
+    again: Option<Again>,
+}
+
+/// A queue's work left: `control[2]` (pushed, not yet done) above 0 after a launch reruns `stages`.
+struct Again {
+    control: Buffer,
+    stages: Vec<Stage>,
+    /// The launches it may take at most: the items over a launch's budget, and one more.
+    bound: usize,
 }
 
 impl Job {
     fn ready(o: Output) -> Self {
-        Job { stages: Vec::new(), read: Read::Ready(o), bad: None }
+        Job { stages: Vec::new(), read: Read::Ready(o), bad: None, again: None }
     }
 }
 
@@ -783,7 +815,7 @@ impl Planner<'_> {
         };
         let Some(min) = min else {
             let c = self.alloc(n * m * 4);
-            return Ok(Job { stages: vec![Stage::one(tile(&c, &dummy, &dummy, 0))], read: Read::Counts { rows: a.rows, cols: b.rows, buf: c }, bad: None });
+            return Ok(Job { stages: vec![Stage::one(tile(&c, &dummy, &dummy, 0))], read: Read::Counts { rows: a.rows, cols: b.rows, buf: c }, bad: None, again: None });
         };
         let nw = n * mw;
         let mask = self.alloc(nw * 4);
@@ -795,7 +827,7 @@ impl Planner<'_> {
         let args = move |cap: u32| bytes_of(&ScatterArgs { cap, mw: mw as u32, nw: nw as u32 });
         let scatter = Dispatch::per(Pipe::BpScatter, vec![("mask", Bind::Buf(mask.clone())), ("ex", Bind::Buf(ex)), ("pairs", Bind::Buf(pairs.clone())), ("args", Bind::Bytes(args(cap as u32)))], nw);
         st.push(Stage::one(Step::Kernel(scatter.clone())));
-        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None })
+        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None, again: None })
     }
 
     fn count_table(&mut self, loff: &[u32], left: &[u16], roff: &[u32], right: &[u16], emit: bool) -> Result<Job, String> {
@@ -814,7 +846,7 @@ impl Planner<'_> {
         let count = Dispatch::new(Pipe::CtCount, vec![("left", Bind::Buf(bl.clone())), ("right", Bind::Buf(br.clone())), ("loff", Bind::Buf(blo.clone())), ("roff", Bind::Buf(bro.clone())), ("counts", Bind::Buf(counts.clone()))], nparts);
         let mut st = vec![Stage::one(Step::Kernel(count))];
         if !emit {
-            return Ok(Job { stages: st, read: Read::PerRow { n: left.len(), buf: counts }, bad: None });
+            return Ok(Job { stages: st, read: Read::PerRow { n: left.len(), buf: counts }, bad: None, again: None });
         }
         let (ex, total) = self.scan(&mut st, &counts, nl, false);
         let bound: u64 = loff.windows(2).zip(roff.windows(2)).map(|(l, r)| (l[1] - l[0]) as u64 * (r[1] - r[0]) as u64).sum();
@@ -827,7 +859,7 @@ impl Planner<'_> {
             nparts,
         );
         st.push(Stage::one(Step::Kernel(scatter.clone())));
-        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None })
+        Ok(Job { stages: st, read: Read::Pairs { total, buf: pairs, cap, rescatter: Rescatter { dispatch: scatter, args: Box::new(args) } }, bad: None, again: None })
     }
 
     fn histogram(&mut self, off: &[u32], codes: &[u16], width: u32) -> Result<Job, String> {
@@ -841,7 +873,7 @@ impl Planner<'_> {
         let h = self.alloc(nparts as u64 * width as u64 * 4);
         let bad = self.upload(&[0u32; 4]);
         let step = Step::Histogram { codes: bc, offsets: bo, parts: nparts as u32, width, h: h.clone(), bad: bad.clone() };
-        Ok(Job { stages: vec![Stage::one(step)], read: Read::Counts { rows: nparts, cols: width as usize, buf: h }, bad: Some(bad) })
+        Ok(Job { stages: vec![Stage::one(step)], read: Read::Counts { rows: nparts, cols: width as usize, buf: h }, bad: Some(bad), again: None })
     }
 
     fn closure(&mut self, n: u32, off: &[u32], dst: &[u32]) -> Result<Job, String> {
@@ -871,7 +903,6 @@ impl Planner<'_> {
         }
         let (mut soff, mut sdst) = (Vec::with_capacity(ncomp + 1), Vec::new());
         let mut cyclic = vec![0u32; ncomp];
-        let mut level = vec![0u32; ncomp];
         let mut seen = vec![u32::MAX; ncomp];
         for c in 0..ncomp {
             soff.push(sdst.len() as u32);
@@ -886,47 +917,66 @@ impl Planner<'_> {
                     if d as usize != c && seen[d as usize] != c as u32 {
                         seen[d as usize] = c as u32;
                         sdst.push(d);
-                        // Tarjan's numbering puts successors first: their levels are known.
-                        level[c] = level[c].max(level[d as usize] + 1);
                     }
                 }
             }
         }
         soff.push(sdst.len() as u32);
-        let levels = level.iter().copied().max().unwrap_or(0) as usize + 1;
-        let mut lstart = vec![0u32; levels + 1];
-        for &l in &level {
-            lstart[l as usize + 1] += 1;
+        // Each component's predecessors (the successor lists turned round), its successors not yet final, and the
+        // queue's first items: the components with none.
+        let mut poff = vec![0u32; ncomp + 1];
+        for &d in &sdst {
+            poff[d as usize + 1] += 1;
         }
-        for l in 0..levels {
-            lstart[l + 1] += lstart[l];
+        for c in 0..ncomp {
+            poff[c + 1] += poff[c];
         }
-        let mut order = vec![0u32; ncomp];
-        let mut lfill = lstart.clone();
-        for (c, &l) in level.iter().enumerate() {
-            order[lfill[l as usize] as usize] = c as u32;
-            lfill[l as usize] += 1;
+        let mut pdst = vec![0u32; sdst.len()];
+        let mut pfill = poff.clone();
+        for c in 0..ncomp {
+            for &d in &sdst[soff[c] as usize..soff[c + 1] as usize] {
+                pdst[pfill[d as usize] as usize] = c as u32;
+                pfill[d as usize] += 1;
+            }
         }
+        let pending: Vec<u32> = (0..ncomp).map(|c| soff[c + 1] - soff[c]).collect();
+        let mut slots = vec![0u32; ncomp];
+        let mut ready = 0u32;
+        for c in 0..ncomp {
+            if pending[c] == 0 {
+                // A slot holds its item plus one (`ukl/workqueue.h`).
+                slots[ready as usize] = c as u32 + 1;
+                ready += 1;
+            }
+        }
+        let control = [0u32, ready, ready, 0, 0];
         let (boff, bdst) = (self.input(off), self.input(dst));
-        let (bcomp, bcyc, border, bsoff, bsdst) = (self.upload(&comp), self.upload(&cyclic), self.upload(&order), self.upload(&soff), self.upload(&sdst));
+        // copy: not block data (the condensed DAG, its counts and the queue's first items: the host's, for this launch)
+        let (bcomp, bcyc, bsoff, bsdst) = (self.upload(&comp), self.upload(&cyclic), self.upload(&soff), self.upload(&sdst));
+        // copy: not block data (as above)
+        let (bpoff, bpdst, bpending, bslots, bcontrol) = (self.upload(&poff), self.upload(&pdst), self.upload(&pending), self.upload(&slots), self.upload(&control));
         let row32 = (ncomp * words * 2) as u64;
         let r = self.alloc(row32 * 4);
         let out = self.alloc((nu * words * 8) as u64);
         let args = Bind::Bytes(bytes_of(&ClosureArgs { n, words: words as u32 }));
-        let mut st = vec![
-            Stage::one(Step::Zero { buf: r.clone(), words: row32 as usize }),
-            Stage::one(Step::Kernel(Dispatch::per(Pipe::ClInit, vec![("off", Bind::Buf(boff)), ("dst", Bind::Buf(bdst)), ("comp", Bind::Buf(bcomp.clone())), ("cyclic", Bind::Buf(bcyc)), ("R", Bind::Buf(r.clone())), ("args", args.clone())], n as u64))),
-        ];
-        // Level 0 has no successors: its rows are final after the init.
-        for l in 1..levels {
-            let (lo, hi) = (lstart[l], lstart[l + 1]);
-            let level = Bind::Bytes(bytes_of(&LevelArgs { lo, hi, words: words as u32 }));
-            let d = Dispatch::new(Pipe::ClLevel, vec![("R", Bind::Buf(r.clone())), ("order", Bind::Buf(border.clone())), ("soff", Bind::Buf(bsoff.clone())), ("sdst", Bind::Buf(bsdst.clone())), ("args", level)], ((hi - lo) as u64).div_ceil(TG / 32));
-            st.push(Stage::one(Step::Kernel(d)));
-        }
+        // A worker's items in a launch at most: a launch's GPU time bounded by it, not by the graph (decision 0540).
+        const BUDGET: u32 = 4096;
+        let run_args = Bind::Bytes(bytes_of(&ClRunArgs { components: ncomp as u32, words: words as u32, budget: BUDGET, pad: 0 }));
+        let run = Dispatch::per(
+            Pipe::ClRun,
+            vec![("R", Bind::Buf(r.clone())), ("soff", Bind::Buf(bsoff)), ("sdst", Bind::Buf(bsdst)), ("poff", Bind::Buf(bpoff)), ("pdst", Bind::Buf(bpdst)), ("pending", Bind::Buf(bpending)), ("slots", Bind::Buf(bslots)), ("control", Bind::Buf(bcontrol.clone())), ("args", run_args)],
+            ncomp as u64,
+        );
         let total = (nu * words) as u64;
-        st.push(Stage::one(Step::Kernel(Dispatch::per(Pipe::ClGather, vec![("R", Bind::Buf(r)), ("comp", Bind::Buf(bcomp)), ("out", Bind::Buf(out.clone())), ("args", args)], total))));
-        Ok(Job { stages: st, read: Read::Bits { rows: nu, words, buf: out }, bad: None })
+        let gather = Dispatch::per(Pipe::ClGather, vec![("R", Bind::Buf(r.clone())), ("comp", Bind::Buf(bcomp.clone())), ("out", Bind::Buf(out.clone())), ("args", args.clone())], total);
+        let st = vec![
+            Stage::one(Step::Zero { buf: r.clone(), words: row32 as usize }),
+            Stage::one(Step::Kernel(Dispatch::per(Pipe::ClInit, vec![("off", Bind::Buf(boff)), ("dst", Bind::Buf(bdst)), ("comp", Bind::Buf(bcomp)), ("cyclic", Bind::Buf(bcyc)), ("R", Bind::Buf(r)), ("args", args)], n as u64))),
+            Stage::one(Step::Kernel(run.clone())),
+            Stage::one(Step::Kernel(gather.clone())),
+        ];
+        let again = Again { control: bcontrol, stages: vec![Stage::one(Step::Kernel(run)), Stage::one(Step::Kernel(gather))], bound: ncomp / BUDGET as usize + 1 };
+        Ok(Job { stages: st, read: Read::Bits { rows: nu, words, buf: out }, bad: None, again: Some(again) })
     }
 }
 
