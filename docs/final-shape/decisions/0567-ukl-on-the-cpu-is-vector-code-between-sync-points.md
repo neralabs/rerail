@@ -104,9 +104,19 @@ slow". The answers below are the user's, given to the questions of the design pa
    backend on the library's tests.
 2. Uniformity and vectorization, with the interpreter at 32 lanes, and the barrier rule's refusal. Gate: the same,
    with the SIMD-group operations native, and a test kernel that breaks the rule refused with its place.
-3. Cranelift. Gate: the library's tests, then `join_stages` and `pp_grid` equal to the coroutine backend.
-4. Rust AOT. Gate: the same, with its speed measured against the coroutine path.
-5. Cranelift's wider types, if step 3's numbers ask for them.
+3. **Compiled vector code** (the bar set 2026-11-21, replacing "Cranelift, gate: equal to the coroutine
+   backend"):
+   - 1000 times faster than the interpreter;
+   - SSA form;
+   - Rust generated from it with SIMD intrinsics or other implicit SIMD parallelism (the precompiled form);
+   - Cranelift code with SIMD, every register used and spills minimal;
+   - function calls with caller and callee saving chosen per call;
+   - a register allocator over the vector, float, integer and mask registers, which tells the register pressure;
+   - each block's width chosen (1, as the coroutines, 2, 4, 8, 16 or 32 lanes) at the register pressure's sweet
+     spot.
+
+   Built in this order, each part on the one before (§ "Step 3, the plan").
+4. Cranelift's wider types, if the vector code's shape asks for them.
 
 ## Step 2, as built
 
@@ -250,7 +260,37 @@ slow". The answers below are the user's, given to the questions of the design pa
     of it is the text functions' kernel (`row_text`) run by the interpreter: `parity_random_texts` 66 s against
     11 s, `text_functions_on_the_device_are_the_cpus` 31 s against 2.8 s. Compiling that is step 3's.
 
-## Step 3, as built
+## Step 3, the plan
+
+The first build (`54995fd34c`, `jit.rs`) is not step 3. It compiles the interpreter's code tape instruction by
+instruction: each register is a slot in the SIMD group's memory, each instruction loads its operands and stores its
+result, a mask is an integer expanded at each use, and what it does not compile is a call into the interpreter. That
+is the interpreter's handlers placed in a row, and it is slower than the scalar coroutine code. It stays as a
+reference until the SSA's Cranelift back end replaces it, then it is removed.
+
+1. **SSA** (`ssa`), from the vector tape, per body: typed values (integers by width, floats, addresses), each
+   uniform (a scalar register) or varying (a vector of lanes), and masks as values. A variable whose address is
+   not taken is SSA values, not frame memory; the frame keeps only what is addressed. A uniform branch is a branch;
+   a varying one is predication under a mask value, and a varying loop runs while its mask has lanes. Block
+   parameters join values, masks too. Written once into a block, as every derived fact is.
+2. **Register model and allocator** (`regs`), per target: integer, float, vector and mask registers (NEON: 31, 32
+   of 128 bits, masks in vectors; AVX2: 16, 16 of 256 bits; AVX-512: 32 of 512 and 8 mask registers). Liveness
+   over the SSA, the pressure at each point at a width, an allocation with its spills. It is what the width is
+   chosen by, and what each back end's code is checked against.
+3. **Width per block** (1, 2, 4, 8, 16, 32 lanes): the widest a region runs without spilling, its values split into
+   that many lanes' registers; a region of a narrower width runs as several passes over the SIMD group's lanes.
+4. **Calls** as functions: arguments and results in registers, and who saves a live value (the caller or the
+   callee) chosen at each call by its liveness on each side.
+5. **Cranelift back end** from the SSA and the allocation: each value its registers, every register used, spills
+   only where the allocator has them.
+6. **Rust back end** from the SSA, in `simd8`'s form (intrinsics per target, chosen at run time), the precompiled
+   form.
+
+Gate: the library's tests, `join_stages` and `pp_grid` equal on each back end; a kernel's run time (its launches,
+not the test's host side, which is the same on every back end) 1000 times the interpreter's; the generated code
+read beside hand-written SIMD Rust of the same kernel, with each difference fixed.
+
+## Step 3, first build (superseded: `jit.rs`, a reference only)
 
 - **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
   function per section (the kernel's, each body's), each instruction its handler's work inline, in 128-bit vectors
