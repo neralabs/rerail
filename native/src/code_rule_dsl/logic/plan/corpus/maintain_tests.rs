@@ -335,8 +335,49 @@ fn r4_a_line_inserted_is_no_change_to_a_stratum_that_reads_no_offset() {
     assert!(moved.report.cross_maintained.0 > 0, "R4: the mode maintained strata: {:?}", moved.report.cross_again);
 }
 
-/// R4 at scale: a maintained line's work follows its changed read's delta, not the corpus. Each line is led by its
-/// driver's delta, a negated read's too: its delta read positively first, the body planned with its variables bound.
+/// R4: a line inserted at a file's top moves every place in it (`line`'s delta every row of the file's), and a
+/// stratum that reads findings' places is maintained: past the floor its lines start from the findings and probe
+/// the moved places by their nodes (`Stats::lead_free`), priced under the derive. Led by the moved places, the mode
+/// was priced over the derive and derived the stratum again: ep2's import edit derived `violation` again, and its
+/// findings' places made 33 documents. The append before it, past the floor too, adds fewer places than there are
+/// findings: its line is led by them, and kept. At the insert, re-priced under a search's saving (`REPLAN_ROWS`),
+/// that order is searched before the comparison.
+#[test]
+fn a_finding_s_places_moved_are_maintained() {
+    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
+    let program = r#"
+.decl def(n: node, q: symbol)
+def(n, @dot(m, x)) :- kind(n, "function_definition"), field(n, "name", c), text(c, x), docof(n, d), doc(d, _, m).
+.decl imp(n: node, q: symbol)
+imp(n, @dot(m, x)) :- kind(n, "import_from_statement"), field(n, "module_name", mn), text(mn, m), field(n, "name", xn), text(xn, x).
+.decl used(f: node)
+used(f) :- imp(_, q), def(f, q).
+.decl placed(f: node, l: number)
+placed(f, l) :- used(f), line(f, l).
+.output placed
+"#;
+    // `used`: 200 functions of z.py that b.py imports, and a0.py's `g0`, and its `h0` once the append defines it
+    // (the append reaches `placed`). a0.py to a10.py hold the places an edit moves.
+    let z: String = (0..200).map(|i| format!("def f{i}():\n    pass\n")).collect();
+    let b: String = (0..200).map(|i| format!("from z import f{i}\n")).chain(["from a0 import g0\nfrom a0 import h0\n".to_owned()]).collect();
+    let big: String = (0..30).map(|i| format!("def g{i}():\n    pass\n")).collect();
+    let mut files: Vec<(String, String)> = vec![("z.py".into(), z), ("b.py".into(), b)];
+    files.extend((0..11).map(|i| (format!("a{i}.py"), big.clone())));
+    let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
+    let mut s = Session::new("r4-places", program, &["placed"], &refs);
+    s.run();
+    let more: String = (0..12).map(|i| format!("def h{i}():\n    pass\n")).collect();
+    s.write("a0.py", &format!("{big}{more}"));
+    s.edit("functions appended");
+    s.write("a0.py", &format!("import os\n{big}{more}"));
+    let moved = s.edit("an import inserted at the top");
+    assert!(!moved.report.cross_again.contains_key(maintain::THRESHOLD), "R4: the findings' places moved are maintained: {:?}", moved.report.cross_again);
+    assert!(moved.report.cross_maintained.0 > 0, "R4: the mode maintained strata: {:?}", moved.report.cross_again);
+}
+
+/// R4 at scale: a maintained line's work follows its changed read's delta, not the corpus. A negated read's line is
+/// led by its delta: read positively first, the body planned with its variables bound; a positive one's delta leads
+/// where it is the cheapest start (`a_finding_s_places_moved_are_maintained`).
 /// Left where the plan tested it, a negated read's line walked its other reads whole (the data layer's 2-file edit
 /// at 334 files: 113 removal joins, 10 s of 31).
 #[test]

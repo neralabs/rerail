@@ -524,6 +524,10 @@ pub struct Stats {
     pub card: table::RelMap<f64>,
     /// Current wave cardinalities, distinct from full relation cardinalities.
     pub delta_rows: table::RelMap<f64>,
+    /// A line whose delta is read through its own index (a maintain mode's removal or add join, decision 0364): the
+    /// delta (`first`) is sized by its rows but need not lead, and a probe of it is the relation's probe at the
+    /// delta's share of its rows. A semi-naive probe's delta leads its wave (`false`).
+    pub lead_free: bool,
     /// (rel, col) → posting-weighted fanout of an equality probe: sq / rows.
     pub fan: ColMap<f64>,
     /// (derived rel, col) → {value: postings}, for a column of few values (native statistics).
@@ -680,6 +684,7 @@ impl Stats {
             parents: Default::default(),
             card: Default::default(),
             delta_rows: Default::default(),
+            lead_free: false,
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
@@ -862,6 +867,7 @@ impl Stats {
                 .collect()),
             card: Default::default(),
             delta_rows: Default::default(),
+            lead_free: false,
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
@@ -1048,6 +1054,7 @@ impl Model {
             parents: st.parents.clone(),
             card: Default::default(),
             delta_rows: Default::default(),
+            lead_free: false,
             fan: Default::default(),
             dfreq: Default::default(),
             heavy: Default::default(),
@@ -2885,7 +2892,8 @@ impl Model {
                 plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
             }
         });
-        if source_orders() {
+        // A lead-free line's order is not its delta-led line's (`line_key` is the body and the delta).
+        if source_orders() && !self.stats.lead_free {
             orders_put(line_key(b, first), &got.0.0);
         }
         remember(&key, &got);
@@ -2904,7 +2912,8 @@ impl Model {
                 plans_put(p, key, (got.0.0.clone().into(), got.0.1 / nodes, got.1.clone(), gap, None, ran));
             }
         });
-        if source_orders() {
+        // A lead-free line's order is not its delta-led line's (`line_key` is the body and the delta).
+        if source_orders() && !self.stats.lead_free {
             orders_put(line_key(b, first), &got.0.0);
         }
         // Its sizes now, as `plan_rule_reused` keeps them with its plan.
@@ -2962,7 +2971,7 @@ impl Model {
     /// differs), else, for a maintenance rule (`Body::origin`), its source rule's order (`source_order`). Which of the
     /// two (0, 1) with it. None where a search prices fewer than `START_CANDIDATES` orders: it prices the start's.
     fn start_order(&self, b: &Body<'_>, first: Option<usize>) -> Option<(Vec<Step>, usize)> {
-        if !source_orders() {
+        if !source_orders() || self.stats.lead_free {
             return None;
         }
         // Why a line is searched, not started (the profile's decisions).
@@ -3001,6 +3010,10 @@ impl Model {
             d.u64(b.key() as u64);
             d.u64((b.key() >> 64) as u64);
             d.u64(first.map_or(u64::MAX, |f| f as u64));
+            // Its delta free to start anywhere: another line than the one its delta leads.
+            if self.stats.lead_free {
+                d.str("lead free");
+            }
             d.u64(self.stats.solving_digest as u64);
             d.u64((self.stats.solving_digest >> 64) as u64);
             // A changed key domain can make another order cheaper while row and distinct counts stay fixed.
@@ -3078,6 +3091,9 @@ impl Model {
     /// demand-restricted aggregate's demand (`Body::demand_first`); and a demanded relation's rule from a lead its
     /// demand bounds (`Body::demand_bounds_lead`), so a kept order led by a scan is searched again (Q59).
     pub fn valid_live_driver(&self, order: &[Step], b: &Body<'_>, first: Option<usize>) -> bool {
+        if self.stats.lead_free {
+            return true;
+        }
         let driven = first.or_else(|| b.demand_first()).is_none_or(|f| order.first().is_some_and(|s| s.at == f));
         driven && (first.is_some() || order.first().is_none_or(|s| b.demand_bounds_lead(s.at)))
     }
@@ -3124,8 +3140,9 @@ impl Model {
         if with_plans(|p| p.is_none()) {
             return self.plan_inner(pf, b, first, None, true);
         }
-        // A line planned with the program (decision 0361 step 5): no key, no cache, no price.
-        if let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes) {
+        // A line planned with the program (decision 0361 step 5): no key, no cache, no price. Delta-led: not a
+        // lead-free line's.
+        if !self.stats.lead_free && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes) {
             self.log_assumed(line_key(b, first));
             super::profile::decision("prepared plans (decision 0361 step 5)", || "a live plan taken as prepared: not searched or priced".to_owned());
             return Ok((plan, None));
@@ -3610,6 +3627,7 @@ impl Model {
     ) -> Result<(Plan, Option<super::profile::RulePlan>)> {
         // A line planned with the program from its layouts (decision 0361 step 5): taken as kept, not searched.
         if fixed.is_none()
+            && !self.stats.lead_free
             && let Some(plan) = self.stats.prepared.take(line_key(b, first), self.stats.nodes, b, &self.stats.shapes)
         {
             self.log_assumed(line_key(b, first));
@@ -3789,7 +3807,7 @@ impl Model {
         let delta_misses = self.delta_misses(b, first);
         let delta_vars = first.and_then(|f| b.atom(f)).map(body::atom_vars);
         let delta_size = first.and_then(|f| b.atom(f)).and_then(|a| self.stats.delta_rows.get(b.rel(a))).copied();
-        let starts = |i: usize| first.is_none_or(|f| f == i);
+        let starts = |i: usize| self.stats.lead_free || first.is_none_or(|f| f == i);
         // Which rule priced the atom last (`atom_rows`), and the containment share it applied: the explain record
         // names it per step, so a misprediction shows the rule that made it.
         let basis: std::cell::Cell<&'static str> = std::cell::Cell::new("");
@@ -4214,7 +4232,15 @@ impl Model {
             let a = b.atom(i).expect("an atom");
             let (rel, args) = (b.rel(a), b.args(i));
             let mut rows = atom_rows_(i, bound);
-            if first == Some(i)
+            // A delta read through its own index past the lead (`Stats::lead_free`): the relation's probe, at the
+            // delta's share of its rows (measured). Led by its delta, a line reads the delta's rows at most.
+            let share = (self.stats.lead_free && args.iter().any(|t| joins_with(*t, bound)))
+                .then(|| delta_size.zip(stats.card.get(rel).copied().filter(|&c| c > 0.0)))
+                .flatten();
+            if first == Some(i) && let Some((n, card)) = share {
+                rows = (rows * (n / card).min(1.0)).max(1e-6);
+                basis.set("delta share");
+            } else if first == Some(i)
                 && let Some(n) = delta_size && n.max(0.01) < rows { rows = n.max(0.01); basis.set("delta size"); }
             // A cross product never filters a binding: each one reads every matching row, and a relation empty
             // where the plan was priced is not empty where it is reused. At least one row per binding, so a connected
@@ -8454,20 +8480,38 @@ impl<'a> Run<'a, '_> {
         let (mut maintain, mut derive) = (0.0, 0.0);
         for b in &bodies {
             plan_site("the threshold's price of a derive (0090 §4)");
-            derive += self.model.plan_rule_reused(pf, b, None)?.0.1;
+            let derived = self.model.plan_rule_reused(pf, b, None)?.0.1;
+            derive += derived;
             for k in 0..b.len() {
                 let Lit::Atom(a) = b.view(k) else { continue };
                 let rel = b.rel(a);
                 let Some(&n) = deltas.get(rel).filter(|n| **n > 0) else { continue };
                 let was = self.model.stats.delta_rows.insert(rel, n as f64);
                 plan_site("the threshold's price of the mode (0090 §4)");
-                let priced = self.model.plan_rule_reused(pf, b, (!a.neg()).then_some(k));
+                // Priced as the mode plans it (`maintain_mode`): a positive driver past the floor free to start
+                // anywhere.
+                let first = (!a.neg()).then_some(k);
+                self.model.stats.lead_free = first.is_some() && crate::code_rule_dsl::logic::plan::corpus::maintain::past_floor(n);
+                let mut priced = self.model.plan_rule_reused(pf, b, first).map(|p| p.0.1);
+                // A kept order is run as it is while its work re-priced is under `REPLAN_ROWS`: a search could save
+                // no more than that. Its price may still be far over the line's best, and here it is summed with
+                // the stratum's others against the derive: a line priced over its rule's derive is searched, and
+                // priced at its best. After ep2's append, three lines kept from its few moved lines were each
+                // priced 9,836 at the import's 9,350 (their best, 10 to 60), and the mode's 30,377 against the
+                // derive's 3,505 derived `violation` again, its finding's places making 33 documents.
+                if let Ok(kept) = priced
+                    && kept > derived
+                    && let Ok(((_, best, _), _)) = self.model.plan_inner(pf, b, first, None, false)
+                {
+                    priced = Ok(kept.min(best));
+                }
+                self.model.stats.lead_free = false;
                 match was {
                     Some(w) => self.model.stats.delta_rows.insert(rel, w),
                     None => self.model.stats.delta_rows.remove(rel),
                 };
                 // A removal and an add, each over its side of the delta: priced once over the whole delta.
-                maintain += priced?.0.1;
+                maintain += priced?;
             }
         }
         Ok((maintain, derive))
@@ -8617,9 +8661,22 @@ impl<'a> Run<'a, '_> {
                     };
                     // The line's order: the driver first, then the rest as planned from its variables bound.
                     let led = led.map(|o| std::iter::once(Step { at: k, mode: None }).chain(o.into_iter().filter(|st| st.at != k)).collect::<Vec<_>>());
+                    // A positive driver's line is a whole join (`Line::Remove`, `Line::Seed`), its delta probed
+                    // through its own index where another atom binds it (`Source::Version`): past 0090 §4's floor,
+                    // sized by its rows, it leads only where it is the cheapest start (`Stats::lead_free`). Led by
+                    // it, a one-row finding read after 4,672 moved lines was each of 163 rules' lines in ep2's import
+                    // edit, and their price (1.9 M) kept `violation` derived again: 33 documents made for their
+                    // places (0.19 s). Under the floor a line costs little whatever its order, and keeps the
+                    // program's (its prepared and kept plans): planned free, ep2's appends' lines cost 1 G more.
                     let (order, key) = match (&led, &led_body) {
                         (Some(o), Some(lb)) => (o.clone(), self.model.reused_key(lb, None)),
-                        _ => (self.model.plan_rule_reused(pf, b, first)?.0.0, self.model.reused_key(b, first)),
+                        _ => {
+                            // The relation's change, both sides, as the clause's price reads it (`mode_costs`).
+                            self.model.stats.lead_free = crate::code_rule_dsl::logic::plan::corpus::maintain::past_floor(gone + added);
+                            let planned = self.model.plan_rule_reused(pf, b, first).map(|p| (p.0.0, self.model.reused_key(b, first)));
+                            self.model.stats.lead_free = false;
+                            planned?
+                        }
                     };
                     // The changed inputs' literals read their versions: the driver's, and as they were in a removal.
                     self.mode_reads.clear();

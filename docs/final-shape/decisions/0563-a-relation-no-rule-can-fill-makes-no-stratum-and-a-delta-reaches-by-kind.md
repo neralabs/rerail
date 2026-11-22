@@ -576,16 +576,51 @@ relations):
 | An import at a file's top | 50.2 G | 48.6 G |
 | A comprehension at another file's end | 39.0 G | 38.6 G |
 
-What stays: the priced clause still derives the five again, and maintaining them is cheaper. With the clause off
-(`RERAIL_AGAIN_PRICE=1e15`) the import's cross part is 0.75 s against 1.05 s, 43.9 G against 49.2 G, outputs
-identical; before this fix the same setting cost 40 s. The mode's price is its work (1.9 M: `line`'s 4,672 rows
-scanned on each side of 163 rules, under 0.02 s). The derive's (3,501) leaves out what it costs: the 33 documents
-its probes make, and its 359 rules' joins set up. A document's place read by a probe makes the document because,
-where a program reads spans, `Extra` makes `line`, `end_line`, `col` and `docof` as rows for every node and token
-beside the spans', and the batch binds those rows in place of the views (0353 step 3, Q216). Q216 (the spans' ranges
-written once into the batch's block, the view reading them past its own positions) leaves no node's place made,
-so the derive's probes cost what its plan prices and the clause compares like with like. ep2's program reads
-`comment`, `tape_line`, `src_line_lf` and `src_line`, whose spans the view does not cover yet.
+The priced clause still derived the five again: the mode at 1.9 M, the derive at 3,501. With the clause off
+(`RERAIL_AGAIN_PRICE=1e15`) the import's cross part was 0.75 s against 1.05 s, outputs identical. The derive's
+price is its joins' rows, but deriving `violation` again also made the 33 documents, 0.19 s of its 0.41 s
+(`MadeRows::routed`, sampled). The mode's price was its lines' real order.
+
+**A maintain mode's line starts where it is cheapest.** A removal or add line is a whole join (`Line::Remove`,
+`Line::Seed`), and a changed input's version is probed through its own index wherever it is read
+(`Source::Version`). Only a semi-naive probe's delta must lead its wave. A positive driver's line whose relation's
+change is past 0090 §4's floor (`RERAIL_AGAIN_MIN`) is now planned with its delta sized by its rows but free to start
+anywhere (`Stats::lead_free`, its plans keyed apart). Probed through a bound variable, the delta is priced as the
+relation's probe at the delta's share of its rows. Each of the 163 lines reads the finding first and probes the
+moved lines by its node. Under the floor a line costs little whatever its order, and keeps the program's: planned
+free, its prepared plan was not taken, and each append cost 1 G more (38.0 against 37.1 G). A negated driver still
+leads its line (`Body::with_bound`).
+
+**A line priced over its rule's derive is searched before the comparison.** A kept order is run as it is while its
+work re-priced is under `REPLAN_ROWS` (10,000): a search could save no more than that. The price clause sums 490
+such prices against the derive. After the append, three lines kept from its few moved lines (led by `line`'s delta
+there) were each priced 9,836 at the import, against a best of 10 to 60: the mode at 30,377, `violation` derived
+again. In `mode_costs`, a line priced over its rule's derive is searched, and priced at the cheaper of the two.
+
+With both, `violation` is maintained: mode 1,039 against derive 3,505. ep2 on the M3, unprofiled, A and B on, cold
+then the append, the import and a second append, each side its own store, sides alternating; before is the same
+build with neither (outputs identical between the sides on every edit; without the floor, the last edit's rows
+equal a fresh cold run's in all 661 relations):
+
+| Edit | cross before | after | Instructions before | after |
+|---|---|---|---|---|
+| The append | 0.53 s | 0.52 s | 36.8 G | 36.7 G |
+| An import at a file's top | 1.00 s | 0.68 s | 48.8 G | 42.6 G |
+| A second append | 0.61 s | 0.61 s | 39.0 G | 38.6 G |
+
+The import's cross part is now within 0.1 s of the appends'. Four strata are still derived again by the clause,
+small ones (`later_dec`, `p255_start`, `p255_rr_demand_agg_rr_agg5`, `p107_rr_agg7`: 0 to 5 rows kept). Tests:
+`plan::tests::a_maintain_mode_line_starts_where_it_is_cheapest` (fails with the start fixed);
+`maintain_tests::a_finding_s_places_moved_are_maintained` (cold, an append past the floor whose line its few new
+places lead, then an import at the file's top; outputs a fresh run's; fails without either change: mode 526
+against derive 404).
+
+The derive's price still leaves out the documents its probes make. Where a program reads spans, `Extra` makes
+`line`, `end_line`, `col` and `docof` as rows for every node and token beside the spans', and the batch binds those
+rows in place of the views (0353 step 3, Q216). Q216 (the spans' ranges written once into the batch's block, the
+view reading them past its own positions) leaves no node's place made, so a derive's probes cost what its plan
+prices. ep2's program reads `comment`, `tape_line`, `src_line_lf` and `src_line`, whose spans the view does not
+cover yet.
 
 ### The order of work, amended
 

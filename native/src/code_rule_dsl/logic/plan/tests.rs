@@ -2143,8 +2143,9 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
 /// rows: a probe of it by a binding drawn from many values mostly misses. ep2's import edit: a finding of one row,
 /// `p49_ASYNC100($n, _)`, priced as keeping every binding, was probed after four old versions' reads of 4,672 moved
 /// nodes in each of 163 rules' lines (34.8 s of the maintain mode), where read after the delta it drops them.
-#[test]
-fn a_probe_of_a_relation_measured_by_rows_alone_prices_its_misses() {
+/// ep2's `violation` rule reading a finding's place, with the corpus's statistics: a finding of one row, its
+/// columns' distinct values not measured, and `line`'s delta of 4,672 moved rows.
+fn finding_place_model() -> (Arc<Version>, Model) {
     let p = parse_version(
         ".decl line(n:number, l:number)\n.decl col(n:number, c:number)\n.decl node(d:number, n:number)\n.decl doc(d:number, p:number)\n\
          .decl finding(n:number, w:number)\n.decl violation(p:number, l:number, c:number)\n\
@@ -2171,11 +2172,37 @@ fn a_probe_of_a_relation_measured_by_rows_alone_prices_its_misses() {
     model.stats.card.insert("finding", 1.0);
     model.stats.solve(["violation"].into_iter().map(str::to_owned).collect());
     model.stats.delta_rows.insert("line", 4_672.0);
+    (p, model)
+}
+
+#[test]
+fn a_probe_of_a_relation_measured_by_rows_alone_prices_its_misses() {
+    let (p, model) = finding_place_model();
     let r = 0usize;
     let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), Some(3)).unwrap();
     let order: Vec<String> = order.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
     assert_eq!(order[..2], ["line", "finding"], "the moved nodes meet the finding before the old versions' reads: {order:?}, work {work}");
     assert!(work < 10_000.0, "the misses priced: {work}");
+}
+
+/// Decision 0364: a maintain mode's removal or add line is a whole join, its delta probed through its own index
+/// where another atom binds it (`Stats::lead_free`). Its delta leads only where it is the cheapest start: the
+/// one-row finding first, and the moved lines probed by its node, priced at their share of `line`'s rows. Led by
+/// the delta, each of ep2's 163 such lines was priced at its 4,672 rows, and the mode's 1.9 M kept `violation`
+/// derived again, its finding's places making 33 documents. A semi-naive probe's line still starts from its delta.
+#[test]
+fn a_maintain_mode_line_starts_where_it_is_cheapest() {
+    let (p, mut model) = finding_place_model();
+    let r = 0usize;
+    let placed = body::Placed::whole(p.clone());
+    let fields = placed.fields().unwrap();
+    let ((led, led_work, _), _) = model.plan_rule_explained(fields, &body::nth(&p, r), Some(3)).unwrap();
+    assert_eq!(led.first().map(|s| s.at), Some(3), "a probe's line starts from its delta");
+    model.stats.lead_free = true;
+    let ((order, work, _), _) = model.plan_rule_explained(fields, &body::nth(&p, r), Some(3)).unwrap();
+    let names: Vec<String> = order.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
+    assert_eq!(names[..2], ["finding", "line"], "the finding leads, the moved lines probed by its node: {names:?}, work {work}");
+    assert!(work < 10.0 && work < led_work / 100.0, "priced at the delta's share: {work} against {led_work} led by it");
 }
 
 /// A restrictive relation outside the fixpoint has the same containment property as one inside it.
