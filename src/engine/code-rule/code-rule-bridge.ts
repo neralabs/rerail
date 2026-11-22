@@ -754,11 +754,14 @@ interface WorktreeDiscovery {
   unread: ReadonlyMap<string, { readonly stamp: string; readonly readError: string }>;
   /** Filesystem-clock reading taken as the last finished walk began; undefined until one finishes. */
   walkedFrom: number | undefined;
+  /** How many times the session let go of each worktree Git stopped listing (`#forgetWorktrees`), by its path. */
+  readonly letGo: Map<string, number>;
 }
 
 function worktreeDiscovery(): WorktreeDiscovery {
   return {
     roots: new Set(), fresh: new Set(), baselineRoots: new Set(), watch: undefined, gaps: [], unread: new Map(), walkedFrom: undefined,
+    letGo: new Map(),
   };
 }
 
@@ -766,6 +769,8 @@ function worktreeDiscovery(): WorktreeDiscovery {
 interface WorktreeStart {
   /** `WorktreeDiscovery.roots` as the walk began. */
   readonly worktrees: ReadonlySet<string>;
+  /** `WorktreeDiscovery.letGo` as the walk began. */
+  readonly letGo: ReadonlyMap<string, number>;
   readonly versions: ReadonlyMap<string, number>;
   /** `ToolCallWindows.ends` as the walk began. */
   readonly callsEnded: number;
@@ -1117,6 +1122,8 @@ interface WalkStart {
   readonly checkpoint: DiscoveryCheckpoint;
   /** `WorktreeDiscovery.roots` as the walk started. */
   readonly worktrees: ReadonlySet<string>;
+  /** `WorktreeDiscovery.letGo` as the walk of the other worktrees began (`walkKeeps`); none for the session folder's. */
+  readonly letGo?: ReadonlyMap<string, number>;
   readonly previous: ReadonlyMap<string, ObservedSource>;
   readonly versions: ReadonlyMap<string, number>;
   readonly heads: ReadonlyMap<string, string>;
@@ -1608,16 +1615,25 @@ function forgetSnapshots(discovery: SourceDiscovery, worktrees: ReadonlySet<stri
   }
 }
 /**
- * Keeps the `HEAD` and unmerged entries a walk read as what the next walk is judged from. The walk of the other worktrees
- * keeps only those of checkouts in a worktree Git still lists: one Git stopped listing while the walk ran was let go of
- * as the walk was taken (`#forgetWorktrees`), and a worktree Git lists again at its path is new to the session.
+ * Whether `walk` keeps what it read of the Git of the checkout at `root` as what the next walk is judged from. The
+ * session folder's walk keeps all it read. The walk of the other worktrees keeps only what it read of a checkout in one
+ * of its worktrees that Git listed for the whole walk, which the session let go of none of the times since the walk
+ * began (`WorktreeDiscovery.letGo`): one Git stopped listing meanwhile, even for a while, was let go of
+ * (`#forgetWorktrees`), and a worktree Git lists again at its path is new to the session.
  */
+function walkKeeps(discovery: SourceDiscovery, walk: WalkStart, root: string): boolean {
+  if (walk.inSession) return true;
+  const path = sessionPath(discovery.root, root);
+  const worktree = walk.worktrees.has(path) ? path : rootHolding(walk.worktrees, path);
+  return worktree !== undefined && discovery.worktrees.letGo.get(worktree) === walk.letGo?.get(worktree);
+}
+/** Keeps the `HEAD` and unmerged entries a walk read, those it keeps (`walkKeeps`), as what the next walk is judged from. */
 function keepWalkedGit(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
-  const listed = (root: string): boolean => walk.inSession || inWorktrees(discovery, root);
-  keepEach(discovery.heads, walk.heads, listed);
-  keepEach(discovery.unmerged, walk.unmerged, listed);
+  const keeps = (root: string): boolean => walkKeeps(discovery, walk, root);
+  keepEach(discovery.heads, walk.heads, keeps);
+  keepEach(discovery.unmerged, walk.unmerged, keeps);
   // Kept after the audit: a checkout this walk was the first to pass is judged as one no walk has read (`stoppedSince`).
-  keepEach(discovery.unmerged, scan.unmerged, root => listed(root) && !discovery.unmerged.has(root));
+  keepEach(discovery.unmerged, scan.unmerged, root => keeps(root) && !discovery.unmerged.has(root));
 }
 /** Puts into `into` each entry of `from` whose root `keep` takes. */
 function keepEach<T>(into: Map<string, T>, from: ReadonlyMap<string, T>, keep: (root: string) => boolean): void {
@@ -2840,10 +2856,15 @@ export class CodeRuleBridge {
    * Lets go of the worktrees Git no longer lists, and of the checkouts inside them: their files, and the `HEAD` and
    * unmerged entries the walks kept of them. The session folder's walk reads every kept `HEAD` outside the worktrees
    * (`#readCheckouts`), and one whose checkout is gone asks Git, one Git start at a time, inside the walk a shell
-   * command's result waits for.
+   * command's result waits for. Each is counted (`WorktreeDiscovery.letGo`): a walk that began before keeps nothing it
+   * read of one, even when Git lists a worktree at its path again by then (`walkKeeps`).
    */
   #forgetWorktrees(discovery: SourceDiscovery, removed: ReadonlySet<string>): void {
-    for (const worktree of removed) discovery.worktrees.fresh.delete(worktree);
+    const { fresh, letGo } = discovery.worktrees;
+    for (const worktree of removed) {
+      fresh.delete(worktree);
+      letGo.set(worktree, (letGo.get(worktree) ?? 0) + 1);
+    }
     for (const path of this.#observed.keys()) if (underBaselineRoot(removed, path)) this.#observed.delete(path);
     forgetSnapshots(discovery, removed);
     this.#worktreeView.forget(removed);
@@ -2886,7 +2907,10 @@ export class CodeRuleBridge {
       discovery.worktrees.gaps = [{ reason: errorMessage(error) }];
       return undefined;
     }
-    const start: WorktreeStart = { worktrees: new Set(discovery.worktrees.roots), versions: new Map(discovery.versions), callsEnded: discovery.toolCalls.ends };
+    const start: WorktreeStart = {
+      worktrees: new Set(discovery.worktrees.roots), letGo: new Map(discovery.worktrees.letGo), versions: new Map(discovery.versions),
+      callsEnded: discovery.toolCalls.ends,
+    };
     const rules = { current: false };
     return {
       worktrees: new Set(worktrees),
@@ -3051,7 +3075,7 @@ export class CodeRuleBridge {
     }
     const walk: WalkStart = {
       inSession: false, baseline: false, checkpoint: "edit", worktrees: new Set(snapshots.keys()), previous, versions: start.versions,
-      heads, unmerged, callsEnded: start.callsEnded, observedAt,
+      heads, unmerged, callsEnded: start.callsEnded, observedAt, letGo: start.letGo,
     };
     const views = await this.#readTakenTexts(discovery, walk, scan, found);
     // Not this take's to record: the session keeps what it saw of them (`#takeSnapshots`).
@@ -3544,7 +3568,7 @@ export class CodeRuleBridge {
     const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path);
     sorted.unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
-      const verdicts = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
+      const verdicts = await this.#gitVerdicts(discovery, walk, checkout, group, uncaptured);
       if (await this.#checkoutStands(discovery, walk, checkout, group)) this.#sortByVerdicts(group, verdicts, sorted);
     }
     const { unwritten, notOwn } = sorted;
@@ -3663,6 +3687,7 @@ export class CodeRuleBridge {
    */
   async #gitVerdicts(
     discovery: SourceDiscovery,
+    walk: WalkStart,
     checkout: string,
     edits: readonly CodeRuleEdit[],
     uncaptured: ReadonlyMap<string, string>,
@@ -3671,7 +3696,9 @@ export class CodeRuleBridge {
     const first = await this.#readGitVerdicts(discovery, checkout, named);
     if (first === undefined) return new Map();
     const standing = await this.#settledReading(discovery, checkout, named, first) ?? first;
-    keepFirstSnapshot(discovery, checkout, standing.view);
+    // A re-sync outside the queue (a session folder walk's, or the next walk's as it starts) can let go of the checkout's
+    // worktree while Git is read here: what Git said is then no snapshot the session keeps of it (`walkKeeps`).
+    if (walkKeeps(discovery, walk, checkout)) keepFirstSnapshot(discovery, checkout, standing.view);
     return standing.verdicts;
   }
 
