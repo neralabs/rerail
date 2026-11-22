@@ -127,3 +127,30 @@ fn a_read_of_a_pass_made_already_reads_its_instance() {
     let e = refusal(&format!("{made}\n.from python bound for annotation\n"));
     assert!(e.contains("annotation is made already"), "{e}");
 }
+
+/// 0597 step 3, rung 3.1: a context is declared where its exports are written (the library's files each add theirs):
+/// two declarations of one context, of the same host and roots, are one context exporting both's. One of another
+/// host or roots is refused.
+#[test]
+fn a_context_declared_twice_exports_both_declarations() {
+    let text = PROGRAM.replace(
+        ".context annotation of python roots ann_root exports ann_names",
+        ".decl ann_bound(x: symbol)\nann_bound(x) :- bound(x).\n.context annotation of python roots ann_root exports ann_names\n.context annotation of python roots ann_root exports ann_bound",
+    ) + ".from annotation ann_bound as late\n.decl later(x: symbol)\nlater(x) :- late(x).\n.output later\n";
+    let v = parse_version(&text).unwrap();
+    assert!(rules_of(&v, "later").iter().all(|r| r.contains("rr_cx_annotation_ann_bound(")), "{}", v.show());
+    let settings = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&*v);
+    assert_eq!(settings.iter().filter(|(k, _)| k == "pass").count(), 1, "{settings:?}");
+    let e = refusal(&PROGRAM.replace(".context annotation of python roots ann_root exports ann_names", ".context annotation of python roots ann_root exports ann_names\n.context annotation of python roots name_node exports ann_names"));
+    assert!(e.contains("annotation: declared twice, of other roots"), "{e}");
+}
+
+/// 0597 step 3, rung 3.2: a guest's view of its host (`host_node(n, h)`, `guest_of(n, s)`) names a host's node in its
+/// second column: a context's rule reading it binds its own node to its nodes, not the host's.
+#[test]
+fn a_contexts_read_of_its_hosts_node_binds_only_its_own() {
+    let text = PROGRAM.replace(".input kind, text", ".decl host_node(n: node, h: node)\n.input kind, text, host_node").replace("ann_names(x) :- name_node(n), text(n, x), bound(x).", "ann_names(x) :- name_node(n), host_node(n, h), text(n, x), bound(x).");
+    let v = parse_version(&text).unwrap();
+    let names = rules_of(&v, "rr_cx_annotation_ann_names");
+    assert!(names.len() == 1 && names[0].contains("rr_cx_annotation_rr_nodes($n)") && !names[0].contains("rr_cx_annotation_rr_nodes($h)"), "{}", v.show());
+}

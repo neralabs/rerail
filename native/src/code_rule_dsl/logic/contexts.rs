@@ -157,8 +157,17 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
             _ => return Err(shape(text)),
         };
         let c = Context { name: name.clone(), host: host.clone(), roots: rel.clone(), exports: rels.into_iter().map(|(r, _)| r).collect(), made: key == "pass", reads };
-        if d.contexts.insert(name.clone(), c).is_some() {
-            return bad(format!(".{key} {name}: declared twice"));
+        // A context is declared where its exports are written (each library file adds its own, 3.1): a declaration
+        // of a context declared already, of the same host and roots, adds its exports and reads.
+        match d.contexts.get_mut(name) {
+            None => {
+                d.contexts.insert(name.clone(), c);
+            }
+            Some(was) if (&was.host, &was.roots, was.made) == (&c.host, &c.roots, c.made) => {
+                was.exports.extend(c.exports);
+                was.reads.extend(c.reads);
+            }
+            Some(_) => return bad(format!(".{key} {name}: declared twice, of other roots, another host or made")),
         }
     }
     for (_, text) in settings.iter().filter(|(k, _)| k == "from") {
@@ -332,6 +341,10 @@ impl Rewrite for Renaming<'_> {
 /// The node variables of rule `r` of pass `pass` that a view reads (a positive atom of a relation no rule derives,
 /// not another pass's, in a column of type `node`): each joined with the pass's nodes, so a context's views give its
 /// roots' nodes alone (0597 rule 2).
+/// The views of a guest's host (0431): `host_node(n, h)` and `guest_of(n, s)` give a guest node's host's node, which is
+/// no node of the guest's context.
+const HOSTS_NODE: &[(&str, usize)] = &[("host_node", 1), ("guest_of", 1)];
+
 fn view_nodes<'v>(v: &'v Version, d: &Declared, pass: &str, r: RuleRef<'v>) -> Vec<T<'v>> {
     let derived = |x: &str| v.rel(x).is_some_and(|id| v.heads(id).next().is_some());
     let mut seen = BTreeSet::new();
@@ -343,9 +356,10 @@ fn view_nodes<'v>(v: &'v Version, d: &Declared, pass: &str, r: RuleRef<'v>) -> V
             continue;
         }
         let Some(cols) = v.columns_of(rel) else { continue };
-        for (t, (_, ty)) in a.args().zip(cols.iter()) {
+        for (i, (t, (_, ty))) in a.args().zip(cols.iter()).enumerate() {
             if let TermRef::Var(slot) = t
                 && ty == "node"
+                && !HOSTS_NODE.contains(&(rel, i))
                 && seen.insert(r.var(slot).0)
             {
                 out.push(t_of(r, t));
