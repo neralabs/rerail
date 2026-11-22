@@ -116,6 +116,27 @@ describe("submoduleChanged", () => {
     const read = vi.mocked(readSync).mock.results.reduce((sum, result) => sum + (result.type === "return" ? result.value : 0), 0);
     expect([changed, read <= 1024 * 1024 + 1]).toEqual([{ status: 128, stdout: "", stderr: `fatal: too large to be a .git file: '${gitfile}'\n` }, true]);
   });
+
+  it("reads a `.git` file that grew after its stat to Git's 1 MiB and one byte at most, and fails as too large", async () => {
+    const { linked } = repositories(await folder());
+    const gitfile = join(linked, ".git");
+    const opened: number[] = [];
+    vi.mocked(openSync).mockImplementation((path, flags, mode) => {
+      const file = realFs.openSync(path, flags, mode);
+      if (path === gitfile) opened.push(file);
+      return file;
+    });
+    vi.mocked(readSync).mockImplementation((...args: Parameters<typeof readSync>) => {
+      // The file grows between the stat that sized the read and the first read.
+      if (opened.splice(0).length > 0) realFs.appendFileSync(gitfile, "\n".repeat(4 * 1024 * 1024));
+      return realFs.readSync(...args);
+    });
+
+    const changed = await submoduleChanged(linked, false, async () => await Promise.resolve(UNASKED), 1);
+
+    const read = vi.mocked(readSync).mock.results.reduce((sum, result) => sum + (result.type === "return" ? result.value : 0), 0);
+    expect([changed, read <= 1024 * 1024 + 1]).toEqual([{ status: 128, stdout: "", stderr: `fatal: too large to be a .git file: '${gitfile}'\n` }, true]);
+  });
 });
 
 describe("worktreeIndex", () => {
@@ -135,16 +156,29 @@ describe("worktreeGitFolder", () => {
     expect(worktreeGitFolder(work, { [name]: join(work, ".git") })).toBeUndefined();
   });
 
-  it("answers as Git's discovery from a folder whose own `.git` file cannot be opened", async () => {
+  it("reads a linked worktree's `.git` file into a buffer of the file's own size", async () => {
+    const { linked } = repositories(await folder());
+    const found = gitFolderFound(linked);
+    const alloc = vi.spyOn(Buffer, "alloc");
+    try {
+      expect(worktreeGitFolder(linked, {})).toBe(found);
+      expect(alloc.mock.calls.map(([size]) => size).filter(size => size > 1024)).toEqual([]);
+    } finally {
+      alloc.mockRestore();
+    }
+  });
+
+  it("answers as Git's discovery from a folder whose own `.git` file cannot be opened", async context => {
     const { work } = repositories(await folder());
     const inner = join(work, "inner");
     mkdirSync(inner);
     writeFileSync(join(inner, ".git"), "gitdir: ../.git\n");
-    const giveBack = unopenable(join(inner, ".git"));
+    const denied = unopenable(join(inner, ".git"));
     try {
+      if (!denied.held) context.skip();
       expect(worktreeGitFolder(inner, {})).toBe(gitFolderFound(inner));
     } finally {
-      giveBack();
+      denied.giveBack();
     }
   });
 });

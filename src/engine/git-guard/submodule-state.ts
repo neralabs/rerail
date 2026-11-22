@@ -716,15 +716,20 @@ function isFile(file: number): boolean {
   }
 }
 
-/** The bytes of the open file `file` to its end; undefined past `most`. */
+/**
+ * The bytes of the open file `file` to its end; undefined past `most`. The buffer is sized from the file's own size,
+ * at most `most` and one byte, and grows to that bound where the file holds more by the read, so one that grew after
+ * its stat is still read to its end.
+ */
 function readWithin(file: number, most: number): Buffer | undefined {
-  const bytes = Buffer.alloc(most + 1);
+  let bytes = Buffer.alloc(Math.min(fstatSync(file).size, most) + 1);
   let read = 0;
   let got: number;
   do {
+    if (read === bytes.length) bytes = Buffer.concat([bytes], most + 1);
     got = readSync(file, bytes, read, bytes.length - read, null);
     read += got;
-  } while (got > 0 && read < bytes.length);
+  } while (got > 0 && read <= most);
   return read > most ? undefined : bytes.subarray(0, read);
 }
 

@@ -10,7 +10,7 @@ import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { gitModifiedOrUntrackedPaths, runGit, runGitWithoutBlocking, type GitResult } from "../../../src/engine/git.js";
 import { removeFolder } from "../../support/platform/remove-folder.js";
-import { unopenable } from "../../support/platform/unopenable-file.js";
+import { unopenable, type Unopenable } from "../../support/platform/unopenable-file.js";
 
 vi.mock("node:child_process", { spy: true });
 const actualChildProcess = await vi.importActual<typeof import("node:child_process")>("node:child_process");
@@ -86,31 +86,34 @@ async function gitsStarted<T>(root: string, call: () => T | Promise<T>): Promise
 const AUDIT_DIFF = ["diff", "--name-only", "--no-renames", "--relative", "--ignore-submodules=none", "--diff-filter=ACMRTUXB", "-z", "--"];
 const SCAN_DIFF = ["diff", "--name-only", "--no-renames", "--relative", "--diff-filter=ACMRTUXB", "-z", "HEAD", "--"];
 
+/** A state made as asked, with nothing to undo. */
+const MADE: Unopenable = { held: true, giveBack: () => undefined };
+
 /**
  * Each state a marked submodule `sub` of a {@link submoduleGitfile} checkout is asked in, whose worktree changed: how
- * to make it from the checkout `work` and the line that names the Git folder, and how to undo it.
+ * to make it from the checkout `work` and the line that names the Git folder, whether it holds, and how to undo it.
  */
-const MARKED_STATES: ReadonlyArray<readonly [string, (work: string, named: string) => () => void]> = [
-  ["whose worktree changed", () => () => undefined],
+const MARKED_STATES: ReadonlyArray<readonly [string, (work: string, named: string) => Unopenable]> = [
+  ["whose worktree changed", () => MADE],
   ["whose `.git` file cannot be opened", work => unopenable(join(work, "sub", ".git"))],
   ["whose `.git` file holds more than 1 MiB", (work, named) => {
     writeFileSync(join(work, "sub", ".git"), named.padEnd(1024 * 1024 + 1, "\n"));
-    return () => undefined;
+    return MADE;
   }],
   ["whose `.git` file holds no `gitdir: `", work => {
     writeFileSync(join(work, "sub", ".git"), "nothing\n");
-    return () => undefined;
+    return MADE;
   }],
   ["in a checkout whose `.gitmodules` Git cannot read", work => {
     writeFileSync(join(work, ".gitmodules"), "[submodule\n");
-    return () => undefined;
+    return MADE;
   }],
   // The scan's diff names it, as its commit changed, and its rule leaves it out of Git's own.
   ["whose commit changed in the index, with `ignore = all` in `.gitmodules`", work => {
     git(join(work, "sub"), "commit", "--quiet", "--allow-empty", "-m", "moved");
     git(work, "add", "sub");
     setGitmodules(work, "all");
-    return () => undefined;
+    return MADE;
   }],
 ];
 
@@ -545,26 +548,23 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
 
   // Git's diff opens a submodule's `.git` to find its commit before it asks the submodule, so Rerail's own diff fails
   // there first, with Git's message.
-  it("and answer as Git's own diff where a submodule's `.git` file cannot be opened", async () => {
+  it("and answer as Git's own diff where a submodule's `.git` file cannot be opened", async context => {
     const root = await folder();
     const { work, gitfile, named } = await submoduleGitfile(root);
     await writeFile(gitfile, `${named}\n`);
-    const giveBack = unopenable(gitfile);
+    const denied = unopenable(gitfile);
     try {
+      if (!denied.held) context.skip();
       const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
       const gits = [gitStderr(work, AUDIT_DIFF), gitStderr(work, SCAN_DIFF)];
 
       expect(answers.map(answer => answer.status === 0 ? undefined : answer.stderr)).toEqual(gits);
       expect(gits.map(stderr => stderr === undefined)).toEqual([false, false]);
     } finally {
-      giveBack();
+      denied.giveBack();
     }
   }, 60_000);
 
-  // Git's diff looks into no submodule marked assume-unchanged or skip-worktree, so it opens no `.git` of one.
-  it.each(["assume-unchanged", "skip-worktree"].flatMap(mark => MARKED_STATES.map(([what, made]) => [mark, what, made] as const)))(
-    "and answer as Git's own diff for a submodule marked %s %s", async (mark, _what, made) => {
-      const root = await folder();
   // A scan from a folder: Git's diff from a commit reads the rules of, and looks into, the submodule outside that folder
   // too, and prints none of it; the audit's diff, of the worktree with the index, does neither. Each row: the state, and
   // whether Git's own audit and scan from the folder answer.
@@ -596,19 +596,24 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
     expect(gits.map(([ok]) => ok)).toEqual(answered);
   }, 60_000);
 
+  // Git's diff looks into no submodule marked assume-unchanged or skip-worktree, so it opens no `.git` of one.
+  it.for(["assume-unchanged", "skip-worktree"].flatMap(mark => MARKED_STATES.map(([what, made]) => [mark, what, made] as const)))(
+    "and answer as Git's own diff for a submodule marked %s %s", { timeout: 60_000 }, async ([mark, _what, made], context) => {
+      const root = await folder();
       const { work, gitfile, named } = await submoduleGitfile(root);
       await writeFile(gitfile, `${named}\n`);
       await writeFile(join(work, "sub", "inner.txt"), "two\n");
-      const giveBack = made(work, named);
-      git(work, "update-index", `--${mark}`, "sub");
+      const state = made(work, named);
       try {
+        if (!state.held) context.skip();
+        git(work, "update-index", `--${mark}`, "sub");
         const answers = [await runGitWithoutBlocking(work, AUDIT_DIFF), await runGitWithoutBlocking(work, SCAN_DIFF)];
 
         expect(answers.map(answer => [answer.status, answer.stdout])).toEqual([[0, git(work, ...AUDIT_DIFF)], [0, git(work, ...SCAN_DIFF)]]);
       } finally {
-        giveBack();
+        state.giveBack();
       }
-    }, 60_000);
+    });
 
   // The `git status` Git's diff runs in a submodule reads no rule of a submodule inside it that is marked.
   it("and answer as Git's own diff for a submodule whose one submodule is marked and whose `.gitmodules` Git cannot read", async () => {
