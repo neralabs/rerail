@@ -114,8 +114,6 @@ const SCRATCH: &[&str] = &[
     "rerail_capture",
     "rerail_terminal_match",
     "capture_tapes",
-    "fact_batch",
-    "fact_dv",
     "stat_meta",
     "stat_col",
     "stat_kind",
@@ -147,8 +145,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("corpus_state", "3"),
     ("corpus_decided", "3"),
     ("stat_blob", "6"),
-    ("fact_stats", "6"),
-    ("fact_value_stats", "6"),
     ("kind_size", "6"),
     ("edge_freq", "6"),
     ("tape_kind_counts", "6"),
@@ -177,8 +173,10 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// the compiled plans, the statistics they read and their feedback became kept facts (t33 step 6); 39 when the facts
 /// memo's last users became kept facts and its three tables went (and the sweep of its retired schemas), with the workspace pipeline's result pages and the
 /// predecessor's tree result segments, which nothing called outside their tests (t33 step 3); 33 when the workspace's
-/// results, their catalogs and checks and its completed directories became entries of the per-file memo (t33 step 8).
-const NOT_YET_TABLES_PIN: usize = 33;
+/// results, their catalogs and checks and its completed directories became entries of the per-file memo (t33 step 8); 31
+/// when the fact relations' column statistics went, which nothing wrote but the demand's terminal estimate, now a kept
+/// fact (t33 step 6).
+const NOT_YET_TABLES_PIN: usize = 31;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.

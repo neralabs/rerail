@@ -259,7 +259,7 @@ fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Can
     let outcome = run(&lease, &store, &program, WS, documents.clone(), &limits, &mut |chunk| wave.demand(&lease, &store, WS, chunk)).unwrap();
     let elapsed = started.elapsed();
     assert_eq!(outcome.waves as usize, 2 * outcome.chunks);
-    wave.statistics(&lease, WS).unwrap();
+    wave.statistics(&lease, &store).unwrap();
 
     let position = documents.iter().enumerate().map(|(at, d)| (i64::from(d.key), at)).collect::<BTreeMap<_, _>>();
     let mut matches = vec![vec![BTreeSet::new(); documents.len()]; clauses.len()];
@@ -309,7 +309,9 @@ fn gate_by(default: usize, limits: Limits, backend: ExecutionBackend, route: Can
         let family = family_name(WS, PROGRAM, &format!("matched:{name}"));
         assert!(store.derivation_valid(&family).unwrap(), "{family}");
     }
-    let estimate: i64 = lease.query_row("SELECT rows FROM fact_stats WHERE tbl = 'rerail_terminal_match'", [], |row| row.get(0)).unwrap();
+    store.written().unwrap();
+    let estimate = store.terminal_estimate().unwrap().expect("the wave kept its estimate");
+    assert!(estimate >= 1, "{estimate}");
     eprintln!(
         "S4 wave ({route:?}): {} clauses ({} passes) on {} fixtures in {} chunks, {:?}: {expected_nodes} matched nodes; \
          candidates {candidate_nodes} of {all_nodes} clause-nodes; {} under-produced, {} differ; terminal estimate {estimate}",

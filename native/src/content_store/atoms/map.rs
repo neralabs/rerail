@@ -509,8 +509,7 @@ pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
 ];
 
 /// The integer, untyped and blob columns of the store's schema that hold no atom (ids of the store's own rows,
-/// counts, digests, encoded bytes of integers or text). `fact_value_stats.val`: the slice's scope (text) and clause
-/// numbers (`matched(c: number, …)`).
+/// counts, digests, encoded bytes of integers or text).
 #[cfg(test)]
 pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("atom_blocks", &["seq", "tag"]),
@@ -525,8 +524,6 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("derivation_inputs", &["ordinal", "digest"]),
     ("derivations", &["producer", "status", "cost"]),
     ("edge_freq", &["pkind", "ckind", "field", "n"]),
-    ("fact_stats", &["rows", "ndv", "sq", "sqd"]),
-    ("fact_value_stats", &["val", "n", "docs", "sqd"]),
     ("facts_chain", &["space", "seq", "tag"]),
     ("file_documents", &["tape_id", "ordinal", "parent_ordinal", "role_id", "via_id", "document_tape_id", "source_map", "host_errors", "at_start", "at_end"]),
     // The per-file memo's entries (decision 0240 §4): their symbols are strings in the pack (memo/image.rs).

@@ -67,33 +67,3 @@ fn feedback_is_an_ewma_per_plan_and_backend() {
     assert_eq!(cpu.samples, 2);
     assert_eq!(feedback(&store, plan, "metal").unwrap().unwrap().samples, 1);
 }
-
-#[test]
-fn sqlite_stat1_from_fact_statistics_steers_index_choice() {
-    let store = open(&temp());
-    store
-        .candidate_transaction(true, |db| {
-            db.execute_batch(
-                "CREATE TABLE stat_probe(d INTEGER, a INTEGER, b INTEGER); \
-                 CREATE INDEX stat_probe_a ON stat_probe(a); CREATE INDEX stat_probe_b ON stat_probe(b);",
-            )?;
-            let plan = |db: &Connection| -> Result<String> {
-                db.query_row("EXPLAIN QUERY PLAN SELECT * FROM stat_probe WHERE a = 1 AND b = 2", [], |r| r.get(3))
-            };
-            let indexes: [(&str, &str, &[&str]); 2] = [("stat_probe", "stat_probe_a", &["a"]), ("stat_probe", "stat_probe_b", &["b"])];
-            // a: 1000 rows over 1000 values; b: 1000 rows in one value.
-            db.execute_batch(
-                "INSERT INTO fact_stats VALUES ('stat_probe','a',1000,1000,1000,1000), ('stat_probe','b',1000,1,1000000,1000000)",
-            )?;
-            write_stat1(db, &indexes)?;
-            assert_eq!(db.query_row("SELECT stat FROM sqlite_stat1 WHERE idx='stat_probe_b'", [], |r| r.get::<_, String>(0))?, "1000 1000");
-            assert!(plan(db)?.contains("stat_probe_a"), "{}", plan(db)?);
-            db.execute_batch(
-                "UPDATE fact_stats SET ndv=1, sq=1000000 WHERE col='a'; UPDATE fact_stats SET ndv=1000, sq=1000 WHERE col='b'",
-            )?;
-            write_stat1(db, &indexes)?;
-            assert!(plan(db)?.contains("stat_probe_b"), "{}", plan(db)?);
-            Ok(())
-        })
-        .unwrap();
-}

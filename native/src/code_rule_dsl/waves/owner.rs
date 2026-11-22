@@ -3,8 +3,8 @@
 //! recycled across executions only when it is clean.
 //!
 //! D's owner was an in-memory connection, rebound per lease to a source snapshot, regex functions
-//! and a work budget. Here the connection is on the store's file, so `fact_stats` and `atoms`
-//! are `main` (the compiled plans are kept facts), and a lease binds the base-relation vtabs instead
+//! and a work budget. Here the connection is on the store's file, so `atoms` is `main`'s (the compiled plans and
+//! the statistics are kept facts), and a lease binds the base-relation vtabs instead
 //! (`facts::vtab::syntax`). `statistics_boundary` returns the counts the compiled plans' validity
 //! reads (`stats::plans`), and `trim` evicts completed relations to a byte capacity.
 pub mod database;

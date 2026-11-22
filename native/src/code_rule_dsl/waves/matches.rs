@@ -7,8 +7,8 @@
 //! reads the batch's terminal matches into `matched(clause, d, node)`, and each matched node's bytes
 //! into `span(d, node, start, end)` for the findings layer (`findings`, S5); the planner emits them
 //! from `SOURCE`, over two batch inputs (O14, `logic::plan::emit_batch`). The loop records the relation as one
-//! fact family per clause (`partitions`) and `statistics` writes their row estimates to
-//! `fact_stats`, where the demand relations read them.
+//! fact family per clause (`partitions`) and `statistics` keeps the terminal matches' row estimate (the most rows of
+//! one clause), as kept facts of the store, where the next drive's demand relations read it (`ContentStore::terminal_estimate`).
 
 use crate::code_rule_dsl::logic::sql::select::Source;
 use super::owner::Lease;
@@ -565,27 +565,12 @@ impl Wave {
         })
     }
 
-    /// Each clause family's row estimate in `fact_stats`, and the terminal relation's (their
-    /// most), replacing the last run's: the demand relations read `max(rows)` per table.
-    pub fn statistics(&self, lease: &Lease<'_>, scope: &str) -> StoreResult<()> {
-        let mut most = 0_i64;
-        for (part, name) in self.names.iter().enumerate() {
-            let (rows, documents): (i64, i64) = lease.query_row(
-                &format!("SELECT count(*), count(DISTINCT c1) FROM {RELATION} WHERE c0 = ?1"),
-                [part as i64],
-                |row| Ok((row.get(0)?, row.get(1)?)),
-            )?;
-            most = most.max(rows);
-            let table = super::schedule::family_name(scope, PROGRAM, &format!("{RELATION}:{name}"));
-            lease.execute(
-                "INSERT OR REPLACE INTO fact_stats(tbl, col, rows, ndv, sq, sqd) VALUES (?1, 'd', ?2, ?3, 0, 0)",
-                rusqlite::params![table, rows, documents],
-            )?;
-        }
-        lease.execute(
-            "INSERT OR REPLACE INTO fact_stats(tbl, col, rows, ndv, sq, sqd) VALUES (?1, 'producer_id', ?2, ?3, 0, 0)",
-            rusqlite::params![TERMINAL, most.max(1), self.names.len() as i64],
-        )?;
+    /// The terminal matches' row estimate, the most rows of one clause, kept for the next drive (`ContentStore::terminal_estimate`),
+    /// replacing the last run's, behind the run. Each clause family's own count was kept beside it, and nothing read
+    /// it: it went (t33 step 6).
+    pub fn statistics(&self, lease: &Lease<'_>, store: &ContentStore) -> StoreResult<()> {
+        let most: i64 = lease.query_row(&format!("SELECT coalesce(max(n), 0) FROM (SELECT count(*) AS n FROM {RELATION} GROUP BY c0)"), [], |row| row.get(0))?;
+        store.keep_terminal_estimate(most.max(1));
         Ok(())
     }
 }

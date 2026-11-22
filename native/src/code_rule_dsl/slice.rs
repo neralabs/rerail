@@ -210,7 +210,7 @@ fn execute(store: &ContentStore, scope: &str, root: HashKey, rules: &mut Rules, 
     let memoised = evaluate.clone();
     let outcome = prof::time("slice.wave", || schedule::batches::run_over(&lease, store, &program, scope, evaluate, inputs, &limits, &mut |chunk| wave.demand(&lease, store, scope, chunk)))?;
     prof::time("slice.remember", || -> StoreResult<()> {
-        wave.statistics(&lease, scope)?;
+        wave.statistics(&lease, store)?;
         memo::remember(&lease, store, scope, &rules.digest, &memoised)?;
         kept::remember(&lease, store, space, &rules.digest, &documents, &last, &fresh, cold)
     })?;

@@ -627,33 +627,17 @@ CREATE TABLE IF NOT EXISTS edge_freq (
     PRIMARY KEY (pkind, ckind, field)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS edge_freq_by_child ON edge_freq(ckind);
--- Fact relations' column statistics, merged per batch of documents (`ingest::merge_facts`):
--- per column, rows, distinct values, the sum of squared value counts corpus-wide (`sq`) and
--- within a document (`sqd`); per value of a value column, its count, documents and `sqd`.
-CREATE TABLE IF NOT EXISTS fact_stats (
-    tbl TEXT NOT NULL,
-    col TEXT NOT NULL,
-    rows INTEGER NOT NULL,
-    ndv INTEGER NOT NULL,
-    sq INTEGER NOT NULL,
-    sqd INTEGER NOT NULL,
-    PRIMARY KEY (tbl, col)
-) STRICT, WITHOUT ROWID;
 -- Compiled plans (stats/plans.rs), the statistics their decisions read and each plan's observed
 -- selectivity and cost per backend are kept facts of the store (t33 step 6): a store made before
 -- loses the tables.
 DROP TABLE IF EXISTS compiled_plan_reads;
 DROP TABLE IF EXISTS compiled_plans;
 DROP TABLE IF EXISTS plan_feedback;
-CREATE TABLE IF NOT EXISTS fact_value_stats (
-    tbl TEXT NOT NULL,
-    col TEXT NOT NULL,
-    val ANY,
-    n INTEGER NOT NULL,
-    docs INTEGER NOT NULL,
-    sqd INTEGER NOT NULL,
-    PRIMARY KEY (tbl, col, val)
-) STRICT, WITHOUT ROWID;
+-- Fact relations' column statistics (`fact_stats`, `fact_value_stats`) went (t33 step 6): no fact relation is a SQL
+-- table with a document column, and the one estimate kept there, the demand's terminal matches', is a kept fact of
+-- the store (`ContentStore::terminal_estimate`).
+DROP TABLE IF EXISTS fact_stats;
+DROP TABLE IF EXISTS fact_value_stats;
 -- Every `term` column below is the term's atom (`atoms`): its text is stored once.
 CREATE TABLE IF NOT EXISTS term_postings (
     lang INTEGER NOT NULL,

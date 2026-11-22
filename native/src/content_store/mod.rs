@@ -32,6 +32,8 @@ pub mod guest_keys;
 mod object_segments;
 mod segments;
 mod plan_set;
+/// The demand's terminal matches' row estimate, a kept fact (t33 step 6).
+mod estimates;
 mod objects;
 pub mod journal;
 pub mod observe;

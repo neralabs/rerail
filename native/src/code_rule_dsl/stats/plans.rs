@@ -13,9 +13,6 @@
 //! - **`plan_feedback`** holds, per plan and backend, an EWMA of the observed selectivity and cost
 //!   per root (§2.5b, §4.8: "sel from `plan_feedback` EWMA, else the prior"). It also answers H4:
 //!   a regex's matched-term count enters the estimate after its first fill.
-//! - **`sqlite_stat1`** is written from `fact_stats` for fact relations held as SQL tables, never
-//!   by `ANALYZE` over the data (02 "SQL join order"); `ANALYZE sqlite_schema` only creates the
-//!   table and reloads the planner's copy.
 //!
 //! The three are kept facts of the store (t33 step 6, decisions 0104 and 0456), where three SQLite
 //! tables held them: one space, a partition per plan, `compiled_plan(p0..p3, compiler, decisions
@@ -327,35 +324,6 @@ pub fn kept_plans(store: &ContentStore) -> KeptPlans {
     }
     out.plans.sort_by_key(|p| p.0);
     out
-}
-
-/// Writes `sqlite_stat1` rows for `indexes` ((table, index, columns)) from `fact_stats`, and makes
-/// the planner read them. An index's k-th number is the rows an equality on its first k columns
-/// selects: the smallest postings-weighted fanout (`sq / rows`) among them, at least 1.
-pub fn write_stat1(db: &Connection, indexes: &[(&str, &str, &[&str])]) -> Result<()> {
-    db.execute_batch("ANALYZE sqlite_schema")?;
-    let mut column = db.prepare_cached("SELECT rows, sq FROM fact_stats WHERE tbl = ?1 AND col = ?2")?;
-    for (table, index, columns) in indexes {
-        let mut rows = 0;
-        let mut stat = Vec::with_capacity(columns.len());
-        let mut fanout = u64::MAX;
-        for col in *columns {
-            let (n, sq) = column
-                .query_row(params![table, col], |row| Ok((row.get::<_, i64>(0)? as u64, row.get::<_, i64>(1)? as u64)))
-                .optional()?
-                .unwrap_or((0, 0));
-            rows = rows.max(n);
-            fanout = fanout.min(sq.div_ceil(n.max(1)).max(1));
-            stat.push(fanout.to_string());
-        }
-        db.execute("DELETE FROM sqlite_stat1 WHERE tbl = ?1 AND idx = ?2", params![table, index])?;
-        db.execute(
-            "INSERT INTO sqlite_stat1(tbl, idx, stat) VALUES (?1, ?2, ?3)",
-            params![table, index, format!("{} {}", rows.max(1), stat.join(" "))],
-        )?;
-    }
-    // Reloads every table's statistics; reads no table but the schema.
-    db.execute_batch("ANALYZE sqlite_schema")
 }
 
 // cratify: `tests` is rerail-engine's (it mounts it)
