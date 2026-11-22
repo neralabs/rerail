@@ -145,8 +145,6 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/matcher/embedded/mod.rs", "HOOKS", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/matcher/memo.rs", "MEMO", Call, "the matches of the file being matched on this thread"),
     ("src/code_rule_dsl/matcher/mod.rs", "CLAUSES_BEGUN", Thread, "a count of this thread's work, read by tests and the profile"),
-    ("src/code_rule_dsl/matcher/mod.rs", "CLAUSE_STATE_READS", Thread, "a count of this thread's work, read by tests and the profile"),
-    ("src/code_rule_dsl/matcher/mod.rs", "FILL_STEPS", Thread, "a count of this thread's work, read by tests and the profile"),
     ("src/code_rule_dsl/matcher/mod.rs", "UTIL_PEAK", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/matcher/p_anchors/sql/corpus.rs", "CURRENT", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/matcher/parse.rs", "HOOKS", Call, "the state of one call in progress on this thread, set and read within it"),
@@ -156,12 +154,14 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("src/code_rule_dsl/matcher/resolve.rs", "SOURCE_TYPE_DERIVATIONS", Thread, "a count of this thread's work, read by tests and the profile"),
     ("src/code_rule_dsl/matcher/resolve.rs", "SUB_TABLES", Call, "the state of one call in progress on this thread, set and read within it"),
     ("src/code_rule_dsl/matcher/resolve.rs", "TABLE_BUILDS", Thread, "a count of this thread's work, read by tests and the profile"),
-    ("src/code_rule_dsl/matcher/util.rs", "THREE_VALUED", Call, "the state of one call in progress on this thread, set and read within it"),
-    ("src/code_rule_dsl/matcher/util.rs", "UNKNOWN", Call, "the state of one call in progress on this thread, set and read within it"),
-    ("src/code_rule_dsl/matcher/util.rs", "UTIL_DEPTH", Thread, "a count of this thread's work, read by tests and the profile"),
-    ("src/code_rule_dsl/matcher/util.rs", "UTIL_EXCEEDED", Call, "the state of one call in progress on this thread, set and read within it"),
-    ("src/code_rule_dsl/matcher/util.rs", "UTIL_STACK_BASE", Thread, "a count of this thread's work, read by tests and the profile"),
-    ("src/code_rule_dsl/matcher/util.rs", "UTIL_STEPS_LEFT", Thread, "a count of this thread's work, read by tests and the profile"),
+    ("src/code_rule_dsl/matcher/steps.rs", "CLAUSE_STATE_READS", Thread, "a count of this thread's work, read by tests and the profile"),
+    ("src/code_rule_dsl/matcher/steps.rs", "FILL_STEPS", Thread, "a count of this thread's work, read by tests and the profile"),
+    ("src/code_rule_dsl/matcher/steps.rs", "THREE_VALUED", Call, "the state of one call in progress on this thread, set and read within it"),
+    ("src/code_rule_dsl/matcher/steps.rs", "UNKNOWN", Call, "the state of one call in progress on this thread, set and read within it"),
+    ("src/code_rule_dsl/matcher/steps.rs", "UTIL_DEPTH", Thread, "a count of this thread's work, read by tests and the profile"),
+    ("src/code_rule_dsl/matcher/steps.rs", "UTIL_EXCEEDED", Call, "the state of one call in progress on this thread, set and read within it"),
+    ("src/code_rule_dsl/matcher/steps.rs", "UTIL_STACK_BASE", Thread, "a count of this thread's work, read by tests and the profile"),
+    ("src/code_rule_dsl/matcher/steps.rs", "UTIL_STEPS_LEFT", Thread, "a count of this thread's work, read by tests and the profile"),
     ("src/code_rule_dsl/profile.rs", "PHASE_STACK", Thread, "this thread's open phase timings"),
     ("src/code_rule_dsl/profile.rs", "PROFILE", Thread, "the older apply path's profile: each of its workers takes the session itself (`WorkerProfile`)"),
     ("src/code_rule_dsl/profile/sql.rs", "ACTIVE", Thread, "this thread's statement being profiled"),
@@ -231,9 +231,9 @@ impl<T: Clone + Send + Sync + 'static, G: 'static> Part for Shared<T, G> {
 /// it is put back last, so every other part's guard drops inside it (a plans guard's drop counts into the run).
 pub static CARRIERS: rerail_registry::Slot<&'static [fn(&mut Capture)]> = rerail_registry::Slot::new("the run's carried context (run_state::CARRIERS)");
 
-/// The carriers of a program without the planner (setfix's own test binary): the run's, then a job's scope of the
-/// run's chunk.
-pub const RUN_CARRIERS: &[fn(&mut Capture)] = &[super::run::carried, super::native::setfix::carried];
+/// The carriers of a program of the run alone (`rerail-run`'s own test binary): the run's. Setfix's test binary adds
+/// its own (`setfix::RUN_CARRIERS`).
+pub const RUN_CARRIERS: &[fn(&mut Capture)] = &[super::run::carried];
 
 /// The run's context on the caller's thread, for a job on another to enter ([module docs](self)).
 pub struct Carry {

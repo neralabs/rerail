@@ -745,3 +745,41 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   the old name. `cargo check --tests --workspace` is clean on Linux and on a Mac, and so is the workspace's
   check with `code-rule-profile,p-anchor-corpus,test-hooks`. On a Linux host 47 pass: the crate's own tests and
   boot's workspace tests.
+- **Step 5i** (2026-11-21): setfix split, to 19.4k production lines, over `rerail-run` (`native/crates/run`, 6.4k):
+  the run and its state, the lanes, the device interface, the native solvers but setfix (the lattices,
+  `dfs_first`, the components, rank, reach, width), the waves' storage, the planner's `statkeep` and the thread
+  pool. 5a found the run's layer and setfix one cycle. Six references went up from the run, besides the ones a
+  path-relative `setfix::` hid from `refgraph`. Each was cut:
+  - **The device interface was two layers in one trait.** Setfix's joins and fixpoints and the columns' statistics
+    name its store (`Store`, `InRel`, `JoinRule`, …). The run's own solvers ask a device only for a lattice system's
+    fixpoint, nearest ancestors, the launch guard and the report. Those four are `Device` (`logic::device`, the
+    run's), and the rest is `SolverDevice: Device` (`device::solver`, setfix's, with `JoinPlan`, `StatColumn`,
+    `ColumnStats`). A solver device's `register` registers it as both, so the engine still registers Metal once,
+    and Metal implements the two traits in two blocks. The lattice solve and the lanes read `device()`.
+  - **`native::register` registered every native SQL function**, setfix's too. The lattices' part is
+    `native::register_lattices` (the run's). Setfix's `register` calls it and then registers the set engine's
+    functions and tables. Setfix's facade of `native` re-exports it as `native::register`, so its callers did not
+    change. The same facade holds the re-exports of setfix's items `native.rs` made, `component` among them, and
+    mounts T's extension (test-only), which runs setfix.
+  - **The waves' owner and schedule are setfix's.** The owner's database registers setfix's symbols on each
+    connection, and the schedule runs on the owner. Nothing in the run reads either but a lattice's operations,
+    `waves::schedule::lattice::Operations`, which the native lattices make. It is `native::lattices::Operations`
+    now, and the schedule re-exports it.
+  - `RUN_CARRIERS` named setfix's carrier. The run's own is the run's alone, and setfix's test binary registers
+    `setfix::RUN_CARRIERS` (the run's, then setfix's).
+  - `statkeep`'s tests measure setfix's column sources. They are a file now (`plan/statkeep/tests.rs`), which
+    setfix's facade of `statkeep` mounts.
+  - **Found on the way:**
+    - 6a moved the matcher's limits and counters to `matcher/steps.rs`, but the thread-local census
+      (`run_state::STATE`) still named them in `util.rs` and the matcher's root, so
+      `every_thread_local_is_listed_with_its_class` failed. Their entries name `steps.rs` now.
+    - Since 5b, device_metal's test binary registered no carriers, so
+      `a_recursive_stratum_on_the_device_is_the_cpus_fixpoint` stopped in `Carry::here`. It registers the
+      program's list now (`logic::CARRIERS`), as boot does.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac, and the workspace's with
+    `code-rule-profile,p-anchor-corpus,test-hooks`; clippy clean on the run, setfix and the planner): on a Linux
+    host, `rerail-run` and `rerail-setfix` in full and the native, lanes, run, run-state, statkeep, waves, schedule,
+    lattice and joins tests of `rerail-logic`, tests_logic and the planner, 329 of 331 pass. The census test was
+    one failure (fixed above, then 7 of 7 run-state and carrier tests pass). The other is the SQL profiling test,
+    which needs `node`. On a Mac (an M3), device_metal's lattice, join, nearest, fixpoint and column-statistics
+    tests: 21 pass, the recursive stratum's after its fix.
