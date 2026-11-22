@@ -10390,3 +10390,11 @@ Decision 0603, a stratum's levels and rounds as one program on the device (`note
 - **An index build keeps both sides' rules**: ours' taken-from-another-batch and give-back, and theirs' gated and live
   builds, which are never told to other batches.
 - **A set head's delta is theirs' block**, which the device rounds read and write. Each rerun finds its indexes again.
+
+### Q487. Roll-up 66 (Go-C-and-C-support a39040bb03 onto Pulling-it-all-together): what the merge chose
+
+Decision 0588, the expansion as one loop phase and §6's teams (`notes/roll-up-66-go-c.md`):
+- **A slab's refusals by layer**: the lease's under the pool's `RERAIL_POOL_DEBUG`, the residency's under 0588's
+  `RERAIL_PP_WHY`. Only a capacity refusal counts as capacity (87fe4b4a28).
+- **The setup's split** is 9 libraries, 5 calls deep: ours' and theirs' levels both counted.
+- **`pp_expand::RUNS`** is an id counter in the global-state list.
