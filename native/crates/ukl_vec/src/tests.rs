@@ -482,7 +482,12 @@ fn the_width_is_the_one_whose_registers_hold_the_values_live() {
     assert!(at8 >= 40, "the 20 values at width 8: {at8} vector registers");
     let ats = |ps: &[super::pressure::FuncPressure]| ps.iter().map(|f| (f.lanes, f.scalar, f.other, f.at[0], f.at[2], f.at[5])).collect::<Vec<_>>();
     assert!(w_few >= 8, "a kernel of few values runs wide: {w_few} ({:?})", ats(&few));
-    assert!(w_many < w_few, "one of many values runs narrower: {w_many} against {w_few} ({:?})", ats(&many));
+    // The widths their launches are fastest at (`width_times`, and the split-float product's measurement): the 20
+    // accumulators at 4 lanes, where they fit the registers; the split-float product at 32.
+    assert_eq!(w_many, 4, "one of many values runs at 4 lanes ({:?})", ats(&many));
+    let (p3, k3) = split_floats();
+    let w_split = super::pressure::width(&super::pressure::of(&ssa_of(&p3, &k3)), files);
+    assert_eq!(w_split, 32, "the split-float product runs at 32 lanes");
     // Both run as the interpreter does at the width chosen.
     for (p, k) in [(&p, &k), (&p2, &k2)] {
         let want = run_on(p, k, super::run::Exec::Interpret);
@@ -744,13 +749,9 @@ fn a_matrix_product_is_each_rows_columns_in_lanes() {
     }
 }
 
-/// A matrix product of floats stored apart: each entry's sign a bit (32 to a word, entry `e` bit `e % 32` of word
-/// `e / 32`), its exponent a byte, its fraction 3 bytes (low byte first, the top bit 0). Each lane unpacks its
-/// operands to floats, sums their products as `fma` (each rounded once), and packs its result the same way, the
-/// sign bits of a row a ballot of its 32 lanes. The result's bits are a 32-bit `fma` product's.
-#[test]
-fn a_matrix_product_of_split_floats_is_a_floating_one() {
-    const N: usize = 32;
+/// A matrix product of 32 by 32 floats stored apart: each entry's sign a bit of a word, its exponent a byte, its
+/// fraction 3 bytes; its result stored the same way, each row's signs one SIMD group's ballot.
+fn split_floats() -> (super::lower::Program, super::vector::Kernel) {
     let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\n\
 #define UNPACK(sg, ex, mt, x) as_float(((sg[(x) >> 5u] >> ((x) & 31u)) << 31) | ((uint32_t)ex[x] << 23) | (uint32_t)mt[3u * (x)] | ((uint32_t)mt[3u * (x) + 1u] << 8) | ((uint32_t)mt[3u * (x) + 2u] << 16))\n\
 DEFINE_KERNEL2(rule, t_mms,\n\
@@ -786,6 +787,17 @@ DEFINE_KERNEL2(rule, t_mms,\n\
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("t_mms").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    (p, k)
+}
+
+/// A matrix product of floats stored apart: each entry's sign a bit (32 to a word, entry `e` bit `e % 32` of word
+/// `e / 32`), its exponent a byte, its fraction 3 bytes (low byte first, the top bit 0). Each lane unpacks its
+/// operands to floats, sums their products as `fma` (each rounded once), and packs its result the same way, the
+/// sign bits of a row a ballot of its 32 lanes. The result's bits are a 32-bit `fma` product's.
+#[test]
+fn a_matrix_product_of_split_floats_is_a_floating_one() {
+    const N: usize = 32;
+    let (p, k) = split_floats();
     // Fractions that use all 23 bits, both signs, exponents around 1.
     let float = |x: usize, salt: u32| {
         let h = (x as u32).wrapping_mul(0x9e37_79b9).wrapping_add(salt).rotate_left(13).wrapping_mul(0x85eb_ca6b);
@@ -833,9 +845,165 @@ DEFINE_KERNEL2(rule, t_mms,\n\
         let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
         let _ = at.cl.set(Ok(c));
         assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+        // A development measurement (`RERAIL_UKL_VEC_BENCH`): the least of 50 launches.
+        if std::env::var("RERAIL_UKL_VEC_BENCH").is_ok() {
+            let best = (0..50)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    run(&at, super::run::Exec::Ssa);
+                    t.elapsed().as_secs_f64() * 1e6
+                })
+                .fold(f64::MAX, f64::min);
+            eprintln!("BENCH t_mms w{w}: {best:.1} us a launch");
+        }
     }
     // One SIMD group's code, its chunks a loop of it: no fiber.
     assert_eq!(super::fiber::prepared(), fibers, "fibers prepared for a group with no barrier");
+}
+
+/// A compiled function's counted loop (machine code as text, `compile_listed`): from the block of its first fused
+/// multiply-add to its back edge, the jumps between blocks left out.
+#[cfg(target_arch = "aarch64")]
+fn fma_loop(code: &str) -> Vec<&str> {
+    let lines: Vec<&str> = code.lines().collect();
+    let fm = lines.iter().position(|l| l.trim_start().starts_with("fmadd ") || l.trim_start().starts_with("fmla ")).expect("a multiply-add");
+    let start = (0..fm).rev().find(|&i| lines[i].starts_with("block")).expect("its block");
+    let end = (fm..lines.len()).find(|&i| lines[i].trim_start().starts_with("cbnz ")).expect("its back edge");
+    lines[start + 1..=end].iter().copied().filter(|l| l.starts_with("  ") && !l.trim_start().starts_with("b label")).collect()
+}
+
+/// The split-float matrix product's loop at each width is vector code as written by hand:
+/// - nothing in the stack: its constants and accumulators are in registers (one sign multiplier for every 4 lanes,
+///   one swizzle pattern for each window offset, no pattern for exponent bytes);
+/// - each 4 lanes' fraction one swizzle (`tbl`) of a window of B's bytes, its exponents a widening (`uxtl`) of a
+///   window of 16 (under 16 lanes, where registers are left, a swizzle): B's bytes are never loaded one at a time;
+/// - A's fraction bytes loads at offsets 1 apart from one register;
+/// - at 1 lane, each sign bit's shift a shift of the count the source masks (`x & 31`), with no mask of its own;
+/// - the counter up to 0, tested at the loop's end with no compare;
+/// - fewer instructions a lane at each wider width.
+/// AArch64's code.
+#[test]
+#[cfg(target_arch = "aarch64")]
+fn the_split_float_products_loop_is_vector_code() {
+    let (p, k) = split_floats();
+    let ssa = ssa_of(&p, &k);
+    let mut last = f64::MAX;
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile_listed(&ssa, &k.name, w, &super::exec::places()).unwrap();
+        let code = c.listing.last().expect("the kernel's code for a chunk whose lanes all run");
+        let body = fma_loop(code);
+        let count = |op: &str| body.iter().filter(|l| l.trim_start().starts_with(op)).count();
+        let text = body.join("\n");
+        assert!(!text.contains("[sp"), "w{w}: the loop reads or writes the stack:\n{text}");
+        let per = body.len() as f64 / f64::from(w);
+        assert!(per < last, "w{w}: {per:.2} instructions a lane, against {last:.2} at half the width:\n{text}");
+        last = per;
+        // A's bytes: its exponent and its 3 fraction bytes, the fraction's from one register at offsets k, k+1, k+2.
+        let at: Vec<(String, i64)> = body
+            .iter()
+            .filter_map(|l| {
+                let r = l.trim_start().strip_prefix("ldrb ")?;
+                let (base, off) = r.split_once("[")?.1.trim_end_matches(']').split_once(", #")?;
+                Some((base.to_string(), off.parse().ok()?))
+            })
+            .collect();
+        assert!(
+            at.iter().any(|(b, o)| at.contains(&(b.clone(), o + 1)) && at.contains(&(b.clone(), o + 2))),
+            "w{w}: A's fraction bytes are not loaded at offsets from one register:\n{text}"
+        );
+        if w == 1 {
+            let masks = body.iter().filter(|l| l.trim_start().starts_with("and ") && l.ends_with(", #31")).count();
+            assert_eq!(masks, 2, "w1: the shifts' counts masked again:\n{text}");
+        }
+        if w >= 2 {
+            assert_eq!(count("ldrb "), 4, "w{w}: B's bytes loaded one at a time:\n{text}");
+        }
+        if w >= 4 {
+            let tbl = if w >= 16 { w / 4 } else { 2 * w / 4 };
+            assert_eq!(count("tbl "), tbl as usize, "w{w}: a swizzle for each 4 lanes' fraction (and exponents, under 16 lanes):\n{text}");
+            assert_eq!(count("uxtl") > 0, w >= 16, "w{w}: the exponent bytes a widening at 16 lanes and more:\n{text}");
+            assert_eq!(count("mul "), w as usize / 4, "w{w}: the sign bits' products:\n{text}");
+        }
+        // The back edge: the counter's increment, then a test of it against 0.
+        let (inc, br) = (body[body.len() - 2].trim_start(), body[body.len() - 1].trim_start());
+        let reg = br.strip_prefix("cbnz ").and_then(|r| r.split(',').next()).unwrap();
+        assert!(inc.starts_with(&format!("add {reg}, {reg}, #1")), "w{w}: the loop's end:\n{inc}\n{br}");
+    }
+}
+
+/// Bytes and 16-bit lanes next to each other (each lane's the next), unsigned and signed, and `or`s of a record's
+/// bytes each shifted to its place by a multiple of 8 (a 32-bit word of 4 bytes, 24 bits of 3 in another order, a
+/// word of two 16-bit halves), and an `or` whose bytes overlap (one byte twice, at 0 and 8; two at 0; one shifted
+/// by 4): at every width, as the interpreter's.
+#[test]
+fn next_bytes_and_records_bytes_ored_are_each_lanes() {
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\n\
+DEFINE_KERNEL2(rule, t_rec,\n\
+               ROBUFFER, uint8_t, ub, \"[256]\",\n\
+               ROBUFFER, int8_t, sb, \"[256]\",\n\
+               ROBUFFER, uint16_t, uh, \"[128]\",\n\
+               ROBUFFER, int16_t, sh, \"[128]\",\n\
+               ROBUFFER, uint8_t, rec, \"[256]\",\n\
+               RWBUFFER, uint32_t, out, \"[512]\",\n\
+               LID0,     uint32_t, lid, )\n\
+{\n\
+    out[lid] = (uint32_t)ub[lid] * 3u;\n\
+    out[64u + lid] = (uint32_t)((int32_t)sb[lid] * 5);\n\
+    out[128u + lid] = (uint32_t)uh[lid] + 1u;\n\
+    out[192u + lid] = (uint32_t)((int32_t)sh[lid] - 7);\n\
+    out[256u + lid] = (uint32_t)rec[4u * lid] | ((uint32_t)rec[4u * lid + 1u] << 8) | ((uint32_t)rec[4u * lid + 2u] << 16) | ((uint32_t)rec[4u * lid + 3u] << 24);\n\
+    out[320u + lid] = ((uint32_t)rec[3u * lid + 2u] << 16) | (uint32_t)rec[3u * lid] | ((uint32_t)rec[3u * lid + 1u] << 8);\n\
+    out[384u + lid] = (uint32_t)rec[2u * lid] | ((uint32_t)rec[2u * lid] << 8) | ((uint32_t)rec[2u * lid + 1u] << 4) | (uint32_t)rec[2u * lid + 1u];\n\
+    out[448u + lid] = (uint32_t)uh[2u * lid] | ((uint32_t)uh[2u * lid + 1u] << 16);\n\
+}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_rec").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let h = |x: u32, salt: u32| x.wrapping_mul(0x9e37_79b9).wrapping_add(salt).rotate_left(11).wrapping_mul(0x85eb_ca6b);
+    let ub: Vec<u8> = (0..256).map(|x| (h(x, 1) >> 24) as u8).collect();
+    let sb: Vec<i8> = (0..256).map(|x| (h(x, 2) >> 24) as i8).collect();
+    let uh: Vec<u16> = (0..128).map(|x| (h(x, 3) >> 16) as u16).collect();
+    let sh: Vec<i16> = (0..128).map(|x| (h(x, 4) >> 16) as i16).collect();
+    let rec: Vec<u8> = (0..256).map(|x| (h(x, 5) >> 24) as u8).collect();
+    let mut want = vec![0u32; 512];
+    for l in 0..64usize {
+        let r = |i: usize| u32::from(rec[i]);
+        want[l] = u32::from(ub[l]) * 3;
+        want[64 + l] = (i32::from(sb[l]) * 5) as u32;
+        want[128 + l] = u32::from(uh[l]) + 1;
+        want[192 + l] = (i32::from(sh[l]) - 7) as u32;
+        want[256 + l] = u32::from_le_bytes([rec[4 * l], rec[4 * l + 1], rec[4 * l + 2], rec[4 * l + 3]]);
+        want[320 + l] = r(3 * l + 2) << 16 | r(3 * l) | r(3 * l + 1) << 8;
+        want[384 + l] = r(2 * l) | r(2 * l) << 8 | r(2 * l + 1) << 4 | r(2 * l + 1);
+        want[448 + l] = u32::from(uh[2 * l]) | u32::from(uh[2 * l + 1]) << 16;
+    }
+    let run = |k: &super::vector::Kernel, exec| {
+        let mut out = vec![0u32; 512];
+        let ptr = |p: *const u8| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args = [
+            ptr(ub.as_ptr()), ptr(sb.as_ptr().cast()), ptr(uh.as_ptr().cast()), ptr(sh.as_ptr().cast()), ptr(rec.as_ptr()),
+            ptr(out.as_mut_ptr().cast()), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4]),
+        ];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [64, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        out
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    let ssa = ssa_of(&p, &k);
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile_listed(&ssa, &k.name, w, &super::exec::places()).unwrap();
+        // At 16 lanes and more, each 4 lanes' swizzles: one for each record's word (the 4 bytes', the 3 bytes', the
+        // two halves'), and the overlapping bytes' three (the byte at 0 and 8 one; the other byte's two loads, the one
+        // shifted by 4 and the one at 0, each its own). The lanes next to each other are widenings, no swizzle.
+        if w >= 16 && cfg!(target_arch = "aarch64") {
+            let code = c.listing.last().unwrap();
+            let tbl = code.lines().filter(|l| l.trim_start().starts_with("tbl ")).count();
+            assert_eq!(tbl, 6 * w as usize / 4, "w{w}: the swizzles:\n{code}");
+        }
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+    }
 }
 
 /// Lanes of 1 and 2 bytes some bytes apart, as windows of their bytes and shuffles: signed bytes 3 apart, 2-byte

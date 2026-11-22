@@ -109,7 +109,7 @@ pub unsafe fn prepare(ctx: &mut Ctx, stack: &mut Stack, f: Start, arg: u64) {
         }
         w(24, arg); // r12
         w(16, f as usize as u64); // r13
-        w(48, trampoline as usize as u64); // the return address
+        w(48, trampoline as *const () as u64); // the return address
         ctx.sp = sp;
     }
 }
