@@ -1493,7 +1493,24 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     let _ = &x.tokens;
     // The parser's own code, but for what nothing in it calls.
     let parts: Vec<String> = RUNTIME.split("\n\n").chain(words.split("\n\n")).map(|p| p.trim_matches('\n').to_owned()).filter(|p| !p.is_empty()).collect();
+    // The methods take the file's length only where one reads it (`walk`'s `string` takes none).
+    let (sig, call) = ("src: &[u8], len: usize, starts: &[u32]", "(src, len, starts, d, &mut i, [");
+    let methods: String = lp.method_code.borrow().concat();
+    if !reads_ident(&methods.replace(sig, "").replace(call, ""), "len") {
+        out = out.replace(sig, "src: &[u8], starts: &[u32]").replace(call, "(src, starts, d, &mut i, [");
+    }
     Ok(drop_uncalled(out, &parts))
+}
+
+/// Whether `code` names `id` (not as part of a longer name, a field or a method).
+fn reads_ident(code: &str, id: &str) -> bool {
+    let b = code.as_bytes();
+    code.match_indices(id).any(|(k, _)| {
+        let before = k.checked_sub(1).map(|j| b[j]);
+        let after = b.get(k + id.len()).copied();
+        let ident = |c: Option<u8>| c.is_some_and(|c| c.is_ascii_alphanumeric() || c == b'_');
+        !ident(before) && before != Some(b'.') && !ident(after)
+    })
 }
 
 /// `out` without each of `parts` (a function and its comments, as written in `out`) that nothing else in `out` calls.

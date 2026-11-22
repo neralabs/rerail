@@ -1283,7 +1283,7 @@ fn json_tier2_is_walks_shape() {
     let calls: Vec<&str> = tier2.split("match peek(src, starts, i) {\n").skip(1).filter(|m| m.contains("value_primitive::<S>(")).collect();
     let places: Vec<&str> = tier2.split("let s = starts[i] as usize;\nmatch src[s] {\n0x7b => {").skip(1).collect();
     assert_eq!(places.len() + calls.len(), 3, "a value's decision at three places");
-    assert_eq!(tier2.matches("_ => {\ne = unsafe { value_primitive::<S>(src, len, starts, d, &mut i, [").count(), 3, "each place's `_` the primitive");
+    assert_eq!(tier2.matches("_ => {\ne = unsafe { value_primitive::<S>(src, starts, d, &mut i, [").count(), 3, "each place's `_` the primitive");
     let primitive = tier2.split("fn value_primitive<S").nth(1).expect("the primitive").split("\nOk(e)\n}").next().expect("its body");
     for arm in ["0x22 => {\ne = unsafe { string::<S>(", "0x74 if src[s..s + 4] == *b\"true\"", "0x66 if src[s..s + 5] == *b\"false\"", "0x6e if src[s..s + 4] == *b\"null\"", "let end = number_end(src, s)?;\ne = token(d, &mut i, "] {
         assert!(primitive.contains(arm), "`{arm}` the primitive's:\n{primitive}");

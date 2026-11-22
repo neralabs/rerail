@@ -81,7 +81,7 @@ found these differences:
    - The function is simdjson's `bit_indexer::write`: nothing where the bits are none; then four; then two at a time,
      each test inside the one before, to 24; then one at a time.
 
-Later, the same day, a second and a third reading found five more differences, done as follows:
+Later, the same day, a second and a third reading found six more differences, done as follows:
 
 10. **`peek` returns the record's byte** (`u8`), as `walk` reads `*v`. Every arm it feeds is a byte pattern.
 11. **A string's escapes are read as `escaped_string` reads them.**
@@ -102,6 +102,8 @@ Later, the same day, a second and a third reading found five more differences, d
     - Alternatives that are each one byte are one test: the exponent's sign, as in `parse_exponent`.
 14. **The root's calls test no depth.** No level is open there (`depth` is 0), as at `walk`'s document. Each list's
     calls keep their test. JSON's `if depth == DEPTH` is then at the four calls inside the two lists' loops.
+15. **The methods take the file's length only where one reads it.** With no end bound, `string` read none: the
+    methods' signature and their calls drop `len`, as `walk`'s `string` takes none.
 
 Implementer's choices:
 - **The string's start.** It stays `q & ~string_tail`, not `structural_start & q`: the JIT's split of a region read

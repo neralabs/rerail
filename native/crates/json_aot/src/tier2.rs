@@ -176,7 +176,7 @@ static HEX_VALUE: [u32; 256] = [0xffff_0000, 0xffff_0000, 0xffff_0000, 0xffff_00
 /// # Safety
 /// The CPU runs `S`'s backend (`run_best` chose it).
 #[inline(always)]
-unsafe fn string<S: rerail_simd8::Simd8x64>(src: &[u8], len: usize, starts: &[u32], d: &mut Cursor<Cells>, ip: &mut usize, n: [u32; 1]) -> Result<usize, u32> {
+unsafe fn string<S: rerail_simd8::Simd8x64>(src: &[u8], starts: &[u32], d: &mut Cursor<Cells>, ip: &mut usize, n: [u32; 1]) -> Result<usize, u32> {
 let mut i = *ip;
 let mut e = 0usize;
 let s = starts[i] as usize;
@@ -272,13 +272,13 @@ Ok(e)
 /// # Safety
 /// The CPU runs `S`'s backend (`run_best` chose it).
 #[inline(always)]
-unsafe fn value_primitive<S: rerail_simd8::Simd8x64>(src: &[u8], len: usize, starts: &[u32], d: &mut Cursor<Cells>, ip: &mut usize, n: [u32; 5]) -> Result<usize, u32> {
+unsafe fn value_primitive<S: rerail_simd8::Simd8x64>(src: &[u8], starts: &[u32], d: &mut Cursor<Cells>, ip: &mut usize, n: [u32; 5]) -> Result<usize, u32> {
 let mut i = *ip;
 let mut e = 0usize;
 let s = starts[i] as usize;
 match src[s] {
 0x22 => {
-e = unsafe { string::<S>(src, len, starts, d, &mut i, [n[0]]) }?;
+e = unsafe { string::<S>(src, starts, d, &mut i, [n[0]]) }?;
 }
 // `number`: its words by their bytes, then its own.
 0x74 if src[s..s + 4] == *b"true" && !in_row(src[s + 4], 3) => {
@@ -389,7 +389,7 @@ continue 'run;
 }
 }
 _ => {
-e = unsafe { value_primitive::<S>(src, len, starts, d, &mut i, [3, 4, 5, 6, 7]) }?;
+e = unsafe { value_primitive::<S>(src, starts, d, &mut i, [3, 4, 5, 6, 7]) }?;
 }
 }
 close(d, len as u64);
@@ -409,7 +409,7 @@ match peek(src, starts, i) {
 0x22 => {}
 _ => return Err(at(src, starts, i)),
 }
-e = unsafe { string::<S>(src, len, starts, d, &mut i, [18]) }?;
+e = unsafe { string::<S>(src, starts, d, &mut i, [18]) }?;
 match peek(src, starts, i) {
 0x3a => {
 i += 1;
@@ -456,7 +456,7 @@ continue 'run;
 }
 }
 _ => {
-e = unsafe { value_primitive::<S>(src, len, starts, d, &mut i, [9, 10, 11, 12, 13]) }?;
+e = unsafe { value_primitive::<S>(src, starts, d, &mut i, [9, 10, 11, 12, 13]) }?;
 }
 }
 close(d, e as u64);
@@ -583,7 +583,7 @@ continue 'run;
 }
 }
 _ => {
-e = unsafe { value_primitive::<S>(src, len, starts, d, &mut i, [3, 4, 5, 6, 7]) }?;
+e = unsafe { value_primitive::<S>(src, starts, d, &mut i, [3, 4, 5, 6, 7]) }?;
 }
 }
 match peek(src, starts, i) {
