@@ -740,6 +740,49 @@ fn a_string_with_templates_is_one_record() {
     }
 }
 
+/// Texts the grammar refused and the lean parser reads: a `when` entry ended by nothing or by
+/// `;`, a parameter named by a modifier's word (`vararg`, `noinline`, `crossinline`, `reified`),
+/// a lambda's trailing comma, a header ended by an `import` on its line, a string over a line,
+/// and a `\$` in a raw string.
+#[test]
+fn small_readings_are_the_lean_parsers() {
+    same(&[
+        "val x = when (y) { else -> 1 }\n",
+        "val x = when (y) { 1 -> a 2 -> b }\n",
+        "val x = when (y) { 1 -> a; 2 -> b }\n",
+        "val x = when (y) { 1 -> a; }\n",
+        "val x = when (y) {\n    1 -> a; // c\n    2 -> b\n}\n",
+        "val x = when { a -> { b } else -> c }\n",
+        "fun f(noinline: Int) {}\n",
+        "fun f(vararg: Int, noinline b: () -> Unit) {}\n",
+        "fun f(vararg a: Int, vararg @A b: Int) {}\n",
+        "val vararg = 1\n",
+        "fun f() { noinline(1) }\n",
+        "class A(val vararg: Int)\n",
+        "class A(vararg val a: Int)\n",
+        "val reified = 1\n",
+        "inline fun <reified T : Any> g(reified: T) = reified\n",
+        "fun <reified> f() {}\n",
+        "class A<reified out T>\n",
+        "val f = { a, -> a }\n",
+        "val f = { a, b, -> a }\n",
+        "val f = { (a, b), -> a }\n",
+        "import a.b import c\n",
+        "package a import b\n",
+        "import a.b as c import d.*\n",
+        "import a.b; import c\n",
+        "val s = \"a\nb\"\n",
+        "val s = \"a ${b}\nc\"\n",
+        "val s = \"a $b\nc\"\n",
+        "val s = \"\n\"\nval t = 1\n",
+        "val h = \"\"\"\\$a\"\"\"\n",
+        "val h = \"\"\"a\\$b c\"\"\"\n",
+        "val h = \"\"\"\\\\$a\"\"\"\n",
+        "val h = \"\"\"\\${a}\"\"\"\n",
+    ]);
+    refused(&["val h = \"\"\"a\\$$b\"\"\"\n", "val h = \"\"\"a\\$\"\"\"\n", "val s = `a\nb`\n"]);
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
@@ -748,23 +791,17 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val x = when (a) {\n    1 -> b\n    /* c */\n    else -> d\n}\n",
         "val s = \"${f(\"${x}\")}\"\n",
         "val s = \"${if (a) { 1 } else 2}\"\n",
-        "val h = \"\"\"\\$a\"\"\"\n",
-        "import a.b import c\n",
         "val s = 'x\n",
-        "val s = \"a\nb\"\n",
         "val s = \"${ {x} }\"\n",
         "val s = \"${}\"\n",
         "val s = \"open\n",
         "/* /* nested */ */\npackage a\n",
         "/* open\n",
-        "val f = { a, -> a }\n",
-        "val x = when (y) { else -> 1 }\n",
         "val x = 1d\n",
         "val x = 1.5L\n",
         "val x = 1_\n",
         "val x = 0x\n",
         "class A { val x = 1 }\n",
-        "fun f(noinline: Int) {}\n",
         // A comment lost before `catch`, `finally` or `else` (not `else ->`): not read yet.
         "fun f() {\n    try { a() }\n    /* c */ catch (e: E) {}\n}\n",
     ]);

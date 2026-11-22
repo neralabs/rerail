@@ -128,14 +128,18 @@ error "a block comment open at the end of the file" by tokens when f_block & las
 error "a string open at the end of the file" by tokens when (f_str | f_tail | f_rstr | f_rtail) & last_byte
 error "a character open at the end of the file" by tokens when f_chr & last_byte
 error "a backtick name open at the end of the file" by tokens when f_tick & last_byte
-# None of them goes over a line in Kotlin: one that does is not read.
-escape "a string, a character or a backtick name over a line" when (f_str | f_tail | f_chr | f_tick) & lf
+# A character or a backtick name over a line is not read (the lean lexer refuses them). A
+# string over a line is: the lean lexer reads it to its quote.
+escape "a character or a backtick name over a line" when (f_chr | f_tick) & lf
 
 # --- Strings -----------------------------------------------------------------------------------
 
-# A raw string's bytes after its `"""`, and a raw tail's after its `}`. No backslash escapes in it: a `\$` is not read yet.
+# A raw string's bytes after its `"""`, and a raw tail's after its `}`. No backslash escapes in it.
 mask rbody      = f_rstr & ~o_rstr & ~prev(o_rstr) & ~prev(o_rstr, 2) | f_rtail & ~o_rtail
-escape "a backslash before `$` in a raw string" when rbody & dollar & prev(backslash)
+# A `\$` there is content, and the lean parser's reader passes the byte after it too: before a
+# quote it ends the string after that one quote, and a `$` after it starts no template. Those
+# are not read.
+escape "a `\$` before a quote or a `$` in a raw string" when rbody & dollar & escaped(backslash) & next(dq | dollar)
 # The lean parser ends a raw string at a run of three quotes or more in it, and keeps the
 # quotes past three as none of the string's leaves.
 escape "a raw string closed by four quotes or more" when rbody & dq3 & next(dq, 3)
@@ -326,9 +330,9 @@ token punct     = start p_start pair two_start
 keywords simple_identifier {
   "as" "break" "class" "continue" "do" "else" "false" "for" "fun" "if" "in" "interface" "is"
   "null" "object" "return" "super" "this" "throw" "true" "try" "typealias" "val" "var" "when"
-  "while" "vararg" "noinline" "crossinline"
+  "while"
 } soft {
-  "package" "import" "by" "constructor" "L" "u" "U" "uL" "UL"
+  "package" "import" "by" "constructor" "L" "u" "U" "uL" "UL" "vararg" "noinline" "crossinline"
   "expect" "data" "inner" "value" "actual" "set" "get" "override" "suspend" "annotation" "sealed" "lateinit" "tailrec" "operator" "infix" "inline" "external" "public" "private" "internal" "protected" "abstract" "final" "open" "const" "reified" "field" "property" "receiver" "param" "setparam" "delegate" "companion" "init" "dynamic" "where" "catch" "finally" "enum" "file" "out"
 }
 keywords interpolated_identifier { } soft { "expect" "data" "inner" "value" "actual" "set" "get" "override" "suspend" "annotation" "sealed" "lateinit" "tailrec" "operator" "infix" "inline" "external" "public" "private" "internal" "protected" "abstract" "final" "open" "const" "vararg" "noinline" "crossinline" "reified" "field" "property" "receiver" "param" "setparam" "delegate" "companion" "constructor" "init" "dynamic" "where" "catch" "finally" "enum" "out" }
@@ -494,6 +498,15 @@ mark ty_susp    = tokens "suspend" simple_identifier | backtick_name | "(" | "@"
 # A delegation specifier's `suspend`, before a function type (the lean parser's
 # `delegation_specifiers`): the specifier's own leaf.
 mark ds_susp    = tokens "suspend" simple_identifier | backtick_name | "("
+# A function parameter's modifier: `vararg`, `noinline` or `crossinline` a name or `@` follows
+# (the lean parser's `parameter_modifiers_ahead(true)`); else the word is the parameter's name.
+# An `import` on the line of the header before it: the lean lexer's `asi` ends the header there
+# with a semicolon of no width.
+mark imp_same   = tokens "import" without semi
+mark pm         = tokens "vararg" | "noinline" | "crossinline" simple_identifier | backtick_name | "@"
+# A type parameter's `reified` a name, `@`, `in` or `out` follows (the lean parser's
+# `type_parameter_modifiers_ahead`); else the word is the parameter's name.
+mark tpm        = tokens "reified" simple_identifier | backtick_name | "@" | "in" | "out"
 # A class parameter's modifier: any modifier a name, `@` or another word follows (the lean
 # parser's `parameter_modifiers_ahead(false)`).
 mark cp_mod     = tokens "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" simple_identifier | backtick_name | "@" | "val" | "var" | "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual"
@@ -536,11 +549,11 @@ tree kotlin {
   node soft_name        = retag simple_identifier soft_word
   choice type_name      = simple_identifier as type_identifier | backtick_name as type_identifier | soft_type_name | 'file' as type_identifier
   node soft_type_name   = retag type_identifier soft_word
-  choice soft_word      = 'constructor' | 'expect' | 'data' | 'inner' | 'value' | 'actual' | 'set' | 'get' | 'override' | 'suspend' | 'annotation' | 'sealed' | 'lateinit' | 'tailrec' | 'operator' | 'infix' | 'inline' | 'external' | 'public' | 'private' | 'internal' | 'protected' | 'abstract' | 'final' | 'open' | 'const' | 'field' | 'property' | 'receiver' | 'param' | 'setparam' | 'delegate' | 'companion' | 'init' | 'dynamic' | 'where' | 'catch' | 'finally' | 'enum'
-  node package_header   = 'package' identifier (semi | ';')
+  choice soft_word      = 'constructor' | 'expect' | 'data' | 'inner' | 'value' | 'actual' | 'set' | 'get' | 'override' | 'suspend' | 'annotation' | 'sealed' | 'lateinit' | 'tailrec' | 'operator' | 'infix' | 'inline' | 'external' | 'public' | 'private' | 'internal' | 'protected' | 'abstract' | 'final' | 'open' | 'const' | 'vararg' | 'noinline' | 'crossinline' | 'reified' | 'field' | 'property' | 'receiver' | 'param' | 'setparam' | 'delegate' | 'companion' | 'init' | 'dynamic' | 'where' | 'catch' | 'finally' | 'enum'
+  node package_header   = 'package' identifier (semi | ';' | imp_same)
   node identifier       = name ('.' name)*
   node import_list      = import_header+
-  node import_header    = 'import' import_identifier [wild '.' '*' as wildcard_import | import_alias] (semi | ';')
+  node import_header    = 'import' import_identifier [wild '.' '*' as wildcard_import | import_alias] (semi | ';' | imp_same)
   node import_identifier = retag identifier name ('.' name)*
   node import_alias     = 'as' type_name
 
@@ -593,7 +606,7 @@ tree kotlin {
   node function_value_parameters = '(' [function_value_parameter (',' function_value_parameter)*] (trail_paren | ')')
   choice function_value_parameter = [parameter_modifiers] parameter ['=' expression]
   node parameter        = name ':' type
-  node parameter_modifiers = (annotation | parameter_modifier)+
+  node parameter_modifiers = (annotation | pm parameter_modifier)+
   node function_body    = block | '=' expression
   node primary_constructor = [[modifiers] 'constructor'] '(' [class_parameter (',' class_parameter)*] (trail_paren | ')')
   node class_parameter  = [class_parameter_modifiers] [binding_pattern_kind] name ':' type ['=' expression]
@@ -626,7 +639,7 @@ tree kotlin {
   # `where T : A, U : B`, as the lean parser's `type_constraints`.
   node type_constraints = 'where' type_constraint (',' type_constraint)*
   node type_constraint  = (annotation)* type_name ':' type
-  node type_parameter_modifiers = (reification_modifier | variance_modifier)+
+  node type_parameter_modifiers = (tpm reification_modifier | variance_modifier)+
   node reification_modifier = 'reified'
 
   # Modifiers: an annotation, or a word a declaration follows (`decl_mod`).
@@ -744,7 +757,7 @@ tree kotlin {
                         | '{' [statements] '}'
   # `{ ->`: not the tokens the grammar implies, so both are leaves.
   choice lambda_bare_open = '{' '->'
-  node lambda_parameters = lambda_parameter (',' lambda_parameter)*
+  node lambda_parameters = lambda_parameter (',' lambda_parameter)* [lam_trail]
   choice lambda_parameter = variable_declaration | multi_variable_declaration [':' type]
   node navigation_suffix = ('.' | qdot '?' merge '?.' '.' | '::') ('class' | name)
   node indexing_suffix  = '[' expression (',' expression)* (trail_bracket | ']')
@@ -784,12 +797,13 @@ tree kotlin {
   node try_expression   = 'try' blk '{' [statements] '}' (catch_block)* [finally_block]
   node catch_block      = 'catch' '(' name ':' type ')' blk '{' [statements] '}'
   node finally_block    = 'finally' blk '{' [statements] '}'
-  # A `when`: its subject, then its entries, each ended by a line break.
+  # A `when`: its subject, then its entries, each ended by a line break, a `;` or nothing (the
+  # lean parser's `semi`, tree-sitter's `optional(_semi)`: `{ else -> 1 }`).
   # An entry holds the line break that ends it (tree-sitter's `when_entry` takes its `_semi`), so
   # a comment before the break is the entry's.
   node when_expression  = 'when' [when_subject blk] '{' (when_entry)* '}'
   node when_subject     = '(' ['val' variable_declaration '='] expression ')'
-  node when_entry       = (when_condition (',' when_condition)* [when_trail] | 'else') '->' control_structure_body (semi | semi_close)
+  node when_entry       = (when_condition (',' when_condition)* [when_trail] | 'else') '->' control_structure_body [semi | semi_close | ';']
   node when_condition   = named neg_test | range_test | type_test | expression
   # One node from the `!`: a `range_test`, retagged a `type_test` at an `is`.
   node neg_test         = retag range_test '!' ('in' expression | neg_is)
@@ -805,6 +819,9 @@ tree kotlin {
   choice trail_paren    = trail ',' ')'
   # A `when` entry's: its own choice, so that `when_entry`'s implied `,` is not this one.
   choice when_trail     = trail ','
+  # A lambda's parameters': its own choice, so that `lambda_parameters`' implied `,` is not this
+  # one (the lean parser keeps the trailing comma's leaf).
+  choice lam_trail      = trail ','
   choice trail_angle    = trail ',' '>'
   choice trail_bracket  = trail ',' ']'
   choice trail_brace    = trail ',' [semi_close] '}'
@@ -877,11 +894,11 @@ tree kotlin {
   implied catch_block 'catch' '(' ':' ')' '{' '}'
   implied finally_block 'finally' '{' '}'
   implied when_subject '(' ')' 'val' '='
-  implied when_entry ',' 'else'
+  implied when_entry ',' 'else' ';'
   implied callable_reference '::' 'class'
   # Every mark a rule takes is asked only where a rule takes it, as the lean parser asks each
   # question where it branches (decision 0492). Not hidden: `generic`, where a `<` that opens type
   # arguments no rule reads refuses the file.
-  hidden apart this_at jump_at as_q as_split is_split qdot ge sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod
+  hidden apart this_at jump_at as_q as_split is_split qdot ge sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod pm tpm imp_same
   extra line_comment multiline_comment
 }
