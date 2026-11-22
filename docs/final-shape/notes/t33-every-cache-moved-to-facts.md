@@ -170,7 +170,7 @@ removed with nothing in its place but K1–K4.
 | tapes: `source_objects`, `tape_objects` (kept: they are objects) | (content, tag, grammar version, format) | `doc_key` and `doc_tape` as in the Intro; the object tables hold the bytes the answer's value names |
 | `guests.rs` `KEPT` | (text, grammar) | `parse_of`'s answer rows (K3) |
 | `cross_rows`, `cross_blocks`, `cross_components` (0076) | an import component's file bytes | goes: cross-file relations in K1, partitioned by the document of their first location column, maintained by K4. 0092 §6: keys of bytes have no cutoff |
-| `slice_rules`, `slice_document`, `slice_match`, `slice_span`, `slice_fresh` | the slice's rules and documents | the slice's match relations in K1, partitioned by document |
+| `slice_rules`, `slice_document`, `slice_match`, `slice_span`, `slice_fresh` | the slice's rules and documents | **built** (2026-11-21, `slice/kept.rs`): relations of the scope's space in K1, a document's rows its own partition. A run writes only the partitions of the documents it evaluated, reused or lost; the wave reads the others where they lie, through `kept_facts` (a temp view, no copy). The SQL column statistics of the two tables went with them. `slice_fresh` is the run's scratch |
 | `corpus_stats` | a path's stat to its source | goes: K2's `file_stat` |
 | `corpus_plans`, `corpus_plan_relations`, `corpus_manifests`, `corpus_manifest_plans`, `corpus_roots`, `corpus_live`, `corpus_state`, `corpus_decided`, `corpus_swept` (0053) | each run's manifest of what it used | collection is reachability: an object or a frame is live while a stored fact names it. How long an old state is kept is a `.cache` directive on the relation |
 | `session.rs` `SESSION` | the session's memo, cross part, phased exports, written outputs, statistics | the resident copy of K1's relations, written behind by 0102 |
@@ -208,8 +208,8 @@ rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.ph
 | Today | Key and check today | Becomes |
 |---|---|---|
 | `text_matcher`, `text_term`, `text_pending`, the stored automata (0075's memo entries) | the patterns' key | `dfa(g, a) :- text_group(g, patterns), …` answered by determinizing; the automaton is an object its value names |
-| `strings.rs` `MATCHERS`, `GROUPS`, `functions.rs` `CACHE`, `text.rs` `LOWERED` | a pattern | in-memory forms of a pattern fact, made again from it: nothing to write (compiling a regex is cheap; determinizing, above, is not) |
-| `text.rs` `NAMES` | a production's name | a profiling counter: state, not a cache (reclassify) |
+| `strings.rs` `MATCHERS`, `GROUPS`, `functions.rs` `CACHE`, `text.rs` `LOWERED` | a pattern | in-memory forms of a pattern fact, made again from it: nothing to write (compiling a regex is cheap; determinizing, above, is not). `CACHE`: **done**, listed as state (2026-11-21) |
+| `text.rs` `NAMES` | a production's name | a profiling counter: state, not a cache. **Done**, listed as state (2026-11-21) |
 | `prefilter_sets`, `term_postings`, `vocabulary_*`, `search_index_sets` | the store's own triggers and indexes | derived relations over tapes, in K1 per document, with the indexes they need |
 
 ### Step 8: the workspace pipeline

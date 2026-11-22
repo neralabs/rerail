@@ -3253,6 +3253,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-boot",
  "rerail-c-directives",
  "rerail-c-pp",

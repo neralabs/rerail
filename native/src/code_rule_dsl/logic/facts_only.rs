@@ -125,7 +125,10 @@ const SCRATCH: &[&str] = &[
     "stat_val",
     "stat_docrange",
     "{table} in code_rule_dsl/logic/native/setfix/lab.rs",
-    "{} in code_rule_dsl/slice.rs",
+    // The slice's run: the documents whose kept rows it does not read, and the memo's rows of the documents it
+    // reused (`slice::kept::views`), beside the kept ones it reads in place.
+    "slice_fresh",
+    "{} in code_rule_dsl/slice/kept.rs",
     // A test's in-memory input (`plan/acyclic/queries.rs`).
     "facts",
 ];
@@ -149,11 +152,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("corpus_state", "3"),
     ("corpus_decided", "3"),
     ("corpus_swept", "3"),
-    ("slice_rules", "3"),
-    ("slice_document", "3"),
-    ("slice_match", "3"),
-    ("slice_span", "3"),
-    ("slice_fresh", "3"),
     ("compiled_plans", "6"),
     ("compiled_plan_reads", "6"),
     ("plan_feedback", "6"),
@@ -191,8 +189,10 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
 /// merge took one out (2026-11-12); 58 when the cross-file memo's three tables went (decision 0450 §3, 2026-11-19); 57 when `local_check_results`, which nothing wrote, went (0450 step 2); 56 when
 /// `corpus_stats` went, a corpus file's content the observer's answer (t33 K2, 2026-11-21); 54 when the observer's
-/// answers and settings (`observed`, `observer_meta`) became kept facts of the content store (t33 K2).
-const NOT_YET_TABLES_PIN: usize = 54;
+/// answers and settings (`observed`, `observer_meta`) became kept facts of the content store (t33 K2); 49 when the
+/// slice's last run per scope became kept facts of the scope's space (t33 step 3), and `slice_fresh` was found to be
+/// the run's scratch.
+const NOT_YET_TABLES_PIN: usize = 49;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
@@ -213,6 +213,11 @@ const STATE: &[(&str, &str)] = &[
     // Profiling: the placements a recording run made, and the writer's jobs by kind.
     ("code_rule_dsl/logic/plan/placement.rs", "Recording"),
     // The coverage check's census of the shipped rule files, read once by a test process.
+    // A rule's pattern compiled on this thread (RER-131's group patterns, where `GROUPS` was): the in-memory form of
+    // the rule's own text, made again from it; compiling a regex is cheap, so nothing is written (t33 step 7).
+    ("code_rule_dsl/logic/strings/functions.rs", "CACHE"),
+    // A production's profiling counter's name, made once per name: a counter, not a result (t33 step 7).
+    ("code_rule_dsl/text.rs", "NAMES"),
     ("code_rule_dsl/logic/plan/coverage.rs", "CENSUS"),
     // The process's interned relation names (`front::Name`): one allocation per distinct name, not a result kept.
     // The relations' numbers (decision 0209 step 1, `table::rel_id`): an interner as `TABLE`, one number per name.
@@ -348,12 +353,10 @@ const NOT_YET_MAPS: &[(&str, &str, &str)] = &[
     ("code_rule_dsl/logic/derived.rs", "SESSION_MEMO", "6"),
     // The observed keeps, a handle a strand enters (decision 0113 §4).
     ("code_rule_dsl/logic/plan/keeps.rs", "ObservedAt", "6"),
-    // RER-131's compiled group patterns, where `GROUPS` was.
-    ("code_rule_dsl/logic/strings/functions.rs", "CACHE", "7"),
-    ("code_rule_dsl/text.rs", "NAMES", "7"),
 ];
-/// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised.
-const NOT_YET_MAPS_PIN: usize = 9;
+/// The pinned size of `NOT_YET_MAPS`: lowered by each move, never raised. 7 when a rule pattern's compiled form and a
+/// production's counter name were found to be state, no cache (t33 step 7, 2026-11-21).
+const NOT_YET_MAPS_PIN: usize = 7;
 
 fn src() -> PathBuf {
     std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..").join("src")
