@@ -1609,6 +1609,22 @@ function forgetSnapshots(discovery: SourceDiscovery, worktrees: ReadonlySet<stri
   }
 }
 /**
+ * Keeps the `HEAD` and unmerged entries a walk read as what the next walk is judged from. The walk of the other worktrees
+ * keeps only those of checkouts in a worktree Git still lists: one Git stopped listing while the walk ran was let go of
+ * as the walk was taken (`#forgetWorktrees`), and a worktree Git lists again at its path is new to the session.
+ */
+function keepWalkedGit(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
+  const listed = (root: string): boolean => walk.inSession || inWorktrees(discovery, root);
+  keepEach(discovery.heads, walk.heads, listed);
+  keepEach(discovery.unmerged, walk.unmerged, listed);
+  // Kept after the audit: a checkout this walk was the first to pass is judged as one no walk has read (`stoppedSince`).
+  keepEach(discovery.unmerged, scan.unmerged, root => listed(root) && !discovery.unmerged.has(root));
+}
+/** Puts into `into` each entry of `from` whose root `keep` takes. */
+function keepEach<T>(into: Map<string, T>, from: ReadonlyMap<string, T>, keep: (root: string) => boolean): void {
+  for (const [root, value] of from) if (keep(root)) into.set(root, value);
+}
+/**
  * Whether `path` lies below one of `roots` (`""` holds every path). Each folder above `path` is looked up in `roots`, so
  * a walk that asks this of every file costs the depth of the file, not the number of the repository's worktrees.
  */
@@ -3275,10 +3291,7 @@ export class CodeRuleBridge {
     await this.#noteWalkedIgnoreFiles(discovery, walk, scan.sources);
     await this.#auditWalkEdits(discovery, walk, edits, uncaptured);
     this.#keepFirstSeenTexts(scan.firstSeen);
-    for (const [root, head] of walk.heads) discovery.heads.set(root, head);
-    for (const [root, entries] of walk.unmerged) discovery.unmerged.set(root, entries);
-    // Kept after the audit: a checkout this walk was the first to pass is judged as one no walk has read (`stoppedSince`).
-    for (const [root, entries] of scan.unmerged) if (!discovery.unmerged.has(root)) discovery.unmerged.set(root, entries);
+    keepWalkedGit(discovery, walk, scan);
     if (walk.inSession) this.#finishSessionWalk(discovery, walk, scan);
     else this.#finishWorktreeWalk(discovery, walk, scan);
     this.#observations?.set(this.#cwd, new Map(this.#observed));
