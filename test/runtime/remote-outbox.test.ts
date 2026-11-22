@@ -381,6 +381,48 @@ describe("remote sink outbox", () => {
     expect(sink.requests[1]!.records.find(item => item.type === "audit")).toMatchObject({ id: auditId, failures: [], failureCount: 0 });
   });
 
+  it("sends a scan's audit whose stored violations do not read with a failure that names them, and again whole once they are mended", async () => {
+    const { sessionId } = seed();
+    const audits = new SqliteAuditStore(databasePath());
+    const scanId = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "repository", mode: "log", origin: "scan", revision: 1, catalogRevision: "c1", ruleRevisions: [{ ruleId: "no-todo", revision: 1 }], paths: [] });
+    audits.finish(scanId, {
+      status: "completed",
+      violations: [{
+        id: "v1", ruleId: "no-todo", clauseId: "c", code: "TODO", mode: "log", message: "No TODO", path: "a.ts",
+        span: { startByte: 0, endByte: 4, startLine: 0, startColumn: 0, endLine: 0, endColumn: 4 }, captures: {}, variables: {},
+      }],
+    });
+    audits.close();
+    // Writes what `edit` makes of the scan's stored violations past the CHECK. The history triggers parse the violations
+    // on UPDATE, so they are set aside for the write and put back: the state a damaged file leaves.
+    const editViolations = (edit: (text: string) => string): void => {
+      const database = new Database(databasePath());
+      database.pragma("ignore_check_constraints = ON");
+      const triggers = database.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'audits' AND sql LIKE '%violations_json%'").all() as Array<{ name: string; sql: string }>;
+      database.transaction(() => {
+        const text = database.prepare("SELECT violations_json FROM audits WHERE audit_id = ?").pluck().get(scanId) as string;
+        for (const trigger of triggers) database.exec(`DROP TRIGGER "${trigger.name}"`);
+        database.prepare("UPDATE audits SET violations_json = ? WHERE audit_id = ?").run(edit(text), scanId);
+        for (const trigger of triggers) database.exec(trigger.sql);
+      })();
+      database.close();
+    };
+    const sentOfScan = (request: number): unknown[] => sink.requests[request]!.records.filter(item => String(item.id).startsWith(scanId))
+      .map(item => [item.type, item.id, ...(item.type === "audit" ? [(item.failures as Array<{ clauseId: string }>).map(failure => failure.clauseId)] : [])]);
+    // Its closing bracket made a space and its length kept, so only the test of its lists tells the outbox it is mended.
+    editViolations(text => `${text.slice(0, -1)} `);
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    const [result] = await outbox().sync({ force: true });
+    expect(result!.error).toBeUndefined();
+    expect(sentOfScan(0)).toEqual([["audit", scanId, ["violations"]]]);
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(1);
+    editViolations(text => `${text.slice(0, -1)}]`);
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(2);
+    expect(sentOfScan(1)).toEqual([["audit", scanId, []], ["violation", `${scanId}:0`]]);
+  });
+
   it("keeps the cursor on failure, backs off, and resends the same batch id once the remote is back", async () => {
     seed();
     addRemote({ url: sink.url, token: "test-token", content: true }, home);

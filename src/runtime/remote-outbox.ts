@@ -824,8 +824,13 @@ const SCAN_VIOLATION_KEYS = `SELECT ordinal, violation_key, logged FROM (
     ${violationCopiesSql("audit", "audits audit, json_each(audit.violations_json) violation", "audit.audit_id = ?")}
   ) WHERE copy = 1`;
 
-/** `audit`'s violations by ordinal: the first copy of each, its key and whether it was logged. */
+/**
+ * `audit`'s violations by ordinal: the first copy of each, its key and whether it was logged. None when its record
+ * lists none: a scan's stored violations that the record reads as none (`readLists`) would end the sync in SQLite's
+ * `json_each`.
+ */
 function violationKeysOf(rerail: Database.Database, audit: AuditRecord): ReadonlyMap<number, { violation_key: string; logged: number }> {
+  if (audit.violations.length === 0) return new Map();
   const rows = rerail.prepare(audit.origin === "scan" ? SCAN_VIOLATION_KEYS : ONGOING_VIOLATION_KEYS).all(audit.auditId) as Array<{ ordinal: number; violation_key: string; logged: number }>;
   return new Map(rows.map(entry => [entry.ordinal, entry]));
 }
