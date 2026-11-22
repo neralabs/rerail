@@ -1105,7 +1105,7 @@ impl Captures {
     }
 
     /// The captures a stored witness's JSON object holds; `None` for any other shape.
-    pub(crate) fn from_value(value: &Value) -> Option<Self> {
+    pub fn from_value(value: &Value) -> Option<Self> {
         let mut captures = Self::default();
         for (name, value) in value.as_object()? {
             if name == PROJECTION {
@@ -1150,7 +1150,7 @@ impl Serialize for Captures {
 /// A regex witness: named groups that matched become captures; the message and fix
 /// substitute their text. `span` locates a match in the file's content; it gives `None` for a
 /// match in no source text (a `file.path` regex), whose witness then has no span or captures.
-pub(super) fn regex_witness(
+pub fn regex_witness(
     path: &str,
     regex: &Regex,
     found: &regex::Captures<'_>,

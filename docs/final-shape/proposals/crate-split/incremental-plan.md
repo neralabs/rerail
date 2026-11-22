@@ -695,3 +695,23 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     `each` tests of classic, boot and the logic, demand, transducer and language test crates, 158 pass (one a pack
     data test). The other is a transducer test the device lane refuses (`UnsupportedBackend`) on a Linux host:
     there seven of `transducer::packed::tests` are refused so; they read no code this step moved.
+- **Step 6c** (2026-11-21): `rerail-rules` (`native/crates/rules`), over `rerail-matcher`. The plan's
+  `rerail-rule-compile` and `rerail-admission` (6e) are one crate: the model, the compiler, the evaluation over a
+  file (`eval`, `query`, `violations`, `resolution`) and the relational admission (`residency::admission`) are one
+  cycle (the model holds the admission's plans, the compiler compiles them, the admission evaluates through `eval`
+  and writes violations), 24.6k lines, with the SQLite hooks and functions the admission registers (`hooks`,
+  `crypto`).
+  - P's and D's SQL anchor engines (19.4k lines) and `waves::relational` (10.6k lines, test-only), which read the
+    model and the admission's database, moved with it: its matcher facade mounts them now, so classic's matcher
+    is this crate's. 54.6k lines in all. `tape::token_readers` (a test) stays classic's.
+  - What the workspace reads of them (the metrics' fields, the compiled clauses', the plans', `select_when`'s
+    leaves and answers) was crate-private: widened (`pub`).
+  - 6b's checks left out `code-rule-profile` and `p-anchor-corpus`: with them, classic read 34 private items of the
+    profile (`PhaseTimer`, the `record_*` functions, the owners). Widened here; that check is clean now.
+  - Left in classic (6d, the workspace): `workspace`, `findings`, `placement`, `rule_api`, `stats`,
+    `facts::facts_a` and the P table.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; classic's check with
+    `code-rule-profile,p-anchor-corpus,test-hooks` clean; clippy clean on it and classic): on a Linux host,
+    `rerail-rules`, `rerail-matcher` and `rerail-classic` in full, 206 pass; `rerail-tests-compile` and
+    `rerail-tests-matcher` in full and the admission's tests of `rerail-tests-logic`, 1391 pass (four are pack
+    data tests).

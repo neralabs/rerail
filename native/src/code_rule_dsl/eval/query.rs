@@ -918,7 +918,7 @@ impl TapeCacheSlot {
 
     // Read by P's relational workspace path (test-only, open item O18).
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
-    pub(crate) fn seed(
+    pub fn seed(
         language: GrammarDialect,
         file: &FileInput,
         image: &crate::code_rule_dsl::tape::FileImage,

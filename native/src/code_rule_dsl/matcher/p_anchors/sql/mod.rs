@@ -103,7 +103,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
     }
 
     #[cfg(feature = "code-rule-profile")]
-    pub(in crate::code_rule_dsl) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.nodes
     }
     pub fn visited_nodes(&self) -> usize {
@@ -119,7 +119,7 @@ impl<'tree> FileAnchorIndex<'tree, TapeDoc> {
             .adopt(self._root.root().get_doc().node(pre as u32))
     }
     #[cfg(feature = "code-rule-profile")]
-    pub(in crate::code_rule_dsl) fn estimated_bytes(&self) -> usize {
+    pub fn estimated_bytes(&self) -> usize {
         self.file.as_ref().map_or(0, |file| file.bytes)
     }
 

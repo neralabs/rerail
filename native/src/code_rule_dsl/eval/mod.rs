@@ -111,7 +111,7 @@ impl SnapshotContext for NoContext {
 }
 
 /// The snapshot's derived context (`SnapshotContext`).
-pub(crate) type DerivedPackages = Box<dyn SnapshotContext>;
+pub type DerivedPackages = Box<dyn SnapshotContext>;
 
 fn derive_context(
     snapshot: &mut Snapshot,
@@ -127,7 +127,7 @@ fn derive_context(
 // cratify: `ecma` is rerail-lang-ecma's (it mounts it)
 
 /// Evaluates `code_rule`, its grammar matchers matched natively (`matcher::run_clause`).
-pub(super) fn evaluate_code_rule(
+pub fn evaluate_code_rule(
     code_rule: &CompiledCodeRule,
     snapshot: &Snapshot,
     mode: &str,
@@ -142,7 +142,7 @@ pub(super) fn evaluate_code_rule(
     Ok(evaluation)
 }
 
-pub(super) fn evaluate_clauses(
+pub fn evaluate_clauses(
     code_rule: &CompiledCodeRule,
     snapshot: &Snapshot,
     mode: &str,
