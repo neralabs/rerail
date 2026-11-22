@@ -941,6 +941,12 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
 - `openInBrowser` puts the capability link in `argv` (`open`, `xdg-open`), readable by other users via `ps` while the
   process runs. Accepted: the window is short.
 - The enforcer's spool in `tmpdir()` survives a crash.
+- On Windows a hook learns that the pipe `RERAIL_ENGINE_SOCKET` names is the home's daemon on one connection (Windows
+  names the process serving the pipe, or the engine there proves it holds the capability, a proof up to 12 s old
+  included) and sends the event, with the capability, on another. If the daemon ends between the two and another user
+  creates a pipe of that name in that moment, that user gets the event and the capability. The window is short, and
+  the other user cannot end the daemon to open it. What would close it: the same check on the connection that carries
+  the event.
 - `/native/session` still returns `error.message` in its `400`s.
 - A `.git` gitlink in an archive (not a clone) can point at another repository's common directory and inherit its
   `rerail-repository-id`, rules and start state when a session starts in that folder. A path a tool call names gets no
