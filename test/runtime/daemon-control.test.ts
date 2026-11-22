@@ -1042,6 +1042,28 @@ describe("a state file Windows left behind", () => {
     expect(existsSync(stateFile)).toBe(false);
   });
 
+  // A daemon that exited by itself between the lookup and its end: the end cannot open it, and its pid is free. The stop
+  // answers that it stopped, as for any daemon it finds ending, and clears its record.
+  it("stops a daemon whose engine has no proof that exited before its end, and clears its record", async () => {
+    const stateFile = join(home, DAEMON_STATE_FILE);
+    const state = stateFor({ pid: DEAD_PID, kernelSocketPath: PIPE, accessToken: "capability", startedAt: OLDER_STARTED_AT });
+    let running = true;
+    const machine: DaemonMachine = {
+      ...olderEngine(OLDER_STARTED_AT - 600),
+      kill: () => {
+        if (!running) throw Object.assign(new Error("kill ESRCH"), { code: "ESRCH" });
+        return true;
+      },
+      endProcessStartedBy: () => {
+        running = false;
+        return "unread";
+      },
+    };
+    await writeFile(stateFile, JSON.stringify(state));
+    expect(await stopDaemon(home, machine)).toBe("stopped");
+    expect(existsSync(stateFile)).toBe(false);
+  });
+
   // An end that leaves the process running after the stop's kill wait, or that cannot open it while its pid runs, keeps
   // the record, and the stop says so: a later stop finds the daemon again.
   it.each([
