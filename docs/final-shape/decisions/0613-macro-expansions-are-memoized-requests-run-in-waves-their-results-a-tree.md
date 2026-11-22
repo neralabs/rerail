@@ -173,6 +173,55 @@ So:
 - **In the corpus, the waves shorten the slowest piece about 2.8 times.** The rest is one request's own reading,
   which 0588's loop would split as it splits the files.
 
+## Arguments as references, run by continuations (measured 2026-11-22)
+
+In this rule a child takes its arguments as references and waits only where it reads them. The model is an
+executor of the requests' schedule, written as continuations (`Lazy` in `measure_the_waves_of_expansions`):
+- **Reading.** A request reads its list. At each call it reaches, it waits only for the expansions that its call's
+  name and shape came from (`Request::dep_at`): its name, its `(` and `)`, the commas that split it, and any
+  parentheses a producer left unpaired. Tokens are recorded by the expansion that produced them (`Tk::exp`).
+  Tokens of an ancestor's list are ready.
+- **Waiting.** A wait leaves a continuation on the expansion it waits for. When that expansion completes, the
+  continuation goes back on the queue.
+- **Arguments.** A child's arguments are posted with it and read as holes; nothing waits for an argument as a
+  whole.
+- **The memo.** A hit waits for the first result. If the first is the hit's own ancestor (an open tail
+  re-entering the expansion whose list it ended), the hit is computed again; waiting would deadlock.
+- **Open tails.** A child with an open tail holds its parent's reading after it until it is done.
+
+Nothing was left waiting at the end, in any unit.
+
+| | Corpus, headers stubbed | Corpus with the system's headers | Boost.Preprocessor |
+|---|---|---|---|
+| The longest invocation, serially | 146 steps | 326 | 2,081,468 (`seq.c`) |
+| Waves: after / holes / references / free | 48 / 49 / **37** / 37 | 169 / 166 / **166** / 166 | `tuple.c`: 54,666 / 33,831 / **5,940** / 2,786 |
+| Continuations left waiting (all units) | 43 | 598 | 21,195 |
+| Steps computed, as a share of serial | 83.4% | 77.2% | 11.7% |
+| The slowest piece (`tif_getimage.c`, 393 device steps) | 155 model steps serially; **43** with references, the free bound | | |
+
+Boost, in steps:
+
+| Unit | Serially | Holes | References | Free |
+|---|---|---|---|---|
+| `seq.c` | 2,081,468 | 3,966 | **747** | 490 |
+| `tuple.c` | 97,770 | 33,831 | **5,940** | 2,786 |
+| `array.c` | 96,762 | 33,330 | **5,869** | 2,773 |
+| `arithmetic.c` | 145,131 | 1,881 | **253** | 148 |
+| `variadic.c` | 30,941 | 1,617 | **145** | 144 |
+| `control.c` | 16,972 | 5,446 | **468** | 468 |
+| `facilities.c` | 16,897 | 6,618 | **654** | 610 |
+
+So:
+- **References come close to the free bound.**
+  - In the corpus they reach it.
+  - In most of Boost they come within 10%.
+  - `tuple.c` and `array.c` stay about 2 times above it. Their tuples are calls whose commas come from an argument's
+    expansion, so the call's shape needs that expansion.
+  - Against waiting for whole arguments (holes), references are 5 to 11 times shorter in Boost.
+- **Waits are few:** 21,195 continuations over 4.4 M requests.
+- **The slowest corpus piece.** References reach the free bound there: 43 model steps against 155 serially. Scaled
+  by the device's 393 steps, that is about 0.37 ms of the loop, against 1.32 ms today.
+
 ## Decision
 
 1. **An expansion is a request.** Kinds:
@@ -198,6 +247,9 @@ So:
    - A lane group runs one request with 0588's loop. At an invocation whose key is done, it writes a `P_NODE`
      entry. At one that isn't, it posts a request (or waits on the pending one), writes a `P_NODE` hole, and goes
      on past it.
+   - **A child takes its arguments as references** (measured above). It is posted at once. It and its own
+     calls wait, by continuation, only for the expansions their names and call shapes come from: a `(`, a `)`,
+     a splitting comma, or an unpaired parenthesis.
    - **An argument's expansion is a hole too** (measured above: waiting for them serializes Boost's iterations).
      Its edges are both live in the rescan, since its tokens are read inline: a function-like name before it
      takes its `(` first, and its open tail takes the body's `(` after it. The same check and continuation
@@ -231,8 +283,8 @@ So:
    - **Next:**
      - **Done since:** the model in steps, against the device's slowest piece; the corpus with the system's
        headers; the arguments' edges, statically and taken.
-     - **Next:** a call's dependence on the one argument its tokens come from, not all of them; a child
-       reading its arguments as references.
+     - **Done since:** a child taking its arguments as references, run by continuations (the model's `Lazy`).
+     - **Next:** step 2, a CPU executor that produces the tokens, checked against the serial pass's.
 2. **A CPU reference of the waves**, test-only: the serial pass's reader, run as requests with the memo, the holes,
    the edge checks and the continuations. Its output must equal the serial pass's on the eval tests, the corpus
    and Boost.Preprocessor. This proves the semantics (painting, tails, `(` from a child, `#`/`##` on unexpanded

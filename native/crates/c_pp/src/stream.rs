@@ -221,6 +221,10 @@ pub struct Pp<'a> {
     building: u32,
     /// By (expansion, parameter): its argument's request.
     arg_reqs: HashMap<(u32, usize), u32>,
+    /// The requests' dependencies (`Request::dep_at`): the expansions whose tokens a call's name
+    /// and shape came from; `call_deps`, the call being collected's.
+    deps: Vec<u32>,
+    call_deps: Vec<u32>,
     /// Reading an `#if`'s line: `defined` is an operator.
     in_if: bool,
     /// Collecting a call's arguments: a file's end ends them, not the file.
@@ -290,6 +294,8 @@ impl<'a> Pp<'a> {
             last_req: 0,
             building: 0,
             arg_reqs: HashMap::new(),
+            deps: Vec::new(),
+            call_deps: Vec::new(),
             in_if: false,
             collecting: 0,
             lines,
@@ -379,7 +385,7 @@ impl<'a> Pp<'a> {
             self.sink.token(&t, text, at, off);
         }
         if !self.reqs.is_empty() {
-            self.sink.requests(&self.reqs);
+            self.sink.requests(&self.reqs, &self.deps);
         }
         true
     }
@@ -601,7 +607,22 @@ impl<'a> Pp<'a> {
                     needs = t.exp != id || args.iter().flatten().any(|a| a.exp != id);
                 }
             }
+            let dv: Vec<u32> = if self.reqs.is_empty() {
+                Vec::new()
+            } else {
+                let mut v = if fnlike { std::mem::take(&mut self.call_deps) } else { Vec::new() };
+                v.push(t.exp);
+                v.sort_unstable();
+                v.dedup();
+                v
+            };
+            let before = self.reqs.len();
             self.enter(d, t, end, args, parent, ppos, needs);
+            if self.reqs.len() > before {
+                let r = &mut self.reqs[before];
+                (r.dep_at, r.dep_n) = (self.deps.len() as u32, dv.len() as u32);
+                self.deps.extend(dv);
+            }
         }
     }
 
@@ -653,6 +674,14 @@ impl<'a> Pp<'a> {
     fn collect_args(&mut self, d: u32, name: &Tk) -> Result<(Vec<Vec<Tk>>, Tk), bool> {
         self.collecting += 1;
         let _lp = self.lex_raw();
+        // A measurement's (`Sink::requests`): the tokens whose producers the call's shape needs:
+        // its `(` and `)`, the commas that split it, and the parentheses a producer leaves unpaired.
+        let trace = !self.reqs.is_empty();
+        let mut paired: Vec<(u32, i32)> = Vec::new();
+        if trace {
+            self.call_deps.clear();
+            self.call_deps.push(_lp.exp);
+        }
         let (n, variadic) = (self.defs[d as usize].params.len(), self.defs[d as usize].variadic);
         let mut args: Vec<Vec<Tk>> = vec![Vec::new()];
         let mut depth = 0u32;
@@ -662,15 +691,28 @@ impl<'a> Pp<'a> {
             if t.kind == P::Eof {
                 break false;
             }
+            if trace && (t.is(T::LParen) || t.is(T::RParen)) && !(t.is(T::RParen) && depth == 0) {
+                let d = if t.is(T::LParen) { 1 } else { -1 };
+                match paired.iter_mut().find(|p| p.0 == t.exp) {
+                    Some(p) => p.1 += d,
+                    None => paired.push((t.exp, d)),
+                }
+            }
             if t.is(T::LParen) {
                 depth += 1;
             } else if t.is(T::RParen) {
                 if depth == 0 {
                     end = t;
+                    if trace {
+                        self.call_deps.push(t.exp);
+                    }
                     break true;
                 }
                 depth -= 1;
             } else if t.is(T::Comma) && depth == 0 && !(variadic && args.len() == n) {
+                if trace {
+                    self.call_deps.push(t.exp);
+                }
                 args.push(Vec::new());
                 continue;
             }
@@ -680,6 +722,9 @@ impl<'a> Pp<'a> {
             args.last_mut().unwrap().push(t);
         };
         self.collecting -= 1;
+        if trace {
+            self.call_deps.extend(paired.iter().filter(|p| p.1 != 0).map(|p| p.0));
+        }
         let file = self.cur_file();
         if !done {
             self.note_cut();

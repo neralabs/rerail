@@ -86,7 +86,7 @@ pub trait Sink {
     fn entered(&mut self, e: Entered) {}
 
     /// The unit's expansions as requests (`wants_entries`, decision 0613's measurement), at its end.
-    fn requests(&mut self, r: &[Request]) {}
+    fn requests(&mut self, r: &[Request], deps: &[u32]) {}
 
     /// A pragma (a `#pragma` line's text after `pragma`, or `_Pragma`'s string).
     fn pragma(&mut self, file: u32, at: u32, text: &[u8]) {}
@@ -148,6 +148,12 @@ pub struct Request {
     pub edge_last: u32,
     /// Calls in the rescan whose name and `(` came from different parts (an argument and the body).
     pub taken: u32,
+    /// An invocation's dependencies, `deps[dep_at..dep_at + dep_n]` of `Sink::requests`: the
+    /// expansions (`Tk::exp`) whose tokens its name and its call's shape came from (its `(` and `)`,
+    /// the commas that split it, parentheses a producer left unpaired). A child taking its
+    /// arguments as references waits for these alone.
+    pub dep_at: u32,
+    pub dep_n: u32,
 }
 
 /// No outputs.
@@ -197,9 +203,9 @@ impl Sink for Tee<'_> {
         self.0.entered(e);
         self.1.entered(e);
     }
-    fn requests(&mut self, r: &[Request]) {
-        self.0.requests(r);
-        self.1.requests(r);
+    fn requests(&mut self, r: &[Request], deps: &[u32]) {
+        self.0.requests(r, deps);
+        self.1.requests(r, deps);
     }
     fn pragma(&mut self, file: u32, at: u32, text: &[u8]) {
         self.0.pragma(file, at, text);
