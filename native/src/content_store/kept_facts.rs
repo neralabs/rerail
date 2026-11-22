@@ -266,14 +266,25 @@ fn holder_ident() -> [u8; 32] {
 
 /// `rel`'s rows of partition `part`: `n` rows of `types.len()` words, which `fill` gives row by row, written into a
 /// block of their own as they are given (`BlockFlat`, never a heap vector) and digested there; with none, the
-/// partition's rows of `rel` gone. A fill that gives other than `n` whole rows is refused.
+/// partition's rows of `rel` gone. A fill that gives other than `n` whole rows is refused. Kept as given: in the order
+/// given, none dropped (`sorted_put` keeps them in canonical order).
 pub fn filled_put<E: Into<StoreError>>(rel: &str, ident: [u8; 32], part: i64, types: &[u8], n: usize, fill: impl FnOnce(&mut dyn FnMut(i64)) -> Result<(), E>) -> StoreResult<KeptPut> {
+    block_put(rel, ident, part, types, n, true, fill)
+}
+
+/// `filled_put`, its rows kept in canonical order (columns ascending, duplicates dropped), the order recorded: a probe
+/// of leading columns is a range (`Packed::probe`).
+pub fn sorted_put<E: Into<StoreError>>(rel: &str, ident: [u8; 32], part: i64, types: &[u8], n: usize, fill: impl FnOnce(&mut dyn FnMut(i64)) -> Result<(), E>) -> StoreResult<KeptPut> {
+    block_put(rel, ident, part, types, n, false, fill)
+}
+
+fn block_put<E: Into<StoreError>>(rel: &str, ident: [u8; 32], part: i64, types: &[u8], n: usize, given: bool, fill: impl FnOnce(&mut dyn FnMut(i64)) -> Result<(), E>) -> StoreResult<KeptPut> {
     use sha2::Digest as _;
     let width = types.len();
     let (what, digest) = if n == 0 {
         (KeptWhat::Gone, 0)
     } else {
-        let mut block = BlockFlat::new(n, width, true);
+        let mut block = BlockFlat::new(n, width, given);
         let mut h = sha2::Sha256::new();
         let mut given = 0;
         fill(&mut |v| {
@@ -1220,6 +1231,19 @@ impl super::ContentStore {
     pub fn kept_space(&self, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
         let Some(rows) = self.kept_row(space)? else { return Ok(None) };
         Ok(self.open_kept(space, rows)?.map(|(_, kept)| kept))
+    }
+}
+
+impl super::ContentStore {
+    /// Notes `space`'s chain as a write in a transaction of this process's left it (`written`, from `write_space`),
+    /// once that transaction has committed: the rows this process holds are the new ones.
+    pub(in crate::content_store) fn note_kept(&self, space: &[u8; 32], written: Option<ChainRows>) {
+        let Some(rows) = written else { return };
+        super::held::snapshot_kept(&self.database_path, |kept| {
+            if let Some(held) = kept {
+                held.insert(*space, rows);
+            }
+        });
     }
 }
 

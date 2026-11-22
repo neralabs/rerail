@@ -850,6 +850,8 @@ impl Atoms {
         // The kept facts beside them (decisions 0456 K8, 0439), on a store's connection.
         if let Some(path) = connection.path().filter(|path| !path.is_empty()) {
             super::kept_facts::vtab::install(connection, Path::new(path))?;
+            // The prefilter's tables as its kept facts (t33 steps 6 and 7).
+            super::prefilter::vtab::install(connection, Path::new(path))?;
         }
         Ok(atoms)
     }

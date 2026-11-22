@@ -212,6 +212,43 @@ rows. The constants' rows (`constant_rows`, step 1) stay in the same `<store>.ph
 | `text.rs` `NAMES` | a production's name | a profiling counter: state, not a cache. **Done**, listed as state (2026-11-21) |
 | `prefilter_sets`, `term_postings`, `vocabulary_*`, `search_index_sets` | the store's own triggers and indexes | derived relations over tapes, in K1 per document, with the indexes they need |
 
+### Steps 6 and 7 in detail: the prefilter's tables (2026-11-22, Typing-support)
+
+User, 2026-11-22: "complete step 6 and 7 without the crating", and "Keep the SQL, and provide an alternative and
+equivalent path that allows access to the kept facts via a virtual table. We do want to maintain the SQL
+compatibility at least for now." So the SQL route (`RERAIL_CANDIDATES=sql`, 03 §17) stays, and reads what the tables
+held through eponymous virtual tables of the same names and columns, over the kept facts.
+
+- **A tape's rows** (`prefilter_sets`, `tape_kind_counts`, `term_postings`, `term_coverage`): kept relations of the
+  prefilter's space, one partition a tape (its `tape_id`), put whole when the tape is published. A posting is bytes
+  (the delta-varint or container segment the readers decode): the tape's byte heap is one relation (`at`, `word`),
+  and a row names its slice. Tape ids are reused after collection, so the tape's partition goes in the transaction
+  that deletes its row (reclamation), as the cascade did.
+- **The store-wide sums** (`kind_size`, `term_kind_freq`, `term_node_freq`, `term_freq`, and the residue the cap
+  reads): counted, as an aggregate is, in runs of deltas (partitions below 0): each publication writes one run, its
+  tapes' counts less those of the tapes it replaces, and a collection one run of the deleted tapes' counts negated.
+  A run merges with the one before it once it is at least half its size, so a cold run of N files writes O(N log N)
+  rows and a reader adds O(log N) runs. A term's sum counts its nodes and the (tape, kind) rows that carry it:
+  `term_freq.n` is the rows, as the table's was. Written in the publication's own transaction, which holds the
+  write lock, so two processes never lose a count.
+- **The vocabularies** (`vocabulary_*`, `text_matcher`, `text_term`, `text_pending`): one mechanism
+  (`ContentStore::vocabulary_terms`; `regex_terms` for the prefilter's regexes, `text::vocabulary::fill` for the
+  text layer's plans). A key has its matching terms kept as a partition of the vocabulary space, with the sums' last
+  publication it was tested up to. It is brought up to date before a statement runs, over the terms of the runs past
+  that point (a merge across it reads the merged run's terms again); of those, a term no tape holds any more leaves
+  the set, so a set never outgrows the vocabulary. A literal set (`^(?:a|b)$`, a plan's whole literals) is found by
+  value and kept too: the SQL route reads every regex's terms from `vocabulary_term`. Keys all up to date are read
+  from the held rows without the write lock; the statement's own transaction only reads.
+- **The readers**: the set lowering (`sets.rs`), the gates and the text slots (`terms.rs`) read a batch's tapes'
+  rows in place through `prefilter::kept`; the SQL route and the planner's statistics (`stats/inputs.rs`) read
+  through the virtual tables (`prefilter::vtab`), which take `tape_id`, `kind`, `term`, `lang` and `expression`
+  equalities as keys and scan otherwise. The vocabulary's SQL fill (`vocabulary-fill.sql`) and the functions only it
+  called (`nera_terms_matching`, `nera_prefix_ranges`, `nera_literal_set`) went with the tables.
+- **Kept in canonical order** (`kept_facts::sorted_put`): a tape's or a run's rows are probed by their leading
+  columns, so they are written sorted, unlike `filled_put`'s rows as given.
+- **Not moved, gone:** `edge_freq` and the set's `edges` (nothing but their tests and the trigger read them).
+- **The search indexes** (`search_index_sets`, the FTS tables): next, on their own.
+
 ### Step 8: the workspace pipeline
 
 `completed_workspace_revisions`, `completed_directory_reuse`, `candidate_*`, `context_check_results`: **Moved**

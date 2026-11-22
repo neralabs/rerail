@@ -144,22 +144,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("corpus_live", "3"),
     ("corpus_state", "3"),
     ("corpus_decided", "3"),
-    ("kind_size", "6"),
-    ("edge_freq", "6"),
-    ("tape_kind_counts", "6"),
-    ("term_freq", "6"),
-    ("term_kind_freq", "6"),
-    ("term_node_freq", "6"),
-    ("term_coverage", "6"),
-    ("text_matcher", "7"),
-    ("text_term", "7"),
-    ("text_pending", "7"),
-    ("prefilter_sets", "7"),
-    ("term_postings", "7"),
-    ("vocabulary_predicate", "7"),
-    ("vocabulary_term", "7"),
-    ("vocabulary_literal", "7"),
-    ("vocabulary_pending", "7"),
     ("search_index_sets", "7"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
@@ -175,8 +159,9 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// results, their catalogs and checks and its completed directories became entries of the per-file memo (t33 step 8); 31
 /// when the fact relations' column statistics went, which nothing wrote but the demand's terminal estimate, now a kept
 /// fact (t33 step 6); 30 when the corpus path's statistics (`stat_blob`) became kept relations, one partition a memo
-/// plan (t33 step 6).
-const NOT_YET_TABLES_PIN: usize = 30;
+/// plan (t33 step 6); 14 when the prefilter's per-tape access paths, its store-wide counts and both vocabularies became
+/// kept facts of the store, read through virtual tables of their names (t33 steps 6 and 7).
+const NOT_YET_TABLES_PIN: usize = 14;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
@@ -314,6 +299,7 @@ const STATE: &[(&str, &str)] = &[
     ("code_rule_dsl/logic/plan/search.rs", "OWN_PLANNED"),
     ("code_rule_dsl/logic/plan/keeps.rs", "OWN_OBSERVED"),
     ("content_store/reclamation.rs", "EXECUTED_COLLECT_SQL"),
+    ("content_store/prefilter.rs", "REJECT_TERM"),
     ("content_store/schema.rs", "SCHEMA_OBJECTS"),
     ("content_store/snapshots.rs", "AFTER_GIT_TREE_TRANSACTION"),
     // The session this thread's runs are runs of (decision 0204): the caller's handle, set and taken back by it.

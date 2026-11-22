@@ -59,9 +59,7 @@ const RELATIONS: &[&str] = &["facts_chain", "memo_entries", "memo_packs"];
 /// Caches made before decision 0103, each to move to the two rules (§7 lists each one's). This list may only shrink.
 const NOT_YET_MOVED: &[&str] = &[
     // Tapes, documents and their indexes.
-    "tape_objects", "file_documents", "prefilter_sets", "tape_kind_counts", "term_postings", "term_freq", "term_kind_freq",
-    "term_node_freq", "term_coverage", "edge_freq", "text_matcher", "text_pending", "text_term", "vocabulary_literal",
-    "vocabulary_pending", "vocabulary_predicate", "vocabulary_term", "kind_size", "search_index_sets",
+    "tape_objects", "file_documents", "search_index_sets",
     // The whole run's record.
     "run_record",
     // The derivation graph: what it records is the keys of §7.

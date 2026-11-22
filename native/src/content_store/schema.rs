@@ -593,40 +593,8 @@ DROP TABLE IF EXISTS tree_pages_pending;
 DROP TABLE IF EXISTS tree_result_segments;
 DROP TABLE IF EXISTS completed_snapshot_trees;
 
--- The prefilter's per-tape access paths (prefilter.rs, from PIAT's anchor
--- store): kind positions, case-exact term postings and the nodes terms do not cover, each keyed by
--- tape and dying with it. Kinds are atoms (tape tag * 1024 + kind code). Postings are delta-varint
--- preorder lists (`nera_postings`). The frequency tables count over every tape that has a set.
-CREATE TABLE IF NOT EXISTS prefilter_sets (
-    tape_id INTEGER PRIMARY KEY REFERENCES tape_objects(tape_id) ON DELETE CASCADE,
-    version INTEGER NOT NULL CHECK(version >= 0),
-    nodes INTEGER NOT NULL CHECK(nodes >= 0),
-    edges BLOB NOT NULL
-) STRICT;
-CREATE TABLE IF NOT EXISTS tape_kind_counts (
-    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
-    kind INTEGER NOT NULL,
-    n INTEGER NOT NULL CHECK(n > 0),
-    size INTEGER NOT NULL CHECK(size >= 0),
-    postings BLOB NOT NULL,
-    PRIMARY KEY (tape_id, kind)
-) STRICT, WITHOUT ROWID;
--- Ingestion statistics (stats/ingest.rs, from Typing-support's `stats.py`): nodes of each kind
--- and the sum of their descendants, and direct edges by (parent kind, child kind, field; 0 is
--- none). A tape's own edges are its set's `edges` segment (`nera_edges`), subtracted when it goes.
-CREATE TABLE IF NOT EXISTS kind_size (
-    kind INTEGER PRIMARY KEY,
-    n INTEGER NOT NULL,
-    size INTEGER NOT NULL
-) STRICT;
-CREATE TABLE IF NOT EXISTS edge_freq (
-    pkind INTEGER NOT NULL,
-    ckind INTEGER NOT NULL,
-    field INTEGER NOT NULL,
-    n INTEGER NOT NULL,
-    PRIMARY KEY (pkind, ckind, field)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS edge_freq_by_child ON edge_freq(ckind);
+-- The prefilter's per-tape access paths, its store-wide counts and its vocabularies, and the text layer's
+-- vocabulary, are kept facts of the store (t33 steps 6 and 7): `RETIRED_TABLES`.
 -- Compiled plans (stats/plans.rs), the statistics their decisions read and each plan's observed
 -- selectivity and cost per backend are kept facts of the store (t33 step 6): a store made before
 -- loses the tables.
@@ -641,133 +609,6 @@ DROP TABLE IF EXISTS fact_value_stats;
 -- The corpus path's statistics (`stat_blob`, one encoded blob a memo plan) went (t33 step 6): they are kept relations
 -- of their own space, one partition a plan (keptstats.rs `Keeper::into_kept`).
 DROP TABLE IF EXISTS stat_blob;
--- Every `term` column below is the term's atom (`atoms`): its text is stored once.
-CREATE TABLE IF NOT EXISTS term_postings (
-    lang INTEGER NOT NULL,
-    term INTEGER NOT NULL,
-    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
-    kind INTEGER NOT NULL,
-    n INTEGER NOT NULL CHECK(n > 0),
-    postings BLOB NOT NULL,
-    PRIMARY KEY (lang, term, tape_id, kind)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS term_postings_by_tape ON term_postings(tape_id);
-CREATE TABLE IF NOT EXISTS term_freq (
-    lang INTEGER NOT NULL,
-    term INTEGER NOT NULL,
-    n INTEGER NOT NULL,
-    PRIMARY KEY (lang, term)
-) STRICT, WITHOUT ROWID;
--- Planner statistics (stats/inputs.rs, from Data-layer-rule-expressivity's `value_frequency`
--- and `value_kind_frequency`): nodes per (term, kind) and covered nodes per kind, over every
--- tape with a set. A kind's uncovered nodes are `kind_size.n - term_kind_freq.n`.
-CREATE TABLE IF NOT EXISTS term_node_freq (
-    lang INTEGER NOT NULL,
-    term INTEGER NOT NULL,
-    kind INTEGER NOT NULL,
-    n INTEGER NOT NULL,
-    PRIMARY KEY (lang, term, kind)
-) STRICT, WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS term_kind_freq (
-    kind INTEGER PRIMARY KEY,
-    n INTEGER NOT NULL
-) STRICT;
-CREATE TABLE IF NOT EXISTS term_coverage (
-    tape_id INTEGER NOT NULL REFERENCES prefilter_sets(tape_id) ON DELETE CASCADE,
-    kind INTEGER NOT NULL,
-    bad INTEGER NOT NULL,
-    residue INTEGER NOT NULL,
-    missing BLOB NOT NULL,
-    PRIMARY KEY (tape_id, kind)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS term_coverage_residue ON term_coverage(kind) WHERE residue > 0;
--- Publication adds the counts in one statement per table; removal, including a cascade from a
--- collected tape, counts down here.
-CREATE TRIGGER IF NOT EXISTS tape_kind_count_delete AFTER DELETE ON tape_kind_counts BEGIN
-    UPDATE kind_size SET n=n-OLD.n, size=size-OLD.size WHERE kind=OLD.kind;
-    DELETE FROM kind_size WHERE kind=OLD.kind AND n<=0;
-END;
-CREATE TRIGGER IF NOT EXISTS prefilter_set_delete AFTER DELETE ON prefilter_sets BEGIN
-    UPDATE edge_freq SET n=edge_freq.n-e.n FROM nera_edges(OLD.edges) e
-        WHERE edge_freq.pkind=e.pkind AND edge_freq.ckind=e.ckind AND edge_freq.field=e.field;
-    DELETE FROM edge_freq WHERE n<=0;
-END;
-CREATE TRIGGER IF NOT EXISTS term_posting_delete AFTER DELETE ON term_postings BEGIN
-    UPDATE term_freq SET n=n-1 WHERE lang=OLD.lang AND term=OLD.term;
-    DELETE FROM term_freq WHERE lang=OLD.lang AND term=OLD.term AND n<=0;
-    UPDATE term_node_freq SET n=n-OLD.n WHERE lang=OLD.lang AND term=OLD.term AND kind=OLD.kind;
-    DELETE FROM term_node_freq WHERE lang=OLD.lang AND term=OLD.term AND kind=OLD.kind AND n<=0;
-    UPDATE term_kind_freq SET n=n-OLD.n WHERE kind=OLD.kind;
-    DELETE FROM term_kind_freq WHERE kind=OLD.kind AND n<=0;
-END;
-
--- The prefilter's regex vocabulary (vocabulary.rs, from PIAT's
--- `vocabulary.sql`): each registered predicate's matching terms, filled in SQL when a candidate
--- statement first names it and kept current by the terms each publication adds. A term that
--- leaves `term_freq` leaves every predicate's set by cascade.
-CREATE TABLE IF NOT EXISTS vocabulary_predicate (
-    lang INTEGER NOT NULL,
-    expression TEXT NOT NULL,
-    ready INTEGER NOT NULL DEFAULT 0,
-    PRIMARY KEY (lang, expression)
-) STRICT, WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS vocabulary_term (
-    lang INTEGER NOT NULL,
-    expression TEXT NOT NULL,
-    term INTEGER NOT NULL,
-    PRIMARY KEY (lang, expression, term),
-    FOREIGN KEY (lang, expression) REFERENCES vocabulary_predicate(lang, expression) ON DELETE CASCADE,
-    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS vocabulary_term_deleted ON vocabulary_term(lang, term);
--- An exact literal set (`^(?:a|b)$`) matches exactly its literals: a join, not a regex per term.
--- A literal is text: it need not be a term (or an atom) yet.
-CREATE TABLE IF NOT EXISTS vocabulary_literal (
-    lang INTEGER NOT NULL,
-    expression TEXT NOT NULL,
-    term TEXT NOT NULL,
-    PRIMARY KEY (lang, term, expression),
-    FOREIGN KEY (lang, expression) REFERENCES vocabulary_predicate(lang, expression) ON DELETE CASCADE
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS vocabulary_literal_expression ON vocabulary_literal(lang, expression);
-CREATE TABLE IF NOT EXISTS vocabulary_pending (
-    lang INTEGER NOT NULL,
-    term INTEGER NOT NULL,
-    PRIMARY KEY (lang, term),
-    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
-) STRICT, WITHOUT ROWID;
--- An upsert that only counts an existing term up is an UPDATE: only new terms are pending.
-CREATE TRIGGER IF NOT EXISTS vocabulary_added AFTER INSERT ON term_freq BEGIN
-    INSERT OR IGNORE INTO vocabulary_pending VALUES(NEW.lang, NEW.term);
-END;
--- The text layer's vocabulary (code_rule_dsl/text, decision 0042): each kept plan's matching
--- terms by the plan's key. A key is filled over the whole vocabulary when first seen, then over
--- the terms added since: `text_pending` is a log of added terms in order, and `upto` the last
--- entry a key has read. Entries every key has read are dropped.
-CREATE TABLE IF NOT EXISTS text_matcher (
-    lang INTEGER NOT NULL,
-    key TEXT NOT NULL,
-    plan TEXT NOT NULL,
-    upto INTEGER NOT NULL,
-    PRIMARY KEY (lang, key)
-) STRICT, WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS text_term (
-    lang INTEGER NOT NULL,
-    key TEXT NOT NULL,
-    term INTEGER NOT NULL,
-    PRIMARY KEY (lang, key, term),
-    FOREIGN KEY (lang, key) REFERENCES text_matcher(lang, key) ON DELETE CASCADE,
-    FOREIGN KEY (lang, term) REFERENCES term_freq(lang, term) ON DELETE CASCADE
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS text_term_deleted ON text_term(lang, term);
-CREATE TABLE IF NOT EXISTS text_pending (
-    seq INTEGER PRIMARY KEY AUTOINCREMENT,
-    lang INTEGER NOT NULL,
-    term INTEGER NOT NULL
-) STRICT;
-CREATE TRIGGER IF NOT EXISTS text_vocabulary_added AFTER INSERT ON term_freq BEGIN
-    INSERT INTO text_pending(lang, term) VALUES(NEW.lang, NEW.term);
-END;
 -- The per-file memo's entries (decision 0240 §4, 0295 §4): where each one's image is in the segments beside the
 -- store (`<store>.memo/<pack>.seg`, `framed` 1: offset and length in the segment's block), by its plan's space and
 -- its part (its content's and path's), with its path, its content's SHA-256 and its document key. A path's contents
@@ -815,8 +656,9 @@ impl ContentStore {
                         }
                         apply_schema(&transaction)?;
                         super::analysis_scope::compact_existing_directory_receipts(&transaction)?;
-                        for table in RETIRED_TABLES {
-                            transaction.execute_batch(&format!("DROP TABLE IF EXISTS {table}"))?;
+                        let present: HashSet<(String, String)> = schema_object_names(&transaction)?.into_iter().collect();
+                        for table in RETIRED_TABLES.iter().filter(|t| present.contains(&("table".to_owned(), (**t).to_owned()))) {
+                            transaction.execute_batch(&format!("DROP TABLE {table}"))?;
                         }
                         if version != SCHEMA_VERSION {
                             transaction.pragma_update(None, "user_version", SCHEMA_VERSION)?;
@@ -928,7 +770,29 @@ fn holds_schema_objects(connection: &Connection) -> StoreResult<bool> {
 /// - The frames (decision 0104's first form of the kept facts, and their bookkeeping of decisions 0117, 0138, 0227
 ///   and 0295 §4): the kept facts are blocks (decision 0439). A floor-7 store made where frames were still kept as
 ///   metadata beside the chain (decision 0456 step 6a) has them.
-const RETIRED_TABLES: &[&str] = &["frames", "frame_segments", "frame_part_used", "frame_spaces", "frame_confirmed", "frame_used", "frame_program_used"];
+/// - The prefilter's per-tape access paths, its store-wide counts and its vocabularies, and the text layer's
+///   vocabulary (t33 steps 6 and 7): kept facts (`prefilter::kept`, `prefilter::vocabulary`), read through virtual
+///   tables of the same names (`prefilter::vtab`). Children first; their triggers go with them. A name a virtual table
+///   has is dropped only while the store holds a table of it: SQLite refuses to drop an eponymous virtual table.
+const RETIRED_TABLES: &[&str] = &[
+    "frames", "frame_segments", "frame_part_used", "frame_spaces", "frame_confirmed", "frame_used", "frame_program_used",
+    "text_term",
+    "text_matcher",
+    "text_pending",
+    "vocabulary_term",
+    "vocabulary_literal",
+    "vocabulary_pending",
+    "vocabulary_predicate",
+    "term_coverage",
+    "term_postings",
+    "term_node_freq",
+    "term_kind_freq",
+    "term_freq",
+    "tape_kind_counts",
+    "edge_freq",
+    "kind_size",
+    "prefilter_sets",
+];
 
 /// Whether the store holds a table of `RETIRED_TABLES`.
 fn holds_retired(connection: &Connection) -> StoreResult<bool> {
@@ -1142,6 +1006,7 @@ mod schema_object_tests {
         applied.sort();
         read.sort();
         assert_eq!(read, applied);
-        assert!(read.len() > 100, "{} objects", read.len());
+        // 95 once the prefilter's tables became kept facts (t33 steps 6 and 7).
+        assert!(read.len() > 90, "{} objects", read.len());
     }
 }

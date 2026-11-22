@@ -384,8 +384,9 @@ impl ContentStore {
         let current_generation = generation(&transaction)?;
         // Tapes leave in bulk, and their ids may be reused: the working set holds none of them.
         self.working_set().clear();
-        report.tapes = execute_collect(
-            &transaction,
+        // The tapes' prefilter facts leave in the same transaction (t33 step 6): an id reused names a new tape.
+        let tapes: Vec<i64> = transaction
+            .prepare(collect_sql(
             "DELETE FROM tape_objects WHERE tape_id IN (SELECT t.tape_id FROM tape_objects t \
              WHERE t.created_generation < ?1 \
              AND NOT EXISTS (SELECT 1 FROM snapshot_files f WHERE f.tape_id=t.tape_id) \
@@ -394,9 +395,12 @@ impl ContentStore {
              AND NOT EXISTS (SELECT 1 FROM file_documents d WHERE d.document_tape_id=t.tape_id) \
              AND NOT EXISTS (SELECT 1 FROM corpus_live l WHERE l.source_id=t.source_id \
                              AND l.grammar_version=t.grammar_version AND l.tape_format=t.tape_format_version) \
-             ORDER BY t.tape_id LIMIT ?3)",
-            params![current_generation, OBJECT_TAPE, limit],
-        )?;
+             ORDER BY t.tape_id LIMIT ?3) RETURNING tape_id",
+            ))?
+            .query_map(params![current_generation, OBJECT_TAPE, limit], |row| row.get(0))?
+            .collect::<Result<_, _>>()?;
+        report.tapes = tapes.len();
+        let prefilter = super::prefilter::forget_tapes(&self.database_path, &transaction, &tapes)?;
         execute_collect(
             &transaction,
             "DELETE FROM source_aliases WHERE source_id IN (SELECT s.source_id FROM source_objects s \
@@ -498,6 +502,7 @@ impl ContentStore {
             [],
         )?;
         self.commit(transaction)?;
+        self.note_kept(&super::prefilter::kept::space(), prefilter);
         Ok(report)
     }
 }

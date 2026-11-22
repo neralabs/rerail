@@ -71,7 +71,7 @@ fn run(policy: &str) {
                 false
             }))
             .unwrap();
-        let result = store.candidate_transaction(statement.writes(), |db| execute::rows(db, statement, &mut |qid, _, _| emit(qid)));
+        let result = execute::prepare(store, statement).and_then(|()| store.candidate_transaction(false, |db| execute::rows(db, statement, &mut |qid, _, _| emit(qid))));
         store.candidate_progress(0, None::<fn() -> bool>).unwrap();
         result.unwrap();
     };

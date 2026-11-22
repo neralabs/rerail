@@ -11,13 +11,15 @@
 //! pattern's requirements does not change a set: intersections commute. Unlike the SQL there is
 //! no admission limit, so no plan is broadened to its root kinds.
 //!
-//! SQL reads the leaves: the space's node counts, the posting blobs by key, and the vocabulary's
-//! terms for each regex, filled by the vocabulary stages first. The operations run on the
+//! The leaves are read from the tapes' prefilter rows, kept facts read where they lie (t33 step 6): the space's node
+//! counts and the posting bytes by key; a regex's terms are its kept vocabulary (`ContentStore::regex_terms`). The operations run on the
 //! space's bitmaps (`space::NodeSet`).
-use super::lower::{VOCABULARY, anchored};
+use super::lower::anchored;
 use super::LANG_STRIDE;
 use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
 use crate::code_rule_dsl::space::{Builder, NodeSet, NodeSpace};
+use crate::content_store::kept_facts::KeptSpace;
+use crate::content_store::prefilter::kept;
 use crate::content_store::{ContentStore, StoreResult};
 use std::collections::{BTreeSet, HashMap};
 
@@ -377,44 +379,39 @@ pub(super) fn select(
     // compiles are written after it (`gates::flush`).
     let kept_gates = crate::code_rule_dsl::stats::plans::Plans::open(store)?;
     let store_path = store.database_path().to_path_buf();
-    let (space, leaves, gated) = store.candidate_transaction(true, |db| {
+    // The tapes' prefilter rows, kept facts read where they lie (t33 step 6), and each regex's terms, brought up to
+    // date before the candidates' transaction (t33 step 7).
+    let kept = store.kept_space(&kept::space())?;
+    let view = kept.as_ref().map(KeptSpace::view);
+    let tape_of = |file: i64| view.as_ref().and_then(|view| kept::tape(view, file));
+    let regex_terms: HashMap<&str, Vec<i64>> = if regexes.is_empty() {
+        HashMap::new()
+    } else {
+        let _stage = crate::code_rule_dsl::prof::Stage::start("sets.vocabulary");
+        let expressions: Vec<String> = regexes.iter().map(|&e| e.to_owned()).collect();
+        regexes.iter().copied().zip(store.regex_terms(lang, &expressions)?).collect()
+    };
+    let (space, leaves, gated) = store.candidate_transaction(false, |db| {
         let gated = {
             let _stage = crate::code_rule_dsl::prof::Stage::start("sets.gates");
-            super::gates::select(db, &store_path, kept_gates.as_ref(), lang as u32, plans, files)?
+            super::gates::select(db, &store_path, kept_gates.as_ref(), &tape_of, lang as u32, plans, files)?
         };
-        // The vocabulary's terms for each regex, as the SQL's vocabulary stages fill them.
-        if !regexes.is_empty() {
-            let _stage = crate::code_rule_dsl::prof::Stage::start("sets.vocabulary");
-            let mut register = db.prepare_cached("INSERT OR IGNORE INTO vocabulary_predicate(lang,expression,ready) VALUES (?1,?2,0)")?;
-            for expression in &regexes {
-                register.execute(rusqlite::params![lang, expression])?;
-            }
-            for (_, sql) in VOCABULARY {
-                db.execute_batch(sql)?;
-            }
-        }
         let _stage = crate::code_rule_dsl::prof::Stage::start("sets.read");
+        let tapes: Vec<Option<kept::Tape<'_>>> = files.iter().map(|&file| tape_of(file).filter(|t| t.lang == lang)).collect();
         let space = {
-            let mut nodes = db.prepare_cached(
-                "SELECT s.nodes FROM prefilter_sets s JOIN tape_objects t ON t.tape_id=s.tape_id WHERE s.tape_id=?1 AND t.grammar_id=?2",
-            )?;
             let counts = files
                 .iter()
-                .map(|&file| {
+                .zip(&tapes)
+                .map(|(&file, tape)| {
                     // The working set's image of the tape where it holds one (decision 0024 §5).
                     if let Some(image) = store.working_set().kinds(file) {
-                        return Ok(if i64::from(image.lang) == lang { image.nodes } else { 0 });
+                        return if i64::from(image.lang) == lang { image.nodes } else { 0 };
                     }
-                    let count: Option<i64> = nodes.query_row(rusqlite::params![file, lang], |row| row.get(0)).map(Some).or_else(|error| match error {
-                        rusqlite::Error::QueryReturnedNoRows => Ok(None),
-                        error => Err(error),
-                    })?;
-                    Ok(u32::try_from(count.unwrap_or(0)).unwrap_or(0))
+                    tape.map_or(0, |t| u32::try_from(t.nodes).unwrap_or(0))
                 })
-                .collect::<rusqlite::Result<Vec<_>>>()?;
+                .collect::<Vec<_>>();
             NodeSpace::new(counts)
         };
-        let index = files.iter().enumerate().filter(|&(at, _)| space.count(at) > 0).map(|(at, &file)| (file, at)).collect::<HashMap<_, _>>();
         let atom = |kind: u16| lang * i64::from(LANG_STRIDE) + if kind == u16::MAX { 0 } else { i64::from(kind) };
         // Each kind's postings, read once per file for every kind the program reads.
         let wanted = program
@@ -430,74 +427,65 @@ pub(super) fn select(
         let mut by_kind: HashMap<u16, Builder> = HashMap::new();
         let mut uncovered = Builder::default();
         let reads_uncovered = program.ops.contains(&Op::Uncovered);
-        {
-            let mut kinds = db.prepare_cached("SELECT kind, postings FROM tape_kind_counts WHERE tape_id=?1")?;
-            let mut missing = db.prepare_cached("SELECT missing FROM term_coverage WHERE tape_id=?1 AND length(missing)>0")?;
-            for (at, &file) in files.iter().enumerate() {
-                // A file no plan's gate holds has no candidates: its postings are not read.
-                if space.count(at) == 0 || gated.any.as_ref().is_some_and(|any| !any.contains(&file)) {
-                    continue;
+        for (at, &file) in files.iter().enumerate() {
+            // A file no plan's gate holds has no candidates: its postings are not read.
+            if space.count(at) == 0 || gated.any.as_ref().is_some_and(|any| !any.contains(&file)) {
+                continue;
+            }
+            if let (false, Some(image)) = (wanted.is_empty(), store.working_set().kinds(file)) {
+                crate::code_rule_dsl::prof::count("working_set.kind_hits", 1);
+                for (&atom, &kind) in &wanted {
+                    let Some(postings) = u32::try_from(atom).ok().and_then(|atom| image.postings(atom)) else { continue };
+                    let set = by_kind.entry(kind).or_default();
+                    push_kinds(postings, space.base(at), space.count(at), set)?;
                 }
-                if let (false, Some(image)) = (wanted.is_empty(), store.working_set().kinds(file)) {
-                    crate::code_rule_dsl::prof::count("working_set.kind_hits", 1);
-                    for (&atom, &kind) in &wanted {
-                        let Some(postings) = u32::try_from(atom).ok().and_then(|atom| image.postings(atom)) else { continue };
-                        let set = by_kind.entry(kind).or_default();
-                        push_kinds(postings, space.base(at), space.count(at), set)?;
-                    }
-                } else if !wanted.is_empty() {
-                    let mut rows = kinds.query([file])?;
-                    while let Some(row) = rows.next()? {
-                        let Some(&kind) = wanted.get(&row.get::<_, i64>(0)?) else { continue };
-                        let set = by_kind.entry(kind).or_default();
-                        push_kinds(row.get_ref(1)?.as_blob()?, space.base(at), space.count(at), set)?;
-                    }
+            } else if let (false, Some(tape)) = (wanted.is_empty(), tapes[at]) {
+                for row in tape.kinds() {
+                    let Some(&kind) = wanted.get(&row.kind) else { continue };
+                    let set = by_kind.entry(kind).or_default();
+                    push_kinds(&tape.bytes(row.at, row.len), space.base(at), space.count(at), set)?;
                 }
-                if reads_uncovered {
-                    // A file's rows are each ascending, not one after another.
-                    let mut positions = Vec::new();
-                    let mut rows = missing.query([file])?;
-                    while let Some(row) = rows.next()? {
-                        positions.extend(decode(row.get_ref(0)?.as_blob()?, space.count(at))?);
-                    }
-                    positions.sort_unstable();
-                    positions.dedup();
-                    positions.into_iter().for_each(|p| uncovered.node(space.base(at) + p));
+            }
+            if let (true, Some(tape)) = (reads_uncovered, tapes[at]) {
+                // A file's rows are each ascending, not one after another.
+                let mut positions = Vec::new();
+                for row in tape.covers().filter(|c| c.len > 0) {
+                    positions.extend(decode(&tape.bytes(row.at, row.len), space.count(at))?);
                 }
+                positions.sort_unstable();
+                positions.dedup();
+                positions.into_iter().for_each(|p| uncovered.node(space.base(at) + p));
             }
         }
         let by_kind = by_kind.into_iter().map(|(kind, set)| (kind, set.finish())).collect::<HashMap<_, _>>();
         let uncovered = uncovered.finish();
-        // A text's term postings, by term.
+        // A text's term postings, by term, over the batch's tapes in space order.
         let terms_of = |expression: &str, literal: bool| -> rusqlite::Result<NodeSet> {
             let mut set = NodeSet::empty(&space);
-            // Terms are atoms (`atoms`).
+            // Terms are atoms (`atoms`), as the store numbers them.
             let terms = if literal {
-                db.prepare_cached("SELECT v.term FROM atoms a CROSS JOIN term_freq v ON v.lang=?1 AND v.term=a.atom WHERE a.value=?2")?
-                    .query_map(rusqlite::params![lang, expression], |row| row.get::<_, i64>(0))?
+                db.prepare_cached("SELECT atom FROM atoms WHERE value=?1")?
+                    .query_map([expression], |row| row.get::<_, i64>(0))?
                     .collect::<rusqlite::Result<Vec<_>>>()?
             } else {
-                db.prepare_cached("SELECT term FROM vocabulary_term WHERE lang=?1 AND expression=?2")?
-                    .query_map(rusqlite::params![lang, expression], |row| row.get::<_, i64>(0))?
-                    .collect::<rusqlite::Result<Vec<_>>>()?
+                regex_terms.get(expression).cloned().unwrap_or_default()
             };
-            let mut postings = db.prepare_cached("SELECT tape_id, postings FROM term_postings WHERE lang=?1 AND term=?2")?;
             for term in terms {
-                let mut files = Vec::new();
-                let mut rows = postings.query(rusqlite::params![lang, term])?;
-                while let Some(row) = rows.next()? {
-                    if let Some(&at) = index.get(&row.get::<_, i64>(0)?) {
-                        files.push((at, decode(row.get_ref(1)?.as_blob()?, space.count(at))?));
-                    }
-                }
-                // One term's set, built in node order (a file's rows merged), then joined to the
-                // others'.
-                files.sort_unstable_by_key(|&(at, _)| at);
                 let mut term_set = Builder::default();
-                for group in files.chunk_by_mut(|x, y| x.0 == y.0) {
-                    let at = group[0].0;
-                    let mut positions = group.iter_mut().flat_map(|(_, p)| std::mem::take(p)).collect::<Vec<_>>();
-                    if group.len() > 1 {
+                for (at, tape) in tapes.iter().enumerate() {
+                    let Some(tape) = tape.filter(|_| space.count(at) > 0) else { continue };
+                    // A term's rows of a tape (one a kind) merged in node order.
+                    let mut rows = tape.term(term).peekable();
+                    if rows.peek().is_none() {
+                        continue;
+                    }
+                    let mut positions = Vec::new();
+                    let mut many = 0;
+                    for row in rows {
+                        positions.extend(decode(&tape.bytes(row.at, row.len), space.count(at))?);
+                        many += 1;
+                    }
+                    if many > 1 {
                         positions.sort_unstable();
                         positions.dedup();
                     }
