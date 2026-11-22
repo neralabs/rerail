@@ -55,8 +55,9 @@ describe("a start beside a daemon still in its start", () => {
   }, 120_000);
 
   // Beside a daemon still in its start, `rerail status` removed a daemon.json that named another program, and did not
-  // say so.
-  test("rerail status beside a daemon still in its start says it removed a daemon.json that named another program", async () => {
+  // say so. Not on Windows: there the lookup spends its 2 s on the engine's proof over the held daemon's pipe, which
+  // its blocked thread never answers, so no start time is read in time and the record is kept, as for a busy daemon.
+  test.skipIf(process.platform === "win32")("rerail status beside a daemon still in its start says it removed a daemon.json that named another program", async () => {
     const place = StartingDaemonHome.make();
     const other = spawn(process.execPath, ["-e", "setInterval(() => {}, 1e6)"], { stdio: "ignore" });
     try {
