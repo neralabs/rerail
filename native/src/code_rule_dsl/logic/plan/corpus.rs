@@ -3573,6 +3573,23 @@ fn run_observed(
 /// The start of the error a preparation returns to be prepared again (`Replans`).
 const REPLAN: &str = "prepare again: ";
 
+/// What the profile calls a run (its per-file memo use, its cross part): its phase (`sources`), else the policies its
+/// program declares (`policy a, b`), else "the program" (an embedded program, such as Git's inventory). A scan runs
+/// several programs; each one's lines are told apart by it. Read only while profiling.
+fn run_label(given: &Texts<'_>) -> String {
+    if let Some(phase) = phases::current() {
+        return phase;
+    }
+    let ids: Vec<String> = match given.read {
+        Some(program) => crate::code_rule_dsl::logic::rr::metadata(&**program)
+            .ok()
+            .and_then(|m| m["policies"].as_array().map(|ps| ps.iter().filter_map(|p| p["id"].as_str().map(str::to_owned)).collect()))
+            .unwrap_or_default(),
+        None => given.programs.iter().flat_map(|text| crate::code_rule_dsl::logic::rr::declared_policies(text)).collect(),
+    };
+    if ids.is_empty() { "the program".to_owned() } else { format!("policy {}", ids.join(", ")) }
+}
+
 /// `run_observed`, within the run's own state (`run::scope`).
 #[allow(clippy::too_many_arguments)]
 fn run_observed_within(
@@ -5085,7 +5102,7 @@ fn run_observed_within(
         let hex = |d: &[u8; 32]| d[..4].iter().map(|b| format!("{b:02x}")).collect::<String>();
         eprintln!(
             "rerail: memo plan {} of {}: rules {} (local {}, {} phased relations read), tree demand {memo_tree_stats}, {} modules renamed",
-            hex(&memo::plan_digest(&memo_program)), phases::current().as_deref().unwrap_or("the program"), hex(&memo_rules), hex(&memo_local), phased.len(), renamed_modules.len()
+            hex(&memo::plan_digest(&memo_program)), run_label(given), hex(&memo_rules), hex(&memo_local), phased.len(), renamed_modules.len()
         );
     }
     // Its entries' symbol columns, for a store this process forks from (decision 0170): carried with its key.
@@ -9829,7 +9846,7 @@ fn run_observed_within(
             top.sort_by_key(|a| std::cmp::Reverse(a.1.1));
             crate::code_rule_dsl::logic::profile::decision("memo entries written", || {
                 let named: Vec<String> = top.iter().take(8).map(|(r, (rows, values))| format!("{r} {:.1} MB ({rows} rows, {:.0}%)", *values as f64 * 8.0 / 1e6, 100.0 * *values as f64 / total.max(1) as f64)).collect();
-                format!("{}: {:.1} MB of values over {nodes} nodes: {}", phases::current().as_deref().unwrap_or("the program"), total as f64 * 8.0 / 1e6, named.join("; "))
+                format!("{}: {:.1} MB of values over {nodes} nodes: {}", run_label(given), total as f64 * 8.0 / 1e6, named.join("; "))
             });
             for (rel, (rows, _)) in &top {
                 let pushed = rel.strip_prefix("fl").and_then(|s| s.split_once('_')).is_some_and(|(n, _)| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()));
@@ -10459,7 +10476,8 @@ fn run_observed_within(
                                 for (rel, why) in &maintained.again {
                                     by.entry(why).or_default().push(rel);
                                 }
-                                by.iter().map(|(why, rels)| format!("{why}: {} ({}{})", rels.len(), rels.iter().take(6).copied().collect::<Vec<_>>().join(", "), if rels.len() > 6 { ", …" } else { "" })).collect::<Vec<_>>().join("; ")
+                                let label = run_label(given);
+                                by.iter().map(|(why, rels)| format!("{label}: {why}: {} ({}{})", rels.len(), rels.iter().take(6).copied().collect::<Vec<_>>().join(", "), if rels.len() > 6 { ", …" } else { "" })).collect::<Vec<_>>().join("; ")
                             });
                             }
                             crate::code_rule_dsl::logic::profile::decision("maintenance driven by deltas (decision 0117 step 3)", || {
@@ -10684,9 +10702,12 @@ fn run_observed_within(
                         crate::code_rule_dsl::logic::profile::decision("the kept part, to the frames (t33 K4)", || format!("{written} rows of what changed queued to the store"));
                     }
                     drop(s);
+                    // Named as the run's per-file memo use is (its phase, else the program): a scan's runs each have
+                    // their own cross part.
                     crate::code_rule_dsl::logic::profile::decision("cross-file part kept (decision 0077)", || {
                         format!(
-                            "{} of {} strata run ({} maintained from deltas, {} of them recursive; {} derived again); inputs changed: {}; {} relations kept for the next run, {:.1} MB",
+                            "{}: {} of {} strata run ({} maintained from deltas, {} of them recursive; {} derived again); inputs changed: {}; {} relations kept for the next run, {:.1} MB",
+                            run_label(given),
                             cut.strata.0,
                             cut.strata.1,
                             maintained.maintained,
@@ -11069,7 +11090,7 @@ fn run_observed_within(
     });
     if memoised {
         crate::code_rule_dsl::prof::count("corpus.file_memo_misses", docs.len().saturating_sub(memo_hits));
-        crate::code_rule_dsl::logic::profile::decision("per-file memo use", || format!("{}: {memo_hits} of {} files read from the memo; {memo_unattributed} chunks' rows not memoised (a row naming no document of its chunk){}", phases::current().as_deref().unwrap_or("the program"), docs.len(), if memo_why.is_empty() { String::new() } else { format!(": {}", memo_why.iter().take(12).cloned().collect::<Vec<_>>().join("; ")) }));
+        crate::code_rule_dsl::logic::profile::decision("per-file memo use", || format!("{}: {memo_hits} of {} files read from the memo; {memo_unattributed} chunks' rows not memoised (a row naming no document of its chunk){}", run_label(given), docs.len(), if memo_why.is_empty() { String::new() } else { format!(": {}", memo_why.iter().take(12).cloned().collect::<Vec<_>>().join("; ")) }));
     }
     if let Some(collecting) = collecting {
         let collection = crate::code_rule_dsl::logic::profile::Activity::default();

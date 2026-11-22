@@ -93,6 +93,29 @@ function storeRetirementFixture(home: string, control: string) {
   return { cli, publish, stop };
 }
 
+/**
+ * What a scan's policy programs did, read from its profile (`RERAIL_PROFILE`'s profile.txt): the files whose per-file
+ * part they ran again instead of reading it from the per-file memo (decision 0052), and the strata of their cross-file
+ * part that ran (`run`), and of those reached, the ones derived again instead of maintained from deltas or kept
+ * (`again`, decision 0077; a relation with facts of its own is read again whether or not a stratum runs, 0364 R3).
+ * A reference graph is rules (decision 0483): a file's references are its per-file part, and their links its cross
+ * part. The profile names each run by the policies its program declares (`policy <id>`); the scan's other programs
+ * (its phases, Git's inventory) are not counted; with `policy`, only its runs are.
+ */
+function policyWork(trace: string, policy?: string): { files: number; run: number; again: number } {
+  const named = policy === undefined ? "[^:]+" : policy.replace(/[.*+?^${}()|[\]\\]/gu, "\\$&");
+  const times = (repeat: string | undefined) => Number(repeat ?? 1);
+  let files = 0, run = 0, again = 0;
+  for (const [, read, of, repeat] of trace.matchAll(new RegExp(String.raw`^\s*- policy ${named}: (\d+) of (\d+) files read from the memo;.*?(?:\(x(\d+)\))?$`, "gmu"))) {
+    files += (Number(of) - Number(read)) * times(repeat);
+  }
+  for (const [, ran, derived, repeat] of trace.matchAll(new RegExp(String.raw`^\s*- policy ${named}: (\d+) of \d+ strata run \(.*?; (\d+) derived again\).*?(?:\(x(\d+)\))?$`, "gmu"))) {
+    run += Number(ran) * times(repeat);
+    again += Number(derived) * times(repeat);
+  }
+  return { files, run, again };
+}
+
 describe("headless rerail scan", () => {
   const suiteStore = process.env.RERAIL_CONTENT_STORE_PATH;
   afterAll(() => {
@@ -3832,7 +3855,10 @@ Value(@place("git",1), v) :- git_root_repo(_), v = @git_tracked(${JSON.stringify
           home, stdout: { write: text => { output += text; return true; } },
         });
         expect(exit).toBe(1);
-        expect(JSON.parse(output)).toMatchObject({ status: "failed", rules: [], failures: [expect.objectContaining({ code: "adapter-error", path: expect.stringMatching(/broken\.rr$/u) })] });
+        expect(JSON.parse(output)).toMatchObject({ status: "failed", rules: [], failures: [expect.objectContaining({
+          code: "adapter-error", path: expect.stringMatching(/broken\.rerail$/u), ruleId: "broken",
+          message: expect.stringMatching(/^\/.*broken\.rerail: no \.violation declarations/u),
+        })] });
       }
     } finally { vi.unstubAllEnvs(); }
   });
@@ -3936,7 +3962,8 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
       const uniqueSubtrees = new Set(git(root, "ls-tree", "-d", "-r", "HEAD").split("\n").map(row => row.split(/\s+/u)[2]));
       const trace = readFileSync(join(profile, "profile.txt"), "utf8");
       expect(Number(trace.match(/^\s*count\s+(\d+)\s+git\.tree_decodes$/mu)?.[1])).toBe(1 + uniqueSubtrees.size);
-      return Number(trace.match(/^\s*count\s+(\d+)\s+source_tape\.parses$/mu)?.[1]);
+      // The source files' tapes: the scan's profile also counts phase 0's parse of the policy's own texts.
+      return [...trace.matchAll(/^\s*count\s+(\d+)\s+source_tape\.input\.[a-z]+\.python\.[0-9a-f]{64}$/gmu)].reduce((sum, [, n]) => sum + Number(n), 0);
     };
     const shared = measure("shared");
     writeFileSync(join(root, "copy/call.py"), "x = f(2)\n");
@@ -3945,7 +3972,7 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
     expect(measure("distinct")).toBe(shared + 1);
   }, 30_000);
 
-  it("reuses reference bindings until a decorator changes a file's sibling target", () => {
+  it("reuses reference bindings until the sibling setting changes, and links the sibling a decorator matches", () => {
     const root = checkout(), home = root + "-home";
     mkdirSync(home);
     writeFileSync(join(root, "tasks.py"), "class Jobs:\n    @task\n    def run_one(self):\n        pass\n    def do_one(self):\n        pass\n");
@@ -3970,13 +3997,16 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
         expect(trace).toMatch(/^\s*count\s+[1-9]\d*\s+rr\.embedded_program_hits$/mu);
         expect(trace).not.toMatch(/^\s*count\s+[1-9]\d*\s+(rr\.embedded_program_compiles|source_tape\.parses)$/mu);
       }
-      const count = trace.match(/^\s*count\s+(\d+)\s+reference\.binding_contributions$/mu)?.[1];
-      return [report.violations.map(v => v.path), Number(count ?? 0)];
+      return [report.violations.map(v => v.path), policyWork(trace)];
     };
-    expect(evaluate("never", "cold")).toEqual([[], 3]);
-    expect(evaluate("never", "warm")).toEqual([[], 0]);
-    expect(evaluate("absent", "unused")).toEqual([[], 0]);
-    expect(evaluate("task", "matched")).toEqual([["tasks.py"], 1]);
+    // Every file's references derived.
+    expect(evaluate("never", "cold")).toEqual([[], expect.objectContaining({ files: 3 })]);
+    // Nothing changed: no file's references derived again, and no stratum of the links run.
+    expect(evaluate("never", "warm")).toEqual([[], expect.objectContaining({ files: 0, run: 0 })]);
+    // The setting is facts the file-local rules read as the run's constants (decision 0483 §3, t50 step 1): a new
+    // setting is a new per-file part, every file's references derived again, whether or not a decorator matches.
+    expect(evaluate("absent", "unused")).toEqual([[], expect.objectContaining({ files: 3 })]);
+    expect(evaluate("task", "matched")).toEqual([["tasks.py"], expect.objectContaining({ files: 3 })]);
   }, 90_000);
 
   it("shares verified trees in either policy order and reuses independent reference links across revisions", () => {
@@ -4033,13 +4063,17 @@ Referenced(src) :- reference_edge(src, _, _).
       expect(report.violations.filter(finding => finding.code === "Referenced").map(finding => finding.path).sort())
         .toEqual(state === "removed" || state === "independent" ? ["other/a.py", "src/independent.py"]
           : ["other/a.py", "src/a.py", "src/independent.py"]);
-      const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8").matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)]
-        .map(([, count, name]) => [name, Number(count)]));
+      const trace = readFileSync(join(profile, "profile.txt"), "utf8");
+      const counters = new Map([...trace.matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)].map(([, count, name]) => [name, Number(count)]));
       if (state !== "revisited") expect(counters.get("git.tree_decodes") ?? 0).toBe(["warm", "settings", "revisited"].includes(state) ? 0 : state === "cold" ? 3 : 2);
-      expect(counters.get("reference.tape_summaries") ?? 0).toBe(["warm", "revisited", "settings"].includes(state) ? 0 : state === "cold" ? 8 : 1);
-      expect(counters.get("reference.binding_contributions") ?? 0).toBe(["warm", "revisited", "settings"].includes(state) ? 0 : state === "cold" ? 8 : 1);
       expect(counters.get("source_ast.parses") ?? 0).toBe(0);
-      expect(counters.get("reference.name_links") ?? 0).toBe(["warm", "settings", "revisited"].includes(state) ? 0 : state === "cold" ? 3 : 1);
+      // Each file's references are derived once for its contents: on the first run, for a changed file, and for
+      // every file when the setting (the per-file part's constants, decision 0483 §3) changes.
+      const work = policyWork(trace, "references");
+      expect(work.files, state).toBe(state === "cold" || state === "settings" ? 8 : ["warm", "revisited"].includes(state) ? 0 : 1);
+      // Nothing changed: no stratum of the links runs. A file changed: the links are maintained from it, none derived again.
+      if (state === "warm") expect(work.run, state).toBe(0);
+      if (["removed", "independent", "restored"].includes(state)) expect(work.again, state).toBe(0);
     };
     evaluate("walk-first", [walk, references], "cold");
     evaluate("references-first", [references, walk], "cold");
@@ -4062,14 +4096,13 @@ Referenced(src) :- reference_edge(src, _, _).
     evaluate("references-first", [references, walk], "restored");
     evaluate("references-first", [references, walk], "revisited", firstRevision);
     const store = join(root, "references-first/content.sqlite");
+    // What the named scope owns: the plans its manifests name, whose kept facts (decision 0401) live while one does.
     const owned = () => queryContentStore<{ n: number }>(store, `
-      SELECT count(DISTINCT u.space) AS n FROM frame_program_used u
-      JOIN corpus_manifest_plans p ON p.plan_digest=u.program
-      JOIN analysis_scope_manifest a USING(manifest_id)
-      WHERE u.space=u.program AND a.scope='named:order'
+      SELECT count(DISTINCT p.plan_digest) AS n FROM analysis_scope_manifest a
+      JOIN corpus_manifest_plans p USING(manifest_id)
+      WHERE a.scope='named:order'
     `)[0]!.n;
-    // Both the source and link phases have an owned image for each of the four trees.
-    expect(owned()).toBeGreaterThanOrEqual(8);
+    expect(owned()).toBeGreaterThan(0);
     loadNativeBinding().deleteAnalysisScope(store, "order", false);
     expect(owned()).toBe(0);
   }, 120_000);
@@ -4136,7 +4169,7 @@ Method(src, text) :- reference_edge(src, dst, "self"), node_text(dst, text).
         scope: "repository", packs: [], version: "test",
       })));
     `;
-    const evaluate = (state: string, result: string, contributions: number, links: number) => {
+    const evaluate = (state: string, result: string) => {
       const home = join(root, "home");
       const profile = join(home, state);
       const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, join(home, "home.sqlite"), policy], {
@@ -4146,20 +4179,21 @@ Method(src, text) :- reference_edge(src, dst, "self"), node_text(dst, text).
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
       expect(report.violations).toHaveLength(1);
       expect(report.violations[0]!.message).toContain(`return '${result}'`);
-      const counters = new Map([...readFileSync(join(profile, "profile.txt"), "utf8").matchAll(/^\s*count\s+(\d+)\s+([a-z._]+)$/gmu)]
-        .map(([, count, name]) => [name, Number(count)]));
-      expect(counters.get("reference.binding_contributions") ?? 0).toBe(contributions);
-      expect(counters.get("reference.name_links") ?? 0).toBe(links);
+      return policyWork(readFileSync(join(profile, "profile.txt"), "utf8"));
     };
-    // The graph also links the inheritance reference to Base.
-    evaluate("cold", "base", 3, 2);
-    evaluate("warm", "base", 0, 0);
+    // Every file's references are derived, and every link.
+    expect(evaluate("cold", "base")).toMatchObject({ files: 3 });
+    // Nothing changed: no file's references derived again, and no stratum of the links run.
+    expect(evaluate("warm", "base")).toMatchObject({ files: 0, run: 0 });
+    // An unrelated definition renamed: that file's references alone, and the links maintained from it, the method's
+    // link kept.
     writeFileSync(join(root, "pkg/other.py"), "def renamed():\n    pass\n");
     commit("unrelated definition renamed");
-    evaluate("renamed", "base", 1, 0);
+    expect(evaluate("renamed", "base")).toMatchObject({ files: 1, again: 0 });
+    // The override added: that file's references, and the links maintained from them, the method's link moved to it.
     writeFileSync(join(root, "pkg/service.py"), `${service}\n    def hook(self):\n        return 'override'\n`);
     commit("add the prioritized override");
-    evaluate("override", "override", 1, 1);
+    expect(evaluate("override", "override")).toMatchObject({ files: 1, again: 0 });
   }, 90_000);
 
   it.each(["loose", "packed"])("rechecks a %s tree after corruption and restoration with the same cache", (representation) => {

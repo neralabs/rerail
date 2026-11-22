@@ -513,7 +513,15 @@ impl napi::Task for ScanRrPolicies {
 impl ScanRrPolicies {
     fn scan(&mut self) -> Result<String> {
         use content_store::analysis_scope::{self, AnalysisRun, RunSource};
-        use code_rule_dsl::logic::plan::corpus;
+        use code_rule_dsl::logic::{plan::corpus, profile};
+        // The scan is one run (decision 0441: a command's): every policy's runs join it, and the programs each runs
+        // first (its dialects', Git's inventory). Its profile is theirs together (decision 0442: the records are the
+        // run's), held here and written once at its end; held by a corpus run, each run's would replace the last's.
+        let _run = code_rule_dsl::logic::run::scope(code_rule_dsl::logic::native::width::Settings::from_env);
+        let profiled = if profile::on() { profile::hold_records() } else { None };
+        if profiled.is_some() {
+            profile::reset();
+        }
         let path = Path::new(&self.store);
         let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
         let mut warning = None;
@@ -601,6 +609,11 @@ impl ScanRrPolicies {
             }
             (reports, corpus::git_source_reads_complete())
         });
+        if profiled.is_some() && let Some(dir) = profile::directory() {
+            let header = format!("Profile of a policy scan: {} policies, each run and the programs it ran first\n", self.paths.len());
+            profile::report::write(&dir, &header).map_err(|e| Error::from_reason(format!("profile: {e}")))?;
+        }
+        drop(profiled);
         if let Some(mut run) = run {
             let succeeded = source_complete && reports.iter().all(|report| report.get("error").is_none());
             warning = match run.finish(succeeded) {
