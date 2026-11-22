@@ -652,3 +652,21 @@ pub(crate) fn test_languages() {
         crate::code_rule_dsl::embed::install_embedders(vec![(language::Via::CallArgument, &rerail_lang_python::code_rule_dsl::embed::call_argument::CallArgument)]);
     });
 }
+
+/// This crate's own test binary, which the engine does not load: strict mode on every connection, what a job carries
+/// of its run and the core names, as boot registers them (`logic`'s tests' own `test_load`). Without them its device
+/// tests stopped at their first job ("no program registered what a job carries").
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        crate::code_rule_dsl::logic::profile::strict_on_every_connection();
+        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
+        crate::code_rule_dsl::logic::plan::keeps::CORE_NAMES.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::rr::core_names);
+    }
+    // Run as the binary loads, before any test opens a store (as the engine's `module_init` runs).
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}

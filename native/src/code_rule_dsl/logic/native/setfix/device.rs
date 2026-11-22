@@ -1605,6 +1605,22 @@ impl<'p> Run<'p> {
         }
     }
 
+    /// The indexes stages `from..` probe, found again for `batch`, which encodes them again (`complete`): an index
+    /// the batch they were first encoded in built may have gone back when it was done (`mj::Batch::again`).
+    fn indexes_again(&mut self, from: usize, batch: &mut mj::Batch) -> Result<(), String> {
+        for k in from..self.plan.stages.len() {
+            if let Some((dev, Some(ix))) = &mut self.rels[k] {
+                *ix = batch.again(dev, ix).map_err(|e| format!("{e:?}: an index found again"))?;
+            }
+            for (dev, ix, _) in self.probes[k].iter_mut().flatten() {
+                if let Some(ix) = ix {
+                    *ix = batch.again(dev, ix).map_err(|e| format!("{e:?}: a probe's index found again"))?;
+                }
+            }
+        }
+        Ok(())
+    }
+
     /// Encodes stages `from..` into `batch`; the component's own relations are `own`'s.
     fn encode(&mut self, from: usize, batch: &mut mj::Batch, rep: &mut Report, own: &mut Own, names: &Interner) -> Result<(), String> {
         for k in from..self.plan.stages.len() {
@@ -2149,6 +2165,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
             None => batch.insert(direct_batch(Some(arena.max(mj::ARENA_START)))?),
         };
         for (k, s) in again {
+            runs[k].indexes_again(s, b)?;
             runs[k].encode(s, b, rep, &mut Own::default(), names)?;
         }
         finish_timed(b, rep)?;
@@ -2530,7 +2547,8 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         rep.reruns += again.len() as u32;
         pending = again.iter().map(|&(k, _)| k).collect();
         for (k, s) in again {
-            if let Err(e) = runs[k].as_mut().expect("a run").encode(s, &mut batch, rep, own, names) {
+            let r = runs[k].as_mut().expect("a run");
+            if let Err(e) = r.indexes_again(s, &mut batch).and_then(|()| r.encode(s, &mut batch, rep, own, names)) {
                 let _ = batch.finish();
                 return Err(e);
             }

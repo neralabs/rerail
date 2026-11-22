@@ -908,6 +908,8 @@ pub(in crate::code_rule_dsl) struct DevIndex {
     /// slab of its own is bound by a wrap of its used extent (`Block::device_buffer`), which a buffer taken before the
     /// index was added (its relation's) does not reach.
     buffer: Held,
+    /// The relation's columns it is by (`Batch::index`'s `cols`), to find it again (`Batch::again`).
+    cols: Vec<usize>,
 }
 
 impl DevIndex {
@@ -1470,7 +1472,7 @@ impl Batch {
             return Ok(None);
         }
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk: 1, buffer: bound(&home)? }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk: 1, buffer: bound(&home)?, cols: Vec::new() }))
     }
 
     /// A `has` axis probed by one of its columns (decision 0353 step 5): no index, each binding's rows walked on the
@@ -1486,7 +1488,7 @@ impl Batch {
             _ => return Err(Error::UnsupportedFeature("a has axis probed by both its columns, or none")),
         };
         let home = rel.home.clone().expect("a view's relation of no columns");
-        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk, buffer: bound(&home)? }))
+        Ok(Some(DevIndex { index: NONE, rows: rel.rows, moved: None, built: false, walk, buffer: bound(&home)?, cols: Vec::new() }))
     }
 
     /// `rel`'s index on its columns `cols`, the relation's own (decision 0325 step 5): found where it was built
@@ -1494,6 +1496,25 @@ impl Batch {
     /// (read by the stages after it), and marked built when the batch is done. A relation whose block has no room for
     /// it is copied once into a block of its own that has (with no dead rows: their bits lie in the old block).
     pub(in crate::code_rule_dsl) fn index(&mut self, rel: &DevRel, cols: &[usize]) -> Result<DevIndex, Error> {
+        let mut ix = self.index_of(rel, cols)?;
+        ix.cols = cols.to_vec();
+        Ok(ix)
+    }
+
+    /// `ix`, an index a stage of an earlier batch probed `rel` by, as a stage encoded into this batch must probe it
+    /// (an overflow's stages run again, `setfix::device::complete`). An index the earlier batch built, which another
+    /// batch built meanwhile, went back when the earlier one was done (`finish`): its buckets emptied, its entry free
+    /// for the next, so a probe of it found no rows (B023's closures, 2026-11-22: a function's body lost, its loop
+    /// variable's late reads found). So a relation's index is found again (the one kept); a walk of the tape, and an
+    /// index of a relation it copied (its own, which no other batch finds), stand.
+    pub(in crate::code_rule_dsl) fn again(&mut self, rel: &DevRel, ix: &std::rc::Rc<DevIndex>) -> Result<std::rc::Rc<DevIndex>, Error> {
+        if ix.walk != 0 || ix.moved.is_some() {
+            return Ok(std::rc::Rc::clone(ix));
+        }
+        Ok(std::rc::Rc::new(self.index(rel, &ix.cols)?))
+    }
+
+    fn index_of(&mut self, rel: &DevRel, cols: &[usize]) -> Result<DevIndex, Error> {
         let home = rel.home.clone().expect("an index of a relation, not of words");
         let r = rel.relation();
         // A continuation's index is of every row it reads (its base's first: `ix_bucket` reads by id, `rel_get`).
@@ -1512,10 +1533,10 @@ impl Batch {
             let held = home.ix.lock().unwrap_or_else(|e| e.into_inner());
             // A delta read in place is its rows `from..`: its index is of those, not the relation's first rows.
             if let Some(i) = r.find_index_from(&key, rel.from, rel.rows as u32) {
-                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
+                return Ok(DevIndex { index: i as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
             }
             if let Some(b) = self.building.iter().find(|b| b.encoded && std::ptr::eq(b.rel, r) && b.room.key[..b.room.ncols] == *key && b.room.from == rel.from && b.room.rows_n as usize == rel.rows) {
-                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
+                return Ok(DevIndex { index: b.room.index as u32, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
             }
             // Another batch's, its work committed: this batch's, committed after, runs after it on the one queue, and
             // waits for it at its finish (a builder the device failed fails this batch). Building it again here took
@@ -1526,7 +1547,7 @@ impl Batch {
                 let index = f.room.index as u32;
                 self.borrowed.push(f.done.watch());
                 crate::code_rule_dsl::prof::count_named("device.index taken from another batch's build".into(), 4 * rel.rows);
-                return Ok(DevIndex { index, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)? });
+                return Ok(DevIndex { index, rows: rel.rows, moved: None, built: false, walk: 0, buffer: bound(&home)?, cols: Vec::new() });
             }
             // SAFETY: under the block's index lock; the relation's rows are written (or are by this batch's work
             // before the build, which its passes order).
@@ -1620,7 +1641,7 @@ impl Batch {
                      &[room.offs as i64, room.rows as i64], groups(n));
         }
         self.building[held].encoded = true;
-        Ok(DevIndex { index: room.index as u32, rows: n, moved: None, built: true, walk: 0, buffer })
+        Ok(DevIndex { index: room.index as u32, rows: n, moved: None, built: true, walk: 0, buffer, cols: Vec::new() })
     }
 
     /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
@@ -1996,6 +2017,40 @@ pub mod tests {
                 ((x >> 33) as i64).rem_euclid(modulus) + (3 << 32)
             })
             .collect()
+    }
+
+    /// B023's closures (2026-11-22): two batches that each found no index of a relation built one, and the second's
+    /// went back when it was done (`finish`), its buckets emptied, so a probe of it finds no rows. A stage that probed
+    /// it, encoded again in a later batch (an overflow's stages run again, `setfix::device::complete`), finds the
+    /// relation's kept index instead (`Batch::again`), and builds none.
+    #[test]
+    fn an_index_built_twice_is_found_again_where_it_is_kept() {
+        if rerail_accel::gpu::join::device().is_err() {
+            return;
+        }
+        let n = 300;
+        let keys = rows(n, 11, 40);
+        let rel = DevRel::empty_indexed(1, n, 2).unwrap();
+        let r = rel.part.as_ref().expect("its own").rel();
+        for (i, &v) in keys.iter().enumerate() {
+            // SAFETY: row `i` is claimed (`for_device`), and nothing else writes the relation yet.
+            unsafe { r.rows.put(i as u32, 0, v) };
+        }
+        let (mut first, mut second) = (Batch::new().unwrap(), Batch::new().unwrap());
+        let kept = first.index(&rel, &[0]).unwrap();
+        let lost = std::rc::Rc::new(second.index(&rel, &[0]).unwrap());
+        assert!(kept.built && lost.built && kept.index != lost.index, "each batch built its own");
+        first.finish().unwrap();
+        second.finish().unwrap();
+        let r = rel.relation();
+        assert_eq!(r.find_index_from(&[0], 0, n as u32), Some(kept.index as usize), "the first's is kept");
+        let gone = &r.indexes.as_slice()[lost.index as usize];
+        assert_eq!(gone.ncols, 0, "the second's went back");
+        let mut later = Batch::new().unwrap();
+        let found = later.again(&rel, &lost).unwrap();
+        assert_eq!(found.index, kept.index, "found again: the index kept");
+        assert!(!found.built, "none built again");
+        later.finish().unwrap();
     }
 
     /// Decision 0491 steps 3 and 5: a device relation's block is held by its own region, which a kernel's bind pins by
