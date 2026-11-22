@@ -1193,6 +1193,16 @@ fn json_rusts_tapes_are_the_jits() {
         inputs.push(format!("[\"{}\\uD83D\\uDE00\"]", "x".repeat(k)).into_bytes());
         inputs.push(format!("[\"{}\\uD83D\\u0041\"]", "x".repeat(k)).into_bytes());
     }
+    // After a byte order mark (the blocks start after it): alone, short, unclosed, a scalar, and across a block's edge.
+    let bom = |b: &[u8]| [&[0xef, 0xbb, 0xbf][..], b].concat();
+    for b in [&b""[..], b" ", b"[1]", b"\"a", b"7", b"[\"\xef\xbb\xbf\"]", b"\xef\xbb\xbf[]", b"{\"a\": [true, null]}"] {
+        inputs.push(bom(b));
+    }
+    for k in 55..72 {
+        inputs.push(bom(format!("[\"{}\", 12, \"b\\n\"]", "x".repeat(k)).as_bytes()));
+        inputs.push(bom(format!("[{}1\"a\"]", " ".repeat(k)).as_bytes()));
+        inputs.push(bom(format!("[\"{}", "x".repeat(k)).as_bytes()));
+    }
     let (mut same, mut refused) = (0, 0);
     for (k, f) in inputs.iter().enumerate() {
         let show = || String::from_utf8_lossy(&f[..f.len().min(60)]).into_owned();
@@ -1327,7 +1337,10 @@ fn json_tier1_masks_are_block_locals() {
     assert!(stage1.contains("    for t in 0..nw {\n"), "the file's blocks alone");
     assert!(!stage1.contains("NONE"), "no block past the file");
     assert_eq!(stage1.matches("src.starts_with(").count(), 1, "the byte order mark tested once");
-    assert_eq!(stage1.matches("let lv_0 = ").count(), 1, "the file's bits made once a block");
+    // No mask the file's bits (`lv`): no record or error holds at the padding's byte; the blocks start after a byte
+    // order mark (`off`), as simdjson's stage 1 reads past it.
+    assert!(!stage1.contains("lv"), "a mask of the file's bits:\n{stage1}");
+    assert!(stage1.contains("let off = if src.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };\n    let nw = (n - off).div_ceil(64);"), "the blocks after the mark");
     // The words read past their block's code: `nonquote_scalar`, for the block before's (`follows`; a local of its
     // code there), and the string open at the end's `f_str`.
     let outer: Vec<&str> = stage1.lines().filter(|l| l.starts_with("    let mut v_") || l.starts_with("    let mut p_")).collect();
@@ -1337,14 +1350,14 @@ fn json_tier1_masks_are_block_locals() {
     // `follows`, `string_tail`, and the records `structural_start` itself (proved equal to the tokens' starts but where
     // an error refuses the file, `refused_equal`).
     for part in [
-        "let v_m_scalar = !(v_m_op | v_m_ws) & lv;",
-        "v_m_nonquote_scalar = v_m_scalar & (!v_m_quote & lv);",
-        "let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63) & lv;",
+        "let v_m_scalar = !(v_m_op | v_m_ws);",
+        "v_m_nonquote_scalar = v_m_scalar & !v_m_quote;",
+        "let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63);",
         "let v_m_string_tail = (v_m_f_str ^ v_m_q);",
-        "let v_m_structural_start = (v_m_op | v_m_scalar & (!v_m_follows & lv)) & (!v_m_string_tail & lv);",
-        "let (base, cnt, mut bits) = (64 * q as u32, v_m_structural_start.count_ones() as usize, v_m_structural_start);",
+        "let v_m_structural_start = (v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail;",
+        "let (base, cnt, mut bits) = ((off + 64 * q) as u32, v_m_structural_start.count_ones() as usize, v_m_structural_start);",
         // A string right after a scalar, refused: simdjson's stage 2 refuses it at the number's or the atom's end.
-        "let v_t3 = v_m_q & v_m_follows & (!v_m_string_tail & lv);\n            // a string right after a scalar\n            errors |= v_t3;",
+        "let v_t3 = v_m_q & v_m_follows & !v_m_string_tail;\n            // a string right after a scalar\n            errors |= v_t3;",
     ] {
         assert!(stage1.contains(part), "no `{part}`:\n{stage1}");
     }
