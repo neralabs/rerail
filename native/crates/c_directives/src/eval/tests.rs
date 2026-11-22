@@ -1528,12 +1528,13 @@ fn a_unit_past_its_scratch_room_runs_again_larger() {
 }
 
 /// R8: an `#if` line past rung 0's room that decides an include. The rounds and the expansion's run both run it
-/// again larger before reading what the lines decided (a request made from a line cut short is none).
+/// again larger before reading what the lines decided (a request made from a line cut short is none). Two 8⁴
+/// fan-outs: 16,383 pieces of the line's output (decision 0588: the loop's room).
 #[test]
 fn a_line_past_its_room_runs_again_larger() {
     let fan = "#define A0 1+1+1+1+1+1+1+1\n#define A1 A0+A0+A0+A0+A0+A0+A0+A0\n#define A2 A1+A1+A1+A1+A1+A1+A1+A1\n\
-               #define A3 A2+A2+A2+A2+A2+A2+A2+A2\n";
-    let main = format!("{fan}#if A3 == 4096\n#include \"h.h\"\n#endif\nend\n");
+               #define A3 A2+A2+A2+A2+A2+A2+A2+A2\n#define A4 A3+A3+A3+A3+A3+A3+A3+A3\n";
+    let main = format!("{fan}#if A4 + A4 == 65536\n#include \"h.h\"\n#endif\nend\n");
     for cpp in [false, true] {
         let cfg = rerail_c_pp::Config::new(crate::pp::options(cpp));
         let (got, want, rung, _) = expanded_in(&[("main.c", main.as_str()), ("h.h", "in h\n")], cfg, &[]);

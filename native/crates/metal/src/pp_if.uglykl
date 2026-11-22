@@ -605,6 +605,8 @@ typedef struct IfFiles {
     PP_GLOBAL const uint32_t* found_by; PP_GLOBAL const uint32_t* unit_file;
     PP_GLOBAL PpReq* reqs; PP_GLOBAL uint32_t* n_reqs; uint32_t req_cap;
     PP_GLOBAL uint32_t* flags;
+    // The grid's control words: a long line's evaluation beats (`ukl_grid_beat`).
+    PP_GLOBAL uint32_t* grid;
 } IfFiles;
 
 // A header name, spelled from tokens already expanded (`Pp::header_of`): `"…"`'s bytes inside
@@ -809,7 +811,8 @@ UKL_INLINE void p1_if_eval(Ux u, IfFiles x, IfNames nm, uint32_t out_cap, PP_GLO
     IfSy y;
     y.nv = 0u; y.no = 0u; y.want = true; y.bad = false; y.big = false;
     uint8_t b[IF_TOKB];
-    for (uint32_t o = o0; o < o1 && !y.bad && !y.big;) {
+    for (uint32_t o = o0, step = 0u; o < o1 && !y.bad && !y.big; step++) {
+        if ((step & 4095u) == 4095u) ukl_grid_beat(x.grid);
         uint32_t g = ov_ref(u, out, o++);
         // A top token of the line, read raw: its mark.
         uint32_t mark = 0u;
