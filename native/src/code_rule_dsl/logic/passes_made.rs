@@ -20,7 +20,8 @@ pub fn words(text: &str) -> Vec<String> {
 }
 
 /// A pass made (`contexts::passes`): a context, its host and its roots, as the made program's `.pass` settings hold
-/// them (`.pass annotation of python roots ann_root exports ann_type, …`: the roots as the made program names them).
+/// them (`.pass annotation of python roots ann_root [holes REL] exports ann_type, …`: the roots as the made program
+/// names them).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Made {
     pub name: String,
@@ -36,6 +37,7 @@ pub fn made(v: &Version) -> Vec<Made> {
         .filter(|(k, _)| k == "pass")
         .filter_map(|(_, text)| match words(&text).as_slice() {
             [name, of, host, roots, rel, exports, ..] if of == "of" && roots == "roots" && exports == "exports" => Some(Made { name: name.clone(), host: host.clone(), roots: rel.clone() }),
+            [name, of, host, roots, rel, holes, _, exports, ..] if of == "of" && roots == "roots" && holes == "holes" && exports == "exports" => Some(Made { name: name.clone(), host: host.clone(), roots: rel.clone() }),
             _ => None,
         })
         .collect()

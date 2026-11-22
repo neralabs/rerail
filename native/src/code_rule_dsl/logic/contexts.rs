@@ -19,7 +19,13 @@
 //! refused, naming its relations: the passes run in an order (0597 rule 4).
 //!
 //! The pass's roots bound its views: each node a view of its rules reads is one of its nodes (`NODES`), its roots and
-//! what is within them.
+//! what is within them. A region root (a format spec, parsed already as the file's) may hold the host's own code (a
+//! nested field): `holes REL` on the `.context` line names it, and a hole and what is within it are no node of the
+//! context (`HELD`).
+//!
+//! ```text
+//! .context format_spec of python roots fspec_root holes fspec_hole exports fspec_part
+//! ```
 //!
 //! A relation name cannot hold a `.` (a clause's `.` ends it), so a read of another pass is by a name `.from`
 //! declares, not by a qualified name. `.export` is phase 0's already (a file's exports), so a context's are on its
@@ -42,6 +48,10 @@ pub fn instance(context: &str, rel: &str) -> String {
 /// these (`view_nodes`).
 pub const NODES: &str = "rr_nodes";
 
+/// A region root's holes and what is within them (`instance(context, HELD)`): the host's code inside its roots, left
+/// out of its nodes.
+pub const HELD: &str = "rr_held";
+
 /// A context a program declares (`.context`).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Context {
@@ -50,6 +60,9 @@ pub struct Context {
     pub host: String,
     /// The host's relation whose first column is each root's node.
     pub roots: String,
+    /// The host's relation of a region root's holes (`holes`): nodes within a root whose subtrees are the host's code
+    /// (a format spec's nested field), no node of the context. A text root has none.
+    pub holes: Option<String>,
     /// What other passes may read of it (`exports`).
     pub exports: BTreeSet<String>,
     /// Made already (a `.pass`): its instance is in the program, and a read of it is resolved to that.
@@ -60,6 +73,8 @@ pub struct Context {
     /// A made pass's roots in the other members of a combined program, each member's instance whole in its part
     /// (`p1_ann_tree` beside `roots`' `p0_ann_tree`): one pass, each instance under its member's names.
     pub other_roots: BTreeSet<String>,
+    /// A made pass's holes in the other members of a combined program (`other_roots`').
+    pub other_holes: BTreeSet<String>,
 }
 
 /// A read of one pass by another (`.from`): `local` in `reader`'s rules is `rel` of `source`.
@@ -139,10 +154,16 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
     let settings = ProgramFields::settings(v);
     let language = settings.iter().find(|(k, _)| k == "language").map(|(_, t)| t.trim().trim_matches('"').to_owned()).unwrap_or_default();
     let mut d = Declared { language, ..Declared::default() };
-    let shape = |text: &str| Error::Syntax(format!(".context {}: expected `NAME of HOST roots RELATION exports RELATION, …`", text.trim()));
+    let shape = |text: &str| Error::Syntax(format!(".context {}: expected `NAME of HOST roots RELATION [holes RELATION] exports RELATION, …`", text.trim()));
     for (key, text) in settings.iter().filter(|(k, _)| k == "context" || k == "pass") {
         let w = words(text);
-        let [name, of, host, roots, rel, exports, rest @ ..] = w.as_slice() else { return Err(shape(text)) };
+        let [name, of, host, roots, rel, tail @ ..] = w.as_slice() else { return Err(shape(text)) };
+        // A region's holes: read as they are, by the context's nodes (`write_nodes`) and, once made, by its completion.
+        let (holes, tail) = match tail {
+            [h, hrel, tail @ ..] if h == "holes" => (Some(hrel.clone()), tail),
+            _ => (None, tail),
+        };
+        let [exports, rest @ ..] = tail else { return Err(shape(text)) };
         if of != "of" || roots != "roots" || exports != "exports" {
             return Err(shape(text));
         }
@@ -155,14 +176,14 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
             Some((r, list)) if r == "reads" && key == "pass" => names(list, "")?.0.into_iter().map(|(r, _)| r).collect(),
             _ => return Err(shape(text)),
         };
-        let c = Context { name: name.clone(), host: host.clone(), roots: rel.clone(), exports: rels.into_iter().map(|(r, _)| r).collect(), made: key == "pass", reads, other_roots: BTreeSet::new() };
+        let c = Context { name: name.clone(), host: host.clone(), roots: rel.clone(), holes, exports: rels.into_iter().map(|(r, _)| r).collect(), made: key == "pass", reads, other_roots: BTreeSet::new(), other_holes: BTreeSet::new() };
         // A context is declared where its exports are written (each library file adds its own, 3.1): a declaration
         // of a context declared already, of the same host and roots, adds its exports and reads.
         match d.contexts.get_mut(name) {
             None => {
                 d.contexts.insert(name.clone(), c);
             }
-            Some(was) if (&was.host, &was.roots, was.made) == (&c.host, &c.roots, c.made) => {
+            Some(was) if (&was.host, &was.roots, &was.holes, was.made) == (&c.host, &c.roots, &c.holes, c.made) => {
                 was.exports.extend(c.exports);
                 was.reads.extend(c.reads);
             }
@@ -171,8 +192,12 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
                 was.exports.extend(c.exports);
                 was.reads.extend(c.reads);
                 was.other_roots.insert(c.roots);
+                was.other_holes.extend(c.holes.filter(|h| was.holes.as_ref() != Some(h)));
             }
-            Some(was) => return bad(format!(".{key} {name}: declared twice, of other roots, another host or made: of {} roots {}{}, and of {} roots {}{}", was.host, was.roots, if was.made { " (made)" } else { "" }, c.host, c.roots, if c.made { " (made)" } else { "" })),
+            Some(was) => {
+                let shown = |c: &Context| format!("of {} roots {}{}{}", c.host, c.roots, c.holes.as_ref().map_or(String::new(), |h| format!(" holes {h}")), if c.made { " (made)" } else { "" });
+                return bad(format!(".{key} {name}: declared twice, of other roots, another host or made: {}, and {}", shown(was), shown(&c)));
+            }
         }
     }
     for (_, text) in settings.iter().filter(|(k, _)| k == "from") {
@@ -232,11 +257,13 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
         if c.name == d.language {
             return bad(format!(".context {}: the program's language is its own pass", c.name));
         }
-        for roots in std::iter::once(&c.roots).chain(&c.other_roots) {
+        let what = |r: &String| if c.holes.as_ref() == Some(r) || c.other_holes.contains(r) { "holes" } else { "roots" };
+        for roots in std::iter::once(&c.roots).chain(&c.other_roots).chain(&c.holes).chain(&c.other_holes) {
+            let what = what(roots);
             match v.columns_of(roots).or_else(|| c.made.then(|| v.columns_of(&instance(&c.host, roots))).flatten()) {
                 Some(cols) if cols.first().is_some_and(|(_, t)| t == "node") => {}
-                Some(_) => return bad(format!(".context {}: its roots {roots} have no node as their first column", c.name)),
-                None => return bad(format!(".context {}: its roots {roots} are not declared", c.name)),
+                Some(_) => return bad(format!(".context {}: its {what} {roots} have no node as their first column", c.name)),
+                None => return bad(format!(".context {}: its {what} {roots} are not declared", c.name)),
             }
         }
         for e in &c.exports {
@@ -307,7 +334,8 @@ fn plan(v: &Version, d: &Declared) -> Plan {
         let roots = d.name_in(&c.host, &c.roots);
         // A view is read as it is, though a combined program derives `kind` and `docof` from `node`.
         let view = |x: &str| super::plan::corpus::hiding::VIEWS.contains(&x);
-        let stop = |x: &str| of_a_context(x) || x == roots || view(x) || if c.made { c.reads.contains(x) } else { d.read_of(&c.name, x).is_some() } || !derived(x);
+        let holes: BTreeSet<String> = c.holes.iter().chain(&c.other_holes).map(|h| d.name_in(&c.host, h)).collect();
+        let stop = |x: &str| of_a_context(x) || x == roots || holes.contains(x) || view(x) || if c.made { c.reads.contains(x) } else { d.read_of(&c.name, x).is_some() } || !derived(x);
         let mut set: BTreeSet<String> = BTreeSet::new();
         let mut todo: Vec<String> = Vec::new();
         if c.made {
@@ -458,9 +486,21 @@ fn write_nodes(v: &Version, d: &Declared, c: &Context, b: &mut Builder<'_>) -> R
     let root = |at: &'static str| -> Vec<T<'static>> { std::iter::once(T::Var(at)).chain((1..arity).map(|_| T::Wild)).collect() };
     b.fields().declare(&nodes, &[("n", "node")]);
     b.rule().head(nodes.as_str(), &[T::Var("n")]).atom(roots.as_str(), &root("n")).finish().map_err(Error::Syntax)?;
-    if v.columns_of("within").is_some() {
-        b.rule().head(nodes.as_str(), &[T::Var("n")]).atom(roots.as_str(), &root("r")).atom("within", &[T::Var("n"), T::Var("r")]).finish().map_err(Error::Syntax)?;
+    if v.columns_of("within").is_none() {
+        return Ok(());
     }
+    let Some(holes) = c.holes.as_ref().map(|h| d.name_in(&c.host, h)) else {
+        b.rule().head(nodes.as_str(), &[T::Var("n")]).atom(roots.as_str(), &root("r")).atom("within", &[T::Var("n"), T::Var("r")]).finish().map_err(Error::Syntax)?;
+        return Ok(());
+    };
+    // A region's holes are the host's code: a hole and what is within it are no node of the context.
+    let held = instance(&c.name, HELD);
+    let harity = v.columns_of(&holes).or_else(|| c.holes.as_ref().and_then(|h| v.columns_of(h))).map_or(1, |cols| cols.len());
+    let hole = |at: &'static str| -> Vec<T<'static>> { std::iter::once(T::Var(at)).chain((1..harity).map(|_| T::Wild)).collect() };
+    b.fields().declare(&held, &[("n", "node")]);
+    b.rule().head(held.as_str(), &[T::Var("n")]).atom(holes.as_str(), &hole("n")).finish().map_err(Error::Syntax)?;
+    b.rule().head(held.as_str(), &[T::Var("n")]).atom(holes.as_str(), &hole("h")).atom("within", &[T::Var("n"), T::Var("h")]).finish().map_err(Error::Syntax)?;
+    b.rule().head(nodes.as_str(), &[T::Var("n")]).atom(roots.as_str(), &root("r")).atom("within", &[T::Var("n"), T::Var("r")]).not(held.as_str(), &[T::Var("n")]).finish().map_err(Error::Syntax)?;
     Ok(())
 }
 
@@ -510,7 +550,8 @@ fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<
         let exports: Vec<&str> = c.exports.iter().map(String::as_str).collect();
         let reads: Vec<String> = d.reads.iter().filter(|r| r.reader == c.name).map(|r| d.name_in(&r.source, &r.rel)).collect();
         let reads = if reads.is_empty() { String::new() } else { format!(" reads {}", reads.join(", ")) };
-        settings.push(("pass".to_owned(), format!("{} of {} roots {} exports {}{reads}", c.name, c.host, d.name_in(&c.host, &c.roots), exports.join(", "))));
+        let holes = c.holes.as_ref().map_or(String::new(), |h| format!(" holes {}", d.name_in(&c.host, h)));
+        settings.push(("pass".to_owned(), format!("{} of {} roots {}{holes} exports {}{reads}", c.name, c.host, d.name_in(&c.host, &c.roots), exports.join(", "))));
     }
     b.fields().set_field(super::program_facts::Field::Settings(&settings));
     Ok(())

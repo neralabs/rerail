@@ -2719,6 +2719,96 @@ fn an_annotation_inside_an_annotation_is_the_contexts_own_root() {
     assert_eq!(together, alone);
 }
 
+/// A host whose f-strings' format specs are a context of region roots: the spec's subtree, parsed already, but for
+/// its holes (a nested field's `{w}`), which are the host's code.
+const SPEC_PASS: &str = "\
+.language python
+#include \"python/ast.rerail\"
+.decl spec_root(s: node)
+spec_root(s) :- kind(i, \"interpolation\"), field(i, \"format_specifier\", s).
+.decl spec_hole(h: node)
+spec_hole(h) :- spec_root(s), child(s, h, _), kind(h, \"format_expression\").
+.decl spec_ident(x: symbol)
+spec_ident(x) :- kind(i, \"identifier\"), text(i, x).
+.decl spec_kind(k: symbol)
+spec_kind(k) :- node(_, n, k, _, _).
+.decl host_ident(x: symbol)
+host_ident(x) :- kind(i, \"identifier\"), text(i, x).
+.decl spec_names(x: symbol)
+spec_names(x) :- names(x).
+.decl spec_kinds(k: symbol)
+spec_kinds(k) :- kinds(k).
+.output spec_names, spec_kinds, host_ident
+.context spec of python roots spec_root holes spec_hole exports spec_ident, spec_kind
+.from spec spec_ident as names
+.from spec spec_kind as kinds
+";
+
+/// 0597 rung 5.1: a region root is bounded at each read, and its holes are its host's: in `f\"{x:>{w}}\"` the spec
+/// context sees the `format_specifier` and no identifier, nor the nested field; the host sees `x` and `w`.
+#[test]
+fn a_regions_holes_are_its_hosts_code() {
+    let file = ("a.py", "s = f\"{x:>{w}}\"\n");
+    for rel in ["spec_names", "spec_kinds", "host_ident"] {
+        let (alone, together) = alone_and_together(&format!("pass-holes-{rel}"), file, SPEC_PASS, PLAIN_PASS, rel);
+        assert_eq!(together, alone, "{rel}");
+        let has = |x: &str| alone.iter().any(|r| r == &[x]);
+        match rel {
+            "spec_names" => assert!(alone.is_empty(), "the spec's identifiers: {alone:?}"),
+            "spec_kinds" => assert!(has("format_specifier") && !has("format_expression") && !has("identifier") && !has("interpolation"), "the spec's kinds: {alone:?}"),
+            _ => assert!(has("x") && has("w") && has("s"), "the host's identifiers: {alone:?}"),
+        }
+    }
+}
+
+/// 0597 rung 5.2: `python/format-spec.rerail` reads a spec's mini-language in the format-spec context, and the host
+/// reads its parts: a standard spec's parts as written, a datetime's own spec as no standard one, and a spec with a
+/// nested field as neither.
+#[test]
+fn a_format_spec_is_read_in_its_own_context() {
+    let file = ("a.py", "a = f\"{x:>10.2f}\"\nb = f\"{d:%Y}\"\nc = f\"{x:*^+#012,.3e}\"\nd = f\"{x:{w}}\"\ne = f\"{x:}\"\n");
+    let program = "\
+.language python
+#include \"python/format-spec.rerail\"
+.decl parts(t: symbol, p: symbol, v: symbol)
+parts(t, p, v) :- fmt_spec_part(s, p, v), text(s, t).
+.decl std(t: symbol)
+std(t) :- fmt_spec_std(s), text(s, t).
+.decl other(t: symbol)
+other(t) :- fmt_spec_other(s), text(s, t).
+.output parts, std, other
+";
+    let row = |r: &[&str]| r.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+    let (parts, together) = alone_and_together("spec-parts", file, program, PLAIN_PASS, "parts");
+    assert_eq!(together, parts);
+    let want: Vec<Vec<String>> = [
+        [":*^+#012,.3e", "align", "^"],
+        [":*^+#012,.3e", "alt", "#"],
+        [":*^+#012,.3e", "fill", "*"],
+        [":*^+#012,.3e", "grouping", ","],
+        [":*^+#012,.3e", "precision", "3"],
+        [":*^+#012,.3e", "sign", "+"],
+        [":*^+#012,.3e", "type", "e"],
+        [":*^+#012,.3e", "width", "12"],
+        [":*^+#012,.3e", "zero", "0"],
+        [":>10.2f", "align", ">"],
+        [":>10.2f", "precision", "2"],
+        [":>10.2f", "type", "f"],
+        [":>10.2f", "width", "10"],
+    ]
+    .iter()
+    .map(|r| row(r))
+    .collect();
+    let mut got = parts.clone();
+    got.sort();
+    assert_eq!(got, want);
+    let (mut std, _) = alone_and_together("spec-std", file, program, PLAIN_PASS, "std");
+    std.sort();
+    assert_eq!(std, [row(&[":"]), row(&[":*^+#012,.3e"]), row(&[":>10.2f"])]);
+    let (other, _) = alone_and_together("spec-other", file, program, PLAIN_PASS, "other");
+    assert_eq!(other, [row(&[":%Y"])]);
+}
+
 /// 0597 rung 2.8: a finding at a context's node stands at its string's line in the file (0431 §3, R9's
 /// `guest_place`): the unresolved name of `y: "Bar"`, on line 3.
 #[test]

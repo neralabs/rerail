@@ -299,6 +299,18 @@ The template's findings stand at the file's lines.
        write, so nothing taken before is uncommitted. It passes in 0.45 s.
      - The quick tier after that fix: all 1,230 tests of rerail-logic and rerail-tests-logic pass.
 5. **f-strings and Vue.** `python/format-spec` and SQL in a template; `vue/expression` reading the script's bindings.
+
+   The plan (2026-11-22). Each rung is a test written red before its code:
+
+   | Rung | Test | Locks |
+   |---|---|---|
+   | 5.1 | `f"{x:>{w}}"`: the format-spec context's identifiers are none, and its nodes are the spec; the host's identifiers include `w` | a region root is bounded at each read; its holes (`holes REL` on `.context`) are the host's code |
+   | 5.2 | `f"{x:>10.2f}"` exports align `>`, width `10`, precision `2`, type `f`; `f"{d:%Y}"` is no standard spec | `python/format-spec.rerail`: the spec's mini-language, its rules the context's |
+   | 5.3 | `parsed(s, "sql", r)` of `f"SELECT a FROM users WHERE id = {uid}"` gives a tree whose `users` stands at its own column; the hole's node stands at `{uid}`, and its host node is the interpolation; `parsed(s, "annotation", _)` of an f-string is none | an f-string's template is a text root in a language's grammar, its holes a marker placed at each field |
+   | 5.4 | `python/sql-template.rerail`: the context `sql` over the templates exports the tables a query names and each hole's role (a value or a name); its rules are the SQL library's | SQL in a template, read by a host rule |
+   | 5.5 | a Vue template's code is the context `expression`, its identifiers the template's alone; the script is the context `script` | the two passes of a component's code |
+   | 5.6 | `<li v-for="item in items">` beside `const item = 1` in the script: no-template-shadow finds the shadow through the script's export | `vue/expression` reads the script's bindings |
+   | 5.7 | the Vue pack's policies find on their examples what they found before | the move kept each policy's meaning |
 6. **Measure.** corpus0 × B-now against the targets (one pack 0.786 T, normal packs 2.428 T, 463 findings,
    d067ec2ebf6f).
 
