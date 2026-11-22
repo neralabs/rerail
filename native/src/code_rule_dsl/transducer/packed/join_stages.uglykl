@@ -1343,6 +1343,8 @@ typedef struct Job {
     JSPACE const uint32_t* cnt;
 } Job;
 UKL_STATIC_ASSERT(sizeof(Job) == 192, "Job: size");
+// `base`'s word in a job's descriptor (its level's size script writes it).
+#define JOB_BASE_WORD 42u
 
 
 
@@ -1764,6 +1766,7 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 #define PK_SUM 26u
 #define PK_GATE 27u
 #define PK_ROUND 28u
+#define PK_SIZE 29u
 
 // An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase, its
 // segment and one (`Seg`; 0: none).
@@ -1782,7 +1785,11 @@ UKL_INLINE uint32_t seg_items(UKL_GLOBAL const Seg* g)
 }
 
 // A scan's level: its `n` values scanned in place, its tiles' sums (their offsets once scanned), whether it has them.
-typedef struct ScanLevel { JSPACE uint32_t* in; JSPACE uint32_t* sums; uint32_t n; uint32_t offsets; uint64_t pad; } ScanLevel;
+// A level a size script sizes (decision 0603 step 5) has its `n` and its values' first word in `in` (`at`, its arena
+// there) set by it: read as words, coherent, as the script wrote them.
+typedef struct ScanLevel { JSPACE uint32_t* in; JSPACE uint32_t* sums; uint32_t n; uint32_t offsets; uint32_t at; uint32_t pad; } ScanLevel;
+#define SCAN_N_WORD 4u
+#define SCAN_AT_WORD 6u
 UKL_STATIC_ASSERT(sizeof(ScanLevel) == 32, "ScanLevel: size");
 // A sort's pass: its keys and places in, its histograms (scanned: each digit's offset for each tile), out.
 typedef struct SortPass {
@@ -1800,6 +1807,52 @@ UKL_STATIC_ASSERT(sizeof(SortPass) == 64, "SortPass: size");
 typedef struct ProgP { uint32_t phases; uint32_t capacity; uint32_t seeds; uint32_t first; } ProgP;
 UKL_REFLECT_STRUCT(ProgP, phases, capacity, seeds, first)
 
+// A level's sizes (decision 0603 step 5): one thread runs a script of `ops` (`Item::group` of them from
+// `Item::what`'s index), over 64-bit registers `r`, in order. Each op's `k` its result's register, `x`/`y` its
+// operands', `w` a word's address, `c` a constant:
+//  0 `r[k] = w[0] + c`; 2 `r[k] = c`; 3 `r[k] = r[x] + r[y] + c`; 4 `r[k] = r[x] - r[y]` (0 below);
+//  5 `r[k] = r[x] * c`; 6 `r[k] = ceil(r[x] / c)`; 7 `r[k] = min(r[x], r[y])`; 8 `r[k] = max(r[x], c)`;
+//  9 a claim of `r[x]` bytes of the program's arena (16 a unit, `w` its top in units, `y` its room in them, `c` its
+//    address): `r[k]` their address; past the room, the program stops (`ctl[6]`'s bits 2 and 32) and `r[k]` is
+//    the arena's start;
+// 11 `w[0] = r[k]`; 12 `r[k] = w[r[x]]`.
+// Its writes are words of a job's descriptor and its parameters and of a scan level, which the phases after it read
+// as words, coherent (a pointer of theirs is the host's; a size its offset).
+typedef struct SizeOp { JSPACE uint32_t* w; uint64_t c; uint32_t op, k, x, y; } SizeOp;
+UKL_STATIC_ASSERT(sizeof(SizeOp) == 32, "SizeOp: size");
+UKL_INLINE void size_one(UKL_GLOBAL const SizeOp* ops, uint32_t n, UKL_GLOBAL uint32_t* ctl, uint32_t t)
+{
+    if (t != 0u) return;
+    uint64_t r[16];
+    for (uint32_t k = 0u; k < 16u; k++) r[k] = 0u;
+    for (uint32_t i = 0u; i < n; i++) {
+        SizeOp o = ops[i];
+        uint32_t k = o.k & 15u, x = o.x & 15u, y = o.y & 15u;
+        switch (o.op) {
+            case 0u: r[k] = (uint64_t)*o.w + o.c; break;
+            case 2u: r[k] = o.c; break;
+            case 3u: r[k] = r[x] + r[y] + o.c; break;
+            case 4u: r[k] = r[x] > r[y] ? r[x] - r[y] : 0u; break;
+            case 5u: r[k] = r[x] * o.c; break;
+            case 6u: r[k] = (r[x] + o.c - 1u) / o.c; break;
+            case 7u: r[k] = r[x] < r[y] ? r[x] : r[y]; break;
+            case 8u: r[k] = r[x] > o.c ? r[x] : o.c; break;
+            case 9u: {
+                uint64_t units = (r[x] + 15u) / 16u;
+                uint32_t got = units > 0xFFFFFFFFu ? 0xFFFFFFFFu : (uint32_t)units;
+                uint32_t old = ukl_atomic_add(o.w, got);
+                bool full = (uint64_t)old + got > (uint64_t)o.y;
+                if (full) ukl_atomic_or(&ctl[6], 2u | 32u);
+                r[k] = full ? o.c : o.c + 16u * (uint64_t)old;
+                break;
+            }
+            case 11u: *o.w = (uint32_t)r[k]; break;
+            case 12u: r[k] = (uint64_t)o.w[r[x]]; break;
+            default: break;
+        }
+    }
+}
+
 // The threadgroup memory the scans' and sorts' tile passes take.
 typedef struct ProgLocal {
     UKL_LOCAL uint32_t* scratch;
@@ -1812,10 +1865,10 @@ typedef struct ProgLocal {
 
 // Item `it`'s work, a group of `JOIN_TG` threads (`l` this one's). The group runs one item at a time, so a tile
 // pass's barriers are the group's.
-UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel* scans, UKL_GLOBAL const SortPass* sorts, UKL_GLOBAL const Seg* segs, JSPACE uint32_t* counts,
-                          UKL_GLOBAL uint32_t* ctl, Item it, uint32_t l, ProgLocal m __UKL_PARAMS)
+UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel* scans, UKL_GLOBAL const SortPass* sorts, UKL_GLOBAL const Seg* segs, UKL_GLOBAL const SizeOp* script,
+                          JSPACE uint32_t* counts, UKL_GLOBAL uint32_t* ctl, Item it, uint32_t l, ProgLocal m __UKL_PARAMS)
 {
-    uint32_t kind = it.what >> 24, x = it.what & 0xffffffu, g = it.group, t = g * JOIN_TG + l;
+    uint32_t kind = it.what >> 24, x = it.what & 0xffffffu, g = it.group, t = kind == PK_SIZE ? 0u : g * JOIN_TG + l;
     // A segment's item strides its job's rows (decision 0603 step 5): its threads `t`, `t + step`, ..., below its
     // count's, `step` the segment's items pushed. Its kernels are a thread a row.
     uint32_t step = 0u, lim = 0u;
@@ -1824,8 +1877,17 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         step = seg_items(sg) * JOIN_TG;
         lim = *sg->count + sg->plus;
     }
+    if (kind == PK_SIZE) {
+        if (l == 0u) size_one(script + x, g, ctl, 0u);
+        return;
+    }
     if (kind == PK_SCAN_SUMS || kind == PK_SCAN_TILES) {
         ScanLevel lv = scans[x];
+        // Its sizes as its level's script set them (a word read: the descriptors' pointers are read as written by
+        // the host).
+        JSPACE const uint32_t* sw = (JSPACE const uint32_t*)(scans + x);
+        lv.n = sw[SCAN_N_WORD];
+        lv.in += sw[SCAN_AT_WORD];
         UklScanArgs a;
         a.n = lv.n;
         a.hasOffsets = lv.offsets;
@@ -1846,7 +1908,8 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
         return;
     }
     UKL_GLOBAL const Job* j = &jobs[x];
-    JSPACE uint32_t* c = counts + j->base;
+    // Its counts' first word, as its level's size script set it.
+    JSPACE uint32_t* c = counts + ((JSPACE const uint32_t*)(jobs + x))[JOB_BASE_WORD];
     for (uint32_t pass = 0u; pass < UKL_WQ_TURNS; pass++) {
     switch (kind) {
         case PK_COPY: rows_copy_one((JSPACE const uint8_t*)j->L, (JSPACE uint8_t*)j->O, j->totals, (JSPACE const Copy*)j->P, t); break;
@@ -1894,19 +1957,21 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
 //
 // `ctl`: 0-4 the queue's control (head, tail, active, overflow, base), 5 the seeds taken, 6 the program's flags (1:
 // a push past the queue's capacity; 2: a gate stopped it; 4, 8, 16: a round's end stopped it past its rounds,
-// yielded, ended it), 7 a round's end's jump, 8 the rounds this launch ran, 9 where a yield goes on (the phase and
+// yielded, ended it; 32: a claim past its arena's room, with 2), `counts` the arena (each level's counts at the offsets
+// its size script claimed, decision 0603 step 5), 7 a round's end's jump, 8 the rounds this launch ran, 9 where a yield goes on (the phase and
 // one), then each phase's items done (emptied as the phase is pushed: a round runs a phase again), then each phase's
 // items as pushed (0: all of them; a phase of segments, theirs). `phases`: each phase's first item, its items, its
 // first segment and its segments (`segs`). `phases`: each phase's first item and
 // its items. Ordering: a group's writes, a device barrier and fence, then its count; the pusher's fence, then its
 // pushes; the taker's fence after its take.
 DEFINE_KERNEL2(join, join_run,
-               ROBUFFER, Job,       jobs,    "[jobs]",
+               RWBUFFER, Job,       jobs,    "[jobs]",
                ROBUFFER, Item,      items,   "[items]",
                ROBUFFER, uint32_t,  phases,  "[4 * phases]",
                ROBUFFER, Seg,       segs,    "[segs]",
-               ROBUFFER, ScanLevel, scans,   "[scans]",
+               RWBUFFER, ScanLevel, scans,   "[scans]",
                ROBUFFER, SortPass,  sorts,   "[sorts]",
+               ROBUFFER, SizeOp,    script,  "[ops]",
                RWBUFFER, uint32_t,  ctl,     "[10 + 2 * phases]",
                RWBUFFER, uint32_t,  slots,   "[capacity]",
                RWBUFFER, uint32_t,  counts,  "[counts]",
@@ -1956,7 +2021,7 @@ DEFINE_KERNEL2(join, join_run,
         ukl_tg_barrier();
         if (got == 0u) return;
         Item it = items[item];
-        prog_item(jobs, scans, sorts, segs, (JSPACE uint32_t*)counts, ctl, it, l, m __UKL_ARGS);
+        prog_item(jobs, scans, sorts, segs, script, (JSPACE uint32_t*)counts, ctl, it, l, m __UKL_ARGS);
         // The group's writes, then the item counted: the one that brings its phase's count to its items pushes the
         // next phase's.
         ukl_tg_barrier_device();

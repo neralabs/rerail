@@ -2004,6 +2004,11 @@ impl Batch {
             }
             p.extend([to, from, u64::from(code) | (n as u64) << 32]);
         }
+        // The arena's top emptied: a round's counts are its own (decision 0603 step 5).
+        let top = self.program.top()?;
+        p.extend([top, 0, 2 | 1 << 32]);
+        p[1] += 1;
+        writes.push(top);
         job.p = Some(as_bytes(&p).to_vec());
         job.count = 1;
         job.order(&reads, &writes);
@@ -2143,7 +2148,6 @@ impl Batch {
         let passes = bits / 8;
         // Where the sorted keys and places end: in the first pair after an even number of passes.
         let sorted = sort.as_ref().map(|(a, b, ..)| if passes % 2 == 0 { a } else { b });
-        let level_base = prog.counts;
         let (mut kb, mut eb, mut total) = (0usize, 0usize, 0usize);
         let first_job = prog.descs.len();
         for (j, at) in jobs.iter().zip(&placed) {
@@ -2154,7 +2158,8 @@ impl Batch {
             d.bs = at[2].map_or(s, |b| pa + b);
             d.dd = at[3].map_or(s, |b| pa + b);
             d.p = at[4].map_or(s, |b| pa + b);
-            d.base = u32::try_from(level_base + total).map_err(|_| Error::BackendCapacity)?;
+            // Its counts' first word: the level's size script's (below).
+            d.base = 0;
             d.n = j.n as u32;
             total += j.n;
             if let (JobKind::Index, Some((a, _, _, _)), Some(f)) = (j.kind, &sort, sorted) {
@@ -2166,7 +2171,9 @@ impl Batch {
             }
             prog.descs.push(d);
         }
-        prog.counts += total + 1;
+        if u32::try_from(total + 1).is_err() {
+            return Err(Error::BackendCapacity);
+        }
         prog.levels += 1;
         let groups = |threads: usize| threads.div_ceil(rerail_accel::gpu::join::GROUP as usize).max(1);
         // A row stage's SIMD groups, a worker's group of them an item.
@@ -2197,6 +2204,32 @@ impl Batch {
             prog.phase_of(items, segs);
         };
         job_phase(prog, &[(JobKind::Gate, PK_GATE, |j| j.count), (JobKind::Sum, PK_SUM, |j| j.count), (JobKind::Round, PK_ROUND, |j| j.count)]);
+        // The level's sizes (decision 0603 step 5): its counts' words claimed in the program's arena, each job's
+        // first word in its descriptor, the scan's values there.
+        let scan_at = if total > 0 {
+            let first = prog.script.len();
+            let top = prog.top()?;
+            let bytes = (4 * (total + 1)).next_multiple_of(16);
+            prog.arena += bytes;
+            prog.op(OpAt::of(SZ_CONST, 1, 0, 0).c(Late::Abs(bytes as u64)));
+            prog.op(OpAt::of(SZ_CLAIM, 0, 1, ROOM).w(Late::Abs(top)).c(Late::Arena(0)));
+            prog.op(OpAt::of(SZ_CONST, 2, 0, 0).c(Late::Arena(0)));
+            prog.op(OpAt::of(SZ_SUB, 3, 0, 2));
+            prog.op(OpAt::of(SZ_DIVUP, 3, 3, 0).c(Late::Abs(4)));
+            // The scan's first level's values' first word (`Late::Scan`, its level set once the scan is made).
+            let at = prog.script.len();
+            prog.op(OpAt::of(SZ_PUT32, 3, 0, 0));
+            for (i, j) in jobs.iter().enumerate() {
+                if j.n > 0 {
+                    prog.op(OpAt::of(SZ_PUT32, 3, 0, 0).w(Late::Desc(first_job + i, std::mem::offset_of!(JobDesc, base) as u64)));
+                    prog.op(OpAt::of(SZ_ADD, 3, 3, ZERO).c(Late::Abs(j.n as u64)));
+                }
+            }
+            prog.phase(vec![(PK_SIZE, first as u32, (prog.script.len() - first) as u32)]);
+            Some(at)
+        } else {
+            None
+        };
         job_phase(prog, &[(JobKind::Copy, PK_COPY, |j| j.count)]);
         if let (Some((a, b, hist, tiles)), Some(f)) = (&sort, sorted) {
             job_phase(prog, &[(JobKind::Index, PK_IX_KEY, |j| j.count)]);
@@ -2234,7 +2267,9 @@ impl Batch {
             (JobKind::Dedup, PK_DEDUP_MARK, |j| j.count),
         ]);
         if total > 0 {
-            prog.scan(ScanData::Counts(level_base), total)?;
+            let level = prog.scans.len();
+            prog.scan(ScanData::Script, total)?;
+            prog.script[scan_at.expect("a level of counts has its sizes")].w = Late::Scan(level, std::mem::offset_of!(ScanLevel, at) as u64);
             job_phase(prog, &[
                 (JobKind::Stage, PK_STAGE_SCATTER, |j| j.scatter),
                 (JobKind::Witness, PK_STAGE_SCATTER, |j| j.scatter),
@@ -2279,18 +2314,19 @@ impl Batch {
         if self.program.phases.is_empty() {
             return Ok(());
         }
-        let prog = std::mem::take(&mut self.program);
-        let counts = Held::new(4 * (prog.counts + 1))?;
+        let mut prog = std::mem::take(&mut self.program);
+        // The arena: each level's counts at the offsets its size script claims (decision 0603 step 5).
+        let counts = Held::new(prog.arena.max(16))?;
         let ca = address(&counts.buffer)?;
         let scans: Vec<ScanLevel> = prog
             .scans
             .iter()
             .map(|l| {
                 let data = match l.data {
-                    ScanData::Counts(at) => ca + 4 * at as u64,
+                    ScanData::Script => ca,
                     ScanData::At(a) => a,
                 };
-                ScanLevel { data, sums: l.sums.unwrap_or(data), n: l.n, offsets: u32::from(l.sums.is_some() && l.offsets), pad: 0 }
+                ScanLevel { data, sums: l.sums.unwrap_or(data), n: l.n, offsets: u32::from(l.sums.is_some() && l.offsets), at: 0, pad: 0 }
             })
             .collect();
         // Each in a buffer of its own (an empty one of a few bytes: a buffer is never empty).
@@ -2301,6 +2337,20 @@ impl Batch {
         let segs = bytes(as_bytes(&prog.segs))?;
         let scan_levels = bytes(as_bytes(&scans))?;
         let sorts = bytes(as_bytes(&prog.sorts))?;
+        // The size scripts' addresses, now that the buffers they name are made.
+        let (da, sa) = (address(&descs.buffer)?, address(&scan_levels.buffer)?);
+        let room = u32::try_from(prog.arena / 16).map_err(|_| Error::BackendCapacity)?;
+        let late = |l: Late| match l {
+            Late::Zero => 0,
+            Late::Abs(a) => a,
+            Late::Desc(i, o) => da + (std::mem::size_of::<JobDesc>() * i) as u64 + o,
+            Late::Scan(i, o) => sa + (std::mem::size_of::<ScanLevel>() * i) as u64 + o,
+            Late::Arena(o) => ca + o,
+        };
+        let script: Vec<SizeOp> =
+            prog.script.iter().map(|o| SizeOp { w: late(o.w), c: late(o.c), op: o.op, k: o.k, x: o.x, y: if o.y == ROOM { room } else { o.y } }).collect();
+        let script = bytes(as_bytes(&script))?;
+        let top = prog.top.take();
         // A group an item at most, a few rounds' where it runs rounds (`round_end`): a group that finds nothing to
         // take ends, and later ones start as earlier ones end. The queue's room: every phase pushed in a launch (its
         // rounds' at most), the continuations and a slot a group gives up at most.
@@ -2309,7 +2359,7 @@ impl Batch {
         let capacity = rounds * prog.phases.iter().map(|p| p[1] as usize).sum::<usize>() + workers;
         let format = prog.format.unwrap_or_else(run_view_format);
         self.done.levels += prog.levels;
-        let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, counts, phase_items: prog.phases, capacity, workers, format, uses: prog.uses, hold: prog.hold };
+        let kit = Kit { descs, items, phases, segs, scans: scan_levels, sorts, script, top, counts, phase_items: prog.phases, capacity, workers, format, uses: prog.uses, hold: prog.hold };
         self.launch(kit, 0)
     }
 
@@ -2336,9 +2386,12 @@ impl Batch {
             pass.use_read_write(&h.buffer);
         }
         pass.use_read_write(&kit.counts.buffer);
+        if let Some(t) = &kit.top {
+            pass.use_read_write(&t.buffer.buffer);
+        }
         pass.run_bytes_at(
             &pipe,
-            &[(&kit.descs.buffer, 0), (&kit.items.buffer, 0), (&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&kit.scans.buffer, 0), (&kit.sorts.buffer, 0), (&ctl.buffer.buffer, 0), (&slots.buffer.buffer, 0), (&kit.counts.buffer, 0)],
+            &[(&kit.descs.buffer, 0), (&kit.items.buffer, 0), (&kit.phases.buffer, 0), (&kit.segs.buffer, 0), (&kit.scans.buffer, 0), (&kit.sorts.buffer, 0), (&kit.script.buffer, 0), (&ctl.buffer.buffer, 0), (&slots.buffer.buffer, 0), (&kit.counts.buffer, 0)],
             &args,
             kit.workers,
         );
@@ -2436,6 +2489,10 @@ struct Kit {
     segs: Held,
     scans: Held,
     sorts: Held,
+    /// Its size scripts' ops (`SizeOp`), and their arena's top (none where it has none).
+    script: Held,
+    top: Option<Words>,
+    /// The arena: its counts (decision 0603 step 5).
     counts: Held,
     /// Each phase's first item, its items and its segments (`Program::phases`).
     phase_items: Vec<[u32; 4]>,
@@ -2482,6 +2539,7 @@ const PK_LAT_MERGE: u32 = 25;
 const PK_SUM: u32 = 26;
 const PK_GATE: u32 = 27;
 const PK_ROUND: u32 = 28;
+const PK_SIZE: u32 = 29;
 /// The phases whose items are their jobs' rows' (`Job::rows_word`): each kernel's threads past its rows do nothing.
 /// Not a row's text (its SIMD groups stride its rows), an index (its sort is of every key), a clear, a fold's map or
 /// places, a scan's or a sort's tiles.
@@ -2514,8 +2572,11 @@ struct Program {
     segs: Vec<SegAt>,
     scans: Vec<ScanAt>,
     sorts: Vec<SortPass>,
-    /// Its counts' words: each level's, and one past each for its total.
-    counts: usize,
+    /// Its levels' size scripts (`size_one`), their ops end to end; the bytes of the arena they claim; its top's word
+    /// (made with the first script, emptied at each round's end).
+    script: Vec<OpAt>,
+    arena: usize,
+    top: Option<Words>,
     /// The view format its jobs read (0: several); none read a view.
     format: Option<u32>,
     levels: u32,
@@ -2528,6 +2589,18 @@ struct Program {
 }
 
 impl Program {
+    /// Its arena's top (`size_one`'s claims), its address: made at its first use.
+    fn top(&mut self) -> Result<u64, Error> {
+        if self.top.is_none() {
+            self.top = Some(Words::zeroed(1)?);
+        }
+        address(&self.top.as_ref().expect("made").buffer.buffer)
+    }
+
+    fn op(&mut self, o: OpAt) {
+        self.script.push(o);
+    }
+
     /// A phase of `items` (`(kind, which, group)`), after the ones before; none for no items.
     fn phase(&mut self, items: Vec<(u32, u32, u32)>) {
         self.phase_of(items, Vec::new());
@@ -2587,12 +2660,72 @@ impl Program {
     }
 }
 
-/// Where a scan level's values lie: in the program's counts (from a word), or at an address.
+/// Where a scan level's values lie: where its level's size script claimed them (a level's counts), or at an address.
 #[derive(Clone, Copy)]
 enum ScanData {
-    Counts(usize),
+    Script,
     At(u64),
 }
+
+/// An address a size script names, known when its program launches (`run_program`): none, an address, a job's
+/// descriptor's word, a scan level's, the arena's.
+#[derive(Clone, Copy)]
+enum Late {
+    Zero,
+    Abs(u64),
+    Desc(usize, u64),
+    Scan(usize, u64),
+    Arena(u64),
+}
+
+/// A size script's op as it is built (`size_one`'s `SizeOp`, its addresses late).
+#[derive(Clone, Copy)]
+struct OpAt {
+    w: Late,
+    c: Late,
+    op: u32,
+    k: u32,
+    x: u32,
+    y: u32,
+}
+
+impl OpAt {
+    fn of(op: u32, k: u32, x: u32, y: u32) -> OpAt {
+        OpAt { w: Late::Zero, c: Late::Zero, op, k, x, y }
+    }
+    fn w(self, w: Late) -> OpAt {
+        OpAt { w, ..self }
+    }
+    fn c(self, c: Late) -> OpAt {
+        OpAt { c, ..self }
+    }
+}
+
+/// `join_stages.uglykl`'s `SizeOp`, byte for byte.
+#[repr(C)]
+#[derive(Clone, Copy)]
+struct SizeOp {
+    w: u64,
+    c: u64,
+    op: u32,
+    k: u32,
+    x: u32,
+    y: u32,
+}
+
+const _: () = assert!(std::mem::size_of::<SizeOp>() == 32);
+
+// `size_one`'s ops.
+const SZ_CONST: u32 = 2;
+const SZ_ADD: u32 = 3;
+const SZ_SUB: u32 = 4;
+const SZ_DIVUP: u32 = 6;
+const SZ_CLAIM: u32 = 9;
+const SZ_PUT32: u32 = 11;
+/// A register no op writes: 0.
+const ZERO: u32 = 15;
+/// A claim's `y`: the arena's room, known at the launch.
+const ROOM: u32 = u32::MAX;
 
 /// A program's scan level, as it is built: its values, its tiles' sums (none for one tile), whether they offset it.
 struct ScanAt {
@@ -2610,10 +2743,13 @@ struct ScanLevel {
     sums: u64,
     n: u32,
     offsets: u32,
-    pad: u64,
+    /// Its values' first word past `data` (a size script's).
+    at: u32,
+    pad: u32,
 }
 
 const _: () = assert!(std::mem::size_of::<ScanLevel>() == 32);
+const _: () = assert!(std::mem::offset_of!(JobDesc, base) == 4 * 42, "join_stages' JOB_BASE_WORD");
 
 /// `join_stages.uglykl`'s `SortPass`, byte for byte.
 #[repr(C)]

@@ -230,3 +230,21 @@ its launches: fewer than its rounds.
   5b's and 5c's sizes, made on the device, need. A segment of no count (`per` 0) runs each item once, as before. A
   scan's or a sort's tile pass is not a segment's.
 - **Measured:** spark2's CPU backend, 45 of 45 (67 s); the mini's Metal, 32 of 32.
+
+### Done (2026-11-22): 5b's mechanism, a level's size script and the program's arena
+
+- **A level's sizes are a script on the device** (`size_one`, `PK_SIZE`; the host's `OpAt`, `Program::script`). One
+  thread runs ops over 64-bit registers: loads, constants, sums, differences, products, rounded quotients, minima and
+  maxima, a claim of the program's arena, and stores of words. A level with counts has one, a phase before its
+  copies. The script claims the level's counts in the arena and sets each job's first word (`Job::base`) and the
+  scan's first level's values (`ScanLevel::at`). The kernel's `counts` is now that arena. Its addresses (a job's
+  descriptor, a scan level, the arena) are resolved when the program launches (`Late`).
+- **A claim past the arena's room stops the program** (`ctl[6]`'s bits 2 and 32) where a gate would.
+- **A round's end empties the arena's top.** A round's counts are its own, so a program of rounds claims no more
+  than its levels need once.
+- **What the script writes is read as words, coherent.** A job's descriptor and a scan level are read as the host
+  wrote them, and their patched words (a first word, an offset, a count) are read as words from a coherent pointer.
+  Reading the whole descriptor through a coherent pointer (its fields are pointers) crashed the M2's Metal compiler
+  service (`XPC_ERROR_CONNECTION_INTERRUPTED`, at each try). The offline check (`metal` to AIR) did not show it.
+  So a table the script places (5c) is an offset from the arena, not a pointer it writes.
+- **Measured:** spark2's CPU backend, 45 of 45; the mini's Metal, 32 of 32.
