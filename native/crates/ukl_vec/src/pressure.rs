@@ -3,9 +3,9 @@
 //! of four 32-bit or two 64-bit lanes each; a mask in a part of four lanes each; a uniform value, and at one lane a
 //! lanes value, in an integer or float register), the most at any point the function's pressure in each file.
 //!
-//! The width is the one whose cost a lane is least, in cycles of a core that issues six integer operations, four
-//! vector ones and three loads or stores a cycle (an Apple M1's, near enough an x86-64 core's), to its units at once,
-//! so a lane's cycles are its busiest unit's: a lanes operation is a vector one of up to four lanes (fewer at a width
+//! The width is the one whose cost a lane is least, in cycles of a core that runs four integer instructions a cycle,
+//! two vector ones and three loads or stores, their cycles added (measured on an Apple M-series core: the integer
+//! and vector instructions of a loop add rather than overlap): a lanes operation is a vector one of up to four lanes (fewer at a width
 //! below four), at one lane an integer one; one a lane at a time (a load or store at each lane's address, a copy, a
 //! shuffle) a load a lane, and at a width of two or more its lane moved out of its vector and back too (two cycles,
 //! measured: `width_times`); the uniform operations and the control integer ones for the width's lanes; each
@@ -63,8 +63,8 @@ pub struct FuncPressure {
     pub lanes: f64,
     pub scalar: f64,
     pub other: f64,
-    /// Its loads and stores of 1- or 2-byte lanes some bytes apart: at 4 lanes or more a window's load or store and
-    /// its shuffle (`cl`'s `load_bytes`, `store_span`), under 4 a lane at a time.
+    /// Its loads and stores of 1- or 2-byte lanes some bytes apart: at 2 lanes or more a window's load or store and
+    /// its shuffle (`cl`'s `load_bytes`, `store_span`), at one the lane's.
     pub bytes: f64,
     /// A cross-lane kernel's region boundaries below 32 lanes (`ssa::regions`: its exchanges, barriers, the group's
     /// decisions its chunks exchange, the joins of different regions), and at each width the registers live across
@@ -463,19 +463,21 @@ pub fn lane_cost(ps: &[FuncPressure], k: usize, files: Files) -> f64 {
             }
             let spilled: f64 = peak.iter().map(|r| r.1 * r.2).sum();
             let w = f64::from(w);
-            let (vector, each) = if w >= 4.0 { (p.lanes + 2.0 * p.bytes, p.scalar) } else { (p.lanes, p.scalar + p.bytes) };
-            // The core issues to its integer, vector and memory units at once: a lane's cycles are its busiest
-            // unit's. At one lane, the lanes operations are integer ones, a lane-at-a-time access a load or store;
-            // at more, a lanes operation is a vector one of up to four lanes, a lane-at-a-time access a load or
-            // store and its lane's moves out of its vector and back (two cycles, measured: `width_times`). The
-            // uniform operations and control are integer ones for the width's lanes; a spill a store and a reload.
-            let (int, vec) = if w == 1.0 { (vector / 6.0 + p.other / 6.0, 0.0) } else { (p.other / 6.0 / w, vector / (4.0 * w.min(4.0)) + 2.0 * each) };
+            let (vector, each) = if w >= 2.0 { (p.lanes + 2.0 * p.bytes, p.scalar) } else { (p.lanes, p.scalar + p.bytes) };
+            // A lane's cycles: its integer instructions at four a cycle, its vector ones at two, added (the
+            // split-float matmul's loop at each width, its instructions counted and its time measured: they add
+            // rather than overlap, and its vector code runs two a cycle, its integer code four). At one lane, the
+            // lanes operations are integer ones, a lane-at-a-time access a load or store; at more, a lanes
+            // operation is a vector one of up to four lanes, a lane-at-a-time access a load or store and its lane's
+            // moves out of its vector and back (two cycles, measured: `width_times`). The uniform operations and
+            // control are integer ones for the width's lanes; a spill a store and a reload.
+            let (int, vec) = if w == 1.0 { ((vector + p.other) / 4.0, 0.0) } else { (p.other / 4.0 / w, vector / (2.0 * w.min(4.0)) + 2.0 * each) };
             // Below 32 lanes, a chunked kernel's region boundaries (`cl`'s chunk loop): for each chunk, a dozen
             // integer operations (the exchange's word, the next region's number and its check, the chunk loop, the
             // dispatch), and a store and a load of each register live across it.
             let (rint, rmem) = if w < 32.0 { (p.exchanges * 12.0 / 6.0 / w, 2.0 * p.kept[k] / 3.0 / w) } else { (0.0, 0.0) };
             let mem = (each + 2.0 * spilled / w) / 3.0 + rmem;
-            (int + rint).max(vec).max(mem)
+            int + rint + vec + mem
         })
         .sum()
 }

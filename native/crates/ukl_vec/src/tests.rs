@@ -449,21 +449,32 @@ fn kernel_of(body: &str) -> (super::lower::Program, super::vector::Kernel) {
     (p, k)
 }
 
-/// The register pressure a width gives: a kernel of few values live runs wide, one of many (each live to the end)
-/// narrower, where its values fit the registers; and the pressure model's counts are a lanes value's parts.
+/// A kernel of many values live in a loop: 20 accumulators, each updated each time round and read at the end (at 32
+/// lanes 160 vector registers, at 4 lanes 20).
+fn many_values_body() -> String {
+    let names: Vec<String> = (0..20).map(|j| format!("a{j}")).collect();
+    let mut body = String::new();
+    for (j, n) in names.iter().enumerate() {
+        body += &format!("    uint32_t {n} = out[lid] + {j}u;\n");
+    }
+    body += "    for (uint32_t k = 0u; k < 16u; k++) {\n";
+    for (j, n) in names.iter().enumerate() {
+        body += &format!("        {n} = {n} * {}u + (k ^ lid);\n", 2 * j + 3);
+    }
+    body += "    }\n";
+    body += &format!("    out[lid] = {};", names.join(" ^ "));
+    body
+}
+
+/// The register pressure a width gives: a kernel of few values live runs wide, one of many live in a loop narrower,
+/// where its values fit the registers; and the pressure model's counts are a lanes value's parts.
 #[test]
 fn the_width_is_the_one_whose_registers_hold_the_values_live() {
     let files = super::pressure::Files { vec: 28, int: 24, float: 0 };
     let (p, k) = kernel_of("    uint32_t a = out[(lid + 1u) % 64u] * 3u + lid;\n    out[lid] = a ^ (a >> 2);");
     let few = super::pressure::of(&ssa_of(&p, &k));
     let w_few = super::pressure::width(&few, files);
-    let names: Vec<String> = (0..20).map(|j| format!("a{j}")).collect();
-    let mut body = String::new();
-    for (j, n) in names.iter().enumerate() {
-        body += &format!("    uint32_t {n} = out[(lid + {j}u) % 64u] * {}u + lid;\n", 2 * j + 3);
-    }
-    body += &format!("    out[lid] = {};", names.join(" ^ "));
-    let (p2, k2) = kernel_of(&body);
+    let (p2, k2) = kernel_of(&many_values_body());
     let many = super::pressure::of(&ssa_of(&p2, &k2));
     let w_many = super::pressure::width(&many, files);
     // At width 8 each of the 20 lanes values is two vector registers: at least 40 live at the last.
@@ -483,18 +494,13 @@ fn the_width_is_the_one_whose_registers_hold_the_values_live() {
     }
 }
 
-/// A development measurement (`RERAIL_UKL_VEC_BENCH`): the 20-values kernel's launch time at each width.
+/// A development measurement (`RERAIL_UKL_VEC_BENCH`): the many-values kernel's launch time at each width.
 #[test]
 fn width_times() {
     if std::env::var("RERAIL_UKL_VEC_BENCH").is_err() {
         return;
     }
-    let names: Vec<String> = (0..20).map(|j| format!("a{j}")).collect();
-    let mut body = String::new();
-    for (j, n) in names.iter().enumerate() {
-        body += &format!("    uint32_t {n} = out[(lid + {j}u) % 64u] * {}u + lid;\n", 2 * j + 3);
-    }
-    body += &format!("    out[lid] = {};", names.join(" ^ "));
+    let body = many_values_body();
     for b in [&body, &"    uint32_t a = out[(lid + 1u) % 64u] * 3u + lid;\n    out[lid] = a ^ (a >> 2);".to_string()] {
         let (p, k) = kernel_of(b);
         let ssa = ssa_of(&p, &k);
@@ -509,11 +515,15 @@ fn width_times() {
             let _ = kk.cl.set(Ok(c));
             let go = || super::run::run(&p, &kk, &args, super::run::Launch { grid: [256, 1, 1], block: [64, 1, 1], local: 0, resident: 1, exec: super::run::Exec::Ssa }).unwrap();
             go();
-            let t = std::time::Instant::now();
-            for _ in 0..20 {
-                go();
-            }
-            eprintln!("BENCH w{w}: {:.1} us a launch (chosen w{chosen})", t.elapsed().as_secs_f64() * 1e6 / 20.0);
+            // The least of 50: a loaded machine's other work only adds.
+            let best = (0..50)
+                .map(|_| {
+                    let t = std::time::Instant::now();
+                    go();
+                    t.elapsed().as_secs_f64() * 1e6
+                })
+                .fold(f64::MAX, f64::min);
+            eprintln!("BENCH w{w}: {best:.1} us a launch (chosen w{chosen})");
         }
     }
 }

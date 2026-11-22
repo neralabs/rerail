@@ -705,6 +705,9 @@ struct Cg<'a, 'b> {
     steps: HashMap<V, Steps>,
     /// Stores of 1- or 2-byte lanes some bytes apart, held until their bytes are whole elements (`hold_bytes`).
     held: Vec<(M, V, V, V)>,
+    /// Loads of 1- or 2-byte lanes made with an earlier one of their block whose span theirs overlaps
+    /// (`load_bytes`): each one's lanes.
+    preloaded: HashMap<V, Vec<Value>>,
     /// The blocks' immediate dominators, and the bounds the branches give: a value at most the bound in the blocks
     /// the branch's side dominates (`bound`).
     idom: Vec<usize>,
@@ -789,6 +792,7 @@ impl<'a, 'b> Cg<'a, 'b> {
             frame_of: HashMap::new(),
             steps: HashMap::new(),
             held: Vec::new(),
+            preloaded: HashMap::new(),
             idom: Vec::new(),
             below: HashMap::new(),
             counted: HashMap::new(),
@@ -2412,6 +2416,104 @@ impl<'a, 'b> Cg<'a, 'b> {
         self.sum(&l)
     }
 
+    /// A uniform address under mask `mask` (`guarded`) as a sum and the access's offset: its constant, where no lane
+    /// of the mask is missing (else the scratch area's address takes the sum's place, and the offset 0), so the
+    /// accesses at a few bytes from one place share its sum.
+    fn addr_u_at(&mut self, a: V, mask: V) -> (Value, i32) {
+        let mut l = self.lin(a);
+        let whole = mask == NONE || (mask == self.entry_v && self.kernel) || self.all(mask);
+        match i32::try_from(l.k) {
+            Ok(k) if whole && !l.terms.is_empty() => {
+                l.k = 0;
+                (self.sum(&l), k)
+            }
+            _ => {
+                let at = self.sum(&l);
+                (self.guarded(at, mask), 0)
+            }
+        }
+    }
+
+    /// Address `a` (of `M::PTR`) as a sum of other values times constants and a constant, by the SSA's operations:
+    /// its sums, differences, products and shifts by constants, and the casts that widen an unsigned integer no
+    /// operation of can wrap (`bound`). Two addresses of equal terms are a constant apart.
+    fn ssa_lin(&self, a: V, depth: u32) -> (std::collections::BTreeMap<V, i64>, i64) {
+        let leaf = || (std::collections::BTreeMap::from([(a, 1)]), 0);
+        let i = *self.f.inst(a);
+        if depth == 0 {
+            return leaf();
+        }
+        let int = |m: M| !m.float() && !m.is_agg() && m.bytes() > 0 && m != M::B;
+        let scale = |(t, k): (std::collections::BTreeMap<V, i64>, i64), c: i64| (t.into_iter().map(|(v, x)| (v, x.wrapping_mul(c))).collect(), k.wrapping_mul(c));
+        match i.op {
+            O::Const => (std::collections::BTreeMap::new(), self.konst(a).map_or(0, |k| k as i64)),
+            O::Bin if int(M(i.d)) => {
+                let (x, y) = (i.a, i.b);
+                match Op::of(u32::from(i.sub)) {
+                    Op::Add | Op::Sub => {
+                        let (mut t, k) = self.ssa_lin(x, depth - 1);
+                        let (u, j) = self.ssa_lin(y, depth - 1);
+                        let sign = if Op::of(u32::from(i.sub)) == Op::Add { 1 } else { -1 };
+                        for (v, c) in u {
+                            let e = t.entry(v).or_insert(0);
+                            *e = e.wrapping_add(sign * c);
+                        }
+                        t.retain(|_, c| *c != 0);
+                        (t, k.wrapping_add(sign * j))
+                    }
+                    Op::Mul => match (self.konst(x), self.konst(y)) {
+                        (_, Some(c)) => scale(self.ssa_lin(x, depth - 1), c as i64),
+                        (Some(c), _) => scale(self.ssa_lin(y, depth - 1), c as i64),
+                        _ => leaf(),
+                    },
+                    Op::Shl => match self.konst(y).filter(|&c| c < 32) {
+                        Some(c) => scale(self.ssa_lin(x, depth - 1), 1 << c),
+                        None => leaf(),
+                    },
+                    _ => leaf(),
+                }
+            }
+            O::Cast => {
+                let from = M(i.b);
+                let widens = int(from) && int(i.m) && !from.signed() && i.m.bytes() > from.bytes() && self.bound(i.a).is_some();
+                if widens || (int(from) && int(i.m) && i.m.bytes() == from.bytes()) { self.ssa_lin(i.a, depth - 1) } else { leaf() }
+            }
+            _ => leaf(),
+        }
+    }
+
+    /// The loads after load `x` in its block, before anything that writes memory or leaves it, of `x`'s type and
+    /// mask whose addresses are `x`'s and a constant (`ssa_lin`), each with the constant: their spans overlap `x`'s
+    /// where it is less than the span.
+    fn byte_group(&self, x: V) -> Vec<(V, i64)> {
+        let f = self.f;
+        let ix = *f.inst(x);
+        let insts = &f.blocks[self.cur_block].insts;
+        let Some(at) = insts.iter().position(|&y| y == x) else { return Vec::new() };
+        let (tx, kx) = self.ssa_lin(ix.a, 16);
+        let mut out = Vec::new();
+        for &y in &insts[at + 1..] {
+            let iy = f.inst(y);
+            if iy.op == O::Load && iy.shape == Shape::Lanes && iy.m == ix.m && iy.b == ix.b {
+                let (ty, ky) = self.ssa_lin(iy.a, 16);
+                if ty == tx && (ky - kx).abs() < 16 {
+                    out.push((y, ky - kx));
+                }
+                continue;
+            }
+            let pure = matches!(
+                iy.op,
+                O::Const | O::Arg | O::Entry | O::NoLanes | O::Undef | O::Param | O::Bin | O::Un | O::Cast | O::Select
+                    | O::First | O::MaskOf | O::MAnd | O::MOr | O::MAndNot | O::Any | O::Global | O::Shared
+                    | O::FrameAddr | O::Lid | O::Gid | O::Lane | O::GroupInfo | O::LaneOp | O::Load
+            );
+            if !pure {
+                break;
+            }
+        }
+        out
+    }
+
     fn dominates(&self, a: usize, mut b: usize) -> bool {
         loop {
             if a == b {
@@ -2724,76 +2826,99 @@ impl<'a, 'b> Cg<'a, 'b> {
     fn load_bytes(&mut self, m: M, addr: V) -> Option<Vec<Value>> {
         let w = self.w;
         let eb = i64::from(m.bytes());
-        if !matches!(eb, 1 | 2) || m.float() || m.is_agg() || m == M::B || w < 4 {
+        if !matches!(eb, 1 | 2) || m.float() || m.is_agg() || m == M::B || w < 2 {
             return None;
+        }
+        let x = self.cur_inst;
+        if let Some(r) = self.preloaded.remove(&x) {
+            return Some(r);
         }
         let st = self.steps.get(&addr)?.clone();
         let s = st.step;
         if s < eb || s > 16 {
             return None;
         }
-        let at = self.sum(&st.first);
+        // The loads after it in its block a few bytes from it (another byte of each lane's record): one span, its
+        // windows each loaded once, and each load's lanes swizzled out of them.
+        let mut group = vec![(x, 0i64)];
+        group.extend(self.byte_group(x));
         let span = (i64::from(w) - 1) * s + eb;
+        let lo_u = group.iter().map(|g| g.1).min().unwrap_or(0);
+        let hi_u = group.iter().map(|g| g.1).max().unwrap_or(0) + span;
+        let at = self.sum(&st.first);
         let little = MemFlags::new().with_endianness(ir::Endianness::Little);
-        // A window holding bytes `lo..hi` of the span: its value and each byte's place in it.
-        let mut windows: Vec<(i64, Value)> = Vec::new();
         let (n, _) = parts(m, w);
-        let mut out = Vec::with_capacity(n);
-        for p in 0..n as i64 {
-            let (lo, hi) = (4 * p * s, (4 * p + 3) * s + eb);
-            let (v, place): (Value, Box<dyn Fn(i64) -> i64>) = if span >= 16 {
-                let mut o = lo / 16 * 16;
-                if hi > o + 16 {
-                    o = lo;
-                }
-                let o = o.min(span - 16);
-                let v = match windows.iter().find(|x| x.0 == o) {
-                    Some(&(_, v)) => v,
-                    None => {
-                        let v = self.b.ins().load(I8X16, mf(), at, o as i32);
-                        windows.push((o, v));
-                        v
-                    }
-                };
-                (v, Box::new(move |b| b - o))
-            } else {
-                let (h, ty, vt) = if span >= 8 { (8, I64, I64X2) } else { (4, I32, I32X4) };
-                let a1 = span - h;
-                let v = match windows.first() {
-                    Some(&(_, v)) => v,
-                    None => {
-                        let x0 = self.b.ins().load(ty, mf(), at, 0);
-                        let mut v = self.b.ins().scalar_to_vector(vt, x0);
-                        if a1 > 0 {
-                            let x1 = self.b.ins().load(ty, mf(), at, a1 as i32);
-                            v = self.b.ins().insertlane(v, x1, 1);
+        // The windows loaded: each one's first byte (from the span's), its value.
+        let mut windows: Vec<(i64, Value)> = Vec::new();
+        let mut mine = Vec::new();
+        for &(y, d) in &group {
+            let mut out = Vec::with_capacity(n);
+            for p in 0..n as i64 {
+                let (lo, hi) = (d + 4 * p * s, d + (4 * p + 3) * s + eb);
+                let (v, place): (Value, Box<dyn Fn(i64) -> i64>) = if hi_u - lo_u >= 16 {
+                    let o = match windows.iter().find(|w| w.0 <= lo && hi <= w.0 + 16) {
+                        Some(&(o, _)) => o,
+                        None => {
+                            let mut o = lo_u + (lo - lo_u) / 16 * 16;
+                            if hi > o + 16 {
+                                o = lo;
+                            }
+                            o.min(hi_u - 16)
                         }
-                        let v = self.b.ins().bitcast(I8X16, little, v);
-                        windows.push((0, v));
-                        v
-                    }
+                    };
+                    let v = match windows.iter().find(|w| w.0 == o) {
+                        Some(&(_, v)) => v,
+                        None => {
+                            let v = self.b.ins().load(I8X16, mf(), at, o as i32);
+                            windows.push((o, v));
+                            v
+                        }
+                    };
+                    (v, Box::new(move |b| b - o))
+                } else {
+                    let (h, ty, vt) = if hi_u - lo_u >= 8 { (8, I64, I64X2) } else { (4, I32, I32X4) };
+                    let a1 = hi_u - h;
+                    let v = match windows.first() {
+                        Some(&(_, v)) => v,
+                        None => {
+                            let x0 = self.b.ins().load(ty, mf(), at, lo_u as i32);
+                            let mut v = self.b.ins().scalar_to_vector(vt, x0);
+                            if a1 > lo_u {
+                                let x1 = self.b.ins().load(ty, mf(), at, a1 as i32);
+                                v = self.b.ins().insertlane(v, x1, 1);
+                            }
+                            let v = self.b.ins().bitcast(I8X16, little, v);
+                            windows.push((lo_u, v));
+                            v
+                        }
+                    };
+                    (v, Box::new(move |b| if b < lo_u + h { b - lo_u } else { b - a1 + h }))
                 };
-                (v, Box::new(move |b| if b < h { b } else { b - a1 + h }))
-            };
-            let mut idx = [0xffu8; 16];
-            for i in 0..4i64 {
-                for c in 0..eb {
-                    idx[(4 * i + c) as usize] = place(lo + i * s + c) as u8;
+                let mut idx = [0xffu8; 16];
+                for i in 0..4i64 {
+                    for c in 0..eb {
+                        idx[(4 * i + c) as usize] = place(lo + i * s + c) as u8;
+                    }
                 }
+                let ic = self.b.func.dfg.constants.insert(ConstantData::from(idx.to_vec()));
+                let iv = self.b.ins().vconst(I8X16, ic);
+                let r = self.b.ins().swizzle(v, iv);
+                let r = self.b.ins().bitcast(I32X4, little, r);
+                out.push(if m.signed() {
+                    let k = 32 - 8 * eb;
+                    let r = self.b.ins().ishl_imm(r, k);
+                    self.b.ins().sshr_imm(r, k)
+                } else {
+                    r
+                });
             }
-            let ic = self.b.func.dfg.constants.insert(ConstantData::from(idx.to_vec()));
-            let iv = self.b.ins().vconst(I8X16, ic);
-            let r = self.b.ins().swizzle(v, iv);
-            let r = self.b.ins().bitcast(I32X4, little, r);
-            out.push(if m.signed() {
-                let k = 32 - 8 * eb;
-                let r = self.b.ins().ishl_imm(r, k);
-                self.b.ins().sshr_imm(r, k)
+            if y == x {
+                mine = out;
             } else {
-                r
-            });
+                self.preloaded.insert(y, out);
+            }
         }
-        Some(out)
+        Some(mine)
     }
 
     /// The address of lane 0 when `addr`'s lanes are `bytes` apart: its steps'.
@@ -2869,6 +2994,16 @@ impl<'a, 'b> Cg<'a, 'b> {
             return (r, None);
         }
         let px = self.lanes(x, m);
+        // At one lane, a shift of a 32- or 64-bit lane (a scalar of its bits) by its count: Cranelift's, which takes
+        // the count modulo the bits as the kernel's language does.
+        if self.w == 1 && matches!(op, Op::Shl | Op::Shr) && !m.float() && matches!(m.bits(), 32 | 64) {
+            let r = match (op, m.signed()) {
+                (Op::Shl, _) => self.b.ins().ishl(pa[0], px[0]),
+                (_, true) => self.b.ins().sshr(pa[0], px[0]),
+                _ => self.b.ins().ushr(pa[0], px[0]),
+            };
+            return (vec![r], None);
+        }
         let r = self.per_lane(&[(pa, m), (px, m)], m, &mut |g, xs| g.u_bin(op, m, xs[0], xs[1]));
         (r, None)
     }
@@ -3148,6 +3283,11 @@ impl<'a, 'b> Cg<'a, 'b> {
         let k = self.mask(mask);
         let full = (mask == self.entry_v && self.kernel) || self.all(mask);
         if full {
+            // One lane's address of steps: the lane's load, its constant the load's offset.
+            if let Some((at, off)) = self.one_lane_at(addr) {
+                let u = self.load_u(m, at, off);
+                return vec![self.lane_scalar(u, m)];
+            }
             if let Some(at) = self.consecutive(addr, m.bytes()) {
                 return self.load_contiguous(m, at);
             }
@@ -3276,7 +3416,7 @@ impl<'a, 'b> Cg<'a, 'b> {
     fn hold_bytes(&mut self, m: M, addr: V, x: V, mask: V) -> bool {
         let eb = i64::from(m.bytes());
         let full = (mask == self.entry_v && self.kernel) || self.all(mask);
-        if !matches!(eb, 1 | 2) || m.float() || m.is_agg() || m == M::B || self.w < 4 || !full {
+        if !matches!(eb, 1 | 2) || m.float() || m.is_agg() || m == M::B || self.w < 2 || !full {
             return false;
         }
         let Some(st) = self.steps.get(&addr).cloned() else { return false };
@@ -3408,10 +3548,30 @@ impl<'a, 'b> Cg<'a, 'b> {
     }
 
     fn store_lanes(&mut self, m: M, addr: V, x: V, mask: V) {
+        if (mask == self.entry_v && self.kernel) || self.all(mask) {
+            if let Some((at, off)) = self.one_lane_at(addr) {
+                let px = self.lanes(x, m);
+                let v = self.uniform_of(px[0], m);
+                self.store_u(m, at, v, off);
+                return;
+            }
+        }
         if self.hold_bytes(m, addr, x, mask) {
             return;
         }
         self.store_lanes_each(m, addr, x, mask);
+    }
+
+    /// At one lane, an address of steps (not a frame variable's): its sum but its constant, and the constant, an
+    /// access's offset (so the accesses a few bytes apart share the sum).
+    fn one_lane_at(&mut self, addr: V) -> Option<(Value, i32)> {
+        if self.w != 1 || self.frame_of.contains_key(&addr) {
+            return None;
+        }
+        let mut first = self.steps.get(&addr)?.first.clone();
+        let k = i32::try_from(first.k).ok()?;
+        first.k = 0;
+        Some((self.sum(&first), k))
     }
 
     fn store_lanes_each(&mut self, m: M, addr: V, x: V, mask: V) {
@@ -3590,6 +3750,16 @@ impl<'a, 'b> Cg<'a, 'b> {
                     let whole = matches!(op, Op::Add | Op::Mul) && !om.float() && !om.signed() && om.bytes() == 4 && self.bound(x).is_some();
                     if whole {
                         return Ok(Rp::U(if op == Op::Add { self.b.ins().iadd(a, b) } else { self.b.ins().imul(a, b) }));
+                    }
+                    // A shift by a count under its type's bits (`bound`): no mask of the count; a right shift of a
+                    // normalized value is one.
+                    if matches!(op, Op::Shl | Op::Shr) && !om.float() && om.bits() > 0 && self.bound(i.b).is_some_and(|c| c < u64::from(om.bits())) {
+                        let r = match (op, om.signed()) {
+                            (Op::Shl, _) => self.b.ins().ishl(a, b),
+                            (_, true) => self.b.ins().sshr(a, b),
+                            _ => self.b.ins().ushr(a, b),
+                        };
+                        return Ok(Rp::U(if op == Op::Shr { r } else { norm_u(&mut self.b, om, r) }));
                     }
                     Rp::U(self.u_bin(op, om, a, b))
                 } else {
@@ -3776,18 +3946,16 @@ impl<'a, 'b> Cg<'a, 'b> {
             }
             O::Load => match self.vals[i.a as usize].clone() {
                 Rp::U(_) => {
-                    let a = self.addr_u(i.a);
-                    let a = self.guarded(a, i.b);
-                    Rp::U(self.load_u(m, a, 0))
+                    let (a, off) = self.addr_u_at(i.a, i.b);
+                    Rp::U(self.load_u(m, a, off))
                 }
                 _ => Rp::L(self.load_lanes(m, i.a, i.b)),
             },
             O::Store => {
                 match (self.vals[i.a as usize].clone(), self.vals[i.b as usize].clone()) {
                     (Rp::U(_), Rp::U(v)) => {
-                        let a = self.addr_u(i.a);
-                        let a = self.guarded(a, i.c);
-                        self.store_u(m, a, v, 0)
+                        let (a, off) = self.addr_u_at(i.a, i.c);
+                        self.store_u(m, a, v, off)
                     }
                     (Rp::U(a), Rp::L(p)) => {
                         // Each running lane's in order: the last one's stays.
