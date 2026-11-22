@@ -214,6 +214,27 @@ struct Gen<'a> {
     /// Each expression made a local of its own, by its text.
     temps: HashMap<String, String>,
     next: usize,
+    /// `prefix`'s bytes (decision 0335).
+    prefix: Option<Vec<u8>>,
+}
+
+/// The masks tier 2 finds a token's end by where tier 1 is simdjson's stage 1 (no `skip`), each a field of
+/// `Masks`, by row: a run's (`run_K`), a pair's second byte (`pair_K`), a last byte's (`last_K`). A reader's are
+/// `readers`'. One byte (`pair empty`, no rule) has none.
+pub fn stage1_ends(stmts: &[Stmt]) -> Result<Vec<(String, Expr)>, String> {
+    let mut out = Vec::new();
+    for s in stmts {
+        let Stmt::Token { kind, rule, last, .. } = s else { continue };
+        let k = ident(kind);
+        match (rule, last) {
+            (Some(TokenRule::Run(r)), _) => out.push((format!("run_{k}"), r.clone())),
+            (Some(TokenRule::Pair(Expr::Empty)), _) | (None, None) | (Some(TokenRule::ReadParts(..) | TokenRule::Inside(..)), _) => {}
+            (Some(TokenRule::Pair(p)), _) => out.push((format!("pair_{k}"), p.clone())),
+            (None, Some(l)) => out.push((format!("last_{k}"), l.clone())),
+            (Some(other), _) => return Err(format!("tier 1 as Rust: `{kind}`'s rule {other:?} with no `skip` is not written yet")),
+        }
+    }
+    Ok(out)
 }
 
 impl Gen<'_> {
@@ -326,7 +347,10 @@ impl Gen<'_> {
                 let _ = writeln!(self.body, "    let mut m_{} = vec![0u64; nw];", ident(e));
             }
         }
-        let _ = writeln!(self.body, "    {{\n        let mut at = 0usize;\n        // The region opened last of the kinds with no `after`.\n        let mut plain = usize::MAX;\n        // Each kind's next opener, at or after where it was looked for (`n`: none).");
+        // The region opened last of the kinds with no `after`: kept only where a region's `after` reads it.
+        let reads_plain = ks.iter().any(|r| !r.after.is_empty());
+        let plain = if reads_plain { "\n        // The region opened last of the kinds with no `after`.\n        let mut plain = usize::MAX;" } else { "" };
+        let _ = writeln!(self.body, "    {{\n        let mut at = 0usize;{plain}\n        // Each kind's next opener, at or after where it was looked for (`n`: none).");
         let firsts: Vec<String> = opens.iter().map(|o| format!("first_bit(&{o}, 0).unwrap_or(n)")).collect();
         let _ = writeln!(self.body, "        let mut nx = [{}];", firsts.join(", "));
         let _ = writeln!(self.body, "        loop {{\n            let (mut p, mut k) = (n, usize::MAX);");
@@ -354,7 +378,7 @@ impl Gen<'_> {
                 format!("                    match first_bit(&{c}, p + 1) {{\n                        Some(c) => {{\n                            let last = {last};\n                            set(&mut {f}, p, c);\n                            set(&mut {hidden}, p + 1, last + 1);\n                            at = last + 1;\n                        }}\n                        None => {{\n                            set(&mut {f}, p, n);\n                            set(&mut {hidden}, p + 1, n);\n                            at = n;\n                        }}\n                    }}\n")
             };
             let _ = write!(arm, "                    set(&mut {o}, p, p + 1);\n{close}");
-            if r.after.is_empty() {
+            if r.after.is_empty() && reads_plain {
                 let _ = writeln!(arm, "                    plain = {k};");
             }
             let body = match &r.empty {
@@ -422,6 +446,70 @@ impl Gen<'_> {
         None
     }
 
+    /// The prefix's bytes out of the file's bits (`prefix`, decision 0335): no class, `~` or token has them, and
+    /// positions stay the file's.
+    fn prefix_code(&self) -> String {
+        match &self.prefix {
+            Some(b) => format!(
+                "    // `prefix`: a file that starts with these bytes is read from after them.\n    if src.starts_with(&[{}]) {{\n        lv[0] &= !((1u64 << {}) - 1);\n    }}\n",
+                b.iter().map(|x| format!("{x:#04x}")).collect::<Vec<_>>().join(", "),
+                b.len()
+            ),
+            None => String::new(),
+        }
+    }
+
+    /// Tier 1 with no `skip`: simdjson's stage 1. Its records are each token's first byte, the bits of the rows'
+    /// starts (simdjson's structural indexes), each with its row's kind; tier 2 finds a token's end, from the masks
+    /// tier 1 gives it (`stage1_ends`, `readers`), as simdjson's stage 2 does.
+    fn stage1(mut self, rows: &[(usize, &Stmt)]) -> Result<String, String> {
+        let x = self.x;
+        let mut all: Option<Expr> = None;
+        let mut chain = String::new();
+        for (row, s) in rows {
+            let Stmt::Token { kind, start, rule, .. } = s else { continue };
+            if matches!(rule, Some(TokenRule::Inside(..))) {
+                continue;
+            }
+            let st = self.val(start)?;
+            let k = self.kind_of(*row);
+            let _ = write!(chain, "{}if bit(&{st}, s) {{\n                // `{kind}`\n                {k}\n            }} ", if chain.is_empty() { "" } else { "else " });
+            all = Some(match all.take() {
+                Some(a) => Expr::Or(Box::new(a), Box::new(start.clone())),
+                None => start.clone(),
+            });
+        }
+        let all = self.val(&all.ok_or("tier 1 as Rust: no token")?)?;
+        // The masks tier 2 reads: a reader's, then each row's end's.
+        let mut fields: Vec<(String, Expr)> = readers(x.stmts).into_iter().flat_map(|r| r.masks).collect();
+        fields.extend(stage1_ends(x.stmts)?);
+        let mut used: Vec<String> = Vec::new();
+        let mut fields_init = String::new();
+        let mut decl = String::new();
+        for (f, e) in &fields {
+            let v = self.val(e)?;
+            let v = if used.contains(&v) { format!("{v}.clone()") } else { v };
+            used.push(v.clone());
+            let _ = writeln!(decl, "    pub {f}: Vec<u64>,");
+            let _ = writeln!(fields_init, "            {f}: {v},");
+        }
+        let mut out = String::new();
+        out.push_str("// Generated by the Bitlex compiler (`rerail_compiler::bitlex_lex_rust`) from the grammar's lexer statements. Do not edit.\n\n");
+        let _ = write!(out, "/// The masks tier 2 reads, a bit a byte: those it finds a token's end by, and splits a region by.\npub struct Masks {{\n{decl}}}\n\n");
+        out.push_str("/// Tier 1's records, simdjson's stage 1: each token's first byte and its kind, the masks tier 2 reads, and whether the file goes to tree-sitter.\npub struct Lexed {\n    pub starts: Vec<u32>,\n    pub codes: Vec<u32>,\n    pub masks: Masks,\n    pub refused: bool,\n}\n\n");
+        let kinds: Vec<String> = x.kinds.iter().map(|k| k.to_string()).collect();
+        let _ = write!(out, "/// Each byte's record kind, as a token's first byte.\nconst KINDS: [u8; 256] = [{}];\n\n", kinds.join(", "));
+        out.push_str(&format!("/// `src`'s records.\npub fn lex(src: &[u8]) -> Lexed {{\n    let n = src.len();\n    let nw = n.div_ceil(64);\n    // Each word's bits inside the file.\n    let {}lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n {{ !0 }} else {{ (1u64 << (n % 64)) - 1 }}).collect();\n", if self.prefix.is_some() { "mut " } else { "" }));
+        out.push_str(&self.prefix_code());
+        out.push_str(&self.body);
+        let _ = write!(
+            out,
+            "    // The tokens: each bit of a row's start, in order, its kind its row's.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    for (q, &word) in {all}.iter().enumerate() {{\n        let mut bits = word;\n        while bits != 0 {{\n            let s = 64 * q + bits.trailing_zeros() as usize;\n            bits &= bits - 1;\n            let kind: u32 = {chain}else {{\n                0\n            }};\n            starts.push(s as u32);\n            codes.push(kind);\n        }}\n    }}\n    Lexed {{\n        starts,\n        codes,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n"
+        );
+        out.push_str(HELPERS);
+        Ok(out)
+    }
+
     fn source(mut self) -> Result<String, String> {
         let x = self.x;
         // The classes, all in one pass over the blocks (simdjson's `classify`).
@@ -444,7 +532,9 @@ impl Gen<'_> {
         let mut token_escapes: Vec<&Stmt> = Vec::new();
         for s in x.stmts {
             match s {
-                Stmt::Lexer(_) | Stmt::Class(..) | Stmt::Keywords { .. } | Stmt::TokenError(..) | Stmt::Tree { .. } => {}
+                // A token's check is tier 2's, in the token's arm.
+                Stmt::Lexer(_) | Stmt::Class(..) | Stmt::Keywords { .. } | Stmt::TokenError(..) | Stmt::Tree { .. } | Stmt::Check { .. } => {}
+                Stmt::Prefix(b) => self.prefix = Some(b.clone()),
                 Stmt::Mask(name, e) => {
                     let _ = writeln!(self.body, "    // mask {name} = {}", show(e));
                     match e {
@@ -518,7 +608,8 @@ impl Gen<'_> {
         }
         let skip = match &skip {
             Some(e) => self.val(e)?,
-            None => return Err("tier 1 as Rust: a token loop needs `skip`".into()),
+            None if marks.is_empty() && token_escapes.is_empty() => return self.stage1(&rows),
+            None => return Err("tier 1 as Rust: marks or token escapes with no `skip` are not written yet".into()),
         };
         let extras: Vec<&String> = {
             let mut v = Vec::new();
@@ -689,7 +780,7 @@ impl Gen<'_> {
             }
         }
         let mut out = String::new();
-        out.push_str("// Generated by the Bitlex compiler (`rerail_bitlex::bitlex_lex_rust`) from the grammar's lexer statements. Do not edit.\n\n");
+        out.push_str("// Generated by native/crates/compiler/src/bitlex_lex_rust.rs; do not edit. The Bitlex compiler's Rust from the grammar's lexer statements.\n\n");
         out.push_str("/// The masks tier 2 reads, a bit a byte: those it splits a region by, where it reads one in parts.\npub struct Masks {\n");
         for f in &fields {
             let _ = writeln!(out, "    pub {f}: Vec<u64>,");
@@ -703,7 +794,8 @@ impl Gen<'_> {
         }
         let _ = write!(out, "/// A token's word: the code of the word its bytes are, 0 for none.\nfn word(b: &[u8]) -> u32 {{\n    match b {{\n{words}        _ => 0,\n    }}\n}}\n\n");
         out.push_str(&pair_fns);
-        out.push_str("/// `src`'s records.\npub fn lex(src: &[u8]) -> Lexed {\n    let n = src.len();\n    let nw = n.div_ceil(64);\n    // Each word's bits inside the file.\n    let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();\n");
+        out.push_str(&format!("/// `src`'s records.\npub fn lex(src: &[u8]) -> Lexed {{\n    let n = src.len();\n    let nw = n.div_ceil(64);\n    // Each word's bits inside the file.\n    let {}lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n {{ !0 }} else {{ (1u64 << (n % 64)) - 1 }}).collect();\n", if self.prefix.is_some() { "mut " } else { "" }));
+        out.push_str(&self.prefix_code());
         out.push_str(&self.body);
         let _ = write!(
             out,
@@ -932,5 +1024,5 @@ fn set(v: &mut [u64], a: usize, b: usize) {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0 }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, prefix: None }.source()
 }

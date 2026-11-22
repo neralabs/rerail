@@ -117,6 +117,10 @@ pub(super) struct Board<'a> {
     comps: Vec<Component<'a>>,
     /// The components submitted whose jobs are not collected yet.
     flying: Vec<usize>,
+    /// The strata whose components' jobs ended and ran them, since the loop last took them (`take_finished`): their
+    /// reads are done, so a relation whose every reader is among them is released now, not when the loop reaches its
+    /// last reader.
+    finished: Vec<usize>,
     in_flight: usize,
     k: f64,
     fixed: f64,
@@ -185,6 +189,7 @@ impl<'a> Board<'a> {
             member_of: vec![None; sccs.len()],
             comps: Vec::new(),
             flying: Vec::new(),
+            finished: Vec::new(),
             in_flight: 0,
             k: if merge { env_f("RERAIL_STRATA_K", 8.0) } else { 0.0 },
             fixed: env_f("RERAIL_STRATA_FIXED", 136e-6),
@@ -575,7 +580,13 @@ impl<'a> Board<'a> {
         }
         comp.state = State::Done(n, stop);
         let ran: Vec<usize> = self.comps[c].members[..n].to_vec();
+        self.finished.extend(ran.iter().copied());
         ran.into_iter().for_each(|m| self.retire(m));
+    }
+
+    /// The strata that ran in their components' jobs since the last call, in the order their jobs ended.
+    pub(super) fn take_finished(&mut self) -> Vec<usize> {
+        std::mem::take(&mut self.finished)
     }
 
     /// The device wave of the components issued with `c` (decision 0123 §6): each of them is waited for, so the

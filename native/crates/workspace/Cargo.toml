@@ -95,6 +95,8 @@ rerail-matcher = { path = "../matcher", default-features = false }
 rerail-rules = { path = "../rules", default-features = false }
 rerail-facts = { path = "../facts", default-features = false }
 rerail-lang = { path = "../lang", default-features = false }
+# The registry its hooks register in (`TASK_RUN`), as every crate with one does (check_crate_dag.py).
+rerail-registry = { path = "../registry" }
 rerail-prof = { path = "../prof" }
 rerail-blocks = { path = "../blocks" }
 rerail-rr-syntax = { path = "../rr_syntax" }

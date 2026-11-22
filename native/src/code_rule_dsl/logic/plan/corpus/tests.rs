@@ -1979,6 +1979,8 @@ fn every_switch_lowering_reads_is_classified() {
     /// and profiles, the store's and the cost model's paths, the session's binding.
     const NOT_PREPARING: &[&str] = &[
         "RERAIL_BLESS_CENSUS",
+        // Why a narrow copy is not diffed (decision 0575): a trace.
+        "RERAIL_NARROW_DIFF_DEBUG",
         "RERAIL_IDEMPOTENCY_DUMP",
         "RERAIL_MAGIC_CHECK",
         "RERAIL_MERGE_WHY",
@@ -1986,6 +1988,8 @@ fn every_switch_lowering_reads_is_classified() {
         "RERAIL_SPLIT_DUMP",
         "RERAIL_DEMAND_DUMP",
         "RERAIL_PREPARED_TRACE",
+        // Prints each diffed copy's change points (decision 0575).
+        "RERAIL_NARROW_DIFF_DEBUG",
         // How the combine's link is made (decision 0373): spliced into the last one, linked whole, or both and compared;
         // the program is the same (`check` asserts it).
         "RERAIL_COMBINE_LINK",
@@ -2056,7 +2060,7 @@ fn every_switch_lowering_reads_is_classified() {
                 if let Some(m) = test_module.find(&text) {
                     text.truncate(m.start());
                 }
-                files.push((p.strip_prefix(&root).unwrap().display().to_string(), text));
+                files.push((p.strip_prefix(&root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"), text));
             }
         }
         files
@@ -2529,7 +2533,9 @@ fn a_finding_no_file_holds_is_refused_naming_its_clause() {
     let text = ".policy \"p\" revision 1\n.language python\n.violation Assert(at: node) \"an assert\"\nAssert(n) :- kind(n, \"assert_statement\").\n";
     let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
     let shown = v.show();
-    assert!(shown.contains("rr_unplaced(\"Assert\") :- Assert(") && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
+    // The finding's node by its clause, and the program's one rule refusing those of no file's document.
+    let found = crate::code_rule_dsl::logic::rr::FOUND_NODE;
+    assert!(shown.contains(&format!("{found}(\"Assert\", ")) && shown.contains(&format!("rr_unplaced($rr_clause) :- {found}(")) && shown.contains("!doc("), "the lowering writes R9's rule:\n{shown}");
     assert!(v.output_names().iter().any(|o| o == crate::code_rule_dsl::logic::rr::UNPLACED));
     let out = dir.join("out");
     let run = |text: &str, out: &std::path::Path| super::run(text, &dir.join("ws"), None, out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18);
@@ -2574,4 +2580,52 @@ v(n) :- kind(n, \"assert_statement\").
     let got: Vec<(String, usize)> = ["c1", "c2", "c3", "v"].iter().map(|r| (r.to_string(), crate::code_rule_dsl::logic::plan::output::shown(&out, r).unwrap().len())).collect();
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(got, [("c1".to_owned(), 1), ("c2".to_owned(), 1), ("c3".to_owned(), 1), ("v".to_owned(), 1)]);
+}
+
+/// The engine's Git programs (`git::SOURCE_CHECKS`, `ROOT_TREE`, `INVENTORY`) each read as one program, their library
+/// modules included by name and each read once: what each derives is declared, and so are the trailers `git.rerail`
+/// includes (`git/messages.rerail`, which includes `git.rerail` again).
+#[test]
+fn the_git_programs_read_their_library_once() {
+    for (name, text, derives) in [
+        ("source checks", super::git::SOURCE_CHECKS, "git_selected_source_blob"),
+        ("root tree", super::git::ROOT_TREE, "git_root_tree_error"),
+        ("inventory", super::git::INVENTORY, "inventory_error"),
+    ] {
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap_or_else(|e| panic!("{name}: {e}"));
+        for rel in [derives, "git_trailer", "git_tree_entry"] {
+            assert!(v.decl_of(rel).is_some(), "{name}: {rel} is not declared");
+        }
+    }
+}
+
+/// Decision 0597 (`logic::contexts`), through the library: an annotation context holds its own instance of the library's `unparen` (and what it reads),
+/// while the host keeps its own for its own rules; the roots are the annotations' trees the host parses.
+#[test]
+fn a_context_holds_the_librarys_rules_it_reaches_as_its_own() {
+    use crate::code_rule_dsl::logic::rr::parse_version;
+    let rules_of = |v: &crate::code_rule_dsl::logic::program_image::Version, rel: &str| -> Vec<String> { v.rules().filter(|r| v.rel_name(r.head().rel()) == rel).map(|r| v.show_rule(r)).collect() };
+    let text = "\
+.language python
+#include \"python/ast.rerail\"
+.decl ann_root(r: node)
+ann_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_inner(r: node, e: node)
+ann_inner(r, e) :- ann_root(r), unparen(r, e).
+.decl host_inner(e: node)
+host_inner(e) :- kind(n, \"parenthesized_expression\"), unparen(n, e).
+.decl seen(e: node)
+seen(e) :- quoted(_, e).
+seen(e) :- host_inner(e).
+.output seen
+.context annotation of python roots ann_root exports ann_inner
+.from python ann_root for annotation
+.from annotation ann_inner as quoted
+";
+    let v = parse_version(text).unwrap();
+    let all = v.show();
+    assert!(!rules_of(&v, "rr_cx_annotation_unparen").is_empty(), "the context's own unparen: {all}");
+    assert!(rules_of(&v, "rr_cx_annotation_ann_inner").iter().all(|r| r.contains("rr_cx_annotation_unparen(") && r.contains(" ann_root(")), "{all}");
+    assert!(!rules_of(&v, "unparen").is_empty() && rules_of(&v, "host_inner").iter().all(|r| r.contains(" unparen(")), "the host's own: {all}");
+    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_annotation_ann_inner(")), "{all}");
 }

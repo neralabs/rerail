@@ -197,7 +197,7 @@ fn flat(src: &str) -> String {
 
 /// Each dispatch's arm (`'X: loop { match d { … } }`, its top level) that is only `d = L::M;
 /// continue 'X;`, back into its own loop, in generated Rust whose comments hold no braces.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", unix))]
 fn dispatch_resets(src: &str) -> Vec<String> {
     let lines: Vec<&str> = src.lines().map(str::trim).filter(|l| !l.starts_with("//")).collect();
     let mut out = Vec::new();
@@ -307,7 +307,8 @@ fn tree_inputs() -> Vec<Vec<u8>> {
 /// The trees test's form: tier 2 as `rust_stream` writes it, compiled by rustc and run on the JIT's
 /// harness in place of Cranelift's code, gives the JIT's trees, file for file (page 40: the
 /// comparison with simdjson is made on this Rust).
-#[cfg(target_arch = "aarch64")]
+// Unix: the tree's Rust is loaded as a library rustc builds (`dlopen`).
+#[cfg(all(target_arch = "aarch64", unix))]
 #[test]
 fn simdjson_forms_rust_trees_are_the_jits() {
     let (jit, mut aot) = (simdjson_form(), simdjson_form());
@@ -485,9 +486,9 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         let arms: Vec<&str> = flat16.split(&format!("\n{opener} => {{")).skip(1).collect();
         assert!(!arms.is_empty(), "the arms of {opener}");
         for arm in arms {
-            // Its enclosing nodes opened first (the document's, at the top).
+            // Its enclosing nodes opened first (the document's, at the top, with its closer checked: 0559).
             let at = arm.find(&empty(closer));
-            let first = at.is_some_and(|k| arm[..k].lines().all(|l| l.is_empty() || l.starts_with("s.open16(")));
+            let first = at.is_some_and(|k| arm[..k].lines().all(|l| l.is_empty() || l.starts_with("s.open16(") || l.starts_with("if s.n == 0 || s.byte(unsafe { *s.starts.add((s.n - 1) * s.rs) })")));
             assert!(first, "{opener}'s arm looks for its closer first: {}", &arm[..arm.len().min(160)]);
         }
     }
@@ -495,6 +496,12 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // as the lean parser's `next == index + count`: no token taken for it, no other word tests it, `ACCEPT` neither.
     assert!(!src16.contains("t.start == s.len") && !src16.contains("t.start == self.len") && !src16.contains("t.at_end"), "the end tested once, by the count");
     assert!(flat16.contains("\nif (t.next as usize == s.n) {\n") && src16.contains("    fn accept(&mut self, t: &T) -> R {\n        if self.wr.open_len != 1 {"), "the end the stream's count, `ACCEPT` past it");
+    // The document's container closed by the stream's last token, checked before the walk as the lean parser's
+    // `last != '}'` (`rust_stream::last_closers`, decision 0559): in the `{` and `[` arms, once each.
+    for closer in ["0x7d", "0x5d"] {
+        let check = format!("if s.n == 0 || s.byte(unsafe {{ *s.starts.add((s.n - 1) * s.rs) }}) != {closer} {{ return refuse(why::BYTE); }}\n");
+        assert_eq!(flat16.matches(&check).count(), 1, "the document's closer {closer} the last token, checked before the walk");
+    }
     let empties = flat16.matches("\nlet st = t.start;\ns.token_all(t)?;\nt.rec_end = t.start + 1;\ns.leaf16(").count();
     assert!(empties > 0 && made16 == made + empties && src16.contains("mod ops {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
     // Written once: no format 15 cell (an offset, a block's base, a size, a tail) beside the ops' cells.
@@ -587,7 +594,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // (`Batch::end_streams`), the file's length, as the unclamped `TOKEN` takes them (decision 0543): the Rust refuses
     // each, as the JIT does (whose refusal names its word, not the reason). Ends of 0, as before, would read the
     // file's first byte as the next token's.
-    for f in [&b"["[..], b"{", b"[1", b"[1,", b"[\"a\"", b"[\"a\",", b"{\"a\"", b"{\"a\":", b"{\"a\":1", b"{\"a\":1,", b"[[", b"[[1,", b"{\"a\":[", b"{\"a\":{\"b\":", b"", b"[1] 2", b"{} {}", b"\"a\" \"b\"", b"1 2", b"[]]", b"{}}"] {
+    for f in [&b"["[..], b"{", b"[1", b"[1,", b"[\"a\"", b"[\"a\",", b"{\"a\"", b"{\"a\":", b"{\"a\":1", b"{\"a\":1,", b"[[", b"[[1,", b"{\"a\":[", b"{\"a\":{\"b\":", b"", b"[1] 2", b"{} {}", b"\"a\" \"b\"", b"1 2", b"[]]", b"{}}", b"[1}", b"{\"a\":1]", b"[{}", b"{\"a\":[]", b"[1] ]", b"{} }", b"[1,2]}"] {
         let want = jit.parser.image16(f, &lang, &numbers, false).map(|_| ());
         let got = aot.parser.image16(f, &lang, &numbers, false).map(|_| ());
         assert!(want.is_err() && got.is_err(), "{:?}: the Rust refuses it as the JIT does: {got:?}, {want:?}", String::from_utf8_lossy(f));
@@ -599,7 +606,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
 /// `-C opt-level=3`) writing format 16 (`image16`), the tape's home and presence. simdjson's: its DOM parser, stage 1
 /// and stage 2 to its tape, from a padded copy of the bytes (`structurals`). Per file: the instructions retired a byte
 /// and the time a byte (each the median of `RERAIL_ITERS` runs), single-threaded.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", unix))]
 #[test]
 #[ignore = "a measurement: run by name with RERAIL_JSON_FILES and --nocapture"]
 fn simdjson_form_against_simdjson() {
@@ -679,7 +686,7 @@ fn simdjson_form_against_simdjson() {
 
 /// `src`, tier 2's Rust, built by rustc (optimized, as the ahead-of-time build) into a library
 /// and loaded: its entry.
-#[cfg(target_arch = "aarch64")]
+#[cfg(all(target_arch = "aarch64", unix))]
 fn aot_entry(src: &str) -> rerail_cpu_stream::native_cpu_stream::Entry {
     // A directory a source: the loader gives back the library already loaded at a path, so two
     // sources built at one path would both run the first.
@@ -1471,4 +1478,66 @@ fn jsonc_refusals_by_reason() {
     if let Ok(out) = std::env::var("RERAIL_DISASM") {
         std::fs::write(out, rerail_rir::rir_asm::disassemble(&c.program)).expect("writes");
     }
+}
+
+/// JSON's parser as Rust in simdjson's structure (`rerail_json_aot`): tier 1 and tier 2 as the Bitlex compiler writes
+/// them from the grammar, tier 1 from the lexer's statements (`bitlex_lex_rust`, stage 1) and tier 2 from the tree
+/// rules in one loop (`bitlex_rust::tier2_loop`), never from tier 2's native IR (decision 0551).
+fn json_rust() -> (String, String) {
+    let source = std::fs::read_to_string(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../json_parser/json-simdjson.bitlex")).expect("reads");
+    let stmts = ::bitlex::syntax::parse(&source).expect("parses");
+    let ids = rerail_cpu_stream::ladder::Ids::default();
+    let kind = |n: &str| Some(ids.of(n));
+    let field = |n: &str| Some(ids.of(&format!("field {n}")));
+    let symbols = rerail_bitlex::bitlex_masks::Symbols { kind: &kind, field: &field };
+    let c = rerail_bitlex::bitlex_masks::compile_shaped(&stmts, &[rerail_bitlex::bitlex_masks::FALLBACK], Some(&symbols), rerail_bitlex::bitlex_masks::Shape::Auto).expect("compiles");
+    let tier1 = c.lexer_rust.expect("a tree section").unwrap_or_else(|e| panic!("tier 1 as Rust: {e}"));
+    let tier2 = c.rust_loop.expect("a tree section").unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
+    (tier1, tier2)
+}
+
+/// `rerail_json_aot`'s `tier1.rs` and `tier2.rs` are the Bitlex compiler's output for the grammar (`json_rust`);
+/// `RERAIL_BLESS=1` writes them again.
+#[test]
+fn json_rust_is_current() {
+    let (tier1, tier2) = json_rust();
+    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
+        let path = format!("{}/../json_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("RERAIL_BLESS").is_some() {
+            std::fs::write(&path, &rust).expect("writes");
+        }
+        assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "json_aot's {file} is not the compiler's: RERAIL_BLESS=1");
+    }
+}
+
+/// The generated parser's format 16 and 16z tapes are the JIT's, byte for byte, in a language whose table is the
+/// one the generator made (`ENTRIES`); it refuses the files the JIT refuses.
+#[test]
+fn json_rusts_tapes_are_the_jits() {
+    let jit = simdjson_form();
+    let (_, tag) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
+    let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), [1, 1, 1], 1).expect("a language");
+    let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
+    let mut inputs = tree_inputs();
+    inputs.extend(deep_nests(1023..1026));
+    let (mut same, mut refused) = (0, 0);
+    for (k, f) in inputs.iter().enumerate() {
+        let show = || String::from_utf8_lossy(&f[..f.len().min(60)]).into_owned();
+        for z in [false, true] {
+            let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| w.extent().to_vec());
+            let mut w = rerail_tape_format::f16::Writer::new(&lang, f, tag, z, true, f.len() / 2 + 16);
+            let got = rerail_json_aot::parse(f, &mut w).map_err(|b| format!("refused at byte {b}")).and_then(|()| w.finish().map(|d| d.tape.extent().to_vec()));
+            match (&want, &got) {
+                (Ok(a), Ok(b)) => {
+                    assert!(a == b, "file {k} ({:?}, 16z {z}): the Rust's tape is not the JIT's; the JIT's nodes {:?}", show(), ours(&jit, f));
+                    same += 1;
+                }
+                (Err(_), Err(_)) => refused += 1,
+                _ => panic!("file {k} ({:?}, 16z {z}): the JIT {want:?}, the Rust {got:?}", show()),
+            }
+        }
+    }
+    eprintln!("{same} tapes the JIT's, {refused} refused by both");
+    assert!(same > 0 && refused > 0);
 }

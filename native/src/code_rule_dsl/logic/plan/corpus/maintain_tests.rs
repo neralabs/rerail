@@ -296,11 +296,14 @@ fn r3_a_reached_stratum_is_derived_again_only_on_its_first_run_or_past_the_thres
 #[test]
 fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
     // The test's relations are small: a floor under θ (0090 §4's is 1,024 rows) above a small edit's deltas and below
-    // the corpus's. nextest runs a test as a process of its own.
-    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
+    // the corpus's. Held as a switch while the test runs (`switches::set`): set on the process and left, it was every
+    // later test's floor (a_session_maintains_a_cross_file_aggregate derived a stratum again under `cargo test`).
     let files: Vec<(String, String)> = (0..40).map(|i| (format!("m{i}.py"), format!("import m{}\ndef f{i}():\n    pass\n", (i + 1) % 40))).collect();
     let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
     let mut s = Session::new("r4", KINDS, KIND_OUTPUTS, &refs);
+    // Taken after the session, which holds the maintain tests one at a time: taken before, it waited on a test
+    // whose runs waited on it.
+    let _floor = super::switches::set(&[("RERAIL_AGAIN_MIN", "50")]);
     s.run();
     s.write("m0.py", "import m1\nimport m7\ndef f0():\n    pass\n");
     let small = s.edit("one import added");
@@ -318,13 +321,15 @@ fn r4_an_edit_that_reaches_most_of_a_stratum_derives_it_again() {
 /// moved node was a change to it: ep2's one-line edit derived 391 strata again past the threshold, 66 over `kind`.
 #[test]
 fn r4_a_line_inserted_is_no_change_to_a_stratum_that_reads_no_offset() {
-    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
     // One file holds most nodes, so its nodes moved are most of `node`'s rows.
     let big: String = (0..60).map(|i| format!("def f{i}():\n    pass\n")).collect();
     // `used_kind` reads `kind` in the cross part, past a join of two files' rows, as `width` reads `child`.
     let program = format!("{KINDS}\n.decl used_kind(f: node, k: symbol)\nused_kind(f, k) :- uses(_, f), kind(f, k).\n.output used_kind\n");
     let outputs: Vec<&'static str> = KIND_OUTPUTS.iter().copied().chain(["used_kind"]).collect();
     let mut s = Session::new("r4-moved", &program, &outputs, &[("a.py", big.as_str()), ("b.py", "from a import f1\ndef g():\n    pass\n")]);
+    // Taken after the session, which holds the maintain tests one at a time: taken before, it waited on a test
+    // whose runs waited on it.
+    let _floor = super::switches::set(&[("RERAIL_AGAIN_MIN", "50")]);
     s.run();
     // A line inserted in the first function's body, as ep2's: every node after it moves, and no child's index but
     // the function's own.
@@ -375,10 +380,12 @@ first(n) :- a(_, _), n = min n2 : { a(n2, _) }.
 
 #[test]
 fn r4_a_stratum_derived_again_past_theta_feeds_maintained_readers() {
-    unsafe { std::env::set_var("RERAIL_AGAIN_MIN", "50") };
     let files: Vec<(String, String)> = (0..40).map(|i| (format!("m{i}.py"), format!("import m{}\ndef f{i}():\n    pass\n", (i + 1) % 40))).collect();
     let refs: Vec<(&str, &str)> = files.iter().map(|(f, b)| (f.as_str(), b.as_str())).collect();
     let mut s = Session::new("r4-readers", AGAIN_THEN_MAINTAINED, &["c", "first"], &refs);
+    // Taken after the session, which holds the maintain tests one at a time: taken before, it waited on a test
+    // whose runs waited on it.
+    let _floor = super::switches::set(&[("RERAIL_AGAIN_MIN", "50")]);
     s.run();
     for i in 0..40 {
         s.write(&format!("m{i}.py"), &format!("import m{}\ndef g{i}():\n    pass\n", (i + 1) % 40));

@@ -483,13 +483,9 @@ CREATE TABLE IF NOT EXISTS facts_results (
     frame BLOB NOT NULL,
     PRIMARY KEY (source_id, fact_schema, path, plan_digest)
 ) STRICT, WITHOUT ROWID;
--- Neural Engine models compiled on this machine (decision 0098 §3): a compiled model's archive under the digest of
--- its template and its fixed relation. A JIT-compiled model is a fact of the store, read back by later runs; an AOT
--- one is part of the executable. Additive and referencing nothing, so the floor stays.
-CREATE TABLE IF NOT EXISTS accel_models (
-    model_key BLOB NOT NULL PRIMARY KEY CHECK(length(model_key) = 32),
-    archive BLOB NOT NULL
-) STRICT, WITHOUT ROWID;
+-- Neural Engine models compiled on this machine (decision 0098 §3) are kept facts of the store, their archives
+-- sources (`accel_models.rs`, t33 step 6): a store made before loses the table.
+DROP TABLE IF EXISTS accel_models;
 -- Bit i of `words` (little-endian u64s): the set's clause i ran with nothing to report; its
 -- counts are in the `counts` frame. A clear bit is unknown, never absent.
 CREATE TABLE IF NOT EXISTS facts_completions (
@@ -597,20 +593,8 @@ CREATE TABLE IF NOT EXISTS corpus_decided (
     swept INTEGER NOT NULL DEFAULT 0
 ) STRICT;
 INSERT OR IGNORE INTO corpus_decided(singleton, run, time) VALUES (1, 0, 0);
--- A root's stat index (corpus_runs.rs), as git's: a file's size, mtime and inode when its source was last read, and
--- the source. A run trusts an entry whose stat matches and whose mtime is over two seconds before `recorded_ns` (an
--- edit in the same tick as the recording could otherwise keep its stat), and then neither reads nor hashes the file.
--- An entry whose source was collected is not trusted. Additive: an older binary ignores it.
-CREATE TABLE IF NOT EXISTS corpus_stats (
-    root_id INTEGER NOT NULL REFERENCES corpus_roots(root_id),
-    path TEXT NOT NULL,
-    size INTEGER NOT NULL,
-    mtime_ns INTEGER NOT NULL,
-    inode INTEGER NOT NULL,
-    source_id INTEGER NOT NULL,
-    recorded_ns INTEGER NOT NULL,
-    PRIMARY KEY (root_id, path)
-) STRICT, WITHOUT ROWID;
+-- The corpus's stat index went (t33 K2): a corpus file's content is the observer's answer for its path.
+DROP TABLE IF EXISTS corpus_stats;
 CREATE INDEX IF NOT EXISTS facts_results_by_plan ON facts_results(plan_digest);
 -- The other memo plans a manifest names (`record_corpus_run_naming`): a prepared program's (decision 0073). They are
 -- live while a kept manifest names them. Additive: an older binary ignores it, and collects nothing by it.

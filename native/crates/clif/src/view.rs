@@ -227,6 +227,11 @@ pub mod cache {
     /// is an entry given back (not filled): its slot no key's.
     pub const TAG_SHIFT: u32 = 16;
     pub const NUMBER: u32 = (1 << TAG_SHIFT) - 1;
+    /// Index slots a generation at most: `Spec::new`'s for the most entries. A slot's index is masked by it too, on
+    /// every backend, so the offset of a slot's compare-and-swap has a bound the compiler sees. On the M3 Max's GPU a
+    /// swap at an index masked only by the header's count did not act on the slot: two threads both won one
+    /// (decision 0540).
+    pub const SLOTS_MAX: u32 = (2 * NUMBER).next_power_of_two();
     /// The room past the dead entry: an entry's masked loads reach at most an entry and a word past it.
     pub const SLACK: usize = 256;
     /// A guard after the slack, of `GUARD_BYTE`s: no read or write of the cache reaches it (decision 0463), and
@@ -320,7 +325,7 @@ pub mod cache {
             let max = word(MAX)?;
             let mut spec = Spec { gens: word(GENS)?, entries: word(ENTRIES)?, arena: 0, max, slots: word(SLOTS)?, stats: word(STATS)? != 0 };
             spec.arena = u32::try_from(stride.saturating_sub(first)).unwrap_or(0);
-            if spec.gens < 3 || max == 0 || !(max as usize).is_multiple_of(ALIGN) || spec.arena < max || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries {
+            if spec.gens < 3 || max == 0 || !(max as usize).is_multiple_of(ALIGN) || spec.arena < max || !spec.slots.is_power_of_two() || spec.entries == 0 || spec.entries >= NUMBER || spec.slots < 2 * spec.entries || spec.slots > SLOTS_MAX {
                 return Err(format!("a cache's shape overwritten: {spec:?}"));
             }
             let stated = [(GEN_STRIDE, spec.gen_stride()), (FIRST_ENTRY, spec.first_entry()), (DEAD, spec.dead())];
@@ -346,7 +351,7 @@ pub mod cache {
         /// `init` of a `buf` whose bytes are zero already (fresh anonymous memory): only the header, the stamps and
         /// the guard written, so the pages of entries never taken are never touched (decision 0478 step 2d).
         pub fn init_zeroed(&self, buf: &mut [u8]) -> Result<(), String> {
-            if buf.len() < self.bytes() || !self.slots.is_power_of_two() || self.gens < 3 {
+            if buf.len() < self.bytes() || !self.slots.is_power_of_two() || self.slots > SLOTS_MAX || self.gens < 3 {
                 return Err(format!("a cache of {} bytes for {self:?}", buf.len()));
             }
             let word = |v: usize| u32::try_from(v).map_err(|_| format!("a cache past 4 GiB: {self:?}"));

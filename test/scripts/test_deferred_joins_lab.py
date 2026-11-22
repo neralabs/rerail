@@ -1,7 +1,11 @@
-"""Regressions for the controls and the completion cache."""
+"""Regressions for the deferred-joins lab's controls and its completion cache (scripts/profiling/deferred_joins)."""
 
 import itertools
+from pathlib import Path
+import sys
 import unittest
+
+sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "scripts" / "profiling" / "deferred_joins"))
 
 from lab import connect
 from strategies import Strategy

@@ -587,7 +587,7 @@ struct Entry<'tree, D: Doc> {
     node: D::Node<'tree>,
     parent: Option<NonZeroUsize>,
     previous: Option<NonZeroUsize>,
-    kind: u16,
+    pub kind: u16,
     subtree_end: usize,
 }
 

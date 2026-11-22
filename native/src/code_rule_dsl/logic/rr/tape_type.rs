@@ -1,7 +1,13 @@
-//! The `tape` column type (decision 0103): a tape is the content key of a parsed text (`@parse`, `parse_of`,
-//! `tape_of`). It is stored as tapes always were (a symbol: an atom over atoms), so the engine sees `sym`; the type
-//! is checked here, before lowering: a variable that stands in a tape column stands in no symbol, number or node
-//! column. A tape is addressed by its content, so unlike a node it can be exported from a phase and kept.
+//! The content-keyed column types (decision 0103 §3): `tape`, `digest` and `blob`. Each holds a value named by its
+//! content, so unlike a node it can be exported from a phase and kept. Each is stored as a symbol, so the engine sees
+//! `sym`; the type is checked here, before lowering: a variable that stands in a column of one of them stands in no
+//! column of another type (a symbol, number, node, or another content type).
+//!
+//! - `tape`: the content key of a parsed text (`@parse`, `parse_of`, `tape_of`), stored as tapes always were (a
+//!   symbol: an atom over atoms).
+//! - `digest`: a 32-byte content hash, stored as its 64 hex digits (what `@sha256` and `@tree_digest` give).
+//! - `blob`: an opaque payload a native step makes (a compiled plan, a matcher, a device model), stored as the
+//!   content key of its bytes in the store's objects, as a tape is.
 //!
 //! ```text
 //! .decl ann_tree(s: symbol, v: symbol, t: tape)
@@ -15,7 +21,10 @@ use super::from_tape::{RrFile, S, Stmt};
 use super::tape::Field;
 use crate::code_rule_dsl::logic::front::Error;
 
-/// The types a tape is not: a variable in one of these and in a tape column is refused.
+/// The content-keyed types: a variable in a column of one of them is refused in a column of any other type.
+const CONTENT: [&str; 3] = ["tape", "digest", "blob"];
+
+/// The types a content-keyed value is not, besides the other content types.
 const OTHER: [&str; 8] = ["symbol", "sym", "number", "int", "unsigned", "float", "node", "span"];
 
 /// The relations of `core.rerail` with a tape column, and their columns' types.
@@ -82,8 +91,8 @@ impl Seen<'_> {
     }
 }
 
-/// The relations' declared column types, then each clause's variables: an error at the first variable that is a tape
-/// and something else.
+/// The relations' declared column types, then each clause's variables: an error at the first variable that is of a
+/// content-keyed type and of another type.
 pub(super) fn check(statements: &[Stmt]) -> Result<(), Error> {
     check_in(statements, &BTreeMap::new())
 }
@@ -131,10 +140,10 @@ pub(super) fn check_in(statements: &[Stmt], given: &BTreeMap<String, Vec<String>
             }
         }
         for (v, types) in &seen.1 {
-            if types.contains("tape")
-                && let Some(other) = types.iter().find(|t| OTHER.contains(&t.as_str()))
-            {
-                return Err(Error::Syntax(format!("line {line}: {v} is a tape in one column and a {other} in another: declare the column `tape`")));
+            for content in CONTENT.iter().filter(|c| types.contains(**c)) {
+                if let Some(other) = types.iter().find(|t| t.as_str() != *content && (OTHER.contains(&t.as_str()) || CONTENT.contains(&t.as_str()))) {
+                    return Err(Error::Syntax(format!("line {line}: {v} is a {content} in one column and a {other} in another: declare the column `{content}`")));
+                }
             }
         }
     }

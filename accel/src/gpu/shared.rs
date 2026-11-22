@@ -23,8 +23,9 @@
 //! - **Blocks in slabs** (`lease_block`): a block (`rerail_blocks`) whose memory is a pooled buffer, bound to the
 //!   device by that buffer: pinned once, recycled run after run. A block that outgrows its slab moves to a larger
 //!   one by one copy (`grow_block`); its references are self-relative, so the copy is the move.
-//! - **The guard.** A function the engine sets to its launch budget. Every submission checks it first, on the
-//!   submitting thread, so relational work is refused by the same budget as the rest of the engine's GPU work.
+//! - **The launch budget.** Every launch on the device is charged to its evaluation's ledger (`launch`) before it
+//!   is encoded, and every submission checked there: relational work is refused by the same budget as the rest of
+//!   the engine's GPU work.
 //!
 //! Everything here is safe to share between threads: Metal's device, queues and pipelines are, and the pool is
 //! behind a lock.
@@ -118,6 +119,12 @@ impl Memory {
         let room = self.idle_room(budgets, other(), need);
         self.pool.lock().expect("the pool").trim(room, self.slab_idle_limit());
     }
+}
+
+/// What the ledger of `rerail-metal` reserves now: a launch's record of the application's buffers
+/// (`launch::DispatchRecord`).
+pub fn other_reserved() -> usize {
+    other()
 }
 
 /// What the ledger of `rerail-metal` reserves now.
@@ -1021,18 +1028,6 @@ pub fn drop_free() {
     p.idle.clear();
     p.held = 0;
     p.held_slabs = 0;
-}
-
-static GUARD: OnceLock<fn() -> Result<(), String>> = OnceLock::new();
-
-/// Sets the check every submission makes first (once per process; a second call is ignored).
-pub fn set_guard(f: fn() -> Result<(), String>) {
-    let _ = GUARD.set(f);
-}
-
-/// The submission check: the engine's launch budget when it set one.
-pub fn guard() -> Result<(), String> {
-    GUARD.get().map_or(Ok(()), |f| f())
 }
 
 /// Held by each test that leases from the pool, or counts its live leases: the budget tests count every live lease

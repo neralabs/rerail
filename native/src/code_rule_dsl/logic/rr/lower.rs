@@ -129,8 +129,9 @@ enum Members {
 fn ty(t: &str) -> String {
     match t {
         "number" | "unsigned" => "int".to_owned(),
-        // A tape is stored as a symbol (its content key); `tape_type` checks it before lowering.
-        "symbol" | "tape" => "sym".to_owned(),
+        // A tape, a digest and a blob are stored as symbols (their content keys, decision 0103 §3); `tape_type` checks
+        // them before lowering.
+        "symbol" | "tape" | "digest" | "blob" => "sym".to_owned(),
         "span" | "loc" => "node".to_owned(),
         // A float column holds floats' keys (`float_key`).
         "float" => "int".to_owned(),
@@ -659,6 +660,9 @@ pub struct Module {
     places: BTreeSet<String>,
     /// Its program, rules and header, as its walk wrote it (decision 0377 step 3) or its image holds it.
     version: std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>,
+    /// The bound families it declares (`.pragma "bound-family"`), read off its version once: each scope that reaches
+    /// it reads them (`seeds`).
+    families: Vec<String>,
 }
 
 /// `statements` lowered as a module whose includes are `scope` (each module it reaches, once): its clauses read their
@@ -685,7 +689,7 @@ pub fn seeds(scope: &[&Module]) -> Seeds {
         given.extend(m.written.iter().map(|(k, v)| (k.clone(), v.clone())));
     }
     let printed = scope.iter().flat_map(|m| m.l.printed_demands.iter().cloned()).collect();
-    let families = scope.iter().flat_map(|m| bound_family::specs(&*m.version)).collect();
+    let families = scope.iter().flat_map(|m| m.families.iter().cloned()).collect();
     Seeds { l, seeded, given, printed, families }
 }
 
@@ -872,7 +876,8 @@ pub fn lower_module_seeded_written(statements: Vec<Stmt>, seeds: &Seeds) -> Resu
     // Each `.shape` names what its rules read, in the version: a relation of their body, and the variables it waits
     // for.
     shapes_hold(&version, &shapes)?;
-    Ok(Module { l, written, docof, places, version })
+    let families = bound_family::specs(&*version);
+    Ok(Module { l, written, docof, places, version, families })
 }
 
 /// Each `.shape`'s rules, read in `version`, read its relation (and what it waits after), and have each variable it
@@ -1024,7 +1029,8 @@ impl Module {
         for (r, x) in p.deps {
             l.deps.entry(r).or_default().insert(x);
         }
-        Ok(Module { l, written: p.written.into_iter().collect(), docof: p.docof, places: p.places, version })
+        let families = bound_family::specs(&*version);
+        Ok(Module { l, written: p.written.into_iter().collect(), docof: p.docof, places: p.places, version, families })
     }
 }
 

@@ -52,7 +52,6 @@ pub const STATE: &[(&str, &str, Class, &str)] = &[
     ("crates/compiler/src/pp_words.rs", "HOST_RUNS", Thread, "a count of this thread's work, read by tests and the profile"),
     ("crates/compiler/src/native_cpu_stream.rs", "IDS", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/buffer_observation.rs", "ACTIVE", Thread, "this thread's scratch or counters in a backend"),
-    ("crates/metal/src/launch.rs", "EVALUATION", Thread, "this thread's scratch or counters in a backend"),
     ("crates/metal/src/test_pool.rs", "LEDGERS", Thread, "this thread's share of the test pool"),
     ("crates/metal/src/test_pool.rs", "MEASURED", Thread, "this thread's test reads the driver's own figure (a test switch, per thread as the test pool is)"),
     ("crates/metal/src/test_pool.rs", "WORKING_SET", Thread, "this thread's test's working set for the device (a test switch, per thread as the test pool is)"),

@@ -15,6 +15,8 @@ test-hooks = ["rerail-store-base/test-hooks", "rerail-blocks/test-hooks", "rerai
 
 [dependencies]
 rerail-store-base = { path = "../store_base" }
+# The slots the store above fills: the observer's kept facts, a reused inventory's manifests owned again.
+rerail-registry = { path = "../registry" }
 # `\\?\` free canonical paths on Windows (std's are verbatim, which `/`-joined text and text comparisons break).
 dunce = "=1.0.5"
 rerail-prof = { path = "../prof" }

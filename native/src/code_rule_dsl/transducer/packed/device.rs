@@ -79,8 +79,9 @@ pub trait MatcherDevice: Send + Sync {
     /// Drops the label passes' pipelines (their memory) once the documents they ran over are gone.
     fn drop_label_pipelines(&self);
     /// Span prefilters' ends (`regex_block`): bit `i` of a file's words, a match can end after its byte `i`.
-    /// `Ok(None)`: a program form the device lacks, recorded in 0202's `metal-form` list (the cores run them). Any
-    /// other failure is the run's error (decision 0382: no fallback on an error).
+    /// `Ok(None)`: a program form the device lacks (the cores run them), or the set's kernels still compiling on
+    /// threads of their own (the cores run the batch meanwhile: no launch waits on the compiler). Any other failure is
+    /// the run's error (decision 0382: no fallback on an error).
     fn span_ends(&self, natives: &[&rerail_compiler::block_native::BlockNative], batch: &[super::block::BatchFile<'_>]) -> Result<Option<Vec<Vec<u64>>>, Error>;
     /// A node-set program (the prefilter's sets, `SetStep`s over `slots` slots of a space of `len` nodes in `files`,
     /// each file its first node and count), with `leaves` written in their slots: the words of each of `outputs`.

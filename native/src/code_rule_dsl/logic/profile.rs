@@ -2729,8 +2729,8 @@ pub fn memory_report(r: &mut String, spans: &BTreeMap<String, SpanTotal>) {
     memory::sampled_report(r);
 }
 
-/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux, Windows) `port`, read from another thread;
-/// `None` for a thread that has ended, and elsewhere.
+/// CPU (user + system) of the thread with Mach port (macOS) or thread id (Linux, Windows) `port`, read from another
+/// thread; `None` for a thread that has ended, and elsewhere.
 fn thread_cpu(port: u32) -> Option<f64> {
     #[cfg(target_os = "macos")]
     {

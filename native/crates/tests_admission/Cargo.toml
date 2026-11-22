@@ -1,6 +1,6 @@
 # The engine's tests of the matchers' lowering and admission: the composite matcher's lowering, the admission experiments, greedy contracts and cycle progress (docs/final-shape/proposals/crate-split/incremental-plan.md, step 7i).
 # A test crate: its library is its tests (`#![cfg(test)]`). Its manifest is boot's, with boot below it
-# (tools/cratify/test_crates.py), and kept by hand since.
+# (tools/cratify/split_test_crates.py), and kept by hand since.
 [package]
 name = "rerail-tests-admission"
 version = "0.1.0"

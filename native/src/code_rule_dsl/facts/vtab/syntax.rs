@@ -1118,11 +1118,16 @@ pub fn module(rel: &str) -> String {
     m.strip_suffix(".__init__").map(str::to_owned).unwrap_or(m)
 }
 
+/// The last segment of `path`: a library document is named as the engine has the file, with `\` on Windows.
+pub(crate) fn file_name(path: &str) -> &str {
+    path.rsplit(|c| c == '/' || (cfg!(windows) && c == '\\')).next().unwrap_or(path)
+}
+
 /// The package relative imports resolve against (`__package__`): a package's own name, else its
 /// module's parent.
 /// The package of module `m`, the file at `path`: `m` itself for a package's `__init__`, else `m`'s parent.
 pub(crate) fn package_of(path: &str, m: &str) -> String {
-    let name = path.rsplit('/').next().unwrap_or(path);
+    let name = file_name(path);
     if name.starts_with("__init__.") { m.to_owned() } else { m.rsplit_once('.').map(|(p, _)| p.to_owned()).unwrap_or_default() }
 }
 
@@ -3923,7 +3928,12 @@ impl Source for Viewed {
             return None;
         }
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| crate::code_rule_dsl::facts::rows::Part::for_device(0, self.len()).ok()).clone());
+        let home = in_place.as_ref().and_then(|_| self.home.get_or_init(|| {
+            // Room for an index of each key the strata probe a view by, found again by every later binding: with room
+            // for one, each binding probing it by another key made a fresh home of its own, never found again (133 of
+            // 3.4 MB in each of pth_unpack's fixpoints, its 49 lines by kind pair; ab138).
+            crate::code_rule_dsl::facts::rows::Part::for_device_indexed(0, self.len(), crate::code_rule_dsl::facts::rows::AXIS_KEYS).ok()
+        }).clone());
         #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
         let home = None;
         Some(crate::code_rule_dsl::facts::vtab::DeviceView {

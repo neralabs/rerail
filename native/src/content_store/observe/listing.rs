@@ -13,7 +13,7 @@ pub(super) type Listed = Option<(Kind, Stat)>;
 
 /// The entries of `dir`, by name (`.` and `..` left out). An error where `dir` cannot be opened as a directory.
 #[cfg(target_os = "macos")]
-pub(super) fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
+pub fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
     use std::os::unix::ffi::{OsStrExt as _, OsStringExt as _};
     let path = std::ffi::CString::new(dir.as_os_str().as_bytes())?;
     // SAFETY: a NUL-terminated path; the descriptor is closed by `Fd`.
@@ -112,7 +112,7 @@ fn i64_at(b: &[u8], at: usize) -> Option<i64> {
 /// The entries of `dir`, by name: `readdir`, then each entry's `fstatat` relative to the open directory (no path
 /// walked again), a symbolic link left to be `stat`ed on its own.
 #[cfg(all(unix, not(target_os = "macos")))]
-pub(super) fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
+pub fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
     let mut out = Vec::new();
     for e in std::fs::read_dir(dir)? {
         let e = e?;
@@ -144,7 +144,7 @@ pub(super) fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
 /// its entries changed). NTFS writes a file's times and size into its directory as its last handle closes: a file
 /// still open for writing may list as it was, and is named once it is closed.
 #[cfg(windows)]
-pub(super) fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
+pub fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
     use std::os::windows::{ffi::OsStringExt as _, fs::OpenOptionsExt as _, io::AsRawHandle as _};
     use windows_sys::Win32::Foundation::ERROR_NO_MORE_FILES;
     use windows_sys::Win32::Storage::FileSystem::{
@@ -223,7 +223,7 @@ pub(super) fn entries(dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
 
 /// No listing with stats here: a root is not checked by its listings (`supported`).
 #[cfg(not(any(unix, windows)))]
-pub(super) fn entries(_dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
+pub fn entries(_dir: &Path) -> std::io::Result<Vec<(OsString, Listed)>> {
     Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
 }
 

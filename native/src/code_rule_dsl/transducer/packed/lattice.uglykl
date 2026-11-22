@@ -20,8 +20,8 @@
 #define BIG ((int64_t)1099511627776L)
 
 // `budget`: a worker's visits in a launch at most (`ukl_wq_spent`, decision 0540).
-typedef struct LatticeArgs { uint32_t cells, capacity, polls, budget; } LatticeArgs;
-UKL_REFLECT_STRUCT(LatticeArgs, cells, capacity, polls, budget)
+typedef struct LatticeArgs { uint32_t cells, capacity, budget; } LatticeArgs;
+UKL_REFLECT_STRUCT(LatticeArgs, cells, capacity, budget)
 
 UKL_INLINE int64_t lub(int64_t a,int64_t b){ if(a==BOT)return b; if(b==BOT)return a; return a==b?a:TOP; }
 UKL_INLINE int64_t magnitude(int64_t a){ return a<0?-a:a; }
@@ -96,13 +96,10 @@ DEFINE_KERNEL2(lattice, lattice_queue,
   (void)worker;
   UKL_COHERENT uint8_t* cells=(UKL_COHERENT uint8_t*)values;
   UklWorkQueue q={slots,control,args.capacity,0u,args.budget};
-  uint32_t polls=0u,visits=0u,retries=0u,cell=0u;
+  uint32_t visits=0u,retries=0u,cell=0u;
   for(uint32_t turn=0u;turn<UKL_WQ_TURNS&&!ukl_wq_spent(q,visits);turn++){
-    if(!ukl_wq_take(q,&cell)){
-      if(ukl_wq_idle(q,&polls,args.polls))break;
-      continue;
-    }
-    polls=0u;
+    // None to take: the worker ends (decision 0540 step 7); a cell's pusher is running and takes on.
+    if(!ukl_wq_take(q,&cell))break;
     ukl_atomic_and(&queued[cell/32u],~(1u<<(cell%32u)));
     ukl_fence_device();
     visits++;

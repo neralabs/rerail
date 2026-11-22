@@ -3184,6 +3184,7 @@ dependencies = [
  "rerail-gpu",
  "rerail-ukl",
  "rustc-hash",
+ "serde",
  "sha2 0.10.9",
 ]
 
@@ -3282,6 +3283,7 @@ dependencies = [
  "regex-automata",
  "regex-syntax",
  "rerail-accel",
+ "rerail-blocks",
  "rerail-boot",
  "rerail-c-directives",
  "rerail-c-pp",
@@ -4191,6 +4193,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-json-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-json-aot",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-json-lean"
 version = "0.1.0"
 dependencies = [
@@ -5037,6 +5047,7 @@ dependencies = [
  "rerail-cpu-block",
  "rerail-cpu-stream",
  "rerail-device",
+ "rerail-json-aot",
  "rerail-kotlin-parser",
  "rerail-metal",
  "rerail-parser-tests",
@@ -8514,6 +8525,7 @@ dependencies = [
  "rerail-lang",
  "rerail-matcher",
  "rerail-prof",
+ "rerail-registry",
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-rules",

@@ -28,7 +28,7 @@ pub struct TreeDiff {
 
 struct Entry {
     tree: bool,
-    digest: [u8; 32],
+    pub digest: [u8; 32],
     child: Option<i64>,
 }
 

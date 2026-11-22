@@ -26,6 +26,13 @@ use crate::code_rule_dsl::logic::plan::body::{VarSet, atom_vars, lit_vars, term_
 use crate::code_rule_dsl::logic::program_image::manager::{Cx, ProgramPass, ProgramW};
 use crate::code_rule_dsl::logic::program_image::{About, AggRef, AtomRef, Cell, CmpOp, Lit, LitRef, Rewrite, RuleBuilder, RuleRef, Slot, T, TermRef, Version, t_of};
 use std::collections::{BTreeMap, BTreeSet};
+use std::sync::Arc;
+
+mod split;
+
+/// The profile's topic of each change demand made to keep the program's components (`Report::reasons`): a relation
+/// split (`split`), or relations computed in full for a negative cycle.
+pub const REASON_TOPIC: &str = "the program's demand: kept apart (decisions 0065 §2a, 0145)";
 
 /// A term of a literal the transformation writes: the rule's own, the fresh variable `_m<n>`, or, in a gate's own
 /// rule, its variable `_g<n>`, `_` or `0`.
@@ -562,6 +569,8 @@ pub struct ProgramDemand {
     /// program is then as it was, every relation computed in full).
     pub listed: Vec<String>,
     pub outcome: Option<std::result::Result<Report, String>>,
+    /// Each relation split (`split`) and its copy, in the order made.
+    pub splits: Vec<(String, String)>,
 }
 
 impl ProgramPass for ProgramDemand {
@@ -577,15 +586,50 @@ impl ProgramPass for ProgramDemand {
     }
 }
 
+/// The rounds of splits (`split`) one program may take: each splits what the last left, one relation below it.
+const SPLIT_ROUNDS: usize = 32;
+
 impl ProgramDemand {
+    /// The transformation (`transform`), and while its demand joins a request's component with what the request reads
+    /// (`split::joins`), each such demand split and the program transformed again. Each split is a decision of the
+    /// run's profile: the relation, the cycle with the rule of each step, and the rules moved to the copy.
     fn apply(&mut self, cx: &Cx<'_>, w: &mut ProgramW<'_>) -> std::result::Result<(), String> {
-        let v = cx.v();
-        let about = About::of(v);
-        let listed: Vec<&str> = about.demand_list.iter().map(|a| v.text(*a)).collect();
+        let mut owned: Option<Arc<Version>> = None;
+        let (mut copies, mut reasons): (Vec<(String, String)>, Vec<String>) = (Vec::new(), Vec::new());
+        for round in 0..=SPLIT_ROUNDS {
+            let v: &Version = owned.as_deref().unwrap_or_else(|| cx.v());
+            let about = About::of(v);
+            let Some((trial, decls, mut report)) = self.transform(v, &about, &copies)? else { return Ok(()) };
+            let requests = split::requests(v, &about);
+            let program = split::graph(v, &requests);
+            let found = split::joins(v, &about, &trial.made, &program, &requests);
+            if found.is_empty() {
+                self.splits = copies;
+                reasons.append(&mut report.reasons);
+                report.reasons = reasons;
+                return self.write(v, w, trial, decls, report);
+            }
+            if round == SPLIT_ROUNDS {
+                return Err(format!("demand still joins a request's component after {SPLIT_ROUNDS} rounds of splits: {}", found[0].why));
+            }
+            reasons.extend(found.iter().map(|s| s.why.clone()));
+            let (next, made) = split::split(v, &found, &program)?;
+            copies.extend(made);
+            owned = Some(next);
+        }
+        unreachable!("a round returns")
+    }
+
+    /// The transformation of `v`, with the relations of `copies` (each a relation's copy) demanded as theirs are: the
+    /// program, the guards' declarations and the report; `None` where the program lists nothing.
+    #[allow(clippy::type_complexity)]
+    fn transform<'v>(&mut self, v: &'v Version, about: &About, copies: &[(String, String)]) -> std::result::Result<Option<(Trial<'v>, Vec<(String, Vec<(String, String)>)>, Report)>, String> {
+        let mut listed: Vec<&str> = about.demand_list.iter().map(|a| v.text(*a)).collect();
         if listed.is_empty() && !self.every {
-            return Ok(());
+            return Ok(None);
         }
         self.listed = listed.iter().map(|x| (*x).to_owned()).collect();
+        listed.extend(copies.iter().filter(|(of, _)| listed.contains(&of.as_str())).map(|(_, c)| c.as_str()).collect::<Vec<_>>());
         let derived: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
         let mut full: BTreeSet<String> = BTreeSet::new();
         if !self.every && !listed.contains(&"*") {
@@ -609,11 +653,11 @@ impl ProgramDemand {
         // A relation that aggregates is computed in full: guarded, its count would join its demand's recursive component.
         full.extend(v.rules().filter(|r| r.body().any(|l| matches!(l.view(), Lit::Agg { .. }))).map(|r| v.rel_name(r.head().rel()).to_owned()));
         let originals: Vec<Made<'_>> = v.rules().map(|rule| Made { rule, head: None, body: rule.body().map(M::Own).collect() }).collect();
-        let (sccs, _) = strata(v, &about, &originals).map_err(|e| e.to_string())?;
+        let (sccs, _) = strata(v, about, &originals).map_err(|e| e.to_string())?;
         let level: BTreeMap<String, usize> = sccs.iter().enumerate().flat_map(|(i, scc)| scc.iter().map(move |r| (r.clone(), i))).collect();
-        let mut cyc = Vec::new();
+        let (mut cyc, mut why) = (Vec::new(), Vec::new());
         let made = loop {
-            let mut cx2 = Ctx { v, about: &about, by: &by, idb: &idb, level: &level, answered: BTreeMap::new() };
+            let mut cx2 = Ctx { v, about, by: &by, idb: &idb, level: &level, answered: BTreeMap::new() };
             match attempt(&mut cx2, &full, self.gate) {
                 Ok(made) => break made,
                 Err(Attempt::Failed(e)) => return Err(e.to_string()),
@@ -632,6 +676,7 @@ impl ProgramDemand {
                     if new.is_empty() {
                         return Err(error.to_string());
                     }
+                    why.push(format!("{} computed in full, with what they read ({}): {error}", negs.iter().cloned().collect::<Vec<_>>().join(", "), new.iter().cloned().collect::<Vec<_>>().join(", ")));
                     cyc.extend(negs.intersection(&new).cloned());
                     full.extend(new);
                 }
@@ -639,11 +684,24 @@ impl ProgramDemand {
         };
         let (trial, decls, mut report) = made;
         report.full_for_negation = cyc;
-        // The program as the attempt made it: its rules, the guards' declarations, `magic_true`, and no demand left.
+        report.reasons = why;
+        Ok(Some((trial, decls, report)))
+    }
+
+    /// The program as the attempt made it, over `v` (the input, or its split): its rules, the guards' and the copies'
+    /// declarations, `magic_true`, and no demand left.
+    fn write(&mut self, v: &Version, w: &mut ProgramW<'_>, trial: Trial<'_>, decls: Vec<(String, Vec<(String, String)>)>, report: Report) -> std::result::Result<(), String> {
         let input = w.input().clone();
         let b = w.derive()?;
         for m in &trial.made {
-            write(&input, b.rule(), m)?;
+            write(v, b.rule(), m)?;
+        }
+        for (_, copy) in &self.splits {
+            if let Some(d) = v.decl_of(copy) {
+                let cols: Vec<(String, String)> = d.cols().map(|(n, t)| (v.text(n).to_owned(), v.text(t).to_owned())).collect();
+                let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
+                b.fields().declare(copy, &cols);
+            }
         }
         for (rel, cols) in decls.iter().chain(&trial.done) {
             let cols: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
@@ -682,7 +740,7 @@ impl ProgramDemand {
         // The report, as the program keeps it (`Program::magic_report`: `magic_report` and `report_list`).
         b.fields().set_about_rows("magic_report", vec![vec![pc, Cell::Int(report.magic_rules as i64), Cell::Int(report.extras_kept as i64), Cell::Int(report.gates as i64)]]);
         let mut list = Vec::new();
-        for (name, items) in [("adornments", &report.adornments), ("full", &report.full), ("full_for_negation", &report.full_for_negation)] {
+        for (name, items) in [("adornments", &report.adornments), ("full", &report.full), ("full_for_negation", &report.full_for_negation), ("reasons", &report.reasons)] {
             for (k, item) in items.iter().enumerate() {
                 let (n, x) = (b.atom(name), b.atom(item));
                 list.push(vec![pc, Cell::Str(n), Cell::Int(k as i64), Cell::Str(x)]);
@@ -1138,6 +1196,7 @@ fn attempt<'v>(cx: &mut Ctx<'v, '_>, full_in: &BTreeSet<String>, gate: bool) -> 
         extras_kept,
         gates: trial.gates.len(),
         full_for_negation: Vec::new(),
+        reasons: Vec::new(),
     };
     Ok((trial, decls, report))
 }

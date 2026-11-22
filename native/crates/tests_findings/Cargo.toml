@@ -1,6 +1,6 @@
 # The engine's tests of findings: the workspace's storage, results, placement and cross-file findings, the async reference and the violations (docs/final-shape/proposals/crate-split/incremental-plan.md, step 7i).
 # A test crate: its library is its tests (`#![cfg(test)]`). Its manifest is boot's, with boot below it
-# (tools/cratify/test_crates.py), and kept by hand since.
+# (tools/cratify/split_test_crates.py), and kept by hand since.
 [package]
 name = "rerail-tests-findings"
 version = "0.1.0"

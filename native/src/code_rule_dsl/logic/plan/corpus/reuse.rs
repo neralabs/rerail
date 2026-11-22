@@ -39,6 +39,8 @@ const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_RE
     // A profile's and the heap sampler's (`profile::memory`, `rerail_prof`): a measurement's cold runs sample the heap
     // and its warm runs do not, so with these in the key no warm run found the cold run's record (decision 0376).
     "RERAIL_PROF", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
+    // The width census of the run's relations (`profile::memory::width_census`): what a layout would hold, measured.
+    "RERAIL_WIDTH_CENSUS",
     // The stores a measurement keeps apart (the cost model's, the rule images'): a plan's costs and a program's stored
     // form, never the run's outputs.
     "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_EXPORT_IMAGES",

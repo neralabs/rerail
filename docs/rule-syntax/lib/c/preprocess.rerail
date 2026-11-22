@@ -42,6 +42,8 @@
 // What the file gets wrong: `unmatched`, `after_else`, `unterminated`, `malformed` (by directive),
 // and `unclosed_comment` (i = -1).
 .decl c_pp_problem(path: symbol, i: number, kind: symbol)
+// Answered natively (t33 K3, `language::adapter::c_pp::Directives`).
+.answer c_pp_file_req -> c_directive, c_define, c_undef, c_include, c_cond, c_cond_next, c_cond_parent, c_pragma, c_line, c_text, c_guard, c_pp_problem
 
 // ---- mode (b): a translation unit applied ----
 //
@@ -72,3 +74,5 @@ c_pp_tu_req(tu, s) :- c_tu(tu, c), c_cfg_spec(c, s).
 // `#error`, `#warning` and what the pass refused: `kind` (`error`, `warning`, `not_found`,
 // `bad_expr`, `arg_count`, `redefined`, …) and its text.
 .decl c_pp_diag(tu: symbol, spec: symbol, path: symbol, at: number, kind: symbol, text: symbol)
+// Answered natively (t33 K3, `language::adapter::c_pp::Units`).
+.answer c_pp_tu_req -> c_pp_read, c_pp_included, c_pp_include_wanted, c_pp_cond_taken, c_pp_active, c_pp_expansion, c_pp_diag

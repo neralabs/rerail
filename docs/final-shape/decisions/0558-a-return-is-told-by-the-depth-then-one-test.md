@@ -4,6 +4,7 @@ Numbered 0548 where it was written (Parser-generators-final-shape); 0558 here, t
 
 Status: done by the implementer. The item is the user's (2026-11-21, "please do these", the second): "a two-way
 return". How it is done is the implementer's choice. Follows 0541. Page 40, step 52.
+Numbered 0548 where it was written (Parser-generators-final-shape); 0558 here, the hub's 0548 being another.
 
 ## What was there
 

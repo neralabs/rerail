@@ -1,6 +1,6 @@
 """Seeded syntax-error mutants of a directory's Python files, for `cpython::parity::syntax_error_parity` (Q360, Q389).
 
-    python3 -I -S scripts/dev/python-syntax-mutants.py SRC OUT
+    python3 -I -S scripts/dev/python_syntax_mutants.py SRC OUT
 
 Each file under SRC of at most 40,000 characters gives 6 mutants, OUT/<index>/m<k>.py: the text truncated, a
 character dropped, a bracket, quote, backslash, `$`, tab, newline or other piece put in, or a line's indentation

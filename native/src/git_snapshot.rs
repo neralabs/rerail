@@ -1,5 +1,5 @@
 //! Read-only source views of Git trees. Paths identify objects; they never name an extracted checkout.
-//! Like nera-data-layer's library Git importer, tree walks retain blob IDs and bytes are read on demand.
+//! Like the internal data layer's library Git importer, tree walks retain blob IDs and bytes are read on demand.
 
 use rerail_store::Canonical as _;
 use std::cell::RefCell;
@@ -113,7 +113,29 @@ pub struct Inventory {
     pub tree_failures: Vec<SourceFailure>,
     pub tree_observations: std::collections::BTreeMap<gix::ObjectId, String>,
     pub selection: String,
+    /// The memo plans the runs that made it recorded manifests of, under `manifest_root`: a run that reuses it owns
+    /// them again for its scope (`own_recorded_manifests`), as it would by running them.
+    pub plans: Vec<[u8; 32]>,
+    pub manifest_root: String,
 }
+
+/// Whether a run reusing `inventory` holds what its runs recorded: under an owner, their manifests owned again for its
+/// scope. False when they are gone (collected): the inventory runs again, and records them.
+fn owned_again(inventory: &Inventory, store: Option<&Path>, owner: Option<&AnalysisOwner>) -> Result<bool, InventoryError> {
+    let (Some(store), Some(owner)) = (store, owner) else { return Ok(true) };
+    if inventory.plans.is_empty() {
+        return Ok(true);
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let own = OWN_RECORDED.try_get().ok_or("the content store's owner of recorded manifests is not registered")?;
+    Ok(own(store, &inventory.manifest_root, &inventory.plans, owner, now).map_err(InventoryError::Cache)? > 0)
+}
+
+/// Owns the manifests that `plans` recorded under `root` again for `owner`, in the content store at `store`, and
+/// gives how many it owned (`ContentStore::own_recorded_manifests`). The store's, above this crate (rerail-store);
+/// boot registers it.
+pub type OwnRecorded = fn(&Path, &str, &[[u8; 32]], &AnalysisOwner, i64) -> Result<usize, crate::content_store::StoreError>;
+pub static OWN_RECORDED: rerail_registry::Slot<OwnRecorded> = rerail_registry::Slot::new("the content store's owner of a reused inventory's recorded manifests");
 
 #[derive(Clone, Debug)]
 pub struct RawTreeEntry {
@@ -510,6 +532,7 @@ impl View {
         if let Some((_, value)) = saved
             && inventory_selection(&self.root).as_ref() == Some(&value.selection)
             && self.inventory.lock().unwrap_or_else(|e| e.into_inner()).generation == generation
+            && owned_again(&value, store, owner)?
         {
             return Ok(value);
         }

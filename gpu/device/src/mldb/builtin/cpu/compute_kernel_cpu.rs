@@ -402,7 +402,9 @@ const SCHED_BYTES: usize = 256 << 10;
 /// The pthread key whose value on a thread is its running launch's scheduler (`__ukl_cpu_sched`; its running thread is
 /// the scheduler's): the one thread-local every kernel library uses, read and written by the shim itself
 /// (`pthread_getspecific`). A library has none of its own: macOS gives each loaded image's thread-locals a pthread
-/// key, and a process runs out of them after a few hundred libraries.
+/// key, and a process runs out of them after a few hundred libraries. On Windows the key is a TLS index (`TlsAlloc`),
+/// which the shim reads with `TlsGetValue`.
+#[cfg(not(windows))]
 fn tls_key() -> u64 {
     static KEY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
     *KEY.get_or_init(|| {
@@ -412,6 +414,23 @@ fn tls_key() -> u64 {
         let made = unsafe { libc::pthread_key_create(&mut key, None) };
         assert_eq!(made, 0, "the CPU backend's thread key: {}", std::io::Error::from_raw_os_error(made));
         key as u64
+    })
+}
+
+#[cfg(windows)]
+fn tls_key() -> u64 {
+    #[link(name = "kernel32")]
+    unsafe extern "system" {
+        fn TlsAlloc() -> u32;
+    }
+    /// `TlsAlloc`'s answer when the process has no index left.
+    const TLS_OUT_OF_INDEXES: u32 = u32::MAX;
+    static KEY: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+    *KEY.get_or_init(|| {
+        // SAFETY: an index allocated once for the process and never freed (its values are the launches').
+        let key = unsafe { TlsAlloc() };
+        assert_ne!(key, TLS_OUT_OF_INDEXES, "the CPU backend's thread key: {}", std::io::Error::last_os_error());
+        u64::from(key)
     })
 }
 
