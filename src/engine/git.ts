@@ -1540,7 +1540,7 @@ export async function gitCrlfPaths(
 // The pieces of `gitCrlfPaths` a reader that keeps its answers by the stamps of their inputs asks again (`git-crlf-reader.ts`).
 export { crlfRule, lineEndingAttributes, lineEndingAttributesFrom, type LineEndingAttributes, type LineEndingConfig };
 
-/** The most bytes of a listing `gitModifiedOrUntrackedPaths` and `unmergedEntries` read: past it, the first lists none and the second cannot say. */
+/** The most bytes of a listing `gitModifiedOrUntrackedPaths`, `gitFirstSightListing` and `unmergedEntries` read: past it, the first lists none and the others cannot say. */
 const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
 
 /**
@@ -1549,10 +1549,20 @@ const MAX_LISTED_PATH_BYTES = 64 * 1024 * 1024;
  */
 export type ChangedPathsListing = { readonly ended: "printed"; readonly paths: string[] } | { readonly ended: "failed" | "timed-out" };
 
+/** The paths a `-z` listing printed, split at Git's NULs; a listing that printed none of its own ends as it ended. */
+function listedPaths(read: GitRead): ChangedPathsListing {
+  return read.ended === "printed" ? { ended: "printed", paths: read.stdout.split("\0").filter(path => path !== "") } : read;
+}
+
 /** Lists the files `gitModifiedOrUntrackedPaths` answers, and says how the listing ended. */
 export async function gitModifiedOrUntrackedListing(cwd: string, options: GitReadOptions = {}): Promise<ChangedPathsListing> {
-  const read = await readGit(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES);
-  return read.ended === "printed" ? { ended: "printed", paths: read.stdout.split("\0").filter(path => path !== "") } : read;
+  return listedPaths(await readGit(cwd, ["ls-files", "-z", "--modified", "--others", "--exclude-standard"], options.signal, MAX_LISTED_PATH_BYTES));
+}
+
+/** What `gitModifiedOrUntrackedPaths` answers of a listing that ended as `listing` did. */
+function modifiedOrUntracked(listing: ChangedPathsListing): string[] | undefined {
+  if (listing.ended === "timed-out") return undefined;
+  return listing.ended === "printed" ? listing.paths : [];
 }
 
 /**
@@ -1562,9 +1572,33 @@ export async function gitModifiedOrUntrackedListing(cwd: string, options: GitRea
  * none is not its answer.
  */
 export async function gitModifiedOrUntrackedPaths(cwd: string, options: GitReadOptions = {}): Promise<string[] | undefined> {
+  return modifiedOrUntracked(await gitModifiedOrUntrackedListing(cwd, options));
+}
+
+/** What a walk lists of a checkout for a session that sees it for the first time (`gitFirstSightListing`). */
+export interface FirstSightListing {
+  /** The files `gitModifiedOrUntrackedPaths` answers. */
+  readonly changed: string[] | undefined;
+  /**
+   * The files whose text may differ from what the commit `head` holds: those `ls-files --modified --others` printed,
+   * which compares each file with the index, and those whose index entry differs from `head`'s tree (`diff-index
+   * --cached`). Every other file holds what the index holds, and the index what `head` holds. Undefined when either
+   * listing failed or ran past its time limit, without `head`, and when `HEAD`'s newest move is a commit
+   * (`headMovedOnlyByCommits` with no `from`): that commit may hold what a command wrote.
+   */
+  readonly notAtHead: string[] | undefined;
+}
+
+/**
+ * The files of the checkout at `cwd` that `gitModifiedOrUntrackedPaths` answers, and those whose text may differ from
+ * the commit `head` (`FirstSightListing`): one Git process, and two more once the first printed and `head` is known.
+ */
+export async function gitFirstSightListing(cwd: string, head: string | undefined, options: GitReadOptions = {}): Promise<FirstSightListing> {
   const listing = await gitModifiedOrUntrackedListing(cwd, options);
-  if (listing.ended === "timed-out") return undefined;
-  return listing.ended === "printed" ? listing.paths : [];
+  const changed = modifiedOrUntracked(listing);
+  if (listing.ended !== "printed" || head === undefined || await headMovedOnlyByCommits(cwd, undefined, options)) return { changed, notAtHead: undefined };
+  const staged = listedPaths(await readGit(cwd, ["diff-index", "-z", "--cached", "--name-only", head, "--"], options.signal, MAX_LISTED_PATH_BYTES));
+  return { changed, notAtHead: staged.ended === "printed" ? [...listing.paths, ...staged.paths] : undefined };
 }
 
 /**

@@ -818,17 +818,22 @@ function takeCheckouts(
 }
 
 /**
- * Puts into `listed` (`WalkStart.listedAtFirstSight`) what the Git of each checkout of a worktree listed as modified or
- * untracked for the walk that first shows it to a session (`WorktreeFindings.listed`), for each checkout whose listing
- * finished. Git lists an unmerged path as modified, so a conflict is among the files read.
+ * Puts into `listed` (`WalkStart.listedAtFirstSight`) the files whose text may differ from `HEAD` that the walk first
+ * showing a session a worktree listed of its own checkout (`WorktreeFindings.notAtHead`), where Git said which. Git lists
+ * an unmerged path as modified, so a conflict is among the files read.
  */
 function takeFirstSightListings(findings: WorktreeFindings, listed: Map<string, ReadonlySet<string>>): void {
-  for (const [checkout, paths] of findings.listed) if (paths !== undefined) listed.set(checkout, new Set(paths));
+  for (const [checkout, paths] of findings.notAtHead) listed.set(checkout, new Set(paths));
 }
 
-/** Whether `edit`, of the file at `path` in its checkout, is one Git's listing (`listed`) leaves out: it holds what its index holds. */
+/**
+ * Whether `edit`, of the file at `path` in its checkout, is one the walk's listings (`listed`) leave out: a file there
+ * that holds what its index holds, where the index holds what `HEAD` holds. A deletion they leave out is of a path
+ * neither the index nor `HEAD` has, which a reading with no move of `HEAD` known before takes for Git's too
+ * (`removedByGit`). A file the walk could not read as text has no verdict of Git's, and is asked as before.
+ */
 function listedUnchanged(edit: CodeRuleEdit, path: string, listed: ReadonlySet<string>): boolean {
-  return edit.deleted !== true && edit.readError === undefined && !listed.has(path);
+  return edit.readError === undefined && !listed.has(path);
 }
 
 /**
@@ -1115,9 +1120,9 @@ interface WalkStart {
   readonly heads: ReadonlyMap<string, string>;
   readonly unmerged: ReadonlyMap<string, ReadonlyMap<string, string>>;
   /**
-   * In a take of the other worktrees' walk, by checkout (physical), the files its Git listed as modified or untracked
-   * when the walk first showed the session that checkout's worktree (`takeFirstSightListings`): every other file there
-   * holds what its index holds.
+   * In a take of the other worktrees' walk, by checkout (physical), the files whose text may differ from `HEAD` that its
+   * Git listed when the walk first showed the session that checkout's worktree (`takeFirstSightListings`): every other
+   * file there holds what its index holds, and the index what `HEAD` held as the walk began.
    */
   readonly listedAtFirstSight?: ReadonlyMap<string, ReadonlySet<string>>;
   /**
@@ -3617,8 +3622,9 @@ export class CodeRuleBridge {
 
   /**
    * `#gitVerdicts` of the changes in `checkout` that a walk first showing the session its worktree found there. A file
-   * its Git did not list then as modified or untracked (`listed`, `WalkStart.listedAtFirstSight`) holds what the index
-   * holds, Git's own text, as a reading of its blob would find (`#heldByGit`): it is judged so without asking Git again.
+   * its Git did not list then (`listed`, `WalkStart.listedAtFirstSight`) holds what the index holds, and the index what
+   * `HEAD` held, whose newest move was no commit: Git's own text, as a reading of `HEAD`'s blob would find with no move
+   * of `HEAD` known before (`#heldByGit`). It is judged so without asking Git again.
    * Every file of a worktree Git added while the session ran is stamped since the session opened, so the reading asked
    * Git for the blobs of all of them, and of `HEAD`'s moves, in the queue a shell command's result waits on, for every
    * such worktree and every session watching it. The rest, and a file the walk could not read, are read as before.
