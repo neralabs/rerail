@@ -102,7 +102,7 @@ fn field_of(e: &Expr, r: usize, role: &str, masks: &mut Vec<(String, Expr)>, all
 pub fn piece_covers(stmts: &[Stmt]) -> Vec<usize> {
     match readers(stmts).as_slice() {
         [rd] => match rd.parts.as_slice() {
-            [(_, start, PartLen::Bytes(_), _)] => crate::bitlex_piece_checks::piece_checks(stmts, start).map(|c| c.covers).unwrap_or_default(),
+            [(_, start, PartLen::Bytes(_), _)] => crate::bitlex_piece_checks::piece_checks(stmts, start, None).map(|c| c.covers).unwrap_or_default(),
             _ => Vec::new(),
         },
         _ => Vec::new(),
@@ -203,6 +203,175 @@ fn length_bits(e: &Expr, defs: &HashMap<String, Expr>, n: usize, pre: usize, dep
             (0..n).map(|i| if f == "next" { i + k < n && a[i + k] } else { i >= k && a[i - k] && lv(i) }).collect()
         }
         _ => return None,
+    })
+}
+
+/// The records tier 1 writes, as a mask of the grammar: the tokens' starts (but a region's inside tokens), their
+/// common conjuncts once (`factored`), named where an error refuses the bytes they differ at (`refused_equal`).
+fn records_of(stmts: &[Stmt]) -> Option<Expr> {
+    let u = stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Token { rule: Some(TokenRule::Inside(..)), .. } => None,
+            Stmt::Token { start, .. } => Some(start.clone()),
+            _ => None,
+        })
+        .reduce(|a, b| Expr::Or(Box::new(a), Box::new(b)))?;
+    let f = factored(&u, stmts);
+    Some(refused_equal(&f, stmts).unwrap_or(f))
+}
+
+/// A class's or a byte mask's bytes, where its byte decides it.
+fn bytes_of_expr(e: &Expr, stmts: &[Stmt]) -> Option<[bool; 256]> {
+    let mut set = [false; 256];
+    for b in 0..=255u8 {
+        set[usize::from(b)] = at_byte(e, b, stmts)?;
+    }
+    Some(set)
+}
+
+/// The bytes a token that runs over `run` (`run R`) may end before, as simdjson's `is_not_structural_or_whitespace`
+/// is false at them: a byte no token starts at (skipped), or one a record may start at right after a byte of `run`
+/// (each `prev(X)`, `X` holding all of `run`, true there; one holding none of it false). At any other byte after a run
+/// no record starts and none is skipped: tier 1's records equal the tokens' starts but where an error refuses the
+/// file (`refused_equal`), so the file is refused, and tier 2 refuses it there.
+pub fn ends_after_run(stmts: &[Stmt], run: &Expr) -> Option<[bool; 256]> {
+    let r = bytes_of_expr(run, stmts)?;
+    let records = records_of(stmts)?;
+    let mut ats = Vec::new();
+    atoms(&records, stmts, &mut ats);
+    if ats.len() > 16 {
+        return None;
+    }
+    let forced: Vec<Option<bool>> = ats
+        .iter()
+        .map(|(_, e)| match e {
+            Expr::Call(f, a) if f == "prev" => match a.as_slice() {
+                [Arg::E(x)] | [Arg::E(x), Arg::N(1)] => {
+                    let xs = bytes_of_expr(x, stmts)?;
+                    if (0..256).all(|b| !r[b] || xs[b]) {
+                        Some(true)
+                    } else if (0..256).all(|b| !r[b] || !xs[b]) {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    // The tokens outside a region (a region's inside ones start only inside it).
+    let starts: Vec<&Expr> = stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Token { rule: Some(TokenRule::Inside(..)), .. } => None,
+            Stmt::Token { start, .. } => Some(start),
+            _ => None,
+        })
+        .collect();
+    let mut ok = [false; 256];
+    for b in 0..=255u8 {
+        let skipped = starts.iter().all(|s| false_at(s, b, stmts));
+        let starts_here = (0..1u32 << ats.len()).filter(|v| forced.iter().enumerate().all(|(i, f)| f.is_none_or(|f| (v >> i & 1 == 1) == f))).any(|v| at_atoms(&records, b, stmts, &ats, v) == Some(true));
+        ok[usize::from(b)] = skipped || starts_here;
+    }
+    Some(ok)
+}
+
+/// The errors tier 2 tests at a run token's end, where its end test is `ends_after_run`'s: each holds only at a byte
+/// right after one of the run's bytes (a conjunct `prev(X)`, `X` within the run's bytes), outside every region (a
+/// conjunct `~T`, `T` a region's fill but its opener, `F ^ O`), and only at a byte the run may not end before and
+/// does not run over. Such a byte is a run token's next (the run's bytes outside a region are tokens tier 2 reads, or
+/// refuses), and tier 2 refuses it there, as simdjson refuses a scalar's dirty end (`[1"a"]`).
+pub fn run_end_covers(stmts: &[Stmt]) -> Vec<usize> {
+    let runs: Vec<&Expr> = stmts.iter().filter_map(|s| if let Stmt::Token { rule: Some(TokenRule::Run(r)), .. } = s { Some(r) } else { None }).collect();
+    let [run] = runs.as_slice() else { return Vec::new() };
+    let (Some(ok), Some(r)) = (ends_after_run(stmts, run), bytes_of_expr(run, stmts)) else { return Vec::new() };
+    let def = |n: &str| stmts.iter().rev().find_map(|s| if let Stmt::Mask(m, e) = s && m == n { Some(e.clone()) } else { None });
+    // Each region's fill (and the masks that are it alone) and its opener.
+    let regions: Vec<(Vec<String>, Expr)> = readers(stmts)
+        .iter()
+        .flat_map(|rd| rd.regions.iter())
+        .map(|g| {
+            let mut fills = vec![format!("f_{}", g.kind)];
+            for s in stmts {
+                if let Stmt::Mask(m, Expr::Name(n)) = s
+                    && fills.contains(n)
+                {
+                    fills.push(m.clone());
+                }
+            }
+            (fills, g.opener.clone())
+        })
+        .collect();
+    let tail = |t: &str| {
+        let Some(Expr::Xor(a, b)) = def(t) else { return false };
+        regions.iter().any(|(fills, o)| {
+            let fill = |x: &Expr| matches!(x, Expr::Name(n) if fills.contains(n));
+            let opener = |x: &Expr| format!("{x:?}") == format!("{o:?}");
+            (fill(&a) && opener(&b)) || (fill(&b) && opener(&a))
+        })
+    };
+    let mut out = Vec::new();
+    for (i, s) in stmts.iter().enumerate() {
+        let Stmt::Error(_, e) = s else { continue };
+        let mut cs = Vec::new();
+        fn conj(e: &Expr, out: &mut Vec<Expr>) {
+            if let Expr::And(a, b) = e {
+                conj(a, out);
+                conj(b, out);
+            } else {
+                out.push(e.clone());
+            }
+        }
+        conj(e, &mut cs);
+        let resolve = |c: &Expr| match c {
+            Expr::Name(n) => def(n).unwrap_or_else(|| c.clone()),
+            c => c.clone(),
+        };
+        let after_run = cs.iter().any(|c| match resolve(c) {
+            Expr::Call(f, a) if f == "prev" => match a.as_slice() {
+                [Arg::E(x)] | [Arg::E(x), Arg::N(1)] => bytes_of_expr(x, stmts).is_some_and(|xs| (0..256).all(|b| !xs[b] || r[b])),
+                _ => false,
+            },
+            _ => false,
+        });
+        let outside = cs.iter().any(|c| matches!(c, Expr::Not(t) if matches!(&**t, Expr::Name(n) if tail(n))));
+        if after_run && outside && (0..=255u8).all(|b| false_at(e, b, stmts) || (!ok[usize::from(b)] && !r[usize::from(b)])) {
+            out.push(i);
+        }
+    }
+    out
+}
+
+/// Whether tier 1 refuses a file whose region `kind` is open at its end: an error `F & L`, `F` its fill (`f_KIND`, or
+/// a mask that is it alone) and `L` the file's last byte. Then a read of the region in tier 2 meets its closer before
+/// the file's end.
+pub fn refuses_open_at_end(stmts: &[Stmt], kind: &str) -> bool {
+    let f = format!("f_{kind}");
+    let mut defs: HashMap<String, Expr> = HashMap::new();
+    let mut prefix = 0;
+    let mut fills = vec![f.clone()];
+    for s in stmts {
+        match s {
+            Stmt::Mask(m, e) => {
+                if matches!(e, Expr::Name(n) if fills.contains(n)) {
+                    fills.push(m.clone());
+                }
+                defs.insert(m.clone(), e.clone());
+            }
+            Stmt::Prefix(b) => prefix = b.len(),
+            _ => {}
+        }
+    }
+    stmts.iter().any(|s| match s {
+        Stmt::Error(_, Expr::And(a, b)) => {
+            let fill = |x: &Expr| matches!(x, Expr::Name(n) if fills.contains(n));
+            (fill(a) && is_last_byte(b, &defs, prefix)) || (fill(b) && is_last_byte(a, &defs, prefix))
+        }
+        _ => false,
     })
 }
 
@@ -392,6 +561,11 @@ struct Gen<'a> {
     /// Simdjson's stage 1 (no `skip`, every mask in the pass): the mask whose bits are the records, written as
     /// indexes at its block (`bit_indexer`), the source padded (`PADDING`) and each block loaded where it is.
     index: Option<usize>,
+    /// What stage 1 writes from each block's bits: the records' mask and each error ORed (`sinks`), where none holds
+    /// at the padding's byte past the end, its masks need not be the file's bits (`lv`).
+    outputs: Vec<Expr>,
+    /// Each toggle's node and the mask it toggles on.
+    toggles: HashMap<usize, Expr>,
     /// The byte-pair errors in simdjson's `utf8_checker` form (`bitlex_pair_lookup`), in simdjson's stage 1.
     lookup: Option<crate::bitlex_pair_lookup::Lookup>,
 }
@@ -593,7 +767,10 @@ impl Gen<'_> {
                     let a = self.ring(a, "q");
                     // Each byte's parity of `a`'s bits up to it, the block before's carried (simdjson's `prefix_xor`).
                     let code = format!("{{\n        let mut x = {a};\n        x ^= x << 1;\n        x ^= x << 2;\n        x ^= x << 4;\n        x ^= x << 8;\n        x ^= x << 16;\n        x ^= x << 32;\n        let x = x ^ 0u64.wrapping_sub(c_{name});\n        c_{name} = x >> 63;\n        x & lv\n    }}");
-                    return Ok(self.push_node(key, name, what, code, lag, true));
+                    let operand = ea(0)?.clone();
+                    let id = self.push_node(key, name, what, code, lag, true);
+                    self.toggles.insert(id, operand);
+                    return Ok(id);
                 }
                 "text" => {
                     let Some(Arg::S(t)) = args.first() else { return Err("tier 1 as Rust: `text` needs a string".into()) };
@@ -762,7 +939,15 @@ impl Gen<'_> {
             }
         }
         let rings = needs_ring.iter().any(|r| *r);
-        let mut outer: Vec<bool> = (0..self.nodes.len()).map(|i| needs_p[i] || (most == 0 && self.end_sinks.iter().any(|(_, s)| *s == i))).collect();
+        // No mask holds the file's bits (`lv`) where each block is the file's or the padding (no stage behind, the
+        // source padded) and no output holds at the padding's byte, whatever the masks carried hold: a bit past the
+        // end reaches no byte before it (shifts, toggles and carries go up), and no block follows the last. The
+        // `prefix` is then skipped as simdjson skips a byte order mark: the blocks start after it.
+        let bare = most == 0 && self.index.is_some() && self.outputs.iter().all(|e| false_at(e, b' ', self.x.stmts));
+        // An end test of a toggle whose mask holds at no padding byte: its carry out of the last block is its value at
+        // the file's last byte (simdjson's `finish`, `prev_in_string != 0`).
+        let carried = |i: usize| bare && self.toggles.get(&i).is_some_and(|op| false_at(op, b' ', self.x.stmts));
+        let mut outer: Vec<bool> = (0..self.nodes.len()).map(|i| needs_p[i] || (most == 0 && !carried(i) && self.end_sinks.iter().any(|(_, s)| *s == i))).collect();
         for i in (0..self.nodes.len()).filter(|&i| live[i]) {
             for (x, off) in ring_reads(&codes[i], &by_name) {
                 if self.nodes[i].lag != self.nodes[x].lag && age(self.nodes[i].lag, self.nodes[x].lag, off).is_some() {
@@ -771,6 +956,17 @@ impl Gen<'_> {
             }
         }
         let ring = (most as usize + 2).next_power_of_two();
+        if most == 0 && self.index.is_some() {
+            // simdjson's `bit_indexer::write`: four, then two at a time while the count goes past them, each test in
+            // the one before, to 24, then one at a time.
+            let mut stepped = String::new();
+            for i in (4..24).step_by(2).rev() {
+                let inner = std::mem::take(&mut stepped);
+                stepped = format!("one(*count + {i});\none(*count + {});\n{}", i + 1, if inner.is_empty() { String::new() } else { format!("if {} < cnt {{\n{}}}\n", i + 2, indent(&inner, "    ")) });
+            }
+            let _ = write!(out, "/// Block bits `bits` from `base` as indexes at `si[*count..]` (simdjson's `bit_indexer::write`).\n///\n/// # Safety\n/// `si` has room for `*count` and 64 more.\n#[inline(always)]\nunsafe fn write_indexes(si: *mut u32, count: &mut usize, base: u32, mut bits: u64) {{\n    if bits == 0 {{\n        return;\n    }}\n    let cnt = bits.count_ones() as usize;\n    // SAFETY: the caller's: each write within `*count + 64`.\n    let mut one = |k: usize| unsafe {{\n        *si.add(k) = base.wrapping_add(bits.trailing_zeros());\n        bits &= bits.wrapping_sub(1);\n    }};\n    for k in 0..4 {{\n        one(*count + k);\n    }}\n    if 4 < cnt {{\n{}    }}\n    if 24 < cnt {{\n        for k in 24..cnt {{\n            one(*count + k);\n        }}\n    }}\n    *count += cnt;\n}}\n\n", indent(&stepped, "        "));
+        }
+        let off = |q: &str| if bare && self.prefix.is_some() { format!("off + 64 * {q}") } else { format!("64 * {q}") };
         let _ = writeln!(
             out,
             "/// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`{}, each mask a local of its block{}.\n#[inline(always)]\nunsafe fn stage1<S: rerail_simd8::Simd8x64>({}) -> Stage1 {{\n{}    let nw = n.div_ceil(64);",
@@ -779,6 +975,11 @@ impl Gen<'_> {
             if self.index.is_some() { "src: &[u8], n: usize" } else { "src: &[u8]" },
             if self.index.is_some() { "" } else { "    let n = src.len();\n" }
         );
+        if bare && let Some(b) = &self.prefix {
+            let bytes = b.iter().map(|x| format!("{x:#04x}")).collect::<Vec<_>>().join(", ");
+            out.truncate(out.len() - "    let nw = n.div_ceil(64);\n".len());
+            let _ = writeln!(out, "    // `prefix`: a file that starts with these bytes is read from after them, its blocks from there (as simdjson\n    // reads past a byte order mark).\n    let off = if src.starts_with(&[{bytes}]) {{ {} }} else {{ 0 }};\n    let nw = (n - off).div_ceil(64);", b.len());
+        }
         if rings {
             let _ = writeln!(out, "    const RING: usize = {ring};");
         }
@@ -812,7 +1013,9 @@ impl Gen<'_> {
             out.push_str("    // The byte-pair errors' check, simdjson's `utf8_checker`: the block before, the errors, and whether the block before left\n    // a sequence open.\n    let mut prev_input = unsafe { S::splat(0) };\n    let mut error = unsafe { S::splat(0) };\n    let mut prev_incomplete = unsafe { S::splat(0) };\n    let max_value = unsafe { S::load(&MAX_VALUE) };\n");
         }
         // The file's bits of each block (`lv`), once a block: a stage behind takes the block before's.
-        if let Some(b) = &self.prefix {
+        if let Some(b) = &self.prefix
+            && !bare
+        {
             let bytes = b.iter().map(|x| format!("{x:#04x}")).collect::<Vec<_>>().join(", ");
             let _ = writeln!(out, "    // `prefix`: a file that starts with these bytes is read from after them.\n    let prefix = src.starts_with(&[{bytes}]);");
         }
@@ -829,7 +1032,13 @@ impl Gen<'_> {
         if !self.sinks.is_empty() {
             out.push_str("    // The errors' bits in the blocks so far, ORed.\n    let mut errors = 0u64;\n");
         }
-        let _ = writeln!(out, "    let mut refused = false;\n    for t in 0..{} {{\n        // The block's bits inside the file (none past its end).\n        let lv_0 = {};", if most == 0 { "nw".to_owned() } else { format!("nw + {most}") }, indent(&lv_of("t", most > 0), "        ").trim());
+        if most == 0 && self.index.is_some() {
+            out.push_str("    // The block before's records, written at the next block (simdjson's `prev_structurals`).\n    let mut prev_structurals = 0u64;\n");
+        }
+        let _ = writeln!(out, "    let mut refused = false;\n    for t in 0..{} {{", if most == 0 { "nw".to_owned() } else { format!("nw + {most}") });
+        if !bare {
+            let _ = writeln!(out, "        // The block's bits inside the file (none past its end).\n        let lv_0 = {};", indent(&lv_of("t", most > 0), "        ").trim());
+        }
         for lag in 0..=most {
             let ids: Vec<usize> = (0..self.nodes.len()).filter(|&i| live[i] && self.nodes[i].lag == lag).collect();
             if ids.is_empty() {
@@ -843,12 +1052,15 @@ impl Gen<'_> {
                 1 => ("if t >= 1 && t - 1 <= nw {\n            let q = t - 1;".to_owned(), "lv_1".to_owned()),
                 _ => (format!("if t >= {lag} && t - {lag} <= nw {{\n            let q = t - {lag};"), lv_of("q", true)),
             };
-            let _ = writeln!(out, "        {guard}\n            let lv = {lv};");
+            let _ = writeln!(out, "        {guard}");
+            if !bare {
+                let _ = writeln!(out, "            let lv = {lv};");
+            }
             if lag == 0 {
                 if self.index.is_some() {
                     // The source padded: each block of the file loaded where it is (`PADDING` past its end).
                     if most == 0 {
-                        let _ = writeln!(out, "            let b: &[u8; 64] = src[64 * q..64 * q + 64].try_into().expect(\"a padded block\");\n            let v = unsafe {{ S::load(b) }};");
+                        let _ = writeln!(out, "            let b: &[u8; 64] = src[{0}..{0} + 64].try_into().expect(\"a padded block\");\n            let v = unsafe {{ S::load(b) }};", off("q"));
                     } else {
                         let _ = writeln!(out, "            const NONE: [u8; 64] = [0u8; 64];\n            let b: &[u8; 64] = if q < nw {{ src[64 * q..64 * q + 64].try_into().expect(\"a padded block\") }} else {{ &NONE }};\n            let v = unsafe {{ S::load(b) }};");
                     }
@@ -865,6 +1077,7 @@ impl Gen<'_> {
             for i in ids {
                 let n = &self.nodes[i];
                 let code = local_reads(&codes[i], &by_name, &self.nodes, n.lag).replace(" & lv & lv", " & lv");
+                let code = if bare { without_lv(&code) } else { code };
                 let code = indent(&code, "            ");
                 let code = code.trim();
                 let unsafe_ = if codes[i].contains("S::") { format!("unsafe {{ {code} }}") } else { code.to_owned() };
@@ -891,13 +1104,16 @@ impl Gen<'_> {
                 if self.index == Some(i) {
                     // simdjson's `bit_indexer::write`: four indexes, four more where there are, then one at a time; each
                     // write past the count is written over by the next block's, or past the end.
-                    let write = "let (base, cnt, mut bits) = (64 * q as u32, {W}.count_ones() as usize, {W});\n// SAFETY: `count + cnt` is at most `n`; the room is `n + 64 + 3`.\nunsafe {\n    for k in 0..4 {\n        *si.add(count + k) = base + bits.trailing_zeros();\n        bits &= bits.wrapping_sub(1);\n    }\n    if cnt > 4 {\n        for k in 4..8 {\n            *si.add(count + k) = base + bits.trailing_zeros();\n            bits &= bits.wrapping_sub(1);\n        }\n    }\n    let mut k = 8;\n    while k < cnt {\n        *si.add(count + k) = base + bits.trailing_zeros();\n        bits &= bits.wrapping_sub(1);\n        k += 1;\n    }\n}\ncount += cnt;\n";
-                    let write = write.replace("{W}", &w);
+                    let write = "let (base, cnt, mut bits) = ({B}, {W}.count_ones() as usize, {W});\n// SAFETY: `count + cnt` is at most `n`; the room is `n + 64 + 3`.\nunsafe {\n    for k in 0..4 {\n        *si.add(count + k) = base + bits.trailing_zeros();\n        bits &= bits.wrapping_sub(1);\n    }\n    if cnt > 4 {\n        for k in 4..8 {\n            *si.add(count + k) = base + bits.trailing_zeros();\n            bits &= bits.wrapping_sub(1);\n        }\n    }\n    let mut k = 8;\n    while k < cnt {\n        *si.add(count + k) = base + bits.trailing_zeros();\n        bits &= bits.wrapping_sub(1);\n        k += 1;\n    }\n}\ncount += cnt;\n";
+                    let write = write.replace("{W}", &w).replace("{B}", &if bare && self.prefix.is_some() { "(off + 64 * q) as u32".to_owned() } else { "64 * q as u32".to_owned() });
                     let write = write.as_str();
-                    out.push_str("            // The records: the block's bits as indexes (simdjson's `bit_indexer::write`).\n");
                     if most == 0 {
-                        out.push_str(&indent(write, "            "));
+                        // As `index`: the block before's records written at this block (`indexer.write(idx - 64,
+                        // prev_structurals)`), the last block's after the pass, through one `write`.
+                        let base = if bare && self.prefix.is_some() { "((off + 64 * q) as u32).wrapping_sub(64)" } else { "(64 * q as u32).wrapping_sub(64)" };
+                        let _ = writeln!(out, "            // The block before's records (simdjson's `indexer.write(idx - 64, prev_structurals)`).\n            unsafe {{ write_indexes(si, &mut count, {base}, prev_structurals) }};\n            prev_structurals = {w};");
                     } else {
+                        out.push_str("            // The records: the block's bits as indexes (simdjson's `bit_indexer::write`).\n");
                         let _ = write!(out, "            if q < nw {{\n{}            }}\n", indent(write, "                "));
                     }
                 }
@@ -912,12 +1128,24 @@ impl Gen<'_> {
             out.push_str("        lv_1 = lv_0;\n");
         }
         out.push_str("    }\n");
+        if most == 0 && self.index.is_some() {
+            let base = if bare && self.prefix.is_some() { "((off + 64 * nw) as u32).wrapping_sub(64)" } else { "(64 * nw as u32).wrapping_sub(64)" };
+            let _ = writeln!(out, "    // The last block's records (simdjson's `finish`).\n    unsafe {{ write_indexes(si, &mut count, {base}, prev_structurals) }};");
+        }
         if !self.sinks.is_empty() {
             out.push_str("    // The errors, once.\n    refused |= errors != 0;\n");
         }
         // The tests at the file's last byte, once.
         for (why, id) in &self.end_sinks {
             let word = if most == 0 { format!("v_{}", self.nodes[*id].name) } else { format!("e_{}", self.nodes[*id].name) };
+            if carried(*id) {
+                let _ = writeln!(out, "    // {why}: the toggle carried out of the file's last block, once (simdjson's `finish`).\n    refused |= c_{} != 0;", self.nodes[*id].name);
+                continue;
+            }
+            if bare && self.prefix.is_some() {
+                let _ = writeln!(out, "    // {why}: at the file's last byte, once (its block's word, the pass's last).\n    refused |= n > off && {word} >> ((n - 1 - off) % 64) & 1 != 0;");
+                continue;
+            }
             let inside = match &self.prefix {
                 Some(b) => format!(" && !(prefix && n <= {})", b.len()),
                 None => String::new(),
@@ -1220,7 +1448,16 @@ impl Gen<'_> {
         {
             let (f, o) = (format!("f_{}", r.kind), format!("o_{}", r.kind));
             let inside = Expr::Call("toggle".into(), vec![Arg::E(r.opener.clone())]);
-            self.make_node(format!("={f}"), format!("m_{}", ident(&f)), format!("{f}: a region's opener to its closer, `toggle({})`", show(&r.opener)), &inside)?;
+            // Its word named as the grammar names it, where a mask is it alone (`in_string = f_str`, as simdjson's).
+            let alias = self.x.stmts.iter().find_map(|s| match s {
+                Stmt::Mask(m, Expr::Name(n)) if *n == f && !self.x.stmts.iter().any(|t| matches!(t, Stmt::Mask(m2, _) | Stmt::Class(m2, _) if m2 == m && !matches!(t, Stmt::Mask(_, Expr::Name(n2)) if *n2 == f))) => Some(m.clone()),
+                _ => None,
+            });
+            let (local, what) = match &alias {
+                Some(m) => (format!("m_{}", ident(m)), format!("{m}: the region `{}`'s opener to its closer, `toggle({})`", r.kind, show(&r.opener))),
+                None => (format!("m_{}", ident(&f)), format!("{f}: a region's opener to its closer, `toggle({})`", show(&r.opener))),
+            };
+            self.make_node(format!("={f}"), local, what, &inside)?;
             let opener = Expr::And(Box::new(r.opener.clone()), Box::new(Expr::Name(f.clone())));
             self.make_node(format!("={o}"), format!("m_{}", ident(&o)), format!("{o}: its openers"), &opener)?;
             let hidden = Expr::Xor(Box::new(Expr::Name(f.clone())), Box::new(r.opener.clone()));
@@ -1371,9 +1608,11 @@ impl Gen<'_> {
                 None => start.clone(),
             });
         }
-        let all_e = all.ok_or("tier 1 as Rust: no token")?;
+        let all_e = factored(&all.ok_or("tier 1 as Rust: no token")?, x.stmts);
+        let all_e = refused_equal(&all_e, x.stmts).unwrap_or(all_e);
         let all = if in_pass {
             self.index = Some(self.node(&all_e)?);
+            self.outputs.push(all_e.clone());
             String::new()
         } else {
             self.val(&all_e)?
@@ -1529,7 +1768,8 @@ impl Gen<'_> {
             self.lookup = crate::bitlex_pair_lookup::lookup(x.stmts, self.prefix.as_deref()).ok();
         }
         // In simdjson's stage 1, the errors at an escape are tier 2's, where it reads the escape (decision 0599).
-        let pieces: Vec<usize> = if records { piece_covers(x.stmts) } else { Vec::new() };
+        // A scalar's dirty end too: tier 2 tests it at the run's end (`run_end_covers`), as simdjson's stage 2.
+        let pieces: Vec<usize> = if records { piece_covers(x.stmts).into_iter().chain(run_end_covers(x.stmts)).collect() } else { Vec::new() };
         let covered: Vec<*const Expr> = self
             .lookup
             .iter()
@@ -1570,6 +1810,7 @@ impl Gen<'_> {
                     }
                     let id = g.node(e)?;
                     g.sinks.push((why.to_string(), id));
+                    g.outputs.push((*e).clone());
                     return Ok(None);
                 }
                 if g.region_escape(why, e, &read)? {
@@ -1891,6 +2132,256 @@ fn lookup_code(l: &crate::bitlex_pair_lookup::Lookup) -> String {
     }
     out.push_str("                // A sequence the block's last bytes leave open (`is_incomplete`): the bytes above `MAX_VALUE`'s.\n                prev_incomplete = unsafe { S::gt_bits(v, max_value) };\n            }\n            prev_input = v;\n");
     out
+}
+
+/// Whether `e` holds at a byte `b`, where that says (its classes, and the masks of them); `None` where it reads more.
+fn at_byte(e: &Expr, b: u8, stmts: &[Stmt]) -> Option<bool> {
+    let f = |x: &Expr| at_byte(x, b, stmts);
+    match e {
+        Expr::Name(n) => stmts.iter().rev().find_map(|s| match s {
+            Stmt::Class(c, items) if c == n => Some(Some(items.iter().any(|&(lo, hi)| (lo..=hi).contains(&u32::from(b))))),
+            Stmt::Mask(m, x) if m == n => Some(f(x)),
+            _ => None,
+        })?,
+        Expr::Not(x) => f(x).map(|v| !v),
+        Expr::And(x, y) => match (f(x), f(y)) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        },
+        Expr::Or(x, y) => match (f(x), f(y)) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        },
+        Expr::Xor(x, y) => Some(f(x)? ^ f(y)?),
+        _ => None,
+    }
+}
+
+/// The masks a start reads that its byte does not decide: each call (`escaped(B)`, `prev(X)`, …) and each name no
+/// statement defines (a region's), by its text.
+fn atoms(e: &Expr, stmts: &[Stmt], out: &mut Vec<(String, Expr)>) {
+    match e {
+        Expr::Name(n) => match stmts.iter().rev().find(|s| matches!(s, Stmt::Class(c, _) | Stmt::Mask(c, _) if c == n)) {
+            Some(Stmt::Mask(_, x)) => atoms(x, stmts, out),
+            Some(_) => {}
+            None => {
+                if !out.iter().any(|a| a.0 == *n) {
+                    out.push((n.clone(), e.clone()));
+                }
+            }
+        },
+        Expr::Call(..) => {
+            let k = format!("{e:?}");
+            if !out.iter().any(|a| a.0 == k) {
+                out.push((k, e.clone()));
+            }
+        }
+        Expr::Not(x) => atoms(x, stmts, out),
+        Expr::And(x, y) | Expr::Or(x, y) | Expr::Xor(x, y) => {
+            atoms(x, stmts, out);
+            atoms(y, stmts, out);
+        }
+        _ => {}
+    }
+}
+
+/// Whether `e` is false at byte `b` whatever the masks its byte does not decide hold (`atoms`).
+fn false_at(e: &Expr, b: u8, stmts: &[Stmt]) -> bool {
+    let mut ats = Vec::new();
+    atoms(e, stmts, &mut ats);
+    ats.len() <= 16 && (0..1u32 << ats.len()).all(|v| at_atoms(e, b, stmts, &ats, v) == Some(false))
+}
+
+/// A mask's code with no `& lv` (the file's bits): `(!x)` left `!x`.
+fn without_lv(code: &str) -> String {
+    let mut out = String::with_capacity(code.len());
+    let mut rest = code;
+    while let Some(k) = rest.find(" & lv") {
+        let after = &rest[k + 5..];
+        if after.starts_with(|c: char| c.is_alphanumeric() || c == '_' || c == '[') {
+            out.push_str(&rest[..k + 5]);
+        } else {
+            out.push_str(&rest[..k]);
+        }
+        rest = after;
+    }
+    out.push_str(rest);
+    // `(!name)` is `!name`.
+    let mut s = String::with_capacity(out.len());
+    let mut rest = out.as_str();
+    while let Some(k) = rest.find("(!") {
+        let tail = &rest[k + 2..];
+        let id = tail.find(|c: char| !(c.is_alphanumeric() || c == '_')).unwrap_or(tail.len());
+        if id > 0 && tail[id..].starts_with(')') {
+            s.push_str(&rest[..k]);
+            s.push('!');
+            s.push_str(&tail[..id]);
+            rest = &tail[id + 1..];
+        } else {
+            s.push_str(&rest[..k + 2]);
+            rest = tail;
+        }
+    }
+    s.push_str(rest);
+    s
+}
+
+/// `e` at byte `b`, the atoms valued `v`; `None` where it reads what is neither.
+fn at_atoms(e: &Expr, b: u8, stmts: &[Stmt], atoms: &[(String, Expr)], v: u32) -> Option<bool> {
+    let f = |x: &Expr| at_atoms(x, b, stmts, atoms, v);
+    let atom = |k: &str| atoms.iter().position(|a| a.0 == k).map(|i| v >> i & 1 == 1);
+    match e {
+        Expr::Name(n) => match stmts.iter().rev().find(|s| matches!(s, Stmt::Class(c, _) | Stmt::Mask(c, _) if c == n)) {
+            Some(Stmt::Class(_, items)) => Some(items.iter().any(|&(lo, hi)| (lo..=hi).contains(&u32::from(b)))),
+            Some(Stmt::Mask(_, x)) => f(x),
+            _ => atom(n),
+        },
+        Expr::Call(..) => atom(&format!("{e:?}")),
+        Expr::Not(x) => f(x).map(|v| !v),
+        Expr::And(x, y) => Some(f(x)? & f(y)?),
+        Expr::Or(x, y) => Some(f(x)? | f(y)?),
+        Expr::Xor(x, y) => Some(f(x)? ^ f(y)?),
+        _ => None,
+    }
+}
+
+/// The records `u` as a mask the grammar names, where the two differ only at bytes an error of tier 1 refuses the
+/// file at: simdjson's `structural_start`, where a token's start (a string's quote, the region's opener) is not the
+/// mask's and an error refuses the bytes between.
+///
+/// Proved by enumeration: each byte, and each value of the atoms (`atoms`) the starts and errors read, where an
+/// escaped byte's `B` is before it (`escaped(B)` makes `prev(X)` true for each class mask `X` holding `B`).
+fn refused_equal(u: &Expr, stmts: &[Stmt]) -> Option<Expr> {
+    let covered = piece_covers(stmts);
+    let errors: Vec<&Expr> = stmts.iter().enumerate().filter(|(i, _)| !covered.contains(i)).filter_map(|(_, s)| if let Stmt::Error(_, e) = s { Some(e) } else { None }).collect();
+    // The candidates: the masks the terms of `u` have as a conjunct.
+    let mut names = Vec::new();
+    fn conj(e: &Expr, out: &mut Vec<String>) {
+        match e {
+            Expr::And(a, b) => {
+                conj(a, out);
+                conj(b, out);
+            }
+            Expr::Or(a, b) => {
+                conj(a, out);
+                conj(b, out);
+            }
+            Expr::Name(n) => out.push(n.clone()),
+            _ => {}
+        }
+    }
+    conj(u, &mut names);
+    names.dedup();
+    let class_of = |x: &Expr| -> Option<[bool; 256]> {
+        let mut set = [false; 256];
+        for b in 0..=255u8 {
+            set[usize::from(b)] = at_byte(x, b, stmts)?;
+        }
+        Some(set)
+    };
+    for n in names {
+        if !stmts.iter().any(|s| matches!(s, Stmt::Mask(m, _) if *m == n)) {
+            continue;
+        }
+        let m = Expr::Name(n.clone());
+        let mut ats = Vec::new();
+        atoms(u, stmts, &mut ats);
+        atoms(&m, stmts, &mut ats);
+        // Only the errors that read the atoms alone (and classes) can be weighed.
+        let errs: Vec<&Expr> = errors
+            .iter()
+            .copied()
+            .filter(|e| {
+                let mut a = ats.clone();
+                atoms(e, stmts, &mut a);
+                a.len() == ats.len()
+            })
+            .collect();
+        if ats.len() > 12 || errs.is_empty() {
+            continue;
+        }
+        // `escaped(B)` before `prev(X)`, `B` within `X`.
+        let mut implies = Vec::new();
+        for (i, (_, ei)) in ats.iter().enumerate() {
+            let Expr::Call(f, args) = ei else { continue };
+            let [Arg::E(bx)] = args.as_slice() else { continue };
+            if f != "escaped" {
+                continue;
+            }
+            let Some(bset) = class_of(bx) else { continue };
+            for (j, (_, ej)) in ats.iter().enumerate() {
+                let Expr::Call(g, a2) = ej else { continue };
+                let x = match a2.as_slice() {
+                    [Arg::E(x)] | [Arg::E(x), Arg::N(1)] if g == "prev" => x,
+                    _ => continue,
+                };
+                if let Some(xs) = class_of(x)
+                    && (0..256).all(|c| !bset[c] || xs[c])
+                {
+                    implies.push((i, j));
+                }
+            }
+        }
+        let ok = (0..1u32 << ats.len()).filter(|v| implies.iter().all(|&(i, j)| v >> i & 1 == 0 || v >> j & 1 == 1)).all(|v| {
+            (0..=255u8).all(|b| {
+                let err = errs.iter().any(|e| at_atoms(e, b, stmts, &ats, v) == Some(true));
+                err || at_atoms(u, b, stmts, &ats, v).is_some_and(|x| Some(x) == at_atoms(&m, b, stmts, &ats, v))
+            })
+        });
+        if ok {
+            return Some(m);
+        }
+    }
+    None
+}
+
+/// `a | b | …` with the conjuncts every term has taken out once: `(a' | b' | …) & c`; `c` alone where `a' | b' | …`
+/// is classes holding every byte `c` can hold (simdjson's `structural_start`: each token's start `structural_start &
+/// C`, their union `structural_start`).
+fn factored(e: &Expr, stmts: &[Stmt]) -> Expr {
+    fn terms<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
+        match e {
+            Expr::Or(a, b) => {
+                terms(a, out);
+                terms(b, out);
+            }
+            e => out.push(e),
+        }
+    }
+    fn conj(e: &Expr, out: &mut Vec<Expr>) {
+        match e {
+            Expr::And(a, b) => {
+                conj(a, out);
+                conj(b, out);
+            }
+            e => out.push(e.clone()),
+        }
+    }
+    let mut ts = Vec::new();
+    terms(e, &mut ts);
+    let cs: Vec<Vec<Expr>> = ts
+        .iter()
+        .map(|t| {
+            let mut c = Vec::new();
+            conj(t, &mut c);
+            c
+        })
+        .collect();
+    let key = |e: &Expr| format!("{e:?}");
+    let common: Vec<Expr> = cs[0].iter().filter(|c| cs.iter().all(|t| t.iter().any(|x| key(x) == key(c)))).cloned().collect();
+    // Each term keeps something past the common part, or the factoring says nothing.
+    if ts.len() < 2 || common.is_empty() || cs.iter().any(|t| t.len() <= common.len()) {
+        return e.clone();
+    }
+    let and = |v: Vec<Expr>| v.into_iter().reduce(|a, b| Expr::And(Box::new(a), Box::new(b))).expect("a conjunct");
+    let rest = cs.into_iter().map(|t| and(t.into_iter().filter(|x| !common.iter().any(|c| key(c) == key(x))).collect())).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a term");
+    let common = and(common);
+    if (0..=255u8).all(|b| at_byte(&common, b, stmts) == Some(false) || at_byte(&rest, b, stmts) == Some(true)) {
+        return common;
+    }
+    Expr::And(Box::new(rest), Box::new(common))
 }
 
 /// Class `set`'s code in stage 1: one compare where it is one byte, else its nibble-table bits, each a product of high
@@ -2222,5 +2713,97 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, lookup: None }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, outputs: Vec::new(), toggles: HashMap::new(), lookup: None }.source()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// JSON's records are `structural_start` where the tokens' starts differ from it only where an error refuses the
+    /// file (`refused_equal`): without the error, not.
+    #[test]
+    fn records_are_structural_start_where_an_error_refuses_the_rest() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
+        let source = std::fs::read_to_string(path).expect("reads");
+        let stmts = ::bitlex::syntax::parse(&source).expect("parses");
+        let starts = |stmts: &[Stmt]| stmts.iter().filter_map(|s| match s {
+            Stmt::Token { rule: Some(TokenRule::Inside(..)), .. } => None,
+            Stmt::Token { start, .. } => Some(start.clone()),
+            _ => None,
+        }).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("a token");
+        let u = factored(&starts(&stmts), &stmts);
+        assert!(matches!(refused_equal(&u, &stmts), Some(Expr::Name(n)) if n == "structural_start"));
+        let without: Vec<Stmt> = stmts.into_iter().filter(|s| !matches!(s, Stmt::Error(why, _) if why == "a string right after a scalar")).collect();
+        assert!(refused_equal(&factored(&starts(&without), &without), &without).is_none(), "no error refuses a quote after a scalar");
+    }
+
+    /// JSON's tier 1 refuses a string open at the end (its fill, as `in_string`, at the last byte): without that
+    /// error, not.
+    #[test]
+    fn json_refuses_a_string_open_at_the_end() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
+        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(path).expect("reads")).expect("parses");
+        assert!(refuses_open_at_end(&stmts, "str"));
+        let without: Vec<Stmt> = stmts.into_iter().filter(|s| !matches!(s, Stmt::Error(why, _) if why == "a string open at the end of the file")).collect();
+        assert!(!refuses_open_at_end(&without, "str"));
+    }
+
+    /// The dirty end of a scalar (`[1"a"]`) is tier 2's (`run_end_covers`): JSON's error "a string right after a
+    /// scalar" is the one covered, and `ends_after_run` is simdjson's structural or whitespace. On every file of up to
+    /// five bytes of `1"\ [a`, by the grammar's reference evaluator: where the error holds, a run token ends before a
+    /// byte it may not end before (tier 2 refuses there); and where one does, the file is refused (an error, or the
+    /// tree), so tier 2's refusal is the grammar's.
+    #[test]
+    fn a_scalars_dirty_end_is_tier_2s() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
+        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(path).expect("reads")).expect("parses");
+        let covered = run_end_covers(&stmts);
+        assert_eq!(covered.len(), 1);
+        assert!(matches!(&stmts[covered[0]], Stmt::Error(why, _) if why == "a string right after a scalar"));
+        let run = stmts.iter().find_map(|s| if let Stmt::Token { rule: Some(TokenRule::Run(r)), .. } = s { Some(r.clone()) } else { None }).expect("a run");
+        let (ok, r) = (ends_after_run(&stmts, &run).expect("the ends"), bytes_of_expr(&run, &stmts).expect("its bytes"));
+        let structural_or_ws = |b: u8| b"{}[],: \t\n\r".contains(&b);
+        assert!((0..=255u8).all(|b| ok[usize::from(b)] == structural_or_ws(b)), "simdjson's structural or whitespace");
+        let tables = HashMap::new();
+        let alphabet = b"1\"\\ [a";
+        let (mut files, mut dirty) = (0, 0);
+        for len in 1..=5u32 {
+            for k in 0..(alphabet.len() as u32).pow(len) {
+                let src: Vec<u8> = (0..len).map(|d| alphabet[(k / (alphabet.len() as u32).pow(d)) as usize % alphabet.len()]).collect();
+                let out = ::bitlex::eval::Ev::run(&stmts, &src, &tables).expect("runs");
+                let error = out.errors.iter().any(|e| e == "a string right after a scalar");
+                let ends_dirty = out.tokens.iter().any(|t| !t.mark && ["number", "true", "false", "null"].contains(&t.kind.as_str()) && src.get(t.end).is_some_and(|&b| !ok[usize::from(b)] && !r[usize::from(b)]));
+                assert!(!error || ends_dirty, "{:?}: the error, and no run's dirty end", String::from_utf8_lossy(&src));
+                if ends_dirty {
+                    let refused = !out.errors.is_empty() || out.tree.as_ref().is_none_or(|d| ::bitlex::tree::nodes(d, &out.tokens, src.len()).is_err());
+                    assert!(refused, "{:?}: a run's dirty end in a file the grammar takes", String::from_utf8_lossy(&src));
+                    dirty += 1;
+                }
+                files += 1;
+            }
+        }
+        assert!(dirty > 100, "{dirty} of {files}");
+    }
+
+    /// A mask's `& lv` dropped: where it ends an operand, and `(!x)` then `!x`; not where `lv` begins a longer name.
+    #[test]
+    fn without_lv_drops_the_files_bits() {
+        assert_eq!(without_lv("(v_m_op | v_m_scalar & (!v_m_follows & lv)) & (!v_m_string_tail & lv)"), "(v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail");
+        assert_eq!(without_lv("{\n    x & lv\n}"), "{\n    x\n}");
+        assert_eq!(without_lv("a & lv_1 & lvx & lv[i]"), "a & lv_1 & lvx & lv[i]");
+        assert_eq!(without_lv("!(a | b) & lv"), "!(a | b)");
+    }
+
+    /// JSON's records and errors hold at no space whatever the carried masks hold; a class holding the space does.
+    #[test]
+    fn outputs_false_at_the_padding() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
+        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(path).expect("reads")).expect("parses");
+        let name = |n: &str| Expr::Name(n.to_owned());
+        assert!(false_at(&name("structural_start"), b' ', &stmts));
+        assert!(false_at(&Expr::And(Box::new(name("in_string")), Box::new(name("control"))), b' ', &stmts));
+        assert!(!false_at(&name("ws"), b' ', &stmts));
+        assert!(!false_at(&name("in_string"), b' ', &stmts), "a carried mask is free");
+    }
 }

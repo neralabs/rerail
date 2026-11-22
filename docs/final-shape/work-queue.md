@@ -10435,3 +10435,12 @@ Crate split steps 7b to 7i (`notes/roll-up-70-engine-crating.md`):
 - **Ours' code on theirs' interfaces**: `Places::syntax_batch`, the `CHUNK_AXIS` slot in `within.rs`, and boot's
   ungated `native_cpu::register`.
 - **The global-state list** follows theirs' moves and new slots.
+
+### Q492. Roll-up 71 (Parser-generators-final-shape 62187a8c9a onto Pulling-it-all-together): what the merge chose
+
+Decisions 0602 and 0604, JSON's generated Rust in simdjson's shape (`notes/roll-up-71-parser-generators.md`):
+- **Theirs' merge of the hub stays out.** Its inputs are in ours. Its text puts the lowerings' removal on the hub's
+  `stream_facts` split, and roll-up 55 chose the JIT's own `native_cpu_facts`. Ours' decision numbers (0562, 0569,
+  0577 to 0579) stand.
+- **Theirs' own commits** are applied to ours' files. The slab trace is already roll-up 66's print.
+- **The decisions index** gets rows for 0576, 0597, 0601 and 0603, with theirs' 0602 and 0604.

@@ -351,6 +351,100 @@ fn simdjson_form_against_simdjson() {
     }
 }
 
+/// The simdjson form's two Bitlex builds phase by phase, on the same files and language (`RERAIL_JSON_FILES`,
+/// `:`-separated): the JIT (Cranelift's code of the grammar, `simdjson_form`) and the ahead-of-time Rust
+/// (`rerail-json-aot`, the Bitlex compiler's from the grammar). Per file, the least of `RR_ROUNDS` runs' instructions
+/// and cycles a byte (the process's, `retired`), single-threaded, each writer kept from one run to the next:
+/// - tier 1 alone: the JIT's batch (`Batch::new` and `call`), the Rust's `lex`;
+/// - tier 2 and the writer: the Rust's `parse_lexed` on records made once; the JIT's has no entry of its own, so it
+///   is the whole path's less tier 1's;
+/// - the whole path to 16 and to 16z: the JIT's `image16_in`, the Rust's `parse`.
+///
+/// Both tapes are checked to be the same first. simdjson's DOM parser on the file is printed beside them.
+#[cfg(all(target_arch = "aarch64", unix))]
+#[test]
+#[ignore = "a measurement: run by name with RERAIL_JSON_FILES and --nocapture, in an optimized build"]
+fn simdjson_form_jit_and_aot_phase_by_phase() {
+    use rerail_tape_format::f16::Writer;
+    let files: Vec<(String, Vec<u8>)> = std::env::var("RERAIL_JSON_FILES")
+        .expect("RERAIL_JSON_FILES")
+        .split(':')
+        .map(|p| (base(Path::new(p)), std::fs::read(p).expect("reads")))
+        .collect();
+    let rounds: usize = std::env::var("RR_ROUNDS").ok().and_then(|v| v.parse().ok()).unwrap_or(9);
+    let jit = simdjson_form();
+    let t2 = jit.parser.sixteen().expect("a format 16 tier 2");
+    let (_, tag) = t2.widths_tag();
+    let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), rerail_json_aot::WIDTHS, 1).expect("a language");
+    let numbers = t2.numbers(&lang);
+    let retired = rerail_compiler::native_cpu_codegen::retired;
+    let least = |run: &mut dyn FnMut()| {
+        run();
+        let mut best = (u64::MAX, u64::MAX);
+        for _ in 0..rounds {
+            let (i0, c0) = retired();
+            run();
+            let (i1, c1) = retired();
+            best = (best.0.min(i1 - i0), best.1.min(c1 - c0));
+        }
+        best
+    };
+    println!("least of {rounds} rounds, instructions / cycles a byte");
+    for (name, f) in &files {
+        let b = f.len() as f64;
+        let nodes = f.len() / 2 + 16;
+        let fp = rerail_json_aot::padded(f);
+        let (mut wj, mut wa) = (Writer::empty(), Writer::empty());
+        for z in [false, true] {
+            let want = jit.parser.image16_in(&mut wj, f, &lang, &numbers, z).unwrap_or_else(|e| panic!("{name}: the JIT refuses it: {e}"));
+            wa.begin(&lang, f, tag, z, true, nodes);
+            rerail_json_aot::parse(&fp, f.len(), &mut wa).unwrap_or_else(|e| panic!("{name}: the Rust refuses it at byte {e}"));
+            let got = wa.finish().expect("finishes").tape;
+            assert!(got.extent() == want.extent(), "{name}: the Rust's tape is the JIT's (z {z})");
+            wa.recycle(got);
+            wj.recycle(want);
+        }
+        let jit_whole = |w: &mut Writer, z: bool| {
+            let t = jit.parser.image16_in(w, f, &lang, &numbers, z).expect("parses");
+            w.recycle(std::hint::black_box(t));
+        };
+        let j16 = least(&mut || jit_whole(&mut wj, false));
+        let j16z = least(&mut || jit_whole(&mut wj, true));
+        let j1 = least(&mut || {
+            let mut batch = native_cpu_block::Batch::new(&jit.parser.tier1, &[f]);
+            batch.call(&jit.parser.tier1);
+            std::hint::black_box(&batch);
+        });
+        let aot_whole = |w: &mut Writer, z: bool| {
+            w.begin(&lang, f, tag, z, true, nodes);
+            rerail_json_aot::parse(&fp, f.len(), w).expect("parses");
+            let t = w.finish().expect("finishes").tape;
+            w.recycle(std::hint::black_box(t));
+        };
+        let a16 = least(&mut || aot_whole(&mut wa, false));
+        let a16z = least(&mut || aot_whole(&mut wa, true));
+        let a1 = least(&mut || _ = std::hint::black_box(rerail_json_aot::lex(&fp, f.len())));
+        let lexed = rerail_json_aot::lex(&fp, f.len());
+        let a2 = least(&mut || {
+            wa.begin(&lang, f, tag, false, true, nodes);
+            rerail_json_aot::parse_lexed(&fp, &lexed, &mut wa).expect("parses");
+            let t = wa.finish().expect("finishes").tape;
+            wa.recycle(std::hint::black_box(t));
+        });
+        let dom = least(&mut || _ = std::hint::black_box(rerail_simdjson_native::structurals(f, |i| i.len()).expect("simdjson parses it")));
+        let r = |(i, c): (u64, u64)| format!("{:>6.2} / {:>5.2}", i as f64 / b, c as f64 / b);
+        let less = |(i, c): (u64, u64), (i1, c1): (u64, u64)| (i.saturating_sub(i1), c.saturating_sub(c1));
+        println!("{name} ({} bytes); simdjson's DOM {}", f.len(), r(dom));
+        println!("  {:<28} {:>15} {:>15}", "", "JIT", "AOT (Rust)");
+        println!("  {:<28} {:>15} {:>15}", "tier 1", r(j1), r(a1));
+        println!("  {:<28} {:>15} {:>15}", "tier 2 + writer, 16", format!("{}*", r(less(j16, j1))), r(a2));
+        println!("  {:<28} {:>15} {:>15}", "whole path to 16", r(j16), r(a16));
+        println!("  {:<28} {:>15} {:>15}", "whole path to 16z", r(j16z), r(a16z));
+    }
+    println!("* the JIT's whole path to 16 less its tier 1");
+}
+
 fn ours(c: &Compiled, bytes: &[u8]) -> Option<Vec<IdNode>> {
     c.parser.parse(bytes).ok().map(as_ids)
 }
@@ -1185,12 +1279,25 @@ fn json_rusts_tapes_are_the_jits() {
         r#"["\uD83D\uDE00"]"#, r#"["\ud83d\ude00"]"#, r#"["\uD83D"]"#, r#"["\uDE00"]"#, r#"["\uDE00\uD83D"]"#, r#"["\uD83D\n"]"#,
         r#"["\uD83Dx\uDE00"]"#, r#"["\uD83D\uD83D\uDE00"]"#, r#"["\u12"]"#, r#"["\u12G4"]"#, r#"["\\u12"]"#, r#"["\\uD83D\uDE00"]"#,
         r#"["\\uDE00"]"#, r#"["a\uD83D","\uDE00"]"#, r#"{"\u00e9": "\u0041\u00"}"#,
+        r#"["\uD83D\uDE0g"]"#, r#"["\uD83D\uDE"]"#, r#"["\uD83D\uDE00\uDE00"]"#, r#"["\uD83D\uDE00\uD83D\uDE01x"]"#, r#"["\uD83D\uDBFF"]"#, r#"[1"a"]"#, r#"[true"a"]"#, r#"{"a":1"b"}"#, r#"[1 "a"]"#, r#"["a""b"]"#, r#"["\x"]"#, r#"["\'"]"#, r#"["\U0041"]"#, r#"["a\"#, r#"["\"#, r#"["\\"]"#, r#"["\/\b\f\n\r\t\""]"#,
     ] {
         inputs.push(f.as_bytes().to_vec());
     }
     for k in 50..70 {
         inputs.push(format!("[\"{}\\uD83D\\uDE00\"]", "x".repeat(k)).into_bytes());
         inputs.push(format!("[\"{}\\uD83D\\u0041\"]", "x".repeat(k)).into_bytes());
+    }
+    // After a byte order mark (the blocks start after it): alone, short, unclosed, a scalar, and across a block's edge.
+    let bom = |b: &[u8]| [&[0xef, 0xbb, 0xbf][..], b].concat();
+    for b in [&b""[..], b" ", b"[1]", b"\"a", b"7", b"[\"\xef\xbb\xbf\"]", b"\xef\xbb\xbf[]", b"{\"a\": [true, null]}"] {
+        inputs.push(bom(b));
+    }
+    for k in 55..72 {
+        inputs.push(bom(format!("[\"{}\", 12, \"b\\n\"]", "x".repeat(k)).as_bytes()));
+        inputs.push(bom(format!("[{}1\"a\"]", " ".repeat(k)).as_bytes()));
+        inputs.push(bom(format!("[\"{}", "x".repeat(k)).as_bytes()));
+        inputs.push(format!("[\"{}", "x".repeat(k)).into_bytes());
+        inputs.push(format!("[\"{}\"]", "x".repeat(k)).into_bytes());
     }
     let (mut same, mut refused) = (0, 0);
     for (k, f) in inputs.iter().enumerate() {
@@ -1235,9 +1342,9 @@ fn json_utf8_is_simdjsons_lookup() {
     }
 }
 
-/// Tier 2 in `walk`'s shape (page 40, fixes 8, 9 and 12; decision 0599): each container's cycle one loop, its opener
-/// taken in its arm, a pair closed where its value ends, a value's byte matched once, a string with no escape written
-/// as its node and its content at once.
+/// Tier 2 in `walk`'s shape (page 40, fixes 8, 9 and 12; decisions 0599, 0602): each container's cycle one loop, its
+/// opener taken in its arm, a pair closed where its value ends, a value's primitives one method called from each
+/// place, a string with no escape written as its node and its content at once.
 #[test]
 fn json_tier2_is_walks_shape() {
     let (_, tier2) = json_rust();
@@ -1250,24 +1357,55 @@ fn json_tier2_is_walks_shape() {
     }
     // Its opener taken in the loop's arm (`ObjectBegin | ObjectKey`).
     assert_eq!(tier2.lines().filter(|l| l.strip_suffix(" => {").and_then(|p| p.split_once(" | ")).is_some_and(|(a, b)| a.parse::<usize>().is_ok() && b.parse::<usize>().is_ok())).count(), 2, "a begin and its loop one arm, each container");
+    // The places a level returns to one arm, a loop (`walk`'s `scope_end`): an object's and an array's rest and the
+    // document's end, a closer there going on inside it, not through the run's match.
+    let ret = tier2.split(" => 'ret: loop {\n").nth(1).expect("the returns' loop").split("\n},\n").next().expect("its end");
+    assert_eq!(tier2.matches("=> 'ret: loop {").count(), 1, "one returns' loop");
+    assert_eq!(ret.matches("st = ret[depth];\ncontinue 'ret;").count(), 2, "an object's and an array's closer stay in it:\n{ret}");
+    assert!(!ret.contains("st = ret[depth];\ncontinue 'run;"), "a closer in it through the run's match");
+    // A separator's, an opener's and a `:`'s end kept by none (`walk`'s `take!()`): the record taken alone. A closer's
+    // is its node's end.
+    assert_eq!(tier2.matches("0x2c => {\ni += 1;\n").count(), 4, "each `,` taken alone");
+    assert!(tier2.contains("0x3a => {\ni += 1;\n}"), "the `:` taken alone");
+    assert_eq!(tier2.matches("e = s + 1;").count(), 4, "only the closers' ends");
     // No place that only closes a node and goes on: a pair is closed where its value ends.
     assert!(!tier2.contains("=> {\nclose(d, e as u64);\nst = "), "a place of a pair's close alone");
-    // A value's byte matched once: at each of its three places (the root, a pair's value, an element), one `match` on
-    // the byte whose arms are the containers', the string's, the atoms' and the number's; no method that matches it
-    // again.
-    assert!(!tier2.contains("fn value("), "no method of the value's alternatives");
-    let sites: Vec<&str> = tier2.split("match src[s] {\n").skip(1).collect();
-    assert_eq!(sites.len(), 3, "a value's decision a place");
-    for site in &sites {
-        let arms = site.split("\n_ => {\nreturn Err(at(src, starts, i));\n}\n}\n").next().expect("the match");
-        for arm in ["0x7b => {", "0x5b => {", "0x22 => {\ne = unsafe { string::<S>(", "0x74 if src[s..s + 4] == *b\"true\"", "let end = number_end(src, s)?;\ne = token(d, &mut i, "] {
-            assert!(arms.contains(arm), "`{arm}` an arm of the one match:\n{arms}");
-        }
-        assert!(!arms.contains("match peek("), "the byte matched again:\n{arms}");
+    // A value as `walk` decides it (decision 0602): at each of its three places (the root, a pair's value, an element)
+    // a `match` on the byte with the containers' arms, and the rest one method's (`walk`'s `primitive`), its `_`. The
+    // method is written once: the string's, the atoms' and the number's arms there alone.
+    assert_eq!(tier2.matches("fn value_primitive<S").count(), 1, "the primitive written once");
+    let calls: Vec<&str> = tier2.split("match peek(src, starts, i) {\n").skip(1).filter(|m| m.contains("value_primitive::<S>(")).collect();
+    let places: Vec<&str> = tier2.split("let s = starts[i] as usize;\nmatch src[s] {\n0x7b => {").skip(1).collect();
+    assert_eq!(places.len() + calls.len(), 3, "a value's decision at three places");
+    assert_eq!(tier2.matches("_ => {\ne = unsafe { value_primitive::<S>(src, starts, d, &mut i, [").count(), 3, "each place's `_` the primitive");
+    let primitive = tier2.split("fn value_primitive<S").nth(1).expect("the primitive").split("\nOk(e)\n}").next().expect("its body");
+    for arm in ["0x22 => {\ne = unsafe { string::<S>(", "0x74 if src[s..s + 4] == *b\"true\"", "0x66 if src[s..s + 5] == *b\"false\"", "0x6e if src[s..s + 4] == *b\"null\"", "let end = number_end(src, s)?;\ne = token(d, &mut i, "] {
+        assert!(primitive.contains(arm), "`{arm}` the primitive's:\n{primitive}");
+        assert_eq!(tier2.matches(arm).count(), 1, "`{arm}` written once");
     }
-    // Each primitive's arm a call of code written once (`token`, `number_end`, `string`), as `walk` calls `primitive`.
+    assert!(!primitive.contains("0x7b") && !primitive.contains("0x5b"), "a container is the place's");
     assert_eq!(tier2.matches("fn number_end(").count(), 1, "a number's end written once");
+    // No depth test at the root's calls (no level is open there, as `walk`'s document); one at each list's.
+    let root = tier2.split("\n0 => {\n").nth(1).expect("the root's place").split("\n1 | 2 => {").next().expect("its end");
+    assert!(!root.contains("depth == DEPTH"), "a depth test at the root:\n{root}");
+    assert_eq!(tier2.matches("if depth == DEPTH {").count(), 4, "an object's and an array's call in each list");
+    // A scalar's end as simdjson's: the byte after it structural or whitespace (`is_not_structural_or_whitespace`).
+    assert!(tier2.contains("fn ends(b: u8) -> bool {\nmatches!(ROWS[usize::from(b)], 0 | 2)\n}"), "the end's test");
+    assert!(tier2.contains("Some(j) if ends(src[s + j]) => Ok(s + j),") && tier2.contains("== *b\"true\" && ends(src[s + 4])"), "a number's and an atom's end");
+    // A number at a digit or `-` alone (`walk`'s `*v - '0' < 10 || *v == '-'`), any other byte refused.
+    assert!(primitive.contains("0x2d | 0x30..=0x39 => {\nlet end = number_end(src, s)?;"), "the number's arm its check's first bytes:\n{primitive}");
+    // The number's check reads its bytes with no bound (the padding ends every number, as `number_end` reads), and the
+    // exponent's sign in one test.
+    let check = tier2.split("fn check_number(b: &[u8]) -> Option<usize> {\n").nth(1).expect("the check").split("\nSome(j)\n}").next().expect("its body");
+    assert!(!check.contains("b.get(j)"), "a bound at each byte:\n{check}");
+    assert!(check.contains("if matches!(b[j], 0x2b | 0x2d) {\nj += 1;\n}\n"), "the exponent's sign one test:\n{check}");
     assert!(!tier2.contains("i += 1;\ne = end;\nleaf("), "a token's leaf written out at a place");
+    // The nodes stored through the walk's hold on the tape, a local of `run` (`Cursor`, the lean parser's `Walk`), not
+    // the writer's ops on its state.
+    assert_eq!(tier2.matches("let mut cursor = unsafe { Cursor::<Cells>::begin(state) };").count(), 1, "one cursor, the walk's");
+    for op in ["w_open_with", "w_leaf_with", "w_close_with", "w_leaf_in_with", "d: *mut u8"] {
+        assert!(!tier2.contains(op), "tier 2 still has `{op}`");
+    }
     // A string read 32 bytes at a time on the backend chosen once (`run_best`), as `backslash_quote`.
     assert!(tier2.contains("x += 32;") && tier2.contains("S::marks32(") && tier2.contains("fn run_best("), "32 bytes a step, one dispatch");
     // A string with no escape: the node and its content at once.
@@ -1285,13 +1423,19 @@ fn json_escape_checks_are_tier2s() {
     }
     let string = tier2.split("fn string<S").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
     let at = string.split("let y = p + 1;\n").nth(1).expect("the checks at an escape");
-    assert!(at.starts_with("if matches!(src[y], 0x75) {\n"), "at a `\\u` alone:\n{at}");
+    // The escape's second byte decided once, as `escaped_string`'s `c`: the `u`'s checks, the other words, else refused.
+    assert!(at.starts_with("// Its second byte decided once: the words', the checks at the gate's.\nmatch src[y] {\n0x75 => {\n"), "at a `\\u` alone:\n{at}");
+    assert!(at.contains("\n0x22 | 0x5c | 0x2f | 0x62 | 0x66 | 0x6e | 0x72 | 0x74 => {}\n_ => return Err(p as u32),\n}"), "the other words, then refused:\n{at}");
+    assert!(!string.contains("if !matches!(&src[p..p + 2]"), "the two bytes matched against the words");
+    // No end bound: tier 1 refuses a file a string is open at the end of (`refuses_open_at_end`), as `walk` reads.
+    assert!(!string.contains("x >= len"), "a bound at the file's end:\n{string}");
     for why in ["// \\u without four hex digits", "// a lone high surrogate", "// a lone low surrogate"] {
         assert!(at.contains(why), "{why}");
     }
-    // As `escaped_string`: the four digits read as one number, the surrogates ranges of it, and a low one's high one
-    // the escape before, one position (`low_checked`), not a word of the string's escapes.
-    for part in ["let cp = HEX_VALUE[usize::from(src[y + 1])] << 12 |", "if cp > 0xffff {", "let m2 = (0xd800..=0xdbff).contains(&cp);", "let m3 = (0xdc00..=0xdfff).contains(&cp);", "after2 = y + 6;", "if m3 && after2 != y {"] {
+    // As `escaped_string`: the four digits read as one number, the surrogates ranges of it; a high one's low half its
+    // next escape's four digits, a number too; and that escape's checks skipped (`low_checked`), so a low one reached
+    // otherwise is lone.
+    for part in ["let cp = HEX_VALUE[usize::from(src[y + 1])] << 12 |", "if cp > 0xffff {", "let m2 = (0xd800..=0xdbff).contains(&cp);", "let m3 = (0xdc00..=0xdfff).contains(&cp);", "after2 = y + 6;", "if after2 != y {", "if m3 {\nreturn Err(y as u32);", "let n7 = HEX_VALUE[usize::from(src[y + 7])] << 12 |", "(0xdc00..=0xdfff).contains(&n7)"] {
         assert!(at.contains(part), "no `{part}`:\n{at}");
     }
     assert!(!string.contains("w2") && !at.contains("matches!(src[y + 1]"), "a digit's class tested, or the escapes kept:\n{at}");
@@ -1308,15 +1452,44 @@ fn json_tier1_masks_are_block_locals() {
     assert!(stage1.contains("    for t in 0..nw {\n"), "the file's blocks alone");
     assert!(!stage1.contains("NONE"), "no block past the file");
     assert_eq!(stage1.matches("src.starts_with(").count(), 1, "the byte order mark tested once");
-    assert_eq!(stage1.matches("let lv_0 = ").count(), 1, "the file's bits made once a block");
-    // The words read past their block's code: `word`, for the block before's (a local of its code there), and the
-    // string open at the end's `f_str`.
+    // No mask the file's bits (`lv`): no record or error holds at the padding's byte; the blocks start after a byte
+    // order mark (`off`), as simdjson's stage 1 reads past it.
+    assert!(!stage1.contains("lv"), "a mask of the file's bits:\n{stage1}");
+    assert!(stage1.contains("let off = if src.starts_with(&[0xef, 0xbb, 0xbf]) { 3 } else { 0 };\n    let nw = (n - off).div_ceil(64);"), "the blocks after the mark");
+    // The words read past their block's code: `nonquote_scalar`, for the block before's (`follows`; a local of its
+    // code there). The string open at the end is the toggle's carry out of the last block (simdjson's `finish`,
+    // `prev_in_string != 0`): `in_string`'s word, as the grammar names the region's `f_str`, is its block's.
     let outer: Vec<&str> = stage1.lines().filter(|l| l.starts_with("    let mut v_") || l.starts_with("    let mut p_")).collect();
-    assert_eq!(outer, ["    let mut v_m_f_str = 0u64;", "    let mut v_m_word = 0u64;"]);
-    assert!(stage1.contains("            let p_m_word = v_m_word;\n"), "the block before's `word`, a local");
+    assert_eq!(outer, ["    let mut v_m_nonquote_scalar = 0u64;"]);
+    assert!(stage1.contains("            let p_m_nonquote_scalar = v_m_nonquote_scalar;\n"), "the block before's `nonquote_scalar`, a local");
+    // The string and token masks are `index`'s (`json_scanner`, `json_string_scanner`): `scalar`, `nonquote_scalar`,
+    // `follows`, `string_tail`, and the records `structural_start` itself (proved equal to the tokens' starts but where
+    // an error refuses the file, `refused_equal`).
+    for part in [
+        "let v_m_scalar = !(v_m_op | v_m_ws);",
+        "v_m_nonquote_scalar = v_m_scalar & !v_m_quote;",
+        "let v_m_follows = (v_m_nonquote_scalar << 1 | p_m_nonquote_scalar >> 63);",
+        "let v_m_string_tail = (v_m_in_string ^ v_m_q);",
+        "let v_m_structural_start = (v_m_op | v_m_scalar & !v_m_follows) & !v_m_string_tail;",
+        // The block before's records written at this block, the last after the pass, through one `write` (simdjson's
+        // `bit_indexer::write`, `indexer.write(idx - 64, prev_structurals)` and `finish`).
+        "unsafe { write_indexes(si, &mut count, ((off + 64 * q) as u32).wrapping_sub(64), prev_structurals) };\n            prev_structurals = v_m_structural_start;",
+    ] {
+        assert!(stage1.contains(part), "no `{part}`:\n{stage1}");
+    }
+    // A string right after a scalar is tier 2's, at the scalar's end (`run_end_covers`), as simdjson's stage 2.
+    assert!(!stage1.contains("a string right after a scalar"), "tier 1 tests a scalar's dirty end");
+    for name in ["v_m_word", "v_m_code", "v_m_wordbyte", "v_m_hidden", "v_m_o_str"] {
+        assert!(!stage1.contains(name), "stage 1 still makes `{name}`");
+    }
     let after = stage1.split("\n    }\n").nth(1).expect("after the pass");
-    assert!(after.contains("// a string open at the end of the file: at the file's last byte, once"), "the end's test after the pass:\n{after}");
+    assert!(after.contains("// a string open at the end of the file: the toggle carried out of the file's last block, once (simdjson's `finish`).\n    refused |= c_m_in_string != 0;"), "the end's test after the pass:\n{after}");
     assert!(!stage1.contains("last_byte"), "no mask of the last byte");
     // The errors' bits ORed into one word, tested once after the pass (`index`'s `unescaped_chars_error`).
     assert!(stage1.contains("            errors |= v_t2;\n") && after.contains("    refused |= errors != 0;\n"), "the errors tested once");
+    assert!(after.contains("    unsafe { write_indexes(si, &mut count, ((off + 64 * nw) as u32).wrapping_sub(64), prev_structurals) };"), "the last block's records after the pass");
+    assert_eq!(tier1.matches("fn write_indexes(").count(), 1, "one write");
+    for part in ["    if bits == 0 {\n        return;\n    }", "        if 6 < cnt {\n            one(*count + 6);"] {
+        assert!(tier1.contains(part), "the write's `{part}`");
+    }
 }
