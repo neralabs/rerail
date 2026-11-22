@@ -141,7 +141,7 @@ fn temporal_empty_and_identical_deltas_share_roots_and_keep_snapshot_row_ids() {
     let pool = super::super::scratch::Pool::default();
     let mut work = super::super::scratch::Work::new(&db, &pool);
     work.versions = Some(&store);
-    let add = super::super::temporal::delta(&mut work, &empty, &full).unwrap();
+    let add = super::delta(&mut work, &empty, &full).unwrap();
     assert_eq!((add.inserted, add.deleted), (2000, 0));
     let plus = store.available(&add.plus).unwrap();
     assert!(Arc::ptr_eq(
@@ -152,13 +152,13 @@ fn temporal_empty_and_identical_deltas_share_roots_and_keep_snapshot_row_ids() {
         plus.ids.as_ref().unwrap(),
         full.ids.as_ref().unwrap()
     ));
-    let remove = super::super::temporal::delta(&mut work, &full, &empty).unwrap();
+    let remove = super::delta(&mut work, &full, &empty).unwrap();
     let minus = store.available(&remove.minus).unwrap();
     assert!(Arc::ptr_eq(
         minus.full.as_ref().unwrap(),
         full.full.as_ref().unwrap()
     ));
-    let unchanged = super::super::temporal::delta(&mut work, &full, &full).unwrap();
+    let unchanged = super::delta(&mut work, &full, &full).unwrap();
     assert_eq!((unchanged.inserted, unchanged.deleted), (0, 0));
     assert_eq!(
         work.version_nodes, 3,
@@ -170,7 +170,7 @@ fn temporal_empty_and_identical_deltas_share_roots_and_keep_snapshot_row_ids() {
     assert_eq!(plus.rows()[0], vec![Some(0), Some(1)]);
     assert!(plus.same(&minus));
     let changed = store.version("delta_source");
-    let difference = super::super::temporal::delta(&mut work, &full, &changed).unwrap();
+    let difference = super::delta(&mut work, &full, &changed).unwrap();
     assert_eq!((difference.inserted, difference.deleted), (1, 1));
     let added = store.available(&difference.plus).unwrap();
     let removed = store.available(&difference.minus).unwrap();

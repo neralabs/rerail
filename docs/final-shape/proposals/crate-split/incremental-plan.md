@@ -1081,3 +1081,29 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   - Tests:
     - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the two crates.
     - On a Linux host, both crates' tests: 36 of 36 (the 5 parity tests ignored).
+- **Step 7g** (2026-11-22): the SQL executor's sessions, 25.1k production lines, are now two crates.
+  - **rerail-sessions-base** (`native/crates/sessions_base`, 14.8k) has the executor's parts below the executor: the
+    runs (`session`), tuple maintenance, reductions, versions, phases, walks, the work graph, frontiers, recursion,
+    scratch, planning and the rest.
+  - **rerail-sessions** (10.5k; same name, so no reader above changes) has the rest:
+    - the executor (`CodeRuleSqlExecutor`, now in `sql_executor/executor.rs` with its executions' impl from
+      `session.rs`);
+    - the modules that read the executor or the traces: catalog, compiler, documents, explain, producers,
+      profiling, updates, verification;
+    - the retained traces (`temporal`).
+  - The base's reads of the traces are cut:
+    - `Execution::temporal` holds `Box<dyn session::Trace>`. The trait has what the base and the executor read of a
+      trace: `apply`, `objects`, the planning statistics and strategy, `stable_phases`, `explain` and `frames`. The
+      traces' own code and tests read the type (`temporal::Trace::of`, `of_mut`).
+    - The run with one retained trace is maintained through `maintenance::TEMPORAL`, a `rerail_registry::Slot` of
+      `Temporal` (`apply_initial`). Boot registers it (`install_with`), and so does rerail-sessions' own test binary.
+    - The batches' runtime in `scratch::Pool` is held as `Any` and read as its type by the batches.
+    - `temporal::delta`, the native version difference, reads only the versions and the scratch work. It is now
+      `versions::delta`, which `temporal` re-exports, so the base's maintenance and the bulk version tests call it
+      directly.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the two crates and boot.
+    - On a Linux host, both crates' own tests and rerail-tests-logic's SQL executor, SQL admission and tools tests:
+      208 of 209. The one failure, `sql_sessions_use_shared_explain_profiles_…`, runs `node` (the SQL report),
+      which that host lacks.
+    - On a Mac, that test passes.

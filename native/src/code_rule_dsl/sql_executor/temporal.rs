@@ -86,46 +86,8 @@ fn read(r: &Rel) -> Option<String> {
         _ => r.program_relation().map(str::to_owned),
     }
 }
-pub fn delta(
-    w: &mut Work<'_>,
-    old: &versions::Version,
-    new: &versions::Version,
-) -> Result<Delta> {
-    let operation = w.profiler.map(|p| {
-        p.operation(
-            "native version difference",
-            ("sql-extension", 0),
-            0,
-            vec![
-                ("old".into(), old.len() as i64),
-                ("new".into(), new.len() as i64),
-            ],
-        )
-    });
-    let _cpu = super::super::logic::profile::span(|| "native version difference".into());
-    // Empty and identical versions have an exact difference without a row walk.
-    // Share the immutable roots instead of decoding, hashing and indexing them again.
-    if old.len() == 0 || new.len() == 0 || old.same(new) {
-        let plus = w.output_table(old.columns().len())?;
-        let minus = w.output_table(old.columns().len())?;
-        let same = old.same(new);
-        let empty = old.empty_like();
-        let added = if same { &empty } else { new };
-        let removed = if same { &empty } else { old };
-        let store = w.versions.ok_or_else(|| error("temporal rows require native storage"))?;
-        if store.clone_scratch(&plus, added)? && store.clone_scratch(&minus, removed)? {
-            w.version_nodes += 1;
-            if let Some(operation) = operation { operation.finish(added.len()+removed.len()); }
-            return Ok(Delta {plus,minus,inserted:added.len() as u64,deleted:removed.len() as u64});
-        }
-    }
-    let plus=w.output_table(old.columns().len())?;
-    let minus=w.output_table(old.columns().len())?;
-    let (inserted,deleted,visited)=w.versions.ok_or_else(||error("temporal rows require native storage"))?.difference_scratch(&plus,&minus,old,new)?;
-    w.version_nodes+=visited;
-    if let Some(operation)=operation {operation.finish(inserted+deleted);}
-    Ok(Delta{plus,minus,inserted:inserted as u64,deleted:deleted as u64})
-}
+// `delta`, the native version difference, is the versions' (`versions::delta`).
+pub use super::versions::delta;
 
 #[derive(Clone)]
 pub struct Trace {
@@ -165,7 +127,70 @@ pub fn loop_analyses(emitted:&plan::emit::Emitted)->Arc<Vec<Value>> {
 
 // replay_tests: a test the engine hosts (it reads above this crate; tools/cratify/test-hosts.tsv)
 
+impl session::Trace for Trace {
+    fn clone_box(&self) -> Box<dyn session::Trace> {
+        Box::new(self.clone())
+    }
+    fn apply(
+        &mut self,
+        w: &mut Work<'_>,
+        store: &versions::Store,
+        changes: &BTreeMap<String, Delta>,
+        limit: u32,
+    ) -> Result<(BTreeMap<String, Delta>, u32)> {
+        Trace::apply(self, w, store, changes, limit)
+    }
+    fn objects(&self) -> Box<dyn Iterator<Item = (String, bool)> + '_> {
+        Box::new(Trace::objects(self))
+    }
+    fn planning_statistics(&self) -> Option<Value> {
+        Trace::planning_statistics(self)
+    }
+    fn planning_strategy(&self) -> planning::Strategy {
+        Trace::planning_strategy(self)
+    }
+    fn stable_phases(&self, program: &schedule::Program) -> bool {
+        Trace::stable_phases(self, program)
+    }
+    fn explain(&self) -> Value {
+        Trace::explain(self)
+    }
+    fn frames(&self) -> usize {
+        Trace::frames(self)
+    }
+    fn as_any(&self) -> &dyn std::any::Any {
+        self
+    }
+    fn as_any_mut(&mut self) -> &mut dyn std::any::Any {
+        self
+    }
+    fn into_any(self: Box<Self>) -> Box<dyn std::any::Any> {
+        self
+    }
+}
+
+/// The retained traces' entry points, as the executor's parts below them read them (`maintenance::TEMPORAL`).
+pub struct Retained;
+
+impl maintenance::Temporal for Retained {
+    fn apply_initial(&self, w: &mut Work<'_>, run: &mut session::Execution, changes: &mut BTreeMap<String, Delta>, limit: u32) -> Result<Value> {
+        initial::apply(w, run, changes, limit)
+    }
+}
+
+/// Registers the retained traces (boot's `install_with`, and this crate's own test binary).
+pub fn register() {
+    maintenance::TEMPORAL.register("rerail-sessions", &Retained);
+}
+
 impl Trace {
+    /// A run's trace as its own type (every trace a run holds is one).
+    pub fn of(trace: &dyn session::Trace) -> &Trace {
+        trace.as_any().downcast_ref().expect("a retained trace")
+    }
+    pub fn of_mut(trace: &mut dyn session::Trace) -> &mut Trace {
+        trace.as_any_mut().downcast_mut().expect("a retained trace")
+    }
     pub fn planning_statistics(&self) -> Option<Value> {
         self.batch.as_ref().map(batch::History::planning_statistics)
     }
@@ -683,7 +708,7 @@ pub fn prepare(
         }
         run.objects.extend(trace.objects());
         run.recursive.remove(&stratum);
-        run.temporal.insert(stratum, trace);
+        run.temporal.insert(stratum, Box::new(trace));
     }
     Ok(())
 }

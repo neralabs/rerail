@@ -3,6 +3,20 @@ use super::super::logic::sql::select::{FromItem, Join, Query, Relation as SqlRel
 use super::super::logic::sql::sql_ast::{SqlBinaryOperator as B, SqlExpression as E};
 use super::*;
 
+/// The retained traces' entry points (`temporal`, rerail-sessions'), which boot registers (`TEMPORAL`).
+pub trait Temporal: Sync {
+    /// Maintains a run whose whole program is one retained trace (stratum 0) over `changes`.
+    fn apply_initial(&self, w: &mut Work<'_>, run: &mut session::Execution, changes: &mut BTreeMap<String, Delta>, limit: u32) -> Result<Value>;
+}
+
+pub static TEMPORAL: rerail_registry::Slot<&'static dyn Temporal> =
+    rerail_registry::Slot::new("the retained traces (sql_executor::maintenance::TEMPORAL)");
+
+/// The registered retained traces. A run with versioned storage or a retained trace needs them.
+pub fn temporal() -> Result<&'static dyn Temporal> {
+    TEMPORAL.try_get().ok_or_else(|| error("the retained traces (rerail-sessions' temporal) are not registered"))
+}
+
 #[derive(Clone)]
 pub struct Delta {
     pub plus: String,
@@ -163,7 +177,7 @@ impl Work<'_> {
         if let Some(store) = self.versions
             && let Some((old, new)) = store.available(old).zip(store.available(now))
         {
-            return temporal::delta(self, &old, &new);
+            return versions::delta(self, &old, &new);
         }
         let plus = self.set_table(width)?;
         let minus = self.set_table(width)?;
@@ -369,7 +383,7 @@ pub fn maintain(
 fn maintain_pass(w: &mut Work<'_>, run: &mut session::Execution,
     changes: &mut BTreeMap<String, Delta>, limit: u32) -> Result<Value> {
     if run.temporal.contains_key(&0) {
-        return temporal::initial::apply(w, run, changes, limit);
+        return temporal()?.apply_initial(w, run, changes, limit);
     }
     let e = Arc::clone(&run.emitted);
     let arities: BTreeMap<_, _> = e.program.relations.iter().cloned().collect();

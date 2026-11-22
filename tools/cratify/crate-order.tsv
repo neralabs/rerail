@@ -89,6 +89,7 @@ rerail-corpus-prep	core
 rerail-rr-root	core
 rerail-logic	core
 rerail-device-metal	provider
+rerail-sessions-base	core
 rerail-sessions	core
 rerail-boot	root
 rerail-engine	root
