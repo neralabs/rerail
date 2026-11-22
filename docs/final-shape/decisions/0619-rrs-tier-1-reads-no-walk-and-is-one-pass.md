@@ -69,7 +69,7 @@ no template's string, no fill kept over a region (`assume … at ends`), no regi
 `prefix`. That is `.rerail`'s loop. Kotlin's keeps its two passes and its file is unchanged, and so is JSON's (the
 index form, 0585).
 
-What stays: the records hold each token's code, because tier 2 reads it (0618), and, until step 4, its last byte. Stage 1 keeps the
+What stays: the records hold each token's code, because tier 2 reads it (0618), and its last byte (step 4 below). Stage 1 keeps the
 masks the token loop reads for the file's blocks, as the lean lexer's `Blocks::of` does.
 
 ## Step 3: tier 1 hands tier 2 no mask (0586's part)
@@ -88,35 +88,33 @@ Now, where no region is read in parts:
 
 Kotlin reads regions in parts, so it keeps its masks, and its file is unchanged.
 
-## Step 4: tier 2 reads each token's end from the bytes (0586's other half)
+## Step 4, taken out: tier 2 read each token's end from the bytes
 
-0586 made JSON's tier 2 read from the bytes what tier 1 had found for it. In `.rerail`, after step 3, that was each
-token's last byte (`lasts`). Tier 2 now reads it from the bytes, and tier 1's records hold only each token's first
-byte and its code. The codes stay, as the goal's first item asks (0618).
+Step 4 made `.rerail`'s tier 2 find each token's last byte from the bytes, as 0586 did for JSON's, so that tier 1's records held only each token's first byte and its code. It is out again. Tier 1 hands tier 2 each token's last byte (`lasts`), as it did after step 3.
 
-- **Tier 2's `token_last(src, n, s)`** gives the last byte of the token tier 1 starts at `s`
-  (`bitlex_lex_rust/byte_ends.rs`).
-  - Its rule is the first whose start holds at `s`, as tier 1's dispatch takes it, with the grammar's assumptions at a
-    start read in.
-  - Its end is the rule's, as tier 1's token loop finds it: a run's last byte, a pair's, or a region's closer after the
-    opener.
-- **Each mask the end reads is made of the bytes, 64 at a time** (`rerail_simd8`'s backends), in place of stage 1's:
-  - a class, by its byte ranges;
-  - `prev` and `next`, as the window a byte back or on;
-  - `escaped`, word by word with its carry, as tier 1's (a string's closer, `quote & ~escaped`).
-  So `/*`'s closer `slash & prev(star)`, the backticks' `tt` and `ttt`, and a number's `num_run` are read as the
-  grammar states them.
-- **The source tier 2 reads is the padded one.** `parse(buf, n, lx)` takes it as tier 1's `lex` does.
-- **Only where every rule has its byte form** (`ends_from_bytes`): no region read in parts, no second closer (`or`),
-  no region `after` another. Elsewhere tier 1 keeps its last bytes. So Kotlin's files are unchanged.
+It was:
 
-Tier 1 still finds each end in its own pass, since the next token starts after it, and its checks read the token's
-bytes. So a region's bytes are read twice: by tier 1's masks, and by tier 2's search for the closer. That is 0586's
-shape: there too, tier 1 still makes `q` and `esc` for its own tests, and tier 2 finds the string's end from the bytes.
+- a function `token_last(src, n, s)`, generated from the grammar (`bitlex_lex_rust/byte_ends.rs`);
+- the masks it needed, rebuilt from the bytes, 64 at a time;
+- tier 2 reading the padded source.
 
-The record tests (`tier1s_records_are_the_interpreters`, the samples and the corpus) compare each token's last byte as
-`token_last` reads it with the interpreter's. A last byte moved by one in a string's end fails them at the first
-string.
+It was slower, and it can't be faster in the records form:
+
+- **Tier 1 already has each end.** The token loop finds the last byte to move on to the next token, so recording it is one store.
+- **The records form never reads a token's bytes.** It reads tier 1's codes. So reading the end again meant reading the bytes a second time: a word's run, and a region's opener to its closer.
+- **JSON's byte form is different.** There, tier 2 reads each token's bytes anyway, so finding the end comes with that read. That is why 0586 pays there and this did not.
+
+Measured on a Linux arm64 farm host (product build, the 1,831 files, the least of 7 rounds):
+
+| | With step 4 | Without |
+|---|---|---|
+| Tier 1 | 33.1 ms | 34.6 ms |
+| Tier 2 | 62.6 ms | 54.4 ms |
+| `token_last` alone, every token | 14.6 ms | none |
+
+Tier 1's cost for the store is within the runs' noise.
+
+A grammar's tier 2 should read a token's end from the bytes only where it reads those bytes anyway: that is the byte form.
 
 The farm run also took in four probes and benchmarks of the JIT, which are run by hand (`#[ignore]`). One passes run as
 its note says (`rr_words_text`, with `RR_WORDS`). Three fail: `rr_tier1_split`, `rr_sparse_marks_bound` and

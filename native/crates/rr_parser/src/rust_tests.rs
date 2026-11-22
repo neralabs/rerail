@@ -93,15 +93,12 @@ fn tier2_checked_marks() -> u32 {
 }
 
 /// Where tier 1 as Rust (`rerail_rr_aot::lex`) is not the interpreter's tier 1: whether it sends the file to the
-/// engine, and where neither does, each token's first and last byte (tier 2's, read from the bytes) and code. In the bits of the marks tier 2 checks
+/// engine, and where neither does, each token's first and last byte and code. In the bits of the marks tier 2 checks
 /// (`tier2_checked_marks`), the Rust's are the interpreter's and those tier 2 tests.
 fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     let late = tier2_checked_marks() << 16;
     let run = c.program.block_programs[0].run(text.as_bytes());
-    let buf = rerail_rr_aot::padded(text.as_bytes());
-    let lx = rerail_rr_aot::lex(&buf, text.len());
-    // Each token's last byte, as tier 2 reads it from the bytes (decision 0619 step 4): tier 1 records none.
-    let byte_lasts: Vec<u32> = lx.starts.iter().map(|&s| rerail_rr_aot::token_last(&buf, text.len(), s as usize) as u32).collect();
+    let lx = rerail_rr_aot::lex(&rerail_rr_aot::padded(text.as_bytes()), text.len());
     let refused = run.totals.first().is_some_and(|&t| t != 0);
     // An escape the lowering makes a check of tier 2's at a token (`pending_checks`): the interpreter's tier 1 does
     // not refuse there, tier 1 as Rust does; either way the file is refused.
@@ -117,7 +114,7 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
     let (starts, lasts) = (&run.positions[0], &run.positions[1]);
     for k in 0..starts.len().max(lx.starts.len()) {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
-        let ours = (lx.starts.get(k), byte_lasts.get(k), lx.codes.get(k));
+        let ours = (lx.starts.get(k), lx.lasts.get(k), lx.codes.get(k));
         let kept = |c: Option<&u32>| c.map(|&c| c & !late);
         let late_ok = run.codes.get(k).zip(lx.codes.get(k)).is_none_or(|(&t, &o)| t & late & !o == 0);
         if (theirs.0, theirs.1, kept(theirs.2)) != (ours.0, ours.1, kept(ours.2)) || !late_ok {
@@ -301,12 +298,9 @@ fn rr_aot_against_jit() {
             })
             .sum::<usize>()
     };
-    // What step 4 of 0619 adds to tier 2: each record's last byte read from the bytes.
-    let lexed: Vec<_> = bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len())).collect();
-    let ends = || bufs.iter().zip(&files).zip(&lexed).map(|((b, t), l)| l.starts.iter().map(|&s| rerail_rr_aot::token_last(b, t.len(), s as usize)).sum::<usize>()).sum::<usize>();
-    let mut best = [std::time::Duration::MAX; 6];
+    let mut best = [std::time::Duration::MAX; 5];
     for _ in 0..rounds {
-        for (k, f) in [&lex as &dyn Fn() -> usize, &aot, &jit, &engine, &jit_lex, &ends].into_iter().enumerate() {
+        for (k, f) in [&lex as &dyn Fn() -> usize, &aot, &jit, &engine, &jit_lex].into_iter().enumerate() {
             best[k] = best[k].min(time(f));
         }
     }
@@ -318,7 +312,6 @@ fn rr_aot_against_jit() {
     row("the parser as Rust, tier 1 (lex)", best[0]);
     row("the parser as Rust, tier 2 (parse - lex)", best[1].saturating_sub(best[0]));
     row("the parser as Rust, whole (parse)", best[1]);
-    row("the parser as Rust, every token's last byte (token_last)", best[5]);
     row("the JIT, tier 1 (the batch)", best[4]);
     row("the JIT, tier 2 (image - batch)", best[2].saturating_sub(best[4]));
     row("the JIT, whole (image)", best[2]);

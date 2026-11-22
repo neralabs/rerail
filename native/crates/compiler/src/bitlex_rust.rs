@@ -1567,34 +1567,8 @@ impl<'a> G<'a> {
             let parts: Vec<String> = RUNTIME.split("\n\n").map(|p| p.trim_matches('\n').to_owned()).filter(|p| !p.is_empty() && p.matches('{').count() == p.matches('}').count()).collect();
             out = one_loop::drop_uncalled(out, &parts);
         }
-        // Each token's last byte read from the bytes (decision 0619 step 4, as 0586's): tier 1's records hold none, and
-        // tier 2 reads the padded source.
-        let from_bytes = crate::bitlex_lex_rust::ends_from_bytes(self.x.lexer);
-        if from_bytes {
-            for (a, b) in [
-                ("    lasts: &'a [u32],\n", "    /// The source padded (`PADDING` spaces after it): what each token's last byte is read from (`token_last`).\n    buf: &'a [u8],\n"),
-                ("    fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {", "    fn new(src: &'a [u8], buf: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {"),
-                ("let (starts, lasts, codes) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..]);", "let (starts, codes) = (&lx.starts[..], &lx.codes[..]);"),
-                ("P { src, starts, lasts, codes, n,", "P { src, buf, starts, codes, n,"),
-                ("(self.starts[j], self.lasts[j] + 1)", "(self.starts[j], self.last(j) + 1)"),
-                ("(self.starts[self.i], self.lasts[self.i] + 1)", "(self.starts[self.i], self.last(self.i) + 1)"),
-            ] {
-                if out.matches(a).count() != 1 {
-                    return Err(format!("tier 2 as Rust: the records' last bytes, not where they were: {a:?}"));
-                }
-                out = out.replace(a, b);
-            }
-            out.push_str("\nimpl P<'_> {\n    /// Record `j`'s last byte, read from the bytes at its first.\n    #[inline(always)]\n    fn last(&self, j: usize) -> u32 {\n        token_last(self.buf, self.src.len(), self.starts[j] as usize) as u32\n    }\n}\n\n");
-            out.push_str(&crate::bitlex_lex_rust::byte_ends(self.x.lexer)?);
-        }
         let masks = if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() { "" } else { " and masks (those a region's parts are found by)" };
-        let (head, args) = if from_bytes {
-            ("pub fn parse(buf: &[u8], n: usize, lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {\n    let src = &buf[..n];", "src, buf, lx, widths")
-        } else {
-            ("pub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {", "src, lx, widths")
-        };
-        let what = if from_bytes { "each token's first byte and code, its last read from the bytes" } else { "each token's first and last bytes and code" };
-        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records ({what}){masks}, or the byte it was refused at.\n{head}\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        let mut p = P::new({args})?;\n        p.{entry}()?;\n        match p.w.finish_columns() {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}");
+        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code){masks}, or the byte it was refused at.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        let mut p = P::new(src, lx, widths)?;\n        p.{entry}()?;\n        match p.w.finish_columns() {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}");
         Ok(out)
     }
 }
