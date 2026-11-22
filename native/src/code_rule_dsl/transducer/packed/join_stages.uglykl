@@ -1402,6 +1402,9 @@ typedef struct LatP { int64_t top; uint32_t n; uint32_t had; uint32_t nkeys; uin
                       uint32_t omask; uint32_t counted; uint64_t r_at, r_rows_at, h_at, h0_at; } LatP;
 UKL_REFLECT_STRUCT(LatP, top, n, had, nkeys, code, after, pmask, hmask, level, omask, counted, r_at, r_rows_at, h_at, h0_at)
 UKL_STATIC_ASSERT(sizeof(LatP) == 80, "LatP: size");
+// A fold's parameters, read whole: the host's block, which no group writes, so a plain load (C++ copies no struct
+// through a volatile pointer: CUDA's `UKL_COHERENT`).
+#define LAT_P(pp) (*(UKL_GLOBAL const LatP*)(pp))
 
 // The relation `R`'s row `row` in column `c`, and the place to write it: `R` is a relation in its block
 // (decision 0325 step 5), its descriptor at `r_at`, its rows' at `r_rows_at`; written through the writer written
@@ -1424,7 +1427,7 @@ UKL_INLINE bool lat_same(Longs T, uint32_t stride, uint32_t a, uint32_t b, uint3
 
 UKL_INLINE void lat_clear_one(JSPACE uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE const LatP* pp, uint32_t i)
 {
-    LatP p = *pp;
+    LatP p = LAT_P(pp);
     if (i > p.pmask) return;
     P[i] = 0xffffffffu;
     best[i] = 0xffffffffu;
@@ -1434,7 +1437,7 @@ UKL_INLINE void lat_clear_one(JSPACE uint32_t* P, JSPACE uint32_t* best, JSPACE 
 // The key map's slot `i` emptied (a map new, or grown).
 UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t i)
 {
-    LatP p = *pp;
+    LatP p = LAT_P(pp);
     if (i > p.hmask) return;
     JSPACE uint32_t* H = (JSPACE uint32_t*)(HB + p.h_at);
     H[3 * i] = 0xffffffffu;
@@ -1446,7 +1449,7 @@ UKL_INLINE void lat_hclear_one(JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32
 // changes and round with it); its key read in `R`'s row.
 UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB, JSPACE uint8_t* HB, JSPACE const LatP* pp, uint32_t s)
 {
-    LatP p = *pp;
+    LatP p = LAT_P(pp);
     if (s > p.omask) return;
     JSPACE const uint32_t* O = (JSPACE const uint32_t*)(OB + p.h0_at);
     uint32_t t = O[3 * s];
@@ -1468,7 +1471,7 @@ UKL_INLINE void lat_rehash_one(JSPACE const uint8_t* R, JSPACE const uint8_t* OB
 
 UKL_INLINE void lat_claim_one(Longs U, JSPACE uint32_t* P, JSPACE const uint32_t* cnt, JSPACE const LatP* pp, uint32_t x)
 {
-    LatP p = *pp;
+    LatP p = LAT_P(pp);
     // Its rows: `n` (the stride of `U`'s columns), or as many as the word an earlier phase wrote (`counted`).
     if (x >= (p.counted != 0u ? ukl_min(*cnt, p.n) : p.n)) return;
     int64_t key[8];
@@ -1528,7 +1531,7 @@ UKL_INLINE bool lat_better(UKL_PRIVATE const LatP* p, JSPACE uint32_t* A, int64_
 UKL_INLINE void lat_best_one(Longs U, JSPACE const uint32_t* P, JSPACE uint32_t* best, JSPACE uint32_t* flags, JSPACE uint32_t* A, JSPACE const uint32_t* cnt,
                          JSPACE const LatP* pp, uint32_t x)
 {
-    LatP p = *pp;
+    LatP p = LAT_P(pp);
     // Its rows: `n` (the stride of `U`'s columns), or as many as the word an earlier phase wrote (`counted`).
     if (x >= (p.counted != 0u ? ukl_min(*cnt, p.n) : p.n)) return;
     uint32_t s = lat_place(U, P, &p, x);
@@ -1568,7 +1571,7 @@ UKL_INLINE int64_t lat_widen(UKL_PRIVATE const LatP* p, int64_t old, int64_t now
 UKL_INLINE void lat_merge_one(Longs U, JSPACE const uint32_t* P, JSPACE const uint32_t* best, JSPACE const uint32_t* flags, JSPACE uint8_t* R, JSPACE uint8_t* HB,
                           JSPACE int64_t* D, JSPACE uint32_t* counters, JSPACE uint32_t* A, JSPACE const LatP* pp, uint32_t s)
 {
-    LatP p = *pp;
+    LatP p = LAT_P(pp);
     JSPACE uint32_t* H = (JSPACE uint32_t*)(HB + p.h_at);
     if (s > p.pmask) return;
     uint32_t rep = P[s];
