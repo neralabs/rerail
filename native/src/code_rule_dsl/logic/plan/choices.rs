@@ -401,11 +401,12 @@ pub fn note_rows((notes, exact, raised): super::joins::Stored) -> NoteRows {
 
 /// The plans kept under `prepared`: one read of the store.
 pub fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(super::StoredPlans, super::prepared::ByVersion, super::kept_analyses::ByVersion)> {
-    if !held(store, prepared)? {
+    if !{ let _s = super::super::profile::span(|| "whether the store holds them".into()); held(store, prepared)? } {
         return Ok(Default::default());
     }
-    let Some(facts) = PLANS.within(*prepared).get(store, 0) else { return Ok(Default::default()) };
-    take_notes(&facts);
+    let Some(facts) = ({ let _s = super::super::profile::span(|| "their entry, read".into()); PLANS.within(*prepared).get(store, 0) }) else { return Ok(Default::default()) };
+    { let _s = super::super::profile::span(|| "the join notes, taken".into()); take_notes(&facts); }
+    let _s = super::super::profile::span(|| "the plans, decoded".into());
     let ready: Vec<Vec<Value>> = facts.get(PREPARED_REL).into_iter().flatten().map(|row| row.as_slice().to_vec()).collect();
     let analyses: Vec<Vec<Value>> = facts.get(ANALYSES_REL).into_iter().flatten().map(|row| row.as_slice().to_vec()).collect();
     let plans = facts

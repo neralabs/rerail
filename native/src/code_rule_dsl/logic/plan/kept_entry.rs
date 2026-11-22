@@ -86,7 +86,12 @@ impl Entries {
         let mut bad = BTreeSet::new();
         let Ok(Some(kept)) = store.kept_space(&self.space()) else { return out };
         let chain = kept.view();
-        for entry in chain.all().filter(|e| only.is_none_or(|p| e.key.part == p) && *e.key.ident == self.ident(e.key.rel)) {
+        // One partition's read merges its own entries alone: the space holds one a program, every engine build's.
+        let entries: Box<dyn Iterator<Item = rerail_blocks::kept::Kept<'_>> + '_> = match only {
+            Some(p) => Box::new(chain.of_part(p).into_iter()),
+            None => chain.all(),
+        };
+        for entry in entries.filter(|e| *e.key.ident == self.ident(e.key.rel)) {
             let part = entry.key.part;
             let Some((rel, kinds)) = entry.key.rel.rsplit_once('#') else { continue };
             let kinds = kinds.as_bytes();

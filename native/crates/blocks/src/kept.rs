@@ -256,6 +256,11 @@ impl<B: Borrow<Block>> KeptFacts<B> {
     fn every(&self) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
         self.entries().iter().map(move |e| (self.key_of(e), self.entry(e)))
     }
+
+    /// The entries of partition `part`, in key order: the directory's entries tested by their part alone.
+    fn of_part(&self, part: i64) -> impl Iterator<Item = (FactKey<'_>, Found<'_>)> + '_ {
+        self.entries().iter().filter(move |e| e.part == part).map(move |e| (self.key_of(e), self.entry(e)))
+    }
 }
 
 /// A space's chain of kept files, oldest first, read as one: a key's newest entry is its entry; a gone entry hides
@@ -363,6 +368,12 @@ impl<B: Borrow<Block>> KeptChain<'_, B> {
             }
         }
         out
+    }
+
+    /// Every entry of partition `part`, across the files, each key's newest resolved, in key order: a partition's
+    /// read merges its own entries, not every one of the chain.
+    pub fn of_part(&self, part: i64) -> Vec<Kept<'_>> {
+        self.merged(move |f| f.of_part(part))
     }
 
     /// The bytes of the files.

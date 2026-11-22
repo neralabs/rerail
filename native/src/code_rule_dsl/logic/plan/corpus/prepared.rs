@@ -442,7 +442,7 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
     super::memo::off();
     let start = std::time::Instant::now();
     // The store's, where its program's text is stored (a pointer is kept only beside its text, `record`).
-    let kept = source.and_then(|_| pointer::get(store, key));
+    let kept = source.and_then(|_| { let _s = crate::code_rule_dsl::logic::profile::span(|| "the pointer, read".into()); pointer::get(store, key) });
     let (mut facts, size) = match kept {
         Some(facts) => (facts, 0),
         None => match crate::code_rule_dsl::logic::rr::images::shipped().and_then(|b| b.get(shipped_key(key))) {
@@ -490,7 +490,7 @@ pub(super) fn lookup(store: &ContentStore, source: Option<SourceId>, dialect: Gr
         }
         None => return Ok(None),
     };
-    let got = prepared_of(&facts, source, version, dialect);
+    let got = { let _s = crate::code_rule_dsl::logic::profile::span(|| "what preparing found, read".into()); prepared_of(&facts, source, version, dialect) };
     if std::env::var_os("RERAIL_PREPARED_TRACE").is_some() {
         eprintln!("RERAIL_PREPARED_TRACE lookup ({}): {:.1} kB of shipped facts; read {:.3} s, to a prepared program {:.3} s{}",
             super::phases::current().unwrap_or_else(|| "main".into()), size as f64 / 1e3, read.as_secs_f64(), at.elapsed().as_secs_f64(),
