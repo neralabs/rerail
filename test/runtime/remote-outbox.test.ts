@@ -313,7 +313,11 @@ describe("remote sink outbox", () => {
 
   it("marks the hash it keeps for an audit by the record it sent, not by a test of the stored lists", async () => {
     const { sessionId, auditId } = seed();
-    const [intact] = addAudits(sessionId, 1);
+    // A failure of the audit's own leaves its hash readable.
+    const audits = new SqliteAuditStore(databasePath());
+    const intact = audits.start({ sessionId, workspaceRoot: "/work/app", scope: "repository", mode: "log", revision: 1, catalogRevision: "c1", ruleRevisions: [], paths: [] });
+    audits.finish(intact, { status: "completed", failures: [{ clauseId: "c", code: "adapter-error", stage: "persistence", message: "The audit's own failure." }] });
+    audits.close();
     setPathsText(auditId, '["a.ts"');
     // The test of the stored lists says the opposite of each record.
     const tests = vi.spyOn(SqliteAuditReader.prototype, "unreadableListCount").mockImplementation(id => (id === auditId ? 0 : 1));
@@ -322,7 +326,7 @@ describe("remote sink outbox", () => {
     await outbox().sync({ force: true });
     const damaged = auditHashes(auditId);
     expect(damaged.kept).toBe(damaged.marked);
-    const whole = auditHashes(intact!);
+    const whole = auditHashes(intact);
     expect(whole.kept).toBe(whole.readable);
   });
 

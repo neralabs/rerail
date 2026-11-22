@@ -269,8 +269,6 @@ interface RemoteSync {
 interface BatchSending extends RemoteSync {
   readonly rerail: Database.Database | undefined;
   readonly rules: RuleDocuments;
-  /** The audits held under their marked hash whose lists this sync found still unreadable: no later batch tests them. */
-  readonly stillUnreadable: Set<string>;
   batches: number;
   records: number;
   maxSendable: number;
@@ -304,6 +302,11 @@ export class RemoteOutbox {
   readonly #fetch: typeof fetch;
   readonly #now: () => number;
   readonly #holder = randomUUID();
+  /**
+   * The audits held under their marked hash whose lists a sync found still unreadable, by the connection it reads
+   * through, which lasts as long as the sync: its later batches pass them by untested.
+   */
+  readonly #stillUnreadable = new WeakMap<Database.Database, Set<string>>();
 
   constructor(options: OutboxOptions = {}) {
     this.#home = options.home ?? defaultRerailHome();
@@ -450,7 +453,7 @@ export class RemoteOutbox {
     const { state, remote, options, key, configHash } = sync;
     const rerail = this.#openRerail();
     try {
-      const sending: BatchSending = { ...sync, rerail, rules: new RuleDocuments(rerail), stillUnreadable: new Set(), batches: 0, records: 0, maxSendable: Number.POSITIVE_INFINITY, skipped: 0 };
+      const sending: BatchSending = { ...sync, rerail, rules: new RuleDocuments(rerail), batches: 0, records: 0, maxSendable: Number.POSITIVE_INFINITY, skipped: 0 };
       for (let index = 0; index < (options.maxBatches ?? 50); index += 1) {
         if (options.signal?.aborted === true) break;
         const step = await this.#sendBatch(sending);
@@ -468,7 +471,7 @@ export class RemoteOutbox {
   async #sendBatch(sending: BatchSending): Promise<SyncResult | "done" | "next"> {
     const { state, rerail, rules, remote, exclusions, options, key, token } = sending;
     const budget = options.batchBytes ?? MAX_BATCH_BYTES;
-    const batch = this.#collect(state, rerail, rules, remote, exclusions, budget, sending.maxSendable, sending.stillUnreadable);
+    const batch = this.#collect(state, rerail, rules, remote, exclusions, budget, sending.maxSendable);
     if (isEmptyBatch(batch)) return "done";
     const sendable = batch.records.filter(item => item.line !== "").length;
     if (sendable === 0) {
@@ -531,7 +534,7 @@ export class RemoteOutbox {
 
   #collect(
     state: Database.Database, rerail: Database.Database | undefined, rules: RuleDocuments, remote: RemoteEntry,
-    exclusions: readonly RepositoryExclusion[], budget: number, maxSendable: number, stillUnreadable: Set<string>,
+    exclusions: readonly RepositoryExclusion[], budget: number, maxSendable: number,
   ): BatchBuilder {
     const key = remoteStateKey(remote);
     const batch = new BatchBuilder(budget - 1024, maxSendable);
@@ -572,7 +575,7 @@ export class RemoteOutbox {
       const isExcluded = (sessionId: string, at: number): boolean =>
         excludedSessions.has(sessionId) || excluded.at(sessionRepository.get(sessionId) ?? null, at);
       if (!this.#collectEvents(state, rerail, remote, batch, isExcluded)) return batch;
-      if (!this.#collectAudits(rerail, rules, batch, isExcluded, addSnapshot, unsent, stillUnreadable)) return batch;
+      if (!this.#collectAudits(rerail, rules, batch, isExcluded, addSnapshot, unsent)) return batch;
     }
 
     const scans = state.prepare("SELECT scan_id, repository_key, document_json, rules_json, queued_at FROM scans ORDER BY queued_at").all() as Array<{ scan_id: string; repository_key: string; document_json: string; rules_json: string; queued_at: number }>;
@@ -625,11 +628,12 @@ export class RemoteOutbox {
     isExcluded: (sessionId: string, at: number) => boolean,
     addSnapshot: (item: OutboxRecord) => boolean,
     unsent: (item: OutboxRecord) => boolean,
-    stillUnreadable: Set<string>,
   ): boolean {
     const rows = rerail.prepare("SELECT audit_id, session_id, origin, status, started_at, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as FinishedAuditRow[];
     // Opens the database at its first read: a sync with no audit to test or send opens none.
     const reader = new SqliteAuditReader(join(this.#home, RERAIL_DATABASE_FILE));
+    const stillUnreadable = this.#stillUnreadable.get(rerail) ?? new Set<string>();
+    this.#stillUnreadable.set(rerail, stillUnreadable);
     const sink: AuditSink = { rerail, rules, batch, addSnapshot, unsent, reader, stillUnreadable };
     try {
       return rows.every(row => isExcluded(row.session_id, row.started_at) || this.#addPending(sink, row));
