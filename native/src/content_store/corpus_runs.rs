@@ -257,37 +257,6 @@ impl FileStat {
 pub const RACY_NS: i64 = 2_000_000_000;
 
 impl ContentStore {
-    /// Keeps memo plan `plan`'s statistics (decision 0096 §2): one blob, written by the run that counted them.
-    pub fn put_stat_blob(&self, plan: [u8; 32], blob: &[u8]) -> StoreResult<()> {
-        self.immediate_transaction(|tx| {
-            tx.execute_batch("CREATE TABLE IF NOT EXISTS stat_blob(plan BLOB PRIMARY KEY, blob BLOB NOT NULL) WITHOUT ROWID")?;
-            tx.execute_cached("INSERT OR REPLACE INTO stat_blob(plan, blob) VALUES (?1, ?2)", params![&plan[..], blob])?;
-            Ok(())
-        })
-    }
-
-    /// `put_stat_blob`, behind the run (decision 0102), in its record (decision 0306): the blob in its byte area.
-    pub fn queue_stat_blob(&self, plan: [u8; 32], blob: Vec<u8>) {
-        fn apply(cx: &super::record::Apply<'_>, body: super::record::codec::Body) -> StoreResult<()> {
-            let plan: [u8; 32] = super::record::codec::from_body("the kept statistics", body)?;
-            cx.store.put_stat_blob(plan, cx.bytes)
-        }
-        self.record("the kept statistics", vec![stat_blob_key(&plan)], &plan, Some(blob), apply);
-    }
-
-
-    /// Memo plan `plan`'s kept statistics (`put_stat_blob`), if a run kept them; a queued write of them first.
-    pub fn stat_blob(&self, plan: [u8; 32]) -> StoreResult<Option<Vec<u8>>> {
-        // Its statistics name symbols by the store's ids: the reader maps them (decision 0170, `Keeper::map_symbols`).
-        self.settle(&stat_blob_key(&plan));
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let kept: i64 = connection.query_row_cached("SELECT count(*) FROM sqlite_master WHERE type='table' AND name='stat_blob'", [], |r| r.get(0))?;
-        if kept == 0 {
-            return Ok(None);
-        }
-        Ok(connection.query_row_cached("SELECT blob FROM stat_blob WHERE plan=?1", [&plan[..]], |r| r.get(0)).optional()?)
-    }
-
     /// Records the relations a memo plan's entries hold rows of, each with its declared columns (JSON).
     pub fn record_corpus_relations(&self, plan: [u8; 32], relations: &[(String, String)]) -> StoreResult<()> {
         self.immediate_transaction(|tx| {
@@ -1101,11 +1070,6 @@ mod tests;
 /// `bytes` as lower-case hex, as SQLite's `unhex` reads it.
 fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// What a write of memo plan `plan`'s statistics is queued under (`stat_blob` settles it).
-pub fn stat_blob_key(plan: &[u8; 32]) -> super::write_back::Key {
-    super::write_back::Key::of(&[b"stat_blob", plan])
 }
 
 /// Whether `corpus_decided.run` is past its `swept` on connection `c` (a read: the memo sweep's `due`).

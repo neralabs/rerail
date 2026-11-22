@@ -505,7 +505,6 @@ pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
     ("text_term", "term", "SQL over `term_freq` and the `atoms` table, in the store's ids (vocabulary.rs)"),
     ("text_pending", "term", "a trigger on `term_freq`"),
     ("source_objects", "frame", "content-addressed sources: their makers keep no atom (tapes, program texts, tree counts of integer constants, the planning choices' own string table)"),
-    ("stat_blob", "blob", "the kept statistics' exact counts of `sym` columns: mapped as written and read (keptstats.rs `Keeper::map_symbols`)"),
 ];
 
 /// The integer, untyped and blob columns of the store's schema that hold no atom (ids of the store's own rows,

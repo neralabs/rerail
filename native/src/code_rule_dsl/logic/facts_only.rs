@@ -144,7 +144,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("corpus_live", "3"),
     ("corpus_state", "3"),
     ("corpus_decided", "3"),
-    ("stat_blob", "6"),
     ("kind_size", "6"),
     ("edge_freq", "6"),
     ("tape_kind_counts", "6"),
@@ -175,8 +174,9 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// predecessor's tree result segments, which nothing called outside their tests (t33 step 3); 33 when the workspace's
 /// results, their catalogs and checks and its completed directories became entries of the per-file memo (t33 step 8); 31
 /// when the fact relations' column statistics went, which nothing wrote but the demand's terminal estimate, now a kept
-/// fact (t33 step 6).
-const NOT_YET_TABLES_PIN: usize = 31;
+/// fact (t33 step 6); 30 when the corpus path's statistics (`stat_blob`) became kept relations, one partition a memo
+/// plan (t33 step 6).
+const NOT_YET_TABLES_PIN: usize = 30;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.

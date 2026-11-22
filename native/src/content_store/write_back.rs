@@ -1458,8 +1458,8 @@ mod tests {
     fn a_runs_wave_is_written_whole_at_its_boundary() {
         let (dir, store) = store("waves");
         let other = ContentStore::open(&store.database_path).unwrap();
-        let kept = |s: &ContentStore, i: u8| s.stat_blob([i; 32]).unwrap().is_some();
-        let put = |s: &ContentStore, i: u8| s.write_back("blob", 0, vec![], job(move |s| s.put_stat_blob([i; 32], b"kept")));
+        let kept = |s: &ContentStore, i: u8| probed(s, i).is_some();
+        let put = |s: &ContentStore, i: u8| s.write_back("blob", 0, vec![], job(move |s| put_probe(s, i, b"kept")));
         let waves = run_waves();
         for i in 0..3 {
             put(&store, i);
@@ -1502,7 +1502,7 @@ mod tests {
         let d = Arc::clone(&done);
         store.write_back("blob", 0, vec![], job(move |s| {
             std::thread::sleep(std::time::Duration::from_millis(50));
-            s.put_stat_blob([1; 32], b"kept")?;
+            put_probe(s, 1, b"kept")?;
             *d.lock().unwrap() = true;
             Ok(())
         }));
@@ -1510,9 +1510,21 @@ mod tests {
         drop(hold);
         assert!(*done.lock().unwrap());
         let again = ContentStore::open(&path).unwrap();
-        assert_eq!(again.stat_blob([1; 32]).unwrap().as_deref(), Some(&b"kept"[..]));
+        assert_eq!(probed(&again, 1).as_deref(), Some(&b"kept"[..]));
         drop(again);
         let _ = std::fs::remove_dir_all(dir);
     }
 
+    /// A write these tests make and read back: a source of `bytes` and `key`.
+    fn put_probe(s: &ContentStore, key: u8, bytes: &[u8]) -> StoreResult<()> {
+        s.put_source(&[bytes, &[key]].concat(), &[]).map(drop)
+    }
+
+    /// What `put_probe` wrote under `key`, as the store's file holds it now.
+    fn probed(s: &ContentStore, key: u8) -> Option<Vec<u8>> {
+        let id = s.source_by_hash(crate::content_store::HashKey::sha256(&[&b"kept"[..], &[key]].concat())).unwrap()?;
+        let mut bytes = s.get_source(id).unwrap();
+        assert_eq!(bytes.pop(), Some(key));
+        Some(bytes)
+    }
 }

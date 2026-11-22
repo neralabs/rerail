@@ -638,6 +638,9 @@ DROP TABLE IF EXISTS plan_feedback;
 -- the store (`ContentStore::terminal_estimate`).
 DROP TABLE IF EXISTS fact_stats;
 DROP TABLE IF EXISTS fact_value_stats;
+-- The corpus path's statistics (`stat_blob`, one encoded blob a memo plan) went (t33 step 6): they are kept relations
+-- of their own space, one partition a plan (keptstats.rs `Keeper::into_kept`).
+DROP TABLE IF EXISTS stat_blob;
 -- Every `term` column below is the term's atom (`atoms`): its text is stored once.
 CREATE TABLE IF NOT EXISTS term_postings (
     lang INTEGER NOT NULL,

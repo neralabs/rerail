@@ -64,8 +64,6 @@ const NOT_YET_MOVED: &[&str] = &[
     "vocabulary_pending", "vocabulary_predicate", "vocabulary_term", "kind_size", "search_index_sets",
     // The whole run's record.
     "run_record",
-    // The cross part's statistics.
-    "stat_blob",
     // The derivation graph: what it records is the keys of §7.
     "name_bindings", "derivations", "derivation_inputs",
 ];

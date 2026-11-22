@@ -264,6 +264,34 @@ fn holder_ident() -> [u8; 32] {
     sha2::Sha256::digest(b"rerail.kept-facts/holder/v1").into()
 }
 
+/// `rel`'s rows of partition `part`: `n` rows of `types.len()` words, which `fill` gives row by row, written into a
+/// block of their own as they are given (`BlockFlat`, never a heap vector) and digested there; with none, the
+/// partition's rows of `rel` gone. A fill that gives other than `n` whole rows is refused.
+pub fn filled_put<E: Into<StoreError>>(rel: &str, ident: [u8; 32], part: i64, types: &[u8], n: usize, fill: impl FnOnce(&mut dyn FnMut(i64)) -> Result<(), E>) -> StoreResult<KeptPut> {
+    use sha2::Digest as _;
+    let width = types.len();
+    let (what, digest) = if n == 0 {
+        (KeptWhat::Gone, 0)
+    } else {
+        let mut block = BlockFlat::new(n, width, true);
+        let mut h = sha2::Sha256::new();
+        let mut given = 0;
+        fill(&mut |v| {
+            if given < n * width {
+                block.put(given / width, given % width, v);
+                h.update(v.to_le_bytes());
+            }
+            given += 1;
+        })
+        .map_err(Into::into)?;
+        if given != n * width {
+            return Err(StoreError::Invalid(format!("{rel}: {given} values for {n} rows of {width}")));
+        }
+        (KeptWhat::Picked(Box::new(block)), u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes")))
+    };
+    Ok(KeptPut { rel: rel.to_owned(), ident, part, digest, reads: Vec::new(), types: types.to_vec(), what })
+}
+
 /// The put that makes the source of SHA-256 key `source`, and `plan`, partition `part`'s holder in its space.
 pub fn holder_put(part: i64, source: [u8; 32], plan: Option<[u8; 32]>) -> KeptPut {
     let mut row = BlockFlat::new(1, 8, true);
@@ -272,6 +300,12 @@ pub fn holder_put(part: i64, source: [u8; 32], plan: Option<[u8; 32]>) -> KeptPu
     }
     let digest = u64::from_le_bytes(source[..8].try_into().expect("8 bytes")) ^ plan.map_or(0, |p| u64::from_le_bytes(p[..8].try_into().expect("8 bytes")));
     KeptPut { rel: HOLDER.into(), ident: holder_ident(), part, digest, reads: Vec::new(), types: b"iiiiiiii".to_vec(), what: KeptWhat::Picked(Box::new(row)) }
+}
+
+/// The put that makes `plan` alone partition `part`'s holder in its space: held while the plan is not dead, whatever
+/// sources the store keeps (a holder of no source, its key zero).
+pub fn plan_holder_put(part: i64, plan: [u8; 32]) -> KeptPut {
+    holder_put(part, [0; 32], Some(plan))
 }
 
 /// The source key and plan a holder entry names.
@@ -1108,6 +1142,7 @@ impl super::ContentStore {
                 for entry in chain.of(HOLDER) {
                     let held = match holder_of(&entry) {
                         Some((_, Some(plan))) if dead.contains(&plan) => false,
+                        Some((key, Some(_))) if key == [0; 32] => true,
                         Some((key, _)) => super::objects::source_id_by_hash(t, super::HashKey::from_sha256_digest(key))?.is_some(),
                         None => false,
                     };

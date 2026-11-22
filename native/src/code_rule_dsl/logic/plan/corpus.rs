@@ -3374,13 +3374,10 @@ fn run_observed_within(
             }
             // The last program's, whichever it was: a relation a rule's edit reached since is counted again from
             // scratch, the others are as counted (`Keeper::begin`, by identity; decision 0225 §2).
-            let mut k = last.and_then(|w| store.stat_blob(w).ok().flatten()).and_then(|b| keptstats::Keeper::decode(&b)).unwrap_or_default();
-            // Its constants are the store's atoms: this process's, mapped (decision 0170), in one call.
+            // Its constants are the store's atoms: this process's, mapped as read (decision 0170), in one call.
             let atoms = store.atoms_handle();
-            if atoms.holds_by_reading()
-                && k.map_symbols(&|key, names| memo_plan.syms.columns(key, names.len()), atoms.forked(), |v| atoms.to_local(crate::content_store::StoreIds::as_stored(v)).map(drop)).is_err() {
-                    k = keptstats::Keeper::default();
-                }
+            let to_local = |v: &mut [i64]| if atoms.holds_by_reading() { atoms.to_local(crate::content_store::StoreIds::as_stored(v)).map(drop) } else { Ok(()) };
+            let mut k = last.and_then(|w| keptstats::Keeper::of_kept(&store.kept_space(&keptstats::space()).ok()??, &w, &to_local)).unwrap_or_default();
             // The contents its last run had not stored yet, by their sources now.
             k.resolve(|digests| store.sources_by_hashes(&digests.iter().map(|d| crate::content_store::HashKey::from_sha256_digest(*d)).collect::<Vec<_>>()).unwrap_or_else(|_| vec![None; digests.len()]));
             Some(k)
@@ -7579,23 +7576,15 @@ fn run_observed_within(
             (Some(s), Some(k), _) => {
                 s.stats.lock().expect("the session's statistics").insert(memo_program, (memo_whole, k));
             }
-            // Written as one blob with the run, whose memo entries it names by content (0096 §2): a later process
-            // patches it. A run that could not keep them writes it empty, so the next counts every file in.
+            // Kept with the run, whose memo entries it names by content (0096 §2): a later process patches it. A run
+            // that could not keep them keeps it empty, so the next counts every file in. Kept facts of the store (t33
+            // step 6), its symbol columns' constants mapped to the store's ids by the store's writer (decision 0170).
             (None, Some(k), Some(memo::Memo::Stored(store))) if kept.is_none() || k.counted != (0, 0) => {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| "write the kept statistics, queued".into());
-                // Its constants as the store numbers them, in the writer's transaction (decision 0170): a record of its
-                // own (decision 0306), its relations' symbol columns asked here.
-                let columns = k.symbol_columns(&|key, names| memo_plan.syms.columns(key, names.len()));
-                fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> crate::content_store::StoreResult<()> {
-                    let (plan, columns): ([u8; 32], std::collections::BTreeMap<String, Option<Vec<bool>>>) = crate::content_store::record::codec::from_body("the kept statistics, mapped", body)?;
-                    if !cx.store.atoms_handle().forked() {
-                        return cx.store.put_stat_blob(plan, cx.bytes);
-                    }
-                    let mut k = keptstats::Keeper::decode(cx.bytes).ok_or_else(|| crate::content_store::StoreError::Invalid("the kept statistics do not read back".into()))?;
-                    k.map_symbols(&|key, _| columns.get(key).cloned().flatten(), true, |v| cx.store.symbols_to_store(crate::content_store::ProcessIds::of_process(v)).map(drop))?;
-                    cx.store.put_stat_blob(plan, &k.encode())
+                match k.into_kept(&memo_whole, &memo_program, &|key, names| memo_plan.syms.columns(key, names.len())) {
+                    Ok(puts) => store.queue_kept(keptstats::space(), puts),
+                    Err(e) => crate::code_rule_dsl::logic::profile::decision("the kept statistics", || format!("not kept: {e}")),
                 }
-                store.queue_record(crate::content_store::write_back::Syms::Mapped, "the kept statistics, mapped", vec![crate::content_store::stat_blob_key(&memo_whole)], &(memo_whole, columns), Some(k.encode()), apply, false);
             }
             _ => {}
         }
