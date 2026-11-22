@@ -829,11 +829,14 @@ function takeFirstSightListings(findings: WorktreeFindings, listed: Map<string, 
 /**
  * Whether `edit`, of the file at `path` in its checkout, is one the walk's listings (`listed`) leave out: a file there
  * that holds what its index holds, where the index holds what `HEAD` holds. A deletion they leave out is of a path
- * neither the index nor `HEAD` has, which a reading with no move of `HEAD` known before takes for Git's too
- * (`removedByGit`). A file the walk could not read as text has no verdict of Git's, and is asked as before.
+ * neither the index nor `HEAD` has, which a reading with no `HEAD` known before takes for Git's too (`removedByGit`).
+ * Where the session knows a `HEAD` of the checkout (`headKnown`: a worktree it saw before Git removed it and added it
+ * again), a reading that finds `HEAD` unmoved takes the deletion for no Git command's, so it is asked as before. So is
+ * a file with a read error, which has no verdict of Git's.
  */
-function listedUnchanged(edit: CodeRuleEdit, path: string, listed: ReadonlySet<string>): boolean {
-  return edit.readError === undefined && !listed.has(path);
+function listedUnchanged(edit: CodeRuleEdit, path: string, listed: ReadonlySet<string>, headKnown: boolean): boolean {
+  if (edit.readError !== undefined || listed.has(path)) return false;
+  return edit.deleted !== true || !headKnown;
 }
 
 /**
@@ -3627,7 +3630,7 @@ export class CodeRuleBridge {
    * of `HEAD` known before (`#heldByGit`). It is judged so without asking Git again.
    * Every file of a worktree Git added while the session ran is stamped since the session opened, so the reading asked
    * Git for the blobs of all of them, and of `HEAD`'s moves, in the queue a shell command's result waits on, for every
-   * such worktree and every session watching it. The rest, and a file the walk could not read, are read as before.
+   * such worktree and every session watching it. The rest are read as before (`listedUnchanged`).
    */
   async #firstSightVerdicts(
     discovery: SourceDiscovery,
@@ -3635,7 +3638,8 @@ export class CodeRuleBridge {
     group: readonly CodeRuleEdit[],
     uncaptured: ReadonlyMap<string, string>,
   ): Promise<Map<string, GitVerdict>> {
-    const unchanged = new Set(group.filter(edit => listedUnchanged(edit, sessionPath(checkout, resolve(discovery.root, edit.path)), listed)));
+    const headKnown = discovery.heads.has(checkout);
+    const unchanged = new Set(group.filter(edit => listedUnchanged(edit, sessionPath(checkout, resolve(discovery.root, edit.path)), listed, headKnown)));
     const asked = group.filter(edit => !unchanged.has(edit));
     const verdicts = asked.length === 0 ? new Map<string, GitVerdict>() : await this.#gitVerdicts(discovery, checkout, asked, uncaptured);
     for (const edit of unchanged) verdicts.set(edit.path, {});
