@@ -118,45 +118,39 @@ fn in_row(b: u8, r: u8) -> bool {
 /// to the padded source's end), or none.
 fn check_number(b: &[u8]) -> Option<usize> {
 let mut j = 0usize;
-if matches!(b.get(j), Some(0x2d)) {
+if matches!(b[j], 0x2d) {
 j += 1;
 }
-if matches!(b.get(j), Some(0x30)) {
+if matches!(b[j], 0x30) {
 j += 1;
-} else if matches!(b.get(j), Some(0x31..=0x39)) {
+} else if matches!(b[j], 0x31..=0x39) {
 j += 1;
-while matches!(b.get(j), Some(0x30..=0x39)) {
+while matches!(b[j], 0x30..=0x39) {
 j += 1;
 }
 } else {
 return None;
 }
-if matches!(b.get(j), Some(0x2e)) {
+if matches!(b[j], 0x2e) {
 j += 1;
-if !matches!(b.get(j), Some(0x30..=0x39)) {
+if !matches!(b[j], 0x30..=0x39) {
 return None;
 }
 j += 1;
-while matches!(b.get(j), Some(0x30..=0x39)) {
+while matches!(b[j], 0x30..=0x39) {
 j += 1;
 }
 }
-if matches!(b.get(j), Some(0x45 | 0x65)) {
+if matches!(b[j], 0x45 | 0x65) {
 j += 1;
-if matches!(b.get(j), Some(0x2b | 0x2d)) {
-if matches!(b.get(j), Some(0x2b)) {
+if matches!(b[j], 0x2b | 0x2d) {
 j += 1;
-} else if matches!(b.get(j), Some(0x2d)) {
-j += 1;
-} else {
-return None;
 }
-}
-if !matches!(b.get(j), Some(0x30..=0x39)) {
+if !matches!(b[j], 0x30..=0x39) {
 return None;
 }
 j += 1;
-while matches!(b.get(j), Some(0x30..=0x39)) {
+while matches!(b[j], 0x30..=0x39) {
 j += 1;
 }
 }

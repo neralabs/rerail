@@ -1293,6 +1293,11 @@ fn json_tier2_is_walks_shape() {
     assert_eq!(tier2.matches("fn number_end(").count(), 1, "a number's end written once");
     // A number at a digit or `-` alone (`walk`'s `*v - '0' < 10 || *v == '-'`), any other byte refused.
     assert!(primitive.contains("0x2d | 0x30..=0x39 => {\nlet end = number_end(src, s)?;"), "the number's arm its check's first bytes:\n{primitive}");
+    // The number's check reads its bytes with no bound (the padding ends every number, as `number_end` reads), and the
+    // exponent's sign in one test.
+    let check = tier2.split("fn check_number(b: &[u8]) -> Option<usize> {\n").nth(1).expect("the check").split("\nSome(j)\n}").next().expect("its body");
+    assert!(!check.contains("b.get(j)"), "a bound at each byte:\n{check}");
+    assert!(check.contains("if matches!(b[j], 0x2b | 0x2d) {\nj += 1;\n}\n"), "the exponent's sign one test:\n{check}");
     assert!(!tier2.contains("i += 1;\ne = end;\nleaf("), "a token's leaf written out at a place");
     // The nodes stored through the walk's hold on the tape, a local of `run` (`Cursor`, the lean parser's `Walk`), not
     // the writer's ops on its state.
