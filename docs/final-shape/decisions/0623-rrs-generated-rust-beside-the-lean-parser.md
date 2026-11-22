@@ -108,3 +108,25 @@ where lean checks `violation`'s ninth. The `match` on byte strings is gone where
 Elsewhere, and where no multiplier is found, it stays.
 
 `rr_parser`'s 51 library tests pass, the corpus's tapes and records included.
+
+## Step 3, first part: the block's masks once a block, as lean's `Window` (done)
+
+- **The block's words.** At each block, the loop makes once, from the block's 64 bytes, the masks its tokens read
+  where they start (`k_M`: a word's run, a number's run and dot, the brackets the depth counts, the gap's newline and
+  form feed, the skipped bytes). A token reads its bits from the block's word, and goes on in windows only past the
+  block. That is lean's `micro::run`, then `word_end` (`brun_last`, `bfirst_in`, `bcount_in`, `bfirst_clear`).
+- **The region readers read from the opener.** A region's row (a rule `read …`) reads its closer and its checks in
+  windows from the token's first byte, as lean's micro-lexers read from theirs, and the block makes none of their
+  masks.
+- **A class is made by the nibble tables.** A window's class is stage 1's: its pair of nibble tables (`classify`), then
+  one test and one bitmask. The tables are the ones the file holds (`stage1_codes`: stage 1 makes a class's code again
+  against the tables of the classes it writes). A first try took a node's own code, which names an earlier table
+  layout, and the samples with a `\u` or a `\q` in a string failed. The tests caught it.
+- **A read of one byte is a test of the bytes there** (`first_clear(&M, s, s + 1)`: a zero or a minus before a
+  digit).
+
+`rr_parser`'s 51 library tests pass, the corpus's tapes and records included.
+
+What the block makes is still more than lean's four masks (`space`, `word`, `rare`, `pair`): a number's three, which
+lean reads as a rare token from its start, and the gap's newline and form feed, which lean's parser asks only where a
+statement asks it (step 5).

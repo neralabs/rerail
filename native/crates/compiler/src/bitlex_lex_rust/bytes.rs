@@ -26,6 +26,13 @@ pub(super) struct Bytes<'a> {
     /// Each class's window function, by name.
     cls: Vec<String>,
     code: String,
+    /// The masks the loop reads from its block's word (`k_NAME`, made once a block, as the lean lexer's `Window`).
+    block: Vec<String>,
+    /// Each class's bits as stage 1 makes them of the byte vector `v` (`cP`: its nibble tables' pair `P`, simdjson's
+    /// `classify`), by name.
+    class_code: HashMap<String, String>,
+    /// Whether the line read is in a region's row: its reads go from the opener, as the lean lexer's micro-lexers.
+    in_region: bool,
 }
 
 /// The calls of the loop that read a mask: their name, and how many of their first arguments are masks.
@@ -33,7 +40,7 @@ const READS: [(&str, usize); 8] =
     [("run_once_last", 2), ("first_clear", 1), ("first_bit", 1), ("count_in", 1), ("first_in", 1), ("run_last", 1), ("any_in", 1), ("bit", 1)];
 
 impl<'a> Bytes<'a> {
-    pub(super) fn new(stmts: &'a [Stmt], locals: HashMap<String, Expr>) -> Self {
+    pub(super) fn new(stmts: &'a [Stmt], locals: HashMap<String, Expr>, class_code: HashMap<String, String>) -> Self {
         let mut classes = HashMap::new();
         let mut defs = HashMap::new();
         for s in stmts {
@@ -49,7 +56,7 @@ impl<'a> Bytes<'a> {
                 _ => {}
             }
         }
-        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new() }
+        Bytes { classes, defs, locals, written: Vec::new(), cls: Vec::new(), code: String::new(), block: Vec::new(), class_code, in_region: false }
     }
 
     /// `prev(E, k)` and `next(E, k)`: the call's mask and its distance, back (negative) or on.
@@ -117,6 +124,23 @@ impl<'a> Bytes<'a> {
             Expr::Name(n) => {
                 if self.classes.contains_key(n.as_str()) {
                     let f = format!("cls_{}", ident(n));
+                    if !self.cls.contains(&f)
+                        && let Some(code) = self.class_code.get(n.as_str())
+                    {
+                        self.cls.push(f.clone());
+                        // Stage 1's bits of the class: its pairs of nibble tables, then one test (simdjson's `classify`).
+                        let code = code.trim_end_matches(" & lv").to_owned();
+                        let mut lines = String::new();
+                        for k in 0..8 {
+                            if code.contains(&format!("c{k},")) || code.contains(&format!("c{k})")) {
+                                let _ = writeln!(lines, "    let c{k} = unsafe {{ S::classify(v, &LO_{k}, &HI_{k}) }};");
+                            }
+                        }
+                        let _ = write!(
+                            self.code,
+                            "/// Class `{n}`'s bits in the 64 bytes from `p`: none past the file or before it.\n///\n/// # Safety\n/// The CPU runs `S`'s backend.\n#[inline(always)]\nunsafe fn {f}<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize, p: isize) -> u64 {{\n    let Some((v, q)) = (unsafe {{ window::<S>(src, n, p) }}) else {{ return 0 }};\n{lines}    // SAFETY: the caller's.\n    let b = unsafe {{ {code} }};\n    held(b, q, n, p)\n}}\n\n"
+                        );
+                    }
                     if !self.cls.contains(&f) {
                         self.cls.push(f.clone());
                         let rs = self.classes[n.as_str()];
@@ -197,6 +221,35 @@ impl<'a> Bytes<'a> {
             }
             Ok(f)
         };
+        // A read of one byte (`first_clear(&M, a, a + 1)`): a test of the bytes there.
+        if name == "first_clear" && args.len() == 3 && args[2].trim() == format!("{} + 1", args[1].trim()) {
+            let e = self.expr(&m)?;
+            let a = args[1].trim();
+            return Ok(Some(format!("(!{}).then_some({a})", self.at(&e, a, 0)?)));
+        }
+        // A mask with no escapes: its block's word first, made once a block (`k_M`), then windows past the block.
+        if name != "bit" && !self.in_region && !self.window_fn(&m)?.1 {
+            let k = self.block_word(&m);
+            let (f, _) = self.window_fn(&m)?;
+            return Ok(Some(match (name, args.len()) {
+                ("first_bit", 2) => format!("bfirst_bit(n, base, {k}, {}, {f})", args[1].trim()),
+                ("count_in", 3) => format!("bcount_in(n, base, {k}, {}, {}, {f})", args[1].trim(), args[2].trim()),
+                ("first_in", 3) => format!("bfirst_in(n, base, {k}, {}, {}, {f})", args[1].trim(), args[2].trim()),
+                ("any_in", 3) => format!("bfirst_in(n, base, {k}, {}, {}, {f}).is_some()", args[1].trim(), args[2].trim()),
+                ("first_clear", 3) => format!("bfirst_clear(n, base, {k}, {}, {}, {f})", args[1].trim(), args[2].trim()),
+                ("run_last", 2) => format!("brun_last(n, base, {k}, {}, {f})", args[1].trim()),
+                ("run_once_last", 3) => {
+                    let Some(d) = mask(&args[1]) else { return Ok(None) };
+                    let (fd, esc) = self.window_fn(&d)?;
+                    if esc {
+                        return Err(format!("`{d}` reads escapes"));
+                    }
+                    let kd = self.block_word(&d);
+                    format!("brun_once_last(n, base, {k}, {kd}, {}, {f}, {fd})", args[2].trim())
+                }
+                _ => return Err(format!("`{name}` with {} arguments has no form of the bytes", args.len())),
+            }));
+        }
         Ok(Some(match (name, args.len()) {
             ("bit", 2) => {
                 let e = self.expr(&m)?;
@@ -224,7 +277,12 @@ impl<'a> Bytes<'a> {
     /// `code` with each read of a mask in the bytes' form.
     pub(super) fn rewrite(&mut self, code: &str) -> Result<String, String> {
         let mut out = String::new();
+        self.in_region = false;
         for line in code.split_inclusive('\n') {
+            // A row's comment names its rule (`// `kind`: rule`): a region's is `read …`.
+            if let Some(rule) = line.trim_start().strip_prefix("// `").and_then(|r| r.split_once("`: ")).map(|(_, r)| r) {
+                self.in_region = rule.starts_with("read ");
+            }
             out.push_str(&self.rewrite_line(line, line)?);
         }
         Ok(out)
@@ -257,13 +315,30 @@ impl<'a> Bytes<'a> {
         Ok(out)
     }
 
-    /// The block's token starts: the bytes `skip` does not hold, from block `b`'s window.
+    /// The block's word of mask `m` (`k_m`), made once a block.
+    fn block_word(&mut self, m: &str) -> String {
+        if !self.block.iter().any(|b| b == m) {
+            self.block.push(m.to_owned());
+        }
+        format!("k_{m}")
+    }
+
+    /// The block's token starts: the bytes `skip` does not hold, from block `b`'s word.
     pub(super) fn starts(&mut self, skip: &str) -> Result<String, String> {
-        let (f, esc) = self.window_fn(skip)?;
+        let (_, esc) = self.window_fn(skip)?;
         if esc {
             return Err(format!("`{skip}` reads escapes"));
         }
-        Ok(format!("!({f})(base as isize, &mut 0)"))
+        Ok(format!("!{}", self.block_word(skip)))
+    }
+
+    /// The block's words, made once a block where the loop comes to it: the lean lexer's `Window`.
+    pub(super) fn block_words(&self) -> String {
+        let mut out = String::from("        // The block's masks, from its bytes (the lean lexer's `Window`): what its tokens read of it.\n");
+        for m in &self.block {
+            let _ = writeln!(out, "        let k_{m} = unsafe {{ w_{m}::<S>(src, n, base as isize, &mut 0) }};");
+        }
+        out
     }
 
     /// The window functions and helpers the rewritten reads call.
@@ -473,6 +548,102 @@ fn wrun_last(n: usize, s: usize, mut w: impl FnMut(isize, &mut u64) -> u64) -> u
             return (p + ones - 1) as usize;
         }
         p += 64;
+    }
+}
+
+/// `wfirst_bit` from block `base`'s word `k` where `from` is in the block, then windows past it.
+#[inline(always)]
+fn bfirst_bit(n: usize, base: usize, k: u64, from: usize, w: impl FnMut(isize, &mut u64) -> u64) -> Option<usize> {
+    let q = from.wrapping_sub(base);
+    if q >= 64 {
+        return wfirst_bit(n, from, w);
+    }
+    let bits = k & (!0u64 << q);
+    if bits != 0 {
+        return Some(base + bits.trailing_zeros() as usize);
+    }
+    wfirst_bit(n, base + 64, w)
+}
+
+/// Block `base`'s word `k` cut to bytes `a..=b` (`a` in the block), and whether `b` is past the block.
+#[inline(always)]
+fn in_block(base: usize, k: u64, a: usize, b: usize) -> (u64, bool) {
+    let mut bits = k & (!0u64 << (a - base));
+    let past = b >= base + 64;
+    if !past {
+        bits &= !0u64 >> (63 - (b - base));
+    }
+    (bits, past)
+}
+
+/// `wfirst_in` from block `base`'s word `k` where `a` is in the block, then windows past it.
+#[inline(always)]
+fn bfirst_in(n: usize, base: usize, k: u64, a: usize, b: usize, w: impl FnMut(isize, &mut u64) -> u64) -> Option<usize> {
+    if a > b {
+        return None;
+    }
+    if a.wrapping_sub(base) >= 64 {
+        return wfirst_in(n, a, b, w);
+    }
+    let (bits, past) = in_block(base, k, a, b);
+    if bits != 0 {
+        return Some(base + bits.trailing_zeros() as usize);
+    }
+    if past { wfirst_in(n, base + 64, b, w) } else { None }
+}
+
+/// `wcount_in` from block `base`'s word `k` where `a` is in the block, then windows past it.
+#[inline(always)]
+fn bcount_in(n: usize, base: usize, k: u64, a: usize, b: usize, w: impl FnMut(isize, &mut u64) -> u64) -> u32 {
+    if a > b {
+        return 0;
+    }
+    if a.wrapping_sub(base) >= 64 {
+        return wcount_in(n, a, b, w);
+    }
+    let (bits, past) = in_block(base, k, a, b);
+    bits.count_ones() + if past { wcount_in(n, base + 64, b, w) } else { 0 }
+}
+
+/// `wfirst_clear` from block `base`'s word `k` where `from` is in the block, then windows past it.
+#[inline(always)]
+fn bfirst_clear(n: usize, base: usize, k: u64, from: usize, to: usize, w: impl FnMut(isize, &mut u64) -> u64) -> Option<usize> {
+    if from >= to {
+        return None;
+    }
+    if from.wrapping_sub(base) >= 64 {
+        return wfirst_clear(n, from, to, w);
+    }
+    let (bits, past) = in_block(base, !k, from, to - 1);
+    if bits != 0 {
+        let i = base + bits.trailing_zeros() as usize;
+        return (i < n).then_some(i);
+    }
+    if past { wfirst_clear(n, base + 64, to, w) } else { None }
+}
+
+/// `wrun_last` from block `base`'s word `k` where the run's first byte is in the block (the lean lexer's
+/// `micro::run`), then windows past it (its `word_end`).
+#[inline(always)]
+fn brun_last(n: usize, base: usize, k: u64, s: usize, w: impl FnMut(isize, &mut u64) -> u64) -> usize {
+    let q = (s + 1).wrapping_sub(base);
+    if q >= 64 {
+        return wrun_last(n, s, w);
+    }
+    let ones = (!(k >> q)).trailing_zeros() as usize;
+    if q + ones < 64 {
+        return s + ones;
+    }
+    wrun_last(n, base + 63, w)
+}
+
+/// `wrun_once_last` from block `base`'s words `kr` and `kd`, then windows past it.
+#[inline(always)]
+fn brun_once_last(n: usize, base: usize, kr: u64, kd: u64, s: usize, r: impl FnMut(isize, &mut u64) -> u64, mut d: impl FnMut(isize, &mut u64) -> u64) -> usize {
+    let l = brun_last(n, base, kr, s, r);
+    match bfirst_in(n, base, kd, s + 1, l, &mut d).and_then(|p| bfirst_in(n, base, kd, p + 1, l, &mut d)) {
+        Some(q) => q - 1,
+        None => l,
     }
 }
 

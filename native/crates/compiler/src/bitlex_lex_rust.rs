@@ -1434,8 +1434,9 @@ impl Gen<'_> {
     /// Stage 1's code in its parts (`Stage1Text`): `stage1` writes them as a function of its own, and the one pass
     /// (decision 0619) writes its block's code where the token loop needs the block. `padded`: the source is padded,
     /// each block loaded where it is.
-    fn stage1_parts(&self, padded: bool) -> Stage1Text {
-        let mut out = String::new();
+    /// The masks stage 1 writes (`live`), the nibble tables of the classes among them (`pairs`), and each mask's code
+    /// (a class's in those tables).
+    fn stage1_codes(&self) -> (Vec<bool>, Vec<Vec<Rect>>, Vec<String>) {
         // The masks stage 1 writes: those an escape, the records or a later stage reads (tier 2's words, `also`, among
         // them), and their operands.
         let mut live: Vec<bool> = self.nodes.iter().enumerate().map(|(i, n)| n.kept || !n.also.is_empty() || self.index == Some(i) || self.sinks.iter().chain(&self.end_sinks).any(|(_, s)| *s == i)).collect();
@@ -1460,6 +1461,12 @@ impl Gen<'_> {
                 _ => n.code.clone(),
             })
             .collect();
+        (live, pairs, codes)
+    }
+
+    fn stage1_parts(&self, padded: bool) -> Stage1Text {
+        let mut out = String::new();
+        let (live, pairs, codes) = self.stage1_codes();
         for (p, rects) in pairs.iter().enumerate() {
             let (mut lo, mut hi) = ([0u8; 16], [0u8; 16]);
             for (b, &(h, l)) in rects.iter().enumerate() {
@@ -5885,7 +5892,10 @@ impl Gen<'_> {
         // nothing of its own and every mask the loop reads has that form.
         let from_bytes = if fused && self.stage1_parts(true).finals.trim().is_empty() && !self.body.lines().any(|l| l.trim_start().starts_with("refused |=")) {
             let locals: HashMap<String, Expr> = self.nodes.iter().filter_map(|n| n.expr.clone().map(|e| (n.name.clone(), e))).collect();
-            let mut by = bytes::Bytes::new(x.stmts, locals);
+            // Each class stage 1 writes, by the nibble tables the file holds (`stage1_codes`).
+            let (live, _, codes) = self.stage1_codes();
+            let class_code: HashMap<String, String> = self.nodes.iter().zip(&live).zip(&codes).filter(|((n, l), _)| **l && n.class.is_some()).filter_map(|((n, _), c)| n.what.strip_prefix("class ").map(|w| (w.to_owned(), c.clone()))).collect();
+            let mut by = bytes::Bytes::new(x.stmts, locals, class_code);
             let mut go = || -> Result<_, String> {
                 let mut pieces = Vec::new();
                 for t in [&open_code, &branches, &token_code, &own_code, &gap_code, &acc_after] {
@@ -5896,7 +5906,7 @@ impl Gen<'_> {
                     pieces.push(t);
                 }
                 let starts = by.starts(&skip)?;
-                Ok((pieces, starts))
+                Ok((pieces, format!("{}        let mut firsts = {starts}", by.block_words())))
             };
             go().ok().map(|(p, st)| (p, st, by.code()))
         } else {
@@ -5962,14 +5972,14 @@ impl Gen<'_> {
         }
         let _ = write!(
             out,
-            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}{scan_decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).\n    let mut b = at / 64;\n{stage}{loop_head}        let base = b * 64;\n        let mut firsts = {block_starts} & (!0u64 << at.saturating_sub(base));\n        while firsts != 0 {{\n        let s = base + firsts.trailing_zeros() as usize;\n        if s >= n {{\n            break 'tokens;\n        }}\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches};\n        let word = if extra {{ 0 }} else {{ {word_read} }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n        if at >= base + 64 {{\n            b = at / 64;\n            continue 'tokens;\n        }}\n        firsts &= !0u64 << (at - base);\n        }}\n        b += 1;\n    }}\n{pass_end}{unplaced_code}    let _ = (from, from_record, before, pending);\n{span_after}    Lexed {{\n        starts,\n        lasts,\n        codes,\n{masks_init}        refused,\n    }}\n}}\n",
+            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}{scan_decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).\n    let mut b = at / 64;\n{stage}{loop_head}        let base = b * 64;\n{block_starts} & (!0u64 << at.saturating_sub(base));\n        while firsts != 0 {{\n        let s = base + firsts.trailing_zeros() as usize;\n        if s >= n {{\n            break 'tokens;\n        }}\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches};\n        let word = if extra {{ 0 }} else {{ {word_read} }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n        if at >= base + 64 {{\n            b = at / 64;\n            continue 'tokens;\n        }}\n        firsts &= !0u64 << (at - base);\n        }}\n        b += 1;\n    }}\n{pass_end}{unplaced_code}    let _ = (from, from_record, before, pending);\n{span_after}    Lexed {{\n        starts,\n        lasts,\n        codes,\n{masks_init}        refused,\n    }}\n}}\n",
             own = own_code,
             plain_decl = plain_decl_text,
             stage = if fused { walk.as_str() } else { "" },
             word_read = if word_table.is_some() { "word_at(src, s, l + 1 - s)" } else { "word(&src[s..=l])" },
             block_starts = match &from_bytes {
                 Some((_, st, _)) => st.clone(),
-                None => format!("!{skip}[b]"),
+                None => format!("        let mut firsts = !{skip}[b]"),
             },
             masks_init = if fields.is_empty() { String::new() } else { format!("        masks: Masks {{\n{fields_init}        }},\n") },
         );
