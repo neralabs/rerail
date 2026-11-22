@@ -352,14 +352,17 @@ pub(super) fn sampled_report(r: &mut String) {
     for p in &t.open {
         let _ = writeln!(r, "    {}", super::short(p, 160));
     }
-    // The footprint then, by holder: the heap's live bytes and what it keeps resident beyond them, the device's
-    // buffers (the driver's count; of them the pool's reservations and relational work's leases), SQLite's heap
-    // (inside jemalloc's when it allocates there), and the rest (stacks, code, maps, other allocators).
+    // The footprint then, by holder: the heap's live bytes and what it keeps resident beyond them, the device's own
+    // buffers (the pool's reservations, relational work's leases and its idle buffers: IOAccelerator memory), SQLite's
+    // heap (inside jemalloc's when it allocates there), the host blocks, and the rest (stacks, code, maps, other
+    // allocators). The driver's count (`current_allocated_size`) is shown apart: it counts every no-copy wrap of host
+    // memory (the blocks, the heap) again, so it is no holder of its own (ab145: 2,709 MB of it at a 3,051 MB
+    // footprint whose IOAccelerator regions were 971 MB).
     let [driver, reserved, leased, idle, sqlite, host, host_free] = t.holders;
     let heap_mb = |b: u64| (b >> 20) as usize;
-    let accounted = heap_mb(t.resident) + driver;
-    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; Metal driver {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} ({} free on their lists); the rest {}",
-        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), driver, reserved, leased, idle, sqlite, host, host_free, heap_mb(t.footprint).saturating_sub(accounted + host));
+    let accounted = heap_mb(t.resident) + reserved + leased + idle + host;
+    let _ = writeln!(r, "  by holder then (MB): heap live {}, heap resident beyond live {}; the device's own {} (device pool {}, relational leases {} + {} idle); SQLite heap {}; host blocks {} ({} free on their lists); the rest {}; the Metal driver's count {} (no-copy wraps of host memory counted again)",
+        heap_mb(t.live), heap_mb(t.resident.saturating_sub(t.live)), reserved + leased + idle, reserved, leased, idle, sqlite, host, host_free, heap_mb(t.footprint).saturating_sub(accounted), driver);
     // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
     // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
     let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
