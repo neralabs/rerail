@@ -93,6 +93,7 @@
 #define CLIF_T_C_CLEARING 4294967295u
 #define CLIF_T_C_WRITING 2147483648u
 #define CLIF_T_C_PROBES 16u
+#define CLIF_T_C_SLOTS_MAX 131072u
 #define CLIF_T_C_TRIES 4u
 #define CLIF_T_C_SPIN 65536u
 // A slot: the key's tag above TAG_SHIFT, its entry's number plus one below (0: pending, no entry yet).
