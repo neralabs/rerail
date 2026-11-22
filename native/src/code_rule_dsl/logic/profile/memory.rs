@@ -346,6 +346,9 @@ pub(super) fn sampled_report(r: &mut String) {
     let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
     if let Some(census) = width_census::report() {
         let _ = writeln!(r, "  {census}");
+        for line in width_census::top(40) {
+            let _ = writeln!(r, "    {line}");
+        }
     }
     // What threads keep on the device between strata, past every admission (Q203).
     let [scratch] = rerail_accel::gpu::shared::kept();
@@ -422,10 +425,48 @@ pub mod width_census {
     /// The bytes a split layout would hold: a node id's document part (above bit 32) as an offset from its least, and
     /// its low part, each at the bytes it needs; a value below 2^32 as it is.
     static SPLIT: AtomicU64 = AtomicU64::new(0);
+    /// The bytes per range of 4,096 rows, chosen by the blocks' encoder: as written, and each range sorted.
+    static RANGED: [AtomicU64; 2] = [const { AtomicU64::new(0) }; 2];
+
+    /// Each relation's rows and values let go, by its name (a stratum's name prefix folded: `rr_narrow_` kept).
+    static BY_NAME: std::sync::Mutex<Vec<(String, u64, u64, u64)>> = std::sync::Mutex::new(Vec::new());
+
+    pub fn relation(name: &str, rows: u64, values: u64) {
+        let mut by = BY_NAME.lock().unwrap_or_else(|e| e.into_inner());
+        match by.iter_mut().find(|e| e.0 == name) {
+            Some(e) => {
+                e.1 += rows;
+                e.2 += values;
+                e.3 += 1;
+            }
+            None => by.push((name.to_owned(), rows, values, 1)),
+        }
+    }
+
+    /// The relations that held the most values, with their rows and how many times one was let go.
+    pub fn top(n: usize) -> Vec<String> {
+        let mut by = BY_NAME.lock().unwrap_or_else(|e| e.into_inner()).clone();
+        by.sort_by(|a, b| b.2.cmp(&a.2));
+        let total: u64 = by.iter().map(|e| e.2).sum();
+        let mut out = vec![format!("relations let go: {} names, {} M values in all; the most:", by.len(), total / 1_000_000)];
+        out.extend(by.iter().take(n).map(|(name, rows, values, times)| format!("{:>8.1} M values {:>8.1} M rows {times:>6}x  {name}", *values as f64 / 1e6, *rows as f64 / 1e6)));
+        out
+    }
+
+    pub fn ranged(written: u64, sorted: u64) {
+        RANGED[0].fetch_add(written, Relaxed);
+        RANGED[1].fetch_add(sorted, Relaxed);
+    }
 
     pub fn on() -> bool {
         static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
         *ON.get_or_init(|| std::env::var_os("RERAIL_WIDTH_CENSUS").is_some())
+    }
+
+    /// Whether each range is encoded too (`RERAIL_WIDTH_CENSUS=ranged`): about as long as the run again.
+    pub fn ranges() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var("RERAIL_WIDTH_CENSUS").is_ok_and(|v| v == "ranged"))
     }
 
     fn class(span: u64) -> usize {
@@ -460,8 +501,8 @@ pub mod width_census {
         // What each would hold: as they are, at 1, 2, 4 or 8 bytes a value; as offsets, the same.
         let compact = |base: usize| (0..4).map(|i| BYTES[base + i].load(Relaxed) / 8 * [1, 2, 4, 8][i]).sum::<u64>() >> 20;
         Some(format!(
-            "width census: {total} MB of columns released ({} M values); needing 1/2/4/8 bytes as they are: {}/{}/{}/{} MB (compact {} MB), as offsets from their least: {}/{}/{}/{} MB (compact {} MB); split at bit 32, the document part an offset: {} MB",
-            BYTES[8].load(Relaxed) / 1_000_000, mb(0), mb(1), mb(2), mb(3), compact(0), mb(4), mb(5), mb(6), mb(7), compact(4), SPLIT.load(Relaxed) >> 20
+            "width census: {total} MB of columns released ({} M values); needing 1/2/4/8 bytes as they are: {}/{}/{}/{} MB (compact {} MB), as offsets from their least: {}/{}/{}/{} MB (compact {} MB); split at bit 32, the document part an offset: {} MB; per range of 4,096 rows (the blocks' encoder, split at the granule where smaller): {} MB as written, {} MB each range sorted",
+            BYTES[8].load(Relaxed) / 1_000_000, mb(0), mb(1), mb(2), mb(3), compact(0), mb(4), mb(5), mb(6), mb(7), compact(4), SPLIT.load(Relaxed) >> 20, RANGED[0].load(Relaxed) >> 20, RANGED[1].load(Relaxed) >> 20
         ))
     }
 }

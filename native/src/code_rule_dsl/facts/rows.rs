@@ -1003,6 +1003,31 @@ impl Drop for Held {
                         low = low.max(v as u64 & 0xffff_ffff);
                     }
                     width_census::column(u64::from(n), lo, hi, (dlo, dhi, low));
+                    // Per range of 4,096 rows, as written and sorted: the blocks' own chooser (`col::choose`), each
+                    // column as it is or split at the granule (bit 18), whichever is smaller, and its descriptors.
+                    if !width_census::ranges() {
+                        continue;
+                    }
+                    let mut buf: Vec<i64> = Vec::with_capacity(4096);
+                    let (mut written, mut sorted) = (0u64, 0u64);
+                    let size = |v: &[i64]| -> u64 {
+                        let whole = rerail_blocks::col::choose(v).bytes() as u64 + 48;
+                        let hi: Vec<i64> = v.iter().map(|x| x >> 18).collect();
+                        let lo: Vec<i64> = v.iter().map(|x| x & ((1 << 18) - 1)).collect();
+                        let split = rerail_blocks::col::choose(&hi).bytes() as u64 + rerail_blocks::col::choose(&lo).bytes() as u64 + 96;
+                        whole.min(split)
+                    };
+                    let mut at = 0u32;
+                    while at < n {
+                        let end = (at + 4096).min(n);
+                        buf.clear();
+                        buf.extend((at..end).map(|id| rel.get(id, c)));
+                        written += size(&buf);
+                        buf.sort_unstable();
+                        sorted += size(&buf);
+                        at = end;
+                    }
+                    width_census::ranged(written, sorted);
                 }
             }
         }

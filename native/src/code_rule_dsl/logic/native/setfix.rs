@@ -4648,6 +4648,16 @@ pub fn adopted(conn: &Connection) -> std::collections::BTreeSet<String> {
     std::mem::take(&mut *on(conn).adopted.lock())
 }
 
+/// Under `RERAIL_WIDTH_CENSUS`: each relation's rows and values held when it is let go, by its name.
+impl Drop for InRel {
+    fn drop(&mut self) {
+        if crate::code_rule_dsl::logic::profile::memory::width_census::on() && self.view.is_none() && self.n > 0 {
+            let name = self.name.get().map_or("(unnamed)", String::as_str);
+            crate::code_rule_dsl::logic::profile::memory::width_census::relation(name, self.n as u64, (self.n * self.k) as u64);
+        }
+    }
+}
+
 impl InRel {
     /// Column `c`'s kept filter (decision 0488), where its sketches count every row of its own (no view's): what a
     /// screen of a probe of it may borrow, the CPU's and the device's.
