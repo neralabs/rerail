@@ -1663,6 +1663,8 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
     // them inside it made the warm run's writes (the answers, the manifest, the statistics).
     std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
     let store = base.join("store.sqlite");
+    // Begun from the template (`test_store::begun`): its child processes would each fill an empty one first.
+    super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();
@@ -1731,6 +1733,8 @@ y = x{i} + 2
     // Past the observer's racy window, so the second run knows each file by its stat (`RACY_NS`).
     std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
     let store = base.join("store.sqlite");
+    // Begun from the template (`test_store::begun`): its child processes would each fill an empty one first.
+    super::test_store::begun(&store);
     let run = |program: &std::path::Path, strict: bool| {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap());
         child
@@ -1792,6 +1796,8 @@ fn a_second_run_in_one_process_records_the_first_runs_manifest() {
     std::fs::write(src.join("pkg/loader.py"), "import pickle as p\n\ndef load(b):\n    return p.loads(b)\n").unwrap();
     std::fs::write(src.join("main.py"), "from pkg.loader import load\nload(b'x')\n").unwrap();
     let store = base.join("store.sqlite");
+    // Begun from the template (`test_store::begun`): its child processes would each fill an empty one first.
+    super::test_store::begun(&store);
     let manifests = || -> Vec<(Vec<u8>, Vec<u8>)> {
         let db = rusqlite::Connection::open(&store).unwrap();
         let mut rows: Vec<(Vec<u8>, Vec<u8>)> = db.prepare("SELECT digest, sources FROM corpus_manifests").unwrap().query_map([], |r| Ok((r.get(0)?, r.get(1)?))).unwrap().flatten().collect();

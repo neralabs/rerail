@@ -11,6 +11,9 @@
 //! `VACUUM INTO` and a rename, so a reader never sees half of one. A binary that registers no language (a lower
 //! crate's) cannot run phase 0: its template is an empty store, and it says so once.
 //!
+//! A store a test names (`TEST_TAPE_CACHE`, or one it hands a process it starts) begins as a copy of the template too,
+//! where it is not there yet (`begun`): a fresh store is one that holds nothing of the test's own program.
+//!
 //! A copy is a new store: the template has no identity, and a copy takes its own (`store_identity`) at its first open,
 //! as a store created does. So a copy is a clone and nothing more.
 use std::path::{Path, PathBuf};
@@ -221,6 +224,28 @@ pub fn copy() -> Store {
         clone_dir(&beside(template, suffix), &beside(&path, suffix)).expect("a copy of the template's folders");
     }
     Store { dir, path }
+}
+
+/// The store a test names at `path` (`TEST_TAPE_CACHE`, or one it hands a child process) begun as a copy of the
+/// template where it is not there yet, as a test's own store is (`copy`). A store begun empty ran phase 0 over the rule
+/// library and planned the core program again, as `fill` does, before its test's own work: for a test of a few runs
+/// over a few files, most of its time (a child's cold run of the pickle policy over three files, 4.3 s, ran phase 0
+/// for 0.8 s of it). Not the template's own staging store, nor while the template is filled.
+pub fn begun(path: &Path) {
+    if filling() || path.starts_with(templates()) || path.exists() {
+        return;
+    }
+    let template = template();
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).expect("a test store's directory");
+    }
+    // The folders first, then the file under a name of its own, renamed: a reader of the store's file finds what it names.
+    for suffix in FOLDERS {
+        clone_dir(&beside(template, suffix), &beside(path, suffix)).expect("a copy of the template's folders");
+    }
+    let at = path.with_extension(format!("{}.{}.begun", std::process::id(), nanos()));
+    clone_file(template, &at).expect("a copy of the template");
+    std::fs::rename(&at, path).expect("a test store, begun from the template");
 }
 
 thread_local! {

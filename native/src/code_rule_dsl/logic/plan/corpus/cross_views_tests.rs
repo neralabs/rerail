@@ -259,6 +259,8 @@ fn a_session_holds_its_corpus_batch_and_keeps_its_base_statistics() {
 fn r5_the_runs_read_no_sql_inside_the_waves() {
     let c = Corpus::new("r5");
     let store = c.store();
+    // Begun from the template (`test_store::begun`): its child processes would each fill an empty one first.
+    super::test_store::begun(&store);
     let run = |n: usize| {
         let mut child = std::process::Command::new(std::env::current_exe().unwrap());
         child

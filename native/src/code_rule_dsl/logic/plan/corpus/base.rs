@@ -1778,7 +1778,13 @@ pub fn tape_cache_path() -> Option<std::path::PathBuf> {
         return path;
     }
     #[cfg(any(test, feature = "test-hooks"))]
-    if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()).or_else(test_store::handed) {
+    if let Some(path) = TEST_TAPE_CACHE.with(|p| p.borrow().clone()) {
+        // A store the test named, begun from the template where it is new (`test_store::begun`).
+        test_store::begun(&path);
+        return Some(path);
+    }
+    #[cfg(any(test, feature = "test-hooks"))]
+    if let Some(path) = test_store::handed() {
         return Some(path);
     }
     if std::env::var_os("RERAIL_TAPE_CACHE").is_none()

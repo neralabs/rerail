@@ -356,6 +356,12 @@ it counts pages that are not resident. The different store states may be the cau
 writable shared mapping of `d4` (50 MB): the writer is opened only to append, and this warm run appended one atom.
 Neither `footprint` nor `vmmap` can attach to a process over the farm's ssh session, so it is not yet known (Q230).
 
+Answered (Q230, 2026-11-19), measured from inside the process: the profile reads the footprint and its high-water
+mark (`proc_pid_rusage`'s `ri_phys_footprint` and `ri_lifetime_max_phys_footprint`, `profile::memory`) every 5 ms,
+with each holder's share, so neither tool is needed. The peak was the cost model's training, begun in every process
+beside its run and never finished; it now waits until no run is under way. On 2026-11-22 the warm run's peak is
+70.1 MB profiled and 28 MB without the profile.
+
 ### The keep beside the frames (step 6, 2026-11-18)
 
 ep2 on m3 with the profiling build, at load 40–60. A fresh store `k0` (cold), then `k1` and `k2` (warm). The old v6

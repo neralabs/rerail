@@ -10426,7 +10426,7 @@ pub mod tests {
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "a work tree with a head"]);
         let out = std::process::Command::new(std::env::current_exe().unwrap())
             .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::git_seeing_no_file_under_the_root_is_kept_child", "--ignored", "--test-threads", "1", "--nocapture"])
-            .env("RERAIL_TAPE_CACHE", dir.path().join("store.sqlite"))
+            .env("RERAIL_TAPE_CACHE", { let store = dir.path().join("store.sqlite"); super::test_store::begun(&store); store })
             .env("RERAIL_GIT_FILES_CHILD", work.join("ignored"))
             .output()
             .unwrap();
