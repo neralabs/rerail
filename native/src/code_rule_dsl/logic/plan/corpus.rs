@@ -2397,6 +2397,21 @@ fn run_observed_within(
         }
         (None, _) => (None, ""),
     };
+    // Neither held for this store's atoms nor in the store: one this process prepared for another store (a run of the
+    // same program over another store) is moved to this store's atoms (`prepared::moved`), not prepared again; kept
+    // in the store as a prepared one is.
+    let (kept, from) = match kept {
+        Some(p) => (Some(p), from),
+        None => match with_prepared(|kept| kept.get(&prepared_key).and_then(|all| all.first().cloned())).and_then(|p| prepared::moved(store, &p, dialect)) {
+            Some(p) => {
+                let p = Arc::new(p);
+                keep_durably(&p);
+                keep_prepared(prepared_key, Arc::clone(&p));
+                (Some(p), "memory")
+            }
+            None => (None, from),
+        },
+    };
     drop(section.take());
     let reused = kept.is_some();
     let prepared = match kept {
