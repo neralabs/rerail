@@ -1,6 +1,6 @@
 # Audits: unreadable stored lists of one audit no longer fail its pages
 
-For [pull request #989](https://github.com/neralabs/rerail/pull/989), head 33de51166. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #989](https://github.com/neralabs/rerail/pull/989), head 118028688. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #989](https://github.com/neralabs/rerail/pull/989), head 33de5
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 996 lines in 11 files: 342 ship, 654 are tests and text | Fast. Low risk, no high-risk path. | Nothing. It stands alone on `main`. | 2 |
+| 1,058 lines in 11 files: 358 ship, 700 are tests and text | Fast. Low risk, no high-risk path. | Nothing. It stands alone on `main`. | 2 |
 
 ## 2. Intent, and the gap
 
@@ -31,7 +31,7 @@ Found on 16 November 2026 on Linux x64, reading audits a Claude Code session rec
 ## 3. Where to look
 
 1. **Read first**, 10 min: `audit-store.ts`: `record`, `readLists`, `parsedList`, `latestAuditSummary`, `holdsList`, `readableAudits`. Does an intact audit read exactly as before, and a damaged one say what is wrong?
-2. 5 min: `remote-outbox.ts`: `#addPending`, `#mendedFrom`, `#addAudit`, `auditHash`; `audit-control.ts`: `onlyToleratedFailures`; `support-bundle.ts`: the log.
+2. 5 min: `remote-outbox.ts`: `#addPending`, `#mendedFrom`, `#addAudit`, `auditHash`, `violationKeysOf`; `audit-control.ts`: `onlyToleratedFailures`, `hasCodeAndMessage`; `support-bundle.ts`: the log.
 
 **Then skim**, 5 min: Store cases: each damaged list in a page and alone, a damaged stored copy, the summary against the record, one log line per text; the support bundle keeps the failure.
 
@@ -103,7 +103,7 @@ The description is the record: "How you tested it" holds the failing runs, the r
 |---|---|---|
 | Linux x64 and Windows 11 | The issue's steps as written, 5 runs at `main` and 5 at this head, each system on one machine | `main`: 500 on the page, its page of 200 and the damaged audit, 200 for another, in 5 of 5. Here: 200 four times with 5 audits, in 5 of 5, and one `daemon.log` line naming the audit. |
 | Linux x64 | Each other list and the stored copy damaged, at `main` and here | `main`: every audit read 500, and the session's page 500 for failures and violations. Here: every audit read and the session's page 200, the damaged audit marked. |
-| Linux x64 | 108 one-line changes to the new and changed lines, one at a time | 104 caught; the 4 left change only the cost. The unchanged files pass every case. Listing the unreadable lists' failures after the audit's own fails 4 cases. |
+| Linux x64 | 111 one-line changes to the new and changed lines, one at a time | 107 caught; the 4 left change only the cost. The unchanged files pass every case. Listing the unreadable lists' failures after the audit's own fails 4 cases. |
 | Linux x64 and Windows 11 | The changed test files and every file importing a changed module, 14 files, here and at `main` on one machine each | Linux x64: 500 passed here, 456 at `main`, support bundle cases over their 5 s limit at both, the same 2 again at both. Windows 11: 513 of 513 here, 468 of 468 at `main`. |
 | Linux x64 | Syncs through `main`'s outbox, 4a663d799's and this head's alternately in one process | 4,000 audits sent marked, the first batch: 42.3 ms here with one statement testing lists, 1,190.6 ms at 4a663d799 with 4,000, where they name one damaged stored provenance; 45.9 and 326.2 ms for damaged paths of their own. `main` ends each such sync with the parse error. 4,000 audits not sent: 170.6 ms here, 175.5 ms at `main`. 40 runs each. |
 
