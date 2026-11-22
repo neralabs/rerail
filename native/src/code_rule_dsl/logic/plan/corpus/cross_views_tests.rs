@@ -306,12 +306,13 @@ fn an_edit_patches_a_semi_join_inputs_statistics_and_makes_no_unchanged_document
             };
             let made = profile::take_decisions();
             let of = |topic: &str| made.keys().filter(|(t, _)| t == topic).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
-            (of("the base relations' statistics (decision 0458)"), of("a batch's every document made by a whole read of a relation (decision 0494)"), rows)
+            let space = of("the corpus batch's row space (decision 0494)");
+            (of("the base relations' statistics (decision 0458)"), of("a batch's every document made by a whole read of a relation (decision 0494)"), rows, space)
         };
-        let (cold, _, _) = run(&mut c);
+        let (cold, _, _, _) = run(&mut c);
         run(&mut c);
         c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
-        let (edit, whole, rows) = run(&mut c);
+        let (edit, whole, rows, space) = run(&mut c);
         profile::set(false);
         let route = format!("{}, {}", if session { "a session" } else { "a new process" }, outputs[0]);
         // The semi-join inputs: those the cold run counted at the held nodes.
@@ -326,6 +327,12 @@ fn an_edit_patches_a_semi_join_inputs_statistics_and_makes_no_unchanged_document
         }
         // A whole read makes at most the changed file's document (1 of the batch's).
         let unmade = |x: &String| x.rsplit_once(": ").and_then(|(_, t)| t.split(' ').next()?.parse::<usize>().ok()).unwrap_or(0);
+        // Every base relation's rows counted by its kept statistics, a semi-join's too: a `len` (a plan's estimate)
+        // made every document of a relation without its count.
+        let all_counted = |x: &String| x.split(" base relations' rows").next().and_then(|n| n.split_once(" of ")).is_some_and(|(a, b)| a == b);
+        if !space.iter().filter(|x| x.contains("base relations' rows")).all(all_counted) {
+            failed.push(format!("{route}: the corpus batch has every base relation's rows by its kept statistics: {space:?}"));
+        }
         if !whole.iter().all(|x| unmade(x) <= 1) {
             failed.push(format!("{route}: no read makes an unchanged document: {whole:?}"));
         }

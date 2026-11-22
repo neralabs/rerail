@@ -7741,6 +7741,22 @@ fn run_observed_within(
                 }
             }
         };
+        // A semi-join's rows, every node's (not only the held nodes'): kept under its own name as a count with no
+        // column, beside its statistics at the held nodes, and patched by its versions' rows as a base relation's
+        // count is. The corpus batch answers its `len` by it (`give_totals`, above): without it a plan's estimate made
+        // every document.
+        let held_total = |rel: &str, source: &dyn crate::code_rule_dsl::facts::vtab::Source, kept: Option<(u64, super::statkeep::RelStats)>| -> super::statkeep::RelStats {
+            let patched = |k: &super::statkeep::RelStats| base_wholes.get(rel).map(|(old, new)| k.rows() - old.as_ref().map_or(0, |s| s.len() as i64) + new.as_ref().map_or(0, |s| s.len() as i64));
+            let rows = match kept {
+                Some((d, k)) if d == base_digest(rel) => k.rows(),
+                Some((d, k)) if Some(d) == table_digest.map(|t| t ^ tag(rel)) => patched(&k).unwrap_or_else(|| source.len() as i64),
+                _ => source.len() as i64,
+            };
+            let mut k = super::statkeep::RelStats::new(Vec::new());
+            k.rows = rows;
+            k
+        };
+        let keeps = base_binds.is_some() || session_binds.is_some();
         // A base relation read off the corpus batch, to count: its source, the columns its rules read, its kept
         // statistics.
         struct Count {
@@ -7761,6 +7777,10 @@ fn run_observed_within(
                     crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
                     if let Some(k) = keep {
                         base_stats_out.push((held_stats_name(&rel), base_digest(&rel), k));
+                    }
+                    let total = held_total(&rel, source.as_ref(), kept_stats.remove(&rel));
+                    if keeps {
+                        base_stats_out.push((rel.clone(), base_digest(&rel), total));
                     }
                     st
                 } else {
@@ -7848,6 +7868,10 @@ fn run_observed_within(
                     crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
                     if let Some(k) = keep {
                         base_stats_out.push((held_stats_name(&rel), base_digest(&rel), k));
+                    }
+                    let total = held_total(&rel, source.as_ref(), kept_stats.remove(&rel));
+                    if keeps {
+                        base_stats_out.push((rel.clone(), base_digest(&rel), total));
                     }
                     (rows, st)
                 }
