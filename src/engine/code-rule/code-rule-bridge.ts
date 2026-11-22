@@ -3379,7 +3379,7 @@ export class CodeRuleBridge {
   #finishWorktreeWalk(discovery: SourceDiscovery, walk: WalkStart, scan: SourceScan): void {
     const worktrees = discovery.worktrees;
     worktrees.walkedFrom = walk.observedAt;
-    // A worktree Git lists again at its path while the walk is taken is new to the session: its first walk is to come.
+    // A worktree Git listed again at its path since the walk began is new to the session: its first walk is to come.
     const gone = new Set([...walk.worktrees].filter(worktree => !walkHeld(discovery, walk, worktree)));
     for (const worktree of walk.worktrees) if (!gone.has(worktree)) worktrees.fresh.delete(worktree);
     worktrees.baselineRoots = scan.failedRoots;
