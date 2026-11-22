@@ -410,6 +410,9 @@ pub struct Region {
     /// Its name `K`: the openers taken are `o_K`, the fill `f_K`.
     pub kind: String,
     pub opener: Expr,
+    /// `O bytes N`: the opener's bytes (1 to 3), past which its closer is found: a raw string's
+    /// `"""`, as the lean lexer looks for its closer from the opener's end (`string_end`).
+    pub opens: u8,
     pub closer: Expr,
     /// `bytes N`: the closer's bytes, from its first (1 to 3).
     pub bytes: u8,
@@ -445,7 +448,7 @@ impl Regions {
     /// carry H      = empty
     /// mask o_K     = O & ~H [& K_later]
     /// mask E       = O & ~H & ~K_later                # with `else E`
-    /// mask f_K     = fill(o_K, C)
+    /// mask f_K     = fill(o_K, C)                     # `O bytes N`: C & ~prev(o_K) … & ~prev(o_K, N - 1)
     /// next H       = prev(f_K) | … | prev(f_K, N)     # `outside`: prev(f_K) & ~C
     ///              | prev(E) | … | prev(E, M - 1)
     /// ```
@@ -527,7 +530,7 @@ impl Regions {
                 }
                 None => out.push(Stmt::Mask(o.clone(), open)),
             }
-            out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(r.closers())])));
+            out.push(Stmt::Mask(f.clone(), call("fill", vec![Arg::E(name(&o)), Arg::E(r.closers_past(&o))])));
             if r.outside {
                 or(and(prev(&f, 1), not(r.closer.clone())));
             } else if let Some((c2, m)) = &r.or {
@@ -568,6 +571,15 @@ impl Region {
     /// The name of its `else`'s mask: whether a byte of the closer comes after a byte.
     pub fn later(&self) -> String {
         format!("{}_later", self.kind)
+    }
+
+    /// Its closers past an opener's bytes (`opens`), from its openers `o`: `C & ~prev(o) & …
+    /// & ~prev(o, N - 1)`, its `closers` with an opener of one byte.
+    pub fn closers_past(&self, o: &str) -> Expr {
+        (1..self.opens).fold(self.closers(), |c, k| {
+            let p = if k == 1 { Expr::Call("prev".into(), vec![Arg::E(Expr::Name(o.to_string()))]) } else { Expr::Call("prev".into(), vec![Arg::E(Expr::Name(o.to_string())), Arg::N(u64::from(k))]) };
+            Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(p))))
+        })
     }
 
     /// Its closers: `C`, or `C | C2` with `or C2`.
@@ -1645,7 +1657,7 @@ impl P {
     }
 
     // --- statements ---
-    /// `regions H { K = O .. C [bytes N] [outside] [else E bytes M] … }` (`Regions`).
+    /// `regions H { K = O [bytes N] .. C [bytes N] [outside] [else E bytes M] … }` (`Regions`).
     fn regions(&mut self) -> R<Regions> {
         let hidden = self.ident()?;
         self.want_p("{")?;
@@ -1655,6 +1667,7 @@ impl P {
             let kind = self.ident()?;
             self.want_p("=")?;
             let opener = self.expr()?;
+            let opens = if self.eat_kw("bytes") { self.int()? } else { 1 };
             self.want_p("..")?;
             let closer = self.expr()?;
             let bytes = if self.eat_kw("bytes") { self.int()? } else { 1 };
@@ -1686,10 +1699,13 @@ impl P {
                     return self.err("`after` or `resumes` and the kinds it names, on a kind with no `outside` or `else`");
                 }
             }
+            if !(1..=3).contains(&opens) || opens > 1 && (outside || empty.is_some()) {
+                return self.err("an opener of 1 to 3 bytes (more than 1: no `outside` or `else`)");
+            }
             if !(1..=3).contains(&bytes) || (outside && bytes != 1) || (outside && or.is_some()) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
                 return self.err("a closer of 1 to 3 bytes (`outside`: 1, and no `or`), an `else` of 1 to 3");
             }
-            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes });
+            kinds.push(Region { kind, opener, opens: opens as u8, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes });
             self.nls();
         }
         if kinds.is_empty() {

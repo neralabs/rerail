@@ -194,12 +194,12 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
                 let is = f.ins().icmp_imm(IntCC::Equal, open, k as i64 + 1);
                 f.ins().brif(is, this, &[], next, &[]);
                 f.switch_to_block(this);
-                emit_cont(&mut f, kind, (closers[k], seconds[k]), &or, walk.hidden, head, exit, k, last0);
+                emit_cont(&mut f, kind, (closers[k], seconds[k]), &or, walk.hidden, head, exit, k, (last0, skip));
                 f.switch_to_block(next);
             } else {
                 f.ins().jump(this, &[]);
                 f.switch_to_block(this);
-                emit_cont(&mut f, kind, (closers[k], seconds[k]), &or, walk.hidden, head, exit, k, last0);
+                emit_cont(&mut f, kind, (closers[k], seconds[k]), &or, walk.hidden, head, exit, k, (last0, skip));
             }
         }
 
@@ -286,7 +286,15 @@ pub fn build_walk(native: &BlockNative, w: usize, calls: &WalkCalls) -> Result<F
 /// A region of kind `k` open at the block's start: closed at its closer's first bit, or open
 /// through the block.
 #[allow(clippy::too_many_arguments)]
-fn emit_cont(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, (closer, second): (Value, Value), or: &dyn Fn(&mut FunctionBuilder<'_>, u16, Value), hidden: u16, head: Block, exit: Block, k: usize, last: Value) {
+fn emit_cont(f: &mut FunctionBuilder<'_>, kind: &crate::block::WalkKind, (closer, second): (Value, Value), or: &dyn Fn(&mut FunctionBuilder<'_>, u16, Value), hidden: u16, head: Block, exit: Block, k: usize, (last, skip): (Value, Value)) {
+    // An opener of more than one byte near the block before's end: its closer past its bytes,
+    // the places of this block they reach (`skip`, carried as the hidden places are).
+    let closer = if kind.opens > 1 {
+        let past = from(&mut *f, skip);
+        f.ins().band(closer, past)
+    } else {
+        closer
+    };
     let (through, close) = (f.create_block(), f.create_block());
     f.ins().brif(closer, close, &[], through, &[]);
     f.switch_to_block(through);
@@ -359,7 +367,15 @@ fn emit_kind(
     heads: &mut Vec<(Block, Step)>,
 ) {
     let past = after(&mut *f, t);
-    let cm = f.ins().band(closer, past);
+    // Its closer past the opener's bytes (`WalkKind::opens`).
+    let reach = if kind.opens > 1 { Some(f.ins().iadd_imm(t, i64::from(kind.opens))) } else { None };
+    let cm = match reach {
+        Some(n) => {
+            let m = from(&mut *f, n);
+            f.ins().band(closer, m)
+        }
+        None => f.ins().band(closer, past),
+    };
     let (close, through) = (f.create_block(), f.create_block());
     // No closer in the block: open through it, or (an `else`) look past it first.
     let none = if scan.is_some() { f.create_block() } else { through };
@@ -388,8 +404,12 @@ fn emit_kind(
     let past2 = after(&mut *f, t);
     or(&mut *f, hidden, past2);
     let open = f.ins().iconst(types::I64, k as i64 + 1);
-    let zero = f.ins().iconst(types::I64, 0);
-    f.ins().jump(exit, &[open.into(), zero.into(), last.into()]);
+    // The opener's bytes past the block: the next block's closer is found past them (`skip`).
+    let resume = match reach {
+        Some(n) => n,
+        None => f.ins().iconst(types::I64, 0),
+    };
+    f.ins().jump(exit, &[open.into(), resume.into(), last.into()]);
 
     let (Some(tests), Some((e, m))) = (scan, kind.empty) else { return };
     let flags = MemFlags::trusted();

@@ -276,11 +276,11 @@ pub mod t {
     pub const CHAR_CONTENT: u32 = 13;
     pub const BACKSLASH_U: u32 = 14;
     pub const INTERPOLATED_IDENTIFIER: u32 = 15;
-    pub const QUOTE_QUOTE: u32 = 16;
-    pub const INTERPOLATION_EXPRESSION_START: u32 = 17;
-    pub const QUOTE__CLOSE: u32 = 18;
-    pub const STRING_CONTENT: u32 = 19;
-    pub const INTERPOLATION_IDENTIFIER_START: u32 = 20;
+    pub const INTERPOLATION_EXPRESSION_START: u32 = 16;
+    pub const QUOTE__CLOSE: u32 = 17;
+    pub const STRING_CONTENT: u32 = 18;
+    pub const INTERPOLATION_IDENTIFIER_START: u32 = 19;
+    pub const QUOTE_QUOTE: u32 = 20;
     pub const TICK__CLOSE: u32 = 21;
 }
 
@@ -595,7 +595,7 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
 }
 
 /// Each byte's record kind, as a token's first byte (`Records::kinds`).
-const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 21, 11, 12, 13, 14, 17, 18, 19, 20, 15, 16, 1, 5, 6, 4, 0, 0];
+const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 21, 11, 12, 13, 14, 16, 17, 18, 19, 15, 20, 1, 5, 6, 4, 0, 0];
 
 
 /// A record of an extra (a comment): the extra's mark in its code.
@@ -7310,13 +7310,11 @@ impl P<'_> {
     fn string_literal(&mut self) -> R {
         self.open(k::STRING_LITERAL);
         self.skip(self.at_quote())?;
-        if self.at_quote_quote() {
-            self.skip(self.at_quote_quote())?;
-        } else {
-        }
         loop {
             if self.at_string_content() {
                 self.tk(self.at_string_content(), k::STRING_CONTENT, 0)?;
+            } else if self.at_quote_quote() {
+                self.skip(self.at_quote_quote())?;
             } else if self.at_interpolation_identifier_start() {
                 self.tk(self.at_interpolation_identifier_start(), k::INTERPOLATION_IDENTIFIER_START, 0)?;
                 self.interp_id()?;
@@ -10409,7 +10407,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 2 | 18)
+        matches!(c & 0xff, 2 | 17)
     }
 
     fn at_quote(&self) -> bool {
@@ -10419,7 +10417,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_quote_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 2 | 18)
+        matches!(c & 0xff, 2 | 17)
     }
 
     fn at_quote_quote_at(&self, j: usize) -> bool {
@@ -10427,7 +10425,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 16)
+        matches!(c & 0xff, 20)
     }
 
     fn at_quote_quote(&self) -> bool {
@@ -10437,7 +10435,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_quote_quote_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 16)
+        matches!(c & 0xff, 20)
     }
 
     fn at_tick_at(&self, j: usize) -> bool {
@@ -10625,7 +10623,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 17)
+        matches!(c & 0xff, 16)
     }
 
     fn at_interpolation_expression_start(&self) -> bool {
@@ -10635,7 +10633,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_expression_start_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 17)
+        matches!(c & 0xff, 16)
     }
 
     fn at_interpolation_identifier_start_at(&self, j: usize) -> bool {
@@ -10643,7 +10641,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 20)
+        matches!(c & 0xff, 19)
     }
 
     fn at_interpolation_identifier_start(&self) -> bool {
@@ -10653,7 +10651,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_interpolation_identifier_start_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 20)
+        matches!(c & 0xff, 19)
     }
 
     fn at_real_literal_at(&self, j: usize) -> bool {
@@ -10697,7 +10695,7 @@ impl P<'_> {
             return false;
         }
         let c = self.code_at(j);
-        matches!(c & 0xff, 19)
+        matches!(c & 0xff, 18)
     }
 
     fn at_string_content(&self) -> bool {
@@ -10707,7 +10705,7 @@ impl P<'_> {
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_string_content_rec(&self, j: usize) -> bool {
         let c = self.codes[j];
-        matches!(c & 0xff, 19)
+        matches!(c & 0xff, 18)
     }
 
     fn at_uni_digits_at(&self, j: usize) -> bool {
@@ -10787,42 +10785,49 @@ impl P<'_> {
                     part = Some((e, 0, 1));
                 }
             }
-            // `interpolation_identifier_start`
-            if let Some(e) = first_bit(&m.id_dollar, at).filter(|&e| e < c) {
+            // `""`
+            if let Some(e) = first_bit(&m.r_lead, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 2) < q) {
                     part = Some((e, 1, 2));
                 }
             }
+            // `interpolation_identifier_start`
+            if let Some(e) = first_bit(&m.id_dollar, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 1, 3) < q) {
+                    part = Some((e, 1, 3));
+                }
+            }
             // `interpolated_identifier`
-            if let Some(e) = first_bit(&m.rd0_part3, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 0, 3) < q) {
-                    part = Some((e, 0, 3));
+            if let Some(e) = first_bit(&m.rd0_part4, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 0, 4) < q) {
+                    part = Some((e, 0, 4));
                 }
             }
             // `string_content`
             if let Some(e) = first_bit(&m.lone, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 1, 4) < q) {
-                    part = Some((e, 1, 4));
+                if part.is_none_or(|q| (e, 1, 5) < q) {
+                    part = Some((e, 1, 5));
                 }
             }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 19);
+                self.piece(at, to - 1, 18);
             }
             match part {
                 Some((e, _, i)) => {
                     let (l, kind) = match i {
-                        0 => (e + 1, 16),
+                        0 => (e + 1, 20),
                         1 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 19),
+                        }, 18),
                         2 => (e + 0, 20),
-                        3 => (match first_bit(&m.id_last, e) {
+                        3 => (e + 0, 19),
+                        4 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 15),
-                        4 => (e + 0, 19),
+                        5 => (e + 0, 18),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -10830,13 +10835,13 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = if bit(&m.t_dollar, c) {
-                        (c + 1, 17)
+                        (c + 1, 16)
                     } else if bit(&m.o_str, s) {
                         // `str`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 18)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 17)
                     } else {
                         // `rstr`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 18)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 17)
                     };
                     self.piece(c, l, kind);
                     if bit(&m.t_dollar, c) {
@@ -10867,27 +10872,33 @@ impl P<'_> {
                     part = Some((e, 0, 0));
                 }
             }
-            // `interpolation_identifier_start`
-            if let Some(e) = first_bit(&m.id_dollar, at).filter(|&e| e < c) {
+            // `""`
+            if let Some(e) = first_bit(&m.r_lead, at).filter(|&e| e < c) {
                 if part.is_none_or(|q| (e, 1, 1) < q) {
                     part = Some((e, 1, 1));
                 }
             }
+            // `interpolation_identifier_start`
+            if let Some(e) = first_bit(&m.id_dollar, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 1, 2) < q) {
+                    part = Some((e, 1, 2));
+                }
+            }
             // `interpolated_identifier`
-            if let Some(e) = first_bit(&m.rd0_part3, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 0, 2) < q) {
-                    part = Some((e, 0, 2));
+            if let Some(e) = first_bit(&m.rd0_part4, at).filter(|&e| e < c) {
+                if part.is_none_or(|q| (e, 0, 3) < q) {
+                    part = Some((e, 0, 3));
                 }
             }
             // `string_content`
             if let Some(e) = first_bit(&m.lone, at).filter(|&e| e < c) {
-                if part.is_none_or(|q| (e, 1, 3) < q) {
-                    part = Some((e, 1, 3));
+                if part.is_none_or(|q| (e, 1, 4) < q) {
+                    part = Some((e, 1, 4));
                 }
             }
             let to = part.map_or(c, |q| q.0);
             if to > at {
-                self.piece(at, to - 1, 19);
+                self.piece(at, to - 1, 18);
             }
             match part {
                 Some((e, _, i)) => {
@@ -10895,13 +10906,14 @@ impl P<'_> {
                         0 => (match first_bit(&m.rd0_part1_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
-                        }, 19),
+                        }, 18),
                         1 => (e + 0, 20),
-                        2 => (match first_bit(&m.id_last, e) {
+                        2 => (e + 0, 19),
+                        3 => (match first_bit(&m.id_last, e) {
                             Some(l) => l,
                             None => return self.refuse(),
                         }, 15),
-                        3 => (e + 0, 19),
+                        4 => (e + 0, 18),
                         _ => unreachable!(),
                     };
                     self.piece(e, l, kind);
@@ -10909,17 +10921,17 @@ impl P<'_> {
                 }
                 None => {
                     let (l, kind) = if bit(&m.rd1_closes0, c) {
-                        (c + 0, 18)
+                        (c + 0, 17)
                     } else if bit(&m.rd1_closes1, c) {
-                        (c + 2, 18)
+                        (c + 2, 17)
                     } else if bit(&m.t_dollar, c) {
-                        (c + 1, 17)
+                        (c + 1, 16)
                     } else if bit(&m.o_tail, s) {
                         // `tail`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, 10)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 0 }, u32::from(KINDS[usize::from(self.src[c])]))
                     } else {
                         // `rtail`
-                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, 10)
+                        (if bit(&m.t_dollar, c) { c + 0 } else { c + 2 }, u32::from(KINDS[usize::from(self.src[c])]))
                     };
                     self.piece(c, l, kind);
                     if !(bit(&m.t_dollar, c)) {

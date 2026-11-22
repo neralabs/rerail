@@ -254,12 +254,12 @@ pub fn readers(stmts: &[Stmt]) -> Vec<Reader> {
         let name = |x: String| Expr::Name(x);
         let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
         // Its closers: each region's, outside the others' fills (a `"` in a raw string closes no
-        // string), as the lowering's reader reads them.
+        // string), each past its opener's bytes, as the lowering's reader reads them.
         let closer = match rs.as_slice() {
-            [one] => one.closers(),
+            [one] => one.closers_past(&format!("o_{}", one.kind)),
             _ => rs
                 .iter()
-                .map(|q| rs.iter().filter(|o| o.kind != q.kind).fold(q.closers(), |c, o| Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(name(format!("f_{}", o.kind))))))))
+                .map(|q| rs.iter().filter(|o| o.kind != q.kind).fold(q.closers_past(&format!("o_{}", q.kind)), |c, o| Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(name(format!("f_{}", o.kind))))))))
                 .reduce(or)
                 .expect("a region"),
         };
@@ -2932,7 +2932,8 @@ impl Gen<'_> {
 
     /// Region `r`'s opener's bytes after its first that no closer can be: the closer is after them.
     fn opener_body(&self, r: &Region) -> i64 {
-        let mut body = 0i64;
+        // Past its bytes (`Region::opens`) at least.
+        let mut body = i64::from(r.opens) - 1;
         let mut memo = HashMap::new();
         let closers = self.bytes_at(&r.closers(), 0, &mut memo);
         while body < 8 {
@@ -3693,6 +3694,8 @@ impl Gen<'_> {
         for (k, r) in ks.iter().enumerate() {
             let (o, f) = (format!("m_o_{}", ident(&r.kind)), format!("m_f_{}", ident(&r.kind)));
             let c = &closers[k];
+            // Its closer past the opener's bytes (`Region::opens`).
+            let past = r.opens;
             let mut arm = String::new();
             let close = if r.outside {
                 format!("                    let c = first_bit(&{c}, p + 1).unwrap_or(n);\n                    set(&mut {f}, p, c);\n                    set(&mut {hidden}, p + 1, c);\n                    at = c.max(p + 1);\n")
@@ -3708,7 +3711,7 @@ impl Gen<'_> {
                     Some((c2, _)) if r.resumes => format!("{{\n                                if !bit(&{c2}, c) {{\n                                    template = usize::MAX;\n                                }}\n                                {last}\n                            }}"),
                     _ => last,
                 };
-                format!("                    match first_bit(&{c}, p + 1) {{\n                        Some(c) => {{\n                            let last = {last};\n                            set(&mut {f}, p, c);\n                            set(&mut {hidden}, p + 1, last + 1);\n                            at = last + 1;\n                        }}\n                        None => {{\n                            set(&mut {f}, p, n);\n                            set(&mut {hidden}, p + 1, n);\n                            at = n;\n                        }}\n                    }}\n")
+                format!("                    match first_bit(&{c}, p + {past}) {{\n                        Some(c) => {{\n                            let last = {last};\n                            set(&mut {f}, p, c);\n                            set(&mut {hidden}, p + 1, last + 1);\n                            at = last + 1;\n                        }}\n                        None => {{\n                            set(&mut {f}, p, n);\n                            set(&mut {hidden}, p + 1, n);\n                            at = n;\n                        }}\n                    }}\n")
             };
             let _ = write!(arm, "                    set(&mut {o}, p, p + 1);\n{close}");
             let body = match &r.empty {
@@ -4259,7 +4262,8 @@ impl Gen<'_> {
                             let some = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                             let some = self.template_close(&r.kind, some)?;
                             let some = if !self.keeps_close(*row, rule) { some } else { with_close(&some) };
-                            format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {some},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}")
+                            format!("match first_bit(&{c}, s + {}) {{\n                Some(c) => {some},", r.opens)
+                                + &format!("\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}")
                         };
                         if rs.len() == 1 {
                             code = one;
@@ -4280,7 +4284,7 @@ impl Gen<'_> {
                     let found = if tests.is_empty() { found } else { format!("{{\n                    let last = {found};\n{}                    last\n                }}", indent(&tests, "                    ")) };
                     let found = self.template_close(&r.kind, found)?;
                     let found = if !self.keeps_close(*row, rule) { found } else { with_close(&found) };
-                    (format!("read {} parts, to its closer", r.kind), format!("match first_bit(&{c}, s + 1) {{\n                Some(c) => {found},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}"))
+                    (format!("read {} parts, to its closer", r.kind), format!("match first_bit(&{c}, s + {}) {{\n                Some(c) => {found},\n                None => {{\n                    refused = true;\n                    break;\n                }}\n            }}", r.opens))
                 }
                 None => match last {
                     Some(l) => (format!("last {}", show(l)), format!("first_bit(&{}, s).unwrap_or(s)", self.val(l)?)),

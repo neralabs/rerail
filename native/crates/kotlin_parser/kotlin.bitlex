@@ -92,17 +92,16 @@ mask sq_close   = sq & ~escaped(backslash)
 mask t_dollar   = dollar & next(lbrace) & ~escaped(backslash)
 mask t_lex      = prev(t_dollar)
 mask t_close    = rbrace
-# A raw string: `"""`, then to the last three quotes of the next run of three or more, but
-# never one or two bytes past a run's first quote: the opener's run of four or five quotes
-# (`""""x"""`) is its `"""` and content, as the lean lexer reads it, and the run of six its
-# opener and its closer (`""""""`). A closing run of four or more is refused (`rbody`).
+# A raw string: `"""`, then to the last three quotes of the next run of three or more past it
+# (`bytes 3`, as the lean lexer looks from the opener's end): the opener's run of four or five
+# quotes (`""""x"""`) is its `"""` and content, and the run of six its opener and its closer
+# (`""""""`). A closing run's quotes before its last three are the closer's (`r_lead`).
 mask dq3        = dq & next(dq) & next(dq, 2)
-mask dq_first   = dq & ~prev(dq)
-mask rclose     = dq3 & ~next(dq, 3) & ~prev(dq_first) & ~(prev(dq_first, 2) & prev(dq))
+mask rclose     = dq3 & ~next(dq, 3)
 regions hidden {
   line  = line_open .. lf outside
   block = block_open .. block_end
-  rstr  = dq3 .. rclose bytes 3 or t_dollar
+  rstr  = dq3 bytes 3 .. rclose bytes 3 or t_dollar
   str   = dq & ~dq3 .. dq_close or t_dollar
   chr   = sq .. sq_close
   tick  = bt .. bt
@@ -141,9 +140,6 @@ mask rbody      = f_rstr & ~o_rstr & ~prev(o_rstr) & ~prev(o_rstr, 2) | f_rtail 
 # quote it ends the string after that one quote, and a `$` after it starts no template. Those
 # are not read.
 escape "a `\$` before a quote or a `$` in a raw string" when rbody & dollar & escaped(backslash) & next(dq | dollar)
-# The lean parser ends a raw string at a run of three quotes or more in it, and keeps the
-# quotes past three as none of the string's leaves.
-escape "a raw string closed by four quotes or more" when rbody & dq3 & next(dq, 3)
 mask body       = f_str & ~o_str | f_tail & ~o_tail | rbody
 mask s_word     = body & word
 mask s_dollar   = body & dollar & ~escaped(backslash)
@@ -286,7 +282,10 @@ token bin_literal = start bin_at run prev(bin_at) | bx
 mask r_q        = rbody & dq & ~next(dq)
 mask r_id       = fill(prev(id_dollar), prev(id_last))
 mask r_stop     = ~rbody | r_q | id_dollar | lone | r_id
-mask r_x        = rbody & ~id_dollar & ~lone & ~r_id
+# The quotes of a closing run before its last three (three quotes after each, which only a
+# closing run has in a body): the closer's, as the lean lexer's closer takes the run.
+mask r_lead     = rbody & dq3 & next(dq, 3)
+mask r_x        = rbody & ~id_dollar & ~lone & ~r_id & ~r_lead
 mask r_start    = r_x & (~prev(r_x) | prev(r_q))
 mask r_end      = r_x & ~next(r_x)
 # A string: its opener, its parts, and its closer, a `"` or a template's `${`. After the
@@ -297,6 +296,7 @@ mask r_end      = r_x & ~next(r_x)
 token '"'       = start o_str | o_rstr read str | rstr parts {
                     '""' = prev(o_rstr) bytes 2
                     string_content = r_start last r_q | r_end
+                    '""' = r_lead bytes 1
                     interpolation_identifier_start = id_dollar bytes 1
                     interpolated_identifier = prev(id_dollar) last id_last
                     string_content = lone bytes 1
@@ -305,6 +305,7 @@ token '"'       = start o_str | o_rstr read str | rstr parts {
                   }
 token interpolation_expression_end = start o_tail | o_rtail read tail | rtail parts {
                     string_content = r_start last r_q | r_end
+                    '""' = r_lead bytes 1
                     interpolation_identifier_start = id_dollar bytes 1
                     interpolated_identifier = prev(id_dollar) last id_last
                     string_content = lone bytes 1
@@ -783,7 +784,9 @@ tree kotlin {
   choice interp_id      = interpolated_identifier | soft_interp
   node soft_interp      = retag interpolated_identifier interp_soft
   choice interp_soft    = 'expect' | 'data' | 'inner' | 'value' | 'actual' | 'set' | 'get' | 'override' | 'suspend' | 'annotation' | 'sealed' | 'lateinit' | 'tailrec' | 'operator' | 'infix' | 'inline' | 'external' | 'public' | 'private' | 'internal' | 'protected' | 'abstract' | 'final' | 'open' | 'const' | 'vararg' | 'noinline' | 'crossinline' | 'reified' | 'field' | 'property' | 'receiver' | 'param' | 'setparam' | 'delegate' | 'companion' | 'constructor' | 'init' | 'dynamic' | 'where' | 'catch' | 'finally' | 'enum' | 'out'
-  node string_literal   = '"' ['""'] (string_content | interpolation_identifier_start interp_id
+  # A raw string's `""` after its first quote, and its closing run's quotes before its last
+  # three: implied, no leaves.
+  node string_literal   = '"' (string_content | '""' | interpolation_identifier_start interp_id
                           | interpolation_expression_start interpolated_expression interpolation_expression_end)* '"'
   node interpolated_expression = expression
   node this_expression  = this_label | 'this'

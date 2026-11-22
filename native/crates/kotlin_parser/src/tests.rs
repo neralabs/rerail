@@ -510,14 +510,24 @@ fn raw_strings_are_the_lean_parsers() {
         "val i = \"\"\"a\"\n\"\"\"\n",
         "val i = \"\"\"a\"b\"\"\"\n",
         "val i = \"\"\"a\" \"\"\"\n",
-    ]);
-    // A closing run of four quotes or more: the lean parser's closer takes them all.
-    refused(&[
+        // A closing run of four quotes or more: the lean parser's closer takes them all, its
+        // quotes before the last three no leaves (`r_lead`).
         "val h = \"\"\"a\"\"\"\"\n",
         "val h = \"\"\"a\"\"\"\"\"\n",
         "val h = \"\"\"${a}\"\"\"\"\n",
         "val h = \"\"\"\"\"\"\"\n",
+        "val h = \"\"\"\"\"\"\"\"\"\n",
+        "val h = \"\"\"a ${b}\"\"\"\"\"\n",
+        "val h = \"\"\"a\"\" b\"\"\"\"\n",
+        "val h = \"\"\"\"a\"\"\"\"\n",
+        "val h = \"\"\"a\"\"\" + \"\"\"b\"\"\"\n",
     ]);
+    // An opener in a block's last two bytes: its closer past them, in the next block (the JIT's
+    // walk carries the opener's bytes over, as the places it hides).
+    let pad = |p: usize, body: &str| format!("//{}\nval s = {body}\n", "x".repeat(p - 3));
+    let bodies = ["\"\"\"\"x\"\"\"", "\"\"\"\"\"\"", "\"\"\"\"\"\"\"", "\"\"\"a\"\"\"\"", "\"\"\"\"${a}\"\"\""];
+    let edges: Vec<String> = (52..=56).flat_map(|p| bodies.iter().map(move |b| pad(p, b))).collect();
+    same(&edges.iter().map(String::as_str).collect::<Vec<_>>());
     // A string whose `"` starts a block (byte 64, 65, 128), the token before in the block
     // before: the refill reads the block before its rows' words are final, and the opener of
     // the two regions is read from the rows (the CPU's tier 1 waits on it).

@@ -546,6 +546,10 @@ pub struct Walk {
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct WalkKind {
     pub opener: u16,
+    /// The opener's bytes (1 to 3): its closer is found past them, at `t + opens` on (a raw
+    /// string's `"""`). Its fill is then of the closer with none of the `opens - 1` places
+    /// after an open (`closer_past`).
+    pub opens: u8,
     pub closer: u16,
     pub open: u16,
     pub fill: u16,
@@ -859,8 +863,8 @@ impl BlockProgram {
                 return Err(format!("walk {w}: an `after` naming a kind with one or with no `or`, on a kind with an `else` or `outside`, or past 15 kinds"));
             }
             for k in &walk.kinds {
-                let fits = (1..=3).contains(&k.bytes) && (!k.outside || k.bytes == 1 && k.or.is_none()) && k.empty.is_none_or(|e| (1..=3).contains(&e.1)) && k.or.is_none_or(|o| (1..=3).contains(&o.1));
-                if self.ops.get(usize::from(k.fill)) != Some(&BlockOp::Fill(k.open, k.closer)) || !fits {
+                let fits = (1..=3).contains(&k.bytes) && (!k.outside || k.bytes == 1 && k.or.is_none()) && k.empty.is_none_or(|e| (1..=3).contains(&e.1)) && k.or.is_none_or(|o| (1..=3).contains(&o.1)) && (1..=3).contains(&k.opens) && (k.opens == 1 || !k.outside && k.empty.is_none());
+                if !self.fill_of(k) || !fits {
                     return Err(format!("walk {w}: a fill not of its open and closer, or a count that does not fit"));
                 }
                 if k.empty.is_some() && byte_tests(&self.ops, k.closer).is_none() {
@@ -869,6 +873,20 @@ impl BlockProgram {
             }
         }
         Ok(())
+    }
+
+    /// Whether a walk kind's fill is `fill(open, C)`, `C` its closer past the opener's bytes:
+    /// the closer itself, or (`opens` N) `closer & ~prev(open) … & ~prev(open, N - 1)`, the
+    /// `AndNot`s outermost the last.
+    fn fill_of(&self, k: &WalkKind) -> bool {
+        let Some(&BlockOp::Fill(open, mut c)) = self.ops.get(usize::from(k.fill)) else { return false };
+        for d in (1..k.opens).rev() {
+            match self.ops.get(usize::from(c)) {
+                Some(&BlockOp::AndNot(x, p)) if self.ops.get(usize::from(p)) == Some(&BlockOp::Prev(k.open, d)) => c = x,
+                _ => return false,
+            }
+        }
+        open == k.open && c == k.closer
     }
 
     /// The bytes the program digest covers.
@@ -978,6 +996,10 @@ impl BlockProgram {
                 let (e, m) = k.empty.unwrap_or((u16::MAX, 0));
                 out.extend_from_slice(&e.to_le_bytes());
                 out.extend_from_slice(&[k.bytes, u8::from(k.outside), m]);
+                if k.opens > 1 {
+                    out.extend_from_slice(b"opens");
+                    out.push(k.opens);
+                }
                 if k.or.is_some() || k.after != 0 {
                     let (c2, m2) = k.or.unwrap_or((u16::MAX, 0));
                     out.extend_from_slice(b"or");
@@ -1322,7 +1344,7 @@ impl BlockProgram {
                 }
                 let Some((t, k)) = best else { break };
                 let kind = walk.kinds[k];
-                let closer = next_bit(&values[usize::from(kind.closer)], t + 1, end);
+                let closer = next_bit(&values[usize::from(kind.closer)], t + usize::from(kind.opens), end);
                 if let (Some((e, m)), None) = (kind.empty, closer) {
                     set(&mut values[usize::from(e)], t, t + 1);
                     let to = (t + usize::from(m)).min(end);
@@ -1816,7 +1838,7 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
         let _ = writeln!(out, "  block {at} rounds {}", pairs.join(" "));
     }
     // `block N region G %opener %closer %open %fill B [outside] [else %e M] [or %c M] [after
-    // MASK]`: a walk's kinds,
+    // MASK [resumes]] [opens N]`: a walk's kinds,
     // in order, each of rounds group `G` (`Walk`).
     for walk in &block.walks {
         for k in &walk.kinds {
@@ -1824,7 +1846,8 @@ pub fn block_rows(out: &mut String, at: usize, block: &BlockProgram) {
             let empty = k.empty.map_or(String::new(), |(e, m)| format!(" else %{e} {m}"));
             let or = k.or.map_or(String::new(), |(c, m)| format!(" or %{c} {m}"));
             let after = if k.after != 0 { format!(" after {}{}", k.after, if k.resumes { " resumes" } else { "" }) } else { String::new() };
-            let _ = writeln!(out, "  block {at} region {} %{} %{} %{} %{} {}{outside}{empty}{or}{after}", walk.group, k.opener, k.closer, k.open, k.fill, k.bytes);
+            let opens = if k.opens > 1 { format!(" opens {}", k.opens) } else { String::new() };
+            let _ = writeln!(out, "  block {at} region {} %{} %{} %{} %{} {}{outside}{empty}{or}{after}{opens}", walk.group, k.opener, k.closer, k.open, k.fill, k.bytes);
         }
     }
     for (k, value) in block.outputs.iter().enumerate() {

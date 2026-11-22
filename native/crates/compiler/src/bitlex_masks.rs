@@ -1012,9 +1012,10 @@ impl Lowering {
                             // outside the others' fills (a `"` in a raw string closes no
                             // string), each closer's last by `closer_last`. The first closer
                             // after the opener is its own region's: the bytes before it are
-                            // its fill's.
+                            // its fill's. Each closer past its opener's bytes
+                            // (`Region::closers_past`): a reader looks from the byte after.
                             let (opener, closer) = match rs.as_slice() {
-                                [r] => (self.expr(&r.opener)?, self.expr(&r.closers())?),
+                                [r] => (self.expr(&r.opener)?, self.expr(&r.closers_past(&format!("o_{}", r.kind)))?),
                                 _ => {
                                     let name = |x: String| Expr::Name(x);
                                     let or = |a: Expr, b: Expr| Expr::Or(Box::new(a), Box::new(b));
@@ -1022,7 +1023,7 @@ impl Lowering {
                                     let c = rs
                                         .iter()
                                         .map(|r| {
-                                            rs.iter().filter(|q| q.kind != r.kind).fold(r.closers(), |c, q| Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(name(format!("f_{}", q.kind)))))))
+                                            rs.iter().filter(|q| q.kind != r.kind).fold(r.closers_past(&format!("o_{}", r.kind)), |c, q| Expr::And(Box::new(c), Box::new(Expr::Not(Box::new(name(format!("f_{}", q.kind)))))))
                                         })
                                         .reduce(or)
                                         .expect("a region");
@@ -1446,7 +1447,13 @@ impl Lowering {
             };
             opens.push(open);
             templates.push(None);
-            let fill = self.op(BlockOp::Fill(open, closer));
+            // An opener of `N` bytes: its closer past them (`Region::closers_past`).
+            let mut past = closer;
+            for k in 1..r.opens {
+                let p = self.op(BlockOp::Prev(open, k));
+                past = self.op(BlockOp::AndNot(past, p));
+            }
+            let fill = self.op(BlockOp::Fill(open, past));
             if r.outside {
                 let p = self.op(BlockOp::Prev(fill, 1));
                 hide.push(self.op(BlockOp::AndNot(p, closer)));
@@ -1481,7 +1488,7 @@ impl Lowering {
             let before = self.prev(f, 1)?;
             let flips = self.xor(f, before)?;
             self.toggles.push((f, flips));
-            kinds.push(crate::block::WalkKind { opener, closer, open, fill, bytes: r.bytes, outside: r.outside, empty, or, after, resumes: r.resumes });
+            kinds.push(crate::block::WalkKind { opener, opens: r.opens, closer, open, fill, bytes: r.bytes, outside: r.outside, empty, or, after, resumes: r.resumes });
         }
         let mut next = *hide.first().ok_or("regions that hide nothing")?;
         for &h in &hide[1..] {
