@@ -856,8 +856,9 @@ describe("a state file Windows left behind", () => {
     const notOurs = `the engine pipe ${PIPE} is not this Rerail home's daemon`;
 
     it("asks Windows which process holds it first, and its engine to prove it holds the capability only when Windows names another, within a wait the event shares", async () => {
-      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", startedAt: STARTED });
-      const endpoint = await atStandInTime(async () => await engineEndpointAt(PIPE, undefined, answering("proved")));
+      await recordState({ kernelSocketPath: PIPE, accessToken: "capability", pid: DEAD_PID, startedAt: STARTED });
+      const other = { pid: DEAD_PID + 1, startedAt: STARTED - 1 };
+      const endpoint = await atStandInTime(async () => await engineEndpointAt(PIPE, undefined, answering("proved", "win32", other)));
       expect(endpoint).toEqual({ socketPath: PIPE, accessToken: "capability", proofTookMs: 0 });
       expect(held).toEqual([[PIPE, ENGINE_ANSWER_WAIT_MS]]);
       expect(asked).toEqual([[PIPE, "capability", ENGINE_ANSWER_WAIT_MS]]);
