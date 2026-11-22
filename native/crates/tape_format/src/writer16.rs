@@ -1727,9 +1727,9 @@ pub unsafe fn w_leaf(desc: *const u8, number: u32, start: u64, end: u64) -> u32 
 /// A walk's hold on the writer, as the lean parser's `Walk` holds its tape's columns: the block it writes (its room
 /// and side area), the next node, the start before, and the open nodes' frames, kept by the walk as its own. An open,
 /// a leaf and a close store the node's cells through them, at the widths `X` (`Fixed`: a store of the cell's width at
-/// a constant offset). The state is reached only to begin a block (and settle the one before), to close a node of a
-/// block before, or where a bound fails: then its own op writes the node, the cursor's fields given to it and taken
-/// back. The bytes are the state's ops'.
+/// a constant offset), with no test of their bounds: as `Walk`'s, the caller's are in order (`begin`). The state is
+/// reached only to begin a block (and settle the one before) and to close a node of a block before: then its own op
+/// writes the node, the cursor's fields given to it and taken back. The bytes are the state's ops'.
 pub struct Cursor<X: CellWidths> {
     s: *mut State,
     room: usize,
@@ -1747,7 +1747,9 @@ impl<X: CellWidths> Cursor<X> {
     ///
     /// # Safety
     /// `desc` is a writer's state, its room reserved for the walk (`Writer::reserve_run`: each node, each open frame),
-    /// of widths `X`; nothing else writes it while the cursor is held.
+    /// of widths `X`; nothing else writes it while the cursor is held. The walk's nodes are in order, as a parser's
+    /// are: each start at or past the one before, each end at or past its node's start, every one within the source,
+    /// and a node is open for each node but the first (a debug build checks each).
     #[inline(always)]
     pub unsafe fn begin(desc: *mut u8) -> Self {
         // SAFETY: the caller's.
@@ -1844,11 +1846,12 @@ impl<X: CellWidths> Cursor<X> {
         j
     }
 
-    /// Whether node `n` at `start` goes in the held block, in bounds: else the state's op writes it.
+    /// Whether node `n` (and `rows - 1` after it) goes in the held block: else the state's op writes it.
     #[inline(always)]
     fn fits(&self, start: u64, rows: u32) -> bool {
+        debug_assert!(start >= self.prev_start && start <= self.source_len, "the walk's starts in order, in the source");
         let j = self.n % Z;
-        j != 0 && j + rows <= Z && start >= self.prev_start && start <= self.source_len
+        j != 0 && j + rows <= Z
     }
 
     /// A node opened at `start` (`w_open`).
@@ -1874,7 +1877,8 @@ impl<X: CellWidths> Cursor<X> {
     /// As `begin`'s.
     #[inline(always)]
     pub unsafe fn leaf(&mut self, number: u32, start: u64, end: u64) {
-        if self.fits(start, 1) && end >= start && end <= self.source_len {
+        debug_assert!(end >= start && end <= self.source_len, "a leaf's end past its start, in the source");
+        if self.fits(start, 1) {
             // SAFETY: the caller's; it fits.
             unsafe {
                 let j = self.node(number, start, false);
@@ -1895,7 +1899,8 @@ impl<X: CellWidths> Cursor<X> {
     /// As `begin`'s.
     #[inline(always)]
     pub unsafe fn leaf_in(&mut self, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) {
-        if self.fits(start, 2) && cs >= start && ce >= cs && end >= ce && end <= self.source_len {
+        debug_assert!(cs >= start && ce >= cs && end >= ce && end <= self.source_len, "the node's and its child's bounds in order");
+        if self.fits(start, 2) {
             // SAFETY: the caller's; both fit.
             unsafe {
                 let j = self.node(number, start, false);
@@ -1931,8 +1936,9 @@ impl<X: CellWidths> Cursor<X> {
         unsafe {
             let t = self.opens + (self.open_len as usize - 1) * OPEN as usize;
             let (i, start) = (ld32(t), ld64(t + 16));
+            debug_assert!(end >= start && end <= self.source_len, "a close's end past its node's start, in the source");
             // The node in the held block: its cells there, and no block to settle.
-            if i / Z == (self.n - 1) / Z && end >= start && end <= self.source_len {
+            if i / Z == (self.n - 1) / Z {
                 self.open_len -= 1;
                 let j = i % Z;
                 self.put(2, j, end - start);
