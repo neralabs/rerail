@@ -817,7 +817,10 @@ impl Batch {
     /// The batch's vocabulary, every document made: its strings and their symbols, each string once.
     pub(super) fn vocabulary(&self) -> (Vec<String>, Vec<u32>) {
         if self.rows.complete.get().is_none() {
-            profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || "the batch's vocabulary (a text test)".to_owned());
+            profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || {
+                let unmade = self.rows.state.lock().of.iter().filter(|g| g.is_none()).count();
+                format!("the batch's vocabulary (a text test): {unmade} of {} documents unmade", self.docs.len())
+            });
         }
         self.complete();
         let shared = self.shared.lock();
@@ -840,7 +843,12 @@ impl MadeRows {
     /// What a read reads once every document is made: the relation, whole.
     fn target(&self) -> &dyn Source {
         if self.batch.rows.complete.get().is_none() {
-            profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || self.batch.rows.names[self.rel].clone());
+            // With how many documents the read makes: a batch of an edit's changed files is made whole at no cost, one
+            // of the corpus at the corpus's.
+            profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || {
+                let unmade = self.batch.rows.state.lock().of.iter().filter(|g| g.is_none()).count();
+                format!("{}: {unmade} of {} documents unmade", self.batch.rows.names[self.rel], self.batch.docs.len())
+            });
         }
         &*self.batch.complete()[self.rel]
     }
