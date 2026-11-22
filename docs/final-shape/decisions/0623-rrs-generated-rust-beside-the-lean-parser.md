@@ -96,3 +96,15 @@ The reads are lean's in where they read, not yet in what they read. A run or a c
 bytes of its mask, and a test at a token's start reads each byte with a bound. The next steps make them lean's: the
 common token's one table load (3), the word's one load (4), and the region readers as lean's micro-lexers (2's
 other half).
+
+## Step 4: a word's code from one load (done)
+
+A token's word is `word_at(src, s, len)`. It loads the token's first 8 bytes (the source is padded, so the load needs
+no check), masks them to its length, and hashes them with the length by one multiply into `WORDS`, where each of the
+grammar's words has a slot of its own. This is the lean lexer's `word_code`, except that lean's table was written by
+hand and ours is the generator's: it searches a fixed sequence of multipliers (splitmix64's) for one that gives each
+word its own slot, so the table is the same at every build. A word of more than 8 bytes compares its other bytes too,
+where lean checks `violation`'s ninth. The `match` on byte strings is gone where the bytes form applies (step 1).
+Elsewhere, and where no multiplier is found, it stays.
+
+`rr_parser`'s 51 library tests pass, the corpus's tapes and records included.

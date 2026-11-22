@@ -488,3 +488,53 @@ fn wrun_once_last(n: usize, s: usize, r: impl FnMut(isize, &mut u64) -> u64, mut
 }
 
 "#;
+
+/// A word's first 8 bytes as one word of memory, little-endian, zeros past its end.
+fn key8(w: &[u8]) -> u64 {
+    w.iter().take(8).enumerate().fold(0, |k, (i, &c)| k | u64::from(c) << (8 * i))
+}
+
+/// A token's word from one load (decision 0623 step 4, the lean lexer's `word_code`): its first 8 bytes masked to its
+/// length, and the length, hashed by one multiply into a table where each of the grammar's words (`words`, code
+/// `i + 1`) has a slot of its own. `None` where no multiplier the search tries gives each its own slot.
+pub(super) fn word_table(words: &[Vec<u8>]) -> Option<String> {
+    let keys: Vec<u64> = words.iter().map(|w| key8(w) ^ w.len() as u64).collect();
+    let least = usize::BITS - words.len().max(1).leading_zeros();
+    let mut x = 0x9e37_79b9_7f4a_7c15u64;
+    for bits in least + 1..=least + 4 {
+        for _ in 0..100_000 {
+            // splitmix64's steps: a fixed sequence, so the table is the same at every build.
+            x = x.wrapping_add(0x9e37_79b9_7f4a_7c15);
+            let mut z = x;
+            z = (z ^ (z >> 30)).wrapping_mul(0xbf58_476d_1ce4_e5b9);
+            z = (z ^ (z >> 27)).wrapping_mul(0x94d0_49bb_1331_11eb);
+            let mul = (z ^ (z >> 31)) | 1;
+            let mut slots = vec![usize::MAX; 1 << bits];
+            let ok = keys.iter().enumerate().all(|(i, &k)| {
+                let slot = (k.wrapping_mul(mul) >> (64 - bits)) as usize;
+                let free = slots[slot] == usize::MAX;
+                slots[slot] = i;
+                free
+            });
+            if !ok {
+                continue;
+            }
+            let mut table = String::new();
+            for slot in &slots {
+                match words.get(*slot) {
+                    Some(w) => {
+                        let tail: Vec<String> = w.iter().skip(8).map(|c| format!("{c:#04x}")).collect();
+                        let _ = writeln!(table, "    ({:#018x}, {}, {}, &[{}]),", key8(w), w.len(), slot + 1, tail.join(", "));
+                    }
+                    None => table.push_str("    (0, 0, 0, &[]),\n"),
+                }
+            }
+            return Some(format!(
+                "/// Each slot's word (`word_at`): its first 8 bytes, its length, its code, its bytes after the 8th.\nstatic WORDS: [(u64, usize, u32, &[u8]); {}] = [\n{table}];\n\n/// A token's word: the code of the word its `len` bytes from `s` are, 0 for none. Its first 8 bytes, masked to its length,\n/// and the length, hashed by one multiply into `WORDS` (the lean lexer's `word_code`); a word of more than 8 compares the rest.\n#[inline(always)]\nfn word_at(src: &[u8], s: usize, len: usize) -> u32 {{\n    let raw = u64::from_le_bytes(src[s..s + 8].try_into().expect(\"the padded source\"));\n    let k = raw & (u64::MAX >> (64 - 8 * len.min(8)));\n    let (key, l, code, tail) = WORDS[((k ^ len as u64).wrapping_mul({mul:#018x}) >> {}) as usize];\n    if key == k && l == len && (len <= 8 || src[s + 8..s + len] == *tail) {{ code }} else {{ 0 }}\n}}\n\n",
+                1usize << bits,
+                64 - bits
+            ));
+        }
+    }
+    None
+}
