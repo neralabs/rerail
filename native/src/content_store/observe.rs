@@ -2819,7 +2819,7 @@ mod tests {
         // What a run writes of its own: the store and the files beside it (a real store's: the observer keeps its
         // answers in it, t33 K2), and its outputs.
         let own_writes = |n: u32| {
-            let written = crate::content_store::ContentStore::open(&content).unwrap();
+            let written = rerail_store_above::content_store::ContentStore::open(&content).unwrap();
             written.put_source(format!("store {n}").as_bytes(), &[]).unwrap();
             drop(written);
             std::fs::write(root.join("store.sqlite.upkeep"), format!("frames\t{n}\n")).unwrap();

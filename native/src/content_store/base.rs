@@ -1,7 +1,7 @@
 //! The content store's base (rerail-store-base): its keys, ids, errors and payloads, the constants its tables
 //! read, and the connection's cached reads (`Cached`, `flush_of`). The store's base modules read them (the atoms,
-//! the segments, the rows, the journal), and so does everything above: the store
-//! (rerail-store, `mod.rs`) with its observer and git, which re-exports them where they were (`crate::content_store::*`).
+//! the segments, the rows, the journal), and so does everything above: the observer and git (rerail-observe), and
+//! the store itself (rerail-store, `mod.rs`), which re-exports them where they were (`crate::content_store::*`).
 use super::SegmentBytes;
 use rusqlite::Connection;
 use rerail_blocks::block::Flush;

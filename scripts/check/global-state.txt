@@ -373,6 +373,9 @@ native/crates/run/src/lib.rs::LOAD	stays	code registered at load (an init-array 
 native/crates/sessions/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/transducer/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/transducer_cpu/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/observe/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers the store its tests keep the observer's answers in)
+native/crates/store/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary registers the store with the observer)
+native/src/content_store/observer_store/base.rs::STORE	stays	code a crate above registers at load (the content store, as the observer and git reach it)
 native/src/code_rule_dsl/logic/device.rs::DEVICE	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/plan/corpus/base.rs::RUNNER	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/profile/memory.rs::BYTES	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's

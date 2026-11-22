@@ -1,6 +1,6 @@
 //! The analysis scope's base (rerail-store-base): an owner of a scope (`AnalysisOwner`, its acquisition and
 //! generation), a run's source (`RunSource`) and the scopes' names (`named`, `directory`), which git reads with the
-//! observer (rerail-store's). `analysis_scope.rs` (rerail-store) re-exports them.
+//! observer (rerail-observe). `analysis_scope.rs` (rerail-store) re-exports them.
 use super::super::Cached as _;
 use rerail_store::Canonical as _;
 use std::path::Path;

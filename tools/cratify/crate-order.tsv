@@ -46,6 +46,7 @@ rerail-accel	core
 rerail-prof	core
 rerail-metal	core
 rerail-store-base	core
+rerail-observe	core
 rerail-store	core
 rerail-program-image	core
 rerail-cpu-stream	core

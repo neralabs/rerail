@@ -13,19 +13,14 @@ steps 7b to 7i):
 
 ## Items
 
-1. **rerail-observe is rerail-store again.** Theirs' 7b put the observer and git below the store, with no
-   `ContentStore`. On ours, that layering has a cycle:
+1. **Theirs' 7b stands: the observer and git are below the store, and reach it through an interface** (the user's
+   choice, 2026-11-22; see "Correction"). On ours, the observer and git read the store above them:
    - the observer's answers, canonical forms and settings are kept facts of the store (t33 K2, `observe/facts.rs`);
-   - the store's collection sweeps the observer under its lease (`corpus_runs`);
-   - `git_workspace`'s snapshot reads the observer and the store (`owned_again`), and it and `git_access` read each
-     other.
+   - `git_workspace`'s snapshot owns again the manifests a run recorded in the store (`owned_again`).
 
-   So the three are the store's. rerail-store mounts the observer in `mod.rs` and `git_access` and `git_workspace` in
-   its root, over rerail-store-base. rerail-store-base keeps the rest of 7b.
-
-   rerail-observe goes everywhere it was named: the crate, the workspace members, the lock, `crate-order.tsv`, and the
-   docs of the base. rerail-store already had all of its dependencies. 7b's text in the crate split's plan records the
-   amendment.
+   The store's collection sweeping the observer under its lease (`corpus_runs`) reads downward, and stays in the
+   store. The two upward reads go through what they need of the store, declared in rerail-store-base and filled
+   by rerail-store at load (item 1 of "Correction").
 2. **Theirs' 7b split of `content_store/mod.rs`** moved the root's types into `base.rs`. Ours' changes to `mod.rs` since
    the base were applied to theirs' `mod.rs`. The hunks it rejected were applied to `base.rs`, where those items are
    now. That covers t33's removals: the facts memo's `HASH_BLAKE3` and `HashKey::blake3`, the candidate checks' clause
@@ -70,10 +65,52 @@ steps 7b to 7i):
 ## Checks
 
 Locally under Relax, CPU:
-- `relax check rerail-engine` type- and borrow-checks the engine's 93 crates clean, and `relax check rerail-facts`
+- `relax check rerail-engine` type- and borrow-checked the engine's 93 crates clean, and `relax check rerail-facts`
   checks its 47. The one error, in both, is in the vendored Cranelift (`smallvec` is ambiguous). That is Relax's
   resolver, and cargo builds that code.
-- rerail-store's tests: the observer's 33 pass (1 ignored), and git's 38 pass.
+- rerail-store's tests: the observer's 33 passed (1 ignored), and git's 38 passed. These ran under the fold that
+  "Correction" undoes; its own checks are there.
 - rerail-device-metal's test build compiles (its 86 tests listed, none run on this Mac).
 - rerail-tests-lang's place test passes.
 - The crate DAG, global-state and thread-state checks pass.
+
+## Correction: the store reached from below (the user's choice)
+
+This roll-up first folded rerail-observe into rerail-store, which reversed theirs' 7b. It was the user's call, and
+the user chose (2026-11-22) to keep 7b and invert t33 K2's reads of the store:
+1. **The interface** is rerail-store-base's `content_store::observer_store::base`:
+   - `Store` opens a store at a path for its kept facts and owns its recorded manifests again (git's
+     `owned_again`);
+   - `Kept` is an open store as the observer's facts read and write a space of it: it settles the space, reads an
+     atom's text, interns atoms, reads the space's chain as kept (`&dyn KeptRead`), and queues a put;
+   - `STORE` is its slot (`rerail_registry::Slot`). With none registered, the observer keeps nothing, and git
+     reports the missing store.
+2. **The provider** is rerail-store's `observer_store.rs`: `ContentStore` implements `Kept`, and a provider with no
+   fields implements `Store`. `register` fills the slot from boot's `install_with`, and from the load hooks of
+   rerail-store's and rerail-observe's own test binaries. rerail-observe's test build dev-depends on rerail-store
+   (`rerail-store-above`, since its sources name the base `rerail_store`) for the store its tests keep answers in.
+   The DAG check reads normal and build dependencies only. The tree has upward dev-dependencies already
+   (rerail-rr-parser on rerail-rr-aot).
+3. **The puts' types** (`KeptPut`, `KeptWhat`, `KeptRows`, `KeptPicked`, `BlockFlat`, `FlatWriter`) move to
+   rerail-store-base's `kept_facts/base.rs`, since the observer builds its puts with them. `kept_facts` re-exports
+   them where they were, so no reader changed. `KeptPut::key` is public now, since the store's writer reads it
+   across the crates.
+4. **The fold is undone**: rerail-observe's crate (theirs', unchanged but for the test hook and dependency), the
+   workspace member, `crate-order.tsv`, rerail-store's dependency, feature and re-exports, and the base's docs.
+   7b's text in the plan says how the store is reached instead of recording the fold.
+5. **The global-state list** gets `observer_store/base.rs::STORE` and the two test binaries' `LOAD`s.
+
+### Checks
+
+Locally under Relax, CPU:
+- `relax check rerail-engine` type- and borrow-checks the engine's 94 crates with 0 errors. `relax check
+  rerail-store` checks its 25 the same way.
+- rerail-observe's tests: 42 pass (1 ignored). rerail-store's `git_`, sweep, `corpus_runs::` and `kept_facts::`
+  tests: 97 pass (1 ignored).
+- The crate DAG, global-state and thread-state checks pass.
+
+Relax does not run this tree's load hooks. It reads `#[link_section]` only when the attribute's first token is
+`link_section` (`sections.rs`, `item_section`), and edition 2024's `unsafe(link_section = …)` begins with `unsafe`.
+The bare form is refused in an edition-2024 crate ("unsafe attribute used without unsafe"). So those test runs
+registered the store through a temporary `Once`, in the observer's facts and in `ContentStore::open`, which is not
+committed. The committed load hooks are the tree's usual form, and cargo runs them.

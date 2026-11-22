@@ -3,14 +3,10 @@
 //! JavaScript does not receive connections, SQL, row identifiers, or hash lanes.
 //! The code-rule runtime will call this module through coarse Rust operations.
 
-// The store's base is the crate below (rerail-store-base): the keys, ids, errors and payloads (`base.rs`), the
-// segments, the rows, the postings, the vocabulary, compression, the journal, the hazards, the scope leases and the
-// private files, re-exported here.
-pub use rerail_store_base::content_store::*;
-/// The observer of the files a run reads: its answers, canonical forms and settings are kept facts of this store
-/// (t33 K2, `observe/facts.rs`), and the store's collection sweeps it under its lease (`corpus_runs`), so it is the
-/// store's.
-pub mod observe;
+// The store's base and its observer are the crates below (rerail-store-base, rerail-observe): the keys, ids, errors
+// and payloads (`base.rs`), the atoms, the segments, the rows, the postings, the vocabulary, compression, the journal,
+// the hazards, the scope leases and the private files, and the observer (`observe`), re-exported here.
+pub use rerail_observe::content_store::*;
 pub mod analysis_scope;
 pub mod atoms;
 pub use atoms::{ProcessIds, StoreIds, Sym};
@@ -34,6 +30,8 @@ mod document_places;
 pub use document_places::{DOCUMENT_WORDS, DocumentPlaces, PLACED_WORDS};
 mod held;
 pub mod kept_facts;
+/// The store as the observer and git below it reach it (`observer_store::base::STORE`), registered at load.
+pub mod observer_store;
 pub mod guest_keys;
 mod object_segments;
 mod plan_set;

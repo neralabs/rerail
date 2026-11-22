@@ -47,6 +47,8 @@ fn install_with(ids: Option<BuildIds>) {
         install_languages(ids.is_none());
         // The retained traces, which the SQL executor's parts below them read (`maintenance::TEMPORAL`).
         sql_executor::temporal::register();
+        // The content store, which the observer and git below it reach (`content_store::observer_store::STORE`).
+        crate::content_store::observer_store::register();
         logic::plan::corpus::install_git_inventory();
         logic::run_state::CARRIERS.register("boot", logic::CARRIERS);
         logic::plan::corpus::RUNNER.register("boot", &logic::plan::corpus::Corpus);

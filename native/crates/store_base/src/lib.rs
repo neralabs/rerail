@@ -2,7 +2,7 @@
 //! of the store reads that read no `ContentStore`: the segments, the rows, the postings, the vocabulary,
 //! compression, the journal, the hazards, the scope leases and the private files. With the analysis scope's owner
 //! and names (`analysis_scope::base`), the checkout's source tree, the prefilter's probes and `Canonical`. Below
-//! the store (rerail-store), with its observer and git, which re-exports it.
+//! the observer and git (rerail-observe) and the store (rerail-store), which re-export it.
 //!
 //! The sources are the engine's, in place (`native/src`): only the build moved.
 
@@ -31,6 +31,14 @@ pub mod content_store {
     pub mod analysis_scope {
         pub mod base;
         pub use base::*;
+    }
+    /// A put of a space's kept facts; the space's chain and its writer are the store's.
+    pub mod kept_facts {
+        pub mod base;
+    }
+    /// The store as the observer and git below it reach it; its provider is the store's.
+    pub mod observer_store {
+        pub mod base;
     }
     pub mod bounded_insert;
     pub mod compression;

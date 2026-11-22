@@ -10427,9 +10427,8 @@ The width census, 0165 §3's in-place local original, and t52 step 4 (`notes/rol
 ### Q491. Roll-up 70 (engine-crating 001841e689 onto Pulling-it-all-together): what the merge chose
 
 Crate split steps 7b to 7i (`notes/roll-up-70-engine-crating.md`):
-- **rerail-observe is rerail-store again.** On ours, the observer's answers are the store's kept facts (t33 K2), and
-  the store's collection sweeps the observer. Git reads both. rerail-store mounts the observer and git over
-  rerail-store-base.
+- **Theirs' 7b stands** (corrected, Q494): the observer and git are below the store, and reach its kept facts and
+  manifests through an interface the store registers at load.
 - **Ours' `mod.rs` changes on theirs' split**: t33's removals and the in-memory store's own folder, in `mod.rs` and
   `base.rs`.
 - **Ours' code on theirs' interfaces**: `Places::syntax_batch`, the `CHUNK_AXIS` slot in `within.rs`, and boot's
@@ -10452,3 +10451,13 @@ Roll-up 71 had kept roll-up 55's `native_cpu_facts` over Parser-generators-final
 - `stream_facts` and `stream_analysis` are the front end's, and `native_cpu_clusters` is the compiler's.
 - `native_cpu_facts` goes.
 - 0565 is amended (`notes/roll-up-71-parser-generators.md`, "Correction").
+
+### Q494. Roll-up 70, corrected: theirs' 7b kept, t33 K2's store reads inverted (the user's choice)
+
+Roll-up 70 had folded rerail-observe into rerail-store, reversing engine-crating's 7b. The user chose (2026-11-22)
+to keep 7b and invert t33 K2 (`notes/roll-up-70-engine-crating.md`, "Correction"):
+- rerail-observe is below rerail-store again.
+- The observer's kept facts and git's `owned_again` reach the store through rerail-store-base's
+  `observer_store::base` (`Store`, `Kept`, the `STORE` slot), which rerail-store fills at load.
+- The puts' types are the base's (`kept_facts/base.rs`).
+- The store's sweep of the observer stays in the store.
