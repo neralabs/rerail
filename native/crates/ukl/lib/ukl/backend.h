@@ -177,13 +177,24 @@ UKL_INLINE uint64_t ukl_umulhi64(uint64_t a, uint64_t b) { return __umul64hi(a, 
 UKL_INLINE uint32_t ukl_ctz32(uint32_t x) { return x == 0u ? 32u : (uint32_t)(__ffs(x) - 1); }
 UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0u ? 64u : (uint32_t)(__ffsll(x) - 1); }
 
+#if defined(UKL_HIP)
+// HIP (AMD's wavefronts, 32 or 64 lanes): the shuffles take no mask, as every lane of a wavefront runs them together;
+// a lane past the group's edge keeps its own value (`__shfl_up`, `__shfl_down`), as CUDA's. The ballot is 64 bits,
+// a 32-lane wavefront's in its low half.
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return __shfl(v, (int)lane, UKL_SIMD_WIDTH); }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS) { return __shfl_up(v, d, UKL_SIMD_WIDTH); }
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS) { return __shfl_down(v, d, UKL_SIMD_WIDTH); }
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return __shfl_xor(v, (int)m, UKL_SIMD_WIDTH); }
+UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return (ukl_mask_t)__ballot(b); }
+UKL_INLINE void ukl_sg_barrier() { __UKL_SYNCWARP(); }
+#else
 UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return __shfl_sync(0xffffffffu, v, lane); }
 UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS) { return __shfl_up_sync(0xffffffffu, v, d); }
 UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS) { return __shfl_down_sync(0xffffffffu, v, d); }
 UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return __shfl_xor_sync(0xffffffffu, v, m); }
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return __ballot_sync(0xffffffffu, b); }
-
 UKL_INLINE void ukl_sg_barrier() { __syncwarp(); }
+#endif
 UKL_INLINE void ukl_tg_barrier() { __syncthreads(); }
 UKL_INLINE void ukl_tg_barrier_device() { __syncthreads(); }
 
@@ -204,6 +215,24 @@ UKL_INLINE uint32_t ukl_atomic_add_local(UKL_LOCAL uint32_t* p, uint32_t v) { re
 UKL_INLINE uint32_t ukl_atomic_load_local(UKL_LOCAL uint32_t* p) { return *(volatile uint32_t*)p; }
 UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { *(volatile uint32_t*)p = v; }
 
+#if defined(UKL_HIP)
+// ukl/dot.h on HIP: an f16's conversion (the compiler's `_Float16`), and on RDNA2 (`UKL_HIP_AMD_DOT`, the device's
+// define, `CudaDevice::defines`) the byte and f16 dot products, as OpenCL's AMD section (`v_dot2_f32_f16` rounds
+// the exact sum once). No bf16 form before RDNA3's.
+#define UKL_NATIVE_F16 1
+UKL_INLINE float ukl_f16_to_f32_native(uint32_t h) { return (float)__builtin_bit_cast(_Float16, (uint16_t)h); }
+#if defined(UKL_HIP_AMD_DOT)
+typedef _Float16 __ukl_half2 __attribute__((ext_vector_type(2)));
+#define UKL_NATIVE_DOT4 1
+UKL_INLINE int32_t ukl_dot4_i8_native(uint32_t a, uint32_t b, int32_t acc) { return __builtin_amdgcn_sdot4((int)a, (int)b, acc, false); }
+UKL_INLINE uint32_t ukl_dot4_u8_native(uint32_t a, uint32_t b, uint32_t acc) { return __builtin_amdgcn_udot4(a, b, acc, false); }
+#define UKL_NATIVE_DOT2_F16 1
+UKL_INLINE float ukl_dot2_f16_native(uint32_t a, uint32_t b, float acc)
+{
+    return __builtin_amdgcn_fdot2(__builtin_bit_cast(__ukl_half2, a), __builtin_bit_cast(__ukl_half2, b), acc, false);
+}
+#endif
+#else
 // The lanes holding the same value as this one (Volta and later).
 #define UKL_NATIVE_SG_MATCH 1
 UKL_INLINE ukl_mask_t ukl_sg_match_native(uint32_t v __UKL_PARAMS) { return __match_any_sync(0xffffffffu, v); }
@@ -223,7 +252,9 @@ UKL_INLINE int32_t ukl_dot4_i8_native(uint32_t a, uint32_t b, int32_t acc) { ret
 UKL_INLINE uint32_t ukl_dot4_u8_native(uint32_t a, uint32_t b, uint32_t acc) { return __dp4a(a, b, acc); }
 #endif
 
-#if __CUDA_ARCH__ >= 800
+#endif
+
+#if !defined(UKL_HIP) && __CUDA_ARCH__ >= 800
 #define UKL_NATIVE_SG_REDUCE 1
 UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return __reduce_add_sync(0xffffffffu, v); }
 UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return __reduce_min_sync(0xffffffffu, v); }
@@ -570,7 +601,7 @@ UKL_INLINE uint32_t ukl_mask_rank(ukl_mask_t m, uint32_t l) { return ukl_mask_co
 // A field's offset, as a constant for `UKL_STATIC_ASSERT`. NVRTC (its front end is EDG's) has no `offsetof` nor
 // `__builtin_offsetof`, and no standard headers; EDG's own `__INTADDR__` makes the address a constant.
 #ifndef UKL_OFFSETOF
-#if defined(UKL_CUDA)
+#if defined(UKL_CUDA) && !defined(UKL_HIP)
 #define UKL_OFFSETOF(T, f) ((unsigned long)__INTADDR__(&(((T*)0)->f)))
 #else
 #define UKL_OFFSETOF(T, f) __builtin_offsetof(T, f)

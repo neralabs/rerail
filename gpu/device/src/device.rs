@@ -1,7 +1,7 @@
 //! The forest's device (Rerail, decision 0440): the target's GPU (Metal on macOS, compute_kernel_metal.rs; CUDA on
-//! Linux and Windows, compute_kernel_cuda.rs), an OpenCL GPU (compute_kernel_opencl.rs: integrated GPUs with no other way in) or
+//! Linux and Windows, or HIP on AMD's GPUs, compute_kernel_cuda.rs), an OpenCL GPU (compute_kernel_opencl.rs: integrated GPUs with no other way in) or
 //! the CPU (compute_kernel_cpu.rs: every threadgroup's threads coroutines, for debugging kernels), chosen once a
-//! process: `RERAIL_GPU=cpu` or `=opencl`, else the target's GPU. Each type below is one of them, and gives the grid
+//! process: `RERAIL_GPU=cpu` or `=opencl`, else the target's GPU (`=hip`: HIP's, AMD's, in CUDA's place). Each type below is one of them, and gives the grid
 //! runtime and the trainer one interface (MLDB's `ComputeRuntime`):
 //!
 //! - `Device`, `DeviceRef`: the device (`gpu::shared`'s); `QueueRoot`: what a `ComputeQueue` is made from;
@@ -31,7 +31,9 @@ mod native {
     pub type Buffer = metal::Buffer;
     pub type QueueRoot = metal::CommandQueue;
     pub type SharedEvent = metal::SharedEvent;
-    pub const NAME: &str = "Metal";
+    pub fn name() -> &'static str {
+        "Metal"
+    }
     /// The device's own name (the GPU's model).
     pub fn device_name(d: &Device) -> String {
         d.name().to_owned()
@@ -49,10 +51,17 @@ mod native {
     pub fn device_address(b: &Buffer) -> Option<u64> {
         Some(b.device_address())
     }
-    pub const NAME: &str = "CUDA";
-    /// The device's own name: the backend's until the driver's is read (step E).
-    pub fn device_name(_d: &Device) -> String {
-        NAME.to_owned()
+    /// CUDA, or HIP where the process opened AMD's driver (`compute_kernel_cuda::Vendor`).
+    pub fn name() -> &'static str {
+        crate::compute_kernel_cuda::opened_vendor().map_or("CUDA", |v| v.name())
+    }
+    /// The device's own name: the backend's (and HIP's architecture) until the driver's is read (step E).
+    pub fn device_name(d: &Device) -> String {
+        if d.arch.is_empty() {
+            d.vendor.name().to_owned()
+        } else {
+            format!("{} {}", d.vendor.name(), d.arch)
+        }
     }
 }
 
@@ -87,10 +96,10 @@ pub fn backend() -> &'static str {
     match crate::shared::get().map(|s| &s.device) {
         Some(Device::Cpu(_)) => "CPU",
         Some(Device::OpenCl(_)) => "OpenCL",
-        Some(Device::Native(_)) => native::NAME,
+        Some(Device::Native(_)) => native::name(),
         None if cpu_chosen() => "CPU",
         None if opencl_chosen() => "OpenCL",
-        None => native::NAME,
+        None => native::name(),
     }
 }
 
@@ -128,7 +137,7 @@ impl Device {
         }
     }
 
-    /// The CUDA device, when the process's is CUDA.
+    /// The CUDA device, when the process's is CUDA (or HIP: `CudaDevice::vendor`).
     #[cfg(not(target_os = "macos"))]
     pub fn cuda(&self) -> Option<&crate::compute_kernel_cuda::CudaDevice> {
         match self {
@@ -140,6 +149,9 @@ impl Device {
     /// The lanes of the device's SIMD groups, as its kernels are compiled (`UKL_SIMD_WIDTH`).
     pub fn simd_width(&self) -> u32 {
         match self {
+            #[cfg(not(target_os = "macos"))]
+            Device::Native(d) => d.simd_width,
+            #[cfg(target_os = "macos")]
             Device::Native(_) => 32,
             Device::Cpu(_) => cpu::simd_width(),
             Device::OpenCl(d) => d.simd_width(),
@@ -231,11 +243,14 @@ impl Device {
     }
 
     /// The defines a kernel's preprocessing for this device takes (the CPU's knobs, `compute_kernel_cpu::defines`;
-    /// OpenCL's width and largest threadgroup): `rerail_gpu::Preprocessing`.
+    /// OpenCL's width and largest threadgroup; HIP's instructions by architecture): `rerail_gpu::Preprocessing`.
     pub fn compile_defines(&self) -> Vec<(&'static str, String)> {
         match self {
             Device::Cpu(_) => cpu::defines(),
             Device::OpenCl(d) => d.defines(),
+            #[cfg(not(target_os = "macos"))]
+            Device::Native(d) => d.defines(),
+            #[cfg(target_os = "macos")]
             Device::Native(_) => Vec::new(),
         }
     }
@@ -547,6 +562,17 @@ impl ComputeFunction {
             #[cfg(target_os = "macos")]
             ComputeFunction::Native(f) => f.compute_pipeline_state.static_threadgroup_memory_length(),
             _ => 0,
+        }
+    }
+
+    /// The groups of `threads` threads, each with `local` bytes of threadgroup memory beyond what the kernel declares,
+    /// that `device` holds at once: CUDA's and HIP's driver's occupancy of this kernel; Metal's from its cores
+    /// (`Device::resident_groups`, with the kernel's own threadgroup memory); `None` where the backend does not say.
+    pub fn resident_groups(&self, device: &Device, threads: u32, local: u64) -> Option<u64> {
+        match self {
+            #[cfg(not(target_os = "macos"))]
+            ComputeFunction::Native(f) => f.resident_groups(threads, local),
+            _ => device.resident_groups(threads, self.threadgroup_bytes() + local),
         }
     }
 

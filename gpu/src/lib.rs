@@ -36,7 +36,10 @@ impl Preprocessing for device::Device {
             #[cfg(target_os = "macos")]
             device::Device::Native(_) => rerail_ukl::Backend::Metal { version: 310 },
             #[cfg(not(target_os = "macos"))]
-            device::Device::Native(d) => rerail_ukl::Backend::Cuda { sm: d.sm },
+            device::Device::Native(d) => match d.vendor {
+                compute_kernel_cuda::Vendor::Cuda => rerail_ukl::Backend::Cuda { sm: d.sm },
+                compute_kernel_cuda::Vendor::Hip => rerail_ukl::Backend::Hip { wave: d.simd_width },
+            },
         }
     }
 

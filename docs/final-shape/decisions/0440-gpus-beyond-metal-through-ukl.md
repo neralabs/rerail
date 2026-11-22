@@ -202,7 +202,7 @@ templates are needed) plus UKL's macros. The shims are:
 |---|---|---|---|
 | Metal | Metal front end, then the binary archive (0395) | `ukl_metal_shim.h` (exists) | output must equal today's MSL in behaviour, checked per kernel |
 | CUDA | NVRTC to PTX, then nvJitLink to cubin per `sm_XX` | `ukl_cuda_shim.h` (upstream's draft, repaired) | first new target |
-| ROCm (HIP) | hipRTC | near-copy of CUDA's | wave64 on CDNA (see below) |
+| ROCm (HIP) | hiprtc | the CUDA shim, with HIP's SIMD-group operations (`UKL_HIP`) | done 2026-11-22, on a Radeon 680M (progress, "The HIP backend"); wave64 on CDNA (see below) |
 | OpenCL | `clBuildProgram` (C 1.2 or 2.0), or SPIR-V | upstream had one | in-place reads need OpenCL 2.0 shared virtual memory (SVM) |
 | CPU | the host's C++ compiler, at run time (`RERAIL_GPU=cpu`) | Rerail's `builtin/cpu/ukl/ukl_cpu_shim.h` (stackful coroutines; upstream's, over MLDB's runtime, is not carried) | for debugging kernels, not a product path (progress, "The CPU backend") |
 | WebGPU | not by macros | — | §3.4 |
@@ -1684,7 +1684,60 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
   - A kernel built by `hipcc --offload-arch=gfx1035` ran right: a wave's sum by `__shfl_xor`, and
     `__builtin_amdgcn_sdot4`.
 - **So a HIP backend can be the CUDA backend's port:** `hiprtc` compiles at run time, as NVRTC does there, and
-  device pointers give the addresses OpenCL lacks (a batch over several slabs, above). It is not started.
+  device pointers give the addresses OpenCL lacks (a batch over several slabs, above). It is done: the next entry.
+
+**The HIP backend (2026-11-22).** The user: "please do the HIP port of the CUDA one". One backend, not a second
+copy of it: `compute_kernel_cuda.rs` runs on either vendor's driver, and UKL's CUDA shim and library section take
+HIP's language.
+
+- **The host: CUDA's driver API and HIP's are one table** (`Api`, with `Vendor`).
+  - HIP's calls have CUDA's signatures under other names: `hipModuleLoadData`, `hipModuleLaunchKernel`,
+    `hipHostMalloc`, `hipEventQuery`, `hiprtcGetCode` for `nvrtcGetCUBIN`, and so on.
+  - Every constant read is the same number on both but the device attributes'. Those are a table per vendor
+    (`Attributes`), each value measured from HIP 7.2's header by a probe on the host.
+  - The calls whose shapes differ are their own entries:
+    - `hipStreamWaitValue64` takes a pointer and a mask.
+    - HIP has no opt-in to more dynamic shared memory: a block may take all its LDS.
+    - The architecture's name (`gfx1035`), which hiprtc compiles for, is read from `hipDeviceProp_tR0600`'s
+      `gcnArchName`, at its measured offset.
+  - The process opens HIP's driver when `RERAIL_GPU=hip` asks for it, else CUDA's. It is asked for, not a
+    fallback, until the engine's tests run on it (below): the Radeon's host still runs OpenCL by default.
+  - The libraries are found in the system's search and in the SDK's directory (`HIP_PATH`, else each version under
+    ROCm's install). On Windows, a library named by its path now finds its own dependencies beside it
+    (`LoadLibraryExW`'s altered search: hiprtc needs comgr).
+- **The kernels: `Backend::Hip { wave }`** preprocesses UKL for hip-clang's device compile (`__HIP_DEVICE_COMPILE__`,
+  `__AMDGCN_WAVEFRONT_SIZE`), through the CUDA shim (`UKL_CUDA` and `UKL_HIP`). HIP is CUDA's language, so only these
+  differ:
+  - A wavefront takes the place of a warp, at 32 or 64 lanes.
+  - The shuffles and the ballot are AMD's (`__shfl*`, `__ballot`, with no mask). The ballot is 64 bits; `ukl_mask_t`
+    holds a wave64's.
+  - `ukl_sg_barrier` is a wavefront barrier between release and acquire fences, as CUDA's `__syncwarp`.
+  - The integer types are as the compiler names them (`__UINT64_TYPE__`).
+  - Every unmarked function is a device's (`#pragma clang force_cuda_host_device`), as NVRTC's `-default-device`
+    makes it.
+  - `UKL_OFFSETOF` is clang's builtin, not EDG's `__INTADDR__`.
+  - There is no native match. HIP 7.2's compiler has no wavefront-reduction builtins (a probe's
+    `__has_builtin(__builtin_amdgcn_wave_reduce_*)` is false), so the reductions are the shuffles' reference.
+  - `ukl/dot.h` takes the f16 conversion through `_Float16`, and on RDNA2 (`UKL_HIP_AMD_DOT`, the device's define for
+    a `gfx103*` name) `sdot4`, `udot4` and `fdot2`, as OpenCL's AMD section does.
+- **A kernel's residency, from the driver** (`ComputeFunction::resident_groups`): CUDA's and HIP's occupancy of
+  the kernel, times the multiprocessors (SMs, or a Radeon's work-group processors).
+  - The grid tests ran their grids at 1, 8 and 32 groups. The grid sort's kernel holds only 12 groups of 256 on the
+    680M (its registers), so its 32-group grid failed its barrier there, under OpenCL before and under HIP.
+  - A grid past residency fails by design (`a_grid_past_residency_fails_its_barrier`). The tests now run no fixed
+    size past the kernel's residency, and run at the residency itself: 12 groups for the sort, 24 for the scans, on
+    the 680M; 192 and 288 on a GB10.
+- **Measured:** `rerail-gpu`'s library tests, 19 of 19, on HIP (the Radeon 680M, gfx1035) and on CUDA (a GB10),
+  `dot_products_equal_their_references` with RDNA2's dot products among them. UKL's tests preprocess every library
+  header for HIP at 32 and 64 lanes, as clang does.
+- **The engine's tests on HIP reset the host.** Four slab tests (`residency::slabs::tests`) under `RERAIL_GPU=hip`
+  lost the connection 26 s in. The host had rebooted from bugcheck 0x133 (DPC_WATCHDOG_VIOLATION, one DPC past its
+  limit): a kernel driver, the GPU's by every sign, held a DPC. The host has no debugger to read the minidump.
+  - The library's tests, which ran right, use buffers from `hipHostMalloc` alone.
+  - The slab tests also register the host's pages (`hipHostRegister`, `register_runs`) and wait on a host-written
+    word (`hipStreamWaitValue64`). Those are where to look first.
+  - A reset 20 minutes earlier (no dump) came before any HIP run of the engine's reached the host.
+  - No more of the engine's GPU tests run there under HIP until the call that hangs the driver is found.
 
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's

@@ -27,6 +27,10 @@ fn setup() -> Option<(&'static Program, ComputeQueue)> {
         return None;
     };
     let p = program("library_tests.uglykl", TESTS).unwrap_or_else(|e| panic!("{}: {e}", crate::device::backend()));
+    // The device the tests ran on, said once: a backend that fails to open falls back to another (to OpenCL's on
+    // Windows).
+    static SAID: std::sync::Once = std::sync::Once::new();
+    SAID.call_once(|| eprintln!("the UKL library's tests on {} ({})", crate::device::backend(), shared.device.name()));
     Some((p, ComputeQueue::new(&shared.queue)))
 }
 
@@ -666,11 +670,14 @@ fn hash_tables_build_and_probe() {
 }
 
 /// The grids a grid test runs at: 1, 8 and 32 groups, and the device's resident count for `f` at `lsz` threads a
-/// group (`Device::resident_groups`, R5 of decision 0468), when the device gives its cores.
+/// group (`ComputeFunction::resident_groups`, R5 of decision 0468), when the device says it; none past it.
 fn grid_sizes(f: &crate::device::ComputeFunction, lsz: u32) -> Vec<u32> {
     let mut g = vec![1u32, 8, 32];
-    if let Some(r) = crate::shared::get().and_then(|s| s.device.resident_groups(lsz, f.threadgroup_bytes())) {
-        eprintln!("{}: the device holds {r} groups of {lsz} at {} bytes of threadgroup memory", crate::device::backend(), f.threadgroup_bytes());
+    if let Some(r) = crate::shared::get().and_then(|s| f.resident_groups(&s.device, lsz, 0)) {
+        eprintln!("{}: the device holds {r} groups of {lsz} of the kernel", crate::device::backend());
+        // A grid past what the device holds fails its barrier by design (`a_grid_past_residency_fails_its_barrier`):
+        // a small GPU's (a Radeon 680M's six work-group processors) is below 32 groups of some kernels.
+        g.retain(|&n| n as u64 <= r);
         if !g.contains(&(r as u32)) {
             g.push(r as u32);
         }

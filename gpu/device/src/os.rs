@@ -1,7 +1,7 @@
 //! The system's calls the backends make, on macOS and Linux and on Windows:
 //!
 //! - the libraries a backend loads when it is first asked for (OpenCL's, CUDA's driver and NVRTC, the CPU backend's
-//!   kernels): `dlopen`, `LoadLibraryW`. No backend has a link dependency, so a machine without a driver still runs,
+//!   kernels): `dlopen`, `LoadLibraryExW`. No backend has a link dependency, so a machine without a driver still runs,
 //!   with no device of that kind (decision 0440);
 //! - the size of a page;
 //! - the CPU backend's thread stacks, a guard page below each (`Stacks`).
@@ -214,7 +214,7 @@ mod sys {
 
     #[link(name = "kernel32")]
     unsafe extern "system" {
-        fn LoadLibraryW(name: *const u16) -> *mut c_void;
+        fn LoadLibraryExW(name: *const u16, file: *mut c_void, flags: u32) -> *mut c_void;
         fn GetProcAddress(module: *mut c_void, name: *const i8) -> *mut c_void;
         fn GetLastError() -> u32;
         fn GetSystemInfo(info: *mut SystemInfo);
@@ -265,8 +265,13 @@ mod sys {
 
     pub fn open(name: &str, _: super::Scope) -> Option<*mut c_void> {
         let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
-        // SAFETY: a NUL-terminated name; a library the system's search finds (System32 for a driver's).
-        let h = unsafe { LoadLibraryW(wide.as_ptr()) };
+        // A path's library finds the libraries it needs beside it (a toolkit's: HIP's hiprtc needs its comgr), as
+        // `dlopen` finds them through the library's own run path; a bare name, the system's search (System32 for a
+        // driver's).
+        const LOAD_WITH_ALTERED_SEARCH_PATH: u32 = 0x8;
+        let flags = if name.contains(['\\', '/']) { LOAD_WITH_ALTERED_SEARCH_PATH } else { 0 };
+        // SAFETY: a NUL-terminated name.
+        let h = unsafe { LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), flags) };
         (!h.is_null()).then_some(h)
     }
 
