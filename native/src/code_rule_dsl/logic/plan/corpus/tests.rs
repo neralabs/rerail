@@ -2056,7 +2056,7 @@ fn every_switch_lowering_reads_is_classified() {
                 if let Some(m) = test_module.find(&text) {
                     text.truncate(m.start());
                 }
-                files.push((p.strip_prefix(&root).unwrap().display().to_string(), text));
+                files.push((p.strip_prefix(&root).unwrap().to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/"), text));
             }
         }
         files

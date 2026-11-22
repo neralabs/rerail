@@ -275,73 +275,7 @@ impl FileStat {
 /// for file systems whose mtime is coarse).
 pub const RACY_NS: i64 = 2_000_000_000;
 
-/// A root's stat index as loaded: by path, the stat recorded and its source, for entries a run may trust.
-#[derive(Debug, Default)]
-pub struct StatIndex {
-    entries: HashMap<String, (FileStat, SourceId)>,
-}
-
-impl StatIndex {
-    /// The source of the file at `path` when its stat is `now` and the index holds the same: else `None`, and the file
-    /// is to be read.
-    pub fn source(&self, path: &str, now: FileStat) -> Option<SourceId> {
-        self.entries.get(path).filter(|(stat, _)| *stat == now).map(|(_, id)| *id)
-    }
-    /// The source last read at `path`, whatever the file's stat is now.
-    pub fn recorded(&self, path: &str) -> Option<SourceId> {
-        self.entries.get(path).map(|(_, id)| *id)
-    }
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-}
-
 impl ContentStore {
-    /// The stat index of `root`: entries whose mtime is over [`RACY_NS`] before their recording and whose source is
-    /// still stored.
-    pub fn corpus_stats(&self, root: &str) -> StoreResult<StatIndex> {
-        let connection = self.connection.lock().expect("content store mutex poisoned");
-        let mut statement = connection.prepare_cached(
-            "SELECT st.path, st.size, st.mtime_ns, st.inode, st.source_id FROM corpus_stats st \
-             JOIN corpus_roots r ON r.root_id=st.root_id JOIN source_objects s ON s.source_id=st.source_id \
-             WHERE r.path=?1 AND st.mtime_ns < st.recorded_ns - ?2",
-        )?;
-        let rows = statement.query_map(params![root, RACY_NS], |r| {
-            Ok((r.get::<_, String>(0)?, FileStat { size: r.get(1)?, mtime_ns: r.get(2)?, inode: r.get(3)? }, SourceId(r.get(4)?)))
-        })?;
-        let mut entries = HashMap::new();
-        for row in rows {
-            let (path, stat, id) = row?;
-            entries.insert(path, (stat, id));
-        }
-        Ok(StatIndex { entries })
-    }
-
-    /// Records in `root`'s stat index each (path, stat, source) of `read`, the files a run read, at `now_ns`.
-    pub fn record_corpus_stats(&self, root: &str, read: &[(String, FileStat, SourceId)], now_ns: i64) -> StoreResult<()> {
-        if read.is_empty() {
-            return Ok(());
-        }
-        self.immediate_transaction(|tx| {
-            tx.execute_cached("INSERT OR IGNORE INTO corpus_roots(path) VALUES (?1)", [root])?;
-            let root_id: i64 = tx.query_row_cached("SELECT root_id FROM corpus_roots WHERE path=?1", [root], |r| r.get(0))?;
-            // A few statements whatever the files' number.
-            bounded_insert::insert(
-                tx,
-                "INSERT INTO corpus_stats(root_id, path, size, mtime_ns, inode, source_id, recorded_ns)",
-                "ON CONFLICT(root_id, path) DO UPDATE SET size=excluded.size, mtime_ns=excluded.mtime_ns, inode=excluded.inode, \
-                 source_id=excluded.source_id, recorded_ns=excluded.recorded_ns",
-                read.iter().map(|(path, stat, id)| {
-                    [Value::Integer(root_id), Value::Text(path.clone()), Value::Integer(stat.size), Value::Integer(stat.mtime_ns), Value::Integer(stat.inode), Value::Integer(id.0), Value::Integer(now_ns)]
-                }),
-            )?;
-            Ok(())
-        })
-    }
-
     /// Keeps memo plan `plan`'s statistics (decision 0096 §2): one blob, written by the run that counted them.
     pub fn put_stat_blob(&self, plan: [u8; 32], blob: &[u8]) -> StoreResult<()> {
         self.immediate_transaction(|tx| {
@@ -942,7 +876,6 @@ impl ContentStore {
             tx.prepare_cached("UPDATE corpus_plans SET live = (plan_digest IN (SELECT unhex(value) FROM json_each(?1)))")?
                 .execute([serde_json::to_string(&live_plans).expect("text")])?;
             let gone_json = serde_json::to_string(&gone_roots).expect("integers");
-            tx.prepare_cached("DELETE FROM corpus_stats WHERE root_id IN (SELECT value FROM json_each(?1))")?.execute([&gone_json])?;
             tx.prepare_cached("DELETE FROM corpus_roots WHERE root_id IN (SELECT value FROM json_each(?1))")?.execute([&gone_json])?;
             tx.execute_cached("UPDATE corpus_decided SET run=(SELECT run FROM corpus_state WHERE singleton=1), time=?1 WHERE singleton=1", [now])?;
             // Collection stays due until a pass finds nothing (`collect_corpus_pass`), unless a new manifest came first.

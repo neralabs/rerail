@@ -514,7 +514,6 @@ pub(crate) const ATOM_COLUMNS: &[(&str, &str, &str)] = &[
 /// numbers (`matched(c: number, …)`).
 #[cfg(test)]
 pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
-    ("accel_models", &["model_key", "archive"]),
     ("atom_blocks", &["seq", "tag"]),
     ("candidate_catalogs", &["catalog_id", "identity_hash_id"]),
     ("candidate_checks", &["check_id", "catalog_id", "policy_hash_id", "check_string_id"]),
@@ -531,7 +530,6 @@ pub(crate) const NOT_ATOMS: &[(&str, &[&str])] = &[
     ("corpus_plans", &["plan_digest", "live"]),
     ("corpus_roots", &["root_id"]),
     ("corpus_state", &["singleton", "run", "history_bytes", "due", "archive_due"]),
-    ("corpus_stats", &["root_id", "size", "mtime_ns", "inode", "source_id", "recorded_ns"]),
     ("corpus_swept", &["singleton", "done"]),
     ("derivation_inputs", &["ordinal", "digest"]),
     ("derivations", &["producer", "status", "cost"]),

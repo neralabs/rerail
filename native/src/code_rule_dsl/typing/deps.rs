@@ -243,7 +243,8 @@ impl Universe {
                 out.modules.insert(m, State::Pending);
                 continue;
             };
-            let package = id.path.ends_with("/__init__.py") || id.path.ends_with("/__init__.pyi");
+            // A library file's path is the engine's: on Windows its last separator may be `\`.
+            let package = ["__init__.py", "__init__.pyi"].iter().any(|n| id.path.strip_suffix(n).is_some_and(|d| d.ends_with('/') || (cfg!(windows) && d.ends_with('\\'))));
             for (name, target) in reexports(&m, package, &text) {
                 out.reexports.insert((m.clone(), name, target.clone()));
                 queue.push_back(target);

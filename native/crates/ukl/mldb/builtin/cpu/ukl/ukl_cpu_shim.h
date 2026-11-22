@@ -185,7 +185,7 @@ struct __ukl_cpu_launch {
     uint64_t error_bytes;
     unsigned char* sched;      // the scheduler's storage (`__ukl_cpu_sched`), `sched_bytes` of it, the host thread's
     uint64_t sched_bytes;
-    uint64_t tls_key;          // the host's pthread key whose value is a thread's running scheduler
+    uint64_t tls_key;          // the host's thread key (a pthread key; a TLS index on Windows): a thread's running scheduler
     // The groups run at once: past 1, `shared` holds `shared_bytes` for each, and `stacks` a thread's stack for each
     // thread of each, then one for each group's own coroutine.
     uint32_t resident;
@@ -241,17 +241,28 @@ struct __ukl_cpu_sched {
 // process runs out of them (about 512) after a few hundred kernel libraries: a thread-local's first use then aborts.
 // The running thread is the scheduler's (`cur`), set as it switches; the hot paths read the key once. The two calls
 // are declared here, as the shim includes no system header (`<pthread.h>` would declare its integer types again).
-#if defined(__APPLE__)
+// On Windows the key is a TLS index (`TlsAlloc`), read and written by kernel32's `TlsGetValue` and `TlsSetValue`.
+#if defined(_WIN32)
 typedef unsigned long __ukl_cpu_key_t;
+extern "C" __declspec(dllimport) void* TlsGetValue(__ukl_cpu_key_t);
+extern "C" __declspec(dllimport) int TlsSetValue(__ukl_cpu_key_t, void*);
+#  define __ukl_cpu_key_get(k) TlsGetValue(k)
+#  define __ukl_cpu_key_set(k, v) TlsSetValue(k, (void*)(v))
 #else
+#  if defined(__APPLE__)
+typedef unsigned long __ukl_cpu_key_t;
+#  else
 typedef unsigned int __ukl_cpu_key_t;
-#endif
+#  endif
 extern "C" void* pthread_getspecific(__ukl_cpu_key_t);
 extern "C" int pthread_setspecific(__ukl_cpu_key_t, const void*);
+#  define __ukl_cpu_key_get(k) pthread_getspecific(k)
+#  define __ukl_cpu_key_set(k, v) pthread_setspecific(k, v)
+#endif
 static __ukl_cpu_key_t __ukl_cpu_key;  // the launch's: the same key in every launch
-#define __ukl_sched ((__ukl_cpu_sched*)pthread_getspecific(__ukl_cpu_key))
+#define __ukl_sched ((__ukl_cpu_sched*)__ukl_cpu_key_get(__ukl_cpu_key))
 #define __ukl_self (__ukl_sched->cur)
-static inline void __ukl_cpu_set_sched(__ukl_cpu_sched* s) { pthread_setspecific(__ukl_cpu_key, s); }
+static inline void __ukl_cpu_set_sched(__ukl_cpu_sched* s) { __ukl_cpu_key_set(__ukl_cpu_key, s); }
 
 // Thread `t` of `s` stops (it waits, or is done): straight on to the group's next runnable thread after it, else back
 // to the scheduler. A pass of the group's runnable threads is so one switch a thread, in their order.

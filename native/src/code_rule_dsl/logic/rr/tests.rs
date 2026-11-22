@@ -4587,6 +4587,8 @@ libs(m) :- sources__library(_, m, "c", _).
 "#;
     let files = [("a.c", "#include \"inc/h.h\"\nint a;\n"), ("inc/h.h", "#include \"d.h\"\n"), ("inc/d.h", "int d;\n"), ("unused.h", "int u;\n")];
     let [docs, libs] = <[Vec<String>; 2]>::try_from(joined(guests_run("cheaders", &files, rule, &["docs", "libs"]))).unwrap();
+    // A library document is named by its path as the engine has it: on Windows, with `\`.
+    let docs: Vec<String> = docs.iter().map(|p| p.replace(std::path::MAIN_SEPARATOR, "/")).collect();
     let mut docs: Vec<&str> = docs.iter().map(|p| p.rsplit(".cheaders/").next().unwrap()).collect();
     docs.sort();
     assert_eq!(docs, ["a.c", "inc/d.h", "inc/h.h"], "parsed, each a translation unit");
@@ -5459,4 +5461,33 @@ fn a_texts_declared_policies_read_without_lowering() {
     assert_eq!(declared_policies(".policy \"one\" revision 1\n.policy \"two\" revision 1\n"), ["one", "two"]);
     assert!(declared_policies(".violation V(at: node) \"x\"\nV(n) :- kind(n, \"call\").\n").is_empty());
     assert!(declared_policies(".policy \"unclosed").is_empty(), "a text that does not parse declares none");
+}
+
+/// Every native step's answer is declared in the library (`.answer`, t33 K3), and the library declares no other:
+/// the engine's registry (`rr::WORLD`, and `load`'s `loaded`) and the library's declarations are one list. Here, in
+/// the binary booted as the engine boots (its languages' answerers installed), since the crate split.
+#[test]
+fn every_native_answer_is_declared_in_the_library() {
+    use std::collections::{BTreeMap, BTreeSet};
+    let mut engine: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    for (rel, req) in super::WORLD.iter().copied().chain([("loaded", "load")]) {
+        engine.entry(req.to_owned()).or_default().insert(rel.to_owned());
+    }
+    let mut library: BTreeMap<String, BTreeSet<String>> = BTreeMap::new();
+    let mut dirs = vec![super::library()];
+    while let Some(dir) = dirs.pop() {
+        for entry in std::fs::read_dir(&dir).unwrap().flatten() {
+            let path = entry.path();
+            if path.is_dir() {
+                dirs.push(path);
+            } else if path.extension().is_some_and(|e| e == "rerail") {
+                for line in std::fs::read_to_string(&path).unwrap().lines() {
+                    let Some(text) = line.trim().strip_prefix(".answer ") else { continue };
+                    let answer = crate::code_rule_dsl::logic::front::answers::parse(text).unwrap_or_else(|e| panic!("{}: {e}", path.display()));
+                    library.entry(answer.req).or_default().extend(answer.produces);
+                }
+            }
+        }
+    }
+    assert_eq!(library, engine, "the library's `.answer`s and the engine's answerers");
 }

@@ -579,7 +579,8 @@ fn calls_into_the_standard_library_reach_its_stubs() {
     // Nodes of documents: the one call is main.py's, its target in the stub.
     assert_eq!(rows.len(), 1, "{rows:?}");
     assert_eq!(rows[0].get(0).path(), Some("main.py"), "{rows:?}");
-    assert!(rows[0].get(1).path().unwrap().ends_with("world_load/ts/stdlib/os/path.pyi"), "{rows:?}");
+    // A library document is named as the engine has the file: on Windows, with `\`.
+    assert!(std::path::Path::new(rows[0].get(1).path().unwrap()).ends_with("world_load/ts/stdlib/os/path.pyi"), "{rows:?}");
     drop(rows);
     drop(outputs);
     let _ = std::fs::remove_dir_all(&out);
@@ -599,7 +600,7 @@ fn imports_resolve_through_site_packages_stubs_and_declarations_in_pep_561_order
     corpus::run(&program("calls"), &project, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
     let outputs = Outputs::open(&out).unwrap();
     let text = outputs.rows("call_target");
-    let mut got: Vec<String> = text.iter().map(|r| r.get(1).path().unwrap().split("world_site/").nth(1).unwrap().to_owned()).collect();
+    let mut got: Vec<String> = text.iter().map(|r| r.get(1).path().unwrap().replace(std::path::MAIN_SEPARATOR, "/").split("world_site/").nth(1).unwrap().to_owned()).collect();
     got.sort();
     assert_eq!(
         got,
@@ -634,7 +635,7 @@ fn declarations_and_installed_sources_type_calls_without_declared_ret_facts() {
     assert_eq!(got, ["None", "bytes", "str", "str"], "{text:?}");
     let outputs = Outputs::open(&out).unwrap();
     let targets = outputs.rows("call_target");
-    let reaches = |file: &str| targets.iter().any(|r| r.get(1).path().is_some_and(|p| p.ends_with(file)));
+    let reaches = |file: &str| targets.iter().any(|r| r.get(1).path().is_some_and(|p| std::path::Path::new(p).ends_with(file)));
     assert!(reaches("world_decl/decls/vendor/core.pyi"), "{targets:?}");
     assert!(reaches("world_decl/decls/other.pyi"), "{targets:?}");
     assert!(reaches("site-packages/vendor/__init__.py"), "{targets:?}");
@@ -1679,8 +1680,8 @@ fn spike_t28_a_session_maintains_the_typing_phase() {
             let cpu: f64 = p.report.phases.iter().map(|x| x.1 + x.2).sum();
             let parts: Vec<String> = p.report.phases.iter().filter(|x| x.1 + x.2 >= 0.01).map(|x| format!("{} {:.2}", x.0, x.1 + x.2)).collect();
             let rows: usize = p.exports.iter().map(|e| e.1).sum();
-            println!("T28 {what}: {} {cpu:.2} s CPU; strata {:?} (a new process's {:?}), maintained {:?}; export rows {rows}; parts: {}",
-                p.name, p.report.cross_strata, p.report.cross_kept, p.report.cross_maintained, parts.join(", "));
+            println!("T28 {what}: {} {cpu:.2} s CPU; strata {:?} (a new process's {:?}), maintained {:?}, quiet {:?}; export rows {rows}; parts: {}",
+                p.name, p.report.cross_strata, p.report.cross_kept, p.report.cross_maintained, p.report.cross_quiet, parts.join(", "));
         }
         println!("T28 {what}: the reader's run: {:.2} s", r.phases.iter().map(|x| x.1 + x.2).sum::<f64>());
     };

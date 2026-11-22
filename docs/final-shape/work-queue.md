@@ -10224,3 +10224,11 @@ commit (`notes/roll-up-48-cuda-support.md`).
 Crate split 5g-7a taken whole. Ours' fact-phase and root-inventory plans (337e5ba842) are ported into theirs'
 `corpus/base.rs`, which holds the moved code. Ours' task-run `OnceLock` is a registry `Slot`, by theirs' guard. A
 key test reads its unset switches under `reading` (`notes/roll-up-49-engine-crating.md`).
+
+### Q471. Roll-up 50 (Typing-support-final-shape 509864e95a onto Pulling-it-all-together): what the merge chose
+
+t32's last stages and t33 taken whole: the observer's answers, a prepared program's pointer, the slice's last runs and
+the Neural Engine's models as kept facts, and each native step's answer declared (`.answer`). `boot`'s `test-hooks`
+is the union of both lists, and both sides' new rr tests are kept. Found red at both tips, fixed at root in the next
+commits: the prepared-plans test counted phase 0's line, since Q242 left its own rule unprepared; and two Git modules
+read relations no file in their program declared (`notes/roll-up-50-typing.md`).
