@@ -1725,6 +1725,36 @@ fn the_output_is_pieces_that_refer_to_the_text() {
     assert!(want.len() > 2000 && pieces <= 5 + 4 * 4, "{} tokens in {pieces} pieces", want.len());
 }
 
+/// Decision 0588 §1: the text's expansion is one phase of the loop, whatever its rescans' depth (the rounds took
+/// a few phases a rescan): a run's phases are the same for chains of object-like and function-like macros 1, 8 and
+/// 20 deep (within the loop's stacks: deeper is refused for depth, `X_DEPTH`), and each output is the serial pass's.
+#[test]
+fn the_expansion_is_one_loop_phase() {
+    use rerail_c_pp::files::Search;
+    use rerail_metal::pp_expand::{expand_from, phase_lines};
+    let mut runs: Vec<(usize, Vec<u32>)> = Vec::new();
+    for depth in [1usize, 8, 20] {
+        let mut text = String::from("#define C0 x\n#define F0(a) [a]\n");
+        for k in 1..=depth {
+            text += &format!("#define C{k} C{}\n#define F{k}(a) F{}(a C{k})\n", k - 1, k - 1);
+        }
+        text += &format!("int a = C{depth};\nint b = F{depth}(y) + C{};\n", depth / 2);
+        let (got, want, _, _) = expanded(&[("main.c", text.as_str())], false);
+        same(got.map(|g| show(&g)), Ok(show(&want)), format!("the output at depth {depth}"));
+        let m: std::collections::HashMap<String, Vec<u8>> = [("main.c".to_string(), text.into_bytes())].into_iter().collect();
+        let mut io = Search::new(vec![], move |p: &str| m.get(p).cloned());
+        let d = on_device(rerail_c_pp::Config::new(crate::pp::options(false)), &mut io, "main.c", false).unwrap();
+        let x = expand_from(&d.unit, &d.lay, 0).unwrap();
+        same(x.refused, 0, format!("refused at depth {depth}"));
+        runs.push((depth, phase_lines(&d.unit, &d.lay, &x).unwrap()));
+    }
+    assert!(!runs[0].1.is_empty(), "a traced run writes its phases");
+    for (depth, lines) in &runs[1..] {
+        same(lines.len(), runs[0].1.len(), format!("the phases at depth {depth}, against depth 1"));
+        same(lines, &runs[0].1, format!("the phases' lines at depth {depth}"));
+    }
+}
+
 /// Decision 0588: the loop writes its output once, where each piece makes it. A piece that reads
 /// past its end (a body's call left open, `#define C F(`, its arguments in the text after it, past
 /// the next pieces' starts) takes the pieces it reads, and the pass runs again without them: the

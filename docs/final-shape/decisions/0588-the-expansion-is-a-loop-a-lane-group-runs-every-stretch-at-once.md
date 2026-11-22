@@ -42,15 +42,17 @@ The device's design today spends about 45 ns a token. The loop spends 0.13 ns, w
    - **The lanes** look up the next 32 tokens of the current frame at once, copy a run up to the first token that
      acts together, and split a call's arguments with a ballot over the parentheses' depths.
    - **An argument** is pre-expanded by the same loop into pieces, unless it is next to `#` or `##`.
-3. **The output is 0520's pieces, written in two passes.** The loop counts each stretch's pieces and tokens, a scan
-   places the stretches, and the loop runs again to write the pieces at their place. A run of top tokens is a `P_TOP`
-   piece, a run of a body's literal items a `P_BODY` piece, a produced token a `P_REF`. The host's read
-   (`Expansion::read`) and every consumer are unchanged.
+3. **The output is 0520's pieces, written once, where the loop makes them** (2026-11-22; first in two passes, the
+   loop run again to write at the places a scan of its counts gave). A piece writes its output pieces into chunks of
+   the output it takes from a counter, its tokens' places its own. Then the scans of its counts place the pieces,
+   and a phase a chunk puts each entry in the output's order (an index, `ORDER`) and makes its places the output's.
+   A run of top tokens is a `P_TOP` piece, a run of a body's literal items a `P_BODY` piece, a produced token a
+   `P_REF`. The readers read through the order.
 4. **The refusals stay**, with their reasons: room, depth, the work bound, a call across a stretch.
-5. **Migration.** The loop runs first. A stretch it does not yet cover is marked and expanded by the rounds, until
-   the loop covers every feature. Then the rounds, and their stores and phases, go. Order: object-like macros, calls
-   with arguments, `#`, `##` and the relexer, `__VA_ARGS__` and `__VA_OPT__`, the built-ins and `_Pragma`, calls past
-   a list's end, then the `#if` lines' expansion.
+5. **Migration** (done, 2026-11-21: 5d861d84d1). The loop ran first, a stretch it did not cover sent to the
+   rounds, in this order: object-like macros, calls with arguments, `#`, `##` and the relexer, `__VA_ARGS__` and
+   `__VA_OPT__`, the built-ins and `_Pragma`, calls past a list's end, then the `#if` lines' expansion. Then the
+   rounds, and their stores and phases, went.
 6. **Then the front and P1** (35% of the time) take the same shape: a unit's work in its own team, whatever is
    fastest inside it, loops included.
 
@@ -58,8 +60,10 @@ The device's design today spends about 45 ns a token. The loop spends 0.13 ns, w
 
 - Each eval test (0448's, every feature), the corpus slices and Boost.Preprocessor give the serial pass's tokens, as
   now.
-- **New:** `the_expansion_is_one_loop_phase`, counting a stretch's expansion's grid phases (the trace): fixed,
-  whatever the rescans' depth.
+- **New:** `the_expansion_is_one_loop_phase`: a run's phases (the trace's lines, `pp_expand::phase_lines`) are the
+  same for chains of object-like and function-like macros 1, 8 and 20 deep. Deeper is refused for depth.
+- **New:** `a_piece_read_past_its_end_takes_the_pieces_it_reads`: a body's call left open (`#define C F(`), its
+  arguments in the text past the next pieces' starts. The pass runs again without the pieces it took.
 - **Measured:** the corpus batch's GPU time against the serial pass on all cores, on CUDA and Metal.
 
 ## Built (2026-11-21, `pp_loop.uglykl`)
@@ -88,5 +92,54 @@ the rounds.
 
 Every eval test passes on the CPU, CUDA (GB10) and Metal (M3 Max). The corpus batch (50 C and 50 C++ units, 236,158
 tokens) equals the serial pass, every piece looped. GPU time (warm runs, the hosts loaded with other work): 30.5 ms on
-the GB10 and 78.4 ms on the M3 Max, against the serial pass's 54.6 and 61.3 ms in the debug build on one core. That is
-not yet the Tests' measure, against the optimized serial pass on all cores. The lanes (§2) and a per-piece fallback are next.
+the GB10 and 78.4 ms on the M3 Max, against the serial pass's 54.6 and 61.3 ms in the debug build on one core.
+
+## Built (2026-11-21 to 22)
+
+- **Every feature, and the rounds gone.** The `#if` lines expand in the loop, which is compiled once for them and the
+  text (852b8317f4). The loop does the built-ins, `__COUNTER__`, `_Pragma` and `__VA_OPT__`, and a call read past its
+  piece's end goes on, taking the pieces it reads (8c73273f28). Then the rounds went, with 4,450 lines (5d861d84d1).
+  No piece is sent anywhere else: a refusal is the unit's, and the serial pass takes it.
+- **Indexes, not searches**, each a derived fact written once where it is found (0353):
+  - a body item's name's rows (`IROWS`, after the rows' sort);
+  - a top token's node (`TOPNODE`) and its name's rows (`TROWS`), by its own lookup;
+  - a one-byte punctuator's key, its byte under `KEY_PUNCT`, so a delimiter test reads no tape;
+  - a body item that is `#` (`I_HASH`), so a substitution reads no tape for its items.
+- **The lanes (§2).** `lp_run` is a SIMD group's: a thread a token, and a start about every 32 tokens, so a group
+  mostly holds one piece. Its thread runs it, and asks the group at two points:
+  - at a span, each lane looks up one of the next 32 tokens (`lp_ahead`), and the run of tokens that cannot act is one
+    step (`lp_plain_run`);
+  - in a call's arguments, the group classifies a window of 32 tokens (three ballots: `(`, `)` and `,`), and the
+    thread walks it by its masks, a run to the next delimiter one step.
+
+  A list of the pieces, a thread each, was twice as slow: packed pieces branch apart in a group. Running the state
+  machine in every lane raced, so only the thread writes. On the M3 a loop with an early return was 2.7 times slower;
+  the fixed loop of at most three, then one add, is the shape.
+- **One pass** (§3). On the GB10 the two passes were 2.5 and 2.8 ms of a 4.4 ms batch, the same slowest piece in
+  each. The output's room use is now its chunks' (8 entries each; at most 7 left unused a piece). A piece read past
+  its end runs the pass again without the pieces it took, from the stores' fronts.
+- **Readers keep their place.** `ov_ref` remembers the piece it read last, so a reader walking forward reads a token
+  in it or the next, and only a jump is a search.
+- **A run the system stops** (`BackendPreempted`): on a Mac with a display, macOS's GPU watchdog ends a command buffer
+  that holds the GPU while the display waits ("Impacting Interactivity"), as several tests at once on the mini do. The
+  unit runs again, at most 4 times.
+
+| The corpus batch, GPU median | GB10 (CUDA) | M3 Max |
+|---|---|---|
+| The loop, every piece (8c73273f28) | 20.9 ms | |
+| Indexes (39ff20d133) | 20.2 ms | 48.3 ms |
+| The group looks ahead (935e8ab7f4) | 13.4 ms | 38.9 ms |
+| A plain run one step (7b3883d058) | 10.7 ms | 29.4 ms |
+| Windows; no tape for a punctuator, a top name's rows or a `#` (9c18715582) | 7.6 ms | 18.8 ms |
+| One pass (cb23f84a49) | 4.9 ms | |
+
+The mini ran the one pass at 37.3 ms; the M3 was off the network.
+
+**What is left.**
+- **Metal's step.** One piece of 16,383 output pieces (`a_line_past_its_room_runs_again_larger`'s `#if` line) takes
+  0.86 s at rung 0 and 5 to 8 s at rung 1 on the mini, against 5 to 44 ms under CUDA on the GB10. With the other tests
+  running, its command buffer is stopped each time; alone it passes. The loop's stacks
+  (`LpRun`'s 64 frames and 32 calls) are private arrays indexed at run time, which Metal keeps in device memory. A
+  piece is a SIMD group's, so its stacks fit in threadgroup memory: about 3 KB a piece, 25 KB a group of 256 threads.
+- **§6, the front and P1**, now a minor share of a batch.
+- **The Tests' measure**, against the optimized serial pass on all cores, is not yet taken.

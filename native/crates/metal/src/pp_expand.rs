@@ -1681,6 +1681,26 @@ fn stage_run(unit: &Unit, lay: &Layout, (last, stop, iters): (u32, u32, u32), gr
     Ok(on_grid(&arena, unit, &front, &l, groups)?.1)
 }
 
+/// The phases a run over `unit` passes, each its source line in the evaluator (a traced run, `STOP` at
+/// `PP_TRACE_ON`), at the rooms its run `x` settled at: decision 0588's count of the expansion's phases.
+pub fn phase_lines(unit: &Unit, lay: &Layout, x: &Expanded) -> Result<Vec<u32>, Error> {
+    crate::pp_arena::refuse_past(x.groups)?;
+    let arena = Arena::new();
+    let front = Front::new(&arena, unit, false, x.groups)?;
+    let defs = Defs::new(&arena, unit, x.def_rung)?;
+    let vis = Vis::new(&arena, unit, lay, x.caps, x.xcaps.rung)?;
+    let exp = Exp::new(&arena, unit, lay, x.xcaps, x.caps)?;
+    arena.lease()?;
+    let mut l = Lay::new();
+    front.lay(&mut l, TO_ALL);
+    defs.lay(&mut l);
+    vis.lay(&mut l);
+    exp.lay(&mut l);
+    l.word("STOP", u32::MAX);
+    on_grid(&arena, unit, &front, &l, x.groups)?;
+    Ok(front.trace().into_iter().map(|(line, _)| line).collect())
+}
+
 /// One unit's answer from a batch (`rounds::run_many`, decision 0486 §7): the batch's expansion it ran in, its files
 /// there (`x.ev.bases`' and the refs' files), and its output (`x.out`'s range). Where the unit was
 /// refused, it ran alone, and `x.refused` says why.
