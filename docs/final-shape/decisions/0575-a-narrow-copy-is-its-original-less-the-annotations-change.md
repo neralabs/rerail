@@ -116,6 +116,11 @@ or read `guest_of` (784 to 809 G) were unsound, and are not counted.
     at the corpus, as a member nothing measured is, `rr_cand_pt_walk` (2,635 rows) was priced at 1.76 M, and its
     whole plan scanned `rr_nearest_pt_fscope` (1.83 M rows) to probe it, in each of 10 calls: 1.1 s of CPU and
     631 MB allocated, now 2.5 ms and 1.3 MB. `pt_walk`'s whole plans gain the same way.
+15. **A first scan bounded on a node view's own column reads that range alone** (`setfix::scan_within`).
+    `rr_ann_node(n) :- kind(n, _), n >= a, n < b` read every `kind` row (4.46 M) for the annotations' 2,454. The
+    bounds after a first scan now cut it as they cut a probe: by two searches where its rows are in the column's
+    order, else by the view's source's range read (`range_lookup`), which `Layered` (a chunk's batch and the tape
+    values' parts) now passes through. 155 ms to 0.8 ms.
 7. **A rule beside its annotation twin reads only the copies' deltas** (`Folding::beside_twin`). Since #923 a rule
    that reads an original (narrow, so its copy) sits beside a twin of the same head that reads an annotation's copy
    (folded, so the whole original) and is the rule otherwise: each derivation was made twice (`pt_vopen`). The rule is
@@ -140,12 +145,22 @@ as its own rules again (781 G: the work moves into its readers).
 | 12, read in place by rule | 735.6-737.2 G | 1.48-1.49 GB |
 | 13, one pushed join | 724.8 G | 1.49 GB |
 | 14, whole plans by members' rows | 697.1 G | 1.49 GB |
+| 15, a first scan's range read alone | 695.8 G | 1.44 GB |
 
 Two runs of one binary differed by up to 8 G at loads of 20 to 30.
 
 ## What is left
 
-Against the profiled baseline (605 G), the run is 735 G profiled. It has 3 times the strata (2,187 against 690;
-about 1,000 held empty) and twice the rules; the machinery's strata cost about 2 s of CPU, and preparation 1 s more.
-The candidates' rules also take readers past the inliner's limit (`pt_nameref`: 14 reader copies, stored where it was
-inlined). `rr_ann_node` reads every row of `kind` for the 2,454 in the annotations' range.
+The baseline's own tree (its rules and typing programs, commit 8e14e2bb8c, exported whole) gives the measure that
+compares: the baseline engine runs it in 578.9 G and 33.1 s of user CPU; this engine in 694.1 G and 39.4 s. Over
+today's rules this engine takes 695.8 G, so the rules merged since cost nothing: the gap is the engine's.
+
+Of the 3.3 s more profiled CPU, the diff machinery's strata are 1.9 s: 1,765 strata, of which the candidates are 608
+(1.53 s, joins 0.05 s of it), the rechecks 217 (0.31 s). Almost all of it is each stratum's fixed cost (planning,
+opening, inputs loaded and indexed, the profile's record), at about half a millisecond a stratum a chunk; the base
+inputs' indexes are built again by each stratum that loads them (`child` on `(p, c)`: 168 builds, 123 ms). Then
+preparation (+1.0 s: the prepared program's passes, the measures' keys, the fold), per-stratum work of the other
+strata (+0.5 s), and the chunks' evaluation (+0.5 s).
+
+A candidates' rule led by `rr_ann_doc` is priced by the average document's nodes (2,192), though the annotations'
+documents are small, so with more than a few of them it starts from `kind` (`rr_cand_pt_ownq`, 0.17 s).

@@ -4771,7 +4771,7 @@ impl Model {
         };
         // `RERAIL_PLAN_SHOW=<head>` (dev): the search's cells of one and two joins, and the full order's, as priced.
         if std::env::var("RERAIL_PLAN_SHOW").is_ok_and(|r| r.split(',').any(|name| name == b.rel(b.head()))) {
-            eprintln!("plan show {} first {first:?} fixed {} no_size {no_size:b} no_rows {no_rows:b}", b.show_head(), fixed.is_some());
+            eprintln!("plan show {} first {first:?} fixed {} no_size {no_size:b} no_rows {no_rows:b} at {}", b.show_head(), fixed.is_some(), rerail_prof::code_rule_dsl::logic::profile::bound::<PlanSite>().0);
             for &j in &joins {
                 let Some(a) = b.atom(j) else { continue };
                 let rel = b.rel(a);
