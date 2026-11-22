@@ -219,6 +219,55 @@ fn run_on(p: &super::lower::Program, k: &super::vector::Kernel, exec: super::run
     out
 }
 
+/// Uniform 32-bit values whose readers read only their low 32 bits are held with the bits past 32 not made
+/// (`Cg::low_only`): products and sums of them, a left shift of one, a store of one, its narrowings, its bits as a
+/// float; and the values made of them that other readers read (a right shift, a compare, a division, a widening to 64
+/// bits, signed and unsigned) are each the 32-bit value.
+#[test]
+fn uniform_values_read_for_their_low_bits_are_each_32_bit_value() {
+    let out = ran(concat!(
+        "    uint32_t a = (out[63] + 0x9e3779b9u) * 0x85ebca6bu;\n",
+        "    uint32_t b = a * 7u + a;\n",
+        "    uint32_t c = (b << 5) ^ a;\n",
+        "    uint32_t g = c * 3u;\n",
+        "    out[40] = g;\n",
+        "    uint8_t d = (uint8_t)g;\n",
+        "    uint16_t h = (uint16_t)(g + 9u);\n",
+        "    float f = as_float(g | 1u);\n",
+        "    int32_t s = (int32_t)(out[62] + 3u) * -0x7654321;\n",
+        "    int32_t t = s - 1;\n",
+        "    uint32_t r = lid == 0u ? b >> 3 : lid == 1u ? (uint32_t)d : lid == 2u ? as_uint(f) : lid == 3u ? (uint32_t)(t >> 2)\n",
+        "        : lid == 4u ? (uint32_t)(t / 3) : lid == 5u ? (c < b ? 1u : 2u) : lid == 6u ? (uint32_t)((int64_t)t >> 40)\n",
+        "        : lid == 7u ? (uint32_t)h : lid == 8u ? (uint32_t)((uint64_t)c >> 31) : lid;\n",
+        "    if (lid < 40u)\n",
+        "        out[lid] = r;\n",
+    ));
+    let a = 0x9e37_79b9u32.wrapping_mul(0x85eb_ca6b);
+    let b = a.wrapping_mul(7).wrapping_add(a);
+    let c = (b << 5) ^ a;
+    let g = c.wrapping_mul(3);
+    let t = 3i32.wrapping_mul(-0x765_4321).wrapping_sub(1);
+    let mut want: Vec<u32> = (0..64).collect();
+    want[..9].copy_from_slice(&[
+        b >> 3,
+        u32::from(g as u8),
+        g | 1,
+        (t >> 2) as u32,
+        (t / 3) as u32,
+        if c < b { 1 } else { 2 },
+        (i64::from(t) >> 40) as u32,
+        u32::from(g.wrapping_add(9) as u16),
+        (u64::from(c) >> 31) as u32,
+    ]);
+    want[40] = g;
+    want[62] = 0;
+    want[63] = 0;
+    for l in 41..62 {
+        want[l] = 0;
+    }
+    assert_eq!(out, want);
+}
+
 /// 64-bit unsigned division and comparison are unsigned, on a uniform value and on one that varies: the overflow
 /// check of a decimal constant (`pp`'s `if_number`: `v > (0xffff_ffff_ffff_ffff - d) / 10`).
 #[test]
@@ -880,6 +929,8 @@ fn fma_loop(code: &str) -> Vec<&str> {
 ///   window of 16 (under 16 lanes, where registers are left, a swizzle): B's bytes are never loaded one at a time;
 /// - A's fraction bytes loads at offsets 1 apart from one register;
 /// - at 1 lane, each sign bit's shift a shift of the count the source masks (`x & 31`), with no mask of its own;
+/// - no zero-extension of a uniform value already zero-extended (`mov w, w`): A's bytes, as loaded, widened and
+///   shifted to their places;
 /// - the counter up to 0, tested at the loop's end with no compare;
 /// - fewer instructions a lane at each wider width.
 /// AArch64's code.
@@ -896,6 +947,8 @@ fn the_split_float_products_loop_is_vector_code() {
         let count = |op: &str| body.iter().filter(|l| l.trim_start().starts_with(op)).count();
         let text = body.join("\n");
         assert!(!text.contains("[sp"), "w{w}: the loop reads or writes the stack:\n{text}");
+        let movs: Vec<&&str> = body.iter().filter(|l| l.trim_start().starts_with("mov w")).collect();
+        assert!(movs.is_empty(), "w{w}: zero-extensions {movs:?}:\n{text}");
         let per = body.len() as f64 / f64::from(w);
         assert!(per < last, "w{w}: {per:.2} instructions a lane, against {last:.2} at half the width:\n{text}");
         last = per;

@@ -742,8 +742,12 @@ struct Cg<'a, 'b> {
     /// An unsigned such load's lanes as each register's window and the window's byte each byte of its lanes is (0xff:
     /// 0), with the block it is in: an `or` of them is one swizzle of their bytes (`or_bytes`).
     byte_src: HashMap<V, (usize, Vec<(Value, [u8; 16])>)>,
-    /// Each value's readers (`ssa::reads`).
+    /// Each value's readers (`ssa::reads`): how many, and which.
     nuse: Vec<u32>,
+    users: Vec<Vec<V>>,
+    /// The uniform 32-bit values held with their bits past 32 not made (`low_only`): every reader reads only their
+    /// low 32 bits.
+    dirty: std::collections::HashSet<V>,
     /// The blocks' immediate dominators, and the bounds the branches give: a value at most the bound in the blocks
     /// the branch's side dominates (`bound`).
     idom: Vec<usize>,
@@ -832,6 +836,8 @@ impl<'a, 'b> Cg<'a, 'b> {
             bmember: HashMap::new(),
             byte_src: HashMap::new(),
             nuse: Vec::new(),
+            users: Vec::new(),
+            dirty: Default::default(),
             idom: Vec::new(),
             below: HashMap::new(),
             counted: HashMap::new(),
@@ -940,10 +946,12 @@ impl<'a, 'b> Cg<'a, 'b> {
         self.bounds_of_branches();
         self.loops();
         self.nuse = vec![0; self.f.insts.len()];
+        self.users = vec![Vec::new(); self.f.insts.len()];
         for b in &self.f.blocks {
             for &y in &b.insts {
                 for u in crate::ssa::reads(self.f, y) {
                     self.nuse[u as usize] += 1;
+                    self.users[u as usize].push(y);
                 }
             }
         }
@@ -2001,9 +2009,10 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let s = b.ins().band_imm(x, bits - 1);
                 if signed { b.ins().sshr(a, s) } else { b.ins().ushr(a, s) }
             }
-            Op::And => b.ins().band(a, x),
-            Op::Or => b.ins().bor(a, x),
-            Op::Xor => b.ins().bxor(a, x),
+            // Of two normalized values: normalized (zero- or sign-extended bits, either way).
+            Op::And => return b.ins().band(a, x),
+            Op::Or => return b.ins().bor(a, x),
+            Op::Xor => return b.ins().bxor(a, x),
             _ => {
                 let cc = match (op, signed) {
                     (Op::Eq, _) => IntCC::Equal,
@@ -2567,13 +2576,44 @@ impl<'a, 'b> Cg<'a, 'b> {
         }
     }
 
-    /// The most an unsigned integer value `x` can be, in the block being made (every lane's, for lanes): `None` where
-    /// its operations may wrap, or nothing bounds it.
+    /// Whether every reader of uniform `x` (of 32 bits) reads only its low 32 bits, so it may be held with its bits
+    /// past 32 not made: a uniform `+ - * & | ^` of 32 bits, a `<<` of 32 bits of it (not by it), a store of 4 bytes
+    /// or fewer of it, a narrowing of it, its bits as another type (`as_*`, which masks them).
+    fn low_only(&self, x: V) -> bool {
+        let f = self.f;
+        let m = f.inst(x).m;
+        let int32 = |m: M| !m.float() && !m.is_agg() && m != M::B && m.bits() == 32;
+        int32(m)
+            && !self.users[x as usize].is_empty()
+            && self.users[x as usize].iter().all(|&y| {
+                let i = f.inst(y);
+                // A store of it at a uniform address: `store_u`'s.
+                if i.op == O::Store {
+                    return i.b == x && i.a != x && f.inst(i.a).shape == Shape::Uniform && i.m.bytes() <= 4;
+                }
+                if i.shape != Shape::Uniform {
+                    return false;
+                }
+                match i.op {
+                    O::Bin => {
+                        let op = Op::of(u32::from(i.sub));
+                        int32(M(i.d))
+                            && (matches!(op, Op::Add | Op::Sub | Op::Mul | Op::And | Op::Or | Op::Xor) || (op == Op::Shl && i.a == x && i.b != x))
+                    }
+                    O::Cast => M(i.b) == m && !i.m.float() && !i.m.is_agg() && i.m != M::B && i.m.bytes() < 4,
+                    O::LaneOp => Builtin::of(u32::from(i.sub)) == Builtin::As && i.b == NONE,
+                    _ => false,
+                }
+            })
+    }
+
     /// Whether unsigned `x`'s values all fit in `m`.
     fn fits_in(&self, x: V, m: M) -> bool {
         m.bytes() >= 8 || self.bound(x).is_some_and(|b| b >> (8 * m.bytes()) == 0)
     }
 
+    /// The most an unsigned integer value `x` can be, in the block being made (every lane's, for lanes): `None` where
+    /// its operations may wrap, or nothing bounds it.
     fn bound(&self, x: V) -> Option<u64> {
         self.bound_at(x, 12, self.cur_block)
     }
@@ -2626,12 +2666,16 @@ impl<'a, 'b> Cg<'a, 'b> {
                     Op::Div => self.konst(i.b).filter(|&k| k > 0).map(|k| a.unwrap_or(max(om)) / k),
                     Op::Rem => self.konst(i.b).filter(|&k| k > 0).map(|k| k - 1),
                     Op::And => Some(a.unwrap_or(max(om)).min(b.unwrap_or(max(om)))),
+                    // Every bit up to the larger's top one.
+                    Op::Or | Op::Xor => Some(u64::MAX.checked_shr(a?.max(b?).leading_zeros()).unwrap_or(0)),
                     Op::Eq | Op::Ne | Op::Lt | Op::Le | Op::Gt | Op::Ge => Some(1),
                     _ => None,
                 }
             }
             // A thread's id in its group: under its dimension's threads (`exec::run`: at most `MAX_DIM`).
             O::Lid => Some(u64::from(crate::exec::MAX_DIM) - 1),
+            // A load: its type's most.
+            O::Load => Some(max(i.m)),
             _ => None,
         };
         match (of, fact) {
@@ -4004,6 +4048,36 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let om = M(i.d);
                 if i.shape == Shape::Uniform {
                     let (a, b) = (self.u(i.a), self.u(i.b));
+                    // Of 32 bits, whose readers read only its low 32 bits (`low_only`), or of an operand held so: the
+                    // 64-bit operation, its bits past 32 left (or made, for other readers: `norm_u`).
+                    let low = matches!(op, Op::Add | Op::Sub | Op::Mul | Op::And | Op::Or | Op::Xor | Op::Shl);
+                    if low && !om.float() && !om.is_agg() && om.bits() == 32 {
+                        // Normalized at no cost: an unsigned sum, product or left shift its bound keeps in 32 bits
+                        // (made in 64), a bitwise operation of normalized operands.
+                        let dirty_in = self.dirty.contains(&i.a) || self.dirty.contains(&i.b);
+                        let free = !dirty_in
+                            && (matches!(op, Op::And | Op::Or | Op::Xor) || (!om.signed() && matches!(op, Op::Add | Op::Mul | Op::Shl) && self.bound(x).is_some()));
+                        let keep = !free && self.low_only(x);
+                        if keep || dirty_in {
+                            let r = match op {
+                                Op::Add => self.b.ins().iadd(a, b),
+                                Op::Sub => self.b.ins().isub(a, b),
+                                Op::Mul => self.b.ins().imul(a, b),
+                                Op::And => self.b.ins().band(a, b),
+                                Op::Or => self.b.ins().bor(a, b),
+                                Op::Xor => self.b.ins().bxor(a, b),
+                                _ => {
+                                    let c = if self.bound(i.b).is_some_and(|c| c < 32) { b } else { self.b.ins().band_imm(b, 31) };
+                                    self.b.ins().ishl(a, c)
+                                }
+                            };
+                            if keep {
+                                self.dirty.insert(x);
+                                return Ok(Rp::U(r));
+                            }
+                            return Ok(Rp::U(norm_u(&mut self.b, om, r)));
+                        }
+                    }
                     // A 32-bit unsigned sum or product no value can wrap (`bound`): the 64-bit one, already its
                     // normalized value.
                     let whole = matches!(op, Op::Add | Op::Mul) && !om.float() && !om.signed() && om.bytes() == 4 && self.bound(x).is_some();
@@ -4018,7 +4092,9 @@ impl<'a, 'b> Cg<'a, 'b> {
                             (_, true) => self.b.ins().sshr(a, b),
                             _ => self.b.ins().ushr(a, b),
                         };
-                        return Ok(Rp::U(if op == Op::Shr { r } else { norm_u(&mut self.b, om, r) }));
+                        // A left shift its bound keeps in the type (`bound`): normalized already.
+                        let held = op == Op::Shr || (!om.signed() && self.bound(x).is_some());
+                        return Ok(Rp::U(if held { r } else { norm_u(&mut self.b, om, r) }));
                     }
                     Rp::U(self.u_bin(op, om, a, b))
                 } else {
@@ -4068,8 +4144,13 @@ impl<'a, 'b> Cg<'a, 'b> {
                 if i.shape == Shape::Uniform {
                     let a = self.u(i.a);
                     let int = |t: M| !t.float() && !t.is_agg() && !t.signed() && t != M::B && t.bytes() > 0;
-                    // A narrowing of an integer the target holds: its normalized `I64` already.
-                    if int(from) && int(m) && self.fits_in(i.a, m) {
+                    let any = |t: M| !t.float() && !t.is_agg() && t != M::B && t.bytes() > 0;
+                    // Its normalized `I64` already: a widening of an unsigned integer, or of a signed one to a signed
+                    // type; a narrowing of an unsigned integer the target holds.
+                    let same = any(from)
+                        && any(m)
+                        && ((!from.signed() && m.bytes() > from.bytes()) || (from.signed() == m.signed() && m.bytes() >= from.bytes()));
+                    if !self.dirty.contains(&i.a) && (same || (int(from) && int(m) && self.fits_in(i.a, m))) {
                         Rp::U(a)
                     } else {
                         Rp::U(self.u_cast(from, m, a))
