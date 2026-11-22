@@ -11,7 +11,7 @@ embed::tests	rerail-lang-php
 eval::evidence::tests	rerail-engine
 eval::tests	rerail-engine
 facts::set_census	rerail-transducer
-facts::vtab::p_table	rerail-classic
+facts::vtab::p_table	rerail-workspace
 facts::vtab::syntax::candidate_spike	rerail-lang-python
 facts::vtab::syntax::core_rr::tests	rerail-lang-python
 facts::vtab::syntax::tests	rerail-engine
@@ -20,7 +20,7 @@ findings::async_reference	rerail-lang-python
 language::adapter::kit	rerail-engine
 language::adapter::kit::scope_kit	rerail-lang-python
 language::tests	rerail-lang-php
-lines::eslint	rerail-classic
+lines::eslint	rerail-workspace
 literal::offsets::tests	rerail-lang-python
 literal::tests	rerail-lang-python
 logic::front::caches::tests	rerail-logic
@@ -74,7 +74,7 @@ stats::plans::tests	rerail-engine
 suppress::php_corpus_tests	rerail-lang-php
 tape::corpus_parity	rerail-lang-php
 tape::tests	rerail-engine
-tape::token_readers	rerail-classic
+tape::token_readers	rerail-workspace
 test_support	rerail-engine
 transducer::packed::block_rows_tests	rerail-device-metal
 transducer::packed::compile_matcher_tests	rerail-engine

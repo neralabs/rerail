@@ -53,7 +53,7 @@ struct Frame {
 
 /// One token test. `path` is its place in the rule file (`utils/<name>/...` inside a util).
 #[derive(Eq, Ord, PartialEq, PartialOrd)]
-pub(in crate::code_rule_dsl) struct Test {
+pub struct Test {
     pub category: &'static str,
     pub negated: bool,
     pub relation: String,
@@ -312,15 +312,15 @@ fn node_kind(map: &Map<String, Value>, utils: &Utils<'_>, depth: usize) -> Optio
 }
 
 /// The worst category of a rule's tests, in the order they cost to fix.
-pub(in crate::code_rule_dsl) const ORDER: [&str; 11] = ["root", "below", "layout", "gap", "gap?", "incidental", "excluder", "declared", "lowered", "stored", "never"];
+pub const ORDER: [&str; 11] = ["root", "below", "layout", "gap", "gap?", "incidental", "excluder", "declared", "lowered", "stored", "never"];
 
 /// The categories nothing answers: a rule with such a test does not compile.
-pub(in crate::code_rule_dsl) const UNANSWERED: [&str; 4] = ["root", "below", "gap", "gap?"];
+pub const UNANSWERED: [&str; 4] = ["root", "below", "gap", "gap?"];
 
 
 /// Every token test of a policy document, by its language, a test reached in several contexts
 /// once, in its worst category.
-pub(in crate::code_rule_dsl) fn tests(document: &Value) -> Vec<(String, Test)> {
+pub fn tests(document: &Value) -> Vec<(String, Test)> {
 
     let clauses: &[Value] = document.get("clauses").and_then(Value::as_array).map_or(&[], Vec::as_slice);
     let mut utils = Utils::new();

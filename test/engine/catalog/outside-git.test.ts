@@ -1,4 +1,5 @@
 import { execFileSync, spawn, spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { existsSync, lstatSync, mkdirSync, realpathSync, renameSync, unlinkSync, writeFileSync, type PathLike } from "node:fs";
 import { mkdtemp } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -445,17 +446,18 @@ describe("each folder shape gets Git's answer, and Git is asked only where a .gi
     // A read of the pipe would wait for a writer; this one gives it a line naming a worktree's Git folder that is gone.
     const gone = join(root, "main", ".git", "worktrees", "notes");
     const writer = spawn("sh", ["-c", "printf 'gitdir: %s\\n' \"$0\" > \"$1\"", gone, pipe], { stdio: "ignore" });
+    // Listened for from the start, so an exit before the case ends it is not missed.
+    const exited = once(writer, "exit");
     try {
       expect(askedWhileAnswering(folder), "Rerail asked Git").toBe(true);
     } finally {
-      // Gone before the folder is removed: a kill is only a signal, and the writer still blocked in the pipe's open
-      // holds the folder until it exits.
-      if (writer.exitCode === null && writer.signalCode === null) {
-        const exited = new Promise(done => writer.once("exit", done));
-        writer.kill();
-        await exited;
-      }
+      // The folder goes once the case returns, and goes only once nothing the case started runs in it, so the case
+      // waits for the writer's exit. SIGKILL, as no handler or inherited setting can keep it from ending the shell, which
+      // starts no child for the redirection.
+      writer.kill("SIGKILL");
+      await exited;
     }
+    expect([writer.exitCode, writer.signalCode], "the writer still waited in its open of the pipe, which nothing read").toEqual([null, "SIGKILL"]);
   });
 
   it("an entry above the folder that cannot be read is taken as there, and Git is asked", async () => {

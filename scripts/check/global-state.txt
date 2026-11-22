@@ -129,7 +129,7 @@ native/src/code_rule_dsl/literal/annotation.rs::PYTHON	stays	the engine's own gr
 native/src/code_rule_dsl/literal/mod.rs::GRAMMARS	stays	the engine's own grammars
 native/src/code_rule_dsl/literal/mod.rs::NEXT_TREE	stays	an id counter: append-only
 native/src/code_rule_dsl/logic.rs::LOAD	stays	code registered at load
-native/src/code_rule_dsl/logic/device.rs::SOLVER	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/device/solver.rs::SOLVER	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/json_rules/translate.rs::E	stays	a constant
 native/src/code_rule_dsl/logic/lanes.rs::NEXT	stays	a ticket counter: append-only
 native/src/code_rule_dsl/logic/native/setfix.rs::ONCE	stays	a hook registered once
@@ -138,8 +138,8 @@ native/src/code_rule_dsl/logic/native/setfix/device.rs::WAVES	stays	an id counte
 native/src/code_rule_dsl/logic/native/setfix/level.rs::NEXT	stays	an id counter: append-only
 native/src/code_rule_dsl/logic/native/setfix/runs.rs::READS	stays	a test's counter
 native/src/code_rule_dsl/logic/plan.rs::RUNS	stays	a process-unique number naming a file or directory (with the pid): runs only ever get distinct values, as from the pid (RERAIL_REL_ROWS's dumps)
-native/src/code_rule_dsl/logic/plan/corpus.rs::OFF	stays	a hook registered once
-native/src/code_rule_dsl/logic/plan/corpus.rs::PATH	stays	the default store's path, from the process's working directory (itself the process's), or a test process's tape cache
+native/src/code_rule_dsl/logic/plan/corpus/base.rs::OFF	stays	a hook registered once
+native/src/code_rule_dsl/logic/plan/corpus/base.rs::PATH	stays	the default store's path, from the process's working directory (itself the process's), or a test process's tape cache
 native/src/code_rule_dsl/logic/plan/corpus/owner.rs::CLAIMS	stays	the process's claims of its stores' lock files: a lock file is held by a process, as the OS keeps it
 native/src/code_rule_dsl/logic/plan/corpus/owner.rs::SLOTS	shared	the slot of each base store this process owns: a one-per-store resource
 native/src/code_rule_dsl/logic/plan/corpus/owner.rs::WAITING	stays	a lock, not a result
@@ -291,8 +291,8 @@ native/src/code_rule_dsl/workspace/calls_state.rs::SUMMARIES_EXTRACTED	stays	exi
 native/src/code_rule_dsl/workspace/index.rs::SOURCE_CLASSIFIER	stays	code registered at load (a hook)
 native/src/code_rule_dsl/workspace/index.rs::TASK_RUN	stays	code registered at load (the logic crate's run hooks, boot.rs)
 native/src/code_rule_dsl/workspace/ingest.rs::PACKAGE_CONTEXT_PATH_VISITS	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
-native/src/code_rule_dsl/workspace/ingest.rs::PROJECT	stays	code a crate above registers at load
-native/src/code_rule_dsl/workspace/ingest.rs::REPOSITORY_CONTEXT	stays	code registered at load
+native/src/code_rule_dsl/language/adapter/project.rs::PROJECT	stays	code a crate above registers at load
+native/src/code_rule_dsl/language/adapter/project.rs::REPOSITORY_CONTEXT	stays	code registered at load
 native/src/code_rule_dsl/workspace/storage.rs::NEXT	stays	an id counter: append-only
 native/src/content_store/atoms.rs::GIVEN	stays	a test's counter
 native/src/content_store/connection.rs::CONNECTION_FUNCTIONS	stays	code a crate above registers at load
@@ -348,3 +348,10 @@ native/src/git_snapshot.rs::CHECK_SOURCES	stays	code registered at load: the sou
 native/src/git_snapshot.rs::NEXT	stays	a process-unique number naming a view's directory: invocations only ever get distinct values
 native/src/git_snapshot.rs::READ_INVENTORY	stays	code registered at load: the inventory reader a crate above installs (a function pointer)
 native/src/git_snapshot_message_pattern.rs::SYNTAX	stays	a value computed once from constants: Git's message-search regex syntax
+native/src/code_rule_dsl/logic/device.rs::DEVICE	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/plan/corpus/base.rs::RUNNER	stays	code a crate above registers at load (boot registers the runner, corpus::Corpus)
+native/src/code_rule_dsl/residency/admission/relational/base.rs::ADMISSION	stays	code a crate above registers at load
+native/crates/plan_base/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/plan_search/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/rr_root/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/run/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)

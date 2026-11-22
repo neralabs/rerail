@@ -18,7 +18,7 @@ use std::ops::Range;
 
 /// A match local to its context (the complete source or one independent line).
 pub struct RegexMatch {
-    pub(in crate::code_rule_dsl) range: Range<usize>,
+    pub range: Range<usize>,
     pub context: Range<usize>,
     pub line: Option<usize>,
 }
@@ -136,7 +136,7 @@ pub fn regex_query_matches(
 /// it was cut from. A `file.content` regex reads past a leading byte order mark the file's family
 /// strips (`Adapter::STRIPS_BOM`: ESLint's `SourceCode` does); a match's offsets are moved back by
 /// as much, so spans, columns and fixes stay over the file's own bytes, as every AST witness's do.
-pub(in crate::code_rule_dsl) fn regex_haystack<'a>(
+pub fn regex_haystack<'a>(
     source: &RegexSource,
     file: &'a FileInput,
 ) -> (&'a str, usize) {

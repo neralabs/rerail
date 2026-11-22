@@ -27,7 +27,7 @@ static ALLOWED: Mutex<Option<HashMap<Key, Duration>>> = Mutex::new(None);
 
 /// How an allowance knows its test's thread. Linux cuts a thread's name to 15 bytes, `code_rule_dsl::` for nearly
 /// every test, so a name there would grant one test's allowance to every test: the key is the thread's system id. On
-/// macOS the name (63 bytes) is the test's path.
+/// macOS the name (63 bytes) is the test's path, and on Windows (a thread's description, uncut) all of it.
 #[cfg(target_os = "linux")]
 type Key = u64;
 #[cfg(not(target_os = "linux"))]
@@ -205,6 +205,7 @@ fn threads() -> Vec<(u64, String)> {
         .collect()
 }
 
+/// Windows: the process's threads, each named by its description (`rerail_prof::windows_threads`).
 #[cfg(windows)]
 fn threads() -> Vec<(u64, String)> {
     rerail_prof::windows_threads().into_iter().map(|(id, name)| (u64::from(id), name)).collect()

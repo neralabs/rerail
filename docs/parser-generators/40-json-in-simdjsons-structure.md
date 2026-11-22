@@ -593,6 +593,36 @@ for the Rust alike, as simdjson sizes its tape. The Rust still tested the tape's
 token and every string part. Where the bound holds, `rust_stream` now writes no room check. The
 Rust trees test asserts that the source has none.
 
+## Step 55, done: the loop's writer reserved once (decision 0552)
+
+The generated tier 2 reserves its run's room once, as the JIT does, and calls the writer's ops on its state: an
+open, a leaf, a close and a commit cannot fail, and the writer's failure is read once after the walk. On the way,
+`reserve_final` had reserved no laid entry for a run's blocks (only for the blocks made before it).
+
+## Step 54, done: JSON's Rust from the grammar, in one loop (decision 0551)
+
+Steps 41 to 53 wrote tier 2's Rust from its native IR (`rust_stream`), which 0550 deprecates. The Bitlex compiler
+now writes JSON's parser from the grammar, as it writes Kotlin's: tier 1 from the lexer's statements, as simdjson's
+stage 1 (each token's first byte; no `skip`), and tier 2 from the tree rules as one loop, simdjson's stage 2's
+shape:
+
+| | simdjson's stage 2 | tier 2 as one loop (`rerail-json-aot`) |
+|---|---|---|
+| The walk | `goto` between `object_begin`, `object_field`, `object_continue`, `array_begin`, `array_value`, `array_continue`, `scope_end` | `'run: loop { match st { … } }`: each nested rule's first place, and each place after a level's call |
+| A level | `depth++`, its kind on the stack | its node opened by the caller, its return place pushed, `DEPTH` checked |
+| A value | `switch` on the token's byte | `match` on the next record's first byte; `true`, `false`, `null` by the word |
+| A string | `parse_string` at the quote | read at its token: content and escape leaves, each escape one of its kind's words |
+| A number | `parse_number` | `check number`'s function of its bytes |
+
+Its tapes are the JIT's, byte for byte, in format 16 and 16z, on the tree test's files; the refusals are the JIT's.
+Not yet: a writer with its room reserved once and constant widths, and steps 45 to 53's work in this form.
+
+## Step 53, done: the document's closer checked before the walk (decision 0559)
+
+| | the lean parser | before | now |
+|---|---|---|---|
+| The outer container | `last != '}'` before the walk, then `next == index + count` after it | the count after the walk alone | `if s.n == 0 \|\| s.byte(starts[(s.n - 1) * rs]) != 0x7d { refuse }` in the `{` arm (`0x5d` in `[`), then the count |
+
 ## Step 52, done: a return two ways (decision 0558)
 
 | | the lean parser | before | now |

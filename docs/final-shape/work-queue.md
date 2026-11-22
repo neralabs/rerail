@@ -5698,6 +5698,11 @@ place of the views: copies of tape answers. The views already cover the whole so
   `granules::span_of`); then `Extra` makes no place rows, and `made` binds no place relation.
 - **Check**: the view's rows equal the rows made today, for a program reading each span relation.
 - **Done when**: no place row is made for a node or token in core.rerail's shape.
+- **Its cost on an edit** (2026-11-21, ep2's `body` on the M1 Max, Q332): a node's place in a made relation is a
+  probe that makes the node's document, every relation of its group (decision 0494). The strata derived again over
+  `line` (its rows after the edited line moved) probe the lines of every document's diagnostics: 38 unchanged
+  documents made, `line` by node 32 times and `visit_index` 4 (the profile's "a batch's documents made by a probe"),
+  about 0.09 s of the edit's 4.0 s. The view reads a node's place off the tape and makes nothing.
 
 
 ### Q264. (Q124 on Native-and-GPU-strata until 2026-11-18; Q185 on oscar until 2026-11-18) The device's `str_cmp` of made texts loses rows under load — done 2026-11-18
@@ -10205,3 +10210,39 @@ The farm tooling (farm 54–57) is taken whole. In `test-remote`'s main, theirs'
 0494 step 7 (key-run columns, 8-byte solves, shared axis solves) is taken whole. Its `solve` takes ours' Windows
 device gate. The manifests are ours', with one `rerail-clif` dev-dependency. 0494's section appears once
 (`notes/roll-up-46-phased-facts.md`).
+
+### Q468. Roll-up 47 (main b922e65dc8 onto Pulling-it-all-together): what the merge chose
+
+Main's two test fixes (#986, #988). In `outside-git.test.ts`, both sides fixed the named-pipe case's wait for its
+writer. Theirs (#986) supersedes ours (96142c32b3): it listens from the start, sends SIGKILL, and checks that nothing
+read the pipe. Ours' GIT_DIR shapes stay (`notes/roll-up-47-main.md`).
+
+### Q469. Roll-up 48 (CUDA-support 7eff18d065 onto Pulling-it-all-together): what the merge chose
+
+0576 §13-21, Intel at its own width, is taken. So is theirs' port of G15's and G13's read fixes, which ours lacked.
+The generated `relation.h` is the merged CLIF's own output, with 0494 step 7 and the slot mask. `UKL_SIMD_GROUP_FREE`
+was checked against ours' `vread` cases 9-11. Found: roll-up 41 left two meanings of `UKL_CALLED`, fixed in the next
+commit (`notes/roll-up-48-cuda-support.md`).
+
+### Q470. Roll-up 49 (engine-crating 07649a78d4 onto Pulling-it-all-together): what the merge chose
+
+Crate split 5g-7a taken whole. Ours' fact-phase and root-inventory plans (337e5ba842) are ported into theirs'
+`corpus/base.rs`, which holds the moved code. Ours' task-run `OnceLock` is a registry `Slot`, by theirs' guard. A
+key test reads its unset switches under `reading` (`notes/roll-up-49-engine-crating.md`).
+
+### Q471. Roll-up 50 (Typing-support-final-shape 509864e95a onto Pulling-it-all-together): what the merge chose
+
+t32's last stages and t33 taken whole: the observer's answers, a prepared program's pointer, the slice's last runs and
+the Neural Engine's models as kept facts, and each native step's answer declared (`.answer`). `boot`'s `test-hooks`
+is the union of both lists, and both sides' new rr tests are kept. Found red at both tips, fixed at root in the next
+commits: the prepared-plans test counted phase 0's line, since Q242 left its own rule unprepared; and two Git modules
+read relations no file in their program declared (`notes/roll-up-50-typing.md`).
+
+### Q472. Roll-up 51 (cost-classifier-metal-rf ca7e1c18a6 onto Pulling-it-all-together): what the merge chose
+
+Theirs' 83 commits taken: `rerail-json-aot` (0551, 0552), 0563, 0592, 0597's contexts, the witnessed greedy order, the
+held image store and kept rows staged. Theirs' edits of code ours' split moved are applied where it now is
+(`plan/search.rs`, `corpus/base.rs`, `statkeep/tests.rs`). `contexts` is rerail-rr-root's, beside `rr`, which runs it;
+R9's test of `own_names` stands beside it in `base.rs`. Found red at both tips, fixed at root in the next commits: a
+session's aggregate stratum derived again, and a warm host edit building an unchanged document from its tape, both only
+beside the other corpus tests (`notes/roll-up-51-cost-classifier-metal-rf.md`).

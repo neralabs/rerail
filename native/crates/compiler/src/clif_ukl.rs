@@ -19,7 +19,7 @@
 //!   row (0408, L2), `cs` bytes a row, so a SIMD group's lanes read one field as adjacent words. The context is only
 //!   ever a field's base (`context_uses`).
 //! - **Control:** `clif_rust::Shape`'s structure, printed as C without labels (`Shape::c`).
-//! - **Calls:** each function `UKL_CALLED`, called directly, the compiler inlining as it chooses; the graph has no
+//! - **Calls:** each function `UKL_FUNC`, called directly, the compiler inlining as it chooses; the graph has no
 //!   recursion (no GPU language has it), which the translation checks.
 //!
 //! What it does not print is an error, never a fallback: vectors, stack slots, the stack pointer, traps, and more than
@@ -123,7 +123,7 @@ fn function(out: &mut String, id: u32, f: &ir::Function) -> Result<(), String> {
     let name = |v: ir::Value| format!("v{}", dfg.resolve_aliases(v).as_u32());
     let entry = f.layout.entry_block().ok_or("no entry block")?;
     let params: Vec<String> = dfg.block_params(entry).iter().map(|&v| Ok(format!("{} a{}", ty(dfg.value_type(v))?.0, v.as_u32()))).collect::<Result<_, String>>()?;
-    writeln!(out, "UKL_CALLED {ret_ty} f{id}(uint64_t pin, UKL_GLOBAL uint8_t* heap, uint64_t hb, uint64_t cs{}{}) {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
+    writeln!(out, "UKL_FUNC {ret_ty} f{id}(uint64_t pin, UKL_GLOBAL uint8_t* heap, uint64_t hb, uint64_t cs{}{}) {{", if params.is_empty() { "" } else { ", " }, params.join(", ")).unwrap();
     let absorbed = absorbed(f);
     if !absorbed.is_empty() {
         return Err("a vector test".into());

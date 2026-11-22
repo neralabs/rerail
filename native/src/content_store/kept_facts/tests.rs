@@ -222,6 +222,31 @@ fn a_waves_two_puts_of_a_programs_record_are_one_naming_both() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// A program's reader record put in two waves names both waves' entries: a record only grows (decision 0401 step 8).
+/// A wave's flat rows are written to a file of their own as its gather closes (`KeptStage`); a record staged so was
+/// not joined with the one its chain kept, the newest file's record hid the earlier wave's, and the warm run after
+/// asked those entries again and wrote its record (the corpus's `the_run_after_a_cold_one_writes_nothing`).
+#[test]
+fn a_programs_record_put_in_two_waves_names_both_waves_entries() {
+    let (path, c) = store("two-waves-readers");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let program = [0x44u8; 32];
+    let (one, two) = ([1u8; 32], [2u8; 32]);
+    let entry = |rel: &str, ident: [u8; 32], v: i64| KeptPut { ident, ..put(rel, 0, v as u64, flat(&[v, v])) };
+    let log = std::sync::Arc::new(ReaderLog::new(program));
+    for (rel, ident, v) in [("a", one, 1), ("b", two, 2)] {
+        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptReader(Some(std::sync::Arc::clone(&log))));
+        let _waves = crate::content_store::write_back::run_waves();
+        store.queue_kept(SPACE, vec![entry(rel, ident, v)]);
+    }
+    store.written().unwrap();
+    let rows = chain_rows(&c, &SPACE).unwrap();
+    let kept = KeptSpace::open(&path, &SPACE, &rows).unwrap();
+    let records: Vec<([u8; 32], Vec<[u8; 32]>)> = kept.view().of(READERS).map(|k| (*k.key.ident, record_idents(&k).collect())).collect();
+    assert_eq!(records, [(program, vec![one, two])], "the record after two waves: each wave's entry");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// A wave's puts are gathered by space and appended as one file each: a later put of a key replaces an earlier one, a
 /// retag keeps the rows the wave gave its key with its own reads, and a gone entry stays gone. Two spaces, one
 /// write each.

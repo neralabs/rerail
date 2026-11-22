@@ -28,6 +28,10 @@ fn thread_cpu() -> f64 {
     rerail_prof::thread_cpu().as_secs_f64()
 }
 
+/// How much a thread's CPU may read past its wall: Windows counts a thread's CPU in the clock's ticks (15.6 ms by
+/// default), where the other systems count it to the nanosecond.
+const CPU_TICK: f64 = if cfg!(windows) { 0.016 } else { 0.0 };
+
 /// Work a span starts on threads that open no span of their own (rayon's, a helper thread) is in the report: the
 /// threads' CPU adds up to the process's, and what no span covered is named by thread.
 #[test]
@@ -132,8 +136,8 @@ fn the_run_threads_time_is_charged_to_its_innermost_span_by_phase() {
     };
     // xouter's own: its sleep, off a core; xinner's: its burn, on one.
     let (outer, inner) = (row("xfirst", "xouter"), row("xfirst", "xouter/xinner"));
-    assert!(outer[0] >= 0.06 && outer[1] < 0.02 && outer[2] >= 0.05, "xouter: wall, cpu, off {outer:?}\n{text}");
-    assert!(inner[1] >= 0.03 && inner[0] >= inner[1], "xinner: wall, cpu, off {inner:?}\n{text}");
+    assert!(outer[0] >= 0.06 && outer[1] < 0.02 && outer[2] + CPU_TICK >= 0.05, "xouter: wall, cpu, off {outer:?}\n{text}");
+    assert!(inner[1] >= 0.03 && inner[0] + CPU_TICK >= inner[1], "xinner: wall, cpu, off {inner:?}\n{text}");
     // The second phase is its sleep, outside every span: none of the first phase's time is in it.
     let outside = row("xsecond", "(outside every span)");
     assert!(outside[0] >= 0.02 && outside[0] < 0.06, "xsecond: {outside:?}\n{text}");

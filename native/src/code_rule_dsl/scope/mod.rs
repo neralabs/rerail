@@ -49,6 +49,14 @@ pub const BUILD_STACK_RESERVE: usize = 256 << 10;
 /// Nodes between two reads of the evaluation deadline.
 pub const DEADLINE_INTERVAL: usize = 1_024;
 
+/// A scope a filter names: a table scope kind, or (TypeScript) eslint-scope's global scope, a
+/// script's top level, told apart from a module's (`ScopeKind::Module`).
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub enum ScopeName {
+    Kind(ScopeKind),
+    Global,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq)]
 pub enum ScopeKind {
     Module,
@@ -471,7 +479,7 @@ pub struct ScopeTable {
     /// `add_module`, which `seen_module` reads).
     pub module_imports: Vec<ModuleImport>,
     /// Python usedness, built on first use.
-    pub(crate) usage: OnceLock<Arc<usage::Usage>>,
+    pub usage: OnceLock<Arc<usage::Usage>>,
     /// Declaration names alone, without resolving every read in the file.
     pub(crate) declaration_sites: OnceLock<Arc<usage::Usage>>,
     /// What reaches each read of a variable, where the family has a flow (PHP's, `flow::VariableFlow`).
@@ -573,12 +581,12 @@ impl ScopeTable {
     }
 
     /// The binding a `usage::BindingId` names.
-    pub(crate) fn binding_of(&self, id: usage::BindingId<'_>) -> &Binding {
+    pub fn binding_of(&self, id: usage::BindingId<'_>) -> &Binding {
         &self.scopes[id.scope as usize].bindings[id.name][id.index]
     }
 
     /// The bindings of `id`'s name in its scope, in Ruff's order.
-    pub(crate) fn chain(&self, id: usage::BindingId<'_>) -> &[Binding] {
+    pub fn chain(&self, id: usage::BindingId<'_>) -> &[Binding] {
         &self.scopes[id.scope as usize].bindings[id.name]
     }
 
@@ -729,7 +737,7 @@ impl ScopeTable {
     }
 
     /// The string type definition whose literal spans exactly `range`.
-    pub(crate) fn annotation_at(&self, range: &Range<usize>) -> Option<&Annotation> {
+    pub fn annotation_at(&self, range: &Range<usize>) -> Option<&Annotation> {
         let index = self
             .annotations
             .binary_search_by_key(&range.start, |annotation| annotation.start)

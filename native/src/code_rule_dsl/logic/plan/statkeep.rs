@@ -143,9 +143,9 @@ impl std::fmt::Debug for Exact {
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
-struct Column {
+pub struct Column {
     /// The within-document sum of squares of the rows whose first column names a node (each document a group).
-    sqd: i64,
+    pub sqd: i64,
     /// The rows whose first column is a document key (`doc32` 0): `syntax::measured` counts them all as one group,
     /// so their part of the within-document sum, `zero_sq`, is each value's count over every such row, squared. No
     /// sum by document gives it (a document counted out takes out less than it put in), so each value's count is
@@ -153,13 +153,13 @@ struct Column {
     /// document's own squares are taken (as before 0458's patching).
     zero: Option<Exact>,
     zero_sq: i64,
-    local_ndv: i64,
+    pub local_ndv: i64,
     /// Documents counted in that hold a value naming another document.
-    crossing: i64,
+    pub crossing: i64,
     exact: Option<Exact>,
     sketch: Sketch,
     /// `paired`: the 0096 sketch of each (document, value) pair's count, whose `sq` is the column's `sqd`.
-    pairs: Option<Sketch>,
+    pub pairs: Option<Sketch>,
     /// The values watched (`watch`): the constants the rules test in the column, each counted exactly whatever the
     /// column's values (a count may be 0), so an edit's run takes them as kept rather than counting the rows held.
     watched: FxHashMap<i64, i64>,
@@ -169,24 +169,49 @@ struct Column {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct RelStats {
     columns: Vec<String>,
-    rows: i64,
+    pub rows: i64,
     /// Patched by rows that are not whole documents (`delta`): the per-document sums no longer hold.
     partial: bool,
-    cols: Vec<Column>,
+    pub cols: Vec<Column>,
+}
+
+/// The rows `RelStats::documents_scanned` counts at once, about 48 bytes each while counted: past it, a window ends
+/// where the document of its last row does.
+const WINDOW: usize = 1 << 20;
+
+/// The end of the window of `source`'s rows from `lo`: `window` rows on, then on to the end of the last one's document
+/// (a row's document is its first column's, as `count` reads it).
+fn window_end(source: &dyn crate::code_rule_dsl::facts::vtab::Source, lo: usize, n: usize, window: usize) -> usize {
+    let hi = (lo + window).min(n);
+    if hi == n {
+        return n;
+    }
+    let mut first = [0i64];
+    source.row_at(hi - 1, &[0], &mut first);
+    let last = document_of(first[0]);
+    let mut end = n;
+    source.for_rows_in(hi..n, &[0], &mut |r, row| {
+        if document_of(row[0]) == last {
+            return true;
+        }
+        end = r;
+        false
+    });
+    end
 }
 
 /// The document a row's first column names: as `syntax::measured` reads it.
-fn doc32(first: i64) -> i64 {
+pub fn doc32(first: i64) -> i64 {
     first >> 32
 }
 
 /// The document a location value names: a node (`key << 32 | index`) or a document key (as `memo::document_of`).
-fn document_of(v: i64) -> i64 {
+pub fn document_of(v: i64) -> i64 {
     if v >= 1 << 32 { v >> 32 } else { v }
 }
 
 /// The key a (document, value) pair is counted under in a column's `pairs` sketch: the sketch hashes it again.
-fn pair(doc: i64, v: i64) -> i64 {
+pub fn pair(doc: i64, v: i64) -> i64 {
     v ^ doc.wrapping_mul(0x9E37_79B9_7F4A_7C15_u64 as i64).rotate_left(29)
 }
 
@@ -197,7 +222,7 @@ fn group(first: i64) -> i64 {
 }
 
 /// Whether value `v` names document `d` (its first column's value `first`): a node of it, or its key.
-fn names_doc(v: i64, first: i64) -> bool {
+pub fn names_doc(v: i64, first: i64) -> bool {
     let d = doc32(first);
     (d != 0 && v >> 32 == d) || v == document_of(first)
 }
@@ -223,7 +248,7 @@ impl RelStats {
 
     /// `new`, keeping each column's (document, value) pairs sketched too: for a relation patched by rows that are
     /// not whole documents (a maintained relation's delta), whose `sqd` the per-document sums no longer give.
-    pub(in crate::code_rule_dsl) fn paired(columns: Vec<String>) -> Self {
+    pub fn paired(columns: Vec<String>) -> Self {
         let mut s = Self::new(columns);
         for c in &mut s.cols {
             c.pairs = Some(Sketch::default());
@@ -231,12 +256,28 @@ impl RelStats {
         s
     }
 
+    /// Statistics a source answers from its structure (`Source::statistics`, `within`'s from the tree), as kept ones:
+    /// each column's `(name, rows, ndv, sq, sqd)` within documents (no value crossing one), so `statistics` gives them
+    /// back and a changed document patches them by its rows as any kept relation's. Kept, the next run reads them
+    /// rather than the structure, which in a run whose documents are pending builds every one (Q332).
+    pub fn of_statistics(columns: Vec<String>, known: &[(String, i64, i64, i64, i64)]) -> Self {
+        let rows = known.first().map_or(0, |m| m.1);
+        let cols = columns
+            .iter()
+            .map(|c| {
+                let (ndv, sqd) = known.iter().find(|m| m.0 == *c).map_or((rows, rows), |m| (m.2, m.4));
+                Column { local_ndv: ndv, sqd, ..Column::default() }
+            })
+            .collect();
+        RelStats { columns, rows, partial: false, cols }
+    }
+
     pub fn columns(&self) -> &[String] {
         &self.columns
     }
 
     /// The same statistics, of columns named `columns` (as many).
-    pub(in crate::code_rule_dsl) fn renamed(&self, columns: Vec<String>) -> Self {
+    pub fn renamed(&self, columns: Vec<String>) -> Self {
         debug_assert_eq!(columns.len(), self.columns.len());
         RelStats { columns, ..self.clone() }
     }
@@ -254,7 +295,7 @@ impl RelStats {
     /// `documents`, where this relation's columns are some of the rows' (`from[j]`: the row's column that is this
     /// relation's `j`): a base relation counted at the columns its rules read. A row's document is still its own
     /// first column's.
-    pub(in crate::code_rule_dsl) fn documents_at(&mut self, flat: &[i64], width: usize, from: &[usize], sign: i64) {
+    pub fn documents_at(&mut self, flat: &[i64], width: usize, from: &[usize], sign: i64) {
         debug_assert_eq!(from.len(), self.cols.len());
         self.rows_of(flat, width, sign, None, Some(from))
     }
@@ -268,7 +309,7 @@ impl RelStats {
 
     /// `documents_at` over `n` rows read where they lie (`value(row, column)`, a source's), not a flat copy of them:
     /// a base relation's documents counted off the corpus batch (decision 0458).
-    pub(in crate::code_rule_dsl) fn documents_read(&mut self, n: usize, width: usize, value: &dyn Fn(usize, usize) -> i64, from: &[usize], sign: i64) {
+    pub fn documents_read(&mut self, n: usize, width: usize, value: &dyn Fn(usize, usize) -> i64, from: &[usize], sign: i64) {
         debug_assert_eq!(from.len(), self.cols.len());
         self.count(n, width, &mut |c, each| (0..n).for_each(|r| each(r, value(r, c))), sign, None, Some(from))
     }
@@ -277,27 +318,60 @@ impl RelStats {
     /// document by document) rather than a row at a time, which a view answers by a rank and a select (Q183): a
     /// base relation counted off the corpus batch, cold (decision 0458).
     pub fn documents_scanned(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, from: &[usize], sign: i64) {
-        debug_assert_eq!(from.len(), self.cols.len());
-        let (n, width) = (source.len(), source.columns().len());
-        self.count(
-            n,
-            width,
-            &mut |c, each| {
-                let mut next = 0;
-                source.for_rows(&[c], &mut |r, row| {
-                    debug_assert_eq!(r, next, "a source's walk reads its rows in order");
-                    next = r + 1;
-                    each(r, row[0]);
-                });
-                debug_assert_eq!(next, n, "a source's walk reads every row");
-            },
-            sign,
-            None,
-            Some(from),
-        )
+        self.documents_scanned_in(source, from, sign, WINDOW);
     }
 
-    fn rows_of(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<Option<usize>>, from: Option<&[usize]>) {
+    /// `documents_scanned`, `window` rows at a time and on to the end of a window's last document.
+    pub fn documents_scanned_in(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, from: &[usize], sign: i64, window: usize) {
+        debug_assert_eq!(from.len(), self.cols.len());
+        let (n, width) = (source.len(), source.columns().len());
+        if n <= window {
+            self.count(
+                n,
+                width,
+                &mut |c, each| {
+                    let mut next = 0;
+                    source.for_rows(&[c], &mut |r, row| {
+                        debug_assert_eq!(r, next, "a source's walk reads its rows in order");
+                        next = r + 1;
+                        each(r, row[0]);
+                    });
+                    debug_assert_eq!(next, n, "a source's walk reads every row");
+                },
+                sign,
+                None,
+                Some(from),
+            );
+            return;
+        }
+        // Whole documents at a time: `count` lists each row's document and value (about 48 bytes a row), and its
+        // counts add over whole documents (as a patch's documents in and out do), so a window of rows that ends where
+        // a document does is counted alone. `node` listed whole was 509 MB of a 1,000-file run.
+        let mut lo = 0;
+        while lo < n {
+            let hi = window_end(source, lo, n, window);
+            self.count(
+                hi - lo,
+                width,
+                &mut |c, each| {
+                    let mut next = lo;
+                    source.for_rows_in(lo..hi, &[c], &mut |r, row| {
+                        debug_assert_eq!(r, next, "a source's walk reads its rows in order");
+                        next = r + 1;
+                        each(r - lo, row[0]);
+                        true
+                    });
+                    debug_assert_eq!(next, hi, "a source's walk reads every row of the window");
+                },
+                sign,
+                None,
+                Some(from),
+            );
+            lo = hi;
+        }
+    }
+
+    pub fn rows_of(&mut self, flat: &[i64], width: usize, sign: i64, at: Option<Option<usize>>, from: Option<&[usize]>) {
         if width == 0 || flat.is_empty() {
             return;
         }
@@ -429,7 +503,7 @@ impl RelStats {
     /// column `c`, `postings(c, visit)` hands each value with the first-column values of the rows holding it (their
     /// documents), and is `false` when it has none. The same as `documents` over the rows, at a hash a distinct value
     /// rather than a row. `None` when a column has no postings.
-    pub(in crate::code_rule_dsl) fn from_postings(columns: Vec<String>, rows: i64, postings: &mut dyn FnMut(usize, &mut dyn FnMut(i64, &[i64])) -> bool) -> Option<Self> {
+    pub fn from_postings(columns: Vec<String>, rows: i64, postings: &mut dyn FnMut(usize, &mut dyn FnMut(i64, &[i64])) -> bool) -> Option<Self> {
         let mut s = Self::paired(columns);
         s.rows = rows;
         let mut docs: Vec<(i64, bool, bool)> = Vec::new();
@@ -558,7 +632,7 @@ impl RelStats {
     }
 
     /// The document-key rows' counts by value (`zero`, one pair a value) in or out of their group (`Column::zero`).
-    fn zeros(col: &mut Column, zero: &[(i64, i64)], sign: i64) {
+    pub fn zeros(col: &mut Column, zero: &[(i64, i64)], sign: i64) {
         if zero.is_empty() {
             return;
         }
@@ -578,7 +652,7 @@ impl RelStats {
     }
 
     /// Each distinct value's count (`values`, one pair a value) into the sketch and the exact map.
-    fn values(col: &mut Column, values: &[(i64, i64)], sign: i64) {
+    pub fn values(col: &mut Column, values: &[(i64, i64)], sign: i64) {
         for &(v, k) in values {
             col.sketch.add(v, sign * k);
         }
@@ -820,267 +894,4 @@ mod exact_tests {
     }
 }
 
-#[cfg(test)]
-pub mod tests {
-    use super::RelStats;
-    use crate::code_rule_dsl::facts::vtab::syntax;
-    use crate::code_rule_dsl::logic::native::component::columns_source;
-
-    /// Document `d`'s rows of `r(n, kind, name)`: `n` its nodes, `kind` few-valued, `name` many values shared
-    /// across documents (Zipf-like), so each column takes another of the keeper's paths.
-    fn doc(d: i64, rows: i64, salt: i64) -> Vec<i64> {
-        (0..rows).flat_map(|i| [d << 32 | i, (i * 7 + salt) % 9, ((i * i + salt) % 997) / (1 + i % 5)]).collect()
-    }
-
-    fn measured(docs: &[Vec<i64>]) -> Vec<(String, i64, i64, i64, i64)> {
-        let mut cols = vec![Vec::new(); 3];
-        for d in docs {
-            for row in d.as_chunks::<3>().0 {
-                for (c, v) in row.iter().enumerate() {
-                    cols[c].push(*v);
-                }
-            }
-        }
-        syntax::measured(columns_source(vec!["n".into(), "kind".into(), "name".into()], cols.into_iter().map(Some).collect()).as_ref())
-    }
-
-    /// A column's watched values (the constants the rules test) are counted exactly as documents come and go and as
-    /// rows are patched, past the column's exact map, and read back from the blob: an edit's run takes them as kept.
-    #[test]
-    fn watched_values_are_counted_exactly_past_the_exact_map() {
-        let names = vec!["n".to_owned(), "kind".into(), "name".into()];
-        let docs: Vec<Vec<i64>> = (1..=40).map(|d| doc(d, 50 + d * 13, d % 3)).collect();
-        let mut s = RelStats::new(names);
-        s.documents(&docs.concat(), 3, 1);
-        assert!(s.exact(2).is_none(), "the name column is many-valued");
-        let watch = [0i64, 5, 12, 99_999];
-        let count = |rows: &[Vec<i64>], v: i64| rows.iter().flat_map(|d| d.as_chunks::<3>().0).filter(|r| r[2] == v).count() as i64;
-        s.watch(2, watch.iter().map(|&v| (v, count(&docs, v))));
-        // Documents out and in, and a delta of rows that are not whole documents.
-        s.documents(&docs[7], 3, -1);
-        let new = doc(41, 400, 2);
-        s.documents(&new, 3, 1);
-        let added = doc(42, 30, 1);
-        let removed: Vec<i64> = docs[3][..3 * 20].to_vec();
-        s.delta(&added, &removed, 3);
-        let mut now = docs.clone();
-        now[7].clear();
-        now[3].drain(..3 * 20);
-        now.push(new);
-        now.push(added);
-        let mut bytes = Vec::new();
-        s.encode(&mut bytes);
-        let back = RelStats::decode(&bytes, &mut 0).expect("reads back");
-        for v in watch {
-            assert_eq!(s.watched(2, v), Some(count(&now, v)), "value {v}");
-            assert_eq!(back.watched(2, v), Some(count(&now, v)), "value {v}, read back");
-        }
-        assert_eq!(s.watched(2, 7), None, "a value not watched");
-    }
-
-    /// Kept by delta, the statistics are those of the documents counted in, whatever came and went before: node
-    /// and few-valued columns exactly as measured, a many-valued one within the planner's margin. The blob reads
-    /// back the same.
-    /// A base relation's documents counted where their rows lie (`documents_read`, decision 0458), at some of its
-    /// columns, are counted as their flat rows are; an edit's patch (the old document out, the new in) is a count
-    /// from scratch of the documents now.
-    #[test]
-    fn documents_read_where_they_lie_count_as_their_flat_rows() {
-        let docs: Vec<Vec<i64>> = (1..=20).map(|d| doc(d, 30 + d * 7, d % 3)).collect();
-        let all: Vec<i64> = docs.concat();
-        let n = all.len() / 3;
-        fn read(rows: &[i64]) -> impl Fn(usize, usize) -> i64 + '_ {
-            move |r, c| rows[r * 3 + c]
-        }
-        let from = [0usize, 2];
-        let names = || vec!["n".to_owned(), "name".to_owned()];
-        let (mut flat, mut placed) = (RelStats::new(names()), RelStats::new(names()));
-        flat.documents_at(&all, 3, &from, 1);
-        placed.documents_read(n, 3, &read(&all), &from, 1);
-        assert_eq!(placed, flat);
-        let edited = doc(5, 90, 1);
-        placed.documents_read(docs[4].len() / 3, 3, &read(&docs[4]), &from, -1);
-        placed.documents_read(edited.len() / 3, 3, &read(&edited), &from, 1);
-        let mut now = docs.clone();
-        now[4] = edited;
-        let now = now.concat();
-        let mut fresh = RelStats::new(names());
-        fresh.documents_read(now.len() / 3, 3, &read(&now), &from, 1);
-        assert_eq!(placed, fresh);
-        // Read by the source's walk, a column at a time (`documents_scanned`): the same counts, in and out.
-        let source = |rows: &[i64]| crate::code_rule_dsl::facts::vtab::Relation::from_rows(&["n", "k", "name"], &mut rows.as_chunks::<3>().0.iter().map(|r| r.to_vec()));
-        let mut scanned = RelStats::new(names());
-        scanned.documents_scanned(&source(&all), &from, 1);
-        assert_eq!(scanned, flat);
-        scanned.documents_scanned(&source(&docs[4]), &from, -1);
-        scanned.documents_scanned(&source(&doc(5, 90, 1)), &from, 1);
-        assert_eq!(scanned, fresh);
-    }
-
-    #[test]
-    fn statistics_kept_by_document_are_those_of_the_documents_counted_in() {
-        let docs: Vec<Vec<i64>> = (1..=40).map(|d| doc(d, 50 + d * 13, d % 3)).collect();
-        let mut kept = RelStats::new(vec!["n".into(), "kind".into(), "name".into()]);
-        for d in &docs {
-            kept.documents(d, 3, 1);
-        }
-        // Edits: a document changes, one leaves, one comes back changed again.
-        let edited = doc(7, 400, 2);
-        kept.documents(&docs[6], 3, -1);
-        kept.documents(&edited, 3, 1);
-        kept.documents(&docs[11], 3, -1);
-        let mut now = docs.clone();
-        now[6] = edited;
-        now.remove(11);
-        let (got, want) = (kept.statistics(&|_| true), measured(&now));
-        assert_eq!(got[0], want[0], "a node column is exact");
-        assert_eq!((got[1].1, got[1].2, got[1].3), (want[1].1, want[1].2, want[1].3), "a few-valued column is exact");
-        let ratio = |a: i64, b: i64| a.max(b) as f64 / a.min(b).max(1) as f64;
-        assert!(ratio(got[2].2, want[2].2) < 2.0 && ratio(got[2].3, want[2].3) < 2.0, "{:?} against {:?}", got[2], want[2]);
-        assert_eq!(got[2].4, want[2].4, "sqd is exact");
-        // Counted from scratch, the same counters: history does not matter.
-        let mut fresh = RelStats::new(kept.columns().to_vec());
-        for d in &now {
-            fresh.documents(d, 3, 1);
-        }
-        assert_eq!(fresh, kept);
-        let mut blob = Vec::new();
-        kept.encode(&mut blob);
-        let mut at = 0;
-        assert_eq!(RelStats::decode(&blob, &mut at), Some(kept));
-        assert_eq!(at, blob.len());
-    }
-
-    /// Patched by a delta of rows (not whole documents), the counts stay those of the rows: exact while few-valued.
-    /// A relation counted whole and then patched by rows that are not whole documents (a maintained relation's
-    /// delta) keeps its within-document sum by its pairs' sketch, within the planner's margin, where an unpaired one
-    /// reads it as `sq`; its rows and its few-valued column stay exact.
-    #[test]
-    fn a_paired_relation_patched_by_rows_keeps_its_sum_within_documents() {
-        let docs: Vec<Vec<i64>> = (1..=40).map(|d| doc(d, 50 + d * 13, d % 3)).collect();
-        let names = vec!["n".to_owned(), "kind".into(), "name".into()];
-        let (mut paired, mut plain) = (RelStats::paired(names.clone()), RelStats::new(names));
-        let all: Vec<i64> = docs.concat();
-        paired.documents(&all, 3, 1);
-        plain.documents(&all, 3, 1);
-        // Rows out of some documents, and others into them: not whole documents.
-        let removed: Vec<i64> = docs[3][..30].iter().chain(&docs[20][..60]).copied().collect();
-        let added: Vec<i64> = doc(9, 70, 1)[3 * 50..].iter().chain(&doc(41, 30, 0)).copied().collect();
-        paired.delta(&added, &removed, 3);
-        plain.delta(&added, &removed, 3);
-        let mut now = docs.clone();
-        now[3].drain(..30);
-        now[20].drain(..60);
-        now.push(added);
-        let (got, flat, want) = (paired.statistics(&|_| true), plain.statistics(&|_| true), measured(&now));
-        let ratio = |a: i64, b: i64| a.max(b) as f64 / a.min(b).max(1) as f64;
-        for c in 0..3 {
-            assert_eq!(got[c].1, want[c].1, "rows are exact");
-            assert!(ratio(got[c].4, want[c].4) < 1.5, "column {c}: sqd {:?} against {:?}", got[c], want[c]);
-            assert!(ratio(got[c].2, want[c].2) < 2.0 && ratio(got[c].3, want[c].3) < 2.0, "column {c}: {:?} against {:?}", got[c], want[c]);
-        }
-        assert_eq!((got[1].2, got[1].3), (want[1].2, want[1].3), "a few-valued column is exact");
-        assert!(flat[1].4 == flat[1].3 && flat[1].4 > want[1].4, "unpaired, sqd reads as sq");
-        let mut blob = Vec::new();
-        paired.encode(&mut blob);
-        assert_eq!(RelStats::decode(&blob, &mut 0), Some(paired));
-    }
-
-    #[test]
-    fn statistics_patched_by_a_delta_of_rows_count_the_rows() {
-        let rows: Vec<i64> = (0..300).flat_map(|i| [i % 10, i % 4]).collect();
-        let mut kept = RelStats::new(vec!["a".into(), "b".into()]);
-        kept.delta(&rows, &[], 2);
-        let (plus, minus): (Vec<i64>, Vec<i64>) = ((0..30).flat_map(|i| [i % 10, 9]).collect(), rows[..40].to_vec());
-        kept.delta(&plus, &minus, 2);
-        let mut now: Vec<i64> = rows[40..].to_vec();
-        now.extend(&plus);
-        let mut fresh = RelStats::new(kept.columns().to_vec());
-        fresh.delta(&now, &[], 2);
-        assert_eq!(fresh, kept);
-        let got = kept.statistics(&|_| true);
-        assert_eq!(got[1].1, 310);
-        assert_eq!(got[1].2, 5, "b holds 0..4 and 9");
-    }
-
-    /// The one-pass count gives the counters the four passes it replaced gave: rows naming their document by its
-    /// key or by its nodes, documents whose rows come apart, values crossing documents, with and without `at`.
-    #[test]
-    fn one_pass_counts_as_the_four_passes_did() {
-        use rustc_hash::FxHashMap;
-        // The old count, kept here as the reference.
-        fn old(stats: &mut RelStats, flat: &[i64], width: usize, sign: i64, at: Option<Option<usize>>) {
-            let of = |row: &[i64]| match at {
-                None => (super::doc32(row[0]), super::document_of(row[0])),
-                Some(at) => {
-                    let d = at.map_or(-1, |c| row[c] >> 32);
-                    (d, d)
-                }
-            };
-            let names = |v: i64, row: &[i64]| match at {
-                None => super::names_doc(v, row[0]),
-                Some(at) => at.is_some_and(|c| v >> 32 == row[c] >> 32),
-            };
-            stats.rows += sign * (flat.len() / width) as i64;
-            for (c, col) in stats.cols.iter_mut().enumerate().take(width) {
-                let (mut counts, mut values, mut crossing, mut per_doc) = (FxHashMap::<(i64, i64), i64>::default(), FxHashMap::<i64, i64>::default(), FxHashMap::<i64, bool>::default(), FxHashMap::<(i64, i64), ()>::default());
-                for row in flat.chunks_exact(width) {
-                    let (v, (d32, dof)) = (row[c], of(row));
-                    *counts.entry((d32, v)).or_default() += 1;
-                    *values.entry(v).or_default() += 1;
-                    *crossing.entry(dof).or_default() |= !names(v, row);
-                    per_doc.insert((dof, v), ());
-                }
-                // The document-key rows' group (`doc32` 0) by value, apart (`Column::zero`).
-                col.sqd += sign * counts.iter().filter(|((d, _), _)| *d != 0).map(|(_, k)| k * k).sum::<i64>();
-                let zeros: Vec<(i64, i64)> = counts.iter().filter(|((d, _), _)| *d == 0).map(|(&(_, v), &k)| (v, k)).collect();
-                RelStats::zeros(col, &zeros, sign);
-                col.local_ndv += sign * per_doc.len() as i64;
-                col.crossing += sign * crossing.values().filter(|x| **x).count() as i64;
-                // A paired column's sketch of (document, value) counts: rows naming a document by its nodes by
-                // that document, rows whose first column is a document key summed by value.
-                if let Some(p) = &mut col.pairs {
-                    let (mut large, mut small) = (FxHashMap::<(i64, i64), i64>::default(), FxHashMap::<i64, i64>::default());
-                    for row in flat.chunks_exact(width) {
-                        let (v, (d32, dof)) = (row[c], of(row));
-                        if d32 == 0 { *small.entry(v).or_default() += 1 } else { *large.entry((dof, v)).or_default() += 1 }
-                    }
-                    for ((d, v), k) in large {
-                        p.add(super::pair(d, v), sign * k);
-                    }
-                    for (v, k) in small {
-                        p.add(super::pair(0, v), sign * k);
-                    }
-                }
-                RelStats::values(col, &values.into_iter().collect::<Vec<_>>(), sign);
-            }
-        }
-        let mut flat = Vec::new();
-        for i in 0..600i64 {
-            let d = 1 + i % 7;
-            let first = if i % 5 == 0 { d } else { d << 32 | i };
-            let other = if i % 11 == 0 { (d + 1) << 32 | i } else { d << 32 | (i / 3) };
-            flat.extend([first, i % 4, other]);
-        }
-        // One document's rows alone, in order (no sort), and its rows reversed (sorted).
-        let one: Vec<i64> = flat.as_chunks::<3>().0.iter().filter(|r| r[0] == 3 || r[0] >> 32 == 3).flatten().copied().collect();
-        let reversed: Vec<i64> = one.as_chunks::<3>().0.iter().rev().flatten().copied().collect();
-        // Many values in one column: past the exact map's bound.
-        let wide: Vec<i64> = (0..700i64).flat_map(|i| [5 << 32 | i, i % 3, i]).collect();
-        let names = || vec!["x".to_owned(), "k".into(), "y".into()];
-        for new in [RelStats::new as fn(Vec<String>) -> RelStats, RelStats::paired] {
-            for rows in [&flat, &one, &reversed, &wide] {
-                for at in [None, Some(None), Some(Some(0)), Some(Some(2))] {
-                    let (mut a, mut b) = (new(names()), new(names()));
-                    a.rows_of(rows, 3, 1, at, None);
-                    old(&mut b, rows, 3, 1, at);
-                    assert_eq!(a, b, "at {at:?}");
-                    let half = &rows[..rows.len() / 6 * 3];
-                    a.rows_of(half, 3, -1, at, None);
-                    old(&mut b, half, 3, -1, at);
-                    assert_eq!(a, b, "at {at:?}, counted out");
-                }
-            }
-        }
-    }
-}
+// cratify: `tests` is rerail-setfix's (it mounts it: they measure setfix's column sources)

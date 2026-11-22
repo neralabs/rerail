@@ -4,12 +4,7 @@ use super::{Result, syntax};
 use rusqlite::Connection;
 use std::sync::{Arc, atomic::AtomicUsize};
 
-#[derive(Clone)]
-pub(in crate::code_rule_dsl) struct Spec {
-    pub roots: String,
-    pub syntax: String,
-    pub fields: Vec<String>,
-}
+pub use super::base::ast_stage::Spec;
 pub(super) fn shape(fields: &[String]) -> String {
     let mut columns = vec![
         "CAST(NULL AS TEXT) AS __path".to_owned(),

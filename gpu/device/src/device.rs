@@ -142,7 +142,16 @@ impl Device {
         match self {
             Device::Native(_) => 32,
             Device::Cpu(_) => cpu::simd_width(),
-            Device::OpenCl(_) => cl::simd_width(),
+            Device::OpenCl(d) => d.simd_width(),
+        }
+    }
+
+    /// Whether a source written for `w` lanes (`UKL_SIMD_WIDTH_NEEDED`) runs here: its own width, or (OpenCL) one of
+    /// its sub-groups' sizes.
+    pub fn offers_simd_width(&self, w: u32) -> bool {
+        match self {
+            Device::OpenCl(d) => d.offers_simd_width(w),
+            _ => self.simd_width() == w,
         }
     }
 

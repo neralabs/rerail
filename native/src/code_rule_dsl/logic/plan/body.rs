@@ -507,7 +507,7 @@ impl<'v> Body<'v> {
 
     /// What is bound before its first step, written into a derived value's inputs: a recheck's order is not the
     /// rule's, kept apart (Q208); nor a line's planned from given variables bound (0364 R4).
-    pub(in crate::code_rule_dsl) fn digest_pre(&self, d: &mut super::super::derived::Inputs) {
+    pub fn digest_pre(&self, d: &mut super::super::derived::Inputs) {
         match &self.pre {
             None => {}
             Some(Pre::Head) => d.str("head bound"),
@@ -563,13 +563,13 @@ impl<'v> Body<'v> {
             }
         }
     }
-    pub(in crate::code_rule_dsl) fn digest_atom(&self, d: &mut super::super::derived::Inputs, a: AtomRef<'_>) {
+    pub fn digest_atom(&self, d: &mut super::super::derived::Inputs, a: AtomRef<'_>) {
         d.str(self.rel(a));
         d.u64(u64::from(a.neg()) | u64::from(a.gated()) << 1);
         d.u64(a.args().count() as u64);
         a.args().for_each(|t| self.digest_term(d, t));
     }
-    pub(in crate::code_rule_dsl) fn digest_lit(&self, d: &mut super::super::derived::Inputs, l: LitRef<'_>) {
+    pub fn digest_lit(&self, d: &mut super::super::derived::Inputs, l: LitRef<'_>) {
         match l.view() {
             Lit::Atom(a) => {
                 d.u64(0);
@@ -651,7 +651,7 @@ impl std::fmt::Display for HeadText<'_, '_> {
 /// (`$s = $a` with `$s` bound reads as `$a = $s`). Without it, `p($s), q($a), $s = $a` could only be ordered as a
 /// cross product of `p` and `q` narrowed after by the test (decision 0099 item 4: `fl4317_typing_root`, 14 k rows,
 /// then 2.86 M, then 603). `RERAIL_EQUALITY_BINDS=off` keeps the left side the only one assigned, for comparison.
-pub(super) fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
+pub fn binds_right(l: TermRef<'_>, op: CmpOp, r: TermRef<'_>, bound: &VarSet) -> Option<Slot> {
     if rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var("RERAIL_EQUALITY_BINDS").is_ok_and(|v| v == "off")) || op != CmpOp::Eq {
         return None;
     }

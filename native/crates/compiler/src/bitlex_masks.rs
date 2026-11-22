@@ -115,6 +115,8 @@ pub struct Compiled {
     pub rust: Option<Result<String, String>>,
     /// Tier 1 as Rust, written from the lexer's statements (`bitlex_lex_rust`), or why it is not yet.
     pub lexer_rust: Option<Result<String, String>>,
+    /// Tier 2 as Rust in one loop, written from the tree rules (`bitlex_rust::tier2_loop`), or why it is not yet.
+    pub rust_loop: Option<Result<String, String>>,
 }
 
 /// A named value of the block program (`Compiled::values`): its operation, and its delay (bit
@@ -430,6 +432,8 @@ pub struct Lowering {
     pub rust: Option<Result<String, String>>,
     /// Tier 1 as Rust (`Compiled::lexer_rust`).
     pub lexer_rust: Option<Result<String, String>>,
+    /// Tier 2 as Rust in one loop (`Compiled::rust_loop`).
+    pub rust_loop: Option<Result<String, String>>,
     /// The tree section's tables tier 2 as Rust reads (`bitlex_rust`).
     pub rust_tables: Option<RustTables>,
 }
@@ -568,6 +572,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
         costs: Vec::new(),
         rust: None,
         lexer_rust: None,
+        rust_loop: None,
         rust_tables: None,
     };
     // Every class's products first: the tables come before the operations.
@@ -785,6 +790,7 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
             let x = crate::bitlex_rust::Input { tree: &low.tree, kind: symbols.kind, field: symbols.field, tokens: &t.tokens, words: &r.words, keywords: &low.keywords, soft: &low.soft, marks, extras: &low.extra, extra_bits: t.extra_bits.clone(), lexer: stmts, row_kinds: &t.row_kinds, kinds: &r.kinds };
             let rust = crate::bitlex_rust::tier2(&x);
             low.rust = Some(rust);
+            low.rust_loop = Some(crate::bitlex_rust::tier2_loop(&x));
             // Tier 1 as Rust, from the lexer's statements and the tables (`bitlex_lex_rust`).
             let mark_bits: Vec<Option<u8>> = t.mark_bits.iter().map(|b| b.0).collect();
             let lexer = if t.mark_bits.iter().any(|b| b.0.is_some() && b.1 != 0) {
@@ -843,7 +849,8 @@ pub fn compile_proved(stmts: &[Stmt], outputs: &[&str], symbols: Option<&Symbols
     let proofs = std::mem::take(&mut low.proofs.made);
     let rust = low.rust.take();
     let lexer_rust = low.lexer_rust.take();
-    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values, proofs, rust, lexer_rust })
+    let rust_loop = low.rust_loop.take();
+    Ok(Compiled { rows: rows(&program), program, words, machine, labels, fallbacks, costs, origin, values, proofs, rust, lexer_rust, rust_loop })
 }
 
 /// The operations the provers read: the prefix's value zero (it is stripped before the passes,

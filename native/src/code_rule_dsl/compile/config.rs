@@ -517,7 +517,7 @@ impl Options {
     }
 
     /// Whether `when.option` holds: every named option's value meets its condition (so `{}` holds).
-    pub(super) fn holds(&self, when: &Value, path: &str) -> Result<bool> {
+    pub fn holds(&self, when: &Value, path: &str) -> Result<bool> {
         let conditions = object(when, path)?;
         let mut holds = true;
         for (name, condition) in conditions {

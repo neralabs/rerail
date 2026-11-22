@@ -373,7 +373,7 @@ impl SyntaxErrors {
 
     /// The regions of every document of the file whose own tree `host` is (`embed`): what a rule
     /// crossing between them (`GrammarMatcher::crosses`) reads around.
-    pub(super) fn of_file(host: &TapeDoc) -> Self {
+    pub fn of_file(host: &TapeDoc) -> Self {
         let mut ranges = file_ranges(host);
         for guest in host.guests().iter().flat_map(|guests| guests.iter()) {
             ranges.extend(file_ranges(&guest.doc));

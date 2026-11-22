@@ -257,8 +257,38 @@ impl<'a> Pass<'a> {
         Some(one_group(v, rule, head, &alias, kept, filters))
     }
 
-    /// The keys that are `top`: from the start, `forced`, or a rule whose head only a `top` filter binds. To a
-    /// fixpoint.
+    /// Whether `rel`'s column `at` holds every node but those of a few kinds: one of its rules binds the column by its
+    /// node's kind alone (`kind(n, k)`, `k` free or compared with constants), or by such a column of one other relation,
+    /// with nothing else in its body but comparisons with constants (`unparen(e, e) :- kind(e, k), k != #k1249`, and
+    /// its narrow copy, `rr_narrow_unparen(a, b) :- unparen(a, b), a < …`).
+    fn every_node(&self, rel: &str, at: usize, depth: usize) -> bool {
+        if rel == "kind" {
+            return at == 0;
+        }
+        if depth == 0 || self.f.is_input(rel) {
+            return false;
+        }
+        let v = self.v;
+        self.rules_of.get(rel).is_some_and(|rules| {
+            rules.iter().any(|rule| {
+                let Some(TermRef::Var(h)) = rule.head().args().nth(at) else { return false };
+                let h = name(v, *rule, h);
+                let mut atoms = rule.body().filter_map(|l| l.atom());
+                let (Some(a), None) = (atoms.next(), atoms.next()) else { return false };
+                let consts_only = rule.body().all(|l| match l.view() {
+                    L::Atom(_) => true,
+                    L::Cmp { l, r, .. } => is_const(l) || is_const(r),
+                    _ => false,
+                });
+                !a.neg() && consts_only && !a.args().any(is_const) && a.args().enumerate().any(|(j, t)| t.var().is_some_and(|x| name(v, *rule, x) == h) && self.every_node(self.rel(a), j, depth - 1))
+            })
+        })
+    }
+
+    /// The keys that are `top`: from the start, `forced`, a rule whose head only a `top` filter binds, or a rule
+    /// whose chain (`one_group`) is left, once its `top` filters go, with one atom that cuts nothing, as its column at
+    /// the head holds every node (`every_node`): `dm_exc_qual_0(e) :- unparen(e, m)` held every node of the chunk.
+    /// To a fixpoint.
     fn tops(&self, forced: &BTreeSet<Key>) -> BTreeSet<Key> {
         let mut top: BTreeSet<Key> = self.shapes.iter().filter(|(_, s)| s.is_none()).map(|(k, _)| k.clone()).collect();
         top.extend(forced.iter().cloned());
@@ -269,7 +299,14 @@ impl<'a> Pass<'a> {
                 if top.contains(key) {
                     continue;
                 }
-                let unbound = shapes.iter().any(|s| !s.bound.contains(&s.head) && !s.filters.iter().any(|(k, x)| x == &s.head && !top.contains(k) && self.shapes.contains_key(k)));
+                let live = |s: &Shape<'_>, on: Option<&String>| s.filters.iter().any(|(k, x)| on.is_none_or(|h| x == h) && !top.contains(k) && self.shapes.contains_key(k));
+                let cuts = |s: &Shape<'_>| live(s, None) || s.kept.iter().any(|l| matches!(l.view(), L::Atom(a) if a.args().any(is_const)));
+                let all = |s: &Shape<'_>| {
+                    let mut atoms = s.kept.iter().filter_map(|l| l.atom());
+                    let (Some(a), None) = (atoms.next(), atoms.next()) else { return false };
+                    !a.neg() && a.args().enumerate().any(|(j, t)| t.var().is_some_and(|x| name(self.v, s.rule, x) == s.head) && self.every_node(self.rel(a), j, 4))
+                };
+                let unbound = shapes.iter().any(|s| (!s.bound.contains(&s.head) && !live(s, Some(&s.head))) || (!cuts(s) && all(s)));
                 if unbound {
                     top.insert(key.clone());
                     grew = true;

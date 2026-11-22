@@ -517,16 +517,16 @@ pub struct GraphStats {
 pub struct ReferenceEdge {
     pub path: Arc<str>,
     pub source: super::summary::Def,
-    pub(crate) source_name: Name,
+    pub source_name: Name,
     pub target_path: Arc<str>,
     pub target: super::summary::Def,
-    pub(crate) target_name: Name,
+    pub target_name: Name,
 }
 
 #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))]
 pub struct ReferenceRows {
     pub edges: Vec<ReferenceEdge>,
-    pub(crate) incomplete: BTreeSet<Arc<str>>,
+    pub incomplete: BTreeSet<Arc<str>>,
 }
 
 /// What a reference of a definition's body names, as `link_python` reads the name the summary recorded

@@ -654,7 +654,7 @@ pub struct Related {
 }
 
 impl Related {
-    pub(in crate::code_rule_dsl) fn new(rule: AstMatcher) -> Box<Self> {
+    pub fn new(rule: AstMatcher) -> Box<Self> {
         Box::new(Self {
             rule,
             filter: OnceLock::new(),
@@ -934,7 +934,7 @@ pub struct FieldRelation {
     pub rule: AstMatcher,
     pub stop: StopBy,
     /// What a node needs for `rule` to match it (`WalkFilter`), worked out on first use.
-    pub(crate) filter: OnceLock<Option<Arc<WalkFilter>>>,
+    pub filter: OnceLock<Option<Arc<WalkFilter>>>,
 }
 
 impl FieldRelation {

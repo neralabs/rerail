@@ -110,3 +110,52 @@ packs 3.157 T to 2.756 T; 463 findings, the same set (d067ec2ebf6f).
 
 Test: `a_narrow_copy_of_an_original_within_one_document_is_its_rows_under_the_narrow_bound`; #923's
 `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone` passes.
+
+### A filter's copy differs from its original only by an annotation's rows, and holds none
+
+Added 2026-11-21, superseding the test above (one document). That test let a filter drop rows its copy holds: a
+rule as hiding left it reads an annotation's copy where it reaches an annotation (`type_arg(s, i, a) :-
+sub_item(s, i, e), !lone_tuple(s), rr_in_annotation_0_unparen(e, a)`), and its narrow copy reads the widened
+original there too, so the copy holds that annotation's rows, which the filter dropped. Corpus0's findings did not
+show it. A narrow copy is now a filter of its original exactly where
+- every row by which the widened original and its copy differ holds an annotation's node in a node column of the head
+  (*anchored*, a least fixpoint over each original's sets of such columns): a row differs by a bound of its rule's own,
+  which the widening raised, or by a row of another original kept narrow read (positive, negated or aggregated) that
+  differs so, and that annotation's node must reach a node of the head. A read of a copy folded in differs in neither;
+- no row of the copy holds an annotation's node (*covered*, a greatest fixpoint): each node of its head is bounded, read
+  from a covered relation's node (an original kept narrow, or a relation not widened that reads narrow), or of a
+  document such a node is of.
+
+Whether a node is an annotation's is carried through each rule by what each relation keeps in every row, widened or
+not (`Kept`, a greatest fixpoint): the pairs of its columns where one is an annotation's wherever the other is (a base
+relation's locations, `nearest`, an equality, `@doc`), and the columns that always are (`parsed(_, "annotation", r)`'s
+trees). Where the copy is neither but no literal differs, its rows are its original's, and its readers read the
+original (`Narrowing::same`). A constant node column (`-1`, no node) holds no annotation's node; a number column joined
+to a node (`modnode(d, m)`'s `d`) carries it. Name resolution across an annotation and its host file (`wstart`,
+`walk`, `look`) reads the annotations' copies: its copies are made again.
+
+Keeping such an original's annotation copies apart instead (unfolded, as hiding wrote them) was tried and dropped: a
+widened original takes its annotations' rows from the originals it reads widened, so one kept apart unfolded most of
+the typing library, and a quoted annotation's call lost its target (`quoted_annotations_are_read_as_their_code`).
+
+Measured on corpus0 × B-now, off, one thread, an M1 Max: one pack 0.939 T to 0.983 T, the normal packs 2.157 T to
+2.179 T (the cost of the rows the earlier test dropped); 463 findings, the same set.
+
+Tests: `a_narrow_copy_is_its_originals_rows_under_the_narrow_bound_through_constants_and_document_columns`,
+`a_narrow_copy_that_holds_an_annotations_rows_is_made_again`.
+
+### Which reads a narrow copy serves, and how it is made
+
+Added 2026-11-21, at the merge of the hub (6264e89aae) with the narrow copies above. The two answer apart:
+
+- **Which reads.** As "A rule's rows are its own" says: a rule that is not a widened original's own reads it narrow
+  only through an atom of a variable its head shows (`Narrowing::shown_vars`, `Redirect::Shown`); a narrow copy's
+  rules read every widened original narrow (`Redirect::All`). The originals kept narrow (`Narrowing::reads`) are those
+  such reads reach, and those their rules read in turn.
+- **How each copy is made.** As the sections above say: read as its original (`same`), a filter of it (`within`), its
+  original less the annotations' change (`Diffed`), or made again.
+
+Where the two meet, a rule that reads an original widened at an atom of no shown variable reads its annotations'
+rows there. So `one_document`'s *covered* counts such an atom as no read of a narrow copy; the deltas' graph
+(`Diffed::new`), a change point (`Diffed::write`) and a twin's places (`beside_twin`) are found an atom at a time; and
+a native operator reads narrow where its relation is shown.

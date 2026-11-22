@@ -65,7 +65,7 @@ pub mod code_rule_dsl {
                 #[path = "rir_tests.rs"]
                 pub mod tests;
                 #[allow(unused_imports)]
-                use rerail_compiler::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
+                use rerail_rir::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
                 #[allow(unused_imports)]
                 use super::*;
                 #[allow(unused_imports)]

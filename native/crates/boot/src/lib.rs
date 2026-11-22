@@ -25,8 +25,8 @@ pub use rerail_store::content_store;
 pub use rerail_store::git_access;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
-pub use rerail_classic::git_ignore;
-pub use rerail_classic::panic_boundary;
+pub use rerail_workspace::git_ignore;
+pub use rerail_workspace::panic_boundary;
 pub use rerail_logic::threads;
 pub use rerail_tree_watch::tree_watch;
 extern crate self as rerail_boot;
@@ -96,9 +96,9 @@ pub mod code_rule_dsl {
     // The engine's build identities, which it sets as it loads (`crate::install_build_ids`).
     pub use rerail_lang::code_rule_dsl::build_ids;
     pub mod calls {
-        pub use rerail_classic::code_rule_dsl::calls::*;
+        pub use rerail_workspace::code_rule_dsl::calls::*;
         pub mod closure {
-            pub use rerail_classic::code_rule_dsl::calls::closure::*;
+            pub use rerail_workspace::code_rule_dsl::calls::closure::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::calls::names::Name;
             #[allow(unused_imports)]
@@ -145,7 +145,7 @@ pub mod code_rule_dsl {
             use std::sync::Arc;
         }
         pub mod summary {
-            pub use rerail_classic::code_rule_dsl::calls::summary::*;
+            pub use rerail_workspace::code_rule_dsl::calls::summary::*;
             #[cfg(any(test, feature = "test-hooks"))]
             pub use rerail_lang_python::code_rule_dsl::calls::summary::python;
             #[allow(unused_imports)]
@@ -202,7 +202,7 @@ pub mod code_rule_dsl {
     }
     pub mod compile {
         pub mod value {
-            pub use rerail_classic::code_rule_dsl::compile::value::*;
+            pub use rerail_workspace::code_rule_dsl::compile::value::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::json::{bounded_text, invalid, object, reject_unknown};
             #[allow(unused_imports)]
@@ -253,7 +253,7 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
         pub mod utils {
-            pub use rerail_classic::code_rule_dsl::compile::utils::*;
+            pub use rerail_workspace::code_rule_dsl::compile::utils::*;
             #[allow(unused_imports)]
             use super::documents::{DocumentScopes, Side};
             #[allow(unused_imports)]
@@ -276,10 +276,10 @@ pub mod code_rule_dsl {
             use std::sync::{Arc, Weak};
         }
         pub mod shared {
-            pub use rerail_classic::code_rule_dsl::compile::shared::*;
+            pub use rerail_workspace::code_rule_dsl::compile::shared::*;
         }
         pub mod order {
-            pub use rerail_classic::code_rule_dsl::compile::order::*;
+            pub use rerail_workspace::code_rule_dsl::compile::order::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::json::invalid;
             #[allow(unused_imports)]
@@ -322,7 +322,7 @@ pub mod code_rule_dsl {
             use std::sync::Arc;
         }
         pub mod dialect {
-            pub use rerail_classic::code_rule_dsl::compile::dialect::*;
+            pub use rerail_workspace::code_rule_dsl::compile::dialect::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::json::invalid;
             #[allow(unused_imports)]
@@ -339,7 +339,7 @@ pub mod code_rule_dsl {
             use serde_json::Value;
         }
         pub mod define {
-            pub use rerail_classic::code_rule_dsl::compile::define::*;
+            pub use rerail_workspace::code_rule_dsl::compile::define::*;
             #[allow(unused_imports)]
             use super::ast_rule::{compile_ast_rule, validate_ast_rule};
             #[allow(unused_imports)]
@@ -372,7 +372,7 @@ pub mod code_rule_dsl {
             use std::sync::Arc;
         }
         pub mod config {
-            pub use rerail_classic::code_rule_dsl::compile::config::*;
+            pub use rerail_workspace::code_rule_dsl::compile::config::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::json::{invalid, object, reject_unknown};
             #[allow(unused_imports)]
@@ -383,7 +383,7 @@ pub mod code_rule_dsl {
             use std::collections::BTreeMap;
         }
         pub mod compare {
-            pub use rerail_classic::code_rule_dsl::compile::compare::*;
+            pub use rerail_workspace::code_rule_dsl::compile::compare::*;
             #[allow(unused_imports)]
             use super::ast_rule::AST_RELATIONS;
             #[allow(unused_imports)]
@@ -407,7 +407,7 @@ pub mod code_rule_dsl {
             use std::collections::{BTreeMap, BTreeSet};
         }
         pub mod ast_rule {
-            pub use rerail_classic::code_rule_dsl::compile::ast_rule::*;
+            pub use rerail_workspace::code_rule_dsl::compile::ast_rule::*;
             #[allow(unused_imports)]
             use super::compare::{count_bounds, parse_comparison};
             #[allow(unused_imports)]
@@ -443,9 +443,9 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
-        pub use rerail_classic::code_rule_dsl::compile::*;
+        pub use rerail_workspace::code_rule_dsl::compile::*;
         pub mod binds {
-            pub use rerail_classic::code_rule_dsl::compile::binds::*;
+            pub use rerail_workspace::code_rule_dsl::compile::binds::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
             #[allow(unused_imports)]
@@ -520,7 +520,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)] // boot's mount: only boot's files read it
         pub use rerail_lang_ecma::code_rule_dsl::compile::import_target;
         pub mod parse {
-            pub use rerail_classic::code_rule_dsl::compile::parse::*;
+            pub use rerail_workspace::code_rule_dsl::compile::parse::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::compile::ast_rule::{compile_ast_rule};
             #[allow(unused_imports)]
@@ -576,7 +576,7 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::soundness::sound_under_errors;
         }
         pub mod resolve {
-            pub use rerail_classic::code_rule_dsl::compile::resolve::*;
+            pub use rerail_workspace::code_rule_dsl::compile::resolve::*;
             #[allow(unused_imports)] // boot's mount: only boot's files read it
             pub use rerail_lang_php::code_rule_dsl::compile::resolve::php;
             #[allow(unused_imports)]
@@ -761,7 +761,7 @@ pub mod code_rule_dsl {
     }
     pub mod eval {
         pub mod query {
-            pub use rerail_classic::code_rule_dsl::eval::query::*;
+            pub use rerail_workspace::code_rule_dsl::eval::query::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::json::invalid;
             #[allow(unused_imports)]
@@ -802,7 +802,7 @@ pub mod code_rule_dsl {
             use std::sync::Arc;
         }
         pub mod output {
-            pub use rerail_classic::code_rule_dsl::eval::output::*;
+            pub use rerail_workspace::code_rule_dsl::eval::output::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::json::hex_digest;
             #[allow(unused_imports)]
@@ -816,7 +816,7 @@ pub mod code_rule_dsl {
         }
         pub mod evidence {
             #[cfg(any(test, feature = "test-hooks"))]
-            pub use rerail_classic::code_rule_dsl::eval::evidence::*;
+            pub use rerail_workspace::code_rule_dsl::eval::evidence::*;
             #[allow(unused_imports)]
             use super::output::{failure, violation_from_witness, violation_id};
             #[allow(unused_imports)]
@@ -843,7 +843,7 @@ pub mod code_rule_dsl {
             use std::collections::BTreeSet;
         }
         #[cfg_attr(not(test), allow(unused_imports))]
-        pub use rerail_classic::code_rule_dsl::eval::*;
+        pub use rerail_workspace::code_rule_dsl::eval::*;
         #[cfg_attr(not(test), allow(unused_imports))]
         pub use rerail_lang_ecma::code_rule_dsl::eval::ecma;
         #[allow(unused_imports)]
@@ -1096,9 +1096,10 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use crate::content_store::{Binding, ContentStore, Derivation, DerivationRecord, StoreResult};
     }
+    pub use rerail_workspace::code_rule_dsl::file_input;
     // Wired to the findings layer in a later slice; until then only tests call it.
     pub mod findings {
-        pub use rerail_classic::code_rule_dsl::findings::*;
+        pub use rerail_workspace::code_rule_dsl::findings::*;
         #[cfg(any(test, feature = "test-hooks"))]
         pub mod async_reference {
             pub use rerail_lang_python::code_rule_dsl::findings::async_reference::*;
@@ -1135,7 +1136,7 @@ pub mod code_rule_dsl {
     }
     // The relational pools' hook slots, compiled wherever the pools are (the hub's relational stage is in the library).
     pub mod identifier {
-        pub use rerail_classic::code_rule_dsl::identifier::*;
+        pub use rerail_workspace::code_rule_dsl::identifier::*;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::language::{Family, GrammarDialect};
         #[allow(unused_imports)]
@@ -1155,9 +1156,9 @@ pub mod code_rule_dsl {
         pub use rerail_lang::code_rule_dsl::language::*;
         #[cfg_attr(test, path = "adapter")]
         pub mod adapter {
-            pub use rerail_classic::code_rule_dsl::language::adapter::*;
+            pub use rerail_workspace::code_rule_dsl::language::adapter::*;
             pub mod arguments {
-                pub use rerail_classic::code_rule_dsl::language::adapter::arguments::*;
+                pub use rerail_workspace::code_rule_dsl::language::adapter::arguments::*;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Refusal, Refused};
                 #[allow(unused_imports)]
@@ -1170,7 +1171,7 @@ pub mod code_rule_dsl {
             #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_lang_php::code_rule_dsl::language::adapter::blade;
             pub mod calls {
-                pub use rerail_classic::code_rule_dsl::language::adapter::calls::*;
+                pub use rerail_workspace::code_rule_dsl::language::adapter::calls::*;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Refusal, Refused};
                 #[allow(unused_imports)]
@@ -1198,11 +1199,11 @@ pub mod code_rule_dsl {
             }
             pub use rerail_lang_ecma::code_rule_dsl::language::adapter::ecma;
             pub mod format_args {
-                pub use rerail_classic::code_rule_dsl::language::adapter::format_args::*;
+                pub use rerail_workspace::code_rule_dsl::language::adapter::format_args::*;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Refusal, Refused};
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::matcher::Style;
+                use crate::code_rule_dsl::literal::Grammar;
                 #[allow(unused_imports)]
                 use std::borrow::Cow;
             }
@@ -1240,11 +1241,13 @@ pub mod code_rule_dsl {
             #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_lang_rust::code_rule_dsl::language::adapter::rust;
             pub mod scope {
-                pub use rerail_classic::code_rule_dsl::language::adapter::scope::*;
+                pub use rerail_workspace::code_rule_dsl::language::adapter::scope::*;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Adapter, Refusal};
                 #[allow(unused_imports)]
-                use crate::code_rule_dsl::matcher::{ScopeName, Unresolved, file_module, file_source_type_for};
+                use crate::code_rule_dsl::scope::ScopeName;
+                #[allow(unused_imports)]
+                use crate::code_rule_dsl::matcher::{Unresolved, file_module, file_source_type_for};
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::module_path::ModulePath;
                 #[allow(unused_imports)]
@@ -1272,7 +1275,7 @@ pub mod code_rule_dsl {
             #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_lang_sql::code_rule_dsl::language::adapter::sql;
             pub mod syntax {
-                pub use rerail_classic::code_rule_dsl::language::adapter::syntax::*;
+                pub use rerail_workspace::code_rule_dsl::language::adapter::syntax::*;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::{Adapter, Refusal};
                 #[allow(unused_imports)]
@@ -1295,13 +1298,11 @@ pub mod code_rule_dsl {
                 use std::sync::Arc;
             }
             pub mod value {
-                pub use rerail_classic::code_rule_dsl::language::adapter::value::*;
+                pub use rerail_workspace::code_rule_dsl::language::adapter::value::*;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::adapter::Refusal;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::language::Family;
-                #[allow(unused_imports)]
-                use crate::code_rule_dsl::matcher::SemanticText;
                 #[allow(unused_imports)]
                 use crate::code_rule_dsl::value::structure::{Equality, Tok};
                 #[allow(unused_imports)]
@@ -1374,7 +1375,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::matcher::{file_index};
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
+            use crate::code_rule_dsl::file_input::python_module_path_on_disk;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::suppress::{Suppress, root};
             #[allow(unused_imports)]
@@ -1424,11 +1425,11 @@ pub mod code_rule_dsl {
     }
     pub mod literal {
         pub mod offsets {
-            pub use rerail_classic::code_rule_dsl::literal::offsets::*;
+            pub use rerail_workspace::code_rule_dsl::literal::offsets::*;
             #[allow(unused_imports)]
             use std::ops::Range;
         }
-        pub use rerail_classic::code_rule_dsl::literal::*;
+        pub use rerail_workspace::code_rule_dsl::literal::*;
         pub mod annotation {
             #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_lang_python::code_rule_dsl::literal::annotation::*;
@@ -1934,7 +1935,7 @@ pub mod code_rule_dsl {
     }
     pub mod matcher {
         pub mod value {
-            pub use rerail_classic::code_rule_dsl::matcher::value::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::value::*;
             #[allow(unused_imports)]
             use super::resolve::{ ValueKey, binding_value, constant_value, followed_table, memoize_structure, memoize_value, memoized_structure, memoized_value, unshadowed_global, };
             #[allow(unused_imports)]
@@ -1971,7 +1972,7 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
         pub mod embedded {
-            pub use rerail_classic::code_rule_dsl::matcher::embedded::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::embedded::*;
             #[allow(unused_imports)]
             use super::AstMatcher;
             #[allow(unused_imports)]
@@ -2000,7 +2001,7 @@ pub mod code_rule_dsl {
             use std::sync::Arc;
         }
         pub mod util {
-            pub use rerail_classic::code_rule_dsl::matcher::util::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::util::*;
             #[allow(unused_imports)]
             use super::AstMatcher;
             #[allow(unused_imports)]
@@ -2013,7 +2014,7 @@ pub mod code_rule_dsl {
             use std::sync::{Arc, Mutex, OnceLock, Weak};
         }
         pub mod transform {
-            pub use rerail_classic::code_rule_dsl::matcher::transform::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::transform::*;
             #[allow(unused_imports)]
             use super::exported::exported_span;
             #[allow(unused_imports)]
@@ -2039,7 +2040,7 @@ pub mod code_rule_dsl {
             use std::ops::Range;
         }
         pub mod relation {
-            pub use rerail_classic::code_rule_dsl::matcher::relation::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::relation::*;
             #[allow(unused_imports)]
             use super::AstMatcher;
             #[allow(unused_imports)]
@@ -2074,7 +2075,7 @@ pub mod code_rule_dsl {
             use std::sync::{Arc, OnceLock};
         }
         pub mod nth_child {
-            pub use rerail_classic::code_rule_dsl::matcher::nth_child::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::nth_child::*;
             #[allow(unused_imports)]
             use super::AstMatcher;
             #[allow(unused_imports)]
@@ -2093,7 +2094,7 @@ pub mod code_rule_dsl {
             use std::borrow::Cow;
         }
         pub mod memo {
-            pub use rerail_classic::code_rule_dsl::matcher::memo::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::memo::*;
             #[allow(unused_imports)]
             use super::nth_child::Siblings;
             #[allow(unused_imports)]
@@ -2124,7 +2125,7 @@ pub mod code_rule_dsl {
             use std::sync::Arc;
         }
         pub mod layout {
-            pub use rerail_classic::code_rule_dsl::matcher::layout::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::layout::*;
             #[allow(unused_imports)]
             use super::each::binding_range;
             #[allow(unused_imports)]
@@ -2141,7 +2142,7 @@ pub mod code_rule_dsl {
             use std::ops::Range;
         }
         pub mod each {
-            pub use rerail_classic::code_rule_dsl::matcher::each::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::each::*;
             #[allow(unused_imports)]
             use super::exported::exported_span;
             #[allow(unused_imports)]
@@ -2160,7 +2161,7 @@ pub mod code_rule_dsl {
             use std::sync::Arc;
         }
         pub mod count {
-            pub use rerail_classic::code_rule_dsl::matcher::count::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::count::*;
             #[allow(unused_imports)]
             use super::AstMatcher;
             #[allow(unused_imports)]
@@ -2187,7 +2188,7 @@ pub mod code_rule_dsl {
             use std::ops::ControlFlow;
         }
         pub mod compare {
-            pub use rerail_classic::code_rule_dsl::matcher::compare::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::compare::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::tree::Tree;
             #[allow(unused_imports)]
@@ -2220,7 +2221,7 @@ pub mod code_rule_dsl {
         pub mod analysis {
             pub mod required_text {
                 #[cfg(any(test, feature = "test-hooks"))]
-                pub use rerail_classic::code_rule_dsl::matcher::analysis::required_text::*;
+                pub use rerail_workspace::code_rule_dsl::matcher::analysis::required_text::*;
                 #[allow(unused_imports)]
                 use super::super::{AstMatcher, UtilRef};
                 #[allow(unused_imports)]
@@ -2232,11 +2233,11 @@ pub mod code_rule_dsl {
                 #[allow(unused_imports)]
                 use std::collections::{BTreeMap, BTreeSet};
             }
-            pub use rerail_classic::code_rule_dsl::matcher::analysis::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::analysis::*;
         }
-        pub use rerail_classic::code_rule_dsl::matcher::*;
+        pub use rerail_workspace::code_rule_dsl::matcher::*;
         pub mod anchors {
-            pub use rerail_classic::code_rule_dsl::matcher::anchors::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::anchors::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::matcher::{AstMatcher, StopBy, UtilRef};
             #[allow(unused_imports)]
@@ -2272,7 +2273,7 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
         pub mod arguments {
-            pub use rerail_classic::code_rule_dsl::matcher::arguments::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::arguments::*;
             #[cfg(any(test, feature = "test-hooks"))]
             pub use rerail_lang_php::code_rule_dsl::matcher::arguments::lang_php;
             #[cfg(any(test, feature = "test-hooks"))]
@@ -2308,7 +2309,7 @@ pub mod code_rule_dsl {
         pub mod d_anchors {
             pub mod sql {
                 pub mod lower {
-                    pub use rerail_classic::code_rule_dsl::matcher::d_anchors::sql::lower::*;
+                    pub use rerail_workspace::code_rule_dsl::matcher::d_anchors::sql::lower::*;
                     #[allow(unused_imports)]
                     use super::super::{AnchorPlan, Condition, Direction, Required};
                     #[allow(unused_imports)]
@@ -2321,7 +2322,7 @@ pub mod code_rule_dsl {
                     use render::Definitions;
                 }
                 pub mod corpus {
-                    pub use rerail_classic::code_rule_dsl::matcher::d_anchors::sql::corpus::*;
+                    pub use rerail_workspace::code_rule_dsl::matcher::d_anchors::sql::corpus::*;
                     #[allow(unused_imports)]
                     use super::super::AnchorPlan;
                     #[allow(unused_imports)]
@@ -2340,7 +2341,7 @@ pub mod code_rule_dsl {
                     use std::{cell::RefCell, sync::Arc};
                 }
                 pub mod statistics {
-                    pub use rerail_classic::code_rule_dsl::matcher::d_anchors::sql::statistics::*;
+                    pub use rerail_workspace::code_rule_dsl::matcher::d_anchors::sql::statistics::*;
                     #[allow(unused_imports)]
                     use super::super::{AnchorPlan, Condition, Required, Requirement};
                     #[allow(unused_imports)]
@@ -2350,7 +2351,7 @@ pub mod code_rule_dsl {
                     #[allow(unused_imports)]
                     use std::sync::Arc;
                 }
-                pub use rerail_classic::code_rule_dsl::matcher::d_anchors::sql::*;
+                pub use rerail_workspace::code_rule_dsl::matcher::d_anchors::sql::*;
                 #[allow(unused_imports)]
                 use super::AnchorPlan;
                 #[allow(unused_imports)]
@@ -2367,7 +2368,7 @@ pub mod code_rule_dsl {
                 #[cfg(any(test, feature = "test-hooks"))]
                 use std::borrow::Cow;
             }
-            pub use rerail_classic::code_rule_dsl::matcher::d_anchors::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::d_anchors::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::matcher::{AstMatcher, StopBy, UtilRef};
             #[allow(unused_imports)]
@@ -2416,7 +2417,7 @@ pub mod code_rule_dsl {
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
         pub mod format_args {
-            pub use rerail_classic::code_rule_dsl::matcher::format_args::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::format_args::*;
             #[allow(unused_imports)] // boot's mount: only boot's files read it
             pub use rerail_lang_php::code_rule_dsl::matcher::format_args::printf;
             #[allow(unused_imports)] // boot's mount: only boot's files read it
@@ -2464,10 +2465,10 @@ pub mod code_rule_dsl {
         }
         #[cfg(any(test, feature = "test-hooks"))]
         pub mod p_anchors {
-            pub use rerail_classic::code_rule_dsl::matcher::p_anchors::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::p_anchors::*;
             pub mod sql {
                 pub mod lower {
-                    pub use rerail_classic::code_rule_dsl::matcher::p_anchors::sql::lower::*;
+                    pub use rerail_workspace::code_rule_dsl::matcher::p_anchors::sql::lower::*;
                     #[allow(unused_imports)]
                     use super::super::{AnchorPlan, Condition, Direction, Required};
                     #[allow(unused_imports)]
@@ -2479,7 +2480,7 @@ pub mod code_rule_dsl {
                     #[allow(unused_imports)]
                     use render::Definitions;
                 }
-                pub use rerail_classic::code_rule_dsl::matcher::p_anchors::sql::*;
+                pub use rerail_workspace::code_rule_dsl::matcher::p_anchors::sql::*;
                 #[allow(unused_imports)]
                 pub use crate::code_rule_dsl::matcher::p_anchors::sql::audit::candidate_frontier_audit;
                 #[allow(unused_imports)]
@@ -2562,7 +2563,7 @@ pub mod code_rule_dsl {
             use std::collections::{BTreeMap, HashSet};
         }
         pub mod resolve {
-            pub use rerail_classic::code_rule_dsl::matcher::resolve::*;
+            pub use rerail_workspace::code_rule_dsl::matcher::resolve::*;
             pub use rerail_lang_php::code_rule_dsl::matcher::resolve::php;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::tree::Tree;
@@ -2748,7 +2749,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports)]
         use util::{THREE_VALUED};
     }
-    pub use rerail_classic::code_rule_dsl::model;
+    pub use rerail_workspace::code_rule_dsl::model;
     pub mod module_graph {
         pub use rerail_lang_ecma::code_rule_dsl::module_graph::*;
         // The module graph tests' fixtures, which the engine's napi tests read too.
@@ -2782,7 +2783,7 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::language::{dialect_by_label, label_of_path};
     }
     pub use rerail_lang::code_rule_dsl::module_path;
-    pub use rerail_classic::code_rule_dsl::origin;
+    pub use rerail_workspace::code_rule_dsl::origin;
     pub use rerail_lang_ecma::code_rule_dsl::package_manifest;
     // P's phase clocks; read by profiling once stages are named (05 Phase 11 row 2).
     #[cfg(any(test, feature = "test-hooks"))]
@@ -2811,10 +2812,10 @@ pub mod code_rule_dsl {
     // Read by the prefilter's lowering; the compiled-plan cache is wired with the plans row.
     pub mod stats {
         #[cfg_attr(not(test), allow(unused_imports))]
-        pub use rerail_classic::code_rule_dsl::stats::*;
+        pub use rerail_workspace::code_rule_dsl::stats::*;
         pub mod ingest {
             #[cfg_attr(not(test), allow(unused_imports))]
-            pub use rerail_classic::code_rule_dsl::stats::ingest::*;
+            pub use rerail_workspace::code_rule_dsl::stats::ingest::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
             #[allow(unused_imports)]
@@ -2828,7 +2829,7 @@ pub mod code_rule_dsl {
         }
         pub mod inputs {
             #[cfg_attr(not(test), allow(unused_imports))]
-            pub use rerail_classic::code_rule_dsl::stats::inputs::*;
+            pub use rerail_workspace::code_rule_dsl::stats::inputs::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::matcher::{AnchorPlan, Condition, Required, Requirement};
             #[allow(unused_imports)]
@@ -2842,7 +2843,7 @@ pub mod code_rule_dsl {
         }
         pub mod plans {
             #[cfg_attr(not(test), allow(unused_imports))]
-            pub use rerail_classic::code_rule_dsl::stats::plans::*;
+            pub use rerail_workspace::code_rule_dsl::stats::plans::*;
             #[allow(unused_imports)]
             use rusqlite::{Connection, OptionalExtension, Result, params};
             #[allow(unused_imports)]
@@ -2855,7 +2856,7 @@ pub mod code_rule_dsl {
     pub use rerail_prof::code_rule_dsl::prof;
     // P's hooks are called from its matcher and relational code; W wires them with 03's stage names.
     #[cfg(feature="code-rule-profile")]
-    pub use rerail_classic::code_rule_dsl::profile;
+    pub use rerail_workspace::code_rule_dsl::profile;
     // The same SQL diagnostics serve standalone execution and the workspace profiler.
     #[cfg(any(test, feature = "test-hooks"))]
     pub use rerail_facts::code_rule_dsl::sql_profile;
@@ -2872,7 +2873,7 @@ pub mod code_rule_dsl {
         use std::sync::atomic::{AtomicBool, AtomicU64, Ordering::Relaxed};
     }
     pub mod query {
-        pub use rerail_classic::code_rule_dsl::query::*;
+        pub use rerail_workspace::code_rule_dsl::query::*;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::model::RegexOptions;
         #[allow(unused_imports)]
@@ -2884,18 +2885,18 @@ pub mod code_rule_dsl {
     }
     // Admission reads these once the batch budget is wired; until then only tests call it.
     #[allow(unused_imports)] // boot's mount: only boot's files read it
-    pub use rerail_classic::code_rule_dsl::resolution;
+    pub use rerail_workspace::code_rule_dsl::resolution;
     pub use rerail_facts::code_rule_dsl::search_index;
     #[cfg(any(test, feature = "test-hooks"))]
-    pub use rerail_classic::code_rule_dsl::walks;
+    pub use rerail_workspace::code_rule_dsl::walks;
     #[allow(unused_imports)] // boot's mount: only boot's files read it
     pub mod functors;
-    pub use rerail_classic::code_rule_dsl::rule_api;
+    pub use rerail_workspace::code_rule_dsl::rule_api;
     pub mod residency {
         pub mod admission {
             pub mod relational {
                 pub mod syntax {
-                    pub use rerail_classic::code_rule_dsl::residency::admission::relational::syntax::*;
+                    pub use rerail_workspace::code_rule_dsl::residency::admission::relational::syntax::*;
                     #[allow(unused_imports)]
                     use super::{Result, invalid, source, sql_error};
                     #[allow(unused_imports)]
@@ -2912,17 +2913,17 @@ pub mod code_rule_dsl {
                 pub mod producer {
                     pub mod layout {
                         #[cfg(any(test, feature = "test-hooks"))]
-                        pub use rerail_classic::code_rule_dsl::residency::admission::relational::producer::layout::*;
+                        pub use rerail_workspace::code_rule_dsl::residency::admission::relational::producer::layout::*;
                         #[allow(unused_imports)]
                         use super::{Demand, Resident};
                         #[allow(unused_imports)]
                         use std::{collections::HashSet, sync::Arc};
                     }
-                    pub use rerail_classic::code_rule_dsl::residency::admission::relational::producer::*;
+                    pub use rerail_workspace::code_rule_dsl::residency::admission::relational::producer::*;
                 }
                 pub mod pool {
                     #[cfg(any(test, feature = "test-hooks"))]
-                    pub use rerail_classic::code_rule_dsl::residency::admission::relational::pool::*;
+                    pub use rerail_workspace::code_rule_dsl::residency::admission::relational::pool::*;
                     #[allow(unused_imports)]
                     use super::{Database, Result, configure, connection, sql_error};
                     #[allow(unused_imports)]
@@ -2930,16 +2931,16 @@ pub mod code_rule_dsl {
                 }
                 pub mod admission {
                     #[cfg(any(test, feature = "test-hooks"))]
-                    pub use rerail_classic::code_rule_dsl::residency::admission::relational::admission::*;
+                    pub use rerail_workspace::code_rule_dsl::residency::admission::relational::admission::*;
                     #[allow(unused_imports)]
                     use super::{Inputs, Result, invalid};
                     #[allow(unused_imports)]
                     use crate::code_rule_dsl::{ eval, model::{ClauseKind, CompiledClause, CompiledCodeRule, Metrics, Snapshot}, };
                 }
-                pub use rerail_classic::code_rule_dsl::residency::admission::relational::*;
+                pub use rerail_workspace::code_rule_dsl::residency::admission::relational::*;
                 pub mod batch {
                     #[cfg(any(test, feature = "test-hooks"))]
-                    pub use rerail_classic::code_rule_dsl::residency::admission::relational::batch::*;
+                    pub use rerail_workspace::code_rule_dsl::residency::admission::relational::batch::*;
                     #[allow(unused_imports)]
                     use crate::code_rule_dsl::residency::admission::relational::{Inputs, Job, Preparation, failure, producer, sql_error};
                     #[allow(unused_imports)]
@@ -2951,7 +2952,7 @@ pub mod code_rule_dsl {
                 }
                 pub mod inputs {
                     #[cfg(any(test, feature = "test-hooks"))]
-                    pub use rerail_classic::code_rule_dsl::residency::admission::relational::inputs::*;
+                    pub use rerail_workspace::code_rule_dsl::residency::admission::relational::inputs::*;
                     #[allow(unused_imports)]
                     use crate::code_rule_dsl::residency::admission::relational::{FactQuery, insert};
                     #[allow(unused_imports)]
@@ -3014,7 +3015,7 @@ pub mod code_rule_dsl {
     }
     // P's paths for P's relational stage, under test (open item O18): P's workspace code reads it here.
     pub mod scope {
-        pub use rerail_classic::code_rule_dsl::scope::*;
+        pub use rerail_workspace::code_rule_dsl::scope::*;
         pub use rerail_lang_ecma::code_rule_dsl::scope::ecma;
         pub mod php {
             #[cfg(any(test, feature = "test-hooks"))]
@@ -3086,7 +3087,7 @@ pub mod code_rule_dsl {
             use std::ops::Range;
         }
         pub mod usage {
-            pub use rerail_classic::code_rule_dsl::scope::usage::*;
+            pub use rerail_workspace::code_rule_dsl::scope::usage::*;
             #[cfg(any(test, feature = "test-hooks"))]
             pub use rerail_lang_python::code_rule_dsl::scope::usage::lang_python;
             #[cfg(any(test, feature = "test-hooks"))]
@@ -3166,7 +3167,7 @@ pub mod code_rule_dsl {
     // The first slice's entry points (06 S6), called by hosts through `slice::napi::CodeRuleSlice`.
     pub mod slice;
     pub mod soundness {
-        pub use rerail_classic::code_rule_dsl::soundness::*;
+        pub use rerail_workspace::code_rule_dsl::soundness::*;
         #[allow(unused_imports)]
         use super::embed::segments::FileRanges;
         #[allow(unused_imports)]
@@ -3187,7 +3188,7 @@ pub mod code_rule_dsl {
     }
     pub mod suppress {
         pub mod rerail {
-            pub use rerail_classic::code_rule_dsl::suppress::rerail::*;
+            pub use rerail_workspace::code_rule_dsl::suppress::rerail::*;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::embed::segments::FileRanges;
             #[allow(unused_imports)]
@@ -3203,7 +3204,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::language::adapter::pack as language_pack;
         }
-        pub use rerail_classic::code_rule_dsl::suppress::*;
+        pub use rerail_workspace::code_rule_dsl::suppress::*;
         pub mod biome {
             #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_lang_ecma::code_rule_dsl::suppress::biome::*;
@@ -3368,7 +3369,7 @@ pub mod code_rule_dsl {
                 #[cfg_attr(not(test), allow(unused_imports))]
                 pub use rerail_transducer::code_rule_dsl::transducer::packed::rir::Names;
                 #[allow(unused_imports)]
-                use rerail_compiler::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
+                use rerail_rir::rir_asm::{Line, NameTable, Token, block_programs_rows, head_rows, index, tokens, word_row, word_rows};
                 #[allow(unused_imports)]
                 use super::*;
                 #[allow(unused_imports)]
@@ -3588,7 +3589,7 @@ pub mod code_rule_dsl {
         }
     }
     pub mod value {
-        pub use rerail_classic::code_rule_dsl::value::*;
+        pub use rerail_workspace::code_rule_dsl::value::*;
         pub mod ecma {
             pub use rerail_lang_ecma::code_rule_dsl::value::ecma::*;
             #[allow(unused_imports)]
@@ -3716,7 +3717,7 @@ pub mod code_rule_dsl {
         pub use crate::code_rule_dsl::value::text_regex::MAX_STRING_BYTES;
     }
     pub mod violations {
-        pub use rerail_classic::code_rule_dsl::violations::*;
+        pub use rerail_workspace::code_rule_dsl::violations::*;
         #[allow(unused_imports)]
         use super::json::invalid;
         #[allow(unused_imports)]
@@ -3790,7 +3791,7 @@ pub mod code_rule_dsl {
         pub mod fixtures;
         pub mod results {
             #[cfg(any(test, feature = "test-hooks"))]
-            pub use rerail_classic::code_rule_dsl::workspace::results::*;
+            pub use rerail_workspace::code_rule_dsl::workspace::results::*;
             #[allow(unused_imports)]
             use super::crossfile::CrossFileScheduler;
             #[allow(unused_imports)]
@@ -3828,9 +3829,9 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use std::time::Duration;
         }
-        pub use rerail_classic::code_rule_dsl::workspace::*;
+        pub use rerail_workspace::code_rule_dsl::workspace::*;
         pub mod ingest {
-            pub use rerail_classic::code_rule_dsl::workspace::ingest::*;
+            pub use rerail_workspace::code_rule_dsl::workspace::ingest::*;
             #[cfg_attr(not(test), allow(unused_imports))]
             pub use rerail_lang_ecma::code_rule_dsl::workspace::ingest::ecma;
             #[allow(unused_imports)]
@@ -3912,7 +3913,7 @@ pub mod code_rule_dsl {
     pub mod waves {
         pub use rerail_logic::code_rule_dsl::waves::{owner, storage};
         #[cfg(any(test, feature = "test-hooks"))]
-        pub use rerail_classic::code_rule_dsl::waves::relational;
+        pub use rerail_workspace::code_rule_dsl::waves::relational;
         pub mod schedule {
             pub use rerail_logic::code_rule_dsl::waves::schedule::*;
             pub mod batches;

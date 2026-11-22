@@ -56,17 +56,15 @@ pub fn install_source_classifier(classify: SourceClassifier) {
 }
 
 /// A task's run (decision 0441), from the logic crate above this one, which owns runs and their profile reports.
+#[derive(Clone, Copy)]
 pub struct TaskRun {
     /// Opens the task's run: the corpus runs inside it (each language batch's) join it. Dropped, it ends.
     pub scope: fn() -> Box<dyn std::any::Any>,
     /// Writes the run's profile report (`logic::profile::report::write`) into a directory, under a header.
     pub report: fn(&Path, &str) -> std::io::Result<()>,
 }
-static TASK_RUN: OnceLock<TaskRun> = OnceLock::new();
-
-pub fn install_task_run(run: TaskRun) {
-    let _ = TASK_RUN.set(run);
-}
+/// The registered task run (`TaskRun`): boot's.
+pub static TASK_RUN: rerail_registry::Slot<TaskRun> = rerail_registry::Slot::new("a workspace index task's run (workspace::index::TASK_RUN)");
 
 #[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
@@ -909,7 +907,7 @@ impl Task for WorkspaceIndexTask {
             let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             // The chunk is one run (decision 0441): its walk's language batches (a corpus run each) and the batch it reads
             // join it. Its profile is one (0442), written once at the chunk's end, not by each batch over the last.
-            let _run = TASK_RUN.get().map(|run| (run.scope)());
+            let _run = TASK_RUN.try_get().map(|run| (run.scope)());
             use crate::code_rule_dsl::logic::profile;
             let profiled = if profile::on() { profile::hold_records() } else { None };
             if profiled.is_some() {
@@ -923,7 +921,7 @@ impl Task for WorkspaceIndexTask {
                 None => self.plan(&storage, &repository)?,
             };
             let output = self.index_batch(&repository, index)?;
-            if profiled.is_some() && let Some(dir) = profile::directory() && let Some(run) = TASK_RUN.get() {
+            if profiled.is_some() && let Some(dir) = profile::directory() && let Some(run) = TASK_RUN.try_get() {
                 let header = format!("Profile of a workspace index chunk{}\n", if planned { ": its walk planned, the language of each file it lists decided, and its first batch read" } else { ": one batch read" });
                 (run.report)(&dir, &header).map_err(|e| invalid(format!("profile: {e}")))?;
             }

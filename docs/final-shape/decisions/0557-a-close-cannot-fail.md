@@ -4,6 +4,7 @@ Numbered 0547 where it was written (Parser-generators-final-shape); 0557 here, t
 
 Status: done by the implementer. The item is the user's (2026-11-21, "please do these", the first): "an infallible
 close". How it is done is the implementer's choice. Follows 0544, which did `open` and `leaf`. Page 40, step 51.
+Numbered 0547 where it was written (Parser-generators-final-shape); 0557 here, the hub's 0547 being another.
 
 ## What was there
 

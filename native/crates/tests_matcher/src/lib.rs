@@ -463,6 +463,9 @@ pub mod code_rule_dsl {
             pub use rerail_boot::code_rule_dsl::matcher::d_anchors::*;
             pub mod sql {
                 pub use rerail_boot::code_rule_dsl::matcher::d_anchors::sql::*;
+                // Its profiling spikes, which read `tests` (`document`).
+                #[cfg(all(test, feature = "code-rule-profile"))]
+                pub mod retention_spikes;
                 pub mod lower {
                     pub use rerail_boot::code_rule_dsl::matcher::d_anchors::sql::lower::*;
                     #[cfg(test)]
@@ -594,6 +597,9 @@ pub mod code_rule_dsl {
             #[path = "sql"]
             pub mod sql {
                 pub use rerail_boot::code_rule_dsl::matcher::p_anchors::sql::*;
+                // Its profiling spikes, which read `tests` (`document`).
+                #[cfg(all(test, feature = "code-rule-profile"))]
+                pub mod retention_spikes;
                 pub mod lower {
                     pub use rerail_boot::code_rule_dsl::matcher::p_anchors::sql::lower::*;
                     #[cfg(test)]

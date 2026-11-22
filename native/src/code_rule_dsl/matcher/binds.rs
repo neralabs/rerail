@@ -16,46 +16,40 @@ use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::sync::Arc;
 
-/// A scope a filter names: a table scope kind, or (TypeScript) eslint-scope's global scope, a
-/// script's top level, told apart from a module's (`ScopeKind::Module`).
-#[derive(Clone, Copy, Debug, PartialEq)]
-pub enum ScopeName {
-    Kind(ScopeKind),
-    Global,
-}
+pub use crate::code_rule_dsl::scope::ScopeName;
 
 /// Filters over a binding: how and where it binds, and whether it is read.
 #[derive(Clone, Default)]
 pub struct BindingFilter {
     /// The binding's form is one of these.
-    pub(crate) forms: Option<Vec<Form>>,
+    pub forms: Option<Vec<Form>>,
     /// The scope that holds it is one of these.
-    pub(crate) scopes: Option<Vec<ScopeName>>,
+    pub scopes: Option<Vec<ScopeName>>,
     /// Some read resolves to it (with what it inherits); unknown where a read may be unseen.
-    pub(crate) used: Option<bool>,
+    pub used: Option<bool>,
     /// Some reference resolves to it, writes included.
-    pub(crate) referenced: Option<bool>,
+    pub referenced: Option<bool>,
     /// Some such read comes from another scope.
-    pub(crate) nested_use: Option<bool>,
+    pub nested_use: Option<bool>,
     /// Python: an explicit re-export, or named by a static module `__all__`. TypeScript: a
     /// definition is exported (with `directives`, or a global `/* exported */` comment names it).
-    pub(crate) exported: Option<bool>,
+    pub exported: Option<bool>,
     /// It is the live binding of its name in its scope (Ruff's `scope.bindings()`).
-    pub(crate) latest: Option<bool>,
+    pub latest: Option<bool>,
     /// It is made under a `global` or `nonlocal` declaration.
-    pub(crate) outer: Option<bool>,
+    pub outer: Option<bool>,
     /// How many bindings of its name its scope holds, within a captured node or in all.
     pub bindings: Option<BindingCount>,
     /// TypeScript: it is the global variable of a configured global, in a script's top level
     /// (ESLint's `eslintImplicitGlobalSetting`, which no-redeclare's `builtinGlobals` reads).
-    pub(crate) builtin: Option<bool>,
+    pub builtin: Option<bool>,
     /// TypeScript `directives: "eslint"`: `/* exported */` comments export global variables.
-    pub(crate) directives: bool,
-    pub(crate) language: Option<GrammarDialect>,
+    pub directives: bool,
+    pub language: Option<GrammarDialect>,
     /// ESLint's settings declaring the family's globals (`ScopeRules::eslint_options`): the
     /// query's `languageOptions` (script or module, the JSX pragma), else ESLint's defaults;
     /// `None` for a family they do not configure.
-    pub(crate) options: Option<Arc<LanguageOptions>>,
+    pub options: Option<Arc<LanguageOptions>>,
 }
 
 /// `bindings`: the bindings of the binding's name in its scope (Ruff's `scope.get_all`, deletions
@@ -64,8 +58,8 @@ pub struct BindingFilter {
 pub struct BindingCount {
     /// The capture whose node bounds the count; `None` counts the whole scope.
     pub within: Option<String>,
-    pub(crate) min: usize,
-    pub(crate) max: Option<usize>,
+    pub min: usize,
+    pub max: Option<usize>,
 }
 
 /// The byte range of a capture in the environment a filter runs in.
@@ -337,11 +331,11 @@ fn pragma_variable(table: &ScopeTable, name: &str, fragments_only: bool) -> Opti
 pub struct Redefines {
     pub filter: BindingFilter,
     /// Whether the shadowed binding is of the same scope.
-    pub(crate) same_scope: Option<bool>,
+    pub same_scope: Option<bool>,
     /// TypeScript: every other definition of the variable passes, rather than some earlier one.
     pub every: bool,
     /// Whether both are imports of the same qualified name.
-    pub(crate) same_import: Option<bool>,
+    pub same_import: Option<bool>,
     pub site: Option<AstMatcher>,
     pub value: Option<AstMatcher>,
     pub annotation: Option<AstMatcher>,
@@ -352,11 +346,11 @@ pub struct Redefines {
 /// sub-rules share the caller's environment, as `has` does, so they may bind captures.
 #[derive(Clone)]
 pub struct Binds {
-    pub(crate) language: GrammarDialect,
+    pub language: GrammarDialect,
     /// Kinds a name node can have.
-    pub(crate) name_kinds: BTreeSet<u16>,
-    pub(crate) options: Option<Arc<LanguageOptions>>,
-    pub(crate) python: Option<Arc<PythonOptions>>,
+    pub name_kinds: BTreeSet<u16>,
+    pub options: Option<Arc<LanguageOptions>>,
+    pub python: Option<Arc<PythonOptions>>,
     pub filter: BindingFilter,
     pub site: Option<AstMatcher>,
     pub value: Option<AstMatcher>,
@@ -374,7 +368,7 @@ impl Binds {
             && self.occurrence.is_none()
     }
     /// The sub-rules, the shadowed binding's included, which may bind captures.
-    pub(crate) fn sub_rules(&self) -> impl Iterator<Item = &AstMatcher> {
+    pub fn sub_rules(&self) -> impl Iterator<Item = &AstMatcher> {
         let redefines = self.redefines.as_deref();
         [
             &self.site,

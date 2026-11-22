@@ -41,6 +41,8 @@ pub struct Lang {
     revision: u8,
     /// Each number's kind and field: what a presence's bits are (decision 0434 §4).
     kind_field: Vec<(u16, u16)>,
+    /// `presence_words`, counted once: a tape's reader checks its presence against it at every read.
+    presence_words: (usize, usize),
 }
 
 impl Lang {
@@ -56,14 +58,15 @@ impl Lang {
         let cut = if n <= 256 { 256 } else { 255 };
         let per = if cut >= 256 { 1 } else { n - cut };
         let index = table.entries().iter().enumerate().map(|(k, e)| (e.clone(), k as u32)).collect();
-        let kind_field = table.entries().iter().map(|e| (e.kind, e.field)).collect();
-        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field })
+        let kind_field: Vec<(u16, u16)> = table.entries().iter().map(|e| (e.kind, e.field)).collect();
+        let kinds = kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
+        let fields = kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
+        let presence_words = (kinds.div_ceil(64), fields.div_ceil(64));
+        Ok(Lang { table, index, cut, per, low_w: if per <= 256 { 1 } else { 2 }, widths, revision, kind_field, presence_words })
     }
     /// The words of a presence's kinds' and fields' bitmaps: one bit a kind and a field the table names.
     pub fn presence_words(&self) -> (usize, usize) {
-        let kinds = self.kind_field.iter().map(|&(k, _)| usize::from(k) + 1).max().unwrap_or(0);
-        let fields = self.kind_field.iter().map(|&(_, f)| usize::from(f) + 1).max().unwrap_or(0);
-        (kinds.div_ceil(64), fields.div_ceil(64))
+        self.presence_words
     }
     pub fn table(&self) -> &CodeTable {
         &self.table
@@ -659,8 +662,16 @@ DEFINE_KERNEL2(tests, t_random,
 /// (`rerail_gpu::kernels::program`; this crate is below the device layer, so its callers compile it).
 #[cfg(any(test, feature = "test-hooks"))]
 pub fn device_reads_kernel(header: &str) -> (String, String) {
-    (format!("tape_reads_{header}"), DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>")))
+    // Formats 15's and 16's reads use no SIMD group; 16z's block decode is a SIMD group's (`UKL_SIMD_GROUP_FREE`,
+    // ukl/backend.h).
+    let free = if header == "tape.h" { SIMD_GROUP_FREE } else { "" };
+    (format!("tape_reads_{header}"), format!("{free}{}", DEVICE_KERNEL.replace("READS_HEADER", &format!("<ukl/reads/{header}>"))))
 }
+
+/// What a source says first when its kernels use no SIMD group (ukl/backend.h, decision 0576 §14): on OpenCL they
+/// then require no sub-group size, and a kernel that reaches a SIMD-group operation is refused at its build.
+#[cfg(any(test, feature = "test-hooks"))]
+const SIMD_GROUP_FREE: &str = "#define UKL_SIMD_GROUP_FREE 1\n";
 
 /// The tape format's kernels, by name and text (`rerail_gpu::kernels::program` compiles each): its tests' (the
 /// writer's replay, the reads' two programs), which the engine's `kernels compile` compiles ahead of them.

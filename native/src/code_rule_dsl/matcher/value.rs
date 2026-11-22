@@ -25,7 +25,7 @@ use std::sync::atomic::{AtomicUsize, Ordering as AtomicOrdering};
 pub struct Reading {
     pub language: GrammarDialect,
     /// The language's family, whose adapter decodes the values.
-    pub(crate) family: Family,
+    pub family: Family,
     pub(crate) options: Option<Arc<LanguageOptions>>,
     pub(crate) python: Option<Arc<PythonOptions>>,
     /// The grammar's expression kinds: only these have values.
@@ -65,7 +65,7 @@ impl Reading {
 
     /// How a parsed tree's nodes are read: by the values its grammar gives them, which are values
     /// of the host's language (Python's for a literal, JavaScript's for a directive comment).
-    pub(crate) fn literal(language: GrammarDialect) -> Self {
+    pub fn literal(language: GrammarDialect) -> Self {
         Self {
             expressions: Arc::new(BTreeSet::new()),
             literal: true,
@@ -74,7 +74,7 @@ impl Reading {
     }
 
     /// This reading, following names through their bindings.
-    pub(crate) fn following(mut self) -> Self {
+    pub fn following(mut self) -> Self {
         self.follow = true;
         self
     }
@@ -195,23 +195,7 @@ impl Reading {
     }
 }
 
-/// Spends one step of the root's utility budget for a decode; false once it or the deadline ran
-/// out (the budget then fails the clause for the file with `UtilLimit::Value`).
-pub fn spend_step() -> bool {
-    if UTIL_EXCEEDED.get().is_some() || budget::matcher_call_budget_exhausted() {
-        return false;
-    }
-    match UTIL_STEPS_LEFT.get().checked_sub(1) {
-        Some(left) => {
-            UTIL_STEPS_LEFT.set(left);
-            true
-        }
-        None => {
-            UTIL_EXCEEDED.set(Some(UtilLimit::Value));
-            false
-        }
-    }
-}
+pub use super::steps::spend_step;
 
 /// A bound on a number: `gt`, `ge`, `lt` or `le`.
 #[derive(Clone, Copy)]
@@ -240,7 +224,7 @@ pub struct ValueTest {
     /// `name: true`: the predicates read what the node names rather than its value: ESTree's
     /// name (an identifier's, escapes decoded; a private name's without `#`) or a string literal's
     /// value, as `compare`'s `name` text reads it; PHP's symbol name. A node without one fails.
-    pub(crate) name: bool,
+    pub name: bool,
 }
 
 impl ValueTest {
@@ -388,7 +372,7 @@ impl ValueTest {
 /// `object` for a JavaScript RegExp). Each node is decoded once per reading, memoized per file as W memoizes it.
 pub(in crate::code_rule_dsl) fn file_values(
     tape: &crate::code_rule_dsl::tape::TapeDoc,
-    file: &crate::code_rule_dsl::model::FileInput,
+    file: &crate::code_rule_dsl::file_input::FileInput,
     plain: bool,
     follow: bool,
     each: &mut ValueSink<'_>,
@@ -457,11 +441,11 @@ impl crate::code_rule_dsl::facts::core::ValueReader for Values {
         let made;
         let file = match file
             .as_any()
-            .downcast_ref::<crate::code_rule_dsl::model::FileInput>()
+            .downcast_ref::<crate::code_rule_dsl::file_input::FileInput>()
         {
             Some(file) => file,
             None => {
-                made = crate::code_rule_dsl::model::FileInput::new(
+                made = crate::code_rule_dsl::file_input::FileInput::new(
                     String::new(),
                     file.language().to_owned(),
                     Arc::clone(file.source()),
