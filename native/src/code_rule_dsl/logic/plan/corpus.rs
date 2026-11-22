@@ -3224,6 +3224,7 @@ fn run_observed_within(
     drop(section.take());
     phase("prepare", statements.count());
     statements.enter("parse");
+    let mut psec = Some(crate::code_rule_dsl::logic::profile::span(|| "the parse, before its waves: the modules and the cross inputs".into()));
     let modules = Modules::default();
     // Every input the cross-file part reads, as bound: a session keeps their digests (decision 0077).
     let mut cross_inputs: Vec<(String, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> = Vec::new();
@@ -3248,6 +3249,7 @@ fn run_observed_within(
         (false, _) => "inside another run's waves: the blocks mapped as they were".into(),
     });
     let mut repository = repository;
+    drop(psec.take()); psec = Some(crate::code_rule_dsl::logic::profile::span(|| "the parse, before its waves: the run's constants".into()));
     if let Some((consts, rels)) = &run_constants {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "derive the constants of the phases' exports".into());
         let mut stats = t_stats.clone();
@@ -3365,6 +3367,7 @@ fn run_observed_within(
         _ => None,
     };
     let last_unmarked = std::cell::Cell::new(last_before == Some(memo_whole));
+    drop(psec.take()); psec = Some(crate::code_rule_dsl::logic::profile::span(|| "the parse, before its waves: the keeper".into()));
     let mut keeper: Option<keptstats::Keeper> = match (session.as_ref(), memo) {
         _ if !keeping => None,
         // Kept under the whole program, and valid while it is the last whose entries the memo's space holds: another
@@ -3428,6 +3431,7 @@ fn run_observed_within(
     // run, or the first after a rule edit, decodes its hits whole as it finds them. The maintained cross program the
     // kept inputs' key is made of is made once, here, and handed to them.
     let mut early_maintained: Option<lower::Lowered> = None;
+    drop(psec.take()); psec = Some(crate::code_rule_dsl::logic::profile::span(|| "the parse, before its waves: the kept route".into()));
     let kept_route = kept_route && {
         let maintained = maintained_cross_of(shared_maintained, &cross)?;
         let (ckey, binds) = retain::keys(&prepared_key, maintained.digest()?);
@@ -3833,6 +3837,7 @@ fn run_observed_within(
     // That includes a file whose content is unchanged but whose entry the run's plan does not have (one the memo
     // dropped): the keeper counts it out against the entry it was counted under. (Not a new build's: its keeper
     // starts empty, `memo_whole` being of the build too.)
+    drop(psec.take()); psec = Some(crate::code_rule_dsl::logic::profile::span(|| "the parse, before its waves: the counted entries".into()));
     let counted_before: HashMap<String, Option<memo::Found>> = match (memo, keeper.borrow().as_ref()) {
         (Some(memo @ memo::Memo::Stored(_)), Some(k)) if looking => {
             let _before = crate::code_rule_dsl::logic::profile::span(|| "memo lookup, before the first wave".into());
@@ -3886,6 +3891,7 @@ fn run_observed_within(
     // The documents' table and the statistics kept beside it, read before the first wave in every run that keeps
     // them (decision 0104), a run inside another's waves too: they name no file of this run.
     // With them, the corpus batch's documents' views' counts (decision 0494).
+    drop(psec.take()); psec = Some(crate::code_rule_dsl::logic::profile::span(|| "the parse, before its waves: the base table".into()));
     let (base_table, mut base_stats_kept, base_counts): (Option<Vec<retain::PlacedDocument>>, BaseStatsKept, retain::BaseCounts) = match (base_binds, memo, looking) {
         (Some(binds), Some(memo::Memo::Stored(_)), true) => {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' table and statistics (decision 0458)".into());
@@ -4117,6 +4123,7 @@ fn run_observed_within(
     let run_docs = &run_docs_held;
     // The cross program's strata identities, read with the cross part's frames (kept as a stored fact, before the
     // first wave): what `Retained::bind_kept` names its frames by.
+    drop(psec.take()); psec = Some(crate::code_rule_dsl::logic::profile::span(|| "the parse, before its waves: the waves' closures".into()));
     let mut cross_idents: Vec<(u64, retain::StrataIdents)> = Vec::new();
     // The run's waves: from its first chunk to the cross-file part's last stratum. SQL a wave's thread runs or waits on
     // meanwhile is a hazard in the profile (decision 0104); before is the run's beginning, after its end.
@@ -4328,14 +4335,14 @@ fn run_observed_within(
     };
     // The matchers a chunk runs (decision 0106). A chunk's documents keep their tapes for them, and for a program that
     // reads W's values, f-string trees or string annotations (`syntax::taped`).
-    let demand = matchers::demanded_by_roots(source, matchers);
+    let demand = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the matchers' demand by roots".into()); matchers::demanded_by_roots(source, matchers) };
     let narrowed = demand.iter().filter(|by| by.is_some()).count();
     if narrowed > 0 {
         crate::code_rule_dsl::logic::profile::decision("ast matchers bound only at other matchers' roots (decision 0459)", || {
             demand.iter().zip(matchers.iter()).filter_map(|(by, (rel, _, _))| Some(format!("{rel} by {}", by.as_ref()?.iter().map(|k| matchers[*k].0.as_str()).collect::<Vec<_>>().join("+")))).collect::<Vec<_>>().join(", ")
         });
     }
-    let chunk_matchers = matchers::compiled(matchers, &demand, &ProgramFields::policies(head)).map_err(Error::Plan)?;
+    let chunk_matchers = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the chunks' matchers, compiled".into()); matchers::compiled(matchers, &demand, &ProgramFields::policies(head)).map_err(Error::Plan)? };
     let keep_tapes = !chunk_matchers.is_empty() || read.iter().any(|rel| syntax::taped(rel));
     if !chunk_matchers.is_empty() {
         crate::code_rule_dsl::logic::profile::decision("ast matchers (decision 0106)", || format!("{} matchers run by the transducer over each chunk's tapes", chunk_matchers.len()));
@@ -4495,7 +4502,7 @@ fn run_observed_within(
     };
     // What the program sees of guests (`guests::guests_seen`), every part of it: a file's programs it cannot see are not
     // made.
-    let local_seen = guests::guests_seen(&prepared_placed.v).max(guests::guests_seen(&local.version));
+    let local_seen = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the guests the local part sees".into()); guests::guests_seen(&prepared_placed.v).max(guests::guests_seen(&local.version)) };
     // A chunk keeps its documents where its rules read guests: its fixpoint's parses, or a guest relation
     // its rules read (a file's programs are made with the batch, and the memo files their rows by their files).
     // And where the cross part reads base relations: they are read off every file's document (decision 0458).
@@ -5023,6 +5030,7 @@ fn run_observed_within(
     let builders = crate::threads::max().max(2);
     // A file read for its programs is its text's document and its tree, a guest of it (decision 0512).
     let split_host = |d: syntax::Document| if guests::unsplit_host(&d, &host) { guests::file_and_tree(d, &guest_keys).to_vec() } else { vec![d] };
+    drop(psec.take()); psec = Some(crate::code_rule_dsl::logic::profile::span(|| "the parse, before its waves: the builder".into()));
     let builder = Builder {
         cut: parking_lot::Mutex::new(Cut {
             docs_in,
@@ -5407,9 +5415,11 @@ fn run_observed_within(
         }
         Ok((wdb, wmodules))
     };
+    drop(psec.take()); psec = Some(crate::code_rule_dsl::logic::profile::span(|| "the parse, before its waves: the worker connections".into()));
     let worker_conns: parking_lot::Mutex<Vec<(Connection, Modules)>> = parking_lot::Mutex::new(Vec::new());
     // What the run wrote before its waves is a wave: the combined program, the prepared sources, the plan holds.
     crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::Before);
+    drop(psec.take());
     let worker_cpu = crate::threads::scope(|jobs| -> Result<((f64, f64), (f64, f64), Vec<crate::content_store::SourceId>, Vec<[u8; 32]>)> {
     // The main thread's error or end stops the builder: no job it starts after is left running.
     let _stop = Stopper(&builder.stopped);

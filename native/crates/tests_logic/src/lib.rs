@@ -197,6 +197,12 @@ pub mod code_rule_dsl {
                 pub mod warm_tests;
                 #[cfg(test)]
                 pub mod cache_tests;
+                // The matchers' tests, mounted nowhere since the crate split: they read the engine's languages too.
+                pub mod matchers {
+                    pub use rerail_boot::code_rule_dsl::logic::plan::corpus::matchers::*;
+                    #[cfg(test)]
+                    pub mod tests;
+                }
                 // Tests that read what the engine registers as it loads (the languages, their `.rerail` libraries) run here.
                 pub mod phase0 {
                     pub use rerail_boot::code_rule_dsl::logic::plan::corpus::phase0::*;
