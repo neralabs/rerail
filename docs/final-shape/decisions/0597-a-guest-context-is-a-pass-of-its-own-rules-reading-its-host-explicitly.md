@@ -170,6 +170,26 @@ The template's findings stand at the file's lines.
      place (the tape); nothing is made of their rows. Tests: `a_host_reading_a_contexts_export_runs_on_every_reading_path`,
      `a_contexts_views_are_its_roots_nodes_alone` (`x: "List[int]"` and `def f(y: float)`: `List`, `int`, never `float` or `x`, alone and in a
      pack).
+   - 2.4 (4798383568): hidden at the run values' bound and folded as a pack folds it, a context's instances get no
+     `rr_in_annotation_` copy and no `rr_narrow_` copy, and the host's relation both passes read stays the host's; the
+     control, the same reach written into the annotation's trees from the host's rules, is copied and widened.
+     Nothing in hiding was changed for it: a context's views are scoped by its nodes, which its roots' guest relation
+     scopes, and nothing of the host reaches them.
+   - 2.5, 2.6: one engine fixpoint orders the passes by their reads: the context reads the host's finished classes,
+     and the host's rows after the context's read them.
+   - 2.7: a nested annotation's tree is a root already: the host's roots rule reads `parsed`, so a string inside an
+     annotation's tree is scoped, and its parse a root. No roots relation of the context's own was needed.
+   - 2.8: a finding at a context's node stands at its string's line (`guest_place`, unchanged).
+   - 2.9: moved after step 3. A policy whose own clauses read `parsed` (its own roots rule) asks guests of its own and
+     runs alone (`tools::policy_groups`, `asks.own`), so the pack the rung tests is the shape step 3 makes: the roots and
+     the context in `python/annotation.rerail`, which every policy that includes `ruff.rerail` includes.
+   - 2.10: with no root the context's nodes are empty, and the file-local part holds each of its strata empty (no
+     component opened). The cross-file part read the local part's export of it as an input and joined it: an input bound
+     already is now taken as empty when it holds no rows, in a program that answers no request (no source grows while
+     it runs). Test: a profiled child run's `heads.tsv` names no head of the context.
+   - 2.11: in a session, an edit that changes no root and nothing the context reads changes no input of its cross
+     strata; renaming the class an annotation names changes `defined_at`, the host relation the context reads.
+   - 2.12: 2.3's and 2.5's rows on Metal (every stratum the device takes placed there) are the CPU's.
 3. **The Python annotation context.** `lib/python/annotation.rerail` from the annotation rules of `names.rerail`,
    `typing` and `ann_*`; the host's readers of annotation facts read `annotation.*`. Tests, kept and passing:
    `quoted_annotations_are_read_as_their_code`, #923's `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone`,

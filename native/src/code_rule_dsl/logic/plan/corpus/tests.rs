@@ -2786,3 +2786,20 @@ fn context_root_child() {
     let source = std::env::var("CONTEXT_ROOT_SOURCE").unwrap();
     printed_run("pass-root", ("a.py", &source), ANNOTATION_PASS, "quoted_names");
 }
+
+/// 0597 rung 2.12: one mechanism on the CPU and the device: 2.3's context views and 2.5's `.from` read give Metal's
+/// rows equal to the CPU's, every stratum the device can run placed there.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+#[test]
+fn a_contexts_rows_on_metal_are_the_cpus() {
+    use crate::code_rule_dsl::typing::file_local::Binding;
+    let file = [("a.py", "class Foo: ...\nx: \"List[int]\" = []\ny: \"Foo\" = 1\nz: \"Bar\" = 1\ndef f(w: float): ...\n")];
+    for (name, program, output) in [("views", ANNOTATION_PASS, "quoted_names"), ("from", RESOLVING_PASS, "quoted_resolved")] {
+        let (_, cpu) = batch_run_on(&format!("pass-{name}-cpu"), &file, program, output, Binding::Cpu);
+        let bound = crate::code_rule_dsl::logic::plan::placement::set_binding(crate::code_rule_dsl::logic::plan::placement::Binding::Always);
+        let (_, metal) = batch_run_on(&format!("pass-{name}-metal"), &file, program, output, Binding::Metal);
+        drop(bound);
+        assert!(!cpu.is_empty(), "{name}: rows");
+        assert_eq!(metal, cpu, "{name}: the device's rows are the CPU's");
+    }
+}
