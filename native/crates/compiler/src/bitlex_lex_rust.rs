@@ -102,7 +102,7 @@ fn field_of(e: &Expr, r: usize, role: &str, masks: &mut Vec<(String, Expr)>, all
 pub fn piece_covers(stmts: &[Stmt]) -> Vec<usize> {
     match readers(stmts).as_slice() {
         [rd] => match rd.parts.as_slice() {
-            [(_, start, PartLen::Bytes(_), _)] => crate::bitlex_piece_checks::piece_checks(stmts, start).map(|c| c.covers).unwrap_or_default(),
+            [(_, start, PartLen::Bytes(_), _)] => crate::bitlex_piece_checks::piece_checks(stmts, start, None).map(|c| c.covers).unwrap_or_default(),
             _ => Vec::new(),
         },
         _ => Vec::new(),

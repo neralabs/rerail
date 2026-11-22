@@ -573,7 +573,7 @@ impl Lp<'_, '_> {
         let mut check = if required.is_empty() { String::new() } else { format!("if !matches!(&src[p..p + {len}], {}) {{\nreturn Err(p as u32);\n}}\n", required.join(" | ")) };
         // The grammar's errors at an escape, where it is read (the lean parser's stage 2; decision 0599): tier 1 leaves
         // them out (`bitlex_lex_rust::piece_covers`).
-        let state = match crate::bitlex_piece_checks::piece_checks(self.g.x.lexer, part_start) {
+        let state = match crate::bitlex_piece_checks::piece_checks(self.g.x.lexer, part_start, Some(quote)) {
             Ok(pc) => {
                 check.push_str(&pc.at_piece);
                 if !self.method_code.borrow().contains(&pc.statics) {

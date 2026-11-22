@@ -41,6 +41,7 @@ const PAD: u8 = b' ';
 #[derive(Clone, Debug)]
 enum R {
     True,
+    False,
     Class(Box<[bool; 256]>, i64),
     /// Anchored mask `id` at `y + off`: `off` 0, this piece's; below, a piece before.
     Anch(usize, i64),
@@ -56,6 +57,7 @@ impl R {
     fn shift(&self, k: i64) -> Option<R> {
         Some(match self {
             R::True => R::True,
+            R::False => R::False,
             R::Class(s, o) => R::Class(s.clone(), o + k),
             // An anchored mask's operand is read at its own byte only: a mask of classes holds none.
             R::Anch(..) | R::Num(..) => return None,
@@ -149,7 +151,7 @@ fn read(e: &Expr, off: i64, scope: &HashMap<String, Def>) -> Option<R> {
 /// the padding and a word's pieces before.
 fn fits(r: &R, anchored: bool) -> bool {
     match r {
-        R::True | R::Num(..) => true,
+        R::True | R::False | R::Num(..) => true,
         R::Class(s, o) => !s[usize::from(PAD)] && (-16..=16).contains(o),
         R::Anch(_, o) => *o == 0 || (anchored && (-63..0).contains(o)),
         R::Not(a) => fits(a, anchored),
@@ -191,6 +193,7 @@ fn pattern(set: &[bool; 256]) -> String {
 fn code(r: &R, a: &[usize]) -> String {
     match r {
         R::True => "true".to_owned(),
+        R::False => "false".to_owned(),
         R::Class(s, 0) => format!("matches!(src[y], {})", pattern(s)),
         R::Class(s, o) if *o > 0 => format!("matches!(src[y + {o}], {})", pattern(s)),
         R::Class(s, o) => format!("(y >= {k} && matches!(src[y - {k}], {}))", pattern(s), k = -o),
@@ -270,7 +273,8 @@ fn and_chain(r: &R, out: &mut Vec<R>) {
 /// `r` with each run of hex-digit classes at consecutive offsets after the piece's byte read as one number (as
 /// simdjson's `hex_to_u32_nocheck`): a range of `cp` where the run is within its digits (`cp`, the four from `at`), else
 /// a range of a number of the run's own, named into `own`.
-fn numbers(r: &R, cp: Option<(i64, usize)>, own: &mut Vec<(i64, usize)>) -> R {
+fn numbers(r: &R, cx: &Cx, own: &mut Vec<(i64, usize)>) -> R {
+    let cp = cx.cp;
     match r {
         R::And(..) => {
             let mut cs = Vec::new();
@@ -284,7 +288,7 @@ fn numbers(r: &R, cp: Option<(i64, usize)>, own: &mut Vec<(i64, usize)>) -> R {
                         None => digits.push((*o, v)),
                     },
                     R::Class(..) => rest.push(c),
-                    _ => rest.push(numbers(&c, cp, own)),
+                    _ => rest.push(numbers(&c, cx, own)),
                 }
             }
             digits.sort();
@@ -297,7 +301,12 @@ fn numbers(r: &R, cp: Option<(i64, usize)>, own: &mut Vec<(i64, usize)>) -> R {
                 let run = &digits[i..=j];
                 let (a, b) = (run[0].0, run[run.len() - 1].0);
                 let within = cp.filter(|&(at, k)| a >= at && b < at + k as i64);
-                let (at, k) = within.unwrap_or((a, run.len()));
+                // A run right after a piece's first byte and the gate, at `a - 2` and `a - 1`, where the bytes from the
+                // piece's own to it are `cp`'s digits: that piece is one too (the digits not its first byte, its lead
+                // byte unescaped, no closer before it), so its digits error holds there. Its `cp` is read whole, as
+                // `escaped_string` reads a pair's low half.
+                let next = within.is_none() && cx.next_piece(a, &rest);
+                let (at, k) = within.or(next.then(|| (a, cp.map_or(0, |c| c.1)))).unwrap_or((a, run.len()));
                 let set: Vec<u16> = (0..k as i64).map(|o| run.iter().find(|d| d.0 == at + o).map_or(0xffff, |d| d.1)).collect();
                 match (k <= 4).then(|| interval(&set)).flatten() {
                     Some((lo, hi)) => {
@@ -315,11 +324,98 @@ fn numbers(r: &R, cp: Option<(i64, usize)>, own: &mut Vec<(i64, usize)>) -> R {
             }
             rest.into_iter().reduce(|a, b| R::And(Box::new(a), Box::new(b))).unwrap_or(R::True)
         }
-        R::Class(..) => numbers(&R::And(Box::new(r.clone()), Box::new(R::True)), cp, own),
-        R::Not(x) => R::Not(Box::new(numbers(x, cp, own))),
-        R::Or(x, z) => R::Or(Box::new(numbers(x, cp, own)), Box::new(numbers(z, cp, own))),
-        R::Xor(x, z) => R::Xor(Box::new(numbers(x, cp, own)), Box::new(numbers(z, cp, own))),
+        R::Class(..) => numbers(&R::And(Box::new(r.clone()), Box::new(R::True)), cx, own),
+        R::Not(x) => R::Not(Box::new(numbers(x, cx, own))),
+        R::Or(x, z) => R::Or(Box::new(numbers(x, cx, own)), Box::new(numbers(z, cx, own))),
+        R::Xor(x, z) => R::Xor(Box::new(numbers(x, cx, own)), Box::new(numbers(z, cx, own))),
         r => r.clone(),
+    }
+}
+
+/// What `numbers` reads by: `cp`'s digits, the pieces' first byte, the gate, the region's closer.
+struct Cx {
+    cp: Option<(i64, usize)>,
+    lead: Option<[bool; 256]>,
+    gate: Option<[bool; 256]>,
+    closer: Option<u8>,
+}
+
+impl Cx {
+    /// Whether the bytes at `a - 2` and `a - 1` (classes among `rest`) are a piece's first byte and the gate, with
+    /// `cp`'s digits from the piece's second byte to `a - 3`: digits that are neither the first byte nor the closer.
+    fn next_piece(&self, a: i64, rest: &[R]) -> bool {
+        let (Some((at, k)), Some(lead), Some(gate), Some(closer)) = (self.cp, &self.lead, &self.gate, self.closer) else { return false };
+        let hex = |c: usize| digit(c as u8).is_some();
+        let within = |s: &[bool; 256], t: &[bool; 256]| (0..256).all(|c| !s[c] || t[c]);
+        let at_off = |o: i64| rest.iter().any(|r| matches!(r, R::Class(s, x) if *x == o && within(s, if o == a - 1 { gate } else { lead })));
+        at == 1 && a - 3 == at + k as i64 - 1 && (0..256).all(|c| !(hex(c) && (lead[c] || c == usize::from(closer)))) && !lead[usize::from(closer)] && at_off(a - 2) && at_off(a - 1)
+    }
+}
+
+/// `r` with the piece before `k` back of mask `id` taken as `v`, folded.
+fn assume(r: &R, id: usize, k: i64, v: bool) -> R {
+    let b = |x: &R| Box::new(assume(x, id, k, v));
+    let r = match r {
+        R::Anch(i, o) if *i == id && *o == -k => if v { R::True } else { R::False },
+        R::Not(x) => R::Not(b(x)),
+        R::And(x, z) => R::And(b(x), b(z)),
+        R::Or(x, z) => R::Or(b(x), b(z)),
+        R::Xor(x, z) => R::Xor(b(x), b(z)),
+        r => r.clone(),
+    };
+    match r {
+        R::Not(x) => match *x {
+            R::True => R::False,
+            R::False => R::True,
+            R::Not(y) => *y,
+            x => R::Not(Box::new(x)),
+        },
+        R::And(x, z) => match (*x, *z) {
+            (R::False, _) | (_, R::False) => R::False,
+            (R::True, y) | (y, R::True) => y,
+            (x, z) => R::And(Box::new(x), Box::new(z)),
+        },
+        R::Or(x, z) => match (*x, *z) {
+            (R::True, _) | (_, R::True) => R::True,
+            (R::False, y) | (y, R::False) => y,
+            (x, z) => R::Or(Box::new(x), Box::new(z)),
+        },
+        r => r,
+    }
+}
+
+/// `r`'s value at a piece where `cp` is in `known`, the masks `truth` hold and the piece before `k` back of mask `id`
+/// holds; `None` where that does not say.
+fn eval3(r: &R, masks: &[(String, R)], truth: &[usize], known: (u32, u32), back: (usize, i64)) -> Option<bool> {
+    let e = |x: &R| eval3(x, masks, truth, known, back);
+    match r {
+        R::True => Some(true),
+        R::False => Some(false),
+        R::Anch(id, 0) if truth.contains(id) => Some(true),
+        R::Anch(id, 0) => e(&masks[*id].1),
+        R::Anch(id, o) if (*id, -*o) == back => Some(true),
+        R::Num(v, lo, hi, _) if v == "cp" => {
+            if known.0 >= *lo && known.1 <= *hi {
+                Some(true)
+            } else if known.1 < *lo || known.0 > *hi {
+                Some(false)
+            } else {
+                None
+            }
+        }
+        R::Not(x) => e(x).map(|v| !v),
+        R::And(x, z) => match (e(x), e(z)) {
+            (Some(false), _) | (_, Some(false)) => Some(false),
+            (Some(true), Some(true)) => Some(true),
+            _ => None,
+        },
+        R::Or(x, z) => match (e(x), e(z)) {
+            (Some(true), _) | (_, Some(true)) => Some(true),
+            (Some(false), Some(false)) => Some(false),
+            _ => None,
+        },
+        R::Xor(x, z) => Some(e(x)? ^ e(z)?),
+        _ => None,
     }
 }
 
@@ -359,7 +455,7 @@ fn reads_back(r: &R, out: &mut Vec<usize>) {
 
 /// The errors at the pieces that start at the mask `part_start` (the region's one part): `Err` says why there are
 /// none.
-pub fn piece_checks(stmts: &[Stmt], part_start: &str) -> Result<PieceChecks, String> {
+pub fn piece_checks(stmts: &[Stmt], part_start: &str, closer: Option<u8>) -> Result<PieceChecks, String> {
     let mut scope: HashMap<String, Def> = HashMap::new();
     let mut anchor: Option<(String, usize)> = None;
     // The pieces' first byte's class (`B`).
@@ -536,11 +632,12 @@ pub fn piece_checks(stmts: &[Stmt], part_start: &str) -> Result<PieceChecks, Str
     };
     let mut own = Vec::new();
     if cp.is_some() {
+        let cx = Cx { cp, lead, gate, closer };
         for m in &mut masks {
-            m.1 = numbers(&m.1, cp, &mut own);
+            m.1 = numbers(&m.1, &cx, &mut own);
         }
         for e in &mut errors {
-            e.2 = numbers(&e.2, cp, &mut own);
+            e.2 = numbers(&e.2, &cx, &mut own);
         }
     }
     // A piece before read at one distance `k` only, where no piece starts in the `k - 1` bytes from it (the classes
@@ -609,6 +706,41 @@ pub fn piece_checks(stmts: &[Stmt], part_start: &str) -> Result<PieceChecks, Str
             }
         }
     }
+    // A piece `k` after one of `after`'s, where that one's errors passed: the next escape, its `cp` in the range the
+    // errors required of it there (a number of its own at `k + cp`'s offset). Where every error, and the mask, is false
+    // at it then, its checks are skipped, as `escaped_string` skips the low half it checked (`low_checked`); the others
+    // read the mask's piece before as false.
+    let mut paired: Option<(usize, i64)> = None;
+    if let ([(id, k)], Some((at0, _))) = (after.as_slice(), cp) {
+        let known = errors.iter().find_map(|(_, _, r)| {
+            let cs = bare(r, &masks);
+            let [R::Anch(m, 0), R::Not(x)] = cs.as_slice() else { return None };
+            if m != id {
+                return None;
+            }
+            let mut cs = Vec::new();
+            and_chain(x, &mut cs);
+            cs.iter().find_map(|c| match c {
+                R::Num(v, lo, hi, _) if *v == format!("n{}", k + at0) => Some((*lo, *hi)),
+                _ => None,
+            })
+        });
+        if let Some(known) = known
+            && errors.iter().all(|e| eval3(&e.2, &masks, &truth, known, (*id, *k)) == Some(false))
+            && eval3(&R::Anch(*id, 0), &masks, &truth, known, (*id, *k)) == Some(false)
+        {
+            paired = Some((*id, *k));
+        }
+    }
+    if let Some((id, k)) = paired {
+        for m in &mut masks {
+            m.1 = assume(&m.1, id, k, false);
+        }
+        for e in &mut errors {
+            e.2 = assume(&e.2, id, k, false);
+        }
+        let _ = writeln!(at, "// Not the low half of the pair the escape {k} before checked (`escaped_string`'s `low_checked`): there no error\n// holds.\nif after{id} != y {{");
+    }
     if let Some((o, k)) = cp {
         let _ = writeln!(at, "// The {k} digits as a number (simdjson's `hex_to_u32_nocheck`): a byte not hex puts bits past them.\nlet cp = {};", digits_code(o, k));
     }
@@ -645,6 +777,9 @@ pub fn piece_checks(stmts: &[Stmt], part_start: &str) -> Result<PieceChecks, Str
                 let _ = writeln!(at, "(w{id}, y{id}) = (h{id} | u64::from({m}), y);");
             }
         }
+    }
+    if paired.is_some() {
+        at.push_str("}\n");
     }
     if gate.is_some() {
         at.push_str("}\n");

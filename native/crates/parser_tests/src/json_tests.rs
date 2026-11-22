@@ -1185,6 +1185,7 @@ fn json_rusts_tapes_are_the_jits() {
         r#"["\uD83D\uDE00"]"#, r#"["\ud83d\ude00"]"#, r#"["\uD83D"]"#, r#"["\uDE00"]"#, r#"["\uDE00\uD83D"]"#, r#"["\uD83D\n"]"#,
         r#"["\uD83Dx\uDE00"]"#, r#"["\uD83D\uD83D\uDE00"]"#, r#"["\u12"]"#, r#"["\u12G4"]"#, r#"["\\u12"]"#, r#"["\\uD83D\uDE00"]"#,
         r#"["\\uDE00"]"#, r#"["a\uD83D","\uDE00"]"#, r#"{"\u00e9": "\u0041\u00"}"#,
+        r#"["\uD83D\uDE0g"]"#, r#"["\uD83D\uDE"]"#, r#"["\uD83D\uDE00\uDE00"]"#, r#"["\uD83D\uDE00\uD83D\uDE01x"]"#, r#"["\uD83D\uDBFF"]"#,
     ] {
         inputs.push(f.as_bytes().to_vec());
     }
@@ -1295,9 +1296,10 @@ fn json_escape_checks_are_tier2s() {
     for why in ["// \\u without four hex digits", "// a lone high surrogate", "// a lone low surrogate"] {
         assert!(at.contains(why), "{why}");
     }
-    // As `escaped_string`: the four digits read as one number, the surrogates ranges of it, and a low one's high one
-    // the escape before, one position (`low_checked`), not a word of the string's escapes.
-    for part in ["let cp = HEX_VALUE[usize::from(src[y + 1])] << 12 |", "if cp > 0xffff {", "let m2 = (0xd800..=0xdbff).contains(&cp);", "let m3 = (0xdc00..=0xdfff).contains(&cp);", "after2 = y + 6;", "if m3 && after2 != y {"] {
+    // As `escaped_string`: the four digits read as one number, the surrogates ranges of it; a high one's low half its
+    // next escape's four digits, a number too; and that escape's checks skipped (`low_checked`), so a low one reached
+    // otherwise is lone.
+    for part in ["let cp = HEX_VALUE[usize::from(src[y + 1])] << 12 |", "if cp > 0xffff {", "let m2 = (0xd800..=0xdbff).contains(&cp);", "let m3 = (0xdc00..=0xdfff).contains(&cp);", "after2 = y + 6;", "if after2 != y {", "if m3 {\nreturn Err(y as u32);", "let n7 = HEX_VALUE[usize::from(src[y + 7])] << 12 |", "(0xdc00..=0xdfff).contains(&n7)"] {
         assert!(at.contains(part), "no `{part}`:\n{at}");
     }
     assert!(!string.contains("w2") && !at.contains("matches!(src[y + 1]"), "a digit's class tested, or the escapes kept:\n{at}");

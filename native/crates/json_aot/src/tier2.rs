@@ -236,9 +236,12 @@ return Err(p as u32);
 // The grammar's errors at an escape, from its bytes: its second byte `y`.
 let y = p + 1;
 if matches!(src[y], 0x75) {
+// Not the low half of the pair the escape 6 before checked (`escaped_string`'s `low_checked`): there no error
+// holds.
+if after2 != y {
 // The 4 digits as a number (simdjson's `hex_to_u32_nocheck`): a byte not hex puts bits past them.
 let cp = HEX_VALUE[usize::from(src[y + 1])] << 12 | HEX_VALUE[usize::from(src[y + 2])] << 8 | HEX_VALUE[usize::from(src[y + 3])] << 4 | HEX_VALUE[usize::from(src[y + 4])];
-let n7 = HEX_VALUE[usize::from(src[y + 7])] << 4 | HEX_VALUE[usize::from(src[y + 8])];
+let n7 = HEX_VALUE[usize::from(src[y + 7])] << 12 | HEX_VALUE[usize::from(src[y + 8])] << 8 | HEX_VALUE[usize::from(src[y + 9])] << 4 | HEX_VALUE[usize::from(src[y + 10])];
 // mask high
 let m2 = (0xd800..=0xdbff).contains(&cp);
 // mask low
@@ -248,15 +251,16 @@ if cp > 0xffff {
 return Err(y as u32);
 }
 // a lone high surrogate
-if m2 && !(matches!(src[y + 5], 0x5c) && matches!(src[y + 6], 0x75) && (0xdc..=0xdf).contains(&n7)) {
+if m2 && !(matches!(src[y + 5], 0x5c) && matches!(src[y + 6], 0x75) && (0xdc00..=0xdfff).contains(&n7)) {
 return Err(y as u32);
 }
 // a lone low surrogate
-if m3 && after2 != y {
+if m3 {
 return Err(y as u32);
 }
 if m2 {
 after2 = y + 6;
+}
 }
 }
 leaf(d, 2, p as u64, (p + 2) as u64);
