@@ -99,10 +99,8 @@ fn the_interpreter_runs_fused_opcodes_and_each_thread_gets_its_value() {
         assert!(ops.contains(&want), "{want:?} in {ops:?}");
     }
     assert!(!ops.iter().any(|o| matches!(o, I::VBinGen | I::VUnGen | I::VCastGen)), "a generic opcode in {ops:?}");
-    let mut out = vec![0u32; 64];
-    let ptr = (out.as_mut_ptr() as u64).to_le_bytes().to_vec();
-    let args = [super::run::Arg::Bytes(ptr), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
-    super::run::run(&p, &k, &args, [1, 1, 1], [64, 1, 1], 0, 1).unwrap();
+    let out = run_on(&p, &k, super::run::Exec::Interpret);
+    assert_eq!(run_on(&p, &k, super::run::Exec::Jit), out, "compiled against interpreted");
     let want: Vec<u32> = (0..64u32)
         .map(|l| {
             let x = l * 3 + (l >> 1);
@@ -163,7 +161,10 @@ fn the_written_sources_lower_and_vectorize() {
             match super::vector::vectorize(&p, k as u32) {
                 Err(e) => failed.push(format!("{name} {f}: {e}")),
                 Ok(vk) if std::env::var("RERAIL_UKL_VEC_TIMES").is_ok() => {
-                    eprintln!("TIME {f}: {:.2} s, vector tape {} nodes, code {} words", t.elapsed().as_secs_f64(), super::k::View::new(&vk.tape).len(), vk.code.words.len());
+                    let vt = t.elapsed().as_secs_f64();
+                    let t = std::time::Instant::now();
+                    let j = super::run::compiled(&vk).map(|_| ());
+                    eprintln!("TIME {f}: {vt:.2} s, vector tape {} nodes, code {} words; compiled {:.3} s {j:?}", super::k::View::new(&vk.tape).len(), vk.code.words.len(), t.elapsed().as_secs_f64());
                 }
                 Ok(_) => {}
             }
@@ -187,10 +188,17 @@ fn ran_with(prelude: &str, body: &str) -> Vec<u32> {
     let tape = super::c_tape(&src).unwrap();
     let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
     let k = super::vector::vectorize(&p, p.kernel("t_rule").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let interpreted = run_on(&p, &k, super::run::Exec::Interpret);
+    assert_eq!(run_on(&p, &k, super::run::Exec::Jit), interpreted, "compiled against interpreted");
+    interpreted
+}
+
+/// Each thread's `out[0..64)` from kernel `k` of `p` run over one group of 64 by `exec`.
+fn run_on(p: &super::lower::Program, k: &super::vector::Kernel, exec: super::run::Exec) -> Vec<u32> {
     let mut out = vec![0u32; 64];
     let ptr = (out.as_mut_ptr() as u64).to_le_bytes().to_vec();
     let args = [super::run::Arg::Bytes(ptr), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
-    super::run::run(&p, &k, &args, [1, 1, 1], [64, 1, 1], 0, 1).unwrap_or_else(|e| panic!("{}", e.0));
+    super::run::run(p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [64, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
     out
 }
 
@@ -268,4 +276,65 @@ fn a_continue_that_varies_leaves_the_rest_of_the_body() {
     let out = ran("    uint32_t n = lid == 0u ? 21u : 20u, skip = lid == 0u ? 2u : 0u;\n    uint32_t j = 0u, k = 0u, sfx = 0u, digits = 0u;\n    for (uint32_t p = 0u; p < n; p++) {\n        uint32_t c = lid == 0u ? (p < 18u ? 70u : 117u) : 49u;\n        if (c == 39u) continue;\n        if (j++ < skip) continue;\n        if (k == 0u) {\n            uint32_t d = c - 48u;\n            if (d < (lid == 0u ? 23u : 10u)) {\n                digits++;\n                continue;\n            }\n        }\n        if (k >= 3u) break;\n        sfx |= c << (8u * k);\n        k++;\n    }\n    out[lid] = sfx ^ digits << 24;");
     let want: Vec<u32> = (0..64u32).map(|l| if l == 0 { 0x757575 ^ 16 << 24 } else { 20 << 24 }).collect();
     assert_eq!(out, want);
+}
+
+/// A `switch` on a value that varies runs each lane's case, falling through, `break`, `continue` and `default` as C
+/// does; one on a value the SIMD group shares goes straight to its case (decision 0567: a round for each value the
+/// running lanes have, each through a jump to its case).
+#[test]
+fn a_switch_runs_each_lanes_case() {
+    let out = ran(
+        "    uint32_t x = 0u;\n    for (uint32_t k = 0u; k < 3u; k++) {\n        switch ((lid + k) % 7u) {\n        case 0u: x += 1u;\n        case 1u: x += 10u; break;\n        case 3u: x += 100u; continue;\n        case 5u: if ((lid & 1u) != 0u) break; x += 1000u;\n        default: x += 7u;\n        }\n        x += 3u;\n        switch (k) {\n        case 0u: x ^= 0x10u; break;\n        case 2u: x ^= 0x200u;\n        default: x += 1u;\n        }\n    }\n    out[lid] = x;",
+    );
+    let want: Vec<u32> = (0..64u32)
+        .map(|lid| {
+            let mut x = 0u32;
+            for k in 0..3u32 {
+                match (lid + k) % 7 {
+                    0 => x += 11,
+                    1 => x += 10,
+                    3 => {
+                        x += 100;
+                        continue;
+                    }
+                    5 if lid & 1 != 0 => {}
+                    5 => x += 1007,
+                    _ => x += 7,
+                }
+                x += 3;
+                match k {
+                    0 => x ^= 0x10,
+                    2 => x = (x ^ 0x200) + 1,
+                    _ => x += 1,
+                }
+            }
+            x
+        })
+        .collect();
+    assert_eq!(out, want);
+}
+
+/// A kernel's compiled sections kept as bytes (a store's, `jit::compile`'s) load into code that runs as compiled: the
+/// code needs no relocation, so the bytes are the code (decision 0567 step 3).
+#[test]
+fn compiled_code_kept_as_bytes_runs_the_same() {
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\n\nstatic uint32_t twice(uint32_t x) { return x + x; }\n\nDEFINE_KERNEL2(rule, t_rule,\n               RWBUFFER, uint32_t, out, \"[64]\",\n               LID0,     uint32_t, lid, ,\n               LANE,     uint16_t, lane, )\n{\n    uint32_t x = twice(lid);\n    switch (lid % 3u) { case 0u: x += 5u; break; default: x ^= 1u; }\n    out[lid] = x + ukl_sg_sum(lid __UKL_ARGS);\n}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap();
+    let k = super::vector::vectorize(&p, p.kernel("t_rule").unwrap()).unwrap();
+    let mut kept = None;
+    super::run::compiled_kept(&k, || None, |b| kept = Some(b.to_vec())).unwrap();
+    let kept = kept.expect("the compiled code needs no relocation");
+    let want = run_on(&p, &k, super::run::Exec::Interpret);
+    assert_eq!(run_on(&p, &k, super::run::Exec::Jit), want);
+    let again = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+    super::run::compiled_kept(&again, || Some(kept.clone()), |_| panic!("compiled again, not loaded")).unwrap();
+    assert_eq!(run_on(&p, &again, super::run::Exec::Jit), want);
+    let mut bad = kept.clone();
+    bad.truncate(bad.len() - 1);
+    let other = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+    let mut compiled = false;
+    super::run::compiled_kept(&other, || Some(bad), |_| compiled = true).unwrap();
+    assert!(compiled, "a kept form cut short is compiled again");
 }

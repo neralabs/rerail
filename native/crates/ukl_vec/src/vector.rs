@@ -34,6 +34,8 @@ pub struct Kernel {
     /// Whether its levels take a thread's id in its group as its SIMD group's and its lane's (`Level::Lid`): then
     /// `run` takes only a group whose lanes are so (1-D, or its first dimension a multiple of the SIMD width).
     pub lid: bool,
+    /// Its code tape compiled (`jit`), on its first launch that asks for it, or why it could not be.
+    pub jit: std::sync::OnceLock<Result<crate::jit::Jit, String>>,
 }
 
 type R<T> = Result<T, Error>;
@@ -87,7 +89,7 @@ impl Kernel {
         }
         let code = tapes.pop()?;
         let tape = tapes.pop()?;
-        Some(Kernel { tape, code, name, lid })
+        Some(Kernel { tape, code, name, lid, jit: Default::default() })
     }
 }
 
@@ -141,7 +143,7 @@ pub fn vectorize(p: &Program, kernel: u32) -> R<Kernel> {
     }
     let tape = b.finish();
     let code = crate::code::compile(&tape)?;
-    Ok(Kernel { tape, code, name: f.name.clone(), lid })
+    Ok(Kernel { tape, code, name: f.name.clone(), lid, jit: Default::default() })
 }
 
 /// The context a function is called in: each argument's level (an aggregate's, its most varying byte's). A body's

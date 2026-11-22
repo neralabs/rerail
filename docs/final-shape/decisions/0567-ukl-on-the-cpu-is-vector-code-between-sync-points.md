@@ -219,7 +219,8 @@ slow". The answers below are the user's, given to the questions of the design pa
   - **x86:** the same loop compiled again with AVX2, chosen at run time (`is_x86_feature_detected`). The gate was
     run on two x86 Linux hosts with AVX2, the library's 19 tests on each, against the coroutine backend back to
     back: 4.3 s against 6.6 s on one, and 6.2 s against 7.7 s on the other (the test harness's times).
-  - **`switch`** runs each case under the lanes whose value is its label and those that fell through the case before.
+  - **`switch`** was first each case under the lanes whose value is its label and those that fell through the case
+    before: every label compared over 32 lanes at each run, twice with a `default`. Step 3 replaced it (below).
   - **A poll of another group's progress** (`ukl_poll_yield`, a grid barrier's: `Yield`) ends a SIMD group's turn,
     and once every SIMD group of its group waits, the group's. Up to the coroutine backend's resident count of groups
     run together, each in a slot of its own, taking turns in order. So a persistent grid of up to that many groups
@@ -248,3 +249,53 @@ slow". The answers below are the user's, given to the questions of the design pa
     on the coroutine backend. On a Mac (M3 Max, idle), 82 s against the coroutine backend's 16 s, warm store. Most
     of it is the text functions' kernel (`row_text`) run by the interpreter: `parity_random_texts` 66 s against
     11 s, `text_functions_on_the_device_are_the_cpus` 31 s against 2.8 s. Compiling that is step 3's.
+
+## Step 3, as built
+
+- **Cranelift compiles the code tape** (`rerail-ukl-vec`'s `jit`, `RERAIL_CPU_EXEC=jit`), not the vector tape: one
+  function per section (the kernel's, each body's), each instruction its handler's work inline, in 128-bit vectors
+  (4 lanes of 32 bits, 2 of 64). The SIMD group's state stays the interpreter's (`Sg`'s files, in memory):
+  - A section stops at a barrier, a poll, the end, and a call of a section that can stop and its return. The
+    driver in `run` does there what the interpreter's loop does (the call stack, the windows, the turns), and enters
+    the next section at its resume point through a jump table at its entry.
+  - A call of a section that cannot stop (none of the gate's text functions can) is direct: compiled code calling
+    compiled code, through the dispatch's table of entries, the windows advanced in registers. Each call through the
+    driver had cost two entries and exits of the caller.
+  - Within a block, a value stored to a file is taken from the register it was computed in, not loaded again; the
+    stores still go to memory, which a stop and an interpreter's step read. The lanes of a mask are made once per
+    block. A store to a lane's variable under all 32 lanes is plain stores, not a blend.
+  - What it does not compile itself (an atomic, a shuffle, a reduction, a generic opcode, a division, a copy past 64
+    bytes) is one step of the interpreter, called with the SIMD group: the same code, the same results. The crate's
+    kernel tests run every kernel both ways and compare.
+- **The compiled code is kept** in the device's store with the code tape (`vec/<key>.jit`, keyed by the code tape's
+  key and the host's target and features, `jit::host`). It holds no address of its process (the interpreter's step
+  and the entries are the dispatch's; its constants and jump tables are PC-relative), so its bytes are the code: a
+  process loads them (`jit::load`, `define_function_bytes`) rather than compiling. A compile costs about 20 µs an
+  instruction (`row_text`'s 39 K: 0.8 s; `pp_setup`'s 189 K: 2.6 s), and each of nextest's processes compiled every
+  kernel it launched: before the store, the join tests took 62 s compiled against 38 s interpreted. The test
+  `compiled_code_kept_as_bytes_runs_the_same` fails on a host whose code would need relocating.
+- **`switch` is a jump by its value through a table** (`Switch` and its sorted `Label`s: the interpreter searches
+  them, Cranelift's `Switch` makes a jump table or a tree), to its case; the cases follow in order, falling through.
+  On a value that varies, a round for each value the running lanes have: the first remaining lane's, and the lanes
+  that share it, through the same jump. A round costs one comparison, not one for each label. The text functions'
+  switches have dozens of labels: in a profile of the compiled `row_text`, the label comparisons were half its
+  time, and the join tests on the interpreter went from 82 s to 34 s (`a_switch_runs_each_lanes_case`).
+- **A launch's setup** was most of a short launch: the program's tape checked whole to find its data (twice), and
+  each SIMD group's frame allocated and cleared at each group's start. The data's place is found once (`Program`),
+  and a thread keeps the slots of its last four launch shapes. A lane's variables start as C's locals do, unset, as
+  on the coroutine backend.
+- **Gate** (2026-11-21), with `RERAIL_GPU=cpu`:
+  - `rerail-gpu`'s 25 tests pass on the JIT: on this Mac 2.1 s against the interpreter's 3.2 s (warm store, at
+    6 threads); on an x86-64 Linux host (AVX2) 2.3 s against 4.0 s. The crate's 16 tests pass on both.
+  - pp's arena tests (`pp_grid`'s kernels): the 9 pass.
+  - The join and setfix device tests (`join_stages`' kernels): the 44 pass. On a Mac (M3 Max, nextest at 8
+    threads, warm store, a load of 4–8):
+
+    | Executor | The 44 tests | `parity_random_texts` |
+    |---|---|---|
+    | Compiled (this step) | 15.7 s | 14.4 s |
+    | The interpreter | 32.0 s | 24.7 s |
+    | The coroutine backend | 12.1 s | 11.2 s |
+
+    The times are whole tests, their host side included, which is the same for each executor.
+

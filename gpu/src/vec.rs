@@ -1,6 +1,7 @@
-//! The CPU device's kernels run by the vector path's interpreter (decision 0567, step 2), with `RERAIL_CPU_EXEC=vec`:
-//! the source preprocessed as OpenCL C (`rerail_ukl_vec`), lowered to its kernel tape, each kernel vectorized on its
-//! first launch (refused there if it breaks the barrier rule) and each launch interpreted at 32 lanes,
+//! The CPU device's kernels run on the vector path (decision 0567): with `RERAIL_CPU_EXEC=vec` by its interpreter
+//! (step 2), with `RERAIL_CPU_EXEC=jit` compiled by Cranelift (step 3). The source is preprocessed as OpenCL C
+//! (`rerail_ukl_vec`), lowered to its kernel tape, each kernel vectorized on its first launch (refused there if it
+//! breaks the barrier rule) and each launch run at 32 lanes,
 //! where the CPU backend otherwise compiles the source with the host's compiler. Its kernels' arguments are their
 //! rows, as a compiled library's are (`rerail_device::rows`), read from the kernel tape's constants and types.
 
@@ -13,9 +14,18 @@ use rerail_ukl_vec::vector::Kernel;
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-/// Whether `device`'s kernels are interpreted: the CPU's, with `RERAIL_CPU_EXEC=vec`.
+/// Whether `device`'s kernels run on the vector path: the CPU's, with `RERAIL_CPU_EXEC=vec` or `jit`.
 pub fn on(device: &Device) -> bool {
-    matches!(device, Device::Cpu(_)) && std::env::var("RERAIL_CPU_EXEC").is_ok_and(|v| v == "vec")
+    matches!(device, Device::Cpu(_)) && exec().is_some()
+}
+
+/// How the vector path runs a kernel's code tape, by `RERAIL_CPU_EXEC`.
+fn exec() -> Option<rerail_ukl_vec::run::Exec> {
+    match std::env::var("RERAIL_CPU_EXEC").ok()?.as_str() {
+        "vec" => Some(rerail_ukl_vec::run::Exec::Interpret),
+        "jit" => Some(rerail_ukl_vec::run::Exec::Jit),
+        _ => None,
+    }
 }
 
 /// The program `text` at `path`, specialized by `defines`, as an interpreted library named `name`.
@@ -128,6 +138,12 @@ impl CpuInterpreter for Interpreted {
         let vk = self.kernels.lock().map_err(|_| "a kernel's vectorizing panicked".to_string())?.entry(kernel.to_string()).or_insert_with(|| self.vectorized(kernel, k)).clone()?;
         // The groups that run together: the coroutines' count (`compute_kernel_cpu::resident_groups`).
         let resident = crate::compute_kernel_cpu::resident_groups(block.iter().map(|&b| b as usize).product());
-        rerail_ukl_vec::run::run(&self.program, &vk, &args, grid, block, shared, resident).map_err(|e| e.0)
+        let exec = exec().unwrap_or(rerail_ukl_vec::run::Exec::Interpret);
+        if exec == rerail_ukl_vec::run::Exec::Jit {
+            // Its compiled code: the store's (the bytes are the code, `jit::load`), else compiled and kept there.
+            let key = rerail_device::store::key(&[self.key.as_bytes(), kernel.as_bytes(), b"jit", rerail_ukl_vec::jit::host().as_bytes()]);
+            rerail_ukl_vec::run::compiled_kept(&vk, || rerail_device::store::load("vec", &key, "jit"), |b| rerail_device::store::save("vec", &key, "jit", b)).map_err(|e| e.0)?;
+        }
+        rerail_ukl_vec::run::run(&self.program, &vk, &args, rerail_ukl_vec::run::Launch { grid, block, local: shared, resident, exec }).map_err(|e| e.0)
     }
 }

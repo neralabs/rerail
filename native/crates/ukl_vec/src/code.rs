@@ -14,6 +14,9 @@
 //! - **Masks:** `CUR` (the lanes running), `BRK`, `CONT`, `RET` (the lanes that took those exits from the innermost
 //!   loop or inlined call), `END` (the lanes that ended), and slots to save them in. A uniform branch is a jump; a
 //!   varying one sets `CUR` for each side; a jump skips code whose `CUR` is empty, so no code runs with no lanes.
+//! - **A `switch`** is a jump by its value through a table (`Switch` and its `Label`s, sorted), to its case; the cases
+//!   follow in order, falling through. On a value that varies, a round for each value the running lanes have: the
+//!   first remaining lane's, and the lanes that share it, through the same jump.
 //! - **A lane's own variables** are in its SIMD group's frame, struct of arrays: lane `l` of the variable at frame
 //!   offset `off`, `size` bytes, its byte `inner`, is at `off * W + l * size + inner`. A direct read or write of one
 //!   (`LdL`, `StL`) is 32 consecutive values when it is a whole scalar variable.
@@ -97,6 +100,10 @@ pub enum I {
     Call,
     /// A function's end: back to its caller.
     Ret,
+    /// `[s, n, t]`: a jump by scalar `s`'s value through the `n` `Label`s that follow (sorted by value), or to `t`.
+    Switch,
+    /// `[low, high, t]`: a `Switch`'s entry, never run: value `low | high << 32` jumps to `t`.
+    Label,
 
     /// `[s, low, high]`.
     SConst,
@@ -749,9 +756,11 @@ impl Gen<'_> {
         Ok(())
     }
 
-    /// A `switch`: each case under the lanes whose value is its label and those that fell through the case before
-    /// (a `default` the lanes no label is); past it, the lanes that came in, less those that took a `continue` or a
-    /// `return` (its breaks' lanes go on).
+    /// A `switch`. On a value the SIMD group shares, a `Switch` to its case, and the cases in order, each falling
+    /// through to the next as C's do. On one that varies, a round for each value its running lanes have: the first
+    /// remaining lane's value, its lanes (those that have it) through the same `Switch`, so a round costs one
+    /// comparison of the lanes, not one for each label. Past it, the lanes that came in, less those that took a
+    /// `continue` or a `return` (its breaks' lanes go on).
     fn switch(&mut self, n: usize) -> R<()> {
         let v = self.v;
         let (site, m) = (v.w(n, 0), M(v.w(n, 1)));
@@ -759,59 +768,78 @@ impl Gen<'_> {
         let kids: Vec<usize> = v.children(n).collect();
         let c = self.value(kids[0])?;
         let c = self.fit(c, m);
-        let c = if check {
-            let c = self.scalar(c);
-            self.emit(I::Agree, 0, [n as u32, site, c.r, 0]);
-            c
-        } else {
-            c
-        };
-        let c = self.vector(c);
-        let (s0, sb, e) = (self.slot(), self.slot(), self.slot());
+        let (s0, sb) = (self.slot(), self.slot());
         self.emit(I::MSet, 0, [s0, CUR, 0, 0]);
         self.emit(I::MSet, 0, [sb, BRK, 0, 0]);
         self.emit(I::MClr, 0, [BRK, 0, 0, 0]);
         let cases = &kids[1..];
-        let label = |k: usize| u64::from(v.w(k, 1)) | u64::from(v.w(k, 2)) << 32;
-        // The lanes of label `x` (of those that came in) into mask `to`.
-        let lanes_of_label = |g: &mut Self, x: u64, to: u32| {
-            let k = g.konst(m, x);
-            let k = g.vector(k);
-            let t = g.alloc(Class::V32, M::B);
-            g.emit(if c.c == Class::V64 { I::Eq64 } else { I::Eq32 }, 0, [t.r, c.r, k.r, 0]);
-            g.emit(I::MAnd, 0, [to, s0, t.r, 0]);
-            g.free(t);
-            g.free(k);
-        };
-        // A `default`'s lanes: those no label is.
-        let any = if cases.iter().any(|&k| v.w(k, 0) != 0) {
-            let any = self.slot();
-            self.emit(I::MClr, 0, [any, 0, 0, 0]);
-            for &k in cases.iter().filter(|&&k| v.w(k, 0) == 0) {
-                lanes_of_label(self, label(k), e);
-                self.emit(I::MOr, 0, [any, e, 0, 0]);
+        if c.c == Class::S || check {
+            let c = self.scalar(c);
+            if check {
+                self.emit(I::Agree, 0, [n as u32, site, c.r, 0]);
             }
-            Some(any)
+            self.cases(c.r, m, cases)?;
+            self.free(c);
         } else {
-            None
-        };
-        self.emit(I::MClr, 0, [CUR, 0, 0, 0]);
-        for &k in cases {
-            match any {
-                Some(any) if v.w(k, 0) != 0 => {
-                    self.emit(I::MAndNM, 0, [e, s0, any, 0]);
-                }
-                _ => lanes_of_label(self, label(k), e),
-            }
-            self.emit(I::MOr, 0, [CUR, e, 0, 0]);
-            let j = self.jzm(CUR);
-            self.stmt(v.child(k, 0))?;
-            self.patch(j, 2);
+            let c = self.vector(c);
+            let rest = self.slot();
+            self.emit(I::MSet, 0, [rest, CUR, 0, 0]);
+            let top = self.here();
+            let done = self.jzm(rest);
+            self.emit(I::MSet, 0, [CUR, rest, 0, 0]);
+            let x = self.alloc(Class::S, m);
+            let wide = c.c == Class::V64;
+            self.emit(if wide { I::Extract64 } else { I::Extract32 }, m.0, [x.r, c.r, 0, 0]);
+            let (b, t) = (self.alloc(c.c, m), self.alloc(Class::V32, M::B));
+            self.emit(if wide { I::Bcast64 } else { I::Bcast32 }, 0, [b.r, x.r, 0, 0]);
+            self.emit(if wide { I::Eq64 } else { I::Eq32 }, 0, [t.r, c.r, b.r, 0]);
+            self.emit(I::MAnd, 0, [CUR, rest, t.r, 0]);
+            self.emit(I::MAndNM, 0, [rest, rest, CUR, 0]);
+            self.free(t);
+            self.free(b);
+            self.cases(x.r, m, cases)?;
+            self.free(x);
+            self.emit(I::Jmp, 0, [top, 0, 0, 0]);
+            self.patch(done, 2);
+            self.free(c);
+            self.mtop -= 1;
         }
-        self.free(c);
         self.emit(I::MSwEnd, 0, [s0, 0, 0, 0]);
         self.emit(I::MSet, 0, [BRK, sb, 0, 0]);
-        self.mtop -= if any.is_some() { 4 } else { 3 };
+        self.mtop -= 2;
+        Ok(())
+    }
+
+    /// A `Switch` by scalar `x` (of `m`) to `cases`, then the cases in order: each runs from its own (or the case
+    /// before's) lanes, unless none are left.
+    fn cases(&mut self, x: u32, m: M, cases: &[usize]) -> R<()> {
+        let v = self.v;
+        let labelled: Vec<usize> = cases.iter().copied().filter(|&k| v.w(k, 0) == 0).collect();
+        let at = self.emit(I::Switch, 0, [x, labelled.len() as u32, 0, 0]);
+        let table = self.code.len();
+        for _ in &labelled {
+            self.emit(I::Label, 0, [0; 4]);
+        }
+        let (mut entries, mut default, mut outs) = (Vec::new(), None, Vec::new());
+        for &k in cases {
+            let start = self.here();
+            if v.w(k, 0) != 0 {
+                default = Some(start);
+            } else {
+                entries.push((crate::ops::norm(m, u64::from(v.w(k, 1)) | u64::from(v.w(k, 2)) << 32), start));
+            }
+            outs.push(self.jzm(CUR));
+            self.stmt(v.child(k, 0))?;
+        }
+        let end = self.here();
+        for o in outs {
+            self.code[o + 2] = end;
+        }
+        self.code[at + 3] = default.unwrap_or(end);
+        entries.sort_unstable();
+        for (e, (x, t)) in entries.into_iter().enumerate() {
+            self.code[table + e * WORDS + 1..][..3].copy_from_slice(&[x as u32, (x >> 32) as u32, t]);
+        }
         Ok(())
     }
 

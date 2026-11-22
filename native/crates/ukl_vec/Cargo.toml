@@ -16,6 +16,12 @@ rerail-ukl = { path = "../ukl" }
 rerail-c-lean = { path = "../c_lean" }
 # The tapes the passes read and write.
 rerail-tape-format = { path = "../tape_format" }
+# The code tape compiled (`jit`, decision 0567 step 3), as the engine's other JIT modules are (`rerail-clif`).
+cranelift-codegen = "=0.125.4"
+cranelift-frontend = "=0.125.4"
+cranelift-module = "=0.125.4"
+cranelift-native = "=0.125.4"
+cranelift-jit = "=0.125.4"
 
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).

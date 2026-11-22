@@ -12,6 +12,7 @@
 use rerail_c_lean::{Dialect, Tape};
 
 pub mod code;
+pub mod jit;
 pub mod ctape;
 pub mod k;
 pub mod lower;

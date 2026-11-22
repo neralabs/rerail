@@ -38,15 +38,15 @@ pub struct Program {
     pub typedefs: HashMap<String, Ty>,
     pub tags: HashMap<String, u32>,
     pub globals: HashMap<String, (Ty, u32)>,
+    /// Where `data`'s bytes are in the tape's words, and how many: found once, not at each launch.
+    data_at: (usize, usize),
 }
 
 impl Program {
     /// The program's constant memory (its `Data` node's bytes), read in place.
     pub fn data(&self) -> &[u8] {
-        let v = crate::k::View::new(&self.tape);
-        let d = v.children(0).last().expect("the program's data");
-        let n = v.w(d, 0) as usize;
-        let words = v.ws(d, 1, n.div_ceil(4));
+        let (at, n) = self.data_at;
+        let words = &self.tape.words[at..at + n.div_ceil(4)];
         // SAFETY: the words' bytes, `n` of them.
         unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), n) }
     }
@@ -147,7 +147,15 @@ pub fn lower(source: &crate::Source, tape: &rerail_c_lean::Tape) -> R<Program> {
     l.b.close(root);
     let stacks = stacks(&l.b, &l.funcs)?;
     let globals = l.globals.iter().filter_map(|(n, v)| if let Place::Global(at) = v.place { Some((n.clone(), (v.ty.clone(), at))) } else { None }).collect();
-    Ok(Program { tape: l.b.finish(), funcs: l.funcs, structs: l.structs, stacks, sites: l.sites, typedefs: l.typedefs, tags: l.tags, globals })
+    let tape = l.b.finish();
+    let data_at = {
+        let v = crate::k::View::new(&tape);
+        let d = v.children(0).last().expect("the program's data");
+        let n = v.w(d, 0) as usize;
+        let at = v.ws(d, 1, 0).as_ptr() as usize - tape.words.as_ptr() as usize;
+        (at / 4, n)
+    };
+    Ok(Program { tape, funcs: l.funcs, structs: l.structs, stacks, sites: l.sites, typedefs: l.typedefs, tags: l.tags, globals, data_at })
 }
 
 /// Each function's stack, its frame and its deepest callee's: no kernel recurses (a kernel's vector tape inlines

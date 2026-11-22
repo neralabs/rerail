@@ -4,6 +4,9 @@
 //! nothing left to decide, which the compiler makes vector code (NEON; AVX2 where the CPU has it, chosen at run
 //! time). A mask's lanes are packed by NEON's adds across a vector.
 //!
+//! Compiled (`jit`, `Exec::Jit`), the same state runs: the compiled sections between their stops, and the driver here
+//! doing at a stop what the interpreter's loop does.
+//!
 //! A threadgroup's SIMD groups take turns: each runs to its next threadgroup barrier (`Bar`) or its end, then the
 //! next; once all have, they all go on. The barrier rule (decision 0567 §3), proven by `vector`, makes every SIMD
 //! group that has not ended wait at the same barrier; one that does not fails the kernel.
@@ -34,6 +37,13 @@ pub enum Arg {
 
 type R<T> = Result<T, Error>;
 
+/// How a kernel's code tape runs: the interpreter's loop, or compiled (`jit`, its sections between the stops).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Exec {
+    Interpret,
+    Jit,
+}
+
 /// Why a SIMD group's turn ended: its end, a threadgroup barrier (its site), or a poll of another group's progress.
 enum Stop {
     Halt,
@@ -53,7 +63,8 @@ enum Wait {
 /// A resident group's slot: its SIMD groups, their frames, its threadgroup memory and its checked decisions, and
 /// the group it runs.
 struct Slot {
-    frames: Vec<u128>,
+    /// The memory its SIMD groups' frames are in (each `Sg::frame`), held.
+    _frames: Vec<u128>,
     shared: Vec<u128>,
     g: Vec<Sg>,
     agreed: HashMap<u32, Decisions>,
@@ -81,6 +92,14 @@ struct Sg {
     calls: Vec<(usize, u64, [usize; 4])>,
 }
 
+thread_local! {
+    /// The thread's last launches' slots, by their shape (`run`), the latest first: for its next launch of one.
+    static SLOTS: RefCell<Vec<([usize; 11], Vec<Slot>)>> = const { RefCell::new(Vec::new()) };
+}
+
+/// The shapes of slots a thread keeps.
+const KEPT_SHAPES: usize = 4;
+
 /// A checked branch's decisions in the group, in order, and how many each SIMD group has made.
 type Decisions = (Vec<u64>, Vec<usize>);
 
@@ -97,6 +116,13 @@ struct Cx<'p> {
     block: [u32; 3],
     group: [u32; 3],
     agreed: RefCell<HashMap<u32, Decisions>>,
+    /// The compiled sections, when they run it, and the interpreter's step they call (`jit::Places::step`).
+    jit: Option<&'p crate::jit::Jit>,
+    step: crate::jit::Step,
+    /// The compiled sections' entries, which a direct call takes its callee's from (`jit::Places::entries`).
+    entries: *const crate::jit::Entry,
+    /// An interpreter's step's failure from the compiled code.
+    fault: RefCell<Option<Error>>,
     #[cfg(target_arch = "x86_64")]
     avx2: bool,
 }
@@ -173,13 +199,24 @@ fn wide(m: M, x: u32) -> u64 {
     ops::norm(m, u64::from(x))
 }
 
-/// Runs `k` (a kernel of `p`) over `grid` groups of `block` threads, with `args` for its parameters. `local` is
-/// the threadgroup memory a group has past the kernel's own (its `Arg::Local` arguments'). Up to `resident` groups
+/// A launch: its grid of groups, its groups' threads, the threadgroup memory a group has past the kernel's own (its
+/// `Arg::Local` arguments'), the groups that run together, and how the code runs.
+#[derive(Clone, Copy, Debug)]
+pub struct Launch {
+    pub grid: [u32; 3],
+    pub block: [u32; 3],
+    pub local: u64,
+    pub resident: usize,
+    pub exec: Exec,
+}
+
+/// Runs `k` (a kernel of `p`) over `launch`'s grid of groups, with `args` for its parameters. Up to `resident` groups
 /// run together, as the CPU's coroutines do (`ukl_cpu_shim.h`): each in a slot of its own that takes the launch's
 /// next group when its own ends, the slots taking turns in order, a group's turn ending when all its SIMD groups
 /// poll another's progress (`Yield`). So a persistent grid of up to `resident` groups meets its barriers, and a
 /// larger one fails their bound, as on a GPU that holds fewer; a run is the same every time.
-pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3], local: u64, resident: usize) -> R<()> {
+pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
+    let Launch { grid, block, local, resident, exec } = launch;
     let cv = View::new(&k.code);
     let words = cv.p(0);
     let (frame_bytes, own, n_params) = (words[0] as usize, u64::from(words[1]).next_multiple_of(16), words[2] as usize);
@@ -200,9 +237,11 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3
     if groups == 0 {
         return Ok(());
     }
-    let pv = View::new(&p.tape);
-    let data_node = pv.children(0).last().expect("the program's data");
-    let data = pv.ws(data_node, 1, 0).as_ptr() as u64;
+    let jit = match exec {
+        Exec::Interpret => None,
+        Exec::Jit => Some(compiled(k)?),
+    };
+    let data = p.data().as_ptr() as u64;
     let mut cx = Cx {
         p,
         kernel: &k.name,
@@ -214,11 +253,23 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3
         block,
         group: [0; 3],
         agreed: RefCell::new(HashMap::new()),
+        jit,
+        step,
+        entries: jit.map_or(std::ptr::null(), |j| j.entries().as_ptr()),
+        fault: RefCell::new(None),
         #[cfg(target_arch = "x86_64")]
         avx2: std::arch::is_x86_feature_detected!("avx2"),
     };
     let (bx, by) = (block[0].max(1), block[1].max(1));
-    let mut slots: Vec<Slot> = (0..resident.clamp(1, groups))
+    // The slots: this thread's last launch's, if it had this one's shape (their frames and files as they were left:
+    // a lane's variables start as C's locals do, unset, so a group's start clears only its threadgroup memory).
+    let shape = [nsg, frame, ns, n32, n64, nm, (own + local) as usize, threads, bx as usize, by as usize, resident.clamp(1, groups)];
+    let kept = SLOTS.with(|c| {
+        let mut c = c.borrow_mut();
+        let at = c.iter().position(|e| e.0 == shape)?;
+        Some(c.remove(at).1)
+    });
+    let mut slots: Vec<Slot> = kept.filter(|v| !v.is_empty()).unwrap_or_else(|| (0..resident.clamp(1, groups))
         .map(|_| {
             let mut frames = vec![0u128; (nsg * frame).div_ceil(16).max(1)];
             let base = frames.as_mut_ptr() as u64;
@@ -243,9 +294,12 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3
                     }
                 })
                 .collect();
-            Slot { frames, shared: vec![0u128; (own + local).div_ceil(16) as usize + 1], g, agreed: HashMap::new(), group: [0; 3], busy: false }
+            Slot { _frames: frames, shared: vec![0u128; (own + local).div_ceil(16) as usize + 1], g, agreed: HashMap::new(), group: [0; 3], busy: false }
         })
-        .collect();
+        .collect());
+    for sl in &mut slots {
+        sl.busy = false;
+    }
     let live = |s: usize| {
         let n = (threads - s * W).min(W);
         if n == W { u32::MAX } else { (1u32 << n) - 1 }
@@ -256,7 +310,6 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3
         sl.group = [(at % gx) as u32, (at / gx % gy) as u32, (at / (gx * gy)) as u32];
         sl.agreed.clear();
         sl.shared.fill(0);
-        sl.frames.fill(0);
         let sh = sl.shared.as_mut_ptr() as u64;
         for (s, sg) in sl.g.iter_mut().enumerate() {
             let mask = live(s);
@@ -306,9 +359,51 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], grid: [u32; 3], block: [u32; 3
             }
         }
         if !any {
+            SLOTS.with(|c| {
+                let mut c = c.borrow_mut();
+                c.insert(0, (shape, slots));
+                c.truncate(KEPT_SHAPES);
+            });
             return Ok(());
         }
     }
+}
+
+/// Kernel `k`'s code tape compiled (`jit`): on the first call, then kept with the kernel.
+pub fn compiled(k: &Kernel) -> R<&crate::jit::Jit> {
+    compiled_kept(k, || None, |_| {})
+}
+
+/// The same, from its kept form (`jit::load`), which `kept` reads back, else compiled, its kept form given to
+/// `keep`.
+pub fn compiled_kept(k: &Kernel, kept: impl FnOnce() -> Option<Vec<u8>>, keep: impl FnOnce(&[u8])) -> R<&crate::jit::Jit> {
+    let cv = View::new(&k.code);
+    let words = cv.p(0);
+    let (n_params, ncode) = (words[2] as usize, words[7] as usize);
+    let code = &words[HEADER + 2 * n_params..HEADER + 2 * n_params + ncode];
+    let places = crate::jit::Places {
+        pc: std::mem::offset_of!(Sg, pc) as i32,
+        shared: std::mem::offset_of!(Cx, shared) as i32,
+        data: std::mem::offset_of!(Cx, data) as i32,
+        step: std::mem::offset_of!(Cx, step) as i32,
+        fp: std::mem::offset_of!(Sg, fp) as i32,
+        win: std::mem::offset_of!(Sg, win) as i32,
+        entries: std::mem::offset_of!(Cx, entries) as i32,
+    };
+    let table = &words[HEADER + 2 * n_params + ncode..][..words[8] as usize * TABLE];
+    k.jit
+        .get_or_init(|| {
+            if let Some(j) = kept().and_then(|b| crate::jit::load(code, &b)) {
+                return Ok(j);
+            }
+            let (j, bytes) = crate::jit::compile(&k.name, code, table, places).map_err(|e| e.0)?;
+            if let Some(b) = bytes {
+                keep(&b);
+            }
+            Ok(j)
+        })
+        .as_ref()
+        .map_err(|e| Error(format!("{}: {e}", k.name)))
 }
 
 impl Cx<'_> {
@@ -458,21 +553,100 @@ impl Cx<'_> {
 
     /// SIMD group `sg` from its instruction to its next barrier or its end.
     fn exec(&self, sg: &mut Sg) -> R<Stop> {
+        if let Some(jit) = self.jit {
+            return self.exec_jit(jit, sg);
+        }
+        self.interpret::<false>(sg)
+    }
+
+    /// The interpreter's loop from `sg`'s instruction, or (`ONE`) that instruction alone.
+    fn interpret<const ONE: bool>(&self, sg: &mut Sg) -> R<Stop> {
         #[cfg(target_arch = "x86_64")]
         if self.avx2 {
             // SAFETY: the CPU has AVX2 (`is_x86_feature_detected`); the code is `compile`'s.
-            return unsafe { exec_avx2(self, sg) };
+            return unsafe { exec_avx2::<ONE>(self, sg) };
         }
         // SAFETY: the code tape's instructions are `compile`'s, their registers within the files.
-        unsafe { exec_in(self, sg) }
+        unsafe { exec_in::<ONE>(self, sg) }
+    }
+
+    /// The compiled sections from `sg`'s instruction: each runs to its next stop, and what the interpreter does
+    /// there is done here (a call's and a return's frames, windows and masks), until a barrier, a poll or the end.
+    fn exec_jit(&self, jit: &crate::jit::Jit, sg: &mut Sg) -> R<Stop> {
+        loop {
+            let (entry, at) = jit.at(sg.pc).ok_or_else(|| self.err(&format!("instruction {} is no section's resume point", sg.pc)))?;
+            let win = sg.win;
+            // SAFETY: the section is the code's, compiled; the windows are within the files (as `exec_in`'s).
+            let r = unsafe {
+                entry(
+                    std::ptr::from_ref(self).cast(),
+                    std::ptr::from_mut(sg).cast(),
+                    sg.s.as_mut_ptr().add(win[0]),
+                    sg.v32.as_mut_ptr().add(win[1]).cast(),
+                    sg.v64.as_mut_ptr().add(win[2]).cast(),
+                    sg.m.as_mut_ptr().add(win[3]),
+                    sg.fp,
+                    at,
+                )
+            };
+            if r != 0 {
+                return Err(self.fault.borrow_mut().take().unwrap_or_else(|| self.err("the compiled code entered no resume point")));
+            }
+            let i = (sg.pc - 1) * WORDS;
+            let (a, b) = (self.code[i + 1] as usize, self.code[i + 2] as usize);
+            // SAFETY: the compiled code stops past an instruction of the code, `compile`'s.
+            match unsafe { I::of(self.code[i]) } {
+                I::Halt => return Ok(Stop::Halt),
+                I::Bar => return Ok(Stop::Bar(a as u32)),
+                I::Yield => return Ok(Stop::Yield),
+                I::Call => {
+                    sg.calls.push((sg.pc * WORDS, sg.fp, sg.win));
+                    let r = &self.table[b * TABLE..][..TABLE];
+                    sg.fp += u64::from(r[0]);
+                    let caller = sg.win[3];
+                    for (w, &k) in sg.win.iter_mut().zip(&r[1..]) {
+                        *w += k as usize;
+                    }
+                    // The five masks go with the lanes into the callee.
+                    sg.m.copy_within(caller..caller + 5, sg.win[3]);
+                    sg.pc = a;
+                }
+                I::Ret => {
+                    let (back, f, w) = sg.calls.pop().expect("a call to return from");
+                    let callee = sg.win[3];
+                    (sg.pc, sg.fp, sg.win) = (back / WORDS, f, w);
+                    sg.m.copy_within(callee..callee + 5, sg.win[3]);
+                }
+                op => return Err(self.err(&format!("the compiled code stopped at {op:?}"))),
+            }
+        }
+    }
+}
+
+/// The interpreter's step of instruction `pc` for the compiled code (`jit::Step`).
+///
+/// # Safety
+///
+/// `cx` and `sg` are the dispatch's and the SIMD group's the compiled code was entered with, `pc` an instruction
+/// of its code that neither jumps nor stops.
+unsafe extern "C" fn step(cx: *const u8, sg: *mut u8, pc: u64) -> u64 {
+    // SAFETY: the caller's.
+    let (cx, sg) = unsafe { (&*cx.cast::<Cx>(), &mut *sg.cast::<Sg>()) };
+    sg.pc = pc as usize;
+    match cx.interpret::<true>(sg) {
+        Ok(_) => 0,
+        Err(e) => {
+            *cx.fault.borrow_mut() = Some(e);
+            1
+        }
     }
 }
 
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "avx2,popcnt,bmi1,bmi2,lzcnt")]
-unsafe fn exec_avx2(cx: &Cx, sg: &mut Sg) -> R<Stop> {
+unsafe fn exec_avx2<const ONE: bool>(cx: &Cx, sg: &mut Sg) -> R<Stop> {
     // SAFETY: the caller's.
-    unsafe { exec_in(cx, sg) }
+    unsafe { exec_in::<ONE>(cx, sg) }
 }
 
 /// The interpreter's loop: an instruction at a time, through the table of opcodes.
@@ -482,7 +656,7 @@ unsafe fn exec_avx2(cx: &Cx, sg: &mut Sg) -> R<Stop> {
 /// The code is `compile`'s: its registers are within `sg`'s files, its jumps within the code, its addresses the
 /// kernel's (its buffers', its frame's, threadgroup memory's).
 #[inline(always)]
-unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
+unsafe fn exec_in<const ONE: bool>(cx: &Cx, sg: &mut Sg) -> R<Stop> {
     let code = cx.code.as_ptr();
     let (s0, v320, v640, mk0) = (sg.s.as_mut_ptr(), sg.v32.as_mut_ptr(), sg.v64.as_mut_ptr(), sg.m.as_mut_ptr());
     let (mut fp, mut win) = (sg.fp, sg.win);
@@ -574,6 +748,22 @@ unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
                     std::ptr::copy_nonoverlapping(callee, mk, 5);
                 }
                 I::Jmp => pc = a * WORDS,
+                I::Switch => {
+                    // The labels follow (`pc` is past the instruction), sorted by value: a binary search.
+                    let x = s!(a);
+                    let label = |e: usize| u64::from(*code.add(pc + e * WORDS + 1)) | u64::from(*code.add(pc + e * WORDS + 2)) << 32;
+                    let (mut lo, mut hi) = (0, b);
+                    while lo < hi {
+                        let mid = (lo + hi) / 2;
+                        if label(mid) < x {
+                            lo = mid + 1;
+                        } else {
+                            hi = mid;
+                        }
+                    }
+                    pc = if lo < b && label(lo) == x { *code.add(pc + lo * WORDS + 3) as usize } else { c } * WORDS;
+                }
+                I::Label => unreachable!("a switch's label run"),
                 I::Jzm => {
                     if m!(a) == 0 {
                         pc = b * WORDS;
@@ -925,6 +1115,9 @@ unsafe fn exec_in(cx: &Cx, sg: &mut Sg) -> R<Stop> {
                 I::LNot32 => un!(w32, r32, |x: u32| u32::from(x == 0)),
                 I::LNot64 => un!(w64, r64, |x: u64| u64::from(x == 0)),
                 I::Popcount32 => un!(w32, r32, |x: u32| x.count_ones()),
+            }
+            if ONE {
+                return Ok(Stop::Halt);
             }
         }
     }
