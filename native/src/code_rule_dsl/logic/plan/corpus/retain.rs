@@ -3073,6 +3073,10 @@ impl Retained {
                 if cut.clean.contains(rel) {
                     if let Some(stored) = was.derived.get(rel) {
                         now.insert(rel.clone(), stored.digest);
+                    } else if let Some(rd) = reads.iter().map(|r| read_digest(r, &now, &derived, prog, &leaves).map(|d| (r.clone(), d))).collect::<Option<Vec<_>>>() {
+                        // Clean with no entry (a relation no round kept rows of, a view held in place): named by its
+                        // reads, as `from_frame_snapshot` names it, so its readers' entries are written and current.
+                        now.insert(rel.clone(), unkept_digest(rel, &rd));
                     }
                     continue;
                 }
