@@ -1467,3 +1467,24 @@ fn the_mix_kernels_rust_runs_both_sides_and_full_rounds() {
         assert!(lines[one..end].iter().any(|l| l.contains("wrapping_add(1") || l.contains("+ 1")), "the loop of one bound counts in lanes:\n{f}");
     }
 }
+
+/// `f16_parent.uglykl` (rerail-ukl-aot's test kernel: format 16's parent read, every node) as Rust at 8 lanes.
+fn f16_parent_rust() -> Result<String, super::Error> {
+    let text = include_str!("../../ukl_aot/kernels/f16_parent.uglykl");
+    let src = super::source("/<kernels>/f16_parent.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("parent_all").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    super::rs::kernel(&k, 8).map_err(|e| super::Error(format!("{}\n{}", e.0, super::k::View::new(&k.tape).listing())))
+}
+
+#[test]
+fn the_f16_parent_kernels_rust_is_the_checked_in_one() {
+    let rust = f16_parent_rust().unwrap_or_else(|e| panic!("{}", e.0));
+    let at = concat!(env!("CARGO_MANIFEST_DIR"), "/../ukl_aot/src/parent_all_w8.rs");
+    if std::env::var_os("UKL_RS_WRITE").is_some() {
+        std::fs::write(at, &rust).unwrap();
+    }
+    let kept = std::fs::read_to_string(at).unwrap_or_default();
+    assert!(kept == rust, "{at} is not the kernel's Rust (UKL_RS_WRITE=1 writes it):\n{rust}");
+}

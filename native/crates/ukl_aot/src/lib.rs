@@ -16,6 +16,8 @@ pub mod hand;
 pub mod mix_lanes_w8;
 #[cfg(target_arch = "aarch64")]
 pub mod nearest_jump_w8;
+#[cfg(target_arch = "aarch64")]
+pub mod parent_all_w8;
 pub mod scalar;
 #[cfg(test)]
 mod tests;

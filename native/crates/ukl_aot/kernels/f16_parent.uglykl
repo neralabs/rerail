@@ -1,0 +1,22 @@
+// A test kernel of rerail-ukl-aot (decision 0567 step 3): every node's parent, by format 16's own read
+// (`clif_f16_parent`, `<ukl/reads/tape_f16.h>`), over a tape in place. The parent is a walk back over the slots of
+// the node's previous siblings, each slot a load of the run-time width its array has, an escaped one read from its
+// side list; a lane ends its walk at its own step.
+
+#define CLIF_VIEW_SPACE UKL_GLOBAL
+#include <ukl/backend.h>
+#include <ukl/reads/tape.h>
+
+typedef struct ParentArgs { uint32_t nodes, pad0, pad1, pad2; } ParentArgs;
+UKL_REFLECT_STRUCT(ParentArgs, nodes, pad0, pad1, pad2)
+
+DEFINE_KERNEL2(f16, parent_all,
+               ROBUFFER, uint8_t,    tape, "[bytes]",
+               ROBUFFER, uint32_t,   view, "[words]",
+               RWBUFFER, uint32_t,   out,  "[args.nodes]",
+               ARGS,     ParentArgs, args, ,
+               GID0,     uint32_t,   i,    )
+{
+  if(i>=args.nodes)return;
+  out[i]=clif_f16_parent(tape,view,i);
+}
