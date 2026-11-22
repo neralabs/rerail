@@ -385,8 +385,8 @@ pub use rerail_program_image::code_rule_dsl::logic::program_facts;
 pub use rerail_planner::code_rule_dsl::logic::program_image;
 pub use rerail_planner::code_rule_dsl::logic::program_text;
 pub use rerail_logic_core::code_rule_dsl::logic::version_trace;
-/// Main's JSON rules translated to `.rerail` on read (decision 0175).
-pub mod json_rules;
+/// Main's JSON rules translated to `.rerail` on read (decision 0175): `rerail-json-rules`'s.
+pub use rerail_json_rules::code_rule_dsl::logic::json_rules;
 #[allow(dead_code)]
 pub mod rr;
 pub mod settings;

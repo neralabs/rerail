@@ -4044,6 +4044,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-json-rules"
+version = "0.1.0"
+dependencies = [
+ "fancy-regex 0.17.0",
+ "indexmap",
+ "regex",
+ "rerail-json-rules",
+ "rerail-rr",
+ "serde_json",
+]
+
+[[package]]
 name = "rerail-kotlin-aot"
 version = "0.1.0"
 dependencies = [
@@ -4644,6 +4656,7 @@ dependencies = [
  "rerail-corpus-memo",
  "rerail-corpus-prep",
  "rerail-facts",
+ "rerail-json-rules",
  "rerail-lang",
  "rerail-logic",
  "rerail-logic-core",

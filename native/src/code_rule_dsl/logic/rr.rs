@@ -153,15 +153,8 @@ pub fn core_shape() -> &'static std::collections::BTreeSet<String> {
     SHAPE.get_or_init(|| core_names().iter().filter(|r| !lower::made_on_request(r)).cloned().collect())
 }
 
-/// The library `#include` reads from.
-pub fn library() -> PathBuf {
-    // `RERAIL_RR_LIB` names another copy: the browser build (native/wasm) mounts the library in its own filesystem.
-    std::env::var_os("RERAIL_RR_LIB")
-        .map(PathBuf::from)
-        // From the checkout's root, with no `..` in the path: a path the engine reads is named one way, so the file
-        // observer keeps one answer and one journal root for each directory (`native/../docs` and `docs` were two).
-        .unwrap_or_else(rerail_store::source_tree::rule_library)
-}
+/// The library `#include` reads from (`rerail-rr`'s: the JSON rules' translator reads it too, under the language).
+pub use rerail_rr::code_rule_dsl::logic::rr::library::library;
 
 /// The directory whose include resolution is part of a program read. Preserve a missing root as a distinct input.
 pub fn library_root() -> PathBuf {

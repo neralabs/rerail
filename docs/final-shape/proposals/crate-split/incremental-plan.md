@@ -620,3 +620,14 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     crates, the planner and `rerail-logic`): on a Linux host, the preparation's, product demand's, link's and magic
     sets' tests (72), and the corpus root's, maintain and cache tests (78 of 79; the one that failed is 5c's, which
     needs pack test data).
+- **Step 5g** (2026-11-21): `rerail-json-rules` (`native/crates/json_rules`): `logic::json_rules`, the translator of
+  main's JSON policies to `.rerail`, 9.2k lines. It is over `rerail-rr` alone, not over the planner as the table's
+  order put it, so it builds beside the planner's crates. The language's reader (`rr.rs`, `rerail-logic`'s)
+  translates a JSON policy as it reads it, and `rerail-logic` re-exports the crate's module.
+  - Its one read of the language's root was where the library is (`rr::library`): an environment variable, else the
+    checkout's rule library. That is `rerail-rr`'s now (`rr::library`, in `rr/library.rs`), and `rr.rs` re-exports
+    it.
+  - Its tests were already mounted by tests_logic.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on it,
+    `rerail-rr` and `rerail-logic`): on a Linux host, the JSON rules' tests and the language reader's and settings'
+    tests, 210 pass.
