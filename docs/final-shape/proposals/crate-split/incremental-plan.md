@@ -910,3 +910,27 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     `sqlite_virtual_table_drives_batched_matching_and_relational_composition`). That host's matcher device refuses
     the Metal JIT (`UnsupportedBackend`), and so does every packed test's Metal leg there. On a Mac (an M3) both
     pass.
+- **The guard of §5** (2026-11-22): `scripts/check/check_crate_dag.py`, run by the pre-commit hook. It refuses:
+  - a dependency up the graph;
+  - a core crate depending on a provider;
+  - a new install hook outside the registry.
+
+  The order is `tools/cratify/crate-order.tsv`: the 87 workspace crates, bottom first, each with its class:
+  - `core`;
+  - `provider`: the language packs and the Metal device;
+  - `root`: boot and the engine;
+  - `test`: the test crates and the parser tests.
+
+  A crate's normal and build dependencies are crates on earlier lines. A core crate depends on no provider, a
+  library on no test crate, and only the engine (on boot) and the test crates on the root. A new crate, or one
+  that must move, is a change to that file.
+
+  `rerail-metal` and `rerail-gpu` are core: they are the platform's libraries, which the front end and `rerail-lang`
+  use, not providers of an engine trait.
+
+  The hooks: an `install`/`install_*` function that keeps what it is handed in a `OnceLock` (`.set(`,
+  `.get_or_init(`) and does not register is refused, but for the 43 that `scripts/check/install-hooks.txt` lists,
+  which were there when the check came. That list only shrinks.
+
+  The plan's "a core file that names a provider" is the graph's check: since the split, a file can only name a
+  crate its own crate depends on.
