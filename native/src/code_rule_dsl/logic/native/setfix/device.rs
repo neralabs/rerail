@@ -2465,9 +2465,15 @@ impl Own {
             return Ok(Some((dev, None)));
         }
         let key = (rel, delta, cols.to_vec());
-        if let Some(ix) = self.sorts.get(&key) {
-            rep.sort_hits += 1;
-            return Ok(Some((dev, Some(ix.clone()))));
+        // A sort an earlier round's batch made is found again where its relation keeps it (`mj::Batch::again`): that
+        // batch may have given it back (another batch built the same one, or its builder was cut by an overflow), and
+        // a given-back index reads no rows. The cache handed it out as it was before: the next round's probes then
+        // derived nothing from it.
+        if let Some(ix) = self.sorts.get(&key).cloned() {
+            let ix = batch.again(&dev, &ix).map_err(|e| format!("{e:?}: an index of {} rows found again", dev.rows))?;
+            if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
+            self.sorts.insert(key, ix.clone());
+            return Ok(Some((dev, Some(ix))));
         }
         let ix = Rc::new(batch.index(&dev, cols).map_err(|e| format!("{e:?}: an index of {} rows", dev.rows))?);
         if ix.built { rep.sorts += 1 } else { rep.sort_hits += 1 }
