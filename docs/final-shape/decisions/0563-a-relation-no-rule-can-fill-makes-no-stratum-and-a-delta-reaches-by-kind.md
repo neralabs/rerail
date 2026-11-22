@@ -518,6 +518,35 @@ With A firing too (both sides; B off and on, the same machine, a later run):
   probes.
 - The profiled edit runs overstate the edits by 20–40%, so the numbers above are unprofiled.
 
+### After A and B: the edits' profiles
+
+With A and B built, the insert and the comprehension edit gained little (6–7%), so both were profiled (M3, A and B
+on). Their join steps cost 31 ms and 19 ms. Their cross-file joins cost 0.96 s and 1.41 s, and most of that was one
+removal join each building every document's rows (decision 0494), for an edit to one file:
+
+- **The insert: `docof` read as it was.** A removal join reads a changed input as it was (0364). `docof`'s old
+  version, probed by a node, made the node's document. `rewritable` (`upgrade-typing.rerail`), from
+  `future_annotations`'s gone row, walks `typing_ref` and tests each node's document, so it made 121 documents,
+  0.74 s. The node's document is its id's (0083 §3), so with the node bound the join now computes it (`DocOf`). The
+  id's document holds of every id the old rows hold, so the join finds at least what it did; a removal's rows are
+  candidates, each rechecked against the rows now. Test:
+  `made_batch_tests::a_removal_join_computes_docof_from_the_node`.
+- **The comprehension edit: the join screen measured its probe side first.** The Bloom screen (0488) measured the
+  probe side's rows before it checked the scan's against its floor (256). A removal join of a few `text` rows, then
+  a text test (`strtest_51`), so asked the text test's length. Unknown after an edit (one document's counts are
+  not given), that is every string that passes, every document made: 299 documents, 0.98 s, for a walk that is never
+  screened. The scan's floor is now checked first. Test: `join_filter::tests::a_small_scan_does_not_measure_its_probe_side`.
+
+ep2, M3, unprofiled, A and B on; outputs identical on every run:
+
+| Edit | Instructions | Wall | Peak memory |
+|---|---|---|---|
+| An import at a file's top | 60.0 → 50.2 G | 3.18 → 2.70 s | 766 → 705 MB |
+| A comprehension at another file's end | 57.4 → 39.0 G | 3.08 → 2.20 s | 862 → 753 MB |
+
+The append is unchanged (36.6 → 36.8 G). With B off, the append fell too (59.1 → 39.3 G): the screen's measure was
+much of what B cut there.
+
 ### The order of work, amended
 
 1. **A1 and A2** as spiked:
