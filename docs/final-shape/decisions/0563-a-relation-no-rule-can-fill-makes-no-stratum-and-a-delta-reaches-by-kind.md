@@ -608,19 +608,11 @@ equal a fresh cold run's in all 661 relations):
 | An import at a file's top | 1.00 s | 0.68 s | 48.8 G | 42.6 G |
 | A second append | 0.61 s | 0.61 s | 39.0 G | 38.6 G |
 
-The import's cross part is now within 0.1 s of the appends'. Four strata are still derived again by the clause,
-small ones (`later_dec`, `p255_start`, `p255_rr_demand_agg_rr_agg5`, `p107_rr_agg7`: 0 to 5 rows kept). Tests:
+The import's cross part is now within 0.1 s of the appends'. Tests:
 `plan::tests::a_maintain_mode_line_starts_where_it_is_cheapest` (fails with the start fixed);
 `maintain_tests::a_finding_s_places_moved_are_maintained` (cold, an append past the floor whose line its few new
 places lead, then an import at the file's top; outputs a fresh run's; fails without either change: mode 526
 against derive 404).
-
-The derive's price still leaves out the documents its probes make. Where a program reads spans, `Extra` makes
-`line`, `end_line`, `col` and `docof` as rows for every node and token beside the spans', and the batch binds those
-rows in place of the views (0353 step 3, Q216). Q216 (the spans' ranges written once into the batch's block, the
-view reading them past its own positions) leaves no node's place made, so a derive's probes cost what its plan
-prices. ep2's program reads `comment`, `tape_line`, `src_line_lf` and `src_line`, whose spans the view does not
-cover yet.
 
 ### The order of work, amended
 
