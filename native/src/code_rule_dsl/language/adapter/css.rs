@@ -40,7 +40,7 @@ fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
 impl Adapter for Css {
     const FAMILY: Family = Family::Css;
     const LABEL: &'static str = "css";
-    const TERMINATORS: Terminators = Terminators::Newlines;
+    const TERMINATORS: Terminators = Terminators::Css;
     const PACKAGES: bool = false;
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;

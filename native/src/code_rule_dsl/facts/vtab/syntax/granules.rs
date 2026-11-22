@@ -65,10 +65,10 @@ pub(super) const SPAN_SLOTS: u32 = rerail_clif::ids::SPAN_SLOTS;
 pub const POSITIONS: u64 = SPAN_SLOTS as u64 * INDEX as u64;
 /// The first slot of the spans'.
 const SPAN_FIRST: u32 = SLOTS - SPAN_SLOTS;
-/// Slots of `Extra`'s spans (`ExtraSpan`): one for each kind of line and for the comments, `MATCH_SLOTS` for the
-/// matches, below the positions'.
-const MATCH_SLOTS: u32 = 12;
-pub const EXTRA_SLOTS: u32 = 4 + MATCH_SLOTS;
+/// Slots of `Extra`'s spans (`ExtraSpan`): one for the lines, one for the comments, `MATCH_SLOTS` for the matches,
+/// below the positions'. Sixteen in all, so the granules' slots (and every node's id) are as they were.
+const MATCH_SLOTS: u32 = 14;
+pub const EXTRA_SLOTS: u32 = 2 + MATCH_SLOTS;
 const EXTRA_FIRST: u32 = SPAN_FIRST - EXTRA_SLOTS;
 /// Slots granules take: `1..EXTRA_FIRST`.
 const GRANULE_SLOTS: u32 = EXTRA_FIRST - 1;
@@ -77,12 +77,8 @@ const GRANULE_SLOTS: u32 = EXTRA_FIRST - 1;
 /// of its own between the granules' and the positions', so no node, position or other kind has its id.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ExtraSpan {
-    /// The whole source (index 0) and its physical lines (`src_line`, from 1).
+    /// The whole source (index 0) and its lines (`src_line`, from 1).
     Line,
-    /// The `\n`-lines (`src_line_lf`, from 1).
-    Lf,
-    /// The tape's lines (`tape_line`, from 1).
-    Tape,
     /// The comments no node is, from 1.
     Comment,
     /// Each `match_all`/`match_group`/`rx_span` match or group, from 0.
@@ -93,10 +89,8 @@ impl ExtraSpan {
     const fn first(self) -> u32 {
         match self {
             ExtraSpan::Line => 0,
-            ExtraSpan::Lf => 1,
-            ExtraSpan::Tape => 2,
-            ExtraSpan::Comment => 3,
-            ExtraSpan::Match => 4,
+            ExtraSpan::Comment => 1,
+            ExtraSpan::Match => 2,
         }
     }
     /// How many spans of the kind a document may have.

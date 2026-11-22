@@ -60,7 +60,7 @@ pub trait Adapter: 'static {
     const FAMILY: Family;
     /// The family's name in diagnostics.
     const LABEL: &'static str;
-    /// The line terminators of the linter the family's ports follow.
+    /// The line terminators of the family's ecosystem (its compiler's, linters' and editors', decision 0612).
     const TERMINATORS: Terminators;
     /// Whether the family names a file's module from the package markers around it (Python's
     /// `__init__.py`): a file without a host module gets the markers' module.

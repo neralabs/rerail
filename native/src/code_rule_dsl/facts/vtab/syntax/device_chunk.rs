@@ -11,7 +11,7 @@
 //!   (0293) when the chunk is made: an interim, until the device's kernels read the tape in the chunk (0293 step 5);
 //! - `core.rerail`'s places (`Shape::Core`'s `Loc` views: `line`, `end_line`, `col`, `docof`), added on a `Loc` view's
 //!   first device read (`fill_locs`): the document's first row in them, its spans past its nodes (tokens, the whole
-//!   text, lines and end points, as `Projected::span` gives them) and its line starts (`core_rr::Lines`).
+//!   text, lines and end points, as `Projected::span` gives them), placed on the facts' line starts (`flines`).
 //!
 //! The kind a view holds is the dialect's canonical code's atom (`Dialect::kind`): each tag's canonical table is in
 //! the block once, and an entry points at its own.
@@ -58,15 +58,14 @@ structure! {
         pub kind: Span<u32>,
         pub field: Span<u16>,
         pub canonical: Span<u16>,
-        /// The spans past the nodes, `[start, end]` each, and the line starts, for the `Loc` views (`fill_locs`).
+        /// The spans past the nodes, `[start, end]` each, for the `Loc` views (`fill_locs`).
         pub spans: Span<u32>,
-        pub lines: Span<u32>,
         /// A guest's places (decision 0055), per `Loc` local: its first line, last line and start column in its
         /// file, `Locs::place`'s, through its placement and its host's lines. Empty for a file's own tree, whose
-        /// places the kernel finds in `lines`.
+        /// places the kernel finds in `flines`.
         pub placed: Span<u32>,
-        /// The facts' line starts (`LineTable::starts`), for the `line` view (`fill_lines`): a node's line is the
-        /// number of them at or before its start (`Facts::start_line`).
+        /// The facts' line starts (`LineTable::starts`), for the `line` view and the `Loc` views (`fill_lines`): a
+        /// line is the number of them at or before a byte (`Facts::start_line`, `LineTable::place`).
         pub flines: Span<u32>,
     }
 }
@@ -157,8 +156,8 @@ pub struct ViewsInPlace {
     pub buffers: Vec<rerail_device::device::Buffer>,
     /// Whether every document's lines are in a slab (`LineTable::placed`), so the `line` view is read in place too.
     pub lines: bool,
-    /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, core.rerail's
-    /// lines in the batch's block), so the `Loc` views are read in place too.
+    /// Whether every document's `Loc` rows are the views' reads' (`ViewEntry::locs`: a file's own tree, or a guest
+    /// placed in its host, its places' lines in a slab), so the `Loc` views are read in place too.
     pub locs: bool,
     /// The cache a 16z document's reads decode its blocks into (decision 0353 step 4b, `view::cache`), which every
     /// stage that reads the batch's views shares: none where no tape is 16z.
@@ -266,7 +265,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
             return refused("views.refused.block");
         }
         let mut row = ViewRow { rows: first_rows, ..Default::default() };
-        if locs && p.locs() > 0 && super::view_docs::ViewEntry::locs(b, p).is_none() {
+        if locs && p.locs() > 0 && super::view_docs::ViewEntry::locs(p).is_none() {
             // Why, by the guest's placement where it has one.
             let why = match p.extra.as_ref().and_then(|x| x.host.as_ref()).map(|(_, place)| place) {
                 Some(super::Placement::Copied { .. }) => "views.refused.locs.guest_copied",
@@ -303,8 +302,9 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
             if !slabs.iter().any(|s| s.device_address() == slab.device_address()) {
                 slabs.push(slab);
             }
-            // Its lines where the device reads them: else the batch's `line` view is made (counted).
-            let table = &p.facts.lines;
+            // Its lines where the device reads them (its places' lines: a guest's are its host's, `Locs::place_lines`):
+            // else the batch's `line` view is made (counted), and its `Loc` views.
+            let table = p.extra.as_deref().map_or(&p.facts.lines, |x| x.place_lines());
             let words = table.words();
             // SAFETY: the words as bytes, their own range.
             let bytes = unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), 4 * words.len()) };
@@ -315,11 +315,12 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
                         slabs.push(slab);
                     }
                 }
-                None if lines => {
-                    crate::code_rule_dsl::prof::count("views.refused.lines_unplaced", 1);
-                    lines = false;
+                None => {
+                    if lines || locs {
+                        crate::code_rule_dsl::prof::count("views.refused.lines_unplaced", 1);
+                    }
+                    (lines, locs) = (false, false);
                 }
-                None => {}
             }
             let entry = super::view_docs::ViewEntry::new(b, p, dialect);
             row.entry = b.offset_of(entry.desc()) as u64;
@@ -541,18 +542,18 @@ pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
     })))
 }
 
-/// Puts the `Loc` views' arrays into `batch`'s chunk, once: each document's first row in them, its spans past its
-/// nodes and its line starts; a guest's places too (decision 0055: its host's lines, through its placement), as the
+/// Puts the `Loc` views' arrays into `batch`'s chunk, once: each document's first row in them and its spans past its
+/// nodes, over the facts' line starts (`fill_lines`); a guest's places too (decision 0055: its host's lines, through its placement), as the
 /// host finds them. False when a document has no places (no `core.rerail` extra) or the block cannot hold them: the views
 /// are then made on the host. A batch with a guest was refused, and its views read on the host for an upload (28 MB
 /// on posthog/hogql).
-// copy (0353 step 4): the line starts and the spans past the nodes copied into the chunk for the `Loc` views. It goes:
-// the views' reads read the lines in place, and the spans where they are written once (Q216).
+// copy (0353 step 4): the spans past the nodes copied into the chunk for the `Loc` views. It goes: the views' reads
+// read the spans where they are written once (Q216).
 pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
-    const LOCS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the Loc views' lines and spans put into the chunk (fill_locs)");
+    const LOCS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the Loc views' spans put into the chunk (fill_locs)");
     *chunk.locs.get_or_init(|| LOCS.time(|| in_block(&chunk.block, || {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rerail's places in the chunk block".into());
-        if batch.docs.iter().any(|p| p.extra.is_none()) {
+        if batch.docs.iter().any(|p| p.extra.is_none()) || !fill_lines(batch, chunk) {
             return false;
         }
         let rows = batch.offsets(View::Loc(Place::Line));
@@ -562,24 +563,21 @@ pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
         for (i, p) in batch.docs.iter().enumerate() {
             let x = p.extra.as_ref().expect("checked above");
             let (len, locs) = (p.len(), p.locs());
-            let starts = x.lines.starts();
-            let (Some(sp), Some(ls)) = (b.try_alloc_t::<u32>(2 * (locs - len) as usize + 1), b.try_alloc_t::<u32>(starts.len().max(1))) else {
+            let Some(sp) = b.try_alloc_t::<u32>(2 * (locs - len) as usize + 1) else {
                 return false;
             };
-            // SAFETY: `sp` holds `2 * (locs - len)` values and `ls` the starts, just allocated in the block; entry `i`
-            // of the table, whose `Loc` fields no reader reads before this returns.
+            // SAFETY: `sp` holds `2 * (locs - len)` values, just allocated in the block; entry `i` of the table, whose
+            // `Loc` fields no reader reads before this returns.
             unsafe {
                 for (j, local) in (len..locs).enumerate() {
                     let [s, e] = p.span(local);
                     *sp.add(2 * j) = s;
                     *sp.add(2 * j + 1) = e;
                 }
-                std::ptr::copy_nonoverlapping(starts.as_ptr(), ls, starts.len());
                 let d = docs.add(i);
                 (*d).loc_row = rows[i] as u32;
                 (*d).locs = locs;
                 Span::set(&raw const (*d).spans, sp, 2 * (locs - len) as usize);
-                Span::set(&raw const (*d).lines, ls, starts.len());
             }
             if x.host.is_some() {
                 let Some(pl) = b.try_alloc_t::<u32>(3 * locs as usize + 1) else { return false };

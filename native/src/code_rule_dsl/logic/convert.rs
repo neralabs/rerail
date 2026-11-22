@@ -836,8 +836,6 @@ pub(in crate::code_rule_dsl) const BASE: &str = "\
 .decl syntax_error(d: int)
 .decl source(d: int, sp: node)
 .decl src_line(d: int, l: int, sp: node)
-.decl src_line_lf(d: int, l: int, sp: node)
-.decl tape_line(d: int, l: int, sp: node)
 .decl line_count(d: int, k: int)
 .decl end_line(n: node, l: int)
 .decl col(n: node, c: int)

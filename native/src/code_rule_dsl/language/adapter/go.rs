@@ -40,7 +40,7 @@ fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
 impl Adapter for Go {
     const FAMILY: Family = Family::Go;
     const LABEL: &'static str = "go";
-    const TERMINATORS: Terminators = Terminators::Newlines;
+    const TERMINATORS: Terminators = Terminators::Lf;
     const PACKAGES: bool = false;
     const PACKAGE_MANIFESTS: bool = false;
     const JSX_RUNTIMES: bool = false;

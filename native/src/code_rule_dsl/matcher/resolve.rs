@@ -844,7 +844,7 @@ struct FileScopes {
     /// is no literal); `None` is a parse whose value is not known.
     value_parses: HashMap<(ValueKey, Grammar), Option<Arc<SubTree>>>,
     /// The file's lines, per linter's terminators (`layout`, `suppress`), built on first use.
-    lines: [Option<Rc<LineTable>>; 2],
+    lines: [Option<Rc<LineTable>>; Terminators::COUNT],
     /// The file's suppression indexes (each linter's comments a `suppress` reads), by type, read on first use
     /// (`file_index`).
     indexes: HashMap<std::any::TypeId, Rc<dyn std::any::Any>>,
@@ -893,7 +893,7 @@ impl FileScopeSlot {
             structures: HashMap::new(),
             parses: HashMap::new(),
             value_parses: HashMap::new(),
-            lines: [None, None],
+            lines: Default::default(),
             indexes: HashMap::new(),
             rerail_ignores: None,
             php_names: None,

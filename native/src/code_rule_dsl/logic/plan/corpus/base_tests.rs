@@ -104,50 +104,51 @@ fn w_lines(source: &str, lf_only: bool) -> Vec<Vec<String>> {
     matches.into_iter().map(|m| r![m.line.unwrap() + 1, &source[m.context]]).collect()
 }
 
-/// `src_line` is W's lines of a `lines` regex (Python's `str.splitlines()`), `src_line_lf` its `terminators: "lf"`
-/// lines, `line_count` their number; a line span's `text` is the line without its terminator, its `line` and
-/// `end_line` its number, its `col` 0.
+/// `src_line` is the file's lines as its language ends them (Python: `\r\n`, `\r`, `\n`; the facts' `LineTable`, decision
+/// 0612), `line_count` the lines a linter counts; a line span's `text` is the line without its terminator, its `line`
+/// and `end_line` its number, its `col` 0. W's lines of a `lines` regex (Python's `str.splitlines()`, which also ends
+/// a line at `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 and U+2029) are the library's `py_line`, made from them.
 #[test]
-fn source_lines_are_ws_regex_lines() {
-    let dir = corpus("lines", &[("a.py", LINES)]);
+fn source_lines_are_the_languages_lines() {
+    let dir = corpus("lines", &[("a.py", LINES), ("b.py", "x = 1\n")]);
     let program = r#"
-.decl src_line(d: number, l: number, sp: span)
-.decl src_line_lf(d: number, l: number, sp: span)
-.decl line_count(d: number, k: number)
-.decl text(n: loc, s: symbol)
-.decl line(n: loc, l: number)
-.decl end_line(n: loc, l: number)
-.decl col(n: loc, c: number)
-.input src_line, src_line_lf, line_count, text, line, end_line, col
-.decl lines(l: number, s: symbol)
-lines(l, s) :- src_line(_, l, sp), text(sp, s), line(sp, l), end_line(sp, l), col(sp, 0).
-.decl lf_lines(l: number, s: symbol)
-lf_lines(l, s) :- src_line_lf(_, l, sp), text(sp, s), line(sp, l), end_line(sp, l), col(sp, 0).
-.decl count(k: number)
-count(k) :- line_count(_, k).
-.output lines, lf_lines, count
+#include "core.rerail"
+#include "data-layer/pub-lines.rerail"
+.decl lines(p: symbol, l: number, s: symbol)
+lines(p, l, s) :- doc(d, p, _), src_line(d, l, sp), text(sp, s), line(sp, l), end_line(sp, l), col(sp, 0).
+.decl split(l: number, s: symbol)
+split(l, s) :- doc(d, "a.py", _), py_line(d, l, s).
+.decl count(p: symbol, k: number)
+count(p, k) :- doc(d, p, _), line_count(d, k).
+.output lines, split, count
 "#;
-    let got = run(&dir, program, &["lines", "lf_lines", "count"]);
-    let (python, lf) = (w_lines(LINES, false), w_lines(LINES, true));
+    let got = run(&dir, program, &["lines", "split", "count"]);
+    let table = |path: &str, source: &str| {
+        let t = LineTable::new(source, Terminators::of(GrammarDialect::Python));
+        (0..t.starts().len()).map(|i| r![path, i + 1, &source[t.start(i)..t.end(i)]]).collect::<Vec<_>>()
+    };
+    let want = sorted(table("a.py", LINES).into_iter().chain(table("b.py", "x = 1\n")));
+    assert!(want.contains(&r!["a.py", "3", "c = 3\x0bd = 4\x0ce = 5\x1cf\x1dg\x1eh\u{85}i\u{2028}j\u{2029}k = 6"]), "{want:?}");
+    assert!(want.contains(&r!["b.py", "2", ""]), "the empty line after a final terminator: {want:?}");
+    assert_eq!(got[0], want);
+    let python = w_lines(LINES, false);
     assert_eq!(python.len(), 13, "{python:?}");
-    assert_eq!(got[2], [[python.len().to_string()]]);
-    assert_eq!(got[0], sorted(python));
-    assert_eq!(got[1], sorted(lf));
+    assert_eq!(got[1], sorted(python));
+    assert_eq!(got[2], [r!["a.py", 5], r!["b.py", 1]]);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A `lines` regex clause as `src_line`, `text` and `match`: W's findings, line for line.
+/// A `lines` regex clause as `py_line` (the library's `str.splitlines()` lines, over `src_line`) and `match`: W's
+/// findings, line for line, a form feed ending a line as `splitlines()` ends it.
 #[test]
-fn a_lines_regex_is_src_line_text_and_match() {
+fn a_lines_regex_is_py_line_and_match() {
     let files = [("a.py", "x = needle\n# needle\n  y = needle; needle\r\nz = 1\x0cneedle = 2\n"), ("b/c.py", "no = 1\n")];
     let dir = corpus("lines-regex", &files);
     let program = r#"
-.decl doc(d: number, path: symbol, module: symbol)
-.decl src_line(d: number, l: number, sp: span)
-.decl text(n: loc, s: symbol)
-.input doc, src_line, text
+#include "core.rerail"
+#include "data-layer/pub-lines.rerail"
 .decl hit(p: symbol, l: number)
-hit(p, l) :- doc(d, p, _), src_line(d, l, sp), text(sp, s), match(".*needle.*", s), !match("\\s*#.*", s).
+hit(p, l) :- doc(d, p, _), py_line(d, l, s), match(".*needle.*", s), !match("\\s*#.*", s).
 .output hit
 "#;
     let got = run(&dir, program, &["hit"]);
@@ -195,18 +196,18 @@ lines(p, l, e) :- doc(d, p, _), source(d, sp), line(sp, l), end_line(sp, e).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `tape_line(d, l, sp)`: the lines `line(n, l)` numbers (the tape's line table, W's `layout` lines), the empty
-/// line after a final terminator included.
+/// `src_line(d, l, sp)`: the lines `line(n, l)` numbers (the facts' line table, W's `layout` lines), the empty line
+/// after a final terminator included.
 #[test]
-fn tape_lines_are_the_line_table() {
+fn src_lines_are_the_line_table() {
     let source = "a = 1\r\nb = 2\rc = 3\x0cd = 4\n";
     let dir = corpus("tape-lines", &[("a.py", source)]);
     let program = r#"
-.decl tape_line(d: number, l: number, sp: span)
+.decl src_line(d: number, l: number, sp: span)
 .decl text(n: loc, s: symbol)
-.input tape_line, text
+.input src_line, text
 .decl lines(l: number, s: symbol)
-lines(l, s) :- tape_line(_, l, sp), text(sp, s).
+lines(l, s) :- src_line(_, l, sp), text(sp, s).
 .output lines
 "#;
     let got = run(&dir, program, &["lines"]);
@@ -407,8 +408,8 @@ none(p) :- doc(d, p, _), source(d, sp), !match_all("needle", sp, _).
 }
 
 /// A file with no grammar that `.scope text` reads (`.md`, `.rst`, `.txt`, …) is a text-only document: `doc`, `source`,
-/// `src_line`, `tape_line`, `line_count` and `match_all`, each as W reads a file of no language (its lines `\r\n`, `\r`,
-/// `\n`, U+2028 and U+2029), and no node. A file that is not UTF-8 is no document; a hidden one neither.
+/// `src_line`, `line_count` and `match_all`, each as W reads a file of no language (its lines `\r\n`, `\r`, `\n`,
+/// U+2028 and U+2029), and no node. A file that is not UTF-8 is no document; a hidden one neither.
 #[test]
 fn text_files_are_text_only_documents() {
     let rst = "Graph query\r\n===========\n\nUse graph_query_builder( no more.\u{2028}needle here\nlast needle";
@@ -422,7 +423,6 @@ fn text_files_are_text_only_documents() {
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl source(d: number, sp: span)
 .decl src_line(d: number, l: number, sp: span)
-.decl tape_line(d: number, l: number, sp: span)
 .decl line_count(d: number, k: number)
 .decl text(n: loc, s: symbol)
 .decl line(n: loc, l: number)
@@ -436,34 +436,31 @@ treed(p) :- doc(d, p, _), node(d, _, _, _, _).
 advertised(p) :- doc(d, p, _), source(d, sp), text(sp, s), contains("graph_query_builder(", s).
 .decl lines(p: symbol, l: number, s: symbol)
 lines(p, l, s) :- doc(d, p, _), src_line(d, l, sp), text(sp, s).
-.decl tape(p: symbol, l: number, s: symbol)
-tape(p, l, s) :- doc(d, p, _), tape_line(d, l, sp), text(sp, s).
 .decl counts(p: symbol, k: number)
 counts(p, k) :- doc(d, p, _), line_count(d, k).
 .decl hits(p: symbol, l: number, e: number, c: number, s: symbol)
 hits(p, l, e, c, s) :- doc(d, p, _), source(d, sp), match_all("needle", sp, m), line(m, l), end_line(m, e), col(m, c), text(m, s).
-.output docs, treed, advertised, lines, tape, counts, hits
+.output docs, treed, advertised, lines, counts, hits
 "#;
-    let got = run(&dir, program, &["docs", "treed", "advertised", "lines", "tape", "counts", "hits"]);
+    let got = run(&dir, program, &["docs", "treed", "advertised", "lines", "counts", "hits"]);
     let texts = [("docs/design/a.md", md), ("docs/l9700_graph_query.rst", rst), ("notes.txt", "")];
     assert_eq!(got[0], sorted(["docs/design/a.md", "docs/l9700_graph_query.rst", "notes.txt", "pkg/m.py"].map(|p| r![p])));
     assert_eq!(got[1], [["pkg/m.py"]]);
     assert_eq!(got[2], [["docs/l9700_graph_query.rst"]]);
-    let lines = |path: &str, source: &str| w_lines(source, false).into_iter().map(|l| [vec![path.to_owned()], l].concat()).collect::<Vec<_>>();
-    assert_eq!(got[3], sorted(texts.iter().flat_map(|(p, s)| lines(p, s)).chain(lines("pkg/m.py", "f(needle)\n"))));
     let table = |path: &str, source: &str| {
         let t = LineTable::new(source, Terminators::Eslint);
         (0..t.starts().len()).map(|i| r![path, i + 1, &source[t.start(i)..t.end(i)]]).collect::<Vec<_>>()
     };
     let python = LineTable::new("f(needle)\n", Terminators::of(GrammarDialect::Python));
     let python = (0..python.starts().len()).map(|i| r!["pkg/m.py", i + 1, &"f(needle)\n"[python.start(i)..python.end(i)]]);
-    assert_eq!(got[4], sorted(texts.iter().flat_map(|(p, s)| table(p, s)).chain(python)));
-    assert!(got[4].contains(&r!["docs/l9700_graph_query.rst", "5", "needle here"]), "U+2028 ends a line: {:?}", got[4]);
-    assert_eq!(got[5], sorted(texts.iter().map(|(p, s)| r![p, w_lines(s, false).len()]).chain([r!["pkg/m.py", 1]])));
+    assert_eq!(got[3], sorted(texts.iter().flat_map(|(p, s)| table(p, s)).chain(python)));
+    assert!(got[3].contains(&r!["docs/l9700_graph_query.rst", "5", "needle here"]), "U+2028 ends a line: {:?}", got[3]);
+    // The lines a linter counts: the empty line after a final terminator left out, as W's.
+    assert_eq!(got[4], sorted(texts.iter().map(|(p, s)| r![p, w_lines(s, false).len()]).chain([r!["pkg/m.py", 1]])));
     let hits = texts.iter().flat_map(|(p, s)| w_regex("needle", false, "text", p, s, true)).chain(w_regex("needle", false, "python", "pkg/m.py", "f(needle)\n", true));
     let hits = sorted(hits);
     assert_eq!(hits.len(), 4, "{hits:?}");
-    assert_eq!(got[6], hits);
+    assert_eq!(got[5], hits);
     let _ = std::fs::remove_dir_all(&dir);
 }
 
@@ -1395,7 +1392,7 @@ from_t(s, e) :- fstring_template(n, "{...}", v), match("(?s:.*)(?:SELECT [{][.][
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// internal-dead-code's decorator names: a decorator's line (`tape_line`) and column, the `match_group` whose match `m`
+/// internal-dead-code's decorator names: a decorator's line (`src_line`) and column, the `match_group` whose match `m`
 /// is at that column (`col(m, c)` joined on a bound `c`), and the group's text. W: the `lines` regex's capture at
 /// each decorator's line and column.
 #[test]
@@ -1406,14 +1403,14 @@ fn match_group_joined_on_its_match_column() {
 .decl node(d: number, n: node, kind: symbol, start: number, end: number)
 .decl field(p: node, f: symbol, c: node)
 .decl child(p: node, c: node, i: number)
-.decl tape_line(d: number, l: number, sp: span)
+.decl src_line(d: number, l: number, sp: span)
 .decl text(n: loc, s: symbol)
 .decl line(n: loc, l: number)
 .decl col(n: loc, c: number)
 .decl deco_at(o: node, d: number, l: number, c: number)
 deco_at(o, d, l, c) :- node(d, dd, "decorated_definition", _, _), field(dd, "definition", o), child(dd, dc, _), node(_, dc, "decorator", _, _), line(dc, l), col(dc, c).
 .decl deco(l: number, x: symbol)
-deco(l, x) :- deco_at(_, d, l, c), tape_line(d, l, sp), match_all("@\\s*(?P<n>[^\\s(]+)", sp, m), match_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), col(m, c), text(g, x).
+deco(l, x) :- deco_at(_, d, l, c), src_line(d, l, sp), match_all("@\\s*(?P<n>[^\\s(]+)", sp, m), match_group("@\\s*(?P<n>[^\\s(]+)", sp, m, "n", g), col(m, c), text(g, x).
 .output deco
 "#;
     let got = run(&dir, program, &["deco"]);

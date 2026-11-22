@@ -1,23 +1,6 @@
     use super::*;
 
     #[test]
-    fn lines_follow_each_languages_terminators() {
-        let py = Lines::new("a\r\nb\rc\n\nd", true);
-        assert_eq!(py.count(), 5);
-        assert_eq!((1..=5).map(|l| py.span(l)).collect::<Vec<_>>(), [[0, 1], [3, 4], [5, 6], [7, 7], [8, 9]]);
-        assert_eq!(py.line(5), 3);
-        let js = Lines::new("a\r\nb\rc\n", false);
-        assert_eq!(js.count(), 2);
-        assert_eq!(js.span(1), [0, 1]);
-        assert_eq!(js.span(2), [3, 6]);
-        assert_eq!(Lines::new("", false).count(), 1);
-        assert_eq!(Lines::new("", true).count(), 0);
-        // A node ending at a line's start ends on the line before.
-        assert_eq!(js.place([0, 3]), (1, 1, 0));
-        assert_eq!(js.place([4, 5]), (2, 2, 1));
-    }
-
-    #[test]
     fn literals_decode_per_language() {
         let lit = |f, k, t| literal(f, k, t, false);
         assert_eq!(lit(Family::Python, "string", r#""a\nb""#).str.as_deref(), Some("a\nb"));

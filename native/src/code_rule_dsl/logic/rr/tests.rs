@@ -1497,34 +1497,53 @@ given(x) :- node(_, n, "call", x, _), !unset(n).
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Source scanners use str.splitlines(), while AST positions use physical lines.
-/// Keep both contracts, including long lines, empty lines and CRLF as one separator.
+/// A file's lines are its language's (decision 0612), one definition for `src_line` and every place: Python's end at
+/// `\r\n`, `\r` and `\n` alone (CPython's tokenizer, Ruff), so a `\v`, `\f`, `\x1c`-`\x1e`, `\x85`, U+2028 or U+2029
+/// stays inside a line; ECMAScript's at U+2028 and U+2029 too (ESLint, TypeScript); Rust's at `\n` alone (rustc),
+/// a lone `\r` inside a line. Long and empty lines are whole, the empty line after a final terminator is one, and a
+/// node's `line` is the `src_line` holding it. Each document's lines are its own.
 #[test]
-fn python_split_lines_are_lossless_and_document_local() {
-    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("splitlines");
-    std::fs::create_dir_all(&dir).unwrap();
+fn a_files_lines_are_its_languages() {
     let long = "x".repeat(400);
-    let src = format!("{long}\u{000b}two\u{000c}\u{001c}four\u{001d}five\u{001e}six\u{0085}seven\u{2028}eight\u{2029}nine\r\nten\releven\n");
-    std::fs::write(dir.join("a.py"), src).unwrap();
-    std::fs::write(dir.join("b.py"), "short").unwrap();
-    std::fs::write(dir.join("empty.py"), "").unwrap();
-    let program = r#"
+    let tail = "\u{000b}two\u{000c}\u{001c}four\u{001d}five\u{001e}six\u{0085}seven\u{2028}eight\u{2029}nine";
+    let first = format!("{long}{tail}");
+    let a = format!("{first}\r\nten\releven\nf(x)\n");
+    // Each language's files, its lines (from 1), and the line its call is on.
+    type Case<'a> = (&'a str, Vec<(&'a str, &'a str, Vec<&'a str>)>, Vec<(&'a str, u32)>);
+    let cases: [Case<'_>; 3] = [
+        ("python", vec![("a.py", &a, vec![&first, "ten", "eleven", "f(x)", ""]), ("b.py", "short", vec!["short"]), ("empty.py", "", vec![""])], vec![("a.py", 4)]),
+        ("javascript", vec![("c.js", "a\u{2028}b\rc\r\nf(x)\n", vec!["a", "b", "c", "f(x)", ""])], vec![("c.js", 4)]),
+        ("rust", vec![("d.rs", "a\rb\r\nfn f() { g(x) }\n", vec!["a\rb", "fn f() { g(x) }", ""])], vec![("d.rs", 2)]),
+    ];
+    for (language, files, calls) in cases {
+        let dir = crate::code_rule_dsl::fixtures::temp().with_extension(format!("lines-{language}"));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        for (path, source, _) in &files {
+            std::fs::write(dir.join(path), source).unwrap();
+        }
+        let program = format!(r#"
+.language {language}
 .decl seen(p: symbol, l: number, t: symbol)
-seen(p, l, t) :- doc(d, p, _), split_line(d, l, t).
-.output seen
-"#;
-    let policy = dir.join("lines.rerail");
-    std::fs::write(&policy, program).unwrap();
-    let program = crate::code_rule_dsl::tools::read_rr(&policy).unwrap();
-    let out = dir.join("out");
-    crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
-    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap();
-    let lines = [&long, "two", "", "four", "five", "six", "seven", "eight", "nine", "ten", "eleven"];
-    let mut expected: Vec<Vec<String>> = lines.iter().enumerate().map(|(i, t)| vec!["a.py".to_owned(), (i + 1).to_string(), (*t).to_owned()]).collect();
-    expected.push(vec!["b.py".to_owned(), "1".to_owned(), "short".to_owned()]);
-    expected.sort();
-    assert_eq!(rows, expected);
-    let _ = std::fs::remove_dir_all(&dir);
+seen(p, l, t) :- doc(d, p, _), src_line(d, l, sp), text(sp, t).
+.decl call_at(p: symbol, l: number)
+call_at(p, l) :- doc(d, p, _), node(d, n, k, _, _), (k = "call" ; k = "call_expression"), line(n, l), src_line(d, l, sp), text(sp, t), contains("(x)", t).
+.output seen, call_at
+"#);
+        let policy = dir.join("lines.rerail");
+        std::fs::write(&policy, program).unwrap();
+        let program = crate::code_rule_dsl::tools::read_rr(&policy).unwrap();
+        let out = dir.join("out");
+        crate::code_rule_dsl::logic::plan::corpus::run(&program, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap();
+        let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, "seen").unwrap();
+        let mut expected: Vec<Vec<String>> = files.iter().flat_map(|(p, _, lines)| lines.iter().enumerate().map(move |(i, t)| vec![(*p).to_owned(), (i + 1).to_string(), (*t).to_owned()])).collect();
+        expected.sort();
+        assert_eq!(rows, expected, "{language}");
+        let got = crate::code_rule_dsl::logic::plan::output::shown(&out, "call_at").unwrap();
+        let want: Vec<Vec<String>> = calls.iter().map(|(p, l)| vec![(*p).to_owned(), l.to_string()]).collect();
+        assert_eq!(got, want, "{language}: a call's line is the src_line holding it");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }
 
 /// Empty scopes still run global absence checks; they must not become a planning error or an early return.
@@ -1560,7 +1579,7 @@ fn explicit_input_files_preserve_the_callers_document_batch() {
 .policy "explicit-inputs" revision 1
 .language python
 .violation Seen(at: span, t: symbol) "{t}"
-Seen(@place(p, l), t) :- doc(d, p, _), split_line(d, l, t).
+Seen(@place(p, l), t) :- doc(d, p, _), src_line(d, l, sp), text(sp, t).
 "#).unwrap();
     let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join("out"),
         &serde_json::json!({"inputFiles": [".hidden/a.txt", "included.py"]})).unwrap();
@@ -1585,7 +1604,7 @@ fn a_policy_read_once_still_reads_the_roots_settings() {
 .policy "settings-read" revision 1
 .language python
 .violation Seen(at: span, m: symbol) "{m}"
-Seen(@place(p, l), m) :- doc(d, p, _), split_line(d, l, _), env("mark", m).
+Seen(@place(p, l), m) :- doc(d, p, _), src_line(d, l, _), env("mark", m).
 "#).unwrap();
     let marks = |out: &str| -> Vec<String> {
         let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join(out), &serde_json::Value::Null).unwrap();
@@ -1616,30 +1635,6 @@ fn a_handed_program_run_again_finds_the_same() {
     crate::code_rule_dsl::logic::plan::corpus::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
     let _ = std::fs::remove_dir_all(&dir);
     assert_eq!(again.unwrap(), first);
-}
-
-/// async_executor uses str.split('\n'), not physical lines or Python splitlines.
-#[test]
-fn lf_lines_keep_other_separators_and_the_trailing_empty_line() {
-    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrlf");
-    let root = dir.join("corpus");
-    std::fs::create_dir_all(&root).unwrap();
-    let first = format!("{}\rtwo\u{2028}three\u{b}four", "x".repeat(400));
-    std::fs::write(root.join("a.py"), format!("{first}\nfive\n")).unwrap();
-    std::fs::write(root.join("empty.py"), "").unwrap();
-    let policy = dir.join("rule.rerail");
-    std::fs::write(&policy, r#"
-.policy "lf-lines" revision 1
-.language python
-.violation Seen(at: span, text: symbol) "{text}"
-Seen(@place(p, l), t) :- doc(d, p, _), lf_line(d, l, t).
-"#).unwrap();
-    let result = crate::code_rule_dsl::tools::run_rr(&policy, &root, &dir.join("out"), &serde_json::Value::Null).unwrap();
-    let mut actual: Vec<(String, u64, String)> = result["diagnostics"].as_array().unwrap().iter()
-        .map(|r| (r["path"].as_str().unwrap().to_owned(), r["line"].as_u64().unwrap(), r["parameters"]["text"].as_str().unwrap().to_owned())).collect();
-    actual.sort();
-    assert_eq!(actual, vec![("a.py".into(),1,first), ("a.py".into(),2,"five".into()),
-                           ("a.py".into(),3,"".into()), ("empty.py".into(),1,"".into())]);
 }
 
 /// Existing allowlist bytes must verify through the public reader and relational execution path.
