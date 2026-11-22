@@ -201,8 +201,8 @@ pub fn pruned(version: Arc<Version>) -> Result<Arc<Version>, String> {
 
 /// `version` without the rules no row can reach in a run that admits no guest (decision 0563 A): its guest relations
 /// (`guests::ONLY`) empty, and what only those rules read (`prune::Unfillable`). `keep`: what another part reads of
-/// it (the file-local part's exports). `part` names it in the decision.
-pub fn unfillable(version: Arc<Version>, part: &str, keep: &[String]) -> Result<Arc<Version>, String> {
+/// it (the file-local part's exports). `part` names it in the decision. With the rules it dropped.
+pub fn unfillable(version: Arc<Version>, part: &str, keep: &[String]) -> Result<(Arc<Version>, usize), String> {
     let rules = version.size();
     let mut p = Pipeline::new("unfillable", version);
     let mut unfillable = prune::Unfillable::new(super::guests::ONLY.iter().map(|r| (*r).to_owned()), keep.iter().cloned());
@@ -212,7 +212,7 @@ pub fn unfillable(version: Arc<Version>, part: &str, keep: &[String]) -> Result<
     crate::code_rule_dsl::logic::profile::decision("the rules no row can reach (decision 0563 A)", || {
         format!("{part}: the run admits no guest: {} rules join an empty relation, {} more only they read ({rules} → {} rules); {} relations empty: {found}", unfillable.dropped, unfillable.unread, v.size(), unfillable.found.len())
     });
-    Ok(v)
+    Ok((v, unfillable.dropped + unfillable.unread))
 }
 
 /// The passes before lowering, on the version (decision 0281's path, steps 6c–6e): the functors only CPython gives

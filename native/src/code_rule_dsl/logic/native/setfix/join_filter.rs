@@ -224,11 +224,14 @@ impl JoinFilter {
         }) else {
             return Err("the probe is by no column the scan binds");
         };
+        // The scan's rows first: a walk under `MIN_SCAN` is never screened, so the probe side is not measured for it.
+        // Its length can cost what the walk does not: a text test's is its strings' that pass, every document made
+        // (decision 0494); on ep2's comprehension edit a removal join of a few `text` rows made 299 documents so.
         let outer = Column::of(left, store, left_col).ok_or("the scan is of a view with ids")?;
-        let inner = Column::of(right, store, right_col).ok_or("the probe is of a view with ids")?;
         if outer.len < MIN_SCAN {
             return Err("under 256 scan rows");
         }
+        let inner = Column::of(right, store, right_col).ok_or("the probe is of a view with ids")?;
         // The probe side's own filter, else one built for this walk. A full one refuses little, and its samples say so.
         let (filter, reservation, kept) = match inner.keys.map(|sk| (sk, sk.filter())) {
             Some((_, Some(f))) => (Arc::clone(f), None, true),
@@ -378,6 +381,59 @@ mod tests {
         run_join_collect(&j, &store, &mut syms, &[], &mut answers).unwrap();
         answers.sort_unstable();
         (chosen, answers)
+    }
+
+    /// A scan under `MIN_SCAN` rows is never screened, and its probe side is not measured for it: a source's length
+    /// can cost what the walk does not (a text test's is every document made, decision 0494; ep2's comprehension
+    /// edit made 299 documents so, for a removal join of a few `text` rows). Here the probe side counts its
+    /// `len` calls; the walk of 10 rows probes it by `lookup` alone.
+    #[test]
+    fn a_small_scan_does_not_measure_its_probe_side() {
+        use super::super::{InRel, Interner, parse_join, run_join_collect, symbols};
+        use crate::code_rule_dsl::facts::vtab::Source;
+        struct Counted(std::sync::atomic::AtomicUsize);
+        impl Source for Counted {
+            fn columns(&self) -> Vec<String> {
+                vec!["v".into()]
+            }
+            fn len(&self) -> usize {
+                self.0.fetch_add(1, Relaxed);
+                1000
+            }
+            fn estimated_matches(&self, _: usize, _: bool) -> usize {
+                1
+            }
+            fn indexed(&self, column: usize) -> bool {
+                column == 0
+            }
+            fn lookup(&self, _: usize, values: &[i64]) -> Option<Vec<usize>> {
+                Some(values.iter().filter(|&&v| (0..1000).contains(&v) && v % 2 == 0).map(|&v| v as usize).collect())
+            }
+            fn value(&self, row: usize, _: usize) -> i64 {
+                row as i64
+            }
+        }
+        let path = crate::code_rule_dsl::fixtures::temp();
+        drop(crate::code_rule_dsl::fixtures::open(&path));
+        let db = rusqlite::Connection::open(&path).unwrap();
+        let symbols = symbols(&db).unwrap();
+        let mut syms = Interner::for_loading(&symbols);
+        let store = Store { rels: Vec::new(), syms: symbols };
+        let mut j = parse_join(&db, "pos c0 v0\npos c1 v0\nhead v0", &mut syms).unwrap();
+        let counted = Arc::new(Counted(std::sync::atomic::AtomicUsize::new(0)));
+        let outer = InRel::kept(vec![b'i'], (0..10).collect(), 10);
+        let inner = InRel::over_source(Arc::clone(&counted) as Arc<dyn Source>, vec![b'i']);
+        for (step, (rel, cols)) in j.steps.iter_mut().zip([(outer, &[][..]), (inner, &[0][..])]) {
+            let Step::Atom { src, .. } = step else { panic!("expected an atom") };
+            *src = Src::In(rel.clone(), rel.index(cols));
+        }
+        let before = counted.0.load(Relaxed);
+        assert!(JoinFilter::choose(&j, &store).is_none(), "10 scan rows: no screen");
+        assert_eq!(counted.0.load(Relaxed), before, "the probe side is not measured for a walk under 256 rows");
+        let mut answers = Vec::new();
+        run_join_collect(&j, &store, &mut syms, &[], &mut answers).unwrap();
+        answers.sort_unstable();
+        assert_eq!(answers, vec![0, 2, 4, 6, 8]);
     }
 
     /// A test between the scan and the probe: the probe, step 2, is screened, every match kept.
