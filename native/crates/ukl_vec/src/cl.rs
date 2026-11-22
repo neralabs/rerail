@@ -157,10 +157,31 @@ fn width_mask(m: M) -> i64 {
     if m.bits() >= 64 { -1 } else { ((1u64 << m.bits()) - 1) as i64 }
 }
 
-/// Compiles kernel `ssa` (named `name`) at width `w` (32 if it has a cross-lane operation): the code, and its kept
-/// form (`load`), if its relocations are ones it can hold.
+/// Compiles kernel `ssa` (named `name`) at width `w`, or for `w` 0 the width its register pressure chooses
+/// (`pressure`; 32 if it has a cross-lane operation): the code, and its kept form (`load`), if its relocations are
+/// ones it can hold.
 pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, Option<Vec<u8>>)> {
-    let w = if ssa.funcs[0].cross { 32 } else { w };
+    let w = if ssa.funcs[0].cross {
+        32
+    } else if w == 0 {
+        let ps = crate::pressure::of(ssa);
+        let files = crate::pressure::Files::host();
+        let w = crate::pressure::width(&ps, files);
+        if std::env::var("RERAIL_UKL_VEC_TIMES").is_ok() {
+            let row: Vec<String> = crate::pressure::WIDTHS
+                .iter()
+                .enumerate()
+                .map(|(k, &w)| {
+                    let (v, i) = ps.iter().fold((0, 0), |(v, i), p| (v.max(p.at[k].vec + p.at[k].float), i.max(p.at[k].int)));
+                    format!("w{w} {v}v {i}i {:.1}", crate::pressure::lane_cost(&ps, k, files))
+                })
+                .collect();
+            eprintln!("PRESSURE {name}: {} -> w{w}", row.join(", "));
+        }
+        w
+    } else {
+        w
+    };
     if !matches!(w, 1 | 2 | 4 | 8 | 16 | 32) {
         return Err(Error(format!("{name}: a width of {w} lanes")));
     }
@@ -247,7 +268,7 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
 pub fn host() -> String {
     // FNV-1a over the sources.
     let mut h = 0xcbf2_9ce4_8422_2325u64;
-    for src in [include_str!("ssa.rs"), include_str!("cl.rs"), include_str!("exec.rs"), include_str!("fiber.rs")] {
+    for src in [include_str!("ssa.rs"), include_str!("cl.rs"), include_str!("exec.rs"), include_str!("fiber.rs"), include_str!("pressure.rs")] {
         for &b in src.as_bytes() {
             h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
         }
@@ -1279,9 +1300,32 @@ impl<'a, 'b> Cg<'a, 'b> {
             let z = self.b.ins().uextend(I64, z);
             let bad = self.b.ins().band(z, any);
             self.fail_if(bad, what);
+            // A constant power of two: a mask or a shift of the lanes, unsigned.
+            let i = *self.f.inst(x);
+            let k = (i.op == O::Const).then(|| u64::from(i.a) | u64::from(i.b) << 32);
+            if let Some(k) = k.filter(|&k| k.is_power_of_two() && !m.signed() && !wide(m) && !m.float() && self.w > 1) {
+                let r: Vec<Value> = pa
+                    .iter()
+                    .map(|&p| {
+                        if op == Op::Rem {
+                            let c = self.b.ins().iconst(I32, (k - 1) as i64);
+                            let c = self.b.ins().splat(I32X4, c);
+                            self.b.ins().band(p, c)
+                        } else {
+                            let c = self.b.ins().iconst(I32, i64::from(k.trailing_zeros()));
+                            self.b.ins().ushr(p, c)
+                        }
+                    })
+                    .collect();
+                return r;
+            }
             let one = self.b.ins().iconst(I64, 1);
             let zc = self.b.ins().icmp_imm(IntCC::Equal, d, 0);
             let safe = self.b.ins().select(zc, one, d);
+            if self.vec_div(m) {
+                let q = self.splat(safe, m);
+                return self.div_f64(op, m, &pa, &q);
+            }
             let r = self.per_lane(&[(pa, m)], m, &mut |g, xs| g.u_div(op, m, xs[0], safe, false));
             return r;
         }
@@ -1294,7 +1338,55 @@ impl<'a, 'b> Cg<'a, 'b> {
         let one = self.b.ins().iconst(I64, 1);
         let ones = self.splat(one, m);
         let px = self.select_lanes(mask, m, px, ones);
+        if self.vec_div(m) {
+            return self.div_f64(op, m, &pa, &px);
+        }
         self.per_lane(&[(pa, m), (px, m)], m, &mut |g, xs| g.u_div(op, m, xs[0], xs[1], false))
+    }
+
+    /// Whether lanes of `m` divide as vectors (`div_f64`): integers of 32 bits or fewer, on AArch64 (whose vector
+    /// conversions of 64-bit lanes Cranelift has), at a width of two lanes or more.
+    fn vec_div(&self, m: M) -> bool {
+        cfg!(target_arch = "aarch64") && self.w > 1 && !wide(m) && !m.float() && !m.is_agg()
+    }
+
+    /// Lanes `pa` divided by `px` (no lane by 0), integers of 32 bits or fewer: each pair of lanes as 64-bit floats,
+    /// whose quotient, truncated, is the integer's (an operand below 2^32 is exact, and the quotient's rounding error
+    /// below 2^-21 / divisor, less than its distance to the next integer); the remainder `a - q * x`. The quotient's
+    /// low 32 bits wrap as the integer's (`i32::MIN / -1`).
+    fn div_f64(&mut self, op: Op, m: M, pa: &[Value], px: &[Value]) -> Vec<Value> {
+        let signed = m.signed();
+        let mut out = Vec::new();
+        for (&a, &x) in pa.iter().zip(px) {
+            let mut q64 = Vec::new();
+            for high in [false, true] {
+                let widen = |b: &mut FunctionBuilder, v: Value| match (signed, high) {
+                    (true, false) => b.ins().swiden_low(v),
+                    (true, true) => b.ins().swiden_high(v),
+                    (false, false) => b.ins().uwiden_low(v),
+                    (false, true) => b.ins().uwiden_high(v),
+                };
+                let fa = widen(&mut self.b, a);
+                let fa = self.b.ins().fcvt_from_sint(F64X2, fa);
+                let fx = widen(&mut self.b, x);
+                let fx = self.b.ins().fcvt_from_sint(F64X2, fx);
+                let fq = self.b.ins().fdiv(fa, fx);
+                q64.push(self.b.ins().fcvt_to_sint_sat(I64X2, fq));
+            }
+            let imm = self.b.func.dfg.immediates.push(ConstantData::from(vec![0u8, 1, 2, 3, 8, 9, 10, 11, 16, 17, 18, 19, 24, 25, 26, 27]));
+            let lo = self.b.ins().bitcast(I8X16, le(), q64[0]);
+            let hi = self.b.ins().bitcast(I8X16, le(), q64[1]);
+            let q = self.b.ins().shuffle(lo, hi, imm);
+            let q = self.b.ins().bitcast(I32X4, le(), q);
+            let r = if op == Op::Div {
+                q
+            } else {
+                let p = self.b.ins().imul(q, x);
+                self.b.ins().isub(a, p)
+            };
+            out.push(self.norm32(m, r));
+        }
+        out
     }
 
     fn cast_lanes(&mut self, from: M, to: M, a: V) -> Vec<Value> {
@@ -1465,23 +1557,113 @@ impl<'a, 'b> Cg<'a, 'b> {
             }
             return self.assemble(m, &xs);
         }
-        let pa = self.lanes(addr, M::PTR);
         let k = self.mask(mask);
-        let scratch = self.b.ins().load(I64, mf(), self.env, self.pl.scratch);
         let full = mask == self.entry_v && self.kernel;
-        let mut xs = Vec::new();
-        for j in 0..w {
-            let a = self.extract(&pa, M::PTR, j);
-            let a = if full {
-                a
-            } else {
-                let on = self.mask_lane(&k, j);
-                self.b.ins().select(on, a, scratch)
-            };
-            let u = self.load_u(m, a, 0);
-            xs.push(self.lane_scalar(u, m));
+        if w > 1 {
+            if let Some((base, off, from)) = self.based(addr) {
+                // A uniform base and each lane's 32-bit offset: a load of base and the offset, extended, a lane; a
+                // lane that does not run reads the first running lane's place (none running: the scratch area's).
+                let po = self.lanes(off, from);
+                let (base, po) = if full {
+                    (base, po)
+                } else {
+                    let bits = self.mask_bits(&k);
+                    let none = self.b.ins().icmp_imm(IntCC::Equal, bits, 0);
+                    let idx = self.b.ins().ctz(bits);
+                    let idx = self.b.ins().band_imm(idx, i64::from(w - 1));
+                    let first = self.lane_at(&po, from, idx);
+                    let first = self.b.ins().ireduce(I32, first);
+                    let zero = self.b.ins().iconst(I32, 0);
+                    let first = self.b.ins().select(none, zero, first);
+                    let scratch = self.b.ins().load(I64, mf(), self.env, self.pl.scratch);
+                    let base = self.b.ins().select(none, scratch, base);
+                    let sp = self.b.ins().splat(I32X4, first);
+                    let po: Vec<Value> = po.iter().zip(&k).map(|(&o, &km)| self.b.ins().bitselect(km, o, sp)).collect();
+                    (base, po)
+                };
+                return self.gather(m, &mut |g, j| {
+                    let o = g.b.ins().extractlane(po[(j / 4) as usize], (j % 4) as u8);
+                    let o = if from.signed() { g.b.ins().sextend(I64, o) } else { g.b.ins().uextend(I64, o) };
+                    g.b.ins().iadd(base, o)
+                });
+            }
         }
-        self.assemble(m, &xs)
+        let pa = self.lanes(addr, M::PTR);
+        let pa = if full || w == 1 {
+            pa
+        } else {
+            // A lane that does not run reads the scratch area: the addresses selected as vectors, two lanes a part.
+            let scratch = self.b.ins().load(I64, mf(), self.env, self.pl.scratch);
+            let ss = self.b.ins().splat(I64X2, scratch);
+            pa.iter()
+                .enumerate()
+                .map(|(p, &a)| {
+                    let km = k[p / 2];
+                    let wide_m = if p % 2 == 0 { self.b.ins().swiden_low(km) } else { self.b.ins().swiden_high(km) };
+                    self.b.ins().bitselect(wide_m, a, ss)
+                })
+                .collect()
+        };
+        if w == 1 && !full {
+            let scratch = self.b.ins().load(I64, mf(), self.env, self.pl.scratch);
+            let on = self.mask_lane(&k, 0);
+            let a = self.b.ins().select(on, pa[0], scratch);
+            let u = self.load_u(m, a, 0);
+            return vec![self.lane_scalar(u, m)];
+        }
+        self.gather(m, &mut |g, j| g.extract(&pa, M::PTR, j))
+    }
+
+    /// If lanes address `addr` is a uniform base plus each lane's 32-bit integer, extended: the base, the integer's
+    /// value and its type.
+    fn based(&mut self, addr: V) -> Option<(Value, V, M)> {
+        let i = *self.f.inst(addr);
+        if i.op != O::Bin || Op::of(u32::from(i.sub)) != Op::Add {
+            return None;
+        }
+        for (u, o) in [(i.a, i.b), (i.b, i.a)] {
+            let Rp::U(base) = self.vals[u as usize] else { continue };
+            let c = *self.f.inst(o);
+            if c.op != O::Cast || c.shape != Shape::Lanes {
+                continue;
+            }
+            let from = M(c.b);
+            if from.bytes() == 4 && !from.float() && !from.is_agg() && matches!(self.vals[c.a as usize], Rp::L(_)) {
+                return Some((base, c.a, from));
+            }
+        }
+        None
+    }
+
+    /// The parts of `m` whose lane `j` is the value of `m` at the address `addr(j)` gives, each part made as its lanes
+    /// are loaded (no lane's value kept past its part's).
+    fn gather(&mut self, m: M, addr: &mut dyn FnMut(&mut Self, u32) -> Value) -> Vec<Value> {
+        if self.w == 1 {
+            let a = addr(self, 0);
+            let u = self.load_u(m, a, 0);
+            return vec![self.lane_scalar(u, m)];
+        }
+        let (n, t) = parts(m, self.w);
+        let per = if wide(m) { 2 } else { 4 };
+        let mut out = Vec::with_capacity(n);
+        for p in 0..n as u32 {
+            let mut v = None;
+            for l in 0..per {
+                let j = p * per + l;
+                if j >= self.w {
+                    break;
+                }
+                let a = addr(self, j);
+                let u = self.load_u(m, a, 0);
+                let x = self.lane_scalar(u, m);
+                v = Some(match v {
+                    None => self.b.ins().splat(t, x),
+                    Some(v) => self.b.ins().insertlane(v, x, l as u8),
+                });
+            }
+            out.push(v.expect("a part's lanes"));
+        }
+        out
     }
 
     fn store_lanes(&mut self, m: M, addr: V, x: V, mask: V) {

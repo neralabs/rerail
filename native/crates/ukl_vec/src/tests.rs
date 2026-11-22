@@ -429,3 +429,137 @@ fn ssa_runs_equal(p: &super::lower::Program, k: &super::vector::Kernel, want: &[
         assert_eq!(run_on(p, &again, super::run::Exec::Ssa), want, "{} at width {w}: the compiled SSA against the interpreter", k.name);
     }
 }
+
+/// Kernel `t_rule` of a source whose body is `body`, lowered and vectorized.
+fn kernel_of(body: &str) -> (super::lower::Program, super::vector::Kernel) {
+    let text = format!(
+        "#include <ukl/memory.h>\n#include <ukl/group.h>\nDEFINE_KERNEL2(rule, t_rule,\n               RWBUFFER, uint32_t, out, \"[64]\",\n               LID0,     uint32_t, lid, ,\n               LANE,     uint16_t, lane, )\n{{\n{body}\n}}\n"
+    );
+    let src = super::source("/<kernels>/rule.uglykl", &text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_rule").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    (p, k)
+}
+
+/// The register pressure a width gives: a kernel of few values live runs wide, one of many (each live to the end)
+/// narrower, where its values fit the registers; and the pressure model's counts are a lanes value's parts.
+#[test]
+fn the_width_is_the_one_whose_registers_hold_the_values_live() {
+    let files = super::pressure::Files { vec: 28, int: 24, float: 0 };
+    let (p, k) = kernel_of("    uint32_t a = out[(lid + 1u) % 64u] * 3u + lid;\n    out[lid] = a ^ (a >> 2);");
+    let few = super::pressure::of(&ssa_of(&p, &k));
+    let w_few = super::pressure::width(&few, files);
+    let names: Vec<String> = (0..20).map(|j| format!("a{j}")).collect();
+    let mut body = String::new();
+    for (j, n) in names.iter().enumerate() {
+        body += &format!("    uint32_t {n} = out[(lid + {j}u) % 64u] * {}u + lid;\n", 2 * j + 3);
+    }
+    body += &format!("    out[lid] = {};", names.join(" ^ "));
+    let (p2, k2) = kernel_of(&body);
+    let many = super::pressure::of(&ssa_of(&p2, &k2));
+    let w_many = super::pressure::width(&many, files);
+    // At width 8 each of the 20 lanes values is two vector registers: at least 40 live at the last.
+    let at8 = many.iter().map(|f| f.at[3].vec).max().unwrap();
+    assert!(at8 >= 40, "the 20 values at width 8: {at8} vector registers");
+    let ats = |ps: &[super::pressure::FuncPressure]| ps.iter().map(|f| (f.lanes, f.scalar, f.other, f.at[0], f.at[2], f.at[5])).collect::<Vec<_>>();
+    assert!(w_few >= 8, "a kernel of few values runs wide: {w_few} ({:?})", ats(&few));
+    assert!(w_many < w_few, "one of many values runs narrower: {w_many} against {w_few} ({:?})", ats(&many));
+    // Both run as the interpreter does at the width chosen.
+    for (p, k) in [(&p, &k), (&p2, &k2)] {
+        let want = run_on(p, k, super::run::Exec::Interpret);
+        let ssa = ssa_of(p, k);
+        let (c, _) = super::cl::compile(&ssa, &k.name, 0, &super::exec::places()).unwrap();
+        let again = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = again.cl.set(Ok(c));
+        assert_eq!(run_on(p, &again, super::run::Exec::Ssa), want);
+    }
+}
+
+/// A development measurement (`RERAIL_UKL_VEC_BENCH`): the 20-values kernel's launch time at each width.
+#[test]
+fn width_times() {
+    if std::env::var("RERAIL_UKL_VEC_BENCH").is_err() {
+        return;
+    }
+    let names: Vec<String> = (0..20).map(|j| format!("a{j}")).collect();
+    let mut body = String::new();
+    for (j, n) in names.iter().enumerate() {
+        body += &format!("    uint32_t {n} = out[(lid + {j}u) % 64u] * {}u + lid;\n", 2 * j + 3);
+    }
+    body += &format!("    out[lid] = {};", names.join(" ^ "));
+    for b in [&body, &"    uint32_t a = out[(lid + 1u) % 64u] * 3u + lid;\n    out[lid] = a ^ (a >> 2);".to_string()] {
+        let (p, k) = kernel_of(b);
+        let ssa = ssa_of(&p, &k);
+        let mut out = vec![0u32; 64];
+        let ptr = (out.as_mut_ptr() as u64).to_le_bytes().to_vec();
+        let args = [super::run::Arg::Bytes(ptr), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
+        let ps = super::pressure::of(&ssa);
+        let chosen = super::pressure::width(&ps, super::pressure::Files::host());
+        for w in [1u32, 2, 4, 8, 16, 32] {
+            let (c, _) = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap();
+            let kk = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+            let _ = kk.cl.set(Ok(c));
+            let go = || super::run::run(&p, &kk, &args, super::run::Launch { grid: [256, 1, 1], block: [64, 1, 1], local: 0, resident: 1, exec: super::run::Exec::Ssa }).unwrap();
+            go();
+            let t = std::time::Instant::now();
+            for _ in 0..20 {
+                go();
+            }
+            eprintln!("BENCH w{w}: {:.1} us a launch (chosen w{chosen})", t.elapsed().as_secs_f64() * 1e6 / 20.0);
+        }
+    }
+}
+
+/// Division and remainder of 32-bit and narrower lanes, as vectors: unsigned and signed, by a constant (a power of
+/// two among them), by a uniform divisor and by one that varies, negative operands and `i32::MIN / -1` (which
+/// wraps) among them; each lane's as Rust's wrapping operations.
+#[test]
+fn thirty_two_bit_lanes_divide_as_each_lanes_integer() {
+    let out = ran(concat!(
+        "    uint32_t u = lid * 2654435761u;\n",
+        "    int32_t s = (int32_t)u;\n",
+        "    uint32_t d = (lid % 7u) + 1u;\n",
+        "    int32_t sd = lid % 3u == 0u ? -(int32_t)d : (int32_t)d;\n",
+        "    uint32_t k = out[63] + 10u;\n",
+        "    int32_t mn = lid == 5u ? (int32_t)0x80000000u : s;\n",
+        "    int32_t m1 = lid == 5u ? -1 : sd;\n",
+        "    uint8_t b = (uint8_t)u;\n",
+        "    uint32_t r = 0u;\n",
+        "    switch (lid % 8u) {\n",
+        "    case 0u: r = u / 10u + u % 64u; break;\n",
+        "    case 1u: r = u % 10u ^ u / 64u; break;\n",
+        "    case 2u: r = (uint32_t)(s / 7) ^ (uint32_t)(s % 7); break;\n",
+        "    case 3u: r = (uint32_t)(s / sd) + (uint32_t)(s % sd); break;\n",
+        "    case 4u: r = u / d ^ u % d; break;\n",
+        "    case 5u: r = (uint32_t)(mn / m1) ^ (uint32_t)(s % 16); break;\n",
+        "    case 6u: r = u / k + u % k; break;\n",
+        "    default: r = (uint32_t)(b / (uint8_t)d) + (uint32_t)(b % (uint8_t)3u); break;\n",
+        "    }\n",
+        "    out[lid] = r;"
+    ));
+    let want: Vec<u32> = (0..64u32)
+        .map(|l| {
+            let u = l.wrapping_mul(2654435761);
+            let s = u as i32;
+            let d = l % 7 + 1;
+            let sd = if l % 3 == 0 { -(d as i32) } else { d as i32 };
+            let k = 10u32;
+            let mn = if l == 5 { i32::MIN } else { s };
+            let m1 = if l == 5 { -1 } else { sd };
+            let b = u as u8;
+            match l % 8 {
+                0 => u / 10 + u % 64,
+                1 => u % 10 ^ u / 64,
+                2 => (s / 7) as u32 ^ (s % 7) as u32,
+                3 => (s.wrapping_div(sd) as u32).wrapping_add(s.wrapping_rem(sd) as u32),
+                4 => u / d ^ u % d,
+                5 => mn.wrapping_div(m1) as u32 ^ (s % 16) as u32,
+                6 => u / k + u % k,
+                _ => u32::from(b / d as u8) + u32::from(b % 3),
+            }
+        })
+        .collect();
+    // Lane 6's `k` read `out[63]` before any lane wrote it.
+    assert_eq!(out, want);
+}

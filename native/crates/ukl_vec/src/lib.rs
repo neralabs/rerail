@@ -20,6 +20,7 @@ pub mod fiber;
 pub mod k;
 pub mod lower;
 pub mod ops;
+pub mod pressure;
 pub mod run;
 pub mod ssa;
 pub mod ty;

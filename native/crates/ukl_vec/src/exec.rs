@@ -135,9 +135,9 @@ pub(crate) fn places() -> Places {
     }
 }
 
-/// The width a kernel's code runs at when nothing else chooses it (`RERAIL_UKL_WIDTH`, else 8).
+/// The width a kernel's code runs at (`RERAIL_UKL_WIDTH`), else 0: its register pressure's (`pressure`).
 fn width() -> u32 {
-    std::env::var("RERAIL_UKL_WIDTH").ok().and_then(|s| s.parse().ok()).unwrap_or(8)
+    std::env::var("RERAIL_UKL_WIDTH").ok().and_then(|s| s.parse().ok()).unwrap_or(0)
 }
 
 /// Kernel `k`'s SSA compiled: on its first launch, then kept with it.
