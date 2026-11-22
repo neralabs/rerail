@@ -183,7 +183,7 @@ const SPLIT_INDEX_LINK = Buffer.from("link", "latin1");
  * Whether the index file at `index` records no submodule, read in process so that no Git starts to list it: its bytes
  * hold no gitlink's mode word ({@link GITLINK_MODE}), so none of its entries is one, and no split index's `link`
  * signature. An index that holds those bytes anywhere, in a time, an object id or a path too, and one that is no file
- * that can be read are left to Git's listing ({@link GITLINK_LISTING}), which then answers as before. It opens without
+ * that can be read whole ({@link fileBytes}) are left to Git's listing ({@link GITLINK_LISTING}), which then answers as before. It opens without
  * waiting, as {@link openedFile} does, so a pipe put there holds none of the process's threads.
  */
 export async function recordsNoSubmodule(index: string): Promise<boolean> {
@@ -191,13 +191,20 @@ export async function recordsNoSubmodule(index: string): Promise<boolean> {
   return bytes !== undefined && !bytes.includes(GITLINK_MODE) && !bytes.includes(SPLIT_INDEX_LINK);
 }
 
-/** The bytes of the file at `path`, opened without waiting; undefined when it is no file that can be read or close. */
+/**
+ * The bytes of the file at `path`, opened without waiting; undefined when it is no file that can be read or close, or
+ * the read gave fewer bytes than its stat: Node's `readFile` ends at a read that gives fewer than it asked for, which a
+ * mount (FUSE with direct_io, a network share) or a signal can give before the end, where Git maps the whole file.
+ */
 async function fileBytes(path: string): Promise<Buffer | undefined> {
   const handle = await open(path, READ_WITHOUT_WAITING).catch(() => undefined);
   if (handle === undefined) return undefined;
   try {
     try {
-      return (await handle.stat()).isFile() ? await handle.readFile() : undefined;
+      const stats = await handle.stat();
+      if (!stats.isFile()) return undefined;
+      const bytes = await handle.readFile();
+      return bytes.length === stats.size ? bytes : undefined;
     } finally {
       await handle.close();
     }
@@ -732,8 +739,11 @@ function isFile(file: number): boolean {
   }
 }
 
-/** Whether a file may hold more after a read of it gave `got` of the `wanted` bytes it asked for. */
-type MoreToRead = (got: number, wanted: number) => boolean;
+/**
+ * Whether a file may hold more after a read of it gave `got` of the `wanted` bytes it asked for, `read` bytes in all of
+ * a file whose stat gave `size`.
+ */
+type MoreToRead = (got: number, wanted: number, read: number, size: number) => boolean;
 
 /**
  * A config file is read until a read gives nothing: a mount (FUSE with direct_io, a network share) or a signal may cut
@@ -742,10 +752,10 @@ type MoreToRead = (got: number, wanted: number) => boolean;
 const UNTIL_EMPTY: MoreToRead = got => got > 0;
 
 /**
- * A `.git` file is read until a read gives fewer bytes than it asked for, as a read of a regular file does at its end,
- * so a file of the size its stat gave takes one read.
+ * A `.git` file is read as Git reads it (`read_in_full` of the size its stat gave): on after a read cut short, until a
+ * read gives nothing or, once that size is read, fewer bytes than it asked for, so a file of that size takes one read.
  */
-const UNTIL_SHORT: MoreToRead = (got, wanted) => got === wanted;
+const UNTIL_SIZE: MoreToRead = (got, wanted, read, size) => got > 0 && (got === wanted || read < size);
 
 /**
  * The bytes of the open file `file` to its end, read until `more` says it holds no more; undefined past `most`. The
@@ -762,7 +772,7 @@ function readWithin(file: number, most: number, size: number, more: MoreToRead):
     wanted = bytes.length - read;
     got = readSync(file, bytes, read, wanted, null);
     read += got;
-  } while (more(got, wanted) && read <= most);
+  } while (more(got, wanted, read, size) && read <= most);
   return read > most ? undefined : bytes.subarray(0, read);
 }
 
@@ -786,13 +796,22 @@ function validHead(path: string): boolean {
   return text !== undefined && (/^ref:[ \t\n\r]*refs\//u.test(text) || /^[0-9a-fA-F]{40}/u.test(text));
 }
 
-/** The first bytes of `path`, as many as Git reads of a `HEAD` (255); undefined when it is no file that can be read. */
+/**
+ * The first bytes of `path`, as many as Git reads of a `HEAD` (255), read on after a read cut short until a read gives
+ * nothing, as Git's `read_in_full` reads; undefined when it is no file that can be read.
+ */
 function headText(path: string): string | undefined {
   const file = openedFile(path);
   if (typeof file !== "number") return undefined;
   return readClosing(file, opened => {
     const head = Buffer.alloc(255);
-    return head.toString("latin1", 0, readSync(opened, head));
+    let read = 0;
+    let got: number;
+    do {
+      got = readSync(opened, head, read, head.length - read, null);
+      read += got;
+    } while (got > 0 && read < head.length);
+    return head.toString("latin1", 0, read);
   });
 }
 
@@ -856,7 +875,7 @@ function statOf(path: string): Stats | undefined {
 function gitfileText(path: string, size: number): string | GitFailure | undefined {
   const file = openedFile(path);
   if (typeof file !== "number") return undefined;
-  return readClosing(file, opened => readWithin(opened, MAX_GITFILE_BYTES, size, UNTIL_SHORT)?.toString("utf8") ?? fatal(`too large to be a .git file: '${path}'`));
+  return readClosing(file, opened => readWithin(opened, MAX_GITFILE_BYTES, size, UNTIL_SIZE)?.toString("utf8") ?? fatal(`too large to be a .git file: '${path}'`));
 }
 
 /** The text of the file at `path`, opened without waiting ({@link openedFile}); undefined when it is no file that can be read. */

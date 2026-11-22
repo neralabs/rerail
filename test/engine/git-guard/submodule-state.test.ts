@@ -230,6 +230,42 @@ describe("definesNoDriver", () => {
   });
 });
 
+describe("a file Git reads whole, each read of it cut short", () => {
+  // Each row: the file, from the linked worktree's folder, and the bytes each read of it gives, fewer than Git looks for.
+  it.each<[string, (linked: string) => string, number]>([
+    ["its `.git` file", linked => join(linked, ".git"), 7],
+    ["its Git folder's `HEAD`", linked => join(gitFolderFound(linked) ?? "", "HEAD"), 3],
+  ])("opens a submodule whose %s is read on after a read cut short, as Git reads it", async (_what, file, most) => {
+    const { linked } = repositories(await folder());
+    const found = gitFolderFound(linked);
+    shortReads(file(linked), most);
+    const opened: string[] = [];
+
+    const changed = await submoduleChanged(linked, false, async (_folder, gitFolder) => {
+      opened.push(gitFolder);
+      return await Promise.resolve(UNASKED);
+    }, 1);
+
+    expect([changed, opened]).toEqual([true, [found]]);
+  });
+
+  it("leaves an index whose read gives fewer bytes than its stat to Git's listing", async () => {
+    const { work } = repositories(await folder());
+    const index = join(work, ".git", "index");
+    // An entry with a gitlink's mode, past the bytes the read gives.
+    execFileSync("git", ["-C", work, "update-index", "--add", "--cacheinfo", `160000,${"1".repeat(40)},sub`]);
+    vi.mocked(open).mockImplementation(async (path, flags, mode) => {
+      const handle = await realPromises.open(path, flags, mode);
+      const readFile = handle.readFile.bind(handle);
+      // Node's `readFile` ends at a read that gives fewer bytes than the file's size, as a mount or a signal may cut one.
+      handle.readFile = (async () => (await readFile()).subarray(0, 7)) as typeof handle.readFile;
+      return handle;
+    });
+
+    expect(await recordsNoSubmodule(index)).toBe(false);
+  });
+});
+
 describe("a file of a Git folder whose close fails", () => {
   it.each<[string, (work: string, linked: string) => boolean]>([
     ["HEAD", work => definesNoDriver(join(work, ".git"))],
@@ -329,8 +365,9 @@ function shortReads(path: string, most: number): void {
   });
   vi.mocked(readSync).mockImplementation((...args: Parameters<typeof readSync>) => {
     if (!cut.has(args[0])) return realFs.readSync(...args);
-    // The read of a config passes (file, buffer, offset, length, position), a form the type of its last overload omits.
-    const [file, buffer, offset, length, position] = args as unknown as [number, NodeJS.ArrayBufferView, number, number, null];
+    // A read passes (file, buffer, offset, length, position), a form the type of its last overload omits, or (file,
+    // buffer) to fill the buffer.
+    const [file, buffer, offset = 0, length = buffer.byteLength - offset, position = null] = args as unknown as [number, NodeJS.ArrayBufferView, number?, number?, null?];
     return realFs.readSync(file, buffer, offset, Math.min(length, most), position);
   });
 }
