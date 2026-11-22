@@ -53,7 +53,7 @@ fn the_evaluator_copies_no_tape() {
 
 /// §5 of decision 0468: the evaluator is UKL, launched through the lane: its source has no MSL
 /// (no Metal kernel, attribute, address space or SIMD function of its own) and takes UKL's grid.
-/// It runs in rounds (decision 0527), so it takes no work queue.
+/// Its expansion is a loop a thread a piece (decision 0588): no work queue, no rounds, no pool.
 #[test]
 fn the_evaluator_is_ukl() {
     let src = rerail_metal::pp_arena::source();
@@ -62,7 +62,10 @@ fn the_evaluator_is_ukl() {
         assert!(code.is_empty(), "the evaluator's source has MSL `{msl}`: {code:?}");
     }
     assert!(src.contains("#include <ukl/grid.h>"), "UKL's grid");
-    assert!(!src.contains("#include <ukl/workqueue.h>") && !src.contains("ukl_wq_"), "no work queue: the rounds (decision 0527)");
+    assert!(!src.contains("#include <ukl/workqueue.h>") && !src.contains("ukl_wq_"), "no work queue (decision 0588)");
+    for rounds in ["px_drain", "PX_DRAIN", "px_item", "ukl_pool_", "<ukl/pool.h>", "PxList"] {
+        assert!(!src.contains(rounds), "the rounds' `{rounds}` (decision 0588: the loop alone)");
+    }
     assert!(src.contains("DEFINE_KERNEL2(pp, pp_setup") && !src.contains("DEFINE_KERNEL2(pp, px_expand") && src.contains("DEFINE_KERNEL2(pp, pp_check"), "the grid's kernels are UKL's");
     let arena = include_str!("../../../metal/src/pp_arena.rs");
     assert!(arena.contains("lane::Command") && !arena.contains("new_compute_command_encoder"), "launched through the lane");
@@ -369,7 +372,7 @@ fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::fi
         let t0 = std::time::Instant::now();
         let x = rerail_metal::pp_expand::expand_sized(u, l, s, rerail_metal::pp_arena::groups());
         if std::env::var_os("RERAIL_PP_TIME").is_some() {
-            eprintln!("TIME expand {:.3} ms (device {:.3} ms, {} rounds)", t0.elapsed().as_secs_f64() * 1e3, x.as_ref().map_or(0.0, |x| x.gpu_seconds * 1e3), x.as_ref().map_or(0, |x| x.rounds));
+            eprintln!("TIME expand {:.3} ms (device {:.3} ms)", t0.elapsed().as_secs_f64() * 1e3, x.as_ref().map_or(0.0, |x| x.gpu_seconds * 1e3));
         }
         if let Ok(x) = &x {
             ran.runs += 1;
@@ -1511,7 +1514,7 @@ fn past_its_room_runs_again_larger(what: &str, text: &str) {
 }
 
 /// R8: an 8⁴ fan-out of a one-token body used three times: 12,288 expansions, each a piece of the output
-/// (decision 0588: the loop's room), and more than rung 0's arena of tokens (the rounds').
+/// (decision 0588: the loop's room), and more than rung 0's arena of tokens.
 #[test]
 fn a_unit_past_its_token_room_runs_again_larger() {
     let fan = "#define A0 x\n#define A1 A0 A0 A0 A0 A0 A0 A0 A0\n#define A2 A1 A1 A1 A1 A1 A1 A1 A1\n#define A3 A2 A2 A2 A2 A2 A2 A2 A2\n#define A4 A3 A3 A3 A3 A3 A3 A3 A3\n";
@@ -1570,19 +1573,14 @@ fn a_flat_argument_is_read_in_place() {
     }
 }
 
-/// Decision 0486 §10: the blocks no item reads again are given back between rounds, and used
-/// again. Chains of calls each passing a state of 120 tokens on, the blocks given back every 16
-/// units of a store's growth (`RERAIL_PP_GIVE_GAP`; a chain's pieces are a few a level, decision
-/// 0520, so at the default gap of a 32nd of the room a chain this short would give nothing back):
-/// each gives back, settles at rung 0 and gives the serial pass's tokens. The state passed through
+/// Decision 0486 §10: what no reader reads again is given back, and used again: the loop gives
+/// back what is dead below a substitution's list (decision 0588). Chains of calls each passing a
+/// state of 120 tokens on: each gives back, settles at rung 0 and gives the serial pass's tokens. The state passed through
 /// plain calls, through an argument scanned at each level (a dead argument's list), and through
 /// an exit at each level (a join); `__LINE__` in it (its origin read from the lists' `lref`, not
 /// their tokens), `#` of it at the end, and in C and C++.
 #[test]
 fn reclaimed_tokens_keep_a_chain_at_rung_0() {
-    // SAFETY: the variable is read when a run is sized; another test reading it then gives back
-    // more often, which changes no result.
-    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
     let levels = 40;
     let chain = |body: &dyn Fn(usize) -> String, last: &str, tail: &str| {
@@ -1617,16 +1615,12 @@ fn reclaimed_tokens_keep_a_chain_at_rung_0() {
 
 /// R1 of decision 0520: what a chain holds at once is flat in its length. The chains of
 /// `reclaimed_tokens_keep_a_chain_at_rung_0` at 25, 50 and 100 levels, each store's most use
-/// (`Exp::room`, as the serial pass's), the blocks no item reads again given back every 16 of a
-/// store's growth (`RERAIL_PP_GIVE_GAP`): a store whose use grows with the chain's length holds what
-/// no item reads again, which is what made Boost's units climb the rungs. A pending level keeps its
-/// list, as the serial pass keeps its frame (its macro is disabled until its result is read): the
-/// lists grow by at most one a level.
+/// (`Exp::room`, as the serial pass's): a store whose use grows with the chain's length holds what
+/// no reader reads again, which is what made Boost's units climb the rungs. A pending level keeps
+/// a word for its macro, as the serial pass keeps its frame (its macro is disabled until its
+/// result is read).
 #[test]
 fn a_chains_use_is_flat_in_its_length() {
-    // SAFETY: the variable is read when a run is sized; another test reading it then gives back
-    // more often, which changes no result.
-    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
     use rerail_metal::pp_expand::ROOM_STORES;
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
     let chain = |levels: usize, body: &dyn Fn(usize) -> String| {
@@ -1656,13 +1650,12 @@ fn a_chains_use_is_flat_in_its_length() {
             .collect();
         for (s, name) in ROOM_STORES.iter().enumerate() {
             // The output and the scratch grow with the input (the state written out once, the
-            // literals and the `#line` rows' room, two tokens a directive), and the queue's ring is
-            // used to half its room between pauses; every other store's use at 100 levels is at
-            // most its use at 25 and a 16th more.
+            // literals and the `#line` rows' room, two tokens a directive); the tokens' use at 100
+            // levels is at most its use at 25, a 16th more, and a word a level.
             let (a, b, c) = (uses[0][s], uses[1][s], uses[2][s]);
             eprintln!("{what}: {name}: {a} {b} {c}");
-            let grows = ["output", "scratch bytes", "scratch tokens", "queue items"].contains(name);
-            let bound = if *name == "lists" { a + 75 + 16 } else { a + a / 16 + 64 };
+            let grows = ["output", "scratch bytes", "scratch tokens"].contains(name);
+            let bound = a + a / 16 + 75 + 64;
             if !grows && c > bound {
                 flat = false;
             }
@@ -1671,16 +1664,14 @@ fn a_chains_use_is_flat_in_its_length() {
     assert!(flat, "a store's use grows with the chain's length (above)");
 }
 
-/// Decision 0527 §2: a pause gives back a done call's span through its exits' chain, to the
-/// chain's last `)` (its exits' calls' sums by pointer doubling over the lists, not a walk). Each
-/// level of a chain has a done call beside its pending one whose exits chain two deep in the
-/// level's list (`F2(s)(s)(...)`: `F2` gives `G2`, whose call gives `H2`), the last's arguments
-/// 31 pieces. A level adds 64 tokens (its expansion, which the output holds); stopping at the
-/// first exit's `)` would keep the last's arguments too (96 a level), so the bound is 80.
+/// A done call's span is given back through its exits' chain, to the chain's last `)` (decision
+/// 0588: the substitution gives back what is dead below its list). Each level of a chain has a
+/// done call beside its pending one whose exits chain two deep in the level's list
+/// (`F2(s)(s)(...)`: `F2` gives `G2`, whose call gives `H2`), the last's arguments 31 pieces. A
+/// level adds 64 tokens (its expansion, which the output holds); stopping at the first exit's `)`
+/// would keep the last's arguments too (96 a level), so the bound is 80.
 #[test]
 fn a_done_calls_exits_are_given_back_to_their_last() {
-    // SAFETY: as `a_chains_use_is_flat_in_its_length`.
-    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
     use rerail_metal::pp_expand::ROOM_STORES;
     let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
     let last = (0..16).map(|_| "s").collect::<Vec<_>>().join(" a ");

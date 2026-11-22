@@ -4,8 +4,8 @@
 // tokens read in place through `IF_NODES` (a node each, the line's operands' leaves), at its
 // directive's slot. Its names are looked up there as the serial pass's `in_if` reads them:
 // `defined X` and `defined ( X )` are answered and their operands not expanded, and the
-// `__has_*` tests' operands are left raw. The line is then expanded by the text's own passes and
-// rounds (`px_top_*`, `px_item`), and each test's output is evaluated by one thread, as
+// `__has_*` tests' operands are left raw. The line is then expanded by the text's own loop
+// (`lp_loop`, decision 0588), and each test's output is evaluated by one thread, as
 // `expr::eval` evaluates it.
 
 // A top token's mark (`IF_OPS`): `defined` as the operator; a `__has_*` test followed by `(`.
@@ -122,37 +122,6 @@ UKL_INLINE void p1_if_tokens(Ux u, PP_GLOBAL const uint32_t* count, PP_GLOBAL co
         }
     }
     lookups[s] = m;
-}
-
-// A test's operand's end (its `)` + 1, or its line's end), for the reach's max scan.
-// A header test's operand that starts with neither `"…"` nor `<` is expanded first
-// (`Pp::header_of`): it is read as text is.
-UKL_INLINE void p1_if_has_ends(Ux u, PP_GLOBAL const uint32_t* if_nodes, PP_GLOBAL const uint32_t* ops, PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* depth,
-                               PP_GLOBAL const uint64_t* closes, PP_GLOBAL const uint32_t* n_close, PP_GLOBAL uint32_t* hend, uint32_t s) {
-    uint32_t n = total[0];
-    if (s >= n) return;
-    hend[s] = 0u;
-    if (ops[s] < IO_HAS) return;
-    uint32_t end = top_end(at, n_dirs[0], n, s);
-    uint32_t kind = ops[s] - IO_HAS;
-    if (kind >= OPK_HAS_INCLUDE && kind <= OPK_HAS_EMBED && s + 2u < end) {
-        Span r = ref_span(u, if_nodes[s + 2u]);
-        bool str = r.kind == K_LITERAL && r.len >= 1u && r.p[0] == ((uint8_t)('"'));
-        bool lt = r.kind == K_PUNCT && r.len == 1u && r.p[0] == ((uint8_t)('<'));
-        if (!str && !lt) return;
-    }
-    uint32_t c = top_close(closes, n_close[0], depth, s + 1u, end);
-    hend[s] = c == NO_POS ? end : c + 1u;
-}
-
-// A test's operand's tokens are read raw (`Pp::builtin_operand`): no names.
-UKL_INLINE void p1_if_mask(PP_GLOBAL const uint32_t* at, PP_GLOBAL const uint32_t* n_dirs, PP_GLOBAL const uint32_t* total, PP_GLOBAL const uint32_t* reach, PP_GLOBAL uint32_t* ops, PP_GLOBAL uint32_t* lookups, uint32_t s) {
-    if (s >= total[0] || s == 0u) return;
-    uint32_t j = pb_item_of(at, n_dirs[0], s);
-    if (s > at[j] && reach[s - 1u] > s) {
-        lookups[s] = L_NOT_NAME;
-        ops[s] = 0u;
-    }
 }
 
 // --- A test's value -------------------------------------------------------------------------------

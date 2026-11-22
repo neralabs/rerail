@@ -32,7 +32,6 @@ pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/radix.h", include_str!("../lib/ukl/radix.h")),
     ("ukl/hash.h", include_str!("../lib/ukl/hash.h")),
     ("ukl/workqueue.h", include_str!("../lib/ukl/workqueue.h")),
-    ("ukl/pool.h", include_str!("../lib/ukl/pool.h")),
     ("ukl/grid.h", include_str!("../lib/ukl/grid.h")),
     ("ukl/clif.h", include_str!("../lib/ukl/clif.h")),
     // The tape's reads for the kernels, written by hand (decision 0524): one body, which `tape.h` reads formats 15

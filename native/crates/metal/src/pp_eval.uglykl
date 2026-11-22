@@ -63,7 +63,6 @@ UKL_INLINE uint32_t tape_line_of(Tape t, uint32_t x) { return clif_tape_line(t.d
 
 // --- The unit's nodes: a count a file, a prefix sum, a node's file --------------------------------
 
-
 // The file of the unit's node `g`: the last whose first node is at or before it.
 UKL_INLINE uint32_t file_of(PP_GLOBAL const uint32_t* bases, uint32_t n_files, uint32_t g) {
     uint32_t lo = 0u, hi = n_files;
