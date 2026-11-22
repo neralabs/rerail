@@ -8996,11 +8996,14 @@ fn run_observed_within(
             session_corpus_next = whole.then_some(by_path);
         }
         // What the base relations are a function of, under the run's plan: their documents (decision 0458). A base
-        // relation's digest is theirs, taken here, never its rows' (a scan of every row).
-        let words = |d: &syntax::Input| -> [i64; 5] {
+        // relation's digest is theirs, taken here, never its rows' (a scan of every row). A document is its facts'
+        // digest and what the corpus gives it beside them: its module (`doc`'s, which a package root renames) and
+        // whether a regular package holds it (`unpackaged`), each moved by an `__init__.py` its contents do not hold.
+        let words = |d: &syntax::Input| -> [i64; 7] {
             let digest = d.digest();
             let at = |i: usize| i64::from_le_bytes(digest[i * 8..i * 8 + 8].try_into().expect("eight bytes"));
-            [i64::from(d.key()), at(0), at(1), at(2), at(3)]
+            let module = d.module().map_or(0, |m| super::row_digest(&m.bytes().map(i64::from).collect::<Vec<_>>()) as i64);
+            [i64::from(d.key()), at(0), at(1), at(2), at(3), module, i64::from(unpackaged.contains(d.path()))]
         };
         corpus_digest = all.iter().map(|d| super::row_digest(&words(d))).fold(0u64, u64::wrapping_add);
         // Each document's views' counts as kept, where its contents are those they were counted of (decision 0494).
@@ -9190,6 +9193,14 @@ fn run_observed_within(
         if !kept_hits.is_empty() {
             let _s = crate::code_rule_dsl::logic::profile::span(|| "the kept inputs".into());
             let installed: std::result::Result<(usize, usize), String> = (|| {
+                // Only under this run's memo plan does an unchanged file's export rows stand as the kept inputs hold
+                // them, as `same_docs` takes a document (below): the plan folds in what the corpus gives a file beside
+                // its contents (its module, and `unpackaged`, which an `__init__.py` moves). The kept inputs are written
+                // in the keep that writes the documents' table, and every kept route has one (`keeping`), so the
+                // table's plan is theirs.
+                if base_table_plan.get() != Some(Some(retain::memo_plan_tag(&memo_whole))) {
+                    return Err("the kept inputs are of another memo plan than this run's".to_owned());
+                }
                 let maintained = match early_maintained.take() {
                     Some(m) => m,
                     None => maintained_cross_of(shared_maintained, &cross).map_err(|e| e.to_string())?,

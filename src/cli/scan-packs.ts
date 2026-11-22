@@ -26,7 +26,7 @@ import {
   type PublishedPack,
   type RepositoryPack,
 } from "../engine/catalog/packs-file/packs-file.js";
-import { readGitBlobs, runGit } from "../engine/git.js";
+import type { NativeGitRevisionSource } from "../engine/native/native.js";
 import { fetchProblemReason, npmPackStore, type PackStore } from "../setup/rule-pack-store.js";
 
 /** One pack a scan ran, as its report names it. */
@@ -57,8 +57,8 @@ export interface DeclaredPacks {
   readonly packs: readonly DeclaredPack[];
   /** `.rerail/packs.json`, or `<ref>:.rerail/packs.json`. */
   readonly label: string;
-  /** The commit the file was read from, or undefined for the working tree. */
-  readonly commit?: string;
+  /** The tree at `--rules-ref` the file was read from, or undefined for the working tree. */
+  readonly at?: RulesRefTree;
 }
 
 /**
@@ -75,72 +75,79 @@ export interface DeclaredScanPacks {
 /** A file of a pack at a ref larger than this is left out, and the pack then fails to load with why. */
 const MAX_REF_PACK_FILE_BYTES = 16 * 1024 * 1024;
 
-function gitOutput(root: string, args: readonly string[]): string | null {
-  const result = runGit(root, args, { maxBuffer: 256 * 1024 * 1024 });
-  if (result.error !== undefined) throw result.error;
-  return result.status === 0 ? result.stdout : null;
+/** The commit `--rules-ref` names, and its tree as the scan reads it: one resolution, which every read at the ref takes. */
+export interface RulesRefTree {
+  readonly ref: string;
+  readonly commit: string;
+  readonly source: NativeGitRevisionSource;
 }
 
-/** `<mode> <type> <object>\t<path>` entries of `git ls-tree -z` output. */
-function treeEntries(output: string): { mode: string; type: string; object: string; path: string }[] {
-  return output.split("\0").flatMap(entry => {
-    const match = /^(\d+) (\w+) ([0-9a-f]+)\t(.+)$/su.exec(entry);
-    return match === null ? [] : [{ mode: match[1]!, type: match[2]!, object: match[3]!, path: match[4]! }];
-  });
-}
+/** Git's modes of a tree entry: a folder, and the two of a regular file (not a symbolic link or a submodule). */
+const TREE_MODE = 0o040000;
+const isRegularMode = (mode: number): boolean => mode === 0o100644 || mode === 0o100755;
 
-/** Whether a tree entry is a regular file: a blob that is not a symbolic link (`120000`) or a submodule. */
-const isRegularBlob = (entry: { mode: string; type: string }): boolean => entry.type === "blob" && entry.mode !== "120000";
+/** Whether `path` is a folder in `source`'s tree: each part of it a tree, so a symbolic link on the way is none. */
+const isFolderAt = (source: NativeGitRevisionSource, path: string): boolean => source.pathStatus(`${path}/`).status === "selected";
 
 /**
- * The packs the scan's tree declares: the working tree's `.rerail/packs.json`, or the file at `rulesRef`. Undefined
- * when that tree has none. Throws when the file cannot be read or parsed, or `rulesRef` is not a commit.
+ * The packs the scan's tree declares: the working tree's `.rerail/packs.json`, or the file in the tree `at` names
+ * (`--rules-ref`, resolved once by the scan). Undefined when that tree has none. Throws when the file cannot be read
+ * or parsed.
  */
-export async function declaredPacksOf(root: string, rulesRef: string | undefined): Promise<DeclaredPacks | undefined> {
-  if (rulesRef === undefined) {
+export async function declaredPacksOf(root: string, at: RulesRefTree | undefined): Promise<DeclaredPacks | undefined> {
+  if (at === undefined) {
     const packs = readPacksFile(root);
     return packs === undefined ? undefined : { packs, label: PACKS_FILE };
   }
-  const commit = gitOutput(root, ["rev-parse", "--verify", "--quiet", `${rulesRef}^{commit}`])?.trim();
-  if (commit === undefined) throw new Error(`--rules-ref ${rulesRef} is not a commit in ${root}`);
-  const label = `${rulesRef}:${PACKS_FILE}`;
+  const label = `${at.ref}:${PACKS_FILE}`;
   // Each part of the path is looked up in its own tree, so a symbolic link `.rerail` lists nothing, as it would be
   // left unread in a checkout.
-  const entry = treeEntries(gitOutput(root, ["ls-tree", "-z", commit, "--", PACKS_FILE]) ?? "").find(found => found.path === PACKS_FILE);
+  const [folder, name] = [PACKS_FILE.slice(0, PACKS_FILE.lastIndexOf("/")), PACKS_FILE.slice(PACKS_FILE.lastIndexOf("/") + 1)];
+  if (!isFolderAt(at.source, folder)) return undefined;
+  const entry = (at.source.readDirectory(folder) ?? []).find(found => found.name === name);
   if (entry === undefined) return undefined;
-  if (!isRegularBlob(entry)) throw new PacksFileError(`${label} is not a regular file`);
-  const blob = (await readGitBlobs(root, [entry.object], { maxBlobBytes: MAX_PACKS_FILE_BYTES })).get(entry.object);
-  if (blob === undefined) throw new PacksFileError(`${label} is larger than 1 MiB`);
-  return { packs: parsePacksFile(blob.toString("utf8"), label), label, commit };
+  if (!isRegularMode(entry.mode)) throw new PacksFileError(`${label} is not a regular file`);
+  const read = at.source.readSourceChecked(PACKS_FILE, MAX_PACKS_FILE_BYTES);
+  if (read.status === "too-large") throw new PacksFileError(`${label} is larger than 1 MiB`);
+  if (read.status === "absent") return undefined;
+  return { packs: parsePacksFile(read.bytes.toString("utf8"), label), label, at };
 }
 
 /**
- * The repository pack `pack` as it is at `commit`, written under `into`: its `pack.json`, `package.json` and `rules/`,
- * which is all a pack is read from. A folder keeps its name, which a pack without a `package.json` must have. A
- * symbolic link is not written, so a pack that needs one fails to load, as it would from a checkout that refuses it,
- * and nor is a file whose path has a part that is not a plain name (`..`, or a `\` or `:` Windows reads as a path), so
- * nothing is written outside `into`.
+ * The regular files below `folder` in `source`'s tree, by their paths inside it, each part a plain name: a symbolic
+ * link or a submodule is none, and a name that is not UTF-8 or not a plain name (`..`, or a `\` or `:` Windows reads as
+ * a path) is left out, so nothing is written outside the folder it is written to.
  */
-async function repositoryPackAtCommit(root: string, commit: string, label: string, pack: RepositoryPack, into: string): Promise<string> {
-  if (gitOutput(root, ["cat-file", "-t", `${commit}:${pack.path}`])?.trim() !== "tree") {
+function regularFilesBelow(source: NativeGitRevisionSource, folder: string, inside = ""): string[] {
+  return (source.readDirectory(inside === "" ? folder : `${folder}/${inside}`) ?? []).flatMap(({ name, mode }) => {
+    if (name == null || name === "" || name === "." || name === ".." || /[\\:/]/u.test(name)) return [];
+    const path = inside === "" ? name : `${inside}/${name}`;
+    if (mode === TREE_MODE) return regularFilesBelow(source, folder, path);
+    return isRegularMode(mode) ? [path] : [];
+  });
+}
+
+/**
+ * The repository pack `pack` as it is in the tree `at` names, written under `into`: its `pack.json`, `package.json`
+ * and `rules/`, which is all a pack is read from. A folder keeps its name, which a pack without a `package.json` must
+ * have. A symbolic link is not written, so a pack that needs one fails to load, as it would from a checkout that
+ * refuses it, and nor is a file whose path has a part that is not a plain name, so nothing is written outside `into`.
+ */
+function repositoryPackAtCommit(at: RulesRefTree, label: string, pack: RepositoryPack, into: string): string {
+  if (!isFolderAt(at.source, pack.path)) {
     throw new PacksFileError(`${label} lists ${pack.path}, which is not a folder at that commit`);
   }
   const directory = join(into, basename(pack.path));
-  const prefix = `${pack.path}/`;
-  const files = treeEntries(gitOutput(root, ["ls-tree", "-r", "-z", commit, "--", prefix]) ?? "")
-    .map(entry => ({ ...entry, inside: entry.path.slice(prefix.length) }))
-    .filter(entry => entry.path.startsWith(prefix) && isRegularBlob(entry))
-    .filter(entry => entry.inside.split("/").every(part => part !== "" && part !== "." && part !== ".." && !/[\\:]/u.test(part)))
-    .filter(entry => entry.inside === "pack.json" || entry.inside === "package.json" || entry.inside.startsWith("rules/"));
-  const blobs = await readGitBlobs(root, files.map(entry => entry.object), { maxBlobBytes: MAX_REF_PACK_FILE_BYTES });
+  const files = regularFilesBelow(at.source, pack.path)
+    .filter(inside => inside === "pack.json" || inside === "package.json" || inside.startsWith("rules/"));
   mkdirSync(directory, { recursive: true });
-  for (const file of files) {
-    const blob = blobs.get(file.object);
-    if (blob === undefined) continue;
-    const target = join(directory, ...file.inside.split("/"));
+  for (const inside of files) {
+    const read = at.source.readSourceChecked(`${pack.path}/${inside}`, MAX_REF_PACK_FILE_BYTES);
+    if (read.status !== "ok") continue;
+    const target = join(directory, ...inside.split("/"));
     if (relative(directory, target).startsWith("..") || isAbsolute(relative(directory, target))) continue;
     mkdirSync(join(target, ".."), { recursive: true });
-    writeFileSync(target, blob);
+    writeFileSync(target, read.bytes);
   }
   return directory;
 }
@@ -180,28 +187,26 @@ function loadedPack(catalog: RuleCatalog, entry: DeclaredPackDirectory): ScanPac
 }
 
 /**
- * Checks that every folder `pack` names is a folder at `commit`: each part of its path a tree, so a symbolic link on
+ * Checks that every folder `pack` names is a folder at the tree `at` names: each part of its path a tree, so a symbolic link on
  * the way (a blob) or a missing folder is refused, as in a working tree.
  */
-function checkPackFoldersAtCommit(root: string, commit: string, label: string, pack: DeclaredPack): void {
+function checkPackFoldersAtCommit(at: RulesRefTree, label: string, pack: DeclaredPack): void {
   for (const folder of pack.folders ?? []) {
-    const parts = folder.split("/");
-    const inTree = parts.every((_, index) => gitOutput(root, ["cat-file", "-t", `${commit}:${parts.slice(0, index + 1).join("/")}`])?.trim() === "tree");
-    if (!inTree) throw new PacksFileError(`${label} lists the folder ${folder} for ${declaredPackLabel(pack)}, which is not a folder at that commit`);
+    if (!isFolderAt(at.source, folder)) throw new PacksFileError(`${label} lists the folder ${folder} for ${declaredPackLabel(pack)}, which is not a folder at that commit`);
   }
 }
 
-/** Checks every folder the declared packs name: in the working tree, or at `declared.commit`. */
+/** Checks every folder the declared packs name: in the working tree, or at `declared.at`. */
 function checkDeclaredFolders(root: string, declared: DeclaredPacks): void {
   for (const pack of declared.packs) {
-    if (declared.commit === undefined) checkPackFolders(root, pack);
-    else checkPackFoldersAtCommit(root, declared.commit, declared.label, pack);
+    if (declared.at === undefined) checkPackFolders(root, pack);
+    else checkPackFoldersAtCommit(declared.at, declared.label, pack);
   }
 }
 
 /**
  * The folder each declared pack is read from: a published pack installed under `scratch`; a repository pack in the
- * working tree, or written under `scratch` from `declared.commit`.
+ * working tree, or written under `scratch` from `declared.at`.
  */
 async function declaredPackDirectories(
   root: string, declared: DeclaredPacks, scratch: string, storeOf: (home: string) => PackStore,
@@ -214,9 +219,9 @@ async function declaredPackDirectories(
       continue;
     }
     const checkoutPath = join(root, ...pack.path.split("/"));
-    const directory = declared.commit === undefined
+    const directory = declared.at === undefined
       ? repositoryPackDirectory(root, pack)
-      : await repositoryPackAtCommit(root, declared.commit, declared.label, pack, join(scratch, "repository-packs", String(index)));
+      : repositoryPackAtCommit(declared.at, declared.label, pack, join(scratch, "repository-packs", String(index)));
     directories.push({ pack, directory, checkoutPath });
   }
   return directories;
@@ -242,7 +247,7 @@ function loadedDeclaredPacks(catalog: RuleCatalog, directories: readonly Declare
 
 /**
  * The catalog of the packs `declared` lists, for a scan of the checkout at `root`: its repository packs read from the
- * working tree, or from `declared.commit`; its published packs installed under `scratch`. Every listed pack must
+ * working tree, or from `declared.at`; its published packs installed under `scratch`. Every listed pack must
  * load, at the version listed: one that does not fails the scan, naming it and why. So does a `config` its rules do
  * not declare or allow (`declaredPackRuleConfigs`).
  */

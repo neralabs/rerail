@@ -49,7 +49,7 @@ import { repositories } from "../engine/storage/schema.js";
 import { tableColumns } from "../engine/storage/table-probe.js";
 import { setRepositoryStarted, stateOf } from "../runtime/repository-start.js";
 import type { PackStore } from "../setup/rule-pack-store.js";
-import { declaredPacksOf, declaredScanPacks, type DeclaredPacks, type DeclaredScanPacks, type ScanPack, type ScanPackAttachment } from "./scan-packs.js";
+import { declaredPacksOf, declaredScanPacks, type DeclaredPacks, type DeclaredScanPacks, type RulesRefTree, type ScanPack, type ScanPackAttachment } from "./scan-packs.js";
 
 export const SCAN_SCHEMA = "rerail.scan/1";
 
@@ -219,18 +219,26 @@ interface RefRules {
   readonly rr?: { catalog: RuleCatalog; source: NativeGitRevisionSource };
 }
 
-/** Load the ref's policies through the same catalog rules used for a checkout. */
-function rulesAtRef(root: string, ref: string, loadedRr: NativeLoadedRrPolicies, invocation: string, installed: RuleCatalog): RefRules {
-  const binding = loadNativeBinding();
+/**
+ * The commit `ref` (`--rules-ref`) names in `root`, and its tree as the scan reads it: resolved once, before anything
+ * is read at it, and read through by the declared packs and the ref's policies alike. Throws, with Git's reason, when
+ * `ref` names nothing, or names a tree and not a commit.
+ */
+function resolveRulesRef(root: string, ref: string, invocation: string): RulesRefTree {
   let source: NativeGitRevisionSource;
   try {
-    source = new binding.GitRevisionSource(root, ref, "rules-ref", invocation);
+    source = new (loadNativeBinding().GitRevisionSource)(root, ref, "rules-ref", invocation);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(`Cannot resolve --rules-ref ${ref} in ${root}. ${detail}`, { cause: error });
   }
   const commit = source.commit;
   if (!commit) throw new Error(`--rules-ref ${ref} resolved to tree ${source.tree}. This option requires a commit.`);
+  return { ref, commit, source };
+}
+
+/** Load the ref's policies through the same catalog rules used for a checkout. */
+function rulesAtRef(root: string, { ref, commit, source }: RulesRefTree, loadedRr: NativeLoadedRrPolicies, installed: RuleCatalog): RefRules {
   const provenance: RefRuleSource = { kind: "ref", ref, commit };
   const failures: ScanFailure[] = [];
   const unreadable = (path: string, error: unknown, pathIdentity = textPath(path)) => {
@@ -760,8 +768,9 @@ async function withDeclaredPacks<T>(
  */
 async function scanReport(
   database: RerailDatabase, options: HeadlessScanOptions,
-  { root, home, packs, declaredPacks, scanId, startedAt, source, analysisStore, analysisRun }: {
+  { root, home, packs, declaredPacks, refTree, scanId, startedAt, source, analysisStore, analysisRun }: {
     root: string; home: RerailDatabase | undefined; packs: readonly string[]; declaredPacks: DeclaredScanPacks | undefined;
+    refTree: RulesRefTree | undefined;
     scanId: string; startedAt: number; source: NativeGitRevisionSource | undefined;
     analysisStore: string;
     analysisRun: NativeAnalysisScopeRun | undefined;
@@ -771,7 +780,7 @@ async function scanReport(
   const explicitRr = (options.rr?.length ?? 0) > 0;
   const loadedRr = new (loadNativeBinding().LoadedRrPolicies)(analysisStore);
   const installed = declaredPacks?.catalog ?? loadRuleCatalog();
-  const refRules = options.rulesRef === undefined ? undefined : rulesAtRef(root, options.rulesRef, loadedRr, resolve(options.repo), installed);
+  const refRules = refTree === undefined ? undefined : rulesAtRef(root, refTree, loadedRr, installed);
   const catalog = options.rulesRef !== undefined ? refRules?.rr?.catalog
     : explicitRr ? undefined : worktreeScanCatalog(installed, root, undefined, path => loadedRr.load(path));
   const pinned = new Map<string, RuleCatalog>([[root, refRules === undefined ? catalog ?? installed : installed]]);
@@ -901,8 +910,10 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
   const directory = options.revision === undefined;
   const scanId = randomUUID();
   const { root, requested } = scanRoot(options);
+  // The ref is resolved once, before anything is read at it.
+  const refTree = options.rulesRef === undefined ? undefined : resolveRulesRef(root, options.rulesRef, resolve(options.repo));
   // `--pack` replaces the declared packs: the file is not read, and the scan runs the home's installed version of each.
-  const declared = options.rr?.length || options.packs.length > 0 ? undefined : await declaredPacksOf(root, options.rulesRef);
+  const declared = options.rr?.length || options.packs.length > 0 ? undefined : await declaredPacksOf(root, refTree);
   const analysisScope: ScanReport["analysisScope"] = options.analysisScope === undefined
     ? { kind: "directory", path: relative(root, requested).split(sep).join("/") || "." }
     : { kind: "named", name: options.analysisScope };
@@ -936,7 +947,7 @@ export async function runHeadlessScan(options: HeadlessScanOptions): Promise<Sca
       configuration = openRerailDatabase(":memory:");
       const database = configuration;
       const findings = await withDeclaredPacks(root, declared, options.packStore, declaredPacks =>
-        scanReport(database, options, { root, home, packs, declaredPacks, scanId, startedAt, source, analysisStore, analysisRun }));
+        scanReport(database, options, { root, home, packs, declaredPacks, refTree, scanId, startedAt, source, analysisStore, analysisRun }));
       report = { ...findings, analysisScope, cache };
     } finally {
       configuration?.$client.close();

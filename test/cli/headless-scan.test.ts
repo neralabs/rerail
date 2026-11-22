@@ -518,6 +518,7 @@ Resolved(@place("commit", 1), oid) :- git_revision(_, "HEAD", oid).
     git(root, "commit", "-qm", "package marker");
     const policy = join(root, "links.rerail");
     writeFileSync(policy, `#include "core.rerail"
+#include "python/references.rerail"
 .policy "links" revision 1
 .language python
 .violation Edge(at: node, via: symbol) "{via}"
@@ -526,7 +527,7 @@ Edge(n, via) :- reference_edge(n, _, via).
     for (const [revision, expected] of [["HEAD", ["pkg/a.py"]], ["HEAD~1", []], ["HEAD", ["pkg/a.py"]]] as const) {
       const result = await scan(root, { revision, paths, analysisScope: "package", rr: [policy] });
       expect(result.status, JSON.stringify(result.failures)).toBe("completed");
-      expect(result.violations.map(finding => finding.path)).toEqual(expected);
+      expect(result.violations.map(finding => finding.path), `${revision}: ${JSON.stringify(result.violations)}`).toEqual(expected);
     }
   });
 
@@ -1129,7 +1130,7 @@ Field(@place("raw-signature",1), role) :- git_signature_bytes(_,_,role,_).
     const engine = loadNativeBinding();
     const good = join(home, "good.rerail"), bad = join(home, "bad.rerail"), metadata = join(home, "metadata.rerail");
     writeFileSync(good, '#include "core.rerail"\n.policy "good" revision 1\n.language python\n.violation V(at: node) "found"\nV(n) :- kind(n,"identifier").\n');
-    writeFileSync(bad, '#include "core.rerail"\n.policy "bad" revision 1\n.language python\n.references {"unknownParameter":true}\n.violation V(at: node) "edge"\nV(n) :- reference_edge(n,_,_).\n');
+    writeFileSync(bad, '#include "core.rerail"\n#include "python/references.rerail"\n.policy "bad" revision 1\n.language python\n.references {"unknownParameter":true}\n.violation V(at: node) "edge"\nV(n) :- reference_edge(n,_,_).\n');
     writeFileSync(metadata, '#include "git.rerail"\n.policy "metadata" revision 1\n.violation V(at:span) "tree"\nV(@place("git",1)) :- git_source_tree(_,_).\n');
     const evaluate = async (files: string[], view?: InstanceType<typeof engine.GitRevisionSource>) =>
       JSON.parse(await engine.scanRrPoliciesAsync({ paths: files, root, store, output: "" }, undefined, view));
@@ -3727,7 +3728,7 @@ Value(@place("git",1), v) :- git_root_repo(_), v = @git_tracked(${JSON.stringify
     const root = checkout();
     const valid = join(root, "valid.rerail"), invalid = join(root, "invalid.rerail");
     writeFileSync(valid, '#include "git.rerail"\n.policy "good" revision 1\n.violation Seen(at: span) "found"\nSeen(@place("git", 1)) :- git_source_commit(_, _).\n');
-    writeFileSync(invalid, '#include "core.rerail"\n.policy "bad" revision 1\n.language python\n.references {"unknownParameter":true}\n.violation V(at: node) "edge"\nV(n) :- reference_edge(n,_,_).\n');
+    writeFileSync(invalid, '#include "core.rerail"\n#include "python/references.rerail"\n.policy "bad" revision 1\n.language python\n.references {"unknownParameter":true}\n.violation V(at: node) "edge"\nV(n) :- reference_edge(n,_,_).\n');
     for (const rr of [[valid, invalid], [invalid, valid]]) {
       const report = await scan(root, { revision: "HEAD", analysisScope: "partial-policies", rr });
       expect(report.status).toBe("failed");
@@ -3952,7 +3953,7 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), git_tree_walk_complete(_, _)
     const policy = join(home, "links.rerail");
     const evaluate = (decorator: string, phase: string) => {
       const settings = { siblingLinks: [{ decorator, name: { replace: "^run_", by: "do_" } }] };
-      writeFileSync(policy, `#include "core.rerail"\n.policy "links" revision 1\n.language python\n.references ${JSON.stringify(settings)}\n.violation Linked(at: node) "sibling"\nLinked(n) :- reference_edge(n,_, "sibling").\n`);
+      writeFileSync(policy, `#include "core.rerail"\n#include "python/references.rerail"\n.policy "links" revision 1\n.language python\n.references ${JSON.stringify(settings)}\n.violation Linked(at: node) "sibling"\nLinked(n) :- reference_edge(n,_, "sibling").\n`);
       const profile = join(home, phase);
       const script = 'import {runHeadlessScan} from "./src/cli/headless-scan.ts"; const [repo,rr,databasePath] = process.argv.slice(2); console.log(JSON.stringify(await runHeadlessScan({repo,rr:[rr],databasePath,scope:"repository",revision:"HEAD",analysisScope:"links",packs:[],version:"test"})));';
       const report = JSON.parse(execFileSync(process.execPath, ["--import", "tsx", "--input-type=module", "-", root, policy, join(home, "home.sqlite")], {
@@ -4003,6 +4004,7 @@ Seen(@place(p, 1)) :- git_tree_file(_, _, p, _, _), p != ".rerailignore", p != "
     const references = join(root, "references.rerail");
     writeFileSync(references, `
 #include "core.rerail"
+#include "python/references.rerail"
 .policy "references" revision 1
 .language python
 .violation Referenced(at: node) "reference"
@@ -4082,6 +4084,7 @@ Referenced(src) :- reference_edge(src, _, _).
     const evaluate = async (fields: boolean) => {
       writeFileSync(policy, `
 #include "core.rerail"
+#include "python/references.rerail"
 .policy "constructor" revision 1
 .language python
 ${fields ? '.references {"constructorFields":{"fieldToParameter":{"replace":"^state_","by":""}}}' : ""}
@@ -4117,6 +4120,7 @@ Field(src) :- reference_edge(src, dst, "field"), node_text(dst, body), contains(
     const policy = join(root, "method.rerail");
     writeFileSync(policy, `
 #include "core.rerail"
+#include "python/references.rerail"
 .policy "method" revision 1
 .language python
 .violation Method(at: node, target: symbol) "{target}"
