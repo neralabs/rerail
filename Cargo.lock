@@ -5023,6 +5023,7 @@ dependencies = [
  "rerail-clif",
  "rerail-observe",
  "rerail-prof",
+ "rerail-registry",
  "rerail-store-base",
  "rusqlite",
  "same-file",
