@@ -98,7 +98,10 @@ mask t_close    = rbrace
 # (`""""""`). A closing run's quotes before its last three are the closer's (`r_lead`).
 mask dq3        = dq & next(dq) & next(dq, 2)
 mask rclose     = dq3 & ~next(dq, 3)
-regions hidden {
+# A template's code nests: its braces, and its strings' templates, as the lean lexer's
+# `interpolation_end` counts them (decision 0621). A tail opens at the `}` that closes its
+# template, not a brace's.
+regions hidden nests lbrace .. rbrace depth 4 else t_deep {
   line  = line_open .. lf outside
   block = block_open .. block_end
   rstr  = dq3 bytes 3 .. rclose bytes 3 or t_dollar
@@ -116,11 +119,13 @@ mask t_brace    = t_lex & prev(hidden) & ~hidden
 assume "a template's `{` is the last byte of its string's token, after the `$` that closes it" at ends t_brace
 mask code       = ~region & ~t_brace
 
-# A template's code: to the `}` its tail opens at. Not read yet with a brace, a template or a
-# comment in it, nor with none. A line break in it is any other (the lean lexer's
-# `interpolation_end` passes it). A `$` in code is no template's.
+# A template's code: to the `}` its tail opens at. Not read yet with a template or a comment in
+# it, nor with none. A line break or a brace in it is any other (the lean lexer's
+# `interpolation_end` passes a line break, and counts the braces). A `$` in code is no
+# template's.
 mask t_code     = fill(prev(t_brace), o_tail | o_rtail)
-escape "a `${…}` template with a brace, a template or a comment" when t_code & (lbrace | line_open | block_open | dollar & next(lbrace))
+escape "a `${…}` template with a template or a comment" when t_code & (line_open | block_open | dollar & next(lbrace))
+escape "a template's code nested past 4 levels" when t_deep
 escape "an empty `${}`" when prev(t_brace) & rbrace
 escape "a `$` outside a string" when code & dollar
 

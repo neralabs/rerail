@@ -1313,6 +1313,9 @@ impl Lowering {
     /// bytes after them by `prev`s at `D`. An `else`'s "a closer after the byte" is the closer's
     /// `back_fill` at `D - 1`: the same bits, a byte on.
     pub fn regions(&mut self, regions: &::bitlex::syntax::Regions) -> Result<(), String> {
+        if regions.nest.is_some() {
+            return self.nested_regions(regions);
+        }
         self.region_kinds.extend(regions.kinds.iter().cloned());
         let mut inputs = Vec::new();
         let mut seconds = Vec::new();
@@ -1506,6 +1509,27 @@ impl Lowering {
         }
         self.program.rounds.push(pairs);
         self.program.walks.push(crate::block::Walk { group: (self.program.rounds.len() - 1) as u16, hidden, kinds });
+        Ok(())
+    }
+
+    /// Regions with a nest (`::bitlex::syntax::RegionNest`, decision 0621): their rounds as any
+    /// `rounds until settled` (`Regions::body`), every backend's form, with no walk: the stack's
+    /// levels are carried as the hidden places are. Each kind's fill is a mode, as `regions`
+    /// makes it.
+    fn nested_regions(&mut self, regions: &::bitlex::syntax::Regions) -> Result<(), String> {
+        if regions.kinds.iter().any(|r| r.empty.is_some()) {
+            return Err(format!("regions {}: a nest with an `else` kind", regions.hidden));
+        }
+        self.region_kinds.extend(regions.kinds.iter().cloned());
+        let body = regions.body();
+        ::bitlex::syntax::strictly_causal(&body)?;
+        self.rounds(&body)?;
+        for r in &regions.kinds {
+            let f = *self.names.get(&format!("f_{}", r.kind)).ok_or(format!("regions {}: no fill f_{}", regions.hidden, r.kind))?;
+            let before = self.prev(f, 1)?;
+            let flips = self.xor(f, before)?;
+            self.toggles.push((f, flips));
+        }
         Ok(())
     }
 

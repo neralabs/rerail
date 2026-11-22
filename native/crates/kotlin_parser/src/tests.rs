@@ -806,15 +806,37 @@ fn small_readings_are_the_lean_parsers() {
     refused(&["val h = \"\"\"a\\$$b\"\"\"\n", "val h = \"\"\"a\\$\"\"\"\n", "val s = `a\nb`\n"]);
 }
 
+/// Braces in a template's code (decision 0621): the tail opens at the `}` that closes the
+/// template, as the lean lexer's `interpolation_end` counts them; a block of more than 4 levels
+/// is refused.
+#[test]
+fn braces_in_templates_are_the_lean_parsers() {
+    same(&[
+        "val s = \"a ${x.f { it.name }} b\"\n",
+        "val s = \"${if (p) { \"granted\"} else { \"denied\" }}\"\n",
+        "val s = \"${if (a) { 1 } else 2}\"\n",
+        "val s = \"${ {x} }\"\n",
+        "val s = \"${x.joinToString(\",\") { it.name }}\"\n",
+        "val s = \"\"\"${a.map { b -> { c } }}\"\"\"\n",
+        "fun f() { val s = \"${g { 1 }}\"; h { 2 } }\n",
+        "val s = \"${a}\" + \"${b {}}\"\n",
+        "val s = \"${a}\"; val t = { \"${b}\" }\n",
+        "val s = \"${a { b { c { d } } }} e\"\n",
+        "val s = \"${a { \"}\" }} e\"\n",
+        "val s = \"${a { '}' }} e\"\n",
+        "val s = \"${a {\n    b\n}} e\"\n",
+        "fun f() {\n    log(\"x ${g.joinToString(\",\") { it.name }}\")\n}\n",
+    ]);
+    refused(&["val s = \"${a {{{{ b }}}} }\"\n"]);
+}
+
 /// What the grammar does not read: refused, and sent to the lean parser.
 #[test]
 fn what_the_grammar_does_not_read_is_refused() {
     refused(&[
         "val a = 1\n/* c */ /* d */\nexternal fun f()\n",
         "val s = \"${f(\"${x}\")}\"\n",
-        "val s = \"${if (a) { 1 } else 2}\"\n",
         "val s = 'x\n",
-        "val s = \"${ {x} }\"\n",
         "val s = \"${}\"\n",
         "val s = \"open\n",
         "/* /* nested */ */\npackage a\n",

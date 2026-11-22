@@ -402,6 +402,28 @@ pub struct Regions {
     /// The hidden bytes' name: the carry.
     pub hidden: String,
     pub kinds: Vec<Region>,
+    /// `nests O .. C depth D else E`: the templates' code nests (`RegionNest`).
+    pub nest: Option<RegionNest>,
+}
+
+/// `regions H nests O .. C depth D else E { … }`: a template's code holds brackets and templates of
+/// its own, as the lean lexer's `interpolation_end` counts a template's braces and reads its
+/// strings' templates (decision 0621). A stack of `D` levels, each a template or a bracket:
+/// - a template's level opens at the byte after a close at a second closer (`or`, its `$`: the
+///   template's `{`), of a plain kind or of a kind that `resumes` one (its kind's template);
+/// - a bracket's opens at an `O` neither hidden nor a template's, where a level is open;
+/// - the innermost level closes at a `C` not hidden. A kind with `after` opens only at such a
+///   `C` that closes a template of a kind it names, as the lean lexer's string reader goes back
+///   to its string at the template's `}`.
+///
+/// Past `D` levels, `E` holds (a refusal). With a nest, `after` reads the stack, not the last
+/// template, and a kind that `resumes` names one kind.
+#[derive(Clone, Debug)]
+pub struct RegionNest {
+    pub opener: Expr,
+    pub closer: Expr,
+    pub depth: u8,
+    pub deep: String,
 }
 
 /// A kind of region (`Regions`).
@@ -474,10 +496,37 @@ impl Regions {
         }
         out.push(Stmt::Carry(self.hidden.clone(), Expr::Empty));
         let ended = format!("{}_ended", self.hidden);
-        let resumes = self.kinds.iter().any(|r| r.resumes);
+        // With a nest the stack says where a template is open: no `ended`.
+        let resumes = self.nest.is_none() && self.kinds.iter().any(|r| r.resumes);
         if resumes {
             out.push(Stmt::Carry(ended.clone(), Expr::Empty));
         }
+        // The nest's levels from the round before (`RegionNest`): each level open, and open as a
+        // template of each kind a kind with `after` names; at each byte, the innermost level open
+        // before it (`in_j`), and the closer there that closes it (`pop_j`).
+        let strings: Vec<String> = self.kinds.iter().filter(|r| r.after.is_empty() && r.or.is_some() && self.kinds.iter().any(|q| q.after.contains(&r.kind))).map(|r| r.kind.clone()).collect();
+        let lv = |j: u8| format!("{}_lv{j}", self.hidden);
+        let lvk = |j: u8, k: &str| format!("{}_lv{j}_{k}", self.hidden);
+        let inner = |j: u8| format!("{}_in{j}", self.hidden);
+        let pop = |j: u8| format!("{}_pop{j}", self.hidden);
+        if let Some(n) = &self.nest {
+            for j in 1..=n.depth {
+                out.push(Stmt::Carry(lv(j), Expr::Empty));
+                for k in &strings {
+                    out.push(Stmt::Carry(lvk(j, k), Expr::Empty));
+                }
+            }
+            out.push(Stmt::Mask(inner(0), not(prev(&lv(1), 1))));
+            for j in 1..=n.depth {
+                let open = prev(&lv(j), 1);
+                let e = if j < n.depth { and(open, not(prev(&lv(j + 1), 1))) } else { open };
+                out.push(Stmt::Mask(inner(j), e));
+                out.push(Stmt::Mask(pop(j), and(and(n.closer.clone(), not(name(&self.hidden))), name(&inner(j)))));
+            }
+        }
+        // The closes at a template's `$` of each kind that resumes one (with a nest): its kind's
+        // template opens there.
+        let mut resumed: Vec<(String, Expr)> = Vec::new();
         let mut ends: Option<Expr> = None;
         let mut hide: Option<Expr> = None;
         let mut or = |e: Expr| hide = Some(match hide.take() {
@@ -499,7 +548,19 @@ impl Regions {
         });
         for r in &self.kinds {
             let mut open = and(r.opener.clone(), not(name(&self.hidden)));
-            if !r.after.is_empty() {
+            if let (false, Some(n)) = (r.after.is_empty(), &self.nest) {
+                // At a closer that closes a template of a kind it names.
+                let mut at: Option<Expr> = None;
+                for j in 1..=n.depth {
+                    let named = r.after.iter().map(|k| prev(&lvk(j, k), 1)).reduce(|a, b| Expr::Or(Box::new(a), Box::new(b))).expect("verified: a kind named");
+                    let x = and(name(&pop(j)), named);
+                    at = Some(match at {
+                        Some(a) => Expr::Or(Box::new(a), Box::new(x)),
+                        None => x,
+                    });
+                }
+                open = and(open, at.expect("a level"));
+            } else if !r.after.is_empty() {
                 let named = any(plain.iter().copied().filter(|k| r.after.contains(&k.kind)).collect(), &templates).expect("verified: a kind named");
                 let others = any(plain.iter().copied().filter(|k| !r.after.contains(&k.kind)).collect(), &templates).unwrap_or(Expr::Empty);
                 let others = if resumes { Expr::Or(Box::new(others), Box::new(name(&ended))) } else { others };
@@ -540,6 +601,9 @@ impl Regions {
                 if r.after.is_empty() {
                     templates.push((r.kind.clone(), l2.clone()));
                 }
+                if r.resumes && self.nest.is_some() {
+                    resumed.push((r.after[0].clone(), l2.clone()));
+                }
                 if r.resumes {
                     ends = Some(match ends.take() {
                         Some(e) => Expr::Or(Box::new(e), Box::new(l.clone())),
@@ -559,9 +623,58 @@ impl Regions {
                 }
             }
         }
-        out.push(Stmt::Next(self.hidden.clone(), hide.unwrap_or(Expr::Empty)));
+        let hide = hide.unwrap_or(Expr::Empty);
+        // With a nest, the levels read this round's hidden places (a `prev` on their way): the
+        // carry's, at the fixed point.
+        let now = format!("{}_now", self.hidden);
+        if self.nest.is_some() {
+            out.push(Stmt::Mask(now.clone(), hide.clone()));
+        }
+        out.push(Stmt::Next(self.hidden.clone(), hide));
         if resumes {
             out.push(Stmt::Next(ended, call("prev", vec![Arg::E(ends.unwrap_or(Expr::Empty))])));
+        }
+        if let Some(n) = &self.nest {
+            let or2 = |a: Option<Expr>, b: Expr| Some(match a {
+                Some(a) => Expr::Or(Box::new(a), Box::new(b)),
+                None => b,
+            });
+            // Each string kind's template's `{`: the byte after a close at its `$`.
+            let mut all: Option<Expr> = None;
+            for k in &strings {
+                let mut c: Option<Expr> = templates.iter().find(|t| t.0 == *k).map(|t| t.1.clone());
+                for (q, e) in &resumed {
+                    if q == k {
+                        c = or2(c, e.clone());
+                    }
+                }
+                let t = call("prev", vec![Arg::E(c.expect("a plain kind's template"))]);
+                out.push(Stmt::Mask(format!("{}_t_{k}", self.hidden), t));
+                all = or2(all, name(&format!("{}_t_{k}", self.hidden)));
+            }
+            let all = all.unwrap_or(Expr::Empty);
+            out.push(Stmt::Mask(format!("{}_t", self.hidden), all));
+            let t = name(&format!("{}_t", self.hidden));
+            let bracket = and(and(n.opener.clone(), not(name(&now))), not(t.clone()));
+            out.push(Stmt::Mask(format!("{}_b", self.hidden), bracket));
+            let pushes = Expr::Or(Box::new(t.clone()), Box::new(name(&format!("{}_b", self.hidden))));
+            for j in 1..=n.depth {
+                let close = format!("{}_close{j}", self.hidden);
+                out.push(Stmt::Mask(close.clone(), and(and(n.closer.clone(), not(name(&now))), name(&inner(j)))));
+            }
+            let pop = |j: u8| format!("{}_close{j}", self.hidden);
+            for j in 1..=n.depth {
+                // A template opens a level anywhere; a bracket only inside one.
+                let at = if j == 1 { and(t.clone(), name(&inner(0))) } else { and(pushes.clone(), name(&inner(j - 1))) };
+                let push = format!("{}_push{j}", self.hidden);
+                out.push(Stmt::Mask(push.clone(), at));
+                out.push(Stmt::Next(lv(j), call("fill", vec![Arg::E(name(&push)), Arg::E(name(&pop(j)))])));
+                for k in &strings {
+                    let tk = and(name(&push), name(&format!("{}_t_{k}", self.hidden)));
+                    out.push(Stmt::Next(lvk(j, k), call("fill", vec![Arg::E(tk), Arg::E(name(&pop(j)))])));
+                }
+            }
+            out.push(Stmt::Mask(n.deep.clone(), and(pushes, name(&inner(n.depth)))));
         }
         out
     }
@@ -1657,9 +1770,25 @@ impl P {
     }
 
     // --- statements ---
-    /// `regions H { K = O [bytes N] .. C [bytes N] [outside] [else E bytes M] … }` (`Regions`).
+    /// `regions H [nests O .. C depth D else E] { K = O [bytes N] .. C [bytes N] [outside] [else E
+    /// bytes M] … }` (`Regions`).
     fn regions(&mut self) -> R<Regions> {
         let hidden = self.ident()?;
+        let nest = if self.eat_kw("nests") {
+            let opener = self.expr()?;
+            self.want_p("..")?;
+            let closer = self.expr()?;
+            self.want_kw("depth")?;
+            let depth = self.int()?;
+            self.want_kw("else")?;
+            let deep = self.ident()?;
+            if !(1..=15).contains(&depth) {
+                return self.err("a nest of 1 to 15 levels");
+            }
+            Some(RegionNest { opener, closer, depth: depth as u8, deep })
+        } else {
+            None
+        };
         self.want_p("{")?;
         self.nls();
         let mut kinds = Vec::new();
@@ -1727,7 +1856,10 @@ impl P {
         if kinds.len() > 15 && kinds.iter().any(|r| !r.after.is_empty()) {
             return Err("regions with `after`: at most 15 kinds".into());
         }
-        Ok(Regions { hidden, kinds })
+        if nest.is_some() && kinds.iter().any(|r| r.resumes && r.after.len() != 1) {
+            return Err("regions with a nest: a kind that resumes names one kind, its template's".into());
+        }
+        Ok(Regions { hidden, kinds, nest })
     }
 
     fn block(&mut self) -> R<Vec<Stmt>> {

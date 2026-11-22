@@ -38,7 +38,7 @@ pub struct Lexed {
 }
 
 /// Each byte's record kind, as a token's first byte.
-const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 10, 21, 11, 12, 13, 14, 16, 17, 18, 19, 15, 20, 1, 5, 6, 4, 0, 0];
+const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 0, 0, 0, 0, 3, 0, 0, 0, 0, 0, 0, 0, 0, 7, 7, 7, 7, 7, 7, 7, 7, 7, 7, 0, 0, 0, 0, 0, 0, 0, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 9, 8, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 9, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 20, 10, 11, 12, 13, 15, 16, 17, 18, 14, 19, 1, 5, 6, 4, 0, 0];
 
 /// A token's word: the code of the word its bytes are, 0 for none.
 fn word(b: &[u8]) -> u32 {
@@ -222,6 +222,7 @@ struct Stage1 {
     m_bind: Vec<u64>,
     m_backslash: Vec<u64>,
     m_dollar: Vec<u64>,
+    m_lbrace: Vec<u64>,
     m_high: Vec<u64>,
     m_punct: Vec<u64>,
     t0: Vec<u64>,
@@ -485,6 +486,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut m_bind = vec![0u64; nw];
     let mut m_backslash = vec![0u64; nw];
     let mut m_dollar = vec![0u64; nw];
+    let mut m_lbrace = vec![0u64; nw];
     let mut m_high = vec![0u64; nw];
     let mut m_punct = vec![0u64; nw];
     let mut t0 = vec![0u64; nw];
@@ -737,6 +739,9 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             // class lbrace
             let w = unsafe { S::eq_mask(v, 0x7b) & lv };
             r_m_lbrace[q % RING] = w;
+            if q < nw {
+                m_lbrace[q] = w;
+            }
             // class high
             let w = unsafe { S::to_bitmask(S::test(c2, S::splat(0x04))) & lv };
             r_m_high[q % RING] = w;
@@ -1073,8 +1078,8 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             if q < nw {
                 t52[q] = w;
             }
-            // ((lbrace | line_open) | block_open) | (dollar & next(lbrace))
-            let w = (((r_m_lbrace[q % RING] | r_m_line_open[q % RING]) | r_m_block_open[q % RING]) | r_m_dollar[q % RING] & (r_m_lbrace[q % RING] >> 1 | r_m_lbrace[(q + 1) % RING] << 63));
+            // (line_open | block_open) | (dollar & next(lbrace))
+            let w = ((r_m_line_open[q % RING] | r_m_block_open[q % RING]) | r_m_dollar[q % RING] & (r_m_lbrace[q % RING] >> 1 | r_m_lbrace[(q + 1) % RING] << 63));
             r_t53[q % RING] = w;
             if q < nw {
                 t53[q] = w;
@@ -1405,6 +1410,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
         m_bind,
         m_backslash,
         m_dollar,
+        m_lbrace,
         m_high,
         m_punct,
         t0,
@@ -1495,7 +1501,7 @@ pub fn lex(src: &[u8]) -> Lexed {
     // Each word's bits inside the file.
     let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
     // Stage 1: the masks the regions and the tokens read, and whether an escape holds.
-    let Stage1 { m_ws, m_lf, m_slash, m_word, m_alpha, m_digit, m_dot, m_at_sign, m_semicolon, m_rbrace, m_gt, m_dq, m_sq, m_bt, m_u_letter, m_zero, m_x_letter, m_b_letter, m_e_letter, m_f_letter, m_sign, m_hexd, m_bind, m_backslash, m_dollar, m_high, m_punct, t0, m_line_open, m_block_open, m_block_end, t1, m_dq_close, m_sq_close, m_t_dollar, m_t_lex, m_dq3, m_rclose, t2, t3, t4, t9, t11, t13, t15, t26, t27, t30, t31, t32, t33, m_two_start, m_two_start_three, t44, t45, t46, t47, t48, t49, t51, t52, t53, t54, t56, t58, t57, t59, t72, t60, t80, t81, t83, t95, t96, t101, t100, t103, t98, t104, t106, t107, t108, t109, t110, t111, t112, t113, t114, t115, t116, t117, t119, t120, t122, mut fw_rd0_close, mut fw_rd1_close, refused: escapes } = stage1_best(src);
+    let Stage1 { m_ws, m_lf, m_slash, m_word, m_alpha, m_digit, m_dot, m_at_sign, m_semicolon, m_rbrace, m_gt, m_dq, m_sq, m_bt, m_u_letter, m_zero, m_x_letter, m_b_letter, m_e_letter, m_f_letter, m_sign, m_hexd, m_bind, m_backslash, m_dollar, m_lbrace, m_high, m_punct, t0, m_line_open, m_block_open, m_block_end, t1, m_dq_close, m_sq_close, m_t_dollar, m_t_lex, m_dq3, m_rclose, t2, t3, t4, t9, t11, t13, t15, t26, t27, t30, t31, t32, t33, m_two_start, m_two_start_three, t44, t45, t46, t47, t48, t49, t51, t52, t53, t54, t56, t58, t57, t59, t72, t60, t80, t81, t83, t95, t96, t101, t100, t103, t98, t104, t106, t107, t108, t109, t110, t111, t112, t113, t114, t115, t116, t117, t119, t120, t122, mut fw_rd0_close, mut fw_rd1_close, refused: escapes } = stage1_best(src);
     let mut refused = escapes;
     // The regions' walk and the masks made of it: only a test build's checks read them.
     #[cfg(feature = "test-hooks")]
@@ -1518,11 +1524,16 @@ pub fn lex(src: &[u8]) -> Lexed {
         let mut m_f_tail = vec![0u64; nw];
         let mut m_o_rtail = vec![0u64; nw];
         let mut m_f_rtail = vec![0u64; nw];
+        let mut m_t_deep = vec![0u64; nw];
         {
             let mut at = 0usize;
             // The kind of string the template is in: the region closed last at its second closer (a template's `$`), of the kinds with no `after`.
             let mut template = usize::MAX;
             // Each kind's next opener, at or after where it was looked for (`n`: none).
+            // The nest (decision 0621): its levels, each a template's kind or a bracket's `usize::MAX`, innermost last; the place of the last template's `{`.
+            let mut nest = [usize::MAX; 4];
+            let mut depth = 0usize;
+            let mut tb = usize::MAX;
             let mut nx = [first_bit(&m_line_open, 0).unwrap_or(n), first_bit(&m_block_open, 0).unwrap_or(n), first_bit(&m_dq3, 0).unwrap_or(n), first_bit(&t3, 0).unwrap_or(n), first_bit(&m_sq, 0).unwrap_or(n), first_bit(&m_bt, 0).unwrap_or(n), first_bit(&m_rbrace, 0).unwrap_or(n), first_bit(&m_rbrace, 0).unwrap_or(n)];
             loop {
                 let (mut p, mut k) = (n, usize::MAX);
@@ -1594,6 +1605,31 @@ pub fn lex(src: &[u8]) -> Lexed {
                         k = 7;
                     }
                 }
+                // The nest: a bracket's `{` (not a template's) or a level's closer before the next opener, where a level is open.
+                if depth > 0 {
+                    let b = match first_bit(&m_lbrace, at) {
+                        Some(x) if x == tb => first_bit(&m_lbrace, x + 1).unwrap_or(n),
+                        x => x.unwrap_or(n),
+                    };
+                    let c = first_bit(&m_rbrace, at).unwrap_or(n);
+                    if b < p && b < c {
+                        if depth == 4 {
+                            set(&mut m_t_deep, b, b + 1);
+                        } else {
+                            nest[depth] = usize::MAX;
+                            depth += 1;
+                        }
+                        template = usize::MAX;
+                        at = b + 1;
+                        continue;
+                    }
+                    if c < p {
+                        depth -= 1;
+                        template = if depth > 0 { nest[depth - 1] } else { usize::MAX };
+                        at = c + 1;
+                        continue;
+                    }
+                }
                 match k {
                     0 => {
                         // `line = line_open .. lf`
@@ -1627,6 +1663,13 @@ pub fn lex(src: &[u8]) -> Lexed {
                             Some(c) => {
                                 let last = {
                                     if bit(&m_t_dollar, c) {
+                                        if depth == 4 {
+                                            set(&mut m_t_deep, c + 1, c + 2);
+                                        } else {
+                                            nest[depth] = 2;
+                                            depth += 1;
+                                        }
+                                        tb = c + 1;
                                         template = 2;
                                     }
                                     if bit(&m_t_dollar, c) { c + 0 } else { c + 2 }
@@ -1649,6 +1692,13 @@ pub fn lex(src: &[u8]) -> Lexed {
                             Some(c) => {
                                 let last = {
                                     if bit(&m_t_dollar, c) {
+                                        if depth == 4 {
+                                            set(&mut m_t_deep, c + 1, c + 2);
+                                        } else {
+                                            nest[depth] = 3;
+                                            depth += 1;
+                                        }
+                                        tb = c + 1;
                                         template = 3;
                                     }
                                     c + 0
@@ -1701,11 +1751,20 @@ pub fn lex(src: &[u8]) -> Lexed {
                     6 => {
                         // `tail = t_close .. dq_close or t_dollar`
                         set(&mut m_o_tail, p, p + 1);
+                        depth -= 1;
+                        template = if depth > 0 { nest[depth - 1] } else { usize::MAX };
                         match first_bit(&t4, p + 1) {
                             Some(c) => {
                                 let last = {
-                                    if !bit(&m_t_dollar, c) {
-                                        template = usize::MAX;
+                                    if bit(&m_t_dollar, c) {
+                                        if depth == 4 {
+                                            set(&mut m_t_deep, c + 1, c + 2);
+                                        } else {
+                                            nest[depth] = 3;
+                                            depth += 1;
+                                        }
+                                        tb = c + 1;
+                                        template = 3;
                                     }
                                     c + 0
                                 };
@@ -1723,11 +1782,20 @@ pub fn lex(src: &[u8]) -> Lexed {
                     7 => {
                         // `rtail = t_close .. rclose or t_dollar`
                         set(&mut m_o_rtail, p, p + 1);
+                        depth -= 1;
+                        template = if depth > 0 { nest[depth - 1] } else { usize::MAX };
                         match first_bit(&t2, p + 1) {
                             Some(c) => {
                                 let last = {
-                                    if !bit(&m_t_dollar, c) {
-                                        template = usize::MAX;
+                                    if bit(&m_t_dollar, c) {
+                                        if depth == 4 {
+                                            set(&mut m_t_deep, c + 1, c + 2);
+                                        } else {
+                                            nest[depth] = 2;
+                                            depth += 1;
+                                        }
+                                        tb = c + 1;
+                                        template = 2;
                                     }
                                     if bit(&m_t_dollar, c) { c + 0 } else { c + 2 }
                                 };
@@ -1910,6 +1978,9 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut template = usize::MAX;
     // The string's record a template left open (decision 0600), over the template's code.
     let mut held: Option<usize> = None;
+    // The nest (decision 0621): its levels, each a template's kind or a bracket's `usize::MAX`, innermost last, as the lean lexer's `interpolation_end` counts a template's braces.
+    let mut nest = [usize::MAX; 4];
+    let mut depth = 0usize;
     // Whether a gap mask (`lf & code`) held since the grammar token before, and since the record before.
     let mut acc_0 = false;
     let mut rec_0 = false;
@@ -2088,6 +2159,21 @@ pub fn lex(src: &[u8]) -> Lexed {
                 },
                 _ => usize::MAX,
             };
+            // The nest: a bracket opens at a `{` where a level is open; the innermost closes at a `}` (a tail's row reads on past it).
+            if depth > 0 {
+                if bit(&m_lbrace, s) {
+                    if depth == 4 {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    nest[depth] = usize::MAX;
+                    depth += 1;
+                    template = usize::MAX;
+                } else if bit(&m_rbrace, s) {
+                    depth -= 1;
+                    template = if depth > 0 { nest[depth - 1] } else { usize::MAX };
+                }
+            }
             match row {
                 0 => {
                     // `line_comment`: read line
@@ -2455,6 +2541,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                             close = c;
                             if bit(&m_t_dollar, c) {
                                 template = 3;
+                                if depth == 4 {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                nest[depth] = 3;
+                                depth += 1;
                                 if held.is_some() {
                                     refused = true;
                                     break 'tokens;
@@ -2522,6 +2614,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                             close = c;
                             if bit(&m_t_dollar, c) {
                                 template = 2;
+                                if depth == 4 {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                nest[depth] = 2;
+                                depth += 1;
                                 if held.is_some() {
                                     refused = true;
                                     break 'tokens;
@@ -2636,7 +2734,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     if span_0.0 != usize::MAX && span_0.1 == usize::MAX && s >= span_0.0 {
                         let (l, c) = (span_0.0 - 1, s);
                         let _ = (l, c);
-                        // a `${…}` template with a brace, a template or a comment
+                        // a `${…}` template with a template or a comment
                         if any_in(&t53, l + 1, c - 1) {
                             refused = true;
                             break 'tokens;
@@ -2705,9 +2803,16 @@ pub fn lex(src: &[u8]) -> Lexed {
                     match held {
                         Some(o) => {
                             lasts[o] = l as u32;
-                            if !bit(&m_t_dollar, close) {
+                            if bit(&m_t_dollar, close) {
+                                if depth == 4 {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                nest[depth] = 3;
+                                depth += 1;
+                                template = 3;
+                            } else {
                                 held = None;
-                                template = usize::MAX;
                             }
                         }
                         None => {
@@ -2731,7 +2836,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     if span_0.0 != usize::MAX && span_0.1 == usize::MAX && s >= span_0.0 {
                         let (l, c) = (span_0.0 - 1, s);
                         let _ = (l, c);
-                        // a `${…}` template with a brace, a template or a comment
+                        // a `${…}` template with a template or a comment
                         if any_in(&t53, l + 1, c - 1) {
                             refused = true;
                             break 'tokens;
@@ -2815,9 +2920,16 @@ pub fn lex(src: &[u8]) -> Lexed {
                     match held {
                         Some(o) => {
                             lasts[o] = l as u32;
-                            if !bit(&m_t_dollar, close) {
+                            if bit(&m_t_dollar, close) {
+                                if depth == 4 {
+                                    refused = true;
+                                    break 'tokens;
+                                }
+                                nest[depth] = 2;
+                                depth += 1;
+                                template = 2;
+                            } else {
                                 held = None;
-                                template = usize::MAX;
                             }
                         }
                         None => {
@@ -3075,7 +3187,7 @@ pub fn lex(src: &[u8]) -> Lexed {
     if !refused && span_0.0 != usize::MAX && span_0.1 == usize::MAX {
         let (l, c) = (span_0.0 - 1, n);
         let _ = (l, c);
-        // a `${…}` template with a brace, a template or a comment
+        // a `${…}` template with a template or a comment
         if any_in(&t53, l + 1, c - 1) {
             refused = true;
         }
