@@ -44,14 +44,14 @@ pub(super) const GROWTH: f64 = 2.0;
 /// The choices for one program: the program's version as the rewrites left it (`None`: as it was), what each named,
 /// and the scale they were made at.
 #[derive(Clone)]
-pub(super) struct Chosen {
+pub struct Chosen {
     /// The rewritten program's version (t36 items 6 and 7), which the run reads: the passes' overlay of the program's,
     /// or the stored image (or the image of the stored text). `None` where the program was not rewritten.
-    pub(super) version: Option<super::body::Placed>,
+    pub version: Option<super::body::Placed>,
     /// The relations inlined (`keeps::choose`) and demanded (`demand::split_negations`), for the profile.
-    pub(super) inlined: Vec<String>,
-    pub(super) demanded: Vec<String>,
-    pub(super) nodes: f64,
+    pub inlined: Vec<String>,
+    pub demanded: Vec<String>,
+    pub nodes: f64,
 }
 
 /// A digest of everything the rewrites read of a program, and of what else changes their choices: the program's
@@ -98,15 +98,15 @@ pub fn key(p: &super::body::Placed) -> [u8; 32] {
 }
 
 /// Whether choices made at `kept` nodes are taken at `now`.
-pub(super) fn holds(kept: f64, now: f64) -> bool {
+pub fn holds(kept: f64, now: f64) -> bool {
     now <= kept.max(1.0) * GROWTH
 }
 
 /// The choices kept by key, the caller's (decision 0442: the shared object's).
 #[derive(Default)]
-struct KeptChoices(Mutex<HashMap<[u8; 32], Chosen>>);
+pub struct KeptChoices(pub Mutex<HashMap<[u8; 32], Chosen>>);
 
-fn kept() -> std::sync::Arc<KeptChoices> {
+pub fn kept() -> std::sync::Arc<KeptChoices> {
     crate::code_rule_dsl::logic::profile::shared::<KeptChoices>()
 }
 
@@ -124,14 +124,14 @@ struct DurableSide(Option<Arc<Held>>);
 type Held = (ContentStore, [u8; 32], HashMap<String, Vec<u8>>, HashMap<[u8; 32], crate::code_rule_dsl::logic::program_image::SharedBytes>);
 
 /// While held, this thread's runs keep their choices in the store at `path`, under prepared program `prepared`.
-pub(in crate::code_rule_dsl) struct Durable {
+pub struct Durable {
     _side: crate::code_rule_dsl::logic::profile::Bound,
 }
 
 impl Durable {
     /// Every entry kept under `prepared` is read here, at once, before the run's first wave (decision 0104): a
     /// lookup in the waves reads memory only.
-    pub(in crate::code_rule_dsl) fn start(path: &std::path::Path, prepared: [u8; 32], late: Arc<Mutex<Vec<crate::content_store::SourceId>>>) -> Durable {
+    pub fn start(path: &std::path::Path, prepared: [u8; 32], late: Arc<Mutex<Vec<crate::content_store::SourceId>>>) -> Durable {
         let store = ContentStore::open(path).ok();
         let side = store.map(|s| -> Arc<Held> {
             let stored = read_all(&s, &prepared).unwrap_or_default();
@@ -183,7 +183,7 @@ impl Drop for Durable {
 }
 
 /// The choices for program `key` that a run at `nodes` takes: this process's, else the store's.
-pub(super) fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
+pub fn lookup(key: &[u8; 32], nodes: f64) -> Option<Chosen> {
     // Memory is ahead of the store (decision 0102): choices this process holds are the newest there are, so the store
     // is read only for a program this process has not planned. Nor does the read wait for the writer: what a queued
     // write holds is in memory already. A chunk's are its view's (Q314).
@@ -251,7 +251,7 @@ pub(super) fn file(made: Vec<([u8; 32], Chosen, bool)>) {
 }
 
 /// Keeps the choices made for program `key`, in this process and in the store; in a chunk, at its filing.
-pub(super) fn remember(key: [u8; 32], chosen: Chosen) {
+pub fn remember(key: [u8; 32], chosen: Chosen) {
     if let Some(c) = super::chunk_choices() {
         c.take(key, chosen, true);
         return;
@@ -277,7 +277,7 @@ fn queued(prepared: &[u8; 32], key: &[u8; 32]) -> crate::content_store::write_ba
     crate::content_store::write_back::Key::of(&[b"facts_memo/choices", prepared, key])
 }
 
-fn keep(key: [u8; 32], chosen: Chosen) {
+pub fn keep(key: [u8; 32], chosen: Chosen) {
     let held = kept();
     let mut kept = held.0.lock().expect("the kept choices");
     if kept.len() >= KEPT_PROGRAMS && !kept.contains_key(&key) {
@@ -286,7 +286,7 @@ fn keep(key: [u8; 32], chosen: Chosen) {
     kept.insert(key, chosen);
 }
 
-fn hex(bytes: &[u8]) -> String {
+pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -304,7 +304,7 @@ fn plan() -> FactsPlanSet {
 }
 
 /// One program's entry, by its key, under the prepared program's source.
-fn path(key: &[u8; 32]) -> String {
+pub fn path(key: &[u8; 32]) -> String {
     format!("rerail/plan-choices/{}", hex(key))
 }
 
@@ -316,7 +316,7 @@ const REWRITTEN: &str = "rr_chosen_rewritten";
 /// Every program's choices kept under `prepared`, by entry path: one read of the store (the source's pin is the
 /// manifest's, `named`).
 /// Every entry kept under `prepared`, by path, as stored: each is decoded when looked up (`lookup`).
-fn read_all(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<HashMap<String, Vec<u8>>> {
+pub fn read_all(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<HashMap<String, Vec<u8>>> {
     let Some(source) = store.sources_by_hashes(&[HashKey::sha256(source_text(prepared).as_bytes())])?.pop().flatten() else { return Ok(HashMap::new()) };
     Ok(store.facts_results_of(source, SCHEMA, plan().plans[0])?.into_iter().collect())
 }
@@ -366,9 +366,9 @@ fn take_notes(facts: &Facts) {
 }
 
 /// The memo's rows for the entry.
-pub(super) type NoteRows = (Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>);
+pub type NoteRows = (Vec<Vec<Value>>, Vec<Vec<Value>>, Vec<Vec<Value>>);
 
-fn note_rows((notes, exact, raised): super::joins::Stored) -> NoteRows {
+pub fn note_rows((notes, exact, raised): super::joins::Stored) -> NoteRows {
     let notes = notes.iter().map(|(k, n)| super::joins::note_row(*k, n).into_iter().map(Value::Int).collect()).collect();
     let exact = exact
         .iter()
@@ -382,7 +382,7 @@ fn note_rows((notes, exact, raised): super::joins::Stored) -> NoteRows {
 }
 
 /// The plans kept under `prepared`: one read of the store.
-fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(super::StoredPlans, super::prepared::ByVersion)> {
+pub fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(super::StoredPlans, super::prepared::ByVersion)> {
     let Some(source) = store.sources_by_hashes(&[HashKey::sha256(source_text(prepared).as_bytes())])?.pop().flatten() else { return Ok(Default::default()) };
     let Some((_, entry)) = store.facts_results_of(source, PLANS_SCHEMA, plan().plans[0])?.into_iter().find(|(path, _)| path == PLANS_PATH) else { return Ok(Default::default()) };
     let Ok(facts) = program_facts::decode(&entry) else { return Ok(Default::default()) };
@@ -398,7 +398,7 @@ fn read_plans(store: &ContentStore, prepared: &[u8; 32]) -> StoreResult<(super::
 }
 
 /// The kept plans' and join notes' facts entry, made on the run's side (decision 0306).
-fn plans_entry(rows: &[Vec<Value>], notes: &NoteRows, ready: &[Vec<Value>]) -> Vec<u8> {
+pub fn plans_entry(rows: &[Vec<Value>], notes: &NoteRows, ready: &[Vec<Value>]) -> Vec<u8> {
     let mut facts = Facts::new();
     facts.insert(PLANS_REL.to_owned(), rows.iter().map(crate::code_rule_dsl::logic::front::List::from).collect());
     if !ready.is_empty() {
@@ -413,7 +413,7 @@ fn plans_entry(rows: &[Vec<Value>], notes: &NoteRows, ready: &[Vec<Value>]) -> V
 }
 
 /// Writes the kept plans' entry (`plans_entry`, the item's bytes) under prepared program `prepared`'s source.
-fn apply_plans(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
+pub fn apply_plans(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
     let prepared: [u8; 32] = crate::content_store::record::codec::from_body("the kept plans", body)?;
     let store = cx.store;
     let text = source_text(&prepared);
@@ -427,7 +427,7 @@ fn apply_plans(cx: &crate::content_store::record::Apply<'_>, body: crate::conten
 }
 
 /// The digest of the rewritten program a choice's entry names, if it names one.
-fn rewritten(entry: &[u8]) -> Option<[u8; 32]> {
+pub fn rewritten(entry: &[u8]) -> Option<[u8; 32]> {
     match program_facts::decode(entry).ok()?.get(REWRITTEN)?.first()?.as_slice() {
         [Value::Str(digest)] => unhex(digest),
         _ => None,
@@ -435,7 +435,7 @@ fn rewritten(entry: &[u8]) -> Option<[u8; 32]> {
 }
 
 /// A choice's entry: its facts, and the rewritten program (`REWRITTEN`, its digest) opened from its image in `images`.
-fn decode_chosen(images: &HashMap<[u8; 32], crate::code_rule_dsl::logic::program_image::SharedBytes>, entry: &[u8]) -> Option<Chosen> {
+pub fn decode_chosen(images: &HashMap<[u8; 32], crate::code_rule_dsl::logic::program_image::SharedBytes>, entry: &[u8]) -> Option<Chosen> {
     let Ok(facts) = program_facts::decode(entry) else { return None };
     let nodes = match facts.get(SCALE).and_then(|rows| rows.first()).map(|r| r.as_slice()) {
         Some([Value::Int(n)]) => *n as f64,
@@ -514,9 +514,8 @@ fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_stor
 
 /// The source and plan a prepared program's choices live under, for the run's manifest: the source is made when the
 /// store has none yet, so the first run's manifest names the entries it writes.
-pub(in crate::code_rule_dsl) fn named(prepared: &[u8; 32]) -> (String, [u8; 32]) {
+pub fn named(prepared: &[u8; 32]) -> (String, [u8; 32]) {
     (source_text(prepared), plan().plans[0])
 }
 
-#[cfg(test)]
-pub mod tests;
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus)

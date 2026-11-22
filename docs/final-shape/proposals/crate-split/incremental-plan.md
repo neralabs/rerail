@@ -381,7 +381,7 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   are the engine's `code_rule_dsl::napi_tests`. Their helpers moved to fixtures modules: `module_graph::fixtures`,
   and `workspace::fixtures` (`TempDir`, `package_repository`). The test crates' lib.rs files are source now
   (`test_crates.py` ran once).
-  - Tests: the 145 moved tests pass under cargo (spark1); one `cargo check --tests` over boot, the engine and the
+  - Tests: the 145 moved tests pass under cargo (a Linux host); one `cargo check --tests` over boot, the engine and the
     six test crates is clean.
 - **Step 4** (2026-11-21): the compiler is five crates. Their sources stay in `crates/compiler/src`; each crate above
   the front end mounts its modules by `#[path]` and reads the crates below through a private glob (`use
@@ -405,11 +405,9 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     addresses and switch trees (`table_address`, `dispatch`) into `native_cpu_codegen`. Each tier re-exports what
     moved under its old name. `BlockProgram::compile_rows` became `native_cpu_rows::compile_program`.
   - **`pp_words` is the front end's**: `rir_asm` validates a program by it, and Metal's pp runs read it.
-  - **`rust_stream` is live in the JIT.** Its `facts` decides where the JIT's format 16 runs pass nodes directly
+  - **`rust_stream` was live in the JIT.** Its `facts` decided where the JIT's format 16 runs pass nodes directly
     (`direct_keys`, `open_bound`, `marks`, `word_form`), and parser_tests checks that the JIT is direct exactly where
-    the Rust is. `facts` also refuses programs for the Rust backend's own limits. So it stays with the stream tier, as
-    do `rust_block` (it reads `rust_stream`'s names) and `clif_rust` (tier 1's source from a `Parser`). Cutting it out
-    first means separating the JIT's direct-run facts from the Rust backend's acceptance.
+    the Rust is. So it stayed with the stream tier at first. Step 4b (below) cut it out.
   - **No backend trait was needed.** Every caller of a tier is above it (the parser crates: rr-parser, c-directives,
     kotlin, lang-json, the AOT crates, parser_tests), so each upward reference was cut by moving the item down. A
     registry would have no lower caller to serve.
@@ -420,7 +418,7 @@ decision record. There are no A/B triples. One run per state, with the host's lo
   - Both had kept `rerail-rr-parser` from the engine's dependency list, which none of their code reads. It is gone.
   - Tier 2's tests set `bitlex_masks::NO_GAP_ENDS`, which was `cfg(test)` and is now behind `test-hooks`, since those
     tests are another crate's. It was the only `cfg(test)` hook in a lower crate that a higher crate's tests read.
-  - Tests (cargo nextest, spark1; one `cargo check --tests --workspace` clean on Linux, and the Metal crates' check
+  - Tests (cargo nextest, a Linux host; one `cargo check --tests --workspace` clean on Linux, and the Metal crates' check
     on an M3):
     - The five crates' 146 tests pass, with 3 in the slow tier. That is every `#[test]` in their sources but the
       two macOS-only relocation tests.
@@ -430,3 +428,195 @@ decision record. There are no A/B triples. One run per state, with the host's lo
       checkout has not pulled (`pyflakes/F601.py`, the Python pack's upstream sources). One,
       `a_patterns_block_program_runs_alike_on_every_executor`, failed for the device's capacity under the parallel
       run and passes alone.
+- **Step 4b** (2026-11-21): the Rust lowering is its own crate, and the JIT reads only the front end.
+
+  | crate | holds | lines |
+  |---|---|---:|
+  | `rerail-compiler` (the front end) | as in step 4, and `stream_analysis`, `stream_facts`, `record_tables`, `native_cpu_clusters` | 22.0k |
+  | `rerail-cpu-block` | as in step 4 | 13.0k |
+  | `rerail-cpu-stream` | `native_cpu_stream`, `native_cpu_tape`, `clif_rust`, `ladder`, `tier2_on` (and the tier tests) | 12.9k |
+  | `rerail-rust-stream` | `rust_stream`, `rust_block` | 6.0k |
+
+  - **The analyses that emit no code moved down.** From `native_cpu_stream` they went to `stream_analysis`:
+    successors, `callee`, `phases`, `bounds`, `calls_on_stack`, `fetch_of`, `split_parts`, `shared_runs`, the run's
+    state slots (`Mem`) and `refusal`. Tier 1's `RecordTables`, which `fetch_of` reads, went to `record_tables`,
+    `lazy_marks` to `records`, and `native_cpu_clusters`, which reads only those, to the front end whole.
+  - **`rust_stream`'s `facts` split in two.** `stream_facts::facts` gives the program's facts and refuses it with
+    the reasons `rust_stream` named. That covers its one-function form (`OneFn`), `stacked`, `coded`, `key_after`,
+    the records tier 2 makes (`Fetched`) and the parts' checks (`part_facts`). It is the front end's, with
+    `direct_keys`, `direct_entries`, `open_bound`, `marks` and `word_form`. `rust_stream::Facts` holds those facts
+    (by `Deref`) and the Rust's own: the names, the methods, the empty containers, the last ends.
+  - **The JIT's gate is unchanged.** The one place the facts read the Rust's code plan was `part_facts`, through
+    `reads_code`, which walks `succ`, and `succ` takes a switch's successors from `switch_plan`'s arms. But
+    `reads_code` never expands a switch: a fresh switch ends the walk, and any other is a read. It also skips part
+    words, and the Rust's other cases (`empties`, `strings`) are empty when `facts` runs. So the front end walks the
+    words' own successors (`word_succ`) there. `part_facts` and `reads_code` take the successor function: the Rust's
+    calls during emission pass its `succ`, so what they find is as before.
+    `grammars_rust_tapes_are_the_jits` (the JIT direct exactly where the Rust is) passes.
+  - **Dependencies.** `rerail-rust-stream` reads the front end, tier 1's lowering (a local check's mask is the
+    JIT's window function, translated) and `rerail-clif` (`Shape`, `translate`). It does not read
+    `rerail-cpu-stream`, and `rerail-cpu-stream` does not read it, so an edit to either rebuilds only its own crate
+    and the crates above it. `clif_rust`'s `rust_source` writes a compiled `Parser`'s own IR as Rust, so it stays
+    with the JIT. The parsers read `native_cpu_clusters` from the front end. The tape constants `NO_CODE`,
+    `WIDE_OFF` and `WIDE_TAIL` are `stream_analysis`'s, re-exported by `native_cpu_tape`.
+  - Tests (cargo nextest, a Linux host; `cargo check --tests --workspace` clean on Linux; the device, Metal, tier 2 and
+    parser crates check on a Mac mini; the AOT crates check with `generated`):
+    - The compiler's crates, rust-stream, parser_tests, rr-parser, lang-json, kotlin, c-directives and the AOT
+      crates: 332 pass.
+    - After `native_cpu_clusters` moved, those of them that read it: 307 pass.
+- **Step 5a** (2026-11-21): `rerail-logic-core` (`native/crates/logic_core`), the bottom of logic: `analysis`,
+  `bloom`, `costs`, `crypto`, `derived`, `join_size`, `liveness`, `reach_form`, `sql` and `version_trace`, 7.0k
+  production lines. `rerail-logic` reads them under their old names (`logic.rs` re-exports each), so no caller
+  changed.
+  - **The layering differs from the table above.** The modules the table leaves in `rerail-logic` are not one
+    layer. `sql`, `costs`, `analysis`, `bloom` and the liveness rules read nothing above them. `run`, `run_state`,
+    `lanes`, `device`, the waves and the thread pool do: they and setfix read each other, so they stay with
+    `logic::native` and go into `rerail-setfix` together. `rank_form` reads the planner's bodies and goes with it.
+    The references, by `refgraph`, run typing → planner, not both ways, and memo → planner, so the order up is core,
+    setfix, planner, typing, corpus-memo, corpus-prep, then `rerail-logic` (the corpus and the language's root).
+  - **What the core read of the crates above moved, or became a registration.**
+    - The SQL lattice functions (`sql::lattices`) are the native lattices' algebra as SQL functions, so they are
+      `native::lattices`, beside `Lattice` and `Reduction`. Their tops in the SQL a plan emits (`transfers`)
+      rewrite an `Emitted`, so they are `plan::emit::transfers`, which the corpus planner and the SQL sessions
+      call.
+    - `liveness::read_counts` reads a run's `Outputs`, so it is `plan::output::read_counts`.
+    - On macOS the cost model trained the learned join model and set it as the planner's `Pricer`. Training stays
+      in `costs::join_steps`. The pricer over the model is `plan::joins::model`, and boot registers its `install`
+      (`join_steps::register_install`, a `fn`, as `prof::register_device_memory` is).
+    - `analysis`'s tests parse `.rerail` text (`rr::parse_version`), so `rerail-logic`'s facade of `analysis`
+      mounts them.
+  - **A test waited on the disk.** `a_closure_over_many_components_runs_in_pieces_like_semi_naive` inserted its
+    35,000 rows into a file store one commit at a time. On an ext4 host each commit waited on the journal, and the
+    test ran past nextest's 240 s limit. Its inserts are now one transaction: 0.87 s on that host, 1.1 s on a Mac.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux; the logic crates, boot and tests_logic
+    check on a Mac):
+    - The core's own tests, and the lattice, liveness, SQL kernel, widening, SQL session, native and run-state
+      tests of the crates above (a Linux host): 404 run, 402 pass. The closure test then passed alone after its fix. The
+      SQL profiling test needs `node`, which that host lacks, and passes on a Mac.
+    - On a Mac: the core's 23 tests, the join planner's and join steps' tests, `analysis`'s, the closure test and
+      the profiling test: 32 pass.
+- **Step 5b** (2026-11-21): `rerail-setfix` (`native/crates/setfix`): `logic::native` (setfix and the other
+  solvers), the run and its state (`run`, `run_state`), the lanes, the solver device interface (`device`), the waves'
+  owner, schedule and storage, and the thread pool, 27.7k production lines. It also mounts the planner's `statkeep`
+  under the planner's path (`plan::statkeep`, as `rerail-facts` mounts `plan::sketch`): a kept relation carries its
+  statistics in that form (`setfix::KeptStats`). `rerail-logic` re-exports each module under its old name.
+  - **What setfix read of the planner moved down, or became a registration.**
+    - The run's binding (`Binding`, `device`, `set_binding`, `block_device`) is `device::binding`, which
+      `plan::placement` re-exports. The prices it places by stay in `placement`.
+    - The required shape's counts (`maintain::shape`) read only the run's state, so they are `run::shape`, and
+      `maintain` re-exports them. R1's scan of the source exempts that file, which holds the maintenance names.
+    - `PRICE_DRIFT` is the cost model's (`costs`). `sql_col` names an input's columns from `input_columns` alone,
+      so it is `sql::select`'s.
+    - The Bloom screen's choice (`use_bloom`, `BloomProbeInput`) is `logic::bloom`'s. The machine's pricer gives
+      its answer through a slot on the machine object (`BloomAdmission`), which `set_pricer` fills, as it fills the
+      pair caches' (`PairAdmission`).
+    - `profile::watch`'s memory reads (`memory_ceiling`, `resident_bytes`, `physical_bytes`) read only the OS, so
+      they are `profile::memory`'s, in `rerail-prof`, and `watch` re-exports them.
+    - **What a job carries of its run** (`run_state::CARRIERS`) named the planner's thread-locals between the
+      run's and setfix's, so it is a `rerail_registry::Slot`, its first user. The program's composition registers
+      the ordered list, `plan::CARRIERS`: boot does, and `rerail-logic`'s own test binary does as it loads. Setfix's
+      own test binary registers the run's and setfix's (`RUN_CARRIERS`). A binary that registers none fails in
+      `Carry::here` with the slot's name, rather than carrying part of the context.
+    - Tests that read the language or the planner are mounted by `rerail-logic`'s facades: `run_state`'s (every
+      thread-local of the tree against `plan::CARRIERS`), `setfix::bounded_tests` (`rr::parse_version`), and two
+      tests of a relation's digest and kept rows under `plan::corpus::retain`, which moved out of `posted_tests`
+      into `setfix/retain_tests.rs`.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux; setfix, logic, boot, device-metal,
+    tests_logic and sessions check on a Mac):
+    - A Linux host: setfix's 162, sessions' 20, `rerail-logic`'s mounted 23, and tests_logic's native, lanes, run,
+      run-state, Bloom, joins, statkeep and maintain tests: 254 pass. In the first run R1 failed until its
+      exemption followed the list, and once `a_maintained_strata_pieces_run_as_one_component` aborted at exit
+      after passing (glibc: "double free or corruption"). It did not recur alone (6 runs) or in the full set
+      again.
+    - A Mac (an M3): setfix's tests, the mounted ones, and tests_logic's run-state, joins and lanes tests: 173 pass.
+- **Step 5c** (2026-11-21): `rerail-planner` (`native/crates/planner`): `plan.rs` and `plan/*` but the corpus, the
+  answers' gates (`answers`), the rank form, `program_text`, the pass manager with the program's passes, analyses and
+  layouts (`program_image::{manager, passes, analyses, layouts}`, added to `rerail-program-image`'s module as
+  `rerail-logic` added them), and the profile's report and watch, about 40k lines with the inline tests that stayed.
+  It is over setfix. Of the language it reads only `rerail-rr`'s lowering and printer, under the language's path
+  (`logic::rr::{lower, print_version}`), and the shipped images (`rr::images`, below). `rerail-logic` re-exports
+  each module, and its facade of `plan` mounts the corpus (`plan::corpus`) over the planner's `plan`.
+  - **What the planner read of the language's root or the corpus moved, or became a registration.**
+    - `waves::findings` emitted through `emit::emit_batch`, which parsed the program (`rr::parse_version`, the
+      corpus's lowering tail). The caller parses it and calls `emit::emit_program`; `emit_batch` is gone.
+    - The relations a rule's qualification names (`qualified`), the reasons and threshold a stratum is derived again
+      for (`FIRST_RUN`, `THRESHOLD`, `past_threshold`, …), the deferred products' prefixes and the guests' demand
+      relations were the corpus's and read by the planner. They are the planner's (`plan::lower::qualified`, the
+      new `plan::again`, `plan::body::{PRODUCT_DEMAND, DEFERRED_PAIRS}`, `rr::lower::DEMANDS`). The corpus
+      re-exports each under its old name.
+    - **The carriers' list** (`run_state::CARRIERS`) names the corpus's test store, so it is `logic::CARRIERS`,
+      the top's. Boot and `rerail-logic`'s test binary register it. The planner's test binary registers the run's,
+      the planner's and setfix's.
+    - **The core's relation names** (`rr::core_names`, which parse the core's `.rerail` text) are read by `keeps`
+      through `plan::keeps::CORE_NAMES`, a `rerail_registry::Slot` that boot and `rerail-logic`'s tests register.
+    - `program_text` keeps a program's images through `rr::images` (`export`, `shipped`, `shipped_image`). Of
+      `images`, only `store` read the corpus (its stores), so `store` is `rr::images_store`, in the language's
+      root, and `images` is the planner's.
+  - **Tests that parse `.rerail` or run the corpus** are mounted by `rerail-logic`'s facades: 14 modules
+    (`answers::tests`, `plan::{complete_answer_tests, search_tests}`, and the tests of `body`, `choices`, `compose`,
+    `demand`, `demand::over`, `joins`, `keeps`, `lower`, `native_demand`'s integration tests, `replanning` and
+    `wellfounded`). Nine of them were inline and are now files. Each facade repeats its module's imports for the
+    tests' `use super::*`. The planner's test-only helpers they call (`RunPlans::{find, with_stored}`,
+    `joins::raised`, `inline::{unfolded, unfolded_shown}`) are `cfg(any(test, feature = "test-hooks"))`.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on the planner
+    and `rerail-logic`):
+    - A Linux host: the planner's own 32; `rerail-logic`'s plan, answers, program-image, profile and native tests,
+      262; tests_logic's and boot's plan, answers, program-image and boot tests, 325 of 326; the waves and findings
+      tests of tests_logic, boot and classic, 98. The one that failed,
+      `programs_hidden_alone_keep_their_attribute_copies_declared`, stops on pack test data that neither the hosts
+      nor this checkout has (`packs/data-layer/…/datalog/authored`, `npm run fixtures:pull`), before it plans
+      anything, on a Mac too.
+- **Step 5d** (2026-11-21): `rerail-typing` (`native/crates/typing`): `code_rule_dsl::typing`, 7.0k production lines,
+  over the planner. Its crate adds that one module to the planner's `code_rule_dsl`, which it re-exports whole, and
+  `rerail-logic` re-exports it. The corpus runs it (`plan::corpus::typing`).
+  - **What typing read of the corpus moved down.** The file-local passes ask whether a relation is an input every
+    program of a run shares (`phases::is_phased`). That read the names of the inputs the corpus runner fills from
+    Git, the analysis history and the source languages. The names and `is_phased` are the planner's,
+    `plan::phased`, and the corpus's `git`, `analysis_history`, `source_languages` and `phases` import them.
+  - Typing's inline tests (`terms`, `rounds`, `deps`, `declare`) read nothing above it and stay. Its engine,
+    oracle and phase tests were already mounted by the test crates.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on typing,
+    the planner and `rerail-logic`): on a Linux host, every typing test of typing, `rerail-logic`, tests_logic and
+    boot (47), and the corpus's Git, phase, analysis-history and source-language tests (15), pass.
+- **Step 5e** (2026-11-21): `rerail-corpus-memo` (`native/crates/corpus_memo`): the corpus's `memo` (with
+  `memo::image`), `guests`, `hiding`, `exports`, `keptstats`, `matchers`, `scoping`, `owner`, `sizing`, `added`,
+  `texts`, `shape`, `maintain`, `typing`, and the new `own`, 5.8k lines, over typing. Its crate mounts them under a
+  facade of `plan::corpus` that repeats the root's imports, so their `use super::*` resolve as before. The root
+  (`corpus.rs`) re-exports each, and mounts the tests of `added`, `memo`, `memo::image` and `owner`, which read it
+  or the language's root.
+  - **The layering differs from the table above.** The corpus's modules were measured with the root left out (by
+    path, with `use` braces expanded, and the root's own items a glob reaches by name). They are three layers, not
+    two under the root:
+    - the memo's, which read nothing of the corpus above them;
+    - the preparation's (`preparation`, `product_demand`, `link`, `kept_link`), which read the memo and the guests
+      and nothing of the root;
+    - the root's, the rest: the run's world (`world`, `git`, `git_content`, `phases`, `phase0`, `constants`,
+      `reuse`, `analysis_history`, `test_store`, one cycle, which reads the root's `observe`, `ThreadStore` and
+      tape cache), and `retain`, `kept_strata`, `input_delta`, `maintained`, `inputs`, `session`, `cone_rounds`
+      and `prepared`.
+
+    `retain` reads the preparation, so it cannot be under it, as the table had it. `combined` and `import_closure`
+    read the language's root (`rr::parse_version`, `rr::library`) and stay with the root.
+  - **What the memo read of the root moved down.** A chunk's own statistics (`Own`, its `OWN_*` rows, the sample's
+    row budget, `constants_tested_in` and `tested_through`) are `corpus::own`. The queued write's sources (`Late`) are
+    `guests`'. The root re-exports both. The language's lowering's file-system relations (`rr::{FILE_SYSTEM,
+    WORLD}`) are `rerail-rr`'s, which the planner's `rr` facade now re-exports. `memo::image::encode`, which only
+    tests call, is `cfg(any(test, feature = "test-hooks"))`.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on the memo
+    crate and `rerail-logic`): on a Linux host, the memo crate's 17, and the memo layer's, the root's, the
+    statistics' and `combined`'s tests in `rerail-logic` and tests_logic: 144 of 145. The one that failed is 5c's,
+    which needs pack test data.
+- **Step 5f** (2026-11-21): `rerail-corpus-prep` (`native/crates/corpus_prep`): the corpus's `preparation` (simplify,
+  parts, lowering's tail, hide, magic, merge, prune, rank, combining, …) and `product_demand`, 16.8k lines, over the
+  memo. The root re-exports them through facades that mount their tests: all of them parse `.rerail` or read the
+  product demand's tests, so the crate has no tests of its own. Ten inline test modules are now files.
+  - `link` and `kept_link` read the language's root (`rr::{Text, Library, Scoped}`, `rr.rs`'s), so they stay with
+    the corpus's root, though they read the preparation.
+  - **What the preparation read of the top.** `simplify` read the core's relation names (`rr::core_names`); it reads
+    them through the planner's slot (`plan::keeps::core_names`, which `keeps` reads too). `rr::aggregate_demand` is
+    `rerail-rr`'s, which the planner's `rr` facade now re-exports. The product demand's test-only reads
+    (`Program::{shown, changed}`) are `cfg(any(test, feature = "test-hooks"))`.
+  - Tests (cargo nextest; `cargo check --tests --workspace` clean on Linux and on a Mac; clippy clean on the corpus
+    crates, the planner and `rerail-logic`): on a Linux host, the preparation's, product demand's, link's and magic
+    sets' tests (72), and the corpus root's, maintain and cache tests (78 of 79; the one that failed is 5c's, which
+    needs pack test data).

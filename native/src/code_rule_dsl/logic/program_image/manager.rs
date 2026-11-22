@@ -341,7 +341,7 @@ pub type Row = Vec<crate::code_rule_dsl::logic::front::Value>;
 /// The rows stored for a reopened version's analyses, by name and version (decision 0333 §4).
 pub type StoredRows = Arc<dyn Fn(&str, u32) -> Option<Vec<Row>> + Send + Sync>;
 
-type Value = Arc<dyn Any + Send + Sync>;
+pub type Value = Arc<dyn Any + Send + Sync>;
 
 /// A cached analysis, with what the store needs of its type to carry it.
 #[derive(Clone)]
@@ -870,7 +870,7 @@ pub struct Last<'a> {
 
 /// The forms a program pass's writer takes (`ProgramW`).
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum Mode {
+pub enum Mode {
     /// An edit: a view, an overlay, or folded, as its size says.
     Edit,
     /// An overlay, never folded: a version whose cost must stay its own size (a part's fields, decision 0244).

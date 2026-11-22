@@ -1,0 +1,24 @@
+[package]
+name = "rerail-rust-stream"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Deprecated (decision 0550). Tier 2's stream program as Rust source, ahead of time (`rust_stream`), on the compiler's front end and tier 1's lowering."
+# The vendored Cranelift's cfgs (`cranelift_clmul`, `cranelift_preserve_most`), set as for the compiler's front end.
+build = "../compiler/build.rs"
+
+[features]
+test-hooks = ["rerail-compiler/test-hooks", "rerail-cpu-block/test-hooks", "rerail-tape-format/test-hooks", "rerail-clif/test-hooks"]
+
+[dependencies]
+rerail-compiler = { path = "../compiler" }
+# Tier 1's lowering: a local check's and a gap mark's mask, as the JIT's window function, translated to Rust.
+rerail-cpu-block = { path = "../cpu_block" }
+# The tape the generated runs write (decision 0140), and a format 16 source's language (decision 0535).
+rerail-tape-format = { path = "../tape_format" }
+# Cranelift IR as Rust, and the graph's structure as Rust's control (decision 0310).
+rerail-clif = { path = "../clif" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-rust-stream = { path = ".", features = ["test-hooks"] }

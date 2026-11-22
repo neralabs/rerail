@@ -18,7 +18,7 @@ type Result<T> = std::result::Result<T, String>;
 
 /// Native about rows `name` with the rows of `drop`'s relations left out and `add` added, in `program_facts::
 /// write_field`'s order: by the native's name (column 1), then by column 2 where it is a number.
-pub(super) fn edit_native_rows(b: &mut Builder<'_>, name: &str, drop: &HashSet<String>, add: Vec<Vec<Cell>>) {
+pub fn edit_native_rows(b: &mut Builder<'_>, name: &str, drop: &HashSet<String>, add: Vec<Vec<Cell>>) {
     let mut rows = b.about_rows(name);
     let rel_of = |b: &Builder<'_>, r: &[Cell]| match r.get(1) {
         Some(Cell::Str(a)) => b.text(*a).to_owned(),
@@ -40,11 +40,11 @@ pub(super) fn edit_native_rows(b: &mut Builder<'_>, name: &str, drop: &HashSet<S
 }
 
 /// The program's name cell of an about row (column 0).
-pub(super) fn about_p(b: &mut Builder<'_>) -> Cell {
+pub fn about_p(b: &mut Builder<'_>) -> Cell {
     Cell::Str(b.atom(crate::code_rule_dsl::logic::program_image::ABOUT))
 }
 
-pub(super) fn qualified(v: &Version, about: &About, rel: &str, word: &str) -> bool {
+pub fn qualified(v: &Version, about: &About, rel: &str, word: &str) -> bool {
     about.qualifiers.iter().any(|(r, w)| v.text(*r) == rel && v.text(*w) == word)
 }
 
@@ -52,7 +52,7 @@ fn facts_nonempty(v: &Version, rel: &str) -> bool {
     v.find(rel).and_then(|a| v.facts(a)).is_some_and(|f| f.rows().len() > 0)
 }
 
-pub(super) fn is_input(v: &Version, rel: &str) -> bool {
+pub fn is_input(v: &Version, rel: &str) -> bool {
     v.inputs().any(|a| v.text(a) == rel)
 }
 

@@ -32,7 +32,7 @@ use crate::code_rule_dsl::logic::program_image::Version;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::typing::file_local::Binding;
 
-const SEP: &str = "__";
+use crate::code_rule_dsl::logic::plan::phased::SEP;
 
 /// The phases whose runs are under way, outermost first, in the run's context: a phase reading a later phase's export
 /// runs that phase inside its own run, so a phase met again is a cycle. A run in a job is inside the same phases.
@@ -206,13 +206,8 @@ pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::sha
     Ok(out)
 }
 
-/// Whether `rel` names an earlier phase's export (`<phase>__<export>`), or an input the runner binds with the phases'
-/// (Git's, the analysis history's and the source languages'): shared by every program of a run
-/// (`corpus::combine` does not prefix it).
-pub fn is_phased(rel: &str) -> bool {
-    super::analysis_history::is_input(rel) || super::git::INPUTS.contains(&rel) || super::source_languages::is_input(rel)
-        || rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("rr_") && !e.contains(SEP))
-}
+/// Whether `rel` is an input shared by every program of a run (the planner's, `plan::phased`).
+pub use crate::code_rule_dsl::logic::plan::phased::is_phased;
 
 /// A batch of policies run one after another over one tree (`tools::run_policies`): while it is held, phase 1's runs
 /// are kept by their inputs and taken again by a policy whose run has the same ones. Nothing is kept past it, so an

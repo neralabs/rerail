@@ -1,4 +1,4 @@
-//! Tier 2's Rust (`rerail_cpu_stream::rust_stream`, the ahead-of-time backend) against the JIT on every grammar of
+//! Tier 2's Rust (`rerail_rust_stream::rust_stream`, the ahead-of-time backend) against the JIT on every grammar of
 //! three sets: JSON's (`json_parser/`), `.rerail`'s (`rr_parser/rr.bitlex`), and probes whose words edit a node the
 //! writer's ops already have (`RETAGGED_ROOT`). Each grammar's Rust, in format 15 and in format 16 (decision 0434), is
 //! built by rustc with the rest of its set into one library, each grammar a module, run on the JIT's harness, and its
@@ -6,7 +6,7 @@
 
 use rerail_cpu_stream::ladder::{Compiled, Lang, compile_step, documents_with, seed};
 use rerail_cpu_stream::native_cpu_stream::Entry;
-use rerail_cpu_stream::rust_stream;
+use rerail_rust_stream::rust_stream;
 
 /// A set of grammars: each one's name and text, the bytes its documents' mutations write, and documents of its own.
 struct Set {

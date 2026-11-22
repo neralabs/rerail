@@ -1928,7 +1928,7 @@ pub mod code_rule_dsl {
         #[allow(unused_imports, hidden_glob_reexports)]
         use std::sync::Arc;
         #[allow(unused_imports)]
-        use crate::code_rule_dsl::logic::sql::lattices;
+        use crate::code_rule_dsl::logic::native::lattices;
         #[allow(unused_imports)]
         use crate::code_rule_dsl::logic::sql::program;
     }

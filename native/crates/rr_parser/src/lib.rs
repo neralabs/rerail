@@ -131,11 +131,11 @@ pub fn compile_padded(grammar: &str, shape: bitlex_compile::Shape, pad: u16) -> 
     // its return a native return; the optimizer on. Its entries and arms weighted by the
     // samples' traffic. `RR_CUT=traffic`: the clusters cut by traffic instead, as before.
     let samples: Vec<&[u8]> = SAMPLES.iter().map(|s| s.as_bytes()).collect();
-    let traffic = rerail_cpu_stream::native_cpu_clusters::traffic(&program, &samples);
+    let traffic = rerail_compiler::native_cpu_clusters::traffic(&program, &samples);
     let cut = if std::env::var("RR_CUT").as_deref() == Ok("traffic") {
-        rerail_cpu_stream::native_cpu_clusters::by_traffic(&native, &traffic, CLUSTER_CAP)
+        rerail_compiler::native_cpu_clusters::by_traffic(&native, &traffic, CLUSTER_CAP)
     } else {
-        rerail_cpu_stream::native_cpu_clusters::Cut { pick_traffic: traffic.clone(), near: true, unsigned: true, speed: true, ..rerail_cpu_stream::native_cpu_clusters::by_rules(&native) }
+        rerail_compiler::native_cpu_clusters::Cut { pick_traffic: traffic.clone(), near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(&native) }
     };
     let parser = native_cpu_stream::Parser::with_cut(&native, &cut).map_err(|e| format!("Cranelift: {e:?}"))?;
     Ok(Compiled { parser, native: native.block_programs[0].clone(), costs: compiled.costs.clone(), origin: compiled.origin.clone(), values: compiled.values.clone(), block: program.block_programs[0].clone(), labels: compiled.labels.clone(), rows: compiled.rows.clone(), words: compiled.words.clone(), machine: compiled.machine.clone(), program })
@@ -251,7 +251,7 @@ pub mod tests {
     #[test]
     fn tier2_is_a_function_a_grammar_rule() {
         use rerail_compiler::{native_ir, stream};
-        use rerail_cpu_stream::native_cpu_clusters;
+        use rerail_compiler::native_cpu_clusters;
         let c = crate::compiled().expect("compiles");
         let rules = &c.program.rules;
         assert!(rules.len() > 20, "a rule a level: {}", rules.len());
@@ -814,7 +814,7 @@ pub mod tests {
     /// PR #508's 0d1f9497e (t47).
     #[test]
     fn a_lazy_marks_token_is_its_callers() {
-        use rerail_cpu_stream::native_cpu_clusters as cl;
+        use rerail_compiler::native_cpu_clusters as cl;
         let c = crate::compiled().expect("compiles");
         let mut native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
         native.tag = rerail_tape_format::RR_TAG;
@@ -1288,7 +1288,7 @@ pub mod tests {
         // corpus runs it (the interpreter's steps), by the word's operation, a token.
         let native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
         let all: Vec<&[u8]> = ours.iter().map(|f| f.as_bytes()).collect();
-        let traffic = rerail_cpu_stream::native_cpu_clusters::traffic(&c.program, &all);
+        let traffic = rerail_compiler::native_cpu_clusters::traffic(&c.program, &all);
         let mut runs = vec![0u64; native.structural.len()];
         for (&(_, b), &w) in &traffic {
             runs[b as usize] += w;
@@ -2686,7 +2686,7 @@ pub mod tests {
     #[test]
     #[ignore = "a benchmark: run by hand"]
     fn rr_tier2_clusters() {
-        use rerail_cpu_stream::native_cpu_clusters::{by_traffic, crossings, traffic, Cut};
+        use rerail_compiler::native_cpu_clusters::{by_traffic, crossings, traffic, Cut};
         use rerail_cpu_stream::native_cpu_stream::Parser;
         let c = super::compiled().expect("compiles");
         let mut native = rerail_compiler::native_ir::lower(&c.program, 0, 0).expect("lowers");
@@ -2715,14 +2715,14 @@ pub mod tests {
         // `RR_ONLY=form`: that form alone, its crossings over the sample only (a profile of its
         // run, `xctrace`'s counters, with little else in the trace).
         let only = std::env::var("RR_ONLY").ok();
-        let whole = if only.is_some() { traffic.clone() } else { rerail_cpu_stream::native_cpu_clusters::traffic(&c.program, &all) };
+        let whole = if only.is_some() { traffic.clone() } else { rerail_compiler::native_cpu_clusters::traffic(&c.program, &all) };
         let caps: Vec<usize> = std::env::var("RR_CAPS").ok().map(|v| v.split(',').filter_map(|x| x.parse().ok()).collect()).unwrap_or_else(|| vec![600, 1200, 2500]);
         // By the traffic, and by the program alone (no profile: its own edges, in order of place).
         let none = std::collections::HashMap::new();
         let mut shapes: Vec<(String, Cut)> = std::iter::once(("one".to_owned(), Cut::one(native.structural.len()))).chain(caps.iter().map(|&cap| (format!("cap {cap}"), by_traffic(&native, &traffic, cap)))).collect();
-        shapes.push(("rules".to_owned(), Cut { speed: true, ..rerail_cpu_stream::native_cpu_clusters::by_rules(&native) }));
+        shapes.push(("rules".to_owned(), Cut { speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(&native) }));
         if std::env::var_os("RR_STATES").is_some() {
-            shapes.push(("states".to_owned(), rerail_cpu_stream::native_cpu_clusters::by_states(&native)));
+            shapes.push(("states".to_owned(), rerail_compiler::native_cpu_clusters::by_states(&native)));
         }
         if std::env::var_os("RR_STATIC").is_some() {
             shapes.extend(caps.iter().map(|&cap| (format!("static {cap}"), by_traffic(&native, &none, cap))));
@@ -2775,8 +2775,8 @@ pub mod tests {
             })
             // `Cut::pick`: the switches weighted by the profile, or by a table.
             .flat_map(|(name, cut)| {
-                let weighted = (name.clone(), Cut { pick: rerail_cpu_stream::native_cpu_clusters::Pick::Weighted, pick_traffic: traffic.clone(), ..cut.clone() });
-                let table = (name.clone(), Cut { pick: rerail_cpu_stream::native_cpu_clusters::Pick::Table, ..cut.clone() });
+                let weighted = (name.clone(), Cut { pick: rerail_compiler::native_cpu_clusters::Pick::Weighted, pick_traffic: traffic.clone(), ..cut.clone() });
+                let table = (name.clone(), Cut { pick: rerail_compiler::native_cpu_clusters::Pick::Table, ..cut.clone() });
                 let more = std::env::var_os("RR_ARMS").is_some();
                 std::iter::once((name.clone(), cut)).chain(more.then(|| (format!("{}+weighted", weighted.0), weighted.1))).chain(more.then(|| (format!("{}+table", table.0), table.1)))
             })
@@ -3384,7 +3384,7 @@ mod json_probe {
 
     /// JSON's parser with tier 2 a function a grammar rule, as rr's (`by_rules`, optimized).
     fn json_parser(n: &rerail_compiler::native_ir::Structure) -> rerail_cpu_stream::native_cpu_stream::Parser {
-        let cut = rerail_cpu_stream::native_cpu_clusters::Cut { near: true, unsigned: true, speed: true, ..rerail_cpu_stream::native_cpu_clusters::by_rules(n) };
+        let cut = rerail_compiler::native_cpu_clusters::Cut { near: true, unsigned: true, speed: true, ..rerail_compiler::native_cpu_clusters::by_rules(n) };
         rerail_cpu_stream::native_cpu_stream::Parser::with_cut(n, &cut).expect("JSON's parser")
     }
 

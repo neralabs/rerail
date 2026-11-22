@@ -323,6 +323,14 @@ native/src/source_tree.rs::IMAGE	stays	computed once from the engine's own files
 native/crates/registry/src/lib.rs::CPU	stays	a zero-sized provider (the CPU device's name): a constant, registered at load
 native/crates/registry/src/lib.rs::FORMAT	stays	a test's own slot (the slot type's test)
 native/crates/registry/src/lib.rs::GPU	stays	a zero-sized provider (the GPU device's name): a constant, registered at load
+native/crates/corpus_memo/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/corpus_prep/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/planner/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/setfix/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/typing/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/src/code_rule_dsl/logic/costs/join_steps.rs::INSTALL	stays	code a crate above registers at load (the planner's batch pricer over a trained join model)
+native/src/code_rule_dsl/logic/plan/keeps.rs::CORE_NAMES	stays	code a crate above registers at load (the core's relation names)
+native/src/code_rule_dsl/logic/run_state.rs::CARRIERS	stays	code the program's composition registers at load (the run's carried context, in order)
 native/crates/tests_compile/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_demand/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_lang/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)

@@ -9,6 +9,8 @@ use std::sync::{Arc, OnceLock};
 
 use super::native::setfix::{Fresh, InRel, Interner, JoinRule, Store};
 
+/// The run's binding: the CPU only, or the device too.
+pub mod binding;
 pub mod caps;
 pub mod lattice;
 pub mod nearest;
@@ -95,7 +97,7 @@ pub fn register(device: &'static dyn SolverDevice) {
 }
 
 /// The registered device, if any.
-pub(in crate::code_rule_dsl) fn solver() -> Option<&'static dyn SolverDevice> {
+pub fn solver() -> Option<&'static dyn SolverDevice> {
     SOLVER.get().copied()
 }
 

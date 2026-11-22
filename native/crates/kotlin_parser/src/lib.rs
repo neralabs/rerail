@@ -8,7 +8,8 @@
 
 use rerail_bitlex::bitlex_masks as bitlex_compile;
 use rerail_compiler::{native_ir, rir_asm as rir};
-use rerail_cpu_stream::{native_cpu_clusters, native_cpu_stream};
+use rerail_compiler::native_cpu_clusters;
+use rerail_cpu_stream::native_cpu_stream;
 use rerail_kotlin_lean as lean;
 
 /// The grammar.

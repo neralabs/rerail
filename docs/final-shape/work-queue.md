@@ -10161,3 +10161,16 @@ Each choice is read by both sides' invariants in `notes/roll-up-41-rr-align.md`:
   them.
 - **Device gates**: theirs' arms (only no device is skipped) on ours' platforms (Windows too).
 - **The preprocessor grid**: theirs' state words, ours' join.
+
+### Q463. Roll-up 42 (engine-crating bd146745ab onto Pulling-it-all-together): what the merge chose
+
+Each choice is read by both sides' invariants in `notes/roll-up-42-engine-crating.md`:
+
+- **The Rust lowering's crate**: `rerail-rust-stream` mounts `rust_stream` only, marked deprecated (0550).
+  `rust_block` stays removed.
+- **Moved code**: theirs' homes (`stream_analysis`, `stream_facts`, `profile/memory.rs`, `hide/tests.rs`), with ours'
+  changes made there: `root_number` (0558), the split readers and their two slots (0509), Windows' memory readings,
+  and the narrow copy's hide test.
+- **Mirrors**: the split crates re-export what ours added (`rr::UNPLACED`, `rerail_store::Canonical`).
+- **State lists**: `Device` and `INSTALL` in 0104's STATE list. The split's eight load-time registrations go in
+  the global-state list.
