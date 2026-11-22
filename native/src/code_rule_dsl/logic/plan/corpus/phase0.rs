@@ -170,6 +170,13 @@ pub fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
 #[derive(Default)]
 struct PhaseZeroGraphs(Mutex<HashMap<(Option<Dirs>, Seed), Arc<Graph>>>);
 
+/// The graphs' images this process retained, by the image store's path (`images::store_path`) and the image's key: a
+/// graph held in the process is retained once in each store a run reads (the store that evaluates a working tree's
+/// policies keeps them), not at every lookup, which opened the image store and asked it for the image each time
+/// (1,263 lookups, 0.85 s of ep2's edit).
+#[derive(Default)]
+struct PhaseZeroRetained(Mutex<std::collections::HashSet<(Option<PathBuf>, crate::content_store::HashKey)>>);
+
 pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     let dirs = Dirs::here();
     let kept_held = crate::code_rule_dsl::logic::profile::shared::<PhaseZeroGraphs>();
@@ -193,9 +200,14 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     }
     let images = Images::here();
     if let Some(images) = &images {
+        let at = crate::code_rule_dsl::logic::rr::images::store_path();
+        let retained = crate::code_rule_dsl::logic::profile::shared::<PhaseZeroRetained>();
         for (seed, graph) in seeds.iter().zip(&found) {
             if let Some(graph) = graph {
-                crate::code_rule_dsl::logic::rr::retain_graph_image(images.store.as_deref(), images.key(seed), || images.encode(graph));
+                let key = images.key(seed);
+                if retained.0.lock().expect("phase 0's retained images").insert((at.clone(), key)) {
+                    crate::code_rule_dsl::logic::rr::retain_graph_image(images.store(), key, || images.encode(graph));
+                }
             }
         }
     }
@@ -218,7 +230,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
             g.digests.iter().chain(&g.rules).all(|(p, d)| looked.entry(p.clone()).or_insert_with(|| super::observe(|o| o.digest(p))).as_ref() == Some(d))
                 && g.absent.iter().all(|p| *missing.entry(p.clone()).or_insert_with(|| super::observe(|o| o.kind(p)) == crate::content_store::observe::Kind::Missing))
         };
-        let graphs: Vec<Option<Graph>> = wanted.iter().map(|seed| crate::code_rule_dsl::logic::rr::graph_image(images.store.as_deref(), images.key(seed)).and_then(|b| images.decode(&b))).collect();
+        let graphs: Vec<Option<Graph>> = wanted.iter().map(|seed| crate::code_rule_dsl::logic::rr::graph_image(images.store(), images.key(seed)).and_then(|b| images.decode(&b))).collect();
         let mut graphs = graphs.into_iter();
         let trace = std::env::var_os("RERAIL_PHASE0_TRACE").is_some();
         wanted.retain(|seed| {
@@ -267,7 +279,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
         // before images kept them) made the run that derived a graph name none and the run that read it name them.
         if let Some(images) = &images {
             for (seed, g) in &made {
-                crate::code_rule_dsl::logic::rr::keep_graph_image(images.store.as_deref(), images.key(seed), images.encode(g));
+                crate::code_rule_dsl::logic::rr::keep_graph_image(images.store(), images.key(seed), images.encode(g));
             }
         }
         // A test store's template is filled in whichever test process asks first (`test_store`): its graphs are not
@@ -368,14 +380,19 @@ pub(in crate::code_rule_dsl) fn phase_lib() -> Option<PathBuf> {
 struct Images {
     lib: String,
     phases: String,
-    /// The engine build's image store (`rr::image_store`), opened once for the call's seeds.
-    store: Option<Arc<crate::content_store::ContentStore>>,
+    /// The engine build's image store (`rr::image_store`), opened once for the call's seeds when one is asked of it.
+    store: OnceLock<Option<Arc<crate::content_store::ContentStore>>>,
 }
 
 impl Images {
     fn here() -> Option<Images> {
         let lib = dunce::canonicalize(crate::code_rule_dsl::logic::rr::library()).ok()?;
-        Some(Images { lib: format!("{}/", bootstrap_spelling(&lib.to_string_lossy())), phases: format!("{}/", bootstrap_spelling(&phase_lib()?.to_string_lossy())), store: crate::code_rule_dsl::logic::rr::image_store() })
+        Some(Images { lib: format!("{}/", bootstrap_spelling(&lib.to_string_lossy())), phases: format!("{}/", bootstrap_spelling(&phase_lib()?.to_string_lossy())), store: OnceLock::new() })
+    }
+
+    /// The image store, opened on the first ask.
+    fn store(&self) -> Option<&crate::content_store::ContentStore> {
+        self.store.get_or_init(crate::code_rule_dsl::logic::rr::image_store).as_deref()
     }
 
     /// A path or an includer, relative where it is under one of the two directories.
