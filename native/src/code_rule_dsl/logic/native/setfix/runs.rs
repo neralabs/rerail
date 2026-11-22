@@ -693,7 +693,7 @@ impl Run {
     /// distinct rows sorted as this run is (`cmp_vals`), so each row's search starts where the last one's ended. Its
     /// block is found by the fences (leading values, inline), or in a tagged run its tag's span by the tags; within it
     /// the search gallops, so rows near each other in the order read few rows of `data`.
-    fn held_sorted<D: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], rows: &[i64], order: &[u32], live: &impl Fn(u32) -> bool, held: &mut [bool]) {
+    fn held_sorted<D: RowData + ?Sized, R: RowData + ?Sized>(&self, data: &D, k: usize, cols: &[usize], rows: &R, order: &[u32], live: &impl Fn(u32) -> bool, held: &mut [bool]) {
         let n = self.ids.len();
         let Some(&lead) = cols.first() else {
             // No columns: one row at most, held when a live id is.
@@ -711,7 +711,7 @@ impl Run {
             if held[i] {
                 continue;
             }
-            let row = &rows[q as usize * k..][..k];
+            let row = rows.row(q, k);
             let cmp = |id: u32| -> Ordering { cmp_with(cols, tagged, |c| data.value(id, k, c), |c| row[c]) };
             if tagged {
                 // The row's tag span, from where the last row's search ended; within it, the rows read in order.
@@ -1655,7 +1655,7 @@ impl Index {
     /// Sets `held[i]` when a live id (`live`) of this order holds row `order[i]` of `rows` (flat, `k` columns each):
     /// `order` lists distinct rows sorted by this order's columns, which are every column (the first order, the dedup
     /// test). Each run is searched once, in order (decision 0112: the dedup test a wave at a time).
-    pub(super) fn held_sorted<D: RowData + ?Sized>(&self, data: &D, k: usize, rows: &[i64], order: &[u32], live: impl Fn(u32) -> bool, held: &mut [bool]) {
+    pub(super) fn held_sorted<D: RowData + ?Sized, R: RowData + ?Sized>(&self, data: &D, k: usize, rows: &R, order: &[u32], live: impl Fn(u32) -> bool, held: &mut [bool]) {
         debug_assert_eq!(self.cols.len(), k, "the dedup test is the order on every column");
         for (run, _) in &self.runs {
             run.held_sorted(data, k, &self.cols, rows, order, &live, held);
@@ -2063,8 +2063,8 @@ pub mod tests {
                 let mut order: Vec<u32> = (0..200).collect();
                 order.sort_by(|&a, &b| cmp_vals(&cols, true, &probe[a as usize * k..][..k], &probe[b as usize * k..][..k]));
                 let (mut ha, mut hb) = (vec![false; 200], vec![false; 200]);
-                plain.held_sorted(&rows[..], k, &probe, &order, |_| true, &mut ha);
-                placed.held_sorted(&rows[..], k, &probe, &order, |_| true, &mut hb);
+                plain.held_sorted(&rows[..], k, &probe[..], &order, |_| true, &mut ha);
+                placed.held_sorted(&rows[..], k, &probe[..], &order, |_| true, &mut hb);
                 assert_eq!(ha, hb);
                 assert!(ha.iter().any(|&h| h) && ha.iter().any(|&h| !h));
             }
@@ -2282,7 +2282,7 @@ pub mod tests {
         let mut order: Vec<u32> = (0..4).collect();
         order.sort_by(|&a, &b| cmp_vals(&ix.cols, true, &probe[a as usize * k..][..k], &probe[b as usize * k..][..k]));
         let mut held = vec![false; 4];
-        ix.held_sorted(&rows, k, &probe, &order, |_| true, &mut held);
+        ix.held_sorted(&rows, k, &probe[..], &order, |_| true, &mut held);
         let by: Vec<bool> = (0..4u32).map(|q| held[order.iter().position(|&o| o == q).unwrap()]).collect();
         assert_eq!(by, [true, false, true, false]);
         let (mut groups, mut seen) = (0, 0);

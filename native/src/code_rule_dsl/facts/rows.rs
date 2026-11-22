@@ -994,6 +994,247 @@ impl Drop for Lent {
     }
 }
 
+/// Rows a wave's writers write past a relation's rows, at once and where they will lie (decision 0353 step 6, row 8:
+/// the CPU's head rows, as the device's are). A writer claims slots a span at a time (`claim`); room is made under a
+/// lock as the claims pass what is reserved, in the relation's tail's block, and where that has no room left, in a
+/// relation of its own (a next region), which the relation takes as its tail with them (`finish`). Its slots are
+/// `0..slots()`, in order across the regions, each a row of one region. Rows are settled where they lie, and the
+/// wave's end lays the kept ones out at slots `0..m` (`lay_out`), which `finish` makes the relation's rows: what the
+/// writers left between their rows (a span's unwritten rest, a repeat dropped) is past them, room the next wave's
+/// rows are written into.
+pub struct WaveRoom {
+    k: usize,
+    regions: [std::sync::OnceLock<Region>; WAVE_REGIONS],
+    cursor: Mutex<WaveCursor>,
+}
+
+/// The regions a wave's room may have (`WaveRoom`): each next one has room for twice the rows before it.
+const WAVE_REGIONS: usize = 24;
+
+/// Rows a writer claims of a wave's room at a time (`WaveRoom::claim`).
+pub const WAVE_SPAN: u32 = 1024;
+
+/// A region of a wave's room: rows `at..` of `part`, its first slot `first`. `lent`: the loan of the relation's own
+/// tail it is (the first region's, `Rows::tail_room`); none, a relation of its own.
+struct Region {
+    part: Part,
+    at: u32,
+    first: u32,
+    lent: Option<Lent>,
+}
+
+#[derive(Default)]
+struct WaveCursor {
+    /// The region claims go on in, and the rows claimed in it.
+    region: usize,
+    used: u32,
+    /// Every region's rows claimed (`used` the last's).
+    ends: Vec<u32>,
+}
+
+impl WaveRoom {
+    /// Room past `rows`' rows, `k` a row: its tail's own (lent, or the tail moved where its block has no room, as
+    /// a push past a full block moves it), else (or `own`: rows a fold reads, not the relation's) a relation of its
+    /// own.
+    pub fn open(rows: &Rows, k: usize, own: bool) -> WaveRoom {
+        let first = if own { None } else { rows.tail_room(WAVE_SPAN as usize).or_else(|| rows.tail_moved(WAVE_SPAN as usize)) };
+        let region = match first {
+            Some(lent) => Region { part: lent.tail.clone(), at: lent.at, first: 0, lent: Some(lent) },
+            None => Region { part: Part::for_writes(k, WAVE_SPAN as usize), at: 0, first: 0, lent: None },
+        };
+        let room = WaveRoom { k, regions: std::array::from_fn(|_| std::sync::OnceLock::new()), cursor: Mutex::new(WaveCursor { region: 0, used: 0, ends: vec![0] }) };
+        let _ = room.regions[0].set(region);
+        room
+    }
+
+    /// Values a row.
+    pub fn k(&self) -> usize {
+        self.k
+    }
+
+    #[inline(always)]
+    fn region(&self, r: u8) -> &Region {
+        self.regions[r as usize].get().expect("a region claimed")
+    }
+
+    /// `n` slots in a row, claimed for one writer: their region and its first row there.
+    pub fn claim(&self, n: u32) -> (u8, u32) {
+        let mut cur = self.cursor.lock().unwrap_or_else(|e| e.into_inner());
+        let r = cur.region;
+        let reg = self.region(r as u8);
+        let end = u64::from(reg.at) + u64::from(cur.used) + u64::from(n);
+        if end <= u64::from(u32::MAX) && reg.part.reserve(end) {
+            let row = reg.at + cur.used;
+            cur.used += n;
+            *cur.ends.last_mut().expect("a region") = cur.used;
+            return (r as u8, row);
+        }
+        // Its block has no room left: a relation of its own, alone in a block with room for twice the rows before.
+        assert!(r + 1 < WAVE_REGIONS, "a wave's rows past {WAVE_REGIONS} regions");
+        let before: u32 = cur.ends.iter().sum();
+        let rows = (n as usize).max(before as usize);
+        let part = Part::for_writes_with_room(self.k, rows, 8 * self.k.max(1) * rows).unwrap_or_else(|e| panic!("a wave's rows past their block: {e}"));
+        let _ = self.regions[r + 1].set(Region { part, at: 0, first: before, lent: None });
+        cur.region = r + 1;
+        cur.used = n;
+        cur.ends.push(n);
+        (cur.region as u8, 0)
+    }
+
+    /// Slots claimed (`claim`) given back unwritten, where they are the last claimed: a writer's upper bound past
+    /// the rows it wrote (the device's). Whether they were.
+    pub fn give_back(&self, r: u8, row: u32, n: u32) -> bool {
+        let mut cur = self.cursor.lock().unwrap_or_else(|e| e.into_inner());
+        if cur.region != r as usize || self.region(r).at + cur.used != row + n {
+            return false;
+        }
+        cur.used -= n;
+        *cur.ends.last_mut().expect("a region") = cur.used;
+        true
+    }
+
+    /// The slots claimed.
+    pub fn slots(&self) -> u32 {
+        self.cursor.lock().unwrap_or_else(|e| e.into_inner()).ends.iter().sum()
+    }
+
+    /// Region `r`'s relation: a writer other than the host writes its rows there (the device, through `in_block`).
+    pub fn part(&self, r: u8) -> &Part {
+        &self.region(r).part
+    }
+
+    /// The slot of region `r`'s row `row`.
+    #[inline]
+    pub fn global(&self, r: u8, row: u32) -> u32 {
+        let reg = self.region(r);
+        reg.first + (row - reg.at)
+    }
+
+    /// Slot `g`'s region and row (`g` below `slots()`).
+    pub fn slot(&self, g: u32) -> (u8, u32) {
+        let mut r = 0;
+        while let Some(next) = self.regions.get(r + 1).and_then(|o| o.get()) {
+            if g < next.first {
+                break;
+            }
+            r += 1;
+        }
+        let reg = self.region(r as u8);
+        (r as u8, reg.at + (g - reg.first))
+    }
+
+    /// Row `row` of region `r`'s value in column `c`, where a writer wrote it.
+    #[inline(always)]
+    pub fn get(&self, r: u8, row: u32, c: usize) -> i64 {
+        self.region(r).part.get(row, c)
+    }
+
+    /// Writes row `row` of region `r`.
+    ///
+    /// # Safety
+    /// The row is claimed by the caller (`claim`), and no one else reads or writes it meanwhile.
+    #[inline(always)]
+    pub unsafe fn put(&self, r: u8, row: u32, vals: &[i64]) {
+        let part = &self.region(r).part;
+        for (c, &v) in vals.iter().enumerate() {
+            // SAFETY: claimed, so reserved; the caller's.
+            unsafe { part.put(row, c, v) };
+        }
+    }
+
+    /// Row `row` of region `r`.
+    #[inline(always)]
+    pub fn row(&self, r: u8, row: u32) -> Row {
+        let part = &self.region(r).part;
+        Row::from_fn(self.k, |c| part.get(row, c))
+    }
+
+    /// The wave's kept rows laid out at slots `0..src.len()`, slot `t` taking the row slot `src[t]` holds (`src`
+    /// distinct, below `slots()`), each moved once along its cycle, in place; the other slots hold the rest, in no
+    /// order. With them, a value per slot (`side`, a row's level) moved the same way.
+    ///
+    /// # Safety
+    /// No writer writes the room meanwhile, and every slot `src` names was written.
+    pub unsafe fn lay_out(&self, src: &[u32], side: Option<&mut Vec<u32>>) {
+        let n = self.slots();
+        let at: Vec<(u8, u32)> = (0..n).map(|g| self.slot(g)).collect();
+        permute(n as usize, src, |g| self.row(at[g as usize].0, at[g as usize].1), |g, row: &Row| {
+            // SAFETY: the caller's: no writer meanwhile.
+            unsafe { self.put(at[g as usize].0, at[g as usize].1, row) }
+        }, side);
+    }
+
+    /// Slots `0..m` (laid out, `lay_out`) made `rows`' rows, past its rows: its own tail's claimed, the regions past
+    /// it appended as its tail (`Rows::append_part`, not copied). The room's loans are given back.
+    ///
+    /// # Safety
+    /// No writer writes the room after, and slots `0..m` hold the rows.
+    pub unsafe fn finish(self, rows: &mut Rows, m: u32) {
+        let ends = std::mem::take(&mut self.cursor.lock().unwrap_or_else(|e| e.into_inner()).ends);
+        let mut left = m;
+        for (r, slot) in self.regions.into_iter().enumerate() {
+            let Some(reg) = slot.into_inner() else { break };
+            let n = left.min(ends.get(r).copied().unwrap_or(0));
+            left -= n;
+            match &reg.lent {
+                Some(_) if n == 0 => {}
+                // SAFETY: the caller's: written, the writers done.
+                Some(lent) => unsafe { rows.claim_tail(lent, n) },
+                None if n > 0 => {
+                    // SAFETY: the same.
+                    unsafe { reg.part.written(n) };
+                    rows.append_part(reg.part);
+                }
+                None => {}
+            }
+        }
+        debug_assert_eq!(left, 0, "rows laid out past the slots claimed");
+    }
+}
+
+/// Lays rows out in place over slots `0..n`: slot `t` takes the row slot `src[t]` holds (`src` distinct, below `n`),
+/// the others the rest in no order; each row read once and written once along its cycle (one row held aside a
+/// cycle). `side`, a value per slot moved with its row.
+pub fn permute(n: usize, src: &[u32], read: impl Fn(u32) -> Row, write: impl Fn(u32, &Row), mut side: Option<&mut Vec<u32>>) {
+    if src.iter().enumerate().all(|(t, &s)| s as usize == t) {
+        return;
+    }
+    // The whole permutation: the slots no target takes after `src`'s, in order.
+    let mut used = vec![0u64; n.div_ceil(64)];
+    for &s in src {
+        used[s as usize / 64] |= 1 << (s % 64);
+    }
+    let mut perm: Vec<u32> = Vec::with_capacity(n);
+    perm.extend_from_slice(src);
+    perm.extend((0..n as u32).filter(|&s| used[s as usize / 64] & (1 << (s % 64)) == 0));
+    debug_assert_eq!(perm.len(), n, "distinct sources");
+    let mut done = vec![0u64; n.div_ceil(64)];
+    for t in 0..n as u32 {
+        if done[t as usize / 64] & (1 << (t % 64)) != 0 || perm[t as usize] == t {
+            continue;
+        }
+        let held = read(t);
+        let held_side = side.as_deref().map(|s| s[t as usize]);
+        let mut cur = t;
+        loop {
+            done[cur as usize / 64] |= 1 << (cur % 64);
+            let s = perm[cur as usize];
+            if s == t {
+                write(cur, &held);
+                if let (Some(sv), Some(v)) = (side.as_deref_mut(), held_side) {
+                    sv[cur as usize] = v;
+                }
+                break;
+            }
+            write(cur, &read(s));
+            if let Some(sv) = side.as_deref_mut() {
+                sv[cur as usize] = sv[s as usize];
+            }
+            cur = s;
+        }
+    }
+}
+
 /// The relations of many parts merged into one for a reader that binds one (`Rows::one`), and their bytes: copies the
 /// device's reads of a relation of many parts would not make.
 /// On the shared object (decision 0442): a profile's count over the runs that share it.
@@ -2310,6 +2551,76 @@ impl std::fmt::Debug for Row {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Decision 0353 step 6, row 8: a wave's writers write their rows past a relation's rows at once, each a span
+    /// at a time, in its tail's room and past its block into regions of their own; the rows laid out in place
+    /// (`lay_out`) become the relation's rows, past those it held, the tail claimed and the regions its tail after
+    /// (no row copied), whatever order the writers' claims came in.
+    #[test]
+    fn a_waves_writers_write_in_place_and_their_rows_are_laid_out() {
+        let k = 3;
+        for held in [0usize, 700] {
+            let mut rows = Rows::new(k);
+            for i in 0..held as i64 {
+                rows.extend_from_slice(&[i, -i, 7]);
+            }
+            let room = WaveRoom::open(&rows, k, false);
+            // Four writers, each its spans; enough rows that a block's room may not hold them all.
+            let per = 3 * WAVE_SPAN as usize + 17;
+            let spans: Vec<Vec<(u8, u32)>> = std::thread::scope(|s| {
+                let room = &room;
+                let hs: Vec<_> = (0..4i64).map(|w| s.spawn(move || {
+                    let mut mine = Vec::new();
+                    for i in 0..per {
+                        if i % WAVE_SPAN as usize == 0 {
+                            mine.push(room.claim(WAVE_SPAN));
+                        }
+                        let (r, row) = mine[i / WAVE_SPAN as usize];
+                        // SAFETY: this writer's span.
+                        unsafe { room.put(r, row + (i % WAVE_SPAN as usize) as u32, &[w, i as i64, 1000 + w]) };
+                    }
+                    mine
+                })).collect();
+                hs.into_iter().map(|h| h.join().unwrap()).collect()
+            });
+            // Laid out writer by writer, each in its order: the rows past every span's unwritten rest.
+            let mut src = Vec::new();
+            for mine in &spans {
+                for i in 0..per {
+                    let (r, row) = mine[i / WAVE_SPAN as usize];
+                    src.push(room.global(r, row + (i % WAVE_SPAN as usize) as u32));
+                }
+            }
+            assert!(room.slots() as usize >= src.len());
+            // SAFETY: the writers are done, and wrote every slot `src` names.
+            unsafe {
+                room.lay_out(&src, None);
+                room.finish(&mut rows, src.len() as u32);
+            }
+            assert_eq!(rows.rows(), held + 4 * per, "held {held}: every row once");
+            let got = rows.to_vec(held, held + 4 * per, k);
+            let want: Vec<i64> = (0..4i64).flat_map(|w| (0..per as i64).flat_map(move |i| [w, i, 1000 + w])).collect();
+            assert_eq!(got, want, "held {held}: in the order laid out");
+            assert_eq!(rows.to_vec(0, held, k), (0..held as i64).flat_map(|i| [i, -i, 7]).collect::<Vec<_>>(), "held {held}: the rows before kept");
+        }
+    }
+
+    /// `permute`: slot `t` takes the row `src[t]` held; the rest keep the other rows; each moved along its cycle.
+    #[test]
+    fn rows_are_laid_out_by_their_cycles() {
+        let n = 50u32;
+        let cells: Vec<std::cell::Cell<i64>> = (0..n).map(|i| std::cell::Cell::new(i64::from(i) * 10)).collect();
+        let mut side: Vec<u32> = (0..n).collect();
+        let src: Vec<u32> = (0..n).rev().step_by(3).collect();
+        permute(n as usize, &src, |q| Row::of(&[cells[q as usize].get()]), |q, row| cells[q as usize].set(row[0]), Some(&mut side));
+        for (t, &s) in src.iter().enumerate() {
+            assert_eq!((cells[t].get(), side[t]), (i64::from(s) * 10, s), "slot {t}");
+        }
+        let mut rest: Vec<i64> = cells[src.len()..].iter().map(std::cell::Cell::get).collect();
+        rest.sort_unstable();
+        let want: Vec<i64> = (0..n).filter(|q| !src.contains(q)).map(|q| i64::from(q) * 10).collect();
+        assert_eq!(rest, want, "the other rows kept");
+    }
 
     thread_local! {
         /// The allocator's net counter, for these tests: a test moves it as its "work" allocates.

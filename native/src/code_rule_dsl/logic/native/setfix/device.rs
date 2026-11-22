@@ -2129,7 +2129,7 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
                 }
             }
             if !rel.contains(&row) {
-                fresh[head].add(&row);
+                fresh[head].add(&row, rel);
             }
         }
         out.push(n as u64);
@@ -2173,7 +2173,16 @@ fn head_room(rel: &super::Rel, fresh: &super::Fresh, k: usize, n: usize) -> Resu
     let room = match fresh.last_placed() {
         Some(super::Placed::Part(p)) => p.room(n).or_else(|| moved(Some(p.moved_room(p.len(), n)), "heads' relations moved to room for a next lot")),
         Some(super::Placed::Tail { lent, n: written }) => lent.after(*written, n).or_else(|| moved(Some(lent.moved(*written, n)), "heads' relations moved to room for a next lot")),
-        None => rel.tail_room(n).or_else(|| moved(rel.tail_moved(n), "heads' tails moved to room for the device's rows")),
+        // Past its rows, in the wave's room the CPU's rows of the wave are written into too (decision 0353 step 6):
+        // its tail's own, where its block has room (the relation stays one, and a reader binds it whole).
+        Some(super::Placed::Wave { .. }) | None => {
+            let wave = rel.wave_room();
+            let (r, row) = wave.claim(u32::try_from(n).map_err(|_| format!("{n} rows of a head"))?);
+            let dst = mj::DevRel::in_block(&wave.part(r).in_block(row + n as u32), k).map_err(|e| format!("{e:?}: a head's wave room in its block"))?;
+            crate::code_rule_dsl::logic::lanes::prof::count("device join (decision 0095)", "heads' rows written into their wave's room", 1);
+            // `n`: the slots claimed, until the rows written are known (`written`).
+            return Ok((super::Placed::Wave { room: wave, r, row, n: n as u32 }, dst, row as usize));
+        }
     };
     if let Some(lent) = room {
         let at = lent.at;
@@ -2207,6 +2216,12 @@ unsafe fn written(room: super::Placed, n: usize) -> super::Placed {
             super::Placed::Part(part)
         }
         super::Placed::Tail { lent, .. } => super::Placed::Tail { lent, n: n as u32 },
+        // The room's slots past them given back where they are the last claimed (else they lie unwritten, past the
+        // rows the wave's end lays out).
+        super::Placed::Wave { room, r, row, n: claimed } => {
+            let _ = room.give_back(r, row + n as u32, claimed - n as u32);
+            super::Placed::Wave { room, r, row, n: n as u32 }
+        }
     }
 }
 
