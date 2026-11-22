@@ -14,7 +14,8 @@ import { runRuleApproveCommand } from "../../src/cli/rule-approval-cli.js";
 import { describeScan, runHeadlessScan, type ScanReport } from "../../src/cli/headless-scan.js";
 import {
   acquireDirectoryAnalysisGeneration, acquireNamedAnalysisRun, analysisScopeHome, codeRuleSchema, collectAnalysisCaches,
-  deleteNamedAnalysisScope, finishNamedAnalysisRegistration, listAnalysisStores, loadNativeBinding, openRerailDatabase, queueAnalysisScopeReleases,
+  deleteNamedAnalysisScope, finishNamedAnalysisRegistration, listAnalysisStores, loadNativeBinding, mainContentStoreDirectory, openRerailDatabase,
+  queueAnalysisScopeReleases,
   readAnalysisScopeGeneration, recordCheckout, RERAIL_DATABASE_FILE, retireAnalysisStore, scanContentStore, settleAnalysisScopeReleases,
 } from "../../src/engine/index.js";
 import { setCheckoutStarted, stopRerail } from "../../src/runtime/index.js";
@@ -24,7 +25,6 @@ import { setUpTestRepository } from "../support/repository-rules.js";
 import { removeFolderSync } from "../support/platform/remove-folder.js";
 import { withExperiments } from "../support/environment/experiments.js";
 import { stubUserHome } from "../support/user-home.js";
-import { mainContentStoreDirectory } from "../../src/engine/native/rerail-build.js";
 
 withExperiments("HEADLESS_SCAN", "REMOTE_SINK");
 
@@ -3037,7 +3037,7 @@ if (phase === "after-store-ack") {
         writeFileSync(store, "this is not a database");
         return await run(...args);
       } finally {
-        rmSync(cache, { recursive: true, force: true });
+        removeFolderSync(cache);
         renameSync(cache + ".saved", cache);
       }
     });
