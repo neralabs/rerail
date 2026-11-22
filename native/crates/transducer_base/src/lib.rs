@@ -1,5 +1,6 @@
 //! The transducer's base: the packed programs, their interpreter, Bitlex, the batch ABI, the device and CPU executor
-//! interfaces, the query front end and the label sets. It reads none of W (rerail-rules): the compiled CPU executor
+//! interfaces, the query front end and the label sets (their node space is rerail-node-space's, which it re-exports).
+//! It reads none of W (rerail-rules): the compiled CPU executor
 //! (rerail-transducer-cpu) and W's matchers and waves lowered, with `demand` (rerail-transducer), are above it.
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
@@ -137,7 +138,7 @@ pub mod code_rule_dsl {
     pub use rerail_prof::code_rule_dsl::prof;
     pub use rerail_facts::code_rule_dsl::search_index;
     pub use rerail_lang::code_rule_dsl::semver;
-    pub mod space;
+    pub use rerail_node_space::code_rule_dsl::space;
     pub use rerail_facts::code_rule_dsl::sql_profile;
     pub use rerail_facts::code_rule_dsl::sql_admission;
     pub mod tape {

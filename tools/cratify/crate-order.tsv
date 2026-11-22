@@ -80,6 +80,7 @@ rerail-cpython	provider
 rerail-lang-python	provider
 rerail-lang-rust	provider
 rerail-lang-sql	provider
+rerail-node-space	core
 rerail-transducer-base	core
 rerail-transducer-cpu	core
 rerail-transducer	core

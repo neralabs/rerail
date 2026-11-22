@@ -399,7 +399,7 @@ impl NodeSet {
 
     /// Adds every node of file `file`.
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))] // tests and measurements
-    pub(in crate::code_rule_dsl) fn fill_file(&mut self, space: &NodeSpace, file: usize) {
+    pub fn fill_file(&mut self, space: &NodeSpace, file: usize) {
         let mut b = Builder::default();
         let range = space.range(file);
         b.run(range.start, range.end);
@@ -986,6 +986,10 @@ impl NodeSet {
         self.directory.iter().map(|e| self.view(e).len()).sum()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.directory.iter().all(|e| self.view(e).len() == 0)
+    }
+
     // The contract's membership test; no caller yet.
     #[allow(dead_code)]
     pub(in crate::code_rule_dsl) fn contains(&self, node: u32) -> bool {
@@ -1024,7 +1028,7 @@ impl NodeSet {
     /// File `file`'s members as a stored segment (0045 §5): the file's own 2^16 slices, per slice
     /// its number (u16), its form (u8), its length (u32) and its container, little-endian.
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))] // tests and measurements
-    pub(in crate::code_rule_dsl) fn segment(&self, space: &NodeSpace, file: usize) -> Vec<u8> {
+    pub fn segment(&self, space: &NodeSpace, file: usize) -> Vec<u8> {
         let mut b = Builder::default();
         self.file_nodes(space, file).for_each(|p| b.node(p));
         b.finish().encode()
@@ -1063,7 +1067,7 @@ impl NodeSet {
 
     /// (array, bitmap, runs) chunk counts.
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(in crate::code_rule_dsl) fn shape(&self) -> (usize, usize, usize) {
+    pub fn shape(&self) -> (usize, usize, usize) {
         let mut s = (0, 0, 0);
         for e in &self.directory {
             match e.form {

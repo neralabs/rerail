@@ -5058,6 +5058,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-node-space"
+version = "0.1.0"
+dependencies = [
+ "rerail-node-space",
+ "rerail-store-base",
+]
+
+[[package]]
 name = "rerail-observe"
 version = "0.1.0"
 dependencies = [
@@ -8346,6 +8354,7 @@ dependencies = [
  "rerail-cpu-block",
  "rerail-facts",
  "rerail-lang",
+ "rerail-node-space",
  "rerail-prof",
  "rerail-registry",
  "rerail-rir",

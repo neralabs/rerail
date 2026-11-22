@@ -36,6 +36,10 @@ impl NodeSpace {
         self.len
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
     pub fn words(&self) -> usize {
         (self.len as usize).div_ceil(64)
     }

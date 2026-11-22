@@ -1239,3 +1239,31 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     - On a Linux host, the three crates and rules-base: 137 of 137 (33 P, 34 D's waves, 41 D's anchors, 29 rules-base).
     - On a Linux host, the hosted tests: rerail-tests-anchors (162), and rerail-tests-logic's `waves::` (33). All pass.
     - Checks: the workspace with `--tests` is clean, and so is the `p-anchor-corpus` build of the four crates.
+- **Step 8b** (2026-11-22): the node space is a crate of its own, and the sizes are measured without inline tests.
+  - rerail-node-space (1.8k, with its 5 tests) holds `space`: a wave's node space and its chunked node sets (0024
+    §1, 0045).
+    - It reads nothing of the engine, so it sits under rerail-transducer-base, which re-exports it. Every path above
+      is unchanged.
+    - Its `test-hooks` keeps the dense reference set (`DenseSet`).
+    - One container test reads its segments back with the postings' decoder, through a dev-dependency on
+      rerail-store-base.
+    - What the crates above read is widened to `pub` (`fill_file`, `segment`, `shape`). `NodeSpace` and `NodeSet`
+      gain `is_empty`.
+  - The earlier figures counted a file's inline `#[cfg(test)] mod` blocks as production. Less those, the largest
+    crates are:
+
+    | crate | production | inline tests |
+    |---|---:|---:|
+    | rerail-store | 20.7k | 1.0k |
+    | rerail-lang-php | 19.5k | 0.3k |
+    | rerail-transducer-cpu | 19.3k | 0.0k |
+    | rerail-transducer-base | 18.0k | 1.6k |
+
+  - rerail-store stays one crate:
+    - 0.46k of its 20.7k is `tree_result_segments`, which is behind `test-hooks`.
+    - Every module left in it adds methods to `ContentStore` (25 files), and a type's methods stay in its crate.
+    - The modules that do not are the atoms, the kept facts and their SQL tables. They reach its connection,
+      write-back and guest keys, and every connection it opens installs the tables.
+    - So a further cut would turn store methods into traits across crates, for about 0.2k.
+  - Tests (Linux): rerail-node-space 5 of 5, rerail-transducer-base 60 of 60. The workspace check with `--tests` and
+    clippy on both crates are clean.
