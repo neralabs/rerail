@@ -2116,7 +2116,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let site = self.b.ins().iconst(I64, i64::from(i.b));
                 let sg = self.sg;
                 self.helper(H_AGREE, 4, 0, &[sg, node, d, site]);
-                Rp::None
+                if m == M::VOID { Rp::None } else { Rp::U(d) }
             }
             O::Bar => {
                 let site = self.b.ins().iconst(I64, i64::from(i.a));

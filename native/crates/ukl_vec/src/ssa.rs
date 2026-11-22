@@ -120,7 +120,8 @@ pub enum O {
     /// `[address, x, y, mask]`, sub the `Builtin`: an atomic, once for the SIMD group (`Uniform`'s shape) or each
     /// lane's in order.
     Atomic,
-    /// `[node, site, decision]` (words, a value): the group decides an agreed branch alike (cross-lane: the group's).
+    /// `[node, site, decision]` (words, a value): the group decides an agreed branch alike (cross-lane: the group's);
+    /// its value (of `m`, else none) is the group's decision, which the branch takes.
     Agree,
     /// `[site]` (a word): a threadgroup barrier.
     Bar,
@@ -609,7 +610,7 @@ impl<'a, 't> Fb<'a, 't> {
     /// Whether instruction `i` is uniform whatever any block parameter turns out to be.
     fn stable_of(&self, i: &Inst) -> bool {
         match i.op {
-            O::Const | O::Global | O::Shared | O::GroupInfo | O::Any | O::AnyGroup | O::Bits | O::Reduce | O::First => true,
+            O::Const | O::Global | O::Shared | O::GroupInfo | O::Any | O::AnyGroup | O::Bits | O::Reduce | O::First | O::Agree => true,
             O::Arg | O::Atomic => i.shape == Shape::Uniform,
             O::Bin => self.is_uniform(i.a) && self.is_uniform(i.b),
             O::Un | O::Cast | O::LaneOp => i.uses().all(|u| self.is_uniform(u)),
@@ -1040,6 +1041,14 @@ impl<'a, 't> Fb<'a, 't> {
         Ok(if m == M::B { c } else { self.cast(c, m, M::B) })
     }
 
+    /// A checked branch's decision `c` (uniform), agreed by the group: the value its branch takes (the group's, the
+    /// same as `c` wherever the code runs the SIMD group's lanes at once).
+    fn agree(&mut self, n: usize, site: u32, c: V) -> V {
+        let m = self.insts[c as usize].m;
+        let x = self.ins(O::Agree, m, n as u32, site, c, 0);
+        self.shaped(x, Shape::Uniform)
+    }
+
     fn mask_of(&mut self, c: V) -> V {
         let x = self.ins(O::MaskOf, M::B, c, 0, 0, 0);
         self.shaped(x, Shape::Mask);
@@ -1054,9 +1063,7 @@ impl<'a, 't> Fb<'a, 't> {
         let c = self.cond(kids[0])?;
         let c = if v.level(kids[0]) <= Level::SimdGroup { self.scalar(c) } else { c };
         if self.is_uniform(c) {
-            if check {
-                self.ins(O::Agree, M::VOID, n as u32, site, c, 0);
-            }
+            let c = if check { self.agree(n, site, c) } else { c };
             let (t, e) = self.br(c);
             let join = self.block();
             self.switch_to(t);
@@ -1108,9 +1115,7 @@ impl<'a, 't> Fb<'a, 't> {
         let cases = &kids[1..];
         if self.is_uniform(c) || check || v.level(kids[0]) <= Level::SimdGroup {
             let c = self.scalar(c);
-            if check {
-                self.ins(O::Agree, M::VOID, n as u32, site, c, 0);
-            }
+            let c = if check { self.agree(n, site, c) } else { c };
             self.cases(c, m, cases)?;
         } else {
             // A round for each value the running lanes have.
@@ -1239,9 +1244,7 @@ impl<'a, 't> Fb<'a, 't> {
         let c = self.cond(cond)?;
         let c = if v.level(cond) <= Level::SimdGroup { self.scalar(c) } else { c };
         if self.is_uniform(c) {
-            if check {
-                self.ins(O::Agree, M::VOID, n as u32, site, c, 0);
-            }
+            let c = if check { self.agree(n, site, c) } else { c };
             let (go, out) = self.br(c);
             self.switch_to(out);
             self.jump(exit);
