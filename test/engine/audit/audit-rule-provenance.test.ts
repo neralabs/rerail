@@ -1720,6 +1720,9 @@ describe("an audit whose other stored lists do not read", () => {
     const auditIds = threeAudits(path);
     const before = readAudit(path, auditIds[1]!)!;
     const healthy = readAudit(path, auditIds[0]!);
+    expect(healthy).toMatchObject({
+      ruleRevisions: [{ ruleId: "typescript/rule-000", revision: 1 }], paths: ["src/a.ts"], violations: [{ id: "violation-1" }], failures: [FAILURE],
+    });
     damageList(path, auditIds[1]!, list, '[{"ruleId":"typescript/broken"');
     const failures = list === "failures" ? [unreadableList(list)] : [FAILURE, unreadableList(list)];
     const stderr = spyOnStderr();
