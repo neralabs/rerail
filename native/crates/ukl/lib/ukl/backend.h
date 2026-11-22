@@ -45,8 +45,9 @@ typedef uint32_t ukl_mask_t;
 // every call site, 16z's block decode made the view reads' test kernel take 387 s in Metal's back end (2.9 s as
 // calls). A parent walk calling `clif_tape_parent` runs 1.3% slower than with it inlined. A kernel may define
 // `UKL_COLD` as `UKL_INLINE` before its includes.
-// A function the compiler inlines or calls as it chooses: a generated program's (`clif_ukl`), large and many.
-#define UKL_CALLED static
+// A function the compiler inlines or calls as it chooses (`UKL_FUNC`): a generated program's (`clif_ukl`), large and
+// many, and a small read that should inline where it is called (`clif_t_ld`).
+#define UKL_FUNC static
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
@@ -151,7 +152,9 @@ UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { retur
 #define UKL_INLINE static __device__ __forceinline__
 // A rare case, called (not inlined): forced inline at every call site, a large cold read (16z's block decode) made
 // NVRTC take minutes and gigabytes on a kernel that reads every node's every field.
-#define UKL_CALLED static __device__
+// A function the compiler inlines or calls as it chooses (`UKL_FUNC`): a generated program's (`clif_ukl`), large and
+// many, and a small read that should inline where it is called (`clif_t_ld`).
+#define UKL_FUNC static __device__
 #ifndef UKL_COLD
 #define UKL_COLD static __device__ __noinline__
 #endif
@@ -220,7 +223,9 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __reduce
 // The CPU (ukl_cpu_shim.h): a threadgroup's threads are coroutines on one host thread, so every barrier and SIMD-group
 // operation is a suspension, and memory is the host's.
 #define UKL_INLINE static inline
-#define UKL_CALLED static
+// A function the compiler inlines or calls as it chooses (`UKL_FUNC`): a generated program's (`clif_ukl`), large and
+// many, and a small read that should inline where it is called (`clif_t_ld`).
+#define UKL_FUNC static
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
@@ -337,7 +342,9 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __at
 
 // OpenCL C 1.2 (ukl_opencl_shim.h): C with address spaces, clang's `overloadable`, and C11's `_Static_assert`.
 #define UKL_INLINE static inline
-#define UKL_CALLED static
+// A function the compiler inlines or calls as it chooses (`UKL_FUNC`): a generated program's (`clif_ukl`), large and
+// many, and a small read that should inline where it is called (`clif_t_ld`).
+#define UKL_FUNC static
 #ifndef UKL_COLD
 #define UKL_COLD static __attribute__((noinline))
 #endif
