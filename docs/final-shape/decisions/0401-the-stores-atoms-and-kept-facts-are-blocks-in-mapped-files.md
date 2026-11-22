@@ -485,7 +485,15 @@ What stays above 6fc580233a's edit, by the run's instructions a phase (42.6 G ag
   0.026 s of it counting the constants the rules test in the rows held), and binds the kept inputs where they lie
   (0.037 s); 6fc580233a's edit profile has no span of the first, and read its kept inputs from the frames
   (0.012 s).
-- The deferred joins install each of their 10 requests as a derivation of the whole program with its components
-  found again (0.097 s), each install reading the program the one before made.
 - A profiled run's first phase is 1.0 s more than 6fc580233a's: the profile's join locations
   (`profile_join_sources`) look up each file's graph and retain it. No run without the profile does that work.
+
+After the hub's merge (a8919bd06e), the edit took 37.9 G (prepare 23.9 G, combine 6.7 G, stats 1.1 G), cold 875 G,
+warm 2.1 G. The deferred joins installed each of their 10 requests as a derivation of the whole program, with its
+components found again and the relations' readers walked again for each. They install in rounds now
+(`upstream::install_requests`): a round's requests are planned on one version and made in one derivation, with
+its components found once. A round ends before a request whose plan an earlier one of the round would change: one
+that reads the earlier one's relation, or a relation its demand reads. If any guard in a round is not apart from
+its relation, the round falls back to one request at a time. A guard only adds edges, so a round whose guards are
+all apart installs what one request at a time would (the rounds test). The edit is 36.4 G (prepare 22.5 G), cold
+874 G, warm 2.0 G, the rows h1's.
