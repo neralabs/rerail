@@ -199,7 +199,7 @@ impl ImpliedPassed {
 
 /// Where, relative to the node, the token is looked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(in crate::code_rule_dsl) enum Place {
+pub enum Place {
     /// `has` (a neighbour): any of the node's own tokens.
     Own,
     /// `has` with a `field`: the node's tokens in that field.
@@ -216,30 +216,30 @@ pub(in crate::code_rule_dsl) enum Place {
 
 #[derive(Clone)]
 pub struct GapTest {
-    pub(in crate::code_rule_dsl) place: Place,
-    pub(in crate::code_rule_dsl) regex: Regex,
+    pub place: Place,
+    pub regex: Regex,
     /// Its dialect, whose automata are decoded when a test first runs on a tape (`TokenGrammar::of_dialect_static`):
     /// compiling a rule asks the census, and a warm run that tests no tape decodes nothing.
-    pub(in crate::code_rule_dsl) dialect: GrammarDialect,
+    pub dialect: GrammarDialect,
     /// A neighbour walk's `stopBy: {not: X}`: X, which must name only kinds and tokens (by a bare
     /// regex), so the walk passes them. `None`: a plain neighbour, where an extra
     /// beside the node is the neighbour.
-    pub(in crate::code_rule_dsl) past: Option<Box<AstMatcher>>,
+    pub past: Option<Box<AstMatcher>>,
     /// What the target says of the token beside its text, each a relation from the token found to a bare token regex
     /// (`follows: {regex: "^,$", not: {follows: {stopBy: end, regex: "^,$"}}}`: the comma right before the node is its
     /// parent's first). Asked of the parent's tokens, its gaps' and its stored children's (by their text): a `Before`
     /// or `After` test's alone.
-    pub(in crate::code_rule_dsl) token: Vec<TokenCondition>,
+    pub token: Vec<TokenCondition>,
     /// Beside a neighbour relation's own walk (`compile::ast_rule::with_gap`): the test holds
     /// where the neighbour at its place is a stored child, not a token the tape leaves out,
     /// whatever the regex. On a full tree the implied token would be the neighbour, so the walk's
     /// next stored node is not (`for (;; i++);`: after `i++` comes `)`, not the body's `;`).
-    pub(in crate::code_rule_dsl) stored: bool,
+    pub stored: bool,
 }
 
 /// One condition on the token a gap test found (`GapTest::token`), read along the parent's tokens and stored children.
 #[derive(Clone, Debug)]
-pub(in crate::code_rule_dsl) enum TokenCondition {
+pub enum TokenCondition {
     /// A token `regex` matches is at `place` from it (`Before`, `After`, `Earlier` or `Later`), or with `negated` is
     /// not.
     Token { negated: bool, place: Place, regex: Regex },
@@ -297,7 +297,7 @@ impl GapTest {
     /// walk reads that one). An implied token's range is read from the source between its
     /// parent's stored children: the gap holds only its word, whitespace and extras. `None` where
     /// no token matches.
-    pub(in crate::code_rule_dsl) fn token<D: Doc>(&self, node: &Node<'_, D>) -> Option<(std::ops::Range<usize>, String)> {
+    pub fn token<D: Doc>(&self, node: &Node<'_, D>) -> Option<(std::ops::Range<usize>, String)> {
         let found = self.found_items(node, true)?;
         let stored = |at: &usize| matches!(found.items[*at], Item::Child(child) if !found.children[child].is_named() && self.regex.is_match(&found.children[child].text()));
         let candidate = match &self.place {

@@ -411,6 +411,38 @@ fn tarjan_ids(succ: &[Vec<(u32, bool)>]) -> Vec<Vec<u32>> {
     sccs
 }
 
+/// A shortest chain of reads from `from` to `to` through `edges`, each a relation, `!` before one read negated or
+/// aggregated: the steps of a cycle an error or a decision names. Only `to` when nothing reaches it.
+pub fn path(edges: &Edges, from: &str, to: &str) -> Vec<String> {
+    let mut back: BTreeMap<&str, (&str, bool)> = BTreeMap::new();
+    let mut queue = std::collections::VecDeque::from([from]);
+    while let Some(x) = queue.pop_front() {
+        if x == to && x != from {
+            break;
+        }
+        for (w, neg) in edges.get(x).into_iter().flatten() {
+            if w != from && !back.contains_key(w.as_str()) {
+                back.insert(w.as_str(), (x, *neg));
+                queue.push_back(w.as_str());
+            }
+        }
+    }
+    let mut out = vec![to.to_owned()];
+    let mut at = to;
+    while let Some(&(x, neg)) = back.get(at) {
+        if neg {
+            out.last_mut().expect("a step").insert(0, '!');
+        }
+        out.push(x.to_owned());
+        at = x;
+        if at == from {
+            break;
+        }
+    }
+    out.reverse();
+    out
+}
+
 /// Strongly connected components of `nodes` under `edges`, dependencies first, in the same order every run.
 /// Iterative, where T's recursed (with a raised recursion limit).
 ///

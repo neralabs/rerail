@@ -115,14 +115,14 @@ impl RerailIgnores {
     }
 
     /// Whether any directive of the file names `rule`.
-    pub(crate) fn names(&self, rule: &str) -> bool {
+    pub fn names(&self, rule: &str) -> bool {
         self.covers
             .iter()
             .any(|cover| cover.rules.iter().any(|name| name == rule))
     }
 
     /// Whether a violation of `rule` whose anchor names byte `at` is silenced.
-    pub(crate) fn ignores(&self, rule: &str, at: usize) -> bool {
+    pub fn ignores(&self, rule: &str, at: usize) -> bool {
         self.covers
             .iter()
             .any(|cover| cover.range.contains(&at) && cover.rules.iter().any(|name| name == rule))

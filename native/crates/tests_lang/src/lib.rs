@@ -2,7 +2,7 @@
 //!
 //! A test crate above boot: it mounts the test files in place, under the facades the engine hosted them through,
 //! and reads every other module through boot. Its test binary is booted as it loads (`boot::install_for_tests`), as
-//! the engine's is. Written by tools/cratify/test_crates.py, and kept by hand since.
+//! the engine's is. Written by tools/cratify/split_test_crates.py, and kept by hand since.
 #![cfg(test)]
 #![allow(dead_code, unused_imports, hidden_glob_reexports, ambiguous_glob_reexports, private_interfaces, private_bounds)]
 #![allow(clippy::len_without_is_empty, clippy::result_unit_err, clippy::new_without_default)]
@@ -386,7 +386,7 @@ pub mod code_rule_dsl {
             #[allow(unused_imports)]
             use crate::code_rule_dsl::matcher::{file_index};
             #[allow(unused_imports)]
-            use crate::code_rule_dsl::model::{ViolationSpec, python_module_path_on_disk};
+            use crate::code_rule_dsl::file_input::python_module_path_on_disk;
             #[allow(unused_imports)]
             use crate::code_rule_dsl::suppress::{Suppress, root};
             #[allow(unused_imports)]

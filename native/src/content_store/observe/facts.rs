@@ -19,7 +19,7 @@
 
 use super::{Meta, Stat};
 use crate::content_store::ContentStore;
-use crate::content_store::kept_facts::{KeptPut, KeptWhat};
+use crate::content_store::kept_facts::{BlockFlat, KeptPut, KeptWhat};
 use rerail_blocks::kept::{FactKey, KeptRead};
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
@@ -315,7 +315,7 @@ impl Open<'_> {
                 flat.extend([i64::from(s[0]), is_text, number, i64::from(s[1])]);
             }
             let n = ordered.len();
-            let rows_or_gone = if n == 0 { KeptWhat::Gone } else { KeptWhat::Flat { widths: vec![8; META_TYPES.len()], rows: flat.clone(), n, levels: None, given: true } };
+            let rows_or_gone = if n == 0 { KeptWhat::Gone } else { KeptWhat::Picked(Box::new(BlockFlat::of_rows(&flat, META_TYPES.len(), true))) };
             puts.push(KeptPut { rel: META.to_owned(), ident: ident(META), part: 0, digest: digest_of(&flat), reads: Vec::new(), types: META_TYPES.to_vec(), what: rows_or_gone });
         }
         self.store.queue_kept_as(self.space, puts, what);
@@ -385,8 +385,7 @@ impl Open<'_> {
             for (r, s) in rows.values().zip(syms.chunks_exact(R::TEXTS)) {
                 flat.extend(r.words(s));
             }
-            let n = rows.len();
-            puts.push(KeptPut { rel: R::REL.to_owned(), ident, part: part(&dir), digest: digest_of(&flat), reads: Vec::new(), types: R::TYPES.to_vec(), what: KeptWhat::Flat { widths: vec![8; R::TYPES.len()], rows: flat, n, levels: None, given: true } });
+            puts.push(KeptPut { rel: R::REL.to_owned(), ident, part: part(&dir), digest: digest_of(&flat), reads: Vec::new(), types: R::TYPES.to_vec(), what: KeptWhat::Picked(Box::new(BlockFlat::of_rows(&flat, R::TYPES.len(), true))) });
         }
         true
     }

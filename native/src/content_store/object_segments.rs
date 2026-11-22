@@ -328,7 +328,7 @@ impl Gather for ObjectGather {
             .collect();
         // The queue holds the rows; the bytes are the OS's pages.
         let bytes = rows.len() * 96;
-        Some(Closed { what, bytes, keys, syms: Syms::None, job: ObjectsWrite { rows, segments }.work() })
+        Some(Closed { what, bytes, keys, syms: Syms::None, now: None, job: ObjectsWrite { rows, segments }.work() })
     }
 }
 

@@ -276,7 +276,7 @@ impl Writer<'_> {
             Field::MagicReport(report) => {
                 if let Some(report) = report {
                     self.row("magic_report", vec![n(report.magic_rules), n(report.extras_kept), n(report.gates)]);
-                    for (list, items) in [("adornments", &report.adornments), ("full", &report.full), ("full_for_negation", &report.full_for_negation)] {
+                    for (list, items) in [("adornments", &report.adornments), ("full", &report.full), ("full_for_negation", &report.full_for_negation), ("reasons", &report.reasons)] {
                         for (k, item) in items.iter().enumerate() {
                             self.row("report_list", vec![s(list), n(k), s(item)]);
                         }
@@ -756,6 +756,7 @@ impl<'a, C: Cell> Reader<'a, C> {
             extras_kept: int(&row[1])? as usize,
             gates: int(&row[2])? as usize,
             full_for_negation: take("full_for_negation"),
+            reasons: take("reasons"),
         }))
     }
     fn indexed(rows: Option<&Vec<&[C]>>) -> Result<Vec<String>, String> {

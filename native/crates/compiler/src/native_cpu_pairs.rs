@@ -152,7 +152,7 @@ pub fn fused(native: &BlockNative) -> Option<BlockNative> {
 
 /// A box of byte pairs: the byte before's high nibbles and low ones, this byte's high nibbles
 /// and low ones. A pair table's bit holds one.
-type Box = [u16; 4];
+pub type Box = [u16; 4];
 
 impl Rule {
     fn as_box(self) -> Box {
@@ -164,7 +164,7 @@ impl Rule {
 /// union in it; and a box is split where a part of it would be one with another box, and the
 /// rest with a third, as simdjson's tables share `TOO_LARGE` between `f4` and `f5..ff`. The
 /// union of the boxes is the same, and the tree reads only their union.
-fn merged(mut v: Vec<Box>) -> Vec<Box> {
+pub fn merged(mut v: Vec<Box>) -> Vec<Box> {
     let differ = |a: &Box, b: &Box| (0..4).filter(|&d| a[d] != b[d]).collect::<Vec<usize>>();
     loop {
         let mut changed = false;
@@ -264,7 +264,7 @@ fn set(native: &BlockNative, x: usize) -> Option<[bool; 256]> {
 }
 
 /// A set as one product, its high nibbles and its low ones, if it is one and not empty.
-fn product(set: &[bool; 256]) -> Option<(u16, u16)> {
+pub fn product(set: &[bool; 256]) -> Option<(u16, u16)> {
     let (hi, lo) = (0..256).filter(|&b| set[b]).fold((0u16, 0u16), |(h, l), b| (h | 1 << (b >> 4), l | 1 << (b & 15)));
     let all = (0..256).all(|b| set[b] == (hi >> (b >> 4) & 1 == 1 && lo >> (b & 15) & 1 == 1));
     (hi != 0 && all).then_some((hi, lo))

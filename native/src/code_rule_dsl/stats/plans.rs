@@ -32,7 +32,7 @@
 //! compiled into it, never answered from memory alone.
 
 use super::cache::Cache;
-use crate::content_store::kept_facts::{KeptPut, KeptSpace, KeptWhat};
+use crate::content_store::kept_facts::{BlockFlat, KeptPut, KeptSpace, KeptWhat};
 use crate::content_store::{ContentStore, StoreResult};
 use rerail_blocks::kept::{FactKey, KeptRead as _};
 use rusqlite::{Connection, OptionalExtension, Result, params};
@@ -105,24 +105,25 @@ fn rows_of(kept: &KeptSpace, rel: &str, plan: &PlanId) -> Vec<Vec<i64>> {
     (0..entry.rows.len()).map(|i| entry.row(i)).filter(|r| r[..4] == w).collect()
 }
 
-fn put(rel: &str, plan: &PlanId, types: usize, flat: Vec<i64>) -> KeptPut {
-    let what = if flat.is_empty() {
-        KeptWhat::Gone
+/// `plan`'s partition of `rel`: `n` rows of `width` words, which `fill` gives row by row, written into a block of
+/// their own as they are given (`BlockFlat`, never a heap vector) and digested there; gone when `n` is 0.
+fn put(rel: &str, plan: &PlanId, width: usize, n: usize, fill: impl FnOnce(&mut dyn FnMut(i64))) -> KeptPut {
+    let (what, digest) = if n == 0 {
+        (KeptWhat::Gone, 0)
     } else {
-        let n = flat.len() / types;
-        KeptWhat::Flat { widths: vec![8; types], rows: flat, n, levels: None, given: true }
-    };
-    let digest = match &what {
-        KeptWhat::Flat { rows, .. } => {
-            let mut h = Sha256::new();
-            for v in rows {
+        let mut block = BlockFlat::new(n, width, true);
+        let mut h = Sha256::new();
+        {
+            let mut w = block.writer();
+            fill(&mut |v| {
                 h.update(v.to_le_bytes());
-            }
-            u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes"))
+                w.push(v);
+            });
+            debug_assert_eq!(w.written(), n * width, "{rel}: whole rows");
         }
-        _ => 0,
+        (KeptWhat::Picked(Box::new(block)), u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes")))
     };
-    KeptPut { rel: rel.to_owned(), ident: ident(rel), part: part(plan), digest, reads: Vec::new(), types: vec![b'i'; types], what }
+    KeptPut { rel: rel.to_owned(), ident: ident(rel), part: part(plan), digest, reads: Vec::new(), types: vec![b'i'; width], what }
 }
 
 /// `bytes` as words, eight bytes each, the last padded with zeros.
@@ -213,24 +214,28 @@ impl Plans {
     /// connection, so it may run inside a candidate transaction.
     pub fn put(&mut self, store: &std::path::Path, plan: PlanId, compiled: Compiled, read: &BTreeMap<String, u64>) -> Arc<Compiled> {
         let w = words(&plan);
-        let mut head = w.to_vec();
-        head.extend([COMPILER_VERSION, compiled.decisions.len() as i64, compiled.program.len() as i64]);
-        let mut bytes = Vec::new();
+        let head = put(PLAN, &plan, 7, 1, |push| {
+            w.iter().copied().chain([COMPILER_VERSION, compiled.decisions.len() as i64, compiled.program.len() as i64]).for_each(push)
+        });
         let joined: Vec<u8> = compiled.decisions.as_bytes().iter().chain(&compiled.program).copied().collect();
-        for (at, word) in to_words(&joined).enumerate() {
-            bytes.extend(w);
-            bytes.extend([at as i64, word]);
-        }
-        let mut reads = Vec::new();
-        let mut bounds = Vec::with_capacity(read.len());
-        for (stat, &value) in read {
-            let (low, high) = interval(value);
-            let high = high.min(i64::MAX as u64);
-            reads.extend(w);
-            reads.extend([name(stat), low as i64, high as i64]);
-            bounds.push((name(stat), low, high));
-        }
-        self.pending.extend([put(PLAN, &plan, 7, head), put(BYTES, &plan, 6, bytes), put(READ, &plan, 7, reads)]);
+        let bytes = put(BYTES, &plan, 6, joined.len().div_ceil(8), |push| {
+            for (at, word) in to_words(&joined).enumerate() {
+                w.iter().copied().chain([at as i64, word]).for_each(&mut *push);
+            }
+        });
+        let bounds: Vec<(i64, u64, u64)> = read
+            .iter()
+            .map(|(stat, &value)| {
+                let (low, high) = interval(value);
+                (name(stat), low, high.min(i64::MAX as u64))
+            })
+            .collect();
+        let reads = put(READ, &plan, 7, bounds.len(), |push| {
+            for &(stat, low, high) in &bounds {
+                w.iter().copied().chain([stat, low as i64, high as i64]).for_each(&mut *push);
+            }
+        });
+        self.pending.extend([head, bytes, reads]);
         let size = compiled.program.len() + compiled.decisions.len();
         let compiled = Arc::new(compiled);
         self.memory.insert((store.to_path_buf(), plan), Held { compiled: Arc::clone(&compiled), bounds }, size);
@@ -273,8 +278,8 @@ pub fn observe(store: &ContentStore, plan: PlanId, backend: &str, selectivity: f
             rows.push(r);
         }
     }
-    let flat: Vec<i64> = rows.into_iter().flatten().collect();
-    store.queue_kept(space(), vec![put(FEEDBACK, &plan, 9, flat)]);
+    let feedback = put(FEEDBACK, &plan, 9, rows.len(), |push| rows.iter().flatten().copied().for_each(push));
+    store.queue_kept(space(), vec![feedback]);
     Ok(())
 }
 

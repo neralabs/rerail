@@ -1,9 +1,24 @@
 //! Registered aggregate, merge, and widening functions for SQL lattice folds: the native lattices' algebra (`Lattice`)
 //! as SQL functions. (Their transfers' tops in the SQL a plan emits are the planner's, `plan::sql_kernel`.)
 use crate::code_rule_dsl::logic::native::aggregation::Reduction;
-use crate::code_rule_dsl::waves::schedule::LatticeOperations;
 use napi::Result;
 use std::collections::BTreeMap;
+
+/// A lattice's operations as a wave program's fold runs them (`waves::schedule::lattice`, which re-exports it): its
+/// aggregate, merge and widening functions by SQL name, the changes after which it widens, and its top.
+#[derive(Clone, serde::Serialize, serde::Deserialize)]
+pub struct Operations {
+    /// Planner-owned proof. External SQL callbacks cannot claim builtin laws.
+    #[serde(skip)]
+    pub reduction: crate::code_rule_dsl::logic::native::aggregation::Reduction,
+    pub aggregate: String,
+    pub merge: String,
+    pub widen: Option<String>,
+    pub after: Option<u32>,
+    pub top: i64,
+}
+/// The name the wave schedule gives it (`waves::schedule::LatticeOperations`).
+pub use Operations as LatticeOperations;
 fn error(message: impl std::fmt::Display) -> napi::Error {
     napi::Error::from_reason(message.to_string())
 }

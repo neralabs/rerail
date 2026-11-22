@@ -541,7 +541,7 @@ impl Prepared {
             let listed = ordered(facts, "part_demand_listed").into_iter().map(|r| r[1].clone()).collect();
             let row = rows_of(facts, "part_demand").next().unwrap_or_default();
             let outcome = if row.first().map(String::as_str) == Some("ok") && row.len() >= 7 {
-                Ok(front::ast::Report { adornments: split(&row[1]), magic_rules: num(&row[2]), full: split(&row[3]), extras_kept: num(&row[4]), gates: num(&row[5]), full_for_negation: split(&row[6]) })
+                Ok(front::ast::Report { adornments: split(&row[1]), magic_rules: num(&row[2]), full: split(&row[3]), extras_kept: num(&row[4]), gates: num(&row[5]), full_for_negation: split(&row[6]), reasons: row.get(7).map_or_else(Vec::new, |r| r.split('\u{1e}').filter(|x| !x.is_empty()).map(str::to_owned).collect()) })
             } else {
                 Err(row.get(1).cloned().unwrap_or_default())
             };
@@ -625,7 +625,7 @@ fn facts_of(p: &Prepared, digest: &[u8; 32]) -> Facts {
     if let Some((listed, outcome)) = &p.demand {
         put("part_demand_listed", listed.iter().enumerate().map(|(i, r)| vec![n(i), r.clone()]).collect());
         let row = match outcome {
-            Ok(r) => vec!["ok".to_owned(), r.adornments.join("\u{1f}"), n(r.magic_rules), r.full.join("\u{1f}"), n(r.extras_kept), n(r.gates), r.full_for_negation.join("\u{1f}")],
+            Ok(r) => vec!["ok".to_owned(), r.adornments.join("\u{1f}"), n(r.magic_rules), r.full.join("\u{1f}"), n(r.extras_kept), n(r.gates), r.full_for_negation.join("\u{1f}"), r.reasons.join("\u{1e}")],
             Err(e) => vec!["err".to_owned(), e.clone()],
         };
         put("part_demand", vec![row]);
@@ -1337,6 +1337,7 @@ fn link(version: &Version, parts: &[Part], prepared: &[(Own, Prepared)]) -> Resu
                     a.adornments.extend(b.adornments.iter().cloned());
                     a.full.extend(b.full.iter().map(|r| rename(r)));
                     a.full_for_negation.extend(b.full_for_negation.iter().map(|r| rename(r)));
+                    a.reasons.extend(b.reasons.iter().cloned());
                     a.magic_rules += b.magic_rules;
                     a.extras_kept += b.extras_kept;
                     a.gates += b.gates;

@@ -82,9 +82,27 @@ fn shipped_key(key: &[u8; 32]) -> HashKey {
     HashKey::sha256(&[format!("rerail combined entry {SCHEMA}\0").as_bytes(), plan().plans[0].as_slice(), key.as_slice()].concat())
 }
 
+/// An embedded phase program's entry: its key, and, when the store had none, the program compiled, which the phase's
+/// run records (`Embedded::record`).
+pub struct Embedded {
+    pub key: [u8; 32],
+    made: Option<(Vec<LibraryFile>, std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>)>,
+}
+
+impl Embedded {
+    /// Kept in the run's record, ahead of the item naming it: recorded in the caller's (the outer run's, whose record
+    /// the writer applies after the phase's), the phase's manifest found it unwritten and named nothing, and the
+    /// entry lived only while another run's manifest named it (a collected scope took it).
+    pub fn record(&self, store: &ContentStore) {
+        if let Some((read, v)) = &self.made {
+            record_version(store, "an embedded phase program", &self.key, read, v, &[]);
+        }
+    }
+}
+
 /// The embedded phase's text determines its source. The common program plan supplies the engine
-/// and grammar versions. The caller names this entry in the manifest of the phase that reads it.
-pub(super) fn embedded_program(source: &str, store: Option<&ContentStore>) -> super::Result<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<[u8; 32]>)> {
+/// and grammar versions. The phase that reads this entry records it when made, and names it in its manifest.
+pub(super) fn embedded_program(source: &str, store: Option<&ContentStore>) -> super::Result<(std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>, Option<Embedded>)> {
     let Some(store) = store else { return Ok((rr::parse_version(source)?, None)) };
     let mut hash = Sha256::new();
     hash.update(b"rerail/embedded-phase/v1\0");
@@ -93,13 +111,12 @@ pub(super) fn embedded_program(source: &str, store: Option<&ContentStore>) -> su
     store.settle(&queued(&key));
     if let Some(v) = lookup_version(store, &key)? {
         crate::code_rule_dsl::prof::count("rr.embedded_program_hits", 1);
-        return Ok((v, Some(key)));
+        return Ok((v, Some(Embedded { key, made: None })));
     }
     crate::code_rule_dsl::prof::count("rr.embedded_program_compiles", 1);
     let (v, read) = rr::recording(|| rr::parse_version(source));
     let v = v?;
-    record_version(store, "an embedded phase program", &key, &read, &v, &[]);
-    Ok((v, Some(key)))
+    Ok((std::sync::Arc::clone(&v), Some(Embedded { key, made: Some((read, v)) })))
 }
 
 /// The key of a rule file's entry (decision 0275): the program `rr::read_file` reads of the file at `path` (canonical)
@@ -138,7 +155,7 @@ pub(in crate::code_rule_dsl) fn lookup_read(store: &ContentStore, key: &[u8; 32]
 /// The combined program of texts `key`, when the store keeps one whose library files all still read as recorded; or,
 /// where the store has none, the one the engine ships (decision 0264). Opened from its image as its version (decision
 /// 0281's path, step 7a-1).
-pub(super) fn lookup_version(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
+pub fn lookup_version(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>>> {
     let Some((digest, _)) = entry_read(store, key)? else { return Ok(None) };
     Ok(program_text::load_image(store, &digest)?.map(|(v, _)| v))
 }
@@ -218,7 +235,7 @@ pub(in crate::code_rule_dsl) fn read_before_the_run(key: [u8; 32]) {
 }
 
 /// The rule file entries this thread read since the last outermost run took them.
-pub(super) fn take_read_before() -> Vec<[u8; 32]> {
+pub fn take_read_before() -> Vec<[u8; 32]> {
     READ_BEFORE.with_borrow_mut(std::mem::take)
 }
 
@@ -334,13 +351,13 @@ fn owner(key: &[u8; 32]) -> String {
 /// `remember`'s pins of texts `key`'s entry, held by the run that names it (`named`, `name_program`) and released
 /// when that run ends: queued after its manifest, which names the entry by then, as the run's own hold is
 /// (`HeldPlan`).
-pub(super) struct Pins<'a> {
+pub struct Pins<'a> {
     cache: &'a ContentStore,
     key: [u8; 32],
 }
 
 impl<'a> Pins<'a> {
-    pub(super) fn new(cache: &'a ContentStore, key: &[u8; 32]) -> Self {
+    pub fn new(cache: &'a ContentStore, key: &[u8; 32]) -> Self {
         Pins { cache, key: *key }
     }
 }
@@ -354,7 +371,7 @@ impl Drop for Pins<'_> {
 /// Names the program text of texts `key`'s entry, when the store keeps it, among the run's late sources (the
 /// manifest's), so collection keeps it while it keeps the run: queued on the store's writer, after the entry's own
 /// write when this process queued one.
-pub(super) fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
+pub fn name_program(cache: &ContentStore, key: &[u8; 32], late: &std::sync::Arc<std::sync::Mutex<Vec<crate::content_store::SourceId>>>) {
     // Stored already (decision 0228): named now, kept meanwhile by the run's collection lease (decision 0306 step 4).
     if cache.source_by_hash(holder_key(key)).ok().flatten().is_some() {
         if let Some(facts) = ENTRIES.get(cache, Entries::part(key)) {
@@ -441,13 +458,13 @@ impl Named {
 }
 
 /// What the write of texts `key`'s program is queued under (`write_back`, decision 0102).
-pub(in crate::code_rule_dsl) fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
+pub fn queued(key: &[u8; 32]) -> crate::content_store::write_back::Key {
     crate::content_store::write_back::Key::of(&[b"facts_memo/combined", key])
 }
 
 /// The source and plan the entry of texts `key` lives under, when the store keeps it: for the run's manifest. A
 /// queued write of it first.
-pub(super) fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
+pub fn named(key: &[u8; 32]) -> (String, [u8; 32]) {
     (source_text(key), plan().plans[0])
 }
 

@@ -46,11 +46,11 @@ pub struct NthChild {
     pub of_rule: Option<AstMatcher>,
     /// `of_rule`'s identity: equal keys count the same siblings (`Positions`); `None` where it is
     /// not shared (it calls a utility).
-    pub(crate) of_rule_key: Option<String>,
+    pub of_rule_key: Option<String>,
     pub reverse: bool,
     /// Whether `of_rule` reads and binds no capture (`CaptureAnalysis::mentions`), worked out on
     /// first use: its verdict at a sibling is then the same for every candidate.
-    pub(crate) capture_free: std::sync::OnceLock<bool>,
+    pub capture_free: std::sync::OnceLock<bool>,
 }
 
 impl NthChild {

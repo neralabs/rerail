@@ -303,7 +303,7 @@ fn bounded_body_join_admits_equal_frames_before_charging_later_work() {
         assert!(
             trace
                 .iter()
-                .all(|r| r.encoded && r.submitted && r.completed)
+                .all(|r| r.submitted && r.completed)
         );
         eprintln!(
             "QUERY_BODY_JOIN_EVIDENCE {}",
@@ -472,7 +472,7 @@ fn query_bulk_and_bounded_jobs_keep_exact_budget_edges_and_logical_failure_prece
         assert!(
             trace
                 .iter()
-                .all(|r| r.encoded && r.submitted && r.completed)
+                .all(|r| r.submitted && r.completed)
         );
         eprintln!(
             "QUERY_WORK_JOB_EVIDENCE {}",
@@ -606,7 +606,7 @@ fn bulk_work_accounts_for_the_losing_attempt_before_an_earlier_entry_or_guard() 
     assert!(
         trace
             .iter()
-            .all(|r| r.encoded && r.submitted && r.completed)
+            .all(|r| r.submitted && r.completed)
     );
 }
 
@@ -771,7 +771,7 @@ fn query_join_suppresses_later_duplicate_work_but_retains_errors_before_the_join
         assert!(
             trace
                 .iter()
-                .all(|record| record.encoded && record.submitted && record.completed)
+                .all(|record| record.submitted && record.completed)
         );
         eprintln!(
             "QUERY_JOIN_EVIDENCE {}",

@@ -12,7 +12,7 @@ fn keep_entry(store: &ContentStore, source: &[u8], plan: [u8; 32]) {
     use crate::content_store::kept_facts::{KeptPut, KeptWhat, holder_put};
     let part = i64::from(plan[0]);
     let held = crate::content_store::HashKey::sha256(source).sha256_bytes().unwrap();
-    let entry = KeptPut { rel: "entry".into(), ident: [1; 32], part, digest: part as u64, reads: Vec::new(), types: b"i".to_vec(), what: KeptWhat::Flat { widths: vec![8], rows: vec![part], n: 1, levels: None, given: true } };
+    let entry = KeptPut { rel: "entry".into(), ident: [1; 32], part, digest: part as u64, reads: Vec::new(), types: b"i".to_vec(), what: KeptWhat::Picked(Box::new(crate::content_store::kept_facts::BlockFlat::of_row(&[part]))) };
     store.queue_kept(MEMO_SPACE, vec![entry, holder_put(part, held, Some(plan))]);
     store.written().unwrap();
 }

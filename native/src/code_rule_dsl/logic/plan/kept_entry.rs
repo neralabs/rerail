@@ -15,7 +15,7 @@ use super::super::front::Value;
 use super::super::front::ast::{Branded, Class};
 use super::super::program_facts::Facts;
 use crate::content_store::ContentStore;
-use crate::content_store::kept_facts::{KeptPut, KeptWhat, holder_put};
+use crate::content_store::kept_facts::{BlockFlat, KeptPut, KeptWhat, holder_put};
 use rerail_blocks::kept::KeptRead as _;
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
@@ -149,30 +149,35 @@ impl Entries {
         let mut atoms = atoms.into_iter();
         let mut puts = Vec::new();
         for (rel, rows) in facts {
-            // The relation's rows by shape: each shape a kept relation, each row led by its place.
-            let mut shapes: BTreeMap<Vec<u8>, Vec<i64>> = BTreeMap::new();
-            for (at, row) in rows.iter().enumerate() {
+            // The relation's rows by shape: each shape a kept relation, each row led by its place. Counted first, so
+            // each shape's rows are written into a block of their size as they are found (`BlockFlat`).
+            let mut shapes: BTreeMap<Vec<u8>, usize> = BTreeMap::new();
+            let mut row_kinds = Vec::with_capacity(rows.len());
+            for row in rows {
                 let Some(kinds) = row.iter().map(kind).collect::<Option<Vec<u8>>>() else { return };
-                let flat = shapes.entry(kinds).or_default();
-                flat.push(at as i64);
-                for v in row.iter() {
-                    flat.push(match v {
-                        Value::Int(i) => *i,
-                        Value::Str(_) => i64::from(atoms.next().expect("an atom a string")),
-                        Value::Branded(b) => i64::from(b.atom),
-                    });
-                }
+                *shapes.entry(kinds.clone()).or_default() += 1;
+                row_kinds.push(kinds);
             }
-            for (kinds, flat) in shapes {
-                let mut h = Sha256::new();
-                for v in &flat {
+            let mut blocks: BTreeMap<Vec<u8>, (BlockFlat, usize, Sha256)> =
+                shapes.into_iter().map(|(kinds, n)| { let w = 1 + kinds.len(); (kinds, (BlockFlat::new(n, w, true), 0, Sha256::new())) }).collect();
+            for (at, (row, kinds)) in rows.iter().zip(&row_kinds).enumerate() {
+                let (block, r, h) = blocks.get_mut(kinds).expect("a shape counted");
+                let values = std::iter::once(at as i64).chain(row.iter().map(|v| match v {
+                    Value::Int(i) => *i,
+                    Value::Str(_) => i64::from(atoms.next().expect("an atom a string")),
+                    Value::Branded(b) => i64::from(b.atom),
+                }));
+                for (c, v) in values.enumerate() {
+                    block.put(*r, c, v);
                     h.update(v.to_le_bytes());
                 }
+                *r += 1;
+            }
+            for (kinds, (block, _, h)) in blocks {
                 let digest = u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes"));
                 let types: Vec<u8> = std::iter::once(b'i').chain(kinds.iter().map(|&k| if k == b'i' { b'i' } else { b's' })).collect();
-                let n = flat.len() / types.len();
                 let name = format!("{rel}#{}", String::from_utf8(kinds).expect("ascii"));
-                puts.push(KeptPut { ident: self.ident(&name), rel: name, part, digest, reads: Vec::new(), types: types.clone(), what: KeptWhat::Flat { widths: vec![8; types.len()], rows: flat, n, levels: None, given: true } });
+                puts.push(KeptPut { ident: self.ident(&name), rel: name, part, digest, reads: Vec::new(), types, what: KeptWhat::Picked(Box::new(block)) });
             }
         }
         // Put whole with its holder: what the partition kept before that this entry has no rows of goes with it, by

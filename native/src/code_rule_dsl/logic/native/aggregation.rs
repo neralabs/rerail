@@ -193,7 +193,7 @@ pub mod tests {
             assert_eq!(actual, expected);
         }
         // Callback registrations cannot obtain a builtin proof through JSON.
-        let ops: crate::code_rule_dsl::waves::schedule::LatticeOperations = serde_json::from_value(serde_json::json!({"aggregate":"min","merge":"max","top":TOP,"widen":null,"after":null,"reduction":"Min"})).unwrap();
+        let ops: crate::code_rule_dsl::logic::native::lattices::Operations = serde_json::from_value(serde_json::json!({"aggregate":"min","merge":"max","top":TOP,"widen":null,"after":null,"reduction":"Min"})).unwrap();
         assert_eq!(ops.reduction, Reduction::Opaque);
     }
 }

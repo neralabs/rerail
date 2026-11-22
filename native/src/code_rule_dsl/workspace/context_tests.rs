@@ -3007,7 +3007,7 @@ fn stored_local_results_and_their_read_back_are_unchanged_by_eviction_round_trip
     workspace.close();
 
     let restarted = stored_workspace(&store, "/round-trips", &code_rule);
-    let warm = apply_json(&restarted, 1, files);
+    let warm = apply_json(&restarted, 1, files.clone());
     assert_eq!(warm["evaluation"]["violations"], cold, "after restart");
     assert!(
         restored_results(&restarted) > 0,

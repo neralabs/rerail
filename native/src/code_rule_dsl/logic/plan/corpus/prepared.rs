@@ -388,6 +388,7 @@ pub fn prepared_of(
         split,
         interned,
         documents: Default::default(),
+        runs: None,
         cone: Default::default(),
         maintained: Default::default(),
         parts: Default::default(),

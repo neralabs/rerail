@@ -102,6 +102,10 @@ UKL_INLINE uint32_t ukl_pool_take(UklPool p, uint32_t c)
 {
     uint32_t head = ukl_atomic_poll(&p.heads[c]);
     for (uint32_t turn = 0u; turn < UKL_POOL_TURNS && head != UKL_POOL_NONE; turn++) {
+        // The head's link, read after the head that names it: a pusher writes the link, then fences, then swaps it
+        // in, and this fence pairs with that one (without it a link from before the push was read, and the swap made
+        // a block already taken the head again).
+        ukl_fence_device();
         uint32_t next = ukl_atomic_poll(&p.next[head]);
         uint32_t seen = ukl_atomic_cas(&p.heads[c], head, next);
         if (seen == head)

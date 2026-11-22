@@ -40,7 +40,7 @@ impl Adapter for Php {
     /// violation names may suppress it. A PHPStan identifier ignores one error, so the
     /// violation's witnesses on a line spend the identifiers listed for it, as they are met.
     fn suppresses<D: Doc>(
-        violation: &ViolationSpec,
+        code: &str,
         suppress: &Suppress,
         node: &Node<'_, D>,
         source: &str,
@@ -51,7 +51,7 @@ impl Adapter for Php {
         let at = anchored.start;
         suppress.get::<crate::code_rule_dsl::suppress::phpstan::Suppressions>().is_some_and(|identifiers| {
             let index = file_index(|| PhpstanIndex::read(&root(node), source, lines));
-            index.suppresses(&violation.code, identifiers, at, lines)
+            index.suppresses(code, identifiers, at, lines)
         }) || suppress.get::<crate::code_rule_dsl::suppress::psalm::Suppressions>().is_some_and(|psalm| {
             let index = file_index(|| PsalmIndex::read(&root(node), source));
             index.suppresses(&psalm.names, psalm.suppress_all, at)

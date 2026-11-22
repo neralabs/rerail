@@ -649,7 +649,7 @@ fn changed_only(before: &memo::Entry, now: &memo::Entry) -> (memo::Entry, memo::
 pub mod tests {
     use super::{Keeper, memo};
 
-    /// A semi-join's statistics at its held nodes (`corpus`' `held_counted`) are `measured`'s statistics of those rows,
+    /// A semi-join's statistics counted by document (`corpus`' `Counted::Measured`) are `measured`'s statistics of its rows,
     /// counted by document as every base relation's are (`statkeep::RelStats`), so the documents' table keeps and
     /// patches them as it does the others': every column, the node's a key.
     #[test]
@@ -742,3 +742,61 @@ pub mod tests {
     }
 }
 
+/// A semi-join's base relation's statistics, counted of its rows at the nodes the exports hold, the chunks' and the
+/// hits' (read off the corpus batch by a walk of their documents, `Source::for_rows_keyed`). They are the rows the
+/// cross part looks up (decision 0458 binds the whole view, but the cross part reads it only at those nodes), so the
+/// cross part's statistics of the relation are theirs, and the view's other rows are never computed to measure it.
+/// A node's row is counted once, though it is read twice. Exact: each value's count, and its count in each document
+/// (the first column's high half, as `syntax::measured` reads it).
+#[derive(Default)]
+pub struct SemijoinCounts {
+    nodes: rustc_hash::FxHashSet<i64>,
+    /// The node's column: every counted row's own node, so a key with no counts.
+    node: Option<usize>,
+    all: Vec<rustc_hash::FxHashMap<i64, i64>>,
+    by_doc: Vec<rustc_hash::FxHashMap<(i64, i64), i64>>,
+}
+
+impl SemijoinCounts {
+    /// Node `node`'s row, its columns in `input_columns` order with the node at `at`: counted unless counted already.
+    /// Whether it was counted now.
+    pub fn row(&mut self, node: i64, at: usize, row: &[i64]) -> bool {
+        if !self.nodes.insert(node) {
+            return false;
+        }
+        self.node = Some(at);
+        if self.all.len() < row.len() {
+            self.all.resize_with(row.len(), Default::default);
+            self.by_doc.resize_with(row.len(), Default::default);
+        }
+        let d = row[0] >> 32;
+        for (c, &v) in row.iter().enumerate().filter(|&(c, _)| c != at) {
+            *self.all[c].entry(v).or_default() += 1;
+            *self.by_doc[c].entry((v, d)).or_default() += 1;
+        }
+        true
+    }
+
+    /// The statistics (`syntax::statistics`' rows) of the columns `names`, each named in `input` (the rows' columns):
+    /// `None` if one is not, or the rows' document column is not `names`' first.
+    pub fn statistics(&self, input: &[&str], names: &[String]) -> Option<Vec<(String, i64, i64, i64, i64)>> {
+        if names.first().map(String::as_str) != input.first().copied() {
+            return None;
+        }
+        let rows = self.nodes.len() as i64;
+        names
+            .iter()
+            .map(|name| {
+                let c = input.iter().position(|i| i == name)?;
+                Some(match (self.all.get(c).filter(|_| self.node != Some(c)), self.by_doc.get(c)) {
+                    (Some(all), Some(by_doc)) => {
+                        let (ndv, sq, sqd) = (all.len() as i64, all.values().map(|n| n * n).sum(), by_doc.values().map(|n| n * n).sum());
+                        // A key column (every value once) reads as `measured`'s does.
+                        if ndv == rows { (name.clone(), rows, rows, rows, rows) } else { (name.clone(), rows, ndv, sq, sqd) }
+                    }
+                    _ => (name.clone(), rows, rows, rows, rows),
+                })
+            })
+            .collect()
+    }
+}

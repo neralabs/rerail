@@ -933,9 +933,10 @@ SPDX-License-Identifier = "Apache-2.0"
 # MLDB (mldbai/mldb, branch opencl-random-forests at e3caed6fa447): the Metal random forest trainer, the UKL kernel
 # shims and the compute-kernel runtime, copied verbatim under forest/src/mldb/ at their upstream paths, then
 # adapted in place; the compute-kernel runtime has since moved to gpu/device/src/mldb/ (decision 0440: the device
-# layer's crate), at the same upstream paths. Upstream's LICENSE is beside each.
+# layer's crate), and the UKL shims and common headers to native/crates/ukl/mldb/ (the crate that carries them in the
+# engine), at the same upstream paths. Upstream's LICENSE is beside each.
 [[annotations]]
-path = ["forest/src/mldb/**", "gpu/device/src/mldb/**"]
+path = ["forest/src/mldb/**", "gpu/device/src/mldb/**", "native/crates/ukl/mldb/**"]
 precedence = "override"
 SPDX-FileCopyrightText = ["2015-2022 mldb.ai inc.", "2021-2022 Jeremy Barnes", "2026 Nera Software Inc."]
 SPDX-License-Identifier = "Apache-2.0"

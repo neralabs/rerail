@@ -39,7 +39,7 @@ struct State {
 
 impl Corpus {
     #[cfg(feature = "code-rule-profile")]
-    pub(in crate::code_rule_dsl) fn record_origins<'a>(
+    pub fn record_origins<'a>(
         &self,
         rules: impl IntoIterator<Item = &'a crate::code_rule_dsl::model::CompiledCodeRule>,
     ) {
@@ -186,7 +186,7 @@ impl Corpus {
     /// Batch only admitted plan/file pairs. Equal frontiers share one SQL request, so each file
     /// is selected once. (Grouping plans by their files instead caches more templates but runs a
     /// file once per scope, and cost more execution on the full corpus.)
-    pub(in crate::code_rule_dsl) fn prepare_files(
+    pub fn prepare_files(
         &self,
         demands: &BTreeMap<String, Vec<Arc<AnchorPlan>>>,
     ) -> Result<()> {
@@ -451,7 +451,7 @@ impl Corpus {
             .map_or(0, |state| state.data_statements)
     }
 
-    pub(in crate::code_rule_dsl) fn contains(
+    pub fn contains(
         &self,
         path: &str,
         lang: u32,

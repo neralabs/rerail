@@ -17,7 +17,7 @@ use crate::code_rule_dsl::facts::observe::path_name;
 use crate::code_rule_dsl::facts::vtab::syntax::Document;
 use crate::code_rule_dsl::language::label_of_path;
 use crate::code_rule_dsl::waves::owner::Lease;
-use crate::content_store::kept_facts::{KeptPut, KeptSpace, KeptWhat, holder_put};
+use crate::content_store::kept_facts::{BlockFlat, KeptPut, KeptSpace, KeptWhat, holder_put};
 use crate::content_store::{ContentStore, StoreResult};
 use rerail_blocks::kept::{FactKey, KeptRead as _};
 use sha2::{Digest as _, Sha256};
@@ -100,8 +100,11 @@ pub(super) fn lookup(store: &ContentStore, kept: Option<&KeptSpace>, scope: &str
 
 /// Memoises the rows the wave left in `match` and `span` for each of `documents`, behind the run.
 pub(super) fn remember(lease: &Lease<'_>, store: &ContentStore, scope: &str, rules: &[u8; 32], documents: &[Document]) -> StoreResult<()> {
+    // Each document's rows are counted, then written straight into a block of their size (`put`).
     let mut matches = lease.prepare("SELECT c0, c2 FROM matched WHERE c1 = ?1")?;
+    let mut matches_n = lease.prepare("SELECT count(*) FROM matched WHERE c1 = ?1")?;
     let mut spans = lease.prepare("SELECT c1, c2, c3 FROM span WHERE c0 = ?1")?;
+    let mut spans_n = lease.prepare("SELECT count(*) FROM span WHERE c0 = ?1")?;
     let mut puts = Vec::new();
     for document in documents {
         let Some(content) = content(store, scope, document)? else { continue };
@@ -109,47 +112,59 @@ pub(super) fn remember(lease: &Lease<'_>, store: &ContentStore, scope: &str, rul
         let plan = plan(rules, &document.path);
         hold(store, plan)?;
         let part = part(&content, &plan);
-        let mut core = Vec::with_capacity(4);
-        core.extend(document.digest.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
-        let mut m = Vec::new();
-        let mut rows = matches.query([key])?;
-        while let Some(row) = rows.next()? {
-            m.extend([row.get::<_, i64>(0)?, row.get(1)?]);
-        }
-        let mut s = Vec::new();
-        let mut rows = spans.query([key])?;
-        while let Some(row) = rows.next()? {
-            s.extend([row.get::<_, i64>(0)?, row.get(1)?, row.get(2)?]);
-        }
-        puts.push(put(CORE, part, b"iiii", core));
-        puts.push(put(MATCH, part, b"ii", m));
-        puts.push(put(SPAN, part, b"iii", s));
+        puts.push(put(CORE, part, b"iiii", 1, |push| {
+            document.digest.as_chunks::<8>().0.iter().for_each(|w| push(i64::from_le_bytes(*w)));
+            Ok(())
+        })?);
+        let n: i64 = matches_n.query_row([key], |r| r.get(0))?;
+        puts.push(put(MATCH, part, b"ii", n as usize, |push| {
+            let mut rows = matches.query([key])?;
+            while let Some(row) = rows.next()? {
+                push(row.get(0)?);
+                push(row.get(1)?);
+            }
+            Ok(())
+        })?);
+        let n: i64 = spans_n.query_row([key], |r| r.get(0))?;
+        puts.push(put(SPAN, part, b"iii", n as usize, |push| {
+            let mut rows = spans.query([key])?;
+            while let Some(row) = rows.next()? {
+                push(row.get(0)?);
+                push(row.get(1)?);
+                push(row.get(2)?);
+            }
+            Ok(())
+        })?);
         puts.push(holder_put(part, content, Some(plan)));
     }
     store.queue_kept(space(), puts);
     Ok(())
 }
 
-/// `rel`'s rows of partition `part` (`flat`, `types.len()` a row), or, with none, the partition's rows gone.
-fn put(rel: &str, part: i64, types: &[u8], flat: Vec<i64>) -> KeptPut {
+/// `rel`'s rows of partition `part`: `n` rows of `types.len()` words, which `fill` gives row by row, written into a
+/// block of their own as they are given (`BlockFlat`, never a heap vector) and digested there; with none, the
+/// partition's rows gone. A fill that gives other than `n` whole rows (the lease's rows changed under it) is refused.
+fn put(rel: &str, part: i64, types: &[u8], n: usize, fill: impl FnOnce(&mut dyn FnMut(i64)) -> rusqlite::Result<()>) -> StoreResult<KeptPut> {
     let width = types.len();
-    let what = if flat.is_empty() {
-        KeptWhat::Gone
+    let (what, digest) = if n == 0 {
+        (KeptWhat::Gone, 0)
     } else {
-        let n = flat.len() / width;
-        KeptWhat::Flat { widths: vec![8; width], rows: flat, n, levels: None, given: true }
-    };
-    let digest = match &what {
-        KeptWhat::Flat { rows, .. } => {
-            let mut h = Sha256::new();
-            for v in rows {
+        let mut block = BlockFlat::new(n, width, true);
+        let mut h = Sha256::new();
+        let mut given = 0;
+        fill(&mut |v| {
+            if given < n * width {
+                block.put(given / width, given % width, v);
                 h.update(v.to_le_bytes());
             }
-            u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes"))
+            given += 1;
+        })?;
+        if given != n * width {
+            return Err(crate::content_store::StoreError::Invalid(format!("{rel}: {given} values for {n} rows of {width}")));
         }
-        _ => 0,
+        (KeptWhat::Picked(Box::new(block)), u64::from_le_bytes(h.finalize()[..8].try_into().expect("8 bytes")))
     };
-    KeptPut { rel: rel.to_owned(), ident: ident(rel), part, digest, reads: Vec::new(), types: types.to_vec(), what }
+    Ok(KeptPut { rel: rel.to_owned(), ident: ident(rel), part, digest, reads: Vec::new(), types: types.to_vec(), what })
 }
 
 /// How long a plan stays live after the last wave that wrote under it (`hold`).

@@ -705,12 +705,46 @@ pub struct ContentStore {
     lease: std::sync::Arc<collection_guard::SharedLease>,
     /// How long an ended store session's data is kept (decision 0450 step 3).
     session_ageing: reclamation::SessionAgeing,
+    /// An in-memory store's own folder, which its path names and its side folders (`.facts`, `.objects`, ...) are made
+    /// in: none for a store on disk, whose folders are beside its file.
+    own_folder: Option<std::sync::Arc<OwnFolder>>,
     #[cfg(any(test, feature = "test-hooks"))]
     git_tree_lookup_count: AtomicUsize,
     #[cfg(any(test, feature = "test-hooks"))]
     git_tree_write_count: AtomicUsize,
     #[cfg(any(test, feature = "test-hooks"))]
     git_tree_transactions: AtomicUsize,
+}
+
+/// A private folder of an in-memory store's own in the system's temporary folder, removed with the store's last handle.
+struct OwnFolder {
+    path: PathBuf,
+}
+
+impl OwnFolder {
+    /// The first free `rerail-memory-store-<pid>-<n>`, made private: the file system's `create_dir` is what makes it
+    /// this store's alone.
+    fn make() -> StoreResult<Self> {
+        let parent = std::env::temp_dir();
+        let mut builder = std::fs::DirBuilder::new();
+        #[cfg(unix)]
+        std::os::unix::fs::DirBuilderExt::mode(&mut builder, 0o700);
+        for n in 0u64.. {
+            let path = parent.join(format!("rerail-memory-store-{}-{n}", std::process::id()));
+            match builder.create(&path) {
+                Ok(()) => return Ok(Self { path }),
+                Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+                Err(e) => return Err(StoreError::Io(e)),
+            }
+        }
+        unreachable!("a free name below u64::MAX")
+    }
+}
+
+impl Drop for OwnFolder {
+    fn drop(&mut self) {
+        let _ = std::fs::remove_dir_all(&self.path);
+    }
 }
 
 impl Drop for ContentStore {
@@ -763,6 +797,7 @@ impl ContentStore {
             applying: parking_lot::Mutex::new((0, None)),
             write_back: None,
             session_ageing: self.session_ageing.clone(),
+            own_folder: self.own_folder.clone(),
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]
@@ -824,7 +859,14 @@ impl ContentStore {
         atoms::Atoms::share_memory(&connection, std::sync::Arc::clone(&atoms))?;
         let flush = connection::store_flush()?;
         let identity = Self::initialize(&mut connection, flush)?;
-        Ok(Self::with_connection(PathBuf::from(":memory:"), ThreadConnection::memory(connection, identity, flush), atoms, None))
+        // Its path is its own folder's: what is kept beside a store (its kept facts, objects and memo) and what the
+        // process keys by a store's path (its bound kept spaces, its snapshots) is then this store's alone. Named
+        // `:memory:`, every in-memory store shared one folder in the working directory, and each one's write swept away
+        // the files another's rows named.
+        let folder = OwnFolder::make()?;
+        let mut store = Self::with_connection(folder.path.join("store"), ThreadConnection::memory(connection, identity, flush), atoms, None);
+        store.own_folder = Some(std::sync::Arc::new(folder));
+        Ok(store)
     }
 
     fn with_connection(database_path: PathBuf, connection: ThreadConnection, atoms: std::sync::Arc<atoms::Atoms>, write_back: Option<std::sync::Arc<write_back::Writer>>) -> Self {
@@ -837,6 +879,7 @@ impl ContentStore {
             applying: parking_lot::Mutex::new((0, None)),
             write_back,
             session_ageing: reclamation::SessionAgeing::default(),
+            own_folder: None,
             #[cfg(not(target_family = "wasm"))]
             lease: Default::default(),
             #[cfg(any(test, feature = "test-hooks"))]

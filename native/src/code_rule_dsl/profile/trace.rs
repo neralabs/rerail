@@ -6,7 +6,7 @@ use std::io::Write;
 use std::sync::LazyLock;
 use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
-pub(crate) fn enabled() -> bool {
+pub fn enabled() -> bool {
     rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PROFILE").is_some())
 }
 
@@ -31,9 +31,9 @@ fn emit_to(writer: &mut impl Write, prefix: &str, value: Value) -> std::io::Resu
     writer.write_all(line.as_bytes())
 }
 
-pub(crate) struct Context(Option<Attribution>);
+pub struct Context(Option<Attribution>);
 impl Context {
-    pub(crate) fn enter(rule: &str, clause: &str, path: Option<&str>) -> Self {
+    pub fn enter(rule: &str, clause: &str, path: Option<&str>) -> Self {
         if !rerail_prof::code_rule_dsl::logic::profile::setting(|| std::env::var_os("RERAIL_PROFILE").is_some()) {
             return Self(None);
         }

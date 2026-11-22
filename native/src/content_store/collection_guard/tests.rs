@@ -48,7 +48,7 @@ fn readers_publish_memos_and_roots_before_collection_resumes() {
     // A memo entry the reader keeps, held by its source (`HOLDER`).
     let space = [7u8; 32];
     let held = HashKey::sha256(b"in-flight source").sha256_bytes().unwrap();
-    let entry = KeptPut { rel: "result".into(), ident: [1; 32], part: 1, digest: 1, reads: Vec::new(), types: b"i".to_vec(), what: KeptWhat::Flat { widths: vec![8], rows: vec![5], n: 1, levels: None, given: true } };
+    let entry = KeptPut { rel: "result".into(), ident: [1; 32], part: 1, digest: 1, reads: Vec::new(), types: b"i".to_vec(), what: KeptWhat::Picked(Box::new(crate::content_store::kept_facts::BlockFlat::of_row(&[5]))) };
     writer.queue_kept(space, vec![entry, holder_put(1, held, None)]);
     writer.written().unwrap();
     writer

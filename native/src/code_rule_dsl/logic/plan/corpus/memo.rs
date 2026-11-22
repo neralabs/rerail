@@ -481,6 +481,9 @@ pub fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Option<Sou
 /// one it stores. Queued after a write that stores it (FIFO), it finds that one. `stored_by`: what that write is
 /// queued under (`write_back::Key`), where only it stores the text.
 pub fn named_source(cache: &ContentStore, text: String, store: bool, stored_by: Option<&crate::content_store::write_back::Key>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    // Whether the write that stores it is queued, asked before the store is: a write the writer applies between the
+    // two is then found stored, where asked after it was neither stored nor queued, and the manifest lost the source.
+    let queued = stored_by.map(|key| cache.queued(key));
     // Stored already (decision 0228): named now, and only its pin queued (a lock, as `stored_source` takes it). The
     // writer is for what a queued write stores: the lookup there was a write a warm run made.
     if let Some(id) = stored_source(cache, &text).ok().flatten() {
@@ -488,7 +491,7 @@ pub fn named_source(cache: &ContentStore, text: String, store: bool, stored_by: 
         return;
     }
     // Not stored, and nothing queued stores it: the writer would find nothing either.
-    if !store && stored_by.is_some_and(|key| !cache.queued(key)) {
+    if !store && queued == Some(false) {
         return;
     }
     // In the run's record (decision 0306): found, or stored, as the writer applies it.

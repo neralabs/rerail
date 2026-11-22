@@ -13,7 +13,7 @@ use std::collections::BTreeSet;
 use std::sync::Arc;
 
 /// An AST `evidence` relation projected from matches across the code rule's scoped files.
-pub(in crate::code_rule_dsl) fn compile_relation(
+pub fn compile_relation(
     value: &Value,
     path: &str,
     capabilities: &Capabilities,

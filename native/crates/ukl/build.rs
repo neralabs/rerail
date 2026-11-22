@@ -5,9 +5,9 @@ include!("src/carried.rs");
 
 fn main() {
     println!("cargo:rerun-if-changed=src/carried.rs");
-    // The files `carried.rs` includes: the headers under `forest/src/`, the library under `lib/`.
+    // The files `carried.rs` includes: the headers under `mldb/`, the library under `lib/`.
     for (name, _) in HEADERS {
-        println!("cargo:rerun-if-changed=../../../forest/src/{name}");
+        println!("cargo:rerun-if-changed={name}");
     }
     for (name, _) in LIBRARY {
         println!("cargo:rerun-if-changed=lib/{name}");

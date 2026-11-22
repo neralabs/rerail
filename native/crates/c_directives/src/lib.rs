@@ -9,8 +9,9 @@
 //! it does not read) goes to the lean scan, so a row is never wrong.
 
 use rerail_bitlex::bitlex_masks as bitlex_compile;
-use rerail_compiler::{native_ir, rir_asm as rir};
-use rerail_compiler::native_cpu_clusters;
+use rerail_compiler::native_ir;
+use rerail_rir::rir_asm as rir;
+use rerail_cpu_stream::native_cpu_clusters;
 use rerail_cpu_stream::native_cpu_stream;
 
 /// The grammar.

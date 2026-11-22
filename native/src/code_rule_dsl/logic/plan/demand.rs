@@ -80,7 +80,7 @@ pub fn whole_relations() -> crate::code_rule_dsl::logic::profile::Bound {
 /// What was demanded, and the program's version `placed` with each demandable relation computed for the keys its
 /// readers reach (the module's split, an overlay of `placed`); `None` where nothing is, or where the split would not
 /// stratify or type. `placed` must be the whole program (t36 item 6: `over`).
-pub(super) fn split_negations(placed: &Placed, model: &super::Model) -> Option<(Vec<String>, Placed)> {
+pub fn split_negations(placed: &Placed, model: &super::Model) -> Option<(Vec<String>, Placed)> {
     if crate::code_rule_dsl::logic::profile::bound::<Whole>().0 {
         return None;
     }
