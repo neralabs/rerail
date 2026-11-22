@@ -372,6 +372,11 @@ struct Node {
 /// first reads an assumption, and its code (a block that makes its record).
 struct RowArm {
     row: usize,
+    /// Its first bytes, and those after its first it may hold.
+    first: [bool; 256],
+    tail: [bool; 256],
+    /// The escapes at a token's start it tests first: each why and test.
+    starts: Vec<(String, String)>,
     start: Expr,
     check: String,
     /// Its code up to its record's marks, and the marks it always has.
@@ -383,6 +388,8 @@ struct RowArm {
 struct Picks {
     open: String,
     rows: String,
+    /// Whether the rows are picked by the openers themselves: no `open`.
+    fused: bool,
 }
 
 /// A class's nibble-table bit: the high nibbles and the low nibbles it holds (one bit a nibble).
@@ -1452,7 +1459,13 @@ impl Gen<'_> {
                         };
                         let fk = s_at(Known::No).or(es.not().and(carry.clone()));
                         v_s = v_s.or(cond.clone().and(fk.clone()));
-                        v = v.or(cond.and(if dies[k] { fk.and(Known::Test("l == s".to_owned())) } else { fk }));
+                        v = v.or(cond.and(if !dies[k] {
+                            fk
+                        } else if self.read_never_one_byte(rule, k) {
+                            Known::No
+                        } else {
+                            fk.and(Known::Test("l == s".to_owned()))
+                        }));
                     }
                     info.push(RowFill { row: *row, at_s: v_s, at_l: v.clone(), tail_starts: false, tail_stop: Known::No, region: true, dies: row_dies });
                     (v, Known::No)
@@ -1557,7 +1570,12 @@ impl Gen<'_> {
                 if !dies {
                     return Ok(false);
                 }
-                g_s.clone().and(Known::Test("l == s".to_owned()))
+                let k = match rule {
+                    Some(TokenRule::Read(rs)) if rs.len() == 1 => self.kinds.iter().position(|q| q.kind == rs[0].kind),
+                    Some(TokenRule::ReadParts(rs, _)) => Self::row_region(start, rs).and_then(|r| self.kinds.iter().position(|q| q.kind == r.kind)),
+                    _ => None,
+                };
+                if k.is_some_and(|k| self.read_never_one_byte(rule, k)) { Known::No } else { g_s.clone().and(Known::Test("l == s".to_owned())) }
             } else {
                 let tb = self.row_tail_bytes(kind, rule, last);
                 if !(0..256).any(|b| tb[b]) {
@@ -2290,7 +2308,7 @@ impl Gen<'_> {
     /// `LO[c & 15] & HI[c >> 4]`. In a group, the openers and the rows that may start there are
     /// tested in their order, each as `at_start` reads it of the group's bytes: one that starts at
     /// every one of them is no test.
-    fn dispatch(&mut self, rows: &[RowArm]) -> Result<(String, Picks, Vec<Vec<usize>>), String> {
+    fn dispatch(&mut self, rows: &[RowArm]) -> Result<(String, Picks, Vec<Vec<usize>>, Vec<Vec<String>>), String> {
         let opens: Vec<(String, Expr, Vec<usize>)> = match &self.opens {
             Some(o) => o.iter().map(|(kind, local, after)| (local.clone(), self.kinds.iter().find(|r| &r.kind == kind).map_or(Expr::Not(Box::new(Expr::Empty)), |r| r.opener.clone()), after.clone())).collect(),
             None => Vec::new(),
@@ -2365,8 +2383,12 @@ impl Gen<'_> {
         let list = |t: &[u64; 16]| t.iter().map(|b| format!("{b:#x}")).collect::<Vec<_>>().join(", ");
         let tables = format!("/// The token's first byte's group (`dispatch`), as simdjson's `classify`: a byte's bit `r` is set in both where it is of product `r`'s high and low nibbles; each product is one group's.\nstatic DISPATCH_LO: [{ty}; 16] = [{}];\nstatic DISPATCH_HI: [{ty}; 16] = [{}];\n\n", list(&lo), list(&hi));
         // Each group's openers and rows, as `at_start` reads them of its bytes.
-        let mut picks = Picks { open: String::new(), rows: String::new() };
+        let mut picks = Picks { open: String::new(), rows: String::new(), fused: true };
+        let mut fused_rows = String::new();
         let mut chains: Vec<Vec<usize>> = Vec::new();
+        // The regions opened where each row is picked: of a group's, those no row before it in the
+        // group's chain is picked at alone (`open == k`).
+        let mut row_opens: Vec<Vec<String>> = vec![Vec::new(); rows.len()];
         for (g, (sig, b)) in groups.iter().enumerate() {
             let pats = rects.iter().enumerate().filter(|r| r.1.0 == g).map(|(bit, _)| bit.to_string()).collect::<Vec<_>>().join(" | ");
             let shown: String = (0..256u32).filter(|&c| b[c as usize]).map(|c| if (33..127).contains(&c) { char::from_u32(c).unwrap_or('?').to_string() } else { format!("\\x{c:02x}") }).collect();
@@ -2391,11 +2413,14 @@ impl Gen<'_> {
             if chain.last().is_none_or(|(c, _)| c != "true") {
                 may_open.push("usize::MAX".to_owned());
             }
+            let open_chain = chain.clone();
             if !chain.is_empty() {
                 let _ = write!(picks.open, "            // `{shown}`\n            {pats} => {},\n", if_chain(&chain, "usize::MAX", "            "));
             }
             self.start_in = Some(*b);
             let mut chain: Vec<(String, String)> = Vec::new();
+            let mut left = may_open.clone();
+            let mut reads: Vec<Option<String>> = Vec::new();
             for (i, r) in rows.iter().enumerate() {
                 if sig[opens.len() + i] == 0 {
                     continue;
@@ -2413,16 +2438,69 @@ impl Gen<'_> {
                 if st == "false" {
                     continue;
                 }
+                // The region the entry reads (none: a row of code; empty: a test of `open` not alone).
+                reads.push(match st.strip_prefix("open == ") {
+                    Some("usize::MAX") => None,
+                    Some(k) if k.chars().all(|c| c.is_ascii_digit()) => Some(k.to_owned()),
+                    Some(_) => Some(String::new()),
+                    None if st == "true" && may_open.len() == 1 && may_open[0] != "usize::MAX" => Some(may_open[0].clone()),
+                    None if uses(&st, "open") => Some(String::new()),
+                    None => None,
+                });
+                let here: Vec<String> = match st.strip_prefix("open == ") {
+                    Some(k) => left.iter().filter(|m| *m == k).cloned().collect(),
+                    None => left.clone(),
+                };
+                for m in here {
+                    if !row_opens[i].contains(&m) {
+                        row_opens[i].push(m);
+                    }
+                }
+                if let Some(k) = st.strip_prefix("open == ") {
+                    left.retain(|m| m != k);
+                }
+                if st == "true" {
+                    left.clear();
+                }
                 let st = if r.check.is_empty() { st } else { format!("{{{}\n                {st}\n            }}", r.check.replace("\n            ", "\n                ")) };
                 chain.push((st, i.to_string()));
             }
             self.start_in = None;
+            // Fused: each opener picks its region's row (the first that reads it), and with none
+            // the code's rows follow, where every region's row is before every row of code.
+            let code_from = reads.iter().position(Option::is_none).unwrap_or(reads.len());
+            let ok = reads[code_from..].iter().all(Option::is_none)
+                && reads[..code_from].iter().all(|k| k.as_ref().is_some_and(|k| !k.is_empty()))
+                && may_open.iter().all(|m| m == "usize::MAX" || reads.iter().any(|k| k.as_deref() == Some(m.as_str())));
+            if !ok {
+                picks.fused = false;
+            }
+            if picks.fused {
+                let mut fchain: Vec<(String, String)> = Vec::new();
+                for (cond, k) in &open_chain {
+                    let Some(e) = reads.iter().position(|r| r.as_deref() == Some(k.as_str())) else { continue };
+                    let i: usize = chain[e].1.parse().unwrap_or(usize::MAX);
+                    let r = &rows[i];
+                    let st = if r.check.is_empty() { cond.clone() } else { format!("{{{}\n                {cond}\n            }}", r.check.replace("\n            ", "\n                ")) };
+                    fchain.push((st, chain[e].1.clone()));
+                }
+                if may_open.iter().any(|m| m == "usize::MAX") {
+                    // Reached where no opener holds: `open == usize::MAX` is so.
+                    fchain.extend(chain[code_from..].iter().map(|(t, v)| (if t.ends_with("open == usize::MAX") { t.replace("open == usize::MAX", "true") } else { t.clone() }, v.clone())));
+                }
+                if !fchain.is_empty() {
+                    let _ = write!(fused_rows, "                // `{shown}`\n                {pats} => {},\n", if_chain(&fchain, "usize::MAX", "                "));
+                }
+            }
             chains.push(chain.iter().map(|(_, v)| v.parse().unwrap_or(usize::MAX)).collect());
             if !chain.is_empty() {
                 let _ = write!(picks.rows, "                // `{shown}`\n                {pats} => {},\n", if_chain(&chain, "usize::MAX", "                "));
             }
         }
-        Ok((tables, picks, chains))
+        if picks.fused {
+            picks.rows = fused_rows;
+        }
+        Ok((tables, picks, chains, row_opens))
     }
 
     /// Whether `e` may hold at a byte, given the bytes about it (`ctx`): some way it holds
@@ -3602,6 +3680,25 @@ impl Gen<'_> {
 
     /// A region's last byte from its closer's first, `c`, of a token read by its reader: a closer
     /// of a kind of its own (`closes`) its bytes, else the region's.
+    /// Whether a row's read of region `k` is never one byte: it looks for the closer from the
+    /// byte after the first, and its last byte is the closer's or after it, or, where it ends
+    /// before its closer, the opener's second byte is no closer's.
+    fn read_never_one_byte(&mut self, rule: &Option<TokenRule>, k: usize) -> bool {
+        let kind = self.kinds[k].kind.clone();
+        let r = match rule {
+            Some(TokenRule::Read(rs) | TokenRule::ReadParts(rs, _)) => rs.iter().find(|r| r.kind == kind).cloned(),
+            _ => None,
+        };
+        let Some(r) = r else { return false };
+        if !r.outside {
+            return true;
+        }
+        let opener = self.kinds[k].opener.clone();
+        let o = self.bytes_at(&opener, 1, &mut HashMap::new());
+        let c = self.bytes_at(&r.closers(), 0, &mut HashMap::new());
+        !(0..256).any(|i| o[i] && c[i])
+    }
+
     fn closer_last(&mut self, r: &Region, closes: &[(String, Expr, u8)]) -> Result<String, String> {
         let mut out = String::new();
         let k = self.kinds.iter().position(|q| q.kind == r.kind);
@@ -4192,7 +4289,7 @@ impl Gen<'_> {
             }
             let _ = &st;
             // The escapes at a token's start that may hold at this row's, as its bytes read them.
-            let mut first = String::new();
+            let mut first_tests: Vec<(String, String)> = Vec::new();
             let sb = self.bytes_at(start, 0, &mut HashMap::new());
             let sb: [bool; 256] = std::array::from_fn(|i| sb[i] && !self.skipped[i]);
             for (why, e, at) in self.start_checks.clone() {
@@ -4204,10 +4301,11 @@ impl Gen<'_> {
                 self.start_in = None;
                 let Some(t) = t? else { return Err(format!("tier 1 as Rust: the escape `{why}` at a start of `{kind}`")) };
                 if t != "false" {
-                    let _ = write!(first, "            // {why}\n            if {t} {{\n                refused = true;\n                break;\n            }}\n");
+                    first_tests.push((why, t));
                 }
             }
-            row_arms.push(RowArm { row: *row, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n{first}            let l = {l};\n            let l = l.max(s);\n{hits}            (l, {k}, {extra}, "), bits });
+            let tail = if matches!(rule, Some(TokenRule::Read(_) | TokenRule::ReadParts(..))) { [true; 256] } else { self.row_tail_bytes(kind, rule, last) };
+            row_arms.push(RowArm { row: *row, first: sb, tail, starts: first_tests, start: start.clone(), check, body: format!("{{\n            // `{kind}`: {how}\n            //~defs\n            //~spans\n            let l = {l};\n            let l = l.max(s);\n            //~passed\n{hits}            (l, {k}, {extra}, "), bits });
         }
         // Each gap mark's bit at a grammar token, and at an extra the marks it keeps of its own gap.
         let mut gap_code = String::new();
@@ -4282,7 +4380,7 @@ impl Gen<'_> {
         // The region a token's start opens, as the walk opens them (`regions`): the first declared whose
         // opener holds there, a kind `after` others where the region opened last of those with none is one.
         let mut open_code = String::new();
-        let (tables, picks, chains) = self.dispatch(&row_arms)?;
+        let (tables, picks, chains, row_opens) = self.dispatch(&row_arms)?;
         // Each mark of rows, at the row picked: a row of a set starts where the row picked is one,
         // and may where one is after it in a group's chain it is in (those before it do not start).
         for (bit, a, b, test) in &row_marks {
@@ -4312,11 +4410,11 @@ impl Gen<'_> {
             }
         }
         let _ = write!(open_code, "        // The token's first byte's group, by the dispatch tables (simdjson's `classify`).\n        let c = src[s];\n        let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();\n");
-        if let Some(opens) = &self.opens {
+        let plain_kinds: Vec<String> = self.opens.as_ref().map(|o| o.iter().enumerate().filter(|(_, r)| r.2.is_empty()).map(|(k, _)| k.to_string()).collect()).unwrap_or_default();
+        if let Some(opens) = self.opens.as_ref().filter(|_| !picks.fused) {
             let plain: Vec<String> = opens.iter().enumerate().filter(|(_, r)| r.2.is_empty()).map(|(k, _)| k.to_string()).collect();
             let _ = write!(open_code, "        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the region opened last of those with none (`plain`) is one; of those whose opener may be the byte's.\n        let open = match group {{\n{}            _ => usize::MAX,\n        }};\n        if matches!(open, {}) {{\n            plain = open;\n        }}\n", picks.open, plain.join(" | "));
         }
-        let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no token begins with.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&format!("{}{:#x})\n        }}", a.body, a.bits), "        ").trim_start())).collect::<String>());
         let mut span_decl = String::new();
         let mut span_after = String::new();
         let mut acc_after = String::new();
@@ -4328,7 +4426,12 @@ impl Gen<'_> {
                 let _ = write!(open_code, "        // The skipped bytes before the token, for the gap masks (none where there are none).\n        if {g} {{\n            acc_{j} = true;\n{}        }}\n", if a.own { format!("            rec_{j} = true;\n") } else { String::new() });
             }
             if a.here != "false" {
-                let _ = writeln!(open_code, "        let here_{j} = {};", a.here);
+                if picks.fused {
+                    // Each row's, as its region reads it.
+                    let _ = writeln!(open_code, "        let here_{j}: bool;");
+                } else {
+                    let _ = writeln!(open_code, "        let here_{j} = {};", a.here);
+                }
             }
             if tails.contains(&j) {
                 let _ = writeln!(open_code, "        let mut tail_{j} = false;");
@@ -4365,31 +4468,90 @@ impl Gen<'_> {
                     rest.push_str(&refuse(why, r, "                "));
                 }
             }
-            if here.is_empty() && passed.is_empty() && first.is_empty() && rest.is_empty() {
-                continue;
-            }
-            let _ = write!(open_code, "        // `{}`: at the starts in it, and at its end.\n        if s >= span_{i}.1 {{\n", sp.f);
-            if !here.is_empty() || !passed.is_empty() {
-                let _ = write!(open_code, "            let c = span_{i}.1;\n            if s == c {{\n{here}            }} else {{\n                // A token covered it.\n{passed}            }}\n");
-            }
-            let _ = write!(open_code, "            span_{i} = (usize::MAX, usize::MAX);\n        }}");
-            if first == rest && !first.is_empty() {
-                // The same tests at its first byte and after it: one.
-                let mut both = String::new();
-                for (why, f, _) in &sp.starts {
-                    if let Some(f) = f {
-                        both.push_str(&refuse(why, f, "            "));
+            let _ = (&here, &passed, &after, &first, &rest);
+            let e = self.bytes_at(&sp.e.clone(), 0, &mut HashMap::new());
+            for (p, arm) in row_arms.iter_mut().enumerate() {
+                let opens = &row_opens[p];
+                let fold = |t: &str| fold_open(t, opens);
+                let refuse_at = |why: &str, t: &str, pad: &str| if t == "true" { format!("{pad}// {why}\n{pad}refused = true;\n{pad}break;\n") } else { format!("{pad}// {why}\n{pad}if {t} {{\n{pad}    refused = true;\n{pad}    break;\n{pad}}}\n") };
+                let mut code = String::new();
+                // At the starts in it.
+                let (mut f1, mut r1) = (String::new(), String::new());
+                for (why, f, r) in &sp.starts {
+                    if let Some(f) = f.as_deref().map(fold).filter(|t| t != "false") {
+                        f1.push_str(&refuse_at(why, &f, "                "));
+                    }
+                    if let Some(r) = r.as_deref().map(fold).filter(|t| t != "false") {
+                        r1.push_str(&refuse_at(why, &r, "                "));
                     }
                 }
-                let _ = write!(open_code, " else if s >= span_{i}.0 {{\n{both}        }}");
-            } else if !first.is_empty() || !rest.is_empty() {
-                let _ = write!(open_code, " else if s == span_{i}.0 {{\n{first}        }} else if s > span_{i}.0 {{\n{rest}        }}");
-            }
-            open_code.push('\n');
-            if !after.is_empty() {
-                let _ = write!(span_after, "    // `{}`: a token covered its end.\n    if span_{i}.1 < n {{\n        let c = span_{i}.1;\n{after}    }}\n", sp.f);
+                if f1 == r1 && !f1.is_empty() {
+                    let _ = write!(code, "            if s >= span_{i}.0 && s < span_{i}.1 {{\n{f1}            }}\n");
+                } else if !f1.is_empty() || !r1.is_empty() {
+                    let _ = write!(code, "            if s == span_{i}.0 && s < span_{i}.1 {{\n{f1}            }} else if s > span_{i}.0 && s < span_{i}.1 {{\n{r1}            }}\n");
+                }
+                // At its end, where its end byte is a first byte of the row's.
+                if (0..256).any(|b| e[b] && arm.first[b]) {
+                    let mut t1 = String::new();
+                    for (why, t) in &sp.at_end {
+                        let t = fold(t);
+                        if t != "false" {
+                            t1.push_str(&refuse_at(why, &t, "                "));
+                        }
+                    }
+                    if !t1.is_empty() {
+                        let c = if uses(&t1, "c") { format!("                let c = span_{i}.1;\n") } else { String::new() };
+                        let _ = write!(code, "            if s == span_{i}.1 {{\n{c}{t1}            }}\n");
+                    }
+                }
+                let at = arm.body.find("            //~spans\n").map_or(0, |k| k + "            //~spans\n".len());
+                arm.body.insert_str(at, &code);
+                // A token of the row's that covers its end.
+                if (0..256).any(|b| e[b] && arm.tail[b]) {
+                    let mut t1 = String::new();
+                    for (why, t) in &sp.passed {
+                        let t = fold(t);
+                        if t != "false" {
+                            t1.push_str(&refuse_at(why, &t, "                "));
+                        }
+                    }
+                    if !t1.is_empty() {
+                        let at = arm.body.find("            //~passed\n").map_or(0, |k| k + "            //~passed\n".len());
+                        let c = if uses(&t1, "c") { format!("                let c = span_{i}.1;\n") } else { String::new() };
+                        arm.body.insert_str(at, &format!("            // `{}`: this token covers its end.\n            if s < span_{i}.1 && span_{i}.1 <= l {{\n{c}{t1}            }}\n", sp.f));
+                    }
+                }
             }
         }
+        for (p, arm) in row_arms.iter_mut().enumerate() {
+            let opens = &row_opens[p];
+            let mut code = String::new();
+            if picks.fused {
+                if let [k] = opens.as_slice()
+                    && plain_kinds.contains(k)
+                {
+                    let _ = writeln!(code, "            plain = {k};");
+                }
+                for (j, a) in accs.iter().enumerate() {
+                    if a.here != "false" {
+                        let _ = writeln!(code, "            here_{j} = {};", fold_open(&a.here, opens));
+                    }
+                }
+            }
+            for (why, t) in &arm.starts {
+                let t = if picks.fused || opens.len() == 1 { fold_open(t, opens) } else { t.clone() };
+                if t != "false" {
+                    let _ = write!(code, "            // {why}\n            if {t} {{\n                refused = true;\n                break;\n            }}\n");
+                }
+            }
+            let at = arm.body.find("            //~spans\n").map_or(0, |k| k + "            //~spans\n".len());
+            arm.body.insert_str(at, &code);
+            arm.body = arm.body.replace("            //~spans\n", "").replace("            //~passed\n", "");
+            if picks.fused && uses(&arm.body, "open") {
+                return Err(format!("tier 1 as Rust: row {} reads the region opened, which the rows' pick does not make", arm.row));
+            }
+        }
+        let branches = format!("{{\n            // The row: the first whose start holds, of those whose start may be the byte's.\n            let row = match group {{\n{}                _ => usize::MAX,\n            }};\n            match row {{\n{}                _ => {{\n                    // A byte no token begins with.\n                    refused = true;\n                    break;\n                }}\n            }}\n        }}", picks.rows, row_arms.iter().enumerate().map(|(i, a)| format!("                {i} => {},\n", indent(&format!("{}{:#x})\n        }}", a.body, a.bits), "        ").trim_start())).collect::<String>());
         let mut fill_top = String::new();
         let mut fill_end = String::new();
         let nf = self.fills.len();
@@ -4498,22 +4660,59 @@ impl Gen<'_> {
                 span_decl.push_str(&decl_of[i]);
             }
         }
-        // Only the reads of them the code makes.
-        let rest = format!("{branches}{open_code}{gap_code}{own_code}{token_code}");
-        let mut top = String::new();
+        // Only the reads of them the code makes: at the loop's top where code outside the rows'
+        // arms reads one, else first in each arm that reads it (as the lean lexer reads `nl` where
+        // it reads a `;`).
+        let mut branches = branches;
+        let mut defs: Vec<(String, String)> = Vec::new();
         let mut pending_comment = String::new();
         for line in fill_top.lines() {
             if line.trim_start().starts_with("//") {
-                pending_comment = format!("{line}\n");
+                pending_comment = format!("{}\n", line.trim_start());
                 continue;
             }
-            let var = line.trim_start().trim_start_matches("let ").split(' ').next().unwrap_or("");
-            if !var.is_empty() && uses(&rest, var) {
-                top.push_str(&pending_comment);
-                pending_comment.clear();
-                let _ = writeln!(top, "{line}");
+            let var = line.trim_start().trim_start_matches("let ").split(' ').next().unwrap_or("").to_owned();
+            defs.push((var, format!("{pending_comment}{}\n", line.trim_start())));
+            pending_comment.clear();
+        }
+        let mut segs: Vec<String> = branches.split("//~defs\n").map(str::to_owned).collect();
+        for i in 0..segs.len() - 1 {
+            let t = segs[i].trim_end_matches(' ').len();
+            segs[i].truncate(t);
+        }
+        let mut outside = format!("{}{open_code}{gap_code}{own_code}{token_code}{acc_after}", segs[0]);
+        let mut top_defs: Vec<String> = Vec::new();
+        for (var, def) in defs.iter().rev() {
+            if uses(&outside, var) {
+                outside.push_str(def);
+                top_defs.push(def.clone());
+                continue;
+            }
+            if segs.iter().skip(1).all(|seg| uses(seg, var)) {
+                outside.push_str(def);
+                top_defs.push(def.clone());
+                continue;
+            }
+            for seg in segs.iter_mut().skip(1) {
+                if uses(seg, var) {
+                    seg.insert_str(0, def);
+                }
             }
         }
+        let mut top = String::new();
+        for d in top_defs.iter().rev() {
+            top.push_str(&indent(d, "        "));
+        }
+        // Each arm's defs at its indent.
+        for seg in segs.iter_mut().skip(1) {
+            let body_at = seg.lines().find(|l| l.starts_with(' ') && l.trim_start().starts_with("// `")).map(|l| l.len() - l.trim_start().len()).unwrap_or(20);
+            let n = seg.lines().take_while(|l| !l.starts_with(' ')).count();
+            let lines: Vec<&str> = seg.lines().collect();
+            let head: String = lines[..n].iter().map(|l| format!("{}{l}\n", " ".repeat(body_at))).collect();
+            let tail: String = lines[n..].iter().map(|l| format!("{l}\n")).collect();
+            *seg = format!("{head}{tail}");
+        }
+        branches = segs.concat();
         open_code.insert_str(0, &top);
         // Each mask the loop scans the gap before a token of, scanned once (`gap_NAME`), as the
         // lean lexer's `nl`.
@@ -4566,10 +4765,13 @@ impl Gen<'_> {
         let kept: Vec<String> = self.nodes.iter().filter(|n| n.kept).map(|n| n.name.clone()).chain(self.nodes.iter().flat_map(|n| &n.also).map(|a| format!("mut {a}"))).collect();
         let _ = writeln!(out, "    // Stage 1: the masks the regions and the tokens read, and whether an escape holds.\n    let Stage1 {{ {}, refused: escapes }} = stage1_best(src);", kept.join(", "));
         let rest = format!("{plain_decl_text}{fw_decl}{open_code}{branches}{token_code}{own_code}{gap_code}{acc_after}{span_after}{fields_init}");
+        // A refusal in the token loop leaves both its loops.
+        let tokens = |t: &str| t.replace("break;\n", "break 'tokens;\n");
+        let (open_code, branches, token_code, own_code, gap_code, acc_after) = (tokens(&open_code), tokens(&branches), tokens(&token_code), tokens(&own_code), tokens(&gap_code), tokens(&acc_after));
         out.push_str(&gate_walk(&self.body, &rest));
         let _ = write!(
             out,
-            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}    while let Some(s) = first_clear(&{skip}, at, n) {{\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches};\n        let word = if extra {{ 0 }} else {{ word(&src[s..=l]) }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n    }}\n    let _ = (from, from_record, before, pending);\n{span_after}    Lexed {{\n        starts,\n        lasts,\n        codes,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n",
+            "    // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.\n    let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut codes: Vec<u32> = Vec::with_capacity(n / 4 + 1);\n    let mut at = 0usize;\n    // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.\n    let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);\n{plain_decl}{fw_decl}    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).\n    let mut b = at / 64;\n    'tokens: while b < nw {{\n        let base = b * 64;\n        let mut firsts = !{skip}[b] & (!0u64 << at.saturating_sub(base));\n        while firsts != 0 {{\n        let s = base + firsts.trailing_zeros() as usize;\n        if s >= n {{\n            break 'tokens;\n        }}\n{open_code}        let mut hits = 0u32;\n        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {branches};\n        let word = if extra {{ 0 }} else {{ word(&src[s..=l]) }};\n        // The token marks: tier 2 tests the rest of each.\n{token_code}        if extra {{\n            // An extra keeps the marks of its own gap; its tests' hits go to the next grammar token.\n{own}            pending |= hits & 0xffff | hits >> 16;\n        }} else {{\n            let tested = pending | hits;\n{gap_code}            from = s + 1;\n            before = word;\n            pending = hits >> 16;\n        }}\n        from_record = s + 1;\n{acc_after}        starts.push(s as u32);\n        lasts.push(l as u32);\n        codes.push(kind | word << 8 | marks << 16);\n        at = l + 1;\n        if at >= base + 64 {{\n            b = at / 64;\n            continue 'tokens;\n        }}\n        firsts &= !0u64 << (at - base);\n        }}\n        b += 1;\n    }}\n    let _ = (from, from_record, before, pending);\n{span_after}    Lexed {{\n        starts,\n        lasts,\n        codes,\n        masks: Masks {{\n{fields_init}        }},\n        refused,\n    }}\n}}\n",
             own = own_code,
             plain_decl = plain_decl_text,
         );
@@ -4762,6 +4964,70 @@ fn parts_of<'a>(t: &'a str, op: &str) -> Vec<&'a str> {
     }
     out.reverse();
     out
+}
+
+/// `t` with each `open == K` known where the regions `opens` may be open (`usize::MAX`: none), and
+/// what is then known of it.
+fn fold_open(t: &str, opens: &[String]) -> String {
+    let mut out = t.to_owned();
+    let mut i = 0;
+    while let Some(k) = out[i..].find("open == ") {
+        let at = i + k;
+        let v: String = out[at + 8..].chars().take_while(|c| c.is_alphanumeric() || *c == ':' || *c == '_').collect();
+        let known = if !opens.contains(&v) {
+            Some("false")
+        } else if opens.len() == 1 {
+            Some("true")
+        } else {
+            None
+        };
+        match known {
+            Some(b) => {
+                out.replace_range(at..at + 8 + v.len(), b);
+                i = at + b.len();
+            }
+            None => i = at + 8 + v.len(),
+        }
+    }
+    fold_bool(&out)
+}
+
+/// `t`, with its `true`s and `false`s taken in.
+fn fold_bool(t: &str) -> String {
+    let t = t.trim();
+    for (op, unit, zero) in [(" || ", "false", "true"), (" && ", "true", "false")] {
+        let ps = parts_of(t, op);
+        if ps.len() > 1 {
+            let mut kept: Vec<String> = Vec::new();
+            for p in ps {
+                let f = fold_bool(p);
+                if f == zero {
+                    return zero.to_owned();
+                }
+                if f != unit {
+                    kept.push(f);
+                }
+            }
+            return match kept.len() {
+                0 => unit.to_owned(),
+                1 => kept.pop().unwrap_or_default(),
+                _ => format!("({})", kept.join(op)),
+            };
+        }
+    }
+    if let Some(inner) = t.strip_prefix('!') {
+        return match fold_bool(inner).as_str() {
+            "true" => "false".to_owned(),
+            "false" => "true".to_owned(),
+            f if f.starts_with('(') || !f.contains(' ') => format!("!{f}"),
+            f => format!("!({f})"),
+        };
+    }
+    let ps = parts_of(t, " && ");
+    if ps.len() == 1 && ps[0] != t {
+        return fold_bool(ps[0]);
+    }
+    t.to_owned()
 }
 
 /// `a && b`, each conjunct once, less a disjunction one of the others is a part of (`x && (x ||

@@ -1926,61 +1926,24 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut fw_rd2_part2 = vec![0u64; nw];
     // `o_chr` for tier 2, written over each region token.
     let mut fw_o_chr = vec![0u64; nw];
-    while let Some(s) = first_clear(&m_ws, at, n) {
+    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).
+    let mut b = at / 64;
+    'tokens: while b < nw {
+        let base = b * 64;
+        let mut firsts = !m_ws[b] & (!0u64 << at.saturating_sub(base));
+        while firsts != 0 {
+        let s = base + firsts.trailing_zeros() as usize;
+        if s >= n {
+            break 'tokens;
+        }
         // Whether `m_lf` holds in the gap before the token.
         let gap_m_lf = s > at && any_in(&m_lf, at, s - 1);
-        // `fill(prev(code & semicolon), solid)`: at the byte before the token.
-        let fs_2 = fill_2 || (s > at && xl_2);
         let xs_2 = s == at && xl_2;
         // Over the gap.
         let fgap_2 = fill_2 || xl_2;
-        // `fill(lf & code, solid)`: at the byte before the token.
-        let fs_3 = fill_3 || (gap_m_lf);
-        // `fill(prev(as_kw, 2), ~(code & (((word | dot) | text(" ")) | text("?"))))`: at the byte before the token.
-        let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t44, at))) && !any_in(&t44, at + 1, s - 1) } else { fill_4 };
-        let xs_4 = s == at && xl_4;
-        // `fill(code & semicolon, solid)`: at the byte before the token.
-        let fs_5 = fill_5;
-        // `fill(as_run & dot, ~as_run)`: at the byte before the token.
-        let fs_6 = fill_6 && fs_4;
         // The token's first byte's group, by the dispatch tables (simdjson's `classify`).
         let c = src[s];
         let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();
-        // The region a token here opens, as the walk opens them: the first declared whose opener holds, a kind after others where the region opened last of those with none (`plain`) is one; of those whose opener may be the byte's.
-        let open = match group {
-            // `"`
-            5 => if bit(&m_dq3, s) {
-                2
-            } else if bit(&t5, s) {
-                3
-            } else {
-                usize::MAX
-            },
-            // `'`
-            6 => 4,
-            // `/`
-            8 => if bit(&m_line_open, s) {
-                0
-            } else if bit(&m_block_open, s) {
-                1
-            } else {
-                usize::MAX
-            },
-            // ```
-            14 => 5,
-            // `}`
-            15 => if (plain == 3 || plain == 4 || plain == 5) && bit(&m_t_close, s) {
-                6
-            } else if (plain == 2) && bit(&m_t_close, s) {
-                7
-            } else {
-                usize::MAX
-            },
-            _ => usize::MAX,
-        };
-        if matches!(open, 0 | 1 | 2 | 3 | 4 | 5) {
-            plain = open;
-        }
         // The skipped bytes before the token, for the gap masks (none where there are none).
         if gap_m_lf {
             acc_0 = true;
@@ -1991,45 +1954,12 @@ pub fn lex(src: &[u8]) -> Lexed {
             acc_1 = true;
             rec_1 = true;
         }
-        let here_1 = ((open == usize::MAX && bit(&m_rbrace, s)) && fs_2 || xs_2);
+        let here_1: bool;
         // The skipped bytes before the token, for the gap masks (none where there are none).
         if s > at {
             acc_2 = true;
         }
-        let here_2 = (open == 0 || open == 1);
-        // `t_code`: at the starts in it, and at its end.
-        if s >= span_0.1 {
-            let c = span_0.1;
-            if s == c {
-                // a `${…}` template whose `}` is in a string of its code
-                if ((bit(&m_rbrace, s) && !(open == 6)) && !(open == 7)) {
-                    refused = true;
-                    break;
-                }
-            } else {
-                // A token covered it.
-                // a `${…}` template whose `}` is in a string of its code
-                refused = true;
-                break;
-            }
-            span_0 = (usize::MAX, usize::MAX);
-        } else if s >= span_0.0 {
-            // a raw string in a template's code
-            if open == 2 {
-                refused = true;
-                break;
-            }
-        }
-        // `rt_code`: at the starts in it, and at its end.
-        if s >= span_1.1 {
-            span_1 = (usize::MAX, usize::MAX);
-        } else if s >= span_1.0 {
-            // a string, a character or a backtick name in a raw string's template
-            if ((open == 3 || open == 4) || open == 5) {
-                refused = true;
-                break;
-            }
-        }
+        let here_2: bool;
         let mut hits = 0u32;
         let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {
             // The row: the first whose start holds, of those whose start may be the byte's.
@@ -2041,10 +1971,10 @@ pub fn lex(src: &[u8]) -> Lexed {
                     usize::MAX
                 },
                 // `"`
-                5 => if open == 3 {
-                    7
-                } else if open == 2 {
+                5 => if bit(&m_dq3, s) {
                     8
+                } else if bit(&t5, s) {
+                    7
                 } else {
                     usize::MAX
                 },
@@ -2059,9 +1989,9 @@ pub fn lex(src: &[u8]) -> Lexed {
                     usize::MAX
                 },
                 // `/`
-                8 => if open == 0 {
+                8 => if bit(&m_line_open, s) {
                     0
-                } else if open == 1 {
+                } else if bit(&m_block_open, s) {
                     1
                 } else if bit(&t105, s) {
                     13
@@ -2089,9 +2019,9 @@ pub fn lex(src: &[u8]) -> Lexed {
                 // ```
                 14 => 12,
                 // `}`
-                15 => if open == 6 {
+                15 => if (plain == 3 || plain == 4 || plain == 5) && bit(&m_t_close, s) {
                     9
-                } else if open == 7 {
+                } else if (plain == 2) && bit(&m_t_close, s) {
                     10
                 } else if bit(&t105, s) {
                     13
@@ -2103,6 +2033,15 @@ pub fn lex(src: &[u8]) -> Lexed {
             match row {
                 0 => {
                     // `line_comment`: read line
+                        // `fill(prev(code & semicolon), solid)`: at the byte before the token.
+                        let fs_2 = fill_2 || (s > at && xl_2);
+                        // `fill(lf & code, solid)`: at the byte before the token.
+                        let fs_3 = fill_3 || (gap_m_lf);
+                        // `fill(code & semicolon, solid)`: at the byte before the token.
+                        let fs_5 = fill_5;
+                    plain = 0;
+                    here_1 = xs_2;
+                    here_2 = true;
                     let l = {
                         let c = first_bit(&m_lf, s + 1).unwrap_or(n);
                         let last = c - 1;
@@ -2115,28 +2054,43 @@ pub fn lex(src: &[u8]) -> Lexed {
                         last
                     };
                     let l = l.max(s);
+                    // `t_code`: this token covers its end.
+                    if s < span_0.1 && span_0.1 <= l {
+                        // a `${…}` template whose `}` is in a string of its code
+                        refused = true;
+                        break 'tokens;
+                    }
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
                     fill_2 = (xs_2 || fs_2);
                     xl_2 = false;
                     fill_3 = fs_3;
-                    fill_4 = (xs_4 && l == s);
+                    fill_4 = false;
                     xl_4 = false;
                     fill_5 = fs_5;
-                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    fill_6 = false;
                     (l, 0, true, 0x100)
                 }
 ,
                 1 => {
                     // `multiline_comment`: read block
+                            // `fill(prev(code & semicolon), solid)`: at the byte before the token.
+                            let fs_2 = fill_2 || (s > at && xl_2);
+                            // `fill(lf & code, solid)`: at the byte before the token.
+                            let fs_3 = fill_3 || (gap_m_lf);
+                            // `fill(code & semicolon, solid)`: at the byte before the token.
+                            let fs_5 = fill_5;
+                    plain = 1;
+                    here_1 = xs_2;
+                    here_2 = true;
                     let l = match first_bit(&m_block_end, s + 1) {
                         Some(c) => {
                             let last = c + 0;
                             // a nested block comment
                             if any_in(&m_block_open, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // `rd0_close`, for tier 2
                             clear(&mut fw_rd0_close, s, s);
@@ -2148,25 +2102,40 @@ pub fn lex(src: &[u8]) -> Lexed {
                         },
                         None => {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                     };
                     let l = l.max(s);
+                    // `t_code`: this token covers its end.
+                    if s < span_0.1 && span_0.1 <= l {
+                        // a `${…}` template whose `}` is in a string of its code
+                        refused = true;
+                        break 'tokens;
+                    }
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
                     fill_2 = (xs_2 || fs_2);
                     xl_2 = false;
                     fill_3 = fs_3;
-                    fill_4 = (xs_4 && l == s);
+                    fill_4 = false;
                     xl_4 = false;
                     fill_5 = fs_5;
-                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    fill_6 = false;
                     (l, 0, true, 0x300)
                 }
 ,
                 2 => {
                     // `simple_identifier`: run name_more, read as word (assumed)
+                    // `fill(prev(code & semicolon), solid)`: at the byte before the token.
+                    let fs_2 = fill_2 || (s > at && xl_2);
+                    // `fill(prev(as_kw, 2), ~(code & (((word | dot) | text(" ")) | text("?"))))`: at the byte before the token.
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t44, at))) && !any_in(&t44, at + 1, s - 1) } else { fill_4 };
+                    let xs_4 = s == at && xl_4;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_6 = fill_6 && fs_4;
+                    here_1 = ((bit(&m_rbrace, s) && fs_2) || xs_2);
+                    here_2 = false;
                     let l = run_last(&m_word, s);
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
@@ -2185,28 +2154,37 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // a `0x` or `0b` with no digit
                     if bit(&t56, s) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a digit after a binary number
                     if any_in(&t57, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a word touching a real number
                     if any_in(&t77, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a number that ends in `_`
                     if any_in(&t78, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     (l, u32::from(KINDS[usize::from(src[s])]), false, 0x80)
                 }
 ,
                 3 => {
                     // `integer_literal`: run nb, read as ((((((t59 | ((dot & prev(t59)) & next(digit))) | (((dot & next(digit)) & ~prev(word)) & ~prev(dot))) | t61) | t66) | t68) | t64) | (f_letter & prev(t70)) (assumed)
+                    // `fill(prev(code & semicolon), solid)`: at the byte before the token.
+                    let fs_2 = fill_2 || (s > at && xl_2);
+                    // `fill(prev(as_kw, 2), ~(code & (((word | dot) | text(" ")) | text("?"))))`: at the byte before the token.
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t44, at))) && !any_in(&t44, at + 1, s - 1) } else { fill_4 };
+                    let xs_4 = s == at && xl_4;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_6 = fill_6 && fs_4;
+                    here_1 = ((bit(&m_rbrace, s) && fs_2) || xs_2);
+                    here_2 = false;
                     let l = run_last(&t69, s);
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
@@ -2228,33 +2206,40 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // a `0x` or `0b` with no digit
                     if any_in(&t56, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a digit after a binary number
                     if any_in(&t57, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a word touching a real number
                     if any_in(&t77, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a number that ends in `_`
                     if any_in(&t78, s + 1, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // punct: a triple's last byte starts a pair
                     if any_in(&t80, s + 1, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
                 }
 ,
                 4 => {
                     // `real_literal`: run nb, read as ((((((t59 | ((dot & prev(t59)) & next(digit))) | t98) | t61) | t66) | t68) | t64) | (f_letter & prev(t70)) (assumed)
+                    // `fill(prev(code & semicolon), solid)`: at the byte before the token.
+                    let fs_2 = fill_2 || (s > at && xl_2);
+                    // `fill(prev(as_kw, 2), ~(code & (((word | dot) | text(" ")) | text("?"))))`: at the byte before the token.
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t44, at))) && !any_in(&t44, at + 1, s - 1) } else { fill_4 };
+                    let xs_4 = s == at && xl_4;
+                    here_1 = ((bit(&m_rbrace, s) && fs_2) || xs_2);
+                    here_2 = false;
                     let l = run_last(&t69, s);
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
@@ -2273,33 +2258,42 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // a `0x` or `0b` with no digit
                     if any_in(&t56, s + 1, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a digit after a binary number
                     if any_in(&t57, s + 1, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a word touching a real number
                     if any_in(&t77, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a number that ends in `_`
                     if any_in(&t78, s + 1, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // punct: a triple's last byte starts a pair
                     if any_in(&t80, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     (l, 4, false, 0x0)
                 }
 ,
                 5 => {
                     // `hex_literal`: run prev(hex_at) | hx, read as prev(t73) | t71 (assumed)
+                    // `fill(prev(code & semicolon), solid)`: at the byte before the token.
+                    let fs_2 = fill_2 || (s > at && xl_2);
+                    // `fill(prev(as_kw, 2), ~(code & (((word | dot) | text(" ")) | text("?"))))`: at the byte before the token.
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t44, at))) && !any_in(&t44, at + 1, s - 1) } else { fill_4 };
+                    let xs_4 = s == at && xl_4;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_6 = fill_6 && fs_4;
+                    here_1 = ((bit(&m_rbrace, s) && fs_2) || xs_2);
+                    here_2 = false;
                     let l = run_last(&t100, s);
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
@@ -2318,28 +2312,37 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // a `0x` or `0b` with no digit
                     if bit(&t56, s) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a digit after a binary number
                     if any_in(&t57, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a word touching a real number
                     if any_in(&t77, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a number that ends in `_`
                     if any_in(&t78, s + 1, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     (l, 6, false, 0x0)
                 }
 ,
                 6 => {
                     // `bin_literal`: run prev(bin_at) | bx, read as prev(t76) | t74 (assumed)
+                    // `fill(prev(code & semicolon), solid)`: at the byte before the token.
+                    let fs_2 = fill_2 || (s > at && xl_2);
+                    // `fill(prev(as_kw, 2), ~(code & (((word | dot) | text(" ")) | text("?"))))`: at the byte before the token.
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t44, at))) && !any_in(&t44, at + 1, s - 1) } else { fill_4 };
+                    let xs_4 = s == at && xl_4;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_6 = fill_6 && fs_4;
+                    here_1 = ((bit(&m_rbrace, s) && fs_2) || xs_2);
+                    here_2 = false;
                     let l = run_last(&t103, s);
                     // Not proved: a test build checks it against the rule over the file.
                     #[cfg(feature = "test-hooks")]
@@ -2358,28 +2361,36 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // a `0x` or `0b` with no digit
                     if bit(&t56, s) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a digit after a binary number
                     if any_in(&t57, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a word touching a real number
                     if any_in(&t77, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a number that ends in `_`
                     if any_in(&t78, s + 1, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     (l, 5, false, 0x0)
                 }
 ,
                 7 => {
                     // `"`: read str parts, to its closer
+                    plain = 3;
+                    here_1 = xs_2;
+                    here_2 = false;
+                    if s >= span_1.0 && s < span_1.1 {
+                        // a string, a character or a backtick name in a raw string's template
+                        refused = true;
+                        break 'tokens;
+                    }
                     let l = match first_bit(&t6, s + 1) {
                         Some(c) => {
                             close = c;
@@ -2387,12 +2398,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // a string, a character or a backtick name over a line
                             if any_in(&m_lf, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // a `$` before a backtick
                             if any_in(&t53, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // `rd0_close`, for tier 2
                             put(&mut fw_rd0_close, &m_dq_close, s, s);
@@ -2415,22 +2426,28 @@ pub fn lex(src: &[u8]) -> Lexed {
                         },
                         None => {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                     };
                     let l = l.max(s);
+                    // `t_code`: this token covers its end.
+                    if s < span_0.1 && span_0.1 <= l {
+                        // a `${…}` template whose `}` is in a string of its code
+                        refused = true;
+                        break 'tokens;
+                    }
                     // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
                     if bit(&m_t_dollar, close) {
                         let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
                         // a `${…}` template with a brace, a template, a comment or a line break
                         if any_in(&t49, l + 1, c - 1) {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                         // an empty `${}`
                         if bit(&m_rbrace, l + 1) {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                         span_0 = (l + 1, c);
                     }
@@ -2440,15 +2457,23 @@ pub fn lex(src: &[u8]) -> Lexed {
                     fill_2 = xs_2;
                     xl_2 = false;
                     fill_3 = false;
-                    fill_4 = (xs_4 && l == s);
+                    fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
-                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    fill_6 = false;
                     (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
                 }
 ,
                 8 => {
                     // `"`: read rstr parts, to its closer
+                    plain = 2;
+                    here_1 = xs_2;
+                    here_2 = false;
+                    if s >= span_0.0 && s < span_0.1 {
+                        // a raw string in a template's code
+                        refused = true;
+                        break 'tokens;
+                    }
                     let l = match first_bit(&t4, s + 1) {
                         Some(c) => {
                             close = c;
@@ -2456,22 +2481,22 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // a backslash before `$` in a raw string
                             if any_in(&t50, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // a raw string closed by four quotes or more
                             if any_in(&t51, s + 3, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // a raw string opened by four quotes or more
                             if bit(&t52, s) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // a `$` before a backtick
                             if any_in(&t53, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // `rd0_close`, for tier 2
                             put(&mut fw_rd0_close, &m_rclose, s, s);
@@ -2525,22 +2550,28 @@ pub fn lex(src: &[u8]) -> Lexed {
                         },
                         None => {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                     };
                     let l = l.max(s);
+                    // `t_code`: this token covers its end.
+                    if s < span_0.1 && span_0.1 <= l {
+                        // a `${…}` template whose `}` is in a string of its code
+                        refused = true;
+                        break 'tokens;
+                    }
                     // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
                     if bit(&m_t_dollar, close) {
                         let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
                         // a `${…}` template with a brace, a template, a comment or a line break
                         if any_in(&t49, l + 1, c - 1) {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                         // an empty `${}`
                         if bit(&m_rbrace, l + 1) {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                         span_0 = (l + 1, c);
                     }
@@ -2555,15 +2586,17 @@ pub fn lex(src: &[u8]) -> Lexed {
                     fill_2 = xs_2;
                     xl_2 = false;
                     fill_3 = false;
-                    fill_4 = (xs_4 && l == s);
+                    fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
-                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    fill_6 = false;
                     (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
                 }
 ,
                 9 => {
                     // `interpolation_expression_end`: read tail parts, to its closer
+                    here_1 = xs_2;
+                    here_2 = false;
                     let l = match first_bit(&t6, s + 1) {
                         Some(c) => {
                             close = c;
@@ -2571,12 +2604,12 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // a string, a character or a backtick name over a line
                             if any_in(&m_lf, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // a `$` before a backtick
                             if any_in(&t53, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // `rd0_close`, for tier 2
                             clear(&mut fw_rd0_close, s, s);
@@ -2602,22 +2635,28 @@ pub fn lex(src: &[u8]) -> Lexed {
                         },
                         None => {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                     };
                     let l = l.max(s);
+                    // `t_code`: this token covers its end.
+                    if s < span_0.1 && span_0.1 <= l {
+                        // a `${…}` template whose `}` is in a string of its code
+                        refused = true;
+                        break 'tokens;
+                    }
                     // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
                     if bit(&m_t_dollar, close) {
                         let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
                         // a `${…}` template with a brace, a template, a comment or a line break
                         if any_in(&t49, l + 1, c - 1) {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                         // an empty `${}`
                         if bit(&m_rbrace, l + 1) {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                         span_0 = (l + 1, c);
                     }
@@ -2627,15 +2666,17 @@ pub fn lex(src: &[u8]) -> Lexed {
                     fill_2 = xs_2;
                     xl_2 = false;
                     fill_3 = false;
-                    fill_4 = (xs_4 && l == s);
+                    fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
-                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    fill_6 = false;
                     (l, 1, false, 0x0)
                 }
 ,
                 10 => {
                     // `interpolation_expression_end`: read rtail parts, to its closer
+                    here_1 = xs_2;
+                    here_2 = false;
                     let l = match first_bit(&t4, s + 1) {
                         Some(c) => {
                             close = c;
@@ -2643,17 +2684,17 @@ pub fn lex(src: &[u8]) -> Lexed {
                             // a backslash before `$` in a raw string
                             if any_in(&t50, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // a raw string closed by four quotes or more
                             if any_in(&t51, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // a `$` before a backtick
                             if any_in(&t53, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // `rd0_close`, for tier 2
                             clear(&mut fw_rd0_close, s, s);
@@ -2687,22 +2728,28 @@ pub fn lex(src: &[u8]) -> Lexed {
                         },
                         None => {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                     };
                     let l = l.max(s);
+                    // `t_code`: this token covers its end.
+                    if s < span_0.1 && span_0.1 <= l {
+                        // a `${…}` template whose `}` is in a string of its code
+                        refused = true;
+                        break 'tokens;
+                    }
                     // `t_code`: from the byte after `t_brace`, to the next of `rbrace`.
                     if bit(&m_t_dollar, close) {
                         let c = first_bit(&m_rbrace, l + 2).unwrap_or(n);
                         // a `${…}` template with a brace, a template, a comment or a line break
                         if any_in(&t49, l + 1, c - 1) {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                         // an empty `${}`
                         if bit(&m_rbrace, l + 1) {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                         span_0 = (l + 1, c);
                     }
@@ -2717,27 +2764,35 @@ pub fn lex(src: &[u8]) -> Lexed {
                     fill_2 = xs_2;
                     xl_2 = false;
                     fill_3 = false;
-                    fill_4 = (xs_4 && l == s);
+                    fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
-                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    fill_6 = false;
                     (l, 1, false, 0x0)
                 }
 ,
                 11 => {
                     // `'`: read chr parts, to its closer
+                    plain = 4;
+                    here_1 = xs_2;
+                    here_2 = false;
+                    if s >= span_1.0 && s < span_1.1 {
+                        // a string, a character or a backtick name in a raw string's template
+                        refused = true;
+                        break 'tokens;
+                    }
                     let l = match first_bit(&m_sq_close, s + 1) {
                         Some(c) => {
                             let last = c + 0;
                             // a string, a character or a backtick name over a line
                             if any_in(&m_lf, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // a `\u` without four hex digits
                             if any_in(&t54, s + 1, c - 1) || any_in(&t54, c, last) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // `rd0_close`, for tier 2
                             clear(&mut fw_rd0_close, s, s);
@@ -2758,32 +2813,46 @@ pub fn lex(src: &[u8]) -> Lexed {
                         },
                         None => {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                     };
                     let l = l.max(s);
+                    // `t_code`: this token covers its end.
+                    if s < span_0.1 && span_0.1 <= l {
+                        // a `${…}` template whose `}` is in a string of its code
+                        refused = true;
+                        break 'tokens;
+                    }
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
                     fill_2 = xs_2;
                     xl_2 = false;
                     fill_3 = false;
-                    fill_4 = (xs_4 && l == s);
+                    fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
-                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    fill_6 = false;
                     (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
                 }
 ,
                 12 => {
                     // `backtick_name`: read tick
+                    plain = 5;
+                    here_1 = xs_2;
+                    here_2 = false;
+                    if s >= span_1.0 && s < span_1.1 {
+                        // a string, a character or a backtick name in a raw string's template
+                        refused = true;
+                        break 'tokens;
+                    }
                     let l = match first_bit(&m_bt, s + 1) {
                         Some(c) => {
                             let last = c + 0;
                             // a string, a character or a backtick name over a line
                             if any_in(&m_lf, s + 1, c - 1) {
                                 refused = true;
-                                break;
+                                break 'tokens;
                             }
                             // `rd0_close`, for tier 2
                             clear(&mut fw_rd0_close, s, s);
@@ -2795,34 +2864,58 @@ pub fn lex(src: &[u8]) -> Lexed {
                         },
                         None => {
                             refused = true;
-                            break;
+                            break 'tokens;
                         }
                     };
                     let l = l.max(s);
+                    // `t_code`: this token covers its end.
+                    if s < span_0.1 && span_0.1 <= l {
+                        // a `${…}` template whose `}` is in a string of its code
+                        refused = true;
+                        break 'tokens;
+                    }
                     // `assume … at ends t_brace`, not proved: a test build checks it.
                     #[cfg(feature = "test-hooks")]
                     assert!(!any_in(&m_t_brace, at, l - 1), "assume t_brace at ends, by byte {l}");
                     fill_2 = xs_2;
                     xl_2 = false;
                     fill_3 = false;
-                    fill_4 = (xs_4 && l == s);
+                    fill_4 = false;
                     xl_4 = false;
                     fill_5 = false;
-                    fill_6 = ((xs_4 && fs_6) && l == s);
+                    fill_6 = false;
                     (l, u32::from(KINDS[usize::from(src[s])]), false, 0x40)
                 }
 ,
                 13 => {
                     // `punct`: pair
+                    // `fill(prev(code & semicolon), solid)`: at the byte before the token.
+                    let fs_2 = fill_2 || (s > at && xl_2);
+                    // `fill(lf & code, solid)`: at the byte before the token.
+                    let fs_3 = fill_3 || (gap_m_lf);
+                    // `fill(prev(as_kw, 2), ~(code & (((word | dot) | text(" ")) | text("?"))))`: at the byte before the token.
+                    let fs_4 = if s > at { (xl_4 || (fill_4 && !bit(&t44, at))) && !any_in(&t44, at + 1, s - 1) } else { fill_4 };
+                    let xs_4 = s == at && xl_4;
+                    // `fill(as_run & dot, ~as_run)`: at the byte before the token.
+                    let fs_6 = fill_6 && fs_4;
+                    here_1 = ((bit(&m_rbrace, s) && fs_2) || xs_2);
+                    here_2 = false;
                     // a `;` that starts a line
-                    if ((open == usize::MAX && bit(&m_semicolon, s)) && fs_3) {
+                    if (bit(&m_semicolon, s) && fs_3) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a dotted type after `as` before a `<`
-                    if ((open == usize::MAX && bit(&t79, s)) && fs_6) {
+                    if (bit(&t79, s) && fs_6) {
                         refused = true;
-                        break;
+                        break 'tokens;
+                    }
+                    if s == span_0.1 {
+                        // a `${…}` template whose `}` is in a string of its code
+                        if bit(&m_rbrace, s) {
+                            refused = true;
+                            break 'tokens;
+                        }
                     }
                     let l = pair_52(src, s);
                     let l = l.max(s);
@@ -2839,22 +2932,22 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // a dotted type after `as` before a `<`: over the token's bytes after its first.
                     if ((xs_4 || (!bit(&t47, s) && fs_4)) && { let e1 = first_in(&t47, s + 1, l).unwrap_or(l); ((((xs_4 || (!bit(&t47, s) && fs_4)) && (bit(&m_dot, s) || fs_6)) && any_in(&t79, s + 1, e1)) || first_in(&m_dot, s + 1, e1).is_some_and(|y1| any_in(&t79, y1 + 1, e1))) }) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a `$` outside a string
                     if bit(&m_dollar, s) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // a word touching a real number
                     if any_in(&t77, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     // punct: a triple's last byte starts a pair
                     if any_in(&t80, s, l) {
                         refused = true;
-                        break;
+                        break 'tokens;
                     }
                     (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
                 }
@@ -2862,7 +2955,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                 _ => {
                     // A byte no token begins with.
                     refused = true;
-                    break;
+                    break 'tokens;
                 }
             }
         }
@@ -2927,14 +3020,15 @@ pub fn lex(src: &[u8]) -> Lexed {
         lasts.push(l as u32);
         codes.push(kind | word << 8 | marks << 16);
         at = l + 1;
+        if at >= base + 64 {
+            b = at / 64;
+            continue 'tokens;
+        }
+        firsts &= !0u64 << (at - base);
+        }
+        b += 1;
     }
     let _ = (from, from_record, before, pending);
-    // `t_code`: a token covered its end.
-    if span_0.1 < n {
-        let c = span_0.1;
-        // a `${…}` template whose `}` is in a string of its code
-        refused = true;
-    }
     // a `;` that ends the file
     if fill_5 {
         refused = true;

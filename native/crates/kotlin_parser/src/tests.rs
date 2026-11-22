@@ -57,6 +57,35 @@ fn tier1_same(texts: &[&str]) {
     }
 }
 
+/// The template spans' escapes, each tested in the rows it may hold in (decision 0595): a `}` of
+/// a template's code in a token of it, a raw string in a template's code, a string, a character
+/// or a backtick name in a raw string's template; and a template's span after its end.
+#[test]
+fn the_template_spans_are_the_interpreters() {
+    refused(&[
+        "val a = \"${\"}\"}\"\n",
+        "val a = \"${'}'}\"\n",
+        "val a = \"${\"\"\"x\"\"\"}\"\n",
+        "val a = \"\"\"${\"x\"}\"\"\"\n",
+        "val a = \"\"\"${'x'}\"\"\"\n",
+        "val a = \"\"\"${`x`}\"\"\"\n",
+        // Where what follows still reads as tokens: the `}` a token of the code covered is
+        // punctuation, and the raw string's `}` opens the raw string's tail.
+        "val a = \"${\"}\"}\"\"\n",
+        "val a = \"${'}'}\"\"\n",
+        "val a = \"${\"\"\"x\"\"\"}\"\"\"\n",
+    ]);
+    tier1_same(&[
+        "val a = \"${b}\"\n",
+        "val a = \"${b + c}\" + \"${d}\"\n",
+        "val a = \"${b}\"\nval c = \"\"\"x\"\"\"\n",
+        "val a = \"\"\"${b}\"\"\"\nval c = \"x\" + 'y' + `z`\n",
+        "val a = \"${b}\" + c.d { e }\n",
+        "val a = \"${b}\n",
+        "val a = \"${\n",
+    ]);
+}
+
 /// "A `0x` or `0b` with no digit", tested at a number's first byte and, where a `0` may start a
 /// number inside one (`1e+0x`), over its bytes after (decision 0587). There the `x` is also a name
 /// touching a number, refused either way.
