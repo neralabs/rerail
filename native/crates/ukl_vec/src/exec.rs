@@ -54,6 +54,8 @@ struct Sg {
     index: u32,
     done: bool,
     wait: Wait,
+    /// The compiled kernel its fiber runs.
+    entry: Option<cl::Entry>,
     own: crate::fiber::Ctx,
     back: crate::fiber::Ctx,
     stack: crate::fiber::Stack,
@@ -108,12 +110,35 @@ fn width() -> u32 {
 
 /// Kernel `k`'s SSA compiled: on its first launch, then kept with it.
 pub fn compiled<'k>(p: &Program, k: &'k Kernel) -> R<&'k Compiled> {
+    compiled_kept(p, k, || None, |_| {})
+}
+
+/// The same, from its kept form (`cl::load`), which `kept` reads back, else compiled, its kept form given to `keep`.
+pub fn compiled_kept<'k>(p: &Program, k: &'k Kernel, kept: impl FnOnce() -> Option<Vec<u8>>, keep: impl FnOnce(&[u8])) -> R<&'k Compiled> {
     k.cl.get_or_init(|| {
+        if let Some(c) = kept().and_then(|b| cl::load(&b)) {
+            return Ok(c);
+        }
+        let t = std::time::Instant::now();
         let ssa = crate::ssa::build(&k.tape, &|id| if id == u32::MAX { k.name.clone() } else { p.funcs[id as usize].name.clone() }).map_err(|e| e.0)?;
-        cl::compile(&ssa, &k.name, width(), &places()).map_err(|e| e.0)
+        let st = t.elapsed().as_secs_f64();
+        let (c, bytes) = cl::compile(&ssa, &k.name, width(), &places()).map_err(|e| e.0)?;
+        if std::env::var("RERAIL_UKL_VEC_TIMES").is_ok() {
+            let values = ssa.funcs.iter().map(|f| f.insts.len()).sum::<usize>();
+            eprintln!("COMPILE {}: SSA {st:.3} s ({} functions, {values} values), Cranelift {:.3} s", k.name, ssa.funcs.len(), t.elapsed().as_secs_f64() - st);
+        }
+        if let Some(b) = bytes {
+            keep(&b);
+        }
+        Ok(c)
     })
     .as_ref()
     .map_err(|e| Error(format!("{}: {e}", k.name)))
+}
+
+/// The width a kernel compiled for this process runs at, for its kept form's key.
+pub fn kept_width() -> u32 {
+    width()
 }
 
 /// Runs `k` over `launch`'s grid as `run::run` does, its compiled SSA.
@@ -195,6 +220,7 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
                             index: s,
                             done: false,
                             wait: Wait::Run,
+                            entry: None,
                             own: Default::default(),
                             back: Default::default(),
                             stack: crate::fiber::Stack::new(),
@@ -221,7 +247,7 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
             sg.env = envp;
             sg.live = mask;
             sg.args = argv.as_ptr() as u64;
-            (sg.done, sg.wait) = (false, Wait::Run);
+            (sg.done, sg.wait, sg.entry) = (false, Wait::Run, Some(entry));
             for (j, a) in args.iter().enumerate() {
                 let (off, m) = (u64::from(params[2 * j]), M(params[2 * j + 1]));
                 for l in 0..W {
@@ -243,7 +269,6 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
         }
         sl.busy = true;
     };
-    ENTRY.with(|e| e.set(Some(entry)));
     let mut next = 0usize;
     let result = loop {
         let mut any = false;
@@ -292,17 +317,12 @@ pub fn run(p: &Program, k: &Kernel, args: &[Arg], launch: Launch) -> R<()> {
     result
 }
 
-thread_local! {
-    /// The running launch's compiled entry, which a fiber starts.
-    static ENTRY: std::cell::Cell<Option<cl::Entry>> = const { std::cell::Cell::new(None) };
-}
-
 /// A SIMD group's fiber: the kernel, then its end, a switch back that is never resumed.
 unsafe extern "C" fn fiber_start(arg: u64) -> ! {
     let sg = arg as *mut Sg;
-    let entry = ENTRY.with(|e| e.get()).expect("a launch's entry");
     // SAFETY: the SIMD group's state, live while its fiber runs.
     unsafe {
+        let entry = (*sg).entry.expect("a prepared SIMD group's kernel");
         entry(sg as *mut u8);
         (*sg).done = true;
         crate::fiber::switch(&mut (*sg).own, &(*sg).back);

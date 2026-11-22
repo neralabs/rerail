@@ -170,7 +170,7 @@ fn the_written_sources_lower_and_vectorize() {
                     let ssa = super::ssa::build(&vk.tape, &names);
                     let st = t.elapsed().as_secs_f64();
                     let t = std::time::Instant::now();
-                    let c = ssa.as_ref().map_err(|e| e.0.clone()).and_then(|s| super::cl::compile(s, &vk.name, 8, &super::exec::places()).map_err(|e| e.0));
+                    let c = ssa.as_ref().map_err(|e| e.0.clone()).and_then(|s| super::cl::compile(s, &vk.name, 8, &super::exec::places()).map(|_| ()).map_err(|e| e.0));
                     if std::env::var("RERAIL_UKL_VEC_TIMES").is_ok() {
                         let values = ssa.as_ref().map_or(0, |s| s.funcs.iter().map(|f| f.insts.len()).sum::<usize>());
                         eprintln!("TIME {f}: vectorized {vt:.2} s ({} nodes), SSA {st:.3} s ({values} values), compiled {:.3} s", super::k::View::new(&vk.tape).len(), t.elapsed().as_secs_f64());
@@ -237,6 +237,44 @@ fn sixty_four_bit_unsigned_division_is_unsigned() {
 fn a_simd_group_barrier_shows_each_lanes_write_to_the_others() {
     let out = ran("    out[lid] = lid * 7u + 1u;\n    ukl_sg_barrier();\n    uint32_t v = out[lid ^ 5u];\n    ukl_sg_barrier();\n    out[lid] = v;");
     let want: Vec<u32> = (0..64u32).map(|l| (l ^ 5) * 7 + 1).collect();
+    assert_eq!(out, want);
+}
+
+/// A division whose divisor is 0 only in lanes that do not run it divides in the lanes that do: the kernel does not
+/// fail (a uniform divisor too).
+#[test]
+fn a_division_by_zero_in_lanes_that_do_not_run_it_is_none() {
+    let out = ran("    uint32_t d = lid % 4u;\n    uint32_t q = 0u;\n    if (d != 0u) q = (1000u + lid) / d + (77u % d);\n    uint64_t e = (uint64_t)(lid & 3u);\n    if (e != 0ul) q += (uint32_t)(((uint64_t)(lid) << 33) / e);\n    uint32_t u = out[0] * 0u;\n    if (lid > 100u) q += 5u / u;\n    out[lid] = q;");
+    let want: Vec<u32> = (0..64u32)
+        .map(|l| {
+            let d = l % 4;
+            let mut q = if d != 0 { (1000 + l) / d + 77 % d } else { 0 };
+            let e = u64::from(l & 3);
+            if e != 0 {
+                q = q.wrapping_add(((u64::from(l) << 33) / e) as u32);
+            }
+            q
+        })
+        .collect();
+    assert_eq!(out, want);
+}
+
+/// A `switch` on a 64-bit value that varies: each lane's case.
+#[test]
+fn a_switch_on_a_sixty_four_bit_value_runs_each_lanes_case() {
+    let out = ran("    uint64_t v = ((uint64_t)(lid % 5u) << 40) | 3ul;\n    uint32_t x = 1u;\n    switch (v) {\n    case 3ul: x = 10u; break;\n    case (1ul << 40) | 3ul: x = 20u; break;\n    case (3ul << 40) | 3ul: x = 40u;\n    default: x += 2u;\n    }\n    out[lid] = x;");
+    let want: Vec<u32> = (0..64u32).map(|l| [10, 20, 3, 42, 3][(l % 5) as usize]).collect();
+    assert_eq!(out, want);
+}
+
+/// After some lanes return, a value the SIMD group shares (`lid / 32`) addresses a load: a chunk of fewer lanes than
+/// the group's whose lanes have all returned reads nothing, and takes the value from no lane past its own.
+#[test]
+fn a_shared_address_after_lanes_return_reads_for_the_lanes_left() {
+    // Each SIMD group reads the other's word 3 (the first group's, written before the second runs; the second's,
+    // not yet written when the first runs): no lane reads what another of its own group writes.
+    let out = ran("    out[lid] = lid + 100u;\n    if (lid % 8u >= 3u) return;\n    uint32_t g = lid / 32u;\n    uint32_t v = out[(1u - g) * 32u + 3u];\n    out[lid] = v + lid;");
+    let want: Vec<u32> = (0..64u32).map(|l| if l % 8 >= 3 { l + 100 } else if l < 32 { l } else { 103 + l }).collect();
     assert_eq!(out, want);
 }
 
@@ -377,7 +415,12 @@ fn ssa_of(p: &super::lower::Program, k: &super::vector::Kernel) -> super::ssa::S
 fn ssa_runs_equal(p: &super::lower::Program, k: &super::vector::Kernel, want: &[u32]) {
     for w in [1u32, 2, 4, 8, 16, 32] {
         let ssa = ssa_of(p, k);
-        let c = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap_or_else(|e| panic!("{}: {e}", k.name));
+        let (c, bytes) = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap_or_else(|e| panic!("{}: {e}", k.name));
+        // Its kept form, loaded, runs the same.
+        let loaded = super::cl::load(&bytes.expect("a kept form")).expect("the kept form loads");
+        let back = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = back.cl.set(Ok(loaded));
+        assert_eq!(run_on(p, &back, super::run::Exec::Ssa), want, "{} at width {w}: the kept form against the interpreter", k.name);
         let again = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
         let _ = again.cl.set(Ok(c));
         assert_eq!(run_on(p, &again, super::run::Exec::Ssa), want, "{} at width {w}: the compiled SSA against the interpreter", k.name);

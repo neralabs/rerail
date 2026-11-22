@@ -145,6 +145,12 @@ impl CpuInterpreter for Interpreted {
             let key = rerail_device::store::key(&[self.key.as_bytes(), kernel.as_bytes(), b"jit", rerail_ukl_vec::jit::host().as_bytes()]);
             rerail_ukl_vec::run::compiled_kept(&vk, || rerail_device::store::load("vec", &key, "jit"), |b| rerail_device::store::save("vec", &key, "jit", b)).map_err(|e| e.0)?;
         }
+        if exec == rerail_ukl_vec::run::Exec::Ssa {
+            // Its SSA's compiled code: the store's (`cl::load` links it), else compiled and kept there.
+            let width = rerail_ukl_vec::exec::kept_width().to_string();
+            let key = rerail_device::store::key(&[self.key.as_bytes(), kernel.as_bytes(), b"ssa", width.as_bytes(), rerail_ukl_vec::cl::host().as_bytes()]);
+            rerail_ukl_vec::exec::compiled_kept(&self.program, &vk, || rerail_device::store::load("vec", &key, "ssa"), |b| rerail_device::store::save("vec", &key, "ssa", b)).map_err(|e| e.0)?;
+        }
         rerail_ukl_vec::run::run(&self.program, &vk, &args, rerail_ukl_vec::run::Launch { grid, block, local: shared, resident, exec }).map_err(|e| e.0)
     }
 }

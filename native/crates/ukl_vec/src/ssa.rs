@@ -63,7 +63,8 @@ pub enum O {
     Undef,
     /// `[k]` (a word): its block's parameter `k`.
     Param,
-    /// `[a, b]`, sub the `Op`: `a op b` on values of type `m` (a comparison's result a `bool`; `m` is the operands').
+    /// `[a, b, mask]`, sub the `Op`, `d` the operands' type: `a op b` (a comparison's a `bool`); `mask` (else `NONE`)
+    /// an integer division's running lanes.
     Bin,
     /// `[a]`, sub the `Op`.
     Un,
@@ -185,7 +186,8 @@ impl Inst {
         let (a, b, c, d) = (self.a, self.b, self.c, self.d);
         let u: [Option<V>; 4] = match self.op {
             O::Const | O::Arg | O::Entry | O::NoLanes | O::Undef | O::Param | O::Global | O::Shared | O::FrameAddr | O::Lane | O::Bar | O::Yield | O::SgBar | O::Jump | O::Halt => [None; 4],
-            O::Bin | O::MAnd | O::MOr | O::MAndNot => [Some(a), Some(b), None, None],
+            O::Bin => [Some(a), Some(b), Some(c), None],
+            O::MAnd | O::MOr | O::MAndNot => [Some(a), Some(b), None, None],
             O::Un | O::Cast | O::MaskOf | O::Any | O::AnyGroup | O::Bits | O::Lid | O::Gid | O::GroupInfo => [Some(a), None, None, None],
             O::Select | O::Store => [Some(a), Some(b), Some(c), None],
             O::First | O::Load | O::Zero | O::Reduce => [Some(a), Some(b), None, None],
@@ -206,7 +208,8 @@ impl Inst {
         let Inst { a, b, c, d, .. } = self;
         let v: Vec<&mut u32> = match op {
             O::Const | O::Arg | O::Entry | O::NoLanes | O::Undef | O::Param | O::Global | O::Shared | O::FrameAddr | O::Lane | O::Bar | O::Yield | O::SgBar | O::Jump | O::Halt => vec![],
-            O::Bin | O::MAnd | O::MOr | O::MAndNot | O::First | O::Load | O::Zero | O::Reduce | O::LaneOp => vec![a, b],
+            O::Bin => vec![a, b, c],
+            O::MAnd | O::MOr | O::MAndNot | O::First | O::Load | O::Zero | O::Reduce | O::LaneOp => vec![a, b],
             O::Un | O::Cast | O::MaskOf | O::Any | O::AnyGroup | O::Bits | O::Lid | O::Gid | O::GroupInfo | O::Br | O::Switch | O::Ret => vec![a],
             O::Select | O::Store | O::Copy | O::Shuffle => vec![a, b, c],
             O::Atomic => vec![a, b, c, d],
@@ -608,7 +611,8 @@ impl<'a, 't> Fb<'a, 't> {
         match i.op {
             O::Const | O::Global | O::Shared | O::GroupInfo | O::Any | O::AnyGroup | O::Bits | O::Reduce | O::First => true,
             O::Arg | O::Atomic => i.shape == Shape::Uniform,
-            O::Bin | O::Un | O::Cast | O::LaneOp => i.uses().all(|u| self.is_uniform(u)),
+            O::Bin => self.is_uniform(i.a) && self.is_uniform(i.b),
+            O::Un | O::Cast | O::LaneOp => i.uses().all(|u| self.is_uniform(u)),
             O::Load => self.is_uniform(i.a),
             _ => false,
         }
@@ -1123,7 +1127,7 @@ impl<'a, 't> Fb<'a, 't> {
             let r = self.read_mask(rest);
             let x = self.ins(O::First, m, c, r, 0, 0);
             self.shaped(x, Shape::Uniform);
-            let eq = self.ins_sub(O::Bin, Op::Eq as u32, m, c, x, 0, 0);
+            let eq = self.ins_sub(O::Bin, Op::Eq as u32, M::B, c, x, NONE, m.0);
             self.shaped(eq, Shape::Lanes);
             let me = self.mask_of(eq);
             let now = self.mask_op(O::MAnd, r, me);
@@ -1524,7 +1528,9 @@ impl<'a, 't> Fb<'a, 't> {
     fn bin(&mut self, op: Op, m: M, a: V, b: V) -> V {
         let s = self.shape(a).max(self.shape(b));
         let rm = if op.compares() { M::B } else { m };
-        let x = self.ins_sub(O::Bin, op as u32, rm, a, b, 0, m.0);
+        // An integer division's lanes: those that run divide (a lane that does not may hold a 0).
+        let mask = if matches!(op, Op::Div | Op::Rem) && !m.float() { self.cur() } else { NONE };
+        let x = self.ins_sub(O::Bin, op as u32, rm, a, b, mask, m.0);
         self.shaped(x, s);
         x
     }

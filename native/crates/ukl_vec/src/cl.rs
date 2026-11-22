@@ -157,18 +157,20 @@ fn width_mask(m: M) -> i64 {
     if m.bits() >= 64 { -1 } else { ((1u64 << m.bits()) - 1) as i64 }
 }
 
-/// Compiles kernel `ssa` (named `name`) at width `w` (32 if it has a cross-lane operation).
-pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<Compiled> {
+/// Compiles kernel `ssa` (named `name`) at width `w` (32 if it has a cross-lane operation): the code, and its kept
+/// form (`load`), if its relocations are ones it can hold.
+pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, Option<Vec<u8>>)> {
     let w = if ssa.funcs[0].cross { 32 } else { w };
     if !matches!(w, 1 | 2 | 4 | 8 | 16 | 32) {
         return Err(Error(format!("{name}: a width of {w} lanes")));
     }
-    let mut module = cranelift_jit::JITModule::new(cranelift_jit::JITBuilder::with_isa(isa()?, cranelift_module::default_libcall_names()));
+    let mut module = module()?;
     let cc = module.isa().default_call_conv();
     let sigs: Vec<Signature> = ssa.funcs.iter().enumerate().map(|(k, f)| signature(f, k == 0, w, cc)).collect();
     let ids: Vec<FuncId> = sigs.iter().enumerate().map(|(k, s)| module.declare_function(&format!("f{k}"), Linkage::Local, s)).collect::<Result<_, _>>().map_err(|e| Error(format!("{name}: {e}")))?;
     let mut fbc = FunctionBuilderContext::new();
     let mut ctx = module.make_context();
+    let mut kept = Some(Kept::new(w, ssa.funcs.len() + 1));
     for (k, f) in ssa.funcs.iter().enumerate() {
         ctx.func.signature = sigs[k].clone();
         ctx.func.name = ir::UserFuncName::user(0, k as u32);
@@ -181,7 +183,17 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<Compiled> {
             g.b.seal_all_blocks();
             g.b.finalize();
         }
+        // A development hook: each function's CLIF and machine code, to the directory `RERAIL_UKL_VEC_ASM` names.
+        let asm = std::env::var("RERAIL_UKL_VEC_ASM").ok();
+        ctx.set_disasm(asm.is_some());
+        if let Some(dir) = &asm {
+            let _ = std::fs::write(format!("{dir}/{name}.w{w}.{k}.clif"), ctx.func.display().to_string());
+        }
         module.define_function(ids[k], &mut ctx).map_err(|e| Error(format!("{name}: {}: {e:?}", f.name)))?;
+        if let (Some(dir), Some(v)) = (&asm, ctx.compiled_code().and_then(|c| c.vcode.clone())) {
+            let _ = std::fs::write(format!("{dir}/{name}.w{w}.{k}.s"), format!("; {}\n{v}", f.name));
+        }
+        kept = kept.and_then(|kp| kp.add(&ctx));
         module.clear_context(&mut ctx);
     }
     // The entry: each chunk of the SIMD group's lanes that has a lane, its kernel's function.
@@ -197,11 +209,134 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<Compiled> {
         b.finalize();
     }
     module.define_function(eid, &mut ctx).map_err(|e| Error(format!("{name}: the entry: {e:?}")))?;
+    kept = kept.and_then(|kp| kp.add(&ctx));
     module.clear_context(&mut ctx);
     module.finalize_definitions().map_err(|e| Error(format!("{name}: {e}")))?;
     // SAFETY: a finalized function of `Entry`'s signature.
     let entry = unsafe { std::mem::transmute::<*const u8, Entry>(module.get_finalized_function(eid)) };
-    Ok(Compiled { _module: module, entry, width: w })
+    Ok((Compiled { _module: module, entry, width: w }, kept.map(|k| k.out)))
+}
+
+/// What the compiled code is: the host's target and features, and the compiler's own source (the SSA's, this back
+/// end's, the runtime's state it reads), so a kept form is loaded only by the compiler that made it.
+pub fn host() -> String {
+    // FNV-1a over the sources.
+    let mut h = 0xcbf2_9ce4_8422_2325u64;
+    for src in [include_str!("ssa.rs"), include_str!("cl.rs"), include_str!("exec.rs"), include_str!("fiber.rs")] {
+        for &b in src.as_bytes() {
+            h = (h ^ u64::from(b)).wrapping_mul(0x100_0000_01b3);
+        }
+    }
+    match isa() {
+        Ok(isa) => format!("{} {} {h:016x}", isa.triple(), isa.isa_flags().iter().map(|v| v.to_string()).collect::<Vec<_>>().join(",")),
+        Err(e) => e.0,
+    }
+}
+
+/// The kept form's first bytes, and its version.
+const KEPT: &[u8; 8] = b"UKLCL001";
+
+/// The relocations a kept form holds: a call of another of its functions, each target's.
+const RELOCS: [cranelift_codegen::binemit::Reloc; 10] = {
+    use cranelift_codegen::binemit::Reloc::*;
+    [Arm64Call, X86CallPCRel4, X86CallPLTRel4, X86PCRel4, Abs8, Abs4, X86GOTPCRel4, Aarch64AdrGotPage21, Aarch64Ld64GotLo12Nc, Aarch64AdrPrelPgHi21]
+};
+
+/// A kept form being written: its width, its functions' count, then each function's alignment, bytes and
+/// relocations (offset, kind, the function it names, addend), little-endian; the entry last.
+struct Kept {
+    out: Vec<u8>,
+}
+
+impl Kept {
+    fn new(w: u32, funcs: usize) -> Kept {
+        let mut out = KEPT.to_vec();
+        out.extend(w.to_le_bytes());
+        out.extend((funcs as u32).to_le_bytes());
+        Kept { out }
+    }
+
+    /// The function `ctx` compiled, added; none if a relocation is not one it holds.
+    fn add(mut self, ctx: &cranelift_codegen::Context) -> Option<Kept> {
+        let cc = ctx.compiled_code()?;
+        let code = cc.buffer.data();
+        self.out.extend(cc.buffer.alignment.to_le_bytes());
+        self.out.extend((code.len() as u64).to_le_bytes());
+        self.out.extend(code);
+        let relocs = cc.buffer.relocs();
+        self.out.extend((relocs.len() as u32).to_le_bytes());
+        for r in relocs {
+            let kind = RELOCS.iter().position(|&k| k == r.kind)? as u8;
+            let index = match r.target {
+                cranelift_codegen::FinalizedRelocTarget::ExternalName(ir::ExternalName::User(reff)) => ctx.func.params.user_named_funcs()[reff].index,
+                _ => return None,
+            };
+            self.out.extend(r.offset.to_le_bytes());
+            self.out.push(kind);
+            self.out.extend(index.to_le_bytes());
+            self.out.extend(r.addend.to_le_bytes());
+        }
+        Some(self)
+    }
+}
+
+/// A kept form (`compile`'s) loaded: its code, linked; none if it is not one.
+pub fn load(bytes: &[u8]) -> Option<Compiled> {
+    let mut at = 0usize;
+    let mut take = |n: usize| -> Option<&[u8]> {
+        let b = bytes.get(at..at + n)?;
+        at += n;
+        Some(b)
+    };
+    if take(8)? != KEPT {
+        return None;
+    }
+    let u32_of = |b: &[u8]| u32::from_le_bytes(b.try_into().expect("4 bytes"));
+    let w = u32_of(take(4)?);
+    let n = u32_of(take(4)?) as usize;
+    if n == 0 {
+        return None;
+    }
+    let mut module = module().ok()?;
+    let sig = Signature::new(module.isa().default_call_conv());
+    let ids: Vec<FuncId> = (0..n).map(|k| module.declare_function(&format!("f{k}"), Linkage::Local, &sig)).collect::<Result<_, _>>().ok()?;
+    for &id in &ids {
+        let align = u32_of(take(4)?);
+        let len = u64::from_le_bytes(take(8)?.try_into().ok()?) as usize;
+        let code = take(len)?.to_vec();
+        let nr = u32_of(take(4)?) as usize;
+        let mut relocs = Vec::with_capacity(nr);
+        for _ in 0..nr {
+            let offset = u32_of(take(4)?);
+            let kind = *RELOCS.get(take(1)?[0] as usize)?;
+            let index = u32_of(take(4)?);
+            let addend = i64::from_le_bytes(take(8)?.try_into().ok()?);
+            if index as usize >= n {
+                return None;
+            }
+            relocs.push(cranelift_module::ModuleReloc { offset, kind, name: cranelift_module::ModuleRelocTarget::user(0, index), addend });
+        }
+        module.define_function_bytes(id, u64::from(align), &code, &relocs).ok()?;
+    }
+    if take(1).is_some() {
+        return None;
+    }
+    module.finalize_definitions().ok()?;
+    // SAFETY: the kept form's last function is its entry, of `Entry`'s signature.
+    let entry = unsafe { std::mem::transmute::<*const u8, Entry>(module.get_finalized_function(*ids.last()?)) };
+    Some(Compiled { _module: module, entry, width: w })
+}
+
+/// The address space a kernel's code is in: one arena, so a call of one of its functions by another is in a direct
+/// call's reach (AArch64's `bl`, 128 MB; x86-64's `call`, 2 GB). Each allocation in a place of its own (the system
+/// provider's, `mmap`s) put them anywhere, and a call out of reach went elsewhere.
+const ARENA: usize = 64 << 20;
+
+fn module() -> R<cranelift_jit::JITModule> {
+    let mut b = cranelift_jit::JITBuilder::with_isa(isa()?, cranelift_module::default_libcall_names());
+    let arena = cranelift_jit::ArenaMemoryProvider::new_with_size(ARENA).map_err(|e| Error(format!("the compiled code's arena: {e}")))?;
+    b.memory_provider(Box::new(arena));
+    Ok(cranelift_jit::JITModule::new(b))
 }
 
 /// A mask's parts at width `w`: one `I32` (0 or all ones) at 1, else `I32X4`s.
@@ -352,7 +487,7 @@ struct Cg<'a, 'b> {
     /// The function's entry's lanes (its `Entry` value), whose stores need no blend.
     entry_v: V,
     /// A scratch slot: a lanes value stored to read one lane by a dynamic index.
-    slot: ir::StackSlot,
+    slot: Option<ir::StackSlot>,
     /// A comparison's mask, before it is made a `bool`'s lanes (`MaskOf` of it takes it).
     raw: HashMap<V, Vec<Value>>,
     /// The frame variables' addresses (`FrameAddr`): base and stride.
@@ -361,13 +496,14 @@ struct Cg<'a, 'b> {
     splats: HashMap<(V, u32), Vec<Value>>,
     masks64: HashMap<V, Vec<Value>>,
     fail: Option<ir::Block>,
+    /// The function's entry's lanes as bits (`mask_bits`).
+    entry_bits: Value,
     helper_sigs: HashMap<usize, ir::SigRef>,
 }
 
 impl<'a, 'b> Cg<'a, 'b> {
     #[allow(clippy::too_many_arguments)]
-    fn new(mut b: FunctionBuilder<'b>, ssa: &'a Ssa, f: &'a Func, kernel: bool, w: u32, pl: &'a Places, cc: cranelift_codegen::isa::CallConv, callees: Vec<ir::FuncRef>) -> Self {
-        let slot = b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 32 * 8, 4));
+    fn new(b: FunctionBuilder<'b>, ssa: &'a Ssa, f: &'a Func, kernel: bool, w: u32, pl: &'a Places, cc: cranelift_codegen::isa::CallConv, callees: Vec<ir::FuncRef>) -> Self {
         let entry_v = (0..f.insts.len() as V).find(|&x| f.inst(x).op == O::Entry).unwrap_or(NONE);
         let dummy = Value::from_u32(0);
         Cg {
@@ -386,12 +522,13 @@ impl<'a, 'b> Cg<'a, 'b> {
             lane0: dummy,
             env: dummy,
             entry_v,
-            slot,
+            slot: None,
             raw: HashMap::new(),
             frame_of: HashMap::new(),
             splats: HashMap::new(),
             masks64: HashMap::new(),
             fail: None,
+            entry_bits: dummy,
             helper_sigs: HashMap::new(),
         }
     }
@@ -426,6 +563,7 @@ impl<'a, 'b> Cg<'a, 'b> {
         let mp = mask_parts(w);
         let entry_mask: Vec<Value> = ps[3..3 + mp].to_vec();
         self.env = self.b.ins().load(I64, mf(), self.sg, self.pl.env);
+        self.entry_bits = self.mask_bits(&entry_mask);
         let mut at = 3 + mp;
         let mut args = Vec::new();
         if !self.kernel {
@@ -635,6 +773,24 @@ impl<'a, 'b> Cg<'a, 'b> {
     }
 
     /// Mask lane `j` as a `bool` (`I8`).
+    /// A uniform address `a` that the lanes of `mask` read or write: the scratch area's if none of them is in this
+    /// chunk (another chunk's are), so a chunk with no lane touches nothing.
+    fn guarded(&mut self, a: Value, mask: V) -> Value {
+        if mask == NONE || (mask == self.entry_v && self.kernel) {
+            return a;
+        }
+        let k = self.mask(mask);
+        let any = self.any(&k);
+        let any = self.cond(any);
+        let scratch = self.b.ins().load(I64, mf(), self.env, self.pl.scratch);
+        self.b.ins().select(any, a, scratch)
+    }
+
+    /// The scratch slot (32 lanes of 8 bytes), made at its first use.
+    fn slot(&mut self) -> ir::StackSlot {
+        *self.slot.get_or_insert_with(|| self.b.create_sized_stack_slot(StackSlotData::new(StackSlotKind::ExplicitSlot, 32 * 8, 4)))
+    }
+
     fn mask_lane(&mut self, k: &[Value], j: u32) -> Value {
         let x = if self.w == 1 { k[0] } else { self.b.ins().extractlane(k[(j / 4) as usize], (j % 4) as u8) };
         self.b.ins().icmp_imm(IntCC::NotEqual, x, 0)
@@ -667,6 +823,7 @@ impl<'a, 'b> Cg<'a, 'b> {
     fn fail_if(&mut self, c: Value, what: i64) {
         let fail = self.b.create_block();
         let go = self.b.create_block();
+        let c = self.cond(c);
         self.b.ins().brif(c, fail, &[], go, &[]);
         self.b.switch_to_block(fail);
         let wv = self.b.ins().iconst(I64, what);
@@ -676,6 +833,19 @@ impl<'a, 'b> Cg<'a, 'b> {
         self.b.switch_to_block(go);
         self.splats.clear();
         self.masks64.clear();
+    }
+
+    /// A uniform `bool` as a branch's condition: the comparison it was made from, if it was.
+    fn cond(&self, v: Value) -> Value {
+        let dfg = &self.b.func.dfg;
+        if let ir::ValueDef::Result(inst, 0) = dfg.value_def(v) {
+            if let ir::InstructionData::Unary { opcode: ir::Opcode::Uextend, arg } = dfg.insts[inst] {
+                if dfg.value_type(arg) == I8 {
+                    return arg;
+                }
+            }
+        }
+        v
     }
 
     // Uniform operations (and a lane's, a lane at a time).
@@ -693,6 +863,34 @@ impl<'a, 'b> Cg<'a, 'b> {
             _ => self.b.ins().icmp_imm(IntCC::NotEqual, a, 0),
         };
         self.b.ins().uextend(I64, c)
+    }
+
+    /// `a / x` or `a % x` (uniform values of `m`), the kernel failed on a divisor of 0 if `check` (else it is not 0).
+    fn u_div(&mut self, op: Op, m: M, a: Value, x: Value, check: bool) -> Value {
+        if check {
+            let z = self.b.ins().icmp_imm(IntCC::Equal, x, 0);
+            self.fail_if(z, if op == Op::Div { FAIL_DIV } else { FAIL_REM });
+        }
+        let b = &mut self.b;
+        let r = if m.signed() {
+            let neg1 = b.ins().icmp_imm(IntCC::Equal, x, -1);
+            let one = b.ins().iconst(I64, 1);
+            let safe = b.ins().select(neg1, one, x);
+            if op == Op::Div {
+                let q = b.ins().sdiv(a, safe);
+                let n = b.ins().ineg(a);
+                b.ins().select(neg1, n, q)
+            } else {
+                let r = b.ins().srem(a, safe);
+                let z = b.ins().iconst(I64, 0);
+                b.ins().select(neg1, z, r)
+            }
+        } else if op == Op::Div {
+            b.ins().udiv(a, x)
+        } else {
+            b.ins().urem(a, x)
+        };
+        norm_u(&mut self.b, m, r)
     }
 
     fn u_bin(&mut self, op: Op, m: M, a: Value, x: Value) -> Value {
@@ -724,29 +922,7 @@ impl<'a, 'b> Cg<'a, 'b> {
             Op::Add => b.ins().iadd(a, x),
             Op::Sub => b.ins().isub(a, x),
             Op::Mul => b.ins().imul(a, x),
-            Op::Div | Op::Rem => {
-                let z = b.ins().icmp_imm(IntCC::Equal, x, 0);
-                self.fail_if(z, if op == Op::Div { FAIL_DIV } else { FAIL_REM });
-                let b = &mut self.b;
-                if signed {
-                    let neg1 = b.ins().icmp_imm(IntCC::Equal, x, -1);
-                    let one = b.ins().iconst(I64, 1);
-                    let safe = b.ins().select(neg1, one, x);
-                    if op == Op::Div {
-                        let q = b.ins().sdiv(a, safe);
-                        let n = b.ins().ineg(a);
-                        b.ins().select(neg1, n, q)
-                    } else {
-                        let r = b.ins().srem(a, safe);
-                        let z = b.ins().iconst(I64, 0);
-                        b.ins().select(neg1, z, r)
-                    }
-                } else if op == Op::Div {
-                    b.ins().udiv(a, x)
-                } else {
-                    b.ins().urem(a, x)
-                }
-            }
+            Op::Div | Op::Rem => return self.u_div(op, m, a, x, true),
             Op::Shl => {
                 let s = b.ins().band_imm(x, bits - 1);
                 b.ins().ishl(a, s)
@@ -1006,8 +1182,11 @@ impl<'a, 'b> Cg<'a, 'b> {
         if wide(m) { self.narrow_mask(&out) } else { out }
     }
 
-    fn bin_lanes(&mut self, op: Op, m: M, a: V, x: V) -> (Vec<Value>, Option<Vec<Value>>) {
+    fn bin_lanes(&mut self, op: Op, m: M, a: V, x: V, mask: V) -> (Vec<Value>, Option<Vec<Value>>) {
         let pa = self.lanes(a, m);
+        if matches!(op, Op::Div | Op::Rem) && !m.float() {
+            return (self.div_lanes(op, m, pa, x, mask), None);
+        }
         if op.compares() {
             let px = self.lanes(x, m);
             let k = self.cmp_lanes(op, m, &pa, &px);
@@ -1060,6 +1239,36 @@ impl<'a, 'b> Cg<'a, 'b> {
         let px = self.lanes(x, m);
         let r = self.per_lane(&[(pa, m), (px, m)], m, &mut |g, xs| g.u_bin(op, m, xs[0], xs[1]));
         (r, None)
+    }
+
+    /// An integer division's lanes (`pa` by `x`): the kernel failed if a lane of `mask` divides by 0, each lane's
+    /// quotient or remainder the uniform code's, a lane that does not run dividing by 1.
+    fn div_lanes(&mut self, op: Op, m: M, pa: Vec<Value>, x: V, mask: V) -> Vec<Value> {
+        let what = if op == Op::Div { FAIL_DIV } else { FAIL_REM };
+        let km = self.mask(mask);
+        let any = self.any(&km);
+        if let Rp::U(d) = self.vals[x as usize] {
+            // One divisor: one check.
+            let z = self.b.ins().icmp_imm(IntCC::Equal, d, 0);
+            let z = self.b.ins().uextend(I64, z);
+            let bad = self.b.ins().band(z, any);
+            self.fail_if(bad, what);
+            let one = self.b.ins().iconst(I64, 1);
+            let zc = self.b.ins().icmp_imm(IntCC::Equal, d, 0);
+            let safe = self.b.ins().select(zc, one, d);
+            let r = self.per_lane(&[(pa, m)], m, &mut |g, xs| g.u_div(op, m, xs[0], safe, false));
+            return r;
+        }
+        let px = self.lanes(x, m);
+        let z = self.zero_lanes(m);
+        let eq = self.cmp_lanes(Op::Eq, m, &px, &z);
+        let bad: Vec<Value> = eq.iter().zip(&km).map(|(&e, &k)| self.b.ins().band(e, k)).collect();
+        let anybad = self.any(&bad);
+        self.fail_if(anybad, what);
+        let one = self.b.ins().iconst(I64, 1);
+        let ones = self.splat(one, m);
+        let px = self.select_lanes(mask, m, px, ones);
+        self.per_lane(&[(pa, m), (px, m)], m, &mut |g, xs| g.u_div(op, m, xs[0], xs[1], false))
     }
 
     fn cast_lanes(&mut self, from: M, to: M, a: V) -> Vec<Value> {
@@ -1133,9 +1342,11 @@ impl<'a, 'b> Cg<'a, 'b> {
             return self.uniform_of(x[0], m);
         }
         for (k, &p) in x.iter().enumerate() {
-            self.b.ins().stack_store(p, self.slot, 16 * k as i32);
+            let sl = self.slot();
+            self.b.ins().stack_store(p, sl, 16 * k as i32);
         }
-        let base = self.b.ins().stack_addr(I64, self.slot, 0);
+        let sl = self.slot();
+        let base = self.b.ins().stack_addr(I64, sl, 0);
         let size = if wide(m) { 8 } else { 4 };
         let i = self.b.ins().uextend(I64, idx);
         let off = self.b.ins().imul_imm(i, size);
@@ -1404,7 +1615,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                     let (a, b) = (self.u(i.a), self.u(i.b));
                     Rp::U(self.u_bin(op, om, a, b))
                 } else {
-                    let (r, k) = self.bin_lanes(op, om, i.a, i.b);
+                    let (r, k) = self.bin_lanes(op, om, i.a, i.b, i.c);
                     if let Some(k) = k {
                         self.raw.insert(x, k);
                     }
@@ -1457,8 +1668,14 @@ impl<'a, 'b> Cg<'a, 'b> {
                 match self.vals[i.a as usize].clone() {
                     Rp::U(u) => Rp::U(u),
                     Rp::L(p) => {
+                        // A chunk whose mask has no lane (another chunk's has): its entry's first lane, whose value
+                        // the code computed; no lane uses it.
                         let bits = self.mask_bits(&mk);
+                        let eb = self.entry_bits;
+                        let some = self.b.ins().icmp_imm(IntCC::NotEqual, bits, 0);
+                        let bits = self.b.ins().select(some, bits, eb);
                         let idx = self.b.ins().ctz(bits);
+                        let idx = self.b.ins().band_imm(idx, i64::from(w - 1));
                         Rp::U(self.lane_at(&p, m, idx))
                     }
                     r => return Err(Error(format!("a first lane of {r:?}"))),
@@ -1529,18 +1746,26 @@ impl<'a, 'b> Cg<'a, 'b> {
                 }
             }
             O::Load => match self.vals[i.a as usize].clone() {
-                Rp::U(a) => Rp::U(self.load_u(m, a, 0)),
+                Rp::U(a) => {
+                    let a = self.guarded(a, i.b);
+                    Rp::U(self.load_u(m, a, 0))
+                }
                 _ => Rp::L(self.load_lanes(m, i.a, i.b)),
             },
             O::Store => {
                 match (self.vals[i.a as usize].clone(), self.vals[i.b as usize].clone()) {
-                    (Rp::U(a), Rp::U(v)) => self.store_u(m, a, v, 0),
+                    (Rp::U(a), Rp::U(v)) => {
+                        let a = self.guarded(a, i.c);
+                        self.store_u(m, a, v, 0)
+                    }
                     (Rp::U(a), Rp::L(p)) => {
                         // Each running lane's in order: the last one's stays.
+                        let a = self.guarded(a, i.c);
                         let k = self.mask(i.c);
                         let bits = self.mask_bits(&k);
                         let c = self.b.ins().clz(bits);
                         let idx = self.b.ins().irsub_imm(c, 31);
+                        let idx = self.b.ins().band_imm(idx, i64::from(w - 1));
                         let v = self.lane_at(&p, m, idx);
                         self.store_u(m, a, v, 0);
                     }
@@ -1695,9 +1920,11 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let pl = self.lanes(i.b, M::U32);
                 let bits = self.mask_bits(&k);
                 for (p, &v) in px.iter().enumerate() {
-                    self.b.ins().stack_store(v, self.slot, 16 * p as i32);
+                    let sl = self.slot();
+                    self.b.ins().stack_store(v, sl, 16 * p as i32);
                 }
-                let base = self.b.ins().stack_addr(I64, self.slot, 0);
+                let sl = self.slot();
+                let base = self.b.ins().stack_addr(I64, sl, 0);
                 let size = if wide(m) { 8 } else { 4 };
                 let (_, lt) = parts(m, 1);
                 let mut out = Vec::new();
@@ -1821,7 +2048,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                     let pa = self.lanes(i.a, M::PTR);
                     let px = if i.b != NONE { Some(self.lanes(i.b, m)) } else { None };
                     let py = if i.c != NONE { Some(self.lanes(i.c, m)) } else { None };
-                    let slot = self.slot;
+                    let slot = self.slot();
                     let size = if wide(m) { 8 } else { 4 };
                     // Each running lane's in order, its old value to the slot.
                     let z = self.zero_lanes(m);
@@ -1921,6 +2148,7 @@ impl<'a, 'b> Cg<'a, 'b> {
             }
             O::Br => {
                 let c = self.u(i.a);
+                let c = self.cond(c);
                 self.b.ins().brif(c, self.blocks[i.b as usize], &[], self.blocks[i.c as usize], &[]);
                 Rp::None
             }
