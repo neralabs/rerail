@@ -2147,24 +2147,25 @@ pub(in crate::code_rule_dsl) fn put_base_counts(
     content_of: &dyn Fn(&str) -> Option<super::memo::Content>,
     digest: u64,
 ) {
-    let mut rows: Vec<i64> = Vec::with_capacity(counts.len() * COUNTS_WIDTH);
+    let mut rows = BlockFlat::new(counts.len(), COUNTS_WIDTH, true);
+    let mut w = rows.writer();
     for k in counts {
-        rows.push(i64::from(k.key));
-        rows.extend(k.digest.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
-        rows.extend(k.counts.iter().map(|&c| i64::from(c)));
-        rows.extend(k.size.iter().map(|&c| i64::from(c)));
+        w.push(i64::from(k.key));
+        w.extend(k.digest.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
+        w.extend(k.counts.iter().map(|&c| i64::from(c)));
+        w.extend(k.size.iter().map(|&c| i64::from(c)));
         match k.file.then(|| content_of(&k.path)).flatten() {
-            Some(super::memo::Content::Stored(id)) => rows.extend([0, id.raw(), 0, 0, 0]),
+            Some(super::memo::Content::Stored(id)) => w.extend([0, id.raw(), 0, 0, 0]),
             // A content the store does not hold yet, by its digest (a later run finds it stored by it).
             Some(super::memo::Content::Unstored(d) | super::memo::Content::Held(d)) => {
-                rows.push(1);
-                rows.extend(d.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
+                w.push(1);
+                w.extend(d.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
             }
-            None => rows.extend([2, 0, 0, 0, 0]),
+            None => w.extend([2, 0, 0, 0, 0]),
         }
     }
     let name = KeptRel { name: BASE_COUNTS.to_owned(), ident: base_documents_ident(&binds) };
-    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'; COUNTS_WIDTH], rows, counts.len())]);
+    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'; COUNTS_WIDTH], rows)]);
 }
 
 fn base_stats_name(rel: &str) -> String {
@@ -2175,15 +2176,8 @@ fn base_stats_name(rel: &str) -> String {
 pub(in crate::code_rule_dsl) fn put_base_stats(store: &ContentStore, was: &InKept, binds: [u8; 32], rel: &str, digest: u64, stats: &crate::code_rule_dsl::logic::plan::statkeep::RelStats) {
     let mut bytes = Vec::new();
     stats.encode(&mut bytes);
-    let mut words: Vec<i64> = vec![bytes.len() as i64];
-    words.extend(bytes.chunks(8).map(|c| {
-        let mut w = [0u8; 8];
-        w[..c.len()].copy_from_slice(c);
-        i64::from_le_bytes(w)
-    }));
     let name = KeptRel { name: base_stats_name(rel), ident: base_documents_ident(&binds) };
-    let n = words.len();
-    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'], words, n)]);
+    store.queue_kept(was.space, vec![kept_flat(&name, DOCS_PART, digest, Vec::new(), vec![b'i'], BlockFlat::of_bytes(&bytes))]);
 }
 
 /// Queues the documents' table `docs` for the cross part of `binds` into the space `was` was read from, in the keep's
@@ -2197,14 +2191,15 @@ pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &I
     }
     let paths: Vec<&str> = docs.iter().map(|(p, _, _)| p.as_str()).collect();
     let Ok(atoms) = store.atoms_handle().intern_all(&paths) else { return false };
-    let mut rows: Vec<i64> = Vec::with_capacity(docs.len() * 7);
+    let mut rows = BlockFlat::new(docs.len(), crate::content_store::DOCUMENT_WORDS, true);
+    let mut w = rows.writer();
     for ((_, key, content), atom) in docs.iter().zip(atoms) {
-        rows.extend([i64::from(atom), *key]);
+        w.extend([i64::from(atom), *key]);
         match content {
-            super::memo::Content::Stored(id) => rows.extend([0, id.raw(), 0, 0, 0]),
+            super::memo::Content::Stored(id) => w.extend([0, id.raw(), 0, 0, 0]),
             super::memo::Content::Unstored(d) => {
-                rows.push(1);
-                rows.extend(digest_words(d));
+                w.push(1);
+                w.extend(digest_words(d));
             }
             super::memo::Content::Held(_) => unreachable!("refused above"),
         }
@@ -2212,7 +2207,7 @@ pub(in crate::code_rule_dsl) fn put_base_documents(store: &ContentStore, was: &I
     let name = KeptRel { name: BASE_DOCUMENTS.to_owned(), ident: base_documents_ident(&binds) };
     let mut types = vec![b'i'; crate::content_store::PLACED_WORDS];
     types[0] = b's';
-    let what = crate::content_store::kept_facts::KeptWhat::Documents { rows, n: docs.len(), tape };
+    let what = crate::content_store::kept_facts::KeptWhat::Documents { rows, tape };
     let reads = vec![(MEMO_PLAN_READ.to_owned(), plan)];
     store.queue_kept(was.space, vec![crate::content_store::kept_facts::KeptPut { rel: name.name, ident: name.ident, part: DOCS_PART, digest, reads, types, what }]);
     true
@@ -3174,16 +3169,16 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
         // A base relation is kept as its documents' digest (decision 0458): its documents' entry alone, one row, no
         // granules; its rows are its documents' tapes.
         if let Some(bound) = digest_only.get(rel) {
-            let rows = vec![0, digest as i64, bound.unwrap_or_else(|| source.len()) as i64];
-            kept.push(kept_flat(name, DOCS_PART, digest, vec![(DIGEST_ONLY_READ.to_owned(), 1)], vec![b'i'; 3], rows, 1));
+            let rows = BlockFlat::of_row(&[0, digest as i64, bound.unwrap_or_else(|| source.len()) as i64]);
+            kept.push(kept_flat(name, DOCS_PART, digest, vec![(DIGEST_ONLY_READ.to_owned(), 1)], vec![b'i'; 3], rows));
             queue(kept);
             return Some((digest, written));
         }
         // A relation of no columns is its count: one document's entry, its digest the input's (`digest`).
         if width == 0 {
             let n = source.len() as u64;
-            let rows = vec![0, (digest ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)) as i64, n as i64];
-            kept.push(kept_flat(name, DOCS_PART, digest, Vec::new(), vec![b'i'; 3], rows, 1));
+            let rows = BlockFlat::of_row(&[0, (digest ^ n.wrapping_mul(0xff51_afd7_ed55_8ccd)) as i64, n as i64]);
+            kept.push(kept_flat(name, DOCS_PART, digest, Vec::new(), vec![b'i'; 3], rows));
             queue(kept);
             return Some((digest, written));
         }
@@ -3212,13 +3207,17 @@ pub(in crate::code_rule_dsl) fn write_input_kept(store: &ContentStore, was: &InK
                 kept.push(KeptPut { rel: name.name.clone(), ident: name.ident, part, digest: 0, reads: Vec::new(), what: KeptWhat::Picked(Box::new(picked)), types: types.clone() });
             }
         }
-        let mut table: Vec<(i64, (u64, u64))> = docs.iter().map(|(d, v)| (*d, *v)).collect();
-        table.sort_unstable();
-        let rows: Vec<i64> = table.iter().flat_map(|(d, (s, n))| [*d, *s as i64, *n as i64]).collect();
+        // Its documents' table, written into a block of its own as the documents are found, in canonical order (by
+        // document: the packer sorts it, as a sorted copy did before).
+        let mut rows = BlockFlat::new(docs.len(), 3, false);
+        let mut w = rows.writer();
+        for (d, (s, n)) in docs.iter() {
+            w.extend([*d, *s as i64, *n as i64]);
+        }
         // The granules its rows lie in, recorded with its documents' frame (`GRANULES_READ`): a run that reads none of
         // its owners admits them from this, decoding no frame (`kept_inputs`, Q91).
-        let mask = table.iter().fold(0u64, |m, (d, _)| m | granule_bit(granule(*d)));
-        kept.push(kept_flat(name, DOCS_PART, digest, vec![(GRANULES_READ.to_owned(), mask)], docs_types(atom_owner), rows, table.len()));
+        let mask = docs.keys().fold(0u64, |m, d| m | granule_bit(granule(*d)));
+        kept.push(kept_flat(name, DOCS_PART, digest, vec![(GRANULES_READ.to_owned(), mask)], docs_types(atom_owner), rows));
         queue(kept);
         Some((digest, written))
     };
@@ -3298,7 +3297,7 @@ impl crate::content_store::kept_facts::KeptPicked for PickedRows {
     fn width(&self) -> usize {
         self.width
     }
-    fn fill(&self, cols: &mut [i64]) {
+    fn fill(&self, cols: &mut [i64], _: Option<&mut [u32]>) {
         let n = self.rows();
         for c in 0..self.width {
             for (k, i) in (self.lo..self.hi).enumerate() {
@@ -3343,16 +3342,90 @@ pub(in crate::code_rule_dsl) fn kept_put(name: &KeptRel, digest: u64, reads: Vec
     if let Some(put) = kept_rows(name, digest, reads.clone(), types.clone(), rel) {
         return put;
     }
-    let n = rel.rows();
-    // copy: not block data: a relation with no block of its rows (a view's rows read from its source, or none).
-    let rows = rel.live_rows().unwrap_or_default();
-    KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: rel.live_levels(), given: false }, types }
+    // A relation with no block of its rows (a view, read from its source, or none): its live rows read where they
+    // are, by the writer, into its scratch (`LiveRows`).
+    KeptPut { rel: name.name.clone(), ident: name.ident, part: DOCS_PART, digest, reads, what: KeptWhat::Picked(Box::new(LiveRows { rel: Arc::clone(rel) })), types }
+}
+
+/// A source's rows read where they lie (a held relation's from its block, a batch at a time; another's by value), in
+/// canonical order: a stratum's rows or an input's for an entry of their own, never gathered (`kept_strata`).
+pub(in crate::code_rule_dsl) struct SourceRows {
+    pub(in crate::code_rule_dsl) source: Arc<dyn Source>,
+}
+
+impl crate::content_store::kept_facts::KeptPicked for SourceRows {
+    fn rows(&self) -> usize {
+        self.source.len()
+    }
+    fn width(&self) -> usize {
+        self.source.columns().len()
+    }
+    fn given(&self) -> bool {
+        false
+    }
+    fn fill(&self, cols: &mut [i64], _: Option<&mut [u32]>) {
+        let (n, k) = (self.rows(), self.width());
+        let mut r = 0;
+        let held = crate::code_rule_dsl::logic::native::component::each_held_batch(self.source.as_ref(), k, &mut |batch: &[i64]| {
+            for row in batch.chunks_exact(k.max(1)) {
+                for (c, &v) in row.iter().enumerate() {
+                    cols[c * n + r] = v;
+                }
+                r += 1;
+            }
+        });
+        if held.is_none() {
+            for c in 0..k {
+                for (i, v) in cols[c * n..(c + 1) * n].iter_mut().enumerate() {
+                    *v = self.source.value(i, c);
+                }
+            }
+        }
+    }
+}
+
+/// A relation's live rows read where they are (a view's from its source, through it), in canonical order, with
+/// their levels where it has them: for a relation with no block of its rows to lend (`kept_put`).
+struct LiveRows {
+    rel: Arc<InRel>,
+}
+
+impl crate::content_store::kept_facts::KeptPicked for LiveRows {
+    fn rows(&self) -> usize {
+        self.rel.rows()
+    }
+    fn width(&self) -> usize {
+        self.rel.k
+    }
+    fn given(&self) -> bool {
+        false
+    }
+    fn has_levels(&self) -> bool {
+        self.rel.has_levels()
+    }
+    fn fill(&self, cols: &mut [i64], levels: Option<&mut [u32]>) {
+        let (n, k) = (self.rows(), self.width());
+        let mut r = 0;
+        self.rel.each_live_batch(0, self.rel.len(), |batch| {
+            for row in batch.chunks_exact(k.max(1)) {
+                for (c, &v) in row.iter().enumerate() {
+                    cols[c * n + r] = v;
+                }
+                r += 1;
+            }
+        });
+        if let Some(out) = levels {
+            self.rel.each_live_level(&mut |i, l| out[i] = l);
+        }
+    }
 }
 
 /// Rows not held as a relation, as an entry of their own (an input's granule or documents, statistics' words): `n`
 /// rows of `types.len()` columns, flat, kept as given (decision 0456): read by position, in their order, every row.
-fn kept_flat(name: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>, n: usize) -> KeptPut {
-    KeptPut { rel: name.name.clone(), ident: name.ident, part, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: None, given: true }, types }
+use crate::content_store::kept_facts::BlockFlat;
+
+fn kept_flat(name: &KeptRel, part: i64, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: BlockFlat) -> KeptPut {
+    KeptPut { rel: name.name.clone(), ident: name.ident, part, digest, reads, what: KeptWhat::Picked(Box::new(rows)), types }
 }
 
 /// The entry's rows as they are, with `reads` (a frame's retag).
@@ -3427,11 +3500,11 @@ impl Retained {
             if was.stats_kept.contains(rel) && was.derived.get(rel).is_some_and(|s| s.digest == digest) {
                 continue;
             }
-            let words = kept_stats::to_words(&kept_stats::encode(&all));
+            let words = BlockFlat::of_bytes(&kept_stats::encode(&all));
             if std::env::var_os("RERAIL_KEPT_STATS_TRACE").is_some() {
                 eprintln!("rerail: kept statistics written: {rel} ({} entries)", all.len());
             }
-            kept.push(kept_flat(name, kept_stats::PART, digest, Vec::new(), vec![b'i'], words.clone(), words.len()));
+            kept.push(kept_flat(name, kept_stats::PART, digest, Vec::new(), vec![b'i'], words));
         }
     }
 }

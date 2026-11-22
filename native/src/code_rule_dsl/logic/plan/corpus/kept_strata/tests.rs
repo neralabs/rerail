@@ -158,6 +158,6 @@
         let domains = lower::domains_of(&p).unwrap();
         let mut kept = Kept::new(&store, [42; 32], &[], HashMap::new()).typed(&crate::code_rule_dsl::logic::plan::body::Placed::whole(p.clone()), &domains);
         kept.program(&HashMap::from([("kinded".into(), [1; 32])]));
-        kept.ran("kinded", Some((7, vec![b's', b's', b's'], vec![1, 1132, 5], 1, vec![])));
+        kept.ran("kinded", Some((7, vec![b's', b's', b's'], Box::new(crate::content_store::kept_facts::BlockFlat::of_rows(&[1, 1132, 5], 3, false)), 1, vec![])));
         assert_eq!(kept.puts[0].types, b"iis", "the node and the kind are no atoms, the text is");
     }

@@ -73,8 +73,9 @@ fn sha256_of(key: HashKey) -> Option<[u8; 32]> {
 /// format version) names, where one is stored. A content given by its sha256 and stored now is kept by its id (tag
 /// 0), as a reader of the table resolves it before the first wave: a run inside another's waves, which reads no SQL,
 /// finds its files by their ids, and compares them with the table's as they are.
-pub(super) fn resolve(t: &Connection, rows: &[i64], n: usize, tape: Option<[i64; 3]>) -> StoreResult<Vec<i64>> {
-    let mut out = Vec::with_capacity(n * PLACED_WORDS);
+pub(super) fn resolve(t: &Connection, rows: &super::kept_facts::BlockFlat, tape: Option<[i64; 3]>) -> StoreResult<super::kept_facts::BlockFlat> {
+    // Each row's words written into the placed table's block as they are found, none gathered on the heap.
+    let mut placed = super::kept_facts::BlockFlat::new(rows.len(), PLACED_WORDS, true);
     let mut source_st = t.prepare_cached(
         "SELECT h.algorithm_id, h.lane0, h.lane1, h.lane2, h.lane3, s.seg, s.seg_at, s.seg_len FROM source_objects s \
          JOIN hashes h ON h.hash_id = s.canonical_hash_id WHERE s.source_id = ?1",
@@ -85,42 +86,51 @@ pub(super) fn resolve(t: &Connection, rows: &[i64], n: usize, tape: Option<[i64;
          WHERE t.source_id = ?1 AND t.grammar_id = ?2 AND t.grammar_version = ?3 AND t.tape_format_version = ?4",
     )?;
     let hash = |r: &rusqlite::Row<'_>| -> rusqlite::Result<HashKey> { Ok(HashKey { algorithm: r.get(0)?, lanes: [r.get(1)?, r.get(2)?, r.get(3)?, r.get(4)?] }) };
-    for row in rows.as_chunks::<DOCUMENT_WORDS>().0.iter().take(n) {
+    for r in 0..rows.len() {
+        let row: [i64; DOCUMENT_WORDS] = std::array::from_fn(|c| rows.get(r, c));
+        let row = &row;
+        let mut c = 0;
+        let mut out = |words: &[i64]| {
+            for &w in words {
+                placed.put(r, c, w);
+                c += 1;
+            }
+        };
         let id = match row[2] {
             0 => Some(row[3]),
             1 => super::objects::source_id_by_hash(t, HashKey::from_sha256_digest(digest_of(&row[3..7])))?.map(|s| s.0),
             _ => None,
         };
         match id {
-            Some(id) if row[2] == 1 => out.extend([row[0], row[1], 0, id, 0, 0, 0]),
-            _ => out.extend_from_slice(row),
+            Some(id) if row[2] == 1 => out(&[row[0], row[1], 0, id, 0, 0, 0]),
+            _ => out(row),
         }
         let source: Option<(HashKey, [i64; 3])> = match id {
             Some(id) => source_st.query_row([id], |r| Ok((hash(r)?, [r.get(5)?, r.get(6)?, r.get(7)?]))).optional()?,
             None => None,
         };
         let Some((key, place)) = source.and_then(|(k, p)| Some((sha256_of(k)?, p))) else {
-            out.extend([0i64; PLACED_WORDS - DOCUMENT_WORDS]);
+            out(&[0i64; PLACED_WORDS - DOCUMENT_WORDS]);
             continue;
         };
-        out.extend(words_of(&key));
+        out(&words_of(&key));
         // An archived object's place is no segment's: a miss, read through the store.
-        out.extend(if place[0] > 0 { place } else { [0; 3] });
+        out(&if place[0] > 0 { place } else { [0; 3] });
         let tape_row: Option<(HashKey, [i64; 3], i64)> = match (id, tape) {
             (Some(id), Some([grammar, version, format])) => tape_st.query_row([id, grammar, version, format], |r| Ok((hash(r)?, [r.get(5)?, r.get(6)?, r.get(7)?], r.get(8)?))).optional()?,
             _ => None,
         };
         match tape_row.filter(|(_, p, _)| p[0] > 0) {
             Some((h, p, length)) => {
-                out.push(h.algorithm);
-                out.extend(h.lanes);
-                out.extend(p);
-                out.push(length);
+                out(&[h.algorithm]);
+                out(&h.lanes);
+                out(&p);
+                out(&[length]);
             }
-            None => out.extend([0i64; 9]),
+            None => out(&[0i64; 9]),
         }
     }
-    Ok(out)
+    Ok(placed)
 }
 
 impl ContentStore {

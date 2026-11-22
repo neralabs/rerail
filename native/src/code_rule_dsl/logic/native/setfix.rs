@@ -4633,21 +4633,14 @@ pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
 }
 
 /// A native relation of `conn`'s run as it can be kept and held again (`hold_rows`): its columns' types and its live
-/// rows, flat.
-pub fn kept_rows(conn: &Connection, table: &str) -> Option<(Vec<u8>, Vec<i64>, usize)> {
+/// rows where they lie, as a source (`Derived`). Not a view.
+pub fn kept_source(conn: &Connection, table: &str) -> Option<(Vec<u8>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> {
     let rel = on(conn).derived.lock().get(table).cloned()?;
     if rel.view.is_some() {
         return None;
     }
-    let k = rel.k;
-    let mut out = Vec::with_capacity(rel.rows() * k);
-    for id in 0..rel.len() as u32 {
-        if rel.ndead > 0 && is_dead(&rel.dead, id) {
-            continue;
-        }
-        out.extend_from_slice(&rel.rows.row(id, k));
-    }
-    Some((rel.types.clone(), out, rel.rows()))
+    let types = rel.types.clone();
+    Some((types, Derived::source(rel, None)))
 }
 
 /// The relations `adopt`ed into `conn`'s next run, taken by its planner.
@@ -4708,6 +4701,15 @@ impl InRel {
         Some(Arc::new(rel))
     }
     /// Its live rows' levels, in `live_rows`' order: `None` unless every row has one (`has_levels`).
+    /// Each live row's level, by its place among the live rows, where it has them (`has_levels`).
+    pub fn each_live_level(&self, f: &mut dyn FnMut(usize, u32)) {
+        if !self.has_levels() {
+            return;
+        }
+        for (i, id) in (0..self.n).filter(|&id| self.ndead == 0 || !is_dead(&self.dead, id as u32)).enumerate() {
+            f(i, self.level[id]);
+        }
+    }
     pub fn live_levels(&self) -> Option<Vec<u32>> {
         if !self.has_levels() {
             return None;
@@ -8952,7 +8954,12 @@ pub mod posted_tests {
         assert!(d.is_some() && d == retain::held_digest(&cells, &flat), "a view's digest is its rows'");
         let put = retain::kept_put(&crate::content_store::KeptRel { name: "r".into(), ident: [1; 32] }, 0, Vec::new(), b"ii".to_vec(), &r);
         match put.what {
-            crate::content_store::kept_facts::KeptWhat::Flat { rows, n, .. } => assert_eq!((rows, n), (vec![1, 3, 2, 4, 5, 0], 3), "every row of the view kept"),
+            crate::content_store::kept_facts::KeptWhat::Picked(p) => {
+                use crate::content_store::kept_facts::KeptPicked as _;
+                let mut cols = vec![0i64; p.rows() * p.width()];
+                p.fill(&mut cols, None);
+                assert_eq!((cols, p.rows(), p.given()), (vec![1, 2, 5, 3, 4, 0], 3, false), "every row of the view kept, read through it");
+            }
             _ => panic!("a view is kept as its rows"),
         }
     }

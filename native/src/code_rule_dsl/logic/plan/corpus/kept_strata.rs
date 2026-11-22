@@ -68,8 +68,8 @@ fn stored_of(bound: Option<&Arc<Bound>>, rels: &[KeptRel], part: i64) -> HashMap
 }
 
 /// An entry of `n` rows, flat, of `types`' columns.
-fn flat_put(rel: &KeptRel, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Vec<i64>, n: usize) -> KeptPut {
-    KeptPut { rel: rel.name.clone(), ident: rel.ident, part: 0, digest, reads, what: KeptWhat::Flat { widths: vec![8; types.len()], rows, n, levels: None, given: false }, types }
+fn flat_put(rel: &KeptRel, digest: u64, reads: Vec<(String, u64)>, types: Vec<u8>, rows: Box<dyn crate::content_store::kept_facts::KeptPicked>) -> KeptPut {
+    KeptPut { rel: rel.name.clone(), ident: rel.ident, part: 0, digest, reads, what: KeptWhat::Picked(rows), types }
 }
 
 pub(in crate::code_rule_dsl) struct Kept<'s> {
@@ -195,7 +195,7 @@ impl KeptStrata for Kept<'_> {
         self.strata = Some((evaluated, of));
     }
 
-    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Vec<i64>, usize, Vec<(String, u64)>)>) {
+    fn ran(&mut self, rel: &str, got: Option<(u64, Vec<u8>, Box<dyn crate::content_store::kept_facts::KeptPicked>, usize, Vec<(String, u64)>)>) {
         let Some(frame) = self.rels.get(rel).cloned() else { return };
         match got {
             Some((digest, types, rows, n, reads)) => {
@@ -203,9 +203,9 @@ impl KeptStrata for Kept<'_> {
                     return;
                 }
                 let types = self.types.get(rel).filter(|t| t.len() == types.len()).cloned().unwrap_or(types);
-                self.values += rows.len();
+                self.values += n * rows.width();
                 self.written_rows += n;
-                self.puts.push(flat_put(&frame, digest, reads, types, rows, n));
+                self.puts.push(flat_put(&frame, digest, reads, types, rows));
                 if self.values >= FLUSH_VALUES {
                     self.flush();
                 }
@@ -402,20 +402,9 @@ pub(in crate::code_rule_dsl) fn keep(store: &ContentStore, part: Part, next: &su
         let w = source.columns().len();
         // Its symbols typed, so the writer maps them; an input of no declared width is not kept.
         let Some(types) = part.types.get(rel).filter(|t| t.len() == w).cloned() else { continue };
-        let n = source.len();
-        // copy: not block data: an input's rows gathered for its entry's copy (a source the run did not hold as a
-        // relation of a block), a batch at a time.
-        let mut rows: Vec<i64> = Vec::with_capacity(n * w);
-        if crate::code_rule_dsl::logic::native::component::each_held_batch(source.as_ref(), w, &mut |b: &[i64]| rows.extend_from_slice(b)).is_none() {
-            let all: Vec<usize> = (0..w).collect();
-            let mut row = vec![0i64; w];
-            for i in 0..n {
-                source.row_at(i, &all, &mut row);
-                rows.extend_from_slice(&row);
-            }
-        }
-        written += n;
-        puts.push(flat_put(f, digest, Vec::new(), types, rows, n));
+        // Its rows read where they lie by the writer (`SourceRows`), never gathered for it.
+        written += source.len();
+        puts.push(flat_put(f, digest, Vec::new(), types, Box::new(super::retain::SourceRows { source: Arc::clone(source) })));
     }
     for (rel, width, held) in rels {
         let Some((f, was)) = part.frames.get(rel) else { continue };
