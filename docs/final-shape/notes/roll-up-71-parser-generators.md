@@ -54,3 +54,25 @@ Locally under Relax, CPU:
 - rerail-json-lean does not build under Relax: its `stage1.rs`, which this merge does not change, calls the NEON
   intrinsic `vqtbx1q_u8`, which Relax's std lacks. Its tests were not run.
 - The crate DAG, global-state and thread-state checks pass.
+
+## Correction: tier 2's facts in the feeder's layout (Q493)
+
+Item 1 kept roll-up 55's layout of tier 2's facts over the feeder's later choice. That was a clash between two
+architectures, the feeder's and roll-up 55's, and it was not mine to decide. The user chose the feeder's latest
+(2026-11-22): its merge of the hub, f1793ae112.
+
+- The two layouts are two merges of the same inputs, the hub at 15a575d133 and the feeder's own work. Ours has not
+  changed their files since roll-up 55.
+  - So those files are the feeder's: `native_cpu_stream`, `native_cpu_tape`, `native_cpu_clusters`, the compiler's,
+    rerail-cpu-stream's, rerail-rr-parser's, rerail-kotlin-parser's and the C directives' roots, and `record_tables`.
+  - `stream_facts.rs` and `stream_analysis.rs` are back, and `native_cpu_facts.rs` goes.
+  - `native_cpu_clusters` is the compiler's (`rerail_compiler::native_cpu_clusters`), and the parser tests name it
+    there.
+- `block_native.rs` and `error.rs` stay ours. Their difference from the feeder is ours' newer work (roll-ups 52 and
+  66), not the layout.
+- The decision numbers stay the hub's (0562, 0569), as the user chose the layout and not the feeder's numbering.
+- 0565 records the amendment.
+
+Checks, locally under Relax, CPU:
+- `relax check rerail-engine` finds 0 errors in its 93 crates.
+- rerail-parser-tests' `json_in_clusters_equals_one_function` and `json_rust_is_current` pass.

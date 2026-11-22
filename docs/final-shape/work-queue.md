@@ -10444,3 +10444,11 @@ Decisions 0602 and 0604, JSON's generated Rust in simdjson's shape (`notes/roll-
   0577 to 0579) stand.
 - **Theirs' own commits** are applied to ours' files. The slab trace is already roll-up 66's print.
 - **The decisions index** gets rows for 0576, 0597, 0601 and 0603, with theirs' 0602 and 0604.
+
+### Q493. Roll-up 71, corrected: tier 2's facts in Parser-generators' layout (the user's choice)
+
+Roll-up 71 had kept roll-up 55's `native_cpu_facts` over Parser-generators-final-shape's own later merge of the hub
+(f1793ae112). The user chose the feeder's (2026-11-22):
+- `stream_facts` and `stream_analysis` are the front end's, and `native_cpu_clusters` is the compiler's.
+- `native_cpu_facts` goes.
+- 0565 is amended (`notes/roll-up-71-parser-generators.md`, "Correction").

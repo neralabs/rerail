@@ -160,7 +160,7 @@ fn simdjson_forms_trees_are_14_jsons() {
 }
 
 /// The JIT's format 16 run of the simdjson form passes each node to the writer's ops at its word (`direct`,
-/// `native_cpu_facts::direct_keys`): no working row, so no step on the rows is called, and its tape holds no format 15
+/// `stream_facts::direct_keys`): no working row, so no step on the rows is called, and its tape holds no format 15
 /// buffer. (Kept from the Rust trees' test, which 0555 removed.)
 #[test]
 fn simdjson_forms_sixteen_run_is_direct() {
@@ -255,7 +255,7 @@ fn tree_inputs() -> Vec<Vec<u8>> {
     inputs.push(format!("[{}]", vec!["true"; 3000].join(",")).into_bytes());
     inputs.push(format!("{}1{}", "[".repeat(400), "]".repeat(400)).into_bytes());
     // At the depth's limit (`DEPTH`, 1,024 calls) and past it, arrays and objects and both by turns: the open nodes
-    // the writer's stack is reserved for (`native_cpu_facts::open_bound`, decision 0537), at their most; past it, refused.
+    // the writer's stack is reserved for (`stream_facts::open_bound`, decision 0537), at their most; past it, refused.
     inputs.extend(deep_nests(1022..1028));
     inputs.push(format!("{{{}}}", (0..1500).map(|k| format!("\"k{k}\": [{k}, \"v\\n\"]")).collect::<Vec<_>>().join(",")).into_bytes());
     inputs.push(format!("[{}1,{}\"{}\", [{}]]", " ".repeat(300), "\n".repeat(400), "s".repeat(700), vec!["null"; 300].join(", ")).into_bytes());
