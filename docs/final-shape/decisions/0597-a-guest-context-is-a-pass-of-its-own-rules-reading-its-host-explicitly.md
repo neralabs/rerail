@@ -49,10 +49,16 @@ one pack's 0.197 T gap.
    pass it reads (`.from python binding, scope_node, import_name`), and reads them qualified (`python.binding(n, x)`,
    Soufflé's qualified name). They are inputs, read in place in that pass's blocks (0353: no copy, no upload). A
    context exports what others may read (`.export ann_type, ann_uses`); a host rule reads it as `annotation.ann_type`.
+   As built (step 1, 2026-11-21): a relation name cannot hold a `.`, which ends a clause, so a read is by a name its
+   `.from` declares, not qualified: `.from python binding, scope_node for annotation` (the context reads the host's
+   `binding` as `binding`), `.from annotation ann_type as quoted_type` (the host, the program's language, the
+   default reader). `.export` is phase 0's already (a file's exports, `phases::Declared`), so a context's exports are
+   on its own line: `.context annotation of python roots ann_root exports ann_type, ann_uses`.
 
 3. **Extraction is rules of the host, in the host's fixpoint.** Which strings are annotations depends on the host's
    analysis (`cast("Foo", x)` needs `cast` resolved to `typing.cast`), so a pass's roots are derived by its host:
-   `.root annotation(s) :- string_annotation(s), …`. A root is one of two kinds:
+   a relation of the host's whose first column is the root's node (`roots ann_root` on the `.context` line, as built:
+   `ann_root(r) :- string_annotation(s), parsed(s, "annotation", r)`). A root is one of two kinds:
    - **a text**, parsed in the context's grammar as a tape value (0431 §2): a string annotation, a Vue directive's
      value, an f-string's template as SQL (`fstring_template`, its holes markers). Equal texts share one tape;
    - **a region of the host's tape**, its subtree, parsed already: a JSX `{…}`, a format spec's node. Nothing is
@@ -118,6 +124,14 @@ The template's findings stand at the file's lines.
 
 1. **The front end.** `.context`, `.from`, `.export`, `.root`, qualified reads; a pack's programs into one pass graph;
    the cross-pass cycle check. Tests: a context program's reads and exports; a cycle across passes refused, naming it.
+   Done (2026-11-21, `logic::contexts`, applied by `rr::parse_version`): the declarations read and checked (a pass
+   named is declared, a context's roots exist with a node first, a read of a context is of its exports, an export is
+   derived, a reader names a relation once); each context's instance `rr_cx_<context>_<r>` of every relation its
+   exports reach but its `.from` reads and the views, the library's rules as written (`unparen` in the annotation's
+   and the host's own); each reader's `.from` names reading the source's relation; a relation only a context reaches
+   is not the host's; a cycle through two passes refused, naming them and its relations. The views are shared until
+   step 2 bounds them. Tests: `logic::contexts::tests` (six) and `a_context_holds_the_librarys_rules_it_reaches_as_its_own`.
+   Left for step 2: the run's paths (a pack's `combine`, a library held once), which lower without `parse_version`.
 2. **The engine.** A pass's roots as its documents: text roots as tape values (0431's admission, unchanged), region
    roots bounded at each read; the views bounded to a pass's roots; a pass's `.from` inputs read in place in the
    earlier pass's blocks; the strata of every pass in one order, on the CPU and the device (one launch per pass's

@@ -172,7 +172,7 @@ pub fn library_root() -> PathBuf {
 /// them: `core.rerail` first unless the text is in T's shape, each file once, includes first. A text that includes nothing
 /// is read as it is, without `core.rerail`.
 pub fn parse_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    read_text(src)?.lower_version(true)
+    super::contexts::passes(&read_text(src)?.lower_version(true)?)
 }
 
 /// A program's `.rerail` text as `parse_version` reads it, but with only its libraries' declarations, not their clauses:

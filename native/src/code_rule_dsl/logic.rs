@@ -108,6 +108,8 @@ pub mod program_image {
     pub use analyses::{Edges, Strata};
 }
 pub mod program_text;
+/// Contexts: code inside code analysed as a pass of its own rules (decision 0597).
+pub mod contexts;
 pub mod version_trace;
 /// Main's JSON rules translated to `.rerail` on read (decision 0175).
 pub mod json_rules;
