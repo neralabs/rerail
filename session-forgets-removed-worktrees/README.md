@@ -1,6 +1,6 @@
 # A session's hooks stop waiting on worktrees removed since it saw them
 
-For [pull request #985](https://github.com/neralabs/rerail/pull/985), head 6ceff37d92. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #985](https://github.com/neralabs/rerail/pull/985), head f7de2a83db. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #985](https://github.com/neralabs/rerail/pull/985), head 6ceff
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 428 lines in 3 files: 137 ship, 291 are tests and text | Careful. It decides which checkouts a session's walk asks Git about. | Nothing. No CI run here yet: the branch is not pushed. | 3 |
+| 484 lines in 3 files: 144 ship, 340 are tests and text | Careful. It decides which checkouts a session's walk asks Git about. | Nothing. CI passed at 6ceff37d92; the reviewer approved it. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -30,9 +30,9 @@ Found on 21 November 2026 on a Windows 11 laptop whose hooks after shell command
 
 ## 3. Where to look
 
-1. **Read first**, 5 min: `code-rule-bridge.ts`: `#forgetWorktrees`, `#syncWorktrees`, `walkHeld`, `walkKeeps`, `#finishWorktreeWalk`, `#readCheckouts`, `standingCheckouts`. Can a checkout whose `.git` stands go unread, or a worktree listed for a whole walk lose that walk?
+1. **Read first**, 5 min: `code-rule-bridge.ts`: `#forgetWorktrees`, `#syncWorktrees`, `walkHeld`, `walkKeeps`, `#finishWorktreeWalk`, `#restoreObservations`, `#readCheckouts`, `standingCheckouts`. Can a checkout whose `.git` stands go unread, or a worktree listed for a whole walk lose that walk?
 
-**Then skim**, 4 min: Nine cases in `code-rule-bridge.test.ts`: worktrees removed, unlisted with folders kept, unlisted mid-walk or as Git verdicts read, relisted mid-take or mid-walk, added again; a deleted checkout, a `.git` moved aside.
+**Then skim**, 4 min: Ten cases in `code-rule-bridge.test.ts`: worktrees removed, unlisted with folders kept, unlisted mid-walk or as verdicts read, relisted mid-take, mid-walk or mid-evaluator, added again; a checkout deleted, a `.git` moved aside.
 
 ## 4. Risk against verification
 
@@ -45,7 +45,7 @@ One change, low risk: a checkout whose `.git` stands is read as before; only one
 | Change | Check | Its limit, or why it does not hold yet |
 |---|---|---|
 | Removed trees | independent review | No independent review of this head yet. |
-| Removed trees | CI at this head | No CI run at this head on GitHub yet: the branch is not pushed. CI's lint and type-check job passes on Linux x64. |
+| Removed trees | CI at this head | CI passed on GitHub at 6ceff37d92 and has not run at this head; its lint and type-check job passes here on Linux x64. |
 
 </details>
 
@@ -75,7 +75,7 @@ It stands on `main` 1609ac3a30. It shares `code-rule-bridge.ts` and its test fil
 
 </details>
 
-<details><summary><b>8. What is not covered</b>: 3 not verified, 4 smaller gaps, 1 limit that stays</summary>
+<details><summary><b>8. What is not covered</b>: 3 not verified, 3 smaller gaps, 1 limit that stays</summary>
 
 1. **Appearing worktrees** the first walks after many worktrees appear stay slow (#984): on Windows 11 one hook took 22 to 26 s as 130 appeared, at `main`, here and with our change for #795.
 2. **macOS** never ran; its file calls answer as Linux's do.
@@ -84,8 +84,7 @@ It stands on `main` 1609ac3a30. It shares `code-rule-bridge.ts` and its test fil
 **Smaller gaps**
 
 - **Router state.** The router keeps each worktree root's eligibility row, and the rule lane of a worktree in which an edit was audited, until the session ends; neither starts Git or reads a file per root at a boundary, and no slow hook here came from them.
-- **Evaluator failure.** As at `main`, a failed evaluator call puts back what the session saw of a worktree Git stopped listing and listed again inside that call, so a write in the new worktree is judged against the removed one's file.
-- **Shell command across both.** As at `main`, a shell command that ran across both updates keeps what the session saw of a path in such a worktree before it, and the next walk judges that file against the removed worktree's.
+- **Shell command across a relisting.** As at `main`, a shell command that ran while Git stopped listing a worktree and listed another at its path keeps what the session saw of a path there before it, and the next walk judges that file against the removed worktree's.
 - **Suspended session.** A worktree removed while the session was suspended keeps its `HEAD` after the session opens again, at `main` and here; here no walk asks Git about it, and a write in a new worktree at that path was recorded as first seen at both.
 
 **Limits that stay**
@@ -106,11 +105,11 @@ The description on GitHub is the record: "How you tested it" holds the runs on `
 |---|---|---|
 | Windows 11, one machine alone | Two sessions through the registered Claude Code hooks and a daemon, 51 then 130 worktrees seen and removed, `main` and 4073cf0bf5 each built from its commit | `main`: hook after `git status` 4,764 ms median with 181 removed (19 hooks at or over 2 s), 1,459 with 51; 3,447 Git processes in 5 minutes. 4073cf0bf5: 209 and 209, turn ends 182; no hook at or over 2 s; 9 Git processes; the shell write that breaks a rule reported at its result. |
 | Linux x64, one machine | The same at `main` and 86c385dc85 | `main`: shell results 772 ms median with 181 removed, 406 with 51. 86c385dc85: 174 and 169, turn ends 175; the shell write that breaks a rule reported at its result. |
-| Linux x64 | Each new line taken out in turn, and the cases at `main`, at the first commit and at dce28fdd94 | Every one fails its own case (vitest exit 1); the head passes them all. |
-| Windows 11 | The 14 test files importing the changed module at 4073cf0bf5, engine built for that commit | 559 passed, 2 skipped, none failing; `main` 549 passed, 1 skipped, 1 timing case failing at `main` only. |
-| Linux x64 | The same 14 files at 4073cf0bf5 and at `main` on one machine; the changed test file at this head | 556 passed and 5 skipped, none failing; `main` 546 passed and 5 skipped; at this head 305 passed, 3 skipped. |
+| Linux x64 | Each new line taken out in turn, and the cases at `main`, at the first commit, at dce28fdd94 and at 6ceff37d92 | Every one fails its own case (vitest exit 1); the head passes them all. |
+| Windows 11 | The 14 test files importing the changed module at this head and at `main` 04ad4184ea, engine built for each commit | 560 passed, 2 skipped, none failing; `main` 550 passed, 1 skipped. |
+| Linux x64 | The same 14 files at this head and at `main` 04ad4184ea on one machine; the changed test file alone | 557 passed and 5 skipped, none failing; `main` 546 passed and 5 skipped; the changed file 306 passed, 3 skipped. |
 | Linux x64 | CI's lint and type-check job, and the reviewer's rules against `main` 1609ac3a30, at this head | Each step passes; no new finding. |
 
-**Sources.** The branch at 6ceff37d92 and its diff against `main` 1609ac3a30, read on 22 November 2026; runs on Linux x64 machines and Windows 11 machines.
+**Sources.** The branch at f7de2a83db and its diff against `main` 1609ac3a30, read on 22 November 2026; runs on Linux x64 machines and Windows 11 machines.
 
 </details>
