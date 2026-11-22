@@ -148,6 +148,13 @@ impl Exports {
     /// derived (`held_rows`) is read where it lies, its live rows not given before written once into the export's
     /// relation, as one batch's: nothing of the chunk's relation is kept. Other sources' rows are copied in.
     pub fn add(&mut self, rel: &str, width: usize, rows: &dyn Source) -> usize {
+        self.add_owned(rel, width, rows, None)
+    }
+
+    /// `add`, where `own` is the export's location column and whether a document is one of the giving chunk's own:
+    /// a row of such a document no other chunk gives, and the chunk's relation holds it once, so it is appended
+    /// unchecked (as a memo hit's own rows are, `append_own`). Only the others are looked up in the export's set.
+    pub fn add_owned(&mut self, rel: &str, width: usize, rows: &dyn Source, own: Option<(usize, &dyn Fn(i64) -> bool)>) -> usize {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
         debug_assert!(held.source.is_none(), "export {rel} added to after the cross-file part read it");
         let start = held.len() as u32;
@@ -163,12 +170,37 @@ impl Exports {
                 r.each_run(0, n as u32, |p, lo, hi, _| whole &= lo == 0 && hi == p.len());
                 if whole {
                     r.each_run(0, n as u32, |p, _, _, _| held.rows.append_segment(p));
+                    let own = own.filter(|(at, _)| *at < width);
+                    if let Some((at, _)) = own
+                        && held.at.is_some_and(|a| a != at)
+                    {
+                        held.set_all();
+                    }
+                    // The own documents' rows, unchecked: runs of ids, and the documents they are of.
+                    let mut unchecked: Option<std::ops::Range<u32>> = None;
                     let mut added = 0;
                     for i in 0..n {
                         let id = start + i as u32;
                         if dead.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1) {
                             held.kill(id);
                             continue;
+                        }
+                        if let Some((at, mine)) = own {
+                            let d = super::memo::document_of(held.get(id, at));
+                            if mine(d) {
+                                held.at = Some(at);
+                                held.unset_docs.insert(d);
+                                match &mut unchecked {
+                                    Some(run) if run.end == id => run.end = id + 1,
+                                    _ => {
+                                        if let Some(run) = unchecked.replace(id..id + 1) {
+                                            held.unset.push(run);
+                                        }
+                                    }
+                                }
+                                added += 1;
+                                continue;
+                            }
                         }
                         // A row of a document whose own rows were appended unchecked may be one of them: they are set
                         // first.
@@ -178,6 +210,9 @@ impl Exports {
                         if held.keep_once(id) {
                             added += 1;
                         }
+                    }
+                    if let Some(run) = unchecked {
+                        held.unset.push(run);
                     }
                     return added;
                 }

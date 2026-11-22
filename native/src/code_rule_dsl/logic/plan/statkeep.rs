@@ -323,6 +323,74 @@ impl RelStats {
         self.documents_scanned_in(source, from, sign, WINDOW);
     }
 
+    /// `documents_scanned` of rows `lo..hi` of `source`, which hold whole documents: one chunk's own files' rows of a
+    /// relation its batch holds (decision 0458's statistics, counted where the chunk's rows lie).
+    pub fn documents_scanned_range(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, lo: usize, hi: usize, from: &[usize], sign: i64) {
+        debug_assert_eq!(from.len(), self.cols.len());
+        let width = source.columns().len();
+        let mut at = lo;
+        while at < hi {
+            let end = window_end(source, at, hi, WINDOW).min(hi);
+            self.count(
+                end - at,
+                width,
+                &mut |c, each| {
+                    source.for_rows_in(at..end, &[c], &mut |r, row| {
+                        each(r - at, row[0]);
+                        true
+                    });
+                },
+                sign,
+                None,
+                Some(from),
+            );
+            at = end;
+        }
+    }
+
+    /// Another set of documents' statistics in (none of them counted here already): each sum adds, each value's count
+    /// adds, and the sketches add. The same as counting both sets' rows here, whole documents at a time. `false`, and
+    /// nothing changed, when either is a structure's (`of_structure`) or their columns differ.
+    pub fn merge(&mut self, other: &RelStats) -> bool {
+        if self.columns != other.columns || self.shape.is_some() || other.shape.is_some() {
+            return false;
+        }
+        self.rows += other.rows;
+        self.partial |= other.partial;
+        for (a, b) in self.cols.iter_mut().zip(&other.cols) {
+            a.sqd += b.sqd;
+            match &b.zero {
+                Some(z) => {
+                    let pairs: Vec<(i64, i64)> = z.iter().collect();
+                    Self::zeros(a, &pairs, 1);
+                }
+                None => {
+                    a.zero = None;
+                    a.zero_sq += b.zero_sq;
+                }
+            }
+            a.local_ndv += b.local_ndv;
+            a.crossing += b.crossing;
+            match (&mut a.exact, &b.exact) {
+                (Some(x), Some(y)) => {
+                    for (v, n) in y.iter() {
+                        x.add(v, n);
+                    }
+                    if x.len() > EXACT {
+                        a.exact = None;
+                    }
+                }
+                _ => a.exact = None,
+            }
+            a.sketch.merge(&b.sketch, 1);
+            match (&mut a.pairs, &b.pairs) {
+                (Some(x), Some(y)) => x.merge(y, 1),
+                _ => a.pairs = None,
+            }
+        }
+        true
+    }
+
     /// `documents_scanned`, `window` rows at a time and on to the end of a window's last document.
     fn documents_scanned_in(&mut self, source: &dyn crate::code_rule_dsl::facts::vtab::Source, from: &[usize], sign: i64, window: usize) {
         debug_assert_eq!(from.len(), self.cols.len());
@@ -938,6 +1006,39 @@ pub mod tests {
             windowed.documents_scanned_in(&source(&all), &from, 1, window);
             assert_eq!(windowed, flat, "window {window}");
         }
+    }
+
+    /// Each chunk's documents counted where its rows lie (`documents_scanned_range`, a range of whole documents of a
+    /// source holding others too) and the chunks' counts merged (`merge`) are the count of all their documents: the
+    /// statistics the run's stats phase takes from its chunks (decision 0458) are those it counted off the batch.
+    #[test]
+    fn chunks_counts_merged_are_the_count_of_all_their_documents() {
+        let docs: Vec<Vec<i64>> = (1..=24).map(|d| doc(d, 20 + d * 5, d % 4)).collect();
+        let names = || vec!["n".to_owned(), "kind".to_owned(), "name".to_owned()];
+        let from = [0usize, 1, 2];
+        let source = |rows: &[i64]| crate::code_rule_dsl::facts::vtab::Relation::from_rows(&["n", "kind", "name"], &mut rows.as_chunks::<3>().0.iter().map(|r| r.to_vec()));
+        let mut whole = RelStats::new(names());
+        whole.documents_scanned(&source(&docs.concat()), &from, 1);
+        // Three chunks, each of every third document, its rows counted where they lie in a source of all of them.
+        let all = source(&docs.concat());
+        let starts: Vec<usize> = docs.iter().scan(0, |at, d| Some(std::mem::replace(at, *at + d.len() / 3))).collect();
+        let mut merged: Option<RelStats> = None;
+        for chunk in 0..3 {
+            let mut k = RelStats::new(names());
+            for (i, d) in docs.iter().enumerate().filter(|(i, _)| i % 3 == chunk) {
+                k.documents_scanned_range(&all, starts[i], starts[i] + d.len() / 3, &from, 1);
+            }
+            match &mut merged {
+                None => merged = Some(k),
+                Some(m) => assert!(m.merge(&k)),
+            }
+        }
+        let merged = merged.expect("three chunks");
+        assert_eq!(merged.statistics(&|_| true), whole.statistics(&|_| true));
+        assert_eq!(merged.rows(), whole.rows());
+        // Columns that differ are not merged.
+        let mut other = RelStats::new(vec!["n".to_owned()]);
+        assert!(!other.merge(&merged));
     }
 
     #[test]

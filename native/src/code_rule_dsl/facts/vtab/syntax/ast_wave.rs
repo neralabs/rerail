@@ -132,11 +132,45 @@ const WAVE_GPU_HOST_PER_NODE_PASS: f64 = 4e-9;
 
 impl MatcherWave {
     fn on(&self, backend: crate::code_rule_dsl::transducer::packed::MatcherBackend) -> WaveFound {
+        use crate::code_rule_dsl::transducer::packed::MatcherBackend;
         let started = std::time::Instant::now();
-        let (found, run) = self.wave.roots_batch(backend, &self.tapes, &self.active).map_err(|e| format!("{e:?}"))?;
+        // On the cores, parts of the tapes side by side: a tape's labels and roots read that tape alone, so each part's
+        // roots are the whole's at its tapes (a corpus batch's wave over every file ran on one core, 8 s on t50's
+        // product run). Each part's limited roots are placed back at their tapes.
+        let grain = self.tapes.len().div_ceil(rayon::current_num_threads() * 4).max(WAVE_PART_TAPES);
+        if !matches!(backend, MatcherBackend::Cpu) || self.tapes.len() <= grain {
+            let (found, run) = self.wave.roots_batch(backend, &self.tapes, &self.active).map_err(|e| format!("{e:?}"))?;
+            return Ok((found, run, started.elapsed().as_secs_f64()));
+        }
+        use rayon::prelude::*;
+        let starts: Vec<usize> = (0..self.tapes.len()).step_by(grain).collect();
+        let parts: Vec<Result<_, String>> = crate::code_rule_dsl::logic::profile::on_cores(|| {
+            starts
+                .par_iter()
+                .map(crate::code_rule_dsl::logic::profile::carried("ast matcher wave part (pool)", |&at: &usize| {
+                    let end = (at + grain).min(self.tapes.len());
+                    let active: Vec<Vec<bool>> = self.active.iter().map(|a| a[at..end].to_vec()).collect();
+                    self.wave.roots_batch(backend, &self.tapes[at..end], &active).map_err(|e| format!("{e:?}"))
+                }))
+                .collect()
+        });
+        let mut found: Vec<Vec<std::collections::BTreeSet<u32>>> = vec![Vec::with_capacity(self.tapes.len()); self.active.len()];
+        let mut run = crate::code_rule_dsl::transducer::packed::WaveRun::default();
+        for (&at, part) in starts.iter().zip(parts) {
+            let (part_found, part_run) = part?;
+            for (all, theirs) in found.iter_mut().zip(part_found) {
+                all.extend(theirs);
+            }
+            run.limited.extend(part_run.limited.into_iter().map(|(c, t)| (c, t + at)));
+        }
         Ok((found, run, started.elapsed().as_secs_f64()))
     }
 }
+
+/// The fewest tapes a part of a CPU wave has: a part labels its tapes as one pass, whose setup a few would not carry
+/// (parts of 16 tapes took a chunk's wave from one pass to several, and the waves' CPU from 12 s to 24 s on t50's
+/// product run). A chunk's wave is one part; a corpus batch's, of every file, is split.
+const WAVE_PART_TAPES: usize = 256;
 
 impl rerail_accel::kernel::Program for MatcherWave {
     fn name(&self) -> &'static str {

@@ -645,6 +645,10 @@ impl Batch {
                 s.makers.push(me);
                 (need, waits, Claim { rows: &self.rows, me, docs })
             };
+            // A measurement aid: `RERAIL_BATCH_TRACE` names the reader that first makes the batch's rows.
+            if std::env::var_os("RERAIL_BATCH_TRACE").is_some() && self.rows.makes.load(std::sync::atomic::Ordering::Relaxed) == 0 {
+                eprintln!("RERAIL_BATCH_TRACE first rows made ({} documents):\n{}", need.len(), std::backtrace::Backtrace::force_capture());
+            }
             let made = self.make_rows(&need, self.rows.first(), &[]).and_then(|m| self.group_rels(m, &need));
             self.rows.makes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             let mut s = self.rows.state.lock();
@@ -716,7 +720,10 @@ impl Batch {
     pub(super) fn is_complete(&self) -> bool {
         self.rows.complete.get().is_some()
     }
-    /// Every relation, every document's rows made: those unmade as one group.
+    /// Every relation, every document's rows made: those unmade as one group. (Not as groups side by side: a maker
+    /// running a pool job that reads the batch makes what that job reads, so many makers at once made documents twice
+    /// and more, and one run grew past 20 GB. The group's own work runs on the pool instead: its matcher wave by parts
+    /// of its tapes, `ast_wave::matched`.)
     pub(super) fn complete(&self) -> &[Arc<Relation>] {
         if let Some(c) = self.rows.complete.get() {
             return c;
