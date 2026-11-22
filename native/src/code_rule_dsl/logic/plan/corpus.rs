@@ -9318,7 +9318,8 @@ fn run_observed_within(
             if let Some(source) = base_layered.remove(&rel) {
                 if layered_counted.contains(&rel) {
                     let columns = source.columns();
-                    counts.push(Count { rel, columns, held, source, kept: None, layered: true });
+                    let kept = kept_stats.remove(&rel);
+                    counts.push(Count { rel, columns, held, source, kept, layered: true });
                     continue;
                 }
                 let statistics = if semijoin.contains(&rel) {
@@ -9343,7 +9344,8 @@ fn run_observed_within(
             let source = Arc::clone(corpus_sources.get(&rel).ok_or_else(|| Error::Plan(format!("{rel} is not in the corpus batch (it holds {:?})", corpus_sources.keys().collect::<BTreeSet<_>>())))?);
             // The source's columns, in its rows' order: the keyed walk's positions are of these.
             let columns = source.columns();
-            let kept = if semijoin.contains(&rel) { None } else { kept_stats.remove(&rel) };
+            // A semi-join's too: where its keyed walk is refused, it is counted as a base relation is (`Measured`).
+            let kept = kept_stats.remove(&rel);
             counts.push(Count { rel, columns, held, source, kept, layered: false });
         }
         // Each relation counted on the pool, side by side: they read the batch alone, which makes a document once,
@@ -9352,8 +9354,10 @@ fn run_observed_within(
             /// A semi-join's rows at the held nodes (`SemijoinCounts`): their number and statistics, the rows, and how
             /// many nodes the kept rows answered for.
             Looked(usize, Vec<Stat>, retain::SemijoinRows, usize),
-            /// A semi-join's every row, measured (its keyed walk refused).
-            Measured(Vec<Stat>),
+            /// A semi-join's every row, its keyed walk refused: counted as a base relation's are (`base_counted`), kept
+            /// beside the documents' table and patched by the changed documents, not measured whole each run, which
+            /// made every document (`docof`, `end_line`, `visit_index` on ep2's edit).
+            Measured(Vec<Stat>, &'static str, Option<super::statkeep::RelStats>),
             Base(Vec<Stat>, &'static str, Option<super::statkeep::RelStats>),
         }
         let carry = crate::code_rule_dsl::logic::run_state::Carry::here();
@@ -9413,8 +9417,9 @@ fn run_observed_within(
                     Some(Counted::Looked(st.first().map_or(0, |s| s.1 as usize), st, retain::SemijoinRows { width: at.len(), held, rows }, answered))
                 })();
                 looked.unwrap_or_else(|| {
-                    let _m = crate::code_rule_dsl::logic::profile::span(|| format!("a base relation measured ({} rows)", source.len()));
-                    Counted::Measured(syntax::statistics(source))
+                    let held: BTreeSet<&str> = c.held.iter().map(String::as_str).collect();
+                    let (st, how, keep) = base_counted(&c.rel, source, &held, c.kept.clone());
+                    Counted::Measured(st, how, keep)
                 })
             };
             // Counted in waves within a share of the budget (decision 0126): a column's pass lists each row's
@@ -9467,12 +9472,15 @@ fn run_observed_within(
                     }
                     (rows, st)
                 }
-                Counted::Measured(st) => {
-                    crate::code_rule_dsl::logic::profile::decision("a semi-join's rows measured whole", || format!("{rel}: columns {columns:?}, input {:?}", super::super::sql::select::input_columns(&rel)));
-                    crate::code_rule_dsl::logic::profile::decision("a base relation measured, not kept", || format!("{rel}: {} rows", source.len()));
+                Counted::Measured(st, how, keep) => {
+                    crate::code_rule_dsl::logic::profile::decision("a semi-join's rows counted whole", || format!("{rel}: columns {columns:?}, input {:?}: {how}", super::super::sql::select::input_columns(&rel)));
+                    if let Some(k) = keep {
+                        base_stats_out.push((rel.clone(), base_digest(&rel), k));
+                    }
                     // A semi-join's, kept beside its frame for the next run's kept route (`kept_input_stats`).
                     semijoin_stats.insert(rel.clone(), st.clone());
-                    (source.len(), st)
+                    // Its rows its statistics', never its `len`, which made every document (Q332).
+                    (st.first().map_or_else(|| source.len(), |s| usize::try_from(s.1).unwrap_or(0)), st)
                 }
                 Counted::Base(st, how, keep) => {
                     crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
