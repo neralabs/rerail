@@ -183,6 +183,39 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
             d.reads.push(Read { reader: reader.clone(), source: source.clone(), rel, local });
         }
     }
+    // A program of no `.language` (a test's, a phase's) is of the language its library is written for: its pass is
+    // the host its library's contexts name.
+    if d.language.is_empty()
+        && let Some(c) = d.contexts.values().find(|c| !d.contexts.contains_key(&c.host))
+    {
+        d.language = c.host.clone();
+        for r in d.reads.iter_mut().filter(|r| r.reader.is_empty()) {
+            r.reader = d.language.clone();
+        }
+    }
+    // A library declares its context's exports beside the rules that derive them, and a program's library is only
+    // what its outputs reach: an export declared that no rule derives or reads (its rules unreached) is no export, and
+    // a context left with none is no pass. One a rule reads that nothing derives, or one never declared, is refused
+    // below.
+    let read_rels: BTreeSet<&str> = v.rules().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).collect::<Vec<_>>()).collect();
+    let mut dropped: BTreeSet<(String, String)> = BTreeSet::new();
+    for c in d.contexts.values_mut() {
+        let reads = &d.reads;
+        c.exports.retain(|e| {
+            let made = instance(&c.name, e);
+            let derived = [e, &made].into_iter().any(|e| v.rel(e).is_some_and(|r| v.heads(r).next().is_some()));
+            let local_read = |l: &str| read_rels.contains(l);
+            let read = local_read(e) || local_read(&made) || reads.iter().any(|r| r.source == c.name && &r.rel == e && local_read(&r.local));
+            let unreached = !derived && !read && (v.rel(e).is_some() || v.declares(e));
+            if unreached {
+                dropped.insert((c.name.clone(), e.clone()));
+            }
+            !unreached
+        });
+    }
+    let gone: BTreeSet<String> = d.contexts.values().filter(|c| c.exports.is_empty()).map(|c| c.name.clone()).collect();
+    d.contexts.retain(|name, _| !gone.contains(name));
+    d.reads.retain(|r| !gone.contains(&r.source) && !gone.contains(&r.reader) && !dropped.contains(&(r.source.clone(), r.rel.clone())));
     let pass = |p: &str| p == d.language || d.contexts.contains_key(p);
     for c in d.contexts.values() {
         if !pass(&c.host) {
@@ -371,11 +404,12 @@ fn view_nodes<'v>(v: &'v Version, d: &Declared, pass: &str, r: RuleRef<'v>) -> V
 
 /// Whether rule `r` reads what context `c` exports, by another pass's name for it: a host's rule counting the
 /// context's rows in a relation of its own (rule 5, `name_node(n) :- guest_names(n)`), so no rule of the context's
-/// instance of that relation.
+/// instance of that relation. A read by the export's own name (`.from annotation ann_in`) names the context's relation
+/// in both passes: a rule reading it is the context's (`ann_dotted(s, x) :- ann_in(e, s), …`).
 fn reads_own_export(v: &Version, d: &Declared, c: &str, r: RuleRef<'_>) -> bool {
     r.reads().any(|a| {
         let x = v.rel_name(a.rel());
-        d.reads.iter().any(|read| read.source == c && read.reader != c && read.local == x)
+        d.reads.iter().any(|read| read.source == c && read.reader != c && read.local == x && read.local != read.rel)
     })
 }
 

@@ -2576,7 +2576,7 @@ v(n) :- kind(n, \"assert_statement\").
     assert_eq!(got, [("c1".to_owned(), 1), ("c2".to_owned(), 1), ("c3".to_owned(), 1), ("v".to_owned(), 1)]);
 }
 
-/// Decision 0597 (`logic::contexts`), through the library: an annotation context holds its own instance of the library's `unparen` (and what it reads),
+/// Decision 0597 (`logic::contexts`), through the library: a context of quoted annotations holds its own instance of the library's `unparen` (and what it reads),
 /// while the host keeps its own for its own rules; the roots are the annotations' trees the host parses.
 #[test]
 fn a_context_holds_the_librarys_rules_it_reaches_as_its_own() {
@@ -2585,26 +2585,26 @@ fn a_context_holds_the_librarys_rules_it_reaches_as_its_own() {
     let text = "\
 .language python
 #include \"python/ast.rerail\"
-.decl ann_root(r: node)
-ann_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
-.decl ann_inner(r: node, e: node)
-ann_inner(r, e) :- ann_root(r), unparen(r, e).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl quoted_inner(r: node, e: node)
+quoted_inner(r, e) :- quoted_root(r), unparen(r, e).
 .decl host_inner(e: node)
 host_inner(e) :- kind(n, \"parenthesized_expression\"), unparen(n, e).
 .decl seen(e: node)
 seen(e) :- quoted(_, e).
 seen(e) :- host_inner(e).
 .output seen
-.context annotation of python roots ann_root exports ann_inner
-.from python ann_root for annotation
-.from annotation ann_inner as quoted
+.context quoted of python roots quoted_root exports quoted_inner
+.from python quoted_root for quoted
+.from quoted quoted_inner as quoted
 ";
     let v = parse_version(text).unwrap();
     let all = v.show();
-    assert!(!rules_of(&v, "rr_cx_annotation_unparen").is_empty(), "the context's own unparen: {all}");
-    assert!(rules_of(&v, "rr_cx_annotation_ann_inner").iter().all(|r| r.contains("rr_cx_annotation_unparen(") && r.contains(" ann_root(")), "{all}");
+    assert!(!rules_of(&v, "rr_cx_quoted_unparen").is_empty(), "the context's own unparen: {all}");
+    assert!(rules_of(&v, "rr_cx_quoted_quoted_inner").iter().all(|r| r.contains("rr_cx_quoted_unparen(") && r.contains(" quoted_root(")), "{all}");
     assert!(!rules_of(&v, "unparen").is_empty() && rules_of(&v, "host_inner").iter().all(|r| r.contains(" unparen(")), "the host's own: {all}");
-    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_annotation_ann_inner(")), "{all}");
+    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_quoted_quoted_inner(")), "{all}");
 }
 
 // ---- decision 0597: a guest context is a pass of its own rules (step 2's ladder) ----

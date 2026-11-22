@@ -550,6 +550,26 @@ fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
     assert_eq!(together, [2, 1, 2], "{batch:#}");
 }
 
+/// Decision 0597 step 3: ANN401 reads a quoted annotation's tree in the annotation context, and a string nested in
+/// one (`'Node'` in `"Optional['Node']"`) is parsed too: it is a forward reference, not an invalid one, so no `Any`.
+/// A quoted `Any` is.
+#[test]
+fn a_nested_quoted_annotation_is_its_code_and_no_any() {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("ann401-nested");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(
+        dir.join("u.py"),
+        "from typing import Any, List, Optional\nclass Node: ...\ndef f(n: \"Node\", m: \"Optional['Node']\" = None) -> \"List['int']\":\n    return []\ndef g(a: \"Any\") -> None:\n    pass\n",
+    )
+    .unwrap();
+    let pack = crate::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-ann401-any-type.rerail");
+    let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&pack), &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut lines: Vec<u64> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_u64().unwrap_or(0)).collect();
+    lines.sort_unstable();
+    assert_eq!(lines, [5], "only g's quoted Any: {report:#}");
+}
+
 /// O-pha000-kept-part: a reader whose body is only a negation of a demanded relation (`PHA000 :- !allow_status(
 /// "plan_helpers", "valid")`) demands nothing, so the relation is built whole: computed only for its other readers'
 /// keys, it held no row for this one, and the constant finding was reported though the status is valid. The run

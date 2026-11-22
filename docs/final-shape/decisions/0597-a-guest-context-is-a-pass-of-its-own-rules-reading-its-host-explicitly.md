@@ -194,6 +194,57 @@ The template's findings stand at the file's lines.
    `typing` and `ann_*`; the host's readers of annotation facts read `annotation.*`. Tests, kept and passing:
    `quoted_annotations_are_read_as_their_code`, #923's `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone`,
    C408's `a: "dict({})"`, a nested annotation, R9's placement.
+
+   As built (2026-11-22). The ladder:
+
+   | Rung | Test | Shape it locks |
+   |---|---|---|
+   | 3.1 | `a_context_declared_twice_exports_both_declarations` | each library file declares the context again, with its own exports |
+   | 3.2 | `a_contexts_read_of_its_hosts_node_binds_only_its_own` | `host_node` and `guest_of` are not guarded: their host column is no node of the context |
+   | 3.3 | `a_hosts_rule_reading_a_contexts_export_is_no_rule_of_the_context` | a host rule that unions an export, by an alias, is no rule of the instance |
+   | 3.4 | `a_program_of_no_language_is_its_librarys_host` | a test's or a phase's program takes its contexts' host as its pass |
+   | 3.5 | `a_contexts_rule_reading_an_export_by_its_own_name_is_the_contexts` | a read with no alias names the context's own relation in both passes |
+   | 3.6 | `a_nested_quoted_annotation_is_its_code_and_no_any` | ANN401 over a nested string: parsed, a forward reference, not `Any` |
+
+   - **The library.**
+     - `python/annotation.rerail` holds the extraction (rule 3), which is the host's:
+       - `ann_root`, `ann_ctx`, `str_node`, `ann_str`;
+       - `ann_parse(s, r)`, every string's tree, nested ones too;
+       - `ann_host(h, s)`, a tree's host node and its outermost string;
+       - `ann_tree`, the roots.
+     - It also holds `ann_in`, the context's nodes by their outermost string.
+     - `ann_parse` is the only rule that asks for a parse. A reader reads it, never `parsed`: one request of a
+       cross-file relation would make every request of the program cross-file, unanswered by its files (the oracle
+       test's runs admitted no value until this held).
+     - The context reads the host's `ann_parse` (`.from python ann_parse for annotation`). Its own instance would hold
+       nothing, as no annotation root is in a tree.
+     - Each reading file declares the context again with its exports:
+       - `names` exports `look` and `miss`;
+       - `ast` exports `ann_dotted`;
+       - `annotations` (ANN) exports `annt_root_*`;
+       - `points-to` exports `pt_aleaf`, `pt_ahead`, `pt_aarg`, `pt_dtype`, `pt_aself`, `pt_look`, `pt_qn` and
+         `pt_builtin_ref`.
+     - The host counts an export's rows in rules of its own (rule 5).
+   - **Lookups.** A guest's name starts from its tree's host node:
+     - `ann_start` and `pt_hstart` are keyed by `ann_host`'s h, which `host_node` gives every node of a tree.
+     - Keying them by the string matched nothing: `host_node` gives the string's content.
+     - The walk then steps through the host's `scope_up` and `pt_up`, as one meaning (rule 4).
+   - **Engine.**
+     - Repeated declarations merge (3.1).
+     - An export a library declares whose rules the program's outputs never reach (no rule derives or reads it) is
+       dropped, and a context left with no export is no pass. An export declared nowhere is still refused.
+   - **Dropped.** `ruff-classes`' `ann_input` from `parsed` went: RUF013 never found a quoted annotation, with or
+     without parses.
+   - **Not changed.** `typing`'s `type_ctx` reads quoted strings that are not annotation roots. Those are not the
+     context's.
+   - **2.9.** Covered by #923's test in the shape 2.9 needed: both policies include `ruff.rerail`, so both ask the same
+     guests and run as one pack.
+   - **Results.**
+     - The probe gives 20 findings, the baseline's.
+     - corpus0 × B-now gives 463 findings, identical to the earlier run's.
+     - The targeted set passes: contexts, corpus, session, rr, tape and oracle tests (88 and 13).
+     - The names.rerail include of annotation comes before imports: names and imports are one unit, which must be
+       listed after what it includes.
 4. **Removal.** Hiding's annotation range and copies, `FoldOwn`, the narrow copies, `combining::one_document`, and
    their tests, ported to the passes' (removal is removal: no switch to the old path).
 5. **f-strings and Vue.** `python/format-spec` and SQL in a template; `vue/expression` reading the script's bindings.

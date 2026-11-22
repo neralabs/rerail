@@ -167,3 +167,22 @@ fn a_hosts_rule_reading_a_contexts_export_is_no_rule_of_the_context() {
     let host = rules_of(&v, "name_node");
     assert!(host.len() == 2 && host.iter().any(|r| r.contains("rr_cx_annotation_name_node($n)")), "{}", v.show());
 }
+
+/// Two exports, one read by the other's rule: the host reads both by their own names (`.from annotation ann_in`), so
+/// the rule reading one is the context's, and its instance reads the context's own (python/ast's `ann_dotted`).
+#[test]
+fn a_contexts_rule_reading_an_export_by_its_own_name_is_the_contexts() {
+    let text = PROGRAM.replace("exports ann_names", "exports ann_names, ann_short").replace(".output used, bound", ".decl ann_short(x: symbol)\nann_short(x) :- ann_names(x), !bound(x).\n.decl short(x: symbol)\nshort(x) :- ann_short(x).\n.output used, bound, short") + ".from annotation ann_short\n";
+    let v = parse_version(&text).unwrap();
+    let inner = rules_of(&v, "rr_cx_annotation_ann_short");
+    assert!(inner.len() == 1 && inner[0].contains("rr_cx_annotation_ann_names("), "{}", v.show());
+    assert!(rules_of(&v, "short").iter().all(|r| r.contains("rr_cx_annotation_ann_short(")), "{}", v.show());
+}
+
+/// A program of no `.language` (a test's, a typing phase's) is of the language its library is written for: the host
+/// its contexts name is its pass, and its reads are that pass's.
+#[test]
+fn a_program_of_no_language_is_its_librarys_host() {
+    let v = parse_version(&PROGRAM.replace(".language python\n", "")).unwrap();
+    assert!(rules_of(&v, "used").iter().all(|r| r.contains("rr_cx_annotation_ann_names(")), "{}", v.show());
+}
