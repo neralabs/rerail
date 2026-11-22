@@ -250,6 +250,7 @@ pub fn compile(ssa: &Ssa, name: &str, w: u32, places: &Places) -> R<(Compiled, O
         module.define_function(fid, &mut ctx).map_err(|e| Error(format!("{name}: {}: {e:?}", f.name)))?;
         if let (Some(dir), Some(v)) = (&asm, ctx.compiled_code().and_then(|c| c.vcode.clone())) {
             let _ = std::fs::write(format!("{dir}/{name}.w{w}.{k}{}.s", if full { ".full" } else { "" }), format!("; {}\n{v}", f.name));
+            let _ = std::fs::write(format!("{dir}/{name}.w{w}.{k}{}.opt.clif", if full { ".full" } else { "" }), ctx.func.display().to_string());
         }
         kept = kept.and_then(|kp| kp.add(&ctx));
         if map.is_some() && !full {
@@ -567,13 +568,54 @@ fn mask_of_bits(b: &mut FunctionBuilder, bits: Value, w: u32) -> Vec<Value> {
         .collect()
 }
 
-/// A lanes value whose lane `j` is `first + j * step` (`first` an `I64`): in its type's bits, or (`exact`) as an
-/// integer, so a cast that widens it keeps it.
-#[derive(Clone, Copy)]
+/// A lanes value whose lane `j` is `first + j * step` (`first` a 64-bit sum, `Lin`): in its type's bits, or
+/// (`exact`) as an integer, so a cast that widens it keeps it.
+#[derive(Clone)]
 struct Steps {
-    first: Value,
+    first: Lin,
     step: i64,
     exact: bool,
+}
+
+/// A 64-bit integer as a sum: of `I64` values each times a constant, each with the loop depth of the block that makes
+/// it, and a constant. Made (`Cg::sum`) in order of depth, so the part a loop does not change is one value its loop
+/// can be left with (Cranelift hoists it), and the loop adds only what changes (an address: a pointer and its
+/// counter's multiple, not the counter's sum with the invariant terms, widened and scaled each time round).
+#[derive(Clone, Debug, Default)]
+struct Lin {
+    terms: Vec<(Value, i64, u32)>,
+    k: i64,
+}
+
+impl Lin {
+    fn leaf(v: Value, depth: u32) -> Lin {
+        Lin { terms: vec![(v, 1, depth)], k: 0 }
+    }
+
+    fn konst(k: i64) -> Lin {
+        Lin { terms: Vec::new(), k }
+    }
+
+    fn plus(mut self, o: Lin) -> Lin {
+        for t in o.terms {
+            match self.terms.iter_mut().find(|x| x.0 == t.0) {
+                Some(x) => x.1 = x.1.wrapping_add(t.1),
+                None => self.terms.push(t),
+            }
+        }
+        self.k = self.k.wrapping_add(o.k);
+        self.terms.retain(|t| t.1 != 0);
+        self
+    }
+
+    fn times(mut self, c: i64) -> Lin {
+        for t in &mut self.terms {
+            t.1 = t.1.wrapping_mul(c);
+        }
+        self.k = self.k.wrapping_mul(c);
+        self.terms.retain(|t| t.1 != 0);
+        self
+    }
 }
 
 fn vconst32(b: &mut FunctionBuilder, x: [u32; 4]) -> Value {
@@ -619,6 +661,10 @@ struct Cg<'a, 'b> {
     /// the branch's side dominates (`bound`).
     idom: Vec<usize>,
     below: HashMap<V, Vec<(u64, usize)>>,
+    /// Each value's block, and each block's loop depth (the natural loops it is in), for `Lin`'s order.
+    block_of: Vec<u32>,
+    depth: Vec<u32>,
+    preds: Vec<Vec<usize>>,
     /// Splats and 64-bit masks made in the block being made.
     splats: HashMap<(V, u32), Vec<Value>>,
     masks64: HashMap<V, Vec<Value>>,
@@ -665,6 +711,9 @@ impl<'a, 'b> Cg<'a, 'b> {
             steps: HashMap::new(),
             idom: Vec::new(),
             below: HashMap::new(),
+            block_of: Vec::new(),
+            depth: Vec::new(),
+            preds: Vec::new(),
             splats: HashMap::new(),
             masks64: HashMap::new(),
             fail: None,
@@ -744,6 +793,7 @@ impl<'a, 'b> Cg<'a, 'b> {
         }
         self.idom = crate::ssa::idoms(f);
         self.bounds_of_branches();
+        self.loops();
         let order = crate::ssa::rpo(f);
         for &bk in &order {
             if bk != 0 {
@@ -1635,6 +1685,117 @@ impl<'a, 'b> Cg<'a, 'b> {
         }
     }
 
+    /// `block_of` and `depth`: for each back edge (a jump to a block that dominates it), its natural loop's blocks
+    /// one deeper.
+    fn loops(&mut self) {
+        let f = self.f;
+        let nb = f.blocks.len();
+        self.block_of = vec![0; f.insts.len()];
+        let mut preds = vec![Vec::new(); nb];
+        for (b, blk) in f.blocks.iter().enumerate() {
+            for &x in blk.params.iter().chain(&blk.insts) {
+                self.block_of[x as usize] = b as u32;
+            }
+            for s in f.succs(b) {
+                preds[s as usize].push(b);
+            }
+        }
+        self.depth = vec![0; nb];
+        for b in 0..nb {
+            for h in f.succs(b) {
+                let h = h as usize;
+                if !self.dominates(h, b) {
+                    continue;
+                }
+                let mut body = vec![false; nb];
+                body[h] = true;
+                let mut work = vec![b];
+                while let Some(x) = work.pop() {
+                    if !body[x] {
+                        body[x] = true;
+                        work.extend(&preds[x]);
+                    }
+                }
+                for (x, &inside) in body.iter().enumerate() {
+                    self.depth[x] += u32::from(inside);
+                }
+            }
+        }
+        self.preds = preds;
+    }
+
+    /// Uniform integer `x` as a sum (`Lin`): through sums, products and shifts by constants, and casts that keep its
+    /// integer, of 64 bits (whose sums wrap as the addresses made of them) or of 32 that cannot wrap (`bound`).
+    fn lin(&mut self, x: V) -> Lin {
+        self.lin_at(x, 16)
+    }
+
+    fn lin_at(&mut self, x: V, depth: u32) -> Lin {
+        let i = *self.f.inst(x);
+        let unsigned = |m: M| !m.float() && !m.is_agg() && !m.signed() && m.bytes() >= 4;
+        let whole = |g: &Self, m: M| m.bytes() == 8 || g.bound(x).is_some();
+        if depth > 0 && i.shape == Shape::Uniform {
+            let d = depth - 1;
+            match i.op {
+                O::Const if unsigned(i.m) => return Lin::konst(self.konst(x).unwrap_or(0) as i64),
+                O::Bin if unsigned(M(i.d)) && whole(self, M(i.d)) => {
+                    let ka = self.konst(i.a).map(|k| k as i64);
+                    let kb = self.konst(i.b).map(|k| k as i64);
+                    match Op::of(u32::from(i.sub)) {
+                        Op::Add => return self.lin_at(i.a, d).plus(self.lin_at(i.b, d)),
+                        Op::Mul if kb.is_some() => return self.lin_at(i.a, d).times(kb.unwrap_or(0)),
+                        Op::Mul if ka.is_some() => return self.lin_at(i.b, d).times(ka.unwrap_or(0)),
+                        Op::Shl if kb.is_some_and(|k| (0..63).contains(&k)) => return self.lin_at(i.a, d).times(1i64 << kb.unwrap_or(0)),
+                        _ => {}
+                    }
+                }
+                O::Cast if unsigned(i.m) && unsigned(M(i.b)) && (i.m.bytes() >= M(i.b).bytes() || self.fits_in(i.a, i.m)) => {
+                    return self.lin_at(i.a, d);
+                }
+                _ => {}
+            }
+        }
+        let depth = self.depth[self.block_of[x as usize] as usize];
+        Lin::leaf(self.u(x), depth)
+    }
+
+    /// The sum's value: its terms in order of depth, the constant after the outermost ones.
+    fn sum(&mut self, l: &Lin) -> Value {
+        let mut terms = l.terms.clone();
+        terms.sort_by_key(|t| t.2);
+        let mut acc: Option<Value> = None;
+        let mut k_done = l.k == 0;
+        let outer = terms.first().map_or(0, |t| t.2);
+        for (v, c, d) in terms {
+            if !k_done && d > outer {
+                acc = Some(self.plus_imm(acc, l.k));
+                k_done = true;
+            }
+            let t = if c == 1 { v } else if c > 0 && (c as u64).is_power_of_two() { self.b.ins().ishl_imm(v, i64::from(c.trailing_zeros())) } else { self.b.ins().imul_imm(v, c) };
+            acc = Some(match acc {
+                Some(a) => self.b.ins().iadd(a, t),
+                None => t,
+            });
+        }
+        if !k_done {
+            acc = Some(self.plus_imm(acc, l.k));
+        }
+        acc.unwrap_or_else(|| self.b.ins().iconst(I64, 0))
+    }
+
+    fn plus_imm(&mut self, acc: Option<Value>, k: i64) -> Value {
+        match acc {
+            Some(a) => self.b.ins().iadd_imm(a, k),
+            None => self.b.ins().iconst(I64, k),
+        }
+    }
+
+    /// A uniform address: its sum (`lin`, `sum`).
+    fn addr_u(&mut self, a: V) -> Value {
+        let l = self.lin(a);
+        self.sum(&l)
+    }
+
     fn dominates(&self, a: usize, mut b: usize) -> bool {
         loop {
             if a == b {
@@ -1649,17 +1810,37 @@ impl<'a, 'b> Cg<'a, 'b> {
 
     /// The most an unsigned integer value `x` can be, in the block being made (every lane's, for lanes): `None` where
     /// its operations may wrap, or nothing bounds it.
-    fn bound(&self, x: V) -> Option<u64> {
-        self.bound_at(x, 12)
+    /// Whether unsigned `x`'s values all fit in `m`.
+    fn fits_in(&self, x: V, m: M) -> bool {
+        m.bytes() >= 8 || self.bound(x).is_some_and(|b| b >> (8 * m.bytes()) == 0)
     }
 
-    fn bound_at(&self, x: V, depth: u32) -> Option<u64> {
+    fn bound(&self, x: V) -> Option<u64> {
+        self.bound_at(x, 12, self.cur_block)
+    }
+
+    /// The same at the end of block `at`; a block's parameter's, the most its jumps pass it (a loop's counter: its
+    /// start, and its next value where the loop's test of it branches back).
+    fn bound_at(&self, x: V, depth: u32, at: usize) -> Option<u64> {
         let i = *self.f.inst(x);
         let max = |m: M| if m.bytes() >= 8 { u64::MAX } else { (1u64 << (8 * m.bytes())) - 1 };
         let int = |m: M| !m.float() && !m.is_agg() && !m.signed() && m.bytes() > 0;
-        let fact = self.below.get(&x).and_then(|fs| fs.iter().filter(|&&(_, b)| self.dominates(b, self.cur_block)).map(|&(k, _)| k).min());
-        if depth == 0 || !int(i.m) {
+        let fact = self.below.get(&x).and_then(|fs| fs.iter().filter(|&&(_, b)| self.dominates(b, at)).map(|&(k, _)| k).min());
+        if depth == 0 || !int(i.m) || fact.is_some() {
             return fact;
+        }
+        if i.op == O::Param {
+            let b = self.block_of[x as usize] as usize;
+            let k = self.f.blocks[b].params.iter().position(|&p| p == x)?;
+            let mut most = 0;
+            for &p in &self.preds[b] {
+                let t = self.f.inst(*self.f.blocks[p].insts.last()?);
+                if t.op != O::Jump {
+                    return None;
+                }
+                most = most.max(self.bound_at(*self.f.args_of(t).get(k)?, depth - 1, p)?);
+            }
+            return Some(most);
         }
         let d = depth - 1;
         let fits = |v: u128, m: M| (v <= u128::from(max(m))).then_some(v as u64);
@@ -1667,11 +1848,16 @@ impl<'a, 'b> Cg<'a, 'b> {
             O::Const => self.konst(x),
             O::Cast => {
                 let from = M(i.b);
-                if int(from) { self.bound_at(i.a, d).and_then(|a| fits(u128::from(a), i.m)) } else { None }
+                if int(from) {
+                    self.bound_at(i.a, d, at).and_then(|a| fits(u128::from(a), i.m))
+                } else {
+                    // A signed constant: its value, where the target holds it.
+                    self.konst(i.a).and_then(|k| fits(u128::from(k), i.m))
+                }
             }
             O::Bin => {
                 let om = M(i.d);
-                let (a, b) = (self.bound_at(i.a, d), self.bound_at(i.b, d));
+                let (a, b) = (self.bound_at(i.a, d, at), self.bound_at(i.b, d, at));
                 match Op::of(u32::from(i.sub)) {
                     _ if !int(om) => None,
                     Op::Add => fits(u128::from(a?) + u128::from(b?), om),
@@ -1707,9 +1893,8 @@ impl<'a, 'b> Cg<'a, 'b> {
         match op {
             Op::Add => {
                 for (s, u) in [(a, x), (x, a)] {
-                    if let (Some(st), Rp::U(u)) = (self.steps.get(&s).copied(), &self.vals[u as usize]) {
-                        let u = *u;
-                        let first = self.b.ins().iadd(st.first, u);
+                    if let (Some(st), Rp::U(_)) = (self.steps.get(&s).cloned(), &self.vals[u as usize]) {
+                        let first = st.first.plus(self.lin(u));
                         return Some(Steps { first, step: st.step, exact: exact && st.exact });
                     }
                 }
@@ -1720,10 +1905,9 @@ impl<'a, 'b> Cg<'a, 'b> {
                     if op == Op::Shl && s != a {
                         break;
                     }
-                    if let (Some(st), Some(k)) = (self.steps.get(&s).copied(), konst(self, c)) {
+                    if let (Some(st), Some(k)) = (self.steps.get(&s).cloned(), konst(self, c)) {
                         let k = if op == Op::Shl { 1i64.checked_shl(k as u32)? } else { k };
-                        let first = self.b.ins().imul_imm(st.first, k);
-                        return Some(Steps { first, step: st.step.wrapping_mul(k), exact: exact && st.exact });
+                        return Some(Steps { first: st.first.times(k), step: st.step.wrapping_mul(k), exact: exact && st.exact });
                     }
                 }
                 None
@@ -1739,6 +1923,36 @@ impl<'a, 'b> Cg<'a, 'b> {
         match dfg.insts[inst] {
             ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(imm.bits()),
             ir::InstructionData::Unary { opcode: ir::Opcode::Uextend | ir::Opcode::Sextend, arg } => self.known(arg),
+            // A narrowing that keeps the constant.
+            ir::InstructionData::Unary { opcode: ir::Opcode::Ireduce, arg } => {
+                let k = self.known(arg)?;
+                (k >= 0 && (k as u64) >> (dfg.value_type(c).bits() - 1) == 0).then_some(k)
+            }
+            ir::InstructionData::IntCompareImm { opcode: ir::Opcode::IcmpImm, cond, arg, imm } => {
+                let k = self.known(arg)?;
+                use ir::condcodes::IntCC::*;
+                match cond {
+                    Equal => Some(i64::from(k == imm.bits())),
+                    NotEqual => Some(i64::from(k != imm.bits())),
+                    _ => None,
+                }
+            }
+            // A test of two constants (both at least 0, where its signed and unsigned answers agree).
+            ir::InstructionData::IntCompare { opcode: ir::Opcode::Icmp, cond, args } => {
+                let (a, b) = (self.known(args[0])?, self.known(args[1])?);
+                if a < 0 || b < 0 {
+                    return None;
+                }
+                use ir::condcodes::IntCC::*;
+                Some(i64::from(match cond {
+                    Equal => a == b,
+                    NotEqual => a != b,
+                    SignedLessThan | UnsignedLessThan => a < b,
+                    SignedLessThanOrEqual | UnsignedLessThanOrEqual => a <= b,
+                    SignedGreaterThan | UnsignedGreaterThan => a > b,
+                    SignedGreaterThanOrEqual | UnsignedGreaterThanOrEqual => a >= b,
+                }))
+            }
             _ => None,
         }
     }
@@ -1792,9 +2006,9 @@ impl<'a, 'b> Cg<'a, 'b> {
     }
 
     /// The address of lane 0 when `addr`'s lanes are `bytes` apart: its steps'.
-    fn consecutive(&self, addr: V, bytes: u32) -> Option<Value> {
-        let st = self.steps.get(&addr)?;
-        (st.step == i64::from(bytes) && (bytes == 4 || bytes == 8)).then_some(st.first)
+    fn consecutive(&mut self, addr: V, bytes: u32) -> Option<Value> {
+        let st = self.steps.get(&addr)?.clone();
+        (st.step == i64::from(bytes) && (bytes == 4 || bytes == 8)).then(|| self.sum(&st.first))
     }
 
     fn bin_lanes(&mut self, op: Op, m: M, a: V, x: V, mask: V) -> (Vec<Value>, Option<Vec<Value>>) {
@@ -2425,6 +2639,12 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let om = M(i.d);
                 if i.shape == Shape::Uniform {
                     let (a, b) = (self.u(i.a), self.u(i.b));
+                    // A 32-bit unsigned sum or product no value can wrap (`bound`): the 64-bit one, already its
+                    // normalized value.
+                    let whole = matches!(op, Op::Add | Op::Mul) && !om.float() && !om.signed() && om.bytes() == 4 && self.bound(x).is_some();
+                    if whole {
+                        return Ok(Rp::U(if op == Op::Add { self.b.ins().iadd(a, b) } else { self.b.ins().imul(a, b) }));
+                    }
                     Rp::U(self.u_bin(op, om, a, b))
                 } else {
                     if let Some(st) = self.stepped(op, om, i.a, i.b, x) {
@@ -2464,9 +2684,15 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let from = M(i.b);
                 if i.shape == Shape::Uniform {
                     let a = self.u(i.a);
-                    Rp::U(self.u_cast(from, m, a))
+                    let int = |t: M| !t.float() && !t.is_agg() && !t.signed() && t != M::B && t.bytes() > 0;
+                    // A narrowing of an integer the target holds: its normalized `I64` already.
+                    if int(from) && int(m) && self.fits_in(i.a, m) {
+                        Rp::U(a)
+                    } else {
+                        Rp::U(self.u_cast(from, m, a))
+                    }
                 } else {
-                    if let Some(st) = self.steps.get(&i.a).copied() {
+                    if let Some(st) = self.steps.get(&i.a).cloned() {
                         let int = |t: M| !t.float() && !t.is_agg() && t != M::B && t.bytes() >= 4;
                         if int(from) && int(m) && (m.bytes() <= from.bytes() || st.exact || from.bytes() == 8) {
                             // A narrowing keeps the bits, a widening the integer (when it is one).
@@ -2600,7 +2826,8 @@ impl<'a, 'b> Cg<'a, 'b> {
                 }
             }
             O::Load => match self.vals[i.a as usize].clone() {
-                Rp::U(a) => {
+                Rp::U(_) => {
+                    let a = self.addr_u(i.a);
                     let a = self.guarded(a, i.b);
                     Rp::U(self.load_u(m, a, 0))
                 }
@@ -2608,7 +2835,8 @@ impl<'a, 'b> Cg<'a, 'b> {
             },
             O::Store => {
                 match (self.vals[i.a as usize].clone(), self.vals[i.b as usize].clone()) {
-                    (Rp::U(a), Rp::U(v)) => {
+                    (Rp::U(_), Rp::U(v)) => {
+                        let a = self.addr_u(i.a);
                         let a = self.guarded(a, i.c);
                         self.store_u(m, a, v, 0)
                     }
@@ -2675,7 +2903,8 @@ impl<'a, 'b> Cg<'a, 'b> {
                         let gb = self.b.ins().imul(g, bl);
                         first = self.b.ins().iadd(first, gb);
                     }
-                    self.steps.insert(x, Steps { first, step: 1, exact: true });
+                    let d = self.depth[self.cur_block];
+                    self.steps.insert(x, Steps { first: Lin::leaf(first, d), step: 1, exact: true });
                     return Ok(Rp::L(self.iota(first, m)));
                 }
                 let dim = self.u(i.a);
@@ -2762,6 +2991,17 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let orv = self.b.ins().iconst(I64, or);
                 let r = self.b.ins().select(lt3, v, orv);
                 Rp::U(norm_u(&mut self.b, m, r))
+            }
+            O::LaneOp if Builtin::of(u32::from(i.sub)) == Builtin::Fma => {
+                // `a * b + c` rounded once: Cranelift's `fma` (AArch64's `fmla`, by an element where an operand is
+                // uniform).
+                if i.shape == Shape::Uniform {
+                    let (a, b, c) = (self.u(i.a), self.u(i.b), self.u(i.d));
+                    Rp::U(self.b.ins().fma(a, b, c))
+                } else {
+                    let (pa, pb, pc) = (self.lanes(i.a, m), self.lanes(i.b, m), self.lanes(i.d, m));
+                    Rp::L((0..pa.len()).map(|p| self.b.ins().fma(pa[p], pb[p], pc[p])).collect())
+                }
             }
             O::LaneOp => {
                 let bi = Builtin::of(u32::from(i.sub));

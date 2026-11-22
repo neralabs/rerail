@@ -940,10 +940,23 @@ fn load128_at(mem: &AMode) -> Option<(Reg, i64)> {
 
 impl MachInst for Inst {
     fn may_pair(&self) -> bool {
-        matches!(self, Inst::FpuLoad128 { mem, flags, .. } if flags.trap_code().is_none() && load128_at(mem).is_some())
+        match self {
+            Inst::FpuLoad128 { mem, flags, .. } | Inst::FpuStore128 { mem, flags, .. } => flags.trap_code().is_none() && load128_at(mem).is_some(),
+            _ => false,
+        }
     }
 
     fn pair(&self, next: &Self) -> Option<Self> {
+        // Two stores of consecutive places from one base: `stp`.
+        if let (Inst::FpuStore128 { rd: r1, mem: m1, flags: f1 }, Inst::FpuStore128 { rd: r2, mem: m2, flags: f2 }) = (self, next) {
+            let ((b1, o1), (b2, o2)) = (load128_at(m1)?, load128_at(m2)?);
+            if f1 != f2 || f2.trap_code().is_some() || b1 != b2 {
+                return None;
+            }
+            let (lo, rt, rt2) = if o2 == o1 + 16 { (o1, *r1, *r2) } else if o1 == o2 + 16 { (o2, *r2, *r1) } else { return None };
+            let simm7 = SImm7Scaled::maybe_from_i64(lo, I8X16)?;
+            return Some(Inst::FpuStoreP128 { rt, rt2, mem: PairAMode::SignedOffset { reg: b1, simm7 }, flags: *f1 });
+        }
         let (Inst::FpuLoad128 { rd: r1, mem: m1, flags: f1 }, Inst::FpuLoad128 { rd: r2, mem: m2, flags: f2 }) = (self, next) else {
             return None;
         };

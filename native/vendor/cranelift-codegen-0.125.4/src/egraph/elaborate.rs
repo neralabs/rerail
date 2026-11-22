@@ -141,7 +141,11 @@ enum ElabStackEntry {
 
 #[derive(Clone, Debug)]
 enum BlockStackEntry {
-    Elaborate { block: Block, idom: Option<Block> },
+    /// `loops`: the loop stack of `idom` (rerail's patch): a block starts from
+    /// its parent's, not from whatever the walk of a sibling's subtree left
+    /// (a sibling outside a loop pops it, and the next sibling, inside, would
+    /// then hoist nothing out of it).
+    Elaborate { block: Block, idom: Option<Block>, loops: SmallVec<[LoopStackEntry; 8]> },
     Pop,
 }
 
@@ -571,7 +575,22 @@ impl<'a> Elaborator<'a> {
                     // block *unless* we hoist above a loop when all
                     // args are loop-invariant (and this op is pure).
                     let cur_block = self.func.layout.inst_block(before).unwrap();
-                    let lca = self.use_lca[self.func.dfg.inst_results(inst)[result_idx]].expand();
+                    // Never inside a loop the block using it is not in (a use after the loop
+                    // and one in it meet at the loop's header): out to the loop's dominator,
+                    // as far as its arguments are made (one made in the loop stays there, for
+                    // its uses in and after it to share).
+                    let lca = self.use_lca[self.func.dfg.inst_results(inst)[result_idx]].expand().map(|mut t| {
+                        while let Some(lp) = self.loop_analysis.innermost_loop(t) {
+                            if self.loop_analysis.is_in_loop(cur_block, lp) {
+                                break;
+                            }
+                            match self.domtree.idom(t) {
+                                Some(up) if arg_values.iter().all(|a| self.domtree.block_dominates(a.in_block, up)) => t = up,
+                                _ => break,
+                            }
+                        }
+                        t
+                    });
                     let (scope_depth, before, insert_block) = if loop_hoist_level
                         == self.loop_stack.len()
                     {
@@ -853,6 +872,7 @@ impl<'a> Elaborator<'a> {
         self.block_stack.push(BlockStackEntry::Elaborate {
             block: self.func.layout.entry_block().unwrap(),
             idom: None,
+            loops: SmallVec::new(),
         });
 
         // A temporary workspace for elaborate_block, allocated here to maximize the use of the
@@ -861,7 +881,8 @@ impl<'a> Elaborator<'a> {
 
         while let Some(top) = self.block_stack.pop() {
             match top {
-                BlockStackEntry::Elaborate { block, idom } => {
+                BlockStackEntry::Elaborate { block, idom, loops } => {
+                    self.loop_stack = loops;
                     self.block_stack.push(BlockStackEntry::Pop);
                     self.value_to_elaborated_value.increment_depth();
                     self.block_scope[block] = self.value_to_elaborated_value.depth() as u32;
@@ -876,6 +897,7 @@ impl<'a> Elaborator<'a> {
                         self.block_stack.push(BlockStackEntry::Elaborate {
                             block: child,
                             idom: Some(block),
+                            loops: self.loop_stack.clone(),
                         });
                     }
                     // Reverse what we just pushed so we elaborate in

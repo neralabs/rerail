@@ -706,3 +706,34 @@ fn a_matrix_product_is_each_rows_columns_in_lanes() {
         assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
     }
 }
+
+/// A floating `a * a - b` is contracted to one multiply-add, rounded once (OpenCL C's `FP_CONTRACT`), on the
+/// interpreter and the compiled SSA alike: with `a = 1 + 2^-12` and `b = 1 + 2^-11` it is `2^-24`, where rounding the
+/// product first (to `b`) would give 0. Also `+=` of a product, and `fma` called by name.
+#[test]
+fn a_floating_multiply_add_is_rounded_once() {
+    let text = "#include <ukl/memory.h>\n#include <ukl/group.h>\nDEFINE_KERNEL2(rule, t_fma,\n               ROBUFFER, float, a, \"[32]\",\n               ROBUFFER, float, b, \"[32]\",\n               RWBUFFER, float, c, \"[96]\",\n               LID0,     uint32_t, j, )\n{\n    c[j] = a[j] * a[j] - b[j];\n    float s = -b[j];\n    s += a[j] * a[j];\n    c[32u + j] = s;\n    c[64u + j] = fma(a[j], a[j], -b[j]);\n}\n";
+    let src = super::source("/<kernels>/rule.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("t_fma").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    let a = vec![1.0f32 + 2f32.powi(-12); 32];
+    let b = vec![1.0f32 + 2f32.powi(-11); 32];
+    assert_eq!(a[0] * a[0] - b[0], 0.0, "rounded twice");
+    let want = vec![2f32.powi(-24); 96];
+    let run = |k: &super::vector::Kernel, exec| {
+        let mut c = vec![0f32; 96];
+        let ptr = |p: *const f32| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args = [ptr(a.as_ptr()), ptr(b.as_ptr()), ptr(c.as_mut_ptr()), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [1, 1, 1], block: [32, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        c
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    assert_eq!(run(&k, super::run::Exec::Jit), want, "the JIT");
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa_of(&p, &k), &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+    }
+}

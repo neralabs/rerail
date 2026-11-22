@@ -195,7 +195,7 @@ impl Inst {
             O::Select | O::Store => [Some(a), Some(b), Some(c), None],
             O::First | O::Load | O::Zero | O::Reduce => [Some(a), Some(b), None, None],
             O::Copy | O::Shuffle => [Some(a), Some(b), Some(c), None],
-            O::LaneOp => [Some(a), Some(b), None, None],
+            O::LaneOp => [Some(a), Some(b), Some(d), None],
             O::Atomic => [Some(a), Some(b), Some(c), Some(d)],
             O::Agree => [Some(c), Some(d), None, None],
             O::Call => [Some(d), None, None, None],
@@ -212,7 +212,8 @@ impl Inst {
         let v: Vec<&mut u32> = match op {
             O::Const | O::Arg | O::Entry | O::NoLanes | O::Undef | O::Param | O::Global | O::Shared | O::FrameAddr | O::Lane | O::Bar | O::Yield | O::SgBar | O::Jump | O::Halt => vec![],
             O::Bin => vec![a, b, c],
-            O::MAnd | O::MOr | O::MAndNot | O::First | O::Load | O::Zero | O::Reduce | O::LaneOp => vec![a, b],
+            O::MAnd | O::MOr | O::MAndNot | O::First | O::Load | O::Zero | O::Reduce => vec![a, b],
+            O::LaneOp => vec![a, b, d],
             O::Un | O::Cast | O::MaskOf | O::Any | O::AnyGroup | O::Bits | O::Lid | O::Gid | O::GroupInfo | O::Ret => vec![a],
             O::Br | O::Switch => vec![a, d],
             O::Select | O::Store | O::Copy | O::Shuffle => vec![a, b, c],
@@ -1456,6 +1457,42 @@ impl<'a, 't> Fb<'a, 't> {
         let (sb, sc) = (self.read(BRK), self.read(CONT));
         let none = self.none();
         self.write(BRK, none);
+        // A uniform condition (with no sync point in it): tested before the loop and at its body's end, the branch
+        // back there (no jump to a test at the top each time round).
+        if !check && v.level(cond) <= Level::SimdGroup && v.field(cond) & crate::k::SYNC == 0 {
+            let first = self.block();
+            let exit = self.block();
+            if k == Kind::Do {
+                self.jump(first);
+            } else {
+                self.loop_test(cond, first, exit)?;
+            }
+            self.switch_to(first);
+            let si = self.cur();
+            self.write(CONT, none);
+            self.stmt(body)?;
+            { let rv = self.rv; self.rejoin(si, &[BRK, rv, END]); }
+            if k == Kind::For && v.kind(kids[2]) != Kind::Empty {
+                match self.any_cur() {
+                    None => self.stmt(kids[2])?,
+                    Some(a) => {
+                        let (go, out) = self.br(a);
+                        self.switch_to(out);
+                        self.jump(exit);
+                        self.switch_to(go);
+                        self.stmt(kids[2])?;
+                    }
+                }
+            }
+            self.loop_test(cond, first, exit)?;
+            self.seal(first);
+            self.seal(exit);
+            self.switch_to(exit);
+            { let rv = self.rv; self.rejoin(sl, &[rv, END]); }
+            self.write(BRK, sb);
+            self.write(CONT, sc);
+            return Ok(());
+        }
         let top = self.block();
         let first = self.block();
         let exit = self.block();
@@ -1523,6 +1560,24 @@ impl<'a, 't> Fb<'a, 't> {
         { let rv = self.rv; self.rejoin(sl, &[rv, END]); }
         self.write(BRK, sb);
         self.write(CONT, sc);
+        Ok(())
+    }
+
+    /// A loop's test of uniform condition `cond`: lanes left and the condition true, to `first`, else to `exit`.
+    fn loop_test(&mut self, cond: usize, first: u32, exit: u32) -> R<()> {
+        if let Some(a) = self.any_cur() {
+            let (go, out) = self.br(a);
+            self.switch_to(out);
+            self.jump(exit);
+            self.switch_to(go);
+        }
+        let c = self.cond(cond)?;
+        let c = self.scalar(c);
+        let (go, out) = self.br(c);
+        self.switch_to(out);
+        self.jump(exit);
+        self.switch_to(go);
+        self.jump(first);
         Ok(())
     }
 
@@ -1930,13 +1985,14 @@ impl<'a, 't> Fb<'a, 't> {
             }
             _ => {
                 let from = arg_m(0);
-                let mut held = [NONE; 2];
-                for (k, &a) in args.iter().enumerate().take(2) {
+                // A third operand (`fma`'s) in `d`.
+                let mut held = [NONE; 3];
+                for (k, &a) in args.iter().enumerate().take(3) {
                     let a = self.fit(a, arg_m(k));
                     held[k] = if once { self.scalar(a) } else { a };
                 }
                 let s = held.iter().filter(|&&x| x != NONE).map(|&x| self.shape(x)).max().unwrap_or(Shape::Uniform);
-                let r = self.ins_sub(O::LaneOp, b as u32, m, held[0], held[1], from.0, 0);
+                let r = self.ins_sub(O::LaneOp, b as u32, m, held[0], held[1], from.0, held[2]);
                 set(self, r, s)
             }
         }))

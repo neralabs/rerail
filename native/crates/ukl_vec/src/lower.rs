@@ -1257,6 +1257,10 @@ impl L<'_> {
                 (t.clone(), vec![t.clone(), t])
             }
             Builtin::As => (as_target(&name), vec![arg(0)]),
+            Builtin::Fma => {
+                let t = Ty::common(&Ty::common(&arg(0), &arg(1)), &arg(2));
+                (t.clone(), vec![t.clone(), t.clone(), t])
+            }
         };
         if params.len() != args.len() {
             return self.err(e, format!("{name} takes {} arguments", params.len()));
@@ -1560,11 +1564,60 @@ impl L<'_> {
         } else {
             t.clone()
         };
+        // A floating `x + a * b`, `x - a * b`, `a * b - x`: contracted (OpenCL C's `FP_CONTRACT`, on by default), one
+        // multiply-add rounded once.
+        if matches!(o, Op::Add | Op::Sub) && self.m(&ot).float() {
+            let (pl, pr) = (self.product(l, &ot)?, self.product(r, &ot)?);
+            match (o, pr, pl) {
+                (_, Some((a, b)), _) => return self.fma(e, &ot, (a, o == Op::Sub), b, (l, false)),
+                (Op::Add, None, Some((a, b))) => return self.fma(e, &ot, (a, false), b, (r, false)),
+                (_, None, Some((a, b))) => return self.fma(e, &ot, (a, false), b, (r, true)),
+                _ => {}
+            }
+        }
         let n = self.b.open(Kind::Bin, &[o as u32, self.m(&ot).0]);
         self.rv_as(l, &ot)?;
         self.rv_as(r, &ot)?;
         self.b.close(n);
         Ok(())
+    }
+
+    /// `x`'s operands when it is a product of type `t` (in parentheses or not).
+    fn product(&mut self, x: usize, t: &Ty) -> R<Option<(usize, usize)>> {
+        let x = if self.c.kind(x) == "parenthesized_expression" { self.inner(x)? } else { x };
+        if self.c.kind(x) != "binary_expression" || self.operator(x) != "*" || &decay(self.ty(x)?) != t {
+            return Ok(None);
+        }
+        Ok(Some((self.c.child(x, "left").expect("a left operand"), self.c.child(x, "right").expect("a right operand"))))
+    }
+
+    /// `±a * b ± c` of type `t`, one multiply-add (`Builtin::Fma`); `true` negates the operand.
+    fn fma(&mut self, e: usize, t: &Ty, a: (usize, bool), b: usize, c: (usize, bool)) -> R<()> {
+        let m = self.m(t);
+        let site = self.site(e, "a multiply-add");
+        let n = self.b.open(Kind::Builtin, &[Builtin::Fma as u32, m.0, 3, site, m.0, m.0, m.0]);
+        for (x, neg) in [a, (b, false), c] {
+            if neg {
+                let u = self.b.open(Kind::Un, &[Op::Neg as u32, m.0]);
+                self.rv_as(x, t)?;
+                self.b.close(u);
+            } else {
+                self.rv_as(x, t)?;
+            }
+        }
+        self.b.close(n);
+        Ok(())
+    }
+
+    /// Whether reading the place or value `x` twice is reading it once: no call, assignment or increment in it.
+    fn pure(&self, x: usize) -> bool {
+        match self.c.kind(x) {
+            "identifier" | "number_literal" => true,
+            "parenthesized_expression" | "subscript_expression" | "field_expression" | "pointer_expression" | "binary_expression" | "cast_expression" | "type_descriptor" | "primitive_type" | "type_identifier" | "argument_list" | "subscript_argument_list" | "field_identifier" => {
+                self.c.children(x).into_iter().all(|k| self.pure(k))
+            }
+            _ => self.c.children(x).is_empty(),
+        }
     }
 
     fn assignment(&mut self, e: usize, t: &Ty) -> R<()> {
@@ -1596,6 +1649,16 @@ impl L<'_> {
             return Ok(());
         }
         let ot = if matches!(o, Op::Shl | Op::Shr) { t.promoted() } else { Ty::common(t, &rt) };
+        // `x += a * b`, `x -= a * b` of floats: `x = x ± a * b`, contracted (`binary`), where reading `x` twice is once.
+        if matches!(o, Op::Add | Op::Sub) && m.float() && &ot == t && self.pure(l) {
+            if let Some((a, b)) = self.product(r, t)? {
+                let n = self.b.open(Kind::Store, &[m.0]);
+                self.lv(l)?;
+                self.fma(e, t, (a, o == Op::Sub), b, (l, false))?;
+                self.b.close(n);
+                return Ok(());
+            }
+        }
         let n = self.b.open(Kind::Update, &[o as u32, m.0, self.m(&ot).0, 0]);
         self.lv(l)?;
         self.rv_as(r, &ot)?;

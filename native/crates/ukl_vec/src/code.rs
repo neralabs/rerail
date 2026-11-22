@@ -1359,7 +1359,7 @@ impl Gen<'_> {
                 d
             }
             _ => {
-                // The lanes' own: popcount, clz, mul_hi, as_*, min, max.
+                // The lanes' own: popcount, clz, mul_hi, as_*, min, max, fma.
                 let from = arg_m(0);
                 let mut held: Vec<Val> = Vec::new();
                 for (k, a) in args.into_iter().enumerate() {
@@ -1369,7 +1369,7 @@ impl Gen<'_> {
                 let r = |k: usize| held.get(k).map_or(0, |a| a.r);
                 if once {
                     let d = self.alloc(Class::S, m);
-                    self.emit(I::SBuiltin, fields(b as u32, m.0, from.0 & 0xff), [d.r, r(0), r(1), 0]);
+                    self.emit(I::SBuiltin, fields(b as u32, m.0, from.0 & 0xff), [d.r, r(0), r(1), r(2)]);
                     free_all(self, held);
                     d
                 } else {
@@ -1388,7 +1388,7 @@ impl Gen<'_> {
                     let d = self.alloc(lanes_of(m), m);
                     match fused {
                         Some(i) => self.emit(i, 0, [d.r, r(0), r(1), 0]),
-                        None => self.emit(I::VBuiltinGen, fields(b as u32, m.0, from.0 & 0xff), [d.r, r(0), r(1), 0]),
+                        None => self.emit(I::VBuiltinGen, fields(b as u32, m.0, from.0 & 0xff), [d.r, r(0), r(1), r(2)]),
                     };
                     free_all(self, held);
                     d
