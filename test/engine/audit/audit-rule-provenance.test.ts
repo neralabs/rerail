@@ -1766,11 +1766,12 @@ describe("an audit whose other stored lists do not read", () => {
     }
   });
 
-  it("names in its log, once for each damaged list, the audit that read it with none and the column that holds it", async () => {
+  it("names in its log, once for each damaged list, two of one audit among them, the audit that read it with none and the column that holds it", async () => {
     const path = await temporaryDatabase();
     const auditIds = threeAudits(path);
     const text = '[{"ruleId":"typescript/broken"';
     damageList(path, auditIds[0]!, "paths", text);
+    damageList(path, auditIds[0]!, "failures", "null");
     damageList(path, auditIds[1]!, "violations", "{}");
     const stderr = spyOnStderr();
     const store = new SqliteAuditStore(path);
@@ -1791,6 +1792,8 @@ describe("an audit whose other stored lists do not read", () => {
       "",
       `rerail: ${path}: audit ${auditIds[0]} reads with no paths, and a failure that says so: the paths_json of its own row is `
       + `not a JSON array (${parseFailure(text)}).`,
+      `rerail: ${path}: audit ${auditIds[0]} reads with no failures, and a failure that says so: the failures_json of its `
+      + "own row is not a JSON array (it parses to another JSON value).",
       `rerail: ${path}: audit ${auditIds[1]} reads with no violations, and a failure that says so: the violations_json of its `
       + "own row is not a JSON array (it parses to another JSON value).",
     ].sort());
