@@ -214,7 +214,7 @@ typedef struct PpTg {
 #undef PX_QUIT
 #define PX_QUIT return (*phasep = phase, false)
 // The loop over a top (decision 0588), compiled once for the text and the tests' lines (`is_if`):
-// a piece a thread, counted, placed, written, the one `lp_run` for both passes.
+// a piece a thread, written where it is made, then placed.
 UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(uint32_t) lay, UKL_LOCAL PpTg* tg,
                       UklGrid g, UKL_PRIVATE uint32_t* phasep, uint32_t stop, bool is_if __UKL_PARAMS)
 {
@@ -225,7 +225,11 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
     (void)sl; (void)jobs; (void)files;
     PP_GLOBAL const uint32_t* toks = is_if ? AT(const uint32_t, IF_TOTAL) : AT(const uint32_t, GTOTAL);
     uint32_t nt = toks[0];
-    ONE(x) AT(uint32_t, TRN)[15] = 0u;
+    // What a pass run again starts from (a piece read past its end, below): the givings back, the
+    // pieces, the pragmas' rows.
+    uint32_t keep_gives = AT(const uint32_t, CTL)[16], keep_pieces = AT(const uint32_t, TRN)[13];
+    uint32_t keep_rows = AT(const uint32_t, TRN)[0], keep_once = AT(const uint32_t, TRN)[1];
+    ONE(x) { AT(uint32_t, TRN)[15] = 0u; AT(uint32_t, CTL)[20] = 0u; }
     BARRIER();
     // The pieces (`lp_marks`, `lp_starts`): the depth, each token's marks, the starts.
     {
@@ -238,31 +242,24 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
     BARRIER();
     EACH(s, nt) lp_starts(AT(const uint32_t, OFLAG), toks, AT(uint32_t, XFLAG), s);
     BARRIER();
+    // One pass: each piece writes what it makes (`lp_flush`). A piece that read past its end (rare)
+    // took the pieces it read (`lp_swallow`), and those wrote as well: the pass runs again without
+    // them, from the stores' fronts.
     for (uint32_t pass = 0u; pass < 2u; pass++) {
         if (pass == 1u) {
-            // The pieces a piece read past its end took (`lp_swallow`): rare, one thread walks those pieces.
-            if (AT(const uint32_t, TRN)[15] != 0u) {
-                SCAN(nt, OFLAG, XAT, XTOTAL);
-                EACH(s, nt) lp_overruns(AT(const uint32_t, OFLAG), AT(const uint32_t, XAT), toks, AT(uint32_t, XPOS), s);
-                BARRIER();
-                ONE(x) lp_swallow(AT(const uint32_t, XPOS), AT(const uint32_t, XTOTAL), AT(const uint32_t, DELTA), AT(uint32_t, XFLAG), AT(uint32_t, V), AT(uint32_t, OPV));
-                BARRIER();
-            }
-            // The tokens' store again from its front for the second pass (its first's use is the room's: `CTL` 8).
-            // The scratch's too: the second pass makes the same tokens again.
-            // The `__COUNTER__` uses' table too: the second pass makes them again.
-            ONE(x) { PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL); c_[8] = ukl_max(c_[8], c_[0]); c_[0] = 0u; c_[4] = c_[6]; c_[5] = c_[7]; AT(uint32_t, CNT)[1] = 0u; }
-            // The pieces' joins (`lp_join`): the first pass's ends and join words, in the stores the marks no longer need.
-            EACH(s, nt) lp_join(toks, AT(const uint32_t, XFLAG), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, OPV), s);
+            if (AT(const uint32_t, TRN)[15] == 0u) break;
+            SCAN(nt, OFLAG, XAT, XTOTAL);
+            EACH(s, nt) lp_overruns(AT(const uint32_t, OFLAG), AT(const uint32_t, XAT), toks, AT(uint32_t, XPOS), s);
             BARRIER();
-            SCAN(nt, V, OBASE, VTOTAL);
-            SCAN(nt, OPV, OPBASE, OPTOTAL);
-            // The output past its room: refused, the next run sized from its pieces (`CTL` 14).
+            ONE(x) lp_swallow(AT(const uint32_t, XPOS), AT(const uint32_t, XTOTAL), AT(const uint32_t, DELTA), AT(uint32_t, XFLAG), AT(uint32_t, V), AT(uint32_t, OPV));
+            // The tokens' store from its front (its first use is the room's: `CTL` 8), the scratch's, the
+            // `__COUNTER__` uses', the output's chunks, the counts.
             ONE(x) {
-                PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
-                c_[14] = ukl_max(c_[14], AT(const uint32_t, OPTOTAL)[0]);
-                if (AT(const uint32_t, OPTOTAL)[0] > W(OUT_CAP)) px_refuse(c_, X_ROOM);
+                PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL); PP_GLOBAL uint32_t* n_ = AT(uint32_t, TRN);
+                c_[8] = ukl_max(c_[8], c_[0]); c_[0] = 0u; c_[4] = c_[6]; c_[5] = c_[7]; AT(uint32_t, CNT)[1] = 0u;
+                c_[16] = keep_gives; c_[20] = 0u; n_[13] = keep_pieces; n_[0] = keep_rows; n_[1] = keep_once; n_[15] = 0u;
             }
+            BARRIER();
         }
         {
             PX_UA(DR);
@@ -272,12 +269,33 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
             // on GB10, 2026-11-21). Whole SIMD groups: every lane takes each of its group's turns.
             EACH(s, (nt + UKL_SIMD_WIDTH - 1u) & ~(UKL_SIMD_WIDTH - 1u))
                 lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),
-                       AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, OBASE), AT(const uint32_t, OPBASE),
-                       AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, pass == 1u, s,
+                       AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, LOB), AT(uint32_t, PLAST),
+                       AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, s,
                        g.lid & (UKL_SIMD_WIDTH - 1u) __UKL_ARGS);
         }
         BARRIER();
     }
+    // The pieces' joins (`lp_join`): their ends and join words, in the stores the marks no longer need.
+    EACH(s, nt) lp_join(toks, AT(const uint32_t, XFLAG), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, OPV), s);
+    BARRIER();
+    SCAN(nt, V, OBASE, VTOTAL);
+    SCAN(nt, OPV, OPBASE, OPTOTAL);
+    // The output past its room (its pieces, or the chunks they took): refused, the next run sized
+    // from them (`CTL` 14).
+    uint32_t chunks = AT(const uint32_t, CTL)[20];
+    ONE(x) {
+        PP_GLOBAL uint32_t* c_ = AT(uint32_t, CTL);
+        uint32_t need = ukl_max(AT(const uint32_t, OPTOTAL)[0], chunks * LP_OCHUNK);
+        c_[14] = ukl_max(c_[14], need);
+        if (need > W(OUT_CAP)) px_refuse(c_, X_ROOM);
+    }
+    // The output's order and places (`lp_place`), the joins' lengths (`lp_extend`), then each top
+    // token's place (`lp_obase`: `lp_place` reads its piece's first's, the scan's).
+    EACH(c, ukl_min(chunks, W(OUT_CAP) / LP_OCHUNK)) lp_place(AT(uint32_t, OUT), W(OUT_CAP), AT(const uint32_t, CTL) + 20, AT(const uint32_t, THEADS), AT(const uint32_t, OBASE), AT(const uint32_t, OPBASE), c);
+    EACH(s, nt) lp_extend(AT(uint32_t, OUT), W(OUT_CAP), toks, AT(const uint32_t, XFLAG), AT(const uint32_t, DELTA), AT(const uint32_t, DEPTH), AT(const uint32_t, THEADS), AT(const uint32_t, OPV), AT(const uint32_t, PLAST), s);
+    BARRIER();
+    EACH(s, nt) lp_obase(toks, AT(const uint32_t, LOB), AT(uint32_t, OBASE), s);
+    BARRIER();
     *phasep = phase;
     return true;
 }
@@ -594,7 +612,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         // [13]: the loop's pieces (decision 0588).
         ONE(x) { PP_GLOBAL uint32_t* n_ = AT(uint32_t, TRN); n_[0] = 0u; n_[1] = 0u; n_[4] = 0u; n_[5] = 0u; n_[8] = 0u; n_[9] = AT(const uint32_t, CTL)[2]; n_[10] += 1u; n_[13] = 0u; }
         uint32_t nt = N(GTOTAL);
-        // The loop (decision 0588): a piece a thread, counted, placed, written.
+        // The loop (decision 0588): a piece a thread, written where it is made, then placed.
         LP_LOOP_CALL(false);
         {
             TEXT_UX(u);

@@ -1648,7 +1648,7 @@ fn a_chains_use_is_flat_in_its_length() {
             .iter()
             .map(|&n| {
                 let text = chain(n, body);
-                let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+                let (got, want, room, _) = expanded_x(&[("main.c", text.as_str())], false);
                 let got = got.unwrap_or_else(|why| panic!("{what}, {n} levels: refused {why}"));
                 same(show(&got), show(&want), what);
                 room.iter().map(|&(used, _)| used).collect()
@@ -1694,7 +1694,7 @@ fn a_done_calls_exits_are_given_back_to_their_last() {
         .iter()
         .map(|&n| {
             let text = chain(n);
-            let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+            let (got, want, room, _) = expanded_x(&[("main.c", text.as_str())], false);
             let got = got.unwrap_or_else(|why| panic!("{n} levels: refused {why}"));
             same(show(&got), show(&want), "a chain of exits beside it");
             room[tokens].0
@@ -1705,8 +1705,8 @@ fn a_done_calls_exits_are_given_back_to_their_last() {
 }
 
 /// A unit expanded with its run's own figures (`expanded_x`): its output spelled, or its refusal bits; the serial
-/// pass's output; each room's use.
-type RoomsRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS]);
+/// pass's output; each room's use; the output's pieces.
+type RoomsRun = (Result<Vec<Vec<u8>>, u32>, Vec<Vec<u8>>, [(u32, u32); rerail_metal::pp_expand::ROOMS], u32);
 /// §3 of decision 0520: the output is pieces. A top level's run of tokens no call covers is one
 /// piece, and a call's expansion its pieces: a text of 2,000 plain tokens on 200 lines, with a call
 /// after each 500 (`G`: `[`, `g`, `]`, `g`, each its own piece of `F`'s body or `G`'s), is its 5 runs
@@ -1719,11 +1719,30 @@ fn the_output_is_pieces_that_refer_to_the_text() {
         text += &line;
         text += if k % 50 == 49 { " G\n" } else { "\n" };
     }
-    let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+    let (got, want, _, pieces) = expanded_x(&[("main.c", text.as_str())], false);
     let got = got.unwrap_or_else(|why| panic!("refused {why}"));
     same(show(&got), show(&want), "the text");
-    let out = rerail_metal::pp_expand::ROOM_STORES.iter().position(|s| *s == "output").unwrap();
-    assert!(want.len() > 2000 && room[out].0 <= 5 + 4 * 4, "{} tokens in {} pieces", want.len(), room[out].0);
+    assert!(want.len() > 2000 && pieces <= 5 + 4 * 4, "{} tokens in {pieces} pieces", want.len());
+}
+
+/// Decision 0588: the loop writes its output once, where each piece makes it. A piece that reads
+/// past its end (a body's call left open, `#define C F(`, its arguments in the text after it, past
+/// the next pieces' starts) takes the pieces it reads, and the pass runs again without them: the
+/// output is the serial pass's, with plain text and calls around each, across several pieces'
+/// lengths.
+#[test]
+fn a_piece_read_past_its_end_takes_the_pieces_it_reads() {
+    let args = (0..80).map(|i| format!("a{i}")).collect::<Vec<_>>().join(" ");
+    let mut text = String::from("#define F(x, y) <x|y>\n#define C F(\n");
+    for k in 0..6 {
+        text += &format!("p{k} q{k} r{k}\n");
+        text += &format!("C {args} , {args} )\n");
+        text += "s t u v w\n";
+    }
+    let (got, want, _, _) = expanded_x(&[("main.c", text.as_str())], false);
+    let got = got.unwrap_or_else(|why| panic!("refused {why}"));
+    assert!(want.len() > 900, "{} tokens", want.len());
+    same(show(&got), show(&want), "the text");
 }
 
 /// `expanded`, with the run's own figures (its rooms' use).
@@ -1740,7 +1759,7 @@ fn expanded_x(files: &[(&str, &str)], cpp: bool) -> RoomsRun {
     let mut units: Vec<(Box<dyn rerail_c_pp::files::Files>, String)> = vec![(Box::new(Search::new(Vec::new(), move |p: &str| m.get(p).cloned())), "main.c".into())];
     let (s, tapes) = settled_many(&cfg, &mut units, &mut Ran::default()).pop().unwrap().unwrap();
     let got = if s.part.x.refused != 0 { Err(s.part.x.refused) } else { Ok(part_tokens(&s.part, &s.loaded.files, &tapes)) };
-    (got, serial.0, s.part.x.room)
+    (got, serial.0, s.part.x.room, s.part.x.pieces)
 }
 
 /// Plan step 11 of decision 0448 (the built-ins): `__LINE__` is the line of the outermost call's

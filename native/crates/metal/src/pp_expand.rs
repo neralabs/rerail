@@ -1064,6 +1064,10 @@ pub struct Exp {
     oflag: Buf,
     v: Buf,
     obase: Buf,
+    /// Each top token's place in its piece's output (`lp_lex`; `lp_obase` makes it `obase`'s).
+    lob: Buf,
+    /// Each piece's last output entry (`lp_flush`), for its joins' lengths (`lp_extend`).
+    plast: Buf,
     /// The pieces' starts (`lp_starts`), and the overruns' scan and places (`lp_overruns`).
     xflag: Buf,
     xat: Buf,
@@ -1162,6 +1166,8 @@ impl Exp {
             oflag: zeroed(top)?,
             v: zeroed(top)?,
             obase: zeroed(top)?,
+            lob: zeroed(top)?,
+            plast: zeroed(top)?,
             xflag: zeroed(top)?,
             xat: zeroed(top)?,
             xscan: Scan::new(arena)?,
@@ -1185,8 +1191,9 @@ impl Exp {
             lread: zeroed(dirs)?,
             cnt_cap: cnt_cap as u32,
             lb_cap: lb_cap as u32,
-            // The output's pieces: five columns, `out` words each (decision 0520 §3).
-            out: zeroed(5 * out)?,
+            // The output's pieces: five columns, `out` words each (decision 0520 §3), their order and
+            // the loop's chunks (`lp_flush`).
+            out: zeroed(7 * out)?,
             sc_tok: [(); 6].map(|()| zeroed(sc)).into_iter().collect::<Result<Vec<_>, _>>()?.try_into().map_err(|_| Error::BackendFailure)?,
             sc_ckeys: arena.zeroed::<u64>(sc)?,
             sc_sort: Sort::new(arena, sc)?,
@@ -1199,7 +1206,7 @@ impl Exp {
     pub fn lay(&self, l: &mut Lay) {
         l.at("THEADS", &self.theads).at("DELTA", &self.delta).at("DEPTH", &self.depth).at("STATE", &self.state);
         l.at("OFLAG", &self.oflag).at("CTL", &self.ctl).at("XFLAG", &self.xflag).at("XAT", &self.xat).at("XTOTAL", &self.xscan.total);
-        l.at("XPOS", &self.xpos).at("V", &self.v).at("OBASE", &self.obase).at("VTOTAL", &self.vscan.total);
+        l.at("XPOS", &self.xpos).at("V", &self.v).at("OBASE", &self.obase).at("LOB", &self.lob).at("PLAST", &self.plast).at("VTOTAL", &self.vscan.total);
         l.at("OPV", &self.opv).at("OPBASE", &self.opbase).at("OPTOTAL", &self.opscan.total);
         l.at("OUT", &self.out).at("TOKENS", &self.tokens).at("WORDS", &self.words).at("SCRATCH", &self.scratch);
         l.word("OUT_CAP", self.out_cap);
@@ -1277,6 +1284,12 @@ impl Exp {
         unsafe { *self.ctl.host().cast::<u32>().add(2) }
     }
 
+    /// The text's output pieces (`OPTOTAL`).
+    pub fn pieces(&self) -> u32 {
+        // SAFETY: the device finished; a scan's total is a word.
+        unsafe { *self.opscan.total.host().cast::<u32>() }
+    }
+
     /// The last text pass's pieces (`TRN[13]`, decision 0588).
     pub fn loop_pieces(&self) -> u32 {
         // SAFETY: the device finished; `trn` holds 24 words.
@@ -1315,7 +1328,7 @@ impl Exp {
         let n = *words(&self.vscan.total).first().ok_or(Error::BackendFailure)? as usize;
         let cap = self.out_cap as usize;
         let np = (*words(&self.opscan.total).first().ok_or(Error::BackendFailure)? as usize).min(cap);
-        let o = words(&self.out).get(..3 * cap).ok_or(Error::BackendFailure)?;
+        let o = words(&self.out).get(..6 * cap).ok_or(Error::BackendFailure)?;
         let n_gaps = *words(&vis.n_gaps).first().ok_or(Error::BackendFailure)? as usize;
         let gat = words(&vis.gat).get(..n_gaps).ok_or(Error::BackendFailure)?;
         let firsts = words(&vis.gfirsts);
@@ -1325,9 +1338,14 @@ impl Exp {
         let mut out = Vec::with_capacity(n);
         let show = std::env::var_os("RERAIL_PP_PIECES").is_some();
         for i in 0..np {
-            let (src, len, st) = (o[i], o[cap + i] & PN_LEN, o[2 * cap + i]);
+            // The loop's order of its pieces (`lp_place`).
+            let e = o[5 * cap + i] as usize;
+            if e >= cap {
+                return Err(Error::BackendFailure);
+            }
+            let (src, len, st) = (o[e], o[cap + e] & PN_LEN, o[2 * cap + e]);
             if show {
-                eprintln!("piece {i}: kind {} def {} start {st} len {len} at {}", src >> 30, src & !P_KIND, words(&self.out).get(3 * cap + i).copied().unwrap_or(0));
+                eprintln!("piece {i}: kind {} def {} start {st} len {len} at {}", src >> 30, src & !P_KIND, o[3 * cap + e]);
             }
             if out.len() + len as usize > n {
                 if std::env::var_os("RERAIL_PP_WHY").is_some() {
@@ -1378,6 +1396,9 @@ pub struct Expanded {
     pub stoks: Vec<[u32; 3]>,
     /// The arena's use and room at the rung it ran at, store by store (`ROOM_STORES`).
     pub room: [(u32, u32); ROOMS],
+    /// The text's output pieces (`OPTOTAL`): the output's room holds them in the loop's chunks
+    /// (`lp_flush`), so its use is the chunks'.
+    pub pieces: u32,
     /// P1's refusals (`P1_*`), and the round's requests (decision 0467 §1): with either, the
     /// round ended before the expansion, and `out` is empty.
     pub p1_flags: u32,
@@ -1489,7 +1510,7 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
         }
         let requests = vis.requests();
         if p1_flags != 0 || !requests.is_empty() {
-            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups: front.joined(), gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung });
+            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups: front.joined(), gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung });
         }
         vis.read()?;
         let (refused, out) = exp.read(&front, &vis, &defs)?;
@@ -1502,7 +1523,7 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
             }
             x = x.grown(p1.top, exp.room());
             x_tries += 1;
-            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups: front.joined(), gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung });
+            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups: front.joined(), gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung });
             continue;
         }
         if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
@@ -1510,7 +1531,7 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
         }
         let (scratch, stoks) = exp.scratch();
         let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, lay.units(), out.len()) };
-        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups: front.joined(), gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung });
+        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups: front.joined(), gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung });
     }
 }
 
