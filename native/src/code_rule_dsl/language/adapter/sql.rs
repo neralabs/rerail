@@ -18,18 +18,21 @@ use crate::code_rule_dsl::compile::config::Options;
 use crate::code_rule_dsl::compile::options;
 use crate::code_rule_dsl::language::Family;
 use crate::code_rule_dsl::lines::{LineTable, Terminators};
+use crate::code_rule_dsl::matcher::arguments_sql::{SQL_CALL_KINDS, SqlArguments as _};
 use crate::code_rule_dsl::matcher::{
-    Arguments, Passed, SQL_CALL_KINDS, ScopeName, SemanticText, Unresolved, file_sqlfluff,
+    Arguments, Passed, ScopeName, SemanticText, Unresolved, file_index,
 };
 use crate::code_rule_dsl::model::ViolationSpec;
 use crate::code_rule_dsl::module_path::ModulePath;
 use crate::code_rule_dsl::scope::options::{LanguageOptions, PythonOptions};
+use crate::code_rule_dsl::scope::usage::lang_sql::SqlUsage as _;
 use crate::code_rule_dsl::scope::usage::{Steps, Usage};
 use crate::code_rule_dsl::scope::{
     Binding, BuildError, Builder, Directives, Form, Lookup, Reading, Reference, ScopeKind,
     ScopeTable, sql,
 };
-use crate::code_rule_dsl::suppress::{SqlfluffIndex, Suppress, root};
+use crate::code_rule_dsl::suppress::sqlfluff::SqlfluffIndex;
+use crate::code_rule_dsl::suppress::{Suppress, root};
 use crate::code_rule_dsl::value::structure::{Equality, Tok};
 use crate::code_rule_dsl::value::{self, BigInt, Context, NodeRef, Value};
 use ast_grep_core::{Doc, Node};
@@ -41,7 +44,7 @@ use std::path::Path;
 use std::sync::Arc;
 
 /// SQL's family: SQLFluff's semantics.
-pub(crate) struct Sql;
+pub struct Sql;
 
 fn refused(message: impl Into<Cow<'static, str>>) -> Result<(), Refusal> {
     Err(Refusal::Refused(message.into()))
@@ -93,10 +96,12 @@ impl Adapter for Sql {
         _: (usize, usize),
     ) -> bool {
         let at = anchored.start;
-        suppress.sqlfluff.as_ref().is_some_and(|references| {
-            let index = file_sqlfluff(|| SqlfluffIndex::read(&root(node), source, lines));
-            index.suppresses(references, lines.line(at) + 1)
-        })
+        suppress
+            .get::<crate::code_rule_dsl::suppress::sqlfluff::Suppressions>()
+            .is_some_and(|references| {
+                let index = file_index(|| SqlfluffIndex::read(&root(node), source, lines));
+                index.suppresses(references, lines.line(at) + 1)
+            })
     }
 }
 
@@ -217,11 +222,6 @@ impl ScopeRules for Sql {
 
     fn ruff_options(_: Option<&Arc<PythonOptions>>) -> Option<Arc<PythonOptions>> {
         None
-    }
-
-    #[cfg(test)]
-    fn unbound_locally(_: &ScopeTable, _: &Reference, _: &str, _: bool) -> bool {
-        false
     }
 
     fn usage<D: Doc>(

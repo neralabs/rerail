@@ -1331,12 +1331,16 @@ describe("audit rule provenance", () => {
     const checks = busyChecks();
     const stop = new AbortController();
     let pauses = 0;
-    let stoppedAt = 0;
     let moved: number;
-    let endedAt: number;
+    let ended = false;
+    // Whether the move had ended by the time the event loop could run anything after the stop: a timer, I/O or the
+    // immediate that reads it. Ending at once is ending within the stop's turn, and that holds however busy the machine
+    // is; a bound in milliseconds also timed the close of the move's connection and the machine's load.
+    const endedAtStop = Promise.withResolvers<boolean>();
     try {
       // The move's own pause, 150 ms, which a stop ends. After the first batch the check before each batch is answered
-      // busy; the stop comes 50 ms into the third pause that follows.
+      // busy; the stop comes while the third pause that follows runs, so a move that waited out that pause, or anything
+      // else, would not have ended in the stop's turn.
       moved = await move(path, {
         perBatch: 10,
         signal: stop.signal,
@@ -1344,15 +1348,16 @@ describe("audit rule provenance", () => {
           pauses += 1;
           if (pauses === 2) checks.setBusy(true);
           if (pauses === 4) {
-            setTimeout(() => {
-              stoppedAt = performance.now();
+            setImmediate(() => {
               stop.abort();
-            }, 50);
+              setImmediate(() => endedAtStop.resolve(ended));
+            });
           }
           await sleep(150, undefined, { signal: stop.signal }).catch(() => undefined);
         },
+      }).finally(() => {
+        ended = true;
       });
-      endedAt = performance.now();
     } finally {
       checks.restore();
     }
@@ -1360,7 +1365,7 @@ describe("audit rule provenance", () => {
     expect(moved).toBe(10);
     expect(pauses).toBe(4);
     expect(checks.answered()).toBe(2);
-    expect(endedAt - stoppedAt).toBeLessThan(100);
+    expect(await endedAtStop.promise).toBe(true);
     expect(inlineAudits(path)).toBe(20);
     expect(await move(path)).toBe(20);
   });

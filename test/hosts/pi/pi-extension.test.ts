@@ -378,8 +378,8 @@ describe("Pi conversation-rules extension", () => {
     it("sends a Merge Assist note as it is, which already says once that it is Rerail's, not the user's", async () => {
       const harness = createHarness();
       await install(harness);
-      const content = conflictNote({ file: "src/model.ts", peer: "jbarnes-1", author: "Tim", summary: "Share matchers", pullRequest: false });
-      const conflict = { id: "conflict:a", text: "your edit overlaps jbarnes-1 (Tim): model.ts" };
+      const content = conflictNote({ file: "src/model.ts", peer: "jdoe-1", author: "Sam", summary: "Share matchers", pullRequest: false });
+      const conflict = { id: "conflict:a", text: "your edit overlaps jdoe-1 (Sam): model.ts" };
       const note: AdapterDelivery = { sessionId: "pi-test-session", requested: "steer", mechanism: "native-queue", content, ruleIds: [], rules: [], strategy: "message", conflict };
       const spy = withDeliveries(event => event.kind === "result" ? [note] : []);
       try {
@@ -393,7 +393,7 @@ describe("Pi conversation-rules extension", () => {
         const sent = harness.messages[0]!.message as Parameters<MessageRenderer>[0];
         const drawn = harness.renderers.get(RULE_MESSAGE_TYPE)?.(sent, { expanded: false, outputPad: 1 } as MessageRenderOptions, { fg: (_colour: string, text: string) => text } as Theme);
         const lines = drawn?.render(200).map(line => line.replace(/\u001b\[[0-9;]*m|\u001b\]8;;[^\u0007]*\u0007/gu, "").trimEnd());
-        expect(lines).toEqual([" ◆ R E R A I L · your edit overlaps jbarnes-1 (Tim): model.ts"]);
+        expect(lines).toEqual([" ◆ R E R A I L · your edit overlaps jdoe-1 (Sam): model.ts"]);
       } finally {
         spy.mockRestore();
       }

@@ -37,6 +37,7 @@ from transformers import AutoModel
 assert os
 exec("1")
 os.chmod("f", 0o777)
+password = "hunter2"
 try:
     pass
 except Exception:

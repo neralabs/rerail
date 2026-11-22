@@ -28,7 +28,7 @@ function entriesOf(root: string): Map<string, string> {
 /**
  * A `TreeWatch` that sees every write, as the engine's watch is meant to: each `take` compares each watched root's
  * entries with those of the last take, through `node:fs` calls a test's counted `node:fs/promises` never sees. A test
- * makes it miss writes (`silence`), hand notices late (`hold`), lose notices (`lose`), end a watch (`end`) or refuse
+ * makes it miss a change (`unnoticed`), hand notices late (`hold`), lose notices (`lose`), end a watch (`end`) or refuse
  * roots (`unwatchable`), and reads which roots it watches and with which folders.
  */
 export class StampTreeWatch implements TreeWatch {
@@ -41,18 +41,39 @@ export class StampTreeWatch implements TreeWatch {
   readonly #lost = new Set<string>();
   readonly #ended = new Set<string>();
   readonly #held = new Set<string>();
+  /** What `until` waits for, each checked again after a watch. */
+  readonly #waiting: Array<{ readonly met: () => boolean; readonly resolve: () => void }> = [];
   closed = false;
 
   watch(root: string, folders: readonly string[]): boolean {
     if (this.#unwatchable.has(root)) return false;
     if (!this.#entries.has(root)) this.#entries.set(root, entriesOf(root));
     this.folders.set(root, folders);
+    this.#settle();
     return true;
+  }
+
+  /** Resolves once `met` holds, read now and after each watch: a test waits for that fact, not for a time. */
+  until(met: () => boolean): Promise<void> {
+    if (met()) return Promise.resolve();
+    const { promise, resolve } = Promise.withResolvers<void>();
+    this.#waiting.push({ met, resolve });
+    return promise;
+  }
+
+  #settle(): void {
+    for (const waiter of this.#waiting.filter(waiter => waiter.met())) {
+      this.#waiting.splice(this.#waiting.indexOf(waiter), 1);
+      waiter.resolve();
+    }
   }
 
   unwatch(root: string): void {
     this.#entries.delete(root);
     this.folders.delete(root);
+    // As the engine does, the notices queued for a root it lets go of go with it.
+    this.#lost.delete(root);
+    this.#ended.delete(root);
     this.unwatched.push(root);
   }
 
@@ -76,14 +97,31 @@ export class StampTreeWatch implements TreeWatch {
     this.folders.clear();
   }
 
-  /** Takes in, with no notice, every write made in `root` so far, as a write through a hard link or a memory map. */
-  silence(root: string): void {
+  /**
+   * Makes `change` in `root` with no notice, as a write through a hard link or a memory map does: a take while it runs
+   * hands none for `root`, so the walks' notice pump asks for no walk on its account, and every write it made is then
+   * taken in silently. A hold the test already had on `root` stays until its own `release`, and the writes made under
+   * that hold before the change are taken in silently with it: their notices never come.
+   */
+  async unnoticed(root: string, change: () => Promise<unknown>): Promise<void> {
+    const heldBefore = this.#held.has(root);
+    this.hold(root);
+    try {
+      await change();
+      this.#silence(root);
+    } finally {
+      if (!heldBefore) this.release(root);
+    }
+  }
+
+  /** Takes in, with no notice, every write made in `root` so far. */
+  #silence(root: string): void {
     if (this.#entries.has(root)) this.#entries.set(root, entriesOf(root));
   }
 
   /** Makes the next take of `root` say notices were lost, with none named. */
   lose(root: string): void {
-    this.silence(root);
+    this.#silence(root);
     this.#lost.add(root);
   }
 
@@ -98,7 +136,7 @@ export class StampTreeWatch implements TreeWatch {
 
   /** Makes the next take of `root` say its watch ended. */
   end(root: string): void {
-    this.silence(root);
+    this.#silence(root);
     this.#ended.add(root);
   }
 

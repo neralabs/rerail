@@ -8,10 +8,10 @@ import { dirname, join } from "node:path";
 
 const GIT_ENV: NodeJS.ProcessEnv = {
   ...process.env,
-  GIT_AUTHOR_NAME: "Tim Belanger",
-  GIT_AUTHOR_EMAIL: "tim@example.com",
-  GIT_COMMITTER_NAME: "Tim Belanger",
-  GIT_COMMITTER_EMAIL: "tim@example.com",
+  GIT_AUTHOR_NAME: "Alex Kim",
+  GIT_AUTHOR_EMAIL: "alex@example.com",
+  GIT_COMMITTER_NAME: "Alex Kim",
+  GIT_COMMITTER_EMAIL: "alex@example.com",
   GIT_CONFIG_NOSYSTEM: "1",
   GIT_CONFIG_GLOBAL: "/dev/null",
 };

@@ -1,5 +1,5 @@
 use super::*;
-use crate::code_rule_dsl::oracle;
+use crate::code_rule_dsl::fixtures::oracle;
 use num_traits::ToPrimitive;
 use std::collections::BTreeSet;
 

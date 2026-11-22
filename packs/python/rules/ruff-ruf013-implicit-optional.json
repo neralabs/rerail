@@ -1112,7 +1112,8 @@
                     {
                       "any": [
                         {
-                          "regex": "^[\\[\\](),|:]$"
+                          "regex": "^[\\[\\](),|:]$",
+                          "stored": "keeps stored tokens out of an annotation's parts"
                         },
                         {
                           "kind": "comment"

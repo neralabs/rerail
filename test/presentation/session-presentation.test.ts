@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { createServer, type Server } from "node:http";
 import { createServer as createNetServer, type AddressInfo, type Socket } from "node:net";
 import { tmpdir } from "node:os";
@@ -228,21 +228,21 @@ describe("installed session presentation", () => {
 
   it("adds Merge Assist's segment: the newest conflict's line with the others counted, linked to its card", async () => {
     const session = response.context!.session!;
-    const summary = { id: "conflict:overlap:abc:12345678", text: "PR #398 (jbarnes) shares compiled matchers you clone" };
+    const summary = { id: "conflict:overlap:abc:12345678", text: "PR #398 (jdoe) shares compiled matchers you clone" };
     session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 3, summary } };
     const overlaps = await read();
-    expect(overlaps.text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jbarnes) shares compiled matchers you clone (+2)");
+    expect(overlaps.text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jdoe) shares compiled matchers you clone (+2)");
     expect(overlaps.parts.at(-1)!.url).toMatch(/#merge\?conflict=conflict:overlap:abc:12345678$/u);
     session.hud = { activeRuleCount: 3, steeringCount: 2, mergeAssist: { conflicts: 1, summary } };
-    expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jbarnes) shares compiled matchers you clone");
+    expect((await read()).text).toBe("R E R A I L ● 3 rules · steered 2× · ◐ PR #398 (jdoe) shares compiled matchers you clone");
   });
 
   it("cuts a long conflict line in Merge Assist's segment short, keeping the others' count", async () => {
     const session = response.context!.session!;
-    const text = `origin/tbelanger/${"long-branch-".repeat(20)} (${"Someone ".repeat(10)}) is changing src/a/very/deep/path/to/a/file.ts`;
+    const text = `origin/akim/${"long-branch-".repeat(20)} (${"Someone ".repeat(10)}) is changing src/a/very/deep/path/to/a/file.ts`;
     session.hud = { activeRuleCount: 3, steeringCount: 0, mergeAssist: { conflicts: 2, summary: { id: "conflict:a", text } } };
     const segment = (await read()).parts.at(-1)!.text;
-    expect(segment).toMatch(/^◐ origin\/tbelanger\/long-branch-.*… \(\+1\)$/u);
+    expect(segment).toMatch(/^◐ origin\/akim\/long-branch-.*… \(\+1\)$/u);
     expect([...segment.replace(/^◐ /u, "").replace(/ \(\+1\)$/u, "")]).toHaveLength(90);
   });
 
@@ -318,6 +318,44 @@ describe("installed session presentation", () => {
     expect(rendered).toContain("\u001b]8;;http://127.0.0.1/\u0007R E R A I L\u001b]8;;\u0007");
     expect(rendered).toContain("\u001b]8;;http://127.0.0.1/#rules\u00072 rules\u001b]8;;\u0007");
     expect(rendered).not.toContain("\u001b\\");
+  });
+});
+
+describe("the folder as spelt, which the daemon's start check reads what Rerail 0.1.4 saved under", () => {
+  /** `folder` with its drive letter in the other case, as VS Code spells it on Windows; as it is elsewhere. */
+  const otherCase = (folder: string) => folder.replace(/^[a-z](?=:)/iu, letter => letter === letter.toLowerCase() ? letter.toUpperCase() : letter.toLowerCase());
+  const askedFor = () => requested.map(href => new URL(href).searchParams).map(query => [query.get("repository"), query.get("spelling")]);
+
+  it("goes on Windows apart from `repository`, which stays the real path, to a daemon that says it reads it", async () => {
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, readsSpelling: true }));
+    const spelt = otherCase(cwd);
+    await readPresentation({ sessionId, host: "claude-code", cwd: spelt });
+    await readRepositoryState(spelt, "claude-code");
+    const stored = await realpath(cwd);
+    expect(askedFor()).toEqual(Array(2).fill([stored, process.platform === "win32" && spelt !== stored ? spelt : null]));
+  });
+
+  it("does not go to a daemon whose state does not say so, which refuses a query value it does not know", async () => {
+    const spelt = otherCase(cwd);
+    await readPresentation({ sessionId, host: "claude-code", cwd: spelt });
+    await readRepositoryState(spelt, "claude-code");
+    expect(askedFor()).toEqual(Array(2).fill([await realpath(cwd), null]));
+  });
+
+  it("goes only on Windows where a link makes the folder's spelling another path than its real one", async () => {
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, readsSpelling: true }));
+    const link = join(home, "linked-workspace");
+    await symlink(cwd, link, "junction");
+    await readRepositoryState(link, "claude-code");
+    expect(askedFor()).toEqual([[await realpath(cwd), process.platform === "win32" ? link : null]]);
+  });
+
+  it("does not go where the folder is spelt as its real path", async () => {
+    await writeFile(join(home, "daemon.json"), JSON.stringify({ ...state, readsSpelling: true }));
+    const stored = await realpath(cwd);
+    await readPresentation({ sessionId, host: "claude-code", cwd: stored });
+    await readRepositoryState(stored, "claude-code");
+    expect(askedFor()).toEqual(Array(2).fill([stored, null]));
   });
 });
 
@@ -422,7 +460,7 @@ describe("dashboard links", () => {
   });
 
   it("links a Merge Assist note's conflict to its card, though the note names no rule", async () => {
-    const note = { ...steer, ruleIds: [], rules: [], conflict: { id: "conflict:src/x.ts:1-4:ab12", text: "your edit overlaps PR #398 (Tim): x.ts" } };
+    const note = { ...steer, ruleIds: [], rules: [], conflict: { id: "conflict:src/x.ts:1-4:ab12", text: "your edit overlaps PR #398 (Sam): x.ts" } };
     const [linked] = await linkDeliveries([note], cwd);
     expect(linked).toEqual({ ...note, conflict: { ...note.conflict, url: "http://127.0.0.1:4737/#merge?conflict=conflict:src%2Fx.ts:1-4:ab12" } });
   });

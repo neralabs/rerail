@@ -176,7 +176,7 @@ Port of eslint-plugin-react 7.37.5 react/jsx-no-script-url with its default opti
 
 ### `react-jsx-no-target-blank`
 
-Port of eslint-plugin-react 7.37.5 react/jsx-no-target-blank with default options (links only, enforceDynamicLinks always, allowReferrer false). Reports an `<a>` whose last `target` is possibly `_blank` (a string, or a conditional with a `_blank` branch), with an external last `href` string (`scheme:` or `//`) or any `href` expression, and whose last `rel` does not give `noreferrer` on every value it may take (a string, the first quasi of a template, both branches of a conditional, or, when target and rel test the same name, the branch on which target is `_blank`).
+Port of eslint-plugin-react 7.37.5 react/jsx-no-target-blank with default options (links only, enforceDynamicLinks always, allowReferrer false). Reports an `<a>` whose last `target` is possibly `_blank` (a string, or a conditional with a `_blank` branch), with an external last `href` string (`scheme:` or `//`) or any `href` expression, and whose last `rel` does not give `noreferrer` on every value it may take (a string, the first quasi of a template, both branches of a conditional, or, when target and rel test the same name, the branch on which target is `_blank`). As upstream compares only the tests' names, two tests that are both something other than a name (a call, a member access), even different ones, count as the same.
 
 ### `react-jsx-no-undef`
 

@@ -1,0 +1,16 @@
+# corpus: mix: seed 177
+lexer corpus
+class quote = '"'
+class bs    = '\\'
+class ws    = ' ' '\t' '\n' '\r'
+class digit = '0'..'9'
+class alpha = 'a'..'z' 'A'..'Z'
+class high  = 0x80..0xff
+class nul   = 0x00
+class lf    = '\n'
+class op    = '{' '}' '[' ']' ',' ':'
+class x     = 'x'
+mask m0 = after_odd_run(escaped(high))
+mask m1 = after_odd_run(starts(bs))
+mask m2 = fill(prev(after_odd_run(ws), 4), toggle(prev(high, 31)))
+mask m3 = after_odd_run((after(m1) & fill(m2, alpha)))

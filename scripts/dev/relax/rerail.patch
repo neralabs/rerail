@@ -1,0 +1,388 @@
+diff --git a/libs/relax/compiler/src/cache.rs b/libs/relax/compiler/src/cache.rs
+index a83c0c4f..f44a8d24 100644
+--- a/libs/relax/compiler/src/cache.rs
++++ b/libs/relax/compiler/src/cache.rs
+@@ -1178,7 +1178,10 @@ pub struct SharedCode {
+ /// too under RELAX_CACHE_DIR (`own_cache_dir`: tests and measurement keep every store in their own
+ /// folder), and when `home` (the folder, made private: shared_code_root) is refused.
+ pub fn shared_code(policy: crate::sandbox::Policy, own_cache_dir: bool, home: impl FnOnce() -> Result<PathBuf, String>) -> Option<SharedCode> {
+-    if policy != crate::sandbox::Policy::Sandboxed || own_cache_dir {
++    // rerail: RELAX_SHARED_OPEN=1 lets an Open run (bare `relax`) share too. Its entries stay apart
++    // from a Sandboxed run's: the cache config hash holds the sandbox bit.
++    let open_shares = policy == crate::sandbox::Policy::Open && std::env::var_os("RELAX_SHARED_OPEN").is_some_and(|v| v == "1");
++    if (policy != crate::sandbox::Policy::Sandboxed && !open_shares) || own_cache_dir {
+         return None;
+     }
+     home().ok().map(|dir| SharedCode { dir, stale: Vec::new() })
+diff --git a/libs/relax/front/src/native.rs b/libs/relax/front/src/native.rs
+index 20d9fcc4..2b518851 100644
+--- a/libs/relax/front/src/native.rs
++++ b/libs/relax/front/src/native.rs
+@@ -572,6 +572,80 @@ pub fn write_receipt(g: &Graph, seeds: &[usize], scripts: &[ScriptOut], lib: Opt
+     Ok(path)
+ }
+ 
++/// What a script whose build-dependencies reach the native packages `reached` (their crates) takes
++/// from the receipt, for its rerun key: those packages' outputs (cfgs, env, OUT_DIR, system
++/// libraries), a path package's files, and the library's packages and archives. Not the library's
++/// path, nor the other packages' outputs: both change with any native package's build (the
++/// library's folder is the native key's, which hashes every native path package's files; a
++/// package's script can set a rustc-env over all its sources), and every script reaches some
++/// native package (libc is one), so a key over the whole receipt ran every script again, in a
++/// new OUT_DIR, after any edit of such a package, and every crate whose closure reads an OUT_DIR
++/// lost its stores.
++pub fn receipt_identity(g: &Graph, reached: &[usize], scripts: &[ScriptOut], lib: Option<&NativeLib>) -> String {
++    let pkgs: Vec<(&(String, String, String), bool)> = reached.iter().map(|&k| (&g.pkg[k], g.crates[k].registry)).collect();
++    let runs: Vec<(&str, &str, &ScriptOut)> = scripts.iter().map(|o| (g.pkg[o.krate].1.as_str(), g.pkg[o.krate].2.as_str(), o)).collect();
++    identity_of(pkgs, &runs, lib)
++}
++
++/// receipt_identity over the reached packages ((dir, name, version), from a registry) and the
++/// script runs by their package's name and version. Every list is taken as a set: a package's
++/// host and target runs, and the link's archives and packages, come in no fixed order.
++fn identity_of(mut pkgs: Vec<(&(String, String, String), bool)>, scripts: &[(&str, &str, &ScriptOut)], lib: Option<&NativeLib>) -> String {
++    let mut h = fnv(b"receipt-identity-v1", 0xcbf29ce484222325);
++    pkgs.sort();
++    pkgs.dedup();
++    for ((dir, name, version), registry) in pkgs {
++        h = fnv(format!("{name} {version}\0").as_bytes(), h);
++        if !registry {
++            hash_package_dir(dir, &mut h);
++        }
++        let mut runs: Vec<String> = scripts.iter().filter(|(n, v, _)| n == name && v == version)
++            .map(|(_, _, o)| format!("{}\0{}\0{:?}\0{:?}\0{:?}\0", o.host, o.out_dir, o.cfgs, o.env, o.system)).collect();
++        runs.sort();
++        for r in runs {
++            h = fnv(r.as_bytes(), h);
++        }
++    }
++    if let Some(lib) = lib {
++        let (mut statics, mut crates) = (lib.statics.clone(), lib.crates.clone());
++        statics.sort();
++        crates.sort();
++        h = fnv(format!("{statics:?}\0{crates:?}\0").as_bytes(), h);
++    }
++    format!("{h:016x}")
++}
++
++#[cfg(test)]
++mod receipt_identity_tests {
++    use super::*;
++
++    fn run(krate: usize, host: bool, out: &str, env: &[(&str, &str)]) -> ScriptOut {
++        ScriptOut { krate, host, cfgs: vec!["x".into()], env: env.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect(), out_dir: out.into(), system: Vec::new() }
++    }
++
++    /// The identity a script's key holds: the runs and the library's lists in any order are one
++    /// identity; a package the script does not reach changes nothing; one it reaches does.
++    #[test]
++    fn a_receipt_identity_is_of_the_reached_packages_as_sets() {
++        let libc = ("/r/libc".to_string(), "libc".to_string(), "0.2".to_string());
++        let (h, t) = (run(0, true, "/o/libc-h", &[]), run(0, false, "/o/libc-t", &[]));
++        let e1 = run(1, false, "/o/engine", &[("BUILD_ID", "1")]);
++        let e2 = run(1, false, "/o/engine", &[("BUILD_ID", "2")]);
++        let lib = |statics: &[&str]| NativeLib { path: String::new(), statics: statics.iter().map(|s| s.to_string()).collect(), crates: vec!["libc 0.2".into(), "engine 0.1".into()], partial: false };
++        let id = |runs: &[(&str, &str, &ScriptOut)], path: &str, statics: &[&str]| {
++            let mut l = lib(statics);
++            l.path = path.into();
++            identity_of(vec![(&libc, true)], runs, Some(&l))
++        };
++        let base = id(&[("libc", "0.2", &h), ("libc", "0.2", &t), ("engine", "0.1", &e1)], "/n/1/lib.dylib", &["z", "c"]);
++        assert_eq!(base, id(&[("libc", "0.2", &t), ("libc", "0.2", &h), ("engine", "0.1", &e1)], "/n/1/lib.dylib", &["z", "c"]), "the runs' order");
++        assert_eq!(base, id(&[("libc", "0.2", &h), ("libc", "0.2", &t), ("engine", "0.1", &e1)], "/n/1/lib.dylib", &["c", "z"]), "the archives' order");
++        assert_eq!(base, id(&[("libc", "0.2", &h), ("libc", "0.2", &t), ("engine", "0.1", &e2)], "/n/2/lib.dylib", &["z", "c"]), "a package not reached, and the library's folder");
++        let t2 = run(0, false, "/o/libc-t2", &[]);
++        assert_ne!(base, id(&[("libc", "0.2", &h), ("libc", "0.2", &t2), ("engine", "0.1", &e1)], "/n/1/lib.dylib", &["z", "c"]), "a reached package's run");
++    }
++}
++
+ /// Writes the file `path` beside it, then renames it over `path`: a reader sees the old file
+ /// whole or the new one, and a write that fails leaves the old one.
+ fn write_beside(path: &str, data: &[u8]) -> Result<(), String> {
+@@ -1829,9 +1903,24 @@ pub fn wrapper() -> Option<i32> {
+         if is_bin {
+             // the stub script is this executable (wrapper(): a build script stub exits at once)
+             let _ = std::fs::remove_file(path);
+-            if let Some(e) = &exe {
+-                if std::fs::hard_link(e, path).is_err() {
+-                    let _ = std::fs::copy(e, path);
++            // rerail: on Unix the stub is a script that exits 0, not a hard link of this executable.
++            // Cargo removes and links build scripts' names as it rebuilds them; while those were
++            // names of the loader's file, macOS's syspolicyd could find the name it was scanning
++            // gone ("Unable (errno: 2) to read file") and kill the running loader ("Malware
++            // rejection"). A script is another file, and no Mach-O to scan.
++            let script = cfg!(unix) && (name.starts_with("build_script_") || name.starts_with("build-script-"));
++            #[cfg(unix)]
++            if script {
++                use std::os::unix::fs::PermissionsExt;
++                if std::fs::write(path, b"#!/bin/sh\nexit 0\n").is_ok() {
++                    let _ = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o755));
++                }
++            }
++            if !script {
++                if let Some(e) = &exe {
++                    if std::fs::hard_link(e, path).is_err() {
++                        let _ = std::fs::copy(e, path);
++                    }
+                 }
+             }
+         } else if *kind == "dep-info" {
+diff --git a/libs/relax/front/src/unitgraph.rs b/libs/relax/front/src/unitgraph.rs
+index 84bcc71b..38004990 100644
+--- a/libs/relax/front/src/unitgraph.rs
++++ b/libs/relax/front/src/unitgraph.rs
+@@ -785,6 +785,8 @@ pub fn run_build_scripts(sess: &std::sync::Arc<crate::Session>, g: &mut Graph, t
+         }
+     }
+     let mut receipt: Option<String> = None;
++    // per script that takes it: what of it its rerun key holds (native.rs receipt_identity)
++    let mut receipt_ids: Vec<String> = vec![String::new(); g.build_scripts.len()];
+     let mut prebuilt = false;
+     if reach.contains(&true) {
+         let outputs = match native {
+@@ -803,6 +805,11 @@ pub fn run_build_scripts(sess: &std::sync::Arc<crate::Session>, g: &mut Graph, t
+         };
+         if let Some((scripts, lib)) = outputs {
+             receipt = Some(crate::native::write_receipt(g, &seeds, &scripts, lib.as_ref(), target_dir)?);
++            for (i, bs) in g.build_scripts.iter().enumerate() {
++                if reach[i] {
++                    receipt_ids[i] = crate::native::receipt_identity(g, &reached_native(g, bs, &native_krates), &scripts, lib.as_ref());
++                }
++            }
+         }
+     }
+     // a script a host answers (`ScriptAnswer`) starts no process;
+@@ -838,7 +845,7 @@ pub fn run_build_scripts(sess: &std::sync::Arc<crate::Session>, g: &mut Graph, t
+             }
+             _ => Vec::new(),
+         };
+-        let receipts: Vec<Option<&str>> = reach.iter().map(|&r| if r { receipt.as_deref() } else { None }).collect();
++        let receipts: Vec<Option<(&str, &str)>> = reach.iter().zip(&receipt_ids).map(|(&r, id)| if r { receipt.as_deref().map(|p| (p, id.as_str())) } else { None }).collect();
+         let mut results = relax_scripts(sess, gr, target_dir, &root, &native_krates, &check_skipped, &receipts, &meta, &|k| world.is_empty() || world[k]);
+         let mut _kept = None;
+         if let (Some(job), Some(done)) = (&native_job, scripts_done) {
+@@ -918,6 +925,24 @@ fn apply_built(g: &mut Graph, native_krates: &[usize], built: crate::native::Bui
+ 
+ /// The first of the native packages (`native_krates`) `bs`'s build-dependencies reach, by name:
+ /// its child run compiles that package (a build-dependency is the same package built for the host).
++/// Every crate of `native_krates` whose package `bs`'s build-dependencies reach (receipt_identity).
++fn reached_native(g: &Graph, bs: &BuildScript, native_krates: &[usize]) -> Vec<usize> {
++    let mut seen = vec![false; g.raw.len()];
++    let mut stack: Vec<usize> = bs.build_deps.iter().map(|d| d.0).collect();
++    let mut out = Vec::new();
++    while let Some(i) = stack.pop() {
++        if i >= g.raw.len() || std::mem::replace(&mut seen[i], true) {
++            continue;
++        }
++        let u = &g.raw[i];
++        out.extend(native_krates.iter().copied().filter(|&k| g.pkg[k].1 == u.pkg.1 && g.pkg[k].2 == u.pkg.2));
++        stack.extend(u.deps.iter().map(|d| d.0));
++    }
++    out.sort();
++    out.dedup();
++    out
++}
++
+ fn reaches_native<'g>(g: &'g Graph, bs: &BuildScript, native_krates: &[usize]) -> Option<&'g str> {
+     let native: Vec<(&str, &str)> = native_krates.iter().map(|&k| (g.pkg[k].1.as_str(), g.pkg[k].2.as_str())).collect();
+     let mut seen = vec![false; g.raw.len()];
+@@ -1005,7 +1030,7 @@ type LinksMeta = Mutex<std::collections::HashMap<usize, Result<Vec<(String, Stri
+ /// depends on `links` packages runs after their scripts, given their metadata (cargo orders the
+ /// runs the same way); most graphs have no such pair and run every script at once.
+ fn relax_scripts(sess: &std::sync::Arc<crate::Session>, g: &Graph, target_dir: &str, root: &BuildRoot, native_krates: &[usize], check_skipped: &[(usize, &'static str)],
+-    receipts: &[Option<&str>], meta: &LinksMeta,
++    receipts: &[Option<(&str, &str)>], meta: &LinksMeta,
+     only: &(dyn Fn(usize) -> bool + Sync)) -> Vec<ScriptRun> {
+     let results: Mutex<Vec<ScriptRun>> = Mutex::new(Vec::new());
+     let done = |i: usize, r: Result<String, String>, out_dir: String, confined: bool| {
+@@ -1678,7 +1703,7 @@ fn self_exe() -> std::io::Result<std::path::PathBuf> {
+ /// itself is the only process it starts. A script of a git run reads its package through the
+ /// VFS (RELAX_VFS / RELAX_WORKSPACE for the child), and writes only OUT_DIR (on disk).
+ #[allow(clippy::too_many_arguments)]
+-fn run_one(sess: &std::sync::Arc<crate::Session>, bs: &BuildScript, raw: &[RawUnit], cenv: &[(String, String)], dir: &str, pname: &str, ver: &str, name: &str, target_dir: &str, root: &BuildRoot, receipt: Option<&str>) -> (Result<String, String>, String, bool) {
++fn run_one(sess: &std::sync::Arc<crate::Session>, bs: &BuildScript, raw: &[RawUnit], cenv: &[(String, String)], dir: &str, pname: &str, ver: &str, name: &str, target_dir: &str, root: &BuildRoot, receipt: Option<(&str, &str)>) -> (Result<String, String>, String, bool) {
+     if let Err(e) = crate::vfs::read(&bs.src_path) {
+         return (Err(format!("{}: {}", bs.src_path, e)), String::new(), false);
+     }
+@@ -1777,9 +1802,11 @@ fn run_one(sess: &std::sync::Arc<crate::Session>, bs: &BuildScript, raw: &[RawUn
+     };
+     // the native build's outputs for the native packages this script's build-dependencies reach
+     // (run_build_scripts): named by its content, so the rerun key below changes exactly when they do
++    // the receipt's path names every native package's outputs and the library's folder; the key
++    // holds the identity of what this script reaches instead (NATIVE_RECEIPT_ID)
+     match receipt {
+-        Some(r) => cmd.env(NATIVE_RECEIPT, r),
+-        None => cmd.env_remove(NATIVE_RECEIPT),
++        Some((r, id)) => cmd.env(NATIVE_RECEIPT, r).env(NATIVE_RECEIPT_ID, id),
++        None => cmd.env_remove(NATIVE_RECEIPT).env_remove(NATIVE_RECEIPT_ID),
+     };
+     for (k, v) in cenv {
+         cmd.env(k, v);
+@@ -2085,6 +2112,9 @@ fn rerun_reason(stored: &str, now: &str, stored_env: &str, env_key: &str) -> Str
+ /// build-dependency there) keeps one output (relax issue 69). No cargo script can read them.
+ /// The variable that hands a build script's child run its parent's native receipt.
+ pub const NATIVE_RECEIPT: &str = "RELAX_NATIVE_RECEIPT";
++/// What of the native receipt a build script's rerun key holds (native.rs receipt_identity): the
++/// outputs of the native packages it reaches, not the receipt's path.
++pub const NATIVE_RECEIPT_ID: &str = "RELAX_NATIVE_RECEIPT_ID";
+ /// The variable that hands the package binaries an integration test starts (CARGO_BIN_EXE_<name>)
+ /// its run's native receipt (`Inherit::Binary`): set in the test's environment. Empty: none, the
+ /// binary builds its own natives. A binary whose test cleared it from its environment (or cleared
+@@ -2283,7 +2313,8 @@ fn names_program(stdout: &str, out_dir: &str, exe: &std::path::Path) -> bool {
+ 
+ /// A script run's environment as its rerun key holds it: the hash of its units, what runs it
+ /// (`tool`, run_build_scripts) and the variables it is given. Left out: the variables that only
+-/// shape the run (SCRIPT_RUN_SHAPE_VARS), a receipt it is not given, OUT_DIR (the key names the
++/// shape the run (SCRIPT_RUN_SHAPE_VARS), the native receipt's path (its NATIVE_RECEIPT_ID stands
++/// for what the script takes of it) and an identity it is not given, OUT_DIR (the key names the
+ /// output's folder, `script_build_dir`), and RUSTC and CARGO while they name the program that runs
+ /// it (`exe`): where that program lies is no input of the script, what it is (`tool`) is. Two
+ /// copies of one Relax find each other's outputs; a Relax that compiles the script or answers its
+@@ -2292,7 +2323,7 @@ fn script_env_key<'a>(h: u64, tool: u128, envs: impl Iterator<Item = (&'a std::f
+     let mut key = format!("{:016x}\ntool={:032x}", h, tool);
+     for (k, v) in envs {
+         let the_program = (k == "RUSTC" || k == "CARGO") && v == Some(exe.as_os_str());
+-        if SCRIPT_RUN_SHAPE_VARS.iter().any(|s| k == *s) || (k == NATIVE_RECEIPT && v.is_none()) || k == "OUT_DIR" || the_program {
++        if SCRIPT_RUN_SHAPE_VARS.iter().any(|s| k == *s) || k == NATIVE_RECEIPT || (k == NATIVE_RECEIPT_ID && v.is_none()) || k == "OUT_DIR" || the_program {
+             continue;
+         }
+         key.push_str(&format!("\n{}={}", k.to_string_lossy(), v.map(|v| v.to_string_lossy().into_owned()).unwrap_or_default()));
+@@ -2861,6 +2892,29 @@ mod shared_script_tests {
+         d
+     }
+ 
++    /// A script's key holds what it takes of the native receipt (NATIVE_RECEIPT_ID), not the
++    /// receipt's path: a native package it does not reach built again (another receipt) keeps its
++    /// output, and one it reaches (another identity) runs it again.
++    #[test]
++    fn a_scripts_key_holds_the_receipts_identity_not_its_path() {
++        let exe = Path::new("/relax");
++        let key = |receipt: Option<(&str, &str)>| {
++            let mut cmd = std::process::Command::new("true");
++            cmd.env("TARGET", "aarch64-apple-darwin");
++            match receipt {
++                Some((r, id)) => { cmd.env(NATIVE_RECEIPT, r).env(NATIVE_RECEIPT_ID, id); }
++                None => { cmd.env_remove(NATIVE_RECEIPT).env_remove(NATIVE_RECEIPT_ID); }
++            }
++            script_env_key(7, 9, cmd.get_envs(), exe)
++        };
++        assert_eq!(key(Some(("/t/native-scripts-1.json", "aa"))), key(Some(("/t/native-scripts-2.json", "aa"))));
++        assert_ne!(key(Some(("/t/native-scripts-1.json", "aa"))), key(Some(("/t/native-scripts-1.json", "bb"))));
++        assert_ne!(key(None), key(Some(("/t/native-scripts-1.json", "aa"))));
++        let mut plain = std::process::Command::new("true");
++        plain.env("TARGET", "aarch64-apple-darwin");
++        assert_eq!(key(None), script_env_key(7, 9, plain.get_envs(), exe), "a script given no receipt keeps the key it had");
++    }
++
+     /// A shared workspace's script output (vfs.rs SHARE) is keyed and named by what its inputs
+     /// hold, under the mount's paths: two checkouts with the same files share it, a checkout whose
+     /// file differs gets its own, also where the script declared a path under its folder on disk.
+diff --git a/libs/relax/types/src/borrowck/mir_source_tests.rs b/libs/relax/types/src/borrowck/mir_source_tests.rs
+index 6f202315..4584cd12 100644
+--- a/libs/relax/types/src/borrowck/mir_source_tests.rs
++++ b/libs/relax/types/src/borrowck/mir_source_tests.rs
+@@ -1079,3 +1079,44 @@ fn a_closures_higher_ranked_signature_regions_survive_normalization_under_the_bi
+     assert!(unchecked.is_empty(), "{unchecked:?}");
+     assert!(errors.is_empty(), "{errors:?}");
+ }
++
++#[test]
++fn a_closure_built_in_a_closure_returned_through_an_impl_capturing_two_lifetimes_borrows_self() {
++    // rerail: edition 2024's `impl Trait` captures both `&self` and `_r`; the inner closure's
++    // captured borrow sits in the outer closure's signature, in a slot whose identity is the fn's
++    // `'a` (root_cx.rs tie_inherited_slots). It was left free, member constraints chose `'static`
++    // for it, and `T: 'static` failed (E0310). rustc accepts it.
++    let (errors, _) = borrowck_source_in("
++        pub struct S<T>(pub Vec<Option<T>>);
++        impl<T> S<T> {
++            pub fn f(&self, _r: &str) -> impl Iterator<Item = &T> {
++                let o = move || (0..1usize).filter_map(move |c| self.0[c].as_ref());
++                o()
++            }
++        }
++        #[derive(Clone, Copy)]
++        pub enum View<'a> { A(&'a [u32]), B(&'a [u64]) }
++        impl View<'_> { pub fn has(&self, v: u32) -> bool { match self { View::A(x) => x.contains(&v), View::B(x) => x.contains(&(v as u64)) } } }
++        pub fn combine(out: &mut Vec<u32>, a: View<'_>, b: View<'_>) {
++            match (a, b) {
++                (View::A(x), m @ View::B(_)) | (m @ View::B(_), View::A(x)) => out.extend(x.iter().copied().filter(|&v| m.has(v))),
++                _ => {}
++            }
++        }
++        fn main() {}", 2024);
++    assert!(errors.is_empty(), "{errors:?}");
++}
++
++#[test]
++fn a_closure_built_in_a_closure_cannot_return_a_shorter_borrow_through_an_impl() {
++    // rerail: the case above with a borrow of a shorter lifetime: rustc rejects it (E0621), and
++    // tying the signature's slots to the parent's regions must not hide that.
++    let (errors, _) = borrowck_source_in("
++        pub fn g<'a>(x: &'a String, y: &String) -> impl Iterator<Item = &'a String> + 'a {
++            let _ = x;
++            let o = move || std::iter::once(()).map(move |_| y);
++            o()
++        }
++        fn main() {}", 2024);
++    assert!(errors.iter().any(|e| e.contains("E0621") || e.contains("lifetime")), "{errors:?}");
++}
+diff --git a/libs/relax/types/src/borrowck/root_cx.rs b/libs/relax/types/src/borrowck/root_cx.rs
+index eeb69f2d..9be81c76 100644
+--- a/libs/relax/types/src/borrowck/root_cx.rs
++++ b/libs/relax/types/src/borrowck/root_cx.rs
+@@ -203,6 +203,7 @@ impl BorrowCheckRootCtxt<'_> {
+     /// body with the regions it is created with. This adds new outlives obligations to existing
+     /// region variables of the parent, blamed on the nested body's original constraint.
+     fn apply_closure_requirements(&self, parent: &mut RootBody<'_>, child: &NestedInfo, requirements: Option<&ClosureRequirements>, use_: &DeferredClosureRequirement) {
++        self.tie_inherited_slots(parent, child, use_);
+         let Some(requirements) = requirements else { return };
+         let mapping = self.closure_mapping(parent, child, requirements.num_external_vids, use_);
+         let tys = &self.tcx.tys;
+@@ -230,6 +231,47 @@ impl BorrowCheckRootCtxt<'_> {
+         }
+     }
+ 
++    /// rerail: a region of the closure type that is one of the parent's own universal regions (its
++    /// slot's identity, `closure_slots`) is that region in the parent. The nested body maps its
++    /// requirements on such a region to the parent's region itself (closure_mapping), so it
++    /// propagates none for the slot; the parent's instantiation of the closure type has a fresh
++    /// variable there, which nothing else constrains when the slot is in the signature. Equate the two. Without this, a closure built
++    /// in a closure and returned through an `impl Trait` capturing two lifetimes left the inner
++    /// closure's captured borrow free, member constraints chose `'static` for it, and E0310 followed.
++    fn tie_inherited_slots(&self, parent: &mut RootBody<'_>, child: &NestedInfo, use_: &DeferredClosureRequirement) {
++        let (ClauseOwner::Closure(id) | ClauseOwner::Coroutine(id)) = use_.def else { return };
++        let tys = &self.tcx.tys;
++        let kind = if matches!(use_.def, ClauseOwner::Closure(_)) { AggregateKind::Closure(id, use_.args.clone()) } else { AggregateKind::Coroutine(id, use_.args.clone()) };
++        let ty = parent.infcx.rvalue_query_ty(parent.body, &Rvalue::Aggregate(Box::new(kind), vec![]));
++        let instantiated: Vec<RegionVid> = free_regions_in_order(self.tcx, ty).into_iter().map(|r| parent.infcx.to_region_vid(r)).collect();
++        // Only the signature's slots: an upvar's region is constrained where the closure is built
++        // (the captured operand's type flows into it), and its recorded identity is one of the
++        // regions that flowed in (an or-pattern's binding of two arguments names either), not
++        // necessarily the region itself.
++        let crate::types::TyKind::Closure(_, _, args) = tys.kind(ty).clone() else { return };
++        let before = free_regions_in_order(self.tcx, args.parent_args).len() + free_regions_in_order(self.tcx, args.closure_kind_ty).len();
++        let sig = before..before + free_regions_in_order(self.tcx, args.closure_sig_as_fn_ptr_ty).len();
++        if instantiated.len() != child.closure_slots.len() { return; }
++        let point = use_.locations.from_location().map(|l| LocationMap::new(parent.body).point(l));
++        let span = use_.locations.span(parent.body);
++        let universals = &parent.typeck.universals;
++        let mut ties = vec![];
++        for (slot, &identity) in child.closure_slots.iter().enumerate() {
++            if !sig.contains(&slot) { continue; }
++            if identity == RegionId::ERASED { continue; }
++            let Some(&instance) = instantiated.get(slot) else { continue };
++            let own = if tys.region_kind(identity) == RegionKind::ReStatic { Some(universals.fr_static) }
++                else { universals.indices.iter().find(|(r, _)| *r == identity).map(|&(_, v)| v) };
++            if let Some(own) = own { ties.push((own, instance)); }
++        }
++        for (own, instance) in ties {
++            for (sup, sub) in [(own, instance), (instance, own)] {
++                parent.typeck.constraints.outlives_constraints.push(OutlivesConstraint {
++                    sup, sub, location: point, span, category: super::constraints::ConstraintCategory::Boring, from_closure: true });
++            }
++        }
++    }
++
+     /// `UniversalRegions::closure_mapping`: the regions of the parent that the nested body's
+     /// external universal regions (global first, then external) stand for. Those the nested body
+     /// inherits are the parent's own universal regions; the others sit in the regions of the closure

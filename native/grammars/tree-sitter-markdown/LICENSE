@@ -1,0 +1,6 @@
+markdown/src is tree-sitter-md 0.5.4's block grammar (the crate's tree-sitter-markdown/src:
+grammar.json, scanner.c and the tree_sitter headers), and markdown-inline/src its inline grammar
+(the crate's tree-sitter-markdown-inline/src, the same files;
+the generated parser.c is not vendored, build.rs generates it). Under the MIT license the crate
+declares; it ships no license text of its own. The upstream repository is
+https://github.com/tree-sitter-grammars/tree-sitter-markdown. Unpatched.

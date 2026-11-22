@@ -1,0 +1,13 @@
+.policy "waves-class-lambdas" revision 1
+.description "A class with a lambda anywhere in its body: descendants of each class, as a closure over child edges."
+.language python
+.mode steer
+.scope include "**/*"
+// A class's descendants, walked down the tree: a closure of the same level as the others of this set.
+.decl wc_tree(p: node, c: node)
+wc_tree(p, c) :- child(p, c, _).
+.decl wc_desc(c: node, n: node)
+wc_desc(c, n) :- kind(c, "class_definition"), wc_tree(c, n).
+wc_desc(c, m) :- wc_desc(c, n), wc_tree(n, m).
+.violation WC1(at: node) code "WC1" "this class holds a lambda"
+WC1(c) :- wc_desc(c, n), kind(n, "lambda").

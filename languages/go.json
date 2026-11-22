@@ -1,0 +1,26 @@
+{
+  "format": "rerail.language/v1",
+  "id": "go",
+  "status": "supported",
+  "family": "go",
+  "dialects": [
+    {
+      "label": "go",
+      "variant": "Go",
+      "suffixes": [
+        ".go"
+      ],
+      "parser": "tree-sitter",
+      "grammar": "ast-grep:Go",
+      "tapeTag": 27
+    }
+  ],
+  "capabilities": {
+    "scope": "not-supported-yet",
+    "value": "not-supported-yet",
+    "arguments": "not-supported-yet",
+    "calls": "not-supported-yet",
+    "formatArgs": "not-supported-yet"
+  },
+  "suppressions": []
+}

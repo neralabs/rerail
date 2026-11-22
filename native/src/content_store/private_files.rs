@@ -13,7 +13,7 @@ use std::path::Path;
 
 /// The files SQLite keeps beside a database, by the suffix it appends to the database's name.
 #[cfg(unix)]
-const SIDECAR_SUFFIXES: [&str; 3] = ["-wal", "-shm", "-journal"];
+const JOURNAL_SUFFIXES: [&str; 3] = ["-wal", "-shm", "-journal"];
 
 /// Creates the store's folder and database file where absent, private on Unix, and tightens existing ones.
 pub(super) fn prepare(path: &Path) -> io::Result<()> {
@@ -45,10 +45,10 @@ pub(super) fn prepare(path: &Path) -> io::Result<()> {
             }
         }
         keep_private(path)?;
-        for suffix in SIDECAR_SUFFIXES {
-            let mut sidecar = path.as_os_str().to_owned();
-            sidecar.push(suffix);
-            keep_private(Path::new(&sidecar))?;
+        for suffix in JOURNAL_SUFFIXES {
+            let mut journal = path.as_os_str().to_owned();
+            journal.push(suffix);
+            keep_private(Path::new(&journal))?;
         }
     }
     #[cfg(not(unix))]

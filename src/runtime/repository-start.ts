@@ -11,6 +11,7 @@ import {
   nestedCheckouts,
   parentCheckouts,
   recordCheckout,
+  spelledCheckout,
 } from "../engine/catalog/repository-registry.js";
 import { listRepositoryRules } from "../engine/catalog/rule-configuration.js";
 import { awaitingApprovalOf } from "../engine/catalog/rule-approval.js";
@@ -121,11 +122,15 @@ export function sessionNoteRules(workspace: string, databasePath = defaultRerail
 
 /**
  * The effective state of many workspaces over one open connection, as the daemon answers per request. Each
- * workspace's git location is read once; the database is read on every call.
+ * workspace's git location is read once; the database is read on every call. With `spelling`, the folder as a Windows
+ * host spelt it, also the start or stop Rerail 0.1.4 saved under it ({@link spelledCheckout}).
  */
-export function startStateReader(database: RerailDatabase): (workspace: string) => RepositoryStartState {
+export function startStateReader(database: RerailDatabase): (workspace: string, spelling?: string) => RepositoryStartState {
   const resolveCheckout = createCheckoutResolver(database);
-  return workspace => stateOf(checkoutStatus(database, resolveCheckout(workspace)));
+  return (workspace, spelling) => {
+    const checkout = resolveCheckout(workspace);
+    return stateOf(checkoutStatus(database, spelling === undefined ? checkout : spelledCheckout(checkout, spelling)));
+  };
 }
 
 /**
@@ -173,7 +178,8 @@ export function isRerailStarted(workspace: string, databasePath = defaultRerailD
 export function checkoutName(workspace: string, wholeRepository: boolean): string {
   const location = repositoryIdentityLocation(workspace);
   const repository = repositoryFolderName(location);
-  return wholeRepository || location.main ? repository : `${basename(location.workspaceRoot)}, a worktree of ${repository}`;
+  // Outside Git, a worktree whose Git folder is gone included, the repository's name is the folder's own.
+  return wholeRepository || location.main || !location.git ? repository : `${basename(location.workspaceRoot)}, a worktree of ${repository}`;
 }
 
 /**

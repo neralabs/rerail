@@ -1,0 +1,1115 @@
+use super::metal_backend::launch::{
+    CheckedComputeEncoder, commit_checked, wait_checked,
+};
+use super::metal_backend::{MappedBuffer, pipeline_named};
+use super::metal_batch_abi::{
+    FORMAT_VERSION, FinalCaptureRecord, LinkRecord as CaptureRecord, MetalGlobalArenas,
+    PendingRecord, PropertyRecord, RepeatRecord, ResultRecord, TaskStatus,
+};
+use super::packed_batch::{PackedBatch, PackedExecution, PackedResultPage};
+use super::packed_workspace::WorkspaceTotals;
+use super::*;
+use crate::code_rule_dsl::tape::TapeDoc;
+use metal::{ComputePipelineState, Device, MTLSize};
+#[cfg(any(test, feature = "test-hooks"))]
+use std::cell::Cell;
+use std::collections::BTreeMap;
+use std::ops::{Deref, DerefMut};
+use std::sync::{Arc, LazyLock, Mutex};
+
+#[cfg(any(test, feature = "test-hooks"))]
+thread_local! {
+    static INVOCATIONS: Cell<usize> = const { Cell::new(0) };
+    static HOST_EVENTS: Cell<usize> = const { Cell::new(0) };
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub(in crate::code_rule_dsl) fn reset_metrics() {
+    INVOCATIONS.set(0);
+    HOST_EVENTS.set(0);
+}
+
+#[cfg(any(test, feature = "test-hooks"))]
+pub(in crate::code_rule_dsl) fn metrics() -> (usize, usize) {
+    (INVOCATIONS.get(), HOST_EVENTS.get())
+}
+
+#[path = "metal_label_passes.rs"]
+pub mod label_passes;
+// Its tests run in the engine's test binary (its facade of this module mounts `metal_tape_tests.rs` as `tape_tests`): they read what the
+// engine registers as it loads (the languages, their `.rerail` libraries).
+#[path = "metal_set_steps.rs"]
+pub mod set_steps;
+// Block programs on Metal: the Metal crate's.
+pub use rerail_metal::block_program;
+#[path = "metal_work_queue.rs"]
+pub mod work_queue;
+#[path = "metal_lattice.rs"]
+pub mod lattice;
+#[path = "metal_nearest.rs"]
+pub mod nearest;
+// Pre-pinned blocks: the Metal crate's.
+pub use rerail_metal::pool as blocks;
+
+const METAL_JIT_CACHE_LIMIT: usize = 32;
+pub(super) const EXECUTION_LANES: usize = 64;
+static JIT_CACHE: LazyLock<Mutex<BTreeMap<String, Engine>>> =
+    LazyLock::new(|| Mutex::new(BTreeMap::new()));
+const METAL_WORKSPACE_POOL_LIMIT: usize = 4;
+static METAL_WORKSPACE_POOL: LazyLock<Mutex<Vec<MetalWorkspace>>> =
+    LazyLock::new(|| Mutex::new(Vec::new()));
+
+/// Frees the workspaces kept for reuse; whether there were any. Kept workspaces count against the
+/// buffer budget, so a run that misses capacity frees them before anything else (`label_passes::run`).
+pub(super) fn release_workspaces() -> bool {
+    let released = METAL_WORKSPACE_POOL.lock().map(|mut pool| std::mem::take(&mut *pool)).unwrap_or_default();
+    !released.is_empty()
+}
+pub use rerail_metal::METAL_DEVICE;
+
+struct MetalWorkspace {
+    totals: WorkspaceTotals,
+    scheduler_bytes: u32,
+    output_storage_bytes: u32,
+    task_capacity: usize,
+    generation: u32,
+    pending: MappedBuffer,
+    captures: MappedBuffer,
+    cursors: MappedBuffer,
+    repeats: MappedBuffer,
+    scheduler: MappedBuffer,
+    results: MappedBuffer,
+    statuses: MappedBuffer,
+    value_states: MappedBuffer,
+    final_captures: MappedBuffer,
+    output_storage: MappedBuffer,
+}
+
+impl MetalWorkspace {
+    /// The bytes a workspace of these totals holds (`new`'s buffers, before page rounding).
+    pub(super) fn bytes_for(totals: WorkspaceTotals, scheduler_bytes: u32, output_storage_bytes: u32, task_capacity: usize) -> usize {
+        use std::mem::size_of;
+        totals.pending as usize * size_of::<PendingRecord>()
+            + (totals.captures as usize + totals.cursors as usize) * size_of::<CaptureRecord>()
+            + totals.repeats as usize * size_of::<RepeatRecord>()
+            + scheduler_bytes as usize
+            + (totals.candidates as usize + totals.results as usize) * size_of::<ResultRecord>()
+            + task_capacity * size_of::<TaskStatus>()
+            + totals.value_states as usize * 4
+            + totals.output_captures as usize * size_of::<FinalCaptureRecord>()
+            + output_storage_bytes as usize
+    }
+
+    fn new(
+        device: &Device,
+        totals: WorkspaceTotals,
+        scheduler_bytes: u32,
+        output_storage_bytes: u32,
+        task_capacity: usize,
+    ) -> Result<Self, Error> {
+        if crate::code_rule_dsl::prof::on() {
+            Self::count_buffer_sizes(totals, scheduler_bytes, output_storage_bytes);
+        }
+        let (pending, captures, cursors, repeats, scheduler) =
+            Self::untouched_path_buffers(device, totals, scheduler_bytes)?;
+        let (results, statuses, value_states, final_captures, output_storage) =
+            Self::untouched_result_buffers(device, totals, output_storage_bytes, task_capacity)?;
+        let workspace = Self {
+            totals,
+            scheduler_bytes,
+            output_storage_bytes,
+            task_capacity,
+            generation: 1,
+            pending,
+            captures,
+            cursors,
+            repeats,
+            scheduler,
+            results,
+            statuses,
+            value_states,
+            final_captures,
+            output_storage,
+        };
+        for (buffer, label) in [
+            (&workspace.pending, "Rerail pending paths"),
+            (&workspace.results, "Rerail results"),
+            (&workspace.final_captures, "Rerail final captures"),
+            (&workspace.scheduler, "Rerail scheduler"),
+            (&workspace.captures, "Rerail capture links"),
+            (&workspace.cursors, "Rerail cursor links"),
+            (&workspace.repeats, "Rerail repeat links"),
+            (&workspace.output_storage, "Rerail output storage"),
+        ] {
+            buffer.buffer.set_label(label);
+        }
+        Ok(workspace)
+    }
+
+    fn count_buffer_sizes(totals: WorkspaceTotals, scheduler_bytes: u32, output_storage_bytes: u32) {
+        use crate::code_rule_dsl::prof::count;
+        use std::mem::size_of;
+        count("ws.new", 1);
+        count("ws.pending_mb", totals.pending as usize * size_of::<PendingRecord>() >> 20);
+        count("ws.captures_mb", totals.captures as usize * size_of::<CaptureRecord>() >> 20);
+        count("ws.cursors_mb", totals.cursors as usize * size_of::<CaptureRecord>() >> 20);
+        count("ws.repeats_mb", totals.repeats as usize * size_of::<RepeatRecord>() >> 20);
+        count("ws.scheduler_mb", scheduler_bytes as usize >> 20);
+        count("ws.results_mb", totals.results as usize * size_of::<ResultRecord>() >> 20);
+        count("ws.value_states_mb", totals.value_states as usize * 4 >> 20);
+        count("ws.output_mb", output_storage_bytes as usize >> 20);
+        count("ws.final_captures_mb", totals.output_captures as usize * size_of::<FinalCaptureRecord>() >> 20);
+    }
+
+    /// The pending paths, their capture, cursor and repeat links, and the scheduler, in that order.
+    fn untouched_path_buffers(
+        device: &Device,
+        totals: WorkspaceTotals,
+        scheduler_bytes: u32,
+    ) -> Result<(MappedBuffer, MappedBuffer, MappedBuffer, MappedBuffer, MappedBuffer), Error> {
+        Ok((
+            MappedBuffer::untouched::<PendingRecord>(device, totals.pending as usize)?,
+            MappedBuffer::untouched::<CaptureRecord>(device, totals.captures as usize)?,
+            MappedBuffer::untouched::<CaptureRecord>(device, totals.cursors as usize)?,
+            MappedBuffer::untouched::<RepeatRecord>(device, totals.repeats as usize)?,
+            MappedBuffer::untouched::<u8>(device, scheduler_bytes as usize)?,
+        ))
+    }
+
+    /// The results, the task statuses, the value states, the final captures and the output storage, in that order.
+    fn untouched_result_buffers(
+        device: &Device,
+        totals: WorkspaceTotals,
+        output_storage_bytes: u32,
+        task_capacity: usize,
+    ) -> Result<(MappedBuffer, MappedBuffer, MappedBuffer, MappedBuffer, MappedBuffer), Error> {
+        Ok((
+            Self::untouched_results(device, totals)?,
+            MappedBuffer::untouched::<TaskStatus>(device, task_capacity)?,
+            MappedBuffer::untouched::<u32>(device, totals.value_states as usize)?,
+            MappedBuffer::untouched::<FinalCaptureRecord>(
+                device,
+                totals.output_captures as usize,
+            )?,
+            MappedBuffer::untouched::<u8>(device, output_storage_bytes as usize)?,
+        ))
+    }
+
+    /// The candidates' and results' records, in one buffer.
+    fn untouched_results(device: &Device, totals: WorkspaceTotals) -> Result<MappedBuffer, Error> {
+        MappedBuffer::untouched::<ResultRecord>(
+            device,
+            totals
+                .candidates
+                .checked_add(totals.results)
+                .ok_or(Error::BackendCapacity)? as usize,
+        )
+    }
+
+    fn fits(
+        &self,
+        totals: WorkspaceTotals,
+        scheduler_bytes: u32,
+        output_storage_bytes: u32,
+        task_capacity: usize,
+    ) -> bool {
+        self.totals.pending >= totals.pending
+            && self.totals.captures >= totals.captures
+            && self.totals.cursors >= totals.cursors
+            && self.totals.repeats >= totals.repeats
+            && self.totals.query_states >= totals.query_states
+            && self.totals.query_members >= totals.query_members
+            && self.totals.queued_states >= totals.queued_states
+            && self.totals.greedy_entries >= totals.greedy_entries
+            && self.totals.value_states >= totals.value_states
+            && self.totals.candidates >= totals.candidates
+            && self.totals.results >= totals.results
+            && self.totals.output_captures >= totals.output_captures
+            && self.totals.properties >= totals.properties
+            && self.scheduler_bytes >= scheduler_bytes
+            && self.output_storage_bytes >= output_storage_bytes
+            && self.task_capacity >= task_capacity
+    }
+}
+
+struct MetalWorkspaceLease {
+    workspace: Option<MetalWorkspace>,
+    reused: bool,
+    generation_span: u32,
+}
+
+impl MetalWorkspaceLease {
+    /// The workspace's bytes.
+    pub(super) fn bytes(&self) -> usize {
+        let w = self.workspace.as_ref().expect("a workspace");
+        [&w.pending, &w.captures, &w.cursors, &w.repeats, &w.scheduler, &w.results, &w.statuses, &w.value_states, &w.final_captures, &w.output_storage]
+            .iter()
+            .map(|buffer| buffer.buffer.length() as usize)
+            .sum()
+    }
+
+    fn acquire(
+        device: &Device,
+        totals: WorkspaceTotals,
+        scheduler_bytes: u32,
+        output_storage_bytes: u32,
+        task_capacity: usize,
+    ) -> Result<Self, Error> {
+        let generation_span = u32::try_from(task_capacity)
+            .ok()
+            .and_then(|tasks| tasks.checked_add(1))
+            .and_then(|tasks| tasks.checked_mul(2))
+            .ok_or(Error::BackendCapacity)?;
+        let mut pool = METAL_WORKSPACE_POOL.lock().unwrap();
+        let reusable = pool.iter().position(|workspace| {
+            workspace.generation <= u32::MAX - generation_span
+                && workspace.fits(totals, scheduler_bytes, output_storage_bytes, task_capacity)
+        });
+        let (workspace, reused) = if let Some(index) = reusable {
+            (pool.swap_remove(index), true)
+        } else {
+            // The new workspace holds what the pool's did as well, so a run whose levels differ
+            // from the last run's fits one workspace rather than replacing it each time (O28).
+            let (mut totals, mut scheduler_bytes, mut output_storage_bytes, mut task_capacity) =
+                (totals, scheduler_bytes, output_storage_bytes, task_capacity);
+            for old in pool.drain(..) {
+                totals = totals.widest(old.totals);
+                scheduler_bytes = scheduler_bytes.max(old.scheduler_bytes);
+                output_storage_bytes = output_storage_bytes.max(old.output_storage_bytes);
+                task_capacity = task_capacity.max(old.task_capacity);
+            }
+            (
+                MetalWorkspace::new(
+                    device,
+                    totals,
+                    scheduler_bytes,
+                    output_storage_bytes,
+                    task_capacity,
+                )?,
+                false,
+            )
+        };
+        Ok(Self {
+            workspace: Some(workspace),
+            reused,
+            generation_span,
+        })
+    }
+}
+
+impl Deref for MetalWorkspaceLease {
+    type Target = MetalWorkspace;
+
+    fn deref(&self) -> &Self::Target {
+        self.workspace.as_ref().unwrap()
+    }
+}
+
+impl DerefMut for MetalWorkspaceLease {
+    fn deref_mut(&mut self) -> &mut Self::Target {
+        self.workspace.as_mut().unwrap()
+    }
+}
+
+impl Drop for MetalWorkspaceLease {
+    fn drop(&mut self) {
+        let Some(mut workspace) = self.workspace.take() else {
+            return;
+        };
+        workspace.generation = workspace.generation.saturating_add(self.generation_span);
+        let mut pool = METAL_WORKSPACE_POOL.lock().unwrap();
+        if pool.len() < METAL_WORKSPACE_POOL_LIMIT {
+            pool.push(workspace);
+        }
+    }
+}
+
+const BATCH_ENTRY: &str = include_str!("metal_batch_runtime.metal");
+/// The tape's reads and readers (decision 0310), before the runtime: every batch reads its documents in the
+/// batch's chunk block through the tape view (decision 0032), with no node records: the document table's entry as
+/// generated (`slabs::msl`, decision 0289 §4), the reads written once (decision 0310), then the readers.
+static TAPE_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| prefix(""));
+/// The interpreter of resident label batches: tasks from roots, not records (decision 0033).
+static RESIDENT_PREFIX: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| prefix("#define RERAIL_RESIDENT 1\n"));
+
+fn prefix(defines: &str) -> String {
+    format!(
+        "{defines}#include <metal_stdlib>\nusing namespace metal;\n{}{}{}",
+        crate::code_rule_dsl::residency::slabs::msl(),
+        include_str!("metal_tape_reads.metal"),
+        include_str!("metal_tape.metal")
+    )
+}
+
+#[derive(Clone, Eq, PartialEq)]
+pub(super) struct ProgramBufferKey {
+    programs: Vec<super::metal_batch_abi::MetalProgram>,
+    words: Vec<u32>,
+    longs: Vec<u64>,
+    values: Vec<super::metal_batch_abi::ValueRecord>,
+    strings: Vec<super::metal_batch_abi::MetalString>,
+    nfa_states: Vec<super::metal_batch_abi::NfaStateRecord>,
+    nfa_data: Vec<u32>,
+    nfa_ranges: Vec<super::metal_batch_abi::NfaRangeRecord>,
+    lua_instructions: Vec<super::metal_batch_abi::LuaInstructionRecord>,
+    lua_members: Vec<super::metal_batch_abi::LuaSetMemberRecord>,
+    assertions: Vec<super::packed_batch::AssertionRecord>,
+    assertion_data: Vec<u32>,
+    string_bytes: Vec<u8>,
+}
+
+impl From<&PackedBatch> for ProgramBufferKey {
+    fn from(batch: &PackedBatch) -> Self {
+        Self {
+            programs: batch.programs.clone(),
+            words: batch.words.clone(),
+            longs: batch.longs.clone(),
+            values: batch.values.clone(),
+            strings: batch.strings.clone(),
+            nfa_states: batch.nfa_states.clone(),
+            nfa_data: batch.nfa_data.clone(),
+            nfa_ranges: batch.nfa_ranges.clone(),
+            lua_instructions: batch.lua_instructions.clone(),
+            lua_members: batch.lua_members.clone(),
+            assertions: batch.assertions.clone(),
+            assertion_data: batch.assertion_data.clone(),
+            string_bytes: batch.string_bytes.clone(),
+        }
+    }
+}
+
+pub(super) struct ProgramBuffers {
+    programs: MappedBuffer,
+    words: MappedBuffer,
+    longs: MappedBuffer,
+    values: MappedBuffer,
+    strings: MappedBuffer,
+    nfa_states: MappedBuffer,
+    nfa_data: MappedBuffer,
+    nfa_ranges: MappedBuffer,
+    lua_instructions: MappedBuffer,
+    lua_members: MappedBuffer,
+    assertions: MappedBuffer,
+    assertion_data: MappedBuffer,
+    string_bytes: MappedBuffer,
+}
+
+pub struct CachedProgramBuffers {
+    key: ProgramBufferKey,
+    buffers: Arc<ProgramBuffers>,
+}
+
+pub(super) type ProgramBufferCache = Arc<Mutex<Option<CachedProgramBuffers>>>;
+
+#[derive(Clone)]
+pub enum Engine {
+    Interpreter {
+        pipeline: ComputePipelineState,
+        buffers: ProgramBufferCache,
+    },
+    Jit {
+        pipeline: ComputePipelineState,
+        programs: usize,
+        buffers: ProgramBufferCache,
+    },
+}
+
+impl Engine {
+    fn pipeline(&self) -> &ComputePipelineState {
+        match self {
+            Self::Interpreter { pipeline, .. } | Self::Jit { pipeline, .. } => pipeline,
+        }
+    }
+
+    fn buffers(&self) -> &ProgramBufferCache {
+        match self {
+            Self::Interpreter { buffers, .. } | Self::Jit { buffers, .. } => buffers,
+        }
+    }
+
+    fn program_buffers(
+        &self,
+        device: &Device,
+        batch: &PackedBatch,
+    ) -> Result<Arc<ProgramBuffers>, Error> {
+        let key = ProgramBufferKey::from(batch);
+        let mut slot = self.buffers().lock().map_err(|_| Error::BackendFailure)?;
+        if let Some(cached) = slot.as_ref()
+            && cached.key == key
+        {
+            return Ok(Arc::clone(&cached.buffers));
+        }
+        let buffers = Arc::new(ProgramBuffers {
+            programs: MappedBuffer::from_slice(device, &batch.programs)?,
+            words: MappedBuffer::from_slice(device, &batch.words)?,
+            longs: MappedBuffer::from_slice(device, &batch.longs)?,
+            values: MappedBuffer::from_slice(device, &batch.values)?,
+            strings: MappedBuffer::from_slice(device, &batch.strings)?,
+            nfa_states: MappedBuffer::from_slice(device, &batch.nfa_states)?,
+            nfa_data: MappedBuffer::from_slice(device, &batch.nfa_data)?,
+            nfa_ranges: MappedBuffer::from_slice(device, &batch.nfa_ranges)?,
+            lua_instructions: MappedBuffer::from_slice(device, &batch.lua_instructions)?,
+            lua_members: MappedBuffer::from_slice(device, &batch.lua_members)?,
+            assertions: MappedBuffer::from_slice(device, &batch.assertions)?,
+            assertion_data: MappedBuffer::from_slice(device, &batch.assertion_data)?,
+            string_bytes: MappedBuffer::from_slice(device, &batch.string_bytes)?,
+        });
+        *slot = Some(CachedProgramBuffers {
+            key,
+            buffers: Arc::clone(&buffers),
+        });
+        Ok(buffers)
+    }
+}
+
+fn kernel_source(
+    fetch: &str,
+    native_dispatch: Option<&str>,
+    jit_support: &str,
+    jit_context: &str,
+    jit_output_context: &str,
+) -> String {
+    let mut source = BATCH_ENTRY
+        .replace("/*FETCH*/", fetch)
+        .replace("/*JIT_SUPPORT*/", jit_support)
+        .replace("/*JIT_CONTEXT*/", jit_context)
+        .replace("/*JIT_OUTPUT_CONTEXT*/", jit_output_context);
+    let begin = source
+        .find("/*OP_SWITCH_BEGIN*/")
+        .expect("Metal runtime has an opcode-switch start marker");
+    let end = source
+        .find("/*OP_SWITCH_END*/")
+        .expect("Metal runtime has an opcode-switch end marker")
+        + "/*OP_SWITCH_END*/".len();
+    if let Some(dispatch) = native_dispatch {
+        source.replace_range(begin..end, dispatch);
+        let output_begin = source
+            .find("/*OUTPUT_BEGIN*/")
+            .expect("Metal runtime has an output-call start marker");
+        let output_end = source
+            .find("/*OUTPUT_END*/")
+            .expect("Metal runtime has an output-call end marker")
+            + "/*OUTPUT_END*/".len();
+        source.replace_range(output_begin..output_end, "jit_apply_output(outputContext)");
+    } else {
+        source = source
+            .replace("/*OP_SWITCH_BEGIN*/", "")
+            .replace("/*OP_SWITCH_END*/", "")
+            .replace("/*OUTPUT_BEGIN*/", "")
+            .replace("/*OUTPUT_END*/", "");
+    }
+    source
+}
+
+fn opcode_bodies() -> Result<std::collections::BTreeMap<u8, &'static str>, Error> {
+    let begin = BATCH_ENTRY
+        .find("/*OP_SWITCH_BEGIN*/")
+        .ok_or(Error::BackendFailure)?;
+    let end = BATCH_ENTRY
+        .find("/*OP_SWITCH_END*/")
+        .ok_or(Error::BackendFailure)?;
+    let mut bodies = std::collections::BTreeMap::new();
+    for line in BATCH_ENTRY[begin..end].lines().skip(1) {
+        let mut remainder = line.trim();
+        let mut opcodes = Vec::new();
+        while let Some(case) = remainder.strip_prefix("case ") {
+            let (opcode, rest) = case.split_once("u:").ok_or(Error::BackendFailure)?;
+            opcodes.push(opcode.parse::<u8>().map_err(|_| Error::BackendFailure)?);
+            remainder = rest;
+        }
+        for opcode in opcodes {
+            bodies.insert(opcode, remainder);
+        }
+    }
+    Ok(bodies)
+}
+
+const JIT_CONTEXT: &str = "JitContext context={&nodes,children,supertypes,words,longs,values,strings,nfaStates,nfaData,nfaRanges,luaInstructions,luaMembers,valueWork,stringBytes,source,assertions,assertionData,captures,cursors,repeats,queuedStates,greedyEntries,pending,results,&lineStarts,task,file,program,node,&evaluation,&globalArenas,valueBase,valueCapacity,&status,&path,&pendingCount,&captureCount,&cursorCount,&repeatCount,&resultCount,&candidateHead,&localOrdinal,&keep,&advance};";
+const JIT_OUTPUT_CONTEXT: &str = "JitOutputContext outputContext={assertionData,program,task,file,&nodes,captures,raw.captureStart,raw.captureCount,finalCaptures,&finalCaptureCount,&captureBefore,outputStorage,&propertyCount,&outputByteCount,source,&lineStarts,values,nfaStates,nfaData,nfaRanges,valueWork,resultIndex,&resultProperties,&dynamicProperties,&outputSteps,&evaluation,&sharedEvaluation,&globalArenas,valueBase,valueCapacity};";
+
+fn jit_support(
+    bodies: &std::collections::BTreeMap<u8, &'static str>,
+    programs: &[Program],
+) -> Result<String, Error> {
+    let mut source = String::from(
+        "struct JitContext{thread const NodeTable* nodes;device const uchar* children;device const Supertype* supertypes;device const ulong* longs;device const ValueRecord* values;device const StringRecord* strings;device const NfaState* nfaStates;device const uint* nfaData;device const NfaRange* nfaRanges;device const LuaInstruction* luaInstructions;device const LuaMember* luaMembers;device uint* valueWork;device const uchar* stringBytes;device const uchar* source;device const Assertion* assertions;device const uint* assertionData;device Link* captures;device Link* cursors;device RepeatLink* repeats;device Path* pending;device Result* results;thread const LineTable* lineStarts;Task task;File file;Program program;Node node;device Evaluation* evaluation;device GlobalArenas* globalArenas;uint valueBase;uint valueCapacity;device Status* status;thread Path* path;thread uint* pendingCount;thread uint* captureCount;thread uint* cursorCount;thread uint* repeatCount;thread uint* resultCount;thread uint* candidateHead;thread uint* localOrdinal;thread bool* keep;thread bool* advance;};template<uint OP> __attribute__((noinline)) bool jit_step(thread JitContext& context,uint mode,uint operand){thread const NodeTable& nodes=*context.nodes;device const uchar* children=context.children;device const Supertype* supertypes=context.supertypes;device const ulong* longs=context.longs;device const ValueRecord* values=context.values;device const StringRecord* strings=context.strings;device const NfaState* nfaStates=context.nfaStates;device const uint* nfaData=context.nfaData;device const NfaRange* nfaRanges=context.nfaRanges;device const LuaInstruction* luaInstructions=context.luaInstructions;device const LuaMember* luaMembers=context.luaMembers;device uint* valueWork=context.valueWork;device const uchar* stringBytes=context.stringBytes;device const uchar* source=context.source;device const Assertion* assertions=context.assertions;device const uint* assertionData=context.assertionData;device Link* captures=context.captures;device Link* cursors=context.cursors;device RepeatLink* repeats=context.repeats;device Path* pending=context.pending;device Result* results=context.results;thread const LineTable& lineStarts=*context.lineStarts;Task task=context.task;File file=context.file;Program program=context.program;Node node=context.node;device Evaluation& evaluation=*context.evaluation;device GlobalArenas& globalArenas=*context.globalArenas;uint valueBase=context.valueBase,valueCapacity=context.valueCapacity;device Status& status=*context.status;thread Path& path=*context.path;thread uint& pendingCount=*context.pendingCount;thread uint& captureCount=*context.captureCount;thread uint& cursorCount=*context.cursorCount;thread uint& repeatCount=*context.repeatCount;thread uint& resultCount=*context.resultCount;thread uint& candidateHead=*context.candidateHead;thread uint& localOrdinal=*context.localOrdinal;bool keep=*context.keep,advance=*context.advance;constexpr uint op=OP;",
+    );
+    for (index, (opcode, body)) in bodies.iter().enumerate() {
+        source.push_str(if index == 0 {
+            "if constexpr("
+        } else {
+            "else if constexpr("
+        });
+        source.push_str(&format!(
+            "OP=={opcode}u){{{}}}",
+            body.strip_suffix("break;")
+                .unwrap_or(body)
+                .replace("return;", "return false;")
+        ));
+    }
+    source.push_str("else{return false;}*context.keep=keep;*context.advance=advance;return true;}");
+    for (program_index, program) in programs.iter().enumerate() {
+        for value in 0..program.value_programs.len() {
+            source.push_str(&format!(
+                "__attribute__((noinline)) bool jit_value_{program_index}_{value}(thread JitContext& context){{uint outcome=evaluate_text(context.values,context.strings,context.nfaStates,context.nfaData,context.nfaRanges,context.luaInstructions,context.luaMembers,context.valueWork,context.stringBytes,context.source,context.program,context.node,context.task,{value}u,context.path->steps,*context.evaluation,*context.globalArenas,context.valueBase,context.valueCapacity);if(outcome==2u){{context.status->error=6u;return false;}}if(outcome==3u){{context.status->error=4u;return false;}}if(outcome==4u){{context.status->error=2u;return false;}}*context.keep=outcome==1u;return true;}}"
+            ));
+        }
+        for capture in 0..program.capture_programs.len() {
+            source.push_str(&format!(
+                "__attribute__((noinline)) bool jit_capture_{program_index}_{capture}(thread JitContext& context){{uint outcome=evaluate_assertion(context.assertions[context.program.captureStart+{capture}u],context.assertionData,context.captures,context.path->captures,context.task,context.file,context.program,*context.nodes,context.source,context.strings,context.stringBytes,context.values,context.nfaStates,context.nfaData,context.nfaRanges,context.luaInstructions,context.luaMembers,context.valueWork,*context.lineStarts,context.path->steps,*context.evaluation,*context.globalArenas,context.valueBase,context.valueCapacity);if(outcome==2u){{context.status->error=6u;return false;}}if(outcome==3u){{context.status->error=4u;return false;}}if(outcome==4u){{context.status->error=2u;return false;}}*context.keep=outcome==1u;return true;}}"
+            ));
+        }
+    }
+    source.push_str("struct JitOutputContext{device const uint* assertionData;Program program;Task task;File file;thread const NodeTable* nodes;device const Link* captures;uint head;uint captureCount;device FinalCapture* finalCaptures;thread uint* finalCount;thread uint* captureStart;device uchar* storage;thread uint* propertyCount;thread uint* byteCount;device const uchar* source;thread const LineTable* lineStarts;device const ValueRecord* values;device const NfaState* nfaStates;device const uint* nfaData;device const NfaRange* nfaRanges;device uint* valueWork;uint resultIndex;thread uint* resultProperties;thread uint* dynamicProperties;thread uint* steps;device Evaluation* evaluation;device Evaluation* sharedEvaluation;device GlobalArenas* globalArenas;uint valueBase;uint valueCapacity;};");
+    for program_index in 0..programs.len() {
+        source.push_str(&format!(
+            "__attribute__((noinline)) uint jit_output_{program_index}(thread JitOutputContext& c){{return apply_output(c.assertionData,c.program,c.task,c.file,*c.nodes,c.captures,c.head,c.captureCount,c.finalCaptures,*c.finalCount,*c.captureStart,c.storage,*c.propertyCount,*c.byteCount,c.source,*c.lineStarts,c.values,c.nfaStates,c.nfaData,c.nfaRanges,c.valueWork,c.resultIndex,*c.resultProperties,*c.dynamicProperties,*c.steps,*c.evaluation,*c.sharedEvaluation,*c.globalArenas,c.valueBase,c.valueCapacity);}}"
+        ));
+    }
+    source.push_str(
+        "uint jit_apply_output(thread JitOutputContext& context){switch(context.task.program){",
+    );
+    for program_index in 0..programs.len() {
+        source.push_str(&format!(
+            "case {program_index}u:return jit_output_{program_index}(context);"
+        ));
+    }
+    source.push_str("default:return 2u;}}");
+    for (program_index, program) in programs.iter().enumerate() {
+        source.push_str(&format!(
+            "__attribute__((noinline)) bool jit_program_{program_index}(thread JitContext& context){{switch(context.path->pc){{"
+        ));
+        let native = native_ir::lower(program).map_err(|_| Error::BackendFailure)?;
+        for block in &native.structural {
+            let pc = block.position;
+            let (opcode, mode, operand) = block.operation.encoded();
+            if !bodies.contains_key(&opcode) {
+                return Err(Error::InvalidOpcode(usize::from(pc)));
+            }
+            if opcode == TEXT {
+                source.push_str(&format!(
+                    "case {pc}u:return jit_value_{program_index}_{operand}(context);"
+                ));
+            } else if opcode == ASSERT {
+                source.push_str(&format!("case {pc}u:return true;"));
+            } else {
+                source.push_str(&format!(
+                    "case {pc}u:return jit_step<{opcode}u>(context,{mode}u,{operand}u);"
+                ));
+            }
+        }
+        source.push_str("default:context.status->error=5u;return false;}}");
+    }
+    Ok(source
+        .replace("device Path* pending", "device Pending* pending")
+        .replace(
+            "device const Supertype* supertypes;device const ulong* longs",
+            "device const Supertype* supertypes;device const uint* words;device const ulong* longs",
+        )
+        .replace(
+            "device RepeatLink* repeats;device Pending* pending",
+            "device RepeatLink* repeats;device QueuedState* queuedStates;device GreedyEntry* greedyEntries;device Pending* pending",
+        )
+        .replace(
+            "device const Supertype* supertypes=context.supertypes;device const ulong* longs",
+            "device const Supertype* supertypes=context.supertypes;device const uint* words=context.words;device const ulong* longs",
+        )
+        .replace(
+            "device RepeatLink* repeats=context.repeats;device Pending* pending",
+            "device RepeatLink* repeats=context.repeats;device QueuedState* queuedStates=context.queuedStates;device GreedyEntry* greedyEntries=context.greedyEntries;device Pending* pending",
+        ))
+}
+
+fn jit_kernel_source(programs: &[Program]) -> Result<String, Error> {
+    let bodies = opcode_bodies()?;
+    let mut dispatch = String::from("switch(task.program){");
+    for program_index in 0..programs.len() {
+        dispatch.push_str(&format!(
+            "case {program_index}u:if(!jit_program_{program_index}(context))return;break;"
+        ));
+    }
+    dispatch.push_str("default:status.error=5u;return;}");
+    Ok(format!("{}{}", *TAPE_PREFIX, kernel_source("", Some(&dispatch), &jit_support(&bodies, programs)?, JIT_CONTEXT, JIT_OUTPUT_CONTEXT)))
+}
+
+const INTERPRETER_FETCH: &str =
+    "uint word=words[program.wordStart+path.pc];op=word&255u;mode=(word>>8u)&255u;operand=word>>16u;";
+
+/// The interpreter over resident tapes (the label passes'), compiled once (until the residency's
+/// drop releases it with the other pipelines' caches: it is held by the label runs' callers).
+pub(super) fn compile_resident_interpreter_cached() -> Result<Engine, Error> {
+    static INTERPRETER: Mutex<Option<Engine>> = Mutex::new(None);
+    let mut cached = INTERPRETER.lock().map_err(|_| Error::BackendFailure)?;
+    if let Some(engine) = &*cached {
+        return Ok(engine.clone());
+    }
+    let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
+    let engine = Engine::Interpreter { pipeline: pipeline_named(&source, "run_batch")?, buffers: Arc::new(Mutex::new(None)) };
+    *cached = Some(engine.clone());
+    Ok(engine)
+}
+
+pub fn compile_interpreter() -> Result<Engine, Error> {
+    Ok(Engine::Interpreter {
+        pipeline: pipeline_named(&format!("{}{}", *TAPE_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", "")), "run_batch")?,
+        buffers: Arc::new(Mutex::new(None)),
+    })
+}
+
+/// The interpreter with a recursive group's sweep kernel (`label_passes`, `label_sweep`), compiled
+/// once per process. A program whose flags carry a route (bit 31; bit 30 captured nodes, bits 8..30
+/// the label) marks its label as each result is published; other programs run as in `run_batch`.
+pub(in crate::code_rule_dsl) fn compile_sweep_cached() -> Result<ComputePipelineState, Error> {
+    static SWEEP: Mutex<Option<ComputePipelineState>> = Mutex::new(None);
+    let mut cached = SWEEP.lock().map_err(|_| Error::BackendFailure)?;
+    if let Some(pipeline) = &*cached {
+        return Ok(pipeline.clone());
+    }
+    // The label passes' sweep, over resident tapes as their interpreter.
+    let source = format!("{}{}", *RESIDENT_PREFIX, kernel_source(INTERPRETER_FETCH, None, "", "", ""));
+    let edit = |source: String, from: &str, to: &str| {
+        assert_eq!(source.matches(from).count(), 1, "the runtime has one {from}");
+        source.replacen(from, to, 1)
+    };
+    // Labels marked in this sweep must be read as they are marked, not through a read-only cache.
+    // (A program's route marks its labels as it publishes: `label_mark` in `run_task_in`.)
+    let source = edit(
+        source,
+        "device const uint* bits=(device const uint*)(values+1);return ((bits[(kind-16384u)*words+node/32u]>>(node%32u))&1u)!=0u;",
+        "device atomic_uint* bits=(device atomic_uint*)(values+1);return ((atomic_load_explicit(&bits[(kind-16384u)*words+node/32u],memory_order_relaxed)>>(node%32u))&1u)!=0u;",
+    );
+    let begin = source.find("kernel void run_batch(").expect("the runtime has run_batch") + "kernel void run_batch(".len();
+    let end = begin + source[begin..].find("uint tid [[thread_position_in_grid]]){").expect("run_batch's thread position");
+    let kernel = include_str!("metal_label_sweep.metal").replace("/*PARAMETERS*/", &source[begin..end]);
+    let pipeline = pipeline_named(&format!("{source}\n{kernel}"), "label_sweep")?;
+    *cached = Some(pipeline.clone());
+    Ok(pipeline)
+}
+
+pub(super) fn compile_jit(programs: &[Program]) -> Result<Engine, Error> {
+    Ok(Engine::Jit {
+        pipeline: pipeline_named(&jit_kernel_source(programs)?, "run_batch")?,
+        programs: programs.len(),
+        buffers: Arc::new(Mutex::new(None)),
+    })
+}
+
+pub(super) fn jit_cache_key(programs: &[Program]) -> Result<String, Error> {
+    Ok(format!(
+        "metal-jit:{FORMAT_VERSION}:{}:{}",
+        std::env::consts::ARCH,
+        jit_kernel_source(programs)?
+    ))
+}
+
+pub(super) fn program_buffer_key(programs: &[Program]) -> Result<ProgramBufferKey, Error> {
+    Ok(ProgramBufferKey::from(&PackedBatch::new_in_place(programs, &[], &[])?))
+}
+
+/// The interpreter, compiled once per process: a lowered matcher dispatches it once per pass.
+pub(in crate::code_rule_dsl) fn compile_interpreter_cached() -> Result<Engine, Error> {
+    static INTERPRETER: Mutex<Option<Engine>> = Mutex::new(None);
+    let mut cached = INTERPRETER.lock().map_err(|_| Error::BackendFailure)?;
+    if let Some(engine) = &*cached {
+        return Ok(engine.clone());
+    }
+    let engine = compile_interpreter()?;
+    *cached = Some(engine.clone());
+    Ok(engine)
+}
+
+/// Whether `programs`' kernel is compiled (`compile_jit_cached`), without compiling it.
+pub(in crate::code_rule_dsl) fn jit_ready(programs: &[Program]) -> Result<bool, Error> {
+    let key = jit_cache_key(programs)?;
+    Ok(JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?.contains_key(&key))
+}
+
+pub(in crate::code_rule_dsl) fn compile_jit_cached(programs: &[Program]) -> Result<Engine, Error> {
+    let key = jit_cache_key(programs)?;
+    if let Some(engine) = JIT_CACHE
+        .lock()
+        .map_err(|_| Error::BackendFailure)?
+        .get(&key)
+        .cloned()
+    {
+        return Ok(engine);
+    }
+    let engine = compile_jit(programs)?;
+    let mut cache = JIT_CACHE.lock().map_err(|_| Error::BackendFailure)?;
+    if let Some(existing) = cache.get(&key) {
+        return Ok(existing.clone());
+    }
+    if cache.len() == METAL_JIT_CACHE_LIMIT
+        && let Some(oldest) = cache.keys().next().cloned()
+    {
+        cache.remove(&oldest);
+    }
+    cache.insert(key, engine.clone());
+    Ok(engine)
+}
+
+pub(super) fn execute(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+) -> Result<Vec<Vec<Vec<Output>>>, Error> {
+    execute_outcomes(engine, programs, files, anchors)?.into_result()
+}
+
+pub(in crate::code_rule_dsl) fn execute_outcomes(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+) -> Result<BatchOutcome, Error> {
+    execute_packed(engine, programs, files, anchors)?.into_outcome()
+}
+
+pub(super) fn execute_packed(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+) -> Result<PackedExecution, Error> {
+    execute_packed_with_result_limits(engine, programs, files, anchors, None)
+}
+
+pub fn execute_packed_with_result_limits(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+    result_limits: Option<&[u32]>,
+) -> Result<PackedExecution, Error> {
+    let _evaluation = super::metal_backend::metal_execution_guard()?;
+    let mut batch = pack_batch(engine, programs, files, anchors)?;
+    if batch.tasks.is_empty() {
+        return Ok(PackedExecution::new(batch, PackedResultPage::empty()));
+    }
+    let totals = assign_batch_workspace(&mut batch, programs, result_limits)?;
+    let allocation_started = std::time::Instant::now();
+    let (device, queue) = device_and_queue()?;
+    execute_on_device(engine, files, device, &queue, batch, totals, allocation_started)
+}
+
+fn pack_batch(
+    engine: &Engine,
+    programs: &[Program],
+    files: &[TapeDoc],
+    anchors: &[Vec<Vec<u32>>],
+) -> Result<PackedBatch, Error> {
+    if matches!(engine, Engine::Jit { programs: count, .. } if *count != programs.len()) {
+        return Err(Error::InvalidAnchor);
+    }
+    // The tasks with no node records: the device reads the documents in the slabs (`DocTable`).
+    PackedBatch::new_in_place(programs, files, anchors).map_err(|error| print_batch_error("pack", error))
+}
+
+/// `error`, printed with the stage that failed under `RERAIL_PACKED_BATCH_PROFILE`.
+fn print_batch_error(stage: &str, error: Error) -> Error {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!("RERAIL_PACKED_BATCH_ERROR stage={stage} error={error:?}");
+    }
+    error
+}
+
+fn assign_batch_workspace(
+    batch: &mut PackedBatch,
+    programs: &[Program],
+    result_limits: Option<&[u32]>,
+) -> Result<WorkspaceTotals, Error> {
+    let totals = batch
+        .assign_workspace_with_result_limits_and_lanes(programs, result_limits, EXECUTION_LANES)
+        .map_err(|error| print_batch_error("workspace", error))?;
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!(
+            "RERAIL_PACKED_BATCH_PROFILE backend=metal programs={} tasks={} workspaceBytes={} totals={totals:?}",
+            programs.len(),
+            batch.tasks.len(),
+            batch.workspace_allocation_bytes(totals).unwrap_or(u64::MAX),
+        );
+    }
+    Ok(totals)
+}
+
+fn device_and_queue() -> Result<(&'static Device, metal::CommandQueue), Error> {
+    let device = METAL_DEVICE.as_ref().ok_or(Error::UnsupportedBackend)?;
+    let queue = rerail_metal::queue()?;
+    Ok((device, queue))
+}
+
+/// Runs the packed batch on the device: what it binds is held here until its results are read.
+fn execute_on_device(
+    engine: &Engine,
+    files: &[TapeDoc],
+    device: &Device,
+    queue: &metal::CommandQueueRef,
+    mut batch: PackedBatch,
+    totals: WorkspaceTotals,
+    allocation_started: std::time::Instant,
+) -> Result<PackedExecution, Error> {
+    let workspace = lease_workspace(device, &mut batch, totals)?;
+    let (program_buffers, task_buffer, header_buffer) = upload_batch(engine, device, &batch)?;
+    // The documents resident, gathered into one block (decision 0289 §4), in the batch's numbering: their views
+    // where the files were, and the block where the node records were. The kernel reads nothing from the
+    // children, source and line start slots; the block stands in for them.
+    let table = resident_doc_table(files)?;
+    let (file_buffer, block, supertype_buffer) = upload_documents(device, &table, &batch)?;
+    copy_scheduler_state(&workspace.scheduler, &batch);
+    let allocation_elapsed = allocation_started.elapsed();
+    print_workspace_profile(&workspace);
+    let buffers = [
+        &task_buffer.buffer,
+        &header_buffer.buffer,
+        &file_buffer.buffer,
+        block,
+        &program_buffers.programs.buffer,
+        &program_buffers.words.buffer,
+        &program_buffers.longs.buffer,
+        block,
+        &supertype_buffer.buffer,
+        &workspace.pending.buffer,
+        &workspace.captures.buffer,
+        &workspace.cursors.buffer,
+        &workspace.repeats.buffer,
+        &workspace.scheduler.buffer,
+        &workspace.results.buffer,
+        &workspace.statuses.buffer,
+        &program_buffers.values.buffer,
+        &program_buffers.strings.buffer,
+        &program_buffers.nfa_states.buffer,
+        &program_buffers.nfa_data.buffer,
+        &program_buffers.nfa_ranges.buffer,
+        &program_buffers.lua_instructions.buffer,
+        &program_buffers.lua_members.buffer,
+        &program_buffers.assertions.buffer,
+        &program_buffers.assertion_data.buffer,
+        &program_buffers.string_bytes.buffer,
+        block,
+        &workspace.value_states.buffer,
+        block,
+        &workspace.final_captures.buffer,
+        &workspace.output_storage.buffer,
+    ];
+    dispatch_batch(engine, queue, buffers, batch.evaluation_lanes.len() as u64, allocation_elapsed)?;
+    collect_results(batch, totals, &workspace)
+}
+
+/// A workspace for `batch`, with the batch's evaluations and lanes in its generation.
+fn lease_workspace(
+    device: &Device,
+    batch: &mut PackedBatch,
+    totals: WorkspaceTotals,
+) -> Result<MetalWorkspaceLease, Error> {
+    let workspace = MetalWorkspaceLease::acquire(
+        device,
+        totals,
+        batch.header.scheduler_byte_count,
+        batch.header.workspace_byte_count,
+        batch.tasks.len(),
+    )?;
+    for evaluation in &mut batch.evaluations {
+        evaluation.generation = workspace.generation;
+    }
+    for lane in &mut batch.evaluation_lanes {
+        lane.generation = workspace.generation;
+    }
+    Ok(workspace)
+}
+
+/// The batch's programs, tasks and header on the device.
+fn upload_batch(
+    engine: &Engine,
+    device: &Device,
+    batch: &PackedBatch,
+) -> Result<(Arc<ProgramBuffers>, MappedBuffer, MappedBuffer), Error> {
+    let program_buffers = engine.program_buffers(device, batch)?;
+    let task_buffer = MappedBuffer::from_slice(device, &batch.tasks)?;
+    let header_buffer = MappedBuffer::from_slice(device, &[batch.header])?;
+    Ok((program_buffers, task_buffer, header_buffer))
+}
+
+fn resident_doc_table(files: &[TapeDoc]) -> Result<crate::code_rule_dsl::residency::slabs::DocTable, Error> {
+    let table = crate::code_rule_dsl::residency::slabs::admit_docs(files)?;
+    let table = crate::code_rule_dsl::residency::slabs::DocTable::one_block(table).ok_or(Error::BackendCapacity)?;
+    if table.nodes != files.iter().map(TapeDoc::transducer_len).sum::<usize>() {
+        return Err(Error::BackendFailure);
+    }
+    Ok(table)
+}
+
+/// The table's views and block, and the batch's supertypes, on the device.
+fn upload_documents<'table>(
+    device: &Device,
+    table: &'table crate::code_rule_dsl::residency::slabs::DocTable,
+    batch: &PackedBatch,
+) -> Result<(MappedBuffer, &'table metal::Buffer, MappedBuffer), Error> {
+    let file_buffer = MappedBuffer::from_slice(device, &table.views)?;
+    let block = table.block.as_ref().ok_or(Error::BackendFailure)?.buffer();
+    // The derived classes alone (`has_supertype`): the classes are the codes', read on the tape.
+    let supertypes = batch.metal_supertypes();
+    let supertype_buffer = MappedBuffer::from_slice(device, &supertypes)?;
+    Ok((file_buffer, block, supertype_buffer))
+}
+
+/// Writes the batch's global arenas, then its evaluations, then its evaluation lanes, to the scheduler buffer.
+fn copy_scheduler_state(scheduler_buffer: &MappedBuffer, batch: &PackedBatch) {
+    unsafe {
+        std::ptr::copy_nonoverlapping(
+            std::ptr::from_ref(&batch.global_arenas).cast::<u8>(),
+            scheduler_buffer.buffer.contents().cast::<u8>(),
+            std::mem::size_of_val(&batch.global_arenas),
+        );
+        let evaluation_start = std::mem::size_of_val(&batch.global_arenas);
+        std::ptr::copy_nonoverlapping(
+            batch.evaluations.as_ptr().cast::<u8>(),
+            scheduler_buffer
+                .buffer
+                .contents()
+                .cast::<u8>()
+                .add(evaluation_start),
+            std::mem::size_of_val(batch.evaluations.as_slice()),
+        );
+        std::ptr::copy_nonoverlapping(
+            batch.evaluation_lanes.as_ptr().cast::<u8>(),
+            scheduler_buffer
+                .buffer
+                .contents()
+                .cast::<u8>()
+                .add(evaluation_start + std::mem::size_of_val(batch.evaluations.as_slice())),
+            std::mem::size_of_val(batch.evaluation_lanes.as_slice()),
+        );
+    }
+}
+
+fn print_workspace_profile(workspace: &MetalWorkspaceLease) {
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!(
+            "RERAIL_METAL_WORKSPACE reused={} generation={}",
+            workspace.reused, workspace.generation,
+        );
+    }
+}
+
+/// Encodes the kernel over `buffers` for `lanes` evaluation lanes, commits it and waits for it.
+fn dispatch_batch(
+    engine: &Engine,
+    queue: &metal::CommandQueueRef,
+    buffers: [&metal::Buffer; 31],
+    lanes: u64,
+    allocation_elapsed: std::time::Duration,
+) -> Result<(), Error> {
+    let command = queue.new_command_buffer();
+    command.set_label("Rerail packed transducer batch");
+    let encoder = command.new_compute_command_encoder();
+    encoder.set_label("Rerail packed transducer kernel");
+    encoder.set_compute_pipeline_state(engine.pipeline());
+    for (index, buffer) in buffers.into_iter().enumerate() {
+        encoder.set_buffer(index as u64, Some(buffer), 0);
+    }
+    let width = engine.pipeline().thread_execution_width().max(1);
+    encoder.checked_dispatch_threads(
+        command,
+        MTLSize::new(lanes, 1, 1),
+        MTLSize::new(width.min(lanes), 1, 1),
+    );
+    encoder.end_encoding();
+    let execution_started = std::time::Instant::now();
+    commit_checked(command)?;
+    wait_checked(command)?;
+    let execution_elapsed = execution_started.elapsed();
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+        eprintln!(
+            "RERAIL_PACKED_BATCH_PHASES allocationNanoseconds={} executionNanoseconds={}",
+            allocation_elapsed.as_nanos(),
+            execution_elapsed.as_nanos(),
+        );
+    }
+    if command.status() == metal::MTLCommandBufferStatus::Error {
+        return Err(Error::BackendFailure);
+    }
+    Ok(())
+}
+
+/// The batch's results, read from the workspace the kernel wrote them to.
+fn collect_results(
+    mut batch: PackedBatch,
+    totals: WorkspaceTotals,
+    workspace: &MetalWorkspace,
+) -> Result<PackedExecution, Error> {
+    #[cfg(any(test, feature = "test-hooks"))]
+    INVOCATIONS.set(INVOCATIONS.get() + 1);
+    batch.global_arenas = unsafe {
+        workspace
+            .scheduler
+            .buffer
+            .contents()
+            .cast::<MetalGlobalArenas>()
+            .read()
+    };
+    let statuses = unsafe {
+        std::slice::from_raw_parts(
+            workspace.statuses.buffer.contents().cast::<TaskStatus>(),
+            batch.tasks.len(),
+        )
+    };
+    if std::env::var_os("RERAIL_PACKED_BATCH_PROFILE").is_some() {
+        let mut work = BTreeMap::<u32, (u64, u32)>::new();
+        for (task, status) in batch.tasks.iter().zip(statuses) {
+            let entry = work.entry(task.program).or_default();
+            entry.0 += u64::from(status.reserved);
+            entry.1 += 1;
+        }
+        let mut work = work.into_iter().collect::<Vec<_>>();
+        work.sort_by_key(|(_, (total, _))| std::cmp::Reverse(*total));
+        eprintln!(
+            "RERAIL_PACKED_TASK_WORK {:?}",
+            work.into_iter().take(12).collect::<Vec<_>>()
+        );
+    }
+    let results = unsafe {
+        std::slice::from_raw_parts(
+            workspace.results.buffer.contents().cast::<ResultRecord>(),
+            totals
+                .candidates
+                .checked_add(totals.results)
+                .ok_or(Error::BackendCapacity)? as usize,
+        )
+    };
+    let final_captures = unsafe {
+        std::slice::from_raw_parts(
+            workspace
+                .final_captures
+                .buffer
+                .contents()
+                .cast::<FinalCaptureRecord>(),
+            totals.output_captures as usize,
+        )
+    };
+    let output_storage = unsafe {
+        std::slice::from_raw_parts(
+            workspace.output_storage.buffer.contents().cast::<u8>(),
+            batch.header.workspace_byte_count as usize,
+        )
+    };
+    let properties = unsafe {
+        std::slice::from_raw_parts(
+            workspace
+                .output_storage
+                .buffer
+                .contents()
+                .cast::<PropertyRecord>(),
+            totals.properties as usize,
+        )
+    };
+    let page = PackedResultPage::compact(
+        &batch,
+        statuses,
+        results,
+        final_captures,
+        properties,
+        output_storage,
+    )?;
+    Ok(PackedExecution::new(batch, page))
+}

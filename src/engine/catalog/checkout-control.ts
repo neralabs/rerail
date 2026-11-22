@@ -25,12 +25,35 @@ export function checkoutRealpath(path: string): string {
 }
 
 /**
+ * The realpath Rerail 0.1.4 and earlier keyed records by on every platform: the JS one, which on Windows keeps the
+ * letter case, drive letter, mapped drive and 8.3 name the caller spelt. Only for finding a record those versions saved
+ * under the folder as its session spelt it; this build keys every record through {@link checkoutRealpath}.
+ *
+ * The lookup under that earlier key is for Windows installs upgrading from 0.1.4 or earlier, which saved a folder's
+ * audit settings, and the start state of a folder outside Git, under it. It copies and stores nothing. Once no install
+ * upgrades from those versions, delete this function, {@link earlierPhysicalPath}, and what the compiler then names:
+ * the earlier-key read of `SqliteAuditControlStore` (`#settingsRow`, `#earlierKey`, `#savedHere`, `#outsideGit`,
+ * `settingsUnderEither`, `recordedRepository`, `SpeltFolder`), `CheckoutContext.earlierCheckoutPath` with `earlierKeyOf`,
+ * `earlierKeyAt`, `EARLIER_KEYS_HELD`, `spelledCheckout` and `ownStarted`'s second key in `repository-registry.ts`;
+ * the `spelling` value of `GET /api/presentation` (`readingSpelling` in `operations.ts`, `DaemonState.readsSpelling`,
+ * and the `spelling` that `presentationQuery` in `session-presentation.ts` hands the daemon for this lookup).
+ */
+export function earlierRealpath(path: string): string {
+  return realpathOn("linux")(path);
+}
+
+/**
  * The canonical location of `path`: its deepest existing ancestor resolved through symlinks (as {@link checkoutRealpath}
  * does on `platform`), plus the part not yet created. A file or folder whose real path the system refuses, such as one
  * the user is denied on Windows, counts as a part below that ancestor, unless it is a link (see `resolvedThrough`).
  */
 export function physicalPath(path: string, platform: NodeJS.Platform = process.platform): string {
   return resolvedThrough(path, realpathOn(platform));
+}
+
+/** {@link physicalPath} as Rerail 0.1.4 and earlier gave it, through {@link earlierRealpath}: the key they recorded a checkout under. */
+export function earlierPhysicalPath(path: string): string {
+  return resolvedThrough(path, earlierRealpath);
 }
 
 /**
@@ -40,6 +63,28 @@ export function physicalPath(path: string, platform: NodeJS.Platform = process.p
  */
 export function storedPath(path: string): string {
   return resolvedThrough(path, realpathSync.native);
+}
+
+/**
+ * {@link storedPath}, or `path` as given where the system cannot resolve it: one spelling for each folder, whatever link,
+ * letter case or 8.3 short name reached it, to match two paths by. Never for opening.
+ */
+export function storedForm(path: string): string {
+  try {
+    return storedPath(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * The native realpath of `path` with nothing taken off its text first, so the system resolves its names in turn and
+ * follows each link before the `..` after it, as Git resolves a path it reads from a file on Linux and macOS; `resolve`
+ * and the JS realpath cancel `link/..` as text. Throws where the system cannot resolve it. On Windows Node takes a `..`
+ * off the text before it asks the system, as Windows itself does.
+ */
+export function realpathNamesInTurn(path: string): string {
+  return realpathSync.native(path);
 }
 
 /**

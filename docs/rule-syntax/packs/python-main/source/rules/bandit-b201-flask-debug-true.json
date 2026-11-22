@@ -1,0 +1,77 @@
+{
+  "format": "rerail.policy/v1",
+  "id": "bandit-b201-flask-debug-true",
+  "revision": 1,
+  "mode": "steer",
+  "description": "Don't run a Flask app with debug enabled; the interactive debugger lets anyone who can reach it execute arbitrary code.",
+  "scope": {
+    "include": [
+      "**/*.py"
+    ],
+    "exclude": []
+  },
+  "clauses": [
+    {
+      "id": "b201",
+      "forbid": {
+        "ast": {
+          "language": "python",
+          "rule": {
+            "pattern": "$APP.run($$$ARGS)",
+            "arguments": {
+              "signature": [
+                "host",
+                "port",
+                "debug",
+                "load_dotenv"
+              ],
+              "bind": {
+                "DEBUG": "debug"
+              }
+            }
+          },
+          "constraints": {
+            "APP": {
+              "resolves": {
+                "binding": {
+                  "value": {
+                    "matches": "flask-instance"
+                  }
+                }
+              }
+            },
+            "CTOR": {
+              "resolves": {
+                "import": [
+                  "flask.Flask"
+                ]
+              }
+            },
+            "DEBUG": {
+              "value": {
+                "eq": true
+              }
+            }
+          },
+          "utils": {
+            "flask-instance": {
+              "pattern": "$CTOR($$$)"
+            }
+          }
+        }
+      },
+      "violation": {
+        "code": "B201",
+        "anchor": "witness.span",
+        "message": "Remove debug=True from this run call; the debugger lets anyone who reaches it run arbitrary code.",
+        "suppress": {
+          "nosec": {
+            "codes": [
+              "B201"
+            ]
+          }
+        }
+      }
+    }
+  ]
+}

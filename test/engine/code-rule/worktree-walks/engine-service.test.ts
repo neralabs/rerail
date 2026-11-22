@@ -9,6 +9,7 @@ import { removeFolder } from "../../../support/platform/remove-folder.js";
 import { CodeRuleBridge } from "../../../../src/engine/code-rule/code-rule-bridge.js";
 import type * as WalkReads from "../../../../src/engine/code-rule/walk-read-buffers.js";
 import { codeRuleSchema } from "../../../../src/engine/code-rule/code-rule-schema.js";
+import { nativeGitAccess } from "../../../../src/engine/native/git-access.js";
 import { startEngineService } from "../../../../src/runtime/index.js";
 import { testEmbedder } from "../../../support/hook-events.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
@@ -111,6 +112,41 @@ describe("the engine service and the other worktrees of a repository", () => {
     }
   });
 
+  it("opens one Git ignore matcher for a worktree whose change the live sessions audit, each session in a worktree of its own", { timeout: 60_000 }, async () => {
+    const root = await folder();
+    const databasePath = join(root, "rerail.sqlite");
+    const { worktrees } = repository(root, databasePath, ["w1", "w2", "w3", "w4"]);
+    const opens = vi.spyOn(CodeRuleBridge.prototype, "openWorkspace");
+    const audits = vi.spyOn(CheckoutCodeRuleRouter.prototype, "auditGeneratedEdits");
+    const matchers = vi.spyOn(nativeGitAccess(), "openGitIgnoreMatcher");
+    const service = await startEngineService({ socketPath: socketPathIn(root, "shared-ignore"), storageRoot: join(root, "sessions"), databasePath, embedder: testEmbedder });
+    const sessions = worktrees.slice(0, 3).map((cwd, index) => ({ host: "claude-code" as const, sessionId: `session-${index + 1}`, cwd }));
+    const turns = async () => {
+      for (const bridge of opens.mock.contexts as CodeRuleBridge[]) {
+        await bridge.checkpoint("turn");
+        await bridge.settleWorktreeWalk();
+      }
+    };
+    try {
+      for (const session of sessions) await service.ingest({ kind: "session-start", eventId: `${session.sessionId}:start`, session });
+      await vi.waitFor(() => expect(opens.mock.results).toHaveLength(sessions.length), { timeout: 30_000, interval: 20 });
+      await Promise.all(opens.mock.results.map(result => result.value));
+      await turns();
+      // A change in `w4`, which no session works in: each session's runtime audits it in its own router, which asks
+      // Git's ignore rules there.
+      await writeFile(join(worktrees[3]!, "src", "x.py"), "print(1)\n");
+      await turns();
+      const audited = () => audits.mock.calls.filter(([, batch]) => batch.mode === "log" && batch.edits.some(edit => edit.path.endsWith("w4/src/x.py")));
+      await vi.waitFor(() => expect(audited()).toHaveLength(sessions.length), { timeout: 30_000, interval: 20 });
+      await Promise.all(audits.mock.results.map(result => result.value));
+
+      // A matcher holds the worktree's index: the runtimes share the daemon's one.
+      expect(matchers.mock.calls.filter(([path]) => path === worktrees[3])).toHaveLength(1);
+    } finally {
+      await service.close();
+    }
+  });
+
   it("records a shell write in another worktree of one repository while a walk of another repository's worktrees is held", { timeout: 60_000 }, async () => {
     const [held, quick] = [await folder(), await folder()];
     const databasePath = join(held, "rerail.sqlite");
@@ -136,12 +172,13 @@ describe("the engine service and the other worktrees of a repository", () => {
       const entered = Promise.withResolvers<void>();
       const released = Promise.withResolvers<void>();
       releases.push(released.resolve);
-      // A write in the first repository's worktree: its next walk reads that worktree, and is held there.
-      await writeFile(join(slow.worktrees[0]!, "deep", "d.py"), "d = 1\n");
+      // A write in the first repository's worktree: its next walk reads that worktree, and is held there. The hold is in
+      // place before the write, as the walk its change notice asks for can begin while the write is still being made.
       counted.held.set(join(slow.worktrees[0]!, "deep"), async () => {
         entered.resolve();
         await released.promise;
       });
+      await writeFile(join(slow.worktrees[0]!, "deep", "d.py"), "d = 1\n");
       await slowBridge!.checkpoint("turn");
       await entered.promise;
       await fastBridge!.begin("shell-1", "shell", { command: "./run.sh" });

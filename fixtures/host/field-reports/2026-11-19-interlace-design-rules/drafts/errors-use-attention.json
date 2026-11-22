@@ -1,0 +1,91 @@
+{
+  "kind": "code",
+  "rule": {
+    "format": "rerail.policy/v1",
+    "id": "local:errors-use-attention",
+    "revision": 1,
+    "mode": "steer",
+    "description": "Show errors and needs-action states with the attention color, not the destructive red; DESIGN.md allows only neutral and attention.",
+    "scope": {
+      "include": [
+        "src/**/*.ts",
+        "src/**/*.tsx"
+      ],
+      "exclude": [
+        "**/*.test.ts",
+        "**/*.test.tsx",
+        "src/types/database.ts",
+        "src/theme/**",
+        "src/components/ui/**"
+      ]
+    },
+    "clauses": [
+      {
+        "id": "destructive-class",
+        "forbid": {
+          "regex": {
+            "pattern": "(?:^|[\\s'\"`:])(?:bg|text|border|ring|fill|stroke|outline|divide)-destructive(?:-foreground)?\\b",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "DESTRUCTIVE_COLOR",
+          "anchor": "witness.span",
+          "message": "v1 has no red. For an error or needs-action state use text-attention-foreground / bg-attention-muted; for a delete or other destructive action use neutral text-foreground."
+        }
+      },
+      {
+        "id": "destructive-variant",
+        "forbid": {
+          "regex": {
+            "pattern": "\\bvariant=\\{?\\s*['\"]destructive['\"]",
+            "source": "file.content"
+          }
+        },
+        "violation": {
+          "code": "DESTRUCTIVE_VARIANT",
+          "anchor": "witness.span",
+          "message": "Use the default or outline Button here; v1 has no red destructive style."
+        }
+      }
+    ]
+  },
+  "cases": {
+    "caught": [
+      {
+        "path": "src/app/save.tsx",
+        "content": "{error && <Text className=\"text-destructive text-sm\">{t('save.error')}</Text>}\n"
+      },
+      {
+        "path": "src/app/settings.tsx",
+        "content": "<Text className={cn('font-semibold', destructive && 'text-destructive')}>{label}</Text>\n"
+      },
+      {
+        "path": "src/app/del.tsx",
+        "content": "<Button variant=\"destructive\" onPress={del}><Text>{t('x')}</Text></Button>\n"
+      }
+    ],
+    "passed": [
+      {
+        "path": "src/app/settings.tsx",
+        "content": "Alert.alert(t('x'), '', [{ text: t('settings.deleteConfirm'), style: 'destructive', onPress: runDelete }]);\n"
+      },
+      {
+        "path": "src/app/settings2.tsx",
+        "content": "function Row({ destructive }: { destructive?: boolean }) { return null; }\n"
+      },
+      {
+        "path": "src/app/save2.tsx",
+        "content": "{error && <Text className=\"text-attention-foreground\">{msg}</Text>}\n"
+      },
+      {
+        "path": "src/theme/tokens.ts",
+        "content": "const t = { destructive: '0 84% 60%' };\n"
+      },
+      {
+        "path": "src/components/ui/button.tsx",
+        "content": "const d = 'bg-destructive active:bg-destructive/90';\n"
+      }
+    ]
+  }
+}

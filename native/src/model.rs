@@ -184,7 +184,7 @@ static SHARED_MODELS: Mutex<Vec<(ModelKey, Weak<LoadedModel>)>> = Mutex::new(Vec
 pub fn shared_model(root: &Path) -> Result<Arc<LoadedModel>> {
     let manifest = read_manifest(root).map_err(|fault| invalid(fault.message))?;
     let key = ModelKey {
-        root: fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()),
+        root: dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf()),
         checksums: [
             manifest.files.model.sha256,
             manifest.files.tokenizer.sha256,

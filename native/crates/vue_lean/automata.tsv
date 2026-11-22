@@ -1,0 +1,294 @@
+K	attribute
+S	0	0
+M	0	nattribute_name	1
+S	1	1
+M	1	t=	2
+S	2	0
+M	2	nattribute_value	3
+M	2	nquoted_attribute_value	3
+S	3	1
+I	0	nattribute_name	
+I	1	nattribute_value	t=
+I	1	nquoted_attribute_value	t=
+I	2	nattribute_value	
+I	2	nquoted_attribute_value	
+E	1	
+E	3	
+K	directive_attribute
+S	0	0
+M	0	ndirective_name	1
+M	0	t#	2
+M	0	t.	2
+M	0	t:	2
+M	0	t@	2
+S	1	1
+M	1	ndirective_modifiers	3
+M	1	t:	5
+M	1	t=	4
+S	2	0
+M	2	ndirective_value	6
+M	2	ndynamic_directive_value	6
+S	3	1
+M	3	t=	4
+S	4	0
+M	4	nattribute_value	7
+M	4	nquoted_attribute_value	7
+S	5	0
+M	5	ndirective_value	8
+M	5	ndynamic_directive_value	8
+S	6	1
+M	6	ndirective_modifiers	3
+M	6	t#	2
+M	6	t.	2
+M	6	t:	2
+M	6	t=	4
+M	6	t@	2
+S	7	1
+S	8	1
+M	8	ndirective_modifiers	3
+M	8	t=	4
+I	0	ndirective_name	
+I	1	nattribute_value	t=
+I	1	ndirective_modifiers	
+I	1	ndirective_value	t:
+I	1	ndynamic_directive_value	t:
+I	1	nquoted_attribute_value	t=
+I	2	ndirective_value	
+I	2	ndynamic_directive_value	
+I	3	nattribute_value	t=
+I	3	nquoted_attribute_value	t=
+I	4	nattribute_value	
+I	4	nquoted_attribute_value	
+I	5	ndirective_value	
+I	5	ndynamic_directive_value	
+I	6	nattribute_value	t=
+I	6	ndirective_modifiers	
+I	6	nquoted_attribute_value	t=
+I	8	nattribute_value	t=
+I	8	ndirective_modifiers	
+I	8	nquoted_attribute_value	t=
+E	1	
+E	3	
+E	6	
+E	7	
+E	8	
+P	t#
+P	t.
+P	t:
+P	t@
+K	directive_modifiers
+S	0	0
+M	0	t.	1
+S	1	0
+M	1	ndirective_modifier	2
+S	2	1
+M	2	t.	1
+I	0	ndirective_modifier	t.
+I	1	ndirective_modifier	
+I	2	ndirective_modifier	t.
+E	2	
+K	doctype
+S	0	0
+M	0	t<!	1
+S	1	0
+M	1	tdoctype	2
+S	2	0
+M	2	t>	3
+S	3	1
+E	0	t<!tdoctypet>
+E	1	tdoctypet>
+E	2	t>
+E	3	
+K	dynamic_directive_value
+S	0	0
+M	0	t[	1
+S	1	0
+M	1	ndynamic_directive_inner_value	2
+M	1	t]	3
+S	2	0
+M	2	t]	3
+S	3	1
+I	0	ndynamic_directive_inner_value	t[
+I	1	ndynamic_directive_inner_value	
+E	0	t[t]
+E	1	t]
+E	2	t]
+E	3	
+K	end_tag
+S	0	0
+M	0	t</	1
+S	1	0
+M	1	ntag_name	2
+S	2	0
+M	2	t>	3
+S	3	1
+I	0	ntag_name	t</
+I	1	ntag_name	
+E	2	t>
+E	3	
+K	erroneous_end_tag
+S	0	0
+M	0	t</	1
+S	1	0
+M	1	nerroneous_end_tag_name	2
+S	2	0
+M	2	t>	3
+S	3	1
+I	0	nerroneous_end_tag_name	t</
+I	1	nerroneous_end_tag_name	
+E	2	t>
+E	3	
+K	interpolation
+S	0	0
+M	0	t{{	1
+S	1	0
+M	1	nraw_text	2
+M	1	t}}	3
+S	2	0
+M	2	t}}	3
+S	3	1
+I	0	nraw_text	t{{
+I	1	nraw_text	
+E	0	t{{t}}
+E	1	t}}
+E	2	t}}
+E	3	
+K	quoted_attribute_value
+S	0	0
+M	0	t"	2
+M	0	t'	1
+S	1	0
+M	1	nattribute_value	3
+M	1	t'	4
+S	2	0
+M	2	nattribute_value	5
+M	2	t"	6
+S	3	0
+M	3	t'	4
+S	4	1
+S	5	0
+M	5	t"	6
+S	6	1
+I	1	nattribute_value	
+I	2	nattribute_value	
+E	1	t'
+E	2	t"
+E	3	t'
+E	4	
+E	5	t"
+E	6	
+K	script_start_tag
+S	0	0
+M	0	t<	1
+S	1	0
+M	1	ntag_name	2
+S	2	0
+M	2	nattribute	3
+M	2	ndirective_attribute	3
+M	2	t>	4
+S	3	0
+M	3	nattribute	3
+M	3	ndirective_attribute	3
+M	3	t>	4
+S	4	1
+I	0	ntag_name	t<
+I	1	ntag_name	
+I	2	nattribute	
+I	2	ndirective_attribute	
+I	3	nattribute	
+I	3	ndirective_attribute	
+E	2	t>
+E	3	t>
+E	4	
+K	self_closing_tag
+S	0	0
+M	0	t<	1
+S	1	0
+M	1	ntag_name	2
+S	2	0
+M	2	nattribute	3
+M	2	ndirective_attribute	3
+M	2	t/>	4
+S	3	0
+M	3	nattribute	3
+M	3	ndirective_attribute	3
+M	3	t/>	4
+S	4	1
+I	0	ntag_name	t<
+I	1	ntag_name	
+I	2	nattribute	
+I	2	ndirective_attribute	
+I	3	nattribute	
+I	3	ndirective_attribute	
+E	2	t/>
+E	3	t/>
+E	4	
+K	start_tag
+S	0	0
+M	0	t<	1
+S	1	0
+M	1	ntag_name	2
+S	2	0
+M	2	nattribute	3
+M	2	ndirective_attribute	3
+M	2	t>	4
+S	3	0
+M	3	nattribute	3
+M	3	ndirective_attribute	3
+M	3	t>	4
+S	4	1
+I	0	ntag_name	t<
+I	1	ntag_name	
+I	2	nattribute	
+I	2	ndirective_attribute	
+I	3	nattribute	
+I	3	ndirective_attribute	
+E	2	t>
+E	3	t>
+E	4	
+K	style_start_tag
+S	0	0
+M	0	t<	1
+S	1	0
+M	1	ntag_name	2
+S	2	0
+M	2	nattribute	3
+M	2	ndirective_attribute	3
+M	2	t>	4
+S	3	0
+M	3	nattribute	3
+M	3	ndirective_attribute	3
+M	3	t>	4
+S	4	1
+I	0	ntag_name	t<
+I	1	ntag_name	
+I	2	nattribute	
+I	2	ndirective_attribute	
+I	3	nattribute	
+I	3	ndirective_attribute	
+E	2	t>
+E	3	t>
+E	4	
+K	template_start_tag
+S	0	0
+M	0	t<	1
+S	1	0
+M	1	ntag_name	2
+S	2	0
+M	2	nattribute	3
+M	2	ndirective_attribute	3
+M	2	t>	4
+S	3	0
+M	3	nattribute	3
+M	3	ndirective_attribute	3
+M	3	t>	4
+S	4	1
+I	0	ntag_name	t<
+I	1	ntag_name	
+I	2	nattribute	
+I	2	ndirective_attribute	
+I	3	nattribute	
+I	3	ndirective_attribute	
+E	2	t>
+E	3	t>
+E	4	

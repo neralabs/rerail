@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { afterEach, describe, expect, it } from "vitest";
 import { checkouts, defaultRerailDatabasePath, events, openRerailDatabase, PACKAGE_ROOT, policySessionOwners, sessions, SqliteAuditStore } from "../../src/engine/index.js";
 import { collectSupportBundle, type KnownValue, runSupportBundleCommand, scrubText, type SupportBundle } from "../../src/cli/support-bundle.js";
+import { holdHomeAsDaemon } from "../support/processes/home-lock.js";
 import { startTestRepository } from "../support/started-repository.js";
 import { NO_POSIX_MODES, POSIX_MODES } from "../support/platform/file-mode.js";
 import { removeFolder } from "../support/platform/remove-folder.js";
@@ -213,7 +214,7 @@ async function slowDaemon(home: string, delayMs: number | undefined, onProbe?: (
   // port, so a second daemon can replace the first in one home; as short as `engine.sock`, for macOS's 103 bytes.
   const kernelSocketPath = process.platform === "win32" ? `\\\\.\\pipe\\rerail-bundle-test-${process.pid}-${port}` : join(home, `e${port}.sock`);
   // On Windows a lookup sends a recorded daemon's engine a challenge, and only an engine that holds the daemon's
-  // capability answers it (src/runtime/engine-proof.ts, which tests outside the runtime cannot import): this one does,
+  // capability answers it (src/runtime/daemon/engine-proof.ts, which tests outside the runtime cannot import): this one does,
   // as a daemon busy in HTTP still does from its engine.
   const accessToken = "fake-daemon-capability-0123456789";
   const engine = createHttpServer((request, response) => {
@@ -227,12 +228,14 @@ async function slowDaemon(home: string, delayMs: number | undefined, onProbe?: (
     pid: process.pid, host: "127.0.0.1", port, url: `http://127.0.0.1:${port}/`, version: "9.9.9", databasePath: join(home, "rerail.sqlite"),
     kernelSocketPath, ui: "bundled", startedAt: 1, packageRoot: home, accessToken,
   }));
+  const releaseHome = holdHomeAsDaemon(home);
   const closed = async (server: Server | HttpServer): Promise<void> => await new Promise(resolve => server.close(() => resolve()));
   return {
     close: async () => {
       http.closeAllConnections();
       engine.closeAllConnections();
       await Promise.all([closed(http), closed(engine)]);
+      releaseHome();
     },
   };
 }
@@ -284,7 +287,9 @@ describe("rerail support-bundle", () => {
     expect(bundle.rerail.version).toBe("9.9.9");
     expect(bundle.session?.host).toBe("claude-code");
     expect(bundle.session?.eventCounts).toMatchObject({ call: 1, result: 1, "steering-delivered": 1 });
-    expect(bundle.session?.gaps).toEqual({ droppedEvents: 4, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 1, ignoredEdits: 0, ignoreRuleChanges: 0 });
+    expect(bundle.session?.gaps).toEqual({
+      droppedEvents: 4, uncheckedBoundaries: 0, codeRulesPendingBoundaries: 1, ignoredEdits: 0, ignoreRuleChanges: 0, discoveryGaps: 0, discoveryGapsMore: false,
+    });
     expect(bundle.session?.timeline).toContainEqual(expect.objectContaining({ kind: "result", tool: "Bash", failed: true }));
     expect(bundle.session?.timeline).toContainEqual(expect.objectContaining({ kind: "steering-delivered", ruleIds: ["eslint-eqeqeq"] }));
     expect(bundle.session?.steers).toEqual([{ mechanism: "message", requested: "steer", ruleIds: ["eslint-eqeqeq"], text: STEER }]);
