@@ -823,6 +823,49 @@ fn line_breaks_in_brackets_are_the_lean_parsers() {
     same(&["fun f() {\n    g(\n        a + \"b\"\n            + \"c\",\n        d)\n    val e = (h\n        - i)\n}\n"]);
 }
 
+/// The type after `as`, as the lean parser's `ty`: a parenthesized function type too.
+#[test]
+fn as_types_are_the_lean_parsers() {
+    same(&[
+        "val a = (b as ((C) -> Unit)).invoke(1)\n",
+        "val a = b as ((C) -> Unit)\n",
+        "val a = b as @A C\n",
+        "val a = b as suspend () -> Unit\n",
+    ]);
+}
+
+/// Delegation specifiers, as the lean parser's `delegation_specifiers`: `suspend` and a function
+/// type, a function type with a receiver, a parenthesized one, a constructor's call, a delegate.
+#[test]
+fn delegation_specifiers_are_the_lean_parsers() {
+    same(&[
+        "class Block : suspend LifecycleOwner.(View) -> Unit {\n}\n",
+        "class Block : LifecycleOwner.(View) -> Unit {\n}\n",
+        "class B : (Int) -> Unit, C(), D by e\n",
+        "class B : suspend (Int) -> Unit\n",
+    ]);
+}
+
+/// A class parameter's modifiers: any modifier a name follows (`vararg` among them).
+#[test]
+fn class_parameter_modifiers_are_the_lean_parsers() {
+    same(&[
+        "class X(a: Map<String, String>? = null, vararg args: Any?)\n",
+        "class X(private vararg val args: Int, @A override val b: B)\n",
+    ]);
+}
+
+/// Two templates in a block, the second's code across the block's end: the JIT's tier 1 reads
+/// the first again, its string's record open (decision 0600's slot) after it.
+#[test]
+fn templates_read_again_across_a_block_are_the_lean_parsers() {
+    let l1 = "val a = \"${A.B}\"\n";
+    let head = format!("//{}\n", "x".repeat(67));
+    let texts: Vec<String> = (122..127).map(|at| format!("{head}{l1}//{}\nval b = \"${{C.D}}\"\n", "x".repeat(at - head.len() - l1.len() - 11))).collect();
+    assert_eq!(texts[2].find("\"${C").expect("the second template"), 124);
+    same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+}
+
 /// `where` constraints, a function's, a property's and a class's.
 #[test]
 fn type_constraints_are_the_lean_parsers() {
@@ -1770,11 +1813,35 @@ fn probe() {
                 let i = x.iter().zip(&y).position(|(p, q)| p != q).unwrap_or(x.len().min(y.len()));
                 format!("differ: lean {:?} ours {:?}", x.get(i), y.get(i))
             }
-            (Some(_), None) => format!("ours refuses at {:?}", c.refused_at(&text)),
+            (Some(_), None) => {
+                let run = c.program.block_programs[0].run(text.as_bytes());
+                let why = rerail_compiler::stream::run(&c.program, text.as_bytes(), &run).err();
+                let near = why.as_ref().and_then(|w| w.at).map(|a| text[a as usize..].chars().take(30).collect::<String>());
+                let jit2 = c.parser.tier2.run(text.as_bytes(), &run).map(|n| n.len());
+                let cpu = c.parser.tier1.extract(text.as_bytes());
+                let same1 = cpu.codes == run.codes && cpu.positions == run.positions;
+                let first = (0..cpu.codes.len().min(run.codes.len())).find(|&i| cpu.codes[i] != run.codes[i] || cpu.positions.iter().zip(&run.positions).any(|(a, b)| a.get(i) != b.get(i)));
+                let first = first.or((cpu.codes.len() < run.codes.len()).then_some(cpu.codes.len()));
+                let at = first.and_then(|i| run.positions.first().and_then(|p| p.get(i))).map(|&a| (a, text[a as usize..].chars().take(30).collect::<String>()));
+                format!("ours refuses: interpreter {why:?} {near:?}; JIT tier 2 over its tier 1: {jit2:?}; JIT tier 1 the same: {same1} (codes {} vs {}), first differing token at {at:?}", cpu.codes.len(), run.codes.len())
+            }
             (None, Some(_)) => "lean refuses, ours reads".into(),
             (None, None) => "both refuse".into(),
         };
-        eprintln!("PROBE {text:?}: {verdict}");
+        let shown: String = text.chars().take(120).collect();
+        eprintln!("PROBE {shown:?} ({} bytes)\n  => {verdict}", text.len());
+        {
+            // Tier 1: the JIT's records against the interpreter's.
+            let run = c.program.block_programs[0].run(text.as_bytes());
+            let cpu = c.parser.tier1.extract(text.as_bytes());
+            let n = cpu.codes.len().min(run.codes.len());
+            let first = (0..n).find(|&i| cpu.codes[i] != run.codes[i] || cpu.positions.iter().zip(&run.positions).any(|(a, b)| a.get(i) != b.get(i)));
+            let first = first.or((cpu.codes.len() != run.codes.len()).then_some(n));
+            if let Some(i) = first {
+                let at = run.positions.first().and_then(|p| p.get(i)).copied().unwrap_or(0) as usize;
+                eprintln!("  tier 1: the JIT's {} records, the interpreter's {}; first apart: record {i} at {at} {:?}", cpu.codes.len(), run.codes.len(), text.get(at..).map(|t| t.chars().take(30).collect::<String>()));
+            }
+        }
         if std::env::var_os("RERAIL_KOTLIN_PROBE_LEAN").is_some() {
             eprintln!("  lean:\n{}", lean.as_deref().unwrap_or("(refused)"));
         }

@@ -456,6 +456,12 @@ mark fn_paren   = tokens "(" (simple_identifier | backtick_name | "in" | "," | "
 # `suspend` before a type (a name, `(` or `@`): a type modifier, as the lean parser's
 # `type_modifiers_ahead` reads it.
 mark ty_susp    = tokens "suspend" simple_identifier | backtick_name | "(" | "@"
+# A delegation specifier's `suspend`, before a function type (the lean parser's
+# `delegation_specifiers`): the specifier's own leaf.
+mark ds_susp    = tokens "suspend" simple_identifier | backtick_name | "("
+# A class parameter's modifier: any modifier a name, `@` or another word follows (the lean
+# parser's `parameter_modifiers_ahead(false)`).
+mark cp_mod     = tokens "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" simple_identifier | backtick_name | "@" | "val" | "var" | "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual"
 # A name before `::`, but `this` (a hard keyword, as every one): a callable reference's receiver.
 mark cref       = tokens simple_identifier "::"
 # A name and `=` (or an assignment's operator): an assignment to it, or a named argument; and a
@@ -555,12 +561,17 @@ tree kotlin {
   node parameter_modifiers = (annotation | parameter_modifier)+
   node function_body    = block | '=' expression
   node primary_constructor = [[modifiers] 'constructor'] '(' [class_parameter (',' class_parameter)*] (trail_paren | ')')
-  node class_parameter  = [modifiers] [binding_pattern_kind] name ':' type ['=' expression]
+  node class_parameter  = [class_parameter_modifiers] [binding_pattern_kind] name ':' type ['=' expression]
   # A delegate's expression takes no trailing lambda (`no_lambda`, the lean parser's): `class A : I by
   # d {` ends it before the body's `{`. An object literal's specifiers are read so too. The flag
   # is clear again inside parentheses, as the lean parser's `level` clears it.
   flag no_lambda
-  node delegation_specifier = user_type [wrap constructor_invocation _ value_arguments | wrap explicit_delegation _ [by_lf] 'by' with no_lambda expression]
+  # As the lean parser's `delegation_specifiers`: `suspend` and a type, a function type or a
+  # parenthesized one, a function type with a receiver, or a user type and its constructor's
+  # arguments; then a delegate.
+  node delegation_specifier = ds_head [wrap explicit_delegation _ [by_lf] 'by' with no_lambda expression]
+  choice ds_head        = ds_susp 'suspend' type | fn_paren function_type | parenthesized_type [wrap nullable_type _ ('?' as quest)+]
+                        | fn_recv recv_function_type | user_type [wrap constructor_invocation _ value_arguments]
   node class_body       = '{' [class_member (semi class_member | ';' [class_member])* semi_close] '}'
   node class_member nested = [modifiers] member_rest
   choice member_rest    = declaration_rest | retag companion_object companion_rest | retag anonymous_initializer init_rest
@@ -585,6 +596,7 @@ tree kotlin {
 
   # Modifiers: an annotation, or a word a declaration follows (`decl_mod`).
   node modifiers        = (annotation | decl_mod modifier)+
+  node class_parameter_modifiers = retag modifiers (annotation | cp_mod modifier)+
   choice modifier       = class_modifier | member_modifier | visibility_modifier | function_modifier | property_modifier | inheritance_modifier | parameter_modifier | platform_modifier
   node class_modifier   = 'sealed' | 'annotation' | 'data' | 'inner' | 'value'
   node member_modifier  = 'override' | 'lateinit'
@@ -643,7 +655,9 @@ tree kotlin {
   # The type after `as`: a dotted name, or one name with type arguments. With both, the lean
   # parser reads a comparison where an expression follows on the next line: refused.
   choice as_op          = wrap as_expression _ (as_q 'as' merge 'as?' '?' | 'as') as_type
-  choice as_type        = as_user_type [wrap nullable_type _ ('?' as quest)+] | function_type
+  choice as_type        = [type_modifiers] as_core
+  choice as_core        = fn_paren function_type | parenthesized_type [wrap nullable_type _ ('?' as quest)+]
+                        | fn_recv recv_function_type | as_user_type [wrap nullable_type _ ('?' as quest)+]
   node as_user_type     = retag user_type type_name (type_arguments | ('.' type_name)*)
   choice as_operand nested = unary_tight (as_op)*
   choice add_op         = wrap additive_expression _ ('+' | '-') add_operand
@@ -827,6 +841,6 @@ tree kotlin {
   # Every mark a rule takes is asked only where a rule takes it, as the lean parser asks each
   # question where it branches (decision 0492). Not hidden: `generic`, where a `<` that opens type
   # arguments no rule reads refuses the file.
-  hidden apart this_at jump_at as_q sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp
+  hidden apart this_at jump_at as_q sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod
   extra line_comment multiline_comment
 }

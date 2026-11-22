@@ -2992,10 +2992,10 @@ impl P<'_> {
         }
         self.word_skip(w::LPAREN_19)?;
         let arm: usize;
-        if self.m_decl_mod() {
-            arm = 0;
-        } else if self.m_trail() {
+        if self.m_trail() {
             arm = 1;
+        } else if self.m_cp_mod() {
+            arm = 0;
         } else {
             match self.word() {
                 w::AT_2 | w::VAL_22 | w::VAR_23 | w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 | w::FILE_3 | w::OUT_93 | w::BY_25 => {
@@ -3053,12 +3053,12 @@ impl P<'_> {
     /// `class_parameter`.
     fn class_parameter(&mut self) -> R {
         self.open(k::CLASS_PARAMETER);
-        if self.m_decl_mod() {
-            self.modifiers()?;
+        if self.m_cp_mod() {
+            self.class_parameter_modifiers()?;
         } else {
             match self.word() {
                 w::AT_2 => {
-                    self.modifiers()?;
+                    self.class_parameter_modifiers()?;
                 }
                 _ => {
                 }
@@ -3099,20 +3099,17 @@ impl P<'_> {
     /// `delegation_specifier`.
     fn delegation_specifier(&mut self) -> R {
         self.open(k::DELEGATION_SPECIFIER);
-        self.user_type()?;
+        self.ds_head()?;
         self.ask_semi(false)?;
         let arm: usize;
         if self.m_by_lf() {
-            arm = 1;
+            arm = 0;
         } else if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
-            arm = 2;
+            arm = 1;
         } else {
             match self.word() {
-                w::LPAREN_19 => {
-                    arm = 0;
-                }
                 w::BY_25 => {
-                    arm = 1;
+                    arm = 0;
                 }
                 _ => {
                     arm = usize::MAX;
@@ -3121,11 +3118,6 @@ impl P<'_> {
         }
         match arm {
             0 => {
-                self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
-                self.value_arguments()?;
-                self.close()?;
-            }
-            1 => {
                 self.wrap(k::EXPLICIT_DELEGATION, 0)?;
                 if self.m_by_lf() {
                     self.mark_by_lf()?;
@@ -3141,12 +3133,109 @@ impl P<'_> {
                 self.flags = flags;
                 self.close()?;
             }
-            2 => {
+            1 => {
             }
             _ => {
             }
         }
         self.close()?;
+        self.marked = false;
+        Ok(())
+    }
+
+    /// `ds_head`.
+    fn ds_head(&mut self) -> R {
+        let arm: usize;
+        if self.m_fn_paren() {
+            arm = 1;
+        } else if self.m_ds_susp() {
+            arm = 0;
+        } else if self.m_fn_recv() {
+            arm = 3;
+        } else {
+            match self.word() {
+                w::LPAREN_19 => {
+                    arm = 2;
+                }
+                w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 | w::FILE_3 => {
+                    arm = 4;
+                }
+                _ if self.at_simple_identifier() || self.at_backtick_name() => {
+                    arm = 4;
+                }
+                _ => {
+                    arm = usize::MAX;
+                }
+            }
+        }
+        match arm {
+            0 => {
+                self.mark_ds_susp()?;
+                self.word_leaf(w::SUSPEND_24, k::SUSPEND)?;
+                let asks = self.asks;
+                self.asks = asks & 0x0 | 0x8;
+                self.r_type()?;
+                self.asks = asks;
+            }
+            1 => {
+                self.mark_fn_paren()?;
+                self.function_type()?;
+            }
+            2 => {
+                self.parenthesized_type()?;
+                self.ask_semi(false)?;
+                if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                } else {
+                    match self.word() {
+                        w::QUEST_40 => {
+                            self.wrap(k::NULLABLE_TYPE, 0)?;
+                            self.word_leaf(w::QUEST_40, k::QUEST)?;
+                            loop {
+                                self.ask_semi(false)?;
+                                if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                                    break;
+                                } else {
+                                    match self.word() {
+                                        w::QUEST_40 => {
+                                            self.word_leaf(w::QUEST_40, k::QUEST)?;
+                                        }
+                                        _ => {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            self.close()?;
+                        }
+                        _ => {
+                        }
+                    }
+                }
+            }
+            3 => {
+                self.mark_fn_recv()?;
+                self.recv_function_type()?;
+            }
+            4 => {
+                self.user_type()?;
+                self.ask_semi(false)?;
+                if self.m_by_lf() || !self.marked && self.m_semi() || !self.marked && self.m_semi_close() {
+                } else {
+                    match self.word() {
+                        w::LPAREN_19 => {
+                            self.wrap(k::CONSTRUCTOR_INVOCATION, 0)?;
+                            self.value_arguments()?;
+                            self.close()?;
+                        }
+                        _ => {
+                        }
+                    }
+                }
+            }
+            _ => {
+                return self.refuse();
+            }
+        }
         self.marked = false;
         Ok(())
     }
@@ -3752,6 +3841,70 @@ impl P<'_> {
                     _ => {
                         break;
                     }
+                }
+            }
+        }
+        self.close()?;
+        self.marked = false;
+        Ok(())
+    }
+
+    /// `class_parameter_modifiers`.
+    fn class_parameter_modifiers(&mut self) -> R {
+        self.open(UNSET);
+        self.retag(k::MODIFIERS);
+        if self.m_cp_mod() {
+            self.mark_cp_mod()?;
+            self.modifier()?;
+        } else {
+            match self.word() {
+                w::AT_2 => {
+                    let asks = self.asks;
+                    self.asks = asks & 0x0 | 0x0;
+                    self.annotation()?;
+                    self.asks = asks;
+                }
+                _ => {
+                    return self.refuse();
+                }
+            }
+        }
+        loop {
+            let arm: usize;
+            if self.m_cp_mod() {
+                arm = 0;
+            } else {
+                match self.word() {
+                    w::AT_2 => {
+                        arm = 0;
+                    }
+                    _ => {
+                        arm = usize::MAX;
+                    }
+                }
+            }
+            match arm {
+                0 => {
+                    self.retag(k::MODIFIERS);
+                    if self.m_cp_mod() {
+                        self.mark_cp_mod()?;
+                        self.modifier()?;
+                    } else {
+                        match self.word() {
+                            w::AT_2 => {
+                                let asks = self.asks;
+                                self.asks = asks & 0x0 | 0x0;
+                                self.annotation()?;
+                                self.asks = asks;
+                            }
+                            _ => {
+                                return self.refuse();
+                            }
+                        }
+                    }
+                }
+                _ => {
+                    break;
                 }
             }
         }
@@ -4860,24 +5013,54 @@ impl P<'_> {
 
     /// `as_type`.
     fn as_type(&mut self) -> R {
+        if self.m_fn_paren() {
+        } else if self.m_ty_susp() {
+            self.type_modifiers()?;
+        } else if self.m_fn_recv() {
+        } else {
+            match self.word() {
+                w::AT_2 => {
+                    self.type_modifiers()?;
+                }
+                _ => {
+                }
+            }
+        }
+        self.as_core()?;
+        self.marked = false;
+        Ok(())
+    }
+
+    /// `as_core`.
+    fn as_core(&mut self) -> R {
         let arm: usize;
-        match self.word() {
-            w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 | w::FILE_3 => {
-                arm = 0;
-            }
-            w::LPAREN_19 => {
-                arm = 1;
-            }
-            _ if self.at_simple_identifier() || self.at_backtick_name() => {
-                arm = 0;
-            }
-            _ => {
-                arm = usize::MAX;
+        if self.m_fn_paren() {
+            arm = 0;
+        } else if self.m_fn_recv() {
+            arm = 2;
+        } else {
+            match self.word() {
+                w::LPAREN_19 => {
+                    arm = 1;
+                }
+                w::CONSTRUCTOR_36 | w::EXPECT_107 | w::DATA_52 | w::INNER_85 | w::VALUE_86 | w::ACTUAL_108 | w::SET_35 | w::GET_34 | w::OVERRIDE_87 | w::SUSPEND_24 | w::ANNOTATION_1 | w::SEALED_84 | w::LATEINIT_88 | w::TAILREC_94 | w::OPERATOR_95 | w::INFIX_96 | w::INLINE_97 | w::EXTERNAL_98 | w::PUBLIC_89 | w::PRIVATE_90 | w::INTERNAL_91 | w::PROTECTED_92 | w::ABSTRACT_100 | w::FINAL_101 | w::OPEN_102 | w::CONST_99 | w::FIELD_109 | w::PROPERTY_110 | w::RECEIVER_111 | w::PARAM_112 | w::SETPARAM_113 | w::DELEGATE_114 | w::COMPANION_30 | w::INIT_29 | w::DYNAMIC_39 | w::WHERE_28 | w::CATCH_57 | w::FINALLY_58 | w::ENUM_16 | w::FILE_3 => {
+                    arm = 3;
+                }
+                _ if self.at_simple_identifier() || self.at_backtick_name() => {
+                    arm = 3;
+                }
+                _ => {
+                    arm = usize::MAX;
+                }
             }
         }
         match arm {
             0 => {
-                self.as_user_type()?;
+                self.mark_fn_paren()?;
+                self.function_type()?;
+            }
+            1 => {
+                self.parenthesized_type()?;
                 self.ask_semi(false)?;
                 if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_q() || self.m_generic() {
                 } else {
@@ -4907,8 +5090,40 @@ impl P<'_> {
                     }
                 }
             }
-            1 => {
-                self.function_type()?;
+            2 => {
+                self.mark_fn_recv()?;
+                self.recv_function_type()?;
+            }
+            3 => {
+                self.as_user_type()?;
+                self.ask_semi(false)?;
+                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_q() || self.m_generic() {
+                } else {
+                    match self.word() {
+                        w::QUEST_40 => {
+                            self.wrap(k::NULLABLE_TYPE, 0)?;
+                            self.word_leaf(w::QUEST_40, k::QUEST)?;
+                            loop {
+                                self.ask_semi(false)?;
+                                if !self.marked && self.m_semi() || !self.marked && self.m_semi_close() || self.m_as_q() || self.m_generic() {
+                                    break;
+                                } else {
+                                    match self.word() {
+                                        w::QUEST_40 => {
+                                            self.word_leaf(w::QUEST_40, k::QUEST)?;
+                                        }
+                                        _ => {
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                            self.close()?;
+                        }
+                        _ => {
+                        }
+                    }
+                }
             }
             _ => {
                 return self.refuse();
@@ -8234,9 +8449,57 @@ impl P<'_> {
         self.take_ty_susp()
     }
 
+    /// Mark `ds_susp` holds at the token, not taken there; once a token (`held`).
+    fn m_ds_susp(&mut self) -> bool {
+        self.taken >> 29 & 1 == 0 && self.held(29, Self::h_ds_susp)
+    }
+
+    fn h_ds_susp(&self) -> bool {
+        (self.pat_ds_susp_0_0(self.i, self.prev_tok(self.i)))
+    }
+
+    /// Mark `ds_susp` taken: it and the marks before it passed at this token.
+    fn take_ds_susp(&mut self) -> R {
+        self.taken |= 0x3fffffff;
+        Ok(())
+    }
+
+    /// Mark `ds_susp` where the rule takes it: it must hold.
+    fn mark_ds_susp(&mut self) -> R {
+        if !self.m_ds_susp() {
+            return self.refuse();
+        }
+        self.marked = true;
+        self.take_ds_susp()
+    }
+
+    /// Mark `cp_mod` holds at the token, not taken there; once a token (`held`).
+    fn m_cp_mod(&mut self) -> bool {
+        self.taken >> 30 & 1 == 0 && self.held(30, Self::h_cp_mod)
+    }
+
+    fn h_cp_mod(&self) -> bool {
+        (self.pat_cp_mod_0_0(self.i, self.prev_tok(self.i)))
+    }
+
+    /// Mark `cp_mod` taken: it and the marks before it passed at this token.
+    fn take_cp_mod(&mut self) -> R {
+        self.taken |= 0x7fffffff;
+        Ok(())
+    }
+
+    /// Mark `cp_mod` where the rule takes it: it must hold.
+    fn mark_cp_mod(&mut self) -> R {
+        if !self.m_cp_mod() {
+            return self.refuse();
+        }
+        self.marked = true;
+        self.take_cp_mod()
+    }
+
     /// Mark `cref` holds at the token, not taken there; once a token (`held`).
     fn m_cref(&mut self) -> bool {
-        self.taken >> 29 & 1 == 0 && self.held(29, Self::h_cref)
+        self.taken >> 31 & 1 == 0 && self.held(31, Self::h_cref)
     }
 
     fn h_cref(&self) -> bool {
@@ -8245,7 +8508,7 @@ impl P<'_> {
 
     /// Mark `cref` taken: it and the marks before it passed at this token.
     fn take_cref(&mut self) -> R {
-        self.taken |= 0x3fffffff;
+        self.taken |= 0xffffffff;
         Ok(())
     }
 
@@ -8260,7 +8523,7 @@ impl P<'_> {
 
     /// Mark `named` holds at the token, not taken there; once a token (`held`).
     fn m_named(&mut self) -> bool {
-        self.taken >> 30 & 1 == 0 && self.held(30, Self::h_named)
+        self.taken >> 32 & 1 == 0 && self.held(32, Self::h_named)
     }
 
     fn h_named(&self) -> bool {
@@ -8269,7 +8532,7 @@ impl P<'_> {
 
     /// Mark `named` taken: it and the marks before it passed at this token.
     fn take_named(&mut self) -> R {
-        self.taken |= 0x7fffffff;
+        self.taken |= 0x1ffffffff;
         Ok(())
     }
 
@@ -8284,7 +8547,7 @@ impl P<'_> {
 
     /// Mark `enum_class` holds at the token, not taken there; once a token (`held`).
     fn m_enum_class(&mut self) -> bool {
-        self.taken >> 32 & 1 == 0 && self.held(32, Self::h_enum_class)
+        self.taken >> 34 & 1 == 0 && self.held(34, Self::h_enum_class)
     }
 
     fn h_enum_class(&self) -> bool {
@@ -8293,7 +8556,7 @@ impl P<'_> {
 
     /// Mark `enum_class` taken: it and the marks before it passed at this token.
     fn take_enum_class(&mut self) -> R {
-        self.taken |= 0x1ffffffff;
+        self.taken |= 0x7ffffffff;
         Ok(())
     }
 
@@ -8308,7 +8571,7 @@ impl P<'_> {
 
     /// Mark `fun_iface` holds at the token, not taken there; once a token (`held`).
     fn m_fun_iface(&mut self) -> bool {
-        self.taken >> 33 & 1 == 0 && self.held(33, Self::h_fun_iface)
+        self.taken >> 35 & 1 == 0 && self.held(35, Self::h_fun_iface)
     }
 
     fn h_fun_iface(&self) -> bool {
@@ -8317,7 +8580,7 @@ impl P<'_> {
 
     /// Mark `fun_iface` taken: it and the marks before it passed at this token.
     fn take_fun_iface(&mut self) -> R {
-        self.taken |= 0x3ffffffff;
+        self.taken |= 0xfffffffff;
         Ok(())
     }
 
@@ -8332,7 +8595,7 @@ impl P<'_> {
 
     /// Mark `fn_recv` holds at the token, not taken there; once a token (`held`).
     fn m_fn_recv(&mut self) -> bool {
-        self.taken >> 34 & 1 == 0 && self.held(34, Self::h_fn_recv)
+        self.taken >> 36 & 1 == 0 && self.held(36, Self::h_fn_recv)
     }
 
     fn h_fn_recv(&self) -> bool {
@@ -8341,7 +8604,7 @@ impl P<'_> {
 
     /// Mark `fn_recv` taken: it and the marks before it passed at this token.
     fn take_fn_recv(&mut self) -> R {
-        self.taken |= 0x7ffffffff;
+        self.taken |= 0x1fffffffff;
         Ok(())
     }
 
@@ -8356,7 +8619,7 @@ impl P<'_> {
 
     /// Mark `acc` holds at the token, not taken there; once a token (`held`).
     fn m_acc(&mut self) -> bool {
-        self.taken >> 35 & 1 == 0 && self.held(35, Self::h_acc)
+        self.taken >> 37 & 1 == 0 && self.held(37, Self::h_acc)
     }
 
     fn h_acc(&self) -> bool {
@@ -8365,7 +8628,7 @@ impl P<'_> {
 
     /// Mark `acc` taken: it and the marks before it passed at this token.
     fn take_acc(&mut self) -> R {
-        self.taken |= 0xfffffffff;
+        self.taken |= 0x3fffffffff;
         Ok(())
     }
 
@@ -8380,7 +8643,7 @@ impl P<'_> {
 
     /// Mark `recv` holds at the token, not taken there; once a token (`held`).
     fn m_recv(&mut self) -> bool {
-        self.taken >> 37 & 1 == 0 && self.held(37, Self::h_recv)
+        self.taken >> 39 & 1 == 0 && self.held(39, Self::h_recv)
     }
 
     fn h_recv(&self) -> bool {
@@ -8389,7 +8652,7 @@ impl P<'_> {
 
     /// Mark `recv` taken: it and the marks before it passed at this token.
     fn take_recv(&mut self) -> R {
-        self.taken |= 0x3fffffffff;
+        self.taken |= 0xffffffffff;
         Ok(())
     }
 
@@ -8404,7 +8667,7 @@ impl P<'_> {
 
     /// Mark `dotted` holds at the token, not taken there; once a token (`held`).
     fn m_dotted(&mut self) -> bool {
-        self.taken >> 38 & 1 == 0 && self.held(38, Self::h_dotted)
+        self.taken >> 40 & 1 == 0 && self.held(40, Self::h_dotted)
     }
 
     fn h_dotted(&self) -> bool {
@@ -8413,7 +8676,7 @@ impl P<'_> {
 
     /// Mark `dotted` taken: it and the marks before it passed at this token.
     fn take_dotted(&mut self) -> R {
-        self.taken |= 0x7fffffffff;
+        self.taken |= 0x1ffffffffff;
         Ok(())
     }
 
@@ -9072,6 +9335,30 @@ impl P<'_> {
     }
 
     #[allow(unused_variables)]
+    fn pat_ds_susp_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::SUSPEND_24) && self.pat_ds_susp_0_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn pat_ds_susp_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::LPAREN_19) && true
+    }
+
+    #[allow(unused_variables)]
+    fn pat_cp_mod_0_0(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.word_at(j) == w::PUBLIC_89 || self.word_at(j) == w::PRIVATE_90 || self.word_at(j) == w::INTERNAL_91 || self.word_at(j) == w::PROTECTED_92 || self.word_at(j) == w::ABSTRACT_100 || self.word_at(j) == w::FINAL_101 || self.word_at(j) == w::OPEN_102 || self.word_at(j) == w::OVERRIDE_87 || self.word_at(j) == w::LATEINIT_88 || self.word_at(j) == w::CONST_99 || self.word_at(j) == w::SEALED_84 || self.word_at(j) == w::ANNOTATION_1 || self.word_at(j) == w::DATA_52 || self.word_at(j) == w::INNER_85 || self.word_at(j) == w::VALUE_86 || self.word_at(j) == w::TAILREC_94 || self.word_at(j) == w::OPERATOR_95 || self.word_at(j) == w::INFIX_96 || self.word_at(j) == w::INLINE_97 || self.word_at(j) == w::EXTERNAL_98 || self.word_at(j) == w::SUSPEND_24 || self.word_at(j) == w::VARARG_103 || self.word_at(j) == w::NOINLINE_104 || self.word_at(j) == w::CROSSINLINE_105 || self.word_at(j) == w::EXPECT_107 || self.word_at(j) == w::ACTUAL_108) && self.pat_cp_mod_0_1(self.next_tok(j + 1), j)
+    }
+
+    #[allow(unused_variables)]
+    fn pat_cp_mod_0_1(&self, j: usize, prev: usize) -> bool {
+        let _ = prev;
+        (self.at_simple_identifier_at(j) || self.at_backtick_name_at(j) || self.word_at(j) == w::AT_2 || self.word_at(j) == w::VAL_22 || self.word_at(j) == w::VAR_23 || self.word_at(j) == w::PUBLIC_89 || self.word_at(j) == w::PRIVATE_90 || self.word_at(j) == w::INTERNAL_91 || self.word_at(j) == w::PROTECTED_92 || self.word_at(j) == w::ABSTRACT_100 || self.word_at(j) == w::FINAL_101 || self.word_at(j) == w::OPEN_102 || self.word_at(j) == w::OVERRIDE_87 || self.word_at(j) == w::LATEINIT_88 || self.word_at(j) == w::CONST_99 || self.word_at(j) == w::SEALED_84 || self.word_at(j) == w::ANNOTATION_1 || self.word_at(j) == w::DATA_52 || self.word_at(j) == w::INNER_85 || self.word_at(j) == w::VALUE_86 || self.word_at(j) == w::TAILREC_94 || self.word_at(j) == w::OPERATOR_95 || self.word_at(j) == w::INFIX_96 || self.word_at(j) == w::INLINE_97 || self.word_at(j) == w::EXTERNAL_98 || self.word_at(j) == w::SUSPEND_24 || self.word_at(j) == w::VARARG_103 || self.word_at(j) == w::NOINLINE_104 || self.word_at(j) == w::CROSSINLINE_105 || self.word_at(j) == w::EXPECT_107 || self.word_at(j) == w::ACTUAL_108) && true
+    }
+
+    #[allow(unused_variables)]
     fn pat_cref_0_0(&self, j: usize, prev: usize) -> bool {
         let _ = prev;
         (self.at_simple_identifier_at(j)) && self.pat_cref_0_1(self.next_tok(j + 1), j)
@@ -9673,7 +9960,7 @@ impl P<'_> {
             66 => Some(None),
             65 => Some(None),
             132 => None,
-            16421 => None,
+            16423 => None,
             82 => None,
             81 => None,
             20 => None,

@@ -8457,6 +8457,12 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
         let free = f.ins().bor(none, this);
         let ended = f.ins().icmp_imm(IntCC::NotEqual, ended, 0);
         let free = f.ins().bor(free, ended);
+        // A record after this token's open: the loop reads this token again (a refill's block
+        // read again from before a later string's template), and the records from here on are
+        // written again, that one's too. A template in a template's code finds an earlier one.
+        let rec = f.ins().band_imm(open, !STRING_ENDED);
+        let later = f.ins().icmp(IntCC::UnsignedGreaterThan, rec, cur1);
+        let free = f.ins().bor(free, later);
         f.ins().brif(free, set, &[], nested, &[]);
         f.switch_to_block(set);
         f.ins().stack_store(cur1, slot, 0);
