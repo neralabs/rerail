@@ -1295,6 +1295,9 @@ fn json_tier2_is_walks_shape() {
     let root = tier2.split("\n0 => {\n").nth(1).expect("the root's place").split("\n1 | 2 => {").next().expect("its end");
     assert!(!root.contains("depth == DEPTH"), "a depth test at the root:\n{root}");
     assert_eq!(tier2.matches("if depth == DEPTH {").count(), 4, "an object's and an array's call in each list");
+    // A scalar's end as simdjson's: the byte after it structural or whitespace (`is_not_structural_or_whitespace`).
+    assert!(tier2.contains("fn ends(b: u8) -> bool {\nmatches!(ROWS[usize::from(b)], 0 | 2)\n}"), "the end's test");
+    assert!(tier2.contains("Some(j) if ends(src[s + j]) => Ok(s + j),") && tier2.contains("== *b\"true\" && ends(src[s + 4])"), "a number's and an atom's end");
     // A number at a digit or `-` alone (`walk`'s `*v - '0' < 10 || *v == '-'`), any other byte refused.
     assert!(primitive.contains("0x2d | 0x30..=0x39 => {\nlet end = number_end(src, s)?;"), "the number's arm its check's first bytes:\n{primitive}");
     // The number's check reads its bytes with no bound (the padding ends every number, as `number_end` reads), and the
@@ -1377,11 +1380,11 @@ fn json_tier1_masks_are_block_locals() {
         // The block before's records written at this block, the last after the pass, through one `write` (simdjson's
         // `bit_indexer::write`, `indexer.write(idx - 64, prev_structurals)` and `finish`).
         "unsafe { write_indexes(si, &mut count, ((off + 64 * q) as u32).wrapping_sub(64), prev_structurals) };\n            prev_structurals = v_m_structural_start;",
-        // A string right after a scalar, refused: simdjson's stage 2 refuses it at the number's or the atom's end.
-        "let v_t3 = v_m_q & v_m_follows & !v_m_string_tail;\n            // a string right after a scalar\n            errors |= v_t3;",
     ] {
         assert!(stage1.contains(part), "no `{part}`:\n{stage1}");
     }
+    // A string right after a scalar is tier 2's, at the scalar's end (`run_end_covers`), as simdjson's stage 2.
+    assert!(!stage1.contains("a string right after a scalar"), "tier 1 tests a scalar's dirty end");
     for name in ["v_m_word", "v_m_code", "v_m_wordbyte", "v_m_hidden", "v_m_o_str"] {
         assert!(!stage1.contains(name), "stage 1 still makes `{name}`");
     }

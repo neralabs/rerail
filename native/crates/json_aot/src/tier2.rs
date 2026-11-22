@@ -106,13 +106,14 @@ unsafe fn marks<S: rerail_simd8::Simd8x64>(src: &[u8], p: usize, a: u8, b: u8) -
     unsafe { S::marks32(block, a, b) }
 }
 
-/// Whether byte `b` is of row `r` (its number, one past the row's): a byte a token of the row runs over.
+
+
+/// Whether a `number` token, and a word of its row, may end before byte `b`: a byte no token starts at, or one a
+/// record starts at after it (simdjson's `is_not_structural_or_whitespace` false); at any other the file is refused.
 #[inline(always)]
-fn in_row(b: u8, r: u8) -> bool {
-    ROWS[usize::from(b)] == r
+fn ends(b: u8) -> bool {
+matches!(ROWS[usize::from(b)], 0 | 2)
 }
-
-
 
 /// `check number`: the end of the check's grammar's match from the start of `b` (the bytes from the token's,
 /// to the padded source's end), or none.
@@ -157,12 +158,12 @@ j += 1;
 Some(j)
 }
 
-/// A `number`'s end from its first byte at `s`: its check's match, the byte after it none of its row's (the lean
+/// A `number`'s end from its first byte at `s`: its check's match, the byte after it one it may end before (the lean
 /// parser's `number_end`), or the byte it is refused at.
 #[inline(always)]
 fn number_end(src: &[u8], s: usize) -> Result<usize, u32> {
 match check_number(&src[s..]) {
-Some(j) if !in_row(src[s + j], 3) => Ok(s + j),
+Some(j) if ends(src[s + j]) => Ok(s + j),
 _ => Err(s as u32),
 }
 }
@@ -281,15 +282,15 @@ match src[s] {
 e = unsafe { string::<S>(src, starts, d, &mut i, [n[0]]) }?;
 }
 // `number`: its words by their bytes, then its own.
-0x74 if src[s..s + 4] == *b"true" && !in_row(src[s + 4], 3) => {
+0x74 if src[s..s + 4] == *b"true" && ends(src[s + 4]) => {
 let end = s + 4;
 e = token(d, &mut i, n[1], s, end);
 }
-0x66 if src[s..s + 5] == *b"false" && !in_row(src[s + 5], 3) => {
+0x66 if src[s..s + 5] == *b"false" && ends(src[s + 5]) => {
 let end = s + 5;
 e = token(d, &mut i, n[2], s, end);
 }
-0x6e if src[s..s + 4] == *b"null" && !in_row(src[s + 4], 3) => {
+0x6e if src[s..s + 4] == *b"null" && ends(src[s + 4]) => {
 let end = s + 4;
 e = token(d, &mut i, n[3], s, end);
 }

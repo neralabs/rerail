@@ -127,6 +127,9 @@ struct Lp<'g, 'a> {
     /// Whether the code being written is the root's, outside every level: there no level is open (`depth` is 0), and
     /// a call tests no depth, as `walk`'s document.
     at_root: std::cell::Cell<bool>,
+    /// The run row whose tokens end where `ends` holds (`bitlex_lex_rust::ends_after_run`, simdjson's structural or
+    /// whitespace), and `ends`' code.
+    run_ends: Option<(u8, String)>,
     /// The methods that decide every byte themselves (a choice's alternatives that call no level, `walk`'s
     /// `primitive`), refusing what none takes as a decision does: a decision's arm calling one is its `_`.
     deciding: RefCell<std::collections::BTreeSet<String>>,
@@ -479,7 +482,11 @@ impl Lp<'_, '_> {
             // A word: its first byte, its bytes, the byte after not the row's (simdjson's atoms, `str4ncmp`).
             let word = |w: u8| -> (String, usize) {
                 let b = &self.g.x.words[usize::from(w) - 1];
-                (format!("{:#04x} if src[s..s + {l}] == *b\"{}\" && !in_row(src[s + {l}], {})", b[0], lit(b), rk + 1, l = b.len()), b.len())
+                let after = match &self.run_ends {
+                    Some((r, _)) if *r == *rk => format!("ends(src[s + {}])", b.len()),
+                    _ => format!("!in_row(src[s + {}], {})", b.len(), rk + 1),
+                };
+                (format!("{:#04x} if src[s..s + {l}] == *b\"{}\" && {after}", b[0], lit(b), l = b.len()), b.len())
             };
             let _ = writeln!(out, "// `{name}`: its words by their bytes, then its own.");
             for (w, a) in words {
@@ -1360,7 +1367,32 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             _ => {}
         }
     }
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), direct: std::cell::Cell::new(false), at_root: std::cell::Cell::new(false), deciding: RefCell::new(std::collections::BTreeSet::new()) };
+    // A run's end: the bytes it may end before, as tier 1's records allow, one test (`ends`) where they are rows.
+    let run_ends = x.lexer.iter().find_map(|s| match s {
+        Stmt::Token { kind, rule: Some(::bitlex::syntax::TokenRule::Run(r)), .. } => Some((kind.clone(), r.clone())),
+        _ => None,
+    });
+    let run_ends = run_ends.and_then(|(kind, r)| {
+        let (rk, _) = *ends.get(&kind)?;
+        let ok = crate::bitlex_lex_rust::ends_after_run(x.lexer, &r)?;
+        let row = |b: usize| row_of[b].map_or(0, |r| u16::from(r) + 1);
+        let mut rows: Vec<u16> = (0..256).filter(|&b| ok[b]).map(row).collect();
+        rows.sort_unstable();
+        rows.dedup();
+        if !(0..256).all(|b| ok[b] == rows.contains(&row(b))) || rows.contains(&(u16::from(rk) + 1)) {
+            return None;
+        }
+        let pat = rows.iter().map(u16::to_string).collect::<Vec<_>>().join(" | ");
+        Some((rk, format!("/// Whether a `{kind}` token, and a word of its row, may end before byte `b`: a byte no token starts at, or one a
+/// record starts at after it (simdjson's `is_not_structural_or_whitespace` false); at any other the file is refused.
+#[inline(always)]
+fn ends(b: u8) -> bool {{
+matches!(ROWS[usize::from(b)], {pat})
+}}
+
+")))
+    });
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), direct: std::cell::Cell::new(false), at_root: std::cell::Cell::new(false), run_ends, deciding: RefCell::new(std::collections::BTreeSet::new()) };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {
@@ -1393,12 +1425,16 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
         }
         let _ = write!(words, "/// A `{name}` token's word: its keyword's, 0 for none.\n#[inline(always)]\nfn word_{}(b: &[u8]) -> u32 {{\nmatch b {{\n{arms}_ => 0,\n}}\n}}\n\n", ident(name));
     }
-    let mut check_fns = String::new();
+    let mut check_fns = lp.run_ends.as_ref().map(|(_, c)| c.clone()).unwrap_or_default();
     for (k, b) in &checks {
         check_fns.push_str(&lp.check_fn(k, b)?);
         // A run's end, its check's (the lean parser's `number_end`): written once, read at each place.
         if let Ok((rk, End::Run)) = lp.token(k) {
-            let _ = write!(check_fns, "/// A `{k}`'s end from its first byte at `s`: its check's match, the byte after it none of its row's (the lean\n/// parser's `number_end`), or the byte it is refused at.\n#[inline(always)]\nfn {name}_end(src: &[u8], s: usize) -> Result<usize, u32> {{\nmatch check_{name}(&src[s..]) {{\nSome(j) if !in_row(src[s + j], {r}) => Ok(s + j),\n_ => Err(s as u32),\n}}\n}}\n\n", name = ident(k), r = rk + 1);
+            let after = match &lp.run_ends {
+                Some((r, _)) if *r == rk => "ends(src[s + j])".to_owned(),
+                _ => format!("!in_row(src[s + j], {})", rk + 1),
+            };
+            let _ = write!(check_fns, "/// A `{k}`'s end from its first byte at `s`: its check's match, the byte after it one it may end before (the lean\n/// parser's `number_end`), or the byte it is refused at.\n#[inline(always)]\nfn {name}_end(src: &[u8], s: usize) -> Result<usize, u32> {{\nmatch check_{name}(&src[s..]) {{\nSome(j) if {after} => Ok(s + j),\n_ => Err(s as u32),\n}}\n}}\n\n", name = ident(k));
         }
     }
     let places = lp.places.borrow();

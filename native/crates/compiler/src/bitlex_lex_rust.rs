@@ -206,6 +206,146 @@ fn length_bits(e: &Expr, defs: &HashMap<String, Expr>, n: usize, pre: usize, dep
     })
 }
 
+/// The records tier 1 writes, as a mask of the grammar: the tokens' starts (but a region's inside tokens), their
+/// common conjuncts once (`factored`), named where an error refuses the bytes they differ at (`refused_equal`).
+fn records_of(stmts: &[Stmt]) -> Option<Expr> {
+    let u = stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Token { rule: Some(TokenRule::Inside(..)), .. } => None,
+            Stmt::Token { start, .. } => Some(start.clone()),
+            _ => None,
+        })
+        .reduce(|a, b| Expr::Or(Box::new(a), Box::new(b)))?;
+    let f = factored(&u, stmts);
+    Some(refused_equal(&f, stmts).unwrap_or(f))
+}
+
+/// A class's or a byte mask's bytes, where its byte decides it.
+fn bytes_of_expr(e: &Expr, stmts: &[Stmt]) -> Option<[bool; 256]> {
+    let mut set = [false; 256];
+    for b in 0..=255u8 {
+        set[usize::from(b)] = at_byte(e, b, stmts)?;
+    }
+    Some(set)
+}
+
+/// The bytes a token that runs over `run` (`run R`) may end before, as simdjson's `is_not_structural_or_whitespace`
+/// is false at them: a byte no token starts at (skipped), or one a record may start at right after a byte of `run`
+/// (each `prev(X)`, `X` holding all of `run`, true there; one holding none of it false). At any other byte after a run
+/// no record starts and none is skipped: tier 1's records equal the tokens' starts but where an error refuses the
+/// file (`refused_equal`), so the file is refused, and tier 2 refuses it there.
+pub fn ends_after_run(stmts: &[Stmt], run: &Expr) -> Option<[bool; 256]> {
+    let r = bytes_of_expr(run, stmts)?;
+    let records = records_of(stmts)?;
+    let mut ats = Vec::new();
+    atoms(&records, stmts, &mut ats);
+    if ats.len() > 16 {
+        return None;
+    }
+    let forced: Vec<Option<bool>> = ats
+        .iter()
+        .map(|(_, e)| match e {
+            Expr::Call(f, a) if f == "prev" => match a.as_slice() {
+                [Arg::E(x)] | [Arg::E(x), Arg::N(1)] => {
+                    let xs = bytes_of_expr(x, stmts)?;
+                    if (0..256).all(|b| !r[b] || xs[b]) {
+                        Some(true)
+                    } else if (0..256).all(|b| !r[b] || !xs[b]) {
+                        Some(false)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect();
+    // The tokens outside a region (a region's inside ones start only inside it).
+    let starts: Vec<&Expr> = stmts
+        .iter()
+        .filter_map(|s| match s {
+            Stmt::Token { rule: Some(TokenRule::Inside(..)), .. } => None,
+            Stmt::Token { start, .. } => Some(start),
+            _ => None,
+        })
+        .collect();
+    let mut ok = [false; 256];
+    for b in 0..=255u8 {
+        let skipped = starts.iter().all(|s| false_at(s, b, stmts));
+        let starts_here = (0..1u32 << ats.len()).filter(|v| forced.iter().enumerate().all(|(i, f)| f.is_none_or(|f| (v >> i & 1 == 1) == f))).any(|v| at_atoms(&records, b, stmts, &ats, v) == Some(true));
+        ok[usize::from(b)] = skipped || starts_here;
+    }
+    Some(ok)
+}
+
+/// The errors tier 2 tests at a run token's end, where its end test is `ends_after_run`'s: each holds only at a byte
+/// right after one of the run's bytes (a conjunct `prev(X)`, `X` within the run's bytes), outside every region (a
+/// conjunct `~T`, `T` a region's fill but its opener, `F ^ O`), and only at a byte the run may not end before and
+/// does not run over. Such a byte is a run token's next (the run's bytes outside a region are tokens tier 2 reads, or
+/// refuses), and tier 2 refuses it there, as simdjson refuses a scalar's dirty end (`[1"a"]`).
+pub fn run_end_covers(stmts: &[Stmt]) -> Vec<usize> {
+    let runs: Vec<&Expr> = stmts.iter().filter_map(|s| if let Stmt::Token { rule: Some(TokenRule::Run(r)), .. } = s { Some(r) } else { None }).collect();
+    let [run] = runs.as_slice() else { return Vec::new() };
+    let (Some(ok), Some(r)) = (ends_after_run(stmts, run), bytes_of_expr(run, stmts)) else { return Vec::new() };
+    let def = |n: &str| stmts.iter().rev().find_map(|s| if let Stmt::Mask(m, e) = s && m == n { Some(e.clone()) } else { None });
+    // Each region's fill (and the masks that are it alone) and its opener.
+    let regions: Vec<(Vec<String>, Expr)> = readers(stmts)
+        .iter()
+        .flat_map(|rd| rd.regions.iter())
+        .map(|g| {
+            let mut fills = vec![format!("f_{}", g.kind)];
+            for s in stmts {
+                if let Stmt::Mask(m, Expr::Name(n)) = s
+                    && fills.contains(n)
+                {
+                    fills.push(m.clone());
+                }
+            }
+            (fills, g.opener.clone())
+        })
+        .collect();
+    let tail = |t: &str| {
+        let Some(Expr::Xor(a, b)) = def(t) else { return false };
+        regions.iter().any(|(fills, o)| {
+            let fill = |x: &Expr| matches!(x, Expr::Name(n) if fills.contains(n));
+            let opener = |x: &Expr| format!("{x:?}") == format!("{o:?}");
+            (fill(&a) && opener(&b)) || (fill(&b) && opener(&a))
+        })
+    };
+    let mut out = Vec::new();
+    for (i, s) in stmts.iter().enumerate() {
+        let Stmt::Error(_, e) = s else { continue };
+        let mut cs = Vec::new();
+        fn conj(e: &Expr, out: &mut Vec<Expr>) {
+            if let Expr::And(a, b) = e {
+                conj(a, out);
+                conj(b, out);
+            } else {
+                out.push(e.clone());
+            }
+        }
+        conj(e, &mut cs);
+        let resolve = |c: &Expr| match c {
+            Expr::Name(n) => def(n).unwrap_or_else(|| c.clone()),
+            c => c.clone(),
+        };
+        let after_run = cs.iter().any(|c| match resolve(c) {
+            Expr::Call(f, a) if f == "prev" => match a.as_slice() {
+                [Arg::E(x)] | [Arg::E(x), Arg::N(1)] => bytes_of_expr(x, stmts).is_some_and(|xs| (0..256).all(|b| !xs[b] || r[b])),
+                _ => false,
+            },
+            _ => false,
+        });
+        let outside = cs.iter().any(|c| matches!(c, Expr::Not(t) if matches!(&**t, Expr::Name(n) if tail(n))));
+        if after_run && outside && (0..=255u8).all(|b| false_at(e, b, stmts) || (!ok[usize::from(b)] && !r[usize::from(b)])) {
+            out.push(i);
+        }
+    }
+    out
+}
+
 /// Whether tier 1 refuses a file whose region `kind` is open at its end: an error `F & L`, `F` its fill (`f_KIND`, or
 /// a mask that is it alone) and `L` the file's last byte. Then a read of the region in tier 2 meets its closer before
 /// the file's end.
@@ -1625,7 +1765,8 @@ impl Gen<'_> {
             self.lookup = crate::bitlex_pair_lookup::lookup(x.stmts, self.prefix.as_deref()).ok();
         }
         // In simdjson's stage 1, the errors at an escape are tier 2's, where it reads the escape (decision 0599).
-        let pieces: Vec<usize> = if records { piece_covers(x.stmts) } else { Vec::new() };
+        // A scalar's dirty end too: tier 2 tests it at the run's end (`run_end_covers`), as simdjson's stage 2.
+        let pieces: Vec<usize> = if records { piece_covers(x.stmts).into_iter().chain(run_end_covers(x.stmts)).collect() } else { Vec::new() };
         let covered: Vec<*const Expr> = self
             .lookup
             .iter()
@@ -2603,6 +2744,43 @@ mod tests {
         assert!(refuses_open_at_end(&stmts, "str"));
         let without: Vec<Stmt> = stmts.into_iter().filter(|s| !matches!(s, Stmt::Error(why, _) if why == "a string open at the end of the file")).collect();
         assert!(!refuses_open_at_end(&without, "str"));
+    }
+
+    /// The dirty end of a scalar (`[1"a"]`) is tier 2's (`run_end_covers`): JSON's error "a string right after a
+    /// scalar" is the one covered, and `ends_after_run` is simdjson's structural or whitespace. On every file of up to
+    /// five bytes of `1"\ [a`, by the grammar's reference evaluator: where the error holds, a run token ends before a
+    /// byte it may not end before (tier 2 refuses there); and where one does, the file is refused (an error, or the
+    /// tree), so tier 2's refusal is the grammar's.
+    #[test]
+    fn a_scalars_dirty_end_is_tier_2s() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
+        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(path).expect("reads")).expect("parses");
+        let covered = run_end_covers(&stmts);
+        assert_eq!(covered.len(), 1);
+        assert!(matches!(&stmts[covered[0]], Stmt::Error(why, _) if why == "a string right after a scalar"));
+        let run = stmts.iter().find_map(|s| if let Stmt::Token { rule: Some(TokenRule::Run(r)), .. } = s { Some(r.clone()) } else { None }).expect("a run");
+        let (ok, r) = (ends_after_run(&stmts, &run).expect("the ends"), bytes_of_expr(&run, &stmts).expect("its bytes"));
+        let structural_or_ws = |b: u8| b"{}[],: \t\n\r".contains(&b);
+        assert!((0..=255u8).all(|b| ok[usize::from(b)] == structural_or_ws(b)), "simdjson's structural or whitespace");
+        let tables = HashMap::new();
+        let alphabet = b"1\"\\ [a";
+        let (mut files, mut dirty) = (0, 0);
+        for len in 1..=5u32 {
+            for k in 0..(alphabet.len() as u32).pow(len) {
+                let src: Vec<u8> = (0..len).map(|d| alphabet[(k / (alphabet.len() as u32).pow(d)) as usize % alphabet.len()]).collect();
+                let out = ::bitlex::eval::Ev::run(&stmts, &src, &tables).expect("runs");
+                let error = out.errors.iter().any(|e| e == "a string right after a scalar");
+                let ends_dirty = out.tokens.iter().any(|t| !t.mark && ["number", "true", "false", "null"].contains(&t.kind.as_str()) && src.get(t.end).is_some_and(|&b| !ok[usize::from(b)] && !r[usize::from(b)]));
+                assert!(!error || ends_dirty, "{:?}: the error, and no run's dirty end", String::from_utf8_lossy(&src));
+                if ends_dirty {
+                    let refused = !out.errors.is_empty() || out.tree.as_ref().is_none_or(|d| ::bitlex::tree::nodes(d, &out.tokens, src.len()).is_err());
+                    assert!(refused, "{:?}: a run's dirty end in a file the grammar takes", String::from_utf8_lossy(&src));
+                    dirty += 1;
+                }
+                files += 1;
+            }
+        }
+        assert!(dirty > 100, "{dirty} of {files}");
     }
 
     /// A mask's `& lv` dropped: where it ends an operand, and `(!x)` then `!x`; not where `lv` begins a longer name.

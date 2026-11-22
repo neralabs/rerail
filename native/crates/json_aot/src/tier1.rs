@@ -199,10 +199,6 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
             let v_t2 = v_m_in_string & v_m_control;
             // a control byte in a string
             errors |= v_t2;
-            // (q & follows) & ~string_tail
-            let v_t3 = v_m_q & v_m_follows & !v_m_string_tail;
-            // a string right after a scalar
-            errors |= v_t3;
         }
     }
     // The last block's records (simdjson's `finish`).
