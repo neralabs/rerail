@@ -2540,9 +2540,15 @@ impl Program {
         }
         let p = self.phases.len() as u32;
         let base = self.items.len() as u32;
-        self.phases.push([base, items.len() as u32, self.segs.len() as u32, segs.len() as u32]);
+        let s0 = self.segs.len() as u32;
+        self.phases.push([base, items.len() as u32, s0, segs.len() as u32]);
+        // Each item with its segment and one (0: none), which it strides its job's rows by.
+        let mut seg_of = vec![0u32; items.len()];
+        for (k, g) in segs.iter().enumerate() {
+            seg_of[g.first as usize..(g.first + g.items) as usize].fill(s0 + k as u32 + 1);
+        }
         self.segs.extend(segs.into_iter().map(|g| SegAt { first: base + g.first, ..g }));
-        self.items.extend(items.into_iter().map(|(kind, which, group)| [kind << 24 | which, group, p, 0]));
+        self.items.extend(items.into_iter().zip(seg_of).map(|((kind, which, group), seg)| [kind << 24 | which, group, p, seg]));
     }
 
     /// An exclusive scan of the `n` values at `data` in place, with their total after them, as phases: each level's

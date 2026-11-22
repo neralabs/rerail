@@ -220,3 +220,13 @@ its launches: fewer than its rounds.
   change its own. Its total is its rows' offsets (`dedup_scatter_one` and `scan_scatter_one` now read at their rows,
   not their caps).
 - **Measured:** spark2's CPU backend, 45 of 45 (76 s); the mini's Metal, 32 of 32.
+
+### Done (2026-11-22): a segment's items stride its rows (for 5b and 5c)
+
+- **Each item names its segment** (`Item.seg`, its index and one; 0 for none). `Program::phase_of` writes it.
+- **A thread-a-row kernel's item strides its job's rows.** Its thread `t` runs at `t`, `t + step`, and so on, while
+  below the count's rows (`*count + plus`). `step` is the segment's items pushed times `JOIN_TG`. A job's rows past
+  its items encoded are still all run, so the items a job encodes no longer bound the rows it can take. This is what
+  5b's and 5c's sizes, made on the device, need. A segment of no count (`per` 0) runs each item once, as before. A
+  scan's or a sort's tile pass is not a segment's.
+- **Measured:** spark2's CPU backend, 45 of 45 (67 s); the mini's Metal, 32 of 32.

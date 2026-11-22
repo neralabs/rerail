@@ -1765,9 +1765,22 @@ UKL_INLINE void round_one(JSPACE const RoundP* p, UKL_GLOBAL uint32_t* ctl, uint
 #define PK_GATE 27u
 #define PK_ROUND 28u
 
-// An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase.
-typedef struct Item { uint32_t what; uint32_t group; uint32_t phase; uint32_t pad; } Item;
+// An item: its kind and which job, scan level or sort pass (`kind << 24 | which`), its group in that, its phase, its
+// segment and one (`Seg`; 0: none).
+typedef struct Item { uint32_t what; uint32_t group; uint32_t phase; uint32_t seg; } Item;
 UKL_STATIC_ASSERT(sizeof(Item) == 16, "Item: size");
+// A job's items in its phase, as many as a count on the device needs (decision 0603 step 5): `ceil((*count + plus) /
+// per)` of its `items` from `first`, at most them; all of them where `per` is 0 (a job of no count). A phase of
+// segments pushes theirs, at least one item in all.
+typedef struct Seg { JSPACE const uint32_t* count; uint32_t first, items, per, plus; } Seg;
+UKL_STATIC_ASSERT(sizeof(Seg) == 24, "Seg: size");
+UKL_INLINE uint32_t seg_items(UKL_GLOBAL const Seg* g)
+{
+    if (g->per == 0u) return g->items;
+    uint64_t need = ((uint64_t)*g->count + g->plus + g->per - 1u) / g->per;
+    return need < (uint64_t)g->items ? (uint32_t)need : g->items;
+}
+
 // A scan's level: its `n` values scanned in place, its tiles' sums (their offsets once scanned), whether it has them.
 typedef struct ScanLevel { JSPACE uint32_t* in; JSPACE uint32_t* sums; uint32_t n; uint32_t offsets; uint64_t pad; } ScanLevel;
 UKL_STATIC_ASSERT(sizeof(ScanLevel) == 32, "ScanLevel: size");
@@ -1799,10 +1812,18 @@ typedef struct ProgLocal {
 
 // Item `it`'s work, a group of `JOIN_TG` threads (`l` this one's). The group runs one item at a time, so a tile
 // pass's barriers are the group's.
-UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel* scans, UKL_GLOBAL const SortPass* sorts, JSPACE uint32_t* counts, UKL_GLOBAL uint32_t* ctl, Item it, uint32_t l,
-                          ProgLocal m __UKL_PARAMS)
+UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel* scans, UKL_GLOBAL const SortPass* sorts, UKL_GLOBAL const Seg* segs, JSPACE uint32_t* counts,
+                          UKL_GLOBAL uint32_t* ctl, Item it, uint32_t l, ProgLocal m __UKL_PARAMS)
 {
     uint32_t kind = it.what >> 24, x = it.what & 0xffffffu, g = it.group, t = g * JOIN_TG + l;
+    // A segment's item strides its job's rows (decision 0603 step 5): its threads `t`, `t + step`, ..., below its
+    // count's, `step` the segment's items pushed. Its kernels are a thread a row.
+    uint32_t step = 0u, lim = 0u;
+    if (it.seg != 0u && segs[it.seg - 1u].per != 0u) {
+        UKL_GLOBAL const Seg* sg = &segs[it.seg - 1u];
+        step = seg_items(sg) * JOIN_TG;
+        lim = *sg->count + sg->plus;
+    }
     if (kind == PK_SCAN_SUMS || kind == PK_SCAN_TILES) {
         ScanLevel lv = scans[x];
         UklScanArgs a;
@@ -1826,6 +1847,7 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
     }
     UKL_GLOBAL const Job* j = &jobs[x];
     JSPACE uint32_t* c = counts + j->base;
+    for (uint32_t pass = 0u; pass < UKL_WQ_TURNS; pass++) {
     switch (kind) {
         case PK_COPY: rows_copy_one((JSPACE const uint8_t*)j->L, (JSPACE uint8_t*)j->O, j->totals, (JSPACE const Copy*)j->P, t); break;
         case PK_IX_KEY: ix_key_one((JSPACE const uint8_t*)j->L, j->H, (JSPACE uint32_t*)j->S, (JSPACE const IxP*)j->P, j->kb, j->eb, t); break;
@@ -1859,18 +1881,10 @@ UKL_INLINE void prog_item(UKL_GLOBAL const Job* jobs, UKL_GLOBAL const ScanLevel
             break;
         default: break;
     }
-}
-
-// A job's items in its phase, as many as a count on the device needs (decision 0603 step 5): `ceil((*count + plus) /
-// per)` of its `items` from `first`, at most them; all of them where `per` is 0 (a job of no count). A phase of
-// segments pushes theirs, at least one item in all.
-typedef struct Seg { JSPACE const uint32_t* count; uint32_t first, items, per, plus; } Seg;
-UKL_STATIC_ASSERT(sizeof(Seg) == 24, "Seg: size");
-UKL_INLINE uint32_t seg_items(UKL_GLOBAL const Seg* g)
-{
-    if (g->per == 0u) return g->items;
-    uint64_t need = ((uint64_t)*g->count + g->plus + g->per - 1u) / g->per;
-    return need < (uint64_t)g->items ? (uint32_t)need : g->items;
+    // Bounded: a pass a stride of its rows.
+    if (step == 0u || t + step >= lim || t + step < t) break;
+    t += step;
+    }
 }
 
 // The program, one launch (decision 0603; 0540 step 6's scheme): a group of `JOIN_TG` threads an item. The first
@@ -1942,7 +1956,7 @@ DEFINE_KERNEL2(join, join_run,
         ukl_tg_barrier();
         if (got == 0u) return;
         Item it = items[item];
-        prog_item(jobs, scans, sorts, (JSPACE uint32_t*)counts, ctl, it, l, m __UKL_ARGS);
+        prog_item(jobs, scans, sorts, segs, (JSPACE uint32_t*)counts, ctl, it, l, m __UKL_ARGS);
         // The group's writes, then the item counted: the one that brings its phase's count to its items pushes the
         // next phase's.
         ukl_tg_barrier_device();
