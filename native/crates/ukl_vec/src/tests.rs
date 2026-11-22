@@ -1140,3 +1140,91 @@ fn a_floating_multiply_add_is_rounded_once() {
         assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
     }
 }
+
+/// A compiled function's reads and writes back of one address (machine code as text): in a block, an `ldr` from a
+/// register's address and a `str` to it with no write of the register between.
+#[cfg(target_arch = "aarch64")]
+fn read_modify_writes(code: &str) -> usize {
+    let reg = |r: &str| r.trim().trim_start_matches(['x', 'w']).to_string();
+    let mut n = 0;
+    for block in code.split("\nblock") {
+        let mut loaded = std::collections::HashSet::new();
+        for l in block.lines().map(str::trim_start) {
+            let Some((op, rest)) = l.split_once(' ') else { continue };
+            let addr = rest.split_once(", [").and_then(|(_, a)| a.strip_suffix(']')).filter(|a| !a.starts_with("sp") && !a.contains(',')).map(reg);
+            match (op, addr) {
+                ("str", Some(a)) if loaded.contains(&a) => n += 1,
+                ("str", _) => {}
+                (_, a) => {
+                    // A load's address, then its destination written (its own address too, if the same register).
+                    if let (Some(a), true) = (a, op == "ldr") {
+                        loaded.insert(a);
+                    }
+                    if let Some(d) = rest.split(',').next() {
+                        loaded.remove(&reg(d));
+                    }
+                }
+            }
+        }
+    }
+    n
+}
+
+/// The nearest ancestors' kernel (`nearest_jump`, the packed transducer's, decisions 0038 and 0040), the simplest of
+/// the engine's kernels, compiled as written by hand: its `ukl_atomic_load` (OpenCL 1.2's `atomic_or(p, 0)`) is each
+/// lane's load, its `ukl_atomic_store` (an `atomic_xchg` whose old value no one reads) each lane's store, and its
+/// `ukl_atomic_max` of the lanes' steps at one address the lanes' maximum and one atomic: the code reads and writes
+/// back one address once, the maximum's. Each cell's answer, on the interpreter and the compiled SSA at every width,
+/// is its nearest strict ancestor in its set.
+#[test]
+fn the_nearest_kernels_atomics_are_loads_stores_and_one_maximum() {
+    let text = include_str!("../../../src/code_rule_dsl/transducer/packed/nearest.uglykl");
+    let src = super::source("/<kernels>/nearest.uglykl", text, &[]).unwrap();
+    let tape = super::c_tape(&src).unwrap();
+    let p = super::lower::lower(&src, &tape).unwrap_or_else(|e| panic!("{e}"));
+    let k = super::vector::vectorize(&p, p.kernel("nearest_jump").unwrap()).unwrap_or_else(|e| panic!("{}", e.0));
+    // 4 sets of a binary tree of 16 nodes (node i's parent (i - 1) / 2); set s holds the nodes i with i % (s + 2) == 0.
+    const NODES: u32 = 16;
+    const FINAL: u32 = 0x8000_0000;
+    let parent = |i: u32| (i > 0).then(|| (i - 1) / 2);
+    let member = |s: u32, i: u32| i % (s + 2) == 0;
+    let (mut start, mut want) = (Vec::new(), Vec::new());
+    for s in 0..4u32 {
+        for i in 0..NODES {
+            start.push(match parent(i) {
+                None => u32::MAX,
+                Some(q) if member(s, q) => FINAL | q,
+                Some(q) => q,
+            });
+            let mut a = parent(i);
+            while let Some(q) = a.filter(|&q| !member(s, q)) {
+                a = parent(q);
+            }
+            want.push(a.map_or(u32::MAX, |q| FINAL | q));
+        }
+    }
+    let run = |k: &super::vector::Kernel, exec| {
+        let mut state = start.clone();
+        let mut stats = [0u32; 1];
+        let ptr = |p: *mut u32| super::run::Arg::Bytes((p as u64).to_le_bytes().to_vec());
+        let args_of: Vec<u8> = [NODES, 4 * NODES, 0, 0].iter().flat_map(|x| x.to_le_bytes()).collect();
+        let args = [ptr(state.as_mut_ptr()), ptr(stats.as_mut_ptr()), super::run::Arg::Bytes(args_of), super::run::Arg::Bytes(vec![0; 8]), super::run::Arg::Bytes(vec![0; 4])];
+        super::run::run(&p, k, &args, super::run::Launch { grid: [2, 1, 1], block: [32, 1, 1], local: 0, resident: 1, exec }).unwrap_or_else(|e| panic!("{exec:?}: {}", e.0));
+        assert!((1..=4).contains(&stats[0]), "{exec:?}: the most steps a cell took, {}", stats[0]);
+        state
+    };
+    assert_eq!(run(&k, super::run::Exec::Interpret), want, "the interpreter");
+    let ssa = ssa_of(&p, &k);
+    for w in [1u32, 2, 4, 8, 16, 32] {
+        let (c, _) = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap();
+        let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
+        let _ = at.cl.set(Ok(c));
+        assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+        #[cfg(target_arch = "aarch64")]
+        {
+            let (c, _) = super::cl::compile_listed(&ssa, &k.name, w, &super::exec::places()).unwrap();
+            let code = c.listing.last().expect("the kernel's code for a chunk whose lanes all run");
+            assert!(read_modify_writes(code) <= 1, "w{w}: {} addresses read and written back:\n{code}", read_modify_writes(code));
+        }
+    }
+}

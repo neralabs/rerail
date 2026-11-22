@@ -3992,6 +3992,58 @@ impl<'a, 'b> Cg<'a, 'b> {
         }
     }
 
+    /// Whether atomic `bi` of operand `x` leaves its word as it is (a poll: `atomic_or(p, 0)`, ...).
+    fn leaves_word(&self, bi: Builtin, x: V) -> bool {
+        if x == NONE || self.f.inst(x).op != O::Const {
+            return false;
+        }
+        let c = self.f.inst(x);
+        let v = crate::ops::norm(c.m, u64::from(c.a) | u64::from(c.b) << 32);
+        match bi {
+            Builtin::AtomicOr | Builtin::AtomicAdd | Builtin::AtomicSub | Builtin::AtomicXor => v == 0,
+            Builtin::AtomicAnd => v == crate::ops::norm(c.m, u64::MAX),
+            _ => false,
+        }
+    }
+
+    /// The lanes of `mask` of `x` folded by SIMD-group reduction `bi` (add, minimum, maximum), this chunk's alone.
+    fn reduce_here(&mut self, bi: Builtin, m: M, mask: V, x: V) -> Value {
+        let px = self.lanes(x, m);
+        if self.w >= 4 && !m.float() && (bi == Builtin::SubGroupReduceAdd || !wide(m)) {
+            self.reduce_lanes(bi, m, mask, px)
+        } else {
+            let k = self.mask(mask);
+            let w = self.w;
+            self.fold(bi, m, w, &mut |g, l| {
+                let on = g.mask_lane(&k, l);
+                let s = g.extract(&px, m, l);
+                (on, g.uniform_of(s, m))
+            })
+        }
+    }
+
+    /// A store of `x` (`m`) at `a` by the lanes of `mask`.
+    fn store_of(&mut self, m: M, a: V, x: V, mask: V) {
+        match (self.vals[a as usize].clone(), self.vals[x as usize].clone()) {
+            (Rp::U(_), Rp::U(v)) => {
+                let (at, off) = self.addr_u_at(a, mask);
+                self.store_u(m, at, v, off)
+            }
+            (Rp::U(at), Rp::L(p)) => {
+                // Each running lane's in order: the last one's stays.
+                let at = self.guarded(at, mask);
+                let k = self.mask(mask);
+                let bits = self.mask_bits(&k);
+                let c = self.b.ins().clz(bits);
+                let idx = self.b.ins().irsub_imm(c, 31);
+                let idx = self.b.ins().band_imm(idx, i64::from(self.w - 1));
+                let v = self.lane_at(&p, m, idx);
+                self.store_u(m, at, v, 0);
+            }
+            _ => self.store_lanes(m, a, x, mask),
+        }
+    }
+
     /// One lane's atomic at `ptr` (uniform values): the old value.
     fn atomic_u(&mut self, bi: Builtin, m: M, ptr: Value, x: Value, y: Value) -> Value {
         let old = self.load_u(m, ptr, 0);
@@ -4297,24 +4349,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                 _ => Rp::L(self.load_lanes(m, i.a, i.b)),
             },
             O::Store => {
-                match (self.vals[i.a as usize].clone(), self.vals[i.b as usize].clone()) {
-                    (Rp::U(_), Rp::U(v)) => {
-                        let (a, off) = self.addr_u_at(i.a, i.c);
-                        self.store_u(m, a, v, off)
-                    }
-                    (Rp::U(a), Rp::L(p)) => {
-                        // Each running lane's in order: the last one's stays.
-                        let a = self.guarded(a, i.c);
-                        let k = self.mask(i.c);
-                        let bits = self.mask_bits(&k);
-                        let c = self.b.ins().clz(bits);
-                        let idx = self.b.ins().irsub_imm(c, 31);
-                        let idx = self.b.ins().band_imm(idx, i64::from(w - 1));
-                        let v = self.lane_at(&p, m, idx);
-                        self.store_u(m, a, v, 0);
-                    }
-                    _ => self.store_lanes(m, i.a, i.b, i.c),
-                }
+                self.store_of(m, i.a, i.b, i.c);
                 Rp::None
             }
             O::Copy | O::Zero => {
@@ -4610,20 +4645,43 @@ impl<'a, 'b> Cg<'a, 'b> {
                         let s = g.b.ins().load(lt, mf(), at, (l * size) as i32);
                         (on, g.uniform_of(s, m))
                     }))
-                } else if self.w >= 4 && !m.float() && (bi == Builtin::SubGroupReduceAdd || !wide(m)) {
-                    Rp::U(self.reduce_lanes(bi, m, i.b, px))
                 } else {
-                    let w = self.w;
-                    Rp::U(self.fold(bi, m, w, &mut |g, l| {
-                        let on = g.mask_lane(&k, l);
-                        let s = g.extract(&px, m, l);
-                        (on, g.uniform_of(s, m))
-                    }))
+                    Rp::U(self.reduce_here(bi, m, i.b, i.a))
                 }
             }
             O::Atomic => {
                 let bi = Builtin::of(u32::from(i.sub));
-                if i.shape == Shape::Uniform && self.chunked {
+                // Its old value read by no one: an exchange is a store, and an atomic whose lanes combine (a sum, a
+                // minimum, a maximum) at one address the lanes' combination and one atomic, as written by hand.
+                let unread = self.nuse[x as usize] == 0;
+                let combined = match bi {
+                    Builtin::AtomicAdd => Some(Builtin::SubGroupReduceAdd),
+                    Builtin::AtomicMin => Some(Builtin::SubGroupReduceMin),
+                    Builtin::AtomicMax => Some(Builtin::SubGroupReduceMax),
+                    _ => None,
+                }
+                .filter(|_| unread && i.shape == Shape::Lanes && !m.float() && matches!(self.vals[i.a as usize], Rp::U(_)));
+                if self.leaves_word(bi, i.b) {
+                    // A poll (`atomic_or(p, 0)`: OpenCL 1.2's atomic load) leaves its word: a load, each lane's.
+                    match self.vals[i.a as usize].clone() {
+                        Rp::U(a) => {
+                            let a = if i.shape == Shape::Uniform { a } else { self.guarded(a, i.d) };
+                            Rp::U(self.load_u(m, a, 0))
+                        }
+                        _ => Rp::L(self.load_lanes(m, i.a, i.d)),
+                    }
+                } else if unread && bi == Builtin::AtomicXchg {
+                    self.store_of(m, i.a, i.b, i.d);
+                    Rp::None
+                } else if let Some(rb) = combined {
+                    // This chunk's lanes combined (each chunk's atomic its own), to the scratch area with no lane.
+                    let r = self.reduce_here(rb, m, i.d, i.b);
+                    let a = self.u(i.a);
+                    let a = self.guarded(a, i.d);
+                    let y = self.konst_u(m, 0);
+                    self.atomic_u(bi, m, a, r, y);
+                    Rp::None
+                } else if i.shape == Shape::Uniform && self.chunked {
                     // Once for the SIMD group: by the chunk that has its first lane of the mask, whose result every
                     // chunk reads.
                     let k = self.mask(i.d);
