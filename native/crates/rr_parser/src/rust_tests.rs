@@ -112,11 +112,12 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
         return None;
     }
     let (starts, lasts) = (&run.positions[0], &run.positions[1]);
-    for k in 0..starts.len().max(lx.starts.len()) {
+    for k in 0..starts.len().max(lx.recs.len()) {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
-        let ours = (lx.starts.get(k), lx.lasts.get(k), lx.codes.get(k));
+        let rec = lx.recs.get(k);
+        let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
         let kept = |c: Option<&u32>| c.map(|&c| c & !late);
-        let late_ok = run.codes.get(k).zip(lx.codes.get(k)).is_none_or(|(&t, &o)| t & late & !o == 0);
+        let late_ok = run.codes.get(k).zip(ours.2).is_none_or(|(&t, &o)| t & late & !o == 0);
         if (theirs.0, theirs.1, kept(theirs.2)) != (ours.0, ours.1, kept(ours.2)) || !late_ok {
             let at = |s: Option<&u32>| s.map_or(String::new(), |&s| text[s as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
             return Some(format!("record {k}: the interpreter {theirs:x?} `{}`, tier 1 as Rust {ours:x?} `{}`", at(theirs.0), at(ours.0)));
@@ -283,7 +284,7 @@ fn rr_aot_against_jit() {
         std::hint::black_box(f());
         rerail_prof::thread_cpu() - t
     };
-    let lex = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len()).starts.len()).sum::<usize>();
+    let lex = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len()).recs.len()).sum::<usize>();
     let aot = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::parse(b, t.len()).map_or(0, |c| c.keys.len())).sum::<usize>();
     let jit = || files.iter().map(|t| c.parser.image(t.as_bytes()).map_or(0, |i| i.len())).sum::<usize>();
     let engine = || files.iter().map(|t| crate::engine_tape(t).len()).sum::<usize>();

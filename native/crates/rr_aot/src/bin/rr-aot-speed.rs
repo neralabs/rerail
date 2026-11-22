@@ -33,7 +33,7 @@ fn main() {
         std::hint::black_box(f());
         t.elapsed()
     };
-    let lex = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len()).starts.len()).sum::<usize>();
+    let lex = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len()).recs.len()).sum::<usize>();
     let parse = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::parse(b, t.len()).map_or(0, |c| c.keys.len())).sum::<usize>();
     let mut best = [Duration::MAX; 2];
     for _ in 0..rounds {
@@ -45,7 +45,7 @@ fn main() {
     let one = rerail_rr_aot::padded(all.as_bytes());
     let mut whole = Duration::MAX;
     for _ in 0..rounds {
-        whole = whole.min(time(&|| rerail_rr_aot::lex(&one, all.len()).starts.len()));
+        whole = whole.min(time(&|| rerail_rr_aot::lex(&one, all.len()).recs.len()));
     }
     let refused = bufs.iter().zip(&files).filter(|(b, t)| rerail_rr_aot::parse(b, t.len()).is_err()).count();
     let mb = bytes as f64 / 1e6;

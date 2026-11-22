@@ -152,10 +152,11 @@ fn tier1_differs(c: &Compiled, text: &str) -> Option<String> {
         return None;
     }
     let (starts, lasts) = (&run.positions[0], &run.positions[1]);
-    let n = starts.len().max(lx.starts.len());
+    let n = starts.len().max(lx.recs.len());
     for k in 0..n {
         let theirs = (starts.get(k), lasts.get(k), run.codes.get(k));
-        let ours = (lx.starts.get(k), lx.lasts.get(k), lx.codes.get(k));
+        let rec = lx.recs.get(k);
+        let ours = (rec.map(|r| &r.start), rec.map(|r| &r.last), rec.map(|r| &r.code));
         if theirs != ours {
             let at = |s: Option<&u32>| s.map_or(String::new(), |&s| text[s as usize..].chars().take(16).collect::<String>().replace('\n', "⏎"));
             return Some(format!("record {k}: the interpreter {theirs:x?} `{}`, tier 1 as Rust {ours:x?} `{}`", at(theirs.0), at(ours.0)));

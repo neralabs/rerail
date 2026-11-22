@@ -988,7 +988,7 @@ impl<'a> G<'a> {
                 TokenElem::End => pos.push(format!("{j} >= self.n")),
                 TokenElem::Without(m) => and.push(format!("!self.bit_at({j}, {})", self.bit_of(m)?)),
                 TokenElem::With(m) => and.push(format!("self.bit_at({j}, {})", self.bit_of(m)?)),
-                TokenElem::Starting(bytes) => and.push(format!("({j} < self.n && matches!(self.src[self.starts[{j}] as usize], {}))", bytes.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | "))),
+                TokenElem::Starting(bytes) => and.push(format!("({j} < self.n && matches!(self.src[self.recs[{j}].start as usize], {}))", bytes.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | "))),
                 TokenElem::Many(..) => return Err("a run inside an element".into()),
             }
         }
@@ -1044,18 +1044,18 @@ impl<'a> G<'a> {
         let mut and = Vec::new();
         for c in choices {
             match c {
-                TokenElem::Kind(k) if self.x.extras.contains(k) => pos.push(format!("(is_extra(self.codes[{j}]) && extra_kind(self.codes[{j}]) == {})", self.kind_const(k)?)),
+                TokenElem::Kind(k) if self.x.extras.contains(k) => pos.push(format!("(is_extra(self.recs[{j}].code) && extra_kind(self.recs[{j}].code) == {})", self.kind_const(k)?)),
                 TokenElem::Kind(k) => {
                     self.kind_tests.borrow_mut().insert(k.clone());
-                    pos.push(format!("(!is_extra(self.codes[{j}]) && self.at_{}_rec({j}))", ident(k)));
+                    pos.push(format!("(!is_extra(self.recs[{j}].code) && self.at_{}_rec({j}))", ident(k)));
                 }
                 TokenElem::Word(w) => match self.word_of(&String::from_utf8_lossy(w)) {
-                    Some(id) => pos.push(format!("(!is_extra(self.codes[{j}]) && self.codes[{j}] >> 8 & 0xff == w::{})", self.word_const(id))),
+                    Some(id) => pos.push(format!("(!is_extra(self.recs[{j}].code) && self.recs[{j}].code >> 8 & 0xff == w::{})", self.word_const(id))),
                     None => pos.push("false".into()),
                 },
-                TokenElem::With(m) => and.push(format!("self.codes[{j}] >> {} & 1 == 1", 16 + self.bit_num(m)?)),
-                TokenElem::Without(m) => and.push(format!("self.codes[{j}] >> {} & 1 == 0", 16 + self.bit_num(m)?)),
-                TokenElem::Starting(bytes) => and.push(format!("matches!(self.src[self.starts[{j}] as usize], {})", bytes.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | "))),
+                TokenElem::With(m) => and.push(format!("self.recs[{j}].code >> {} & 1 == 1", 16 + self.bit_num(m)?)),
+                TokenElem::Without(m) => and.push(format!("self.recs[{j}].code >> {} & 1 == 0", 16 + self.bit_num(m)?)),
+                TokenElem::Starting(bytes) => and.push(format!("matches!(self.src[self.recs[{j}].start as usize], {})", bytes.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(" | "))),
                 TokenElem::End | TokenElem::Not(_) | TokenElem::Many(..) => return Err(format!("a gap question's element {c:?}")),
             }
         }
@@ -1309,10 +1309,10 @@ impl<'a> G<'a> {
                 // Its opener's kind: its own row's.
                 let rows = self.x.lexer.iter().filter(|s| matches!(s, ::bitlex::syntax::Stmt::Token { .. }));
                 let own = rows.enumerate().find(|(_, s)| matches!(s, ::bitlex::syntax::Stmt::Token { kind, .. } if *kind == rd.kind)).and_then(|(i, _)| self.x.row_kinds.get(i).copied().flatten());
-                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from).filter(|&p| self.i + 1 >= self.n || p < self.starts[self.i + 1] as usize) {{\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
+                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from).filter(|&p| self.i + 1 >= self.n || p < self.recs[self.i + 1].start as usize) {{\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
                 (format!("resume_{r}"), "at byte `s`, no record of its own: the string's parts after its template's `}`", format!("s: usize) -> R {{\n        self.sub.clear();\n        self.k = 0;\n        self.piece(s, s, {});", kind_or(own, "s")))
             } else {
-                (format!("split_{r}"), "record `j`", "j: usize) -> R {\n        let s = self.starts[j] as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.codes[j]));".to_owned())
+                (format!("split_{r}"), "record `j`", "j: usize) -> R {\n        let s = self.recs[j].start as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.recs[j].code));".to_owned())
             };
             let _ = write!(
                 out,
@@ -1323,7 +1323,7 @@ impl<'a> G<'a> {
             );
         }
         let _ = write!(out, "    /// Past the token, to the next grammar token's record{}.\n    #[inline(always)]\n    fn advance(&mut self, from: usize) -> R {{\n{resume}        self.i = self.next_tok(self.i + 1);\n        self.arrive()\n    }}\n\n", if resume.is_empty() { "" } else { ", or the string's parts a template's `}` resumes, at the record before the next (decision 0600)" });
-        let _ = write!(out, "    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {{\n        let s = self.starts[j] as usize;\n{at}        let _ = s;\n        Ok(())\n    }}\n\n");
+        let _ = write!(out, "    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {{\n        let s = self.recs[j].start as usize;\n{at}        let _ = s;\n        Ok(())\n    }}\n\n");
         // A piece's word: its kind's keywords', as the lean lexer finds a word.
         let mut arms = String::new();
         for (b, name) in self.x.tokens {
@@ -1356,7 +1356,7 @@ impl<'a> G<'a> {
             let kinds = if bytes.is_empty() { "false".to_owned() } else { format!("matches!(c & 0xff, {})", bytes.join(" | ")) };
             let words = if hard.is_empty() { String::new() } else { format!(" && !matches!(c >> 8 & 0xff, {})", hard.join(" | ")) };
             let n = ident(&k);
-            let _ = writeln!(out, "    fn at_{n}_at(&self, j: usize) -> bool {{\n        if j >= self.n {{\n            return false;\n        }}\n        let c = self.code_at(j);\n        {kinds}{words}\n    }}\n\n    fn at_{n}(&self) -> bool {{\n        self.at_{n}_at(self.i)\n    }}\n\n    /// Record `j` (not the piece at the token) one of the kind's.\n    fn at_{n}_rec(&self, j: usize) -> bool {{\n        let c = self.codes[j];\n        {kinds}{words}\n    }}\n");
+            let _ = writeln!(out, "    fn at_{n}_at(&self, j: usize) -> bool {{\n        if j >= self.n {{\n            return false;\n        }}\n        let c = self.code_at(j);\n        {kinds}{words}\n    }}\n\n    fn at_{n}(&self) -> bool {{\n        self.at_{n}_at(self.i)\n    }}\n\n    /// Record `j` (not the piece at the token) one of the kind's.\n    fn at_{n}_rec(&self, j: usize) -> bool {{\n        let c = self.recs[j].code;\n        {kinds}{words}\n    }}\n");
         }
     }
 
@@ -1510,7 +1510,7 @@ impl<'a> G<'a> {
             for (a, b) in [
                 ("    asks: u64,\n", "    asks: u64,\n    /// The marks the level open refuses (`refuse M in L`), their bits in a record's code: a token it takes with one\n    /// refuses the file. A call's are its own, the caller's again where it returns.\n    refusing: u32,\n"),
                 ("marked: false, asks: 0,", "marked: false, asks: 0, refusing: 0,"),
-                ("        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n", "        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n        // A mark the level refuses, at the token it takes (`refuse M in L`).\n        if self.k == 0 && self.codes[self.i] >> 16 & self.refusing != 0 {\n            return self.refuse();\n        }\n"),
+                ("        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n", "        if self.i >= self.n || self.open_mark() {\n            return self.refuse();\n        }\n        // A mark the level refuses, at the token it takes (`refuse M in L`).\n        if self.k == 0 && self.recs[self.i].code >> 16 & self.refusing != 0 {\n            return self.refuse();\n        }\n"),
             ] {
                 if out.matches(a).count() != 1 {
                     return Err(format!("tier 2 as Rust: `refuse`'s place in the runtime: {a:?}"));
@@ -1553,11 +1553,11 @@ impl<'a> G<'a> {
         if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() {
             for (a, b) in [
                 ("    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).\n    m: &'a crate::tier1::Masks,\n", ""),
-                ("let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);", "let (starts, lasts, codes) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..]);"),
-                ("P { src, starts, lasts, codes, m, n,", "P { src, starts, lasts, codes, n,"),
+                ("let (recs, m) = (&lx.recs[..], &lx.masks);", "let recs = &lx.recs[..];"),
+                ("P { src, recs, m, n,", "P { src, recs, n,"),
                 ("    /// At record `i`: split it where tier 2 reads its region in parts.\n", "    /// At record `i`: no mark known there yet.\n"),
                 ("        if self.i < self.n {\n            self.split(self.i)?;\n        }\n", ""),
-                ("    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {\n        let s = self.starts[j] as usize;\n        let _ = s;\n        Ok(())\n    }\n\n", ""),
+                ("    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {\n        let s = self.recs[j].start as usize;\n        let _ = s;\n        Ok(())\n    }\n\n", ""),
             ] {
                 if !out.contains(a) {
                     return Err(format!("tier 2: the runtime's masks, not where they were: {a:?}"));
@@ -1712,9 +1712,8 @@ const DEPTH: u32 = 400;
 /// The parser: tier 1's records (the tokens and the comments), the token read next, the tree.
 pub struct P<'a> {
     src: &'a [u8],
-    starts: &'a [u32],
-    lasts: &'a [u32],
-    codes: &'a [u32],
+    /// Tier 1's records, one a token: its first and last byte and its code (the lean parser's `Tok`).
+    recs: &'a [crate::tier1::Rec],
     /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).
     m: &'a crate::tier1::Masks,
     n: usize,
@@ -1758,9 +1757,9 @@ pub struct P<'a> {
 #[allow(dead_code)]
 impl<'a> P<'a> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
-        let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);
-        let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
+        let (recs, m) = (&lx.recs[..], &lx.masks);
+        let n = recs.len();
+        let mut p = P { src, recs, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -1785,7 +1784,7 @@ impl<'a> P<'a> {
     /// Record `j`'s code, its first and its last byte: the piece's at the token.
     #[inline(always)]
     fn code_at(&self, j: usize) -> u32 {
-        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.codes[j] }
+        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.recs[j].code }
     }
 
     /// Whether mark `order` holds at the token (`h`), found once a token, as the lean parser
@@ -1802,7 +1801,7 @@ impl<'a> P<'a> {
 
     #[inline(always)]
     fn next_tok(&self, mut j: usize) -> usize {
-        while j < self.n && is_extra(self.codes[j]) {
+        while j < self.n && is_extra(self.recs[j].code) {
             j += 1;
         }
         j.min(self.n)
@@ -1814,7 +1813,7 @@ impl<'a> P<'a> {
         let mut k = j;
         while k > 0 {
             k -= 1;
-            if !is_extra(self.codes[k]) {
+            if !is_extra(self.recs[k].code) {
                 return k;
             }
         }
@@ -1843,7 +1842,7 @@ impl<'a> P<'a> {
         } else if self.k < self.sub.len() {
             self.sub[self.k].0
         } else {
-            self.starts[self.i]
+            self.recs[self.i].start
         }
     }
 
@@ -1881,7 +1880,7 @@ impl<'a> P<'a> {
         while self.pend < self.i {
             let j = self.pend;
             self.pend += 1;
-            let c = self.codes[j];
+            let c = self.recs[j].code;
             if is_extra(c) && !self.gone.contains(&j) {
                 let (s, e) = self.extra_span(j);
                 let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
@@ -1894,16 +1893,16 @@ impl<'a> P<'a> {
     fn extra_span(&self, j: usize) -> (u32, u32) {
         match self.moved {
             Some((m, s)) if m == j => (s, s),
-            _ => (self.starts[j], self.lasts[j] + 1),
+            _ => (self.recs[j].start, self.recs[j].last + 1),
         }
     }
 
     /// `loses since`: the first extra pending of no width at the next one's start (the lean
     /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).
     fn move_first(&mut self) {
-        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j));
+        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j));
         if let (Some(a), Some(b)) = (pending.next(), pending.next()) {
-            self.moved = Some((a, self.starts[b]));
+            self.moved = Some((a, self.recs[b].start));
         }
     }
 
@@ -1913,10 +1912,10 @@ impl<'a> P<'a> {
         // An extra a `loses since` moved and the one after it go with those before: the lean
         // lexer's semicolon is past that one.
         let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);
-        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.codes[k]) && !self.gone.contains(&k)));
+        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.recs[k].code) && !self.gone.contains(&k)));
         while self.pend < self.i {
             let j = self.pend;
-            let c = self.codes[j];
+            let c = self.recs[j].code;
             if is_extra(c) && c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
                 break;
             }
@@ -1932,7 +1931,7 @@ impl<'a> P<'a> {
 
     /// The extra pending last before the token (not yet written, not dropped or lost).
     fn pending_last(&self) -> Option<usize> {
-        (self.pend..self.i).rev().find(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j))
+        (self.pend..self.i).rev().find(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j))
     }
 
     /// `drops`: the extra pending last gone; with none left pending, the nodes closed next end
@@ -1954,7 +1953,7 @@ impl<'a> P<'a> {
         }
         if let Some(j) = self.pending_last() {
             self.gone.push(j);
-            self.lost = Some((extra_kind(self.codes[j]), None));
+            self.lost = Some((extra_kind(self.recs[j].code), None));
         }
     }
 
@@ -1983,7 +1982,7 @@ impl<'a> P<'a> {
             self.last_end = l + 1;
             return Ok((s, l + 1));
         }
-        let (s, e) = (self.starts[self.i], self.lasts[self.i] + 1);
+        let (s, e) = (self.recs[self.i].start, self.recs[self.i].last + 1);
         self.advance(e as usize)?;
         self.last_end = e;
         Ok((s, e))

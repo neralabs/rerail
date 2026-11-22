@@ -352,9 +352,8 @@ const DEPTH: u32 = 400;
 /// The parser: tier 1's records (the tokens and the comments), the token read next, the tree.
 pub struct P<'a> {
     src: &'a [u8],
-    starts: &'a [u32],
-    lasts: &'a [u32],
-    codes: &'a [u32],
+    /// Tier 1's records, one a token: its first and last byte and its code (the lean parser's `Tok`).
+    recs: &'a [crate::tier1::Rec],
     n: usize,
     /// The next grammar token's record; the first record not written yet (the comments before it).
     i: usize,
@@ -407,9 +406,9 @@ pub struct P<'a> {
 #[allow(dead_code)]
 impl<'a> P<'a> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
-        let (starts, lasts, codes) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..]);
-        let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, gone: Vec::new(), dead: Vec::new(), lost: None, moved: None, strings: 0, stack: Vec::with_capacity(64) };
+        let recs = &lx.recs[..];
+        let n = recs.len();
+        let mut p = P { src, recs, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, gone: Vec::new(), dead: Vec::new(), lost: None, moved: None, strings: 0, stack: Vec::with_capacity(64) };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -425,7 +424,7 @@ impl<'a> P<'a> {
     /// Record `j`'s code, its first and its last byte: the piece's at the token.
     #[inline(always)]
     fn code_at(&self, j: usize) -> u32 {
-        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.codes[j] }
+        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.recs[j].code }
     }
 
     /// Whether mark `order` holds at the token (`h`), found once a token, as the lean parser
@@ -442,7 +441,7 @@ impl<'a> P<'a> {
 
     #[inline(always)]
     fn next_tok(&self, mut j: usize) -> usize {
-        while j < self.n && is_extra(self.codes[j]) {
+        while j < self.n && is_extra(self.recs[j].code) {
             j += 1;
         }
         j.min(self.n)
@@ -454,7 +453,7 @@ impl<'a> P<'a> {
         let mut k = j;
         while k > 0 {
             k -= 1;
-            if !is_extra(self.codes[k]) {
+            if !is_extra(self.recs[k].code) {
                 return k;
             }
         }
@@ -483,7 +482,7 @@ impl<'a> P<'a> {
         } else if self.k < self.sub.len() {
             self.sub[self.k].0
         } else {
-            self.starts[self.i]
+            self.recs[self.i].start
         }
     }
 
@@ -516,7 +515,7 @@ impl<'a> P<'a> {
         while self.pend < self.i {
             let j = self.pend;
             self.pend += 1;
-            let c = self.codes[j];
+            let c = self.recs[j].code;
             if is_extra(c) && !self.gone.contains(&j) {
                 let (s, e) = self.extra_span(j);
                 let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
@@ -529,7 +528,7 @@ impl<'a> P<'a> {
     fn extra_span(&self, j: usize) -> (u32, u32) {
         match self.moved {
             Some((m, s)) if m == j => (s, s),
-            _ => (self.starts[j], self.lasts[j] + 1),
+            _ => (self.recs[j].start, self.recs[j].last + 1),
         }
     }
 
@@ -542,7 +541,7 @@ impl<'a> P<'a> {
             return self.refuse();
         }
         // A mark the level refuses, at the token it takes (`refuse M in L`).
-        if self.k == 0 && self.codes[self.i] >> 16 & self.refusing != 0 {
+        if self.k == 0 && self.recs[self.i].code >> 16 & self.refusing != 0 {
             return self.refuse();
         }
         if let Some((kind, None)) = self.lost {
@@ -564,7 +563,7 @@ impl<'a> P<'a> {
             self.last_end = l + 1;
             return Ok((s, l + 1));
         }
-        let (s, e) = (self.starts[self.i], self.lasts[self.i] + 1);
+        let (s, e) = (self.recs[self.i].start, self.recs[self.i].last + 1);
         self.advance(e as usize)?;
         self.last_end = e;
         Ok((s, e))
@@ -6777,7 +6776,7 @@ impl P<'_> {
 
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_code_literal_rec(&self, j: usize) -> bool {
-        let c = self.codes[j];
+        let c = self.recs[j].code;
         matches!(c & 0xff, 3)
     }
 
@@ -6795,7 +6794,7 @@ impl P<'_> {
 
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_hash_word_rec(&self, j: usize) -> bool {
-        let c = self.codes[j];
+        let c = self.recs[j].code;
         matches!(c & 0xff, 1) && !matches!(c >> 8 & 0xff, 34)
     }
 
@@ -6813,7 +6812,7 @@ impl P<'_> {
 
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_identifier_rec(&self, j: usize) -> bool {
-        let c = self.codes[j];
+        let c = self.recs[j].code;
         matches!(c & 0xff, 5)
     }
 
@@ -6831,7 +6830,7 @@ impl P<'_> {
 
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_number_rec(&self, j: usize) -> bool {
-        let c = self.codes[j];
+        let c = self.recs[j].code;
         matches!(c & 0xff, 2)
     }
 
@@ -6849,7 +6848,7 @@ impl P<'_> {
 
     /// Record `j` (not the piece at the token) one of the kind's.
     fn at_string_rec(&self, j: usize) -> bool {
-        let c = self.codes[j];
+        let c = self.recs[j].code;
         matches!(c & 0xff, 4)
     }
 

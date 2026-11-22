@@ -130,3 +130,19 @@ Elsewhere, and where no multiplier is found, it stays.
 What the block makes is still more than lean's four masks (`space`, `word`, `rare`, `pair`): a number's three, which
 lean reads as a rare token from its start, and the gap's newline and form feed, which lean's parser asks only where a
 statement asks it (step 5).
+
+## Step 5, first part: one record a token, written behind a pointer (done)
+
+- **Tier 1 writes a `Rec { start, last, code }` a token**, the lean lexer's `Tok`, in place of three vectors. It
+  reserves room for a record a byte (`n + 1`) once. Each token's first byte comes after the last token's last byte,
+  so the writes (`out.add(len).write(…)`) need no check, and the vector's length is set once, at the end. A test
+  build asserts the bound at each write.
+- **Tier 2 reads one record** (`self.recs[j].code`, `.start`, `.last`) where it read three vectors.
+- **Kotlin's tier 1 and tier 2 take the same form**, since the generator writes both. A string resumed over a
+  template's code (decision 0600) sets its held record's last byte through the same pointer.
+
+`rr_parser`'s 51 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes and records included. JSON's files
+are unchanged.
+
+The gap marks (`any_in` of the newline and form feed at each token) are still tier 1's. They move to where tier 2
+asks them in step 5's second part.
