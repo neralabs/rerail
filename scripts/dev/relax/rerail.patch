@@ -410,6 +410,21 @@ index 5e831c36..4dcb73ca 100644
          "x86_64-pc-windows-gnu" => ("", ".dll", ".exe", "lib", ".a", &["off"], false),
          "wasm32-unknown-unknown" | "wasm64-unknown-unknown" => ("", ".wasm", ".wasm", "lib", ".a", &["off"], true),
          t => return Err(format!("no target model for {t}")),
+diff --git a/libs/relax/compiler/src/modules.rs b/libs/relax/compiler/src/modules.rs
+index 765aa64e..015d6900 100644
+--- a/libs/relax/compiler/src/modules.rs
++++ b/libs/relax/compiler/src/modules.rs
+@@ -249,7 +249,9 @@ fn sandbox_syntax(prog: &crate::program::Program, krate: u32) -> Vec<String> {
+         for it in trees.iter().flat_map(|t| &t.items) {
+             for a in ast.list(it.attrs) {
+                 if a.toks.hi > a.toks.lo {
+-                    let n = tok(a.toks.lo);
++                    // `#[unsafe(no_mangle)]` and the like (edition 2024) name the attribute inside
++                    let lo = if a.toks.hi > a.toks.lo + 2 && tok(a.toks.lo) == b"unsafe" && tok(a.toks.lo + 1) == b"(" { a.toks.lo + 2 } else { a.toks.lo };
++                    let n = tok(lo);
+                     if matches!(n, b"no_mangle" | b"export_name" | b"link" | b"link_section" | b"used" | b"naked" | b"link_name") {
+                         out.push(format!("{}: `#[{}]` is not allowed in a sandboxed module -- remove it", at(f, it.lo), String::from_utf8_lossy(n)));
+                     }
 diff --git a/libs/relax/compiler/src/os/proc.rs b/libs/relax/compiler/src/os/proc.rs
 index 4f714be3..4bbe077a 100644
 --- a/libs/relax/compiler/src/os/proc.rs
@@ -473,6 +488,23 @@ index 781123aa..4760aaf3 100644
          let fs_base: rt_fn_ty!(fn() -> u64) = unsafe { std::mem::transmute(reader as usize) };
          let cell = TLS_BLOCK.with(|c| c as *const std::cell::Cell<u64> as u64);
          let off = cell.wrapping_sub(fs_base()) as i64;
+diff --git a/libs/relax/compiler/src/sections.rs b/libs/relax/compiler/src/sections.rs
+index b317b895..9aac94b7 100644
+--- a/libs/relax/compiler/src/sections.rs
++++ b/libs/relax/compiler/src/sections.rs
+@@ -45,8 +45,10 @@ pub(crate) struct Section {
+ /// The `#[link_section]` item `item` names (its `cfg_attr`s applied), if any.
+ fn item_section(f: &ParsedFile, item: ItemId) -> Option<String> {
+     for a in f.ast.list(f.ast.item(item).attrs) {
+-        if a.toks.hi >= a.toks.lo + 3 && f.tok_text(a.toks.lo) == "link_section" && f.tok_text(a.toks.lo + 1) == "=" {
+-            return Some(crate::lit::unescape_str(f.tok_text(a.toks.lo + 2)));
++        // `#[unsafe(link_section = ..)]`, as edition 2024 requires it, as well as the bare form
++        let lo = if a.toks.hi > a.toks.lo + 1 && f.tok_text(a.toks.lo) == "unsafe" && f.tok_text(a.toks.lo + 1) == "(" { a.toks.lo + 2 } else { a.toks.lo };
++        if a.toks.hi >= lo + 3 && f.tok_text(lo) == "link_section" && f.tok_text(lo + 1) == "=" {
++            return Some(crate::lit::unescape_str(f.tok_text(lo + 2)));
+         }
+     }
+     None
 diff --git a/libs/relax/compiler/std/core/arch/aarch64.rs b/libs/relax/compiler/std/core/arch/aarch64.rs
 index ba9071f3..ddd91404 100644
 --- a/libs/relax/compiler/std/core/arch/aarch64.rs
@@ -684,6 +716,95 @@ index 00000000..a3a893dd
 +    let r = &v[..] as &[u16];
 +    println!("| {:?} {}", bytes, r.len());
 +}
+diff --git a/libs/relax/compiler/tests/link_section_unsafe/.gitignore b/libs/relax/compiler/tests/link_section_unsafe/.gitignore
+new file mode 100644
+index 00000000..633fc35b
+--- /dev/null
++++ b/libs/relax/compiler/tests/link_section_unsafe/.gitignore
+@@ -0,0 +1,3 @@
++target/
++target-relax/
++Cargo.lock
+diff --git a/libs/relax/compiler/tests/link_section_unsafe/Cargo.toml b/libs/relax/compiler/tests/link_section_unsafe/Cargo.toml
+new file mode 100644
+index 00000000..51bdcf6c
+--- /dev/null
++++ b/libs/relax/compiler/tests/link_section_unsafe/Cargo.toml
+@@ -0,0 +1,8 @@
++[package]
++name = "link-section-unsafe"
++version = "0.1.0"
++edition = "2024"
++publish = false
++
++# its own workspace (no dependencies: runs offline anywhere)
++[workspace]
+diff --git a/libs/relax/compiler/tests/link_section_unsafe/run.sh b/libs/relax/compiler/tests/link_section_unsafe/run.sh
+new file mode 100755
+index 00000000..915030ad
+--- /dev/null
++++ b/libs/relax/compiler/tests/link_section_unsafe/run.sh
+@@ -0,0 +1,13 @@
++#!/bin/bash
++# usage: run.sh <makepad binary>: the load hooks of an edition-2024 crate's test binary run under
++# `relax test` (#[unsafe(link_section = ..)]), and `relax check` reports no dead code for a private
++# #[unsafe(no_mangle)] fn. Prints "link_section_unsafe: ok" or "link_section_unsafe: FAILED" (exit 1).
++H=$(cd "$(dirname "$0")" && pwd)
++export RELAX_CACHE=off
++TEST=$(cd "$H" && RELAX_STD=$H/../../std "$1" test link-section-unsafe --lib 2>&1)
++CHECK=$(cd "$H" && RELAX_STD=$H/../../std "$1" check link-section-unsafe 2>&1)
++if echo "$TEST" | grep -q "test result: ok. 1 passed" && ! echo "$CHECK" | grep -q "never used"; then
++  echo "link_section_unsafe: ok"
++else
++  echo "$TEST" | tail -5; echo "$CHECK" | grep -A3 "never used"; echo "link_section_unsafe: FAILED"; exit 1
++fi
+diff --git a/libs/relax/compiler/tests/link_section_unsafe/src/lib.rs b/libs/relax/compiler/tests/link_section_unsafe/src/lib.rs
+new file mode 100644
+index 00000000..48984537
+--- /dev/null
++++ b/libs/relax/compiler/tests/link_section_unsafe/src/lib.rs
+@@ -0,0 +1,41 @@
++//! relax test fixture: a crate's own test binary registers at load (an init-array entry), as
++//! edition 2024 writes it: `#[used]` with `#[unsafe(link_section = ..)]`, behind `cfg_attr`, bare,
++//! and with the section's name from a macro. Edition 2024 rejects the bare `#[link_section]`, so
++//! a Relax that read only that form ran none of them. A private `#[unsafe(no_mangle)]` fn is kept
++//! alive (no dead_code warning), as rustc's.
++use std::sync::atomic::AtomicU32;
++pub static LOADED: AtomicU32 = AtomicU32::new(0);
++
++#[cfg(test)]
++mod plain {
++    extern "C" fn load() { super::LOADED.fetch_or(1, std::sync::atomic::Ordering::SeqCst); }
++    #[used]
++    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
++    #[cfg_attr(not(target_vendor = "apple"), unsafe(link_section = ".init_array"))]
++    static LOAD: extern "C" fn() = load;
++}
++
++#[cfg(all(test, target_vendor = "apple"))]
++mod direct {
++    extern "C" fn load() { super::LOADED.fetch_or(2, std::sync::atomic::Ordering::SeqCst); }
++    #[used]
++    #[unsafe(link_section = "__DATA,__mod_init_func")]
++    static LOAD: extern "C" fn() = load;
++}
++
++// the section's name from a macro, as a crate writes it for each target
++#[cfg(all(test, target_vendor = "apple"))]
++mod expanded {
++    extern "C" fn load() { super::LOADED.fetch_or(4, std::sync::atomic::Ordering::SeqCst); }
++    #[used]
++    #[unsafe(link_section = concat!("__DATA,", "__mod_init_func"))]
++    static LOAD: extern "C" fn() = load;
++}
++
++#[test]
++fn every_hook_ran_at_load() {
++    assert_eq!(LOADED.load(std::sync::atomic::Ordering::SeqCst), 7);
++}
++
++#[unsafe(no_mangle)]
++extern "C" fn link_section_unsafe_exported() -> u32 { 7 }
 diff --git a/libs/relax/compiler/tests/neon_table_extend.rs b/libs/relax/compiler/tests/neon_table_extend.rs
 new file mode 100644
 index 00000000..4d7901ef
@@ -923,6 +1044,35 @@ index 20d9fcc4..2b518851 100644
                  }
              }
          } else if *kind == "dep-info" {
+diff --git a/libs/relax/front/src/parser.rs b/libs/relax/front/src/parser.rs
+index 4abf5799..35201414 100644
+--- a/libs/relax/front/src/parser.rs
++++ b/libs/relax/front/src/parser.rs
+@@ -3023,7 +3023,11 @@ impl<'a> Parser<'a> {
+     fn expand_linkage_attrs(&mut self, attrs: &mut [Attr]) -> PResult<()> {
+         if self.cfg_out != 0 || self.macros.is_none() || !self.cfg_active(attrs) { return Ok(()); }
+         for attr in attrs {
+-            let (lo, hi) = (attr.toks.lo as usize, attr.toks.hi as usize);
++            let (mut lo, mut hi) = (attr.toks.lo as usize, attr.toks.hi as usize);
++            // `#[unsafe(link_section = ..)]` (edition 2024's form): the attribute inside the parentheses
++            let wrapped = hi > lo + 2 && self.toks.kind_at(lo) == T::KwUnsafe && self.toks.kind_at(lo + 1) == T::OpenParen
++                && self.toks.kind_at(hi - 1) == T::CloseParen;
++            if wrapped { lo += 2; hi -= 1; }
+             if hi <= lo + 3 || self.toks.kind_at(lo + 1) != T::Eq { continue; }
+             let name = String::from_utf8_lossy(self.tok_text(self.toks.at(lo))).into_owned();
+             if !matches!(name.as_str(), "link_name" | "export_name" | "link_section") { continue; }
+@@ -3034,9 +3038,11 @@ impl<'a> Parser<'a> {
+                 .map_err(|msg| PErr { pos: self.toks.at(lo).lo, msg })?;
+             if !string { return Err(PErr { pos: self.toks.at(lo).lo, msg: format!("`{name}` requires a string literal") }); }
+             let mut w = TokText::default();
++            if wrapped { w.word(T::KwUnsafe, "unsafe"); w.word(T::OpenParen, "("); }
+             w.word(T::Ident, &name);
+             w.word(T::Eq, "=");
+             w.word(T::Str, &format!("{text:?}"));
++            if wrapped { w.word(T::CloseParen, ")"); }
+             let start = self.expand_toks(&w.s, &w.toks, self.toks.at(lo).lo);
+             attr.toks = TokRange { lo: start as u32, hi: (self.toks.len() - 1) as u32 };
+         }
 diff --git a/libs/relax/front/src/program/rsim.rs b/libs/relax/front/src/program/rsim.rs
 index 622ac953..592374cc 100644
 --- a/libs/relax/front/src/program/rsim.rs
@@ -1221,6 +1371,43 @@ index eeb69f2d..9be81c76 100644
      /// `UniversalRegions::closure_mapping`: the regions of the parent that the nested body's
      /// external universal regions (global first, then external) stand for. Those the nested body
      /// inherits are the parent's own universal regions; the others sit in the regions of the closure
+diff --git a/libs/relax/types/src/lint.rs b/libs/relax/types/src/lint.rs
+index 88bf32ae..44b5d5cc 100644
+--- a/libs/relax/types/src/lint.rs
++++ b/libs/relax/types/src/lint.rs
+@@ -656,6 +656,19 @@ pub fn attr_path(prog: &Program, file: u32, a: &Attr) -> Vec<u8> {
+     name
+ }
+ 
++/// `attr_path` of the attribute an `unsafe(..)` wraps (`#[unsafe(no_mangle)]`: `no_mangle`, as
++/// edition 2024 writes the unsafe attributes), else of the attribute itself.
++pub fn attr_inner_path(prog: &Program, file: u32, a: &Attr) -> Vec<u8> {
++    let p = prog.src(file);
++    let (lo, hi) = (a.toks.lo as usize, a.toks.hi as usize);
++    if hi > lo + 2 && crate::cfg::tok_str(p, lo) == b"unsafe" && crate::cfg::tok_str(p, lo + 1) == b"(" {
++        // (the wrapper's closing parenthesis left out)
++        let inner = Attr { toks: crate::ast::TokRange { lo: (lo + 2) as u32, hi: a.toks.hi - 1 }, ..*a };
++        return attr_path(prog, file, &inner);
++    }
++    attr_path(prog, file, a)
++}
++
+ /// An attribute's tokens joined by spaces (`crate_type = "lib"`).
+ pub fn attr_text(prog: &Program, file: u32, a: &Attr) -> String {
+     let p = prog.src(file);
+diff --git a/libs/relax/types/src/lint_dead.rs b/libs/relax/types/src/lint_dead.rs
+index 1e534f2d..dd65b8da 100644
+--- a/libs/relax/types/src/lint_dead.rs
++++ b/libs/relax/types/src/lint_dead.rs
+@@ -1107,7 +1107,7 @@ impl<'a> Dead<'a> {
+         let attrs = ast.list(ast.item(def.item).attrs);
+         let used_like = matches!(def.kind, DefKind::Fn | DefKind::Static | DefKind::AssocFn | DefKind::ForeignFn | DefKind::ForeignStatic)
+             && attrs.iter().any(|a| {
+-                let n = lint::attr_path(self.prog, def.file, a);
++                let n = lint::attr_inner_path(self.prog, def.file, a);
+                 n == b"no_mangle" || n == b"export_name" || n == b"used"
+             });
+         // rustc_builtin_macros global_allocator.rs: the expansion's allocator shims read the static
 diff --git a/libs/relax/types/src/typeck.rs b/libs/relax/types/src/typeck.rs
 index 15b36829..7d3de8d1 100644
 --- a/libs/relax/types/src/typeck.rs
