@@ -250,7 +250,7 @@ pub(in crate::code_rule_dsl) struct Part {
 /// Whether a new process maintains its cross-file part from the store (`RERAIL_KEPT_PART=off`: the per-stratum
 /// cut of `Kept` instead, to compare).
 pub(in crate::code_rule_dsl) fn part_wanted() -> bool {
-    std::env::var("RERAIL_KEPT_PART").map_or(true, |v| v != "off")
+    crate::code_rule_dsl::logic::profile::var("RERAIL_KEPT_PART").map_or(true, |v| v != "off")
 }
 
 /// Each derived relation of `prog` and the inputs (of `inputs`) it is derived from, through the strata it reads.

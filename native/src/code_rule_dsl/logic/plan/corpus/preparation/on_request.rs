@@ -690,7 +690,7 @@ impl ProgramPass for SourcesOnRequest {
         if attrs.is_empty() {
             return Ok(());
         }
-        let applied = !std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|x| x == "eager");
+        let applied = !crate::code_rule_dsl::logic::profile::var("RERAIL_NODE_SOURCES").is_ok_and(|x| x == "eager");
         let wd = Widen::new(v, attrs.iter().map(|a| a.rel).collect());
         let mut all: Vec<New> = Vec::new();
         let mut answered: Vec<OnRequest> = Vec::new();

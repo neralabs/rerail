@@ -1,8 +1,9 @@
 //! The engine's switches (the `RERAIL_*` variables a run reads as it goes: `RERAIL_CROSS_K4`, `RERAIL_KEPT_PART`,
 //! `RERAIL_WAVE0`, …) changed only while no run reads them.
 //!
-//! A test that compares a mode with the default (the session tests' oracle, `RERAIL_CROSS_K4=off`) sets the
-//! process's variables, which every thread's run reads. A run on another test's thread then took the mode the test
+//! A test that compares a mode with the default (the session tests' oracle, `RERAIL_CROSS_K4=off`) sets it for its
+//! own runs (`set`'s `SCOPED`, bound in its context and read through `profile::var`): no other test's run sees it or
+//! waits. The rest it sets in the process's variables, which every thread's run reads. A run on another test's thread then took the mode the test
 //! set for itself: `cross_file_strata_are_kept_across_runs_in_the_tape_cache` saw its first run keep its strata
 //! without K4 and its second with them (O-kept-strata-flake). So each run holds `reading` from its start to its end,
 //! and a test sets switches through `set`, which waits until no run on another thread holds them and keeps new runs
@@ -92,31 +93,65 @@ pub fn started<T>(start: impl FnOnce() -> T) -> T {
     start()
 }
 
-/// Switches set for a test; each variable as it was again once dropped.
+/// The switches a test sets for its own runs (`set`), each read through `profile::var` (or `var_os`, `vars`): bound in
+/// the test's context, which its runs and their jobs read, so no other test's run waits for them or sees them.
+const SCOPED: &[&str] = &[
+    "RERAIL_KEPT_PART", "RERAIL_CROSS_K4", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_DEVICE_BUDGET", "RERAIL_AGAIN", "RERAIL_AGAIN_MIN",
+    "RERAIL_AGAIN_THETA", "RERAIL_WAVE0", "RERAIL_COPY_VIEWS", "RERAIL_ANCHORS", "RERAIL_SETS", "RERAIL_INLINE_ONLY", "RERAIL_AST_PARTS",
+    "RERAIL_ASOF", "RERAIL_NODE_SOURCES", "RERAIL_ORDER_RAW", "RERAIL_NODE_IDS",
+];
+
+/// The switches read off a run's context too (the store's path; the profile's and the heap sampler's, which their own
+/// threads read): set in the process's environment, once no run on another thread reads the switches (`reading`).
+const PROCESS: &[&str] = &[
+    "RERAIL_TAPE_CACHE", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
+    "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_FRAMES_TRACE",
+];
+
+/// Switches set for a test; each as it was again once dropped.
 pub struct Set {
     was: Vec<(String, Option<std::ffi::OsString>)>,
-    outermost: bool,
-    _depth: crate::code_rule_dsl::logic::profile::Bound,
+    writer: bool,
+    // Before `_depth`: bound after it, so dropped before it (guards drop in the reverse of their order).
+    _switches: Option<crate::code_rule_dsl::logic::profile::Bound>,
+    _depth: Option<crate::code_rule_dsl::logic::profile::Bound>,
 }
 
-/// Sets each `(variable, value)` once no run on another thread reads the switches, and holds them until dropped.
+/// Sets each `(variable, value)`: a switch of the test's runs (`SCOPED`) in its context, at once; a switch of the
+/// process (`PROCESS`) in its environment, once no run on another thread reads the switches, holding them until
+/// dropped. A switch on neither list is refused: read as the process's variable, a test's value would reach every
+/// test's runs; set in the context alone, the read that takes no context would not see it.
 pub fn set(vars: &[(&str, &str)]) -> Set {
-    let (depth, outermost) = deeper();
-    if outermost {
-        before_taking();
-        let mut s = state();
-        s.waiting += 1;
-        while s.writer || s.readers > 0 {
-            s = CHANGED.wait(s).unwrap_or_else(std::sync::PoisonError::into_inner);
-        }
-        s.waiting -= 1;
-        s.writer = true;
+    for (k, _) in vars {
+        assert!(SCOPED.contains(k) || PROCESS.contains(k), "switches::set: {k} is on neither list: read it through `profile::var` and list it in SCOPED, or list it in PROCESS");
     }
-    let was = vars.iter().map(|(k, _)| ((*k).to_owned(), std::env::var_os(k))).collect();
+    let (process, scoped): (Vec<&(&str, &str)>, Vec<&(&str, &str)>) = vars.iter().partition(|(k, _)| PROCESS.contains(k));
+    let (mut depth, mut writer) = (None, false);
+    if !process.is_empty() {
+        let (d, outermost) = deeper();
+        depth = Some(d);
+        if outermost {
+            before_taking();
+            let mut s = state();
+            s.waiting += 1;
+            while s.writer || s.readers > 0 {
+                s = CHANGED.wait(s).unwrap_or_else(std::sync::PoisonError::into_inner);
+            }
+            s.waiting -= 1;
+            s.writer = true;
+            writer = true;
+        }
+    }
+    let was = process.iter().map(|(k, _)| ((*k).to_owned(), std::env::var_os(k))).collect();
     // SAFETY: no run on another thread reads the variables while this is held (`reading`), and the tests that set
     // them hold this.
-    unsafe { vars.iter().for_each(|(k, v)| std::env::set_var(k, v)) };
-    Set { was, outermost, _depth: depth }
+    unsafe { process.iter().for_each(|(k, v)| std::env::set_var(k, v)) };
+    let switches = (!scoped.is_empty()).then(|| {
+        let mut now = (*crate::code_rule_dsl::logic::profile::bound::<crate::code_rule_dsl::logic::profile::Switches>().0).clone();
+        now.extend(scoped.iter().map(|(k, v)| ((*k).to_owned(), (*v).to_owned())));
+        crate::code_rule_dsl::logic::profile::bind(crate::code_rule_dsl::logic::profile::Switches(std::sync::Arc::new(now)))
+    });
+    Set { was, writer, _switches: switches, _depth: depth }
 }
 
 impl Drop for Set {
@@ -130,7 +165,7 @@ impl Drop for Set {
                 }
             }
         }
-        if self.outermost {
+        if self.writer {
             state().writer = false;
             CHANGED.notify_all();
         }

@@ -39,6 +39,8 @@ const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_RE
     // A profile's and the heap sampler's (`profile::memory`, `rerail_prof`): a measurement's cold runs sample the heap
     // and its warm runs do not, so with these in the key no warm run found the cold run's record (decision 0376).
     "RERAIL_PROF", "RERAIL_HEAP_SAMPLE", "RERAIL_HEAP_AT", "RERAIL_HEAP_FRAMES", "RERAIL_PROF_MEMORY_MS", "RERAIL_TIMELINE",
+    // The width census (`profile::memory::width_census`): it counts the bytes of the columns a run releases.
+    "RERAIL_WIDTH_CENSUS",
     // The stores a measurement keeps apart (the cost model's, the rule images'): a plan's costs and a program's stored
     // form, never the run's outputs.
     "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_EXPORT_IMAGES",
@@ -54,11 +56,8 @@ pub fn measures_only(name: &str) -> bool {
 /// Every engine switch that can change what a run outputs (`RERAIL_*` less `NOT_OUTPUTS`), in name order, as bytes for
 /// the run's key.
 fn switches() -> Vec<u8> {
-    let mut switches: Vec<(String, String)> = std::env::vars_os()
-        .filter_map(|(k, v)| Some((k.into_string().ok()?, v.to_string_lossy().into_owned())))
-        .filter(|(k, _)| k.starts_with("RERAIL_") && !measures_only(k))
-        .collect();
-    switches.sort();
+    // The process's and those the run's context sets for its runs (`profile::vars`, a test's `switches::set`), by name.
+    let switches: Vec<(String, String)> = crate::code_rule_dsl::logic::profile::vars().into_iter().filter(|(k, _)| !measures_only(k)).collect();
     let mut out = Vec::new();
     for (k, v) in switches {
         out.extend_from_slice(k.as_bytes());

@@ -1837,7 +1837,7 @@ fn a_handed_programs_hidden_form_is_kept_under_its_texts() {
     let read = crate::code_rule_dsl::logic::rr::parse_version(src).unwrap();
     let (made, hidden, kept) = super::combine_handed(&read).unwrap();
     let id = |v: &std::sync::Arc<crate::code_rule_dsl::logic::program_image::Version>| (v.size(), v.digest());
-    assert_eq!(id(&made), id(&hidden), "a miss hides the program handed");
+    assert_eq!(id(&made), id(&hidden), "a miss hides the program handed: {}", crate::code_rule_dsl::logic::program_image::differences(&made, &hidden));
     assert_eq!(kept.as_ref().map(id), Some(id(&hidden)), "kept under the texts' digest, read back as hidden");
     let (again, _, _) = super::combine_handed(&read).unwrap();
     assert_eq!(id(&again), id(&hidden), "the store's, the second time");

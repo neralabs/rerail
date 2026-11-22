@@ -466,7 +466,7 @@ pub fn keep_combined(key: [u8; 32], edit: impl FnOnce(&mut Combined)) {
 /// prints from, already lowered (`Texts::read`): the program itself, not its text lowered again. The image is made
 /// once per combined program and kept for the process (`COMBINED`).
 pub fn combine_version(programs: &[&str], masked: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<(Arc<crate::code_rule_dsl::logic::program_image::Version>, [u8; 32])> {
-    let key = texts_digest(masked, graphs, extra);
+    let key = texts_digest(masked, graphs, extra, read.is_some() && programs.len() == 1);
     if let Some(v) = combined_kept().0.lock().expect("the combined programs").get(&key).and_then(|k| k.version.clone()) {
         crate::code_rule_dsl::prof::count("corpus.combined_reused", 1);
         return Ok((v, key));
@@ -510,12 +510,14 @@ pub fn combine_tail(programs: &[&str], extra: &added::Added, read: Option<&Arc<c
     Ok((v, run))
 }
 
-/// The combine kept in the persistent store across processes for a pack of programs (`combined`, decision 0094 §6):
-/// keyed by the texts and checked against the library files the combine read. The store's entry opened as a version
+/// The combine kept in the persistent store across processes (`combined`, decision 0094 §6): keyed by the texts and
+/// checked against the library files the combine read. A pack's, a program handed its run (decision 0275), and one
+/// program's from its text alike: each new process that runs one program combined it again (0.3–0.4 s at the tests'
+/// opt-level, 23 times in one test). The store's entry opened as a version
 /// (`combined::lookup_version`), or the combine's tail run on the version (`combine_tail`) and its image kept as the
 /// entry (`combined::record_version`).
 pub fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8; 32], read: Option<&Arc<crate::code_rule_dsl::logic::program_image::Version>>) -> Result<Arc<crate::code_rule_dsl::logic::program_image::Version>> {
-    let store = if cfg!(feature = "tape-cache") && (programs.len() > 1 || read.is_some()) && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
+    let store = if cfg!(feature = "tape-cache") && std::env::var_os("RERAIL_DUMP_PROGRAMS").is_none() {
         phases::reading_store()
     } else {
         None
@@ -546,17 +548,19 @@ pub fn combine_stored_version(programs: &[&str], extra: &added::Added, key: &[u8
 }
 
 /// The digest of `combine`'s texts and the rows it adds: what a combined program is a function of. `graphs`: each
-/// text's include graph's digest (`Texts::graphs`).
+/// text's include graph's digest (`Texts::graphs`). `handed`: the one text is the print of a program handed its run
+/// (decision 0275), which combines to another program than the text read again does (the handed program keeps its
+/// inputs' layouts), so the two are kept apart.
 /// `programs` are the texts with their messages masked (`masked`): a finding's message by its placeholders alone, its
 /// words the writer's, not the program's (decision 0225 §3), so an edit of them finds the program combined, prepared
 /// and memoised.
-pub fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added) -> [u8; 32] {
+pub fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &added::Added, handed: bool) -> [u8; 32] {
     use sha2::Digest as _;
     let mut hash = sha2::Sha256::new();
     // Under another value of a switch `combine_tail` reads, the same texts combine to another program (`COMBINING`).
     // Only those set: an unset switch keeps the key every run has had.
     for switch in COMBINING {
-        if let Some(v) = std::env::var_os(switch) {
+        if let Some(v) = crate::code_rule_dsl::logic::profile::var_os(switch) {
             hash.update(format!("\0{switch}={}", v.to_string_lossy()).as_bytes());
         }
     }
@@ -573,6 +577,9 @@ pub fn texts_digest(programs: &[&str], graphs: &[Option<[u8; 32]>], extra: &adde
     // The rows the run adds, none for most runs (`added`).
     if !extra.is_empty() {
         extra.hash(&mut hash);
+    }
+    if handed {
+        hash.update(b"\0handed");
     }
     hash.finalize().into()
 }
@@ -786,7 +793,7 @@ pub fn requests_where_documents_are<'s>(mut p: crate::code_rule_dsl::logic::prog
     if !asks {
         return Ok(p);
     }
-    if !std::env::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
+    if !crate::code_rule_dsl::logic::profile::var("RERAIL_NODE_SOURCES").is_ok_and(|v| v == "eager") {
         let requests: Vec<&'static str> = ON_REQUEST.iter().flat_map(|round| round.iter()).map(|a| a.req).filter(|r| v.rel(r).is_some()).collect();
         let mut pass = crate::code_rule_dsl::typing::file_local::RequestsFileLocal { requests, narrowed: Vec::new() };
         p.program(&mut pass);

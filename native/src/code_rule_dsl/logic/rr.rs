@@ -1195,7 +1195,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
 /// has had, and the engine's shipped images (decision 0264) with it.
 fn switched(bytes: &mut Vec<u8>) {
     for switch in super::plan::corpus::COMBINING {
-        if let Some(v) = std::env::var_os(switch) {
+        if let Some(v) = crate::code_rule_dsl::logic::profile::var_os(switch) {
             bytes.extend_from_slice(format!("\0{switch}={}", v.to_string_lossy()).as_bytes());
         }
     }

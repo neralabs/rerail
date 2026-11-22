@@ -72,7 +72,7 @@ fn plan() -> FactsPlanSet {
     hash.update(rr::library().to_string_lossy().as_bytes());
     for switch in super::COMBINING {
         hash.update(b"\0");
-        hash.update(std::env::var(switch).unwrap_or_default().as_bytes());
+        hash.update(crate::code_rule_dsl::logic::profile::var(switch).unwrap_or_default().as_bytes());
     }
     FactsPlanSet::new(vec![hash.finalize().into()])
 }
