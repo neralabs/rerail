@@ -637,6 +637,24 @@ pub use rerail_logic::threads;
 #[path = "../../../src/test_private_folders.rs"]
 mod test_private_folders;
 
+/// This crate's own test binary, which no program composes: strict mode on every connection, and what a job carries
+/// of its run and the core names, as boot registers them (as `rerail-logic`'s own test binary does). Without them a
+/// test whose run hands jobs to the pool panicked at the first job (`run_state::CARRIERS`).
+#[cfg(test)]
+mod test_load {
+    extern "C" fn load() {
+        crate::code_rule_dsl::logic::profile::strict_on_every_connection();
+        crate::code_rule_dsl::logic::run_state::CARRIERS.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::CARRIERS);
+        crate::code_rule_dsl::logic::plan::keeps::CORE_NAMES.register("rerail-device-metal's tests", crate::code_rule_dsl::logic::rr::core_names);
+    }
+    // Run as the binary loads, before any test opens a store.
+    #[used]
+    #[cfg_attr(target_vendor = "apple", unsafe(link_section = "__DATA,__mod_init_func"))]
+    #[cfg_attr(windows, unsafe(link_section = ".CRT$XCU"))]
+    #[cfg_attr(not(any(target_vendor = "apple", windows)), unsafe(link_section = ".init_array"))]
+    static LOAD: extern "C" fn() = load;
+}
+
 /// The language packs this crate's tests read through the load-time registry (`language::base`), registered as the
 /// test binary loads (`device_metal::test_load`), as the engine registers them as it loads (`install_languages`).
 /// `.rr` text is read too (the parity cases' programs, on the CPU pool's workers): registered by the first test that

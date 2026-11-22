@@ -94,7 +94,7 @@ native/src/code_rule_dsl/facts/facts_a/facts.rs::MADE	stays	process-unique numbe
 native/src/code_rule_dsl/facts/families.rs::PREFILTER_IMAGE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/facts/grammar_shape.rs::GRAMMAR	stays	computed once from the engine's own grammar
 native/src/code_rule_dsl/facts/grammar_shape.rs::KEPT	stays	computed from the engine's own grammar, per kind
-native/src/code_rule_dsl/facts/nearest.rs::CHUNK_AXIS	stays	compiled once from the engine's own code
+native/src/code_rule_dsl/facts/nearest.rs::AXIS_SOLVE	stays	compiled once from the engine's own code
 native/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compiled once from the engine's own code
 native/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
@@ -292,6 +292,7 @@ native/src/code_rule_dsl/waves/relational/shared/capture.rs::NEXT	stays	an id co
 native/src/code_rule_dsl/workspace/api.rs::WORKSPACE_INSTANCES	stays	an id counter: append-only
 native/src/code_rule_dsl/workspace/calls_state.rs::SUMMARIES_EXTRACTED	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/code_rule_dsl/workspace/index.rs::SOURCE_CLASSIFIER	stays	code registered at load (a hook)
+native/src/code_rule_dsl/workspace/index.rs::TASK_RUN	stays	code registered at load (a hook: the run's scope and report functions)
 native/src/code_rule_dsl/workspace/ingest.rs::PACKAGE_CONTEXT_PATH_VISITS	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/code_rule_dsl/workspace/ingest.rs::PROJECT	stays	code a crate above registers at load
 native/src/code_rule_dsl/workspace/ingest.rs::REPOSITORY_CONTEXT	stays	code registered at load
@@ -325,6 +326,7 @@ native/src/source_tree.rs::IMAGE	stays	computed once from the engine's own files
 native/crates/registry/src/lib.rs::CPU	stays	a zero-sized provider (the CPU device's name): a constant, registered at load
 native/crates/registry/src/lib.rs::FORMAT	stays	a test's own slot (the slot type's test)
 native/crates/registry/src/lib.rs::GPU	stays	a zero-sized provider (the GPU device's name): a constant, registered at load
+native/crates/device_metal/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/corpus_memo/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/corpus_prep/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/planner/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)

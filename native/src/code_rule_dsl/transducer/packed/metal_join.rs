@@ -29,7 +29,7 @@
 //!
 //! **One submission.** A `Batch` encodes every stage of every rule it is given into one submission of the device
 //! layer's queue (serial: each dispatch sees the last one's writes), and commits a new one only when the launch budget
-//! of one would be exceeded. The kernels are UKL (`join_stages.uglykl`, `chunk_views.uglykl`; decision 0440 step C),
+//! of one would be exceeded. The kernels are UKL (`join_stages.uglykl`; decision 0440 step C),
 //! on every backend; a view read in place (decision 0353 step 4d) is read through its directory's addresses, which
 //! only a device with them has (`ViewInPlace`, made on Metal alone). A table's capacity is fixed when its stage is
 //! encoded; a stage whose rows overflow it writes none past it and reports its true count, and the caller runs it again
@@ -282,19 +282,7 @@ impl Stage {
     }
 }
 
-/// The chunk views' kernels (decision 0289 §2): the chunk's structures as `rerail-blocks` generates them, then
-/// `view_expand`, which makes each row as `Viewed::value_at` does, and the axes' solve (`chunk_views.uglykl`).
-fn chunk_views_source() -> String {
-    format!(
-        "{}{}{}{}",
-        rerail_accel::gpu::join::COMMON,
-        rerail_blocks::RELATION_READS,
-        crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ukl(),
-        include_str!("chunk_views.uglykl")
-    )
-}
-
-/// The joins' kernels (`SOURCE`) and the chunk views' (`chunk_views_source`), to compile ahead of their first use
+/// The joins' kernels (`SOURCE`), to compile ahead of their first use
 /// (`MatcherDevice::kernels_ahead`): each asked for as its use asks for it (`pipeline`), so its use finds it.
 pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhead> {
     const JOIN: [&str; 21] = [
@@ -319,7 +307,6 @@ pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhea
         };
         (format!("join {name}"), Box::new(make))
     }));
-    v.extend(["axis_count", "axis_write", "view_expand"].map(|name| made("chunk_views", name, chunk_views_source)));
     v
 }
 
@@ -343,7 +330,7 @@ static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
 /// The join kernels that read a view (`vread`): each compiled for the tape format of the views it reads (decision 0576),
 /// the view's format field a constant, so it holds that format's reads alone. On an Arc 140V `stage_count` compiled in
 /// 36 s over every format, 16 s over format 16's and 7 s over format 15's.
-const VIEW_KERNELS: [&str; 7] = ["ix_bucket", "stage_count", "stage_scatter", "scan_count", "scan_scatter", "witness_count", "rows_copy"];
+const VIEW_KERNELS: [&str; 9] = ["ix_bucket", "stage_count", "stage_scatter", "scan_count", "scan_scatter", "witness_count", "rows_copy", "axis_count", "axis_write"];
 
 /// The join kernels' source for views of tape format `format` (0: of several, each view read tells its own).
 fn view_source(format: u32) -> String {
@@ -394,122 +381,139 @@ pub fn available() -> bool {
     rerail_accel::gpu::join::device().is_ok()
 }
 
-/// A kind-set axis's batch solve on the device (decision 0289 §2, `facts::nearest::ChunkAxis`), from `chunks`: each
-/// node's rows counted by a climb of its ancestors and the counts scanned into the starts (in its chunk, page-aligned,
-/// bound as a buffer of their own with no copy); then, the totals read, the rows written, each the ids of `n` and `a`,
-/// into one relation of exactly that many rows (decision 0353 step 5), each chunk's past the one's before (a chunk's
-/// batch and its tape values, decision 0431 §8). It is a derived fact like a rule's head: it lies in a run's block,
-/// not leased from the device's budget, which a room sized before the count (containment's up to several rows a node)
-/// filled. Its starts are the first chunk's.
-pub fn axis_in_chunk(chunks: &[&crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk], bits: Option<&[u32]>, inside: bool)
-                     -> Result<crate::code_rule_dsl::facts::nearest::InChunk, String> {
+/// The in-place axis solve's parameters (`axis_count`'s `AxisP`): the views' directory's GPU address, the `node`
+/// view's rows, whether a set's bits are given, whether every ancestor, then the relation's rows' descriptor's offset
+/// and the rows it holds.
+#[repr(C)]
+struct AxisParams {
+    dir: u64,
+    n: u32,
+    bits: u32,
+    inside: u32,
+    pad: u32,
+    rows_at: u64,
+    rows: u64,
+}
+const _: () = assert!(std::mem::size_of::<AxisParams>() == 40);
+
+impl AxisParams {
+    fn bytes(&self) -> &[u8] {
+        // SAFETY: `repr(C)` integers with no padding (its size asserted).
+        unsafe { std::slice::from_raw_parts((self as *const AxisParams).cast::<u8>(), std::mem::size_of::<AxisParams>()) }
+    }
+}
+
+/// A kind-set axis's batch solve on the device (decision 0289 §2, `facts::nearest::AxisSolve`), read off the tape
+/// (decision 0353 step 4): over `views`' directory (a batch's, or a layered source's of a batch and its tape values,
+/// decision 0431 §8), whose `node` rows are `nodes`, each row's ancestors climbed by the views' reads, as a `has` probe
+/// climbs them, and counted; the counts scanned into the starts, in `block` (the batch's, page-aligned, bound as a
+/// buffer of their own with no copy); then, the total read, the rows written, each the ids of `n` and `a`, into one
+/// relation of exactly that many rows (decision 0353 step 5). It is a derived fact like a rule's head: it lies in a
+/// run's block, not leased from the device's budget. `bits`: per kind atom a bit (`None`: every kind); `inside`: every
+/// ancestor in the set, else the nearest. A 16z directory whose caches fail while it reads is refused (the host
+/// solves).
+pub fn axis_in_place(views: &crate::code_rule_dsl::facts::vtab::ViewInPlace, nodes: usize, block: &rerail_blocks::Block, dir_at: usize, bits: Option<&[u32]>, inside: bool)
+                     -> Result<crate::code_rule_dsl::facts::nearest::SolvedOnDevice, String> {
     use crate::code_rule_dsl::facts::rows::Part;
-    use crate::code_rule_dsl::facts::vtab::syntax::device_chunk::ChunkRoot;
+    use rerail_clif::view_reads::{ViewDir, ViewRow};
     const PAGE: usize = 16384;
-    let full = || "the chunk block cannot hold the axis".to_string();
-    let at = |o: usize| u32::try_from(o).map_err(|_| "the axis lies past 4 GB of its chunk".to_string());
+    // A kind atom's bit: 256 tags of 1,024 slots (`facts::core::KIND_STRIDE`), the kernels' `[8192]`.
+    const BIT_WORDS: usize = 8192;
     let device = rerail_accel::gpu::join::device()?;
-    let count = pipeline("chunk_views", "axis_count", chunk_views_source)?;
-    let write = pipeline("chunk_views", "axis_write", chunk_views_source)?;
-    // Each chunk's counts scanned into its starts: its parameters, its starts' offset, and its rows.
-    let mut each: Vec<([u32; 8], usize, usize)> = Vec::with_capacity(chunks.len());
-    for chunk in chunks {
-        let b = &chunk.block;
-        // SAFETY: the chunk's root, which `device_chunk::build` wrote.
-        let n = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).nodes } as usize;
-        let bits_at = match bits {
-            Some(words) => {
-                let p: *mut u32 = b.try_alloc_t(words.len()).ok_or_else(full)?;
-                // SAFETY: just allocated for `words.len()` values.
-                // copy: not block data: the set's membership bits, made here for the kernel.
-                unsafe { std::ptr::copy_nonoverlapping(words.as_ptr(), p, words.len()) };
-                b.offset_of(p)
-            }
-            None => 0,
-        };
-        let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
-        let start_at = b.try_alloc(start_bytes, PAGE).ok_or_else(full)?;
-        let whole = b.device_buffer(device)?;
-        // SAFETY: the starts' pages lie in the chunk's block, which outlives the work: it is waited for below.
-        let starts = unsafe { rerail_device::device::wrap_host_memory(device, b.ptr::<u8>(start_at), start_bytes)? };
-        let p = [at(chunk.root)?, n as u32, at(bits_at)?, u32::from(inside), 0, 0, 0, 0];
-        let scan = Scan::owned(n)?;
+    let format = views.format;
+    let count = view_pipe("axis_count", format)?;
+    let write = view_pipe("axis_write", format)?;
+    let n = nodes;
+    let failed = views.cache_failed();
+    let resident = |pass: &Pass| {
+        let buffers: Vec<&Buffer> = views.buffers.iter().collect();
+        pass.use_read(&buffers);
+        for cache in views.caches.iter().filter_map(|c| c.buffer.as_ref()) {
+            pass.use_read_write(cache);
+        }
+    };
+    let set = Words::zeroed(BIT_WORDS).map_err(|e| format!("{e:?}: the axis's set"))?;
+    if let Some(words) = bits {
+        if words.len() > BIT_WORDS {
+            return Err(format!("an axis's set of {} words, past the kernels' {BIT_WORDS}", words.len()));
+        }
+        // copy: not block data: the set's membership bits, made here for the kernel.
+        for (i, &w) in words.iter().enumerate() {
+            set.set(i, w);
+        }
+    }
+    let mut params = AxisParams { dir: views.dir, n: n as u32, bits: u32::from(bits.is_some()), inside: u32::from(inside), pad: 0, rows_at: 0, rows: 0 };
+    let start_bytes = (4 * (n + 1)).next_multiple_of(PAGE);
+    let start_at = block.try_alloc(start_bytes, PAGE).ok_or("the batch's block cannot hold the axis's starts")?;
+    // SAFETY: the starts' pages lie in the batch's block, which outlives the work: it is waited for below.
+    let starts = unsafe { rerail_device::device::wrap_host_memory(device, block.ptr::<u8>(start_at), start_bytes)? };
+    let scan = Scan::owned(n)?;
+    {
+        let p = Held::of(params.bytes().iter().copied()).map_err(|e| format!("{e:?}"))?;
         let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
         let pass = batch.pass(16).map_err(|e| format!("{e:?}"))?;
-        pass.run(&count, &[&whole, &starts], &p, &[], groups(n + 1));
+        resident(pass);
+        pass.run_bytes(&count, &[&set.buffer.buffer, &starts, &p.buffer], &[], groups(n + 1));
         scan.encode(pass, &starts)?;
         batch.finish().map_err(|e| format!("{e:?}"))?;
-        // SAFETY: the scan completed: its last value is the total.
-        let len = unsafe { *b.ptr::<u32>(start_at + 4 * n) } as usize;
-        each.push((p, start_at, len));
     }
-    let total: usize = each.iter().map(|e| e.2).sum();
-    let first_start = each.first().map_or(0, |e| e.1);
-    // Each document's first row where it has rows (a chunk's rows past the ones' before): the runs of its ids' keys
-    // (decision 0494 step 7), read off the scanned starts where they lie.
+    if views.cache_failed() != failed {
+        return Err("the axis's reads found no room in the 16z cache".to_owned());
+    }
+    // SAFETY: the scan completed: its last value is the total.
+    let total = unsafe { *block.ptr::<u32>(start_at + 4 * n) } as usize;
+    // Each document's first row where it has rows: the runs of its ids' keys (decision 0494 step 7), from the
+    // directory's rows (each one's key and first `node` row) and the scanned starts where they lie.
+    // SAFETY: the directory lies in `block` at `dir_at` (`views_in_place`), alive while the batch is; its rows are
+    // written once its views were.
+    let (dir, rows) = unsafe {
+        let d = &*block.ptr::<ViewDir>(dir_at);
+        (d, std::slice::from_raw_parts(block.ptr::<ViewRow>(d.rows as usize), d.ndocs as usize))
+    };
+    // SAFETY: the scanned starts, `n + 1` values.
+    let start = unsafe { std::slice::from_raw_parts(block.ptr::<u32>(start_at), n + 1) };
     let runs_of = |put: &mut dyn FnMut(u32, u32)| {
-        let mut past = 0u32;
-        for (chunk, &(_, start_at, len)) in chunks.iter().zip(&each) {
-            let b = &chunk.block;
-            // SAFETY: the chunk's root and documents, which `device_chunk::build` wrote; its starts, scanned above.
-            unsafe {
-                let root = &*b.ptr::<ChunkRoot>(chunk.root);
-                let n = root.nodes as usize;
-                let starts = std::slice::from_raw_parts(b.ptr::<u32>(start_at), n + 1);
-                let docs = root.docs.as_slice();
-                for (i, d) in docs.iter().enumerate() {
-                    let end = docs.get(i + 1).map_or(n, |e| e.node_row as usize);
-                    let (from, to) = (starts[d.node_row as usize], starts[end]);
-                    if to > from {
-                        put(past + from, d.key);
-                    }
-                }
+        for (i, r) in rows.iter().enumerate() {
+            let end = rows.get(i + 1).map_or(dir.ends[0], |e| e.rows[0]) as usize;
+            let (from, to) = (start[r.rows[0] as usize], start[end.min(n)]);
+            if to > from {
+                put(from, r.key);
             }
-            past += len as u32;
         }
     };
     let mut runs = 0;
     runs_of(&mut |_, _| runs += 1);
     // Alone in its block, with room for an index by each column: strata probe an axis by `n` and by `a`. Each column
     // its ids' low bits, under the documents' keys.
-    let (rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, 2, runs);
+    let (out_rows, keys) = Part::over_key_runs(crate::code_rule_dsl::facts::rows::Life::Run, 2, total, 2, runs);
     let mut k = 0;
     runs_of(&mut |first, key| {
         keys.put(k, first, key);
         k += 1;
     });
     if total > 0 {
-        let needed = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
-        let rows_at = rows.rows_at() as i64;
-        let out = rows.facts().block.device_buffer(device)?;
-        let mut past = 0usize;
-        for (chunk, (mut p, start_at, len)) in chunks.iter().zip(each) {
-            let b = &chunk.block;
-            let n = p[1] as usize;
-            // p[4]: the rows the relation holds; p[7]: the first of this chunk's (b0: its rows' descriptor).
-            (p[4], p[7]) = (total as u32, past as u32);
-            past += len;
-            if len == 0 {
-                continue;
-            }
-            let whole = b.device_buffer(device)?;
-            // SAFETY: as the count's: the chunk's block outlives the work, waited for below.
-            let starts = unsafe { rerail_device::device::wrap_host_memory(device, b.ptr::<u8>(start_at), (4 * (n + 1)).next_multiple_of(PAGE))? };
-            let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
-            let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
-            pass.run(&write, &[&whole, &starts, &out], &p, &[rows_at], groups(n));
-            batch.finish().map_err(|e| format!("{e:?}"))?;
+        let needed = out_rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
+        (params.rows_at, params.rows) = (out_rows.rows_at() as u64, total as u64);
+        let out = out_rows.facts().block.device_buffer(device)?;
+        let p = Held::of(params.bytes().iter().copied()).map_err(|e| format!("{e:?}"))?;
+        let mut batch = Batch::new().map_err(|e| format!("{e:?}"))?;
+        let pass = batch.pass(1).map_err(|e| format!("{e:?}"))?;
+        resident(pass);
+        pass.run_bytes(&write, &[&set.buffer.buffer, &starts, &out, &p.buffer], &[], groups(n));
+        batch.finish().map_err(|e| format!("{e:?}"))?;
+        if views.cache_failed() != failed {
+            return Err("the axis's reads found no room in the 16z cache".to_owned());
         }
         // Bounded by the relation's chunks (decision 0463): what the writer refused fails the solve, which the host
         // then makes.
-        let now = rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
+        let now = out_rows.rel().rows.needed.load(std::sync::atomic::Ordering::Relaxed);
         if now != needed {
             return Err(format!("the axis's writer refused {} rows past its relation's chunks (decision 0463)", now.wrapping_sub(needed)));
         }
     }
     // SAFETY: the writes completed, every row below the total written.
-    unsafe { rows.written(total as u32) };
-    Ok(crate::code_rule_dsl::facts::nearest::InChunk { start: first_start, rows })
+    unsafe { out_rows.written(total as u32) };
+    Ok(crate::code_rule_dsl::facts::nearest::SolvedOnDevice { start: start_at, rows: out_rows })
 }
 
 /// A relation's columns on the device: `rows` 64-bit values each, column-major.
@@ -1514,27 +1518,6 @@ impl Batch {
         let before = Building::descriptor(std::ptr::from_ref(r));
         self.building.push(Building { home, rel: std::ptr::from_ref(r), _holds: rel.holder(), room, before });
         Ok(DevIndex { index, rows: n, moved: None, built: true, walk: 0, buffer })
-    }
-
-    /// The columns `cols` (its source's) of a view made from a chunk block on the device (decision 0289 §2), into
-    /// `out`, a relation of `out.rows` rows whose columns are `cols` in order: what `Viewed::row_at` made on the host.
-// copy (0353 step 4): a view expanded into a relation (660.8 MB a run on hogql). It goes: a view is a
-// read of the tape, and a stage reads it in place (decision 0353).
-    pub(in crate::code_rule_dsl) fn expand_view(&mut self, block: &Buffer, root: usize, view: u32, cols: &[usize], out: &DevRel) -> Result<(), Error> {
-        let expand = pipeline("chunk_views", "view_expand", chunk_views_source)?;
-        const EXPANDED: rerail_prof::copies::Site = rerail_prof::copies::Site::new(4, "4", "a view expanded into a device relation (expand_view)");
-        EXPANDED.copied(8 * out.rows * cols.len());
-        self.writes(out, "a view expanded");
-        let at = |o: usize| u32::try_from(o).map_err(|_| Error::BackendCapacity);
-        let rows_at = out.rows_at();
-        let mut p = vec![at(root)?, view, out.rows as u32, cols.len() as u32, 0, rows_at as u32, (rows_at >> 32) as u32];
-        p.extend(cols.iter().map(|&c| c as u32));
-        if out.rows > 0 {
-            let params = self.block(&p.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>())?;
-            let pass = self.pass(1)?;
-            pass.run_bytes(&expand, &[block, &out.buffer.buffer, &params.buffer], &[], groups(out.rows));
-        }
-        Ok(())
     }
 
     /// A stage from `left` into `out`, over `right` (its relation and, read by keys, its index): count, scan,

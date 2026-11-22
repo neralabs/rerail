@@ -2607,9 +2607,8 @@ fn the_views_directory_is_the_hosts_too() {
     let docs: Vec<Document> = (1..=3).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x):\n    return g(x, {k})\n"))).collect();
     let projection = Projection { shape: Shape::Core, reads: Some(["node".to_owned(), "child".to_owned()].into()), ..Projection::core() };
     let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
-    let chunk = batch.chunk();
     let views = device_chunk::views_in_place(&batch).expect("a directory, device or not");
-    let block = &chunk.block;
+    let block = batch.block();
     // SAFETY: the directory, its rows and its homes, in the batch's block, which the batch holds.
     let dir = unsafe { &*block.ptr::<ViewDir>(views.at) };
     assert_eq!(dir.at as usize, views.at, "the directory's own offset");
@@ -2689,7 +2688,6 @@ fn the_directorys_searches_are_the_jits() {
     docs.push(document(40, "m40.py", "python", "\"\"\"only a docstring\"\"\"\n"));
     let projection = Projection { shape: Shape::Core, reads: Some(["node".to_owned(), "child".to_owned(), "field".to_owned()].into()), ..Projection::core() };
     let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
-    let chunk = batch.chunk();
     let views = device_chunk::views_in_place(&batch).expect("a directory");
     // One directory: the batch's, its search layer's and its reads layer's (no second one made for the device).
     assert_eq!(views.at, batch.docs.dir_at(), "the views' directory is the batch's");
@@ -2698,7 +2696,7 @@ fn the_directorys_searches_are_the_jits() {
     type ByKey = extern "C" fn(*const u8, u32, u32) -> u32;
     // SAFETY: each read's signature: the descriptor, then its arguments.
     let (by_row, by_key): (ByRow, ByKey) = unsafe { (std::mem::transmute(jit.function("dir_doc_of_row")), std::mem::transmute(jit.function("dir_doc_of_key"))) };
-    let d = chunk.block.ptr::<u8>(views.at).cast_const();
+    let d = batch.block().ptr::<u8>(views.at).cast_const();
     // SAFETY: the directory in the batch's block, which the batch holds.
     let dir = unsafe { &*d.cast::<ViewDir>() };
     let rows = unsafe { dir.rows() };
@@ -2768,10 +2766,9 @@ DEFINE_KERNEL2(syntax_tests, dir_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, D
     docs.push(document(40, "m40.py", "python", "\"\"\"only a docstring\"\"\"\n"));
     let projection = Projection { shape: Shape::Core, reads: Some(["node".to_owned(), "child".to_owned(), "field".to_owned()].into()), ..Projection::core() };
     let batch = Batch::new(&store, docs, &projection, &[], &[], false, None, &HashMap::new()).unwrap();
-    let chunk = batch.chunk();
     let views = device_chunk::views_in_place(&batch).expect("a directory");
     // SAFETY: the directory in the batch's block, which the batch holds.
-    let dir = unsafe { &*chunk.block.ptr::<ViewDir>(views.at) };
+    let dir = unsafe { &*batch.block().ptr::<ViewDir>(views.at) };
     let rows = unsafe { dir.rows() };
     let n = dir.ndocs;
     let mut asks: Vec<[u32; 4]> = Vec::new();
@@ -2798,7 +2795,7 @@ DEFINE_KERNEL2(syntax_tests, dir_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, D
     let out = alloc::<u32>(asks.len()).unwrap();
     let mut q = ComputeQueue::new(&shared.queue);
     launch(&q, probe)
-        .buffer("b", &chunk.block.device_buffer(&shared.device).unwrap())
+        .buffer("b", &batch.block().device_buffer(&shared.device).unwrap())
         .value("p", &DirP { d: views.at as u64, n: m, pad: 0 })
         .buffer("ask", &ask)
         .buffer("out", &out)

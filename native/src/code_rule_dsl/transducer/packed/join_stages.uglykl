@@ -1687,3 +1687,96 @@ DEFINE_KERNEL2(join, lat_merge,
     for (uint32_t c = 0; c < p.nkeys && c < 8; c++) D[(uint64_t)c * p.n + d] = key[c];
     D[(uint64_t)p.nkeys * p.n + d] = v;
 }
+
+// A kind-set axis's batch solve over a views' directory (decision 0353 step 4, `Within::solved_in`): a thread per row
+// of the `node` view, its ancestors read off the tape by the climb written once (`clif_view_up`), as `by_has` reads
+// them, each a member where its kind atom's bit is set (`AxisP::bits`, the host's `member`: tag × 1024 + its slot, as
+// the `node` view's `kind` column holds it). No node column is made for it. `inside`: every ancestor in the set
+// (containment), else the nearest. A climb is bounded by its document's rows.
+typedef struct AxisP {
+    UKL_GLOBAL const ViewDir* dir;
+    // The `node` view's rows; 1 where `bits` holds the set (0: every kind is one); 1 for every ancestor.
+    uint32_t n, bits, inside, pad;
+    // The relation's rows' descriptor's offset in `out`'s block, and the rows it holds.
+    uint64_t rows_at, rows;
+} AxisP;
+UKL_STATIC_ASSERT(sizeof(AxisP) == 40, "AxisP: size");
+UKL_STATIC_ASSERT(UKL_OFFSETOF(AxisP, rows_at) == 24, "AxisP.rows_at");
+
+UKL_INLINE bool axis_in(UKL_GLOBAL const AxisP* p, UKL_GLOBAL const uint32_t* bits, uint32_t q) {
+    if (p->bits == 0u) return true;
+    uint32_t memo = NONE;
+    uint32_t at = (uint32_t)vread(1u, p->dir, q, 2u, &memo);
+    return ((bits[at >> 5] >> (at & 31u)) & 1u) != 0u;
+}
+
+// Node row `v`'s document's row in the directory, its first `node` row and its rows' end.
+UKL_INLINE UKL_GLOBAL const ViewRow* axis_doc(UKL_GLOBAL const ViewDir* d, uint32_t v, UKL_PRIVATE uint32_t* end) {
+    uint32_t i = clif_dir_doc_of_row(view_block(d), d->at, 0u, v, NONE);
+    UKL_GLOBAL const ViewRow* rows = view_rows(d);
+    *end = i + 1u < d->ndocs ? rows[i + 1u].rows[0] : d->ends[0];
+    return &rows[i];
+}
+
+// Each node row's rows (its ancestors in the set), into `start`; the extra value past the last row is 0, so the scan
+// after leaves the total there.
+DEFINE_KERNEL2(join, axis_count,
+               ROBUFFER, uint32_t, bits,  "[8192]",
+               RWBUFFER, uint32_t, start, "[p->n + 1]",
+               ROBUFFER, AxisP,    p,     "[1]",
+               GID0,     uint32_t, v,     )
+{
+    uint32_t n = p->n;
+    if (v > n) return;
+    if (v == n) { start[v] = 0u; return; }
+    UKL_GLOBAL const ViewDir* d = p->dir;
+    uint32_t end = 0u;
+    UKL_GLOBAL const ViewRow* e = axis_doc(d, v, &end);
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines(d, e);
+    uint32_t first = e->rows[0];
+    uint32_t count = 0u;
+    uint32_t up = clif_view_up(ch, e->entry, t, e->view, ls, v - first);
+    for (uint32_t k = first; k < end && up != NONE; k++) {
+        if (axis_in(p, bits, first + up)) {
+            count++;
+            if (p->inside == 0u) break;
+        }
+        up = clif_view_up(ch, e->entry, t, e->view, ls, up);
+    }
+    start[v] = count;
+}
+
+// Each node row's rows from its start (the scanned counts), nearest first: the ids of `n` and `a` (the `node` view's
+// `n`), written once into the axis's relation (decision 0353 step 5) through the writer written once, bounded by its
+// chunks. A solve whose total is past the rows the relation holds writes nothing.
+DEFINE_KERNEL2(join, axis_write,
+               ROBUFFER, uint32_t, bits,  "[8192]",
+               ROBUFFER, uint32_t, start, "[p->n + 1]",
+               RWBUFFER, uint8_t,  out,   "[block]",
+               ROBUFFER, AxisP,    p,     "[1]",
+               GID0,     uint32_t, v,     )
+{
+    if (v >= p->n || (uint64_t)start[p->n] > p->rows) return;
+    UKL_GLOBAL const ViewDir* d = p->dir;
+    uint32_t end = 0u;
+    UKL_GLOBAL const ViewRow* e = axis_doc(d, v, &end);
+    UKL_GLOBAL const uint8_t* ch = view_block(d);
+    UKL_GLOBAL const uint8_t* t = view_tape(d, e);
+    UKL_GLOBAL const uint8_t* ls = view_lines(d, e);
+    uint32_t first = e->rows[0];
+    uint32_t at = start[v];
+    uint32_t memo = NONE;
+    int64_t n_id = vread(1u, d, v, 1u, &memo);
+    uint32_t up = clif_view_up(ch, e->entry, t, e->view, ls, v - first);
+    for (uint32_t k = first; k < end && up != NONE; k++) {
+        if (axis_in(p, bits, first + up)) {
+            clif_rows_put((UKL_GLOBAL const uint8_t*)out, p->rows_at, at, 0u, (uint64_t)n_id);
+            clif_rows_put((UKL_GLOBAL const uint8_t*)out, p->rows_at, at, 1u, (uint64_t)vread(1u, d, first + up, 1u, &memo));
+            at++;
+            if (p->inside == 0u) break;
+        }
+        up = clif_view_up(ch, e->entry, t, e->view, ls, up);
+    }
+}

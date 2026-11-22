@@ -1,88 +1,12 @@
-//! A batch's chunk block (decision 0289 §1, 0266's `Chunk`): the arrays its views are made of, nested per document
-//! in one block the device reads in place (a no-copy shared buffer), so a view the GPU reads is made there
-//! (`metal_join`'s `view_expand`), not row by row on the host (`Viewed::row_at`).
-//!
-//! Each document's entry (`ChunkDoc`) holds its key, its rows' place in each view, and spans of:
-//!
-//! - the projection's arrays, by local id: `core` (the tape node), `low` (its id's low 32 bits by definition,
-//!   empty for ids in preorder), `ord` (its index among its siblings), and the fielded nodes;
-//! - `up`, the projection's parent of each local id (`Projected::up`, `NONE` above the root and an anchor);
-//! - each node's `start`, `end`, `kind` (the tape's atom) and `field`, by local id, read off the tape through its API
-//!   (0293) when the chunk is made: an interim, until the device's kernels read the tape in the chunk (0293 step 5);
-//! - `core.rerail`'s places (`Shape::Core`'s `Loc` views: `line`, `end_line`, `col`, `docof`), added on a `Loc` view's
-//!   first device read (`fill_locs`): the document's first row in them, its spans past its nodes (tokens, the whole
-//!   text, lines and end points, as `Projected::span` gives them) and its line starts (`core_rr::Lines`).
-//!
-//! The kind a view holds is the dialect's canonical code's atom (`Dialect::kind`): each tag's canonical table is in
-//! the block once, and an entry points at its own.
-//!
-//! The projection's arrays are made in the batch's block (0289 §3): the entry points at them, and nothing is copied.
-//! `Facts` holds no column since 0293 step 4: a node's kind, span and field are the tape's answers, and the tape image
-//! is already in the chunk (0289 §4). Until the kernels read it there, the chunk holds those four answers for the
-//! projected nodes, made once per batch on the device's first read. The canonical tables are copied in once a batch.
+//! A batch's views as the device reads them in place (decision 0353 step 4): its documents' directory
+//! (`ViewsInPlace`, `ViewDir`), each document's entry beside its projection's numbering in the batch's block and its
+//! tape where it lies in its slab, which every view's reads read. Nothing makes a view's rows: a view the device does
+//! not read in place is not given to it (`Viewed::device_view`).
 
-use super::{Batch, Item, Place, View};
-use crate::code_rule_dsl::facts::core::NONE;
-use rerail_blocks::{Block, Cells, Span, structure};
+use super::{Batch, Place, View};
 use std::sync::Arc;
-use std::collections::HashMap;
 
-structure! {
-    /// One document of a batch's chunk.
-    pub struct ChunkDoc {
-        pub key: u32,
-        /// The key of the file it is part of (decision 0431 §4, `Projected::file`): `docof`'s.
-        pub file: u32,
-        pub tag: u32,
-        /// Nodes (local ids), and the first row of the document in `node` (also `core_node`'s), `child` and `field`.
-        pub nodes: u32,
-        pub node_row: u32,
-        pub child_row: u32,
-        pub field_row: u32,
-        pub nfielded: u32,
-        /// 1 when ids are local ids (`RERAIL_NODE_IDS=preorder`): `low` is then empty.
-        pub preorder: u32,
-        /// The `Loc` views' first row of the document, and its rows there (nodes, then spans): `fill_locs`.
-        pub loc_row: u32,
-        pub locs: u32,
-        /// To the spans' 8-byte alignment.
-        pub pad: u32,
-        pub core: Span<u32>,
-        pub low: Span<u32>,
-        pub ord: Span<u32>,
-        pub fielded: Span<u32>,
-        pub up: Span<u32>,
-        /// By local id, off the tape (an interim until 0293 step 5).
-        pub start: Span<u32>,
-        pub end: Span<u32>,
-        pub kind: Span<u32>,
-        pub field: Span<u16>,
-        pub canonical: Span<u16>,
-        /// The spans past the nodes, `[start, end]` each, and the line starts, for the `Loc` views (`fill_locs`).
-        pub spans: Span<u32>,
-        pub lines: Span<u32>,
-        /// A guest's places (decision 0055), per `Loc` local: its first line, last line and start column in its
-        /// file, `Locs::place`'s, through its placement and its host's lines. Empty for a file's own tree, whose
-        /// places the kernel finds in `lines`.
-        pub placed: Span<u32>,
-        /// The facts' line starts (`LineTable::starts`), for the `line` view (`fill_lines`): a node's line is the
-        /// number of them at or before its start (`Facts::start_line`).
-        pub flines: Span<u32>,
-    }
-}
-
-structure! {
-    /// A batch's chunk: its documents, in the batch's order, and each view's rows by document (`ndocs + 1` each).
-    pub struct ChunkRoot {
-        pub ndocs: u32,
-        pub nodes: u32,
-        pub children: u32,
-        pub fields: u32,
-        pub docs: Span<ChunkDoc>,
-    }
-}
-
-/// A view the device makes from a chunk (`metal_join`'s `VIEW_*`), with the source columns it has.
+/// A view the device reads (`metal_join`'s `VIEW_*`), with the source columns it has.
 pub const VIEW_NODE: u32 = 0;
 pub const VIEW_CHILD: u32 = 1;
 pub const VIEW_FIELD: u32 = 2;
@@ -145,17 +69,6 @@ pub fn device_view(view: View) -> Option<u32> {
     })
 }
 
-/// A batch's chunk block, and its root's offset in it.
-pub struct Chunk {
-    /// The batch's block (`Batch::block`), which its projections are in.
-    pub block: Arc<Block>,
-    pub root: usize,
-    /// Whether the `Loc` views' arrays are in the block (`fill_locs`), once asked.
-    locs: std::sync::OnceLock<bool>,
-    /// Whether the facts' line starts are in the block (`fill_lines`), once asked.
-    lines: std::sync::OnceLock<bool>,
-}
-
 /// A batch's documents as the views' reads find them on the device (decision 0353 step 4d, `ViewDir`): each one's
 /// entry, beside its projection's numbering in the batch's block, and its tape where it lies in its slab. A stage
 /// reads a view through them; nothing makes the view's rows.
@@ -184,6 +97,21 @@ pub struct ViewsInPlace {
     /// The tape format of every document read off its tape (15, 16, `F16Z_FORMAT`), or 0 for a batch of several: the
     /// stages that read its views are compiled for it (decision 0576).
     pub format: u32,
+}
+
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+impl ViewsInPlace {
+    /// Its `node` view as a stage reads it in place, `keep` keeping its directory's rows, and the view's rows in all
+    /// (`ViewDir::ends`), read in `block` (the batch's, which the directory lies in): `None` where the device reads
+    /// none of it (`dir`).
+    pub fn node_view(&self, block: &rerail_blocks::Block, keep: Arc<dyn std::any::Any + Send + Sync>) -> Option<(crate::code_rule_dsl::facts::vtab::ViewInPlace, usize)> {
+        let dir = self.dir?;
+        // SAFETY: the directory lies in `block` at `at` (`build_views`, `views_over`), its counts written.
+        let nodes = unsafe { (*block.ptr::<rerail_clif::view_reads::ViewDir>(self.at)).ends[0] } as usize;
+        let mut v = crate::code_rule_dsl::facts::vtab::ViewInPlace { dir, kind: read_kind(VIEW_NODE), buffers: self.buffers.clone(), caches: self.caches.clone(), failed: 0, format: self.format, keep };
+        v.failed = v.cache_failed();
+        Some((v, nodes))
+    }
 }
 
 
@@ -351,244 +279,3 @@ pub fn views_over(batch: &Batch, values: &[Arc<Batch>]) -> Option<ViewsInPlace> 
     let format = own.iter().map(|o| o.format).reduce(|a, b| same_format(Some(a), b)).unwrap_or(0);
     Some(ViewsInPlace { at, dir: dir_on_device, buffers, lines, locs, caches, format })
 }
-
-/// Copies `src` into the block and points `span` at it.
-fn put<T: Copy>(b: &Block, span: *const Span<T>, src: &[T]) {
-    let p: *mut T = b.alloc_t(src.len().max(1));
-    // SAFETY: `p` holds `src.len()` items, just allocated in `b`, as `span` is.
-    unsafe {
-        std::ptr::copy_nonoverlapping(src.as_ptr(), p, src.len());
-        Span::set(span, p, src.len());
-    }
-}
-
-/// `n` values made by `at` (by local id) put in `b`, and `span` set to them.
-fn made<T: Copy>(b: &Block, span: *const Span<T>, n: usize, at: impl Fn(usize) -> T) {
-    let p: *mut T = b.alloc_t(n.max(1));
-    // SAFETY: `p` holds `n` items, just allocated in `b`, as `span` is.
-    unsafe {
-        for l in 0..n {
-            p.add(l).write(at(l));
-        }
-        Span::set(span, p, n);
-    }
-}
-
-/// `n` values written by `fill` in `b`, and `span` set to them.
-fn made_with<T: Copy + Default>(b: &Block, span: *const Span<T>, n: usize, fill: impl FnOnce(&mut [T])) {
-    let p: *mut T = b.alloc_t(n.max(1));
-    // SAFETY: `p` holds `n` items, just allocated in `b` and set to their default before `fill` reads or writes them.
-    unsafe {
-        for k in 0..n {
-            p.add(k).write(T::default());
-        }
-        fill(std::slice::from_raw_parts_mut(p, n));
-        Span::set(span, p, n);
-    }
-}
-
-/// `n` values from `values`, in order, put in `b`, and `span` set to them.
-fn made_in_order<T: Copy>(b: &Block, span: *const Span<T>, n: usize, values: impl Iterator<Item = T>) {
-    let p: *mut T = b.alloc_t(n.max(1));
-    let mut k = 0;
-    // SAFETY: `p` holds `n` items, just allocated in `b`, as `span` is.
-    unsafe {
-        for v in values.take(n) {
-            p.add(k).write(v);
-            k += 1;
-        }
-        Span::set(span, p, k);
-    }
-}
-
-/// The batch's chunk, in the batch's block: every document's arrays the views read.
-// copy (0353 step 4): the node columns (`core`, `up`, `ord`, `fielded`, `start`, `end`, `kind`, `field`), the canonical codes
-// and the projection's arrays copied or made here. They go: the kernels read the placed tapes (decision 0353).
-pub fn build(batch: &Batch) -> Chunk {
-    const COLUMNS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(3, "4", "the chunk's node columns and codes (device_chunk::build)");
-    COLUMNS.time(|| in_block(&batch.block, || build_in(batch)))
-}
-
-/// What `f` puts into `block`, with the bytes the block grew by (a copy's size, `rerail_prof::copies`).
-fn in_block<T>(block: &Block, f: impl FnOnce() -> T) -> (T, usize) {
-    let before = block.used();
-    let out = f();
-    (out, block.used().saturating_sub(before))
-}
-
-fn build_in(batch: &Batch) -> Chunk {
-    let _span = crate::code_rule_dsl::logic::profile::span(|| "a batch's chunk block".into());
-    let b = Arc::clone(&batch.block);
-    let root: *mut ChunkRoot = b.alloc_t(1);
-    let docs: *mut ChunkDoc = b.alloc_t(batch.docs.len().max(1));
-    // Each dialect's canonical codes, once.
-    let mut canon: HashMap<u8, (*const u16, usize)> = HashMap::new();
-    for (tag, d) in batch.dialects.iter() {
-        let p: *mut u16 = b.alloc_t(d.canonical.len().max(1));
-        // SAFETY: just allocated for `canonical.len()` items.
-        unsafe { std::ptr::copy_nonoverlapping(d.canonical.as_ptr(), p, d.canonical.len()) };
-        canon.insert(tag, (p, d.canonical.len()));
-    }
-    for (i, p) in batch.docs.iter().enumerate() {
-        let f = &*p.facts;
-        // SAFETY: entry `i` of the table just allocated; every span set below points into `b`.
-        unsafe {
-            let d = docs.add(i);
-            (*d).key = p.key();
-            (*d).file = p.file();
-            (*d).tag = u32::from(p.tag());
-            (*d).nodes = p.len();
-            (*d).node_row = batch.nodes().at(i) as u32;
-            (*d).child_row = batch.firsts(View::Child).at(i) as u32;
-            (*d).field_row = batch.firsts(View::Field).at(i) as u32;
-            (*d).nfielded = p.fielded();
-            (*d).preorder = u32::from(p.defs.is_none());
-            // The tape node and the parent of each local id, made from the rank index and the tape (the host reads
-            // them there, decision 0353 step 2): node columns, as `start` and `end` are, until the kernels read the
-            // placed tapes.
-            let n = p.len() as usize;
-            made_in_order(&b, &raw const (*d).core, n, p.nodes().map(|(_, x)| x));
-            made_in_order(&b, &raw const (*d).up, n, p.walk().map(|(_, _, q)| q));
-            let core: &[u32] = (*d).core.as_slice();
-            let ids = |l: usize| core[l];
-            // Every local's, past the nodes too: a token's id is by definition as well (`Projected::global`).
-            // The ids' low bits, made by one scan of the granule table (nodes and tokens each come in local order).
-            match p.table() {
-                Some(table) => {
-                    let tokens = p.ranks().count(Item::Token) as usize;
-                    made_with(&b, &raw const (*d).low, n + tokens, |out| {
-                        let (mut a, mut k) = (0, n);
-                        table.scan(p.ranks(), |_, low, item| {
-                            let at = if item == Item::Node { &mut a } else { &mut k };
-                            out[*at] = low;
-                            *at += 1;
-                        });
-                    });
-                }
-                None => put(&b, &raw const (*d).low, &[]),
-            }
-            made_in_order(&b, &raw const (*d).ord, n, p.places().map(|(_, idx, _)| idx));
-            made_in_order(&b, &raw const (*d).fielded, p.fielded() as usize, p.nodes().filter(|&(_, x)| p.ranks().is(Item::Field, x)).map(|(l, _)| l));
-            made(&b, &raw const (*d).start, n, |l| f.start(ids(l)));
-            made(&b, &raw const (*d).end, n, |l| f.end(ids(l)));
-            made(&b, &raw const (*d).kind, n, |l| f.kind(ids(l)));
-            made(&b, &raw const (*d).field, n, |l| f.field(ids(l)));
-            match canon.get(&p.tag()) {
-                Some(&(c, n)) => Span::set(&raw const (*d).canonical, c, n),
-                None => Span::set(&raw const (*d).canonical, std::ptr::null::<u16>(), 0),
-            }
-        }
-    }
-    // SAFETY: the root, just allocated; its spans point into `b`.
-    unsafe {
-        (*root).ndocs = batch.docs.len() as u32;
-        (*root).nodes = batch.nodes().total() as u32;
-        (*root).children = batch.firsts(View::Child).total() as u32;
-        (*root).fields = batch.firsts(View::Field).total() as u32;
-        Span::set(&raw const (*root).docs, docs, batch.docs.len());
-    }
-    let at = b.offset_of(root);
-    b.set_root(root);
-    Chunk {
-        block: b,
-        root: at,
-        locs: std::sync::OnceLock::new(),
-        lines: std::sync::OnceLock::new(),
-    }
-}
-
-/// Puts each document's facts' line starts into `batch`'s chunk, once, for the `line` view made on the device (decision
-/// 0325 step 3: it was read on the host, a row at a time, for an upload). False when the block cannot hold them: the
-/// view is then made on the host.
-// copy (0353 step 4): the facts' line starts copied into the chunk, for a batch whose `line` view is made (its tapes
-// not on the device). It goes with the made views: the views' reads read the lines where `LineTable::placed` put them.
-pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
-    const LINES: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the facts' line starts put into the chunk (fill_lines)");
-    *chunk.lines.get_or_init(|| LINES.time(|| in_block(&chunk.block, || {
-        let _span = crate::code_rule_dsl::logic::profile::span(|| "the facts' lines in the chunk block".into());
-        let b = &chunk.block;
-        // SAFETY: the root `build` wrote; its document table.
-        let docs = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).docs.as_ptr() as *mut ChunkDoc };
-        for (i, p) in batch.docs.iter().enumerate() {
-            let starts = p.facts.lines.starts();
-            let Some(ls) = b.try_alloc_t::<u32>(starts.len().max(1)) else { return false };
-            // SAFETY: `ls` holds the starts, just allocated in the block; entry `i` of the table, whose `flines` no
-            // reader reads before this returns.
-            unsafe {
-                for (j, &s) in starts.iter().enumerate() {
-                    *ls.add(j) = s;
-                }
-                Span::set(&raw const (*docs.add(i)).flines, ls, starts.len());
-            }
-        }
-        true
-    })))
-}
-
-/// Puts the `Loc` views' arrays into `batch`'s chunk, once: each document's first row in them, its spans past its
-/// nodes and its line starts; a guest's places too (decision 0055: its host's lines, through its placement), as the
-/// host finds them. False when a document has no places (no `core.rerail` extra) or the block cannot hold them: the views
-/// are then made on the host. A batch with a guest was refused, and its views read on the host for an upload (28 MB
-/// on posthog/hogql).
-// copy (0353 step 4): the line starts and the spans past the nodes copied into the chunk for the `Loc` views. It goes:
-// the views' reads read the lines in place, and the spans where they are written once (Q216).
-pub fn fill_locs(batch: &Batch, chunk: &Chunk) -> bool {
-    const LOCS: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the Loc views' lines and spans put into the chunk (fill_locs)");
-    *chunk.locs.get_or_init(|| LOCS.time(|| in_block(&chunk.block, || {
-        let _span = crate::code_rule_dsl::logic::profile::span(|| "core.rerail's places in the chunk block".into());
-        if batch.docs.iter().any(|p| p.extra.is_none()) {
-            return false;
-        }
-        let rows = batch.firsts(View::Loc(Place::Line));
-        let b = &chunk.block;
-        // SAFETY: the root `build` wrote; its document table.
-        let docs = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).docs.as_ptr() as *mut ChunkDoc };
-        for (i, p) in batch.docs.iter().enumerate() {
-            let x = p.extra.as_ref().expect("checked above");
-            let (len, locs) = (p.len(), p.locs());
-            let starts = x.lines.starts();
-            let (Some(sp), Some(ls)) = (b.try_alloc_t::<u32>(2 * (locs - len) as usize + 1), b.try_alloc_t::<u32>(starts.len().max(1))) else {
-                return false;
-            };
-            // SAFETY: `sp` holds `2 * (locs - len)` values and `ls` the starts, just allocated in the block; entry `i`
-            // of the table, whose `Loc` fields no reader reads before this returns.
-            unsafe {
-                for (j, local) in (len..locs).enumerate() {
-                    let [s, e] = p.span(local);
-                    *sp.add(2 * j) = s;
-                    *sp.add(2 * j + 1) = e;
-                }
-                std::ptr::copy_nonoverlapping(starts.as_ptr(), ls, starts.len());
-                let d = docs.add(i);
-                (*d).loc_row = rows.at(i) as u32;
-                (*d).locs = locs;
-                Span::set(&raw const (*d).spans, sp, 2 * (locs - len) as usize);
-                Span::set(&raw const (*d).lines, ls, starts.len());
-            }
-            if x.host.is_some() {
-                let Some(pl) = b.try_alloc_t::<u32>(3 * locs as usize + 1) else { return false };
-                // SAFETY: `pl` holds `3 * locs` values, just allocated in the block; entry `i` of the table, as above.
-                unsafe {
-                    for (local, span) in p.spans().take(locs as usize) {
-                        let (line, last, col) = x.place(span);
-                        let at = pl.add(3 * local as usize);
-                        (*at, *at.add(1), *at.add(2)) = (line, last, col);
-                    }
-                    Span::set(&raw const (*docs.add(i)).placed, pl, 3 * locs as usize);
-                }
-            }
-        }
-        true
-    })))
-}
-
-/// The UKL of the chunk's structures, as the kernels read them (decision 0440 step C).
-pub fn ukl() -> String {
-    use super::granules::{INDEX_BITS, SLOT_BITS, SPAN_SLOTS};
-    // A span's id past the nodes and tokens (`granules::span_low`): the top slots, down from the last.
-    format!("{}#define GR_SLOTS {}u\n#define GR_INDEX_BITS {INDEX_BITS}u\n#define GR_SPAN_SLOTS {SPAN_SLOTS}u\n",
-            rerail_blocks::ukl_of::<ChunkRoot>(), 1u32 << SLOT_BITS)
-}
-
-/// NONE, as the kernels test a parent with it.
-pub const NO_NODE: u32 = NONE;

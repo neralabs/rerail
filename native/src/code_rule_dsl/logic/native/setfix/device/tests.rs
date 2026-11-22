@@ -1045,7 +1045,7 @@
         let rel = InRel::over_source(std::sync::Arc::clone(&src), vec![b'i'; 3]);
         let mut batch = crate::code_rule_dsl::transducer::packed::metal_join::Batch::new().expect("the device");
         let mut rep = super::Report::default();
-        let (dev, _, place) = super::resident(&rel, &[1, 2], &[], &mut batch, &mut rep).expect("resident");
+        let (dev, _, place, _) = super::resident(&rel, &[1, 2], &[], crate::code_rule_dsl::transducer::packed::metal_join::JOIN, &mut batch, &mut rep).expect("resident");
         assert_eq!((rep.in_place, rep.uploads, rep.upload_bytes), (1, 0, 0), "read in place: {rep:?}");
         assert_eq!((dev.rows, dev.cols), (n, 3));
         assert_eq!(place, [0, 1, 2], "each column at its own place");
@@ -1214,11 +1214,12 @@
         }
     }
 
-    /// Decision 0325 step 6: a view the device made in a batch a refusal dropped uncommitted is not kept as made. The
-    /// next stratum makes it again and reads the host's rows, not a relation nothing wrote (the lost findings of a
-    /// refused `attr_of`, 2026-11-17).
+    /// Decision 0353 step 4: a view whose tapes the device does not read is not made on the device (no view is made
+    /// from the tape's answers); it is given to the device by the upload of step 6's row 5 alone. An upload into a
+    /// batch a refusal dropped uncommitted is not kept: the next stratum uploads it again and reads the host's rows,
+    /// not a relation nothing wrote (decision 0325 step 6; the lost findings of a refused `attr_of`, 2026-11-17).
     #[test]
-    fn a_view_made_on_the_device_is_made_at_each_stratum() {
+    fn a_view_not_read_in_place_is_not_made_on_the_device() {
         use crate::code_rule_dsl::facts::core;
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
         use crate::code_rule_dsl::logic::native::setfix::InRel;
@@ -1228,7 +1229,7 @@
             return;
         }
         // Tapes held in vectors of their own, not where the device reads them (a parse not placed): the batch's views
-        // are made, not read in place (decision 0353 step 4d).
+        // are not read in place (decision 0353 step 4d).
         let lang = crate::code_rule_dsl::language::dialect_by_label("python").unwrap();
         let grammar = Arc::new(crate::code_rule_dsl::tape::Grammar::new(lang).unwrap());
         let docs: Vec<Document> = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a):\n        return a\n"].iter().enumerate().map(|(at, source)| {
@@ -1244,25 +1245,78 @@
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
         let all = sources(&store, docs).unwrap();
         let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
-        assert!(src.device_view().is_some_and(|d| d.in_place.is_none()), "made on the device");
+        assert!(src.device_view().is_none(), "not read in place, and not made");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
         // Encoded into a batch a refusal drops uncommitted: nothing ran it, and nothing of it is kept (decision 0478
         // step 3: a copy is made at each stratum, never cached).
         let mut refused = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
-        super::resident(&rel, &[0, 1], &[], &mut refused, &mut rep).expect("resident");
-        assert_eq!(rep.uploads, 1, "made: {rep:?}");
+        super::resident(&rel, &[0, 1], &[], mj::JOIN, &mut refused, &mut rep).expect("resident");
+        assert_eq!(rep.uploads, 1, "uploaded: {rep:?}");
         drop(refused);
         let mut batch = mj::Batch::new().expect("the device");
         let mut rep = super::Report::default();
-        let (dev, _, place) = super::resident(&rel, &[0, 1], &[], &mut batch, &mut rep).expect("resident");
-        assert_eq!(rep.uploads, 1, "made again: {rep:?}");
+        let (dev, _, place, _) = super::resident(&rel, &[0, 1], &[], mj::JOIN, &mut batch, &mut rep).expect("resident");
+        assert_eq!(rep.uploads, 1, "uploaded again: {rep:?}");
         batch.finish().unwrap();
         let n = src.len();
         for c in [0, 1] {
             let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
             assert_eq!(dev.column(place[c] as usize), host, "column {c}");
         }
+        let _ = std::fs::remove_file(&store_path);
+    }
+
+    /// Decision 0353 step 4: a view filtered by constants (`WHERE idx = 0`, `View::eqs`) is read in place whole, its
+    /// constants keys its stage adds: probed by a column, its index is over that column and the filtered one, and
+    /// nothing of it is uploaded. A stage that checks no keys (a filter's) uploads it as before.
+    #[test]
+    fn a_filtered_view_is_read_in_place_its_constants_keys() {
+        use crate::code_rule_dsl::facts::core::{self, Built};
+        use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
+        use crate::code_rule_dsl::logic::native::setfix::InRel;
+        use crate::code_rule_dsl::model::FileInput;
+        use crate::code_rule_dsl::transducer::packed::metal_join as mj;
+        use std::sync::Arc;
+        if !mj::available() || !rerail_accel::gpu::join::device().is_ok_and(|d| d.has_addresses()) {
+            return;
+        }
+        crate::test_languages();
+        let texts = ["import os\nx = f(1, y=2)\n", "class C(B):\n    def m(self, a, b):\n        return g(a, b)\n"];
+        let docs: Vec<Document> = texts.iter().enumerate().map(|(at, source)| {
+            let path = format!("q{at}.py");
+            let file = FileInput::new(path.clone(), "python".to_owned(), Arc::new((*source).to_owned()), None, None, "core").unwrap();
+            let facts = match core::build(&file).unwrap() { Built::Facts(f) => Arc::new(f), Built::Unparsed => panic!("{path}") };
+            Document { key: (3 + 2 * at) as u32, core: format!("/w#core:{path}"), digest: core::digest(&facts), path, facts, tape: None, guest: None, module: None, unpackaged: false }
+        }).collect();
+        let nonce = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos();
+        let store_path = std::env::temp_dir().join(format!("rerail-filtered-view-{}-{nonce}.sqlite", std::process::id()));
+        let store = crate::content_store::ContentStore::open(&store_path).unwrap();
+        let all = sources(&store, docs).unwrap();
+        // `child(p, c, idx)` of first children (`idx = 0`), its columns read as `(c, p)`: each at its source's place.
+        let src = Arc::clone(&all.iter().find(|(n, s)| *n == "child" && s.python_batch().is_some()).expect("child").1);
+        let rel = InRel::over_filtered(Arc::clone(&src), vec![1, 0], vec![(2, 0)], vec![b'i'; 2]);
+        for mode in [mj::JOIN, mj::SEMI, mj::ANTI] {
+            let mut batch = mj::Batch::new().expect("the device");
+            let mut rep = super::Report::default();
+            // Probed by its parent (the view's column 1).
+            let (dev, ix, place, consts) = super::resident(&rel, &[0, 1], &[1], mode, &mut batch, &mut rep).expect("resident");
+            batch.finish().unwrap();
+            assert_eq!((rep.in_place, rep.uploads), (1, 0), "{mode}: read in place: {rep:?}");
+            assert!(dev.view.is_some() && ix.is_some(), "{mode}: the view, by an index");
+            assert_eq!(dev.rows, src.len(), "{mode}: the whole view's rows");
+            assert_eq!(place, [1, 0], "{mode}: each column at its source's place");
+            assert_eq!(consts, [(2, 0)], "{mode}: its filter, a key the stage adds");
+            let d = super::with_consts(mj::Stage::default(), &consts);
+            assert_eq!((d.nkeys, d.key_kind[0], d.key_const[0], d.key_rcol[0]), (1, mj::CONST, 0, 2), "{mode}: a constant key");
+        }
+        // A filter's stage checks no keys: uploaded, the filtered rows alone.
+        let mut batch = mj::Batch::new().expect("the device");
+        let mut rep = super::Report::default();
+        let (dev, _, _, consts) = super::resident(&rel, &[0, 1], &[], mj::FILTER, &mut batch, &mut rep).expect("resident");
+        batch.finish().unwrap();
+        let first: usize = (0..src.len()).filter(|&r| src.value(r, 2) == 0).count();
+        assert_eq!((rep.uploads, dev.rows, consts.len()), (1, first, 0), "a filter's: uploaded, its rows: {rep:?}");
         let _ = std::fs::remove_file(&store_path);
     }
 
@@ -1293,12 +1347,12 @@
         let store = crate::content_store::ContentStore::open(&store_path).unwrap();
         let all = sources(&store, docs).unwrap();
         let src = Arc::clone(&all.iter().find(|(n, s)| *n == "node" && s.python_batch().is_some()).expect("node").1);
-        assert!(src.device_view().is_some_and(|d| d.in_place.is_some()), "read in place");
+        assert!(src.device_view().is_some(), "read in place");
         let rel = InRel::over_source(Arc::clone(&src), vec![b'i'; src.columns().len()]);
         let probe = |rel: &Arc<InRel>| {
             let mut batch = mj::Batch::new().expect("the device");
             let mut rep = super::Report::default();
-            let (dev, ix, _) = super::resident(rel, &[], &[2], &mut batch, &mut rep).expect("resident");
+            let (dev, ix, _, _) = super::resident(rel, &[], &[2], mj::JOIN, &mut batch, &mut rep).expect("resident");
             batch.finish().unwrap();
             assert!(dev.view.is_some() && ix.is_some(), "a view read in place, by its index");
             (rep.sorts, rep.sort_hits, rep.uploads)
@@ -1310,10 +1364,11 @@
         let _ = std::fs::remove_file(&store_path);
     }
 
-    /// Decision 0289 §2: a view made on the device from the batch's chunk block is the host's rows (`Source::value`),
-    /// for each view the device makes, over documents with fields, nesting and a broken one.
+    /// Decision 0353 step 4: a view the device reads in place is the host's rows (`Source::value`), for each view,
+    /// over documents with fields, nesting and a broken one; nothing makes its rows. A device whose buffers have no
+    /// addresses (OpenCL 1.2's, decision 0440 step C) reads none in place, and is given none.
     #[test]
-    fn views_made_on_the_device_are_the_hosts_rows() {
+    fn views_read_on_the_device_are_the_hosts_rows() {
         use crate::code_rule_dsl::facts::core::{self, Built};
         use crate::code_rule_dsl::facts::vtab::syntax::{Document, sources};
         use crate::code_rule_dsl::model::FileInput;
@@ -1340,54 +1395,43 @@
         // `node_order` are read in place only (decision 0353 step 6: uploaded from the host before).
         for name in ["node", "child", "field", "core_node", "line", "tape", "ast_depth", "node_order"] {
             let src = &all.iter().find(|(n, s)| *n == name && s.python_batch().is_some()).unwrap_or_else(|| panic!("{name}")).1;
-            let d = src.device_view().unwrap_or_else(|| panic!("{name}: made on the device"));
+            let Some(d) = src.device_view() else {
+                assert!(!device.has_addresses(), "{name}: read in place where buffers have addresses");
+                continue;
+            };
             let (n, k) = (src.len(), src.columns().len());
             assert_eq!(d.rows, n, "{name}");
             assert!(n > 0, "{name}: rows");
             // Every column, and a subset out of order, as a stratum asks for.
             for cols in [(0..k).collect::<Vec<_>>(), vec![k - 1, 0]] {
                 seen += 1;
-                // Made (a batch whose tapes are not on the device: `a_view_made_in_a_refused_batch_is_made_again`).
-                if d.in_place.is_none() {
-                    let out = mj::DevRel::empty(cols.len(), n).unwrap();
-                    let mut batch = mj::Batch::new().expect("the device");
-                    batch.expand_view(&d.block.device_buffer(device).unwrap(), d.root, d.view, &cols, &out).unwrap();
-                    batch.finish().unwrap();
-                    for (j, &c) in cols.iter().enumerate() {
-                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
-                        assert_eq!(out.column(j), &host[..], "{name}: column {c}");
-                    }
+                // The views' reads over the batch's directory, copied out of the view by `rows_copy`, are the same
+                // rows; nothing made them.
+                let v = d.in_place.clone();
+                let view = mj::DevRel::view(k, n, v.clone()).unwrap();
+                let out = mj::DevRel::empty(cols.len(), n).unwrap();
+                let mut batch = mj::Batch::new().expect("the device");
+                let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
+                batch.finish().unwrap();
+                // A 16z batch's blocks through its cache (0353 step 4b): every read found room.
+                assert_eq!(v.cache_failed(), 0, "{name}: the 16z cache had room: {:?}", v.cache_counts());
+                for (j, &c) in cols.iter().enumerate() {
+                    let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
+                    assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
                 }
-                // Read in place (decision 0353 step 4d): the views' reads over the batch's directory, copied out of
-                // the view by `rows_copy`, are the same rows; nothing made them.
-                if let Some(v) = d.in_place.clone() {
-                    let view = mj::DevRel::view(k, n, v.clone()).unwrap();
-                    let out = mj::DevRel::empty(cols.len(), n).unwrap();
-                    let mut batch = mj::Batch::new().expect("the device");
-                    let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
-                    batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
-                    batch.finish().unwrap();
-                    // A 16z batch's blocks through its cache (0353 step 4b): every read found room.
-                    assert_eq!(v.cache_failed(), 0, "{name}: the 16z cache had room: {:?}", v.cache_counts());
-                    for (j, &c) in cols.iter().enumerate() {
-                        let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
-                        assert_eq!(out.column(j), &host[..], "{name}: column {c} read in place");
-                    }
-                    in_place += 1;
-                }
+                in_place += 1;
             }
         }
-        assert_eq!(seen, 16);
         // Read in place where every buffer has an address, memory wrapped in place too, which the views' directory is
-        // of (Metal's, CUDA's, the CPU's); made elsewhere (decision 0440 step C: OpenCL's wraps have none, though
-        // its allocations may, Intel's unified shared memory), which the made branch above checked.
+        // of (Metal's, CUDA's, the CPU's); given to the device by none of them elsewhere (decision 0440 step C:
+        // OpenCL's wraps have none, though its allocations may, Intel's unified shared memory).
         let placed = if device.has_addresses() { 16 } else { 0 };
-        assert_eq!(in_place, placed, "node, child, field, core_node, line, tape, ast_depth and node_order read in place");
+        assert_eq!((seen, in_place), (placed, placed), "node, child, field, core_node, line, tape, ast_depth and node_order read in place");
         // core.rerail's places (`View::Loc`), over nodes and the spans past them (tokens, the text, lines, end points).
         {
             use crate::code_rule_dsl::facts::vtab::syntax::{Guest, Made, Placement, Projection, shaped};
-            // With a guest (decision 0055): its places are its host's lines, through its placement, found on the
-            // host and put in the chunk (`ChunkDoc::placed`).
+            // With a guest (decision 0055): its places are its host's lines, through its placement.
             let mut docs = make();
             let text = "y = [2,\n  3]\n";
             let file = FileInput::new("d0.py".to_owned(), "python".to_owned(), Arc::new(text.to_owned()), None, None, "core").unwrap();
@@ -1413,27 +1457,23 @@
             }
             // Each document's places read in place (decision 0353 step 4d): the views' reads over the batch's
             // directory, its tapes and core.rerail's lines in the batch's block; a guest's (a copied stretch) through its
-            // host's lines and its placement. With the guest and without. Made where the device's buffers have no
+            // host's lines and its placement. With the guest and without. None where the device's buffers have no
             // addresses, which the directory is of (OpenCL 1.2's, decision 0440 step C).
             let own_views = shaped(&store, make(), &Projection::core()).unwrap();
             for views in [&core_views, &own_views] {
                 for name in ["line", "end_line", "col", "docof"] {
                     let src = &views.iter().find(|(n, _)| *n == name).unwrap_or_else(|| panic!("{name}")).1;
-                    let d = src.device_view().unwrap_or_else(|| panic!("{name}: on the device"));
-                    assert_eq!(d.in_place.is_some(), device.has_addresses(), "{name}: read in place where buffers have addresses");
+                    let d = src.device_view();
+                    assert_eq!(d.is_some(), device.has_addresses(), "{name}: read in place where buffers have addresses");
+                    let Some(d) = d else { continue };
                     let n = src.len();
                     assert!(n > 0, "{name}: rows");
                     for cols in [vec![0, 1], vec![1]] {
                         let out = mj::DevRel::empty(cols.len(), n).unwrap();
                         let mut batch = mj::Batch::new().expect("the device");
-                        match &d.in_place {
-                            Some(v) => {
-                                let view = mj::DevRel::view(2, n, v.clone()).unwrap();
-                                let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
-                                batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
-                            }
-                            None => batch.expand_view(&d.block.device_buffer(device).unwrap(), d.root, d.view, &cols, &out).unwrap(),
-                        }
+                        let view = mj::DevRel::view(2, n, d.in_place.clone()).unwrap();
+                        let from: Vec<mj::Col> = cols.iter().map(|&c| mj::Col::From(c)).collect();
+                        batch.copy_rows(mj::Rows::Rel(&view), n, &from, mj::Rows::Rel(&out), 0).unwrap();
                         batch.finish().unwrap();
                         for (j, &c) in cols.iter().enumerate() {
                             let host: Vec<i64> = (0..n).map(|r| src.value(r, c)).collect();
@@ -1444,7 +1484,7 @@
             }
         }
         // The kind-set axes and containment, read whole: the batch's solve, a relation of ids written once where it is
-        // computed (decision 0353 step 5), which the device reads where it lies; no view of the chunk makes it.
+        // computed (decision 0353 step 5), which the device reads where it lies; no view makes it.
         use crate::code_rule_dsl::facts::vtab::syntax::within::{Axis, Mode, Within};
         use crate::code_rule_dsl::facts::nearest::Binding;
         use crate::code_rule_dsl::facts::vtab::Source as _;
@@ -1480,7 +1520,7 @@
         for (name, src) in &axes {
             let n = src.len();
             assert!(n > 0, "{name}: rows");
-            assert!(src.device_view().is_none(), "{name}: no view of the chunk makes it");
+            assert!(src.device_view().is_none(), "{name}: no view makes it");
             let held = src.in_block().unwrap_or_else(|| panic!("{name}: a relation in its block"));
             assert_eq!(held.rows as usize, n, "{name}");
             let dev = mj::DevRel::in_block(&held, 2).unwrap();
@@ -1499,6 +1539,9 @@
         }
         // On the device's binding the solve itself is made on the device: the host's rows, in its order, and its runs
         // per looked-up node.
+        // Read off the tape (decision 0353 step 4): the profile records no solve sent to the host.
+        crate::code_rule_dsl::logic::profile::set(true);
+        crate::code_rule_dsl::logic::profile::take_decisions();
         for axis in [Axis::Nearest, Axis::Inside] {
             let host = Within::axis(Arc::clone(&batch), axis, &kinds, Binding::Cpu);
             let dev = Within::axis(Arc::clone(&batch), axis, &kinds, Binding::Metal);
@@ -1516,6 +1559,9 @@
             // The device's solve, its answer as ids too: read where it lies.
             read_in_place("the device's solve", &dev, &[0, 1]);
         }
+        let sent: Vec<String> = crate::code_rule_dsl::logic::profile::take_decisions().into_keys().filter(|(t, x)| t == "kind-set axes (decision 0289)" && x.starts_with("solved on the host")).map(|(_, x)| x).collect();
+        crate::code_rule_dsl::logic::profile::set(false);
+        assert!(sent.is_empty(), "the device's binding solved on the device: {sent:?}");
         // The axes over one set share its solves (decision 0494 step 7): a set that nests nowhere (each document's root
         // kind, which no node of it is below) gives `inside` its `nearest`'s relation, read in place; a set that nests
         // gives each its own, the rows an axis alone makes. Either solved first, on either binding.
@@ -1539,10 +1585,13 @@
         }
         // Containment over every kind: a relation of exactly the total's rows, as many as the host's containment, and
         // the same rows on a second solve.
-        let chunk = batch.chunk();
-        let read = |c: &crate::code_rule_dsl::facts::nearest::InChunk| -> Vec<(i64, i64)> { (0..c.rows.len()).map(|r| (c.rows.get(r, 0), c.rows.get(r, 1))).collect() };
-        let once = mj::axis_in_chunk(&[chunk], None, true).unwrap();
-        let again = mj::axis_in_chunk(&[chunk], None, true).unwrap();
+        // Off the tape, through the batch's views' directory (decision 0353 step 4): no node column made for it.
+        let views = crate::code_rule_dsl::facts::vtab::syntax::device_chunk::views_in_place(&batch).expect("a directory");
+        let (node_view, nodes) = views.node_view(batch.block(), Arc::clone(&batch) as Arc<dyn std::any::Any + Send + Sync>).expect("the device reads the batch's tapes");
+        assert_eq!(nodes, node.len(), "the directory's node rows are the batch's");
+        let read = |c: &crate::code_rule_dsl::facts::nearest::SolvedOnDevice| -> Vec<(i64, i64)> { (0..c.rows.len()).map(|r| (c.rows.get(r, 0), c.rows.get(r, 1))).collect() };
+        let once = mj::axis_in_place(&node_view, nodes, batch.block(), views.at, None, true).unwrap();
+        let again = mj::axis_in_place(&node_view, nodes, batch.block(), views.at, None, true).unwrap();
         assert!(once.rows.len() > 0);
         assert_eq!(once.rows.len() as usize, Within::new(Arc::clone(&batch), Mode::Tree).len());
         // Room for its rows, rounded up to whole chunks: not a bound sized before the count.

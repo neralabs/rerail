@@ -1220,7 +1220,7 @@ impl Source for MadeRows {
         self.target().filter_eq(eqs)
     }
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn device_view(&self) -> Option<DeviceView<'_>> {
+    fn device_view(&self) -> Option<DeviceView> {
         self.done().and_then(|t| t.device_view())
     }
     fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {

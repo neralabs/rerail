@@ -392,7 +392,7 @@ pub struct GpuTotal {
     pub uploads: u64,
     pub upload_bytes: u64,
     /// Uploads by what was read (`UPLOAD_KINDS`): bytes and the host's CPU.
-    pub upload_by: [(u64, f64); 4],
+    pub upload_by: [(u64, f64); 3],
     /// Relations read where they lie, in their block (decision 0325): nothing uploaded.
     pub in_place: u64,
     pub sorts: u64,
@@ -3094,12 +3094,10 @@ pub mod tests {
 
 /// What a device's uploads read (`Report::upload_by`): a flat relation's rows (the store's), a view's rows (a
 /// source's, a tape view's read row by row), and the names of symbols (text tests, `str_cmp`).
-pub const UPLOAD_KINDS: [&str; 4] = ["flat relations", "views", "names", "views made on the device"];
+pub const UPLOAD_KINDS: [&str; 3] = ["flat relations", "views", "names"];
 pub const UPLOAD_FLAT: usize = 0;
 pub const UPLOAD_VIEW: usize = 1;
 pub const UPLOAD_NAMES: usize = 2;
-/// A view its batch's chunk block made on the device (decision 0289 §2): its bytes, and the host's CPU encoding it.
-pub const UPLOAD_MADE: usize = 3;
 
 /// What a stratum's device run did, for the profile.
 #[derive(Clone, Debug, Default)]
@@ -3141,7 +3139,7 @@ pub struct Report {
     pub uploads: u32,
     pub upload_bytes: u64,
     /// The uploads by what they read (`UPLOAD_KINDS`, in order): bytes and this thread's CPU.
-    pub upload_by: [(u64, f64); 4],
+    pub upload_by: [(u64, f64); 3],
     /// Relations read where they lie, in their block (decision 0325).
     pub in_place: u32,
     pub sorts: u32,

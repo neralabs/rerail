@@ -39,34 +39,34 @@ pub(crate) fn nearest(trees: &Trees<'_>, sets: &[Vec<i64>], binding: Binding) ->
     }
 }
 
-/// A kind-set axis's batch solve made on the device from the batch's chunk block (decision 0289 §2): per node row of
-/// the batch's `node`, the first of its rows (`nodes + 1` values, `u32`, in the chunk), and its rows, each the ids
-/// of `n` and `a`, written once into a relation of their own (decision 0353 step 5), which the host and the device
+/// A kind-set axis's batch solve made on the device off the tape (decision 0353 step 4): per node row of the batch's
+/// `node`, the first of its rows (`nodes + 1` values, `u32`, at `start` in the batch's block), and its rows, each the
+/// ids of `n` and `a`, written once into a relation of their own (decision 0353 step 5), which the host and the device
 /// read where it lies.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub struct InChunk {
+pub struct SolvedOnDevice {
     pub start: usize,
     pub rows: super::rows::Part,
 }
 
-/// What makes an axis's solve in a chunk: `members` per dialect tag (256) and kind code (1,024) a bit, `None` for
-/// every kind (containment); `inside` for every ancestor in the set, else the nearest.
+/// What makes an axis's solve on the device: a views' directory read in place (a batch's, or a layered source's of
+/// a batch and its tape values, decision 0431 §8), its `node` rows, the block its starts go in (the batch's),
+/// `members` per kind atom (256 tags of 1,024 slots) a bit, `None` for every kind (containment); `inside` for every
+/// ancestor in the set, else the nearest.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-/// Several chunks' rows go in one relation, each chunk's past those before (a chunk's batch and its tape values,
-/// decision 0431 §8); the starts are the first's.
-pub type ChunkAxis = fn(&[&crate::code_rule_dsl::facts::vtab::syntax::device_chunk::Chunk], Option<&[u32]>, bool) -> Result<InChunk, String>;
+pub type AxisSolve = fn(&crate::code_rule_dsl::facts::vtab::ViewInPlace, usize, &rerail_blocks::Block, usize, Option<&[u32]>, bool) -> Result<SolvedOnDevice, String>;
 
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-static CHUNK_AXIS: std::sync::OnceLock<ChunkAxis> = std::sync::OnceLock::new();
+static AXIS_SOLVE: std::sync::OnceLock<AxisSolve> = std::sync::OnceLock::new();
 
-/// Registers the device's solve of an axis in a chunk (once, at load: the Metal device's).
+/// Registers the device's solve of an axis (once, at load: the Metal device's).
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub fn install_chunk_axis(solve: ChunkAxis) {
-    let _ = CHUNK_AXIS.set(solve);
+pub fn install_axis_solve(solve: AxisSolve) {
+    let _ = AXIS_SOLVE.set(solve);
 }
 
-/// The device's solve of an axis in a chunk, when one is registered.
+/// The device's solve of an axis, when one is registered.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub(crate) fn chunk_axis() -> Option<ChunkAxis> {
-    CHUNK_AXIS.get().copied()
+pub(crate) fn axis_solve() -> Option<AxisSolve> {
+    AXIS_SOLVE.get().copied()
 }

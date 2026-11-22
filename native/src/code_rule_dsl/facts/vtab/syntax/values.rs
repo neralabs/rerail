@@ -92,7 +92,7 @@ pub struct Values {
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub(super) struct Dir {
     pub(super) views: super::device_chunk::ViewsInPlace,
-    _batches: Vec<Arc<super::Batch>>,
+    batches: Vec<Arc<super::Batch>>,
 }
 
 impl Values {
@@ -159,7 +159,7 @@ impl Values {
         {
             return made.clone();
         }
-        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, _batches: batches.clone() }));
+        let made = super::device_chunk::views_over(batch, &batches).map(|views| Arc::new(Dir { views, batches: batches.clone() }));
         *dir = Some((batches.len(), made.clone()));
         made
     }
@@ -272,14 +272,13 @@ impl Layered {
 
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl Layered {
-    /// A view's rows on the device: the chunk's batch's and its values', read in place through their directory. The
-    /// base's view as the device reads it (its kind, its block), its directory that of every document.
-    fn view_over(&self) -> Option<DeviceView<'_>> {
+    /// A view's rows on the device: the batch's and its values', read in place through their directory. The base's
+    /// view as the device reads it (its kind), its directory that of every document.
+    fn view_over(&self) -> Option<DeviceView> {
         let batch = self.base.python_batch()?;
         let mut dv = self.base.device_view();
         let dv_ref = dv.as_mut()?;
-        // A view not read in place is made from the chunk's batch alone: it holds none of the values' rows.
-        let v = dv_ref.in_place.as_mut()?;
+        let v = &mut dv_ref.in_place;
         let dir = self.values.dir(&batch)?;
         let views = &dir.views;
         let loc = (super::device_chunk::VIEW_LOC_LINE..=super::device_chunk::VIEW_LOC_DOCOF).contains(&dv_ref.view);
@@ -295,8 +294,8 @@ impl Layered {
         dv
     }
 
-    /// An axis's rows on the device (a base made on lookup): the device's solve of the chunk's batch and of its
-    /// values', in one relation, made again when values are admitted after it. Its rows are more than the source
+    /// An axis's rows on the device (a base made on lookup): the device's solve of the batch and of its values', off
+    /// their tapes, in one relation, made again when values are admitted after it. Its rows are more than the source
     /// numbers (a value's are made on lookup, `MADE_AT`): a reader that binds it reads every pair.
     fn solved_in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         let base = self.base.as_any()?.downcast_ref::<super::within::Within>()?;
@@ -309,7 +308,11 @@ impl Layered {
             return made.as_ref().map(|w| w.in_block(w.len()));
         }
         let more: Option<Vec<&super::within::Within>> = p.list.iter().map(|x| x.src.as_any().and_then(|a| a.downcast_ref::<super::within::Within>())).collect();
-        let made = more.and_then(|m| base.solved_with(&m));
+        // Over the layered directory of the batch and its values (`views_over`), read off their tapes: one value's
+        // axis a batch of it, in the order admitted.
+        // The axis's own batch: an axis is no node source (`python_batch`).
+        let dir = self.values.dir(base.batch())?;
+        let made = more.filter(|m| m.len() == dir.batches.len()).and_then(|m| base.solved_with(&m, &dir.views, Arc::clone(&dir) as Arc<dyn std::any::Any + Send + Sync>));
         solved.insert(self.name.clone(), (p.list.len(), made.clone()));
         made.map(|w| w.in_block(w.len()))
     }
@@ -546,7 +549,7 @@ impl Source for Layered {
         self.values.whole(&self.name).filter(|w| w.len() == self.len()).and_then(|w| w.in_block())
     }
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn device_view(&self) -> Option<DeviceView<'_>> {
+    fn device_view(&self) -> Option<DeviceView> {
         if !self.has_parts() {
             return self.base.device_view();
         }

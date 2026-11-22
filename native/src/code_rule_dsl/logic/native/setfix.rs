@@ -4038,6 +4038,10 @@ impl View {
     pub fn whole(&self) -> bool {
         self.ids.is_none()
     }
+    /// Its constant filters, each a column of its source and the value it holds (`WHERE c = v`).
+    pub fn eqs(&self) -> &[(usize, i64)] {
+        &self.eqs
+    }
     /// The source's column that view column `c` reads.
     pub fn column(&self, c: usize) -> usize {
         self.cols[c]
@@ -4642,6 +4646,15 @@ impl InRel {
         let n = rows.len();
         let flat: Vec<i64> = rows.iter().flat_map(|r| r.iter().copied()).collect();
         Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n, rows: Rows::frozen(k, flat, n), view: None, base: false, types, stored: n, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None })
+    }
+    /// `src`'s columns `cols`, filtered by `eqs` (each a column of `src` and its value), as `view` opens a
+    /// `SELECT cols ... WHERE c = v` input.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn over_filtered(src: Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, cols: Vec<usize>, eqs: Vec<(usize, i64)>, types: Vec<u8>) -> Arc<InRel> {
+        let k = types.len();
+        debug_assert_eq!(cols.len(), k);
+        let view = View { src, cols, ids: Some(OnceLock::new()), eqs };
+        Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k, n: 0, rows: Rows::new(k), view: Some(view), base: false, types, stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: BlockVec::new(), ndead: 0, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None })
     }
     /// A view of `src`'s columns `cols`, read in place (`hold_view_in_place`): its rows the source's, row for row, a
     /// row found by a column the source keys (`Keyed`).

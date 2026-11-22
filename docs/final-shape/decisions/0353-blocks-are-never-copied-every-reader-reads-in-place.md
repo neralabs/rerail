@@ -381,9 +381,9 @@ Each row is marked in the code with `copy (0353 step N)`.
 |---|---|---|---|---|
 | 1 | Gone (step 3): the projection's per-node arrays. `core`, `local`, `up`, `size` and `fielded` are the rank index; scans carry `idx` and `depth` in the walk, and a point read climbs for `depth`. Only a point read of `idx` makes a column, derived once (see "Node identity") | — | — | Done |
 | 2 | Gone (step 2): definition ids by node, `DefIds::low`, `order`, `back`. The granule table answers them. | — | — | Done |
-| 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 22 bytes a node; 0.07 s a run | Step 4 |
-| 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 660.8 MB, 111.5 ms a run | Step 4 |
-| 5 | Views and flat relations uploaded from the host. Symbols' names no longer (0478 step 2e, 2026-11-19: every text kernel reads them through the atoms directory; `texts` and `DevText` are deleted). `tape`, `ast_depth` and `node_order` are read in place since 2026-11-20 (`view_tape`, `view_depth`, `view_order`, written once in CLIF: a node's parent, its numbered nodes under it by `view_end`'s rank, its depth by a climb, its order key by `num_order_of`): on the M3's 300-file run they were 69.8 MB (`ast_depth`) and 13.7 MB (`tape`) of 176.3 MB uploaded (ab111). Each upload is counted by why it was not read in place and by its columns (`device.upload (...)`) | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident` | 176.3 MB, 647.5 ms a run before (ab111) | Steps 4, 6 |
+| 3 | The chunk block's node columns: `core`, `up`, `fielded`, `low`, `start`, `end`, `kind`, `field`, and the canonical code copy. `low` is made by one scan of the granule table. `core`, `up` and `fielded` are made here from the rank index and the walk, now that the host holds no arrays of them. | `device_chunk.rs`, `build` (`made`, `made_in_order`, `put`) | 0: gone | Done (step 4, 2026-11-22) |
+| 4 | Views expanded into device relations | `metal_join.rs`, `expand_view`; `device.rs`, `resident` | 0: gone | Done (step 4, 2026-11-22) |
+| 5 | Views and flat relations uploaded from the host. Symbols' names no longer (0478 step 2e, 2026-11-19: every text kernel reads them through the atoms directory; `texts` and `DevText` are deleted). `tape`, `ast_depth` and `node_order` are read in place since 2026-11-20 (`view_tape`, `view_depth`, `view_order`, written once in CLIF: a node's parent, its numbered nodes under it by `view_end`'s rank, its depth by a climb, its order key by `num_order_of`): on the M3's 300-file run they were 69.8 MB (`ast_depth`) and 13.7 MB (`tape`) of 176.3 MB uploaded (ab111). Each upload is counted by why it was not read in place and by its columns (`device.upload (...)`) | `metal_join.rs`, `DevRel::upload`; `device.rs`, `resident` | 0.0 MB in 39 calls on cold hogql (M1 Max, 2026-11-22); 69.7 MB before step 4, 176.3 MB before (ab111) | Step 6 (step 4's share done, 2026-11-22) |
 | 6 | Gone (step 5, 2026-11-18): an axis's pairs copied into the chunk, then expanded to ids. The solve writes ids once into a relation of its own, which every reader reads where it lies; `put_pairs` and `VIEW_AXIS` are deleted. `has` probed by its node or its ancestor is walked on the tape on the device (6fdbc1eb2, `DevRel::has`); read whole or by both columns it is still uploaded (row 5). Measured (ab98, 2026-11-20, the M3, 300 files, `--metal`, 1 GB, load 5–9; each arm with 960374749f's planner fix): 463 violations each run; instructions 544 G without the walk, 554 G with it (means of three runs, within their spread of about 30 G), wall 24 s each; `has` walked 6 times a run; row 5's uploads rose from 312.1 MB in 863 calls to 454.3 MB in 949, since strata a keyed `has` kept on the CPU now run on the device and upload their other inputs | — | — | Done |
 | 7 | `core.rr`'s and the vtab's per-node rows: tape answers (`line`, `end_line`, `col`, `docof`, `visit_index`, `doc_root`, `host_node`) and eager derived values (`text`, `parts`, `words`, `intval`, `op_t`). In core.rerail's shape a node's `text` is read in place (2026-11-22); left: T's shape's `NodeRows` (Q121) and `text` of a span or of a node only a cross-file relation binds | `syntax.rs` `node rows`, `NodeRows`; `core_rr`; `tree.rs`; `guests.rs` | 0.0 MB, 0.3 ms on cold hogql (0.45–0.49 s of CPU a run before) | Step 3 |
 | 8 | The CPU's head rows, staged in `Fresh`, merged by `extend_from_slice`, then pushed into the relation | `setfix.rs`, `Fresh` | Every row a CPU stratum derives | Step 6 |
@@ -392,7 +392,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 11 | The transducer's packed batch: 44 bytes a node, and its child lists | `PackedBatch::nodes` (0293 "Interim") | Each matched batch | Step 7 |
 | 12 | Findings, frames and memo entries copied into rows of their own | The output, frames and memo stores | Not yet measured | Step 8 (0325 step 7) |
 | 13 | The transducer's residency: every tape it reads copied into slabs of its own. (Documents copied between slabs, `gather`, are gone, 0471: a batch reads each document in its own slab, by the slabs' GPU addresses.) | `residency::slabs::admit_docs`, `insert`'s `place` | Each tape a Metal batch reads | Step 7 |
-| 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 4 bytes a line, 8 a span, each batch that makes the views | Step 4 |
+| 14 | Found 2026-11-17: the line starts copied into the chunk block for the `line` and `Loc` views, and the spans past a document's nodes beside them; a guest's places made there. Both views read in place where the batch's tapes are on the device (step 4d); the copies are the fallback of a batch whose tapes are not, or with a guest placed by pieces or segments | `device_chunk.rs`, `fill_lines`, `fill_locs` | 0: gone | Done (step 4, 2026-11-22) |
 | 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
 | 16 | Gone (0446, 2026-11-19): a label level's fact rows, uploaded as `(node, label)` pairs for the pattern kernels (`Pass::Fact`). The host writes the findings once into the batch's fact block, and the CPU and the kernels read them there | — | — | Done |
 | 17 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`); a queued tape not in a room read into a vector (`queued_image`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image` | 4.1 MB a run on hogql 16z | Step 4a |
@@ -988,6 +988,35 @@ Tests: `text_of_a_bound_node_is_read_in_place` (each kind of binder; spans, look
 T's shape kept), the warm and made-batch tests, and the quick tiers of rerail-logic, rerail-tests-logic and
 rerail-tests-lang on Linux. Cold hogql gives the same 1,629 findings at 80.1 B instructions (88 B before; this Mac at
 a load of about 11), and row 7 counts 0.0 MB and 0.3 ms.
+
+**Step 4: the GPU reads every view in place** (2026-11-22). The chunk is gone: `device_chunk::build`, its node
+columns and codes (row 3), `expand_view` and the views made from them (row 4), and the line starts and spans copied
+beside them (row 14). `chunk_views.uglykl` is deleted. A view the batch's directory does not read in place is not
+made on the device: `Source::device_view` gives `None` (counted as `views.refused.not_on_device.<view>`), and the
+stratum reads the source's rows where they lie, or uploads them as any other host relation (row 5, step 6).
+- **The kind-set axes are solved off the tape.** `axis_count` and `axis_write` (join_stages.uglykl) climb each node's
+  ancestors through `clif_view_up` over the batch's `node` view (`ViewsInPlace::node_view`), and test each one's
+  kind atom against the set's bits. They write the pairs' ids into one relation in a block (`Part::over_key_runs`),
+  with each node's run start in the batch's block (`metal_join::axis_in_place`, installed as
+  `nearest::AxisSolve`). A layered source's axis is solved the same way over its layered directory
+  (`views_over`), the batch's rows and then each value's. An axis is no node source, so the layered solve takes the
+  axis's own batch (`Within::batch`); asking `python_batch` sent containment's every-ancestor relation to the host,
+  873 MB uploaded a run.
+- **A view filtered by constants is read in place whole** (`WHERE idx = 0`, `View::eqs`; row 5's step-4 share). The
+  stage adds each constant as a key (`with_consts`): its index is over its key columns and the filtered ones, a
+  parent's walk (`by_parent`) takes the children off the tape, and `matches` checks every candidate against the
+  constants. Its columns are the source's (`View::column`), never `owner_col`'s, which maps a whole view's alone.
+  A stage that checks no keys (a filter, mode 3) uploads the filtered rows as before.
+
+Measured on cold hogql on the M1 Max, Metal: 1,629 findings, the same digest as the CPU run. The copies table counts
+35.9 MB in all, 662 MB with only the chunk removed (the axis uploaded), and 69.7 MB of row 5 before. What is left is
+row 5's 39 calls of host relations (step 6), rows 8 and 9 (step 6), and row 17 (step 4a). Tests:
+`a_filtered_view_is_read_in_place_its_constants_keys` (a view of reordered columns, each kind of probe and a
+filter's), `a_has_axis_on_the_device_is_walked_on_the_tape`, `views_read_on_the_device_are_the_hosts_rows`,
+`a_view_not_read_in_place_is_not_made_on_the_device`, and the containment test over `axis_in_place`. They run with
+the rest of rerail-device-metal's setfix and join tests on the M1 Max, and the syntax tests run on Linux. The
+device-metal test binary now registers the carried context and the core names as it loads (`test_load`), as
+rerail-logic's does. Without them, five tests whose runs hand jobs to the pool panicked.
 
 ## What it replaces
 

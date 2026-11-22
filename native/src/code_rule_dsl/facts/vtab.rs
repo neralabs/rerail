@@ -50,19 +50,16 @@ pub trait RowCells: Send+Sync {
 }
 pub struct ReadRow {pub id:i64,pub cells:Arc<dyn RowCells>}
 pub trait RowStream:Send {fn next(&mut self)->Option<ReadRow>;}
-/// A view the device makes in place from a chunk block (`Source::device_view`, decision 0289).
+/// A view the device reads in place (`Source::device_view`, decision 0353 step 4): nothing makes its rows.
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-pub struct DeviceView<'a> {
-    pub block: &'a rerail_blocks::Block,
-    pub root: usize,
+pub struct DeviceView {
     pub view: u32,
     pub rows: usize,
-    /// Where a stage reads the view in place (decision 0353 step 4d), when it can: nothing makes its rows.
-    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    pub in_place: Option<ViewInPlace>,
-    /// With `in_place`, the view's relation of no columns, whose block its probes' indexes go in (decision 0478 step
-    /// 3, R4): made once by the source, which holds it (its batch's life), so every stratum on any thread finds them.
-    pub home: Option<crate::code_rule_dsl::facts::rows::Part>,
+    /// Where a stage reads it: its batch's directory, the buffers its reads reach.
+    pub in_place: ViewInPlace,
+    /// The view's relation of no columns, whose block its probes' indexes go in (decision 0478 step 3, R4): made once
+    /// by the source, which holds it (its batch's life), so every stratum on any thread finds them.
+    pub home: crate::code_rule_dsl::facts::rows::Part,
 }
 
 /// A view a stage reads in place (decision 0353 step 4d): its batch's directory's GPU address, the view's number in
@@ -297,10 +294,10 @@ pub trait Source: Send + Sync {
     fn has_walk(&self) -> Option<HasWalk> {
         None
     }
-    /// A view the device makes from its batch's chunk block (decision 0289): the block, its root, the view's code
-    /// (`syntax::device_chunk::VIEW_*`) and its rows. `None`: the device uploads its rows.
+    /// A view the device reads in place (decision 0353 step 4): its code (`syntax::device_chunk::VIEW_*`), its rows,
+    /// its directory. `None`: the device does not read it where it lies.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
-    fn device_view(&self) -> Option<DeviceView<'_>> {
+    fn device_view(&self) -> Option<DeviceView> {
         None
     }
     /// Its rows as one relation of `rerail_blocks` in one block, every source column at its own place, which the
