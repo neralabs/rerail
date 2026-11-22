@@ -301,7 +301,7 @@ hit(f) :- fn(f), count : { ident(x), count : { ref(n,f,x) } = 0 } > 0.
 }
 
 /// A guard that reads a key only through a comparison (`byte(q, 92)` with `q = p - 1`) restricts the demand too: the
-/// demand of "the last byte before p that is not a backslash", asked where the byte before p is a backslash, is those
+/// demand of an aggregate that reads `p` in its body, asked where the byte before p is a backslash, is those
 /// positions, not every byte (the pairs below each, every pair of the text's bytes, were 17.9 M rows of a 6 KB text).
 /// That is the aggregate as written (`RERAIL_ASOF=off`): by default it is bounded by its probe (decision 0511), one
 /// helper of the bytes alone, and asks no demand.
@@ -315,7 +315,8 @@ fn a_guard_reached_through_a_comparison_restricts_the_demand() {
 odd(p) :- byte(p, _), q = @sub(p, 1), byte(q, 92), m = max j : { byte(j, v), v != 92, j < p }, @sub(p, m) = 3.
 "#;
     let bounded = rr::parse_version(src).unwrap();
-    assert!(rules(&bounded, |h| h.starts_with("rr_demand_agg")).is_empty(), "a bounded aggregate asks no demand: {}", bounded.show());
+    assert!(rules(&bounded, |h| h.starts_with("rr_demand_agg") || h.starts_with("rr_ctx")).is_empty(), "a bounded aggregate asks no demand and keeps no context of its probes: {}", bounded.show());
+    stratifies(&bounded);
     let _as_written = crate::code_rule_dsl::logic::plan::corpus::switches::set(&[("RERAIL_ASOF", "off")]);
     let p = rr::parse_version(src).unwrap();
     let demand = *rules(&p, |h| h.starts_with("rr_demand_agg")).first().unwrap_or_else(|| panic!("no demand: {}", p.show()));

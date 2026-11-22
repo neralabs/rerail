@@ -300,9 +300,9 @@ mod ops {
 
     /// Every op declared in `module` with `linkage` and defined there, each calling the others by its id there (as
     /// `declare_func_in_func`): the JIT's (`jit::Writer`), and a module whose own code calls the ops (tier 2's,
-    /// decision 0434 §6, R17). Each op's id and signature, by name. `near`: the module's code is in one arena, so a
-    /// call between the ops is a direct branch (`colocated`); else each is long-range, as a module's code can be
-    /// mapped farther apart than a branch reaches.
+    /// decision 0434 §6, R17). Each op's id and signature, by name. `near`: the module's code is in one arena (or one
+    /// object), so an op's call of another is a direct branch; else a long-range call, as two of a JIT's mappings may
+    /// be farther apart than a `bl` reaches.
     pub fn define_ops<M: cranelift_module::Module>(module: &mut M, linkage: cranelift_module::Linkage, near: bool) -> Result<std::collections::HashMap<&'static str, (cranelift_module::FuncId, Signature)>, String> {
         use cranelift_module::FuncId;
         // An op's call of another: the module's function of that name, by its id.

@@ -1,0 +1,43 @@
+[package]
+name = "rerail-cpu-stream"
+version = "0.1.0"
+edition = "2024"
+publish = false
+description = "Tier 2 on the CPU: the stream program's words lowered to Cranelift, the tape they write, its clusters, and the parser of both tiers."
+# The vendored Cranelift's cfgs (`cranelift_clmul`, `cranelift_preserve_most`), set as for the compiler's front end.
+build = "../compiler/build.rs"
+
+[features]
+# The ladder (`ladder`) and the tests read the Bitlex compiler, which nothing else here does.
+test-hooks = ["dep:rerail-bitlex", "rerail-bitlex/test-hooks", "rerail-compiler/test-hooks", "rerail-cpu-block/test-hooks", "rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail-metal/test-hooks"]
+
+[dependencies]
+rerail-compiler = { path = "../compiler" }
+rerail-cpu-block = { path = "../cpu_block" }
+rerail-bitlex = { path = "../bitlex", optional = true }
+# The engine's tape, which tier 2 writes (decision 0140).
+rerail-tape-format = { path = "../tape_format" }
+# The tape's reads written once, and the inlining pass every JIT function goes through (decision 0310).
+rerail-clif = { path = "../clif" }
+# Bitlex's parser, for the ladder's grammars.
+bitlex = { path = "../../../tools/bitlex", default-features = false }
+cranelift-codegen = "=0.125.4"
+cranelift-frontend = "=0.125.4"
+cranelift-module = "=0.125.4"
+# The host's ISA and its flags, for tier 2's own ISA (`Cut::unsigned`).
+cranelift-native = "=0.125.4"
+
+[target.'cfg(not(target_family = "wasm"))'.dependencies]
+cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }
+
+# The browser build: a page has no executable memory (the engine's `wasm/README.md`).
+[target.'cfg(target_family = "wasm")'.dependencies]
+cranelift-jit-wasm = { path = "../../wasm/cranelift-jit" }
+
+# Tier 2 over tier 1's buffers where the device layer left them (`tier2_on`).
+[target.'cfg(any(target_os = "macos", target_os = "linux", windows))'.dependencies]
+rerail-metal = { path = "../metal" }
+
+[dev-dependencies]
+# This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
+rerail-cpu-stream = { path = ".", features = ["test-hooks"] }

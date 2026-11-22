@@ -1009,6 +1009,18 @@ const repositoryEnvironment = new Set([
 ]);
 
 /**
+ * Drops this process's repository variables ({@link repositoryEnvironment}): for a command whose arguments name the
+ * checkout it reads, run in a process of its own (a headless scan, from a Git hook too), so every Git it starts, and
+ * every placement it asks of Git or of the engine's reads, is of that checkout. A process serving other checkouts
+ * keeps them.
+ */
+export function leaveInheritedRepository(): void {
+  for (const key of Object.keys(process.env)) {
+    if (repositoryEnvironment.has(process.platform === "win32" ? key.toUpperCase() : key)) delete process.env[key];
+  }
+}
+
+/**
  * `git -C <cwd> <args>` with fsmonitor and hooks disabled, in {@link gitEnvironment} (no optional locks, no lazy fetch
  * of a partial clone's missing objects), and a 10 s default timeout; throws {@link GitUnavailableError} when Git is
  * missing, never on a non-zero exit. When the Git kept for the process is gone, it runs once more with the Git found

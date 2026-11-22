@@ -23,7 +23,7 @@ impl Sources {
     }
 
     /// A Git source's path includes its immutable object identity, so it needs no filesystem stat.
-    pub(super) fn keep_git(&self, path: &Path, bytes: &[u8]) {
+    pub fn keep_git(&self, path: &Path, bytes: &[u8]) {
         let Ok(text) = std::str::from_utf8(bytes) else { return };
         self.0.lock().insert(path.to_path_buf(), (None, text.to_owned()));
     }

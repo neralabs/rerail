@@ -136,7 +136,7 @@ fn sql_sessions_use_shared_explain_profiles_including_errors_and_native_work() {
             && component_loop
             && insertion_coverage
     );
-    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).parent().unwrap().to_path_buf();
+    let root = crate::source_tree::native().parent().unwrap().to_path_buf();
     let output = std::process::Command::new("node")
         .arg(root.join("scripts/profiling/sql-report.mjs"))
         .arg("--sql-session")

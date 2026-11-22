@@ -9,14 +9,13 @@ use crate::code_rule_dsl::matcher::{GrammarMatcher, MatchTree, Stop, match_tree,
 use crate::code_rule_dsl::model::{ClauseKind, Query};
 use crate::code_rule_dsl::tape::{Grammar, TapeImage};
 use crate::code_rule_dsl::test_support::CAPABILITIES;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use ast_grep_core::AstGrep as Root;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 fn pack() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python")
+    crate::source_tree::native().join("../packs/python")
 }
 
 fn files(directory: &Path, extension: &str, found: &mut Vec<PathBuf>) {
@@ -53,7 +52,7 @@ fn clauses() -> Vec<(String, crate::code_rule_dsl::CompiledCodeRuleDsl)> {
         .filter_map(|path| {
             let text = std::fs::read_to_string(&path).ok()?;
             let compiled =
-                CodeRuleDslRuntime::compile(text, "json".to_owned(), CAPABILITIES.to_owned()).ok()?;
+                crate::code_rule_dsl::rule_api::compile(&text, "json", CAPABILITIES).ok()?;
             let name = path.file_stem()?.to_string_lossy().into_owned();
             Some((name, compiled))
         })
@@ -300,7 +299,7 @@ fn a_recursive_utility_inside_another_settles() {
             "violation": { "anchor": "witness.span", "code": "NESTED", "message": "A list concatenation." }
         }]
     }"#;
-    let compiled = CodeRuleDslRuntime::compile(policy.to_owned(), "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let compiled = crate::code_rule_dsl::rule_api::compile(policy, "json", CAPABILITIES).expect("the policy compiles");
     let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
     let program = LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles");
     let tape = python_tape("x = ['a'] + b + c\ny = (['a'] + b) + c\nz = d + e\n");
@@ -342,7 +341,7 @@ fn seeded_clauses() -> (crate::code_rule_dsl::CompiledCodeRuleDsl, TapeDoc) {
             "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{}]}}"#,
         clauses.join(", ")
     );
-    let compiled = CodeRuleDslRuntime::compile(policy, "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy, "json", CAPABILITIES).expect("the policy compiles");
     let tape = python_tape("import os\nx = 1\nprint(x)\n\ndef f(a, b=2, *c):\n    g(a, b)\n    return a\n\nclass K:\n    def m(self):\n        x\n\ns = f\"plain\"\nt = f\"{x}\"\nu = \"{x}\"\nv = f\"{1:>10}\"\n");
     (compiled, tape)
 }
@@ -419,7 +418,7 @@ fn nested_recursion() -> LoweredMatcher {
             "violation": { "anchor": "witness.span", "code": "NESTED", "message": "A list concatenation." }
         }]
     }"#;
-    let compiled = CodeRuleDslRuntime::compile(policy.to_owned(), "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let compiled = crate::code_rule_dsl::rule_api::compile(policy, "json", CAPABILITIES).expect("the policy compiles");
     let (_, grammar) = python_matchers(&compiled).next().expect("a Python clause");
     LoweredMatcher::lower(&match_tree(grammar).expect("the clause lowers")).expect("the tree compiles")
 }
@@ -511,7 +510,7 @@ fn facts_on_metal_are_read_in_their_block() {
             "scope": {{"include": ["**/*"], "exclude": []}}, "clauses": [{}]}}"#,
         clauses.join(", ")
     );
-    let compiled = CodeRuleDslRuntime::compile(policy, "json".to_owned(), CAPABILITIES.to_owned()).expect("the policy compiles");
+    let compiled = crate::code_rule_dsl::rule_api::compile(&policy, "json", CAPABILITIES).expect("the policy compiles");
     let tapes = vec![
         python_tape("x = 1\ny = \"s\"\nz = 2\nprint(x, y)\n"),
         python_tape("def f(a, b):\n    c = 3\n    d = a\n    return c\n"),
@@ -532,7 +531,7 @@ fn facts_on_metal_are_read_in_their_block() {
 /// S2's parity gate (O23, F1): every lowered clause's passes run on Metal over the whole batch of
 /// fixtures, in one command buffer (plus one per extra round of a recursive group), and give the
 /// CPU interpreter's root sets on every fixture.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn lowered_clauses_find_the_same_roots_on_metal() {
     use super::compile_matcher::Backend;
@@ -602,7 +601,7 @@ fn lowered_clauses_find_the_same_roots_on_metal() {
 /// passes mark their bits as they publish (`packed_batch::MARKS`). A clause refused for the
 /// interpreter's per-lane workspace or the launch bound (5 of 39, O38; the packed batch refused the
 /// same ones) is counted, not compared: it runs as walks in production.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
     use super::compile_matcher::Backend;
@@ -654,7 +653,7 @@ fn lowered_clauses_find_the_same_roots_on_the_resident_interpreter() {
 /// Decision 0334: the label sweep under the replanned budget, with every program it walks priced at almost nothing
 /// (a step per node, times the slack). Its tasks run over their budgets, the run goes again with twice the budget
 /// until they finish, and it finds the full budget's roots.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots() {
     use crate::code_rule_dsl::transducer::packed::evaluation_costs::{self, Rate};
@@ -716,6 +715,8 @@ fn a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it
     // One large file (the fixtures' sources one after another) and a few small ones.
     let mut sources = Vec::new();
     files(pack().join("upstream").as_path(), "py", &mut sources);
+    // Without them the large file is empty, and no evaluation outruns its budget: say so.
+    assert!(!sources.is_empty(), "no fixtures under {}: the packs' test data is not pulled (`npm run fixtures:pull`)", pack().join("upstream").display());
     sources.sort();
     let joined: String = sources.iter().step_by(8).filter_map(|path| std::fs::read_to_string(path).ok()).collect::<Vec<_>>().join("\n");
     let mut tapes = vec![python_tape(&joined)];
@@ -858,7 +859,7 @@ fn replan_finds_the_full_budgets_roots_on_the_pack() {
     replan_finds_the_full_budgets_roots(super::compile_matcher::Backend::Cpu, 16);
 }
 
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn on_metal_replan_finds_the_full_budgets_roots_on_the_pack() {
     // Wider waves: a Metal wave's time is mostly its dispatches, not its clauses.
@@ -869,7 +870,7 @@ fn on_metal_replan_finds_the_full_budgets_roots_on_the_pack() {
 /// the interpreter (no micro walks). Where W is priced higher, a run whose tasks ran over goes again with twice the
 /// budget and finds the full run's roots; where W is priced lower, the unfinished (pass, file) go to W
 /// (`WaveRun::limited`: the clause's candidates, every root the full run found among them).
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not() {
     use super::compile_matcher::{Backend, LoweredWave};
@@ -877,6 +878,8 @@ fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where
     use metal_program_backend::label_passes::INTERPRET_ONLY;
     let mut sources = Vec::new();
     files(pack().join("upstream").as_path(), "py", &mut sources);
+    // Without them the large file is empty, and no evaluation outruns its budget: say so.
+    assert!(!sources.is_empty(), "no fixtures under {}: the packs' test data is not pulled (`npm run fixtures:pull`)", pack().join("upstream").display());
     sources.sort();
     let joined: String = sources.iter().step_by(8).filter_map(|path| std::fs::read_to_string(path).ok()).collect::<Vec<_>>().join("\n");
     let mut tapes = vec![python_tape(&joined)];
@@ -946,7 +949,7 @@ fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where
 
 /// The Metal gate's mutation check: a widened walk must differ from W's matcher on Metal too, over the CPU check's
 /// tapes (`widened_tapes`), 16 a launch.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn metal_catches_a_widened_walk() {
     let tapes = widened_tapes();
@@ -1096,7 +1099,7 @@ fn anchored_walks_find_the_unanchored_roots() {
 /// recursive groups, the wave's listed roots and the root records' walks, their text tests reading the walks' rows; and
 /// the formula passes as device formulas (§9). With and without them (`RERAIL_ANCHORS`, `RERAIL_SETS=walk`), on Metal
 /// both: the settled findings of the wave's roots are the same, and so are the root records from every node.
-#[cfg(all(any(target_os = "macos", target_os = "linux"), feature = "metal-tests"))]
+#[cfg(all(any(target_os = "macos", target_os = "linux", windows), feature = "metal-tests"))]
 #[test]
 fn on_metal_anchored_walks_find_the_unanchored_roots() {
     use super::compile_matcher::Backend;
@@ -1680,7 +1683,7 @@ fn micro_walks_are_the_interpreters_label_outputs() {
 /// Whether a walk's first move, reached from its start through saves, forks and jumps only, is `after` with a tail
 /// that marks the start alone (tests, a `load` and its tests, a capture, the emit): the shape the device answers once
 /// for a parent's children (`label_passes.uglykl`'s `sibling_pass`, work queue Q182).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn sibling_shape(words: &[u32]) -> bool {
     let (mut pc, mut seen) = (0, 0);
     while pc < words.len() && seen <= words.len() {
@@ -1715,7 +1718,7 @@ fn sibling_shape(words: &[u32]) -> bool {
 /// gives frames away (a descendant range halved, a move frame whole), and the wave's findings on Metal are still the
 /// CPU's (each side's roots, or W's matcher at its candidates where it gave the clause to W: a backend may stop at
 /// its limit where the other does not). A frame lost, walked twice where a tally counts, or given its walk's wrong start shows here.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn spilled_walks_find_the_cpus_roots() {
     use super::compile_matcher::Backend;
@@ -1829,7 +1832,7 @@ const BINDING_FIXTURES: &[&str] = &[
     "flake8_bugbear/B006_B008.py", "flake8_return/RET504.py",
 ];
 fn binding_fixtures() -> Vec<(String, TapeDoc)> {
-    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../packs/python/upstream/ruff/fixtures");
+    let root = crate::source_tree::native().join("../packs/python/upstream/ruff/fixtures");
     BINDING_FIXTURES
         .iter()
         .map(|path| {

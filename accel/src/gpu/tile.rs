@@ -332,7 +332,3 @@ DEFINE_KERNEL2(join, tile_scatter,
     }
 }
 
-/// Compiles the tile pairs' sort ahead of its first use (the tile kernels themselves are made per key forms).
-pub fn prewarm() {
-    let _ = super::join::prewarm_pair_sort();
-}

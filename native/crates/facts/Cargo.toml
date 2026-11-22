@@ -40,7 +40,7 @@ system-allocator = ["rerail-lang/system-allocator"]
 code-rule-profile = ["rerail-lang/code-rule-profile"]
 p-anchor-corpus = ["rerail-lang/p-anchor-corpus"]
 metal-tests = ["rerail-lang/metal-tests"]
-test-hooks = ["rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-lang/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks", "rerail-rr-parser/test-hooks"]
+test-hooks = ["rerail-tape-format/test-hooks", "rerail-clif/test-hooks", "rerail-blocks/test-hooks", "rerail-lang/test-hooks", "dep:tempfile", "rerail-compiler/test-hooks", "rerail-prof/test-hooks", "rerail-rr-syntax/test-hooks", "rerail-store/test-hooks"]
 
 [dependencies]
 # A chunk's admitted values' parts, read without a lock by every probe of a layered source (`values::Values`).
@@ -105,7 +105,6 @@ rerail-accel = { path = "../../../accel" }
 # The device layer's buffers, as a view read in place names them for the stages (`vtab::ViewInPlace`).
 rerail-device = { path = "../../../gpu/device" }
 rerail-compiler = { path = "../compiler" }
-rerail-rr-parser = { path = "../rr_parser" }
 
 [target.'cfg(not(target_family = "wasm"))'.dependencies]
 cranelift-jit = { version = "=0.125.4", features = ["selinux-fix"] }

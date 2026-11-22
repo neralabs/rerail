@@ -573,11 +573,11 @@ impl Prepared {
     }
 }
 
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn hex(bytes: &[u8]) -> String {
+pub fn hex(bytes: &[u8]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn unhex(text: &str) -> Option<[u8; 32]> {
+pub fn unhex(text: &str) -> Option<[u8; 32]> {
     let mut out = [0u8; 32];
     if text.len() != 64 {
         return None;
@@ -597,11 +597,11 @@ fn plan() -> FactsPlanSet {
     FactsPlanSet::new(vec![HashKey::sha256(b"rerail/part plan v1").sha256_bytes().expect("a sha256 key")])
 }
 
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn str(v: &str) -> Value {
+pub fn str(v: &str) -> Value {
     Value::Str(v.to_owned().into())
 }
 
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn rows_of<'a>(facts: &'a Facts, rel: &str) -> impl Iterator<Item = Vec<String>> + 'a {
+pub fn rows_of<'a>(facts: &'a Facts, rel: &str) -> impl Iterator<Item = Vec<String>> + 'a {
     facts.get(rel).into_iter().flatten().map(|r| r.iter().map(|c| match c {
         Value::Str(s) => s.to_string(),
         other => format!("{other:?}"),
@@ -636,7 +636,7 @@ fn facts_of(p: &Prepared, digest: &[u8; 32]) -> Facts {
 }
 
 /// Rows in their first column's order.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn ordered(facts: &Facts, rel: &str) -> Vec<Vec<String>> {
+pub fn ordered(facts: &Facts, rel: &str) -> Vec<Vec<String>> {
     let mut rows: Vec<Vec<String>> = rows_of(facts, rel).collect();
     rows.sort_by_key(|r| r.first().and_then(|i| i.parse::<usize>().ok()).unwrap_or(0));
     rows
@@ -648,7 +648,7 @@ fn split(s: &str) -> Vec<String> {
 
 /// The part kept under `key`, with the sources its image is kept as.
 /// The version and facts kept under `key` (`keep`), and the sources they were read from.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn kept(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(Arc<Version>, Facts, Vec<SourceId>)>> {
+pub fn kept(store: &ContentStore, key: &[u8; 32]) -> StoreResult<Option<(Arc<Version>, Facts, Vec<SourceId>)>> {
     let Some((facts, digest, source)) = kept_facts(store, key)? else { return Ok(None) };
     let Some((version, mut sources)) = kept_image(store, &digest)? else { return Ok(None) };
     sources.push(source);
@@ -684,7 +684,7 @@ fn record(store: &ContentStore, key: &[u8; 32], p: &Prepared) {
 /// The facts kept under `key` alone (`keep_facts`): no image. With the source they are kept as, which a run that
 /// reads them names in its manifest (decision 0306), as the run that kept them did: else collection may take facts a
 /// kept run reads.
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn kept_facts_alone(store: &ContentStore, key: &[u8; 32]) -> Option<(Facts, SourceId)> {
+pub fn kept_facts_alone(store: &ContentStore, key: &[u8; 32]) -> Option<(Facts, SourceId)> {
     let source = store.source_by_hash(kept_facts_hash(key)).ok()??;
     let set = plan();
     let result = store.facts_memo(FactsMemoKey { source, fact_schema: SCHEMA, path: PATH }).ok()?.results.remove(&set.plans[0])?;
@@ -693,12 +693,12 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn kept_facts_alone(store: &Co
 
 /// The hash the facts kept under `key` (`keep_facts`) are stored by: a reader names them by it where it names by
 /// hashes (the combined program's `IMAGE`).
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn kept_facts_hash(key: &[u8; 32]) -> HashKey {
+pub fn kept_facts_hash(key: &[u8; 32]) -> HashKey {
     HashKey::sha256(source_text(key).as_bytes())
 }
 
 /// Keeps `facts` under `key`, no image beside them, written by the store's writer (`kept_facts_alone` reads them).
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn keep_facts(store: &ContentStore, key: &[u8; 32], facts: &Facts) {
+pub fn keep_facts(store: &ContentStore, key: &[u8; 32], facts: &Facts) {
     let entry = program_facts::encode(facts);
     fn apply(cx: &crate::content_store::record::Apply<'_>, body: crate::content_store::record::codec::Body) -> StoreResult<()> {
         let (key, entry): ([u8; 32], Vec<u8>) = crate::content_store::record::codec::from_body("kept facts", body)?;
@@ -711,7 +711,7 @@ pub(in crate::code_rule_dsl::logic::plan::corpus) fn keep_facts(store: &ContentS
 }
 
 /// Keeps `version` and the facts `facts` makes of its image's digest under `key` (either stage's part).
-pub(in crate::code_rule_dsl::logic::plan::corpus) fn keep(store: &ContentStore, key: &[u8; 32], version: &Arc<Version>, facts: impl FnOnce(&[u8; 32]) -> Facts) {
+pub fn keep(store: &ContentStore, key: &[u8; 32], version: &Arc<Version>, facts: impl FnOnce(&[u8; 32]) -> Facts) {
     let Some(encoded) = program_text::encode_version(version) else { return };
     let entry = program_facts::encode(&facts(&encoded.digest));
     let (packed, pieces) = program_text::pack(vec![encoded], entry);

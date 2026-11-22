@@ -275,22 +275,16 @@ pub fn threads() -> usize {
     })
 }
 
-/// Whether this is the process's main thread (the one `Machine::here` may hold: it lives as long as the process).
+/// The machine's main thread: the one `Machine::here` took into its pool as thread 0, which lives as long as the
+/// process. Recorded when it is taken in, not asked of the system: Windows has no call that says which thread is a
+/// process's main one (main's #929, where it was always false there). The machine's (decision 0442), not a global.
+#[derive(Default)]
+pub struct MainThread(std::sync::OnceLock<std::thread::ThreadId>);
+
+/// Whether this is the main thread of the run's machine (`MainThread`, `Machine::here`'s); false outside a run, and
+/// on a machine no main thread made.
 pub fn is_main_thread() -> bool {
-    #[cfg(target_os = "macos")]
-    {
-        // SAFETY: no arguments.
-        unsafe { libc::pthread_main_np() == 1 }
-    }
-    #[cfg(target_os = "linux")]
-    {
-        // SAFETY: no arguments. The system call, not glibc's `gettid` (2.30): the Linux engine links against 2.17.
-        unsafe { libc::syscall(libc::SYS_gettid) == libc::c_long::from(libc::getpid()) }
-    }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
-    {
-        false
-    }
+    run_own().is_some_and(|run| run.shared().machine().get::<MainThread>().0.get() == Some(&std::thread::current().id()))
 }
 
 /// A pool thread's stack: pages are committed only as they are touched, so this is address space, not memory.
@@ -366,6 +360,7 @@ impl Machine {
     /// with it.
     pub fn here() -> std::sync::Arc<Machine> {
         let machine = Machine::new();
+        let _ = machine.get::<MainThread>().0.set(std::thread::current().id());
         let _ = machine.get::<Cores>().0.set(make_pool(true));
         machine
     }
@@ -919,6 +914,27 @@ pub fn test_run() -> impl Drop {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The machine's main thread is recorded (`MainThread`), so `is_main_thread` is true there on every platform and
+    /// a run's wait on it sleeps on its bell (`rerail_accel::exec`'s `in_a_job` false), while another thread of the
+    /// machine's, in a run on it, is not its main thread (and helps the pool when it waits on its pool).
+    #[test]
+    fn the_machines_main_thread_sleeps_on_its_bell() {
+        let machine = Machine::here();
+        let shared = Shared::on(&machine);
+        let run = |shared: std::sync::Arc<Shared>| enter(Some(std::sync::Arc::new(Bare(RunValues::default(), shared))));
+        assert!(!is_main_thread(), "outside a run");
+        let _run = run(shared.clone());
+        assert!(is_main_thread(), "the thread `Machine::here` took in");
+        let other = std::thread::spawn(move || {
+            let _run = run(shared);
+            is_main_thread()
+        });
+        assert!(!other.join().unwrap(), "another thread, in a run on the machine");
+        let elsewhere = Shared::on(&Machine::new());
+        let _other_machine = run(elsewhere);
+        assert!(!is_main_thread(), "on a machine no main thread made");
+    }
 
     /// A run's last handle dropped on a thread that holds no run (a pool thread whose job carried it): what the run
     /// and its context hold drops with the run's shared object on the thread, so a value whose drop reads it (a

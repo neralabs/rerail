@@ -22,7 +22,7 @@
 //! handed to the reader as input rows, and the reader's run takes their delta as it takes any input's. There is no
 //! store, record or version of a phase's own.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
 
 use super::super::{Error, Result};
@@ -32,7 +32,7 @@ use crate::code_rule_dsl::logic::program_image::Version;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 use crate::code_rule_dsl::typing::file_local::Binding;
 
-const SEP: &str = "__";
+use crate::code_rule_dsl::logic::plan::phased::SEP;
 
 /// The phases whose runs are under way, outermost first, in the run's context: a phase reading a later phase's export
 /// runs that phase inside its own run, so a phase met again is a cycle. A run in a job is inside the same phases.
@@ -206,13 +206,8 @@ pub(super) fn wanted_in(prog: &(impl ProgramFields + ?Sized), shape: &super::sha
     Ok(out)
 }
 
-/// Whether `rel` names an earlier phase's export (`<phase>__<export>`), or an input the runner binds with the phases'
-/// (Git's, the analysis history's and the source languages'): shared by every program of a run
-/// (`corpus::combine` does not prefix it).
-pub fn is_phased(rel: &str) -> bool {
-    super::analysis_history::is_input(rel) || super::git::INPUTS.contains(&rel) || super::source_languages::is_input(rel)
-        || rel.split_once(SEP).is_some_and(|(p, e)| !p.is_empty() && !e.is_empty() && !p.starts_with("rr_") && !e.contains(SEP))
-}
+/// Whether `rel` is an input shared by every program of a run (the planner's, `plan::phased`).
+pub use crate::code_rule_dsl::logic::plan::phased::is_phased;
 
 /// A batch of policies run one after another over one tree (`tools::run_policies`): while it is held, phase 1's runs
 /// are kept by their inputs and taken again by a policy whose run has the same ones. Nothing is kept past it, so an
@@ -460,6 +455,32 @@ pub(super) fn observed_source_digests() -> Vec<[u8; 32]> {
     })
 }
 
+/// The files handed down to the innermost phase under way on this thread (phase 1's `observer__source_file`, with
+/// `observer__source_path`), known before its first wave: each one's paths (as given, and as loaded where that is
+/// another), its module and its content's digest.
+pub(super) fn handed_files() -> Vec<(Vec<String>, String, [u8; 32])> {
+    crate::code_rule_dsl::logic::profile::with_bound(|handed: &HandedDown| {
+        let Some((_, facts)) = handed.0.last() else { return Vec::new() };
+        let text = |v: Option<&Value>| match v {
+            Some(Value::Str(s)) => Some(s.to_string()),
+            _ => None,
+        };
+        let loaded: HashMap<String, String> = facts.get("observer__source_path").into_iter().flatten().filter_map(|r| Some((text(r.first())?, text(r.get(1))?))).collect();
+        facts
+            .get("observer__source_file")
+            .into_iter()
+            .flatten()
+            .filter_map(|r| {
+                let path = text(r.first())?;
+                let digest = crate::content_store::observe::unhex(&text(r.get(3))?)?;
+                let mut paths = vec![path.clone()];
+                paths.extend(loaded.get(&path).filter(|f| **f != path).cloned());
+                Some((paths, text(r.get(1))?, digest))
+            })
+            .collect()
+    })
+}
+
 /// Whether a phase's run is under way on this thread (its documents are its own: phase 1 does not run inside it).
 pub(super) fn in_phase() -> bool {
     crate::code_rule_dsl::logic::profile::with_bound(|r: &Phases| !r.0.is_empty())
@@ -544,7 +565,8 @@ pub(super) fn sources(
         let file = if crate::git_workspace::snapshot::contains(root) {
             p.clone()
         } else {
-            crate::git_workspace::snapshot::canonicalize(root.join(p)).ok()?.into_os_string().into_string().ok()?
+            // Spelled with `/` on every OS, as the rules join and split paths (`corpus::slashed`).
+            super::slashed(&crate::git_workspace::snapshot::canonicalize(root.join(p)).ok()?)
         };
         Some(vec![Value::Str(p.clone().into()), Value::Str(file.into())])
     }).collect();

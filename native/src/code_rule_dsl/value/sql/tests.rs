@@ -377,13 +377,12 @@
     /// `= NULL` on line 2 is reported rather than the file skipped as incomplete.
     #[test]
     fn cv05_reports_beside_positional_parameters() {
-        use crate::code_rule_dsl::CodeRuleDslRuntime;
         use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file};
-        let rule = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"))
+        let rule = crate::source_tree::native()
             .join("../packs/sql/rules/sqlfluff-cv05-convention-is-null.json");
         let document = std::fs::read_to_string(rule).expect("CV05 rule");
         let compiled =
-            CodeRuleDslRuntime::compile(document, "json".to_owned(), CAPABILITIES.to_owned())
+            crate::code_rule_dsl::rule_api::compile(&document, "json", CAPABILITIES)
                 .unwrap_or_else(|error| panic!("{}", error.reason));
         let source = "INSERT INTO t (a, b) VALUES ($1,$2);\nSELECT 1 FROM t WHERE a = NULL;\n\
                       INSERT INTO t (a, b) VALUES ($1,$2);\n";

@@ -1,12 +1,12 @@
-//! Tier 2's Rust (`rerail_compiler::rust_stream`, the ahead-of-time backend) against the JIT on every grammar of
+//! Tier 2's Rust (`rerail_rust_stream::rust_stream`, the ahead-of-time backend) against the JIT on every grammar of
 //! three sets: JSON's (`json_parser/`), `.rerail`'s (`rr_parser/rr.bitlex`), and probes whose words edit a node the
 //! writer's ops already have (`RETAGGED_ROOT`). Each grammar's Rust, in format 15 and in format 16 (decision 0434), is
 //! built by rustc with the rest of its set into one library, each grammar a module, run on the JIT's harness, and its
 //! tape compared with the JIT's byte for byte.
 
-use rerail_compiler::ladder::{Compiled, Lang, compile_step, documents_with, seed};
-use rerail_compiler::native_cpu_stream::Entry;
-use rerail_compiler::rust_stream;
+use rerail_cpu_stream::ladder::{Compiled, Lang, compile_step, documents_with, seed};
+use rerail_cpu_stream::native_cpu_stream::Entry;
+use rerail_rust_stream::rust_stream;
 
 /// A set of grammars: each one's name and text, the bytes its documents' mutations write, and documents of its own.
 struct Set {
@@ -17,7 +17,7 @@ struct Set {
 }
 
 const SETS: [Set; 3] = [
-    Set { name: "json", grammars: rerail_compiler::ladder::grammars, alphabet: b" \nav9,eE-{}[]\":/*\\tu", fixed: json_fixed },
+    Set { name: "json", grammars: rerail_cpu_stream::ladder::grammars, alphabet: b" \nav9,eE-{}[]\":/*\\tu", fixed: json_fixed },
     Set { name: "rr", grammars: || vec![("rr".to_owned(), include_str!("../../rr_parser/rr.bitlex").to_owned())], alphabet: b"().,:-=<>!\"`/*#_ \naZ9~;@{}\\", fixed: Vec::new },
     Set { name: "probe", grammars: || vec![("retagged-root".to_owned(), RETAGGED_ROOT.to_owned()), ("wrapped-twice".to_owned(), WRAPPED_TWICE.to_owned()), ("folded-chain".to_owned(), FOLDED_CHAIN.to_owned())], alphabet: b"();!? \nvraifus", fixed: probe_fixed },
 ];
@@ -128,27 +128,6 @@ fn json_fixed() -> Vec<String> {
     docs
 }
 
-/// The system's loader: a library opened and kept, and its symbols.
-mod loader {
-    use std::ffi::{c_char, c_void};
-    #[cfg(unix)]
-    pub unsafe fn open(path: *const c_char) -> *mut c_void {
-        unsafe { libc::dlopen(path, libc::RTLD_NOW) }
-    }
-    #[cfg(unix)]
-    pub unsafe fn symbol(h: *mut c_void, name: *const c_char) -> *mut c_void {
-        unsafe { libc::dlsym(h, name) }
-    }
-    #[cfg(windows)]
-    #[link(name = "kernel32")]
-    unsafe extern "system" {
-        #[link_name = "LoadLibraryA"]
-        pub fn open(path: *const c_char) -> *mut c_void;
-        #[link_name = "GetProcAddress"]
-        pub fn symbol(h: *mut c_void, name: *const c_char) -> *mut c_void;
-    }
-}
-
 /// The sources built into one library, each a module with its entry `rerail_tier2_entry_{k}`; the entries, in order.
 fn build(sources: &[String]) -> Vec<Entry> {
     let mut h = std::collections::hash_map::DefaultHasher::new();
@@ -165,20 +144,17 @@ fn build(sources: &[String]) -> Vec<Entry> {
     // With its debug assertions: a walk's invariants the reserved writer leaves unchecked (`rust_stream::reserved`).
     let out = std::process::Command::new("rustc").args(["--edition", "2024", "--crate-type", "cdylib", "-C", "opt-level=1", "-C", "debug-assertions", "-o"]).arg(&lib).arg(&rs).output().expect("runs rustc");
     assert!(out.status.success(), "rustc: {}", String::from_utf8_lossy(&out.stderr).chars().take(4000).collect::<String>());
-    let path = std::ffi::CString::new(lib.to_str().expect("a path")).expect("a path");
-    // SAFETY: a library rustc just built from the sources above; kept loaded for the process.
-    let entries = unsafe {
-        let h = loader::open(path.as_ptr());
-        assert!(!h.is_null(), "loading {}", lib.display());
-        (0..sources.len())
-            .map(|k| {
-                let name = std::ffi::CString::new(format!("rerail_tier2_entry_{k}")).expect("a name");
-                let f = loader::symbol(h, name.as_ptr());
-                assert!(!f.is_null(), "rerail_tier2_entry_{k} in {}", lib.display());
-                std::mem::transmute::<*mut std::ffi::c_void, Entry>(f)
-            })
-            .collect()
-    };
+    // A library rustc just built from the sources above; kept loaded for the process (a `Lib` is never closed).
+    let lib = rerail_device::os::Lib::open(&[lib.to_str().expect("a path")], rerail_device::os::Scope::Local)
+        .unwrap_or_else(|| panic!("loading the ladder: {}", rerail_device::os::Lib::error()));
+    let entries = (0..sources.len())
+        .map(|k| {
+            let f = lib.sym(&format!("rerail_tier2_entry_{k}"));
+            assert!(!f.is_null(), "the entry {k}");
+            // SAFETY: the entry the sources above define, of `Entry`'s signature.
+            unsafe { std::mem::transmute::<*mut std::ffi::c_void, Entry>(f) }
+        })
+        .collect();
     let _ = std::fs::remove_dir_all(&dir);
     entries
 }

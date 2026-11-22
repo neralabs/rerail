@@ -7,7 +7,7 @@
 //! `test-hooks` gives each test thread its own buffer ledger (`test_pool`) and the buffer
 //! observations, for the engine's tests as for this crate's.
 // Where the device layer is (decision 0440 step E).
-#![cfg(any(target_os = "macos", target_os = "linux"))]
+#![cfg(any(target_os = "macos", target_os = "linux", windows))]
 #![allow(clippy::missing_safety_doc)]
 
 /// Block programs on Metal (decision 0066): the interpreter and generated MSL, over a batch of
@@ -33,8 +33,6 @@ pub mod runtime;
 pub mod slabs;
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod test_pool;
-/// Tier 2 on the buffers tier 1 left on the device (`image_on`).
-pub mod tier2_on;
 
 pub use rerail_compiler::Error;
 
@@ -57,7 +55,7 @@ pub static METAL_DEVICE: std::sync::LazyLock<Option<metal::Device>> = std::sync:
 pub(crate) fn pool_hooks() {
     rerail_context::machine::<PoolHooks>().0.get_or_init(|| {
         // Relational work's bounded leases count the pool's reservations against the device's budget (decision 0126).
-        rerail_accel::gpu::shared::set_other_reserved(runtime::reserved);
+        rerail_accel::gpu::shared::set_other_reserved(runtime::ledger);
         // The pool's one eviction order: idle buffers, then the residency's least recently used slabs (0266 §16).
         rerail_accel::gpu::shared::set_evictor(slabs::evict);
     });
@@ -69,3 +67,34 @@ pub fn device() -> Result<metal::Device, Error> {
     METAL_DEVICE.clone().ok_or(Error::UnsupportedBackend)
 }
 
+
+/// Whether the device's compiler is NVRTC, which does not compile the label passes' sweep in bounded time
+/// (`label_sweep`: not done after 500 s on a DGX Spark; 1.6 s with the CPU's compiler). The sweep has not run on CUDA
+/// yet, so it is not compiled ahead there: a compile before every test run must end.
+pub fn nvrtc_unbounded() -> bool {
+    rerail_gpu::device::backend() == "CUDA" && !every_kernel_ahead()
+}
+
+/// `RERAIL_KERNELS_ALL=1`, a measurement aid: the kernels a device's compiler does not compile in bounded time are
+/// kept in the lists to compile ahead (`kernels compile --only <name> --within <s>` then times them, bounded).
+pub fn every_kernel_ahead() -> bool {
+    std::env::var_os("RERAIL_KERNELS_ALL").is_some_and(|v| v == "1")
+}
+
+/// The crate's fixed kernels, to compile ahead of their first use (`rerail_gpu::kernels::compile_ahead`): the block
+/// interpreter at each lane width (`block_program`) and the preprocessor's passes (`pp_arena`). Each is asked for as
+/// its use asks for it, so its use then finds it compiled.
+pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
+    use rerail_accel::gpu::{ahead, caught, released};
+    let mut v: Vec<_> = block_program::LaneWidth::ALL
+        .into_iter()
+        .map(|w| ahead(format!("block_batch {w:?}"), move || released(|| caught(|| _ = block_program::interpreter_kernel(w)))))
+        .collect();
+    // The preprocessor's passes only on the CPU, where they run (every preprocessor run is the CPU's for now). A GPU's
+    // compiler does not compile their source in bounded time: NVRTC grew past 90 GB resident on a DGX Spark, Intel's
+    // OpenCL (an Arc 140V) was still compiling at 90 s, and the CPU's compiler takes 7 s.
+    if rerail_gpu::device::backend() == "CPU" || every_kernel_ahead() {
+        v.push(ahead("pp passes", || released(|| caught(|| _ = pp_arena::kernel("pp_setup")))));
+    }
+    v
+}

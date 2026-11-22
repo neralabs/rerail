@@ -1,3 +1,4 @@
+use rerail_store::Canonical as _;
     use super::*;
 
     #[test]
@@ -81,7 +82,7 @@
         let path = dir.path().join("rule.rerail");
         let text = ".decl e(x: int)\n.output e\ne(1).\n";
         std::fs::write(&path, text).unwrap();
-        let path = path.canonicalize().unwrap();
+        let path = path.canonical().unwrap();
         let program = rr::parse_own_version(text).unwrap();
         let digest = Sha256::digest(text.as_bytes()).into();
         let files = [LibraryFile { path: path.clone(), sha256: Some(digest) }];

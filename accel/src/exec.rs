@@ -52,7 +52,7 @@ pub fn configure() {
 }
 
 /// Whether this is one of the pool's threads running a job: on the pool, and not the main thread the machine took
-/// into it (`Machine::here`).
+/// into it (`Machine::here`, which records it: `rerail_context::MainThread`, on every platform).
 fn in_a_job() -> bool {
     on_pool() && !rerail_context::is_main_thread()
 }
@@ -1905,36 +1905,21 @@ impl Backend for CpuBackend {
     }
 }
 
-/// The rayon pool's CPU seconds: every worker's thread clock, summed.
-/// This thread's CPU seconds (`CLOCK_THREAD_CPUTIME_ID`; 0 where there is none).
+/// This thread's CPU seconds: the device layer's clock (`rerail_device::os`, macOS, Linux and Windows); 0 where there
+/// is none.
 pub fn thread_cpu() -> f64 {
-    #[cfg(unix)]
-    {
-        let mut t: libc::timespec = unsafe { std::mem::zeroed() };
-        if unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut t) } != 0 {
-            return 0.0;
-        }
-        t.tv_sec as f64 + t.tv_nsec as f64 * 1e-9
-    }
-    #[cfg(not(unix))]
-    {
-        0.0
-    }
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    return rerail_device::os::thread_cpu();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    0.0
 }
 
-/// The process's user + system CPU seconds (0 where there is no `getrusage`).
+/// The process's user + system CPU seconds: the device layer's clock, as [`thread_cpu`]; 0 where there is none.
 pub fn process_cpu() -> f64 {
-    #[cfg(unix)]
-    {
-        let mut u: libc::rusage = unsafe { std::mem::zeroed() };
-        unsafe { libc::getrusage(libc::RUSAGE_SELF, &mut u) };
-        let s = |t: libc::timeval| t.tv_sec as f64 + t.tv_usec as f64 * 1e-6;
-        s(u.ru_utime) + s(u.ru_stime)
-    }
-    #[cfg(not(unix))]
-    {
-        0.0
-    }
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
+    return rerail_device::os::process_cpu();
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    0.0
 }
 
 #[cfg(all(test, target_os = "macos"))]

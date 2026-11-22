@@ -6,7 +6,7 @@
 //! cargo run -p rerail-blocks --profile profiling --example pinning
 //! ```
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn main() {
     use rerail_blocks::block::{Block, kind};
     use rerail_device::device::Buffer;
@@ -87,5 +87,5 @@ DEFINE_KERNEL2(pinning, touch, RWBUFFER, uint32_t, p, "[n]", GID0, uint32_t, i, 
     println!("pool of 4 x 256 MiB slabs, wrapped once, 40 runs recycling them: {:.3} ms a run", ms(t) / 40.0);
 }
 
-#[cfg(not(any(target_os = "macos", target_os = "linux")))]
+#[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
 fn main() {}
