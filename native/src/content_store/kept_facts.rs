@@ -83,6 +83,9 @@ pub const READERS: &str = "\0readers";
 /// Collection drops a held partition once the store keeps no source of that key, or once its plan is dead
 /// (`collect_kept_facts`), as the facts memo's rows died with their source or their plan: a memo entry kept as kept
 /// facts lives exactly as long as the memo row it replaced would have.
+///
+/// A holder is put with its partition's whole entry: the writer drops what else the partition kept (`write_chain`),
+/// and a wave's earlier puts of it (`KeptGather::add`), so its user writes an entry without reading what it was.
 pub const HOLDER: &str = "\0holder";
 
 fn holder_ident() -> [u8; 32] {
@@ -431,6 +434,17 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
             return Ok(Some(Vec::new()));
         }
     }
+    // A held partition is put whole (`HOLDER`): what else it kept goes.
+    let held: BTreeSet<i64> = puts.iter().filter(|p| p.rel == HOLDER && !matches!(p.what, KeptWhat::Gone)).map(|p| p.part).collect();
+    if !held.is_empty() {
+        let named: HashSet<(&str, [u8; 32], i64)> = puts.iter().map(|p| (p.rel.as_str(), p.ident, p.part)).collect();
+        let gone: Vec<KeptPut> = chain
+            .all()
+            .filter(|e| held.contains(&e.key.part) && e.key.rel != READERS && !named.contains(&(e.key.rel, *e.key.ident, e.key.part)))
+            .map(|e| KeptPut { rel: e.key.rel.to_owned(), ident: *e.key.ident, part: e.key.part, digest: 0, reads: Vec::new(), types: e.types.to_vec(), what: KeptWhat::Gone })
+            .collect();
+        puts.extend(gone);
+    }
     let put_keys: HashSet<FactKey<'_>> = puts.iter().map(KeptPut::key).collect();
     // The files merged into this one: the newest ones, each weighing no more than twice the bytes joining it.
     let mut from = old.files.len();
@@ -579,8 +593,16 @@ impl KeptGather {
     /// rows an earlier put of this wave gave it, and their digest, with its reads. A retag has no digest of its own
     /// (its rows are the entry's): taken over, it gave a relation handed off with its rows (its digest known then) and
     /// retagged at the run's end digest 0, and every reader of it ran again in the next run.
+    /// A held partition is put whole (`HOLDER`): its earlier puts of this wave go with it.
     fn add(&mut self, space: [u8; 32], puts: Vec<KeptPut>) {
         let (list, at) = self.spaces.entry(space).or_default();
+        let held: BTreeSet<i64> = puts.iter().filter(|p| p.rel == HOLDER && !matches!(p.what, KeptWhat::Gone)).map(|p| p.part).collect();
+        if !held.is_empty() && list.iter().any(|p| held.contains(&p.part) && p.rel != READERS) {
+            let (kept, dropped): (Vec<KeptPut>, Vec<KeptPut>) = std::mem::take(list).into_iter().partition(|p| !held.contains(&p.part) || p.rel == READERS);
+            self.bytes -= dropped.iter().map(held_bytes).sum::<usize>();
+            *list = kept;
+            *at = list.iter().enumerate().map(|(i, p)| ((p.rel.clone(), p.ident, p.part), i)).collect();
+        }
         for p in puts {
             self.bytes += held_bytes(&p);
             let key = (p.rel.clone(), p.ident, p.part);

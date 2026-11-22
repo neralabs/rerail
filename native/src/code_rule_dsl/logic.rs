@@ -213,11 +213,13 @@ pub mod plan {
         #[allow(unused_imports)]
         use super::super::front::Value;
         #[allow(unused_imports)]
-        use super::super::program_facts::{self, Facts};
+        use super::super::program_facts::Facts;
         #[allow(unused_imports)]
         use super::super::program_text;
         #[allow(unused_imports)]
-        use crate::content_store::{ContentStore, FactsMemoKey, FactsPlanSet, FactsResult, HashKey, StoreResult};
+        use super::kept_entry::Entries;
+        #[allow(unused_imports)]
+        use crate::content_store::{ContentStore, FactsPlanSet, HashKey, StoreResult};
         #[allow(unused_imports)]
         use sha2::{Digest as _, Sha256};
         #[allow(unused_imports)]

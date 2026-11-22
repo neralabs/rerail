@@ -506,3 +506,22 @@ fn a_held_partition_goes_with_its_holder() {
     assert!(store.source_by_hash(key).unwrap() == Some(kept), "its source stays");
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
+
+/// t33 step 3: a held partition is put whole (`HOLDER`): its user writes an entry without reading what it was (a run
+/// writes inside its waves, decision 0104), and the writer drops the relations the partition kept that the new entry
+/// has not, beside the space's other partitions, which stay.
+#[test]
+fn a_held_partition_is_put_whole() {
+    let (path, c) = store("whole");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let holder = [0x44u8; 32];
+    store.queue_kept(SPACE, vec![put("a", 7, 1, flat(&[1, 1])), put("b", 7, 2, flat(&[2, 2])), holder_put(7, holder, None), put("b", 8, 3, flat(&[3, 3]))]);
+    store.written().unwrap();
+    let parts = |path: &Path, c: &Connection| read(path, c).iter().map(|e| (e.0.clone(), e.1)).collect::<Vec<_>>();
+    let named = |v: &[(&str, i64)]| v.iter().map(|(r, p)| (r.to_string(), *p)).collect::<Vec<_>>();
+    assert_eq!(parts(&path, &c), named(&[("\0holder", 7), ("a", 7), ("b", 7), ("b", 8)]));
+    store.queue_kept(SPACE, vec![put("a", 7, 4, flat(&[4, 4])), holder_put(7, holder, None)]);
+    store.written().unwrap();
+    assert_eq!(parts(&path, &c), named(&[("\0holder", 7), ("a", 7), ("b", 8)]), "partition 7's `b` gone, partition 8's kept");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
