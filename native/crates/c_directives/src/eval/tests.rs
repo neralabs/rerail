@@ -1500,6 +1500,179 @@ fn measure_what_expansions_repeat() {
     }
 }
 
+/// Decision 0613's waves, modelled on the serial pass (`Sink::requests`): each invocation and
+/// argument expansion a request, a token read a unit of time, every ready request at once. A
+/// request's reading starts when it is posted (an invocation's, once its arguments are expanded);
+/// its children are posted as its reading reaches them; it is done when its reading and its
+/// children are. A memo hit (an equal key, no place built-in below) waits for the first's result and
+/// computes nothing. Against that, the serial pass's cost of a top-level invocation is every token
+/// read under it. The corpus (`RERAIL_PP_FIRST`, `RERAIL_PP_COUNT`), or Boost.Preprocessor's tests
+/// with `RERAIL_PP_SET=boost` (each test once: its `.c`, else its `.cpp`); `RERAIL_PP_NAME` filters the
+/// rows. A child with an open tail (a call at its end taking its `(` from after it) holds its
+/// parent's reading after it until it is done.
+#[test]
+#[ignore = "a measurement over the corpus (~/orca/rerail-shared/lean-corpus)"]
+fn measure_the_waves_of_expansions() {
+    use rerail_c_pp::Config;
+    use rerail_c_pp::files::{DirKind, Search};
+    use rerail_c_pp::sink::Request;
+    use std::collections::HashMap;
+    #[derive(Default)]
+    struct Rec(Vec<Request>);
+    impl rerail_c_pp::sink::Sink for Rec {
+        fn wants_entries(&self) -> bool {
+            true
+        }
+        fn requests(&mut self, r: &[Request]) {
+            self.0 = r.to_vec();
+        }
+    }
+    let count = std::env::var("RERAIL_PP_COUNT").ok().and_then(|n| n.parse().ok()).unwrap_or(usize::MAX);
+    let first = std::env::var("RERAIL_PP_FIRST").ok().and_then(|n| n.parse().ok()).unwrap_or(0);
+    let boost = std::env::var("RERAIL_PP_SET").is_ok_and(|v| v == "boost");
+    let mut units: Vec<(String, bool)> = Vec::new();
+    let dirs;
+    if boost {
+        let root = std::env::var("RERAIL_PP_BOOST").map(std::path::PathBuf::from).unwrap_or_else(|_| std::path::PathBuf::from(std::env::var("HOME").unwrap()).join("orca/rerail-shared/boost-preprocessor"));
+        let mut paths: Vec<String> = std::fs::read_dir(root.join("test")).unwrap().flatten().map(|e| e.path().to_string_lossy().into_owned())
+            .filter(|p| p.ends_with(".c") || p.ends_with(".cpp") && !std::path::Path::new(&p.replace(".cpp", ".c")).exists())
+            .filter(|p| std::env::var("RERAIL_PP_ONLY").is_err() || std::env::var("RERAIL_PP_ONLY").is_ok_and(|o| p.contains(&o))).collect();
+        paths.sort();
+        units.extend(paths.into_iter().skip(first).take(count).map(|p| { let c = !p.ends_with(".c"); (p, c) }));
+        dirs = vec![(root.join("include").to_string_lossy().into_owned(), DirKind::Angle)];
+    } else {
+        let root = corpus_root();
+        for (dir, cpp) in [("c", false), ("cpp", true)] {
+            let Ok(rd) = std::fs::read_dir(root.join(dir)) else { continue };
+            let mut paths: Vec<String> = rd.flatten().map(|e| e.path().to_string_lossy().into_owned()).collect();
+            paths.sort();
+            units.extend(paths.into_iter().skip(first).take(count).map(|p| (p, cpp)));
+        }
+        dirs = vec![("<stub>".to_string(), DirKind::After)];
+    }
+    assert!(!units.is_empty(), "no units");
+    let cfgs = [Config::new(crate::pp::options(false)), Config::new(crate::pp::options(true))];
+    struct Model<'a> {
+        r: &'a [Request],
+        kids: Vec<Vec<u32>>,
+        place: Vec<bool>,
+        memo: HashMap<u64, u64>,
+        work: u64,
+        computed: u64,
+        deepest: u32,
+        /// The longest own reading of a request computed.
+        longest: u32,
+        /// Whether an open tail holds its parent's reading (`RERAIL_PP_TAILS=0`: not, a bound).
+        hold: bool,
+        /// Whether an invocation's rescan reads past its arguments' expansions as holes
+        /// (`RERAIL_PP_ARGS=holes`, a bound), not after them.
+        arg_holes: bool,
+    }
+    impl Model<'_> {
+        /// Request `i` posted at `post`, at nesting `depth`: when it is done.
+        fn run(&mut self, i: u32, post: u64, depth: u32) -> u64 {
+            let q = self.r[i as usize];
+            let memoizable = i != 0 && !self.place[i as usize];
+            if memoizable && let Some(&f) = self.memo.get(&q.key) {
+                return f.max(post);
+            }
+            self.work += u64::from(q.own);
+            self.computed += 1;
+            self.deepest = self.deepest.max(depth);
+            self.longest = self.longest.max(q.own);
+            let kids = std::mem::take(&mut self.kids[i as usize]);
+            let mut start = post;
+            let mut args_done = post;
+            for &a in kids.iter().filter(|&&k| self.r[k as usize].arg) {
+                args_done = args_done.max(self.run(a, post, depth + 1));
+            }
+            if !self.arg_holes {
+                start = args_done;
+            }
+            // A child with an open tail holds the reading after it until it is done (the
+            // continuation reads on from the hole with the child's tokens in hand).
+            let mut late = 0u64;
+            let mut done = start + u64::from(q.own);
+            for &c in kids.iter().filter(|&&k| !self.r[k as usize].arg) {
+                let at = start + u64::from(self.r[c as usize].pos) + late;
+                let f = self.run(c, at, depth + 1);
+                if self.r[c as usize].tails > 0 && self.hold {
+                    late = late.max(f - at);
+                }
+                done = done.max(f);
+            }
+            done = done.max(start + u64::from(q.own) + late).max(args_done);
+            if memoizable {
+                self.memo.insert(q.key, done);
+            }
+            done
+        }
+    }
+    let (mut t_read, mut t_work, mut t_reqs, mut t_computed, mut t_tails, mut t_place, mut t_top) = (0u64, 0u64, 0usize, 0u64, 0u64, 0usize, 0u64);
+    let (mut worst_serial, mut worst_wave, mut worst_waves) = (0u64, 0u64, 0u32);
+    let mut rows: Vec<(u64, u64, u64, u64, usize, u64, u32, u32, String)> = Vec::new();
+    for (path, cpp) in &units {
+        let mut io = Search::new(dirs.clone(), |q: &str| std::fs::read(q).ok().or_else(|| q.starts_with("<stub>").then(Vec::new)));
+        let mut rec = Rec::default();
+        {
+            let mut pp = rerail_c_pp::Pp::new(cfgs[usize::from(*cpp)].clone(), &mut io, &mut rec);
+            pp.run(path);
+        }
+        let r = rec.0;
+        if r.is_empty() {
+            continue;
+        }
+        let mut kids: Vec<Vec<u32>> = vec![Vec::new(); r.len()];
+        for (i, q) in r.iter().enumerate().skip(1) {
+            kids[q.parent as usize].push(i as u32);
+        }
+        // A request is place-dependent when it or a request below it reads a place built-in.
+        let mut place: Vec<bool> = r.iter().map(|q| q.place).collect();
+        for i in (1..r.len()).rev() {
+            if place[i] {
+                place[r[i].parent as usize] = true;
+            }
+        }
+        // The serial cost under each request: every token read in its subtree.
+        let mut under: Vec<u64> = r.iter().map(|q| u64::from(q.own)).collect();
+        for i in (1..r.len()).rev() {
+            under[r[i].parent as usize] += under[i];
+        }
+        let tops: Vec<u32> = kids[0].clone();
+        let mut m = Model { r: &r, kids, place: place.clone(), memo: HashMap::new(), work: 0, computed: 0, deepest: 0, longest: 0, hold: std::env::var("RERAIL_PP_TAILS").map_or(true, |v| v != "0"), arg_holes: std::env::var("RERAIL_PP_ARGS").is_ok_and(|v| v == "holes") };
+        // Each top-level invocation's chain: posted at 0 with the unit's memo so far.
+        let (mut serial, mut wave) = (0u64, 0u64);
+        m.work += u64::from(r[0].own);
+        for &c in &tops {
+            serial = serial.max(under[c as usize]);
+            wave = wave.max(m.run(c, 0, 1));
+        }
+        let tails: u64 = r.iter().map(|q| u64::from(q.tails)).sum();
+        let nplace = place.iter().skip(1).filter(|&&p| p).count();
+        t_read += under[0];
+        t_work += m.work;
+        t_reqs += r.len() - 1;
+        t_computed += m.computed;
+        t_tails += tails;
+        t_place += nplace;
+        t_top += u64::from(r[0].own);
+        worst_serial = worst_serial.max(serial);
+        worst_wave = worst_wave.max(wave);
+        worst_waves = worst_waves.max(m.deepest);
+        let name = path.rsplit('/').next().unwrap_or(path).to_string();
+        rows.push((serial, wave, under[0], m.work, r.len() - 1, m.computed, m.deepest, tails as u32, format!("{name} (the longest own reading {})", m.longest)));
+    }
+    let pct = |a: u64, b: u64| 100.0 * a as f64 / b.max(1) as f64;
+    eprintln!("WAVES {} units: {t_reqs} requests ({t_computed} computed with the memo, {:.1}%), {t_place} place-dependent; {t_read} tokens read serially, {t_work} with the memo ({:.1}%), {t_top} of them the files'", rows.len(), pct(t_computed, t_reqs as u64), pct(t_work, t_read));
+    eprintln!("WAVES open tails (a call taking its `(` past a macro's list): {t_tails}");
+    eprintln!("WAVES the longest top-level invocation: {worst_serial} tokens read serially; the longest chain in waves {worst_wave}; the deepest computed request {worst_waves}");
+    rows.sort_by_key(|r| std::cmp::Reverse(r.0));
+    let only = std::env::var("RERAIL_PP_NAME").ok();
+    for (s, w, rd, wk, n, c, d, t, name) in rows.iter().filter(|r| only.as_deref().is_none_or(|o| r.8.contains(o))).take(15) {
+        eprintln!("WAVES {name}: longest invocation {s} serially, {w} in waves; read {rd}, with the memo {wk}; {n} requests, {c} computed, {d} deep, {t} open tails");
+    }
+}
+
 /// What `against_serial` found.
 struct Against {
     same_units: usize,

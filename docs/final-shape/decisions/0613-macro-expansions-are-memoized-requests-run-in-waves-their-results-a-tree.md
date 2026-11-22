@@ -51,6 +51,65 @@ So, in this corpus:
 - **The nesting is shallow:** 74% of invocations are at the top, and none deeper than 3. Waves would number at most
   4. Boost.Preprocessor's tests are the deep case and should be measured next (`RERAIL_PP_BOOST`).
 
+## The waves, modelled (measured 2026-11-22, `measure_the_waves_of_expansions`)
+
+The serial pass reports its expansions as requests (`Sink::requests`):
+- each invocation and each argument's expansion is a request;
+- each request has its parent and the point in the parent's reading where it was posted;
+- each request has its own reading: the tokens taken from its own list, not its children's;
+- each request has its key, whether a place built-in is read below it, and its open tails.
+
+The model runs every ready request at once and counts a token read as one unit of time:
+- an invocation's reading starts when it is posted;
+- a memo hit computes nothing and waits for the first result;
+- a child with an open tail holds its parent's reading after it until the child is done.
+
+It compares two quantities for each top-level invocation:
+- **serially:** every token read under it;
+- **in waves:** when it is done.
+
+Two rules for arguments are compared:
+- **after:** the rescan waits for its arguments' expansions;
+- **holes:** the rescan reads past the arguments' expansions as holes.
+
+Units are tokens read by one reader, not the device's steps. 0588's loop reads a list many tokens a step.
+
+| | The corpus (100 units) | Boost.Preprocessor's tests (25, each once) |
+|---|---|---|
+| Requests (invocations and arguments) | 4,271 | 4,378,731 |
+| Computed with a unit's memo | 2,077 (48.6%) | 344,430 (7.9%) |
+| Tokens read serially / with the memo | 256,614 / 240,196 (93.6%); 215,290 are the files' own | 70.9 M / 14.4 M (20.3%); 111,058 the files' own |
+| Place-dependent requests | 5 | 1,837 |
+| Open tails | 2 | 210,011 |
+| The deepest computed request | 5 | 356 |
+| The longest top-level invocation, serially | 3,603 (`tif_getimage.c`) | 10,451,237 (`seq.c`) |
+| The longest chain in waves, arguments after | 1,146 | 630,526 (`tuple.c`) |
+| The longest chain in waves, arguments as holes | 940 (797 of it one request's own reading) | 14,672 (`tuple.c`) |
+
+Some rows, in tokens:
+
+| Unit | Serially | Waves, arguments after | Waves, arguments as holes |
+|---|---|---|---|
+| `seq.c` | 10,451,237 | 10,556 | 2,336 |
+| `tuple.c` | 1,961,683 | 630,526 | 14,672 |
+| `arithmetic.c` | 691,746 | 6,670 | 327 |
+| `facilities.c` | 76,596 | 23,578 | 1,101 |
+| `tif_getimage.c` | 3,603 | 1,146 | 940 |
+
+So:
+- **Boost is the case for both mechanisms.** The memo removes 80% of the reading. With arguments as holes, the
+  chain of the large tests is 1/70 to 1/4,500 of the serial reading.
+- **Waiting for arguments makes the chain long.** Boost's iterations pass each step's result as the next step's
+  argument. If the rescan waits for its arguments, those steps run one after another (`tuple.c`: 630,526). If
+  arguments are holes, the chain falls 43 times.
+- **Open tails don't make the chain long.** Holding the parent for every open tail costs `tuple.c` 3.5%. But they
+  are frequent in Boost (210,011), so their continuation must be cheap; it is not a rare path there.
+- **In the corpus, the files' own tokens are 84% of the reading.** The waves shorten the longest invocation
+  (`tif_getimage.c`, 3,603 → 940). One request's own reading of 797 tokens is then the chain. So 0588's
+  splitting of the files into pieces stays, and a request's own reading has to be fast.
+- **The memo saves 6% of the corpus's reading.** Its value there is the other units' headers, which this corpus
+  stubs.
+
 ## Decision
 
 1. **An expansion is a request.** Kinds:
@@ -76,6 +135,10 @@ So, in this corpus:
    - A lane group runs one request with 0588's loop. At an invocation whose key is done, it writes a `P_NODE`
      entry. At one that isn't, it posts a request (or waits on the pending one), writes a `P_NODE` hole, and goes
      on past it.
+   - **An argument's expansion is a hole too** (measured above: waiting for them serializes Boost's iterations).
+     Its edges are both live in the rescan, since its tokens are read inline: a function-like name before it
+     takes its `(` first, and its open tail takes the body's `(` after it. The same check and continuation
+     apply.
    - Going on past a hole assumes the child's edges are closed: no `(` first, no open tail. That holds for nearly
      every macro. When the child completes, its edges are checked. If the assumption was wrong, the parent's
      reading from that hole runs again, as a continuation with the child's tokens in hand. That is rare (measured
@@ -100,11 +163,12 @@ So, in this corpus:
 ## Steps (a test before each change)
 
 1. **Measure** (built in this commit: `measure_what_expansions_repeat`):
-   - **Done:** hits and depth on the corpus.
+   - **Done:** hits and depth on the corpus; the waves modelled on the corpus and Boost.Preprocessor
+     (`measure_the_waves_of_expansions`), with open tails counted.
    - **Next:**
-     - Boost.Preprocessor's depth and hits;
      - a corpus with its headers, for sharing across units;
-     - how often a child's edges are open (a tail, a `(` first), from `entered` and the rescan's reads.
+     - how often an argument's edges are open in the rescan;
+     - the model in the device's steps rather than tokens: a request's own reading costs 0588's steps.
 2. **A CPU reference of the waves**, test-only: the serial pass's reader, run as requests with the memo, the holes,
    the edge checks and the continuations. Its output must equal the serial pass's on the eval tests, the corpus
    and Boost.Preprocessor. This proves the semantics (painting, tails, `(` from a child, `#`/`##` on unexpanded

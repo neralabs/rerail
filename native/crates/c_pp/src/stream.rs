@@ -138,6 +138,8 @@ enum Src {
         def: Option<u32>,
         /// The list is read in isolation: its end is a `STOP` token, and the reader goes no further.
         stop: bool,
+        /// The request (`Sink::requests`) whose reading this list is: 0, the top.
+        req: u32,
     },
 }
 
@@ -210,6 +212,13 @@ pub struct Pp<'a> {
     counter: u64,
     /// The `#define`s and `#undef`s so far (`Sink::entered`'s `epoch_key`).
     epoch: u32,
+    /// The requests a measurement traces (`Sink::requests`, decision 0613): 0 is the top. Empty
+    /// when the sink wants none.
+    reqs: Vec<crate::sink::Request>,
+    /// The request of the source the last raw token was read from.
+    last_req: u32,
+    /// The invocation whose arguments are being expanded (their requests' parent).
+    building: u32,
     /// Reading an `#if`'s line: `defined` is an operator.
     in_if: bool,
     /// Collecting a call's arguments: a file's end ends them, not the file.
@@ -275,6 +284,9 @@ impl<'a> Pp<'a> {
             once: Vec::new(),
             counter: 0,
             epoch: 0,
+            reqs: Vec::new(),
+            last_req: 0,
+            building: 0,
             in_if: false,
             collecting: 0,
             lines,
@@ -350,6 +362,9 @@ impl<'a> Pp<'a> {
         self.base = main;
         self.push_file(main, None);
         self.stack.push(self.file_src(builtin));
+        if self.sink.wants_entries() {
+            self.reqs.push(crate::sink::Request::default());
+        }
         loop {
             let t = self.next_token();
             if t.kind == P::Eof {
@@ -359,6 +374,9 @@ impl<'a> Pp<'a> {
             let off = if t.exp == 0 && t.buf != 0 { self.files[t.buf as usize - 1].orig(t.start) } else { 0 };
             let text = spell(&self.files, &self.scratch, &t);
             self.sink.token(&t, text, at, off);
+        }
+        if !self.reqs.is_empty() {
+            self.sink.requests(&self.reqs);
         }
         true
     }
@@ -453,9 +471,13 @@ impl<'a> Pp<'a> {
         loop {
             match self.stack.last_mut() {
                 None => return Tk::eof(NO_SYM),
-                Some(Src::Toks { toks, pos, def, stop }) => {
+                Some(Src::Toks { toks, pos, def, stop, req }) => {
                     if *pos < toks.len() {
                         *pos += 1;
+                        self.last_req = *req;
+                        if let Some(r) = self.reqs.get_mut(*req as usize) {
+                            r.own += 1;
+                        }
                         return toks[*pos - 1];
                     }
                     if *stop {
@@ -480,6 +502,10 @@ impl<'a> Pp<'a> {
                         continue;
                     }
                     let t = self.file_tok(pt, file);
+                    self.last_req = 0;
+                    if let Some(r) = self.reqs.first_mut() {
+                        r.own += 1;
+                    }
                     if t.flags & BOL != 0 && t.kind == P::Hash {
                         self.directive(t, file);
                         continue;
@@ -515,6 +541,7 @@ impl<'a> Pp<'a> {
                 return self.defined_op(t);
             }
             let Some(d) = self.def_of(t.sym) else { return t };
+            let (parent, ppos) = (self.last_req, self.reqs.get(self.last_req as usize).map_or(0, |r| r.own));
             let def = &self.defs[d as usize];
             if def.disabled {
                 t.flags |= NOEXP;
@@ -531,8 +558,11 @@ impl<'a> Pp<'a> {
                     return t;
                 }
                 let toks = self.builtin(b, t);
+                if let Some(r) = self.reqs.get_mut(parent as usize) {
+                    r.place = true;
+                }
                 if !toks.is_empty() {
-                    self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: false });
+                    self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: false, req: parent });
                 }
                 continue;
             }
@@ -547,7 +577,7 @@ impl<'a> Pp<'a> {
             } else {
                 (Vec::new(), t)
             };
-            self.enter(d, t, end, args);
+            self.enter(d, t, end, args, parent, ppos);
         }
     }
 
@@ -555,11 +585,20 @@ impl<'a> Pp<'a> {
     /// expansion).
     fn next_is_lparen(&mut self) -> bool {
         let outer = self.par.as_ref().map(|p| p.outer);
+        // A measurement's: the first macro's list passed whose end the name is at (an open tail).
+        let mut crossed: Option<u32> = None;
         for (k, s) in self.stack.iter_mut().enumerate().rev() {
             match s {
-                Src::Toks { toks, pos, stop, .. } => {
+                Src::Toks { toks, pos, stop, def, req } => {
                     if *pos < toks.len() {
-                        return toks[*pos].is(T::LParen);
+                        let lp = toks[*pos].is(T::LParen);
+                        if lp && let Some(c) = crossed && let Some(r) = self.reqs.get_mut(c as usize) {
+                            r.tails += 1;
+                        }
+                        return lp;
+                    }
+                    if def.is_some() && crossed.is_none() {
+                        crossed = Some(*req);
                     }
                     if *stop {
                         if Some(k) == outer {
@@ -573,7 +612,11 @@ impl<'a> Pp<'a> {
                     let (at, bol) = lx.state();
                     let t = lx.next_token();
                     lx.seek(at, bol);
-                    return t.is(T::LParen);
+                    let lp = t.is(T::LParen);
+                    if lp && let Some(c) = crossed && let Some(r) = self.reqs.get_mut(c as usize) {
+                        r.tails += 1;
+                    }
+                    return lp;
                 }
             }
         }
@@ -640,7 +683,14 @@ impl<'a> Pp<'a> {
     /// The tokens of `toks`, expanded in isolation (an argument before substitution).
     fn expand_list(&mut self, toks: Vec<Tk>) -> Vec<Tk> {
         let depth = self.stack.len();
-        self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: true });
+        let req = if self.reqs.is_empty() {
+            0
+        } else {
+            let key = self.list_key(&toks);
+            self.reqs.push(crate::sink::Request { parent: self.building, key, arg: true, ..Default::default() });
+            self.reqs.len() as u32 - 1
+        };
+        self.stack.push(Src::Toks { toks, pos: 0, def: None, stop: true, req });
         let mut out = Vec::new();
         loop {
             let t = self.next_token();
@@ -692,7 +742,7 @@ impl<'a> Pp<'a> {
     }
 
     /// Macro `d`'s expansion of the call `name` with `args`, entered as the next source.
-    fn enter(&mut self, d: u32, name: Tk, end: Tk, args: Vec<Vec<Tk>>) {
+    fn enter(&mut self, d: u32, name: Tk, end: Tk, args: Vec<Vec<Tk>>, parent: u32, ppos: u32) {
         self.exps.push(Expansion { def: d, name, end });
         let id = self.exps.len() as u32;
         {
@@ -705,7 +755,16 @@ impl<'a> Pp<'a> {
         let body = self.defs[d as usize].body.clone();
         let mut pre: Vec<Option<Vec<Tk>>> = vec![None; args.len()];
         let entry = self.sink.wants_entries().then(|| self.entry_key(d, &args));
+        let req = match entry {
+            Some((_, epoch_key, _)) if !self.reqs.is_empty() => {
+                self.reqs.push(crate::sink::Request { parent, pos: ppos, key: epoch_key, ..Default::default() });
+                self.reqs.len() as u32 - 1
+            }
+            _ => 0,
+        };
+        let building = std::mem::replace(&mut self.building, req);
         let mut out = self.substitute(d, &body, &args, &mut pre, id);
+        self.building = building;
         if let Some((key, epoch_key, depth)) = entry {
             self.sink.entered(crate::sink::Entered { def: d, key, epoch_key, depth, size: out.len() as u32 });
         }
@@ -715,7 +774,7 @@ impl<'a> Pp<'a> {
             f.flags = (f.flags & !(BOL | SPACE)) | (name.flags & (BOL | SPACE));
         }
         self.defs[d as usize].disabled = true;
-        self.stack.push(Src::Toks { toks: out, pos: 0, def: Some(d), stop: false });
+        self.stack.push(Src::Toks { toks: out, pos: 0, def: Some(d), stop: false, req });
     }
 
     /// What macro `d`'s expansion of `args` depends on (`Sink::entered`): its key, with the
@@ -758,6 +817,30 @@ impl<'a> Pp<'a> {
         let key = h;
         mix(&mut h, &self.epoch.to_le_bytes());
         (key, h, depth)
+    }
+
+    /// An argument's key before its expansion (`Sink::requests`): its tokens' spellings, the
+    /// names of the macros disabled, and the definitions' count.
+    fn list_key(&self, toks: &[Tk]) -> u64 {
+        fn mix(h: &mut u64, b: &[u8]) {
+            for &c in b {
+                *h = (*h ^ u64::from(c)).wrapping_mul(0x0100_0000_01b3);
+            }
+        }
+        let mut h: u64 = 0x84222325cbf29ce4;
+        for t in toks {
+            mix(&mut h, &[0xfe, t.flags & (NOEXP | SPACE)]);
+            mix(&mut h, self.text(t));
+        }
+        let mut off: Vec<u32> = self.stack.iter().filter_map(|s| if let Src::Toks { def: Some(x), .. } = s { Some(*x) } else { None }).collect();
+        off.sort_unstable();
+        off.dedup();
+        for x in off {
+            mix(&mut h, &[0xfa]);
+            mix(&mut h, self.syms.text(self.defs[x as usize].name));
+        }
+        mix(&mut h, &self.epoch.to_le_bytes());
+        h
     }
 
     /// The file position a token was called from: through its expansions to the token read from
@@ -1601,7 +1684,7 @@ impl<'a> Pp<'a> {
             f.flags |= BOL;
         }
         if !out.is_empty() {
-            self.stack.push(Src::Toks { toks: out, pos: 0, def: None, stop: false });
+            self.stack.push(Src::Toks { toks: out, pos: 0, def: None, stop: false, req: self.last_req });
         }
     }
 

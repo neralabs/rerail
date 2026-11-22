@@ -85,6 +85,9 @@ pub trait Sink {
     /// A macro invocation entered (`wants_entries`): what its expansion depends on.
     fn entered(&mut self, e: Entered) {}
 
+    /// The unit's expansions as requests (`wants_entries`, decision 0613's measurement), at its end.
+    fn requests(&mut self, r: &[Request]) {}
+
     /// A pragma (a `#pragma` line's text after `pragma`, or `_Pragma`'s string).
     fn pragma(&mut self, file: u32, at: u32, text: &[u8]) {}
 
@@ -106,6 +109,26 @@ pub struct Entered {
     pub epoch_key: u64,
     pub depth: u32,
     pub size: u32,
+}
+
+/// An expansion as a request (decision 0613's measurement): request 0 is the top (the files'
+/// tokens); the others are macro invocations and arguments' expansions, in the order entered.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct Request {
+    /// The request whose reading posted this one (an argument's: its invocation).
+    pub parent: u32,
+    /// The parent's tokens read when this was posted (an argument's: 0).
+    pub pos: u32,
+    /// The tokens this request's own reading took from its list (its children's are theirs).
+    pub own: u32,
+    /// `Entered::epoch_key` (an argument's: its tokens, the disabled names, the definitions' count).
+    pub key: u64,
+    /// An argument's expansion before substitution.
+    pub arg: bool,
+    /// A place-dependent built-in read here (`__LINE__`, `__COUNTER__`, ...): not memoized.
+    pub place: bool,
+    /// Calls whose name is this request's last token and whose `(` comes after it (open tails).
+    pub tails: u32,
 }
 
 /// No outputs.
@@ -154,6 +177,10 @@ impl Sink for Tee<'_> {
     fn entered(&mut self, e: Entered) {
         self.0.entered(e);
         self.1.entered(e);
+    }
+    fn requests(&mut self, r: &[Request]) {
+        self.0.requests(r);
+        self.1.requests(r);
     }
     fn pragma(&mut self, file: u32, at: u32, text: &[u8]) {
         self.0.pragma(file, at, text);
