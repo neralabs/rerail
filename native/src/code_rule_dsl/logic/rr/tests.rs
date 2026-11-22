@@ -294,11 +294,30 @@ fn rule_syntax_files_pass_check_rr() {
     // Phase 0 resolves every file's includes in one run of `bootstrap.rerail`, not one run each.
     let seeds: Vec<_> = rr_files().into_iter().map(|f| crate::code_rule_dsl::logic::plan::corpus::phase0::Seed::File(f.canonical().unwrap())).collect();
     crate::code_rule_dsl::logic::plan::corpus::phase0::graphs(&seeds).unwrap();
-    for f in rr_files() {
+    let programs: Vec<(PathBuf, Vec<(PathBuf, Vec<from_tape::Stmt>)>)> = rr_files().into_iter().map(|f| {
+        let program = program(&f).unwrap().0;
+        (f, program)
+    }).collect();
+    // A library file another library file includes is a part of that file's program, as a run reads a directory of
+    // programs (`tools::logic_command`: "not a program of its own"): alone it has neither the declarations it reads
+    // nor the rules that fill its inputs (`git/messages.rerail`, which `git.rerail` includes before declaring
+    // `git_message`). It is checked in its includer's program, which reads it in.
+    // Canonical both: the files are named from the manifest's directory (`native/..`), the library as the engine finds it.
+    let lib_dir = library().canonical().unwrap();
+    let parts: BTreeSet<PathBuf> = programs
+        .iter()
+        .filter(|(f, _)| f.canonical().unwrap().starts_with(&lib_dir))
+        // A program's own file is its last (`rr::program`: includes first).
+        .flat_map(|(_, program)| program.iter().rev().skip(1).filter_map(|(p, _)| p.canonical().ok()).collect::<Vec<_>>())
+        .collect();
+    for (f, program) in programs {
         for (line, vars) in check::grounded(&read(&f).unwrap().0, &given) {
             problems.push(format!("{}:{line}: unbound {}", short(&f), vars.join(", ")));
         }
-        let mut program = program(&f).unwrap().0;
+        if parts.contains(&f.canonical().unwrap()) {
+            continue;
+        }
+        let mut program = program;
         let core = library().join("core.rerail").canonical().unwrap();
         if !program.iter().any(|(p, _)| *p == core) {
             program.push((core.clone(), read(&core).unwrap().0));
