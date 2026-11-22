@@ -186,7 +186,10 @@ async function runHostHookOnce(
   }
   // Found before the session's lock is taken: a session's hooks that arrive together (parallel tool calls, subagents)
   // wait out a busy daemon side by side. Under the lock, each hook would begin its wait only when the one before it
-  // gave up.
+  // gave up. For the Windows pipe RERAIL_ENGINE_SOCKET names, this lookup is the check that the pipe is the home's
+  // daemon (`engineEndpointAt`), so each event goes out on a check made before the wait for the lock, up to 30 s
+  // (`LOCK_WAIT_MS`), and before its own connection's wait for a free instance of the pipe; docs/threat-model.md
+  // states that time in full.
   const daemon = await hookDaemon(options, startsSession);
   if (daemon.status !== "running") {
     // This event is lost, so say so where `rerail status` looks. A daemon that is gone (it crashed, or was stopped)

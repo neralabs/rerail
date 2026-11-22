@@ -942,11 +942,15 @@ Minor ways another OS user on the same machine could see Rerail's secrets or sta
   process runs. Accepted: the window is short.
 - The enforcer's spool in `tmpdir()` survives a crash.
 - On Windows a hook learns that the pipe `RERAIL_ENGINE_SOCKET` names is the home's daemon on one connection (Windows
-  names the process serving the pipe, or the engine there proves it holds the capability, a proof up to 12 s old
-  included) and sends the event, with the capability, on another. If the daemon ends between the two and another user
-  creates a pipe of that name in that moment, that user gets the event and the capability. The window is short, and
-  the other user cannot end the daemon to open it. What would close it: the same check on the connection that carries
-  the event.
+  names the process serving the pipe, or the engine there proves it holds the capability) and sends the event, with
+  the capability, on another. The time between the two is not short. A Claude Code or Codex hook checks before it
+  waits for its session's lock, up to 30 s (`LOCK_WAIT_MS`); so does a Cursor hook, and one that reads its transcript
+  then sends each new line, and its own event, on that one check. A proof the hook's start check got counts for up to
+  12 s (`HOOK_DAEMON_WAIT_MS`). After Windows has answered, the event's own connection can wait up to 30 s for a free
+  instance of a busy pipe, as Node's connect does (the check's own wait for an instance, `ENGINE_ANSWER_WAIT_MS`, is
+  as long). If the daemon ends in that time and another user creates a pipe of that name, that user gets the event and
+  the capability. The other user cannot end the daemon to open that window. What would close it: the same check on
+  the connection that carries the event.
 - `/native/session` still returns `error.message` in its `400`s.
 - A `.git` gitlink in an archive (not a clone) can point at another repository's common directory and inherit its
   `rerail-repository-id`, rules and start state when a session starts in that folder. A path a tool call names gets no
