@@ -845,6 +845,9 @@ impl MadeRows {
         if self.batch.rows.complete.get().is_none() {
             // With how many documents the read makes: a batch of an edit's changed files is made whole at no cost, one
             // of the corpus at the corpus's.
+            if std::env::var_os("RERAIL_WHOLE_READ_TRACE").is_some() {
+                eprintln!("RERAIL_WHOLE_READ_TRACE {}: {}", self.batch.rows.names[self.rel], std::backtrace::Backtrace::force_capture());
+            }
             profile::decision("a batch's every document made by a whole read of a relation (decision 0494)", || {
                 let unmade = self.batch.rows.state.lock().of.iter().filter(|g| g.is_none()).count();
                 format!("{}: {unmade} of {} documents unmade", self.batch.rows.names[self.rel], self.batch.docs.len())
@@ -1052,9 +1055,12 @@ impl Source for MadeRows {
     fn estimated_matches(&self, column: usize, batch: bool) -> usize {
         // Before its rows are made, by its kept statistics where they were given, as the made relation estimates
         // (`Relation::estimated_matches`, of its rows and the column's distinct values): no document made for it.
-        match (self.done(), self.batch.rows.counted(self.rel), self.batch.rows.distinct(self.rel, column)) {
-            (None, Some(n), Some(distinct)) => {
-                let one = n.div_ceil(distinct.max(1));
+        // Without its distinct values (a semi-join's are of its held nodes alone, decision 0458), a value matches a
+        // document's rows: an estimate never makes the batch.
+        let given = || self.batch.rows.distinct(self.rel, column).unwrap_or(self.batch.docs.len());
+        match (self.done(), self.batch.rows.counted(self.rel)) {
+            (None, Some(n)) => {
+                let one = n.div_ceil(given().max(1)).max(1);
                 if batch { one * 8 } else { one }
             }
             _ => self.target().estimated_matches(column, batch),
@@ -1067,7 +1073,11 @@ impl Source for MadeRows {
         }
     }
     fn estimated_matches_all(&self, columns: &[usize]) -> usize {
-        self.target().estimated_matches_all(columns)
+        // Before its rows are made, the most selective column's: no document made for an estimate.
+        match (self.done(), self.batch.rows.counted(self.rel)) {
+            (None, Some(_)) => columns.iter().map(|&c| self.estimated_matches(c, false)).min().unwrap_or_else(|| self.estimated_len()),
+            _ => self.target().estimated_matches_all(columns),
+        }
     }
     fn composite(&self) -> bool {
         match self.done() {

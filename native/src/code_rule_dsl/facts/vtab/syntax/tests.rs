@@ -2478,6 +2478,33 @@ fn a_batch_given_counts_knows_its_row_space_making_nothing() {
     assert!(failed.contains("text") && failed.contains("0494"), "{failed}");
 }
 
+/// A plan's estimates of a made relation (`estimated_matches`, `estimated_matches_all`) make no document, given its
+/// rows and its distinct values or not: a semi-join's distinct values are of its held nodes (decision 0458), and an
+/// edit's maintained join asking `docof`'s lead made 479 of the data layer's 518 documents (t43 step 21).
+#[test]
+fn a_made_relations_estimates_make_no_document() {
+    let store = ContentStore::open(&temp("estimates")).unwrap();
+    let docs = || -> Vec<Document> {
+        (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &format!("def f{k}(x, y={k}):\n    return g(x)\n\nclass C{k}:\n    pass\n"))).collect()
+    };
+    let reads = ["node", "child", "field", "text", "line", "doc"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let eager = Batch::new(&store, docs(), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let counts: HashMap<u32, made::ViewCounts> = eager.view_counts().into_iter().collect();
+    let totals: HashMap<String, usize> = made_sources(&eager).into_iter().map(|(n, _, s)| (n.to_owned(), s.len())).collect();
+    for distinct in [false, true] {
+        let lazy = Batch::new(&store, docs(), &projection, &[], &[], false, None, &counts).unwrap();
+        lazy.give_totals(&totals);
+        if distinct {
+            lazy.give_distinct("text", vec![Some(totals["text"]), Some(3)]);
+        }
+        let text = Arc::clone(&made_sources(&lazy).into_iter().find(|(n, _, _)| *n == "text").unwrap().2);
+        let estimates = [text.estimated_matches(0, false), text.estimated_matches(1, true), text.estimated_matches_all(&[0, 1])];
+        assert!(estimates.iter().all(|&e| e >= 1), "an estimate of a relation with rows: {estimates:?}");
+        assert_eq!(lazy.docs.made_count(), 0, "no document made for an estimate (distinct values given: {distinct})");
+    }
+}
+
 /// A tape value admitted into the batch (decision 0431 §8) runs no `ast` matcher: the files the batch was started
 /// with are matched once, and are not matched again (a value alone is no file, `Grower::admit`). Each round of guests
 /// ran the wave over every file of the chunk again, 17 s of 131 s of CPU on `all` once the reference graph's rules

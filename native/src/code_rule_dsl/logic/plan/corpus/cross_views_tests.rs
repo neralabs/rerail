@@ -258,7 +258,8 @@ fn a_session_holds_its_corpus_batch_and_keeps_its_base_statistics() {
 
 /// `line` and `col` read only at the nodes `uses` holds, each alone in its rule (a join of two would be pushed into the
 /// file-local part whole), and a span read (`src_line`), which makes `line` and `col` rows of the batch's documents
-/// rather than views of the tape (`Extra::spans`), as the data layer's are, so each is a semi-join input whose first column is the node,
+/// rather than views of the tape (`Extra::spans`), as the data layer's are; and `docof` joined in a maintained
+/// stratum, whose plan asks its estimate by a column (`setfix`'s lead), so each is a semi-join input whose first column is the node,
 /// not the document (the data layer's `line`, `col`, `op`, `visit_index`): its count at the held nodes was refused a
 /// walk of the corpus batch by its documents, and read it whole, making every document (t43 step 21).
 const AT_HELD: &str = r#"
@@ -274,11 +275,14 @@ at_line(f, l) :- uses(_, f), line(f, l).
 at_col(f, c) :- uses(_, f), col(f, c).
 .decl lines(d: number, l: number)
 lines(d, l) :- src_line(d, l, _).
+.decl at_home(u: node, p: symbol)
+at_home(u, p) :- uses(u, f), docof(f, d), doc(d, p, _).
 .output at_line
 .output at_col
 .output lines
+.output at_home
 "#;
-const AT_HELD_OUTPUTS: &[&str] = &["at_line", "at_col", "lines"];
+const AT_HELD_OUTPUTS: &[&str] = &["at_line", "at_col", "lines", "at_home"];
 
 /// An edit pays for the changed documents, not the corpus (t43 step 21): a semi-join input's statistics (its rows at
 /// the nodes the exports hold, Q396) are patched by the changed documents as a base relation's are, their old rows at
@@ -307,14 +311,19 @@ fn an_edit_patches_a_semi_join_inputs_statistics_and_makes_no_unchanged_document
             let made = profile::take_decisions();
             let of = |topic: &str| made.keys().filter(|(t, _)| t == topic).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
             let space = of("the corpus batch's row space (decision 0494)");
-            (of("the base relations' statistics (decision 0458)"), of("a batch's every document made by a whole read of a relation (decision 0494)"), rows, space)
+            let kept = of("cross-file part kept (decision 0077)");
+            (of("the base relations' statistics (decision 0458)"), of("a batch's every document made by a whole read of a relation (decision 0494)"), rows, space, kept)
         };
-        let (cold, _, _, _) = run(&mut c);
+        let (cold, _, _, _, _) = run(&mut c);
         run(&mut c);
         c.write("d.py", "from c import h\nfrom a import f\n\ndef i():\n    h()\n");
-        let (edit, whole, rows, space) = run(&mut c);
+        let (edit, whole, rows, space, kept) = run(&mut c);
         profile::set(false);
         let route = format!("{}, {}", if session { "a session" } else { "a new process" }, outputs[0]);
+        // The edit maintains strata from deltas (a maintained join plans its lead by the inputs' estimates).
+        if !kept.iter().any(|x| x.split(" maintained from deltas").next().and_then(|h| h.rsplit('(').next()).is_some_and(|n| n.trim() != "0")) {
+            failed.push(format!("{route}: the edit maintains strata from deltas: {kept:?}"));
+        }
         // The semi-join inputs: those the cold run counted at the held nodes.
         let held: BTreeSet<&str> = cold.iter().filter(|x| x.contains("at the held nodes") || x.contains("keyed walk")).filter_map(|x| x.split(':').next()).collect();
         if held.is_empty() {

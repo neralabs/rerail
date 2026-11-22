@@ -7757,6 +7757,15 @@ fn run_observed_within(
             k
         };
         let keeps = base_binds.is_some() || session_binds.is_some();
+        // A semi-join's distinct values, as the corpus batch's estimates take them (`give_distinct`): its held nodes'
+        // scaled to its every row (`held_total`), a node's column one row a node, as a base relation's are its kept
+        // statistics'. Without them its estimate is a document's rows.
+        let give_held = |rel: &str, st: &[Stat], held_rows: usize, total: i64| {
+            if let Some(batch) = &corpus_batch {
+                let (h, t) = (held_rows.max(1) as u128, u128::try_from(total.max(0)).unwrap_or(0));
+                batch.give_distinct(rel, st.iter().map(|m| usize::try_from((u128::try_from(m.2.max(0)).unwrap_or(0) * t).div_ceil(h).min(t)).ok()).collect());
+            }
+        };
         // A base relation read off the corpus batch, to count: its source, the columns its rules read, its kept
         // statistics.
         struct Count {
@@ -7773,12 +7782,13 @@ fn run_observed_within(
             // owners', its statistics the keeper's.
             if let Some(source) = base_layered.remove(&rel) {
                 let statistics = if semijoin.contains(&rel) {
-                    let (st, _, how, keep) = held_counted(&rel, &source.columns(), source.as_ref(), kept_stats.remove(&held_stats_name(&rel)));
+                    let (st, held_rows, how, keep) = held_counted(&rel, &source.columns(), source.as_ref(), kept_stats.remove(&held_stats_name(&rel)));
                     crate::code_rule_dsl::logic::profile::decision("the base relations' statistics (decision 0458)", || format!("{rel}: {how}"));
                     if let Some(k) = keep {
                         base_stats_out.push((held_stats_name(&rel), base_digest(&rel), k));
                     }
                     let total = held_total(&rel, source.as_ref(), kept_stats.remove(&rel));
+                    give_held(&rel, &st, held_rows, total.rows());
                     if keeps {
                         base_stats_out.push((rel.clone(), base_digest(&rel), total));
                     }
@@ -7870,6 +7880,7 @@ fn run_observed_within(
                         base_stats_out.push((held_stats_name(&rel), base_digest(&rel), k));
                     }
                     let total = held_total(&rel, source.as_ref(), kept_stats.remove(&rel));
+                    give_held(&rel, &st, rows, total.rows());
                     if keeps {
                         base_stats_out.push((rel.clone(), base_digest(&rel), total));
                     }
