@@ -2,10 +2,10 @@
 //! suppression comments silence it, and the result catalog its placement keys.
 
 use super::super::test_support::CAPABILITIES;
-use super::super::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
+use super::super::{CompiledCodeRuleDsl};
 use super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
 use super::persisted::candidate_catalog;
-use super::tests::WORKSPACE_TEST_SLOT;
+use super::fixtures::WORKSPACE_TEST_SLOT;
 use crate::content_store::CandidateCatalogIdentity;
 use napi::Task;
 use serde_json::{Value, json};
@@ -18,8 +18,7 @@ const NESTED: &str = r#"[
 ]"#;
 
 fn needle_code_rule() -> CompiledCodeRuleDsl {
-    CodeRuleDslRuntime::compile(
-        json!({
+    crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": "placed-needle", "revision": 1,
             "mode": "block",
             "scope": { "include": ["**/*"], "exclude": [] },
@@ -29,16 +28,13 @@ fn needle_code_rule() -> CompiledCodeRuleDsl {
                 "forbid": { "regex": { "source": "file.content", "pattern": "NEEDLE" } }
             }]
         })
-        .to_string(),
-        "json".into(),
-        json!({
+        .to_string(), "json", &json!({
             "ast": { "engine": "ast-grep-core", "engineVersion": "0.45", "languages": {} },
             "limits": { "maxAstPatternBytes": 16384, "maxRegexPatternBytes": 16384,
                 "maxFiles": 100, "maxGraphDepth": 16, "maxSourceBytes": 1000000,
                 "maxVisitedNodes": 100000, "maxWitnesses": 10000 }
         })
-        .to_string(),
-    )
+        .to_string())
     .unwrap()
 }
 
@@ -52,8 +48,7 @@ fn placed(placement: Option<&str>) -> CodeRuleDslWorkspace {
 
 /// Reports each TypeScript identifier as `names`, a rule ESLint comments can disable.
 fn names_code_rule() -> CompiledCodeRuleDsl {
-    CodeRuleDslRuntime::compile(
-        json!({
+    crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": "placed-names", "revision": 1,
             "mode": "block",
             "clauses": [{
@@ -63,10 +58,7 @@ fn names_code_rule() -> CompiledCodeRuleDsl {
                     "suppress": { "eslint": { "rules": ["names"] } } }
             }]
         })
-        .to_string(),
-        "json".into(),
-        CAPABILITIES.to_owned(),
-    )
+        .to_string(), "json", CAPABILITIES)
     .unwrap()
 }
 
@@ -278,8 +270,7 @@ fn the_result_catalog_differs_when_only_the_suppressions_choice_differs() {
 /// mark, as ESLint's rules read its text, and reports over the file's own bytes.
 #[test]
 fn content_regexes_skip_a_leading_byte_order_mark_in_ecmascript_files() {
-    let compiled = CodeRuleDslRuntime::compile(
-        json!({
+    let compiled = crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": "bom", "revision": 1, "mode": "block",
             "scope": { "include": ["**/*"], "exclude": [] },
             "clauses": [{
@@ -288,10 +279,7 @@ fn content_regexes_skip_a_leading_byte_order_mark_in_ecmascript_files() {
                 "forbid": { "regex": { "source": "file.content", "pattern": "\\A[\\x{FEFF}x]" } }
             }]
         })
-        .to_string(),
-        "json".into(),
-        CAPABILITIES.to_owned(),
-    )
+        .to_string(), "json", CAPABILITIES)
     .unwrap();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.add_code_rule(&compiled, None).unwrap();

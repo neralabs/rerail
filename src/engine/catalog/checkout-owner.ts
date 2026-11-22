@@ -154,10 +154,16 @@ export class CheckoutOwners {
   readonly #confirmedGitEntries = new Map<string, string>();
   readonly #database: RerailDatabase | undefined;
 
-  /** `database`'s recorded checkouts, read for plain roots and for the version that forgets every answer. */
-  constructor(database?: RerailDatabase) {
+  /**
+   * `database`'s recorded checkouts, read for plain roots and for the version that forgets every answer
+   * (`recordedVersion`, `database`'s own unless given).
+   */
+  constructor(
+    database?: RerailDatabase,
+    recordedVersion: (() => string) | undefined = database === undefined ? undefined : recordedCheckoutsVersionReader(database),
+  ) {
     this.#database = database;
-    this.#recordedVersion = database === undefined ? undefined : recordedCheckoutsVersionReader(database);
+    this.#recordedVersion = recordedVersion;
   }
 
   /**
@@ -181,16 +187,21 @@ export class CheckoutOwners {
    * enclosing `.gitmodules` or Git folder changed (a gitlink staged or removed, the shared index moved). Costs a stat per
    * folder kept as plain, one to three per `.git` entry kept, and two per submodule answer; Git runs only for what
    * changed, at the next lookup. Returns whether it dropped any.
+   *
+   * With `folders`, the point is theirs alone: each is looked at again (its answers, and those below it, dropped when
+   * it changed), as are the submodule answers for them, a stat or a few each. A walk makes this point for the worktrees
+   * Git lists as it reads the list, so a repository of many worktrees is not looked up again whole for each walk.
    */
-  lookAgain(): boolean {
+  lookAgain(folders?: readonly string[]): boolean {
     this.#revalidate();
-    const outgrown = [...this.#confirmed.keys()].filter(folder => this.#outgrown(folder));
+    const candidates = folders ?? [...this.#confirmed.keys()];
+    const outgrown = candidates.filter(folder => this.#confirmed.has(folder) && this.#outgrown(folder));
     // The highest of each changed chain: dropping it drops the answers below it.
     const highest = outgrown.filter(folder => !outgrown.some(other => other !== folder && within(other, folder)));
     for (const folder of highest) this.#forgetWithin(folder);
     let dropped = highest.length > 0;
     for (const [root, kept] of this.#submodules) {
-      if (submoduleStamp(kept.enclosing) === kept.stamp) continue;
+      if ((folders !== undefined && !folders.includes(root)) || submoduleStamp(kept.enclosing) === kept.stamp) continue;
       this.#submodules.delete(root);
       dropped = true;
     }

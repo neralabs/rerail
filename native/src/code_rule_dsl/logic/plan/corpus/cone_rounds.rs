@@ -348,6 +348,9 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) written: usize,
     /// Each produced relation's rows as the last round bound them (what the rest of the cross part reads).
     pub(in crate::code_rule_dsl) produced: Vec<(String, Vec<Vec<i64>>)>,
+    /// Each relation the run keeps (`On::keep`) that the rounds hold as a view of an input's columns (Q37) and so never
+    /// keep (`retain::cut`'s views): its rows made from the input as the last round bound it, one per input row.
+    pub(in crate::code_rule_dsl) views: Vec<(String, Vec<Vec<i64>>)>,
     /// Requests answered (by relation, keys).
     pub(in crate::code_rule_dsl) answered: BTreeMap<String, usize>,
 }
@@ -645,10 +648,10 @@ impl RoundProgram {
             Some(was) => {
                 let derived: BTreeSet<String> = self.placed.v.rules().map(|r| self.placed.v.rel_name(r.head().rel()).to_owned()).collect();
                 let clean = derived.into_iter().filter(|r| next.kept(r).is_none()).collect();
-                let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new() };
+                let cut = retain::Cut { clean, strata: (0, 0), changed: Vec::new(), views: BTreeSet::new() };
                 let sources: Vec<(String, Arc<dyn Source>)> = bound.iter().map(|(r, (s, _))| (r.clone(), Arc::clone(s))).collect();
                 let digests: std::collections::HashMap<String, u64> = bound.iter().map(|(r, (_, d))| (r.clone(), *d)).collect();
-                next.write_kept(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &HashMap::new(), &BTreeMap::new())?
+                next.write_kept(on.store, was, &self.placed, &self.domains, &retain::Locations::new(), &self.sccs, &cut, &sources, &digests, &BTreeSet::new(), &HashMap::new(), HashMap::new(), None, &BTreeMap::new())?
             }
             None => 0,
         };
@@ -657,8 +660,22 @@ impl RoundProgram {
         for (answer, _) in &self.fs {
             produced.push((answer.clone(), next.read_derived(on.store, answer)?.ok_or_else(|| Gave::Up(format!("{answer} is not kept")))?));
         }
+        let views: Vec<(String, Vec<Vec<i64>>)> = on.keep.iter().filter(|rel| !next.keeps(rel)).filter_map(|rel| {
+            let (input, at) = self.input_view(rel)?;
+            let (source, _) = bound.get(&input)?;
+            Some((rel.clone(), rows(source.as_ref()).into_iter().map(|row| at.iter().map(|&c| row[c]).collect()).collect()))
+        }).collect();
         let world = world_digest(|rel| bound.get(rel).map(|(_, d)| *d));
-        Ok(Done { next, rounds, strata, maintained: maintained_n, derived_again: again, again_why, still: still_n, world, withdrawn, written, produced, answered })
+        Ok(Done { next, rounds, strata, maintained: maintained_n, derived_again: again, again_why, still: still_n, world, withdrawn, written, produced, views, answered })
+    }
+
+    /// The input `rel` is a view of by the rounds' rules (`plan::input_view_shape`: its one rule copies the input's
+    /// columns), and the input's column of each of its columns.
+    fn input_view(&self, rel: &str) -> Option<(String, Vec<usize>)> {
+        let v = &self.placed.v;
+        let mut rules = v.rules().filter(|r| v.rel_name(r.head().rel()) == rel);
+        let (Some(rule), None) = (rules.next(), rules.next()) else { return None };
+        crate::code_rule_dsl::logic::plan::input_view_shape(v, rule, |r| self.inputs.iter().any(|i| i == r))
     }
 
     /// Where the rounds keep an answer's rows: the file system's relation for one of its answers (`fs`), else the

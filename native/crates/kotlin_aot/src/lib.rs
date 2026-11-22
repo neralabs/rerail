@@ -1,6 +1,6 @@
 //! Kotlin's parser as Rust, written by the Bitlex compiler from the grammar, never by hand: tier 1
-//! (`tier1.rs`) from the lexer's statements (`rerail_compiler::bitlex_lex_rust`), tier 2
-//! (`tier2.rs`) from the tree rules (`rerail_compiler::bitlex_rust`).
+//! (`tier1.rs`) from the lexer's statements (`rerail_bitlex::bitlex_lex_rust`), tier 2
+//! (`tier2.rs`) from the tree rules (`rerail_bitlex::bitlex_rust`).
 //! `rerail-kotlin-parser`'s `rust_is_current` test checks they are the compiler's output, and
 //! writes them again with `RERAIL_BLESS=1`. Tier 1 reads the bytes and writes the records (each
 //! token's first and last byte and its code); tier 2 reads them and writes the tape.

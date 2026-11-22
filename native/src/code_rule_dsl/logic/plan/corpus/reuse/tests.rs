@@ -79,12 +79,12 @@
         let entry = |rules: &[(String, String, String)]| rules.iter().find(|r| r.1 == shadow.to_string_lossy()).cloned();
         let before = rules();
         assert_eq!(entry(&before).map(|r| r.2), Some(String::new()), "looked for there first, and missing: {before:?}");
-        assert!(before.iter().any(|r| r.1.ends_with("typing/programs/values.rerail") && !r.2.is_empty()), "the engine's own, read: {before:?}");
+        assert!(before.iter().any(|r| std::path::Path::new(&r.1).ends_with("typing/programs/values.rerail") && !r.2.is_empty()), "the engine's own, read: {before:?}");
         std::fs::write(&shadow, "#include \"core.rerail\"\n.decl y(s: symbol)\n").unwrap();
         // The check compares each `rule` line's digest with the file's now: an empty one with a file there differs.
         let now = rules();
         assert!(entry(&now).is_some_and(|r| !r.2.is_empty()), "the file there is read now: {now:?}");
-        assert!(!now.iter().any(|r| r.1.ends_with("typing/programs/values.rerail")), "and the engine's own is not: {now:?}");
+        assert!(!now.iter().any(|r| std::path::Path::new(&r.1).ends_with("typing/programs/values.rerail")), "and the engine's own is not: {now:?}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -97,7 +97,7 @@
         let given = super::super::Texts::of(&texts).unwrap();
         assert!(given.graphs.iter().all(Option::is_some), "the text has its graph");
         let rules = super::rule_files(&given, &serde_json::json!({})).unwrap();
-        let missing: Vec<_> = rules.iter().filter(|r| r.1.ends_with("typing/programs/nosuchphase.rerail")).collect();
+        let missing: Vec<_> = rules.iter().filter(|r| std::path::Path::new(&r.1).ends_with("typing/programs/nosuchphase.rerail")).collect();
         assert_eq!(missing.len(), 1, "{rules:?}");
         assert!(missing[0].2.is_empty(), "no digest: {rules:?}");
     }
@@ -201,7 +201,7 @@
     /// read there is left out of it without being listed (`reuse::measures_only`).
     #[test]
     fn every_switch_a_profile_reads_is_left_out_of_the_runs_key() {
-        let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+        let root = crate::source_tree::native();
         let dirs = [root.join("src/code_rule_dsl/logic/profile"), root.join("crates/prof/src")];
         let mut files = vec![root.join("src/code_rule_dsl/logic/profile.rs")];
         for d in dirs {

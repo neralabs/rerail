@@ -28,11 +28,7 @@ fn anchor_lab() {
 fn run(policy: &str) {
     let captures = std::env::var("RERAIL_LAB_CAPTURES").expect("RERAIL_LAB_CAPTURES");
     let limit = std::env::var("RERAIL_LAB_LIMIT").map_or(usize::MAX, |n| n.parse().unwrap());
-    let compiled = crate::code_rule_dsl::CodeRuleDslRuntime::compile(
-        std::fs::read_to_string(policy).unwrap(),
-        "json".to_owned(),
-        crate::code_rule_dsl::test_support::CAPABILITIES.to_owned(),
-    )
+    let compiled = crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(policy).unwrap(), "json", crate::code_rule_dsl::test_support::CAPABILITIES)
     .unwrap_or_else(|error| panic!("{}", error.reason));
     let plans = super::plans::plans([compiled.inner.as_ref()]);
     let mut databases: Vec<_> = std::fs::read_dir(&captures)

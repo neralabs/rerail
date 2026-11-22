@@ -17,7 +17,7 @@ pub use crate::code_rule_dsl::facts::core::ast_matches::{MOST_CAPTURES, PREFIX, 
 /// Each relation's matcher compiled for the transducer, over the program's first `.policy` (its utils), by the
 /// registered compiler (`facts::vtab::syntax::AstCompiler`), with the matchers whose roots bound its rows
 /// ([`demanded_by_roots`]). A matcher that does not lower fails the run, naming it.
-pub(in crate::code_rule_dsl) fn compiled(
+pub fn compiled(
     matchers: &[(String, String, Vec<String>)],
     demand: &[Option<Vec<usize>>],
     policies: &[serde_json::Value],

@@ -58,7 +58,7 @@ The calls cost the kernels nothing the runs show.
 On the resident interpreter (`lowered_clauses_find_the_same_roots_on_the_resident_interpreter`, M3, 2026-11-20) the
 results are the same with and without this decision: 103 of 123 clauses equal, 20 refused at the launch bound, and
 the same five runs that needed more chain levels. Four clauses had failed with `BackendFailure` there, with or
-without it. That was not the reads: an interpreted run whose chain outgrew `label_phase`'s first level (0463) failed,
+without it. That was not the reads: an interpreted run whose chain outgrew `label_phase`'s first level (0475) failed,
 where a micro walk's run doubled the levels. It now doubles them too (`metal_label_passes`, the label sweep's retry
 loop). A command buffer the GPU fails is now said where it is waited on (`rerail_metal::launch::wait_checked`), once a
 run, as the joins' are.
@@ -71,3 +71,11 @@ run, as the joins' are.
   `device_tape` on the device (nextest, `--features metal-tests`: 297 pass).
 - The headers are written again by `RERAIL_WRITE_READS=1 cargo test -p rerail-clif`; the clif crate's tests check
   that the checked-in headers are the ones the reads make.
+
+## Since 0524 (2026-11-21)
+
+Decision 0524 (merged here from the hub, 2026-11-21) writes the kernels' tape reads by hand: `<ukl/reads/tape_body.h>`,
+behind `tape.h` and `tape_z.h`, is no longer generated from the CLIF. This decision now covers the reads that still are
+generated (`view.h`, `ids.h`, `relation.h`): one of those past `DEVICE_INLINE` statements is written `UKL_COLD`, the
+rest stay inlined. The handwritten tape reads keep 0463's walks (each walk steps on, whatever it is asked), as the
+generated ones did; `every_walk_ends_whatever_it_is_asked` holds the direct Rust reads (0534) to them.

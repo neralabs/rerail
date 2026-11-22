@@ -111,19 +111,19 @@ pub const BUILTINS: &[(&str, bool)] = &[
 ];
 
 /// `BUILTINS`' indexes the words tell apart (the rest from `__has_feature` on are features).
-pub(crate) const B_LINE: u8 = 0;
-pub(crate) const B_FILE: u8 = 1;
-pub(crate) const B_FILE_NAME: u8 = 2;
-pub(crate) const B_BASE_FILE: u8 = 3;
-pub(crate) const B_COUNTER: u8 = 4;
-pub(crate) const B_INCLUDE_LEVEL: u8 = 5;
-pub(crate) const B_DATE: u8 = 6;
-pub(crate) const B_TIME: u8 = 7;
-pub(crate) const B_TIMESTAMP: u8 = 8;
-pub(crate) const B_PRAGMA: u8 = 9;
-pub(crate) const B_HAS_INCLUDE: u8 = 10;
-pub(crate) const B_HAS_INCLUDE_NEXT: u8 = 11;
-pub(crate) const B_HAS_EMBED: u8 = 12;
+pub const B_LINE: u8 = 0;
+pub const B_FILE: u8 = 1;
+pub const B_FILE_NAME: u8 = 2;
+pub const B_BASE_FILE: u8 = 3;
+pub const B_COUNTER: u8 = 4;
+pub const B_INCLUDE_LEVEL: u8 = 5;
+pub const B_DATE: u8 = 6;
+pub const B_TIME: u8 = 7;
+pub const B_TIMESTAMP: u8 = 8;
+pub const B_PRAGMA: u8 = 9;
+pub const B_HAS_INCLUDE: u8 = 10;
+pub const B_HAS_INCLUDE_NEXT: u8 = 11;
+pub const B_HAS_EMBED: u8 = 12;
 
 /// The configuration the built-ins read: `__DATE__`, `__TIME__` and `__TIMESTAMP__`, fixed so
 /// runs are deterministic (`c_fixed`), and the `__has_feature` family's answers (`c_feature`:
@@ -185,23 +185,23 @@ impl Named {
 /// and the file it names (`NONE`: none).
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub(crate) struct Inc {
-    pub(crate) how: u32,
-    pub(crate) to: u32,
+pub struct Inc {
+    pub how: u32,
+    pub to: u32,
 }
 
 /// A file wanted and not found (`Expanded::wanted`'s row): the file that names it, its name's
 /// bytes (`wanted_bytes[lo..hi]`), and how it is named.
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub(crate) struct Want {
-    pub(crate) file: u32,
-    pub(crate) lo: u32,
-    pub(crate) hi: u32,
-    pub(crate) angle: bool,
-    pub(crate) next: bool,
-    pub(crate) embed: bool,
-    pub(crate) pragma: bool,
+pub struct Want {
+    pub file: u32,
+    pub lo: u32,
+    pub hi: u32,
+    pub angle: bool,
+    pub next: bool,
+    pub embed: bool,
+    pub pragma: bool,
 }
 
 /// `#embed`'s state as the compiled words keep it (`Machine::embed` and `em`): the name's
@@ -210,77 +210,77 @@ pub(crate) struct Want {
 /// scratch where they are there.
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
-pub(crate) struct EmC {
-    pub(crate) rest_lo: u64,
-    pub(crate) rest_hi: u64,
-    pub(crate) has_name: u64,
-    pub(crate) name: u64,
-    pub(crate) nname: u64,
-    pub(crate) angle: u64,
-    pub(crate) has_to: u64,
-    pub(crate) to: u64,
-    pub(crate) lo: u64,
-    pub(crate) i: u64,
-    pub(crate) hi: u64,
-    pub(crate) p: Tok,
-    pub(crate) arg0: u64,
-    pub(crate) arg1: u64,
-    pub(crate) depth: u64,
-    pub(crate) prefix0: u64,
-    pub(crate) prefix1: u64,
-    pub(crate) suffix0: u64,
-    pub(crate) suffix1: u64,
-    pub(crate) if_empty0: u64,
-    pub(crate) if_empty1: u64,
-    pub(crate) has_limit: u64,
-    pub(crate) limit: u64,
-    pub(crate) file: u64,
-    pub(crate) k: u64,
-    pub(crate) n: u64,
-    pub(crate) a: u64,
-    pub(crate) has_digits: u64,
-    pub(crate) digits: u64,
+pub struct EmC {
+    pub rest_lo: u64,
+    pub rest_hi: u64,
+    pub has_name: u64,
+    pub name: u64,
+    pub nname: u64,
+    pub angle: u64,
+    pub has_to: u64,
+    pub to: u64,
+    pub lo: u64,
+    pub i: u64,
+    pub hi: u64,
+    pub p: Tok,
+    pub arg0: u64,
+    pub arg1: u64,
+    pub depth: u64,
+    pub prefix0: u64,
+    pub prefix1: u64,
+    pub suffix0: u64,
+    pub suffix1: u64,
+    pub if_empty0: u64,
+    pub if_empty1: u64,
+    pub has_limit: u64,
+    pub limit: u64,
+    pub file: u64,
+    pub k: u64,
+    pub n: u64,
+    pub a: u64,
+    pub has_digits: u64,
+    pub digits: u64,
 }
 
 /// A built-in call being read (`BUILTIN`): which, its name's token, its parentheses' depth.
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub(crate) struct Bi {
-    pub(crate) b: u32,
-    pub(crate) name: Tok,
-    pub(crate) depth: u32,
+pub struct Bi {
+    pub b: u32,
+    pub name: Tok,
+    pub depth: u32,
 }
 
 /// A feature asked and not answered (`Expanded::unanswered`'s row): its built-in (`BUILTINS`),
 /// and its operand's bytes (`asked_bytes[lo..hi]`).
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub(crate) struct Asked {
-    pub(crate) b: u32,
-    pub(crate) lo: u32,
-    pub(crate) hi: u32,
+pub struct Asked {
+    pub b: u32,
+    pub lo: u32,
+    pub hi: u32,
 }
 
 /// A feature's answer as the compiled words read it (`Env::features`): its built-in's index
 /// (`BUILTINS`, `NONE` for none of them), its operand's bytes, and its value.
 #[repr(C)]
-pub(crate) struct FeatureC {
-    pub(crate) b: u32,
-    pub(crate) name: *const u8,
-    pub(crate) len: u64,
-    pub(crate) value: i64,
+pub struct FeatureC {
+    pub b: u32,
+    pub name: *const u8,
+    pub len: u64,
+    pub value: i64,
 }
 
 /// A file's named target as the compiled words read it (`Named`).
 #[repr(C)]
-pub(crate) struct NamedC {
-    pub(crate) name: *const u8,
-    pub(crate) len: u64,
-    pub(crate) to: u32,
-    pub(crate) angle: bool,
-    pub(crate) next: bool,
-    pub(crate) embed: bool,
-    pub(crate) pragma: bool,
+pub struct NamedC {
+    pub name: *const u8,
+    pub len: u64,
+    pub to: u32,
+    pub angle: bool,
+    pub next: bool,
+    pub embed: bool,
+    pub pragma: bool,
 }
 
 /// The file includes nest to at most (clang's bound).
@@ -382,11 +382,11 @@ pub struct Refused {
 }
 
 /// The standard's names the words know.
-pub(crate) const VA_ARGS: &[u8] = b"__VA_ARGS__";
-pub(crate) const VA_OPT: &[u8] = b"__VA_OPT__";
+pub const VA_ARGS: &[u8] = b"__VA_ARGS__";
+pub const VA_OPT: &[u8] = b"__VA_OPT__";
 
 /// Whether a word is a test (it runs the next word where it holds, skips it where not).
-pub(crate) fn is_test(opcode: u8, mode: u8) -> bool {
+pub fn is_test(opcode: u8, mode: u8) -> bool {
     matches!(opcode, LINE | IS | PEEK | LOOKUP | MACRO | DEFINED) || (opcode == INCLUDE && mode <= 1) || (opcode == EMBED && matches!(mode, 0 | 3 | 4 | 5 | 7 | 8)) || (opcode == SUB && matches!(mode, 1..=4 | 6 | 7)) || (opcode == STR && mode == 1) || opcode == GLUE || (opcode == DEFINE && matches!(mode, 0..=3 | 5 | 7)) || (opcode == EXPR && matches!(mode, 0 | 1 | 3 | 6 | 8 | 11 | 14)) || (opcode == BUILTIN && mode >= 1) || (opcode == ARG && (mode == 2 || mode == 4)) || (opcode == PRE && mode == 0) || (opcode == COND && (mode == 2 || mode == 3)) 
 }
 
@@ -481,7 +481,7 @@ pub fn validate(program: &Words) -> Result<(), Error> {
 
 /// The tests that step a cursor where they hold (`after`: their no-step successor is the
 /// failed one alone). A backend's held branch is the step.
-pub(crate) fn steps_where_held(op: u8, mode: u8) -> bool {
+pub fn steps_where_held(op: u8, mode: u8) -> bool {
     match op {
         // `defined` reads its operand where it holds, and nothing where it does not; a step
         // test steps where it holds.
@@ -543,28 +543,28 @@ fn reads(words: &[u32], entry: usize, memo: &mut HashMap<usize, Option<bool>>) -
 /// No file, definition or source.
 pub const NONE: u32 = u32::MAX;
 /// A body token's mark: no parameter.
-pub(crate) const NO_PARAM: u32 = 0xffff;
+pub const NO_PARAM: u32 = 0xffff;
 /// ...a `__VA_OPT__`.
-pub(crate) const VA_OPT_MARK: u32 = 0xfffe;
+pub const VA_OPT_MARK: u32 = 0xfffe;
 /// ...and with this bit, a paste operator.
-pub(crate) const PASTE_MARK: u32 = 1 << 16;
+pub const PASTE_MARK: u32 = 1 << 16;
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub(crate) struct Src {
+pub struct Src {
     /// The file, or `NONE`: the arena.
-    pub(crate) file: u32,
-    pub(crate) pos: u32,
-    pub(crate) end: u32,
+    pub file: u32,
+    pub pos: u32,
+    pub end: u32,
     /// The macro enabled again where it is left, or `NONE`.
-    pub(crate) def: u32,
-    pub(crate) stop: bool,
+    pub def: u32,
+    pub stop: bool,
     /// A file's: the token index of the `#` of the directive read last.
-    pub(crate) hash: u32,
+    pub hash: u32,
     /// A file's, as `#line` set them: its presumed line less its physical line, and its
     /// presumed name (scratch bytes; `NONE`: its path).
-    pub(crate) delta: i32,
-    pub(crate) presumed: (u32, u32),
+    pub delta: i32,
+    pub presumed: (u32, u32),
 }
 
 impl Src {
@@ -579,30 +579,30 @@ impl Src {
 
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
-pub(crate) struct Def {
-    pub(crate) fnlike: bool,
-    pub(crate) variadic: bool,
-    pub(crate) params: u16,
+pub struct Def {
+    pub fnlike: bool,
+    pub variadic: bool,
+    pub params: u16,
     /// The body: file `file`'s tokens `first..end`, and their marks from `marks`.
-    pub(crate) file: u32,
-    pub(crate) first: u32,
-    pub(crate) end: u32,
-    pub(crate) marks: u32,
+    pub file: u32,
+    pub first: u32,
+    pub end: u32,
+    pub marks: u32,
     /// The arguments to expand before substitution, in the order it asks: `uses[pre.0..pre.1]`.
-    pub(crate) pre: (u32, u32),
-    pub(crate) disabled: bool,
+    pub pre: (u32, u32),
+    pub disabled: bool,
     /// A built-in's index in `BUILTINS` + 1, or 0.
-    pub(crate) builtin: u8,
+    pub builtin: u8,
 }
 
 /// A macro table's slot: a name's key, the name, and its definition (`NONE`: undefined). An
 /// empty slot's name is of kind `EOF` (`Slot::EMPTY`).
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub(crate) struct Slot {
-    pub(crate) key: u64,
-    pub(crate) name: Tok,
-    pub(crate) def: u32,
+pub struct Slot {
+    pub key: u64,
+    pub name: Tok,
+    pub def: u32,
 }
 
 impl Slot {
@@ -611,18 +611,18 @@ impl Slot {
 
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub(crate) struct Frame {
-    pub(crate) def: u32,
-    pub(crate) name: Tok,
+pub struct Frame {
+    pub def: u32,
+    pub name: Tok,
     /// Its arguments: `argv[args..]`; their expansions: `pres[pres..pres + params]`.
-    pub(crate) args: u32,
-    pub(crate) pres: u32,
-    pub(crate) depth: u32,
-    pub(crate) next_use: u32,
+    pub args: u32,
+    pub pres: u32,
+    pub depth: u32,
+    pub next_use: u32,
     /// Its arguments are being read (to its `)`).
-    pub(crate) open: bool,
+    pub open: bool,
     /// Its last token: its `)`, or its name.
-    pub(crate) end: Tok,
+    pub end: Tok,
 }
 
 struct Machine<'a> {
@@ -744,12 +744,12 @@ struct Em {
 /// evaluate only the operands they take).
 #[derive(Default)]
 #[repr(C)]
-pub(crate) struct Ex {
-    pub(crate) lo: u32,
-    pub(crate) at: u32,
-    pub(crate) hi: u32,
-    pub(crate) t: Tok,
-    pub(crate) err: bool,
+pub struct Ex {
+    pub lo: u32,
+    pub at: u32,
+    pub hi: u32,
+    pub t: Tok,
+    pub err: bool,
     vals: Vec<crate::pp_expr::Value>,
     /// Indices into `OPS`.
     ops: Vec<u8>,
@@ -759,10 +759,10 @@ pub(crate) struct Ex {
 
 /// `#if`'s operators (an `EXPR` operator's index); `OPS.len()` an operator of no expression
 /// (`&=`, `[`).
-pub(crate) const OPS: &[&[u8]] = &[b"||", b"&&", b"|", b"^", b"&", b"==", b"!=", b"<", b">", b"<=", b">=", b"<<", b">>", b"+", b"-", b"*", b"/", b"%", b"~", b"!", b"(", b")", b"?", b":", b","];
+pub const OPS: &[&[u8]] = &[b"||", b"&&", b"|", b"^", b"&", b"==", b"!=", b"<", b">", b"<=", b">=", b"<<", b">>", b"+", b"-", b"*", b"/", b"%", b"~", b"!", b"(", b")", b"?", b":", b","];
 
 /// An operator's index in `OPS`.
-pub(crate) const fn op_index(op: &[u8]) -> u8 {
+pub const fn op_index(op: &[u8]) -> u8 {
     let mut i = 0;
     while i < OPS.len() {
         let o = OPS[i];
@@ -782,26 +782,26 @@ fn op_bytes(i: u8) -> &'static [u8] {
 /// The `#define` being read (`DEFINE`).
 #[derive(Clone, Copy)]
 #[repr(C)]
-pub(crate) struct DefState {
-    pub(crate) name: Tok,
+pub struct DefState {
+    pub name: Tok,
     /// Its parameters: `params[p0..]`.
-    pub(crate) p0: u32,
-    pub(crate) fnlike: bool,
-    pub(crate) variadic: bool,
+    pub p0: u32,
+    pub fnlike: bool,
+    pub variadic: bool,
     /// A parameter list: a parameter is wanted next; it closed.
-    pub(crate) want: bool,
-    pub(crate) closed: bool,
+    pub want: bool,
+    pub closed: bool,
     /// The token after the name or the list, read already (`EOF`: none).
-    pub(crate) first: Tok,
+    pub first: Tok,
     /// The definition made so far (its body's tokens, marks).
-    pub(crate) d: Def,
+    pub d: Def,
     /// The walk of the uses: the range's start, its next token, its end, and an open
     /// `__VA_OPT__`'s content (the walk after it: its next token and end).
-    pub(crate) lo: u32,
-    pub(crate) i: u32,
-    pub(crate) hi: u32,
+    pub lo: u32,
+    pub i: u32,
+    pub hi: u32,
     /// `.0` `NONE`: no content open.
-    pub(crate) content: (u32, u32),
+    pub content: (u32, u32),
 }
 
 impl Default for DefState {
@@ -814,43 +814,43 @@ impl Default for DefState {
 /// are expanded before it begins.
 #[derive(Clone, Copy, Default)]
 #[repr(C)]
-pub(crate) struct Sub {
+pub struct Sub {
     /// The expansion's index + 1 (`Tok::exp`).
-    pub(crate) id: u32,
+    pub id: u32,
     /// The body's range walked (all of it, or a `__VA_OPT__`'s content) and its next token.
-    pub(crate) lo: u32,
-    pub(crate) i: u32,
-    pub(crate) hi: u32,
+    pub lo: u32,
+    pub i: u32,
+    pub hi: u32,
     /// The output's first arena index, and the range's (a content's) being made.
-    pub(crate) base: u32,
-    pub(crate) out: u32,
+    pub base: u32,
+    pub out: u32,
     /// The body token taken last (`B`), and its index.
-    pub(crate) bt: Tok,
-    pub(crate) at: u32,
+    pub bt: Tok,
+    pub at: u32,
     /// An open `__VA_OPT__`'s content (`va_open`): the walk after it, its output's start,
     /// whether it is stringized, and its `#` or `__VA_OPT__` token.
-    pub(crate) va_open: bool,
-    pub(crate) va_lo: u32,
-    pub(crate) va_i: u32,
-    pub(crate) va_hi: u32,
-    pub(crate) va_out: u32,
-    pub(crate) va_str: bool,
-    pub(crate) va_bt: Tok,
+    pub va_open: bool,
+    pub va_lo: u32,
+    pub va_i: u32,
+    pub va_hi: u32,
+    pub va_out: u32,
+    pub va_str: bool,
+    pub va_bt: Tok,
     /// The content closed last: its output's start, whether it is stringized, its token.
-    pub(crate) closed_at: u32,
-    pub(crate) closed_str: bool,
-    pub(crate) closed_bt: Tok,
+    pub closed_at: u32,
+    pub closed_str: bool,
+    pub closed_bt: Tok,
     /// The pastes: the range's start, the read and write cursors, and the range's end.
-    pub(crate) ps: u32,
-    pub(crate) r: u32,
-    pub(crate) w: u32,
-    pub(crate) end: u32,
+    pub ps: u32,
+    pub r: u32,
+    pub w: u32,
+    pub end: u32,
     /// The range to stringize, its first token, the literal's first scratch byte, and the token
     /// whose flags it takes.
-    pub(crate) s: (u32, u32),
-    pub(crate) s_first: u32,
-    pub(crate) sb: u32,
-    pub(crate) like: Tok,
+    pub s: (u32, u32),
+    pub s_first: u32,
+    pub sb: u32,
+    pub like: Tok,
 }
 
 type R<T> = Result<T, &'static str>;
@@ -871,7 +871,7 @@ pub fn key(b: &[u8]) -> u64 {
 }
 
 /// `0` … `255` spelled one after another, then `,`: `#embed`'s bytes' spellings.
-pub(crate) const DIGITS: [u8; 659] = {
+pub const DIGITS: [u8; 659] = {
     let (mut b, mut i, mut d) = ([0u8; 659], 0, 0u32);
     while d < 256 {
         if d >= 100 {
@@ -962,7 +962,7 @@ impl<'a> Machine<'a> {
 /// moves it), and the scalars the words read. The code reads and writes them in place, and the
 /// lengths are given back to the vectors when it returns.
 #[repr(C)]
-pub(crate) struct Ctx {
+pub struct Ctx {
     pub files: *const FileC,
     pub nfiles: u64,
     /// A token the compiled words keep aside (a built-in's name while its value is made).
@@ -1094,7 +1094,7 @@ pub(crate) struct Ctx {
 
 /// A file as the compiled words read it.
 #[repr(C)]
-pub(crate) struct FileC {
+pub struct FileC {
     pub toks: *const Tok,
     pub ntoks: u64,
     pub bytes: *const u8,
@@ -1116,26 +1116,26 @@ pub(crate) struct FileC {
 }
 
 /// A conditional's layout (`Machine::conds`): its size and its file source's offset.
-pub(crate) const COND_SIZE: usize = std::mem::size_of::<(u32, bool, bool)>();
-pub(crate) const COND_SRC: usize = std::mem::offset_of!((u32, bool, bool), 0);
+pub const COND_SIZE: usize = std::mem::size_of::<(u32, bool, bool)>();
+pub const COND_SRC: usize = std::mem::offset_of!((u32, bool, bool), 0);
 /// Its chain taken, and its `#else` seen.
-pub(crate) const COND_TAKEN: usize = std::mem::offset_of!((u32, bool, bool), 1);
-pub(crate) const COND_ELSE: usize = std::mem::offset_of!((u32, bool, bool), 2);
+pub const COND_TAKEN: usize = std::mem::offset_of!((u32, bool, bool), 1);
+pub const COND_ELSE: usize = std::mem::offset_of!((u32, bool, bool), 2);
 /// An argument's or an expansion's range: its size, and its two ends' offsets.
-pub(crate) const PAIR: (usize, usize, usize) = (std::mem::size_of::<(u32, u32)>(), std::mem::offset_of!((u32, u32), 0), std::mem::offset_of!((u32, u32), 1));
+pub const PAIR: (usize, usize, usize) = (std::mem::size_of::<(u32, u32)>(), std::mem::offset_of!((u32, u32), 0), std::mem::offset_of!((u32, u32), 1));
 /// An argument use: its size, its parameter's offset, its "inside `__VA_OPT__`"'s.
-pub(crate) const USE: (usize, usize, usize) = (std::mem::size_of::<(u16, bool)>(), std::mem::offset_of!((u16, bool), 0), std::mem::offset_of!((u16, bool), 1));
+pub const USE: (usize, usize, usize) = (std::mem::size_of::<(u16, bool)>(), std::mem::offset_of!((u16, bool), 0), std::mem::offset_of!((u16, bool), 1));
 /// An expansion's name and end tokens: its size, and their offsets.
-pub(crate) const EXP: (usize, usize, usize) = (std::mem::size_of::<(Tok, Tok)>(), std::mem::offset_of!((Tok, Tok), 0), std::mem::offset_of!((Tok, Tok), 1));
+pub const EXP: (usize, usize, usize) = (std::mem::size_of::<(Tok, Tok)>(), std::mem::offset_of!((Tok, Tok), 0), std::mem::offset_of!((Tok, Tok), 1));
 /// A level: its size, its parameter's offset, its start's in `kept`.
-pub(crate) const LEVEL: (usize, usize, usize) = (std::mem::size_of::<(u16, u32)>(), std::mem::offset_of!((u16, u32), 0), std::mem::offset_of!((u16, u32), 1));
+pub const LEVEL: (usize, usize, usize) = (std::mem::size_of::<(u16, u32)>(), std::mem::offset_of!((u16, u32), 0), std::mem::offset_of!((u16, u32), 1));
 
 /// Runs compiled words (`native_cpu_pp`): `code` over the machine's buffers, the result `0`
 /// (accepted) or `pc + 1` and a reason's index into `reasons` above bit 32.
 ///
 /// # Safety
 /// `code` reads and writes only within the `Ctx` it is given: each buffer below its room.
-pub(crate) unsafe fn run_native(program: &Words, files: &[File], env: &Env, bounds: &Bounds, code: unsafe extern "C" fn(*mut Ctx) -> u64, reasons: &[&'static str]) -> Result<Expanded, Refused> {
+pub unsafe fn run_native(program: &Words, files: &[File], env: &Env, bounds: &Bounds, code: unsafe extern "C" fn(*mut Ctx) -> u64, reasons: &[&'static str]) -> Result<Expanded, Refused> {
     HOST_RUNS.with(|n| n.set(n.get() + 1));
     let mut p = prepare(program, files, env, bounds, &mut |b: Buf| b.ptr as u64)?;
     // SAFETY: the caller's.
@@ -3441,3 +3441,42 @@ fn the_digits_spell_0_to_255_and_a_comma() {
     want.push(b',');
     assert_eq!(&DIGITS[..], &want[..]);
 }
+
+/// Why the compiled words refuse a TU: the index the code returns above bit 32 (`run_native`),
+/// each the interpreter's reason.
+pub const REASONS: &[&str] = &[
+    "the compiled words refuse",
+    "the program stopped",
+    "past the calls' bound",
+    "a return with no call",
+    "past the output's bound",
+    "a directive with no file",
+    "a directive's line not in a file",
+    "past the arena's bound",
+    "past the macro table's bound",
+    "past the frames' bound",
+    "an argument with no frame",
+    "past the sources' bound",
+    "no level open",
+    "a level's source not on top",
+    "a level with no frame",
+    "an expansion with no frame",
+    "past the parameters' bound",
+    "past the definitions' bound",
+    "a __VA_OPT__ inside a __VA_OPT__",
+    "past the scratch bytes' bound",
+    "a substitution with no frame",
+    "past the expansions' bound",
+    "an argument substituted before its expansion",
+    "a raw string's prefix pasted",
+    "past the conditionals' bound",
+    "a line's source not on top",
+    "past the expression's bound",
+    "no value",
+    "no operator",
+    "no precedence",
+    "past the wanted files' bound",
+    "past push_macro's bound",
+    "past the unanswered features' bound",
+    "a _Pragma's text the token grammar refuses",
+];

@@ -3090,7 +3090,7 @@ thread_local! {
     pub static NO_WALK_LEMMAS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
-#[cfg(test)]
+#[cfg(any(test, feature = "test-hooks"))]
 thread_local! {
     /// Compile with tier 1's lasts as before decision 0411, for the tests' oracle.
     pub static NO_GAP_ENDS: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
@@ -3103,7 +3103,7 @@ thread_local! {
 /// of a row, and after a byte of `K`, comes a byte of `K`, a start, or the file's end.
 fn gap_ends(low: &mut Lowering, token_rows: &[(String, Val, Val)]) -> Result<Option<Val>, String> {
     let (Some(skip), Some(first)) = (low.skip, token_rows.first()) else { return Ok(None) };
-    #[cfg(test)]
+    #[cfg(any(test, feature = "test-hooks"))]
     if NO_GAP_ENDS.get() {
         return Ok(None);
     }
@@ -4344,7 +4344,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         v.dedup();
         v
     };
-    for b in 0..256 {
+    for (b, kind) in kinds.iter_mut().enumerate() {
         let mut sig: Vec<u16> = lowered.switches.iter().filter(|s| s.offset == 0).map(|s| s.targets[b]).collect();
         // A moved row's tokens have their own kind (decision 0509): its first bytes are not its
         // column's, so a `0` is one class with `1`..`9`, as the lean lexer's one `Int`. A shared
@@ -4358,7 +4358,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         if classes.len() > 256 {
             return Err("more than 256 kinds of first byte".into());
         }
-        kinds[b] = k;
+        *kind = k;
     }
     // Numbered so a switch on the kind has few ranges of one target (its compare tree is
     // shallow, as a jump table on the lean lexer's kinds is small): from byte 0's class, each

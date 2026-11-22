@@ -25,7 +25,7 @@ use std::cmp::Ordering;
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 use std::sync::Arc;
 
-use super::rows::{BlockVec, Home, Row};
+use super::rows::{BlockVec, Facts, Home, Row};
 
 /// A relation's rows, read by id: one flat vector (`[i64]`, `k` values a row), or the segments a maintained relation
 /// shares with the kept one it started as (`super::Rows`, smoking gun 8). Every row lies whole in one segment.
@@ -38,6 +38,11 @@ pub(super) trait RowData {
     /// Where its indexes' arrays go (decision 0384 step 4): its relation's block; `None`, a run's open block.
     fn home(&self) -> Option<Home> {
         None
+    }
+    /// Whether a table lying in `facts` lies in its block (`home`'s): `false` once its rows moved to another (a
+    /// tail past its block's room, `Rows::grow`), so the table moves after them. Read with no reference counted.
+    fn lies_in(&self, _facts: &Arc<Facts>) -> bool {
+        true
     }
 }
 

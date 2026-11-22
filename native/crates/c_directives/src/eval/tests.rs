@@ -838,8 +838,9 @@ fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str,
 
 /// Decisions 0468 §4 and 0485 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
 /// text inside its P1 iterations) and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
-/// definitions, and one that runs again at a larger rung. A grid past the groups the device holds
-/// at once fails its barrier, never hangs, and runs again at half the groups to the same output.
+/// definitions, and one that runs again at a larger rung. A grid dispatched past the groups the
+/// device holds at once is the groups that join it (decision 0540 §3): it passes its barriers the
+/// first time, on fewer groups than dispatched, to the same output.
 #[test]
 fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut big = String::new();
@@ -864,10 +865,11 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
     let (unit, lay) = (&d.unit, &d.lay);
     let wide = rerail_metal::pp_expand::expand_at(unit, lay, 0, 4096).unwrap();
     let narrow = rerail_metal::pp_expand::expand_from(unit, lay, 0).unwrap();
-    assert!(wide.groups < 4096, "the grid past residency ran at {} groups", wide.groups);
-    same(wide.refused, 0, "the halved grid's refusals");
-    same(&wide.out, &narrow.out, "the halved grid's output");
-    eprintln!("past residency: ran again at {} groups", wide.groups);
+    same(wide.groups, 4096, "the grid past residency, run once: no barrier failed");
+    assert!((1..4096).contains(&wide.joined), "the grid is the groups that run: {} joined of 4096", wide.joined);
+    same(wide.refused, 0, "the joined grid's refusals");
+    same(&wide.out, &narrow.out, "the joined grid's output");
+    eprintln!("past residency: {} of 4096 groups joined", wide.joined);
 }
 
 /// A part's output spelled: each ref's token in its file (`files` and `tapes`, the unit's), each
@@ -1632,6 +1634,42 @@ fn a_chains_use_is_flat_in_its_length() {
         }
     }
     assert!(flat, "a store's use grows with the chain's length (above)");
+}
+
+/// Decision 0527 §2: a pause gives back a done call's span through its exits' chain, to the
+/// chain's last `)` (its exits' calls' sums by pointer doubling over the lists, not a walk). Each
+/// level of a chain has a done call beside its pending one whose exits chain two deep in the
+/// level's list (`F2(s)(s)(...)`: `F2` gives `G2`, whose call gives `H2`), the last's arguments
+/// 31 pieces. A level adds 64 tokens (its expansion, which the output holds); stopping at the
+/// first exit's `)` would keep the last's arguments too (96 a level), so the bound is 80.
+#[test]
+fn a_done_calls_exits_are_given_back_to_their_last() {
+    // SAFETY: as `a_chains_use_is_flat_in_its_length`.
+    unsafe { std::env::set_var("RERAIL_PP_GIVE_GAP", "16") };
+    use rerail_metal::pp_expand::ROOM_STORES;
+    let state = (0..20).map(|i| format!("a{i} (b, c)")).collect::<Vec<_>>().join(" ");
+    let last = (0..16).map(|_| "s").collect::<Vec<_>>().join(" a ");
+    let chain = |levels: usize| {
+        let mut t = String::from("#define L0(s) [s]\n#define F2(x) x G2\n#define G2(x) x H2\n#define H2(x) x\n");
+        for k in 1..=levels {
+            t += &format!("#define L{k}(s) F2(s)(s)({last}) a L{}(s) b\n", k - 1);
+        }
+        t += &format!("L{levels}({state})\nend\n");
+        t
+    };
+    let tokens = ROOM_STORES.iter().position(|s| *s == "tokens").unwrap();
+    let uses: Vec<u32> = [16usize, 48]
+        .iter()
+        .map(|&n| {
+            let text = chain(n);
+            let (got, want, room) = expanded_x(&[("main.c", text.as_str())], false);
+            let got = got.unwrap_or_else(|why| panic!("{n} levels: refused {why}"));
+            same(show(&got), show(&want), "a chain of exits beside it");
+            room[tokens].0
+        })
+        .collect();
+    eprintln!("tokens: {} {}", uses[0], uses[1]);
+    assert!(uses[1] <= uses[0] + 80 * 32, "the tokens grow {} a level", (uses[1] - uses[0]) / 32);
 }
 
 /// A unit expanded with its run's own figures (`expanded_x`): its output spelled, or its refusal bits; the serial

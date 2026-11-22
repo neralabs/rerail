@@ -9,6 +9,7 @@ import { remoteSinkEnabled, requireExperiment } from "../engine/experimental-fea
 import {
   auditSettingsPatchSchema, auditSettingsSchema, type AuditControls, type AuditSettings, type AuditSettingsPatch, type AuditRequest,
 } from "../engine/audit/audit-control-schema.js";
+import { leaveInheritedRepository } from "../engine/git.js";
 
 const WAIT_TIMEOUT_MS = 10_000;
 const WAIT_INTERVAL_MS = 250;
@@ -206,6 +207,8 @@ export const SCAN_VIOLATIONS_EXIT = 3;
  */
 async function runHeadlessScanCommand(args: readonly string[], options: AuditCliOptions): Promise<number> {
   const parsed = parseScanArguments(args);
+  // The scan reads the checkout it names (`--repo`, else this folder), also when a Git hook started it with its own.
+  leaveInheritedRepository();
   const ruleDocuments = new Map<string, RuleDocument>();
   const report = await runHeadlessScan(headlessScanOptions(parsed, ruleDocuments, options));
   print(options, parsed.flags.has("--json"), report, describeScan(report));

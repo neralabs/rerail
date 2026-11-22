@@ -1490,13 +1490,6 @@ impl BlockProgram {
         &self.outputs
     }
 
-    /// A row program on the CPU JIT (`native_cpu_rows`).
-    pub fn compile_rows(&self) -> Result<crate::native_cpu_rows::CompiledRows, Error> {
-        self.verify()?;
-        let shape = self.rows.ok_or(Error::InvalidTarget(0))?;
-        crate::native_cpu_rows::compile(&crate::block_native::BlockNative::lower(self), usize::from(shape.columns))
-    }
-
     /// A row program's extract pass: the rows (numbers within the batch, in order) whose bit
     /// output `k` sets, appended to `out`.
     pub fn extract_rows(&self, batch: &RowBatch<'_>, k: usize, values: &mut Vec<u64>, out: &mut Vec<u32>) {

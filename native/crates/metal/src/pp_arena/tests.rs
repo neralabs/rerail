@@ -268,7 +268,7 @@ fn the_pool_gives_each_block_once() {
     let mut demand: BTreeMap<u32, usize> = BTreeMap::new();
     for &c in &classes { *demand.entry(c).or_default() += 1; }
     for rounds in [1u32, 3] {
-        let (ctl, rb, cb) = (zeroed::<u32>(3), buf(&ranges), buf(&classes));
+        let (ctl, rb, cb) = (zeroed::<u32>(4), buf(&ranges), buf(&classes));
         let (heads, next, out) = (zeroed::<u32>(128), zeroed::<u32>(at as usize), zeroed::<u32>(threads * per));
         run(|e| e.run("pb_pool", &[("ctl", &ctl), ("ranges", &rb), ("classes", &cb), ("heads", &heads), ("next", &next), ("out", &out)], Some(ProbeArgs([(ranges.len() / 2) as u32, per as u32, rounds, 0])), groups));
         assert_eq!(read::<u32>(&ctl, 3)[2], 0, "a grid barrier failed");
@@ -326,7 +326,7 @@ fn the_pool_splits_a_larger_block() {
         let room: usize = pieces.iter().filter(|&&k| k >= c).map(|&k| 1usize << (k - c)).sum();
         let classes = vec![c; threads * per];
         for rounds in [1u32, 3] {
-            let (ctl, rb, cb) = (zeroed::<u32>(3), buf(&ranges), buf(&classes));
+            let (ctl, rb, cb) = (zeroed::<u32>(4), buf(&ranges), buf(&classes));
             let (heads, next, out) = (zeroed::<u32>(128), zeroed::<u32>(at as usize), zeroed::<u32>(threads * per));
             run(|e| e.run("pb_pool", &[("ctl", &ctl), ("ranges", &rb), ("classes", &cb), ("heads", &heads), ("next", &next), ("out", &out)], Some(ProbeArgs([(ranges.len() / 2) as u32, per as u32, rounds, 1])), groups));
             assert_eq!(read::<u32>(&ctl, 3)[2], 0, "a grid barrier failed");

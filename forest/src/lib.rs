@@ -44,7 +44,7 @@ pub mod randomforest_kernels;
 pub mod randomforest_recursive;
 // The device layer: `rerail-gpu` (decision 0440), under the names the forest's code uses.
 pub use rerail_gpu::{compute_kernel, compute_kernel_grid, device};
-#[cfg(target_os = "linux")]
+#[cfg(all(not(target_os = "macos"), any(target_os = "linux", windows)))]
 pub use rerail_gpu::compute_kernel_cuda;
 #[cfg(target_os = "macos")]
 pub use rerail_gpu::compute_kernel_metal;
@@ -75,7 +75,7 @@ pub mod gpu {
 
 /// The process's user + system CPU seconds.
 pub fn process_cpu() -> f64 {
-    rerail_gpu::process_cpu_seconds()
+    rerail_gpu::os::process_cpu()
 }
 
 /// Sorts keys and gives each distinct one once, in order (a numeric column's values, `from_column_device`).

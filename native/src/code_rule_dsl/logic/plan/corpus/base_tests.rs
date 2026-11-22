@@ -1169,6 +1169,40 @@ fn a_copy_of_an_inputs_columns_is_a_view_of_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A copy of any input's columns, not only `node`'s, is a view held in place (decisions 0329, 0353): no row of it is
+/// read or copied when it is held. Read into flat rows, a view of a batch's `string_annotation` made every document
+/// of a warm run that read none of it (ep2's `rr_ctx29`, a third of the run, Q332). Its readers find what the
+/// derived copy gave them.
+#[test]
+fn a_copy_of_any_inputs_columns_is_held_in_place() {
+    use crate::code_rule_dsl::logic::profile;
+    let dir = corpus("input-view-any", &[TREE]);
+    let program = ".decl under(x: node, y: node)\nunder(x, y) :- within(x, y).\n\
+                   .decl in_def(s: number)\nin_def(s) :- under(n, a), node(_, a, \"function_definition\", _, _), node(_, n, \"identifier\", s, _).\n\
+                   .output in_def\n";
+    let scope = || crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+    let (viewed, held) = {
+        let _run = scope();
+        profile::set(true);
+        profile::take_decisions();
+        let viewed = run(&dir, program, &["in_def"]);
+        let made = profile::take_decisions();
+        profile::set(false);
+        let held: BTreeSet<String> = made.into_keys().filter(|(t, _)| t == "a view held in place: its statistics (Q332)").map(|(_, x)| x).collect();
+        (viewed, held)
+    };
+    assert!(held.iter().any(|x| x.starts_with("under: ")), "under is a view of within, held in place: {held:?}");
+    let copied = {
+        let _copy = super::switches::set(&[("RERAIL_COPY_VIEWS", "1")]);
+        let _run = scope();
+        std::fs::remove_dir_all(dir.join(".out")).ok();
+        run(&dir, program, &["in_def"])
+    };
+    assert_eq!(viewed, copied);
+    assert!(!viewed[0].is_empty(), "the identifiers inside a function: {viewed:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A core relation nothing derives and the runner does not bind is a named error, not the planner's missing
 /// statistics; those that need CPython say so. A program's own input is its business: no such error.
 #[test]

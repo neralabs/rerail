@@ -1,7 +1,6 @@
 //! The checks of [`super::STATE`] against the source, and of [`super::Carry`].
 
-#[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 use super::{Carry, Class, NOT_YET_PINNED, STATE};
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -9,7 +8,7 @@ use std::path::{Path, PathBuf};
 /// `native/`.
 fn native() -> PathBuf {
     std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../..")
-        .canonicalize()
+        .canonical()
         .unwrap()
 }
 

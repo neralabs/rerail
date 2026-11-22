@@ -187,7 +187,7 @@ fn table(name: &str) -> String {
 
 /// One clause of the wave (its index there is its `c`): its code rule, the clause and the matcher
 /// of the clause's query the wave lowered.
-pub(in crate::code_rule_dsl) struct Shape {
+pub struct Shape {
     pub rule: Arc<CompiledCodeRule>,
     pub clause: usize,
     pub grammar: usize,
@@ -381,7 +381,7 @@ pub(in crate::code_rule_dsl) enum Capture {
     Text(String),
 }
 
-pub(in crate::code_rule_dsl) struct Layer {
+pub struct Layer {
     shapes: Vec<Shape>,
     /// Code rule ids: `r` is an index.
     rules: Vec<String>,
@@ -406,7 +406,7 @@ fn index_of(names: &[String], name: &str) -> Option<i64> {
 }
 
 impl Layer {
-    pub(in crate::code_rule_dsl) fn new(shapes: Vec<Shape>) -> StoreResult<Self> {
+    pub fn new(shapes: Vec<Shape>) -> StoreResult<Self> {
         let (mut rules, mut codes, mut ignores) = (Vec::new(), Vec::new(), Vec::new());
         for shape in &shapes {
             let violation = shape.violation();
@@ -429,7 +429,7 @@ impl Layer {
 
     /// The layer's program: the planner's statements over the tables, with `finding` recorded as
     /// one family per code rule, and the statements its steps read (`Emitted::setup`: the views).
-    pub(in crate::code_rule_dsl) fn program(&self, store: &ContentStore) -> StoreResult<emit::Emitted> {
+    pub fn program(&self, store: &ContentStore) -> StoreResult<emit::Emitted> {
         let mut batch = HashMap::new();
         for (name, table, arity) in WAVE {
             let columns = (0..arity).map(|i| format!("c{i}")).collect::<Vec<_>>();
@@ -441,7 +441,7 @@ impl Layer {
             batch.insert(name.clone(), (Source::positional(&table(name), &columns), 100.0));
         }
         let intern = &mut |names: &[&str]| store.intern_atoms(names).map_err(|e| crate::code_rule_dsl::logic::plan::Error::Plan(e.to_string()));
-        let mut emitted = emit::single(emit::emit_batch(FINDINGS, PROGRAM, &batch, intern).map_err(invalid)?, RELATION).map_err(invalid)?;
+        let mut emitted = emit::single(emit::emit_program(crate::code_rule_dsl::logic::rr::parse_version(FINDINGS).map_err(|e| invalid(e.to_string()))?, PROGRAM, &batch, intern).map_err(invalid)?, RELATION).map_err(invalid)?;
         emitted.program.partitions = vec![(RELATION.to_owned(), self.rules.clone())];
         Ok(emitted)
     }
@@ -449,7 +449,7 @@ impl Layer {
     /// The findings of the wave's matches on `lease` over `documents` of `scope`: the layer's
     /// facts written, its program run once and its families recorded, each (rule, document) a
     /// clause reads published with its coverage.
-    pub(in crate::code_rule_dsl) fn findings(
+    pub fn findings(
         &self,
         lease: &Lease<'_>,
         graph: &(impl Graph + ?Sized),
@@ -489,12 +489,12 @@ impl Layer {
         Ok((findings, outcome))
     }
 
-    pub(in crate::code_rule_dsl) fn shapes(&self) -> &[Shape] {
+    pub fn shapes(&self) -> &[Shape] {
         &self.shapes
     }
 
     /// The shapes' identity, which the program's text does not hold.
-    pub(in crate::code_rule_dsl) fn digest(&self) -> [u8; 32] {
+    pub fn digest(&self) -> [u8; 32] {
         let mut hash = Sha256::new();
         hash.update(b"rerail.findings/v2\0");
         for shape in &self.shapes {

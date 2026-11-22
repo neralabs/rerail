@@ -1,6 +1,6 @@
 #!/bin/zsh
 # dl-history.sh REPO OUT [SCOPE]: the data layer's real history as a replay for maintain-measure.sh (t43, the
-# data-layer scale run; decision 0364's "data-layer history"). REPO is a nera-data-layer clone holding the commits
+# data-layer scale run; decision 0364's "data-layer history"). REPO is a clone of the internal data layer holding the commits
 # below; only its objects are read. OUT gets `o125-replay/00` (the .py files of the first commit, under SCOPE if
 # given, else the whole tree) and `o125-replay/01..03`, each the .py files that commit changed in
 # `l2060_query_builder/` (as decision 0364 measured) with the paths it removed in `.deleted`; and `policy.rr`,

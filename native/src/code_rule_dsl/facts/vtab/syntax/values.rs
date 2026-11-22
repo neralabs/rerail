@@ -17,7 +17,7 @@
 //! binds whole (`in_block`). A view's rows are read in place through one directory of the batch's documents and the
 //! values' (`device_chunk::views_over`), made again when values are admitted after it.
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 use super::super::DeviceView;
 use super::super::Source;
 use parking_lot::RwLock;
@@ -80,16 +80,16 @@ pub struct Values {
     batches: RwLock<Vec<Arc<super::Batch>>>,
     /// The views' directory over the chunk's batch and the values' (`device_chunk::views_over`), and the values it
     /// was made with.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     dir: parking_lot::Mutex<Option<(usize, Option<Arc<Dir>>)>>,
     /// Per relation made on lookup (an axis), the device's solve of the chunk's batch and its values in one relation
     /// (`Within::solved_with`), and the parts it was made with.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     solved: parking_lot::Mutex<FxHashMap<String, (usize, Option<crate::code_rule_dsl::facts::rows::Part>)>>,
 }
 
 /// A views' directory of a chunk's batch and its values, with what its rows' entries and tapes are kept by.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub(super) struct Dir {
     pub(super) views: super::device_chunk::ViewsInPlace,
     _batches: Vec<Arc<super::Batch>>,
@@ -148,7 +148,7 @@ impl Values {
         self.parts.load().get(name).and_then(|p| p.whole.clone())
     }
     /// The views' directory of `batch` (the chunk's) and the values admitted so far: made again when more are.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn dir(&self, batch: &super::Batch) -> Option<Arc<Dir>> {
         let batches = self.batches.read().clone();
         let mut dir = self.dir.lock();
@@ -259,7 +259,7 @@ impl Layered {
     }
 }
 
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 impl Layered {
     /// A view's rows on the device: the chunk's batch's and its values', read in place through their directory. The
     /// base's view as the device reads it (its kind, its block), its directory that of every document.
@@ -564,7 +564,7 @@ impl Source for Layered {
         });
     }
     // A relation's rows on the device: the chunk's, or its and its values' in their one block relation.
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn in_block(&self) -> Option<crate::code_rule_dsl::facts::rows::InBlock> {
         if !self.has_parts() {
             return self.base.in_block();
@@ -574,7 +574,7 @@ impl Source for Layered {
         }
         self.values.whole(&self.name).filter(|w| w.len() == self.len()).and_then(|w| w.in_block())
     }
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     fn device_view(&self) -> Option<DeviceView<'_>> {
         if !self.has_parts() {
             return self.base.device_view();

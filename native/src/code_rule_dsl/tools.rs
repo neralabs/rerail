@@ -1,21 +1,15 @@
 //! The engine's text tools without Node (list step 18; P `spec-tooling.md` §2.2.1–2.2.2): the
-//! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these.
+//! `rerail-engine` binary (`src/bin/rerail-engine.rs`) and the napi wrappers both call these. Boot's: the engine
+//! adds the napi wrapper and boots the program before a command (`code_rule_dsl/tools/napi.rs`).
 
-#[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 pub use super::logic::profile::watch::watch;
 pub use super::sql_executor::CodeRuleSqlExecutor;
 pub use super::logic::settings::{program_text, program_texts, settings};
 pub use super::logic::settings::process_counters;
-use crate::code_rule_dsl::CodeRuleDslRuntime;
 use crate::code_rule_dsl::transducer::packed::rir;
 use crate::code_rule_dsl::logic::program_image::fields::ProgramFields;
 
-/// The package CLI's SQL tool, sharing the standalone command's request and execution path.
-#[napi_derive::napi(catch_unwind)]
-pub fn execute_sql_request(store_path: String, request_json: String) -> napi::Result<String> {
-    sql(std::path::Path::new(&store_path), &request_json).map_err(napi::Error::from_reason)
-}
 
 /// A SQL extension request for the standalone tool. The same session serves the bindings,
 /// lowered rule program and subsequent SQL queries; no AST matcher is lowered to SQL.
@@ -182,7 +176,7 @@ fn sql_request(store: &std::path::Path, request: &str) -> Result<String, String>
 }
 
 /// The capabilities rules compile against, as bundled with the engine.
-pub const CAPABILITIES: &str = include_str!("capabilities.json");
+pub const CAPABILITIES: &str = super::rule_api::CAPABILITIES;
 
 /// Read a public `.rerail` file, including its core prelude and libraries. The CLI and migration
 /// harness use the same reader as the engine; they never strip directives or run a lab interpreter.
@@ -892,7 +886,7 @@ pub fn dump(
     let compiled = policies
         .iter()
         .map(|(name, source, format)| {
-            CodeRuleDslRuntime::compile(source.clone(), format.clone(), capabilities.to_string())
+            crate::code_rule_dsl::rule_api::compile(source, format, capabilities)
                 .map(|rule| (name.clone(), rule))
                 .map_err(|error| format!("{name}: {}", error.reason))
         })
@@ -1139,7 +1133,7 @@ fn logic_checked(programs: &[String], root: &std::path::Path, t_facts: Option<&s
 //   rerail-engine test-rr <rule or directory>... [--filter <text>]
 use std::path::Path;
 
-const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>...\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
+const USAGE: &str = "usage:\n  rerail-engine repeat <script>\n  rerail-engine dump --rule <file>... [--clause <id>] [--fused] [--setplan] [--capabilities <file>]\n  rerail-engine asm <file.rir>\n  rerail-engine logic <program.rerail | dir of .rerail> <corpus root> [<T facts.sqlite>] <out dir> [--modes <modes> | --sql] [--metal] [--chunk <nodes>] [--env key=value]... [--full] [--facts <dir>] [--require-facts] [--base <rev>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine facts-stamp <raw dir> --out <facts dir> --root <repository> <policy.rerail>...\n  rerail-engine images pack <exported dir> <bundle>\n  rerail-engine gc <store.sqlite> [--history-mb <n>]\n  rerail-engine delete-scope <store.sqlite> <name>\n  rerail-engine capture-tapes <root> <out file> [--every <k>] [--max <files>] [--all-tokens]\n  rerail-engine upkeep [<store.sqlite>...] [--cpu <percent>] [--jobs <list>]\n  rerail-engine kernels [list | compile [--all] [--idle] | ship <dir> [--from <store dir>] [--air] | prune [--mb <n>]]\n  rerail-engine sql <store.sqlite> <request.json>\n  rerail-engine flatten [--lowered] <program.rerail>\n  rerail-engine csv <out dir> [<to dir>]\n  rerail-engine run-rr <policy.rerail> <corpus root> <out dir> [<options.json>] [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine run-policies [--tool-calls <calls.json>] <corpus root> <out dir> <policy.rerail>... [--revision <commit-or-tree> --analysis-scope <name>]\n  rerail-engine check-rr <rule>...\n  rerail-engine convert-rr [--cases <cases.json>] <rule>...\n  rerail-engine test-rr <rule or directory>... [--filter <text>] [--json]\n  rerail-engine translate-json [--display] <rule.json>... --out <dir>\nevery command: [--memory-mb <n>] (overall memory budget, default 1024) [--metal-mb <n>] (Metal budget on top of it, default half the overall)";
 
 /// One `rerail-engine` command (`args` after the program's name): its output, or the error to report. The binary
 /// runs one per process; a long-lived instance (the browser's engine: `reactor`) runs one per call, and with
@@ -1206,8 +1200,8 @@ pub fn cli_in(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::cor
 
 /// A command of `cli_in`, within its limits.
 fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus::session::Kept) -> Result<String, String> {
-    // Done as the library loaded, except where nothing runs then (the browser's build).
-    crate::install_store_functions();
+    // The program is booted before its first command: as the library loads, or by the engine's `cli`/`cli_in`
+    // (`code_rule_dsl/tools/napi.rs`) where nothing runs then (the browser's build, the CLI binary).
     let mut budgets = budget_options(args)?;
     for flag in ["--revision", "--analysis-scope"] {
         if budgets.iter().filter(|a| *a == flag).count() > 1 {
@@ -1282,7 +1276,7 @@ fn command(args: &[String], kept: &mut crate::code_rule_dsl::logic::plan::corpus
         Some("flatten") => flatten_command(&args[1..]),
         Some("images") => images_command(&args[1..]),
         Some("csv") => csv_command(&args[1..]),
-        #[cfg(target_os = "macos")]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         Some("kernels") => kernels_command(&args[1..]),
         #[cfg(feature = "tape-cache")]
         Some("gc") => gc_command(&args[1..]),
@@ -1777,42 +1771,129 @@ fn gc_command(args: &[String]) -> Result<String, String> {
     Ok(out)
 }
 
-/// `upkeep [STORE...] [--cpu PCT] [--jobs LIST]`: runs every upkeep job that has work to its end now, idle machine
-/// or not (decision 0190): each store's collection, search-index backlog and SQLite file, and the cost
-/// statistics' store and model. `--cpu` is the share of one core the jobs average (the setting's default, 25);
-/// `--jobs` is `RERAIL_UPKEEP_JOBS`'s list. Prints each job's steps, wall and CPU.
-#[cfg(feature = "tape-cache")]
-/// `rerail-engine kernels` (decision 0395): the store of compiled Metal kernels.
+/// Every fixed kernel of the engine (a kernel whose source is the same for every rule set), to compile ahead of its
+/// first use (decision 0395's tiers, on every backend): the GPU lane's (`rerail_accel::gpu::kernels_ahead`), the GPU
+/// runtime's (`rerail_metal::kernels_ahead`), the device's (`MatcherDevice::kernels_ahead`) and, in a build with the
+/// tests' hooks, the tape format's tests' (`rerail_tape_format::f16::kernels`). Each entry asks for its kernel
+/// as its use does, so its use finds it: in this process, in the store, or shipped.
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
+pub fn kernels_ahead() -> Vec<rerail_gpu::kernels::Ahead> {
+    let mut v = rerail_accel::gpu::kernels_ahead();
+    v.extend(rerail_metal::kernels_ahead());
+    if let Some(device) = crate::code_rule_dsl::transducer::packed::device::matcher() {
+        v.extend(device.kernels_ahead().into_iter().map(|(name, make)| rerail_accel::gpu::ahead(name, make)));
+    }
+    #[cfg(feature = "test-hooks")]
+    v.extend(rerail_tape_format::f16::kernels().into_iter().map(|(name, text)| {
+        rerail_gpu::kernels::Ahead::new(name.clone(), move || rerail_gpu::kernels::program(&name, &text).map(drop))
+    }));
+    v
+}
+
+/// `rerail-engine kernels` (decision 0395): the compiled kernels, on every backend. The device layer's store
+/// (`rerail_device::store`: CUDA's cubins, OpenCL's binaries, the CPU's shared objects) and, on macOS, Metal's
+/// archive store (`rerail_accel::gpu::kernels`).
 ///
 /// ```text
-/// kernels [list]                   the store, the shipped kernels, and the kernels runs went without
-/// kernels compile [--all] [--idle] compiles the last run's (--all: every run's) wanted kernels now, here
+/// kernels [list]                   the stores, the shipped kernels, the device, and (Metal) the kernels runs went
+///                                  without
+/// kernels compile [--all] [--idle] [--threads <n>] [--only <text>] [--within <s>]
+///                                  compiles every fixed kernel now, here (`kernels_ahead`; --only: those whose names
+///                                  hold <text>), <n> at a time (default half the cores), none starting past <s>
+///                                  seconds and none waited for past <s> + 60 (the next goes on from the store), then
+///                                  (Metal) the last run's (--all: every run's) wanted kernels
 ///                                  (--idle: at the background priority, as after a run)
 /// kernels ship <dir> [--from <s>] [--air]
-///                                  the fixed kernels a run compiled (store <s>, else this machine's) as the
-///                                  engine's bundle: this device's archives; --air: AIR libraries too (Xcode's
-///                                  Metal Toolchain)
-/// kernels prune [--mb <n>]         the store within n MB (default RERAIL_METAL_KERNELS_MB, 2048)
+///                                  the fixed kernels as the engine's bundle: this device's forms under
+///                                  <dir>/<backend>/ by the store's keys (compiled first where the store lacks them);
+///                                  Metal: the archives a run compiled (store <s>, else this machine's); --air: AIR
+///                                  libraries too (Xcode's Metal Toolchain)
+/// kernels prune [--mb <n>]         each store within n MB (default RERAIL_GPU_KERNELS_MB and RERAIL_METAL_KERNELS_MB,
+///                                  2048)
 /// ```
-#[cfg(target_os = "macos")]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 fn kernels_command(args: &[String]) -> Result<String, String> {
-    use rerail_accel::gpu::kernels as k;
+    use rerail_gpu::store;
     let mut out = String::new();
+    let threads = match args.iter().position(|a| a == "--threads") {
+        Some(i) => args.get(i + 1).and_then(|v| v.parse::<usize>().ok()).filter(|&n| n > 0).ok_or("--threads takes a number")?,
+        None => rerail_gpu::kernels::ahead_threads(),
+    };
+    // `--within <s>`: no compile starts after `s` seconds (the next `kernels compile` goes on from the store).
+    let within = match args.iter().position(|a| a == "--within") {
+        Some(i) => Some(std::time::Duration::from_secs_f64(args.get(i + 1).and_then(|v| v.parse::<f64>().ok()).ok_or("--within takes seconds")?)),
+        None => None,
+    };
+    let until = within.map(|s| std::time::Instant::now() + s);
+    // `--only <text>`: the fixed kernels whose names hold it.
+    let only = match args.iter().position(|a| a == "--only") {
+        Some(i) => Some(args.get(i + 1).ok_or("--only takes a name")?.as_str()),
+        None => None,
+    };
+    // The process's device (its forms are kept under its backend's directory, in the store and in a bundle).
+    let device = || rerail_gpu::shared::get().map(|s| s.device.name());
+    // Compiles the fixed kernels, reporting each: what it loaded (shipped or from the store), compiled, and took.
+    let compile = |out: &mut String| -> Vec<rerail_gpu::kernels::Made> {
+        let started = std::time::Instant::now();
+        let list = kernels_ahead().into_iter().filter(|a| only.is_none_or(|o| a.name.contains(o))).collect();
+        // The compiles still running a minute past `--within` are left (the process ends without them).
+        let bound = rerail_gpu::kernels::Bound { start_by: until, end_by: until.map(|u| u + std::time::Duration::from_secs(60)) };
+        let made = rerail_gpu::kernels::compile_ahead(list, threads, bound);
+        for m in &made {
+            let how = match &m.result {
+                _ if m.skipped => "  not started (--within)".to_owned(),
+                _ if m.unfinished => "  still compiling, left (--within)".to_owned(),
+                Err(e) => format!("  failed: {}", e.lines().next().unwrap_or("")),
+                Ok(()) if m.compiled > 0 => format!("  compiled {}", m.compiled),
+                Ok(()) if m.loaded > 0 => format!("  loaded {}", m.loaded),
+                Ok(()) => String::new(),
+            };
+            *out += &format!("{:<40.40} {:>8.2} s{how}\n", m.name, m.seconds);
+        }
+        let (loaded, compiled): (u64, u64) = made.iter().fold((0, 0), |(l, c), m| (l + m.loaded, c + m.compiled));
+        *out += &format!(
+            "{} fixed kernels in {:.2} s ({threads} at a time): {compiled} compiled, {loaded} loaded, {} failed, {} not started, {} left compiling\n",
+            made.len(),
+            started.elapsed().as_secs_f64(),
+            made.iter().filter(|m| m.result.is_err()).count(),
+            made.iter().filter(|m| m.skipped).count(),
+            made.iter().filter(|m| m.unfinished).count()
+        );
+        made
+    };
     match args.first().map(String::as_str) {
         None | Some("list") => {
-            let s = k::size();
-            out += &format!("store    {}\n", k::store_dir().map_or("off".to_owned(), |d| d.display().to_string()));
-            out += &format!("shipped  {}\n", k::shipped_dir().map_or("none".to_owned(), |d| d.display().to_string()));
-            if let Some(device) = rerail_accel::gpu::shared::get() {
-                out += &format!("device   {}\n", k::device_tag(&device.device));
+            out += &format!("store    {}\n", store::dir().map_or("off".to_owned(), |d| d.display().to_string()));
+            out += &format!("shipped  {}\n", store::shipped_dir().map_or("none".to_owned(), |d| d.display().to_string()));
+            out += &format!("device   {} ({})\n", device().unwrap_or_else(|| "none".to_owned()), rerail_gpu::device::backend());
+            out += &format!("fixed    {} kernels\n", kernels_ahead().len());
+            if let Some(s) = rerail_gpu::shared::get() {
+                out += &format!("addresses {}\n", s.device.allocations_have_addresses());
+                if let rerail_gpu::device::Device::OpenCl(d) = &s.device {
+                    let (ext, synced) = d.describe();
+                    out += &format!("opencl   synced {synced}; extensions:\n");
+                    for x in ext.split_ascii_whitespace() {
+                        out += &format!("  {x}\n");
+                    }
+                }
             }
-            out += &format!("archives {} ({:.1} MB), sources {} ({:.1} MB), wanted lists {}\n", s.archives, s.archive_bytes as f64 / 1e6, s.sources, s.source_bytes as f64 / 1e6, s.wanted_lists);
-            for (which, label) in [(k::Which::Last, "the last run"), (k::Which::All, "every run")] {
-                let pending = k::pending(which);
-                out += &format!("not compiled, wanted by {label}: {}\n", pending.len());
-                if which == k::Which::All {
-                    for w in pending.iter().take(40) {
-                        out += &format!("  {} {}\n", &w.pipeline[..16], w.name);
+            #[cfg(target_os = "macos")]
+            {
+                use rerail_accel::gpu::kernels as k;
+                let s = k::size();
+                out += &format!("metal store    {}\n", k::store_dir().map_or("off".to_owned(), |d| d.display().to_string()));
+                out += &format!("metal shipped  {}\n", k::shipped_dir().map_or("none".to_owned(), |d| d.display().to_string()));
+                if let Some(device) = rerail_accel::gpu::shared::get() {
+                    out += &format!("metal device   {}\n", k::device_tag(&device.device));
+                }
+                out += &format!("archives {} ({:.1} MB), sources {} ({:.1} MB), wanted lists {}\n", s.archives, s.archive_bytes as f64 / 1e6, s.sources, s.source_bytes as f64 / 1e6, s.wanted_lists);
+                for (which, label) in [(k::Which::Last, "the last run"), (k::Which::All, "every run")] {
+                    let pending = k::pending(which);
+                    out += &format!("not compiled, wanted by {label}: {}\n", pending.len());
+                    if which == k::Which::All {
+                        for w in pending.iter().take(40) {
+                            out += &format!("  {} {}\n", &w.pipeline[..16], w.name);
+                        }
                     }
                 }
             }
@@ -1820,51 +1901,98 @@ fn kernels_command(args: &[String]) -> Result<String, String> {
         }
         Some("compile") => {
             let rest = &args[1..];
-            let which = if rest.iter().any(|a| a == "--all") { k::Which::All } else { k::Which::Last };
             if rest.iter().any(|a| a == "--idle") {
                 rerail_accel::upkeep::lower_this_thread();
             }
-            let started = std::time::Instant::now();
-            let done = k::compile_wanted(which, usize::MAX);
-            for c in &done {
-                out += &format!("{:<40.40} {} {:>8.2} s{}\n", c.name, &c.pipeline[..16], c.seconds, c.skipped.as_ref().map_or(String::new(), |s| format!("  skipped: {s}")));
+            let made = compile(&mut out);
+            #[cfg(target_os = "macos")]
+            {
+                use rerail_accel::gpu::kernels as k;
+                let which = if rest.iter().any(|a| a == "--all") { k::Which::All } else { k::Which::Last };
+                let started = std::time::Instant::now();
+                // Past `--within`, none (the next run's step compiles them).
+                let done = if until.is_some_and(|u| started >= u) { Vec::new() } else { k::compile_wanted(which, usize::MAX) };
+                for c in &done {
+                    out += &format!("{:<40.40} {} {:>8.2} s{}\n", c.name, &c.pipeline[..16], c.seconds, c.skipped.as_ref().map_or(String::new(), |s| format!("  skipped: {s}")));
+                }
+                let n = k::counts();
+                out += &format!(
+                    "{} wanted kernels in {:.2} s: front end {:.2} s, back end {:.2} s\n",
+                    done.iter().filter(|c| c.skipped.is_none()).count(),
+                    started.elapsed().as_secs_f64(),
+                    n.front_end_s,
+                    n.back_end_s
+                );
+                k::prune(k::max_bytes());
             }
-            let n = k::counts();
-            out += &format!(
-                "{} kernels in {:.2} s: front end {:.2} s, back end {:.2} s\n",
-                done.iter().filter(|c| c.skipped.is_none()).count(),
-                started.elapsed().as_secs_f64(),
-                n.front_end_s,
-                n.back_end_s
-            );
-            k::prune(k::max_bytes());
-            Ok(out)
+            store::prune(store::max_bytes());
+            match made.iter().find(|m| m.result.is_err()) {
+                Some(m) => Err(format!("{out}{}: {}", m.name, m.result.as_ref().err().map_or("", String::as_str))),
+                None => Ok(out),
+            }
         }
         Some("ship") => {
-            let dir = args.get(1).ok_or("kernels ship <dir> [--from <store dir>]")?;
-            let from = match args.iter().position(|a| a == "--from") {
-                Some(i) => std::path::PathBuf::from(args.get(i + 1).ok_or("--from requires a directory")?),
-                None => k::store_dir().ok_or("no store (RERAIL_METAL_KERNELS=off): name one with --from")?,
-            };
+            let dir = Path::new(args.get(1).ok_or("kernels ship <dir> [--from <store dir>] [--air]")?);
             let started = std::time::Instant::now();
-            for line in k::ship(Path::new(dir), &from, args.iter().any(|a| a == "--air"))? {
-                out += &line;
-                out += "\n";
+            // The device layer's forms: each fixed kernel's entries as its compile looked them up (in the store,
+            // or shipped already), by their own names under the backend's directory. Metal's device layer keeps
+            // none (its archives are below).
+            let made = compile(&mut out);
+            if let Some(m) = made.iter().find(|m| m.result.is_err()) {
+                return Err(format!("{out}{}: {}", m.name, m.result.as_ref().err().map_or("", String::as_str)));
             }
-            out += &format!("shipped into {dir} in {:.2} s\n", started.elapsed().as_secs_f64());
+            let mut shipped = 0;
+            for entry in made.iter().flat_map(|m| &m.entries) {
+                let (Some(name), Some(backend)) = (entry.file_name(), entry.parent().and_then(Path::file_name)) else { continue };
+                if !entry.is_file() {
+                    continue;
+                }
+                let to = dir.join(backend).join(name);
+                if to == *entry {
+                    continue;
+                }
+                std::fs::create_dir_all(dir.join(backend)).map_err(|e| format!("{}: {e}", dir.display()))?;
+                std::fs::copy(entry, &to).map_err(|e| format!("{} -> {}: {e}", entry.display(), to.display()))?;
+                shipped += 1;
+            }
+            out += &format!("{shipped} device-layer kernels shipped into {}\n", dir.display());
+            #[cfg(target_os = "macos")]
+            {
+                use rerail_accel::gpu::kernels as k;
+                let from = match args.iter().position(|a| a == "--from") {
+                    Some(i) => std::path::PathBuf::from(args.get(i + 1).ok_or("--from requires a directory")?),
+                    None => k::store_dir().ok_or("no store (RERAIL_METAL_KERNELS=off): name one with --from")?,
+                };
+                for line in k::ship(dir, &from, args.iter().any(|a| a == "--air"))? {
+                    out += &line;
+                    out += "\n";
+                }
+            }
+            out += &format!("shipped into {} in {:.2} s\n", dir.display(), started.elapsed().as_secs_f64());
             Ok(out)
         }
         Some("prune") => {
             let mb = match args.iter().position(|a| a == "--mb") {
-                Some(i) => args.get(i + 1).and_then(|v| v.parse::<u64>().ok()).ok_or("--mb takes a number")? << 20,
-                None => k::max_bytes(),
+                Some(i) => Some(args.get(i + 1).and_then(|v| v.parse::<u64>().ok()).ok_or("--mb takes a number")? << 20),
+                None => None,
             };
-            Ok(format!("{} archives removed\n", k::prune(mb)))
+            out += &format!("{} device-layer kernels removed\n", store::prune(mb.unwrap_or_else(store::max_bytes)));
+            #[cfg(target_os = "macos")]
+            {
+                use rerail_accel::gpu::kernels as k;
+                out += &format!("{} archives removed\n", k::prune(mb.unwrap_or_else(k::max_bytes)));
+            }
+            Ok(out)
         }
         Some(other) => Err(format!("kernels {other}: not a kernels command (list, compile, ship, prune)")),
     }
 }
 
+/// `upkeep [STORE...] [--cpu PCT] [--jobs LIST]`: runs every upkeep job that has work to its end now, idle machine
+/// or not (decision 0190): each store's collection, search-index backlog and SQLite file, and the cost
+/// statistics' store and model. `--cpu` is the share of one core the jobs average (the setting's default, 25);
+/// `--jobs` is `RERAIL_UPKEEP_JOBS`'s list. Prints each job's steps, wall and CPU.
+#[cfg(feature = "tape-cache")]
 fn upkeep_command(args: &[String]) -> Result<String, String> {
     use crate::content_store::ContentStore;
     use crate::content_store::upkeep::{Collect, SqliteFile, Tables};
@@ -2088,7 +2216,8 @@ fn capture_tapes_command(args: &[String]) -> Result<String, String> {
                         refused.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                         continue;
                     };
-                    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().into_owned();
+                    // A document's path, with `/` on every OS.
+                    let rel = path.strip_prefix(root).unwrap_or(path).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
                     let mut record = Vec::with_capacity(rel.len() + source.len() + image.len() + 16);
                     record.extend_from_slice(&(rel.len() as u16).to_le_bytes());
                     record.extend_from_slice(rel.as_bytes());
@@ -2192,13 +2321,14 @@ mod git_revision_tests {
         std::fs::write(&rule, ".language python\n.violation Seen(at: node) \"identifier\"\nSeen(n) :- kind(n, \"identifier\").\n").unwrap();
         let path = fixture.path().join("store.sqlite");
         let mut caller = AnalysisRun::begin(ContentStore::open(&path).unwrap(), "named:outer", "outer").unwrap();
-        corpus::with_tape_cache_path(&path, Some((root.clone(), caller.owner.clone())), || {
-            let report = run_policies(&[rule], &root, &fixture.path().join("out"), &serde_json::Value::Null).unwrap();
-            assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
+        let report = corpus::with_tape_cache_path(&path, Some((root.clone(), caller.owner.clone())), || {
+            run_policies(&[rule], &root, &fixture.path().join("out"), &serde_json::Value::Null).unwrap()
         });
+        assert_eq!(report["diagnostics"].as_array().unwrap().len(), 1);
         let db = rusqlite::Connection::open(&path).unwrap();
         let count = |pattern: &str| db.query_row("SELECT count(*) FROM analysis_scope_manifest WHERE scope GLOB ?1", [pattern], |r| r.get::<_, i64>(0)).unwrap();
-        assert!(count("pending:*") > 0);
+        // A run that could not publish says why in its cache warnings.
+        assert!(count("pending:*") > 0, "no pending rows: {}", report["cacheWarnings"]);
         assert_eq!(count("cwd:*"), 0);
         caller.finish(false).unwrap();
         assert_eq!(count("*"), 0);

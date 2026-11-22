@@ -6,6 +6,9 @@
 # A filter on the command line narrows the profile's tier; `--ignore-default-filter` drops it
 # (`cargo nextest run --lib --ignore-default-filter some_slow_test`).
 
+# Setup scripts (`[scripts.setup.kernels]`, below) are experimental in nextest (0.9.152).
+experimental = ["setup-scripts"]
+
 # The slow tier: the tests that took 20 s or more each in a full run (2026-11-15, an M3 Max at
 # -j 16, debug): 45 of 2,639 tests (the per-pack families whole), 2,151 of the run's 3,460 test-seconds. Most read every pack's
 # programs, or every authored rule file, end to end. A test that grows past 20 s joins here.
@@ -20,8 +23,10 @@ default-filter = """not (
   | test(=code_rule_dsl::logic::program_text::tests::pack_programs_read_back_from_their_text)
   | test(=code_rule_dsl::transducer::packed::metal_program_backend::tape_tests::the_label_kernels_compile_for_every_format)
   | test(=code_rule_dsl::logic::json_rules::tests::json_rules_pack_is_current)
-  | test(/^code_rule_dsl::slice::tests::(the_napi_slice_audits_and_applies_as_the_slice_does|an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off)$/)
+  | test(=code_rule_dsl::slice::tests::an_edit_reruns_its_file_and_a_whitespace_edit_cuts_off)
+  | test(=code_rule_dsl::slice::napi_tests::the_napi_slice_audits_and_applies_as_the_slice_does)
   | test(/^code_rule_dsl::transducer::packed::compile_matcher_tests::(spilled_walks_find_the_cpus_roots|micro_walks_are_the_interpreters_label_outputs|lowered_python_clauses_match_where_ws_matcher_does|the_gate_catches_a_widened_walk|a_misplanned_label_sweep_runs_again_and_finds_the_full_budgets_roots|on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where_it_does_not|replan_finds_the_full_budgets_roots_on_the_pack|on_metal_replan_finds_the_full_budgets_roots_on_the_pack|lowered_clauses_find_the_same_roots_on_metal|root_walks_with_text_are_the_interpreters_roots|anchor_rows_per_answer|formula_rows_are_the_sets_members|anchored_walks_find_the_unanchored_roots|on_metal_anchored_walks_find_the_unanchored_roots)$/)
+  | test(=code_rule_dsl::transducer::packed::tests::all_backends_execute_every_verified_instruction_and_mode)
   | test(=code_rule_dsl::transducer::packed::metal_semantic_conformance::phase_four::capture_operators::ordinary_capture_operators_apply_the_complete_truth_table_at_the_assertion)
   | test(=code_rule_dsl::sql_executor::tests::recovery::original_cpython_programs_use_private_projections_and_bounded_join_work)
   | test(=code_rule_dsl::sql_executor::tests::recursive::partitioned_recursive_lattices_remove_cycles_with_bounded_work_and_match_fresh)
@@ -67,6 +72,28 @@ slow-timeout = { period = "60s", terminate-after = 8 }
 
 [profile.default.junit]
 path = "junit.xml"
+
+# The warm tier (Q332): what a run over a kept store does to the files that did not change, by count, in seconds
+# (`cargo nextest run -p rerail-tests-logic --lib --profile warm`). A warm run that parses, builds or
+# makes an unchanged file, writes again, hashes or binds an input whole, or counts a kept statistic again fails here.
+[profile.warm]
+default-filter = "test(/::warm_tests::|::the_run_after_a_cold_one|maintain_tests::r2_|made_batch_tests::|cross_views_tests::a_session_holds_its_corpus_batch|base_tests::a_copy_of_any_inputs_columns_is_held_in_place/)"
+slow-timeout = { period = "30s", terminate-after = 2 }
+failure-output = "immediate"
+
+# The engine's fixed kernels, compiled once before the tests that launch kernels (decision 0395): each test's process
+# then loads them from the kernel store (`RERAIL_GPU_KERNELS`; Metal's archives on macOS) rather than compiling them
+# itself, cold, inside its own time. On the device the run's environment picks (`RERAIL_GPU`), with the tests'
+# features, so each kernel's key is the tests' own. A store that has them all takes about half a second. An empty one
+# takes longer than a test run should wait on (Metal's back end: over 10 minutes on an M1 mini), so no compile starts
+# past 120 s: the next run goes on from what the store kept, and a test that needs one not made yet compiles it.
+[scripts.setup.kernels]
+command = "cargo run -q -p rerail-engine --bin rerail-engine --features test-hooks -- kernels compile --within 120"
+slow-timeout = { period = "60s", terminate-after = 6 }
+
+[[profile.default.scripts]]
+filter = "package(rerail-engine) | package(/^rerail-tests-/) | package(rerail-logic) | package(rerail-device-metal) | package(rerail-tape-format) | package(rerail-accel) | package(rerail-metal) | package(rerail-gpu) | package(rerail-device)"
+setup = "kernels"
 
 # Everything. The longest test (convert's replay sample, ~230 s on an M3 Max) bounds its wall time.
 [profile.gate]

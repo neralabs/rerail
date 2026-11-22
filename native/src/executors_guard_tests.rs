@@ -42,7 +42,7 @@ const EXCEPTIONS: [(&str, &str, usize, &str); 10] = [
 const TEST_FILES: [&str; 1] = ["parity.rs"];
 
 pub(crate) fn repo() -> PathBuf {
-    std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("..")
+    crate::source_tree::native().join("..")
 }
 
 pub(crate) fn sources() -> Vec<PathBuf> {
@@ -129,7 +129,8 @@ fn executors_are_shared() {
     let mut found: Vec<(String, &str, usize)> = Vec::new();
     let mut bad = Vec::new();
     for f in sources() {
-        let rel = f.strip_prefix(&root).unwrap_or(&f).display().to_string();
+        // With `/` on every OS, as the allowances name files.
+        let rel = f.strip_prefix(&root).unwrap_or(&f).to_string_lossy().replace(std::path::MAIN_SEPARATOR, "/");
         let Ok(text) = std::fs::read_to_string(&f) else { continue };
         for (pat, owner) in MADE {
             let at: Vec<usize> = product_lines(&text).into_iter().filter(|(_, l)| l.contains(pat) && !l.trim_start().starts_with("//")).map(|(n, _)| n).collect();

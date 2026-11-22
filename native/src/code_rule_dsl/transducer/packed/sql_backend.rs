@@ -42,7 +42,7 @@ struct MatchRow {
 #[derive(Clone, Copy)]
 enum TerminalBackend {
     Cpu,
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     Metal,
 }
 
@@ -74,7 +74,7 @@ impl MatchBatch {
                 });
                 let backend = match self.backend {
                     TerminalBackend::Cpu => ExecutionBackend::CpuJit,
-                    #[cfg(any(target_os = "macos", target_os = "linux"))]
+                    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
                     TerminalBackend::Metal => ExecutionBackend::MetalJit,
                 };
                 let result = execute_with_backend(backend, &self.programs, &self.files, &anchors);
@@ -209,7 +209,7 @@ impl MatchRegistry {
             .map_err(|error| crate::content_store::StoreError::Invalid(format!("{error:?}")))
     }
 
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     pub fn register_metal_batch(
         &self,
         programs: &[Program],

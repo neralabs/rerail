@@ -142,9 +142,9 @@ pub(super) struct Sample {
 fn holders() -> [usize; 7] {
     let (reserved, driver) = crate::code_rule_dsl::prof::device_memory();
     // Relational work's device leases exist only where the device does (macOS).
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     let (live, idle) = rerail_accel::gpu::shared::held_bytes();
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     let (live, idle) = (0, 0);
     let sqlite = unsafe { rusqlite::ffi::sqlite3_memory_used() }.max(0) as usize;
     let (host, host_free) = rerail_accel::blocks::host_held();
@@ -186,7 +186,7 @@ pub(super) fn sample() {
         let every_ms = std::env::var("RERAIL_PROF_MEMORY_MS").ok().and_then(|v| v.parse().ok()).unwrap_or(5u64).max(1);
         SAMPLED.lock().unwrap().every_ms = every_ms;
         // Relational work's device leases are sampled as the heap is, under the span that leased them.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         if rerail_prof::heap::on() {
             rerail_accel::gpu::shared::set_lease_hook(|ptr, len| {
                 if len == 0 {
@@ -407,4 +407,74 @@ pub fn sampled_tsv() -> String {
         let _ = writeln!(t, "{:.3}\t{:.3}\t{}\t{}\t{}\t{}\t{d}\t{p}\t{l}\t{i}\t{q}\t{h}\t{f}\t{}\t{}", r.at, r.unix, r.footprint, r.max, r.live, r.resident, r.threads, r.open.join(" | "));
     }
     t
+}
+
+/// The memory ceiling in bytes: `RERAIL_MEMORY_MAX_MB`, else three quarters of the machine's memory; `None` with
+/// `off` (or where neither the machine's memory nor the process's can be read).
+pub fn memory_ceiling() -> Option<u64> {
+    match std::env::var("RERAIL_MEMORY_MAX_MB").ok().as_deref().map(str::trim) {
+        Some("off") | Some("0") => None,
+        Some(mb) if mb.parse::<u64>().is_ok() => Some(mb.parse::<u64>().unwrap() << 20),
+        _ => physical_bytes().map(|b| b / 4 * 3),
+    }
+    .filter(|_| resident_bytes().is_some())
+}
+
+/// The machine's memory, in bytes.
+pub fn physical_bytes() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut size: u64 = 0;
+        let mut len = std::mem::size_of::<u64>();
+        // SAFETY: `hw.memsize` is a u64; `size` and `len` describe its buffer.
+        let code = unsafe { libc::sysctlbyname(c"hw.memsize".as_ptr(), (&mut size as *mut u64).cast(), &mut len, std::ptr::null_mut(), 0) };
+        (code == 0 && size > 0).then_some(size)
+    }
+    #[cfg(all(unix, not(target_os = "macos"), not(target_family = "wasm")))]
+    {
+        // SAFETY: sysconf has no pointer arguments.
+        let (pages, page) = unsafe { (libc::sysconf(libc::_SC_PHYS_PAGES), libc::sysconf(libc::_SC_PAGESIZE)) };
+        (pages > 0 && page > 0).then(|| pages as u64 * page as u64)
+    }
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_physical_bytes()
+    }
+    #[cfg(not(any(all(unix, not(target_family = "wasm")), windows)))]
+    {
+        None
+    }
+}
+
+/// The process's resident memory, in bytes (`None` where it cannot be read).
+pub fn resident_bytes() -> Option<u64> {
+    #[cfg(target_os = "macos")]
+    {
+        let mut info = std::mem::MaybeUninit::<libc::mach_task_basic_info>::zeroed();
+        let mut count = libc::MACH_TASK_BASIC_INFO_COUNT;
+        unsafe extern "C" {
+            // The task's own port (`mach_task_self()` is a macro over it; libc's function is deprecated).
+            static mach_task_self_: libc::mach_port_t;
+        }
+        // SAFETY: task_info writes this C-layout buffer; count describes its capacity in words.
+        let code = unsafe { libc::task_info(mach_task_self_, libc::MACH_TASK_BASIC_INFO, info.as_mut_ptr().cast(), &mut count) };
+        // SAFETY: a successful task_info call initializes the output structure.
+        (code == libc::KERN_SUCCESS).then(|| unsafe { info.assume_init() }.resident_size)
+    }
+    #[cfg(target_os = "linux")]
+    {
+        let status = std::fs::read_to_string("/proc/self/statm").ok()?;
+        let pages = status.split_whitespace().nth(1)?.parse::<u64>().ok()?;
+        // SAFETY: sysconf has no pointer arguments.
+        let page_size = unsafe { libc::sysconf(libc::_SC_PAGESIZE) };
+        (page_size > 0).then(|| pages.saturating_mul(page_size as u64))
+    }
+    #[cfg(windows)]
+    {
+        rerail_prof::windows_working_set()
+    }
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
+    {
+        None
+    }
 }

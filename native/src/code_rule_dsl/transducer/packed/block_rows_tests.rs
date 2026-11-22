@@ -62,7 +62,7 @@ fn a_row_program_filters_rows_on_every_cpu_executor() {
     let p = program(FILTER);
     let block = &p.block_programs()[0];
     block.verify().expect("a valid row program");
-    let jit = block.compile_rows().expect("compiles");
+    let jit = native_cpu_rows::compile_program(block).expect("compiles");
     assert!(!jit.clif.contains("call"), "no call in a row program:\n{}", jit.clif);
     let set: Vec<u64> = (0..3).map(|k| 0x8421_0842_1084_2108u64.rotate_left(k * 7)).collect();
     let mut values = Vec::new();
@@ -121,7 +121,7 @@ fn row_programs_are_verified_and_digested() {
 /// On Metal, over the 16-bit layout (`metal_rows`): node columns in a few documents (each a chunk
 /// or more), a number column, comparisons of two node columns of a row's chunk, a node column
 /// against parameters in and out of its chunk, and documents: the interpreter's rows.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 #[test]
 fn a_row_program_scans_rows_on_metal_in_the_16_bit_layout() {
     use super::metal_rows::{Form, Input, Resident, scan};

@@ -13,7 +13,7 @@ use crate::content_store::{ContentStore, HashKey, SourceId, StoreError, StoreRes
 use sha2::{Digest as _, Sha256};
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 
-mod image;
+pub mod image;
 
 /// The memo's fact schema: bumped when an entry's meaning changes.
 /// When it changes, the old number joins `RETIRED_CORPUS_MEMO_SCHEMAS` only if its rows could outlive their plans
@@ -26,12 +26,12 @@ const SCHEMA: u32 = crate::content_store::live_fact_schema(8);
 /// when its identity now is among them; a relation with no rows for the file has no key in `rows`, so whether it
 /// is held is read here, not from `rows`. An `own:` key: it holds no symbol. An entry whose rows stand as stored
 /// takes more of them kept over it (`identities_of`, decision 0280).
-pub(super) const COVERED: &str = "own:covered";
+pub const COVERED: &str = "own:covered";
 
 /// What a hit read for its outputs alone decodes besides its outputs (decision 0117 step 1): its `own:` rows (its tree
 /// counts and `COVERED`), not its export or base rows, which the kept inputs hold. An entry is one image (decision
 /// 0240 §4), so it is held whole and only these are decoded; `Found::whole` decodes the rest if the kept inputs fail.
-pub(super) fn outputs_alone(rel: &str) -> bool {
+pub fn outputs_alone(rel: &str) -> bool {
     rel.starts_with("own:")
 }
 
@@ -43,12 +43,12 @@ pub(super) fn outputs_alone(rel: &str) -> bool {
 /// partial hits whose cone sees guests admits them before its run, as far as the cone sees them (a cone reading a
 /// relation hiding widened to annotations, `FoldOwn`, asks none itself): no entry keeps a base relation's rows
 /// (decision 0458 step 4), so they are made again. Not an output.
-pub(super) const VALUES: &str = "values:";
+pub const VALUES: &str = "values:";
 
 /// A request the fixpoint answered with a tape value (`VALUES`): a string asked as a grammar's (`rr_embed_req`), or
 /// a value `@parse` or `@splice` asked for.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub(super) enum Answered {
+pub enum Answered {
     /// The string at node `at`, parsed as `grammar`.
     Embed { at: i64, grammar: String },
     /// `@parse`'s or `@splice`'s request.
@@ -57,7 +57,7 @@ pub(super) enum Answered {
 
 impl Answered {
     /// The node it was asked at: the files that own its document keep it.
-    pub(super) fn at(&self) -> i64 {
+    pub fn at(&self) -> i64 {
         match self {
             Self::Embed { at, .. } | Self::Value(super::guests::Request::Parse { at, .. }) => *at,
             Self::Value(super::guests::Request::Splice { node, .. }) => *node,
@@ -66,13 +66,13 @@ impl Answered {
 
     /// The rows `VALUES` holds them in: a kind (0 `Embed`, 1 `@parse`, 2 `@splice`), the node, and two texts (a
     /// grammar and a text, a grammar, or the tape spliced in).
-    pub(super) fn rows() -> super::super::output::Rows {
+    pub fn rows() -> super::super::output::Rows {
         use super::super::output::col;
         super::super::output::Rows::new(vec![col::INT, col::INT, col::TEXT, col::TEXT])
     }
 
     /// Its row of `rows`.
-    pub(super) fn push(&self, rows: &mut super::super::output::Rows) {
+    pub fn push(&self, rows: &mut super::super::output::Rows) {
         use super::super::output::Cell;
         let (kind, a, b) = match self {
             Self::Embed { grammar, .. } => (0, grammar.as_str(), ""),
@@ -83,7 +83,7 @@ impl Answered {
     }
 
     /// The requests `rows` hold (`push`'s), in order.
-    pub(super) fn read(rows: &super::super::output::Rows) -> Vec<Self> {
+    pub fn read(rows: &super::super::output::Rows) -> Vec<Self> {
         use super::super::output::Cell;
         (0..rows.len())
             .filter_map(|i| match (rows.cell(i, 0), rows.cell(i, 1), rows.cell(i, 2), rows.cell(i, 3)) {
@@ -97,17 +97,17 @@ impl Answered {
 }
 
 /// The words `identity` is held by in `COVERED`.
-pub(super) fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
+pub fn covered_words(identity: &[u8; 32]) -> [i64; 2] {
     [i64::from_le_bytes(identity[..8].try_into().expect("8 bytes")), i64::from_le_bytes(identity[8..16].try_into().expect("8 bytes"))]
 }
 
 /// The identities `entry` holds (`COVERED`).
-pub(super) fn covered(entry: &Entry) -> HashSet<[i64; 2]> {
+pub fn covered(entry: &Entry) -> HashSet<[i64; 2]> {
     entry.rows.get(COVERED).map(|(_, v)| v.as_chunks::<2>().0.iter().map(|w| [w[0], w[1]]).collect()).unwrap_or_default()
 }
 
 /// Whether `a` and `b` hold the same rows (exported or output) of relation `rel`, in any order.
-pub(super) fn same_relation(a: &Entry, b: &Entry, rel: &str) -> bool {
+pub fn same_relation(a: &Entry, b: &Entry, rel: &str) -> bool {
     let rows = |e: &Entry| -> Option<(usize, Vec<Vec<i64>>)> {
         e.rows.get(rel).filter(|(_, v)| !v.is_empty()).map(|(w, v)| {
             let mut rows: Vec<Vec<i64>> = v.chunks_exact((*w).max(1)).map(<[i64]>::to_vec).collect();
@@ -122,12 +122,12 @@ pub(super) fn same_relation(a: &Entry, b: &Entry, rel: &str) -> bool {
 
 /// What is written of an entry whose rows stand as stored (decision 0280): the identities it holds now (`COVERED`),
 /// kept over the stored entry, whose rows, lines and other identities they are.
-fn identities_of(entry: &Entry) -> Entry {
+pub fn identities_of(entry: &Entry) -> Entry {
     Entry { key: entry.key, rows: entry.rows.get(COVERED).map(|v| (COVERED.to_owned(), v.clone())).into_iter().collect(), ..Entry::default() }
 }
 
 /// Records that `entry` holds the relations of `identities`.
-pub(super) fn cover<'a>(entry: &mut Entry, identities: impl Iterator<Item = &'a [u8; 32]>) {
+pub fn cover<'a>(entry: &mut Entry, identities: impl Iterator<Item = &'a [u8; 32]>) {
     let mut words: Vec<[i64; 2]> = covered(entry).into_iter().chain(identities.map(covered_words)).collect();
     words.sort_unstable();
     words.dedup();
@@ -161,7 +161,7 @@ pub struct Strata {
 }
 
 /// `rels`' `Strata` in the file-local program `local`.
-pub(in crate::code_rule_dsl) fn strata(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> Result<Strata, String> {
+pub fn strata(local: &crate::code_rule_dsl::logic::plan::body::Placed, rels: &BTreeSet<String>) -> Result<Strata, String> {
     // Read from the program's version (t36 item 7): its components, dependencies first, and each one's rules by head.
     let sccs = local.components().map_err(|e| e.to_string())?;
     let ids = crate::code_rule_dsl::logic::plan::Leaves::of_placed(local.clone()).identities_by_heads(&sccs).map_err(|e| e.to_string())?;
@@ -207,7 +207,7 @@ impl Strata {
     /// phases' exports (`phased`), and the projection the base rows are made under (`base`,
     /// `Projection::rows_digest`). So an export's identity changes when a rule it is derived from does, or what the
     /// documents' rows are made of, and only then.
-    pub(in crate::code_rule_dsl) fn identities(&self, options: &serde_json::Value, phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>, base: &[u8; 32]) -> BTreeMap<String, [u8; 32]> {
+    pub fn identities(&self, options: &serde_json::Value, phased: &BTreeMap<String, Vec<Vec<crate::code_rule_dsl::logic::front::Value>>>, base: &[u8; 32]) -> BTreeMap<String, [u8; 32]> {
         let mut out = BTreeMap::new();
         for (rel, (id, reached)) in &self.by_rel {
             let mut hash = Sha256::new();
@@ -226,7 +226,7 @@ impl Strata {
 
 /// Which column of a base relation's row (in `input_columns` order) names the file the row is kept for.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub(super) enum Owner {
+pub enum Owner {
     /// A node or a document key: the row is its document's (`document_of`).
     Node(usize),
     /// A string: the row is each file's whose text holds it, as a text test's row is (`strings::TEXT_COLUMNS`).
@@ -236,7 +236,7 @@ pub(super) enum Owner {
 /// The owner column of `rel`'s rows. Most base relations lead with their node or document; a pattern's spans and
 /// matches lead with the pattern (`rx_span(p, c, …)`, `ast_match(p, n, …)`), so their node is the second column;
 /// `value_type(v, t)` is keyed by the value itself, a string some file's `value(n, v)` holds.
-pub(super) fn owner(rel: &str) -> Owner {
+pub fn owner(rel: &str) -> Owner {
     match rel {
         "rx_span" | "ast_match" => Owner::Node(1),
         "value_type" => Owner::Text(0),
@@ -281,7 +281,7 @@ pub fn doc_keys(paths: &[String]) -> Vec<i64> {
 /// relations (those an entry holds, those its rules derive, its inputs), not their rules, which each entry's
 /// `COVERED` identities name. Two programs of other relations (a phase's, a nested run's) keep their entries apart;
 /// a rule's edit keeps the space, and misses only the relations it reaches.
-pub(super) fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code_rule_dsl::logic::plan::body::Placed, phase: Option<&str>) -> [u8; 32] {
+pub fn space_digest(ids: &BTreeMap<String, [u8; 32]>, local: &crate::code_rule_dsl::logic::plan::body::Placed, phase: Option<&str>) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-space/v2\0");
     hash.update(phase.unwrap_or("").as_bytes());
@@ -314,7 +314,7 @@ fn last_key(space: &[u8; 32]) -> [u8; 32] {
 /// The whole file-local program whose run last wrote the entries of space `space` (decision 0225 §2), if what is kept
 /// of every file together (the kept statistics) is still of its entries: its run ended, or a run of it under way
 /// started from what an ended run of it kept (`set_under_way`). Of no other program's.
-pub(super) fn last_program(store: &ContentStore, space: &[u8; 32]) -> Option<[u8; 32]> {
+pub fn last_program(store: &ContentStore, space: &[u8; 32]) -> Option<[u8; 32]> {
     let b = store.stat_blob(last_key(space)).ok().flatten()?;
     let whole: [u8; 32] = match b.len() {
         32 => b.try_into().ok()?,
@@ -329,7 +329,7 @@ const UNDER_WAY: u8 = 1;
 
 /// Records `whole` as `last_program` of `space`, queued behind the run's writes; `None`: a run is under way that
 /// did not start from what is kept (another program's, or one after it): a run that stops leaves none of it valid.
-pub(super) fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Option<[u8; 32]>) {
+pub fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Option<[u8; 32]>) {
     store.queue_stat_blob(last_key(space), whole.unwrap_or([0; 32]).to_vec());
 }
 
@@ -337,7 +337,7 @@ pub(super) fn set_last_program(store: &ContentStore, space: &[u8; 32], whole: Op
 /// stops, what is kept stays valid for the next (Q71). Its entries are of `whole` and of the contents it read, and the
 /// contents the kept statistics count are still in the memo (its newest `MEMO_CONTENTS` of a path); a content whose
 /// entry went gives the keeper up, as an entry dropped otherwise does.
-pub(super) fn set_under_way(store: &ContentStore, space: &[u8; 32], whole: [u8; 32]) {
+pub fn set_under_way(store: &ContentStore, space: &[u8; 32], whole: [u8; 32]) {
     let mut b = whole.to_vec();
     b.push(UNDER_WAY);
     store.queue_stat_blob(last_key(space), b);
@@ -345,7 +345,7 @@ pub(super) fn set_under_way(store: &ContentStore, space: &[u8; 32], whole: [u8; 
 
 /// The run's plan: the engine build, the grammar version and `program` (a digest of the file-local part as lowered,
 /// its atoms included).
-pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
+pub fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
     let mut hash = Sha256::new();
     // v5: an entry is one image in a pack (0240 §4), its outputs' rows typed, not their lines (0239).
     hash.update(b"rerail.corpus-local/v5\0");
@@ -363,7 +363,7 @@ pub(super) fn plan_digest(program: &[u8; 32]) -> [u8; 32] {
 /// reads (a guest policy) as well as those its rules read, and the spans and patterns the batch matches for it, all
 /// of which its version's image holds. The version's digest (decision 0173 §7), kept as the version was made: the
 /// key reads no rule. A sum, so it does not see the rules' order, which a part's rows do not depend on.
-pub(in crate::code_rule_dsl) fn program_digest(v: &crate::code_rule_dsl::logic::program_image::Version) -> [u8; 32] {
+pub fn program_digest(v: &crate::code_rule_dsl::logic::program_image::Version) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-program/v4\0");
     hash.update(v.digest().to_le_bytes());
@@ -378,7 +378,7 @@ pub(in crate::code_rule_dsl) fn program_digest(v: &crate::code_rule_dsl::logic::
 
 /// A local memo's stored statistics are a projection demanded by its consumers.
 /// Include the projection in the key so a wider consumer cannot reuse a narrower frame.
-pub(super) fn with_tree_demand(digest: [u8; 32], tree: bool) -> [u8; 32] {
+pub fn with_tree_demand(digest: [u8; 32], tree: bool) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-tree-demand/v1\0");
     hash.update(digest);
@@ -389,7 +389,7 @@ pub(super) fn with_tree_demand(digest: [u8; 32], tree: bool) -> [u8; 32] {
 /// `digest` with the modules named by package roots, not paths, folded in (`corpus::package_root_modules`): a file's
 /// `doc` row names its module, which an `__init__.py` added or removed elsewhere in the tree changes. None leaves the
 /// digest as it was.
-pub(super) fn with_modules(digest: [u8; 32], modules: &BTreeMap<String, String>) -> [u8; 32] {
+pub fn with_modules(digest: [u8; 32], modules: &BTreeMap<String, String>) -> [u8; 32] {
     if modules.is_empty() {
         return digest;
     }
@@ -408,7 +408,7 @@ pub(super) fn with_modules(digest: [u8; 32], modules: &BTreeMap<String, String>)
 /// `digest` with the folders whose Python files no regular package holds folded in (`corpus::package_root_modules`,
 /// core.rerail's `unpackaged`): a file's `unpackaged` row follows from its folder, which an `__init__.py` added or removed
 /// changes. A file added to such a folder changes nothing. None leaves the digest as it was.
-pub(super) fn with_unpackaged(digest: [u8; 32], folders: &BTreeSet<&str>) -> [u8; 32] {
+pub fn with_unpackaged(digest: [u8; 32], folders: &BTreeSet<&str>) -> [u8; 32] {
     if folders.is_empty() {
         return digest;
     }
@@ -423,7 +423,7 @@ pub(super) fn with_unpackaged(digest: [u8; 32], folders: &BTreeSet<&str>) -> [u8
 }
 
 /// `digest` with the run's options folded in: the key of a file-local part that reads them (`option_item`).
-pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8; 32] {
+pub fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-options/v1\0");
     hash.update(digest);
@@ -433,7 +433,7 @@ pub(super) fn with_options(digest: [u8; 32], options: &serde_json::Value) -> [u8
 
 /// `digest` with rows folded in, by relation: the key of a file-local part that reads relations whose rows are not in
 /// its text (a phase's exports). The rows' order is not part of it.
-pub(super) fn with_rows<'a>(digest: [u8; 32], rels: impl Iterator<Item = (&'a str, &'a Vec<Vec<crate::code_rule_dsl::logic::front::Value>>)>) -> [u8; 32] {
+pub fn with_rows<'a>(digest: [u8; 32], rels: impl Iterator<Item = (&'a str, &'a Vec<Vec<crate::code_rule_dsl::logic::front::Value>>)>) -> [u8; 32] {
     let mut hash = Sha256::new();
     hash.update(b"rerail.corpus-local-rows/v1\0");
     hash.update(digest);
@@ -452,14 +452,14 @@ pub(super) fn with_rows<'a>(digest: [u8; 32], rels: impl Iterator<Item = (&'a st
 
 /// The memo is the tape cache's: a build without `tape-cache` has no store to keep it in, so the runner never reads or
 /// writes it, and saying so here, where the compiler sees it, leaves the store's zstd frames unlinked.
-pub(super) fn off() {
+pub fn off() {
     if !cfg!(feature = "tape-cache") {
         unreachable!("the corpus memo is off in a build without `tape-cache`");
     }
 }
 
 /// The stored source of `text`, stored if it is not.
-pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> {
+pub fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> {
     off();
     let hash = HashKey::sha256(text.as_bytes());
     // Held (O95): a source the run finds is pinned with it, as one it stores is.
@@ -471,7 +471,7 @@ pub(super) fn source(store: &ContentStore, text: &str) -> StoreResult<SourceId> 
 
 /// The source of `text` when the store holds it: one read, nothing written (the run's collection lease keeps it until
 /// the manifest names it, decision 0306 step 4). `None`: not stored yet; `source`, run on the writer, stores it.
-pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Option<SourceId>> {
+pub fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Option<SourceId>> {
     off();
     Ok(store.sources_by_hashes(&[HashKey::sha256(text.as_bytes())])?.pop().flatten())
 }
@@ -480,7 +480,10 @@ pub(super) fn stored_source(store: &ContentStore, text: &str) -> StoreResult<Opt
 /// on the store's writer, behind the run (decision 0104): the source the store holds then, pinned, or, where `store`,
 /// one it stores. Queued after a write that stores it (FIFO), it finds that one. `stored_by`: what that write is
 /// queued under (`write_back::Key`), where only it stores the text.
-pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stored_by: Option<&crate::content_store::write_back::Key>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+pub fn named_source(cache: &ContentStore, text: String, store: bool, stored_by: Option<&crate::content_store::write_back::Key>, late: &std::sync::Arc<std::sync::Mutex<Vec<SourceId>>>) {
+    // Whether the write that stores it is queued, asked before the store is: a write the writer applies between the
+    // two is then found stored, where asked after it was neither stored nor queued, and the manifest lost the source.
+    let queued = stored_by.map(|key| cache.queued(key));
     // Stored already (decision 0228): named now, and only its pin queued (a lock, as `stored_source` takes it). The
     // writer is for what a queued write stores: the lookup there was a write a warm run made.
     if let Some(id) = stored_source(cache, &text).ok().flatten() {
@@ -488,7 +491,7 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stor
         return;
     }
     // Not stored, and nothing queued stores it: the writer would find nothing either.
-    if !store && stored_by.is_some_and(|key| !cache.queued(key)) {
+    if !store && queued == Some(false) {
         return;
     }
     // In the run's record (decision 0306): found, or stored, as the writer applies it.
@@ -511,7 +514,7 @@ pub(super) fn named_source(cache: &ContentStore, text: String, store: bool, stor
 /// record (decision 0306), behind the writes queued before (a new content's tape stores its source), and named there
 /// (`Apply::name`), kept from collection by the run's lease until the manifest names them (0306 step 4). A second run
 /// in one process finds those files' tapes held and writes none, so only this names them (Q24).
-pub(super) fn named_digests(cache: &ContentStore, digests: Vec<[u8; 32]>) {
+pub fn named_digests(cache: &ContentStore, digests: Vec<[u8; 32]>) {
     if digests.is_empty() {
         return;
     }
@@ -537,10 +540,10 @@ const MEMO_CONTENTS: usize = 4;
 /// derived relation's column the domains find holds one. Taken as atoms, a forked process would map those codes as
 /// this process's ids, and the check where an entry is made refused it (`symbol 65555 is no atom of this process's`).
 #[derive(Clone, Default)]
-pub(super) struct Syms(std::sync::Arc<HashMap<String, Vec<bool>>>);
+pub struct Syms(std::sync::Arc<HashMap<String, Vec<bool>>>);
 
 impl Syms {
-    pub(super) fn of(domains: &super::super::lower::Domains) -> Syms {
+    pub fn of(domains: &super::super::lower::Domains) -> Syms {
         Syms(std::sync::Arc::new(domains.iter().map(|(r, cols)| (r.clone(), cols.iter().map(|d| matches!(d, super::super::lower::Domain::Name)).collect())).collect()))
     }
 
@@ -552,7 +555,7 @@ impl Syms {
     /// atom, whatever the column is declared. Its value is no symbol, and is not mapped: a forked process's counts for
     /// a constant that is an atom are of its numbering (estimates, as the kept statistics' sketches are). Read as one,
     /// the posting's column was looked up by number, found none, and a forked run refused every entry holding one.
-    pub(super) fn columns(&self, key: &str, width: usize) -> Option<Vec<bool>> {
+    pub fn columns(&self, key: &str, width: usize) -> Option<Vec<bool>> {
         if key.starts_with("own:") {
             return Some(vec![false; width]);
         }
@@ -563,13 +566,13 @@ impl Syms {
 
 /// A memo's program (its key, `plan_digest`'s input) with its symbol columns: what reads and writes its entries.
 #[derive(Clone)]
-pub(super) struct Program {
-    pub(super) id: [u8; 32],
-    pub(super) syms: Syms,
+pub struct Program {
+    pub id: [u8; 32],
+    pub syms: Syms,
 }
 
 impl Program {
-    pub(super) fn new(id: [u8; 32], domains: &super::super::lower::Domains) -> Program {
+    pub fn new(id: [u8; 32], domains: &super::super::lower::Domains) -> Program {
         Program { id, syms: Syms::of(domains) }
     }
 }
@@ -585,7 +588,7 @@ impl std::ops::Deref for Program {
 /// its key and value. An entry is made of the run's rows, so each symbol in it is this process's; one past its atoms
 /// came from a read that gave the store's ids unmapped (decision 0170), and is caught here, where the entry is made,
 /// not by the writer mapping it later.
-fn foreign_symbol(entries: &[&Entry], syms: &Syms, atoms: usize) -> Option<(String, i64)> {
+pub fn foreign_symbol(entries: &[&Entry], syms: &Syms, atoms: usize) -> Option<(String, i64)> {
     for entry in entries {
         for (key, (w, rows)) in &entry.rows {
             let Some(cols) = syms.columns(key, *w) else { continue };
@@ -652,7 +655,7 @@ impl Frame {
 
 /// Holds the atoms an entry's symbols name (`image::hold`), as it is read before a run's waves: none of an entry whose
 /// symbols this process holds already. The profile says how many it read.
-pub(super) fn hold<'a>(store: &ContentStore, blobs: impl IntoIterator<Item = &'a crate::content_store::MemoBlob>) -> StoreResult<()> {
+pub fn hold<'a>(store: &ContentStore, blobs: impl IntoIterator<Item = &'a crate::content_store::MemoBlob>) -> StoreResult<()> {
     let bytes: Vec<_> = blobs.into_iter().map(|b| &b.bytes).collect();
     if bytes.is_empty() {
         return Ok(());
@@ -712,24 +715,24 @@ pub(super) fn lookup_all(store: &ContentStore, program: &Program, docs: &[(Sourc
 /// A memo entry found before it is decoded: held in memory (a queued write's, or a session's), or its stored frame.
 /// A run finds its documents' entries before its first wave and decodes each in its wave (decision 0104).
 #[derive(Clone)]
-pub(super) enum Found {
+pub enum Found {
     Held(std::sync::Arc<Entry>),
     Frame(Frame),
 }
 
 impl Found {
     /// The entry, when it is the document's (`key`).
-    pub(super) fn entry(&self, key: i64) -> StoreResult<Option<Entry>> {
+    pub fn entry(&self, key: i64) -> StoreResult<Option<Entry>> {
         self.projected(key, &|_| true)
     }
 
     /// The whole entry this was found for: an entry is found whole (decision 0240 §4: no frame of its outputs alone).
-    pub(super) fn whole(&self, _store: &ContentStore, _program: &Program) -> StoreResult<Option<Found>> {
+    pub fn whole(&self, _store: &ContentStore, _program: &Program) -> StoreResult<Option<Found>> {
         Ok(Some(self.clone()))
     }
 
     /// Decode only demanded relations. Skipped relations' rows are checked, not kept.
-    pub(super) fn projected(&self, key: i64, keep: &dyn Fn(&str) -> bool) -> StoreResult<Option<Entry>> {
+    pub fn projected(&self, key: i64, keep: &dyn Fn(&str) -> bool) -> StoreResult<Option<Entry>> {
         let entry = match self {
             Found::Held(e) => Entry { key: e.key, nodes: e.nodes,
                 rows: e.rows.iter().filter(|(r, _)| keep(r)).map(|(r, v)| (r.clone(), v.clone())).collect(),
@@ -825,7 +828,7 @@ pub(super) fn sources(store: &ContentStore, texts: &[&str]) -> StoreResult<Vec<S
 
 /// The stored sources of many contents, by their SHA-256 digests, in their order: one read and nothing written (a
 /// lookup writes nothing, decision 0104; the run's collection lease keeps them, decision 0306 step 4).
-pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<SourceId>>> {
+pub fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<SourceId>>> {
     off();
     let hashes: Vec<HashKey> = digests.iter().map(|d| HashKey::from_sha256_digest(*d)).collect();
     store.sources_by_hashes(&hashes)
@@ -835,7 +838,7 @@ pub(super) fn found_sources(store: &ContentStore, digests: &[[u8; 32]]) -> Store
 /// append to the store's pack and their rows in one transaction (decision 0240 §4). Queued behind the run (decision 0102): encoded and written by the store's
 /// writer, each entry read from memory until it is written. A content is keyed by its digest, so one the store
 /// does not hold yet is written with the others.
-pub(super) fn remember_all(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
+pub fn remember_all(store: &ContentStore, program: &Program, entries: Vec<(Content, String, i64, Entry)>) -> StoreResult<()> {
     remember_all_but(store, program, entries.into_iter().map(|(c, p, k, e)| (c, p, k, e, false, None)).collect())
 }
 
@@ -975,21 +978,21 @@ fn tally<'a>(entries: impl Iterator<Item = &'a Entry>) {
 }
 
 /// The nodes of the documents remembered, and each relation's (rows, values) over their entries, since the last call.
-pub(super) fn sizes() -> (u64, BTreeMap<String, (u64, u64)>) {
+pub fn sizes() -> (u64, BTreeMap<String, (u64, u64)>) {
     crate::code_rule_dsl::logic::run::local_if_any::<Sizes>().map(|s| std::mem::take(&mut *s.0.lock().expect("the memo's sizes"))).unwrap_or_default()
 }
 
 /// Where a run's memo is: the tape cache's store (decision 0052), or a session's memory (`session::Session`), whose
 /// rows are under the session store's atoms and live as long as the session.
 #[derive(Clone, Copy)]
-pub(super) enum Memo<'a> {
+pub enum Memo<'a> {
     Stored(&'a ContentStore),
     Held(&'a Held),
 }
 
 /// A session's memo: each entry under its content's digest, its path and the file-local program's digest. Shared
 /// (an `Arc`): a hit, and an input's change read from the changed documents' entries, read it in place (0364 R2).
-pub(super) type Held = std::sync::Mutex<HeldEntries>;
+pub type Held = std::sync::Mutex<HeldEntries>;
 
 /// The session memo's entries. Per file and program it holds two: its current content's, and the one before it,
 /// which an edit's input deltas read as the file's old rows (`input_delta::changed`, after the run remembered the
@@ -998,22 +1001,22 @@ pub(super) type Held = std::sync::Mutex<HeldEntries>;
 /// emptied past them: the data layer's 2,410 files and two programs passed that within each run, so no edit's run
 /// found a file in it, and an edit cost a first run.)
 #[derive(Default)]
-pub(super) struct HeldEntries {
+pub struct HeldEntries {
     entries: std::collections::HashMap<([u8; 32], String, [u8; 32]), std::sync::Arc<Entry>>,
     /// Per (path, program): the current content's digest, and the one before.
     files: std::collections::HashMap<(String, [u8; 32]), ([u8; 32], Option<[u8; 32]>)>,
 }
 
 impl HeldEntries {
-    pub(super) fn get(&self, key: &([u8; 32], String, [u8; 32])) -> Option<&std::sync::Arc<Entry>> {
+    pub fn get(&self, key: &([u8; 32], String, [u8; 32])) -> Option<&std::sync::Arc<Entry>> {
         self.entries.get(key)
     }
-    pub(super) fn len(&self) -> usize {
+    pub fn len(&self) -> usize {
         self.entries.len()
     }
     /// `entry` as `path`'s under `program` for content `digest`: it becomes the file's current entry, its current
     /// one the one before, and the one before that goes.
-    fn insert(&mut self, digest: [u8; 32], path: &str, program: [u8; 32], entry: std::sync::Arc<Entry>) {
+    pub fn insert(&mut self, digest: [u8; 32], path: &str, program: [u8; 32], entry: std::sync::Arc<Entry>) {
         let file = (path.to_owned(), program);
         let gone = match self.files.get_mut(&file) {
             None => {
@@ -1038,7 +1041,7 @@ impl HeldEntries {
 /// A file's content as the memo knows it: its stored source; a content the store does not hold yet, by its digest
 /// (its source is written by the store's writer, behind the run, with its tape: decision 0104); or (held) its digest.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub(in crate::code_rule_dsl) enum Content {
+pub enum Content {
     Stored(SourceId),
     Unstored([u8; 32]),
     Held([u8; 32]),
@@ -1046,7 +1049,7 @@ pub(in crate::code_rule_dsl) enum Content {
 
 impl Content {
     /// The stored source, which a run's manifest names (decision 0053).
-    pub(super) fn stored(self) -> Option<SourceId> {
+    pub fn stored(self) -> Option<SourceId> {
         match self {
             Content::Stored(id) => Some(id),
             Content::Unstored(_) | Content::Held(_) => None,
@@ -1059,7 +1062,7 @@ impl Content {
     }
 
     /// The source on the store's writer, where a content queued before is written by now.
-    pub(super) fn resolve(self, store: &ContentStore) -> StoreResult<Option<SourceId>> {
+    pub fn resolve(self, store: &ContentStore) -> StoreResult<Option<SourceId>> {
         match self {
             Content::Stored(id) => Ok(Some(id)),
             Content::Unstored(d) => store.source_by_hash(HashKey::from_sha256_digest(d)),
@@ -1087,7 +1090,7 @@ impl Memo<'_> {
 
     /// The contents of many texts as the memo knows them, by their SHA-256 digests, in their order: `None` for a
     /// text the store does not hold yet (its source is stored with its tape). Nothing is written (`found_sources`).
-    pub(super) fn found(self, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<Content>>> {
+    pub fn found(self, digests: &[[u8; 32]]) -> StoreResult<Vec<Option<Content>>> {
         match self {
             Memo::Stored(store) => Ok(found_sources(store, digests)?.into_iter().map(|id| id.map(Content::Stored)).collect()),
             Memo::Held(_) => Ok(digests.iter().map(|d| Some(Content::Held(*d))).collect()),
@@ -1111,7 +1114,7 @@ impl Memo<'_> {
 
     /// The entries of many documents, each `(content, path)`, found and not decoded (`Found`): stored ones in one
     /// statement, held ones from memory.
-    pub(super) fn found_all(self, program: &Program, docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
+    pub fn found_all(self, program: &Program, docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
         match self {
             Memo::Stored(store) => {
                 let mut out: Vec<Option<Found>> = (0..docs.len()).map(|_| None).collect();
@@ -1153,11 +1156,11 @@ impl Memo<'_> {
     /// `found_all`, for a file whose outputs alone are read (decision 0117 step 1): an entry is read whole, its
     /// other relations not decoded (`Found::projected`). Its outputs were a frame of their own (`local_out`), a
     /// second copy of them written with every entry; decision 0240 §4.
-    pub(super) fn found_outputs_all(self, program: &Program, docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
+    pub fn found_outputs_all(self, program: &Program, docs: &[(Content, &str)]) -> StoreResult<Vec<Option<Found>>> {
         self.found_all(program, docs)
     }
 
-    pub(super) fn lookup(self, content: Content, path: &str, key: i64, program: &Program) -> StoreResult<Option<Entry>> {
+    pub fn lookup(self, content: Content, path: &str, key: i64, program: &Program) -> StoreResult<Option<Entry>> {
         match (self, content) {
             (Memo::Stored(store), Content::Stored(id)) => lookup(store, id, path, key, program),
             (Memo::Stored(store), Content::Unstored(d)) => match pending(store, &queued_unstored(&d, path, program), &store.atoms_handle()) {
@@ -1181,7 +1184,7 @@ impl Memo<'_> {
     }
 
     /// `remember_all`, each with whether its stored rows frame stands (`remember_all_but`).
-    pub(super) fn remember_all_but(self, program: &Program, entries: Vec<(Content, String, i64, Entry, bool, Option<[u8; 32]>)>) -> StoreResult<()> {
+    pub fn remember_all_but(self, program: &Program, entries: Vec<(Content, String, i64, Entry, bool, Option<[u8; 32]>)>) -> StoreResult<()> {
         if let Memo::Stored(store) = self {
             return remember_all_but(store, program, entries);
         }
@@ -1210,160 +1213,8 @@ impl Memo<'_> {
 }
 
 /// The document a row's location value names: a node (`key << 32 | index`) or a document key.
-pub(super) fn document_of(value: i64) -> i64 {
+pub fn document_of(value: i64) -> i64 {
     if value >= 1 << 32 { value >> 32 } else { value }
 }
 
-#[cfg(test)]
-pub mod tests {
-    /// A relation of facts with no rows (a constant folded empty, `constants::fold`) survives its facts: a stored
-    /// program read back is the program written, so its digests (the memo's key, the relations' identities) are the
-    /// same. Without it, the first run after a rebuild and the second keyed the memo apart.
-    #[test]
-    fn an_empty_relation_of_facts_reads_back_as_present() {
-        use crate::code_rule_dsl::logic::program_image::{Builder, Version, fields::ProgramFields};
-        let read = crate::code_rule_dsl::logic::rr::parse_version(".decl a(s: symbol)\n.decl b(s: symbol)\nb(\"x\").\n.output a\n").unwrap();
-        let mut b = Builder::on(&read);
-        b.fields().set_facts("a", &[]);
-        let (v, _) = b.finish().unwrap();
-        // Stored as an image, and opened again.
-        let back = Version::open(v.fold().unwrap().base_bytes().unwrap()).unwrap();
-        assert!(back.states_facts("a") && back.fact_rows("a").is_empty(), "a's empty facts read back:\n{}", back.show());
-        assert_eq!(super::program_digest(&back), super::program_digest(&v));
-    }
-
-    use super::*;
-    use crate::code_rule_dsl::logic::plan::output::{Cell, col};
-
-    /// A session's memo holds every file of a tree past any count (the data layer's 2,410 files under two programs:
-    /// 4,820 entries), and per file and program its current entry and the one before, which an edit's input deltas
-    /// read. An older one goes.
-    #[test]
-    fn a_session_memo_holds_the_tree_and_each_file_s_entry_before() {
-        let mut h = HeldEntries::default();
-        let e = |k: i64| std::sync::Arc::new(Entry { key: k, ..Entry::default() });
-        let d = |n: u8| [n; 32];
-        let (main, sources) = ([1; 32], [2; 32]);
-        for f in 0..5000 {
-            for prog in [main, sources] {
-                h.insert(d(0), &format!("f{f}.py"), prog, e(f));
-            }
-        }
-        assert_eq!(h.len(), 10_000, "every file's entry under both programs is held");
-        h.insert(d(1), "f0.py", main, e(0));
-        assert!(h.get(&(d(0), "f0.py".into(), main)).is_some() && h.get(&(d(1), "f0.py".into(), main)).is_some(), "an edit keeps the entry before");
-        h.insert(d(2), "f0.py", main, e(0));
-        assert!(h.get(&(d(0), "f0.py".into(), main)).is_none(), "the entry before the one before goes");
-        assert!(h.get(&(d(1), "f0.py".into(), main)).is_some() && h.get(&(d(2), "f0.py".into(), main)).is_some());
-        // Back to an earlier content: the two kept are that one and the one it replaced.
-        h.insert(d(1), "f0.py", main, e(0));
-        assert!(h.get(&(d(1), "f0.py".into(), main)).is_some() && h.get(&(d(2), "f0.py".into(), main)).is_some());
-        assert_eq!(h.len(), 10_001);
-        assert!(h.get(&(d(0), "f0.py".into(), sources)).is_some(), "another program's entry of the file is its own");
-    }
-
-    /// Rows of columns typed `types`, of `rows`.
-    pub fn rows_of(types: &[u8], rows: &[&[Cell<'_>]]) -> crate::code_rule_dsl::logic::plan::output::Rows {
-        let mut out = crate::code_rule_dsl::logic::plan::output::Rows::new(types.to_vec());
-        for r in rows {
-            out.push(r);
-        }
-        out
-    }
-
-    #[test]
-    fn a_held_entry_is_projected_and_keyed() {
-        let mut entry = Entry { key: 5, nodes: 100, ..Entry::default() };
-        entry.rows.insert("wanted".into(), (2, vec![5, 9]));
-        entry.rows.insert("unused".into(), (2, vec![1; 2000]));
-        entry.outputs.insert("diagnostic".into(), (vec![0], rows_of(&[col::NODE, col::TEXT], &[&[Cell::Int(5), Cell::Text("bad")]])));
-        let keep = |r: &str| r == "wanted";
-        let held = Found::Held(std::sync::Arc::new(entry.clone()));
-        let projected = held.projected(5, &keep).unwrap().unwrap();
-        assert_eq!(projected.rows.keys().collect::<Vec<_>>(), ["wanted"]);
-        assert_eq!((projected.outputs, projected.nodes), (entry.outputs, 100));
-        assert!(held.projected(6, &keep).unwrap().is_none());
-        assert_ne!(with_tree_demand([0; 32], false), with_tree_demand([0; 32], true), "wider consumers cannot hit narrower frames");
-    }
-
-    /// Decision 0295 §1: the run writes its entries into their segment itself, and its readers of an entry still
-    /// queued read it there (no decoded copy is held for them); once written, the store's row finds the same.
-    #[test]
-    fn a_queued_entry_is_read_from_the_segment_the_run_wrote() {
-        use super::super::super::lower::Domain;
-        let dir = tempfile::tempdir().unwrap();
-        let store = ContentStore::open(&dir.path().join("store.sqlite")).unwrap();
-        let domains: BTreeMap<String, Vec<Domain>> = [("r".to_owned(), vec![Domain::Int, Domain::Int])].into();
-        let program = Program::new([3; 32], &domains);
-        let mut entry = Entry { key: 4, nodes: 9, ..Entry::default() };
-        entry.rows.insert("r".into(), (2, vec![1, 2, 3, 4]));
-        entry.outputs.insert("diagnostic".into(), (vec![0], rows_of(&[col::NODE, col::TEXT], &[&[Cell::Int(5), Cell::Text("bad")]])));
-        let id = store.put_source(b"x = 1\n", &[]).unwrap();
-        let found = |store: &ContentStore| Memo::Stored(store).found_all(&program, &[(Content::Stored(id), "a.py")]).unwrap().pop().flatten();
-        let waves = crate::content_store::write_back::run_waves();
-        remember_all(&store, &program, vec![(Content::Stored(id), "a.py".into(), 4, entry.clone())]).unwrap();
-        let queued = found(&store).expect("queued, found");
-        assert!(matches!(queued, Found::Frame(_)), "read from its segment, not held decoded");
-        assert_eq!(queued.entry(4).unwrap(), Some(entry.clone()));
-        assert_eq!(store.memo_pack_bytes().unwrap().1, 0, "not written yet");
-        drop(waves);
-        store.written().unwrap();
-        assert!(store.memo_pack_bytes().unwrap().1 > 0, "its row written");
-        assert_eq!(found(&store).expect("written, found").entry(4).unwrap(), Some(entry));
-    }
-
-    /// An entry symbol past the process's atoms is refused where the entry is made (decision 0170): a read gave the
-    /// store's ids unmapped. It was found only by the writer, mapping it later (`symbol 2767 is no atom of this
-    /// process's (it holds 2760)`), far from the read.
-    #[test]
-    fn an_entry_naming_no_atom_of_the_process_is_refused_where_it_is_made() {
-        use super::super::super::lower::Domain;
-        let domains: BTreeMap<String, Vec<Domain>> = [("named".to_owned(), vec![Domain::Int, Domain::Name])].into();
-        let syms = Syms::of(&domains);
-        let mut entry = Entry { key: 1, ..Entry::default() };
-        entry.rows.insert("named".into(), (2, vec![9_999, 3, 10_000, 4]));
-        assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "numbers past the atoms are not symbols");
-        entry.rows.insert("named".into(), (2, vec![1, 3, 2, 5]));
-        assert_eq!(foreign_symbol(&[&entry], &syms, 5), Some(("named".to_owned(), 5)));
-    }
-
-    /// A posting counts a constant as its column's source encodes it (`own:postings:field:f`: a grammar's field code,
-    /// 65555, not an atom): its columns are known (a forked run refused every entry holding one when they were not),
-    /// and none is a symbol, so none is mapped, whatever the relation declares.
-    #[test]
-    fn a_posting_and_a_grammar_code_hold_no_symbol() {
-        use super::super::super::lower::Domain;
-        let domains: BTreeMap<String, Vec<Domain>> = [("field".to_owned(), vec![Domain::Node, Domain::Field, Domain::Node]), ("named".to_owned(), vec![Domain::Kind, Domain::Name])].into();
-        let syms = Syms::of(&domains);
-        assert_eq!(syms.columns("own:postings:field:f", 2), Some(vec![false, false]));
-        assert_eq!(syms.columns("named", 2), Some(vec![false, true]), "a kind's neither; a name is");
-        let mut entry = Entry { key: 1, ..Entry::default() };
-        entry.rows.insert("own:postings:field:f".into(), (2, vec![65_555, 10]));
-        assert_eq!(foreign_symbol(&[&entry], &syms, 5), None, "not taken for an atom");
-    }
-
-    #[test]
-    fn an_entry_holds_the_identities_it_was_made_under_and_no_others() {
-        let (a, b, c) = ([1u8; 32], [2u8; 32], [3u8; 32]);
-        let mut entry = Entry { key: 7, ..Entry::default() };
-        cover(&mut entry, [a, b].iter());
-        cover(&mut entry, [b].iter());
-        let held = covered(&entry);
-        assert_eq!(held.len(), 2);
-        assert!(held.contains(&covered_words(&a)) && held.contains(&covered_words(&b)) && !held.contains(&covered_words(&c)));
-        // It is an `own:` key, and names no symbol: what is kept over an entry whose rows stand (decision 0280).
-        assert_eq!(identities_of(&entry).rows.keys().collect::<Vec<_>>(), [COVERED]);
-        assert_eq!(Syms::default().columns(COVERED, 2), Some(vec![false, false]));
-    }
-
-    #[test]
-    fn keys_are_stable() {
-        let paths = ["a.py".to_owned(), "b/c.py".to_owned()];
-        let keys = doc_keys(&paths);
-        assert_eq!(keys, doc_keys(&paths));
-        assert_eq!(doc_keys(&paths[1..]), keys[1..], "a key does not depend on the other paths");
-        assert!(keys.iter().all(|&k| (1..1 << 30).contains(&k)));
-        assert_eq!(document_of(keys[0] << 32 | 9), keys[0]);
-        assert_eq!(document_of(keys[1]), keys[1]);
-    }
-}
+// cratify: `tests` is rerail-logic's (it mounts it: it reads the language, `rr::parse_version`, or the corpus's root)

@@ -366,6 +366,11 @@ export interface NativeCodeRuleDslRuntimeConstructor {
   pythonAstBatch(documentsJson: string): string;
   compile(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): NativeCompiledCodeRuleDsl;
   /**
+   * `compile` on a thread of Node's worker pool, so the JS thread runs other work while a rule compiles. An engine built
+   * before it lacks it.
+   */
+  compileAsync?(source: string, format: CodeRuleDslSourceFormat, capabilitiesJson: string): Promise<NativeCompiledCodeRuleDsl>;
+  /**
    * The tests the `.rerail` files under `pathsJson` (a JSON array of files and directories) carry, each run: a JSON array of
    * `NativeRrTestResult` (`rerail-engine test-rr`).
    */
@@ -517,6 +522,8 @@ export interface NativeAnalysisScopeRun {
 
 export interface NativeLoadedRrPolicies {
   load(path: string, source?: NativeGitRevisionSource): string;
+  /** The policy a failed `load` of `path` names: the one `.policy` its own text declares, read without lowering it. */
+  failedPolicy(path: string, source?: NativeGitRevisionSource): string | null;
 }
 
 export interface NativeBinding {

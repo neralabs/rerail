@@ -40,7 +40,7 @@ simdjson_warn_unused error_code index_and_hash(dom_parser_implementation& parser
                                                uint8_t* digest, std::vector<uint32_t>& comments) noexcept {
   H sha;
   size_t hashed = 0;
-  auto hash_rest = [&] {
+  auto hash_rest = [&]() simdjson_inline_lambda {
     while (hashed + 64 <= total) {
       sha.block(src + hashed);
       hashed += 64;

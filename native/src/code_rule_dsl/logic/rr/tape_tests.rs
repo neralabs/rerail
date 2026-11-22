@@ -125,7 +125,7 @@ fn a_bad_statement_is_one_error_and_parsing_resumes() {
 /// grammar implies, once (a named-only tape, RER-131).
 #[test]
 fn every_rule_file_tapes_and_its_leaves_cover_it() {
-    let root = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax");
+    let root = crate::source_tree::native().join("../docs/rule-syntax");
     let mut files = Vec::new();
     let mut pending = vec![root];
     while let Some(dir) = pending.pop() {
@@ -215,7 +215,7 @@ fn a_rule_about_rules_runs_over_rule_files() {
     std::fs::write(root.join("rules/b.rerail"), ".decl g(x: symbol)\n.input g(IO=file, filename=\"g.csv\")\n").unwrap();
     std::fs::write(root.join("rules/c.rerail"), ".decl h(x: symbol)\n.input h(IO=file, filename=\"../up.csv\")\n").unwrap();
     std::fs::write(root.join("x.py"), "print(1)\n").unwrap();
-    let rule = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
+    let rule = crate::source_tree::native().join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
     let report = crate::code_rule_dsl::tools::run_rr(&rule, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let mut found: Vec<(String, i64)> = report["diagnostics"]
         .as_array()
@@ -288,7 +288,7 @@ fn python_and_rr_policies_run_over_one_repository() {
         ".language python\n.violation eval_call(at: node) code \"PY1\" \"eval\"\neval_call(c) :- node(_, c, \"call\", _, _), field(c, \"function\", f), text(f, \"eval\").\n",
     )
     .unwrap();
-    let rr = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
+    let rr = crate::source_tree::native().join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
     let report = crate::code_rule_dsl::tools::run_policies(&[python.clone(), rr], &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let _ = std::fs::remove_dir_all(&root);
     let _ = std::fs::remove_file(&python);
@@ -328,7 +328,7 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
          pr_call(c) :- node(_, c, \"call\", _, _), field(c, \"function\", f), text(f, \"print\").\n",
     )
     .unwrap();
-    let rr = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
+    let rr = crate::source_tree::native().join("../docs/rule-syntax/packs/rr/rr-input-outside-repository.rerail");
     let paths = [a.clone(), rr.clone(), b.clone(), c.clone()];
     let batch = crate::code_rule_dsl::tools::run_policies(&paths, &root, &root.join("out"), &serde_json::Value::Null).unwrap();
     let codes = |report: &serde_json::Value| -> Vec<String> {
@@ -375,10 +375,11 @@ fn a_batchs_policies_of_one_language_run_as_one_pack() {
     assert!(any(&w1, "rules/a.rerail"), "{w1:?}");
 }
 
-/// A policy's findings are its run alone's whatever else shares its pack (RUF060 beside C417). `anns` reads
-/// `list_like` from a string annotation, so hiding copies it for the annotation, and folding the copy widened
-/// `list_like` to take the annotations in (`hiding::fold_own`). `cmps` reads it through `empty_literal` from the file:
-/// beside `anns` it found the annotation's `1 in []` as well, which it does not alone. It reads it as hiding left it.
+/// A policy's findings are its run alone's whatever else shares its pack (RUF060 beside C417; main's #923). `anns`
+/// reads `list_like` from a string annotation, so hiding copies it for the annotation, and folding the copy widens
+/// `list_like` to take the annotations in (`combining::FoldOwn`). `cmps` reads it through `empty_literal` from the file:
+/// beside `anns` it found the annotation's `1 in []` as well, which it does not alone. Its `Cmp` shows `cmp`'s node,
+/// so it reads `cmp` as hiding left it (`rr_narrow_cmp`, `combining::Narrowing`, decision 0165).
 #[test]
 fn a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("corun-annotations");
@@ -393,7 +394,8 @@ fn a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone() {
         path
     };
     let cmps = policy("cmps", ".violation Cmp(at: node) code \"cmp\" \"in an empty list\"\nCmp(c) :- cmp(c, \"in\", _, r), empty_literal(r, _).");
-    let anns = policy("anns", ".violation Ann(at: node) code \"ann\" \"a list in an annotation\"\nAnn(e) :- annotation(e), list_like(e, _).");
+    // A tape value's node is no file's (decision 0431 R9): `Ann` is placed at the string.
+    let anns = policy("anns", ".violation Ann(at: node) code \"ann\" \"a list in an annotation\"\nAnn(s) :- annotation(e), list_like(e, _), guest_of(e, s).");
     let found = |report: &serde_json::Value, policy: &str| -> Vec<(u64, String)> {
         let rows = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["policy"] == policy);
         let mut found: Vec<(u64, String)> = rows.map(|d| (d["line"].as_u64().unwrap_or(0), d["code"].as_str().unwrap_or("").to_owned())).collect();
@@ -504,20 +506,22 @@ fn a_policy_that_reads_within_finds_in_a_pack_in_either_order_what_it_finds_alon
 }
 
 /// A pack's programs make one set of guests (decision 0055), and a rule that reaches a guest reads every one the run
-/// made: `ruff-classes.rerail`'s `ann_input` asks for the annotation in `Literal["dict({})"]`, and C408, which reads
-/// string annotations, found a `dict({})` call there once a policy that only includes that file ran beside it. A
-/// policy that asks for other guests runs in its own pack (`rr::guest_asks`): C408 finds what it finds alone, and a
-/// policy that asks the same as C408 still shares its pack.
+/// made: `ruff-classes.rerail`'s `ann_input` asks for the annotation in `Literal["dict()"]`, and C408 found a `dict()`
+/// call there once a policy that only includes that file ran beside it. A policy that asks for other guests runs in
+/// its own pack (`rr::guest_asks`), and a policy that asks the same as C408 still shares its pack. In that pack, C408
+/// finds what it finds alone: the file's call, and no call inside a string annotation, which its rules do not name
+/// (decision 0165). Before, hiding cloned C408's own rules for the annotations' nodes that `builtin_at` holds beside a
+/// library that reads them (O110), and the pack was refused (decision 0431 R9: a finding at a tape value's node).
 #[test]
 fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
     let dir = crate::code_rule_dsl::fixtures::temp().with_extension("rrguestpack");
     std::fs::create_dir_all(&dir).unwrap();
     std::fs::write(
         dir.join("c.py"),
-        "from typing import List, Literal, cast\n\na: \"dict({})\" = 1\nb: \"dict(\" \"{})\" = 1\nc: List[\"dict({1: 2})\"] = []\nd: Literal[\"dict({})\"] = 1\ne = cast(\"(dict)({ })\", None)\n",
+        "from typing import List, Literal, cast\n\na: \"dict()\" = 1\nb: \"dict(\" \")\" = 1\nc: List[\"dict(a=2)\"] = []\nd: Literal[\"dict()\"] = 1\ne = cast(\"(dict)( )\", None)\nf = dict()\n",
     )
     .unwrap();
-    let c408 = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
+    let c408 = crate::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-c408-unnecessary-collection-call.rerail");
     let text = std::fs::read_to_string(&c408).unwrap();
     let twin = dir.join("twin.rerail");
     std::fs::write(&twin, text.replace("\"ruff-c408-unnecessary-collection-call\"", "\"t:c408-twin\"")).unwrap();
@@ -538,7 +542,7 @@ fn a_policy_reads_in_a_pack_only_the_guests_it_asks_for_alone() {
         lines
     };
     let own = lines(&alone, "ruff-c408-unnecessary-collection-call");
-    assert!(!own.is_empty() && !own.contains(&6), "C408 alone finds the string annotations, not the `Literal`'s text: {alone:#}");
+    assert_eq!(own, [8], "C408 alone finds the file's call, none in a string annotation: {alone:#}");
     assert_eq!(lines(&batch, "ruff-c408-unnecessary-collection-call"), own, "{batch:#}");
     assert_eq!(lines(&batch, "t:c408-twin"), own, "{batch:#}");
     // C408 and its twin ask the same and run as one pack; the policy that includes `ruff-classes.rerail` runs alone.
@@ -555,7 +559,7 @@ fn a_reader_that_only_negates_a_demanded_relation_reads_it_whole() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("negation-only-reader");
     std::fs::create_dir_all(&root).unwrap();
     std::fs::write(root.join("x.py"), "x = 1\n").unwrap();
-    let policy = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/plan-helpers-allowlist.rerail");
+    let policy = crate::source_tree::native().join("../docs/rule-syntax/data-layer/plan-helpers-allowlist.rerail");
     let codes = |out: &str| -> Vec<String> {
         let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join(out), &serde_json::Value::Null).unwrap();
         report["diagnostics"].as_array().unwrap().iter().map(|d| d["code"].as_str().unwrap_or("").to_owned()).collect()
@@ -581,7 +585,7 @@ fn a_policy_refused_its_kept_inputs_runs_again_over_its_store() {
     let root = crate::code_rule_dsl::fixtures::temp().with_extension("kept-route-refused");
     std::fs::create_dir_all(root.join("_internal")).unwrap();
     std::fs::write(root.join("_internal/__init__.py"), "\"\"\"Internal helpers.\"\"\"\n\ndef get(o, name):\n    return getattr(o, name)\n").unwrap();
-    let policy = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/data-layer/public-api-triples.rerail");
+    let policy = crate::source_tree::native().join("../docs/rule-syntax/data-layer/public-api-triples.rerail");
     let run = |out: &str| -> Vec<String> {
         let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&policy), &root, &root.join(out), &serde_json::Value::Null).unwrap_or_else(|e| panic!("run {out}: {e}"));
         let mut codes: Vec<String> = report["diagnostics"].as_array().unwrap().iter().map(|d| d.to_string()).collect();
@@ -631,7 +635,7 @@ fn statements_from_the_tape_are_the_parsers() {
         }
     }
     // The rule library and packs, and the engine's own programs (typing's, and the pinned golden ones).
-    let manifest = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"));
+    let manifest = crate::source_tree::native();
     let mut pending = vec![manifest.join("../docs/rule-syntax"), manifest.join("src/code_rule_dsl/typing/programs"), manifest.join("src/code_rule_dsl/logic/plan/golden/programs")];
     let mut checked = 0;
     while let Some(dir) = pending.pop() {
@@ -669,7 +673,7 @@ fn ruff_ruf013_finds_an_implicit_optional() {
         "from typing import Optional\n\ndef f(x: int = None):\n    pass\n\ndef g(x: Optional[int] = None):\n    pass\n",
     )
     .unwrap();
-    let pack = std::path::PathBuf::from(std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR")).join("../docs/rule-syntax/packs/python/ruff-ruf013-implicit-optional.rerail");
+    let pack = crate::source_tree::native().join("../docs/rule-syntax/packs/python/ruff-ruf013-implicit-optional.rerail");
     let report = crate::code_rule_dsl::tools::run_policies(std::slice::from_ref(&pack), &dir, &dir.join("out"), &serde_json::Value::Null).unwrap();
     let _ = std::fs::remove_dir_all(&dir);
     let lines: Vec<u64> = report["diagnostics"].as_array().unwrap().iter().map(|d| d["line"].as_u64().unwrap_or(0)).collect();

@@ -68,7 +68,7 @@ pub fn sql_executor() -> Arc<Executor> {
 
 /// The executor for this thread's run.
 pub fn executor() -> Arc<Executor> {
-    executor_for(super::plan::placement::device())
+    executor_for(super::device::binding::device())
 }
 
 /// The executor of a binding: every lane under the device binding (`device`), the cores' (and SME's) otherwise. For
