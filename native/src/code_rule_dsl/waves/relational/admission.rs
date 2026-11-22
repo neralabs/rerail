@@ -21,7 +21,7 @@ pub(in crate::code_rule_dsl) fn limits(rule: &CompiledCodeRule, snapshot: &Snaps
     Ok(())
 }
 
-pub(in crate::code_rule_dsl) fn check(
+pub fn check(
     rule: &CompiledCodeRule,
     clause: &CompiledClause,
     inputs: &mut Inputs,

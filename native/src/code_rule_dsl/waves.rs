@@ -66,6 +66,18 @@ pub(in crate::code_rule_dsl) mod relational {
         #[allow(unused_imports)]
         use std::collections::VecDeque;
     }
+    pub mod admission {
+        pub use rerail_workspace::code_rule_dsl::waves::relational::admission::*;
+        #[cfg(test)]
+        pub mod tests;
+        #[allow(unused_imports)]
+        use super::{Inputs, Result, invalid};
+        #[allow(unused_imports)]
+        use crate::code_rule_dsl::{
+            eval,
+            model::{CompiledClause, CompiledCodeRule, Metrics, Snapshot},
+        };
+    }
     pub mod execution;
     #[path = "inputs"]
     pub mod inputs {
