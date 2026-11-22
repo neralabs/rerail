@@ -258,6 +258,8 @@ const STATE: &[(&str, &str)] = &[
     // the tests' stores are, not results.
     // The caller's options for its runs' inputs (`--facts`, `--require-facts`, `--base`; decision 0442).
     ("code_rule_dsl/logic/plan/corpus/inputs.rs", "Options"),
+    // The harness folders already made private this process (decision 0574): which folders, not results.
+    ("code_rule_dsl/logic/plan/corpus/test_store.rs", "DONE"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "Handed"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "OWN"),
     ("code_rule_dsl/logic/plan/corpus/test_store.rs", "PATH"),
