@@ -594,8 +594,10 @@ impl Batch {
     pub(super) fn ensure(&self, want: &[usize]) {
         let me = std::thread::current().id();
         loop {
-            let (need, waits) = {
-                let s = self.rows.state.lock();
+            // What it needs, and its claim of those no thread has claimed, under one lock: two reads that both found
+            // a document unclaimed would each make it, one group set aside.
+            let (need, waits, claim) = {
+                let mut s = self.rows.state.lock();
                 let making = s.makers.contains(&me);
                 let mut need: Vec<usize> = Vec::new();
                 let mut waits = false;
@@ -621,20 +623,16 @@ impl Batch {
                     }
                     continue;
                 }
-                (need, waits)
-            };
-            if need.is_empty() {
-                debug_assert!(!waits);
-                return;
-            }
-            let claim = {
-                let mut s = self.rows.state.lock();
+                if need.is_empty() {
+                    debug_assert!(!waits);
+                    return;
+                }
                 let docs: Vec<usize> = need.iter().copied().filter(|&i| s.claimed[i].is_none()).collect();
                 for &i in &docs {
                     s.claimed[i] = Some(me);
                 }
                 s.makers.push(me);
-                Claim { rows: &self.rows, me, docs }
+                (need, waits, Claim { rows: &self.rows, me, docs })
             };
             let made = self.make_rows(&need, self.rows.first(), &[]).and_then(|m| self.group_rels(m, &need));
             self.rows.makes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);

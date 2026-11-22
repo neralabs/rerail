@@ -1058,7 +1058,7 @@ fn projection_axes_and_token_spans_are_read_without_renumbering() {
     expected.sort_unstable();
     let tokens = expected.len();
     expected.push([0,f.source.len() as u32]);
-    expected.extend((1..=f.lines.count()).map(|l|f.lines.text_of(l)));
+    expected.extend((1..=f.lines.count()).map(|l|f.lines.text_of(l, f.source.as_bytes())));
     assert_eq!(p.extra.as_ref().unwrap().tokens as usize,tokens);
     assert_eq!(p.locs(),p.len()+expected.len() as u32);
     for (i,&span) in expected.iter().enumerate() { assert_eq!(p.span(p.len()+i as u32),span); }
@@ -1147,7 +1147,7 @@ fn span_ids_census() {
                             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
                             let p = Projected::new(1, Arc::clone(&facts), Some(&dialect), Shape::Core, false, None);
                             let f = &*facts;
-                            let lines: Vec<std::ops::Range<usize>> = (1..=f.lines.count()).map(|l| f.lines.text_of(l)).map(|[a, b]| a as usize..b as usize).collect();
+                            let lines: Vec<std::ops::Range<usize>> = (1..=f.lines.count()).map(|l| f.lines.text_of(l, f.source.as_bytes())).map(|[a, b]| a as usize..b as usize).collect();
                             let comments = (0..f.len() as u32).filter(|&id| f.named(id) && crate::code_rule_dsl::language::adapter::is_comment_kind(dialect.name(f, id))).count();
                             let matches = count(&src) + lines.iter().map(|r| count(&src[r.clone()])).sum::<usize>();
                             let now = [(p.locs() - p.len()) as usize, lines.len() + 1, comments, matches];
@@ -2137,7 +2137,8 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
         let image = TapeImage::parse(&grammar, &source, &|| false).unwrap().unwrap().primary;
         for format in Format::ALL {
             let lines = Arc::new(LineTable::new(&source, crate::code_rule_dsl::lines::terminators(lang)));
-            let words: Vec<u32> = lines.words().to_vec();
+            // The lines' index and a word of room past it, as the device reads them: the test's buffer of them.
+            let words: Vec<u8> = [lines.index(), &[0u8; 8]].concat();
             let facts = Arc::new(core::from_image(Arc::clone(&source), &grammar, image.clone().in_format(format, source.as_bytes()), lines).unwrap());
             let dialect = Dialect::new(core::facts_tag(&facts)).unwrap();
             let (tape, view) = facts.tape.as_ref().unwrap().in_place().unwrap();
@@ -2178,7 +2179,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     .collect();
                 let e = entry.desc();
                 let t = tape.as_ptr();
-                let ll = words.as_ptr().cast::<u8>();
+                let ll = words.as_ptr();
                 let jitted: Vec<i64> = (0..n)
                     .flat_map(|l| {
                         let mut row: Vec<i64> = (0..5).map(|c| node(e, t, v, ll, l, c)).collect();
@@ -2197,7 +2198,7 @@ DEFINE_KERNEL2(syntax_tests, view_probe, ROBUFFER, uint8_t, b, "[block]", ARGS, 
                     bytes.resize(tape.len() + 16, 0);
                     let tt = buffer_of(&bytes).unwrap();
                     let out = alloc::<i64>(n.max(1) as usize * WIDE).unwrap();
-                    // Its lines where the device reads them: a test's buffer of their words.
+                    // Its lines where the device reads them: a test's buffer of their index.
                     let lb = buffer_of(&words).unwrap();
                     let (tt_at, lb_at) = (tt.device_address().unwrap(), lb.device_address().unwrap());
                     // A 16z tape's blocks through a cache every thread shares (0353 step 4b): one of a block a

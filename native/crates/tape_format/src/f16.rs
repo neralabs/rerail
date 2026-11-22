@@ -280,6 +280,10 @@ impl Tape16 {
     pub fn home(&self) -> &crate::home::Home {
         &self.buf
     }
+    /// Where its line index starts in its home (`extent`): the document's lines, read there (decision 0612).
+    pub fn lines_at(&self) -> usize {
+        self.p.lines
+    }
     /// Where its parts lie.
     pub fn placement(&self) -> &Placement {
         &self.p
@@ -1193,6 +1197,10 @@ impl Tape16Z {
     /// Where its bytes are.
     pub fn home(&self) -> &crate::home::Home {
         &self.buf
+    }
+    /// Where its line index starts in its home (`Tape16::lines_at`): a 16z tape stores it as it is.
+    pub fn lines_at(&self) -> usize {
+        self.zat[ZLINES]
     }
 
     /// The stored tape, held as it is: its header, its regions and its piece index are checked against its length,

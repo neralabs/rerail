@@ -1374,7 +1374,7 @@ impl Locs {
     fn file_line(&self, l: u32) -> u32 {
         match &self.host {
             Some((lines, place)) => {
-                let at = self.lines.text_of((l as usize).clamp(1, self.lines.count()))[0];
+                let at = self.lines.start((l as usize).clamp(1, self.lines.count()) - 1) as u32;
                 lines.line(place.host([at, at])[0] as usize) as u32 + 1
             }
             None => l,
@@ -1757,7 +1757,7 @@ impl Projected {
                 } else if i == x.tokens {
                     [0, self.facts.source.len() as u32]
                 } else {
-                    x.lines.text_of((i - x.tokens) as usize)
+                    x.lines.text_of((i - x.tokens) as usize, self.facts.source.as_bytes())
                 }
             }),
         }
@@ -2527,7 +2527,7 @@ impl Extra {
             lines_at.start = made.len();
             for l in 1..=lines.count() {
                 let sp = span(ExtraSpan::Line, l)?;
-                let [a, b] = lines.text_of(l).map(|at| at as usize);
+                let [a, b] = lines.text_of(l, source.as_bytes()).map(|at| at as usize);
                 self.src_lines.push([key, l as i64, sp]);
                 self.span(sp, l, l, 0, &source[a..b], self.line_text, text, string);
                 made.push((sp, a..b));

@@ -90,6 +90,26 @@ Ruff's. The old `Loc` view read `line(e - 1)` instead. It is now `line(e)`, the 
   - A token loop's tier 1 (`.rr`'s) makes no mask of its own. Its line ends are among `records_made`, and its
     index is the scan's.
   - `newlines.rs` is part of the grammar build id, so stored tapes are made again.
+- There is one line index: the tape's. `LineTable` reads it and holds no lines of its own. It used to hold
+  `[n, starts, ends]` words. Its reads are the tape's (`reads::f16::line`, `line_start`) over a view whose
+  `lines` is the index's start.
+  - A document with a format 16 or 16z tape made with its language's terminators reads the index where it lies
+    in that tape (`TapeImage::lines`, `LineTable::of_f16`), the tape held.
+  - Any other document has an index of its own in the same format. Where the device reads tapes, it is placed in
+    a slab's room (`LineTable::placed`, `newlines::index_in`).
+  - A line's text end comes from the source's bytes at its terminator (`end`, `text_of`).
+  - Tree-sitter's rows are `Lf`'s lines (`Points`).
+- The device reads the same index.
+  - The lines' reads (`lines_line`, `lines_start`, `lines_count`, `lines_select`) are the tape's line reads'
+    bodies, with the index at their base (`ll`). They are written once in CLIF, into `<ukl/reads/lines.h>`.
+    `lines_word` is removed.
+  - Format 15's branch of the line reads is removed, in CLIF and in the kernels' `tape_body.h`. A format 15 slab
+    places its language's index beside its tape, where `\n`-only line starts were.
+  - A `Loc` view places a line from its start, which its text's end shares.
+  - The chunk's `flines` (`fill_lines`, the listed copy of 0353 step 4) now hold the index. `chunk_views` reads
+    it with the generated reads, not a search of its own.
+- The packed batch's line starts (in its listed copy, 0353 step 7) are the document's lines, read off its index. They
+  were its `\n`s.
 - The data-layer pack's test data follows. The overlays were edited, the converter's output was regenerated
   (`convert_the_data_layer_pack`), and the 50 changed files were staged in the lint tool-pack's `publish/`
   (`npm run fixtures:stage`).
@@ -105,6 +125,8 @@ Ruff's. The old `Loc` view read `line(e - 1)` instead. It is now `line(e)`, the 
   ambiguous ending. It checks `src_line` and the line of a call.
 - `source_lines_are_the_languages_lines` checks `src_line` against the `LineTable`, `py_line` against W's
   splitlines lines, and `line_count`.
+- `stored_tapes_are_admitted_into_slabs_and_read_in_place` reads each line's start off a format 15 slab's placed
+  index. `the_lines_reads_are_these` holds `lines.h` to its CLIF.
 - `views_made_on_the_device_are_the_hosts_rows` (Metal, with a guest and without) checks that the `line`,
   `end_line`, `col` and `docof` views read in place on the device are the host's rows. It caught `loc_word`
   reading the lines' words from the chunk's base, which `lines_word` fixed.

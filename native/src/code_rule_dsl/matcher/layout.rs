@@ -118,12 +118,12 @@ impl Layout {
         if self
             .line
             .as_ref()
-            .is_some_and(|regex| !regex.is_match(&source[lines.start(at)..lines.end(at)]))
+            .is_some_and(|regex| !regex.is_match(&source[lines.start(at)..lines.end(at, source.as_bytes())]))
         {
             return None;
         }
         if let Some(regex) = &self.previous_line
-            && (at == 0 || !regex.is_match(&source[lines.start(at - 1)..lines.end(at - 1)]))
+            && (at == 0 || !regex.is_match(&source[lines.start(at - 1)..lines.end(at - 1, source.as_bytes())]))
         {
             return None;
         }
@@ -135,7 +135,7 @@ impl Layout {
                     if !spend_util_step() {
                         return None;
                     }
-                    if through.is_match(&source[lines.start(line)..lines.end(line)]) {
+                    if through.is_match(&source[lines.start(line)..lines.end(line, source.as_bytes())]) {
                         last = line;
                         break;
                     }
@@ -143,7 +143,7 @@ impl Layout {
             }
             if !context
                 .regex
-                .is_match(&source[lines.start(first)..lines.end(last)])
+                .is_match(&source[lines.start(first)..lines.end(last, source.as_bytes())])
             {
                 return None;
             }
@@ -248,7 +248,7 @@ fn blank_lines<D: Doc>(
         (first + 1..last)
             .filter(|&line| {
                 source
-                    .get(lines.start(line)..lines.end(line))
+                    .get(lines.start(line)..lines.end(line, source.as_bytes()))
                     .is_some_and(|text| text.chars().all(is_space))
             })
             .count()

@@ -300,28 +300,6 @@ pub fn core(b: &mut B<'_, '_>) -> Value {
     })
 }
 
-/// `lines_line(at)`: the lines starting at or before byte `at` (`Facts::start_line`: `LineTable::line` + 1), by
-/// bisection of the starts.
-#[cfg(feature = "ir")]
-pub fn lines_line(b: &mut B<'_, '_>) -> Value {
-    let at_ = b.arg(0);
-    let n = b.word_at(I32, b.tape, 0);
-    b.bisect(n, &mut |b, i| {
-        let starts = b.f.ins().iadd_imm(b.tape, 4);
-        let p = b.item(starts, i, 4);
-        let start = b.word_at(I32, p, 0);
-        b.f.ins().icmp(IntCC::UnsignedLessThanOrEqual, start, at_)
-    })
-}
-
-/// `lines_word(i)`: word `i` of the lines (`LineTable::words`: their count, then the starts, then the ends).
-#[cfg(feature = "ir")]
-pub fn lines_word(b: &mut B<'_, '_>) -> Value {
-    let i = b.arg(0);
-    let p = b.item(b.tape, i, 4);
-    b.word_at(I32, p, 0)
-}
-
 /// `view_line(l, col)`: column `col` of the `line` view's row of numbered node `l`: its id, the line its start is
 /// on.
 #[cfg(feature = "ir")]
@@ -387,10 +365,14 @@ impl B<'_, '_> {
         let low = self.f.ins().uextend(I64, low);
         self.f.ins().bor(high, low)
     }
-    /// Word `i` of the document's lines (`LineTable`'s `[n, starts[n], ends[n]]`, the view's lines' base: the one
-    /// definition of a line and a place, decision 0612; a guest's are its host's).
-    fn loc_word(&mut self, i: Value) -> Value {
-        self.call_lines("lines_word", &[i])
+    /// The document's lines (`lines_count`), read off its line index at the view's lines' base: the one definition
+    /// of a line and a place (decision 0612); a guest's are its host's.
+    fn loc_count(&mut self) -> Value {
+        self.call_lines("lines_count", &[])
+    }
+    /// Line `k`'s first byte (from 0, `lines_start`).
+    fn loc_start(&mut self, k: Value) -> Value {
+        self.call_lines("lines_start", &[k])
     }
     /// `Loc` position `l`'s byte span, as `start << 32 | end` (`Projected::span`): a node's or token's off the tape,
     /// the whole text, a line's text, or a node's end point.
@@ -418,7 +400,7 @@ impl B<'_, '_> {
                 let j = b.f.ins().isub(i, tokens);
                 // The end points follow the whole text and the lines where the text is the document's own.
                 let own = b.word_at(I32, b.tape, at::OWN_TEXT);
-                let n = b.loc_word_at(0);
+                let n = b.loc_count();
                 let texts = b.f.ins().iadd_imm(n, 1);
                 let zero = b.c32(0);
                 let owned = b.f.ins().icmp_imm(IntCC::NotEqual, own, 0);
@@ -436,20 +418,15 @@ impl B<'_, '_> {
                         let len = b.word_at(I32, b.tape, at::SOURCE_LEN);
                         b.pair(zero, len)
                     }, |b| {
-                        // Line `j`'s text: its start (word `j`) and its end (word `n + j`).
-                        let s = b.loc_word(j);
-                        let n = b.loc_word_at(0);
-                        let at_ = b.f.ins().iadd(n, j);
-                        let e = b.loc_word(at_);
-                        b.pair(s, e)
+                        // Line `j`'s (from 1) place, from its start alone: its text's end is on it (a terminator's
+                        // bytes are the line's they end), so its start stands for both ends here.
+                        let k = b.f.ins().iadd_imm(j, -1);
+                        let s = b.loc_start(k);
+                        b.pair(s, s)
                     })
                 })
             })
         })
-    }
-    fn loc_word_at(&mut self, i: i64) -> Value {
-        let i = self.c32(i);
-        self.loc_word(i)
     }
     /// A guest's span `start << 32 | end` where it stands in its host (`Placement::host`): copied, each end moved by
     /// `delta` and kept within `within`; at `within`. A file's own, as it is.
@@ -509,8 +486,9 @@ impl B<'_, '_> {
                 // The line holding its end offset: a span ending with a terminator ends on the line after it.
                 Place::EndLine => b.loc_line(e),
                 Place::Col => {
-                    // Its line's start: word `line` (the starts from word 1).
-                    let start = b.loc_word(line);
+                    // Its line's start (`line` from 1).
+                    let k = b.f.ins().iadd_imm(line, -1);
+                    let start = b.loc_start(k);
                     b.f.ins().isub(s, start)
                 }
                 Place::Docof => unreachable!(),

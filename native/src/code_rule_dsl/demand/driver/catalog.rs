@@ -425,7 +425,7 @@ impl SqlPlans {
             file_metadata.push(serde_json::json!({
                 "path": file.path,
                 "source": source,
-                "lineStarts": LineTable::new(source, crate::code_rule_dsl::lines::terminators(file.language)).starts(),
+                "lineStarts": LineTable::new(source, crate::code_rule_dsl::lines::terminators(file.language)).starts().collect::<Vec<_>>(),
                 "syntaxFailures": syntax_failures,
             }));
             file_paths.push(file.path);

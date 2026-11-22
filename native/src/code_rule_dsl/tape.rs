@@ -2010,6 +2010,19 @@ impl TapeImage {
         Ok(Self::of15([&code, &size, &base, &off, &tail], widths, codes, kind_aliases, grammar.lang, source.len(), Some(source_digest(source, budget)?)))
     }
 
+    /// `source`'s lines as `terminators` end them (decision 0612): the tape's line index, read where it lies, where
+    /// the tape is format 16's made with those terminators (its language's); else an index of their own, placed
+    /// where the device reads tapes when `placed`.
+    pub fn lines(&self, source: &str, terminators: crate::code_rule_dsl::lines::Terminators, placed: bool) -> LineTable {
+        let same = crate::code_rule_dsl::lines::terminators(self.language) == terminators && self.source_len == source.len();
+        match &self.held {
+            Held::F16(t) if same => LineTable::of_f16(t),
+            Held::F16Z(t) if same => LineTable::of_f16z(t),
+            _ if placed => LineTable::placed(source, terminators),
+            _ => LineTable::new(source, terminators),
+        }
+    }
+
     /// The format it is held in.
     pub fn format(&self) -> formats::Format {
         match self.held {
@@ -2600,7 +2613,7 @@ impl Points {
         let byte = byte as usize;
         let (row, column) = self
             .rows
-            .get_or_init(|| LineTable::tree_sitter(&self.source))
+            .get_or_init(|| LineTable::new(&self.source, crate::code_rule_dsl::lines::Terminators::Lf))
             .point(byte);
         Position::new(row, column, byte)
     }
@@ -2716,7 +2729,7 @@ impl TapeDoc {
         // Positions read through the segments slice both texts: a map that does not fit them is
         // refused here, so the tape is encoded again, never read wrong.
         guest.source_map.check(&guest.text, &host.source)?;
-        let lines = Arc::new(LineTable::new(&guest.text, crate::code_rule_dsl::lines::terminators(grammar.lang)));
+        let lines = Arc::new(guest.tape.lines(&guest.text, crate::code_rule_dsl::lines::terminators(grammar.lang), false));
         let mut doc =
             Self::restore_tree(Arc::clone(&guest.text), grammar, &guest.tape, lines, budget)?;
         checked(budget)?;

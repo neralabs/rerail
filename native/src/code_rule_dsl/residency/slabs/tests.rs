@@ -18,11 +18,6 @@ fn grammar(id: i64) -> Result<Arc<Grammar>, String> {
     Grammar::new(lang)
 }
 
-#[allow(dead_code)]
-fn u32s(document: &Resident, offset: u32, count: usize) -> Vec<u32> {
-    document.bytes_at(offset, 4 * count).as_chunks::<4>().0.iter().map(|word| u32::from_le_bytes(*word)).collect()
-}
-
 use std::sync::Mutex;
 
 /// The residency is process-wide: the tests that admit and drop take turns. Other tests' label
@@ -66,9 +61,13 @@ fn stored_tapes_of_format_15_are_admitted() {
             assert_eq!(offset % 16, 0, "every part at 16 bytes in its slab");
         }
         assert_eq!(document.view.nodes as usize, tape.transducer_len());
-        let lines = u32s(document, document.view.lines, document.view.line_count as usize);
-        let expected = std::iter::once(0).chain(source.bytes().enumerate().filter(|(_, byte)| *byte == b'\n').map(|(at, _)| at as u32 + 1)).collect::<Vec<_>>();
-        assert_eq!(lines, expected);
+        // Its line index, its language's (decision 0612): each line's start read off it where it is placed is the
+        // document's.
+        let head = document.bytes_at(document.view.lines, rerail_tape_format::newlines::HEAD);
+        let index = document.bytes_at(document.view.lines, rerail_tape_format::newlines::len_of(head).unwrap() + 8);
+        let view = rerail_clif::view::TapeView::default();
+        let starts: Vec<u32> = (0..document.view.line_count).map(|k| rerail_tape_format::reads::f16::line_start(index, &view, k)).collect();
+        assert_eq!(starts, tape.line_table().starts().collect::<Vec<_>>());
     }
     // Admitted again: the same documents, read from the residency, not the store.
     let again = admit(&store, &digests, &grammar).unwrap();

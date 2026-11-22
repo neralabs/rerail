@@ -788,6 +788,7 @@ fn instruction(f: &ir::Function, inst: ir::Inst, name: &dyn Fn(ir::Value) -> Str
             let pointers = match (family, to) {
                 (Family::View, Family::Tape) => "tt,v".to_owned(),
                 (Family::View, Family::Lines) => "ll,0".to_owned(),
+                (Family::Lines, Family::Lines) => "t,a0".to_owned(),
                 (Family::View, Family::View) => format!("t,{},tt,v,ll", args[0]),
                 (_, Family::Relation) => format!("t,{}", args[0]),
                 (Family::Tape, _) => pointers(family).1.to_owned(),

@@ -64,9 +64,9 @@ structure! {
         /// file, `Locs::place`'s, through its placement and its host's lines. Empty for a file's own tree, whose
         /// places the kernel finds in `flines`.
         pub placed: Span<u32>,
-        /// The facts' line starts (`LineTable::starts`), for the `line` view and the `Loc` views (`fill_lines`): a
-        /// line is the number of them at or before a byte (`Facts::start_line`, `LineTable::place`).
-        pub flines: Span<u32>,
+        /// The facts' line index's bytes (`LineTable::index`), for the `line` view and the `Loc` views (`fill_lines`),
+        /// read by the lines' reads (`<ukl/reads/lines.h>`: `Facts::start_line`, `LineTable::place`).
+        pub flines: Span<u8>,
     }
 }
 
@@ -305,9 +305,7 @@ fn build_dir(b: &Arc<Block>, docs: &[DirDoc<'_>]) -> Option<ViewsInPlace> {
             // Its lines where the device reads them (its places' lines: a guest's are its host's, `Locs::place_lines`):
             // else the batch's `line` view is made (counted), and its `Loc` views.
             let table = p.extra.as_deref().map_or(&p.facts.lines, |x| x.place_lines());
-            let words = table.words();
-            // SAFETY: the words as bytes, their own range.
-            let bytes = unsafe { std::slice::from_raw_parts(words.as_ptr().cast::<u8>(), 4 * words.len()) };
+            let bytes = table.index();
             match table.room().and_then(|room| crate::code_rule_dsl::tape::placed::on_device(room, bytes)) {
                 Some((address, slab)) => {
                     row.lines = address;
@@ -514,28 +512,28 @@ fn build_in(batch: &Batch) -> Chunk {
     }
 }
 
-/// Puts each document's facts' line starts into `batch`'s chunk, once, for the `line` view made on the device (decision
+/// Puts each document's facts' line index into `batch`'s chunk, once, for the `line` view made on the device (decision
 /// 0325 step 3: it was read on the host, a row at a time, for an upload). False when the block cannot hold them: the
 /// view is then made on the host.
-// copy (0353 step 4): the facts' line starts copied into the chunk, for a batch whose `line` view is made (its tapes
+// copy (0353 step 4): the facts' line index copied into the chunk, for a batch whose `line` view is made (its tapes
 // not on the device). It goes with the made views: the views' reads read the lines where `LineTable::placed` put them.
 pub fn fill_lines(batch: &Batch, chunk: &Chunk) -> bool {
-    const LINES: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the facts' line starts put into the chunk (fill_lines)");
+    const LINES: rerail_prof::copies::Site = rerail_prof::copies::Site::new(14, "4", "the facts' line index put into the chunk (fill_lines)");
     *chunk.lines.get_or_init(|| LINES.time(|| in_block(&chunk.block, || {
         let _span = crate::code_rule_dsl::logic::profile::span(|| "the facts' lines in the chunk block".into());
         let b = &chunk.block;
         // SAFETY: the root `build` wrote; its document table.
         let docs = unsafe { (*b.ptr::<ChunkRoot>(chunk.root)).docs.as_ptr() as *mut ChunkDoc };
         for (i, p) in batch.docs.iter().enumerate() {
-            let starts = p.facts.lines.starts();
-            let Some(ls) = b.try_alloc_t::<u32>(starts.len().max(1)) else { return false };
-            // SAFETY: `ls` holds the starts, just allocated in the block; entry `i` of the table, whose `flines` no
-            // reader reads before this returns.
+            let index = p.facts.lines.index();
+            // A word of room past it: the reads load a whole word where a value ends.
+            let Some(ls) = b.try_alloc_t::<u8>(index.len() + 8) else { return false };
+            // SAFETY: `ls` holds the index and its room, just allocated in the block; entry `i` of the table, whose
+            // `flines` no reader reads before this returns.
             unsafe {
-                for (j, &s) in starts.iter().enumerate() {
-                    *ls.add(j) = s;
-                }
-                Span::set(&raw const (*docs.add(i)).flines, ls, starts.len());
+                std::ptr::copy_nonoverlapping(index.as_ptr(), ls, index.len());
+                std::ptr::write_bytes(ls.add(index.len()), 0, 8);
+                Span::set(&raw const (*docs.add(i)).flines, ls, index.len());
             }
         }
         true

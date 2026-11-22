@@ -531,9 +531,10 @@ fn hash_text(hash: HashKey) -> String {
 
 fn tape_doc(document: &Document) -> Result<tape::TapeDoc> {
     let grammar = tape::Grammar::new(document.language).map_err(invalid)?;
-    let lines = Arc::new(LineTable::new(
+    let lines = Arc::new(document.image.primary.lines(
         &document.source,
         crate::code_rule_dsl::lines::terminators(document.language),
+        false,
     ));
     tape::TapeDoc::restore_with_lines(
         Arc::clone(&document.source),

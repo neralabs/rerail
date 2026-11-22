@@ -3368,6 +3368,7 @@ dependencies = [
  "rerail-rr-parser",
  "rerail-rr-syntax",
  "rerail-store",
+ "rerail-tape-format",
  "rerail-transducer",
  "rerail-w",
  "ruff_python_ast",

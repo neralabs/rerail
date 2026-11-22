@@ -49,8 +49,8 @@ fn invalid(message: impl std::fmt::Display) -> Error {
 }
 
 /// Sizes of a document's parts, from its frames' raw lengths, the image's header and (format 15) the
-/// source's newlines, read by one streamed decode that keeps nothing. Format 16 holds its newline index
-/// (decision 0336 §6): no line is counted for it. A 16z tape is placed as stored, and read through a
+/// source's line ends, its language's (decision 0612), read by one streamed decode that keeps nothing. Format 16
+/// holds its line index (decision 0336 §6): no line is counted for it. A 16z tape is placed as stored, and read through a
 /// cache of its decoded blocks (decision 0353 step 4b).
 struct Plan {
     tape: usize,
@@ -68,11 +68,24 @@ impl Plan {
         aligned(self.tape) + aligned(self.source) + self.derived()
     }
 
-    /// The reader's state beside the tape: format 15's codes at a fixed width and line starts. Format 16's are its
-    /// language's table (the slab's) and its tape's newline index. Nothing per node.
+    /// The reader's state beside the tape: format 15's codes at a fixed width and its line index (format 16's, and
+    /// a word of room past it). Format 16's are its language's table (the slab's) and its tape's line index. Nothing
+    /// per node.
     fn derived(&self) -> usize {
-        if self.table.is_some() { 0 } else { aligned(24 * self.codes) + aligned(4 * self.lines) }
+        if self.table.is_some() { 0 } else { aligned(24 * self.codes) + aligned(self.index_len() + 8) }
     }
+
+    /// Format 15's line index's bytes.
+    fn index_len(&self) -> usize {
+        rerail_tape_format::newlines::index_len(self.source as u64, self.lines as u64)
+    }
+}
+
+/// The line ends of `source` in `grammar`'s language (decision 0612): format 15's line index's.
+fn line_ends(source: &[u8], grammar: &Grammar) -> usize {
+    let mut m = 0;
+    crate::code_rule_dsl::lines::terminators(grammar.lang).each(source, |_, _| m += 1);
+    m
 }
 
 /// The key of a format 16 tape's language table in a slab: its tag and its table's revision.
@@ -105,12 +118,12 @@ fn planned(head: &[u8], tape: usize, source: usize, lines: usize) -> Result<Plan
     Ok(Plan { tape, source, nodes, codes, lines, stored, table })
 }
 
-fn plan(frames: &crate::content_store::ResidentFrames) -> Result<Plan, Error> {
+fn plan(frames: &crate::content_store::ResidentFrames, grammar: &Grammar) -> Result<Plan, Error> {
     let head = frames.tape_frame.head(resident::HEADER_LEN.min(frames.tape_length));
     let stored = resident::stored(head).map_err(invalid)?;
     let mut lines = 0usize;
     if stored == resident::Stored::F15 {
-        lines = 1 + frames.source_frame.segment().bytes().iter().filter(|&&byte| byte == b'\n').count();
+        lines = line_ends(frames.source_frame.segment().bytes(), grammar);
     }
     planned(head, frames.tape_length, frames.source_length, lines)
 }
@@ -129,7 +142,8 @@ pub fn admit(
         let mut planned = Vec::with_capacity(missing.len());
         for (digest, frames) in missing.iter().zip(&frames) {
             let frames = frames.as_ref().ok_or_else(|| invalid("a tape the store does not hold"))?;
-            planned.push((*digest, plan(frames)?, grammar(frames.grammar_id).map_err(invalid)?, frames));
+            let grammar = grammar(frames.grammar_id).map_err(invalid)?;
+            planned.push((*digest, plan(frames, &grammar)?, grammar, frames));
         }
         insert_parts(digests, planned.iter().map(|(digest, plan, grammar, frames)| (*digest, plan, &**grammar, Parts::Frames(frames))).collect())?;
     }
@@ -148,7 +162,7 @@ pub fn admit_docs(docs: &[crate::code_rule_dsl::tape::TapeDoc]) -> Result<Vec<Ar
             let at = digests.iter().position(|candidate| candidate == digest).expect("a miss is one of the digests");
             let (image, source, grammar) = docs[at].resident_parts(images[at].take()).map_err(invalid)?;
             let stored = resident::stored(&image).map_err(invalid)?;
-            let lines = if stored == resident::Stored::F15 { 1 + source.bytes().filter(|&byte| byte == b'\n').count() } else { 0 };
+            let lines = if stored == resident::Stored::F15 { line_ends(source.as_bytes(), grammar) } else { 0 };
             let plan = planned(&image, image.len(), source.len(), lines)?;
             owned.push((*digest, plan, Arc::clone(grammar), image, source));
         }
@@ -261,15 +275,14 @@ fn place(
             // SAFETY: `24 * codes` bytes at a 16-byte offset of the mapping, and `DeviceCode` is 24 bytes, 2-aligned.
             unsafe { std::ptr::copy_nonoverlapping(codes.as_ptr(), base.add(codes_at).cast::<DeviceCode>(), codes.len()) };
             view.codes = at(codes_at)?;
-            // Format 15's line starts, placed beside it.
-            // SAFETY: as the codes', `4 * lines` bytes.
-            let lines = unsafe { std::slice::from_raw_parts_mut(base.add(lines_at).cast::<u32>(), plan.lines) };
-            lines[0] = 0;
-            for (start, (at, _)) in lines[1..].iter_mut().zip(source.iter().enumerate().filter(|(_, byte)| **byte == b'\n')) {
-                *start = at as u32 + 1;
-            }
+            // Format 15's line index, its language's (decision 0612), placed beside it.
+            let index = region(lines_at, plan.index_len() + 8);
+            index.fill(0);
+            let mut ends = Vec::with_capacity(plan.lines);
+            crate::code_rule_dsl::lines::terminators(grammar.lang).each(source, |at, length| ends.push((at + length - 1) as u64));
+            rerail_tape_format::newlines::index_in(index, source.len() as u64, plan.lines as u64, ends.into_iter());
             view.lines = at(lines_at)?;
-            view.line_count = count(plan.lines)?;
+            view.line_count = count(plan.lines + 1)?;
         }
         // A 16z tape as stored (decision 0353 step 4b): its view names its piece index, side lists' part starts,
         // checkpoints, payload and newline index where they lie here, its id, and its entry size; the batch's table

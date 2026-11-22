@@ -174,15 +174,34 @@ pub fn index_into(out: &mut Vec<u8>, source: &[u8], terminators: Terminators) {
 /// room kept): made in place, one pass over the offsets, so a producer that has the newlines (tier 1's bits) needs no
 /// scan of the source.
 pub fn index_of(out: &mut Vec<u8>, u: u64, m: u64, offsets: impl Iterator<Item = u64>) {
+    let len = index_len(u, m);
+    out.clear();
+    out.resize(len + 8, 0);
+    index_in(out, u, m, offsets);
+    out.truncate(len);
+}
+
+/// The bytes of the index of `m` line ends in a source of `u` bytes (`index_in` takes 8 more: a word's room).
+pub fn index_len(u: u64, m: u64) -> usize {
+    let (l, words, zs, os) = shape(u, m);
+    HEAD + 8 * (zs + os + words) + (m * u64::from(l)).div_ceil(8) as usize
+}
+
+/// The index's low parts' width, its high bits' words, and its zero and one samples' counts.
+fn shape(u: u64, m: u64) -> (u32, usize, usize, usize) {
     let l = if m == 0 || u <= m { 0 } else { 63 - (u / m).leading_zeros() };
     let buckets = (u >> l) + 1;
+    (l, (m + buckets).div_ceil(64) as usize, buckets.div_ceil(SAMPLE as u64) as usize, m.div_ceil(SAMPLE as u64) as usize)
+}
+
+/// `index_of`, into `out`: `index_len(u, m) + 8` bytes, zeroed (a room the index is placed in, decision 0612).
+pub fn index_in(out: &mut [u8], u: u64, m: u64, offsets: impl Iterator<Item = u64>) {
+    let (l, words, zs, os) = shape(u, m);
+    let buckets = (u >> l) + 1;
     let bits = m + buckets;
-    let words = bits.div_ceil(64) as usize;
-    let (zs, os) = (buckets.div_ceil(SAMPLE as u64) as usize, m.div_ceil(SAMPLE as u64) as usize);
     let low_len = (m * u64::from(l)).div_ceil(8) as usize;
     let (high_at, low_at) = (HEAD + 8 * (zs + os), HEAD + 8 * (zs + os + words));
-    out.clear();
-    out.resize(low_at + low_len + 8, 0);
+    debug_assert_eq!(out.len(), low_at + low_len + 8, "an index's room");
     let store = |out: &mut [u8], at: usize, word: u64| out[at..at + 8].copy_from_slice(&word.to_le_bytes());
     // The high bits a word at a time and the low parts a word of bits at a time, each stored once it is whole: the
     // offsets ascend, so every bit of a word comes before the next word's.
@@ -215,7 +234,6 @@ pub fn index_of(out: &mut Vec<u8>, u: u64, m: u64, offsets: impl Iterator<Item =
         store(out, high_at + 8 * w_at, word);
     }
     store(out, low_byte, low);
-    out.truncate(low_at + low_len);
     // Samples, in one pass over the high words: the word holding every SAMPLE-th zero (one), and the zeros (ones)
     // before that word.
     let word_at = |out: &[u8], at: usize| u64::from_le_bytes(out[at..at + 8].try_into().expect("8 bytes"));
@@ -271,6 +289,13 @@ pub fn bits_of(u: u64, delay: u32, words: usize, word: impl Fn(usize) -> u64 + C
         })
     });
     (m, offsets)
+}
+
+/// The bytes of the index that starts `index` (its first fields say), without the room after it.
+pub fn len_of(index: &[u8]) -> Option<usize> {
+    let field = |k: usize| index.get(4 * k..4 * k + 4).map(|b| u32::from_le_bytes(b.try_into().expect("4 bytes")) as usize);
+    let (m, l, zs, os, words) = (field(0)?, field(1)?, field(2)?, field(3)?, field(4)?);
+    Some(HEAD + 8 * (zs + os + words) + (m * l).div_ceil(8))
 }
 
 /// The newlines' count an index holds (a document has one line more).

@@ -386,7 +386,7 @@ UKL_INLINE uint32_t clif_t15_parent(CLIF_T_ARGS, uint32_t i)
 
 UKL_INLINE uint32_t clif_t15_length(CLIF_T_ARGS, uint32_t i) { return clif_tape_end_stated(t, v, i) - clif_tape_start_stated(t, v, i); }
 
-// ---- lines: format 16's newline index (`rerail_tape_format::newlines`), format 15's line starts ---------------------
+// ---- lines: a document's line index (`rerail_tape_format::newlines`, decision 0612), every format's ---------------
 
 // The newline index's u32 field `k` (0 the newlines' count, 1 the low parts' width, 2 and 3 the zero and one
 // samples' counts, 4 the high bits' words).
@@ -461,21 +461,6 @@ UKL_INLINE uint32_t clif_t16_line(CLIF_T_ARGS, uint32_t x)
             hi = middle;
     }
     return lo;
-}
-
-// The last line start at or before `x`.
-UKL_INLINE uint32_t clif_t15_line(CLIF_T_ARGS, uint32_t x)
-{
-    uint32_t lines = clif_view(v, CLIF_T_LINES);
-    uint32_t lo = 1u, hi = clif_view(v, CLIF_T_LINE_COUNT);
-    while (lo < hi) {
-        uint32_t middle = (lo + hi) >> 1;
-        if (clif_t_u32(t, clif_t_in_place(), lines, middle * 4u) > x)
-            hi = middle;
-        else
-            lo = middle + 1u;
-    }
-    return lo - 1u;
 }
 
 // Line `k`'s first byte: 0 for the first; else one past newline `k - 1` (its bucket, from its one's position, and
@@ -1381,23 +1366,12 @@ UKL_INLINE uint64_t clif_tape_slot(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE 
     return clif_t16_get(t, v, clif_t_in_place(), 0u, i);
 }
 
-// The line byte `x` lies in (from 0). A 16z tape holds its newline index raw, as format 16 does.
-UKL_INLINE uint32_t clif_tape_line(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t x)
-{
-    uint32_t f = clif_view(v, CLIF_T_FORMAT);
-    if (f == 16u || CLIF_T_IS_Z(f))
-        return clif_t16_line(t, v, x);
-    return clif_t15_line(t, v, x);
-}
+// The line byte `x` lies in (from 0). Every format's view names its line index (a 16z tape holds it raw, as format
+// 16 does; a format 15 tape's is placed beside it).
+UKL_INLINE uint32_t clif_tape_line(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t x) { return clif_t16_line(t, v, x); }
 
 // Line `k`'s first byte.
-UKL_INLINE uint32_t clif_tape_line_start(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t k)
-{
-    uint32_t f = clif_view(v, CLIF_T_FORMAT);
-    if (f == 16u || CLIF_T_IS_Z(f))
-        return clif_t16_line_start(t, v, k);
-    return clif_t_u32(t, clif_t_in_place(), clif_view(v, CLIF_T_LINES), k * 4u);
-}
+UKL_INLINE uint32_t clif_tape_line_start(UKL_GLOBAL const uint8_t* t, CLIF_VIEW_SPACE const uint32_t* v, uint32_t k) { return clif_t16_line_start(t, v, k); }
 
 // Whether the tape's block `block` (its nodes `PART * block ..`; NONE: the whole document) has a node of kind
 // `kind`, by its presence (the view's `presence`, decision 0434 §4): 1 where the tape has none to tell by (format 15,

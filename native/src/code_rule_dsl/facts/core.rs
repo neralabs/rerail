@@ -326,7 +326,7 @@ fn facts_of_image(file: &dyn SourceFile, grammar: &Arc<crate::code_rule_dsl::tap
     // Where the device reads tapes, the parse's in a slab's room too (decision 0353 step 4a): a guest's, a run's
     // without a store.
     let primary = placed_where_read(primary, grammar)?;
-    let lines = Arc::new(LineTable::placed(file.source(), terminators));
+    let lines = Arc::new(primary.lines(file.source(), terminators, true));
     let doc = kept_tape(keep, file, grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, grammar, primary, lines)?;
@@ -411,7 +411,7 @@ pub fn restore_tape(file: &dyn SourceFile, cache: &crate::content_store::Content
     };
     let grammar = Arc::new(Grammar::new(language).map_err(StoreError::Invalid)?);
     let primary = TapeImage::from_bytes(&bytes, &grammar).map_err(StoreError::Invalid)?;
-    let lines = Arc::new(LineTable::new(file.source(), crate::code_rule_dsl::lines::terminators(language)));
+    let lines = Arc::new(primary.lines(file.source(), crate::code_rule_dsl::lines::terminators(language), false));
     kept_tape(true, file, &grammar, &primary, &lines).map_err(StoreError::Invalid)
 }
 
@@ -549,7 +549,7 @@ fn build_in_wave_as(
             primary
         }
     };
-    let lines = Arc::new(LineTable::placed(file.source(), crate::code_rule_dsl::lines::terminators(language)));
+    let lines = Arc::new(primary.lines(file.source(), crate::code_rule_dsl::lines::terminators(language), true));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;
@@ -634,7 +634,7 @@ pub fn build_cached_with_tape(
             let held = held.map_err(|e| e.to_string())?;
             let grammar = tape::Grammar::embedded(language)?;
             let primary = queued_image(&held, &grammar)?;
-            let lines = Arc::new(LineTable::placed(file.source(), crate::code_rule_dsl::lines::terminators(language)));
+            let lines = Arc::new(primary.lines(file.source(), crate::code_rule_dsl::lines::terminators(language), true));
             let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
             return Ok((Built::Facts(read_off(doc.as_ref(), file, &grammar, primary, lines)?), known, doc));
         }
@@ -689,7 +689,7 @@ pub fn build_cached_with_tape(
             primary
         }
     };
-    let lines = Arc::new(LineTable::placed(file.source(), crate::code_rule_dsl::lines::terminators(language)));
+    let lines = Arc::new(primary.lines(file.source(), crate::code_rule_dsl::lines::terminators(language), true));
     let doc = kept_tape(keep, file, &grammar, &primary, &lines)?;
     let _facts = crate::code_rule_dsl::logic::profile::span(|| "facts from tape".into());
     let facts = read_off(doc.as_ref(), file, &grammar, primary, lines)?;

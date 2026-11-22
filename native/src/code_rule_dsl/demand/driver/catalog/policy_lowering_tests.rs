@@ -24,7 +24,7 @@ fn file_metadata(files: &[(String, String)], dialect: GrammarDialect) -> String 
                 serde_json::json!({
                     "path": path,
                     "source": source,
-                    "lineStarts": LineTable::new(source, crate::code_rule_dsl::lines::terminators(dialect)).starts(),
+                    "lineStarts": LineTable::new(source, crate::code_rule_dsl::lines::terminators(dialect)).starts().collect::<Vec<_>>(),
                 })
             })
             .collect(),
