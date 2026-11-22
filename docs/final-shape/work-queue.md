@@ -10414,3 +10414,12 @@ Decision 0597's contexts, steps 2 to 4 (`notes/roll-up-68-cost-classifier.md`):
 - **`passes_made` is rerail-plan-base's**, beside `answers`, below its readers in rerail-rr-root and
   rerail-corpus-prep.
 - **The combine's context passes** are in ours' `corpus/base.rs`, the combine's tail.
+
+### Q490. Roll-up 69 (final-rerail-shape 9a082a2457 onto Pulling-it-all-together): what the merge chose
+
+The width census, 0165 §3's in-place local original, and t52 step 4 (`notes/roll-up-69-final-rerail-shape.md`):
+- **Theirs' merge of cost-classifier stays out.** Its inputs are in ours (roll-ups 53 and 68). Its own text joins
+  49f7195169's kept writer to the crate split, which ours does in `plan/source_rows.rs` with ours' statistics (Q474).
+- **Theirs' own commits on ours' files**: the census's `made_in` on ours' `Held`, and `Narrowing::unbounded` in ours'
+  narrowing loop.
+- **The census's `RANGED`, `BY_NAME` and `BY_SPAN`** are in the global-state list.

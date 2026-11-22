@@ -396,6 +396,7 @@ Each row is marked in the code with `copy (0353 step N)`.
 | 15 | Gone (step 4b, 2026-11-18): a 16z tape's blocks laid out as format 16. `DocTape::in_place`'s copy went first (the CPU reads 16z in place); then the transducer's residency's (`unblock_into` into its slab, for the kernels: the label and program kernels read the stored bytes through the batch's cache), and a 16z batch's views made on the device (they are read in place through a cache). `unblock_into` is deleted. | — | — | Done |
 | 16 | Gone (0446, 2026-11-19): a label level's fact rows, uploaded as `(node, label)` pairs for the pattern kernels (`Pass::Fact`). The host writes the findings once into the batch's fact block, and the CPU and the kernels read them there | — | — | Done |
 | 17 | Found 2026-11-18: a parser's tape copied into its room (`place_stored`); a queued tape not in a room read into a vector (`queued_image`) | `tape.rs`, `place_stored`; `facts/core.rs`, `queued_image` | 4.1 MB a run on hogql 16z | Step 4a |
+| 18 | Gone (2026-11-22, t52 step 4): each chunk's export rows written again into the export's relation (`Exports::add`, decision 0384 step 1). An export now holds the chunk's parts where they lie (`Rows::append_segment`), and a repeat or a dead row is dead in it. The memo's hits (warm runs, `append_own`) still write their rows, under row 12 | `plan/corpus/exports.rs`, `Exports::add` | 2,264 MB of 10.1 GB on 3,089 files (102 exports) | t52 step 4 |
 
 ## The plan
 

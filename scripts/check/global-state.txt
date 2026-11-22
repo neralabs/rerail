@@ -357,5 +357,8 @@ native/src/code_rule_dsl/logic/plan/corpus/base.rs::RUNNER	stays	code a crate ab
 native/src/code_rule_dsl/logic/profile/memory.rs::BYTES	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
 native/src/code_rule_dsl/logic/profile/memory.rs::ON	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
 native/src/code_rule_dsl/logic/profile/memory.rs::SPLIT	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
+native/src/code_rule_dsl/logic/profile/memory.rs::RANGED	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
+native/src/code_rule_dsl/logic/profile/memory.rs::BY_NAME	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
+native/src/code_rule_dsl/logic/profile/memory.rs::BY_SPAN	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
 native/src/code_rule_dsl/residency/admission/relational/base.rs::ADMISSION	stays	code a crate above registers at load
 native/src/code_rule_dsl/workspace/index.rs::TASK_RUN	stays	code a crate above registers at load

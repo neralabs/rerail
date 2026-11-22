@@ -405,3 +405,35 @@
         assert!(all.iter().any(|r| r.starts_with("rr_cx_quoted_ann_ident(")), "the context's own: {all:#?}");
         assert!(rules_of(&v, "ident").iter().all(|r| !r.contains(&wide)), "the host's ident takes no annotation in: {all:#?}");
     }
+
+    /// A widened original whose every row is one document's (`Local`) holds, under the narrow bound, the rows its
+    /// narrow copy would: a reader that bounds its node reads the original, and no copy is made. Made apart, the copies
+    /// derived hogql's `nameref`, `attr_of` and `walk` a second time (main's #923: 90.5 B instructions to 102.9 B).
+    #[test]
+    fn a_local_original_read_bounded_is_read_in_place_not_copied() {
+        use crate::code_rule_dsl::facts::vtab::syntax::{HIDDEN_KEYS, RUN_VALUE_KEYS};
+        // `named` bounds its node narrow, as hiding bounds a rule no annotation reaches.
+        let bound = i64::from(RUN_VALUE_KEYS) << 32;
+        let v = hidden(
+            &format!(
+                "{}{}{}{}{}",
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+                ".decl asg(n: node)\nasg(n) :- e(n), kind(n, \"identifier\").\n",
+                ".decl only(n: node)\nonly(r) :- parsed(_, \"annotation\", r).\n",
+                format_args!(".decl named(n: node)\nnamed(n) :- asg(n), n < {bound}.\n"),
+                ".decl out(n: node)\n.output out\nout(n) :- only(n), asg(n).\nout(n) :- named(n).\n",
+            ),
+            RUN_VALUE_KEYS,
+        );
+        let mut p = Pipeline::new("test", v);
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0, diffed: Default::default() };
+        p.program(&mut fold);
+        let (v, _) = p.finish().unwrap();
+        assert!(fold.folded > 0);
+        let (wide, narrow) = ((i64::from(HIDDEN_KEYS) << 32).to_string(), (i64::from(RUN_VALUE_KEYS) << 32).to_string());
+        let asg = rules_of(&v, "asg");
+        assert!(!asg.is_empty() && asg.iter().all(|r| r.contains(&wide)), "the original takes the annotations in: {asg:#?}");
+        assert!(rules_of(&v, "rr_narrow_asg").is_empty() && !v.declares("rr_narrow_asg"), "{:#?}", v.rules().map(|r| v.show_rule(r)).collect::<Vec<_>>());
+        let named = rules_of(&v, "named");
+        assert!(!named.is_empty() && named.iter().all(|r| r.contains("asg(") && r.contains(&narrow) && !r.contains(&wide)), "read bounded: {named:#?}");
+    }
