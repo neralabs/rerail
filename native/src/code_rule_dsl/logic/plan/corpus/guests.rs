@@ -551,6 +551,9 @@ impl Guests {
         // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
         let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(Got::Not) };
         let Some((text, place)) = host_text(host, ids, local) else { return Ok(Got::Not) };
+        if range == Range::RunValue {
+            crate::code_rule_dsl::logic::profile::decision("run-value documents asked (annotations)", || format!("{grammar_name}: {:?}", text.chars().take(60).collect::<String>()));
+        }
         self.tape_value(host, host_key, at, grammar_name, "fragment", label, fragment, text, place, range, parses)
     }
 

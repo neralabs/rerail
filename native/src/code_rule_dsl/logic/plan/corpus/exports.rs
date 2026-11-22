@@ -39,11 +39,14 @@ struct Held {
     unset_docs: rustc_hash::FxHashSet<i64>,
     /// Let go after its last reader (`release`).
     released: bool,
+    /// Once read (`source`): its parts' relations, its rows and its dead rows, which another export holding the same
+    /// is read as (decision 0611: a chunk's filter read as its relation gives two exports one chunk's parts).
+    shape: Option<(Vec<usize>, usize, Vec<u64>)>,
 }
 
 impl Held {
     fn new(width: usize) -> Self {
-        Held { rows: Rows::living(width, Life::Kept), dead: Vec::new(), set: HashTable::new(), types: None, source: None, unset: Vec::new(), at: None, unset_docs: Default::default(), released: false }
+        Held { rows: Rows::living(width, Life::Kept), dead: Vec::new(), set: HashTable::new(), types: None, source: None, unset: Vec::new(), at: None, unset_docs: Default::default(), released: false, shape: None }
     }
 
     fn width(&self) -> usize {
@@ -336,6 +339,28 @@ impl Exports {
         if let Some(s) = &held.source {
             return Arc::clone(s);
         }
+        // Another export of the same rows (decision 0611): every chunk's part of this one that one's too, in order, its
+        // rows and dead rows the same. The two are one relation: this one is read as that one's, nothing made again.
+        let parts: Vec<usize> = held.rows.parts().map(|p| std::ptr::from_ref(p.rel()) as usize).collect();
+        let shape = (parts, held.rows.rows(), held.dead.clone());
+        let types = held.types.clone();
+        if shape.1 > 0
+            && let Some(same) = self.rels.iter().find(|(o, h)| *o != rel && h.types == types && h.source.is_some() && h.shape.as_ref() == Some(&shape)).map(|(o, _)| o.clone())
+        {
+            crate::code_rule_dsl::logic::profile::decision("exports of the same rows, read as one (decision 0611)", || format!("{rel} as {same}"));
+            let source = self.rels[&same].source.clone().expect("read");
+            let held = self.rels.get_mut(rel).expect("held");
+            held.rows = Rows::living(width, Life::Kept);
+            held.dead.clear();
+            held.set = HashTable::new();
+            held.unset.clear();
+            held.unset_docs.clear();
+            held.source = Some(Arc::clone(&source));
+            held.shape = Some(shape);
+            return source;
+        }
+        let held = self.rels.get_mut(rel).expect("held");
+        held.shape = Some(shape);
         let rows = std::mem::replace(&mut held.rows, Rows::living(width, Life::Kept)).sealed();
         let n = rows.rows();
         let dead = std::mem::take(&mut held.dead);

@@ -6485,6 +6485,16 @@ fn input_of(conn: impl Scoped, spec: &InputKey, syms: &mut Interner) -> Result<A
             if view.ids.is_none() && view.eqs.is_empty() && view.cols.iter().enumerate().all(|(i, &c)| i == c)
                 && let Some(held) = held_rel(view.src.as_ref(), types.len())
             {
+                // Another name of the same held rows (decision 0611: an export read as the export of its source) is
+                // that one's relation, not a second one over the same parts.
+                let parts = |r: &InRel| r.rows.parts().map(|p| std::ptr::from_ref(p.rel()) as usize).collect::<Vec<_>>();
+                let mine = parts(held);
+                let same = on.inputs.lock().values().find(|r| r.view.is_none() && r.base == base && r.types == types && r.n == held.n && r.dead == held.dead && parts(r) == mine).cloned();
+                if let Some(rel) = same {
+                    loaded(0, thread_cpu() - c0, 0);
+                    keep(&rel);
+                    return Ok(rel);
+                }
                 let rel = Arc::new(InRel { vers: Default::default(), viewed: false, keyed: None, k: held.k, n: held.n, rows: held.rows.clone(), view: None, base, types: types.to_vec(), stored: 0, idx: Mutex::new(HashMap::default()), chains: Vec::new(), sorted: Default::default(), sketches: Vec::new(), serves: Vec::new(), dead: held.dead.clone(), ndead: held.ndead, summaries: Default::default(), measured: Default::default(), counted: Default::default(), tables: Default::default(), name: Default::default(), from: None, uid: Default::default(), level: BlockVec::new(), stats: None });
                 loaded(0, thread_cpu() - c0, 0);
                 let _ = rel.name.set(table.clone());

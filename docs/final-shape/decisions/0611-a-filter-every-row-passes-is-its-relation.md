@@ -45,6 +45,14 @@ for them and read the original when there are none").
    be read as it. Its source keeps them too, since the filter reads every one. Where an annotation exists, the
    twin holds the columns its readers do not read: on `all`, about 6 MB.
 
+6. **A filter's source stays stored** (`keeps::refusals`, "a filter reads it"). Inlined into its readers, the source
+   had no rows of its own, and the filter was its rules under the bound: a chunk's `rr_narrow_rf_import_target`, three
+   rules of `rf_import_target`, derived with nothing beside it to be read as.
+7. **Two exports of the same rows are one** (`Exports::source`). A chunk's filter read as its source gives the twin's
+   export the source's export's parts, in order, with the same dead rows. The second export read is the first's
+   source. In the cross part, a second name of one held relation is that relation (`input_of`), not a second
+   `InRel` over the same parts with its dead bits copied.
+
 Not on the device (its strata bind their relations themselves), and not under kept strata (0077 §4), whose kept rows
 are a stratum's own. Both derive filters as before.
 
@@ -56,12 +64,18 @@ are a stratum's own. Both derive filters as before.
 that are not twins: `reference_edge` as `rf_edge` (438,531 rows), `demand_rf_object` as `pre_198`. In chunks:
 `rr_narrow_rf_owner_class` and plain copies of demand (`dm_rf_fn_follows_1` as `dm_rf_fn_seen_1`).
 
-Columns released: 5,107 MB against 5,204 MB before; peak 12.5 GB against 12.8 GB.
+Columns released: 5,107 MB against 5,204 MB before; peak 12.5 GB against 12.8 GB. With 6 and 7, on `all`: 5,088 MB,
+peak 12.3 GB, rows as before, and no relation named `rr_narrow_` let go there either (its annotations reach no twin's
+rows).
 
-Left with `rr_narrow_` in their names, and why:
-- A chunk's `rr_narrow_rf_import_target` is no twin. The chunk derives no `rf_import_target`, so the twin is
-  that relation's rules under the bound, with nothing beside it to double.
-- `dm_rr_narrow_rf_attr_2` is a demand set: the columns a reader asks of the twin (3,600 rows), not a copy of rows.
+A run with no annotation document (`noann`: the 176 files of `s1000` with no string a rule reads as an annotation,
+no run-value document asked, as the profile's "run-value documents asked" shows): every `rr_narrow_` stratum is
+read as its source, and the census lets go of no relation named `rr_narrow_` ("narrow twins let go: 0 names"). Rows
+as W's. The names are left only in the rules, and on the strata bound as their sources.
+
+Before 6 and 7, two were left there: the chunk's `rr_narrow_rf_import_target`, with `rf_import_target` inlined, and the
+cross part's `main.rr_narrow_rf_owner_class`, a second `InRel` of `rf_owner_class`'s export. The demand set
+`dm_rr_narrow_rf_attr_2` is now read as `dm_rf_attr_2`, whose source 6 keeps stored.
 
 ## What it does not change
 
