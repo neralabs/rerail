@@ -1251,6 +1251,17 @@ fn json_tier2_is_walks_shape() {
     }
     // Its opener taken in the loop's arm (`ObjectBegin | ObjectKey`).
     assert_eq!(tier2.lines().filter(|l| l.strip_suffix(" => {").and_then(|p| p.split_once(" | ")).is_some_and(|(a, b)| a.parse::<usize>().is_ok() && b.parse::<usize>().is_ok())).count(), 2, "a begin and its loop one arm, each container");
+    // The places a level returns to one arm, a loop (`walk`'s `scope_end`): an object's and an array's rest and the
+    // document's end, a closer there going on inside it, not through the run's match.
+    let ret = tier2.split(" => 'ret: loop {\n").nth(1).expect("the returns' loop").split("\n},\n").next().expect("its end");
+    assert_eq!(tier2.matches("=> 'ret: loop {").count(), 1, "one returns' loop");
+    assert_eq!(ret.matches("st = ret[depth];\ncontinue 'ret;").count(), 2, "an object's and an array's closer stay in it:\n{ret}");
+    assert!(!ret.contains("st = ret[depth];\ncontinue 'run;"), "a closer in it through the run's match");
+    // A separator's, an opener's and a `:`'s end kept by none (`walk`'s `take!()`): the record taken alone. A closer's
+    // is its node's end.
+    assert_eq!(tier2.matches("0x2c => {\ni += 1;\n").count(), 4, "each `,` taken alone");
+    assert!(tier2.contains("0x3a => {\ni += 1;\n}"), "the `:` taken alone");
+    assert_eq!(tier2.matches("e = s + 1;").count(), 4, "only the closers' ends");
     // No place that only closes a node and goes on: a pair is closed where its value ends.
     assert!(!tier2.contains("=> {\nclose(d, e as u64);\nst = "), "a place of a pair's close alone");
     // A value as `walk` decides it (decision 0602): at each of its three places (the root, a pair's value, an element)

@@ -416,9 +416,7 @@ return Ok(());
 }
 1 | 2 => {
 if st == 1 {
-let s = starts[i] as usize;
 i += 1;
-e = s + 1;
 }
 // The list: its element, then its separator back to the element, or what follows it.
 'l2: loop {
@@ -430,9 +428,7 @@ _ => return Err(at(src, starts, i)),
 e = unsafe { string::<S>(src, len, starts, d, &mut i, [18]) }?;
 match peek(src, starts, i) {
 0x3a => {
-let s = starts[i] as usize;
 i += 1;
-e = s + 1;
 }
 _ => {
 return Err(at(src, starts, i));
@@ -482,9 +478,7 @@ e = unsafe { value_primitive::<S>(src, len, starts, d, &mut i, [9, 10, 11, 12, 1
 close(d, e as u64);
 match peek(src, starts, i) {
 0x2c => {
-let s = starts[i] as usize;
 i += 1;
-e = s + 1;
 continue 'l2;
 }
 0x7d => {
@@ -503,13 +497,14 @@ return Err(at(src, starts, i));
 }
 }
 }
+3 | 6 | 7 => 'ret: loop {
+// Where a level returns: its caller's rest, by the place it pushed.
+match st {
 3 => {
 close(d, e as u64);
 match peek(src, starts, i) {
 0x2c => {
-let s = starts[i] as usize;
 i += 1;
-e = s + 1;
 st = 2;
 continue 'run;
 }
@@ -521,18 +516,48 @@ close(d, e as u64);
 // The place the level's call returns to, by its depth (a level ends only inside its call).
 depth -= 1;
 st = ret[depth];
-continue 'run;
+continue 'ret;
 }
 _ => {
 return Err(at(src, starts, i));
 }
 }
 }
-4 | 5 => {
-if st == 4 {
+6 => {
+match peek(src, starts, i) {
+0x2c => {
+i += 1;
+st = 5;
+continue 'run;
+}
+0x5d => {
 let s = starts[i] as usize;
 i += 1;
 e = s + 1;
+close(d, e as u64);
+// The place the level's call returns to, by its depth (a level ends only inside its call).
+depth -= 1;
+st = ret[depth];
+continue 'ret;
+}
+_ => {
+return Err(at(src, starts, i));
+}
+}
+}
+7 => {
+close(d, len as u64);
+if i != count {
+return Err(at(src, starts, i));
+}
+return Ok(());
+}
+_ => unreachable!(),
+}
+},
+4 | 5 => {
+if st == 4 {
+i += 1;
 }
 // The list: its element, then its separator back to the element, or what follows it.
 'l5: loop {
@@ -579,9 +604,7 @@ e = unsafe { value_primitive::<S>(src, len, starts, d, &mut i, [3, 4, 5, 6, 7]) 
 }
 match peek(src, starts, i) {
 0x2c => {
-let s = starts[i] as usize;
 i += 1;
-e = s + 1;
 continue 'l5;
 }
 0x5d => {
@@ -599,37 +622,6 @@ return Err(at(src, starts, i));
 }
 }
 }
-}
-6 => {
-match peek(src, starts, i) {
-0x2c => {
-let s = starts[i] as usize;
-i += 1;
-e = s + 1;
-st = 5;
-continue 'run;
-}
-0x5d => {
-let s = starts[i] as usize;
-i += 1;
-e = s + 1;
-close(d, e as u64);
-// The place the level's call returns to, by its depth (a level ends only inside its call).
-depth -= 1;
-st = ret[depth];
-continue 'run;
-}
-_ => {
-return Err(at(src, starts, i));
-}
-}
-}
-7 => {
-close(d, len as u64);
-if i != count {
-return Err(at(src, starts, i));
-}
-return Ok(());
 }
 _ => unreachable!(),
 }

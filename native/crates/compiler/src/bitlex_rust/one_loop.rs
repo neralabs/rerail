@@ -116,6 +116,9 @@ struct Lp<'g, 'a> {
     making: RefCell<Vec<Numbers>>,
     /// Each place made of code (`to_place`), by its code.
     placed: RefCell<BTreeMap<String, usize>>,
+    /// Whether the token taken now is followed in its node by a token of the node's (so no close reads its end):
+    /// a separator, an opener, a pair's `:` (`walk`'s `take!()`, its end not kept).
+    end_unread: std::cell::Cell<bool>,
     /// The methods that decide every byte themselves (a choice's alternatives that call no level, `walk`'s
     /// `primitive`), refusing what none takes as a decision does: a decision's arm calling one is its `_`.
     deciding: RefCell<std::collections::BTreeSet<String>>,
@@ -509,6 +512,9 @@ impl Lp<'_, '_> {
                 let n = self.number(k, key)?;
                 return Ok(if t == T::Word { format!("e = token(d, &mut i, {n}, s, end);\n") } else { format!("let s = starts[i] as usize;\ne = token(d, &mut i, {n}, s, {});\n", self.end_code(&name, &end)?) });
             }
+            if kind.is_none() && t != T::Word && matches!(end, End::One) && self.end_unread.get() {
+                return Ok("i += 1;\n".to_owned());
+            }
             let mut body = if t == T::Word { "i += 1;\ne = end;\n".to_owned() } else { format!("let s = starts[i] as usize;\ni += 1;\ne = {};\n", self.end_code(&name, &end)?) };
             if let Some(k) = kind {
                 if self.checked.iter().any(|c| c == k) && !(run_checked && k == name) {
@@ -772,11 +778,37 @@ impl Lp<'_, '_> {
 
     /// A list `a (sep a)*`, then `rest`, then `k`: its head (`a`, its first token tested there) and its cycle (a
     /// decision on the separator, going on to the head, and on what follows, going on to `rest`), one place each.
+    /// `f` with `end_unread` set where `g` is a token without a node, and a token of the node follows it
+    /// (`follows`): its end then is read by no close.
+    fn unread<R>(&self, g: &Gram, follows: bool, f: impl FnOnce() -> R) -> R {
+        // A token without a node is one `as` nothing (`take` writes a leaf for every other).
+        let bare = matches!(g, Gram::As(k, a) if k == ::bitlex::syntax::IMPLIED && self.g.token_of(a).is_some());
+        let was = self.end_unread.replace(follows && bare);
+        let r = f();
+        self.end_unread.set(was);
+        r
+    }
+
+    /// Whether some of `gs` cannot be empty: a token is taken there before the node's close.
+    fn takes(&self, gs: &[Gram]) -> Result<bool, String> {
+        for g in gs {
+            if !self.g.first(g)?.1 {
+                return Ok(true);
+            }
+        }
+        Ok(false)
+    }
+
     fn list(&self, a: &Gram, sep: &[Gram], rest: &[Gram], k: K) -> Result<usize, String> {
         let head = self.place(String::new());
         let again = format!("continue 'l{head};\n");
         let (sep, rest, none) = (Gram::Seq(sep.to_vec()), Gram::Seq(rest.to_vec()), Key::default());
-        let mut arms: Vec<Arm<'_>> = vec![(self.g.first(&sep)?.0, Box::new(|t| self.walk(&sep, &none, K::Code(again.clone()), t)))];
+        // A separator of one token: the element follows it.
+        let one = match &sep {
+            Gram::Seq(gs) if gs.len() == 1 => gs[0].clone(),
+            g => g.clone(),
+        };
+        let mut arms: Vec<Arm<'_>> = vec![(self.g.first(&sep)?.0, Box::new(|t| self.unread(&one, true, || self.walk(&one, &none, K::Code(again.clone()), t))))];
         let (_, empty) = self.g.first(&rest)?;
         let otherwise = if empty {
             self.walk(&rest, &none, k, T::No)?
@@ -849,7 +881,8 @@ impl Lp<'_, '_> {
             Gram::Seq(gs) => {
                 let (mut out, none) = (String::new(), Key::default());
                 for (k, g) in gs.iter().enumerate() {
-                    out.push_str(&self.plain(g, if k == 0 { key } else { &none }, if k == 0 { t } else { T::No })?);
+                    let follows = self.takes(&gs[k + 1..])?;
+                    out.push_str(&self.unread(g, follows, || self.plain(g, if k == 0 { key } else { &none }, if k == 0 { t } else { T::No }))?);
                 }
                 out
             }
@@ -960,7 +993,8 @@ impl Lp<'_, '_> {
                     None => (&gs[..], k),
                 };
                 for (j, g) in gs.iter().enumerate().rev() {
-                    k = K::Code(self.walk(g, if j == 0 { key } else { &none }, k, if j == 0 { t } else { T::No })?);
+                    let follows = list.is_some() || self.takes(&gs[j + 1..])?;
+                    k = K::Code(self.unread(g, follows, || self.walk(g, if j == 0 { key } else { &none }, k, if j == 0 { t } else { T::No }))?);
                 }
                 Self::jump(&k)
             }
@@ -1270,7 +1304,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             _ => {}
         }
     }
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), deciding: RefCell::new(std::collections::BTreeSet::new()) };
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), deciding: RefCell::new(std::collections::BTreeSet::new()) };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {
@@ -1321,9 +1355,36 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             into.insert(l, b);
         }
     }
+    // The places a level's call returns to are one arm, a loop of its own (`walk`'s `scope_end`): a level that ends
+    // there returns to another of them without passing the run's match, so a run of closers stays in the loop.
+    const RETURN: &str = "st = ret[depth];\ncontinue 'run;\n";
+    let mut rets: Vec<usize> = Vec::new();
+    for code in places.iter() {
+        for (k, _) in code.match_indices("ret[depth] = ") {
+            let n: String = code[k + 13..].chars().take_while(char::is_ascii_digit).collect();
+            if let Ok(n) = n.parse::<usize>()
+                && !rets.contains(&n)
+            {
+                rets.push(n);
+            }
+        }
+    }
+    rets.sort_unstable();
+    if rets.len() < 2 || rets.iter().any(|r| into.contains_key(r) || into.values().any(|b| b == r)) {
+        rets.clear();
+    }
     let mut arms = String::new();
     for (l, code) in places.iter().enumerate() {
-        if into.contains_key(&l) {
+        if into.contains_key(&l) || rets.contains(&l) && l != rets[0] {
+            continue;
+        }
+        if rets.first() == Some(&l) {
+            let pats = rets.iter().map(usize::to_string).collect::<Vec<_>>().join(" | ");
+            let mut inner = String::new();
+            for &r in &rets {
+                let _ = write!(inner, "{r} => {{\n{}}}\n", places[r].replace(RETURN, "st = ret[depth];\ncontinue 'ret;\n"));
+            }
+            let _ = write!(arms, "{pats} => 'ret: loop {{\n// Where a level returns: its caller's rest, by the place it pushed.\nmatch st {{\n{inner}_ => unreachable!(),\n}}\n}},\n");
             continue;
         }
         match into.iter().find(|(_, b)| **b == l) {
