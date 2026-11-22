@@ -3344,6 +3344,10 @@ fn run_observed_within(
     let observing = recording && !crate::git_workspace::snapshot::contains(root);
     // The heap's part of the run's count (decision 0435 §3), which the profile reports and the chunks' room starts from.
     rerail_accel::budget::set_heap_reader(crate::code_rule_dsl::logic::profile::memory::heap_live);
+    // The most it has been, sampled, is the profile's alone (`keep_most`).
+    if crate::code_rule_dsl::logic::profile::on() {
+        rerail_accel::budget::keep_most();
+    }
     // The documents the builder reads, in batches, each ended by `None` on the chunks' channel: the corpus's, then
     // each load's (decision 0065 §2a). A run that loads nothing closes the channel after the corpus's, so the
     // builder ends without waiting (as it must without threads).

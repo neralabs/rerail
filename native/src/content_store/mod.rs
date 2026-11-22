@@ -233,6 +233,7 @@ impl ContentStore {
         let flags = OpenFlags::SQLITE_OPEN_READ_WRITE
             | OpenFlags::SQLITE_OPEN_CREATE
             | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
+        rerail_prof::count("store.opened", 1);
         let mut connection = Connection::open_with_flags(path, flags)?;
         let flush = connection::store_flush()?;
         // Only creating or migrating the schema takes the write lock (`initialize`).

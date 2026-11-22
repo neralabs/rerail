@@ -669,6 +669,7 @@ fn open_runtime_connection(path: &Path, flush: Flush) -> StoreResult<Connection>
         | OpenFlags::SQLITE_OPEN_FULL_MUTEX;
     let mut connection = Connection::open_with_flags(path, flags)?;
     configure_connection(&mut connection, flush)?;
+    rerail_prof::count("store.connections_opened", 1);
     Ok(connection)
 }
 
