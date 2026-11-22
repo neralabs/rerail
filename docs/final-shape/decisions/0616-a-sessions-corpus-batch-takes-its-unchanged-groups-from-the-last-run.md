@@ -29,10 +29,16 @@ lie inside it, so the held relation cannot be the next run's relation as it is.
   chain, as 0384's forks open one). Ids stay dense: a taken run's rows are numbered after the runs before it.
 - **A session's batch is made in groups.** Whatever asks for its documents, a whole read (`complete`) or a probe of
   many (a derive's probe of `docof` by every node it reads reached 250 of 334 documents at once), a session's batch
-  makes them in groups of at most `RERAIL_SESSION_GROUP` (4), in their order, in the same block relations
+  makes them in groups of at most `RERAIL_SESSION_GROUP` (1), in their order, in the same block relations
   (`Batch::ensure`). So a run's batch leaves the next every group but a changed document's to take. At the data layer's
   334 files, groups of 32, 4 and 1 gave edits of 0.93 / 1.83 / 1.41, 0.80 / 1.72 / 1.41 and 0.77 / 1.71 / 1.41 s CPU:
   4 has nearly all of it with a quarter of 1's groups.
+  Measured again (2026-11-22) with the profile's count of the documents made, by whether a probe or a whole read
+  asked (`batch: documents made by a probe`, `… by a whole read`): a whole read makes every document whatever the
+  size, and the edits' probes made 10 / 10 / 50 documents in groups of 4 against 4 / 6 / 39 in groups of 1, at
+  1.02 / 1.96 / 1.58 against 0.93 / 1.81 / 1.51 s CPU, the first run 12.7 against 12.1 s. A group's documents but the
+  one asked are work no reader needs, and the groups' count costs nothing seen: groups of 1 is the default. The taken
+  runs are as many either way (contiguous taken groups make one run).
 - **At most `MAX_SEGMENTS - 1` runs are taken.** A changed document's group splits the held rows. Past the limit,
   the runs with the fewest rows are left, and their documents are made again. So no relation's segments are merged
   (0353 step 6's copy). The batch's shape stays bounded over a long session.

@@ -503,14 +503,14 @@ impl Source for Layered {
     /// base's as `lookup` numbers them: a part with no such read is looked up and its rows read (a value's rows are
     /// few). Refused, a chunk with a value admitted read every probe's rows a point read each (`row_at`).
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        self.lookup_read_at(column, value, columns, &mut [0, 0], each)
+        self.lookup_read_at(column, value, columns, &mut super::super::ProbeCursor::default(), each)
     }
     /// The cursor is the base's: a part's reads keep none (a value's rows are few).
-    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], hint: &mut [u32], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         if !self.has_parts() {
-            return self.base.lookup_read_at(column, value, columns, hint, each);
+            return self.base.lookup_read_at(column, value, columns, cursor, each);
         }
-        if self.made.is_some() || columns.len() > 8 || !self.base.lookup_read_at(column, value, columns, hint, each) {
+        if self.made.is_some() || columns.len() > 8 || !self.base.lookup_read_at(column, value, columns, cursor, each) {
             return false;
         }
         let (base, docs) = (self.base_len(), self.base.keys_documents(column));
@@ -881,7 +881,7 @@ mod tests {
         for (c, v) in [(0, id(1, 1)), (0, id(11, 1)), (0, id(12, 0)), (0, 7), (1, 2), (1, 11), (1, 12), (1, 99), (0, id(99, 0))] {
             let mut want: Vec<(usize, Vec<i64>)> = layered.lookup(c, &[v]).expect("a lookup").into_iter().map(|r| (r, vec![layered.value(r, 0), layered.value(r, 1)])).collect();
             let mut got = Vec::new();
-            assert!(layered.lookup_read_at(c, v, &[0, 1], &mut [0, 0], &mut |r, row| got.push((r, row.to_vec()))), "({c}, {v}) read");
+            assert!(layered.lookup_read_at(c, v, &[0, 1], &mut super::super::super::ProbeCursor::default(), &mut |r, row| got.push((r, row.to_vec()))), "({c}, {v}) read");
             want.sort();
             got.sort();
             assert_eq!(got, want, "column {c}, value {v}");

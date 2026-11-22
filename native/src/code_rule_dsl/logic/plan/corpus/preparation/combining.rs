@@ -2590,7 +2590,7 @@ impl Diffed {
             }
             i
         }
-        let mut at = |vars: &mut Vec<Slot>, parent: &mut Vec<usize>, s: Slot| -> usize {
+        let at = |vars: &mut Vec<Slot>, parent: &mut Vec<usize>, s: Slot| -> usize {
             vars.iter().position(|x| *x == s).unwrap_or_else(|| {
                 vars.push(s);
                 parent.push(parent.len());

@@ -4104,10 +4104,10 @@ impl Source for Viewed {
         Some(if lo > hi { Vec::new() } else { self.batch.between(self.view, lo, hi) })
     }
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        self.read_matches(column, value, columns, &mut [0, 0], each)
+        self.read_matches(column, value, columns, &mut super::ProbeCursor::default(), each)
     }
-    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], hint: &mut [u32], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        self.read_matches(column, value, columns, hint, each)
+    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        self.read_matches(column, value, columns, cursor, each)
     }
     fn lookup(&self, column: usize, values: &[i64]) -> Option<Vec<usize>> {
         self.lookup_docs(column, values, None)
@@ -4373,55 +4373,91 @@ impl Viewed {
         }
         Some(rows)
     }
+    /// What column `column` of this view reads of a match, as a plan's op, and the inputs it needs (`read_matches`):
+    /// `value_of`'s columns, decided once a step.
+    fn read_op(view: View, column: usize) -> (u8, u8) {
+        use read_op::*;
+        match (view, column) {
+            (View::Node, 0) => (FILE, 0),
+            (View::Core, 0) => (KEY, 0),
+            (View::Core, 1) => (TAPE, NEED_X),
+            (View::Node, 2) => (KIND, NEED_X),
+            (View::Node, 3) => (START, NEED_X),
+            (View::Node, 4) => (END, NEED_X),
+            (View::Line, 1) => (LINE, NEED_X),
+            (View::Child | View::Field, 0) | (View::Tape, 1) => (UP, NEED_X | NEED_UP),
+            (View::Child, 2) => (IDX, 0),
+            (View::Field, 1) => (FIELD, NEED_X),
+            (View::Tape, 2) => (SIZE, 0),
+            (View::Tape, 3) | (View::Depth, 1) => (DEPTH, 0),
+            (View::Order, 1) => (ORDER, 0),
+            (View::Sibling, 0) => (PREV, 0),
+            _ => (ID, NEED_ID),
+        }
+    }
+
     /// `Source::lookup_read`: `lookup_docs`'s matches for one value, each row's `columns` read from what found it.
     /// A lookup by a node's id knows the row's id; by its parent, the parent's id and each child's tape node; by a
     /// kind or a tape node, the tape node: no select, granule search or parent search a row for those. Views whose
     /// rows are not one a node (`field`, `loc`), and the other lookups, read none (`false`).
-    /// `hint`: the step's probe cursor (`Source::lookup_read_at`): `[document, granule]` of the probe before, so a
-    /// probe in key order finds its document and its matches' granule without a search.
-    fn read_matches(&self, column: usize, value: i64, columns: &[usize], hint: &mut [u32], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        if columns.len() > 8 || matches!(self.view, View::Field | View::Loc(_)) || hint.len() < 2 {
+    ///
+    /// The step's cursor (`Source::lookup_read_at`) holds where the probe before ended (`[document, granule]`, so a
+    /// probe in key order finds its document and its matches' granule without a search) and the plan of the reads
+    /// (`read_op`, made on the step's first probe): a match computes only the inputs the plan needs, the ones the
+    /// probe did not bring, then fills each slot from its op.
+    fn read_matches(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
+        use read_op::*;
+        if matches!(self.view, View::Field | View::Loc(_)) {
             return false;
         }
-        let b = &*self.batch;
-        let (doc_hint, granule_hint) = hint.split_at_mut(1);
-        let (doc_hint, granule) = (&mut doc_hint[0], std::cell::Cell::new(granule_hint[0]));
+        if !cursor.plan.is_for(column, columns) {
+            let Some(mut plan) = super::ReadPlan::new(column, columns) else { return false };
+            for (k, &c) in columns.iter().enumerate() {
+                let (op, needs) = Self::read_op(self.view, c);
+                plan.ops[k] = op;
+                plan.needs |= needs;
+            }
+            cursor.plan = plan;
+        }
+        let plan = cursor.plan;
+        let (len, view, b) = (usize::from(plan.len), self.view, &*self.batch);
+        let [doc_hint, granule] = &mut cursor.hint;
         let mut vals = [0i64; 8];
         // A match: its document, local id, tape node (`NONE`: unknown), own id and parent's id where known.
         let mut emit = |doc: usize, local: u32, x: u32, id: Option<i64>, up: Option<i64>| {
-            let Some(row) = b.row(self.view, doc, local) else { return };
+            let Some(row) = b.row(view, doc, local) else { return };
             let p = &b.docs[doc];
-            let node = std::cell::OnceCell::new();
-            if x != NONE {
-                let _ = node.set(x);
-            }
-            let (n, parent) = (std::cell::OnceCell::new(), std::cell::OnceCell::new());
-            if let Some(id) = id {
-                let _ = n.set(id);
-            }
-            if let Some(up) = up {
-                let _ = parent.set(up);
-            }
-            let x = || *node.get_or_init(|| p.node(local));
-            for (o, &c) in vals.iter_mut().zip(columns) {
-                let at = At {
-                    node: &x,
-                    n: &|| {
-                        *n.get_or_init(|| {
-                            let mut g = granule.get();
-                            let id = p.global_near(local, &mut g);
-                            granule.set(g);
-                            id
-                        })
-                    },
-                    up: &|| *parent.get_or_init(|| Self::parent_id_of(p, local, x())),
-                    idx: &|| p.idx(local as usize),
-                    depth: &|| p.depth(local as usize),
-                    prev: &|| Self::prev_id(p, local),
+            let x = if x == NONE && plan.needs & NEED_X != 0 { p.node(local) } else { x };
+            let n = match id {
+                Some(n) => n,
+                None if plan.needs & NEED_ID != 0 => p.global_near(local, granule),
+                None => 0,
+            };
+            let up = match up {
+                Some(up) => up,
+                None if plan.needs & NEED_UP != 0 => Self::parent_id_of(p, local, x),
+                None => 0,
+            };
+            for (o, &op) in vals[..len].iter_mut().zip(&plan.ops) {
+                *o = match op {
+                    FILE => i64::from(p.file),
+                    KEY => i64::from(p.key),
+                    TAPE => i64::from(x),
+                    KIND => b.dialects[p.tag].kind(&p.facts, x),
+                    START => i64::from(p.facts.start(x)),
+                    END => i64::from(p.facts.end(x)),
+                    LINE => i64::from(p.facts.start_line(x)),
+                    UP => up,
+                    IDX => i64::from(p.idx(local as usize)),
+                    FIELD => i64::from(field_atom(p.tag, p.facts.field(x))),
+                    SIZE => i64::from(p.size(local as usize)),
+                    DEPTH => i64::from(p.depth(local as usize)),
+                    ORDER => i64::from(p.key) << 32 | i64::from(p.order(local)),
+                    PREV => Self::prev_id(p, local),
+                    _ => n,
                 };
-                *o = self.value_of(p, local, &at, c);
             }
-            each(row, &vals[..columns.len()]);
+            each(row, &vals[..len]);
         };
         if column == self.own() {
             if let Some((doc, local)) = b.node_near(value, doc_hint) {
@@ -4449,7 +4485,6 @@ impl Viewed {
         } else {
             return false;
         }
-        hint[1] = granule.get();
         true
     }
     fn row_value(&self, row: usize, column: usize) -> i64 {
@@ -4660,6 +4695,29 @@ impl Viewed {
             _ => (at.n)(),
         }
     }
+}
+
+/// The ops of a view's read plan (`Viewed::read_op`): what a slot reads of a match, and the inputs a plan needs.
+mod read_op {
+    pub const FILE: u8 = 0;
+    pub const KEY: u8 = 1;
+    pub const TAPE: u8 = 2;
+    pub const KIND: u8 = 3;
+    pub const START: u8 = 4;
+    pub const END: u8 = 5;
+    pub const LINE: u8 = 6;
+    pub const UP: u8 = 7;
+    pub const IDX: u8 = 8;
+    pub const FIELD: u8 = 9;
+    pub const SIZE: u8 = 10;
+    pub const DEPTH: u8 = 11;
+    pub const ORDER: u8 = 12;
+    pub const PREV: u8 = 13;
+    pub const ID: u8 = 14;
+    /// The match's tape node, own id and parent's id.
+    pub const NEED_X: u8 = 1;
+    pub const NEED_ID: u8 = 2;
+    pub const NEED_UP: u8 = 4;
 }
 
 /// What a view's column reads of a node's row (`Viewed::value_of`), each read when the column asks.

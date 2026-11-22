@@ -125,6 +125,47 @@ impl ViewInPlace {
     }
 }
 
+/// A join step's probe cursor (`Source::lookup_read_at`), kept by the step across its probes: where the last probe
+/// ended (`hint`: a view of the tape's document and granule), and the source's plan of what a match reads (`plan`),
+/// made on the step's first probe. A hint is checked, never trusted; a plan is kept only for the column and columns
+/// it was made for.
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ProbeCursor {
+    pub hint: [u32; 2],
+    pub plan: ReadPlan,
+}
+
+/// A source's plan of a probe's reads (`ProbeCursor::plan`): for the key column and output columns it was made for, one
+/// op a slot and the inputs a match needs, in the source's own codes. Decided once a step, not once a match.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct ReadPlan {
+    pub made: bool,
+    pub column: u8,
+    pub len: u8,
+    pub columns: [u8; 8],
+    pub ops: [u8; 8],
+    pub needs: u8,
+}
+
+impl ReadPlan {
+    /// Whether it was made for key `column` and output `columns`.
+    #[inline]
+    pub fn is_for(&self, column: usize, columns: &[usize]) -> bool {
+        self.made && usize::from(self.column) == column && usize::from(self.len) == columns.len() && columns.iter().zip(&self.columns).all(|(&c, &k)| c == usize::from(k))
+    }
+    /// An empty plan for key `column` and output `columns` (at most 8, each below 256), its ops to fill.
+    pub fn new(column: usize, columns: &[usize]) -> Option<Self> {
+        if columns.len() > 8 || column > 255 || columns.iter().any(|&c| c > 255) {
+            return None;
+        }
+        let mut cols = [0u8; 8];
+        for (k, &c) in columns.iter().enumerate() {
+            cols[k] = c as u8;
+        }
+        Some(ReadPlan { made: true, column: column as u8, len: columns.len() as u8, columns: cols, ops: [0; 8], needs: 0 })
+    }
+}
+
 pub trait Source: Send + Sync {
     fn python_batch(&self) -> Option<Arc<syntax::Batch>> { None }
     /// Column `c`'s rows a value, where the source knows them without reading its rows (`docof`'s documents: each
@@ -185,7 +226,7 @@ pub trait Source: Send + Sync {
     /// ended, which a source may keep its place in (a view of the tape: the document and granule). Probes in key
     /// order (a scan's rows sorted by the next key, decision 0112) then find their place without a search. A hint is
     /// checked, never trusted: any value gives the same rows.
-    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _hint: &mut [u32], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], _cursor: &mut ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         self.lookup_read(column, value, columns, each)
     }
     /// `for_rows` over rows `range` alone, until `each` returns false: a join step's scan of a view reads its rows

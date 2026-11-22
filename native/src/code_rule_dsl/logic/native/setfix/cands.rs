@@ -100,25 +100,32 @@ pub(super) fn candidates<'a>(src: &'a Src, store: &'a Store, key: &[i64], keys: 
                 (Rows::Source(v), match v.src.sorted_range_at(c, k, &mut hints[0]) { Some(r) => Cands::Range(r.start, r.end), None => Cands::Slice(v.src.sorted_rows(c, k).unwrap_or(&[])) })
             }
             else if ix.source && let Some(v) = &rel.view {
-                let probed = match last {
+                let probed = match &mut last.memo {
                     Some((k, p)) if k.as_slice() == key && !matches!(&*p, Probed::Read(_, n) if *n != need) => p.clone(),
                     _ => {
                         // A step's rows are read as the probe finds them, with the columns it reads (none for
                         // a test): a source that reads in place answers without a list of ids; one that does
                         // not gives the ids.
-                        let read = v.find_read(&ix.cols, key, ix.lead, need, &mut hints[..]);
+                        // The memo's list, which the probe before's candidates no longer hold, is this probe's.
+                        // (Its answer alone is taken: its key's buffer is kept for the next.)
+                        if let Some((_, q)) = &mut last.memo
+                            && let Probed::Read(Found::Many(rows), _) = std::mem::replace(q, Probed::Ids(Vec::new()))
+                        {
+                            last.spare = Some(rows);
+                        }
+                        let read = v.find_read(&ix.cols, key, ix.lead, need, &mut last.cursor, &mut last.spare);
                         let p = match read {
                             Some(rows) => Probed::Read(rows, need),
                             None => Probed::Ids(v.find_keyed(&ix.cols, key, ix.lead)),
                         };
-                        match last {
+                        match &mut last.memo {
                             Some((k, q)) => {
                                 k.clear();
                                 // copy: not block data (a probe key's values, kept to compare the next probe with)
                                 k.extend_from_slice(key);
                                 *q = p.clone();
                             }
-                            None => *last = Some((key.to_vec(), p.clone())),
+                            None => last.memo = Some((key.to_vec(), p.clone())),
                         }
                         p
                     }

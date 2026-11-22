@@ -737,8 +737,13 @@ impl Batch {
     /// A session's batch, which the next run renews from (decision 0616), is made in groups of at most
     /// `RERAIL_SESSION_GROUP` documents, in their order, whether a probe or a whole read asks for them: an edit then
     /// makes again only its changed documents' groups. They go on in the same block relations.
+    ///
+    /// The profile counts the documents made, by whether a probe (its documents) or a whole read (every document)
+    /// asked for them, and the groups (`batch: documents made by a probe`, `… by a whole read`, `batch: groups made`):
+    /// what settles a group's size, and whether a relation's whole reads make documents no probe names.
     pub(super) fn ensure(&self, want: &[usize]) {
         let size = session_group();
+        let whole = want.len() >= self.docs.len();
         if self.keeps_strings && want.len() > size {
             let mut unmade: Vec<usize> = {
                 let s = self.rows.state.lock();
@@ -748,15 +753,15 @@ impl Batch {
             unmade.dedup();
             if unmade.len() > size {
                 for group in unmade.chunks(size) {
-                    self.ensure_group(group);
+                    self.ensure_group(group, whole);
                 }
             }
         }
-        self.ensure_group(want)
+        self.ensure_group(want, whole)
     }
 
-    /// `ensure`'s documents not made yet, as one group.
-    fn ensure_group(&self, want: &[usize]) {
+    /// `ensure`'s documents not made yet, as one group (`whole`: a whole read asked for them).
+    fn ensure_group(&self, want: &[usize], whole: bool) {
         let me = std::thread::current().id();
         loop {
             // What to make, and its claim, under one lock: a document another thread claims between the two would be
@@ -804,6 +809,8 @@ impl Batch {
                 self.group_rels(m, &need).map(|r| (r, used))
             });
             let makes = self.rows.makes.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            crate::code_rule_dsl::prof::count(if whole { "batch: documents made by a whole read" } else { "batch: documents made by a probe" }, need.len());
+            crate::code_rule_dsl::prof::count("batch: groups made", 1);
             if makes < 4 && std::env::var_os("RERAIL_WHOLE_READ_TRACE").is_some() {
                 eprintln!("RERAIL_WHOLE_READ_TRACE group {makes} of {} documents: {}", need.len(), std::backtrace::Backtrace::force_capture());
             }
@@ -1015,9 +1022,10 @@ impl Batch {
     }
 }
 
-/// The documents a group of a session's batch holds at most (decision 0616): `RERAIL_SESSION_GROUP`, default 4.
+/// The documents a group of a session's batch holds at most (decision 0616): `RERAIL_SESSION_GROUP`, default 1 (a
+/// group's other documents were made for no reader: the edits made 2.5 times the documents in groups of 4).
 fn session_group() -> usize {
-    std::env::var("RERAIL_SESSION_GROUP").ok().and_then(|v| v.parse::<usize>().ok()).filter(|&n| n > 0).unwrap_or(4)
+    std::env::var("RERAIL_SESSION_GROUP").ok().and_then(|v| v.parse::<usize>().ok()).filter(|&n| n > 0).unwrap_or(1)
 }
 
 /// A relation a batch makes (`text`, `op`, the matchers'), over its groups (decision 0494): every document made, the

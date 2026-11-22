@@ -146,18 +146,18 @@ impl Source for Places {
         self.both(|s| s.lookup(column, values))
     }
     fn lookup_read(&self, column: usize, value: i64, columns: &[usize], each: &mut dyn FnMut(usize, &[i64])) -> bool {
-        self.lookup_read_at(column, value, columns, &mut [0, 0], each)
+        self.lookup_read_at(column, value, columns, &mut super::super::ProbeCursor::default(), each)
     }
-    /// The view's matches read as found (its cursor `hint`), then the spans' (read as found, else looked up, else
+    /// The view's matches read as found (its cursor), then the spans' (read as found, else looked up, else
     /// filtered, and read): a place relation's probe reads no row of the view a point read each. Only the view may
     /// refuse, before any row is given; the spans always answer.
-    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], hint: &mut [u32], each: &mut dyn FnMut(usize, &[i64])) -> bool {
+    fn lookup_read_at(&self, column: usize, value: i64, columns: &[usize], cursor: &mut super::super::ProbeCursor, each: &mut dyn FnMut(usize, &[i64])) -> bool {
         let width = columns.len();
         if width > 8 {
             return false;
         }
         let mut row = [0i64; 8];
-        if !self.view.lookup_read_at(column, value, columns, hint, each) {
+        if !self.view.lookup_read_at(column, value, columns, cursor, each) {
             let Some(rows) = self.view.lookup(column, &[value]) else { return false };
             for r in rows {
                 self.view.row_at(r, columns, &mut row[..width]);

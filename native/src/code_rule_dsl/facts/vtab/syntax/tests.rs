@@ -324,6 +324,47 @@ fn a_kind_lookup_reads_the_rows_a_per_row_read_finds() {
     }
 }
 
+/// A view's probes read as found through a step's cursor (`Source::lookup_read_at`: the plan of a match's reads made
+/// on the first probe, the document and granule carried from probe to probe) give `lookup`'s rows, each with the
+/// values a per-row read gives: for every view, by every column it reads as found, its keys in order (a cursor's
+/// usual case) and back, the columns in two orders (a plan made again when they change).
+#[test]
+fn a_views_probes_read_through_a_cursor_are_its_lookups_and_rows() {
+    use crate::code_rule_dsl::facts::vtab::ProbeCursor;
+    let store = ContentStore::open(&temp("cursor-read")).unwrap();
+    let mut tried = 0;
+    for (name, source) in sources(&store, documents().into_iter().take(4).collect()).unwrap() {
+        let (n, width) = (source.len(), source.columns().len());
+        if n == 0 {
+            continue;
+        }
+        let forward: Vec<usize> = (0..width).collect();
+        let backward: Vec<usize> = (0..width).rev().collect();
+        for column in 0..width {
+            let mut keys: Vec<i64> = (0..n).map(|r| source.value(r, column)).collect();
+            keys.sort_unstable();
+            keys.dedup();
+            let mut cursor = ProbeCursor::default();
+            let mut read_any = false;
+            for (k, &key) in keys.iter().chain(keys.iter().rev()).enumerate() {
+                let cols = if k % 3 == 2 { &backward } else { &forward };
+                let mut got = Vec::new();
+                if !source.lookup_read_at(column, key, cols, &mut cursor, &mut |r, vals| got.push((r, vals.to_vec()))) {
+                    assert!(!read_any, "{name} column {column}: a cursor's read refused after it read");
+                    break;
+                }
+                read_any = true;
+                let mut want: Vec<(usize, Vec<i64>)> = source.lookup(column, &[key]).expect("a view read as found looks up").into_iter().map(|r| (r, cols.iter().map(|&c| source.value(r, c)).collect())).collect();
+                got.sort();
+                want.sort();
+                assert_eq!(got, want, "{name} column {column} key {key}");
+            }
+            tried += usize::from(read_any);
+        }
+    }
+    assert!(tried >= 6, "views read as found: {tried}");
+}
+
 /// The statistics of a relation held as a view of `node` (decision 0329) are its rows' counts, made without reading
 /// them: per column, the distinct values, the squares of their counts and each value's count, as counting every row
 /// gives (`n`, the key: each value once, no counts).
