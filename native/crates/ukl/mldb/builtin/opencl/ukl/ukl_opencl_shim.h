@@ -30,13 +30,6 @@
 #include "ukl_auto_macros.h"
 #include "ukl_macros.h"
 
-// A source written for one width (`UKL_SIMD_WIDTH_NEEDED`, defined before its includes: the block programs' 32) takes
-// it from the device's sub-groups, whose sizes the host checked offer it (`Device::offers_simd_width`). Emulated, the
-// width is the host's, and `ukl/backend.h` refuses a source it does not fit.
-#if defined(UKL_SIMD_WIDTH_NEEDED) && defined(UKL_OPENCL_SUBGROUPS)
-#undef UKL_SIMD_WIDTH
-#define UKL_SIMD_WIDTH UKL_SIMD_WIDTH_NEEDED
-#endif
 #ifndef UKL_SIMD_WIDTH
 #define UKL_SIMD_WIDTH 32u
 #endif

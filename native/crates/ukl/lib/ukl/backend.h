@@ -13,12 +13,6 @@
 
 #include <ukl>
 
-// A source written for one SIMD width says so before its includes (`UKL_SIMD_WIDTH_NEEDED`); compiled at another, it
-// is refused here, not run wrong.
-#if defined(UKL_SIMD_WIDTH_NEEDED) && UKL_SIMD_WIDTH != UKL_SIMD_WIDTH_NEEDED
-#error "this source is written for UKL_SIMD_WIDTH_NEEDED lanes, and the device's SIMD groups have another width"
-#endif
-
 // A SIMD group's lanes as bits, lane `l` at bit `l` (a ballot's, a match's): 32 bits, or 64 where the group is wider
 // (AMD's 64 lanes; the CPU at `RERAIL_CPU_SIMD_WIDTH=64`). `ukl_mask_*` below read it whatever its width.
 #if UKL_SIMD_WIDTH > 32
@@ -57,6 +51,13 @@ typedef uint32_t ukl_mask_t;
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
 #endif
+// A small read many places of a kernel reach (a tape read, a node's, a relation's column): `UKL_SHARED`. A large
+// body many reach (an interpreter's step, its evaluators, a join stage's row writer): `UKL_LARGE`. Both inlined
+// here; calls on CUDA and OpenCL (decision 0576 §22). A rare case's body, called on every
+// backend but OpenCL: `UKL_RARE`.
+#define UKL_SHARED UKL_INLINE
+#define UKL_LARGE UKL_INLINE
+#define UKL_RARE UKL_COLD
 #define UKL_GLOBAL device
 #define UKL_COHERENT device coherent(device)
 #define UKL_LOCAL threadgroup
@@ -164,6 +165,15 @@ UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { retur
 #ifndef UKL_ONCE
 #define UKL_ONCE static __device__ __noinline__
 #endif
+// A small read many places of a kernel reach (a tape read, a node's, a relation's column): `UKL_SHARED`. A large body
+// many reach (an interpreter's step, its evaluators, a join stage's row writer): `UKL_LARGE`. Both calls here
+// (decision 0576 §22): NVRTC compiles each inlined copy, and the transducer's tests' interpreter and JIT kernels
+// (`all_backends_execute_every_verified_instruction_and_mode`, `wildcard_and_missing_flags_preserve_native_node_meaning`)
+// took it 40 s and 26 s with both called, 187 s and 131 s with the reads inlined, over 240 s with both, forced or at
+// its choice. A rare case's body, called: `UKL_RARE`.
+#define UKL_SHARED static __device__ __noinline__
+#define UKL_LARGE UKL_SHARED
+#define UKL_RARE UKL_COLD
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
 #define UKL_LOCAL
@@ -235,6 +245,13 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return __reduce
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
 #endif
+// A small read many places of a kernel reach (a tape read, a node's, a relation's column): `UKL_SHARED`. A large
+// body many reach (an interpreter's step, its evaluators, a join stage's row writer): `UKL_LARGE`. Both inlined
+// here; calls on CUDA and OpenCL (decision 0576 §22). A rare case's body, called on every
+// backend but OpenCL: `UKL_RARE`.
+#define UKL_SHARED UKL_INLINE
+#define UKL_LARGE UKL_INLINE
+#define UKL_RARE UKL_COLD
 #define UKL_GLOBAL
 #define UKL_COHERENT volatile
 #define UKL_LOCAL
@@ -354,6 +371,14 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { __at
 #ifndef UKL_ONCE
 #define UKL_ONCE static __attribute__((noinline))
 #endif
+// Intel's compiler (IGC) compiles each inlined copy of a body apart, and its time follows the code reached through
+// inlining: the interpreter inlined took 10.7 s on an Arc 140V, its shared bodies called 5.8 s (decision 0576 §13).
+// So here a shared read and a large body (`UKL_SHARED`, `UKL_LARGE`) are calls. A rare case's body is inlined:
+// called from a kernel with a required sub-group size (every kernel here), IGC misread the 16 format's side read at
+// 16 lanes (decision 0576 §19).
+#define UKL_SHARED static __attribute__((noinline))
+#define UKL_LARGE UKL_SHARED
+#define UKL_RARE UKL_INLINE
 #define UKL_GLOBAL __global
 #define UKL_COHERENT volatile __global
 #define UKL_LOCAL __local
@@ -416,7 +441,7 @@ UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS)
 }
 UKL_INLINE void ukl_sg_barrier() { barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
 #elif defined(UKL_OPENCL_SUBGROUPS)
-// The device's sub-groups, 32 lanes (the shim requires it of each kernel): OpenCL 3.0's functions. A lane outside
+// The device's sub-groups, `UKL_SIMD_WIDTH` lanes (the shim requires it of each kernel): OpenCL 3.0's functions. A lane outside
 // the group, or the group's own (`shuffle_up` below lane `d`, `shuffle_down` past the last lane), reads its own
 // value, as CUDA's and the emulation's do; the device's functions leave those undefined.
 UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return sub_group_shuffle(v, lane & (UKL_SIMD_WIDTH - 1u)); }
@@ -433,26 +458,6 @@ UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
 UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return sub_group_shuffle_xor(v, m & (UKL_SIMD_WIDTH - 1u)); }
 UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return sub_group_ballot(b ? 1 : 0).x; }
 UKL_INLINE void ukl_sg_barrier() { sub_group_barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
-#if defined(UKL_SIMD_GROUP_FREE)
-// A program whose source says its kernels use no SIMD group (`UKL_SIMD_GROUP_FREE`, defined before its includes,
-// decision 0576 §14) requires no sub-group size: the driver chooses its width. Intel's compiles a kernel required to
-// run 32 lanes wide 2-5x slower than at its own 16 (on an Arc 140V the interpreter 10.4 s against 5.5 s,
-// `stage_scatter` 11.1 s against 2.4 s). What it says is checked: every SIMD-group operation, and the lane, call a
-// function nothing defines, so a kernel that reaches one is refused at its build ("unresolved external symbol"); the
-// library's functions that no kernel reaches are not built. (16z's block decode is a SIMD group's: a kernel that
-// reads 16z uses one.) Nothing on the other backends.
-uint32_t __ukl_simd_group_in_a_kernel_declared_without_one(void);
-#undef __UKL_SG_ATTR
-#define __UKL_SG_ATTR
-#undef __UKL_CL_LANE
-#define __UKL_CL_LANE __ukl_simd_group_in_a_kernel_declared_without_one()
-#define ukl_sg_shuffle(...) __ukl_simd_group_in_a_kernel_declared_without_one()
-#define ukl_sg_shuffle_up(...) __ukl_simd_group_in_a_kernel_declared_without_one()
-#define ukl_sg_shuffle_down(...) __ukl_simd_group_in_a_kernel_declared_without_one()
-#define ukl_sg_shuffle_xor(...) __ukl_simd_group_in_a_kernel_declared_without_one()
-#define ukl_sg_ballot(...) ((ukl_mask_t)__ukl_simd_group_in_a_kernel_declared_without_one())
-#define ukl_sg_barrier(...) ((void)__ukl_simd_group_in_a_kernel_declared_without_one())
-#endif
 #if defined(__UKL_VEC)
 // The CPU's vector code (rerail-ukl-vec, decision 0567): the group's reductions in one operation each, whose value
 // is the group's (the butterfly of shuffles is every lane's too, but that it agrees is not the shuffles' to show).
