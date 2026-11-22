@@ -932,6 +932,6 @@ Two designs remove this, and each changes 0494:
   every reader reads ("no reader concatenates groups"). A relation with dead ranges needs either a part that starts
   past a row (`rows::Part` is a prefix) or dead rows that whole reads skip.
 - **A group makes only what its read reads.** A probe of `docof` makes every relation of the batch for its
-  documents. String annotations, `Extra`, the tree and the node walk are about 85% of it. But `make_rows` takes a
+  documents. String annotations, `Extra`, the tree and the node walk are 0.44 s of its 0.64 s. But `make_rows` takes a
   relation's producer from the program's reads (with no span read, `docof` is core.rerail's and has no spans). A
   narrower group needs a set of relations to make that is apart from the reads that fix their meaning.
