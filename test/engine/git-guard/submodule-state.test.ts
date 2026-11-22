@@ -286,7 +286,8 @@ describe("a file Git reads whole, each read of it cut short", () => {
     vi.mocked(open).mockImplementation(async (path, flags, mode) => {
       const handle = await realPromises.open(path, flags, mode);
       const readFile = handle.readFile.bind(handle);
-      // Node's `readFile` ends at a read that gives fewer bytes than the file's size, as a mount or a signal may cut one.
+      // For a file of 512 KiB or less, Node's `readFile` ends at a read that gives fewer bytes than the file's size, as
+      // a mount or a signal may cut one.
       handle.readFile = (async () => (await readFile()).subarray(0, 7)) as typeof handle.readFile;
       return handle;
     });

@@ -193,8 +193,9 @@ export async function recordsNoSubmodule(index: string): Promise<boolean> {
 
 /**
  * The bytes of the file at `path`, opened without waiting; undefined when it is no file that can be read or close, or
- * the read gave fewer bytes than its stat: Node's `readFile` ends at a read that gives fewer than it asked for, which a
- * mount (FUSE with direct_io, a network share) or a signal can give before the end, where Git maps the whole file.
+ * the read gave fewer bytes than its stat: for a file of 512 KiB or less, Node's `readFile` ends at a read that gives
+ * fewer than it asked for, which a mount (FUSE with direct_io, a network share) or a signal can give before the end,
+ * where Git maps the whole file.
  */
 async function fileBytes(path: string): Promise<Buffer | undefined> {
   const handle = await open(path, READ_WITHOUT_WAITING).catch(() => undefined);
@@ -611,8 +612,8 @@ export interface SubmodulePlace {
  * any entry, without untracked files when `untrackedLeftOut`. False when it is not checked out (no `.git`, one that is
  * neither a folder nor a regular file, or a `.git` file that cannot be opened or read, which Rerail meets only once
  * Git's own diff in Rerail read it, as that diff fails on one); how it failed when its `.git` names no repository or is
- * a file Git cannot read as one, as Git's diff fails then; true, with no Git started in it, when the guard cannot ask
- * it ({@link UNASKED}).
+ * a file Git cannot read as one, as Git's diff fails then (for a `.git` file that names no repository, with the message
+ * of Git before 2.56); true, with no Git started in it, when the guard cannot ask it ({@link UNASKED}).
  */
 export async function submoduleChanged(place: SubmodulePlace, untrackedLeftOut: boolean, open: SubmoduleOpener, depth: number): Promise<boolean | GitFailure> {
   const folder = join(place.top, place.path);
@@ -635,7 +636,8 @@ const MAX_GITFILE_BYTES = 1024 * 1024;
  * fails instead ({@link gitfileText}): Rerail meets such a file only once Git's own diff in Rerail read it, and takes
  * the submodule as not checked out. How it failed for a `.git` file Git cannot read as one (it holds more than {@link MAX_GITFILE_BYTES}, no `gitdir:` or
  * no path), or a Git folder that holds no repository ({@link holdsRepository}), each of which fails Git's diff, with
- * Git's message, which names the submodule by `path`, its path from its repository's top. Read once for each
+ * Git's message (for a `.git` file that names no repository, the message of Git before 2.56), which names the
+ * submodule by `path`, its path from its repository's top. Read once for each
  * question and never handed to Git as a file, so the guard's listing and the status after it open this one folder
  * whatever `.git` names by then.
  */
@@ -853,8 +855,8 @@ function linkOf(path: string): string | undefined {
  * The Git folder the `.git` file of `size` bytes by its stat in `folder` names from there ({@link namedFolder});
  * undefined when it is none by the read ({@link gitfileText}), and how it failed for one Git cannot read as a `.git`
  * file (too large, no `gitdir:` or no path), or that names a folder that holds no repository, with Git's message
- * (`read_gitfile_error_die`): it names the file `<path>/.git`, `path` the submodule's path from its repository's top,
- * and the folder named from there, as Git's diff joins them from the index.
+ * (`read_gitfile_error_die`), for the last the message of Git before 2.56: it names the file `<path>/.git`, `path` the
+ * submodule's path from its repository's top, and the folder named from there, as Git's diff joins them from the index.
  */
 function namedGitFolder(folder: string, path: string, size: number): string | GitFailure | undefined {
   const dotGit = `${path}/.git`;
