@@ -1,6 +1,6 @@
 # A session's hooks stop waiting on worktrees removed since it saw them
 
-For [pull request #985](https://github.com/neralabs/rerail/pull/985), head f7de2a83db. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #985](https://github.com/neralabs/rerail/pull/985), head 9bcf79aa31. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -10,7 +10,7 @@ For [pull request #985](https://github.com/neralabs/rerail/pull/985), head f7de2
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 484 lines in 3 files: 144 ship, 340 are tests and text | Careful. It decides which checkouts a session's walk asks Git about. | Nothing. CI passed at 6ceff37d92; the reviewer approved it. | 3 |
+| 487 lines in 3 files: 144 ship, 343 are tests and text | Careful. It decides which checkouts a session's walk asks Git about. | Nothing. CI passed at 6ceff37d92; the reviewer approved it. | 3 |
 
 ## 2. Intent, and the gap
 
@@ -45,7 +45,7 @@ One change, low risk: a checkout whose `.git` stands is read as before; only one
 | Change | Check | Its limit, or why it does not hold yet |
 |---|---|---|
 | Removed trees | independent review | No independent review of this head yet. |
-| Removed trees | CI at this head | CI passed on GitHub at 6ceff37d92 and has not run at this head; its lint and type-check job passes here on Linux x64. |
+| Removed trees | CI at this head | CI passed on GitHub at 6ceff37d92; at f7de2a83db its Windows job failed one new case, which this head fixes and where CI has not run; its lint and type-check job passes here on Linux x64. |
 
 </details>
 
@@ -106,10 +106,11 @@ The description on GitHub is the record: "How you tested it" holds the runs on `
 | Windows 11, one machine alone | Two sessions through the registered Claude Code hooks and a daemon, 51 then 130 worktrees seen and removed, `main` and 4073cf0bf5 each built from its commit | `main`: hook after `git status` 4,764 ms median with 181 removed (19 hooks at or over 2 s), 1,459 with 51; 3,447 Git processes in 5 minutes. 4073cf0bf5: 209 and 209, turn ends 182; no hook at or over 2 s; 9 Git processes; the shell write that breaks a rule reported at its result. |
 | Linux x64, one machine | The same at `main` and 86c385dc85 | `main`: shell results 772 ms median with 181 removed, 406 with 51. 86c385dc85: 174 and 169, turn ends 175; the shell write that breaks a rule reported at its result. |
 | Linux x64 | Each new line taken out in turn, and the cases at `main`, at the first commit, at dce28fdd94 and at 6ceff37d92 | Every one fails its own case (vitest exit 1); the head passes them all. |
-| Windows 11 | The 14 test files importing the changed module at this head and at `main` 04ad4184ea, engine built for each commit | 560 passed, 2 skipped, none failing; `main` 550 passed, 1 skipped. |
-| Linux x64 | The same 14 files at this head and at `main` 04ad4184ea on one machine; the changed test file alone | 557 passed and 5 skipped, none failing; `main` 546 passed and 5 skipped; the changed file 306 passed, 3 skipped. |
+| Windows 11 | The 14 test files importing the changed module at this head and at `main` b922e65dc8, engine built for each commit | 560 passed, 2 skipped, none failing; `main` 550 passed, 1 skipped. |
+| Linux x64 | The same 14 files at this head and at `main` b922e65dc8 on one machine; the changed test file alone | 557 passed and 5 skipped, none failing; `main` 546 passed and 5 skipped; the changed file 306 passed, 3 skipped. |
+| Windows 11 and Linux x64 | The case CI's Windows runner failed at f7de2a83db, and each case this change adds, run again and again | That case on Windows 11: 1 of 30 runs at f7de2a83db, and 2 of 20 against 0 of 20 here taken in turn; 0 of 60 at this head on each system. The 10 cases: none failed in 30 runs each. |
 | Linux x64 | CI's lint and type-check job, and the reviewer's rules against `main` 1609ac3a30, at this head | Each step passes; no new finding. |
 
-**Sources.** The branch at f7de2a83db and its diff against `main` 1609ac3a30, read on 22 November 2026; runs on Linux x64 machines and Windows 11 machines.
+**Sources.** The branch at 9bcf79aa31 and its diff against `main` 1609ac3a30, read on 22 November 2026; runs on Linux x64 machines and Windows 11 machines.
 
 </details>
