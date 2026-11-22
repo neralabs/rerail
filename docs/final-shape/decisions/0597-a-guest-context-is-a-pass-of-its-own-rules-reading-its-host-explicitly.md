@@ -156,6 +156,20 @@ The template's findings stand at the file's lines.
    | 2.10 | a run over files with no root makes no stratum of the context | 0563 A: no rule can fill it |
    | 2.11 | a maintained edit that changes no root and no `.from` relation runs none of the context's strata; renaming the class an annotation names runs them | 0563 B: reach by its inputs alone |
    | 2.12 | 2.3 and 2.5 on Metal (a farm Mac), the same rows | one mechanism on the CPU and the device |
+
+   As built:
+   - 2.1 (adc1b74e7d): what is made holds `.pass NAME of HOST roots REL exports R, … [reads R, …]` in place of
+     `.context` and `.from`; `contexts::made` reads it. A later `.from` of a made pass (a pack's policy reading the
+     library's context) reads its instance; the same read twice is one; a read for a made pass is refused.
+   - 2.2: the passes are a program pass of the lowering's tail (`contexts::Passes`, before `Declared`, since a `.from`
+     name is declared by its pass), so every reading path makes them: a policy file, a printed program, a pack's
+     `combine`. A made pass is completed there with what its instance reaches that it does not hold yet (a part
+     lowered in a library's scope holds less than the combined pack); its roots and reads stay its host's.
+   - 2.3: each context's nodes, `rr_cx_<context>_rr_nodes(n)`, are its roots and what is `within` them, a derived
+     fact; each node variable a positive view atom of its rules reads is joined with them. The views stay read in
+     place (the tape); nothing is made of their rows. Tests: `a_host_reading_a_contexts_export_runs_on_every_reading_path`,
+     `a_contexts_views_are_its_roots_nodes_alone` (`x: "List[int]"` and `def f(y: float)`: `List`, `int`, never `float` or `x`, alone and in a
+     pack).
 3. **The Python annotation context.** `lib/python/annotation.rerail` from the annotation rules of `names.rerail`,
    `typing` and `ann_*`; the host's readers of annotation facts read `annotation.*`. Tests, kept and passing:
    `quoted_annotations_are_read_as_their_code`, #923's `a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone`,

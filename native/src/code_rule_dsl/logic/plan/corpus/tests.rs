@@ -2606,3 +2606,63 @@ seen(e) :- host_inner(e).
     assert!(!rules_of(&v, "unparen").is_empty() && rules_of(&v, "host_inner").iter().all(|r| r.contains(" unparen(")), "the host's own: {all}");
     assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_annotation_ann_inner(")), "{all}");
 }
+
+// ---- decision 0597: a guest context is a pass of its own rules (step 2's ladder) ----
+
+/// A host whose annotations are a context: the context's identifiers, read back by the host (`quoted_names`).
+const ANNOTATION_PASS: &str = "\
+.language python
+#include \"python/ast.rerail\"
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, \"annotation\", r).
+.decl ann_ident(x: symbol)
+ann_ident(x) :- kind(i, \"identifier\"), text(i, x).
+.decl quoted_names(x: symbol)
+quoted_names(x) :- names(x).
+.output quoted_names
+.context quoted of python roots quoted_root exports ann_ident
+.from quoted ann_ident as names
+";
+
+/// A program of no context, for a pack beside one.
+const PLAIN_PASS: &str = ".language python\n#include \"python/ast.rerail\"\n.decl inner(e: node)\ninner(m) :- unparen(_, m).\n.output inner\n";
+
+/// `program` over one file read as a policy file is (`parse_file_version`), printed, and run (`corpus::run`): the rows
+/// of `rel`.
+fn printed_run(name: &str, file: (&str, &str), program: &str, rel: &str) -> Vec<Vec<String>> {
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension(name);
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join(file.0), file.1).unwrap();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = Some(dir.join("store.sqlite")));
+    let path = dir.join("g.rerail");
+    std::fs::write(&path, program).unwrap();
+    let printed = crate::code_rule_dsl::logic::rr::print_version(&crate::code_rule_dsl::logic::rr::parse_file_version(&path).unwrap()).unwrap();
+    let out = dir.join("out");
+    super::run(&printed, &dir, None, &out, "program", crate::code_rule_dsl::typing::file_local::Binding::Cpu, 1 << 18).unwrap_or_else(|e| panic!("{e}"));
+    let rows = crate::code_rule_dsl::logic::plan::output::shown(&out, rel).unwrap_or_default();
+    super::TEST_TAPE_CACHE.with(|p| *p.borrow_mut() = None);
+    let _ = std::fs::remove_dir_all(&dir);
+    rows
+}
+
+/// 0597 rung 2.2: a program whose host reads a context's export runs on each path a program is read by: a policy
+/// file read and printed, a run of it alone, and a pack beside a program of no context.
+#[test]
+fn a_host_reading_a_contexts_export_runs_on_every_reading_path() {
+    let file = ("a.py", "x: \"List[int]\" = []\n");
+    let printed = printed_run("pass-printed", file, ANNOTATION_PASS, "quoted_names");
+    let (alone, together) = alone_and_together("pass-paths", file, ANNOTATION_PASS, PLAIN_PASS, "quoted_names");
+    for (path, rows) in [("printed", &printed), ("alone", &alone), ("in a pack", &together)] {
+        assert!(rows.contains(&vec!["List".to_owned()]) && rows.contains(&vec!["int".to_owned()]), "{path}: {rows:?}");
+    }
+}
+
+/// 0597 rung 2.3: a context's views give its roots' nodes alone: the annotation's identifiers are `List` and `int`,
+/// never the host's `x`.
+#[test]
+fn a_contexts_views_are_its_roots_nodes_alone() {
+    let file = ("a.py", "x: \"List[int]\" = []\ndef f(y: float): ...\n");
+    let (alone, together) = alone_and_together("pass-views", file, ANNOTATION_PASS, PLAIN_PASS, "quoted_names");
+    assert_eq!(alone, [["List"], ["int"]]);
+    assert_eq!(together, alone);
+}

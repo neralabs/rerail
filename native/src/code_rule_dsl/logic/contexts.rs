@@ -18,13 +18,14 @@
 //! the relations it reaches itself; one only a context reaches is the context's alone. A cycle through two passes is
 //! refused, naming its relations: the passes run in an order (0597 rule 4).
 //!
-//! The pass's roots bound its views (step 2 of 0597's workplan); here the views are shared.
+//! The pass's roots bound its views: each node a view of its rules reads is one of its nodes (`NODES`), its roots and
+//! what is within them.
 //!
 //! A relation name cannot hold a `.` (a clause's `.` ends it), so a read of another pass is by a name `.from`
 //! declares, not by a qualified name. `.export` is phase 0's already (a file's exports), so a context's are on its
 //! `.context` line.
 
-use super::program_image::{AtomRef, Builder, Rewrite, Version, fields::ProgramFields};
+use super::program_image::{AtomRef, Builder, Lit as L, Rewrite, RuleRef, T, TermRef, Version, fields::ProgramFields, t_of};
 use super::rr::Error;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
@@ -36,6 +37,10 @@ pub const PREFIX: &str = "rr_cx_";
 pub fn instance(context: &str, rel: &str) -> String {
     format!("{PREFIX}{context}_{rel}")
 }
+
+/// A context's nodes (`instance(context, NODES)`): its roots and every node within them. Its rules' views read only
+/// these (`view_nodes`).
+pub const NODES: &str = "rr_nodes";
 
 /// A context a program declares (`.context`).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -49,6 +54,9 @@ pub struct Context {
     pub exports: BTreeSet<String>,
     /// Made already (a `.pass`): its instance is in the program, and a read of it is resolved to that.
     pub made: bool,
+    /// What a made pass reads of other passes, by the names the made program gives them (`reads` on its `.pass`):
+    /// relations its instance reads as they are, never made its own.
+    pub reads: BTreeSet<String>,
 }
 
 /// A read of one pass by another (`.from`): `local` in `reader`'s rules is `rel` of `source`.
@@ -139,11 +147,16 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
         if of != "of" || roots != "roots" || exports != "exports" {
             return Err(shape(text));
         }
-        let (rels, left) = names(rest, "")?;
-        if !left.is_empty() || rels.is_empty() || rels.iter().any(|(r, l)| r != l) {
+        let (rels, left) = names(rest, "reads")?;
+        if rels.is_empty() || rels.iter().any(|(r, l)| r != l) {
             return Err(shape(text));
         }
-        let c = Context { name: name.clone(), host: host.clone(), roots: rel.clone(), exports: rels.into_iter().map(|(r, _)| r).collect(), made: key == "pass" };
+        let reads: BTreeSet<String> = match left.split_first() {
+            None => BTreeSet::new(),
+            Some((r, list)) if r == "reads" && key == "pass" => names(list, "")?.0.into_iter().map(|(r, _)| r).collect(),
+            _ => return Err(shape(text)),
+        };
+        let c = Context { name: name.clone(), host: host.clone(), roots: rel.clone(), exports: rels.into_iter().map(|(r, _)| r).collect(), made: key == "pass", reads };
         if d.contexts.insert(name.clone(), c).is_some() {
             return bad(format!(".{key} {name}: declared twice"));
         }
@@ -216,30 +229,77 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
     Ok(d)
 }
 
-/// The rules of `v` each pass holds (`declared`'s module doc): for each context, the relations it holds, by their
-/// names in the rules as written.
-fn held(v: &Version, d: &Declared) -> BTreeMap<String, BTreeSet<String>> {
+/// What making or completing the passes of `v` writes (`plan`).
+struct Plan {
+    /// For each pass, the relations it makes its own now, by their names as written: a pass to make, every relation
+    /// its exports reach; a made one, what its instance reaches that it does not hold yet (the library's rules a part
+    /// lowered in the library's scope did not hold, completed once the pack is combined).
+    new: BTreeMap<String, BTreeSet<String>>,
+    /// The host's relations (`passes`'s doc).
+    host: BTreeSet<String>,
+}
+
+impl Plan {
+    fn work(&self, d: &Declared) -> bool {
+        d.any() || self.new.values().any(|s| !s.is_empty())
+    }
+}
+
+/// What `v`'s passes make their own now, and what stays the host's.
+fn plan(v: &Version, d: &Declared) -> Plan {
     let derived = |x: &str| v.rel(x).is_some_and(|r| v.heads(r).next().is_some());
-    d.contexts
-        .values()
-        .filter(|c| !c.made)
-        .map(|c| {
-            let mut set: BTreeSet<String> = c.exports.clone();
-            let mut todo: Vec<String> = set.iter().cloned().collect();
-            while let Some(rel) = todo.pop() {
-                let Some(id) = v.rel(&rel) else { continue };
-                for r in v.heads(id) {
-                    for a in r.reads() {
-                        let x = v.rel_name(a.rel());
-                        if d.read_of(&c.name, x).is_none() && derived(x) && set.insert(x.to_owned()) {
-                            todo.push(x.to_owned());
-                        }
+    let mut new = BTreeMap::new();
+    for c in d.contexts.values() {
+        // Read as it is: another pass's (an instance, what it reads `.from`, its roots), or a view.
+        let roots = d.name_in(&c.host, &c.roots);
+        let stop = |x: &str| x.starts_with(PREFIX) || x == roots || if c.made { c.reads.contains(x) } else { d.read_of(&c.name, x).is_some() } || !derived(x);
+        let mut set: BTreeSet<String> = BTreeSet::new();
+        let mut todo: Vec<String> = Vec::new();
+        if c.made {
+            // Its instance as made: what its rules read.
+            todo.extend(v.rules().map(|r| v.rel_name(r.head().rel())).filter(|h| h.starts_with(PREFIX) && d.pass_of(h) == c.name).map(str::to_owned));
+        } else {
+            set.extend(c.exports.iter().cloned());
+            todo.extend(c.exports.iter().cloned());
+        }
+        let mut seen: BTreeSet<String> = todo.iter().cloned().collect();
+        while let Some(rel) = todo.pop() {
+            let Some(id) = v.rel(&rel) else { continue };
+            for r in v.heads(id) {
+                for a in r.reads() {
+                    let x = v.rel_name(a.rel());
+                    if !stop(x) && set.insert(x.to_owned()) && seen.insert(x.to_owned()) {
+                        todo.push(x.to_owned());
                     }
                 }
             }
-            (c.name.clone(), set)
-        })
-        .collect()
+        }
+        new.insert(c.name.clone(), set);
+    }
+    // The host's relations: those it derives that no pass makes its own now and that are no pass's instance, and
+    // each a rule of its own reads (the library's `unparen`, read by a context and the host alike), but for what it
+    // reads `.from` a context under that name.
+    let in_context: BTreeSet<&String> = new.values().flatten().collect();
+    let aliased = |x: &str| d.read_of(&d.language, x).is_some();
+    let mut host: BTreeSet<String> = v
+        .rules()
+        .map(|r| v.rel_name(r.head().rel()))
+        .filter(|h| !in_context.contains(&h.to_string()) && !aliased(h) && !h.starts_with(PREFIX))
+        .map(str::to_owned)
+        .collect();
+    let mut todo: Vec<String> = host.iter().cloned().collect();
+    while let Some(rel) = todo.pop() {
+        let Some(id) = v.rel(&rel) else { continue };
+        for r in v.heads(id) {
+            for a in r.reads() {
+                let x = v.rel_name(a.rel());
+                if in_context.contains(&x.to_string()) && !aliased(x) && host.insert(x.to_owned()) {
+                    todo.push(x.to_owned());
+                }
+            }
+        }
+    }
+    Plan { new, host }
 }
 
 /// A rule of pass `pass` written with each relation as that pass names it.
@@ -247,7 +307,7 @@ struct Renaming<'a> {
     v: &'a Version,
     d: &'a Declared,
     pass: &'a str,
-    /// The relations the pass holds, where it is a context (`held`).
+    /// The relations the pass makes its own now, where it is a context (`Plan::new`).
     own: Option<&'a BTreeSet<String>>,
 }
 
@@ -269,50 +329,75 @@ impl Rewrite for Renaming<'_> {
     }
 }
 
-/// Program `v` with its passes made (`declared`): each context's instance of the rules it holds, each reader's
-/// `.from` names reading the source pass, and the relations only a context reaches taken from the host. A program
-/// that declares no pass is itself. A cycle through two passes is refused, naming its relations.
-pub fn passes(v: &Arc<Version>) -> Result<Arc<Version>, Error> {
-    let d = declared(v)?;
-    if !d.any() {
-        return Ok(Arc::clone(v));
-    }
-    let held = held(v, &d);
-    // The host's relations: those it derives that no context holds, and each a rule of its own reads (a context's
-    // relation the host reads by its own name, the library's `unparen`, is the host's too), but for what it reads
-    // `.from` a context under that name.
-    let in_context: BTreeSet<String> = held.values().flatten().cloned().collect();
-    let aliased = |x: &str| d.read_of(&d.language, x).is_some();
-    let mut host: BTreeSet<String> = v
-        .rules()
-        .map(|r| v.rel_name(r.head().rel()))
-        .filter(|h| !in_context.contains(*h) && !aliased(h))
-        .map(str::to_owned)
-        .collect();
-    let mut todo: Vec<String> = host.iter().cloned().collect();
-    while let Some(rel) = todo.pop() {
-        let Some(id) = v.rel(&rel) else { continue };
-        for r in v.heads(id) {
-            for a in r.reads() {
-                let x = v.rel_name(a.rel());
-                if in_context.contains(x) && !aliased(x) && host.insert(x.to_owned()) {
-                    todo.push(x.to_owned());
-                }
+/// The node variables of rule `r` of pass `pass` that a view reads (a positive atom of a relation no rule derives,
+/// not another pass's, in a column of type `node`): each joined with the pass's nodes, so a context's views give its
+/// roots' nodes alone (0597 rule 2).
+fn view_nodes<'v>(v: &'v Version, d: &Declared, pass: &str, r: RuleRef<'v>) -> Vec<T<'v>> {
+    let derived = |x: &str| v.rel(x).is_some_and(|id| v.heads(id).next().is_some());
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for l in r.body() {
+        let L::Atom(a) = l.view() else { continue };
+        let rel = v.rel_name(a.rel());
+        if a.neg() || derived(rel) || rel.starts_with(PREFIX) || d.read_of(pass, rel).is_some() {
+            continue;
+        }
+        let Some(cols) = v.columns_of(rel) else { continue };
+        for (t, (_, ty)) in a.args().zip(cols.iter()) {
+            if let TermRef::Var(slot) = t
+                && ty == "node"
+                && seen.insert(r.var(slot).0)
+            {
+                out.push(t_of(r, t));
             }
         }
     }
-    let mut b = Builder::derive(v);
+    out
+}
+
+/// Context `c`'s nodes (`NODES`): its roots, and what is within them where the program reads trees (`within`).
+fn write_nodes(v: &Version, d: &Declared, c: &Context, b: &mut Builder<'_>) -> Result<(), Error> {
+    let nodes = instance(&c.name, NODES);
+    let roots = d.name_in(&c.host, &c.roots);
+    let arity = v.columns_of(&roots).or_else(|| v.columns_of(&c.roots)).map_or(1, |cols| cols.len());
+    let root = |at: &'static str| -> Vec<T<'static>> { std::iter::once(T::Var(at)).chain((1..arity).map(|_| T::Wild)).collect() };
+    b.fields().declare(&nodes, &[("n", "node")]);
+    b.rule().head(nodes.as_str(), &[T::Var("n")]).atom(roots.as_str(), &root("n")).finish().map_err(Error::Syntax)?;
+    if v.columns_of("within").is_some() {
+        b.rule().head(nodes.as_str(), &[T::Var("n")]).atom(roots.as_str(), &root("r")).atom("within", &[T::Var("n"), T::Var("r")]).finish().map_err(Error::Syntax)?;
+    }
+    Ok(())
+}
+
+/// The passes of `v` made or completed into `b`, a derivation of `v` (`plan`): the host's rules with its `.from`
+/// names read from their passes; each pass's instance, made, or completed with what it reaches; the relations only a
+/// pass holds taken from the host; and each pass a `.pass` setting, none to make again.
+fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<(), Error> {
+    let finish = |r: Result<super::program_image::RuleId, String>| r.map(|_| ()).map_err(Error::Syntax);
     for r in v.rules() {
         let head = v.rel_name(r.head().rel());
-        if host.contains(head) {
-            b.rewrite(v, r, &mut Renaming { v, d: &d, pass: &d.language, own: None }).finish().map_err(Error::Syntax)?;
+        if plan.host.contains(head) {
+            finish(b.rewrite(v, r, &mut Renaming { v, d, pass: &d.language, own: None }).finish())?;
+        } else if head.starts_with(PREFIX) {
+            // A made pass's instance, completed: its reads of what it makes its own now read that.
+            let pass = d.pass_of(head);
+            finish(b.rewrite(v, r, &mut Renaming { v, d, pass, own: plan.new.get(pass) }).finish())?;
         }
     }
-    for (c, own) in &held {
+    for c in d.contexts.values().filter(|c| !c.made) {
+        write_nodes(v, d, c, b)?;
+    }
+    for (c, own) in &plan.new {
+        let nodes = instance(c, NODES);
         for rel in own {
             let Some(id) = v.rel(rel) else { continue };
             for r in v.heads(id) {
-                b.rewrite(v, r, &mut Renaming { v, d: &d, pass: c, own: Some(own) }).finish().map_err(Error::Syntax)?;
+                let guards = view_nodes(v, d, c, r);
+                let mut rb = b.rewrite(v, r, &mut Renaming { v, d, pass: c, own: Some(own) });
+                for t in &guards {
+                    rb = rb.atom(nodes.as_str(), std::slice::from_ref(t));
+                }
+                finish(rb.finish())?;
             }
             if let Some(cols) = v.columns_of(rel) {
                 let pairs: Vec<(&str, &str)> = cols.iter().map(|(n, t)| (n.as_str(), t.as_str())).collect();
@@ -320,22 +405,68 @@ pub fn passes(v: &Arc<Version>) -> Result<Arc<Version>, Error> {
             }
         }
     }
-    // A relation only contexts hold is not the host's.
-    for rel in in_context.iter().filter(|r| !host.contains(*r)) {
+    for rel in plan.new.values().flatten().filter(|r| !plan.host.contains(*r)) {
         if v.declares(rel) {
             b.fields().undeclare(rel);
         }
     }
-    // The declarations made: each context as a `.pass` (its roots as its host names them), none to make again.
-    let mut settings: Vec<(String, String)> = ProgramFields::settings(&**v).into_iter().filter(|(k, _)| k != "context" && k != "from").collect();
+    let mut settings: Vec<(String, String)> = ProgramFields::settings(v).into_iter().filter(|(k, _)| k != "context" && k != "from").collect();
     for c in d.contexts.values().filter(|c| !c.made) {
         let exports: Vec<&str> = c.exports.iter().map(String::as_str).collect();
-        settings.push(("pass".to_owned(), format!("{} of {} roots {} exports {}", c.name, c.host, d.name_in(&c.host, &c.roots), exports.join(", "))));
+        let reads: Vec<String> = d.reads.iter().filter(|r| r.reader == c.name).map(|r| d.name_in(&r.source, &r.rel)).collect();
+        let reads = if reads.is_empty() { String::new() } else { format!(" reads {}", reads.join(", ")) };
+        settings.push(("pass".to_owned(), format!("{} of {} roots {} exports {}{reads}", c.name, c.host, d.name_in(&c.host, &c.roots), exports.join(", "))));
     }
     b.fields().set_field(super::program_facts::Field::Settings(&settings));
+    Ok(())
+}
+
+/// Program `v` with its passes made (`declared`), or completed: each context's instance of the rules it holds, each
+/// reader's `.from` names reading the source pass, and the relations only a context reaches taken from the host. A
+/// program with nothing to make or complete is itself. A cycle through two passes is refused, naming its relations.
+pub fn passes(v: &Arc<Version>) -> Result<Arc<Version>, Error> {
+    let d = declared(v)?;
+    let plan = plan(v, &d);
+    if !plan.work(&d) {
+        return Ok(Arc::clone(v));
+    }
+    let mut b = Builder::derive(v);
+    write(v, &d, &plan, &mut b)?;
     let out = b.finish().map_err(Error::Syntax)?.0;
-    refuse_crossing_cycles(&out, &d)?;
+    refuse_crossing_cycles(&out, &declared(&out)?)?;
     Ok(out)
+}
+
+/// The passes made in a program's lowering (`rr::lowering_tail_on`), before its declarations are checked: a `.from`
+/// name is read from its pass, and a part lowered in a library's scope has its passes made of what it holds.
+pub struct Passes;
+
+impl super::program_image::manager::ProgramPass for Passes {
+    const NAME: &'static str = "0597's passes";
+    fn run(&mut self, cx: &super::program_image::manager::Cx<'_>, w: &mut super::program_image::manager::ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let d = declared(v).map_err(|e| e.to_string())?;
+        let plan = plan(v, &d);
+        if !plan.work(&d) {
+            return Ok(());
+        }
+        write(v, &d, &plan, w.derive()?).map_err(|e| e.to_string())
+    }
+}
+
+/// A cycle through two passes refused in a program's lowering, once its passes are made (`Passes`).
+pub struct CrossingCycles;
+
+impl super::program_image::manager::ProgramPass for CrossingCycles {
+    const NAME: &'static str = "0597's passes: no cycle through two";
+    fn run(&mut self, cx: &super::program_image::manager::Cx<'_>, _w: &mut super::program_image::manager::ProgramW<'_>) -> Result<(), String> {
+        let v = cx.v();
+        let d = declared(v).map_err(|e| e.to_string())?;
+        if d.contexts.is_empty() {
+            return Ok(());
+        }
+        refuse_crossing_cycles(v, &d).map_err(|e| e.to_string())
+    }
 }
 
 /// A pass made (`passes`): a context, its host and its roots, as the made program's `.pass` settings hold them

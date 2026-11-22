@@ -108,7 +108,7 @@ fn the_passes_printed_and_read_again_are_themselves() {
     let v = parse_version(PROGRAM).unwrap();
     let settings = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&*v);
     assert!(!settings.iter().any(|(k, _)| k == "context" || k == "from"), "{settings:?}");
-    assert!(settings.iter().any(|(k, t)| k == "pass" && t.split_whitespace().collect::<Vec<_>>() == ["annotation", "of", "python", "roots", "ann_root", "exports", "ann_names"]), "{settings:?}");
+    assert!(settings.iter().any(|(k, t)| k == "pass" && t.split_whitespace().collect::<Vec<_>>() == ["annotation", "of", "python", "roots", "ann_root", "exports", "ann_names", "reads", "bound"]), "{settings:?}");
     let printed = crate::code_rule_dsl::logic::rr::print_version(&v).unwrap();
     let again = parse_version(&printed).unwrap();
     assert!(crate::code_rule_dsl::logic::program_image::same_program(&v, &again), "{}", crate::code_rule_dsl::logic::program_image::differences(&v, &again));

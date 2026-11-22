@@ -1131,6 +1131,9 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
         for (own, stated, own_stated) in appended {
             p.program(&mut lowering_tail::AppendModule { own, stated, own_stated });
         }
+        // A guest context's passes (decision 0597): made before the declarations are checked, since a `.from` name
+        // is declared by its pass.
+        p.program(&mut super::contexts::Passes);
         if declared {
             p.program(&mut lowering_tail::Declared);
         }
