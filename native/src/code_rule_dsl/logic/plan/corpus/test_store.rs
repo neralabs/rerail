@@ -231,6 +231,16 @@ pub fn copy() -> Store {
     Store { dir, path }
 }
 
+/// The racy window (`RERAIL_RACY_MS`, `content_store::racy_ns`) of the tests whose runs trust their unchanged files by
+/// their stat: set on their child processes, or for their own runs (`switches::set`). Past the default 2 s they slept
+/// 2.1 s each (7 tests of the corpus), on file systems whose times are exact.
+pub const TEST_RACY_MS: &str = "100";
+
+/// Waits out `TEST_RACY_MS`, twice over: what was written before now is trusted by its stat by a run under it.
+pub fn past_test_racy_window() {
+    std::thread::sleep(std::time::Duration::from_millis(2 * TEST_RACY_MS.parse::<u64>().expect("a window in ms")));
+}
+
 /// The store a test names at `path` (`TEST_TAPE_CACHE`, or one it hands a child process) begun as a copy of the
 /// template where it is not there yet, as a test's own store is (`copy`). A store begun empty ran phase 0 over the rule
 /// library and planned the core program again, as `fill` does, before its test's own work: for a test of a few runs

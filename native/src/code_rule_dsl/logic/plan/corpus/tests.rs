@@ -1661,7 +1661,7 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
     // Past the observer's racy window: a file changed within it of its answer is hashed again by the next run, and
     // its answer recorded again (`RACY_NS`). The claim is of sources older than that; a cold run fast enough to read
     // them inside it made the warm run's writes (the answers, the manifest, the statistics).
-    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
+    super::test_store::past_test_racy_window();
     let store = base.join("store.sqlite");
     // Begun from the template (`test_store::begun`): its child processes would each fill an empty one first.
     super::test_store::begun(&store);
@@ -1678,7 +1678,8 @@ fn cold_then_warm(base: &std::path::Path, program: Option<&std::path::Path>, fil
             .args(["--exact", "code_rule_dsl::logic::plan::corpus::tests::one_corpus_run_for_a_parent", "--ignored", "--test-threads", "1", "--nocapture"])
             .env("RERAIL_TAPE_CACHE", &store)
             .env("RERAIL_CHILD_RUN", &src)
-            .env("RERAIL_CHILD_OUT", base.join("out"));
+            .env("RERAIL_CHILD_OUT", base.join("out"))
+            .env("RERAIL_RACY_MS", super::test_store::TEST_RACY_MS);
         if let Some(program) = program {
             child.env("RERAIL_CHILD_PROGRAM", program);
         }
@@ -1730,8 +1731,8 @@ y = x{i} + 2
         path
     };
     let (before, edited) = (rule("before.rerail", ""), rule("edited.rerail", ", s >= 0"));
-    // Past the observer's racy window, so the second run knows each file by its stat (`RACY_NS`).
-    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
+    // Past the observer's racy window, so the second run knows each file by its stat (`TEST_RACY_MS`).
+    super::test_store::past_test_racy_window();
     let store = base.join("store.sqlite");
     // Begun from the template (`test_store::begun`): its child processes would each fill an empty one first.
     super::test_store::begun(&store);
@@ -1744,7 +1745,8 @@ y = x{i} + 2
             .env("RERAIL_CHILD_OUT", base.join("out"))
             .env("RERAIL_CHILD_PROGRAM", program)
             .env("RERAIL_COSTS", base.join("costs.sqlite"))
-            .env("RERAIL_IMAGE_STORE", base.join("images"));
+            .env("RERAIL_IMAGE_STORE", base.join("images"))
+            .env("RERAIL_RACY_MS", super::test_store::TEST_RACY_MS);
         if strict {
             child.env("RERAIL_SQL_STRICT", "1");
         }

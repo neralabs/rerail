@@ -47,7 +47,10 @@ const NOT_OUTPUTS: &[&str] = &["RERAIL_TAPE_CACHE", "RERAIL_PROFILE", "RERAIL_RE
     "RERAIL_COSTS", "RERAIL_IMAGE_STORE", "RERAIL_EXPORT_IMAGES",
     "RERAIL_FRAMES_TRACE",
     // The memory ceiling (decision 0462): a run past it is stopped and keeps nothing; one under it outputs the same.
-    "RERAIL_MEMORY_MAX_MB"];
+    "RERAIL_MEMORY_MAX_MB",
+    // The observer's racy window (`content_store::racy_ns`): which answers a run trusts by their stat, never what it
+    // outputs.
+    "RERAIL_RACY_MS"];
 
 /// Whether a switch only measures a run, never changes what it outputs: left out of the run's key.
 pub fn measures_only(name: &str) -> bool {

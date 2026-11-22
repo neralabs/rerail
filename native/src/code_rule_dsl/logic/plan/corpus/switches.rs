@@ -98,7 +98,7 @@ pub fn started<T>(start: impl FnOnce() -> T) -> T {
 const SCOPED: &[&str] = &[
     "RERAIL_KEPT_PART", "RERAIL_CROSS_K4", "RERAIL_CROSS_DELTA_COUNTS", "RERAIL_DEVICE_BUDGET", "RERAIL_AGAIN", "RERAIL_AGAIN_MIN",
     "RERAIL_AGAIN_THETA", "RERAIL_WAVE0", "RERAIL_COPY_VIEWS", "RERAIL_ANCHORS", "RERAIL_SETS", "RERAIL_INLINE_ONLY", "RERAIL_AST_PARTS",
-    "RERAIL_ASOF", "RERAIL_NODE_SOURCES", "RERAIL_ORDER_RAW", "RERAIL_NODE_IDS",
+    "RERAIL_ASOF", "RERAIL_NODE_SOURCES", "RERAIL_ORDER_RAW", "RERAIL_NODE_IDS", "RERAIL_RACY_MS",
 ];
 
 /// The switches read off a run's context too (the store's path; the profile's and the heap sampler's, which their own

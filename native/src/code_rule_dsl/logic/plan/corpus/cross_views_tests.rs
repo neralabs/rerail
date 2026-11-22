@@ -271,15 +271,16 @@ fn r5_the_runs_read_no_sql_inside_the_waves() {
             .env("RERAIL_CHILD_PROGRAM", c.dir.join("program.rerail"))
             .env("RERAIL_COSTS", c.dir.join("costs.sqlite"))
             .env("RERAIL_IMAGE_STORE", c.dir.join("images"))
-            .env("RERAIL_SQL_STRICT", "1");
+            .env("RERAIL_SQL_STRICT", "1")
+            .env("RERAIL_RACY_MS", super::test_store::TEST_RACY_MS);
         let output = child.output().unwrap();
         let stderr = String::from_utf8_lossy(&output.stderr);
         let fault: Vec<&str> = stderr.lines().skip_while(|l| !l.starts_with("rerail: RERAIL_SQL_STRICT")).take(200).collect();
         assert!(output.status.success(), "run {n}: {}; {}", output.status, fault.join(" "));
     };
     run(0);
-    // Past the observer's racy window, so the next run knows the unchanged files by their stat (`RACY_NS`).
-    std::thread::sleep(std::time::Duration::from_nanos(crate::content_store::RACY_NS as u64 + 100_000_000));
+    // Past the observer's racy window, so the next run knows the unchanged files by their stat (`TEST_RACY_MS`).
+    super::test_store::past_test_racy_window();
     c.write("a.py", "def f(x, y):\n    return y\n\ndef k():\n    pass\n");
     run(1);
     run(2);
