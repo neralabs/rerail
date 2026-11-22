@@ -290,8 +290,12 @@ The template's findings stand at the file's lines.
          their own prefixes (`p0_ann_tree`, `p1_ann_tree`). These are one pass with two instances. Made passes of one
          context and host merge, and each member's roots are checked (`Context::other_roots`).
        - A refused twice-declared context names both declarations.
-       The fourth failure, `programs_hidden_alone_keep_their_attribute_copies_declared`, needs pack test data that
-       is not pulled here.
+       The fourth, `programs_hidden_alone_keep_their_attribute_copies_declared`, was missing its pack test data. It
+       passes with the lint data placed: restored from 754e41916b~1 and matched to its `test-data.lock` sha.
+     - The quick tier again on 12d3738235, with that data: 1,229 of 1,230 pass. The one failure,
+       `signed_gate_statistics_reach_the_background_cost_store`, passed in the first run and passes alone (1.4 s). It
+       waits 10 s of wall time for the cost store's background write, which the full suite's load delayed. It is the
+       SQL executor's, which 0597 does not touch.
 5. **f-strings and Vue.** `python/format-spec` and SQL in a template; `vue/expression` reading the script's bindings.
 6. **Measure.** corpus0 × B-now against the targets (one pack 0.786 T, normal packs 2.428 T, 463 findings,
    d067ec2ebf6f).
