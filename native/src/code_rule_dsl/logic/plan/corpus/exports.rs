@@ -8,7 +8,7 @@
 //! export per chunk, read back from `x` when the cross-file part started. On the Python pack that copy was 5.6 s of
 //! about 89 s of CPU (166M SQLite VM steps, about 30 ns each).
 
-use crate::code_rule_dsl::facts::rows::{Life, Rows};
+use crate::code_rule_dsl::facts::rows::{IdSet, Life, Rows};
 use crate::code_rule_dsl::facts::vtab::Source;
 use hashbrown::HashTable;
 use rustc_hash::FxHasher;
@@ -25,7 +25,9 @@ struct Held {
     rows: Rows,
     /// Rows not among the export's (bit `id`): a row given again, or dead in the relation it came from.
     dead: Vec<u64>,
-    set: HashTable<u32>,
+    /// Its rows' ids by their values' hashes, in a block (`IdSet`, decision 0353): a heap table before (14.4 MB of
+    /// "hold the export" at a 300-file run's peak on the M3).
+    set: IdSet,
     /// Its columns' types, as the relations it holds give them (the engine's codes).
     types: Option<Vec<u8>>,
     /// The rows as a source, made when the cross-file part first reads them. No chunk adds after that.
@@ -41,7 +43,7 @@ struct Held {
 
 impl Held {
     fn new(width: usize) -> Self {
-        Held { rows: Rows::living(width, Life::Kept), dead: Vec::new(), set: HashTable::new(), types: None, source: None, unset: Vec::new(), at: None, unset_docs: Default::default(), released: false }
+        Held { rows: Rows::living(width, Life::Kept), dead: Vec::new(), set: IdSet::new(), types: None, source: None, unset: Vec::new(), at: None, unset_docs: Default::default(), released: false }
     }
 
     fn width(&self) -> usize {
@@ -74,13 +76,13 @@ impl Held {
     fn insert(&mut self, row: &[i64]) -> bool {
         let h = Held::hash(row.iter().copied());
         let (rows, width) = (&self.rows, self.width());
-        if self.set.find(h, |&i| (0..width).all(|c| rows.get(i, c) == row[c])).is_some() {
+        if self.set.find(h, |i| (0..width).all(|c| rows.get(i, c) == row[c])).is_some() {
             return false;
         }
         let id = self.len() as u32;
         self.rows.extend_from_slice(row);
         let rows = &self.rows;
-        self.set.insert_unique(h, id, |&i| Held::hash((0..width).map(|c| rows.get(i, c))));
+        self.set.insert_unique(h, id, |i| Held::hash((0..width).map(|c| rows.get(i, c))));
         true
     }
 
@@ -88,11 +90,11 @@ impl Held {
     fn keep_once(&mut self, id: u32) -> bool {
         let h = self.row_hash(id);
         let (rows, width) = (&self.rows, self.width());
-        if self.set.find(h, |&i| (0..width).all(|c| rows.get(i, c) == rows.get(id, c))).is_some() {
+        if self.set.find(h, |i| (0..width).all(|c| rows.get(i, c) == rows.get(id, c))).is_some() {
             self.kill(id);
             return false;
         }
-        self.set.insert_unique(h, id, |&i| Held::hash((0..width).map(|c| rows.get(i, c))));
+        self.set.insert_unique(h, id, |i| Held::hash((0..width).map(|c| rows.get(i, c))));
         true
     }
 
@@ -102,7 +104,7 @@ impl Held {
             for id in range {
                 let h = self.row_hash(id);
                 let (rows, width) = (&self.rows, self.width());
-                self.set.insert_unique(h, id, |&i| Held::hash((0..width).map(|c| rows.get(i, c))));
+                self.set.insert_unique(h, id, |i| Held::hash((0..width).map(|c| rows.get(i, c))));
             }
         }
         self.unset_docs.clear();
@@ -312,7 +314,7 @@ impl Exports {
         let rows = std::mem::replace(&mut held.rows, Rows::living(width, Life::Kept)).sealed();
         let n = rows.rows();
         let dead = std::mem::take(&mut held.dead);
-        held.set = HashTable::new();
+        held.set = IdSet::new();
         held.unset.clear();
         held.unset_docs.clear();
         let names: Vec<String> = (0..width).map(|c| format!("c{c}")).collect();
@@ -344,7 +346,7 @@ impl Exports {
         let held = self.rels.entry(rel.to_owned()).or_insert_with(|| Held::new(width));
         held.rows = Rows::living(width, Life::Kept);
         held.dead.clear();
-        held.set = HashTable::new();
+        held.set = IdSet::new();
         held.source = Some(source);
     }
 }

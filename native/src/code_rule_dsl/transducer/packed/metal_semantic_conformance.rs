@@ -111,7 +111,7 @@ fn pinned_corpus_optional_body_and_injection_differential() {
     assert!(
         trace
             .iter()
-            .all(|record| record.encoded && record.submitted && record.completed)
+            .all(|record| record.submitted && record.completed)
     );
     assert!(trace.iter().all(|record| record.peak_application_buffer_bytes <= metal_backend::metal_buffer_limit()));
     let counts = actual
@@ -1206,7 +1206,7 @@ pub mod retained_grid_runtime {
         eprintln!(
             "LONG_CAPTURE_ATTEMPT {}",
             serde_json::json!({
-                "attempts":trace.len(),"encoded":trace.iter().filter(|r|r.encoded).count(),
+                "attempts":trace.len(),"encoded":trace.len(),
                 "completed":trace.iter().filter(|r|r.completed).count(),"seconds":elapsed,
             })
         );
@@ -1215,7 +1215,7 @@ pub mod retained_grid_runtime {
         assert!(
             trace
                 .iter()
-                .all(|r| r.encoded && r.submitted && r.completed)
+                .all(|r| r.submitted && r.completed)
         );
         eprintln!(
             "LONG_CAPTURE_EVIDENCE {}",
@@ -2579,7 +2579,7 @@ pub mod retained_grid_runtime {
             assert!(
                 trace
                     .iter()
-                    .all(|record| record.encoded && record.submitted && record.completed)
+                    .all(|record| record.submitted && record.completed)
             );
             eprintln!(
                 "QUANTIFIED_INJECTION_EVIDENCE {}",
@@ -4073,7 +4073,7 @@ fn long_interpolated_query_oracles(complete_cpu: bool, metal: bool) {
             let trace = scope.snapshot();
             eprintln!(
                 "LONG_INTERPOLATED_QUERY_EVIDENCE {}",
-                serde_json::json!({"forcedViews":forced_views,"parts":parts,"nodes":files[0].transducer_len(),"captures":expected[0][0][0].captures.len(),"attempts":trace.len(),"encoded":trace.iter().filter(|r|r.encoded).count(),"completed":trace.iter().filter(|r|r.completed).count(),"seconds":started.elapsed().as_secs_f64(),"error":format!("{:?}",actual.as_ref().err()),"peakMetalBytes":trace.iter().map(|r|r.peak_application_buffer_bytes).max(),"lastKernels":trace.iter().rev().take(12).map(|r|&r.kernel).collect::<Vec<_>>()})
+                serde_json::json!({"forcedViews":forced_views,"parts":parts,"nodes":files[0].transducer_len(),"captures":expected[0][0][0].captures.len(),"attempts":trace.len(),"encoded":trace.len(),"completed":trace.iter().filter(|r|r.completed).count(),"seconds":started.elapsed().as_secs_f64(),"error":format!("{:?}",actual.as_ref().err()),"peakMetalBytes":trace.iter().map(|r|r.peak_application_buffer_bytes).max(),"lastKernels":trace.iter().rev().take(12).map(|r|&r.kernel).collect::<Vec<_>>()})
             );
             assert_eq!(
                 actual.expect(
@@ -4082,8 +4082,7 @@ fn long_interpolated_query_oracles(complete_cpu: bool, metal: bool) {
                 expected
             );
             assert!(!trace.is_empty() && trace.len() <= crate::code_rule_dsl::transducer::packed::metal_backend::launch::KERNEL_LAUNCH_LIMIT);
-            assert!(trace.iter().all(|r| r.encoded
-                && r.submitted
+            assert!(trace.iter().all(|r| r.submitted
                 && r.completed
                 && r.peak_application_buffer_bytes <= metal_backend::metal_buffer_limit()));
         }

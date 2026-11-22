@@ -71,7 +71,7 @@ pub(super) struct Context {
     pub(super) host: HashMap<u32, u32>,
     /// The files' lines, by key, that their guests are placed by: shared with the batches it grows into and the tape
     /// values admitted to them (decision 0431 §6, §8), whose hosts may be no document of theirs.
-    pub(super) lines_of: Arc<parking_lot::RwLock<HashMap<u32, Arc<core_rr::Lines>>>>,
+    pub(super) lines_of: Arc<parking_lot::RwLock<HashMap<u32, Arc<crate::code_rule_dsl::lines::LineTable>>>>,
     /// The first failure making a document or a group (a verdict raised, too many positions): every source of the
     /// batch reports it (`Source::failure`), so the statement reading it fails rather than read the rows as absent.
     pub(super) failure: parking_lot::Mutex<Option<String>>,
@@ -258,13 +258,10 @@ impl Docs {
             _ => None,
         };
         let withheld = core && error.is_some() && !guest.is_some_and(|g| projection.keeps_partial(&g.grammar));
-        let python_lines = dialect.is_some_and(|d| d.family == Family::Python);
         // A guest's nodes have their places in its file: the file's lines, where the batch holds the file.
-        let placed = guest.map(|g| (g, self.file_lines(g.host).unwrap_or_else(|| Arc::new(core_rr::Lines::shared(Arc::clone(&d.facts.source), python_lines, &self.context.block)))));
+        let placed = guest.map(|g| (g, self.file_lines(g.host).unwrap_or_else(|| Arc::clone(&d.facts.lines))));
         let new_span = profile::span(|| "projected".into());
-        // A guest's file is made before it (`file_lines`), so its own lines are never built ahead of it (decision 0470 step 2:
-        // the eager batch hands a file the lines a program of it built first).
-        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, None, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
+        let mut p = Projected::narrowed(d.key, Arc::clone(&d.facts), dialect, shape, withheld, placed, projection.node_anchors.as_ref().filter(|_| core), &self.context.block);
         // T's shape takes a program's whole tree, not as a guest, but its nodes are its file's too (Q324, decision 0512).
         p.file = Guest::file_key(d.guest.as_deref().map(Guest::of), d.key);
         drop(new_span);
@@ -288,7 +285,7 @@ impl Docs {
     }
     /// The lines of the file a guest of `host` is in (through guests of guests), where the batch holds that file in
     /// core.rerail's shape.
-    fn file_lines(&self, host: u32) -> Option<Arc<core_rr::Lines>> {
+    fn file_lines(&self, host: u32) -> Option<Arc<crate::code_rule_dsl::lines::LineTable>> {
         let mut k = host;
         for _ in 0..=self.context.host.len() {
             match self.context.host.get(&k) {

@@ -29,6 +29,7 @@ const SPAN_OFF: i32 = offset_of!(Span<u64>, off) as i32;
 const SPAN_LEN: i32 = offset_of!(Span<u64>, len) as i32;
 const ROWS_MIN_LOG: i32 = offset_of!(Rows, min_log) as i32;
 const ROWS_COLS: i32 = offset_of!(Rows, cols) as i32;
+const ROWS_LEN: i32 = offset_of!(Rows, len) as i32;
 const ROWS_RESERVED: i32 = offset_of!(Rows, reserved) as i32;
 const ROWS_NEEDED: i32 = offset_of!(Rows, needed) as i32;
 const ROWS_NCOLS: i32 = offset_of!(Rows, ncols) as i32;
@@ -305,6 +306,20 @@ pub fn rel_get(b: &mut B<'_, '_>) -> Value {
             b.call_at("rows_get", rows, &[i, c])
         },
     )
+}
+
+/// `rows_len(rows)`: the rows a relation's rows descriptor has claimed (`Rows::len`), read while the device claims
+/// them (decision 0603 step 3).
+pub fn rows_len(b: &mut B<'_, '_>) -> Value {
+    b.word_at(I32, b.tape, ROWS_LEN)
+}
+
+/// `rel_len(rel)`: the rows the relation has claimed of its own (`Rows::len`): what a reader that runs while its writer
+/// grows it reads it by (a recursive component's relations on the device, their rows claimed by the device: decision
+/// 0603 step 3).
+pub fn rel_len(b: &mut B<'_, '_>) -> Value {
+    let rows = b.f.ins().iadd_imm(b.tape, REL_ROWS);
+    b.call_at("rows_len", rows, &[])
 }
 
 /// `rel_dead(rel, id)`: 1 if the relation's dead bits mark row `id` (a delta's kills of its base, or of its own).

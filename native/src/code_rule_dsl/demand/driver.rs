@@ -324,12 +324,13 @@ pub fn drive(
 ) -> StoreResult<QueryOutcome> {
     // Failures are rows here (`SqlFailureRow`), so the batch's status is the statements' to read.
     // The batches registered by this drive: its own (decision 0442), read by its statements' tables.
-    let registry = Arc::new(MatchRegistry::default());
+    // The terminal matches' estimate the last wave kept, read before the transaction (a kept read waits on the
+    // store's writer).
+    let estimate = store.terminal_estimate()?;
+    let registry = Arc::new(MatchRegistry::with_terminal_estimate(estimate));
     with_batch(&registry, Some(demand), None, |token| {
         let token = token.expect("a registered batch");
         store.candidate_transaction(false, |db| {
-            // Registering again replaces the modules and re-reads their row estimates from
-            // `fact_stats`, which the previous batch may have changed.
             register_module(db, Arc::clone(&registry))?;
             let mut materialized = Vec::new();
             let result = run(db, &registry, token, statements, file_metadata, &mut materialized);

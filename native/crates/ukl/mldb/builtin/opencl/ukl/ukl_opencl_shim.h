@@ -30,13 +30,6 @@
 #include "ukl_auto_macros.h"
 #include "ukl_macros.h"
 
-// A source written for one width (`UKL_SIMD_WIDTH_NEEDED`, defined before its includes: the block programs' 32) takes
-// it from the device's sub-groups, whose sizes the host checked offer it (`Device::offers_simd_width`). Emulated, the
-// width is the host's, and `ukl/backend.h` refuses a source it does not fit.
-#if defined(UKL_SIMD_WIDTH_NEEDED) && defined(UKL_OPENCL_SUBGROUPS)
-#undef UKL_SIMD_WIDTH
-#define UKL_SIMD_WIDTH UKL_SIMD_WIDTH_NEEDED
-#endif
 #ifndef UKL_SIMD_WIDTH
 #define UKL_SIMD_WIDTH 32u
 #endif
@@ -44,6 +37,9 @@
 #define UKL_TG_MAX 1024u
 #endif
 
+// The fixed-width integers by OpenCL's own. The CPU's vector path (`rerail-ukl-vec`, decision 0567) reads C, whose
+// grammar has them as types already.
+#if !defined(__UKL_VEC)
 typedef uint uint32_t;
 typedef int int32_t;
 typedef ushort uint16_t;
@@ -52,6 +48,7 @@ typedef uchar uint8_t;
 typedef char int8_t;
 typedef ulong uint64_t;
 typedef long int64_t;
+#endif
 // A word the atomics take: a plain integer, as OpenCL 1.2's atomic functions (`atomic_or`, ...) do. OpenCL C 2.0
 // and later have types of these names (C11's `_Atomic`, which 1.2's functions do not take, and which a private
 // variable cannot be), so there the names are the integers' by macro; 1.2's functions remain in 3.0. The source is
@@ -79,11 +76,17 @@ static inline uint __ukl_cl_lid(void)
 #define __UKL_SG_ATTR
 #endif
 
+// A threadgroup's own storage, declared in a kernel's entry (a `SHARED` row, the SIMD group's scratch): `__local`.
+// The CPU's vector path (decision 0567), whose pointers have no address space, marks the declaration instead.
+#ifndef __UKL_LOCAL_STORAGE
+#define __UKL_LOCAL_STORAGE __local
+#endif
+
 #if UKL_SIMD_WIDTH > 1 && !defined(UKL_OPENCL_SUBGROUPS)
 #define UKL_OPENCL_EMULATED_SG 1
 #define __UKL_PARAMS , __local uint* __ukl_sg
 #define __UKL_ARGS , __ukl_sg
-#define __UKL_SG_DECL __local uint __ukl_sg[UKL_TG_MAX];
+#define __UKL_SG_DECL __UKL_LOCAL_STORAGE uint __ukl_sg[UKL_TG_MAX];
 #else
 #define __UKL_PARAMS
 #define __UKL_ARGS
@@ -307,7 +310,7 @@ static inline uint32_t ukl_simdgroup_broadcast_first(uint32_t val, uint16_t simd
 // rows' that no row names (decision 0440 step B). OpenCL 1.2 has no indirect launch: the host launches the caller's
 // bound of groups, and the groups past the counts return first, so a kernel sees the grid the counts give.
 #define GEN_OUTER_PARAMETER_GROUPS(Type, Name) __global const Type * Name, uint Name##_at
-#define GEN_SHARED_DECL_SHARED(Type, Name, Bounds) __local Type Name[Bounds];
+#define GEN_SHARED_DECL_SHARED(Type, Name, Bounds) __UKL_LOCAL_STORAGE Type Name[Bounds];
 
 #define GEN_OUTER_PARAMETER2(Access, Type, Name, Bounds) CALL2_A(GEN_OUTER_PARAMETER_, Access, Type, Name)
 
@@ -350,6 +353,11 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
     (__ukl_out[__ukl_k++] = (ulong)((char *)&__ukl_v.Field - (char *)&__ukl_v), \
      __ukl_out[__ukl_k++] = sizeof(__ukl_v.Field), \
      __ukl_out[__ukl_k++] = __UKL_SCALAR_KIND(__ukl_v.Field))
+#if defined(__UKL_VEC)
+// The CPU's vector path (decision 0567) has every layout from its own types: a structure's fields and a kernel's rows
+// are named in constants it reads.
+#define UKL_REFLECT_STRUCT(Type, ...) static const char Type ## __ukl_fields[] = #__VA_ARGS__;
+#else
 #define UKL_REFLECT_STRUCT(Type, ...) \
     __kernel void Type ## __ukl_layout(__global ulong * __ukl_out) \
     { \
@@ -362,6 +370,7 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
         __ukl_out[0] = __ukl_k - 1u; \
         __ukl_cl_text(__ukl_out, __ukl_k, __ukl_names); \
     }
+#endif
 
 // A kernel: its info kernel (the rows' layout, three numbers a row after their count, then the rows' text), its
 // body (inner), and its entry, which declares the threadgroup memory and the SIMD group's scratch.
@@ -369,6 +378,19 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
 // A program of one kernel of a source (`UKL_ONE_KERNEL`, with `__UKL_ONLY_<name>` defined as `__UKL_PROBE`): every
 // other kernel of the source is only its body, a static function nothing calls, which the compiler does not emit. An
 // OpenCL driver builds every kernel of a program, and Intel's spent 436 s on the 21 join stages of one source.
+#if defined(__UKL_VEC)
+#define __UKL_KERNEL_INFO(Name, ...) static const char Name ## __ukl_params[] = #__VA_ARGS__;
+#else
+#define __UKL_KERNEL_INFO(Name, ...) \
+    __kernel void Name ## __ukl_info(__global ulong * __ukl_out) \
+    { \
+        __constant char * __ukl_text = #__VA_ARGS__; \
+        uint __ukl_k = 1u; \
+        __UKL_FOREACH_QUAD_NOSEP(GEN_ROW_LAYOUT2, __VA_ARGS__) \
+        __ukl_out[0] = __ukl_k - 1u; \
+        __ukl_cl_text(__ukl_out, __ukl_k, __ukl_text); \
+    }
+#endif
 #if defined(UKL_ONE_KERNEL)
 #define __UKL_SECOND(a, b, ...) b
 #define __UKL_IS_PROBE(...) __UKL_SECOND(__VA_ARGS__, 0, 0)
@@ -384,14 +406,7 @@ static inline uint __ukl_cl_text(__global ulong * out, uint at, __constant char 
 #define DEFINE_KERNEL2(Library, Name, ...) __UKL_DEFINE_KERNEL2(Library, Name, __VA_ARGS__)
 #endif
 #define __UKL_DEFINE_KERNEL2(Library, Name, ...) \
-    __kernel void Name ## __ukl_info(__global ulong * __ukl_out) \
-    { \
-        __constant char * __ukl_text = #__VA_ARGS__; \
-        uint __ukl_k = 1u; \
-        __UKL_FOREACH_QUAD_NOSEP(GEN_ROW_LAYOUT2, __VA_ARGS__) \
-        __ukl_out[0] = __ukl_k - 1u; \
-        __ukl_cl_text(__ukl_out, __ukl_k, __ukl_text); \
-    } \
+    __UKL_KERNEL_INFO(Name, __VA_ARGS__) \
     static void Name ## _inner( __UKL_FOREACH_QUAD(GEN_INNER_PARAMETER2, __VA_ARGS__) __UKL_PARAMS ); \
     __kernel __UKL_SG_ATTR void Name ( __UKL_FOREACH_QUAD(GEN_OUTER_PARAMETER2, __VA_ARGS__, GROUPS, uint, __ukl_groups, ) ) \
     { \

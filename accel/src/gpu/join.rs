@@ -26,11 +26,12 @@
 //! order the kernel declares them, and one parameter block, its `ARGS` row `a`: a `JoinP` (`join_common.h`) of up
 //! to eight words and eight longs, or a caller's own structure (`Pass::run_bytes`).
 
+use super::launch;
 use super::shared;
 use crate::rows::{bits, span};
 use rerail_device::compute_kernel::GridComputeFunctionArgumentDisposition;
 use rerail_device::device::{Buffer, BufferRef, ComputeFunction, ComputeQueue, SharedEvent};
-use rerail_gpu::library::{radix_sort_pairs_in, scan_exclusive_u32_in, scan_sized, RadixSpace, ScanSpace, SCAN_SIZES};
+use rerail_gpu::library::{radix_sort_pairs_in, scan_exclusive_u32_in, RadixSpace, ScanSpace};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -231,6 +232,17 @@ pub struct Submitted {
     committed: f64,
     /// Whether this one only watches (`watch`): it waits only while the owner has not.
     watcher: bool,
+    /// Its pass's key in the evaluation's records (`launch::mark`), the owner's; none for a watcher.
+    key: Option<Box<u8>>,
+}
+
+impl Submitted {
+    /// Its launches' records marked completed (the owner's, once).
+    fn completed(&mut self) {
+        if let Some(key) = self.key.take() {
+            launch::mark(std::ptr::from_ref::<u8>(&key) as usize, true);
+        }
+    }
 }
 
 impl Drop for Submitted {
@@ -240,6 +252,7 @@ impl Drop for Submitted {
         if !self.watcher && !self.event.fence().is_complete() {
             let _ = self.event.await_();
         }
+        self.completed();
     }
 }
 
@@ -292,7 +305,7 @@ pub fn add_timeline(command: &metal::CommandBufferRef, committed: f64, returned:
 impl Submitted {
     /// Another wait for a committed submission: what a sort encoded into it waits for (`Keyed::settle`).
     pub fn watch(&self) -> Submitted {
-        Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true }
+        Submitted { event: Arc::clone(&self.event), reads: Vec::new(), committed: f64::NAN, watcher: true, key: None }
     }
 
     /// Keeps `columns` (what the submission reads) until it completes.
@@ -461,22 +474,32 @@ enum Grid<'a> {
 }
 
 /// The launches of one submission on the process's queue, in order: each sees the last's writes. Committed by
-/// `commit`; dropped without it, nothing it holds runs.
+/// `commit`; dropped without it, nothing it holds runs. Each launch is charged to the evaluation's launch budget
+/// (`launch::attempt`) before it is enqueued, and the commit is the budget's check (`launch::check_submission`): a
+/// pass is a submission as a `rerail_metal::lane::Command` is, in the same ledger. Past the budget, or outside an
+/// evaluation, is the hard failure (decision 0601), never an error to fall back on.
 pub struct Pass {
     /// The process's queue (`shared::Queue`): its fence holds every buffer the launches reach (decision 0487).
     queue: shared::Queue,
-    /// The launches so far (a submission's launch budget counts them).
+    /// The launches charged so far (the evaluation's ledger holds the budget; this is the pass's own count, for
+    /// its reports).
     dispatches: Cell<usize>,
     /// Buffers the launches after reach by address (`use_read`, `use_read_write`), bound by none, each with whether
     /// the launches write it.
     resident: RefCell<Vec<(Buffer, bool)>>,
     /// The first launch that could not be made: the commit's error.
     error: RefCell<Option<String>>,
+    /// This submission's key in the evaluation's records (`launch::attempt`, `launch::mark`).
+    key: Box<u8>,
 }
 
 impl Pass {
     pub fn new() -> Result<Pass, String> {
-        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None) })
+        Ok(Pass { queue: shared::Queue::new()?, dispatches: Cell::new(0), resident: RefCell::new(Vec::new()), error: RefCell::new(None), key: Box::new(0) })
+    }
+
+    fn pointer(&self) -> usize {
+        std::ptr::from_ref::<u8>(&self.key) as usize
     }
 
     /// The launches made so far.
@@ -496,6 +519,17 @@ impl Pass {
         for (i, (b, _)) in buffers.iter().enumerate() {
             self.holds(b, pipe.op, i, pipe.writes.get(i).copied().unwrap_or(true));
         }
+        // Charged before it is enqueued: past the budget, the hard failure (decision 0601).
+        let (shape, indirect) = match &grid {
+            Grid::Groups(groups, threads) => ([*groups as u64 * threads, 1, 1], false),
+            Grid::Indirect { .. } => ([0; 3], true),
+        };
+        let group = match &grid {
+            Grid::Groups(_, threads) => [*threads, 1, 1],
+            Grid::Indirect { .. } => [GROUP, 1, 1],
+        };
+        let bound = buffers.iter().map(|(b, _)| (b.contents() as usize, b.length())).collect();
+        launch::attempt(self.pointer(), &pipe.name, shape, group, indirect, bound);
         let made = (|| {
             if buffers.len() != pipe.buffers.len() {
                 return Err(format!("the kernel {} takes {} buffers, given {}", pipe.name, pipe.buffers.len(), buffers.len()));
@@ -578,8 +612,13 @@ impl Pass {
             // The library's kernels write their outputs and scratch: each held as written.
             self.holds(b, "a UKL library launch", i, true);
         }
+        // The library says its launches once it has enqueued them (its levels' count): charged then, past the
+        // budget the hard failure.
         match call(&self.queue) {
-            Ok(made) => self.dispatches.set(self.dispatches.get() + made),
+            Ok(made) => {
+                self.dispatches.set(self.dispatches.get() + made);
+                launch::charge_made(self.pointer(), "a UKL library launch", made);
+            }
             Err(e) => *self.error.borrow_mut() = Some(format!("the UKL library: {e}")),
         }
     }
@@ -617,13 +656,17 @@ impl Pass {
         let _ = (known, kernel, arg);
     }
 
-    /// Commits the launches (checked against the launch budget): what to wait for.
+    /// Commits the launches, checked against the evaluation's launch budget (`launch::check_submission`): what to
+    /// wait for.
     pub fn commit(self) -> Result<Submitted, String> {
         if let Some(e) = self.error.take() {
             return Err(e);
         }
-        crate::score::phase("gpu commit", shared::guard)?;
-        Ok(Submitted { event: Arc::new(self.queue.flush()), reads: Vec::new(), committed: host_clock(), watcher: false })
+        launch::check_submission();
+        let pointer = self.pointer();
+        let event = crate::score::phase("gpu commit", || self.queue.flush());
+        launch::mark(pointer, false);
+        Ok(Submitted { event: Arc::new(event), reads: Vec::new(), committed: host_clock(), watcher: false, key: Some(self.key) })
     }
 
     /// Commits the launches and waits for them: their device seconds.
@@ -735,22 +778,6 @@ impl Scan {
     /// The scan of `input`'s `count` values into `output` (`count + 1` values, the total last).
     pub fn encode_into(&self, pass: &Pass, input: &Buffer, output: &Buffer) -> Result<(), String> {
         pass.library([input, output].into_iter().chain(self.space.buffers()), |q| scan_exclusive_u32_in(q, input, output, self.count as u32, false, &self.space));
-        Ok(())
-    }
-
-    /// Encodes the sizes of a scan sized on the device: of `min(totals[slot], cap)` values (a stage's rows), from the
-    /// binding table's count the work before wrote, not the host's guess of its space; `cap` below `count`. Returns the
-    /// sizes, for `encode_sized` and `Pass::run_bytes_indirect` (the grid over the `n + 1` outputs at
-    /// `SCAN_OUTPUT_GRID`, `GROUP` threads a group).
-    pub fn size(&self, pass: &Pass, totals: &Buffer, slot: usize, cap: usize) -> Result<Held, String> {
-        let sizes = Held::new(4 * SCAN_SIZES)?;
-        pass.library([totals, &sizes.buffer].into_iter().chain(self.space.buffers()), |q| self.space.size(q, totals, slot as u32, cap as u32, GROUP as u32, &sizes.buffer));
-        Ok(sizes)
-    }
-
-    /// `encode`, of `size`'s count, on its grids.
-    pub fn encode_sized(&self, pass: &Pass, data: &Buffer, sizes: &Held) -> Result<(), String> {
-        pass.library([data, &sizes.buffer].into_iter().chain(self.space.buffers()), |q| scan_sized(q, data, &sizes.buffer, &self.space));
         Ok(())
     }
 }
@@ -969,6 +996,8 @@ impl Keyed {
     /// on the process's queue runs after it. The intermediates are in scratch, the sort's order, runs and gathered
     /// columns in buffers of their own. The columns it reads are kept until it completes.
     pub fn sort(columns: Vec<Column>) -> Result<Keyed, String> {
+        // An evaluation of the launch budget (`launch`), or the caller's when it is in one.
+        let _evaluation = launch::LaunchScope::enter();
         let pass = Pass::new()?;
         let (mut keyed, reads) = Keyed::encode(&pass, columns)?;
         let mut pending = pass.commit()?;
@@ -1147,6 +1176,8 @@ pub fn column_stats(cols: &[&[i64]], k: usize) -> Result<Vec<ColStats>, String> 
 /// submission, 64 bits wide.
 pub fn column_stats_of(cols: &[StatCol<'_>], k: usize) -> Result<Vec<ColStats>, String> {
     device()?;
+    // An evaluation of the launch budget (`launch`), or the caller's when it is in one: both rounds.
+    let _evaluation = launch::LaunchScope::enter();
     let mut got = stats_round(cols, k, false)?;
     let wide: Vec<usize> = got.iter().enumerate().filter(|(_, g)| g.is_none()).map(|(i, _)| i).collect();
     if !wide.is_empty() {
@@ -1334,11 +1365,14 @@ DEFINE_KERNEL2(join, probe_scatter,
 /// buffer counts, scans and scatters into space for `expect` pairs (at least two a left row); when there are more,
 /// a second scatters them all into space of the exact size.
 pub fn probe(left: &[Column], right: &Keyed, expect: usize) -> Result<Probed, String> {
+    // An evaluation of the launch budget (`launch`), or the caller's when it is in one; a scatter again a rerun's.
+    let _evaluation = launch::LaunchScope::enter();
     let pass = Pass::new()?;
     let job = ProbeJob::encode(&pass, left, right, expect)?;
     let mut gpu = pass.commit_wait()?;
     let mut submissions = 1;
     if job.overflowed() {
+        let _rerun = launch::rerun();
         let pass = Pass::new()?;
         let job = job.rescatter(&pass, left, right)?;
         gpu += pass.commit_wait()?;
@@ -1809,6 +1843,42 @@ mod tests {
         unsafe { std::slice::from_raw_parts(b.buffer.contents().cast::<u32>(), n) }.to_vec()
     }
 
+    /// A pass's launches are the evaluation's (`launch`): charged as they are made, so passes share one budget and
+    /// none has a count of its own. A launch past it, or outside an evaluation, is the hard failure (decision 0601):
+    /// it raises `exec::OverBudget` before it is made.
+    #[test]
+    fn a_pass_charges_the_evaluations_launch_budget() {
+        if device().is_err() {
+            return;
+        }
+        let over = |f: &dyn Fn()| match std::panic::catch_unwind(std::panic::AssertUnwindSafe(f)) {
+            Ok(()) => false,
+            Err(p) => p.downcast::<crate::exec::OverBudget>().is_ok(),
+        };
+        let keys = fixed("pair_keys").unwrap();
+        let (words, out) = (Held::zeroed(8 * 256).unwrap(), Held::zeroed(8 * 256).unwrap());
+        let launches = |pass: &Pass, n: usize| {
+            for _ in 0..n {
+                pass.run(&keys, &[&words.buffer, &out.buffer], &[256], &[], 1);
+            }
+        };
+        let outside = Pass::new().unwrap();
+        assert!(over(&|| launches(&outside, 1)), "a launch outside an evaluation is the hard failure");
+        assert_eq!(outside.dispatches(), 0, "and is not made");
+        drop(outside);
+        let evaluation = launch::LaunchScope::enter();
+        let first = Pass::new().unwrap();
+        launches(&first, launch::KERNEL_LAUNCH_LIMIT - 10);
+        first.commit_wait().unwrap();
+        let second = Pass::new().unwrap();
+        assert!(over(&|| launches(&second, 11)), "the launch past the budget is the hard failure");
+        assert_eq!(second.dispatches(), 10, "the launch past the budget is not made");
+        drop(second);
+        let records = evaluation.snapshot();
+        assert_eq!(records.len(), launch::KERNEL_LAUNCH_LIMIT);
+        assert!(records.iter().filter(|r| r.command == records[0].command).all(|r| r.completed), "the first pass's launches completed");
+    }
+
     /// Pairs sorted on the device come out in (first, second) order: keys of 32 bits and of 64.
     #[test]
     fn pairs_sorted_on_the_device_are_in_row_order() {
@@ -1821,6 +1891,7 @@ mod tests {
             let want_in: Vec<[u32; 2]> = firsts.iter().zip(&seconds).map(|(&a, &b)| [a as u32, b as u32]).collect();
             let pairs = Held::of(want_in.iter().copied()).unwrap();
             let out = Held::new(8 * n).unwrap();
+            let _evaluation = launch::LaunchScope::enter();
             let pass = Pass::new().unwrap();
             let mut keep = Vec::new();
             encode_sorted_pairs(&pass, &pairs, n, fb, sb, &out, &mut keep).unwrap();
@@ -1912,6 +1983,7 @@ mod tests {
             if !Fused::can() {
                 continue;
             }
+            let _evaluation = launch::LaunchScope::enter();
             let pass = Pass::new().unwrap();
             let mut fused = Fused::default();
             let mut arena = Arena::new(2 * left.len(), probe_blocks(left.len())).unwrap();
@@ -2040,11 +2112,14 @@ mod host_costs {
         let alloc = per(500, || drop(rerail_device::device::alloc_uninitialized_array_sync::<u8>(device, 16384)));
         let pooled = per(500, || drop(Held::new(16384).unwrap()));
         let empty = per(300, || {
+            let _evaluation = launch::LaunchScope::enter();
             Pass::new().unwrap().commit_wait().unwrap();
         });
         let keys = fixed("pair_keys").unwrap();
         let (words, out) = (Held::zeroed(8 * 256).unwrap(), Held::zeroed(8 * 256).unwrap());
         let dispatch = per(100, || {
+            // Each submission an evaluation: its 50 launches within the budget.
+            let _evaluation = launch::LaunchScope::enter();
             let pass = Pass::new().unwrap();
             for _ in 0..50 {
                 pass.run(&keys, &[&words.buffer, &out.buffer], &[256], &[], 1);

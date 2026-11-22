@@ -118,7 +118,7 @@ pub(super) fn remember(lease: &Lease<'_>, store: &ContentStore, space: [u8; 32],
     let mut puts = Vec::new();
     if last.rules != Some(*rules) {
         let flat = words(rules).to_vec();
-        puts.push(put(RULES, 0, b"iiii", flat, 1, true));
+        puts.push(put(RULES, 0, b"iiii", flat, true));
     }
     // The documents, a partition each: written where its entry changed, gone where it went.
     let current: BTreeSet<i64> = documents.iter().map(|d| i64::from(d.key)).collect();
@@ -130,7 +130,7 @@ pub(super) fn remember(lease: &Lease<'_>, store: &ContentStore, space: [u8; 32],
         }
         let mut flat = vec![i64::from(sym), i64::from(d.key)];
         flat.extend(words(&d.digest));
-        puts.push(put(DOCUMENT, i64::from(d.key), b"siiiii", flat, 1, true));
+        puts.push(put(DOCUMENT, i64::from(d.key), b"siiiii", flat, true));
     }
     let gone: BTreeSet<i64> = last.documents.values().map(|(d, _)| *d).filter(|d| !current.contains(d)).collect();
     for d in &gone {
@@ -154,8 +154,7 @@ pub(super) fn remember(lease: &Lease<'_>, store: &ContentStore, space: [u8; 32],
         for d in &parts {
             match by.remove(d) {
                 Some(flat) => {
-                    let n = flat.len() / width;
-                    puts.push(put(rel, *d, types, flat, n, false));
+                    puts.push(put(rel, *d, types, flat, false));
                 }
                 None => puts.push(gone_put(rel, *d, types)),
             }
@@ -165,7 +164,7 @@ pub(super) fn remember(lease: &Lease<'_>, store: &ContentStore, space: [u8; 32],
     Ok(())
 }
 
-fn put(rel: &str, part: i64, types: &[u8], flat: Vec<i64>, n: usize, given: bool) -> KeptPut {
+fn put(rel: &str, part: i64, types: &[u8], flat: Vec<i64>, given: bool) -> KeptPut {
     KeptPut {
         rel: rel.to_owned(),
         ident: ident(rel),
@@ -173,7 +172,7 @@ fn put(rel: &str, part: i64, types: &[u8], flat: Vec<i64>, n: usize, given: bool
         digest: flat_digest(&flat),
         reads: Vec::new(),
         types: types.to_vec(),
-        what: KeptWhat::Flat { widths: vec![8; types.len()], rows: flat, n, levels: None, given },
+        what: KeptWhat::Picked(Box::new(crate::content_store::kept_facts::BlockFlat::of_rows(&flat, types.len(), given))),
     }
 }
 
@@ -204,10 +203,9 @@ pub(super) fn shift_spans(store: &ContentStore, scope: &str, d: i64, start: i64)
         }
         flat.extend(row);
     }
-    let n = entry.rows.len();
     drop(chain);
     if moved > 0 {
-        store.queue_kept(space, vec![put(SPAN, d, b"iiii", flat, n, false)]);
+        store.queue_kept(space, vec![put(SPAN, d, b"iiii", flat, false)]);
         store.settle_kept(&space);
     }
     moved

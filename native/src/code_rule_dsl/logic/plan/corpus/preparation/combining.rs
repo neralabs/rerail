@@ -1213,7 +1213,7 @@ fn one_document(v: &Version, f: &Fields<'_>, read: &BTreeSet<String>, narrowing:
         }
         Ok(())
     };
-    // The greatest set: a relation leaves it when one of its rules does not cover over the set. A rule covers over
+    // The greatest set: each relation is taken to be covered until one of its rules is not. A rule is covered over
     // fewer relations no more often, so a relation that leaves the set rechecks only its readers.
     let mut readers: HashMap<&str, BTreeSet<&str>> = HashMap::new();
     for (head, rs) in rules_of {
@@ -1284,31 +1284,32 @@ fn one_document(v: &Version, f: &Fields<'_>, read: &BTreeSet<String>, narrowing:
     };
     let mut anchors: BTreeMap<&str, BTreeSet<BTreeSet<usize>>> = candidates.iter().map(|&r| (r, BTreeSet::new())).collect();
     let mut unanchored: BTreeSet<&str> = read.iter().map(String::as_str).filter(|r| !rules_of.contains_key(r)).collect();
-    loop {
-        let mut changed = false;
-        for &rel in &candidates {
-            if unanchored.contains(rel) {
-                continue;
-            }
-            let mut sets = anchors[rel].clone();
-            for &r in &rules_of[rel] {
-                match anchor(r, &anchors, &unanchored) {
-                    Ok(s) => sets.extend(s),
-                    Err(_) => {
-                        unanchored.insert(rel);
-                        changed = true;
-                        break;
-                    }
+    // A relation's anchors only grow, and one unanchored stays so: a relation that changes rechecks only its readers
+    // (`readers`), as the greatest set's do.
+    let mut queue: BTreeSet<&str> = candidates.clone();
+    while let Some(rel) = queue.pop_first() {
+        if unanchored.contains(rel) {
+            continue;
+        }
+        let mut sets = anchors[rel].clone();
+        let mut lost = false;
+        for &r in &rules_of[rel] {
+            match anchor(r, &anchors, &unanchored) {
+                Ok(s) => sets.extend(s),
+                Err(_) => {
+                    lost = true;
+                    break;
                 }
             }
-            if !unanchored.contains(rel) && sets != anchors[rel] {
-                anchors.insert(rel, sets);
-                changed = true;
-            }
         }
-        if !changed {
-            break;
+        if lost {
+            unanchored.insert(rel);
+        } else if sets != anchors[rel] {
+            anchors.insert(rel, sets);
+        } else {
+            continue;
         }
+        queue.extend(readers.get(rel).into_iter().flatten().copied().filter(|h| candidates.contains(h) && !unanchored.contains(h)));
     }
     // Anchored with no row that differs: no literal of its rules differs, its narrow rows are its rows.
     let same: BTreeSet<String> = candidates.iter().copied().filter(|rel| !unanchored.contains(rel) && anchors[rel].is_empty() && !lattice.contains_key(*rel)).map(str::to_owned).collect();

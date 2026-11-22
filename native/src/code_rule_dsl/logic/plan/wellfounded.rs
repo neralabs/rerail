@@ -390,9 +390,7 @@ impl Analysis for Proofs {
             }
         }
         let roots: Vec<&str> = comps.0.iter().zip(&recursive).filter(|(_, r)| **r).flat_map(|(c, _)| c.iter().map(String::as_str)).collect();
-        let summarized = crate::code_rule_dsl::logic::profile::span(|| format!("the rules' helpers summarized ({} rules, {} roots)", rules.len(), roots.len()));
         let helpers = summarize(&rules, &types, &roots);
-        drop(summarized);
         let comps = comps.0.iter().zip(&recursive).filter(|(_, r)| **r).map(|(c, _)| (c.clone(), classify(&rules, &helpers, &types, c))).collect();
         Ok(Proofs { comps })
     }

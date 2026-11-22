@@ -503,16 +503,57 @@ pub mod heap {
     /// The threads' names by number, as each named itself (`name_thread`).
     static THREAD_NAMES: std::sync::Mutex<Vec<(u32, String)>> = std::sync::Mutex::new(Vec::new());
 
-    /// This thread's number (1 on), given at its first ask without allocating.
+    /// This thread's number (1 on), given at its first ask without allocating. Its name as the system holds it is
+    /// kept by its number (`SYSTEM_NAMES`), read on the thread itself: a thread that names itself to the system alone
+    /// (a pool's, `thread_name`, as std's start sets it before the thread runs) is named in the report.
     fn thread_ix() -> u32 {
         THREAD_IX
             .try_with(|c| {
                 if c.get() == 0 {
-                    c.set(THREADS.fetch_add(1, Relaxed) + 1);
+                    let ix = THREADS.fetch_add(1, Relaxed) + 1;
+                    keep_system_name(ix);
+                    c.set(ix);
                 }
                 c.get()
             })
             .unwrap_or(0)
+    }
+
+    /// The bytes of a system name kept (`SYSTEM_NAMES`), NUL-padded.
+    const NAME_WORDS: usize = 8;
+    /// The numbered threads' system names, by number: `NAME_WORDS` words of bytes each (0: none kept).
+    static SYSTEM_NAMES: [[AtomicU64; NAME_WORDS]; 4096] = [const { [const { AtomicU64::new(0) }; NAME_WORDS] }; 4096];
+
+    /// Keeps the calling thread's system name as thread `ix`'s, without allocating.
+    fn keep_system_name(ix: u32) {
+        #[cfg(unix)]
+        if let Some(slot) = SYSTEM_NAMES.get(ix as usize) {
+            let mut buf = [0u8; NAME_WORDS * 8];
+            // SAFETY: the calling thread's own handle; the name is written NUL-ended into `buf`, of its length.
+            if unsafe { libc::pthread_getname_np(libc::pthread_self(), buf.as_mut_ptr().cast(), buf.len()) } == 0 {
+                for (w, bytes) in slot.iter().zip(buf.chunks_exact(8)) {
+                    w.store(u64::from_le_bytes(bytes.try_into().unwrap_or([0; 8])), Relaxed);
+                }
+            }
+        }
+        #[cfg(not(unix))]
+        let _ = ix;
+    }
+
+    /// A thread that names itself to the system alone (a pool's) is named by that name where it opened no span.
+    #[cfg(all(test, unix))]
+    #[test]
+    fn a_thread_named_to_the_system_alone_is_named() {
+        let ix = std::thread::Builder::new().name("rr-lane-host 3".into()).spawn(thread_ix).unwrap().join().unwrap();
+        assert_eq!(system_name(ix).as_deref(), Some("rr-lane-host 3"));
+        assert!(name(THREAD | ix).ends_with("rr-lane-host 3"), "{}", name(THREAD | ix));
+    }
+
+    /// Thread `ix`'s system name, as it was when it was numbered.
+    fn system_name(ix: u32) -> Option<String> {
+        let slot = SYSTEM_NAMES.get(ix as usize)?;
+        let bytes: Vec<u8> = slot.iter().flat_map(|w| w.load(Relaxed).to_le_bytes()).take_while(|&b| b != 0).collect();
+        (!bytes.is_empty()).then(|| String::from_utf8_lossy(&bytes).into_owned())
     }
 
     /// Names this thread for its samples taken with no span open (the profile names each thread at its first span).
@@ -818,7 +859,10 @@ pub mod heap {
             let names = THREAD_NAMES.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
             return match names.iter().find(|(i, _)| *i == ix) {
                 Some((_, n)) => format!("(no span open) on {n}"),
-                None => format!("(no span open) on thread #{ix}, unnamed (it opened no span)"),
+                None => match system_name(ix) {
+                    Some(n) => format!("(no span open) on thread #{ix}, {n}"),
+                    None => format!("(no span open) on thread #{ix}, unnamed (it opened no span)"),
+                },
             };
         }
         if id == 0 {

@@ -306,13 +306,20 @@ struct Held(parking_lot::Mutex<Vec<std::sync::Weak<OnConn>>>);
 
 /// The runs' relations held now, by name: their rows, columns, values' bytes (allocated), and the runs holding one
 /// of that name; most bytes first. A run's derived relations, and its loaded inputs as `input: <spec>`.
+/// The rows `r` holds of the run's, as the memory profile counts them (`held_by_name`). A view holds none: its rows are
+/// its source's, read where they lie, and its length is not asked, as a source made on lookup makes every row for it
+/// (the memory sampler's thread held 87 MB of `within`'s rows on the M3's 300 files, made only for this count).
+pub(crate) fn rows_held(r: &InRel) -> usize {
+    if r.view.is_some() { 0 } else { r.len() }
+}
+
 pub fn held_by_name() -> Vec<(String, usize, usize, usize, usize)> {
     let held = crate::code_rule_dsl::logic::profile::machine::<Held>();
     let conns: Vec<Arc<OnConn>> = held.0.lock().iter().filter_map(std::sync::Weak::upgrade).collect();
     let mut by: HashMap<String, (usize, usize, usize, usize)> = HashMap::default();
     let mut add = |name: String, r: &InRel| {
         let e = by.entry(name).or_default();
-        e.0 += r.len();
+        e.0 += rows_held(r);
         e.1 = r.k;
         e.2 += r.held_bytes().0;
         e.3 += 1;
@@ -3394,8 +3401,83 @@ pub fn step_tails(conn: impl Scoped, name: &str) -> Result<Vec<usize>> {
     }).collect())
 }
 
-/// One step's histogram (`step_histograms`): its rows past its constants, and their counts by key (`histogram_key`).
-pub type Histogram = (u64, rustc_hash::FxHashMap<u64, u64>);
+/// One step's histogram (`step_histograms`): its rows past its constants, and their counts by key (`histogram_key`),
+/// shared by the strata that read the same input's (`OnConn::histograms`).
+pub type Histogram = (u64, Arc<Counts>);
+
+/// A histogram's counts by key (decision 0203 §3), in a block of the run's (decision 0353): an open-addressed table of
+/// a power of two slots, each a key and its count (a count of 0: an empty slot), half full at most. A map on the heap
+/// before (`pth_unpack`'s held 25.6 MB at a run's peak on the M3's 300 files), cloned into the cache.
+pub struct Counts {
+    keys: BlockVec<u64>,
+    counts: BlockVec<u64>,
+    len: usize,
+}
+
+impl Counts {
+    fn new() -> Self {
+        Counts::with_slots(64)
+    }
+
+    fn with_slots(n: usize) -> Self {
+        let (mut keys, mut counts) = (BlockVec::with_capacity_in(None, n), BlockVec::with_capacity_in(None, n));
+        keys.resize(n, 0);
+        counts.resize(n, 0);
+        Counts { keys, counts, len: 0 }
+    }
+
+    /// Key `key`'s slot: where it is, or the empty one it would go in.
+    fn slot(&self, key: u64) -> usize {
+        let bits = self.keys.len().trailing_zeros();
+        let mask = self.keys.len() - 1;
+        let mut i = (key.wrapping_mul(0x9e37_79b9_7f4a_7c15) >> (64 - bits)) as usize;
+        while self.counts[i] != 0 && self.keys[i] != key {
+            i = (i + 1) & mask;
+        }
+        i
+    }
+
+    /// Adds `n` (more than 0) to `key`'s count.
+    fn add(&mut self, key: u64, n: u64) {
+        if 2 * (self.len + 1) > self.keys.len() {
+            let mut next = Counts::with_slots(2 * self.keys.len());
+            for (k, c) in self.iter() {
+                next.add(k, c);
+            }
+            *self = next;
+        }
+        let i = self.slot(key);
+        if self.counts[i] == 0 {
+            self.keys[i] = key;
+            self.len += 1;
+        }
+        self.counts[i] += n;
+    }
+
+    /// Every count times `by`: a strided read's, scaled to the rows read past.
+    fn scale(&mut self, by: u64) {
+        self.counts.iter_mut().for_each(|c| *c *= by);
+    }
+
+    /// Key `key`'s count: 0 when no row has it.
+    pub fn get(&self, key: u64) -> u64 {
+        self.counts[self.slot(key)]
+    }
+
+    /// How many keys it counts.
+    pub fn len(&self) -> usize {
+        self.len
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
+    }
+
+    /// Each key and its count, in no order.
+    pub fn iter(&self) -> impl Iterator<Item = (u64, u64)> + '_ {
+        self.keys.iter().zip(self.counts.iter()).filter(|(_, c)| **c != 0).map(|(&k, &c)| (k, c))
+    }
+}
 
 /// A histogram's key for one row's key columns (`values`): the value itself for one column; for several, a 64-bit mix
 /// of them (two keys of a million rows meet once in 10^7 histograms), so a key is 8 bytes in place, not a vector of
@@ -3431,7 +3513,7 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
         // `at` is the plan's step: the atom is the step made first for it.
         let Some(Step::Atom { src, neg: false, keys, .. }) = j.step_of(*at).and_then(|s| j.steps.get(s)) else { return None };
         let consts: Vec<(usize, i64)> = keys.iter().filter_map(|&(c, k)| match k { Key::Const(v) => Some((c, v)), Key::Slot(_) => None }).collect();
-        let mut counts: rustc_hash::FxHashMap<u64, u64> = rustc_hash::FxHashMap::default();
+        let mut counts = Counts::new();
         let mut passed = 0u64;
         let mut count = |n: usize, value: &dyn Fn(u32, usize) -> Option<i64>| -> u64 {
             let stride = n.div_ceil(cap.max(1)).max(1);
@@ -3440,7 +3522,7 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
                 let i = id as u32;
                 if consts.iter().all(|&(c, v)| value(i, c) == Some(v)) && let Some(key) = histogram_key(cols.iter().map(|&c| value(i, c))) {
                     passed += 1;
-                    *counts.entry(key).or_insert(0) += 1;
+                    counts.add(key, 1);
                 }
                 id += stride;
             }
@@ -3463,17 +3545,17 @@ pub fn step_histograms(conn: impl Scoped, name: &str, line: usize, whole: bool, 
                 }
                 let stride = count(rel.len(), &|i, c| (!is_dead(&rel.dead, i)).then(|| rel.at(i as usize).read().at(c)));
                 if stride > 1 {
-                    counts.values_mut().for_each(|n| *n *= stride);
+                    counts.scale(stride);
                 }
-                let h = (passed * stride, counts);
+                let h = (passed * stride, Arc::new(counts));
                 on.histograms.lock().insert(key, h.clone());
                 return Some(h);
             }
         };
         if stride > 1 {
-            counts.values_mut().for_each(|n| *n *= stride);
+            counts.scale(stride);
         }
-        Some((passed * stride, counts))
+        Some((passed * stride, Arc::new(counts)))
     }).collect())
 }
 
@@ -4741,21 +4823,14 @@ pub fn hold_bound(conn: &Connection, table: &str, rel: Arc<InRel>) {
 }
 
 /// A native relation of `conn`'s run as it can be kept and held again (`hold_rows`): its columns' types and its live
-/// rows, flat.
-pub fn kept_rows(conn: &Connection, table: &str) -> Option<(Vec<u8>, Vec<i64>, usize)> {
+/// rows where they lie, as a source (`Derived`). Not a view.
+pub fn kept_source(conn: &Connection, table: &str) -> Option<(Vec<u8>, Arc<dyn crate::code_rule_dsl::facts::vtab::Source>)> {
     let rel = on(conn).derived.lock().get(table).cloned()?;
     if rel.view.is_some() {
         return None;
     }
-    let k = rel.k;
-    let mut out = Vec::with_capacity(rel.rows() * k);
-    for id in 0..rel.len() as u32 {
-        if rel.ndead > 0 && is_dead(&rel.dead, id) {
-            continue;
-        }
-        out.extend_from_slice(&rel.rows.row(id, k));
-    }
-    Some((rel.types.clone(), out, rel.rows()))
+    let types = rel.types.clone();
+    Some((types, Derived::source(rel, None)))
 }
 
 /// The relations `adopt`ed into `conn`'s next run, taken by its planner.
@@ -4816,6 +4891,15 @@ impl InRel {
         Some(Arc::new(rel))
     }
     /// Its live rows' levels, in `live_rows`' order: `None` unless every row has one (`has_levels`).
+    /// Each live row's level, by its place among the live rows, where it has them (`has_levels`).
+    pub fn each_live_level(&self, f: &mut dyn FnMut(usize, u32)) {
+        if !self.has_levels() {
+            return;
+        }
+        for (i, id) in (0..self.n).filter(|&id| self.ndead == 0 || !is_dead(&self.dead, id as u32)).enumerate() {
+            f(i, self.level[id]);
+        }
+    }
     pub fn live_levels(&self) -> Option<Vec<u32>> {
         if !self.has_levels() {
             return None;

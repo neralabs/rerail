@@ -120,7 +120,7 @@ fn finite_literals_filter_before_witness_limits_across_register_and_dynamic_bran
             assert!(
                 trace
                     .iter()
-                    .all(|record| record.encoded && record.submitted && record.completed)
+                    .all(|record| record.submitted && record.completed)
             );
         }
     }
@@ -150,7 +150,7 @@ fn finite_literal_register_work_stays_broad_across_programs_and_files() {
         assert!(
             trace
                 .iter()
-                .all(|record| record.encoded && record.submitted && record.completed)
+                .all(|record| record.submitted && record.completed)
         );
         if let Some(first) = first_launches {
             assert!(trace.len() <= first + 8);

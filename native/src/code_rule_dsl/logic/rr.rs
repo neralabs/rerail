@@ -767,39 +767,40 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
     Ok((modules, units.iter().map(|members| members.iter().map(|&i| paths[i].clone()).collect()).collect(), keys))
 }
 
-/// The store rule images are read from and kept in (`images_store`), unless `RERAIL_MODULE_IMAGES=off`.
-/// The store the run's rule images are kept in (decision 0264, `images`): the engine build's, shared by every project
-/// (`RERAIL_IMAGE_STORE`: a path, or `project` for the run's own store); a test's own store under test.
-fn images_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
-    match images_kept() {
-        ImagesKept::Project => crate::code_rule_dsl::logic::plan::corpus::phases::reading_store(),
-        ImagesKept::Path(path) => crate::content_store::ContentStore::open_images(&path).ok().map(std::sync::Arc::new),
-    }
-}
-
-/// Where `images_store` keeps the run's rule images: the run's own store, or a store of its own at a path.
-enum ImagesKept {
+/// Where the run's rule images are kept (decision 0264): the engine build's store, shared by every project
+/// (`RERAIL_IMAGE_STORE`: a path, or `project` for the run's own store); a test's own store under test. `images_store`
+/// opens it.
+enum Where {
     Project,
     Path(std::path::PathBuf),
 }
 
-fn images_kept() -> ImagesKept {
+fn where_kept() -> Where {
     if cfg!(any(test, feature = "test-hooks")) {
-        return ImagesKept::Project;
+        return Where::Project;
     }
     match std::env::var("RERAIL_IMAGE_STORE") {
-        Ok(v) if v == "project" => ImagesKept::Project,
-        Ok(v) => ImagesKept::Path(std::path::PathBuf::from(v)),
-        Err(_) => ImagesKept::Path(crate::code_rule_dsl::logic::plan::corpus::build_store("rerail-images", None)),
+        Ok(v) if v == "project" => Where::Project,
+        Ok(v) => Where::Path(std::path::PathBuf::from(v)),
+        Err(_) => Where::Path(crate::code_rule_dsl::logic::plan::corpus::build_store("rerail-images", None)),
     }
 }
 
 /// The path of the store `images_store` opens, found without opening it: the run's own store's (`tape_cache_path`),
 /// or the images' own. A caller that keeps an image once a store (phase 0's graphs) names the store by it.
-pub(in crate::code_rule_dsl) fn images_store_path() -> Option<std::path::PathBuf> {
-    match images_kept() {
-        ImagesKept::Project => crate::code_rule_dsl::logic::plan::corpus::tape_cache_path(),
-        ImagesKept::Path(path) => Some(path),
+pub fn image_store_path() -> Option<std::path::PathBuf> {
+    match where_kept() {
+        Where::Project => crate::code_rule_dsl::logic::plan::corpus::tape_cache_path(),
+        Where::Path(path) => Some(path),
+    }
+}
+
+/// The store the run's rule images are kept in, where `where_kept` says (decision 0264). `image_store` reads
+/// it, unless `RERAIL_MODULE_IMAGES=off`.
+fn images_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+    match where_kept() {
+        Where::Project => crate::code_rule_dsl::logic::plan::corpus::phases::reading_store(),
+        Where::Path(path) => crate::content_store::ContentStore::open_images(&path).ok().map(std::sync::Arc::new),
     }
 }
 

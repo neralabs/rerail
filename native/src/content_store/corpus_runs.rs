@@ -114,25 +114,6 @@ impl CorpusPass {
     }
 }
 
-/// The corpus memo's schemas before 4 (logic/plan/corpus/memo.rs): their rows were written before decision 0053, under
-/// plans no manifest names, so only a sweep collects them, by number alone (a content-pure row, empty path, is never
-/// the corpus's). So no other user of `facts_results` may take one: each declares its schema through
-/// `live_fact_schema`. The plan choices (3) and kept plans (2) once did, and a new store's first collection swept
-/// the first run's entries (O-kept-strata-flake). The text tests' compiled groups (103) were kept in the facts memo
-/// until decision 0264 made them images of the engine's build.
-pub const RETIRED_CORPUS_MEMO_SCHEMAS: &[u32] = &[2, 3, 103];
-
-/// `schema`, refused at compile time when the sweep of `RETIRED_CORPUS_MEMO_SCHEMAS` would delete its rows: every
-/// `facts_results` user's fact schema is declared through this.
-pub const fn live_fact_schema(schema: u32) -> u32 {
-    let mut i = 0;
-    while i < RETIRED_CORPUS_MEMO_SCHEMAS.len() {
-        assert!(RETIRED_CORPUS_MEMO_SCHEMAS[i] != schema, "a retired corpus memo schema: the collector sweeps its rows");
-        i += 1;
-    }
-    schema
-}
-
 fn lapsed_plan_hold(connection: &rusqlite::Connection, now: i64) -> StoreResult<bool> {
     Ok(connection
         .query_row_cached("SELECT 1 FROM object_pins WHERE object_kind_id=?1 AND lease_until<?2 LIMIT 1", params![OBJECT_PLAN, now], |r| r.get::<_, i64>(0))
@@ -620,9 +601,6 @@ impl ContentStore {
         if self.analysis_snapshot_due(now)? {
             return Ok(true);
         }
-        if self.retired_memo_rows_left()? {
-            return Ok(true);
-        }
         let due = match self.corpus_due()? {
             0 if self.lapsed_plan_hold(now)? => 1,
             due => due,
@@ -681,12 +659,6 @@ impl ContentStore {
     fn lapsed_plan_hold(&self, now: i64) -> StoreResult<bool> {
         let connection = self.connection.lock().expect("content store connection unavailable");
         lapsed_plan_hold(&connection, now)
-    }
-
-    /// Whether the retired corpus memo schemas' rows are still being swept.
-    fn retired_memo_rows_left(&self) -> StoreResult<bool> {
-        let connection = self.connection.lock().expect("content store connection unavailable");
-        Ok(connection.query_row_cached("SELECT 1 FROM corpus_swept WHERE singleton=1 AND done=0", [], |r| r.get::<_, i64>(0)).optional()?.is_some())
     }
 
     /// `corpus_state.due`: 0 nothing, 1 a new manifest (a decision is due), 2 a decision's rows being collected.
@@ -924,26 +896,6 @@ impl ContentStore {
     fn collect_corpus_pass_unmapped(&self, policy: &CorpusPolicy, now: i64) -> StoreResult<CorpusPass> {
         let Some(_lease) = self.try_collect()? else { return Ok(CorpusPass::default()) };
         let mut pass = CorpusPass::default();
-        // Rows of the corpus memo's retired schemas (before decision 0053 named plans): no plan collects them.
-        let swept = self.immediate_transaction(|tx| {
-            let left: Option<i64> = tx.query_row_cached("SELECT 1 FROM corpus_swept WHERE singleton=1 AND done=0", [], |r| r.get(0)).optional()?;
-            if left.is_none() {
-                return Ok(0);
-            }
-            let schemas = RETIRED_CORPUS_MEMO_SCHEMAS.iter().map(u32::to_string).collect::<Vec<_>>().join(",");
-            let n = tx.execute(
-                &format!(
-                    "DELETE FROM facts_results WHERE (source_id, fact_schema, path, plan_digest) IN (\
-                     SELECT source_id, fact_schema, path, plan_digest FROM facts_results WHERE fact_schema IN ({schemas}) AND path<>'' LIMIT ?1)"
-                ),
-                [PLAN_ROWS_PER_PASS],
-            )?;
-            if (n as i64) < PLAN_ROWS_PER_PASS {
-                tx.execute_cached("UPDATE corpus_swept SET done=1 WHERE singleton=1", [])?;
-            }
-            Ok(n)
-        })?;
-        pass.plan_rows = swept;
         // Holds of runs whose process is gone are released: their plans may be dead now, so a decision is due.
         let orphans = {
             let connection = self.connection.lock().expect("content store connection unavailable");
@@ -963,9 +915,6 @@ impl ContentStore {
                 // Nothing a decision could change: no root went past its protected runs, and the last decision is
                 // recent. The sweep waits for the next decision too; a new manifest makes collection due again.
                 self.immediate_transaction(|tx| Ok(tx.execute_cached("UPDATE corpus_state SET due=0 WHERE singleton=1 AND due=1", [])?))?;
-                if swept > 0 {
-                    pass.collection = self.collect_held(now, MAX_COLLECTION_BATCH)?;
-                }
                 return Ok(pass);
             }
             pass.kept = Some(self.keep_corpus_runs_held(policy, now)?);
@@ -975,30 +924,21 @@ impl ContentStore {
         }
         // The kept spaces' entries only dead programs read (decision 0401 F4), while their plans are still known dead.
         pass.plan_rows += self.collect_kept_facts()?;
-        // Dead plans, one transaction each, until the pass's budget of rows is spent: a dead build's memo is its
-        // entries' rows (one statement), and one plan a pass left a store's dead builds for as many runs.
+        // Dead plans, one transaction each, until the pass's budget is spent: a dead build's per-file memo is its
+        // entries' space (decision 0146), and its kept entries went with it above (`collect_kept_facts`).
         let mut budget = PLAN_ROWS_PER_PASS as usize;
         while budget > 0 {
             let n = self.immediate_transaction(|tx| {
                 let dead: Option<Vec<u8>> = tx.query_row_cached("SELECT plan_digest FROM corpus_plans WHERE live=0 LIMIT 1", [], |r| r.get(0)).optional()?;
                 let Some(plan) = dead else { return Ok(0) };
-                let n = tx.execute_cached(
-                    "DELETE FROM facts_results WHERE (source_id, fact_schema, path, plan_digest) IN (\
-                     SELECT source_id, fact_schema, path, plan_digest FROM facts_results WHERE plan_digest=?1 LIMIT ?2)",
-                    params![plan, PLAN_ROWS_PER_PASS],
-                )?;
-                if (n as i64) < PLAN_ROWS_PER_PASS {
-                    // The plan's per-file memo (decision 0146): its entries' space.
-                    let mut memo_gone = 0;
-                    if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
-                        memo_gone = super::held::drop_memo_space(tx, &super::held::local_space(&digest))?;
-                    }
-                    tx.execute_cached("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
-                    tx.execute_cached("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
-                    // A dead plan collected is work done, though its memo is entries in segments (decision 0240 §4), not rows.
-                    return Ok(n + memo_gone + 1);
+                let mut memo_gone = 0;
+                if let Ok(digest) = <[u8; 32]>::try_from(plan.as_slice()) {
+                    memo_gone = super::held::drop_memo_space(tx, &super::held::local_space(&digest))?;
                 }
-                Ok(n)
+                tx.execute_cached("DELETE FROM corpus_plans WHERE plan_digest=?1 AND live=0", [&plan])?;
+                tx.execute_cached("DELETE FROM corpus_plan_relations WHERE plan_digest=?1", [&plan])?;
+                // A dead plan collected is work done, though its memo is entries in segments (decision 0240 §4), not rows.
+                Ok(memo_gone + 1)
             })?;
             pass.plan_rows += n;
             if n == 0 {

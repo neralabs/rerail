@@ -116,6 +116,8 @@ pub struct Joined {
 /// scan of the threads' counts between: the pairs in order, sized exactly. For a plain equi-join the sort and probe
 /// (`metal_sort`) does only the pairs' work; the tile is for pairs a key cannot find (containment, order).
 pub fn tile_join(left: &Resident, lkeys: &[usize], right: &Resident, rkeys: &[usize]) -> Result<Joined, String> {
+    // An evaluation of the launch budget (`super::launch`), or the caller's when it is in one: both passes.
+    let _evaluation = super::launch::LaunchScope::enter();
     let pass = Pass::new()?;
     let job = TileJob::count(&pass, left, lkeys, right, rkeys)?;
     let mut gpu = pass.commit_wait()?;

@@ -65,7 +65,7 @@ pub const GROUPS: &str = "matchgroup_";
 
 /// The relations a text test's string can come from, and their text columns: the batch interns these strings, so a
 /// test over them is answered from the batch's vocabulary (`facts::vtab::syntax`).
-pub const TEXT_COLUMNS: [(&str, &[usize]); 33] = [
+pub const TEXT_COLUMNS: [(&str, &[usize]); 31] = [
     ("text", &[1]),
     ("name", &[1]),
     ("str", &[1]),
@@ -97,8 +97,6 @@ pub const TEXT_COLUMNS: [(&str, &[usize]); 33] = [
     ("dump_sha256", &[1]),
     ("body_sha256", &[1]),
     ("signature_sha256", &[1]),
-    ("split_line", &[2]),
-    ("lf_line", &[2]),
 ];
 
 /// One test over a set of patterns, compiled once: each pattern lowered by the text layer to its canonical plan (an

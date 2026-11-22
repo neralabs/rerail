@@ -1,9 +1,10 @@
 # 0563: A relation no rule can fill makes no stratum, and an edit's delta reaches a rule by the kinds it holds
 
 Status: designed (2026-11-21), spiked (2026-11-21, "Spike" below: each part validated on ep2, findings exact; the
-design is amended there), A1–A2 and B built (2026-11-21, "Built" below). A1–A2 hold only for batches whose
-languages embed none; a Python batch's guests are known only once its documents are loaded, so for ep2 that part
-waits for A3's run-time form. The user asked for it (2026-11-21): "okay, please survey and design this.
+design is amended there), A1–A2 and B built (2026-11-21, "Built" below). A1–A2 hold where no document embeds a
+program: its language embeds none, or the store records its text as loaded with none, or (a text not loaded yet)
+its language embeds only by call argument and the text names no place's callee. So they hold on ep2. The user
+asked for it (2026-11-21): "okay, please survey and design this.
 Does it also make sense to track changes per fact type? Presumably much work could be cut out if certain fact
 deltas are empty without needing to propagate it." "This" is the 1,700 strata the merge of the serverplan-quality
 hub (2ac89a3a70) added to every cold run of ep2, which makes no guests. Follows 0101 §1, 0117, 0120 and 0431.
@@ -406,9 +407,21 @@ in the run, whose delta is known only when its stratum has run).
 ### A1 and A2
 
 - **The predicate** (`run_observed_within`, after the split): the file-local part answers no request (`!parsing`),
-  the run is not `.embedded on`, and no language of the batch embeds another (`Dialect::embeds()` empty, for the
-  run's dialect and each document's). There is no switch: the pruned parts are a function of the split's, whose
-  digests the memo's and the components' keys are.
+  the run is not `.embedded on`, and no document may embed a program (`may_embed`). A document may not where:
+  - its language embeds none (`Dialect::embeds()` empty);
+  - or the store records its text, in its grammar, grammar version and tape format, as loaded with no programs
+    (`ContentStore::programs_counts`, the `tape_objects.programs` column, 0 = none, below);
+  - or the store does not know its text (a new file, an edit, an empty store), its language embeds only by call
+    argument (Python: `Markup`, `format_html`, 0470), and the text names none of the places' callees. That is the
+    embedder's own test (`embed::call_argument`'s `memchr` precheck), which then builds nothing. The text is read
+    as the run reads it: held, else the file.
+
+  Any other embedding (an HTML file's scripts, a Vue file's blocks) is of the file's structure, so such a document
+  may embed unless the store says it holds none. There is no switch: the pruned parts are a function of the split's,
+  whose digests the memo's and the components' keys are, and a document's text and grammar are in those digests.
+- **The store records "no programs".** A load wrote a tape's program count only where it was not zero, so a count
+  of 0 read the same as unknown (−1). `ObjectsWrite::run` now writes 0 for a load with none
+  (`ContentStore::put_no_programs`, only over −1). `attach_programs` already read 0 as "recorded, none".
 - **The guest-only set** is `guests::ONLY`, beside `READS`.
 - **One pass, `prune::Unfillable`**, forward and backward:
   - forward: the closure seeded from the empty inputs;
@@ -420,8 +433,15 @@ in the run, whose delta is known only when its stratum has run).
 - **Tests:** `prune::tests::a_rule_joining_an_empty_input_goes_with_what_only_it_reads` (a rule over an empty input
   goes, with the demand only it read; a negated empty relation keeps its rule; a relation a phase binds beside its
   rules is never taken empty), and the guest tests of `corpus` and `rr`.
-- **ep2** is a Python batch, so A does not fire there. Python embeds by call argument, and whether a file has such
-  a call is known only once it is loaded, after the split. That case is A3's run-time form (below).
+- **Test:** `session::tests::a_session_drops_the_guest_rules_where_no_document_embeds`. A Python batch whose
+  `parsed` is asked only across files: the first run (an empty store, the callee test) and an edit (one text
+  recorded with none, one new text naming no callee) drop rules (`Report::unfillable`); an edit that adds a
+  `Markup("…")` call keeps them. Each run's findings are a full run's.
+- **The pass is worklists**, each rule and read visited once. As fixed-point sweeps over ep2's 15,000 rules it took
+  1.38 s of an edit's 4.5 s; as worklists, 11 ms.
+- **ep2**, M3: A fires on the cold run (an empty store) and on every edit; none of its 300 files names `Markup` or
+  `format_html`. Cold: 8,097 → 5,655 strata (the spike measured A at about 2% of a cold run's instructions); the
+  store then records 618 texts with no programs. The edits, with A on, are in B's second table below.
 
 ### B: the reach by kind and key
 
@@ -486,9 +506,113 @@ seen. A line put at a file's top cuts `exists_0` but not `violation` (above). Ea
 | An import at a file's top | 66.1 → 61.4 G | 4.98 → 4.49 s | 3.70 → 3.43 s | 878 → 783 MB |
 | A comprehension added at another file's end | 61.8 → 58.5 G | 4.85 → 4.69 s | 3.54 → 3.34 s | 921 → 903 MB |
 
+With A firing too (both sides; B off and on, the same machine, a later run):
+
+| Edit | Instructions | CPU | Wall | Peak memory |
+|---|---|---|---|---|
+| `append` | 59.1 → 36.6 G | 4.48 → 2.97 s | 3.21 → 2.05 s | 855 → 648 MB |
+| An import at a file's top | 64.7 → 60.0 G | 4.50 → 4.07 s | 3.40 → 3.18 s | 878 → 766 MB |
+| A comprehension at another file's end | 61.0 → 57.4 G | 4.53 → 4.31 s | 3.31 → 3.10 s | 1,018 → 862 MB |
+
 - Before `Net`, the insert was even (66.0 → 66.6 G): 363 strata were cut. With `Net`, 444 are, at 124 ms of
   probes.
 - The profiled edit runs overstate the edits by 20–40%, so the numbers above are unprofiled.
+
+### After A and B: the edits' profiles
+
+With A and B built, the insert and the comprehension edit gained little (6–7%), so both were profiled (M3, A and B
+on). Their join steps cost 31 ms and 19 ms. Their cross-file joins cost 0.96 s and 1.41 s, and most of that was one
+removal join each building every document's rows (decision 0494), for an edit to one file:
+
+- **The insert: `docof` read as it was.** A removal join reads a changed input as it was (0364). `docof`'s old
+  version, probed by a node, made the node's document. `rewritable` (`upgrade-typing.rerail`), from
+  `future_annotations`'s gone row, walks `typing_ref` and tests each node's document, so it made 121 documents,
+  0.74 s. The node's document is its id's (0083 §3), so with the node bound the join now computes it (`DocOf`). The
+  id's document holds of every id the old rows hold, so the join finds at least what it did; a removal's rows are
+  candidates, each rechecked against the rows now. Test:
+  `made_batch_tests::a_removal_join_computes_docof_from_the_node`.
+- **The comprehension edit: the join screen measured its probe side first.** The Bloom screen (0488) measured the
+  probe side's rows before it checked the scan's against its floor (256). A removal join of a few `text` rows, then
+  a text test (`strtest_51`), so asked the text test's length. Unknown after an edit (one document's counts are
+  not given), that is every string that passes, every document made: 299 documents, 0.98 s, for a walk that is never
+  screened. The scan's floor is now checked first. Test: `join_filter::tests::a_small_scan_does_not_measure_its_probe_side`.
+
+ep2, M3, unprofiled, A and B on; outputs identical on every run:
+
+| Edit | Instructions | Wall | Peak memory |
+|---|---|---|---|
+| An import at a file's top | 60.0 → 50.2 G | 3.18 → 2.70 s | 766 → 705 MB |
+| A comprehension at another file's end | 57.4 → 39.0 G | 3.08 → 2.20 s | 862 → 753 MB |
+
+The append is unchanged (36.6 → 36.8 G). With B off, the append fell too (59.1 → 39.3 G): the screen's measure was
+much of what B cut there.
+
+### The import's cross part, profiled again (2026-11-22)
+
+After the two fixes the import's cross part is the dearest phase left of the three edits (1.04–1.10 s on the M3,
+0.51–0.62 s for the others). An import at a file's top moves every line of that file: `line`'s delta is 9,350 rows,
+`node_order`'s 8,675. Five strata are derived again for it, by 0090 §4's priced clause (`RERAIL_MODE_TRACE`); the
+dearest, `violation`, took a third of the cross part in the profile (0.57 s of 1.67 s on the mini). Derived again,
+its 163 rules that read a finding's place (`p49_ASYNC100($v0, _), node($d, $v0, …), doc($d, $p, _), line($v0, $l),
+col($v0, $c)`) probe `line` by each finding's node, and a probe makes the node's document (0494): 33 documents
+(`line column 0 ×33`), for an edit to one file.
+
+Maintaining it instead cost 34.8 s (`violation` alone forced into the mode; outputs identical). Each rule's removal
+and add lines led with `line`'s delta and read the finding last: `line → node → doc → !scope_drop → col →
+p49_ASYNC100`. The finding is one row, its rows measured, its columns' distinct values not; the containment share
+(the probes that hit) is skipped where a column's distinct values are not measured, so the probe was priced as
+keeping every binding. A column holds no more distinct values than its relation's rows, so where its own are not
+measured, the rows measured bound them (`plan.rs`, a relation of the component being solved excepted, its rows still
+growing). The lines now read `line → p49_ASYNC100 → …` (each priced 4,870, against 23,537), and `violation`
+maintained costs under 0.02 s of a 0.83 s cross part (profiled). Test:
+`plan::tests::a_probe_of_a_relation_measured_by_rows_alone_prices_its_misses`, which fails without it.
+
+ep2, M3, unprofiled, A and B on, every edit's outputs the rows of a fresh cold run of the same tree (all 661
+relations):
+
+| Edit | Instructions before | after |
+|---|---|---|
+| The append | 36.8 G | 36.6 G |
+| An import at a file's top | 50.2 G | 48.6 G |
+| A comprehension at another file's end | 39.0 G | 38.6 G |
+
+The priced clause still derived the five again: the mode at 1.9 M, the derive at 3,501. With the clause off
+(`RERAIL_AGAIN_PRICE=1e15`) the import's cross part was 0.75 s against 1.05 s, outputs identical. The derive's
+price is its joins' rows, but deriving `violation` again also made the 33 documents, 0.19 s of its 0.41 s
+(`MadeRows::routed`, sampled). The mode's price was its lines' real order.
+
+**A maintain mode's line starts where it is cheapest.** A removal or add line is a whole join (`Line::Remove`,
+`Line::Seed`), and a changed input's version is probed through its own index wherever it is read
+(`Source::Version`). Only a semi-naive probe's delta must lead its wave. A positive driver's line whose relation's
+change is past 0090 §4's floor (`RERAIL_AGAIN_MIN`) is now planned with its delta sized by its rows but free to start
+anywhere (`Stats::lead_free`, its plans keyed apart). Probed through a bound variable, the delta is priced as the
+relation's probe at the delta's share of its rows. Each of the 163 lines reads the finding first and probes the
+moved lines by its node. Under the floor a line costs little whatever its order, and keeps the program's: planned
+free, its prepared plan was not taken, and each append cost 1 G more (38.0 against 37.1 G). A negated driver still
+leads its line (`Body::with_bound`).
+
+**A line priced over its rule's derive is searched before the comparison.** A kept order is run as it is while its
+work re-priced is under `REPLAN_ROWS` (10,000): a search could save no more than that. The price clause sums 490
+such prices against the derive. After the append, three lines kept from its few moved lines (led by `line`'s delta
+there) were each priced 9,836 at the import, against a best of 10 to 60: the mode at 30,377, `violation` derived
+again. In `mode_costs`, a line priced over its rule's derive is searched, and priced at the cheaper of the two.
+
+With both, `violation` is maintained: mode 1,039 against derive 3,505. ep2 on the M3, unprofiled, A and B on, cold
+then the append, the import and a second append, each side its own store, sides alternating; before is the same
+build with neither (outputs identical between the sides on every edit; without the floor, the last edit's rows
+equal a fresh cold run's in all 661 relations):
+
+| Edit | cross before | after | Instructions before | after |
+|---|---|---|---|---|
+| The append | 0.53 s | 0.52 s | 36.8 G | 36.7 G |
+| An import at a file's top | 1.00 s | 0.68 s | 48.8 G | 42.6 G |
+| A second append | 0.61 s | 0.61 s | 39.0 G | 38.6 G |
+
+The import's cross part is now within 0.1 s of the appends'. Tests:
+`plan::tests::a_maintain_mode_line_starts_where_it_is_cheapest` (fails with the start fixed);
+`maintain_tests::a_finding_s_places_moved_are_maintained` (cold, an append past the floor whose line its few new
+places lead, then an import at the file's top; outputs a fresh run's; fails without either change: mode 526
+against derive 404).
 
 ### The order of work, amended
 
@@ -504,8 +628,9 @@ seen. A line put at a file's top cuts `exists_0` but not `violation` (above). Ea
    - the outputs compared on the `append` and insert edits, and B4's test.
 3. ~~**Stable node identity** across an edit.~~ It was already built: ids are by definition (`granules`). An
    insert's delta is the places that moved, and B's `Net` reads past them.
-4. **A3**, on a corpus that answers requests, and as A1–A2's run-time form: the guest inputs counted empty once a
-   batch's documents are loaded and none holds a guest. That is what serves a Python batch like ep2.
+4. **A3**, on a corpus whose file-local part answers requests: the guest inputs counted empty once admission has
+   closed. A Python batch like ep2 no longer needs it: the store's program counts and the callee test decide before
+   the split (A1–A2, above).
 
 ## Prior art
 

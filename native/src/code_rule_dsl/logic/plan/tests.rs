@@ -2173,6 +2173,72 @@ fn a_delta_probe_prices_a_lookup_by_the_bindings_it_can_hit() {
     assert_eq!(order[..2], ["pv", "fcall"], "{order:?}");
 }
 
+/// A relation whose rows are measured and its columns' distinct values are not holds no more distinct values than
+/// rows: a probe of it by a binding drawn from many values mostly misses. ep2's import edit: a finding of one row,
+/// `p49_ASYNC100($n, _)`, priced as keeping every binding, was probed after four old versions' reads of 4,672 moved
+/// nodes in each of 163 rules' lines (34.8 s of the maintain mode), where read after the delta it drops them.
+/// ep2's `violation` rule reading a finding's place, with the corpus's statistics: a finding of one row, its
+/// columns' distinct values not measured, and `line`'s delta of 4,672 moved rows.
+fn finding_place_model() -> (Arc<Version>, Model) {
+    let p = parse_version(
+        ".decl line(n:number, l:number)\n.decl col(n:number, c:number)\n.decl node(d:number, n:number)\n.decl doc(d:number, p:number)\n\
+         .decl finding(n:number, w:number)\n.decl violation(p:number, l:number, c:number)\n\
+         violation(p, l, c) :- finding(n, w), node(d, n), doc(d, p), line(n, l), col(n, c).\n.output violation\n",
+    )
+    .unwrap();
+    let inputs = Inputs { facts: "main.".to_owned(), stats: "main.".to_owned(), atoms: Some([0; 3]), native: BTreeSet::new(), batch: HashMap::new(), given: None, kept: BTreeSet::new() };
+    let derived: HashSet<String> = p.rules().map(|r| p.rel_name(r.head().rel()).to_owned()).collect();
+    let mut model = Model { shapes: Default::default(), docs_by_shift: false, analysis: Default::default(), stats: Stats::empty_of(&body::Placed::whole(p.clone()).fields().unwrap()), ndv: Default::default(), docof: Default::default(), view_src: Default::default(), inputs: inputs.into(), derived: derived.into() };
+    model.stats.nodes = 427_658.0;
+    for (rel, rows, ndv) in [
+        ("line", 556_028.0, vec![556_028.0, 7_379.0]),
+        ("col", 556_028.0, vec![556_028.0, 152.0]),
+        ("node", 427_658.0, vec![300.0, 427_658.0]),
+        ("doc", 300.0, vec![300.0, 273.0]),
+    ] {
+        model.stats.card.insert(rel, rows);
+        for (c, n) in ndv.into_iter().enumerate() {
+            model.ndv.insert((rel.to_owned(), c), n);
+            model.stats.fan.insert((rel.to_owned(), c), rows / n);
+        }
+    }
+    // The finding: its rows counted, no column's.
+    model.stats.card.insert("finding", 1.0);
+    model.stats.solve(["violation"].into_iter().map(str::to_owned).collect());
+    model.stats.delta_rows.insert("line", 4_672.0);
+    (p, model)
+}
+
+#[test]
+fn a_probe_of_a_relation_measured_by_rows_alone_prices_its_misses() {
+    let (p, model) = finding_place_model();
+    let r = 0usize;
+    let ((order, work, _), _) = model.plan_rule_explained(body::Placed::whole(p.clone()).fields().unwrap(), &body::nth(&p, r), Some(3)).unwrap();
+    let order: Vec<String> = order.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
+    assert_eq!(order[..2], ["line", "finding"], "the moved nodes meet the finding before the old versions' reads: {order:?}, work {work}");
+    assert!(work < 10_000.0, "the misses priced: {work}");
+}
+
+/// Decision 0364: a maintain mode's removal or add line is a whole join, its delta probed through its own index
+/// where another atom binds it (`Stats::lead_free`). Its delta leads only where it is the cheapest start: the
+/// one-row finding first, and the moved lines probed by its node, priced at their share of `line`'s rows. Led by
+/// the delta, each of ep2's 163 such lines was priced at its 4,672 rows, and the mode's 1.9 M kept `violation`
+/// derived again, its finding's places making 33 documents. A semi-naive probe's line still starts from its delta.
+#[test]
+fn a_maintain_mode_line_starts_where_it_is_cheapest() {
+    let (p, mut model) = finding_place_model();
+    let r = 0usize;
+    let placed = body::Placed::whole(p.clone());
+    let fields = placed.fields().unwrap();
+    let ((led, led_work, _), _) = model.plan_rule_explained(fields, &body::nth(&p, r), Some(3)).unwrap();
+    assert_eq!(led.first().map(|s| s.at), Some(3), "a probe's line starts from its delta");
+    model.stats.lead_free = true;
+    let ((order, work, _), _) = model.plan_rule_explained(fields, &body::nth(&p, r), Some(3)).unwrap();
+    let names: Vec<String> = order.iter().filter_map(|s| rel_at(&p, r, s.at)).collect();
+    assert_eq!(names[..2], ["finding", "line"], "the finding leads, the moved lines probed by its node: {names:?}, work {work}");
+    assert!(work < 10.0 && work < led_work / 100.0, "priced at the delta's share: {work} against {led_work} led by it");
+}
+
 /// A restrictive relation outside the fixpoint has the same containment property as one inside it.
 /// The delta's name domain is wider than the four names the restrictive input can match.
 #[test]
@@ -2758,6 +2824,34 @@ fn within_read_from_a_part_is_priced_by_its_parents_size() {
     assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
     // The body's descendants, each function's: 10 × 400, not 10 × 5.
     assert!(work >= 10.0 * 400.0, "work {work}: {order:?}");
+}
+
+/// A field's part is priced at the size of the kinds that field's children have (`Fielded::part_size`), not its
+/// parent's: a function's `parameters` are a few nodes, its `body` most of it. Priced at the function's size, the
+/// parameters tied with the function's every node by `nearest`, and `def_outside` (python/names.rerail) read every
+/// function's body to keep the reads in its signature (hogql: 1.27 M rows of work for 0.35 M).
+#[test]
+fn within_read_from_a_fields_part_is_priced_by_that_fields_children() {
+    let rule = |f: &str| {
+        format!(".decl kind(n: number, k: symbol)\n.decl field(p: number, f: symbol, c: number)\n.decl within(n: number, a: number)\n.decl r(n: number)\nr(n) :- kind(g, \"fdef\"), field(g, \"{f}\", b), within(n, b).\n.output r\n")
+    };
+    let p = parse(&rule("parameters")).unwrap();
+    let mut model = bare_model(&p);
+    model.stats.size = std::sync::Arc::new(HashMap::from([("fdef".to_owned(), 400.0), ("block".to_owned(), 380.0), ("parameters".to_owned(), 4.0), ("x".to_owned(), 3.0)]));
+    model.stats.kfreq = std::sync::Arc::new([("fdef".to_owned(), 10), ("block".to_owned(), 10), ("parameters".to_owned(), 10), ("x".to_owned(), 2_000)].into_iter().collect());
+    model.stats.nodes = 6_030.0;
+    model.stats.fielded([
+        ("fdef".to_owned(), "block".to_owned(), "body".to_owned(), 10.0),
+        ("fdef".to_owned(), "parameters".to_owned(), "parameters".to_owned(), 10.0),
+    ]);
+    // A function's parameters are their kind's size, its body its block's: not the function's 400 either.
+    assert_eq!(model.stats.fields.part_size("fdef", "parameters", &model.stats.size), Some(4.0));
+    assert_eq!(model.stats.fields.part_size("fdef", "body", &model.stats.size), Some(380.0));
+    assert_eq!(model.stats.fields.part_size("fdef", "name", &model.stats.size), None, "no such edges: the parent's size");
+    let (order, work) = priced_first_rule(&model, &p);
+    assert_eq!(order.last().map(String::as_str), Some("within($n, $b)"), "{order:?}");
+    // Each function's parameters' descendants: 10 × 4, not 10 × 400.
+    assert!(work < 10.0 * 50.0, "work {work}: {order:?}");
 }
 
 /// Decision 0299: a relation of the program's facts alone has its rows, distinct values and counts before it is

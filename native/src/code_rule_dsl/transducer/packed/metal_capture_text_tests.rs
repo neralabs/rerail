@@ -188,7 +188,7 @@ fn shared_query_capture_text_batches_programs_and_files_without_output_directive
         assert!(
             trace
                 .iter()
-                .all(|record| record.encoded && record.submitted && record.completed)
+                .all(|record| record.submitted && record.completed)
         );
         if let Some(first) = first_launches {
             assert!(trace.len() <= first + 16);

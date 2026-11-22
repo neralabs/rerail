@@ -123,7 +123,7 @@ DEFINE_KERNEL2(pp, pb_if_text,
 // For measurements: the grid's sort alone (`ukl_grid_sort_u64_from`), `args.a` keys by their
 // bits `args.c..args.b`.
 DEFINE_KERNEL2(pp, pb_sort_alone,
-               RWBUFFER, uint32_t,    ctl,     "[4]",
+               RWBUFFER, uint32_t,    ctl,     "[3]",
                RWBUFFER, uint64_t,    keys,    "[n]",
                RWBUFFER, uint32_t,    values,  "[n]",
                RWBUFFER, uint64_t,    keys2,   "[n]",
@@ -132,7 +132,6 @@ DEFINE_KERNEL2(pp, pb_sort_alone,
                RWBUFFER, uint32_t,    sums,    "[n]",
                ARGS,     PpProbeArgs, args,    ,
                SHARED,   uint32_t,    flag,    1,
-               SHARED,   uint32_t,    join,    2,
                SHARED,   uint32_t,    scratch, UKL_TG_SCRATCH,
                SHARED,   uint32_t,    big,     UKL_GRID_SORT_WORDS,
                GSZ0,     uint32_t,    gsz,     ,
@@ -140,11 +139,8 @@ DEFINE_KERNEL2(pp, pb_sort_alone,
                LID0,     uint32_t,    lid,     ,
                LSZ0,     uint32_t,    lsz,     )
 {
-    // The grid is the groups that are running (decision 0540 §3): the rest end.
     UklGrid g;
-    g.ctl = ctl; g.lid = lid; g.lsz = lsz;
-    if (!ukl_grid_join(&g, gsz / lsz, join)) return;
-    (void)group;
+    g.ctl = ctl; g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;
     UklGridSortLocal sl;
     sl.counts = big; sl.h = big + UKL_RADIX_GROUPS * UKL_RADIX_DIGITS;
     sl.before = sl.h + UKL_RADIX_DIGITS; sl.base = sl.before + UKL_RADIX_DIGITS;
@@ -158,21 +154,17 @@ DEFINE_KERNEL2(pp, pb_sort_alone,
 // For measurements: `args.a` grid barriers, then (`args.b` 1) `args.a` device fences, (2)
 // threadgroup barriers with device scope, (3) dependent coherent loads by thread 0, (4) plain ones.
 DEFINE_KERNEL2(pp, pb_barriers_alone,
-               RWBUFFER, uint32_t,    ctl,     "[4]",
+               RWBUFFER, uint32_t,    ctl,     "[3]",
                RWBUFFER, uint32_t,    data,    "[512]",
                ARGS,     PpProbeArgs, args,    ,
                SHARED,   uint32_t,    flag,    1,
-               SHARED,   uint32_t,    join,    2,
                GSZ0,     uint32_t,    gsz,     ,
                TGID0,    uint32_t,    group,   ,
                LID0,     uint32_t,    lid,     ,
                LSZ0,     uint32_t,    lsz,     )
 {
-    // The grid is the groups that are running (decision 0540 §3): the rest end.
     UklGrid g;
-    g.ctl = ctl; g.lid = lid; g.lsz = lsz;
-    if (!ukl_grid_join(&g, gsz / lsz, join)) return;
-    (void)group;
+    g.ctl = ctl; g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;
     uint32_t n = args.a, what = args.b;
     if (what == 0u) { for (uint32_t k = 0u; k < n; k++) if (!ukl_grid_barrier(g, flag)) return; }
     if (what == 1u) { for (uint32_t k = 0u; k < n; k++) { ukl_fence_device(); data[lid] += k; } }
@@ -190,54 +182,3 @@ DEFINE_KERNEL2(pp, pb_barriers_alone,
     }
 }
 
-// The pool (`<ukl/pool.h>`) over a grid, `args.c` rounds: round 0 gives each of `args.a` ranges
-// (`ranges`: start, count), then each thread takes `args.b` blocks of the classes `classes` names
-// (its thread's `args.b` in a row), into `out` (a block's start, `UKL_POOL_NONE` none); each
-// later round gives back the blocks the round before took, then takes again. A take that finds
-// none tries again while its class is not empty, a bounded number of times. `args.d` 1: split
-// takes (`ukl_pool_take_split`), tried again while any class at least the take's is not empty.
-DEFINE_KERNEL2(pp, pb_pool,
-               RWBUFFER, uint32_t,    ctl,     "[4]",
-               ROBUFFER, uint32_t,    ranges,  "[n]",
-               ROBUFFER, uint32_t,    classes, "[n]",
-               RWBUFFER, uint32_t,    heads,   "[n]",
-               RWBUFFER, uint32_t,    next,    "[n]",
-               RWBUFFER, uint32_t,    out,     "[n]",
-               ARGS,     PpProbeArgs, args,    ,
-               SHARED,   uint32_t,    flag,    1,
-               SHARED,   uint32_t,    join,    2,
-               GSZ0,     uint32_t,    gsz,     ,
-               TGID0,    uint32_t,    group,   ,
-               LID0,     uint32_t,    lid,     ,
-               LSZ0,     uint32_t,    lsz,     )
-{
-    // The grid is the groups that are running (decision 0540 §3): the rest end.
-    UklGrid g;
-    g.ctl = ctl; g.lid = lid; g.lsz = lsz;
-    if (!ukl_grid_join(&g, gsz / lsz, join)) return;
-    (void)group;
-    UklPool p; p.heads = heads; p.next = next;
-    // Every thread of the dispatch is a taker (`out`'s), the grid's threads taking them in turn.
-    uint32_t first = g.group * lsz + lid, step = g.groups * lsz;
-    for (uint32_t c = first; c < UKL_POOL_CLASSES; c += step) ukl_pool_clear(p, c);
-    if (!ukl_grid_barrier(g, flag)) return;
-    for (uint32_t r = 0u; r < args.c; r++) {
-        if (r == 0u) { for (uint32_t i = first; i < args.a; i += step) ukl_pool_give_range(p, ranges[2u * i], ranges[2u * i + 1u]); }
-        else for (uint32_t t = first; t < gsz; t += step) for (uint32_t k = 0u; k < args.b; k++) {
-            uint32_t at = out[t * args.b + k];
-            if (at != UKL_POOL_NONE) ukl_pool_give(p, at, classes[t * args.b + k]);
-        }
-        if (!ukl_grid_barrier(g, flag)) return;
-        for (uint32_t t = first; t < gsz; t += step) for (uint32_t k = 0u; k < args.b; k++) {
-            uint32_t c = classes[t * args.b + k], at = UKL_POOL_NONE;
-            for (uint32_t turn = 0u; turn < 1000u && at == UKL_POOL_NONE; turn++) {
-                at = args.d != 0u ? ukl_pool_take_split(p, c) : ukl_pool_take(p, c);
-                bool any = false;
-                for (uint32_t k = c + 1u; args.d != 0u && k < UKL_POOL_CLASSES; k++) any = any || ukl_atomic_poll(&heads[k]) != UKL_POOL_NONE;
-                if (at == UKL_POOL_NONE && ukl_atomic_poll(&heads[c]) == UKL_POOL_NONE && !any) break;
-            }
-            out[t * args.b + k] = at;
-        }
-        if (!ukl_grid_barrier(g, flag)) return;
-    }
-}

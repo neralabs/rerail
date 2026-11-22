@@ -238,6 +238,8 @@ pub(super) fn sample() {
             });
         }
         let _ = rerail_accel::exec::service("profile memory", None, move || {
+            // It opens no span (it runs to the process's end): what it allocates is named by its thread.
+            rerail_prof::heap::name_thread("profile memory (the memory sampler)");
             let start = std::time::Instant::now();
             let mut last_max = footprint().1;
             loop {
@@ -366,6 +368,9 @@ pub(super) fn sampled_report(r: &mut String) {
     // Blocks' memory handed out again and zeroed for it (decision 0342): a free list's chunk asked zeroed (a
     // descriptor), a recycled slab's allocation; a relation's rows are written before read and never zeroed.
     let _ = writeln!(r, "  blocks: {} MB zeroed as their memory was handed out again", rerail_accel::blocks::zeroed_bytes() >> 20);
+    if let Some(census) = width_census::report() {
+        let _ = writeln!(r, "  {census}");
+    }
     // What threads keep on the device between strata, past every admission (Q203).
     let [scratch] = rerail_accel::gpu::shared::kept();
     let _ = writeln!(r, "  device kept by threads between strata: join scratch {} MB at most ({} MB at the end)", scratch.1 >> 20, scratch.0 >> 20);
@@ -518,5 +523,59 @@ pub fn resident_bytes() -> Option<u64> {
     #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         None
+    }
+}
+
+/// A census of the columns of the run's relations as they are released (`RERAIL_WIDTH_CENSUS`): each column's bytes
+/// held (8 a value), by the bytes its values need as they are (unsigned: 1, 2, 4; else 8) and as an offset from the
+/// column's least value. What a compact layout would hold of them.
+pub mod width_census {
+    use std::sync::atomic::{AtomicU64, Ordering::Relaxed};
+    /// Bytes held, by class: as they are (1, 2, 4, 8 bytes), then as offsets (1, 2, 4, 8); then values counted.
+    static BYTES: [AtomicU64; 9] = [const { AtomicU64::new(0) }; 9];
+    /// The bytes a split layout would hold: a node id's document part (above bit 32) as an offset from its least, and
+    /// its low part, each at the bytes it needs; a value below 2^32 as it is.
+    static SPLIT: AtomicU64 = AtomicU64::new(0);
+
+    pub fn on() -> bool {
+        static ON: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+        *ON.get_or_init(|| std::env::var_os("RERAIL_WIDTH_CENSUS").is_some())
+    }
+
+    fn class(span: u64) -> usize {
+        match span {
+            0..=0xff => 0,
+            0x100..=0xffff => 1,
+            0x1_0000..=0xffff_ffff => 2,
+            _ => 3,
+        }
+    }
+
+    /// One column of `n` values, its least `lo` and greatest `hi`.
+    pub fn column(n: u64, lo: i64, hi: i64, split: (i64, i64, u64)) {
+        let bytes = 8 * n;
+        let width = |span: u64| [1u64, 2, 4, 8][class(span)];
+        let (dlo, dhi, low) = split;
+        let one = if lo >= 0 && hi < (1 << 32) { width(hi as u64) } else { width(dhi.wrapping_sub(dlo) as u64) + width(low) };
+        SPLIT.fetch_add(n * one, Relaxed);
+        let plain = if lo < 0 { 3 } else { class(hi as u64) };
+        BYTES[plain].fetch_add(bytes, Relaxed);
+        BYTES[4 + class(hi.wrapping_sub(lo) as u64)].fetch_add(bytes, Relaxed);
+        BYTES[8].fetch_add(n, Relaxed);
+    }
+
+    /// The census's line: MB held by each class.
+    pub fn report() -> Option<String> {
+        if !on() {
+            return None;
+        }
+        let mb = |i: usize| BYTES[i].load(Relaxed) >> 20;
+        let total: u64 = (0..4).map(|i| BYTES[i].load(Relaxed)).sum::<u64>() >> 20;
+        // What each would hold: as they are, at 1, 2, 4 or 8 bytes a value; as offsets, the same.
+        let compact = |base: usize| (0..4).map(|i| BYTES[base + i].load(Relaxed) / 8 * [1, 2, 4, 8][i]).sum::<u64>() >> 20;
+        Some(format!(
+            "width census: {total} MB of columns released ({} M values); needing 1/2/4/8 bytes as they are: {}/{}/{}/{} MB (compact {} MB), as offsets from their least: {}/{}/{}/{} MB (compact {} MB); split at bit 32, the document part an offset: {} MB",
+            BYTES[8].load(Relaxed) / 1_000_000, mb(0), mb(1), mb(2), mb(3), compact(0), mb(4), mb(5), mb(6), mb(7), compact(4), SPLIT.load(Relaxed) >> 20
+        ))
     }
 }

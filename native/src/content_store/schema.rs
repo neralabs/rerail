@@ -391,57 +391,13 @@ CREATE TABLE IF NOT EXISTS store_identity (
 ) STRICT;
 INSERT OR IGNORE INTO store_identity(singleton, id) VALUES (1, random());
 
-CREATE TABLE IF NOT EXISTS candidate_catalogs (
-    catalog_id INTEGER PRIMARY KEY,
-    identity_hash_id INTEGER NOT NULL UNIQUE REFERENCES hashes(hash_id)
-) STRICT;
-CREATE TABLE IF NOT EXISTS candidate_checks (
-    check_id INTEGER PRIMARY KEY,
-    catalog_id INTEGER NOT NULL REFERENCES candidate_catalogs(catalog_id),
-    policy_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    check_string_id INTEGER NOT NULL REFERENCES strings(string_id),
-    UNIQUE (catalog_id, policy_hash_id, check_string_id)
-) STRICT;
-CREATE INDEX IF NOT EXISTS candidate_checks_by_catalog ON candidate_checks(catalog_id, check_id);
-CREATE INDEX IF NOT EXISTS candidate_checks_by_policy ON candidate_checks(policy_hash_id);
-CREATE INDEX IF NOT EXISTS candidate_checks_by_string ON candidate_checks(check_string_id);
-CREATE TABLE IF NOT EXISTS completed_workspace_revisions (
-    workspace_id INTEGER PRIMARY KEY REFERENCES workspaces(workspace_id),
-    revision INTEGER NOT NULL,
-    catalog_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    completed_at INTEGER NOT NULL
-) STRICT;
-CREATE INDEX IF NOT EXISTS completed_workspace_revisions_by_catalog
-ON completed_workspace_revisions(catalog_hash_id);
--- A file's result of a check (a call summary among them) under a context: its bytes as they are, in a segment of
--- `<store>.objects/`, read there in place (decision 0450 step 2: floor 8); the row names their range.
-CREATE TABLE IF NOT EXISTS context_check_results (
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
-    context_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id) ON DELETE CASCADE,
-    check_id INTEGER NOT NULL REFERENCES candidate_checks(check_id) ON DELETE CASCADE,
-    seg INTEGER NOT NULL,
-    seg_at INTEGER NOT NULL,
-    seg_len INTEGER NOT NULL,
-    PRIMARY KEY(source_id, context_hash_id, check_id)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS context_check_results_by_check
-ON context_check_results(check_id, source_id);
-CREATE INDEX IF NOT EXISTS context_check_results_by_context
-ON context_check_results(context_hash_id);
-
--- A directory can be restored only when both its Git tree and the package-marker chain that
--- determines Python module contexts agree.
-CREATE TABLE IF NOT EXISTS completed_directory_reuse (
-    tree_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    prefix TEXT NOT NULL,
-    package_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    catalog_hash_id INTEGER NOT NULL REFERENCES hashes(hash_id),
-    PRIMARY KEY (tree_hash_id, prefix, package_hash_id, catalog_hash_id)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS completed_directory_reuse_by_catalog
-ON completed_directory_reuse(catalog_hash_id, prefix, tree_hash_id, package_hash_id);
-CREATE INDEX IF NOT EXISTS completed_directory_reuse_by_package
-ON completed_directory_reuse(package_hash_id);
+-- A workspace's results, their catalogs and checks, its completed directories and revisions are entries of the
+-- store's per-file memo (`results.rs`, t33 step 8): a store made before loses the tables.
+DROP TABLE IF EXISTS context_check_results;
+DROP TABLE IF EXISTS candidate_checks;
+DROP TABLE IF EXISTS candidate_catalogs;
+DROP TABLE IF EXISTS completed_directory_reuse;
+DROP TABLE IF EXISTS completed_workspace_revisions;
 
 -- A query-independent search index. The kind stream contains one token per preorder node, so an
 -- FTS5 instance offset is the preorder ordinal; terminal transducers confirm its candidates.
@@ -463,44 +419,16 @@ CREATE TRIGGER IF NOT EXISTS delete_tape_search_index BEFORE DELETE ON tape_obje
     DELETE FROM search_kind_fts WHERE rowid=OLD.tape_id;
 END;
 
--- The facts engine's memo (facts_memo.rs): per-file clause results keyed by content (a source),
--- fact schema version, plan digest and, for a clause that reads the path, the path ('' for a
--- content-pure one). Additive: every row cascades from its source and names no other shared row
--- (hashes, strings, paths), so an older binary's collection can delete sources under it without
--- orphaning or misreading a row, and the floor stays.
-CREATE TABLE IF NOT EXISTS facts_plan_sets (
-    set_digest BLOB NOT NULL CHECK(length(set_digest) = 32),
-    ordinal INTEGER NOT NULL CHECK(ordinal >= 0),
-    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
-    PRIMARY KEY (set_digest, ordinal)
-) STRICT, WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS facts_results (
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
-    fact_schema INTEGER NOT NULL CHECK(fact_schema >= 0),
-    path TEXT NOT NULL,
-    plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
-    codec_id INTEGER NOT NULL,
-    raw_length INTEGER NOT NULL,
-    frame BLOB NOT NULL,
-    PRIMARY KEY (source_id, fact_schema, path, plan_digest)
-) STRICT, WITHOUT ROWID;
+-- The facts engine's memo (facts_results, its completions and plan sets) went (t33 step 3): its users keep their
+-- entries as kept facts of the store (`kept_facts::HOLDER`), and a store made before loses the tables.
+DROP INDEX IF EXISTS facts_results_by_plan;
+DROP INDEX IF EXISTS facts_completions_by_set;
+DROP TABLE IF EXISTS facts_results;
+DROP TABLE IF EXISTS facts_completions;
+DROP TABLE IF EXISTS facts_plan_sets;
 -- Neural Engine models compiled on this machine (decision 0098 §3) are kept facts of the store, their archives
 -- sources (`accel_models.rs`, t33 step 6): a store made before loses the table.
 DROP TABLE IF EXISTS accel_models;
--- Bit i of `words` (little-endian u64s): the set's clause i ran with nothing to report; its
--- counts are in the `counts` frame. A clear bit is unknown, never absent.
-CREATE TABLE IF NOT EXISTS facts_completions (
-    source_id INTEGER NOT NULL REFERENCES source_objects(source_id) ON DELETE CASCADE,
-    fact_schema INTEGER NOT NULL CHECK(fact_schema >= 0),
-    path TEXT NOT NULL,
-    set_digest BLOB NOT NULL CHECK(length(set_digest) = 32),
-    words BLOB NOT NULL,
-    codec_id INTEGER NOT NULL,
-    raw_length INTEGER NOT NULL,
-    counts BLOB NOT NULL,
-    PRIMARY KEY (source_id, fact_schema, path, set_digest)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS facts_completions_by_set ON facts_completions(set_digest);
 
 -- The cross-file memo's tables (decision 0076), removed with it (decision 0450 §3): a store made before loses them
 -- when SCHEMA is next applied.
@@ -596,7 +524,6 @@ CREATE TABLE IF NOT EXISTS corpus_decided (
 INSERT OR IGNORE INTO corpus_decided(singleton, run, time) VALUES (1, 0, 0);
 -- The corpus's stat index went (t33 K2): a corpus file's content is the observer's answer for its path.
 DROP TABLE IF EXISTS corpus_stats;
-CREATE INDEX IF NOT EXISTS facts_results_by_plan ON facts_results(plan_digest);
 -- The other memo plans a manifest names (`record_corpus_run_naming`): a prepared program's (decision 0073). They are
 -- live while a kept manifest names them. Additive: an older binary ignores it, and collects nothing by it.
 CREATE TABLE IF NOT EXISTS corpus_manifest_plans (
@@ -604,12 +531,8 @@ CREATE TABLE IF NOT EXISTS corpus_manifest_plans (
     plan_digest BLOB NOT NULL CHECK(length(plan_digest) = 32),
     PRIMARY KEY (manifest_id, plan_digest)
 ) STRICT, WITHOUT ROWID;
--- The sweep of the corpus memo's retired schemas (`RETIRED_CORPUS_MEMO_SCHEMAS`): done once a pass finds no more.
-CREATE TABLE IF NOT EXISTS corpus_swept (
-    singleton INTEGER PRIMARY KEY CHECK (singleton = 1),
-    done INTEGER NOT NULL
-) STRICT;
-INSERT OR IGNORE INTO corpus_swept(singleton, done) VALUES (1, 0);
+-- The sweep of the corpus memo's retired schemas' rows went with `facts_results` (t33 step 3).
+DROP TABLE IF EXISTS corpus_swept;
 
 -- The single interner (atoms.rs, decisions 0049, 0401): dense, append-only; atom 0 is the empty string, and no
 -- block's. The atoms are a chain of blocks in `<store>.atoms/`, mapped by every process: each row is a block, its
@@ -663,31 +586,13 @@ CREATE INDEX IF NOT EXISTS derivation_inputs_by_name ON derivation_inputs(name_a
 CREATE TABLE IF NOT EXISTS push_pending (
     pending INTEGER PRIMARY KEY CHECK(pending = 1)
 ) STRICT;
--- Collection keeps pages some binding names (tree_pages.rs).
-CREATE INDEX IF NOT EXISTS name_bindings_by_digest ON name_bindings(digest);
-
--- Per-directory result pages (tree_pages.rs), keyed by what the
--- directory's result depends on; `digest` is the page derivation's output digest. Each page's bytes are in a
--- segment of `<store>.objects/`, as they are (decision 0450 step 2: floor 8).
-CREATE TABLE IF NOT EXISTS tree_pages (
-    page_key BLOB NOT NULL CHECK(length(page_key) = 32),
-    page_index INTEGER NOT NULL CHECK(page_index >= 0),
-    page_count INTEGER NOT NULL CHECK(page_count > 0),
-    digest BLOB NOT NULL CHECK(length(digest) = 32),
-    file_count INTEGER NOT NULL CHECK(file_count >= 0 AND file_count <= 64),
-    seg INTEGER NOT NULL,
-    seg_at INTEGER NOT NULL,
-    seg_len INTEGER NOT NULL,
-    PRIMARY KEY (page_key, page_index)
-) STRICT, WITHOUT ROWID;
-CREATE INDEX IF NOT EXISTS tree_pages_by_digest ON tree_pages(digest);
--- Page sets put and not yet bound: the name binding a page derivation records is written with its overlay layer,
--- later (facts/overlay.rs), and a set no name binds is collected. A set stays here, kept, while the process that put
--- it lives (`pid`), until collection sees a binding of its digest.
-CREATE TABLE IF NOT EXISTS tree_pages_pending (
-    digest BLOB PRIMARY KEY CHECK(length(digest) = 32),
-    pid INTEGER NOT NULL
-) STRICT, WITHOUT ROWID;
+-- The workspace pipeline's per-directory result pages and the predecessor's tree result segments went, never called
+-- outside their tests (t33 step 3): a store made before loses their tables, and the binding index only they read.
+DROP INDEX IF EXISTS name_bindings_by_digest;
+DROP TABLE IF EXISTS tree_pages;
+DROP TABLE IF EXISTS tree_pages_pending;
+DROP TABLE IF EXISTS tree_result_segments;
+DROP TABLE IF EXISTS completed_snapshot_trees;
 
 -- The prefilter's per-tape access paths (prefilter.rs, from PIAT's anchor
 -- store): kind positions, case-exact term postings and the nodes terms do not cover, each keyed by
@@ -723,52 +628,17 @@ CREATE TABLE IF NOT EXISTS edge_freq (
     PRIMARY KEY (pkind, ckind, field)
 ) STRICT, WITHOUT ROWID;
 CREATE INDEX IF NOT EXISTS edge_freq_by_child ON edge_freq(ckind);
--- Fact relations' column statistics, merged per batch of documents (`ingest::merge_facts`):
--- per column, rows, distinct values, the sum of squared value counts corpus-wide (`sq`) and
--- within a document (`sqd`); per value of a value column, its count, documents and `sqd`.
-CREATE TABLE IF NOT EXISTS fact_stats (
-    tbl TEXT NOT NULL,
-    col TEXT NOT NULL,
-    rows INTEGER NOT NULL,
-    ndv INTEGER NOT NULL,
-    sq INTEGER NOT NULL,
-    sqd INTEGER NOT NULL,
-    PRIMARY KEY (tbl, col)
-) STRICT, WITHOUT ROWID;
--- Compiled plans (stats/plans.rs): decisions and programs under the plan's identity, each
--- statistic a decision read with the interval over which the decision stays valid, and the
--- observed selectivity and cost per root of each plan per backend.
-CREATE TABLE IF NOT EXISTS compiled_plans (
-    plan BLOB PRIMARY KEY CHECK(length(plan) = 32),
-    compiler INTEGER NOT NULL,
-    decisions TEXT NOT NULL,
-    program BLOB NOT NULL
-) STRICT, WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS compiled_plan_reads (
-    plan BLOB NOT NULL REFERENCES compiled_plans(plan) ON DELETE CASCADE,
-    stat TEXT NOT NULL,
-    lo INTEGER NOT NULL,
-    hi INTEGER NOT NULL,
-    PRIMARY KEY (plan, stat)
-) STRICT, WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS plan_feedback (
-    plan BLOB NOT NULL,
-    backend TEXT NOT NULL,
-    selectivity REAL NOT NULL,
-    ns_per_root REAL NOT NULL,
-    samples INTEGER NOT NULL,
-    updated_at INTEGER NOT NULL,
-    PRIMARY KEY (plan, backend)
-) STRICT, WITHOUT ROWID;
-CREATE TABLE IF NOT EXISTS fact_value_stats (
-    tbl TEXT NOT NULL,
-    col TEXT NOT NULL,
-    val ANY,
-    n INTEGER NOT NULL,
-    docs INTEGER NOT NULL,
-    sqd INTEGER NOT NULL,
-    PRIMARY KEY (tbl, col, val)
-) STRICT, WITHOUT ROWID;
+-- Compiled plans (stats/plans.rs), the statistics their decisions read and each plan's observed
+-- selectivity and cost per backend are kept facts of the store (t33 step 6): a store made before
+-- loses the tables.
+DROP TABLE IF EXISTS compiled_plan_reads;
+DROP TABLE IF EXISTS compiled_plans;
+DROP TABLE IF EXISTS plan_feedback;
+-- Fact relations' column statistics (`fact_stats`, `fact_value_stats`) went (t33 step 6): no fact relation is a SQL
+-- table with a document column, and the one estimate kept there, the demand's terminal matches', is a kept fact of
+-- the store (`ContentStore::terminal_estimate`).
+DROP TABLE IF EXISTS fact_stats;
+DROP TABLE IF EXISTS fact_value_stats;
 -- Every `term` column below is the term's atom (`atoms`): its text is stored once.
 CREATE TABLE IF NOT EXISTS term_postings (
     lang INTEGER NOT NULL,

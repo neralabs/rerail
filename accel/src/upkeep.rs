@@ -855,7 +855,10 @@ fn step_job_held(id: u64, s: &Settings, pause: bool, yields: bool, stepping: Opt
     let file = e.job.file();
     let st_ = upkeep();
     let slice = Slice { until: t0 + s.step, memory: s.memory, stop: &st_.stop, file: file.clone(), yields };
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.job.step(&slice))).unwrap_or_else(|_| Err("panicked".into()));
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| e.job.step(&slice))).unwrap_or_else(|p| {
+        crate::exec::abort_over_budget(p);
+        Err("panicked".into())
+    });
     let (wall, cpu) = (t0.elapsed().as_secs_f64(), crate::score::thread_cpu() - c0);
     if scheduler && qos != Qos::Background {
         set_thread_qos(Qos::Background);

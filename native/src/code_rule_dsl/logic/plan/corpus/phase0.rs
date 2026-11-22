@@ -187,7 +187,7 @@ pub fn graph(seed: &Seed) -> std::result::Result<Arc<Graph>, Error> {
 #[derive(Default)]
 struct PhaseZeroGraphs(Mutex<HashMap<(Option<Dirs>, Seed), Arc<Graph>>>);
 
-/// The graphs' images this process retained, by the image store's path (`rr::images_store_path`) and the image's key: a
+/// The graphs' images this process retained, by the image store's path (`rr::image_store_path`) and the image's key: a
 /// graph held in the process is retained once in each store a run reads (the store that evaluates a working tree's
 /// policies keeps them), not at every lookup, which opened the image store and asked it for the image each time
 /// (1,263 lookups, 0.85 s of ep2's edit).
@@ -219,7 +219,7 @@ pub fn graphs(seeds: &[Seed]) -> std::result::Result<Vec<Arc<Graph>>, Error> {
     }
     let images = Images::here();
     if let Some(images) = &images {
-        let at = crate::code_rule_dsl::logic::rr::images_store_path();
+        let at = crate::code_rule_dsl::logic::rr::image_store_path();
         let retained = crate::code_rule_dsl::logic::profile::shared::<PhaseZeroRetained>();
         for (seed, graph) in seeds.iter().zip(&found) {
             if let Some(graph) = graph {

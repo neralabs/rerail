@@ -7,7 +7,6 @@ accel/src/exec.rs::MADE	stays	the one block policy registered once, before the f
 accel/src/gpu/join.rs::RATIO	stays	the OS's timebase ratio: a constant of the machine read once
 accel/src/gpu/shared.rs::BIG	stays	a test lock
 accel/src/gpu/shared.rs::EVICTORS	stays	code registered at load (the pool's evictors, hooks set once each by the crates above)
-accel/src/gpu/shared.rs::GUARD	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::LEASE_HOOK	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::OTHER_RESERVED	stays	code registered at load (a hook)
 accel/src/gpu/shared.rs::REFUSAL_HOOK	stays	code registered at load (a hook)
@@ -25,8 +24,8 @@ native/crates/blocks/src/mem.rs::RESERVED	stays	the process's own mappings, coun
 native/crates/blocks/src/windows.rs::HANDLER	stays	code registered at load (the one fault handler a Windows process has, which commits a reservation's pages as they are touched)
 native/crates/blocks/src/windows.rs::REGIONS	stays	the process's reservations, which its one fault handler commits the pages of: the process's own address space
 native/crates/c_directives/src/expand.rs::UKL	stays	computed once from the engine's own expansion program
+native/crates/ukl_vec/src/vector.rs::V	stays	computed once from the environment (a debugging trace's variable)
 native/crates/c_directives/src/expand.rs::PROGRAM	stays	computed once from the engine's own expansion program
-native/crates/c_directives/src/expand.rs::SAME	stays	computed once from the engine's own constants (the ahead-of-time build against its source)
 native/crates/c_directives/src/lib.rs::LOWERED	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/lib.rs::PARSER	stays	computed once from the engine's own grammar
 native/crates/c_directives/src/pp.rs::C	stays	computed once from the engine's own grammar
@@ -47,6 +46,7 @@ native/crates/kotlin_lean/src/lex.rs::TICK_BODY	stays	a byte class of a literal
 native/crates/kotlin_parser/src/lib.rs::PARSER	stays	computed once from the engine's own grammar
 native/crates/metal/src/lib.rs::METAL_DEVICE	stays	the device (code registered at load)
 native/crates/metal/src/pp_arena.rs::SOURCE	stays	the engine's own UKL, put together once
+native/crates/metal/src/pp_expand.rs::RUNS	stays	an id counter: append-only, a command's number (`Expanded::run`: a batch's units ran in one)
 native/crates/metal/src/slabs.rs::ONE	stays	a test lock
 native/crates/prof/src/lib.rs::DROPPED	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::KEYS	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
@@ -56,6 +56,7 @@ native/crates/prof/src/lib.rs::SIZES	stays	the allocator's heap sampler (`RERAIL
 native/crates/prof/src/lib.rs::SPANS	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::START	stays	the process's start: a clock origin
 native/crates/prof/src/lib.rs::STATE	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
+native/crates/prof/src/lib.rs::SYSTEM_NAMES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): each numbered thread's system name, kept from inside an allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::TABLE	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
 native/crates/prof/src/lib.rs::THREADS	stays	an id counter: append-only
 native/crates/prof/src/lib.rs::THREAD_NAMES	stays	the allocator's heap sampler (`RERAIL_HEAP_SAMPLE`): called inside every allocation, so it may not allocate or lock; one per process, as the global allocator is
@@ -279,7 +280,6 @@ native/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::KINDS	stays	
 native/src/code_rule_dsl/transducer/packed/metal_join.rs::SOURCE	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::SOURCES	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::EVICTOR	stays	registers the workspaces' evictor once (code registered at load, a hook)
-native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::TAPE_PREFIX	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::VIEW_PIECES	stays	computed once from the engine's own source (was metal_label_passes.rs::TAPE_VIEWS)
 native/src/code_rule_dsl/value/names.rs::TABLE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/waves/owner/database.rs::SETUP	stays	code registered at load
@@ -289,7 +289,6 @@ native/src/code_rule_dsl/waves/relational/shared/capture.rs::NEXT	stays	an id co
 native/src/code_rule_dsl/workspace/api.rs::WORKSPACE_INSTANCES	stays	an id counter: append-only
 native/src/code_rule_dsl/workspace/calls_state.rs::SUMMARIES_EXTRACTED	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/code_rule_dsl/workspace/index.rs::SOURCE_CLASSIFIER	stays	code registered at load (a hook)
-native/src/code_rule_dsl/workspace/index.rs::TASK_RUN	stays	code registered at load (the logic crate's run hooks, boot.rs)
 native/src/code_rule_dsl/workspace/ingest.rs::PACKAGE_CONTEXT_PATH_VISITS	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/code_rule_dsl/language/adapter/project.rs::PROJECT	stays	code a crate above registers at load
 native/src/code_rule_dsl/language/adapter/project.rs::REPOSITORY_CONTEXT	stays	code registered at load
@@ -348,10 +347,15 @@ native/src/git_snapshot.rs::CHECK_SOURCES	stays	code registered at load: the sou
 native/src/git_snapshot.rs::NEXT	stays	a process-unique number naming a view's directory: invocations only ever get distinct values
 native/src/git_snapshot.rs::READ_INVENTORY	stays	code registered at load: the inventory reader a crate above installs (a function pointer)
 native/src/git_snapshot_message_pattern.rs::SYNTAX	stays	a value computed once from constants: Git's message-search regex syntax
-native/src/code_rule_dsl/logic/device.rs::DEVICE	stays	code a crate above registers at load
-native/src/code_rule_dsl/logic/plan/corpus/base.rs::RUNNER	stays	code a crate above registers at load (boot registers the runner, corpus::Corpus)
-native/src/code_rule_dsl/residency/admission/relational/base.rs::ADMISSION	stays	code a crate above registers at load
+native/crates/metal/src/pp_arena.rs::T	stays	computed once from the process's device (a group's threads: the GPU's, or the CPU's 32)
 native/crates/plan_base/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/plan_search/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/rr_root/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/run/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/src/code_rule_dsl/logic/device.rs::DEVICE	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/plan/corpus/base.rs::RUNNER	stays	code a crate above registers at load
+native/src/code_rule_dsl/logic/profile/memory.rs::BYTES	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
+native/src/code_rule_dsl/logic/profile/memory.rs::ON	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
+native/src/code_rule_dsl/logic/profile/memory.rs::SPLIT	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's
+native/src/code_rule_dsl/residency/admission/relational/base.rs::ADMISSION	stays	code a crate above registers at load
+native/src/code_rule_dsl/workspace/index.rs::TASK_RUN	stays	code a crate above registers at load

@@ -1,0 +1,65 @@
+.scope text "**/*.[mM][dD]", "**/*.[mM][aA][rR][kK][dD][oO][wW][nN]", "**/*.[rR][sS][tT]", "**/*.[tT][xX][tT]", "**/*.[tT][oO][mM][lL]", "**/*.[cC][fF][gG]", "**/*.[iI][nN][iI]", "**/*.[yY][aA][mM][lL]", "**/*.[yY][mM][lL]"
+.global library pyl_extra, py_line_sep, pyl_rest, py_line
+.decl admin_async_code(d: number, l: number)
+.decl admin_async_hit(d: number, l: number, clause: symbol)
+.decl admin_async_quote(d: number, l: number, k: number)
+.decl doc(d: number, path: symbol, module: symbol)
+.decl in_scope(d: number)
+.decl out_scope(d: number)
+.decl py_line(d: number, n: number, s: symbol)
+.decl py_line_sep(s: symbol)
+.decl pyl_extra(d: number, l: number, k: number)
+.decl pyl_rest(d: number, l: number, j: number, r: symbol)
+.decl rr_agg1(d: number, k: number, l: number, m: number)
+.decl rr_agg3(d: number, k: number, l: number, m: number)
+.decl rr_agg5(d: number, k: number, l: number, m: number)
+.decl rr_agg7(d: number, j: number, l: number, q: number)
+.decl rr_ctx2(d: number, l: number)
+.decl rr_ctx4(d: number, l: number)
+.decl rr_ctx6(d: number, l: number)
+.decl rr_ctx8(d: number, l: number)
+.decl rr_demand_agg_rr_agg1(d: number, l: number)
+.decl rr_demand_agg_rr_agg3(d: number, l: number)
+.decl rr_demand_agg_rr_agg5(d: number, l: number)
+.decl rr_demand_agg_rr_agg7(d: number, l: number)
+.decl src_line(d: number, l: number, sp: node)
+.decl text(n: node, s: symbol)
+.decl violation(rule: symbol, clause: symbol, code: symbol, path: symbol, line: number)
+.input doc, text, src_line
+.output violation
+in_scope(d) :- doc(d, p, _), glob("l8000_admin/tools/**/*.py", p).
+out_scope(d) :- doc(d, p, _), glob("**/.git/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/.venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/venv/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/__pycache__/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tmp/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/test/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/tests/**", p).
+out_scope(d) :- doc(d, p, _), glob("**/*test_*", p).
+pyl_extra(d, l, k) :- src_line(d, l, sp), text(sp, s), py_line_sep(s), k = @count_matches("[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]", s).
+py_line_sep(s) :- pyl_rest(_, _, _, s), match("(?s).*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}].*", s).
+pyl_rest(d, l, 0, s) :- src_line(d, l, sp), text(sp, s).
+pyl_rest(d, l, @add(j, 1), a) :- pyl_rest(d, l, j, r), match("[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?<a>(?s).*)", r), a = @rx_group(r, "^(?:[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?<a>(?s).*))$", "a").
+rr_ctx2(d, l) :- pyl_rest(d, l, 0, s).
+rr_agg1(d, k, l, m) :- rr_demand_agg_rr_agg1(d, l), rr_ctx2(d, l), pyl_extra(d, m, k), m < l.
+py_line(d, n, s) :- pyl_rest(d, l, 0, s), !py_line_sep(s), off = sum k : { rr_agg1(d, k, l, _) }, n = @add(l, off).
+rr_ctx4(d, l) :- pyl_rest(d, l, j, r).
+rr_agg3(d, k, l, m) :- rr_demand_agg_rr_agg3(d, l), rr_ctx4(d, l), pyl_extra(d, m, k), m < l.
+py_line(d, n, h) :- pyl_rest(d, l, j, r), py_line_sep(r), match("(?<h>[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*)[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?s).*", r), h = @rx_group(r, "^(?:(?<h>[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*)[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?s).*)$", "h"), off = sum k : { rr_agg3(d, k, l, _) }, n = @add(@add(l, off), j).
+rr_ctx6(d, l) :- pyl_rest(d, l, j, r), j > 0.
+rr_agg5(d, k, l, m) :- rr_demand_agg_rr_agg5(d, l), rr_ctx6(d, l), pyl_extra(d, m, k), m < l.
+py_line(d, n, r) :- pyl_rest(d, l, j, r), j > 0, !py_line_sep(r), off = sum k : { rr_agg5(d, k, l, _) }, n = @add(@add(l, off), j).
+admin_async_quote(d, l, k) :- py_line(d, l, s), k = @count_matches("\"\"\"|'''", s), k > 0.
+admin_async_hit(d, l, "pattern-0") :- in_scope(d), !out_scope(d), py_line(d, l, s), match("(?s:.*)(?:\\basyncio\\.to_thread\\b)(?s:.*)", s), !match("(?s:.*)(?:\"\"\"|''')(?s:.*)", s), !match("\\s*#(?s:.*)", s).
+admin_async_hit(d, l, "pattern-1") :- in_scope(d), !out_scope(d), py_line(d, l, s), match("(?s:.*)(?:\\brun_in_executor\\b)(?s:.*)", s), !match("(?s:.*)(?:\"\"\"|''')(?s:.*)", s), !match("\\s*#(?s:.*)", s).
+admin_async_hit(d, l, "pattern-2") :- in_scope(d), !out_scope(d), py_line(d, l, s), match("(?s:.*)(?:\\bdisable_sync_in_async_check\\b)(?s:.*)", s), !match("(?s:.*)(?:\"\"\"|''')(?s:.*)", s), !match("\\s*#(?s:.*)", s).
+rr_ctx8(d, l) :- admin_async_hit(d, l, _).
+rr_agg7(d, j, l, q) :- rr_demand_agg_rr_agg7(d, l), rr_ctx8(d, l), admin_async_quote(d, j, q), j < l.
+admin_async_code(d, l) :- admin_async_hit(d, l, _), k = sum q : { rr_agg7(d, _, l, q) }, @sub(k, @mul(2, @div(k, 2))) = 0.
+violation("data-layer-admin-async-purity", "pattern-0", "AAP001", p, l) :- admin_async_hit(d, l, "pattern-0"), admin_async_code(d, l), doc(d, p, _).
+violation("data-layer-admin-async-purity", "pattern-1", "AAP001", p, l) :- admin_async_hit(d, l, "pattern-1"), admin_async_code(d, l), doc(d, p, _).
+violation("data-layer-admin-async-purity", "pattern-2", "AAP001", p, l) :- admin_async_hit(d, l, "pattern-2"), admin_async_code(d, l), doc(d, p, _).
+rr_demand_agg_rr_agg1(d, l) :- pyl_rest(d, l, 0, s).
+rr_demand_agg_rr_agg3(d, l) :- pyl_rest(d, l, j, r), py_line_sep(r), match("(?<h>[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*)[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?s).*", r), h = @rx_group(r, "^(?:(?<h>[^\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}]*)[\\x0b\\x0c\\x1c-\\x1e\\x85\\x{2028}\\x{2029}](?s).*)$", "h").
+rr_demand_agg_rr_agg5(d, l) :- pyl_rest(d, l, j, r), j > 0.
+rr_demand_agg_rr_agg7(d, l) :- admin_async_hit(d, l, _).

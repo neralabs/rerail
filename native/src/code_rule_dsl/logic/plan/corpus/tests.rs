@@ -2588,44 +2588,6 @@ v(n) :- kind(n, \"assert_statement\").
     assert_eq!(got, [("c1".to_owned(), 1), ("c2".to_owned(), 1), ("c3".to_owned(), 1), ("v".to_owned(), 1)]);
 }
 
-/// The texts the combine last read (`kept_texts`): a text's kept modules stand while the text and each library file
-/// they list are as kept, so the combine does not read it again. An edited text, or one whose library file changed,
-/// is read again.
-#[test]
-fn a_kept_texts_modules_stand_while_it_and_its_files_are_as_kept() {
-    use crate::code_rule_dsl::logic::rr::Modules;
-    use std::collections::BTreeSet;
-    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("kept-texts");
-    std::fs::create_dir_all(&dir).unwrap();
-    let (a, b) = (dir.join("a.rerail"), dir.join("b.rerail"));
-    std::fs::write(&a, ".decl x(n: number)\n").unwrap();
-    std::fs::write(&b, ".decl y(n: number)\n").unwrap();
-    let (a, b) = (a.canonicalize().unwrap(), b.canonicalize().unwrap());
-    let digest = |p: &std::path::Path| -> [u8; 32] {
-        use sha2::Digest as _;
-        sha2::Sha256::digest(std::fs::read(p).unwrap()).into()
-    };
-    let modules = |files: &[&std::path::Path], head: &str| Modules {
-        files: files.iter().map(|p| (p.to_path_buf(), digest(p), BTreeSet::from([p.file_stem().unwrap().to_string_lossy().into_owned()]))).collect(),
-        heads: BTreeSet::from([head.to_owned()]),
-        declared: BTreeSet::new(),
-    };
-    let store = crate::content_store::ContentStore::open(&dir.join("store.sqlite")).unwrap();
-    let programs = ["p(1) :- x(1).", "q(1) :- y(1).", "r(1)."];
-    let modular = vec![Some(modules(&[&a], "p")), Some(modules(&[&a, &b], "q")), None];
-    super::kept_texts::keep(&store, &programs, &modular);
-    store.written().unwrap();
-    let shown = |known: Vec<Option<Option<Modules>>>| known.into_iter().map(|k| k.map(|m| m.map(|m| format!("{m:?}")))).collect::<Vec<_>>();
-    let kept: Vec<_> = modular.iter().map(|m| Some(m.as_ref().map(|m| format!("{m:?}")))).collect();
-    assert_eq!(shown(super::kept_texts::known(&store, &programs)), kept, "every text as kept");
-    let edited = ["p(1) :- x(1).", "q(2) :- y(1).", "r(1)."];
-    assert_eq!(shown(super::kept_texts::known(&store, &edited)), [kept[0].clone(), None, kept[2].clone()], "the edited text is read again");
-    std::fs::write(&b, ".decl y(n: number)\n.decl z(n: number)\n").unwrap();
-    assert_eq!(shown(super::kept_texts::known(&store, &programs)), [kept[0].clone(), None, kept[2].clone()], "b.rerail changed: its includer is read again");
-    drop(store);
-    let _ = std::fs::remove_dir_all(&dir);
-}
-
 /// The engine's Git programs (`git::SOURCE_CHECKS`, `ROOT_TREE`, `INVENTORY`) each read as one program, their library
 /// modules included by name and each read once: what each derives is declared, and so are the trailers `git.rerail`
 /// includes (`git/messages.rerail`, which includes `git.rerail` again).
@@ -2672,4 +2634,42 @@ seen(e) :- host_inner(e).
     assert!(rules_of(&v, "rr_cx_annotation_ann_inner").iter().all(|r| r.contains("rr_cx_annotation_unparen(") && r.contains(" ann_root(")), "{all}");
     assert!(!rules_of(&v, "unparen").is_empty() && rules_of(&v, "host_inner").iter().all(|r| r.contains(" unparen(")), "the host's own: {all}");
     assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_annotation_ann_inner(")), "{all}");
+}
+
+/// The texts the combine last read (`kept_texts`): a text's kept modules stand while the text and each library file
+/// they list are as kept, so the combine does not read it again. An edited text, or one whose library file changed,
+/// is read again.
+#[test]
+fn a_kept_texts_modules_stand_while_it_and_its_files_are_as_kept() {
+    use crate::code_rule_dsl::logic::rr::Modules;
+    use std::collections::BTreeSet;
+    let dir = crate::code_rule_dsl::fixtures::temp().with_extension("kept-texts");
+    std::fs::create_dir_all(&dir).unwrap();
+    let (a, b) = (dir.join("a.rerail"), dir.join("b.rerail"));
+    std::fs::write(&a, ".decl x(n: number)\n").unwrap();
+    std::fs::write(&b, ".decl y(n: number)\n").unwrap();
+    let (a, b) = (a.canonicalize().unwrap(), b.canonicalize().unwrap());
+    let digest = |p: &std::path::Path| -> [u8; 32] {
+        use sha2::Digest as _;
+        sha2::Sha256::digest(std::fs::read(p).unwrap()).into()
+    };
+    let modules = |files: &[&std::path::Path], head: &str| Modules {
+        files: files.iter().map(|p| (p.to_path_buf(), digest(p), BTreeSet::from([p.file_stem().unwrap().to_string_lossy().into_owned()]))).collect(),
+        heads: BTreeSet::from([head.to_owned()]),
+        declared: BTreeSet::new(),
+    };
+    let store = crate::content_store::ContentStore::open(&dir.join("store.sqlite")).unwrap();
+    let programs = ["p(1) :- x(1).", "q(1) :- y(1).", "r(1)."];
+    let modular = vec![Some(modules(&[&a], "p")), Some(modules(&[&a, &b], "q")), None];
+    super::kept_texts::keep(&store, &programs, &modular);
+    store.written().unwrap();
+    let shown = |known: Vec<Option<Option<Modules>>>| known.into_iter().map(|k| k.map(|m| m.map(|m| format!("{m:?}")))).collect::<Vec<_>>();
+    let kept: Vec<_> = modular.iter().map(|m| Some(m.as_ref().map(|m| format!("{m:?}")))).collect();
+    assert_eq!(shown(super::kept_texts::known(&store, &programs)), kept, "every text as kept");
+    let edited = ["p(1) :- x(1).", "q(2) :- y(1).", "r(1)."];
+    assert_eq!(shown(super::kept_texts::known(&store, &edited)), [kept[0].clone(), None, kept[2].clone()], "the edited text is read again");
+    std::fs::write(&b, ".decl y(n: number)\n.decl z(n: number)\n").unwrap();
+    assert_eq!(shown(super::kept_texts::known(&store, &programs)), [kept[0].clone(), None, kept[2].clone()], "b.rerail changed: its includer is read again");
+    drop(store);
+    let _ = std::fs::remove_dir_all(&dir);
 }

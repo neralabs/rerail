@@ -48,8 +48,6 @@ const FACT_STORE: &[&str] = &[
     "workspaces",
     // A store session per durable owner (decision 0450 §2): which data the store keeps.
     "store_sessions",
-    // Page sets put and not yet bound (decision 0450): which a collection keeps.
-    "tree_pages_pending",
     // The archive of aged sources and tapes (decision 0450 step 4): their bytes, compressed.
     "object_archive",
     "workspace_overlay",
@@ -116,8 +114,6 @@ const SCRATCH: &[&str] = &[
     "rerail_capture",
     "rerail_terminal_match",
     "capture_tapes",
-    "fact_batch",
-    "fact_dv",
     "stat_meta",
     "stat_col",
     "stat_kind",
@@ -140,9 +136,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("derivations", "1"),
     ("derivation_inputs", "1"),
     ("name_bindings", "1"),
-    ("facts_results", "3"),
-    ("facts_plan_sets", "3"),
-    ("facts_completions", "3"),
     ("corpus_plans", "3"),
     ("corpus_plan_relations", "3"),
     ("corpus_manifests", "3"),
@@ -151,13 +144,7 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("corpus_live", "3"),
     ("corpus_state", "3"),
     ("corpus_decided", "3"),
-    ("corpus_swept", "3"),
-    ("compiled_plans", "6"),
-    ("compiled_plan_reads", "6"),
-    ("plan_feedback", "6"),
     ("stat_blob", "6"),
-    ("fact_stats", "6"),
-    ("fact_value_stats", "6"),
     ("kind_size", "6"),
     ("edge_freq", "6"),
     ("tape_kind_counts", "6"),
@@ -175,14 +162,6 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
     ("vocabulary_literal", "7"),
     ("vocabulary_pending", "7"),
     ("search_index_sets", "7"),
-    ("tree_pages", "8"),
-    ("tree_result_segments", "8"),
-    ("completed_snapshot_trees", "8"),
-    ("completed_workspace_revisions", "8"),
-    ("completed_directory_reuse", "8"),
-    ("candidate_catalogs", "8"),
-    ("candidate_checks", "8"),
-    ("context_check_results", "8"),
 ];
 /// The pinned size of `NOT_YET_TABLES`: lowered by each move, never raised. Raised once, 61 to 62, by the merge of
 /// the cost classifier's per-machine `models` (2026-11-10), which a move to facts has yet to take; back to 61 once a
@@ -190,8 +169,14 @@ const NOT_YET_TABLES: &[(&str, &str)] = &[
 /// `corpus_stats` went, a corpus file's content the observer's answer (t33 K2, 2026-11-21); 54 when the observer's
 /// answers and settings (`observed`, `observer_meta`) became kept facts of the content store (t33 K2); 49 when the
 /// slice's last run per scope became kept facts of the scope's space (t33 step 3), and `slice_fresh` was found to be
-/// the run's scratch; 48 when the Neural Engine's compiled models became kept facts, their archives sources (t33 step 6).
-const NOT_YET_TABLES_PIN: usize = 48;
+/// the run's scratch; 48 when the Neural Engine's compiled models became kept facts, their archives sources (t33 step 6); 45 when
+/// the compiled plans, the statistics they read and their feedback became kept facts (t33 step 6); 39 when the facts
+/// memo's last users became kept facts and its three tables went (and the sweep of its retired schemas), with the workspace pipeline's result pages and the
+/// predecessor's tree result segments, which nothing called outside their tests (t33 step 3); 33 when the workspace's
+/// results, their catalogs and checks and its completed directories became entries of the per-file memo (t33 step 8); 31
+/// when the fact relations' column statistics went, which nothing wrote but the demand's terminal estimate, now a kept
+/// fact (t33 step 6).
+const NOT_YET_TABLES_PIN: usize = 31;
 
 /// Maps (file, static) that keep nothing for later use: registries of open things, queues, switches, profiling, and
 /// the engine's own facts in memory within a run.
