@@ -303,10 +303,10 @@ export class RemoteOutbox {
   readonly #now: () => number;
   readonly #holder = randomUUID();
   /**
-   * The audits held under their marked hash whose lists a sync found still unreadable, by the connection it reads
-   * through, which lasts as long as the sync: its later batches pass them by untested.
+   * The audits held under their marked hash whose lists a sync's test found mended (`#mendedFrom`), by the connection
+   * it reads through, which lasts as long as the sync: its later batches test none again.
    */
-  readonly #stillUnreadable = new WeakMap<Database.Database, Set<string>>();
+  readonly #mended = new WeakMap<Database.Database, Set<string>>();
 
   constructor(options: OutboxOptions = {}) {
     this.#home = options.home ?? defaultRerailHome();
@@ -632,9 +632,7 @@ export class RemoteOutbox {
     const rows = rerail.prepare("SELECT audit_id, session_id, origin, status, started_at, finished_at, length(violations_json) AS size FROM audits WHERE finished_at IS NOT NULL ORDER BY started_at").all() as FinishedAuditRow[];
     // Opens the database at its first read: a sync with no audit to test or send opens none.
     const reader = new SqliteAuditReader(join(this.#home, RERAIL_DATABASE_FILE));
-    const stillUnreadable = this.#stillUnreadable.get(rerail) ?? new Set<string>();
-    this.#stillUnreadable.set(rerail, stillUnreadable);
-    const sink: AuditSink = { rerail, rules, batch, addSnapshot, unsent, reader, stillUnreadable };
+    const sink: AuditSink = { rerail, rules, batch, addSnapshot, unsent, reader, rows };
     try {
       return rows.every(row => isExcluded(row.session_id, row.started_at) || this.#addPending(sink, row));
     } finally {
@@ -646,17 +644,27 @@ export class RemoteOutbox {
    * `row`'s audit unless the remote holds it as it is; false once the batch is full. One held under its readable hash
    * is passed by unread: one sent whole is not sent again for damage to its paths, failures, rule revisions or rule
    * provenance, which its hash leaves out. One held under its marked hash, sent with a stored list that did not read,
-   * has its lists tested in SQL once a sync: passed by while they still do not read, sent again whole once mended. Any
-   * other is read only while the batch has room, so a full batch ends the reads.
+   * is passed by while its lists still do not read and sent again whole once mended (`#mendedFrom`). Any other is read
+   * only while the batch has room, so a full batch ends the reads.
    */
   #addPending(sink: AuditSink, row: FinishedAuditRow): boolean {
-    const held = (unreadable: boolean): boolean => !sink.unsent({ line: "", stream: "audit", id: row.audit_id, hash: auditHash(row, unreadable) });
-    if (held(false) || sink.stillUnreadable.has(row.audit_id)) return true;
-    if (held(true) && sink.reader.unreadableListCount(row.audit_id) > 0) {
-      sink.stillUnreadable.add(row.audit_id);
-      return true;
-    }
+    if (heldAs(sink, row, false)) return true;
+    if (heldAs(sink, row, true) && !this.#mendedFrom(sink, row).has(row.audit_id)) return true;
     return this.#addAudit(sink, sink.reader.get(row.audit_id), row);
+  }
+
+  /**
+   * The audits held under their marked hash whose stored lists read again, tested in SQL once a sync, at the first such
+   * audit it meets, `row`: that one and every one after it, in one statement (`readableAudits`). One held so only after
+   * that test was sent marked by this sync, from the record it read, so it is passed by untested.
+   */
+  #mendedFrom(sink: AuditSink, row: FinishedAuditRow): Set<string> {
+    const tested = this.#mended.get(sink.rerail);
+    if (tested !== undefined) return tested;
+    const marked = sink.rows.slice(sink.rows.indexOf(row)).filter(later => heldAs(sink, later, true));
+    const mended = sink.reader.readableAudits(marked.map(later => later.audit_id));
+    this.#mended.set(sink.rerail, mended);
+    return mended;
   }
 
   /**
@@ -850,7 +858,13 @@ interface AuditSink {
   readonly addSnapshot: (item: OutboxRecord) => boolean;
   readonly unsent: (item: OutboxRecord) => boolean;
   readonly reader: SqliteAuditReader;
-  readonly stillUnreadable: Set<string>;
+  /** Every finished audit, in the order the sync goes through them. */
+  readonly rows: readonly FinishedAuditRow[];
+}
+
+/** Whether the remote holds `row`'s audit under its readable hash or, `unreadable`, its marked one (`auditHash`). */
+function heldAs(sink: AuditSink, row: FinishedAuditRow, unreadable: boolean): boolean {
+  return !sink.unsent({ line: "", stream: "audit", id: row.audit_id, hash: auditHash(row, unreadable) });
 }
 
 /** `items` into the batch together, or none of them while the batch has records and no room for all; false then. */

@@ -474,14 +474,16 @@ function holdsList(text: SQL | SQLiteColumn, item: StoredItem): SQL<number> {
 function readableList(text: SQLiteColumn): SQL<string> {
   return sql<string>`(CASE WHEN ${holdsList(text, "object")} THEN ${text} ELSE '[]' END)`;
 }
-/** How many of an audit's stored lists `parsedList` reads as none: the failures its record lists for them (`readLists`). */
-function unreadableLists(): SQL<number> {
-  const texts: Record<StoredList, SQL | SQLiteColumn> = {
-    ruleRevisions: audits.ruleRevisions, ruleProvenance: ruleProvenanceText(), paths: audits.paths, violations: audits.violations,
-    failures: audits.failures,
+/**
+ * How many of an audit's stored lists `parsedList` reads as none: the failures its record lists for them (`readLists`).
+ * `provenanceHeld` is 1 when the rule provenance the record reads holds a list: by default the text it reads tested.
+ */
+function unreadableLists(provenanceHeld = holdsList(ruleProvenanceText(), "object")): SQL<number> {
+  const texts: Record<Exclude<StoredList, "ruleProvenance">, SQLiteColumn> = {
+    ruleRevisions: audits.ruleRevisions, paths: audits.paths, violations: audits.violations, failures: audits.failures,
   };
-  const unreadable = (Object.keys(texts) as StoredList[]).map(list => sql`(1 - ${holdsList(texts[list], STORED_LISTS[list].item)})`);
-  return sql<number>`(${sql.join(unreadable, sql` + `)})`;
+  const held = (Object.keys(texts) as Array<keyof typeof texts>).map(list => holdsList(texts[list], STORED_LISTS[list].item));
+  return sql<number>`(${sql.join([provenanceHeld, ...held].map(test => sql`(1 - ${test})`), sql` + `)})`;
 }
 
 /**
@@ -1037,10 +1039,21 @@ export class SqliteAuditReader implements AuditReader {
     return database === undefined ? undefined : latestAuditSummary(database, sessionId);
   }
 
-  /** How many of the audit's stored lists its record reads as none (`unreadableLists`), in SQL: no list is parsed in JavaScript. */
-  unreadableListCount(auditId: string): number {
-    const row = this.#database.open()?.select({ count: unreadableLists() }).from(audits).where(eq(audits.auditId, auditId)).get();
-    return row?.count ?? 0;
+  /**
+   * Of `auditIds`, those whose stored lists their records all read (`unreadableLists`), in one statement and with no list
+   * parsed in JavaScript: each stored rule provenance copy they name is tested once, however many of them name it.
+   */
+  readableAudits(auditIds: readonly string[]): Set<string> {
+    const database = this.#database.open();
+    if (database === undefined) return new Set();
+    const ids = sql`(SELECT value FROM json_each(${JSON.stringify(auditIds)}))`;
+    // A copy's test joined by its id, as `ruleProvenanceText` reads the copy; the audit's own text where it names none.
+    const rows = database.all<{ auditId: string }>(sql`WITH copies AS MATERIALIZED (
+        SELECT provenance_id, ${holdsList(sql`rule_provenance_json`, "object")} AS held FROM ${auditRuleProvenances}
+        WHERE provenance_id IN (SELECT rule_provenance_id FROM ${audits} WHERE audit_id IN ${ids}))
+      SELECT ${audits.auditId} AS auditId FROM ${audits} LEFT JOIN copies ON copies.provenance_id = ${audits.ruleProvenanceId}
+      WHERE ${audits.auditId} IN ${ids} AND ${unreadableLists(sql`coalesce(copies.held, ${holdsList(audits.ruleProvenance, "object")})`)} = 0`);
+    return new Set(rows.map(row => row.auditId));
   }
 
   close(): void {

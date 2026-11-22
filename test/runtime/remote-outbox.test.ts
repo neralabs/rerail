@@ -303,7 +303,7 @@ describe("remote sink outbox", () => {
     const { sessionId } = seed();
     addAudits(sessionId, 20);
     addRemote({ url: sink.url, token: "test-token", content: true }, home);
-    const tests = vi.spyOn(SqliteAuditReader.prototype, "unreadableListCount");
+    const tests = vi.spyOn(SqliteAuditReader.prototype, "readableAudits");
     onTestFinished(() => tests.mockRestore());
     const [result] = await outbox().sync({ force: true, batchBytes: 4 * 1024 });
     expect(result!.batches).toBeGreaterThan(1);
@@ -320,7 +320,7 @@ describe("remote sink outbox", () => {
     audits.close();
     setPathsText(auditId, '["a.ts"');
     // The test of the stored lists says the opposite of each record.
-    const tests = vi.spyOn(SqliteAuditReader.prototype, "unreadableListCount").mockImplementation(id => (id === auditId ? 0 : 1));
+    const tests = vi.spyOn(SqliteAuditReader.prototype, "readableAudits").mockImplementation(ids => new Set(ids.filter(id => id === auditId)));
     onTestFinished(() => tests.mockRestore());
     addRemote({ url: sink.url, token: "test-token", content: true }, home);
     await outbox().sync({ force: true });
@@ -336,11 +336,44 @@ describe("remote sink outbox", () => {
     addRemote({ url: sink.url, token: "test-token", content: true }, home);
     await outbox().sync({ force: true });
     addAudits(sessionId, 20);
-    const tests = vi.spyOn(SqliteAuditReader.prototype, "unreadableListCount");
+    const tests = vi.spyOn(SqliteAuditReader.prototype, "readableAudits");
     onTestFinished(() => tests.mockRestore());
     const [result] = await outbox().sync({ force: true, batchBytes: 4 * 1024 });
     expect(result!.batches).toBeGreaterThan(1);
-    expect(tests.mock.calls).toEqual([[auditId]]);
+    expect(tests.mock.calls).toEqual([[[auditId]]]);
+  });
+
+  it("tests the stored lists of the audits it sent naming a damaged stored rule provenance in one statement a sync, however many", async () => {
+    const { sessionId, auditId } = seed();
+    addAudits(sessionId, 20);
+    setProvenanceCopyText(auditId, "[");
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    const prepared = vi.spyOn(Database.prototype, "prepare");
+    onTestFinished(() => prepared.mockRestore());
+    await outbox().sync({ force: true });
+    // Each list test in SQL (`holdsList`) begins with `json_valid`; no other statement of a sync has it.
+    expect(prepared.mock.calls.filter(([source]) => source.includes("json_valid"))).toHaveLength(1);
+    expect(sink.requests).toHaveLength(1);
+  });
+
+  it("sends an audit holding its own rule provenance, as an older Rerail wrote it, again whole once that is mended", async () => {
+    const { auditId } = seed();
+    const setOwnProvenanceText = (text: string): void => {
+      const database = new Database(databasePath());
+      database.pragma("ignore_check_constraints = ON");
+      database.prepare("UPDATE audits SET rule_provenance_id = NULL, rule_provenance_json = ? WHERE audit_id = ?").run(text, auditId);
+      database.close();
+    };
+    setOwnProvenanceText("[");
+    addRemote({ url: sink.url, token: "test-token", content: true }, home);
+    await outbox().sync({ force: true });
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(1);
+    setOwnProvenanceText("[]");
+    await outbox().sync({ force: true });
+    expect(sink.requests).toHaveLength(2);
+    expect(sink.requests[1]!.records.find(item => item.type === "audit")).toMatchObject({ id: auditId, failures: [], failureCount: 0 });
   });
 
   it("keeps the cursor on failure, backs off, and resends the same batch id once the remote is back", async () => {
