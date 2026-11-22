@@ -274,6 +274,25 @@ pub enum Groups {
 /// of 32-lane waves: their waves. `RERAIL_OPENCL_SIMD_WIDTH` (1, 16 or 32) asks for a width: 1 is one lane, no group;
 /// 16 or 32 the device's sub-groups of it where it has them. Otherwise, or with `RERAIL_OPENCL_SUBGROUPS=0` (to
 /// measure one against the other), the shim emulates 32 lanes in threadgroup memory.
+/// The device's native dot products (ukl/dot.h), as the define ukl/backend.h reads: AMD's instructions on RDNA2
+/// (`gfx103x`, whose names and forms these are; other AMD chips' differ, and take the reference until one is tested),
+/// or `cl_khr_integer_dot_product` where kernels are built as OpenCL C 3.0. `RERAIL_OPENCL_DOT=0` keeps the reference.
+fn dots(a: &Api, device: Ptr, groups: Groups) -> Option<&'static str> {
+    if std::env::var("RERAIL_OPENCL_DOT").is_ok_and(|v| v == "0") {
+        return None;
+    }
+    let name = device_info_string(a, device, CL_DEVICE_NAME);
+    let ext = device_info_string(a, device, CL_DEVICE_EXTENSIONS);
+    let has = |e: &str| ext.split_ascii_whitespace().any(|x| x == e);
+    if name.trim().starts_with("gfx103") && has("cl_khr_fp16") {
+        Some("UKL_OPENCL_AMD_DOT")
+    } else if groups == Groups::Required && has("cl_khr_integer_dot_product") {
+        Some("UKL_OPENCL_INT_DOT")
+    } else {
+        None
+    }
+}
+
 fn lanes(a: &Api, device: Ptr) -> (u32, Groups) {
     let asked = match std::env::var("RERAIL_OPENCL_SIMD_WIDTH") {
         Err(_) => None,
@@ -364,6 +383,8 @@ struct DeviceInner {
     /// whose memory is the host's), which a map and unmap make current: then a submission's buffers are made the
     /// host's at its start and the device's back into the host's at its end (`ClComputeQueue::flush`).
     synced: bool,
+    /// Its dot products' native form (`dots`): the define that turns it on in ukl/backend.h, or none.
+    dot: Option<&'static str>,
 }
 
 unsafe impl Send for DeviceInner {}
@@ -413,7 +434,7 @@ impl ClDevice {
         let max_alloc = u64::from_ne_bytes(ma[..8].try_into().unwrap());
         let (mut width, mut groups) = lanes(a, device);
         // Heap buffers first: memory wrapped in place (a block, a mapped tape) is read through one.
-        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, groups, width, base_align, max_alloc, usm: None, synced: false }));
+        let probe = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, groups, width, base_align, max_alloc, usm: None, synced: false, dot: None }));
         // A driver whose kernels' writes reach the host's pages only through a map is made current at each
         // submission's edges (`synced`); a device's own memory holding a buffer while it computes is not a copy (0353).
         // `RERAIL_OPENCL_SYNCED=1` takes this path on any device (its tests on a driver that needs no map).
@@ -427,12 +448,13 @@ impl ClDevice {
             (width, groups) = (32, Groups::Emulated);
         }
         drop(probe);
-        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, groups, width, base_align, max_alloc, usm: None, synced }));
+        let dot = dots(a, device, groups);
+        let d = ClDevice(Arc::new(DeviceInner { device, context, name: name.clone(), max_group, groups, width, base_align, max_alloc, usm: None, synced, dot }));
         if synced {
             return Ok(d);
         }
         let Some(usm) = usm(a, platform, device) else { return Ok(d) };
-        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, groups, width, base_align, max_alloc, usm: Some(usm), synced }));
+        let with = ClDevice(Arc::new(DeviceInner { device, context, name, max_group, groups, width, base_align, max_alloc, usm: Some(usm), synced, dot }));
         // Without the check's pass its buffers stay the heap's, with no address (one context; nothing releases it).
         if let Err(e) = with.follows_addresses() {
             eprintln!("rerail-device: {e}: OpenCL buffers without addresses");
@@ -585,6 +607,9 @@ impl ClDevice {
         }
         if self.0.groups == Groups::Amd {
             d.push(("UKL_OPENCL_AMD", "1".into()));
+        }
+        if let Some(dot) = self.0.dot {
+            d.push((dot, "1".into()));
         }
         d
     }

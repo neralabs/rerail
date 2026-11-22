@@ -947,3 +947,119 @@ fn bench_at(q: &mut ComputeQueue, n: usize) {
         mkeys(all / cores as f64),
     );
 }
+
+/// An f16's bits as an f32, exactly (ukl/dot.h's reference, written again here).
+fn f16_to_f32(h: u32) -> f32 {
+    let (s, e, m) = ((h & 0x8000) << 16, (h >> 10) & 31, h & 0x3ff);
+    if e == 31 {
+        return f32::from_bits(s | 0x7f80_0000 | (m << 13));
+    }
+    if e == 0 {
+        let f = m as f32 * 5.960_464_5e-8;
+        return if s != 0 { -f } else { f };
+    }
+    f32::from_bits(s | ((e + 112) << 23) | (m << 13))
+}
+
+/// The distance between an f32 of magnitude `x` and the next (at least the smallest subnormal's).
+fn ulp32(x: f64) -> f64 {
+    let x = (x.abs() as f32).max(f32::MIN_POSITIVE);
+    (f32::from_bits(x.to_bits() + 1) - x) as f64
+}
+
+/// ukl/dot.h (decision 0617 §7): the byte dot products exact, and the backend's form the reference's; the float ones'
+/// references the host's to the bit, and the backend's within one rounding of them, to the bit where the sums are
+/// exact; the f16 conversion of every one of its 65,536 values, the backend's and the reference's.
+#[test]
+fn dot_products_equal_their_references() {
+    let Some((p, mut q)) = setup() else { return };
+    let mut rng = Rng(17);
+    let n = 65_536u32;
+    // An f16 of moderate size (2^-7..2^8), or (`small`) a small integer (every product and sum exact in f32).
+    let f16 = |r: &mut Rng, small: bool| -> u32 {
+        if small {
+            let v = r.below(129) as i32 - 64;
+            let f = (v.unsigned_abs() as f32).to_bits();
+            // The integer's f16: exponent re-biased, the top 10 significand bits (exact: |v| <= 64).
+            let h = if v == 0 { 0 } else { (((f >> 23) - 112) << 10) | ((f >> 13) & 0x3ff) };
+            h | if v < 0 { 0x8000 } else { 0 }
+        } else {
+            (r.below(2) as u32) << 15 | ((r.below(16) as u32 + 8) << 10) | r.below(1024) as u32
+        }
+    };
+    // A bf16 of moderate size (exponents 2^-30..2^30, no flush to zero nor overflow), or a small integer.
+    let bf16 = |r: &mut Rng, small: bool| -> u32 {
+        if small {
+            ((r.below(129) as f32 - 64.0).to_bits()) >> 16
+        } else {
+            (r.below(2) as u32) << 15 | ((r.below(61) as u32 + 97) << 7) | r.below(128) as u32
+        }
+    };
+    let (mut a, mut b, mut c) = (Vec::new(), Vec::new(), Vec::new());
+    for i in 0..n {
+        // The first quarter's floats are small integers.
+        let small = i < n / 4;
+        let (fa, fb) = (f16(&mut rng, small) | f16(&mut rng, small) << 16, f16(&mut rng, small) | f16(&mut rng, small) << 16);
+        let (ga, gb) = (bf16(&mut rng, small) | bf16(&mut rng, small) << 16, bf16(&mut rng, small) | bf16(&mut rng, small) << 16);
+        let acc = if small { rng.below(2001) as f32 - 1000.0 } else { (rng.below(1 << 20) as f32 - (1 << 19) as f32) / 64.0 };
+        // Thread `i`'s words by `i % 3`: two f16s each, two bf16s each, or any bits (the byte forms' inputs; every
+        // thread's bytes are checked).
+        let (x, y) = match i % 3 {
+            0 => (fa, fb),
+            1 => (ga, gb),
+            _ => (rng.next() as u32, rng.next() as u32),
+        };
+        a.push(x);
+        b.push(y);
+        c.push(acc.to_bits());
+    }
+    let (ab, bb, cb) = (buffer_of(&a).unwrap(), buffer_of(&b).unwrap(), buffer_of(&c).unwrap());
+    let out = alloc::<u32>(n as usize * 10).unwrap();
+    launch(&q, p.function("t_dot").unwrap())
+        .value("args", &TestArgs { n, w: 0 })
+        .buffer("a", &ab)
+        .buffer("b", &bb)
+        .buffer("c", &cb)
+        .buffer("out", &out)
+        .run(&[(n / 64) as u64], &[64])
+        .unwrap();
+    q.flush().await_().unwrap();
+    let got: Vec<u32> = read(&out, n as usize * 10);
+    let backend = crate::device::backend();
+    let (mut exact, mut rounded) = (0usize, 0usize);
+    for i in 0..n as usize {
+        let o = &got[i * 10..i * 10 + 10];
+        let (x, y, z) = (a[i], b[i], c[i]);
+        let bytes = |w: u32| w.to_le_bytes();
+        let i8s: i32 = bytes(x).iter().zip(bytes(y)).fold(z as i32, |s, (&p, q)| s.wrapping_add(p as i8 as i32 * q as i8 as i32));
+        let u8s: u32 = bytes(x).iter().zip(bytes(y)).fold(z, |s, (&p, q)| s.wrapping_add(p as u32 * q as u32));
+        assert_eq!([o[0], o[1], o[2], o[3]], [i8s as u32, i8s as u32, u8s, u8s], "{backend}: {x:#010x} · {y:#010x} + {z:#x}: dot4 i8 (backend, reference), u8 (backend, reference)");
+        // The f16 conversion of `i`'s low bits: both the host's, NaNs as NaNs.
+        let want = f16_to_f32(i as u32 & 0xffff);
+        for (k, g) in [o[8], o[9]].into_iter().enumerate() {
+            let g = f32::from_bits(g);
+            assert!(g.to_bits() == want.to_bits() || (g.is_nan() && want.is_nan()), "{backend}: f16 {:#06x} as f32 ({}): {g} against {want}", i & 0xffff, ["backend", "reference"][k]);
+        }
+        // The float form this thread's inputs are, and its slots.
+        let (conv, slot): (fn(u32) -> f32, usize) = match i % 3 {
+            0 => (f16_to_f32, 4),
+            1 => (|h| f32::from_bits(h << 16), 6),
+            _ => continue,
+        };
+        let (x0, x1, y0, y1) = (conv(x & 0xffff), conv(x >> 16), conv(y & 0xffff), conv(y >> 16));
+        let acc = f32::from_bits(z);
+        let first = x0.mul_add(y0, acc);
+        let reference = x1.mul_add(y1, first);
+        let (native, refd) = (f32::from_bits(o[slot]), f32::from_bits(o[slot + 1]));
+        assert_eq!(refd.to_bits(), reference.to_bits(), "{backend}: thread {i}: dot2 reference {refd} against the host's {reference}");
+        if native.to_bits() == reference.to_bits() {
+            exact += 1;
+        } else {
+            // Within one rounding: the first sum's (whose size bounds its error) and the last's.
+            let bound = ulp32(x0 as f64 * y0 as f64 + acc as f64) + ulp32(reference.abs().max(native.abs()) as f64);
+            assert!(i >= n as usize / 4 && ((native - reference) as f64).abs() <= bound, "{backend}: thread {i}: dot2's form {native} against the reference {reference} (bound {bound}; small integers must be exact)");
+            rounded += 1;
+        }
+    }
+    eprintln!("{backend}: dot2 forms equal to the reference {exact}, within one rounding {rounded}");
+}

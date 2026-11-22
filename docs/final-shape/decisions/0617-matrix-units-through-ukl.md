@@ -111,9 +111,8 @@ Every operation is convergent over the owner: every lane of every owning SIMD gr
   2. it reads the other lanes' values by shuffle;
   3. it accumulates its own elements of C.
 
-  Where the device has dot-product instructions (RDNA2's `v_dot2_f32_f16` and `v_dot4_i32_i8`, to verify on
-  gfx1035), the emulation uses them through the backend's `_native` slot, as other library operations do (decision
-  0440 §5).
+  Where the device has dot-product instructions (RDNA2's `v_dot2_f32_f16` and `v_dot4_i32_i8`, confirmed on
+  gfx1035; CUDA's `dp4a`), the emulation uses them through `<ukl/dot.h>` (§7).
 - **Hopper's and Blackwell's warpgroup instructions** (`wgmma`, `tcgen05`), where four warps own one tile, have
   the M5's shape: an owner of several groups. They fit the same interface, and are not in this first cut.
 
@@ -151,6 +150,54 @@ for (uint i = 0; i < 64 / M_; i++) for (uint j = 0; j < 64 / N_; j++) {
 
 How many fragments a kernel holds depends on the device's shape, and so does how many registers it uses. The block
 size (64) is the kernel's choice, and a backend's measurements may change it, never its results.
+
+### 7. Dot products: one thread's, every backend (2026-11-22)
+
+The user: "please also make dot product operations available, generically, through UKL and hook them up".
+
+`<ukl/dot.h>` gives every kernel one thread's dot products of packed small values. Each operand is a 32-bit word
+holding four bytes or two 16-bit floats, lowest first:
+
+| Call | Result |
+|---|---|
+| `ukl_dot4_i8(a, b, acc)` | `acc + Σ a[k]·b[k]` over four signed bytes, into an i32: exact, wrapping |
+| `ukl_dot4_u8(a, b, acc)` | the same over unsigned bytes, into a u32 |
+| `ukl_dot2_f16(a, b, acc)` | `acc + a[0]·b[0] + a[1]·b[1]` over two f16s, into an f32 |
+| `ukl_dot2_bf16(a, b, acc)` | the same over two bf16s |
+| `ukl_f16_to_f32(h)`, `ukl_bf16_to_f32(h)` | a 16-bit float's bits as an f32, exactly |
+
+- **The float forms are within one rounding.** Their products are exact in f32, so only the sums round:
+  - The reference rounds twice: a fused multiply-add of each product in turn.
+  - AMD's `v_dot2_f32_f16` rounds the exact sum once. On the Radeon 680M it matched the exact sum rounded once in
+    every case of a probe, and the two-`fma` chain in about 1 case in 7.
+  - So a native float form is checked within one rounding of the reference, and to the bit where the sums are
+    exact.
+- **The native forms, each behind a flag in `ukl/backend.h`:**
+
+| Backend | Bytes (`UKL_NATIVE_DOT4`) | f16 (`UKL_NATIVE_DOT2_F16`) | f16 conversion (`UKL_NATIVE_F16`) |
+|---|---|---|---|
+| CUDA | `__dp4a` (sm_61 and later) | the reference's arithmetic | PTX `cvt.f32.f16` |
+| Metal | the reference (Metal has no integer dot product) | the reference's arithmetic | `half` |
+| OpenCL on AMD RDNA2 (`gfx103x`) | `v_dot4_i32_i8`, `v_dot4_u32_u8` | `v_dot2_f32_f16` | `vload_half` |
+| OpenCL with `cl_khr_integer_dot_product` (built as OpenCL C 3.0) | `dot(char4, char4)` | the reference's arithmetic | `vload_half` |
+| Other OpenCL | the reference | the reference's arithmetic | `vload_half` |
+| The CPU | the reference | the reference | the reference |
+
+  - The OpenCL host chooses the define once, when it opens the device (`dots`: `UKL_OPENCL_AMD_DOT` or
+    `UKL_OPENCL_INT_DOT`). `RERAIL_OPENCL_DOT=0` keeps the reference.
+  - Other AMD chips' instructions differ (RDNA3's `v_dot4_i32_iu8`, for example), so they take the reference until
+    one is tested.
+- **The test, `library_tests::dot_products_equal_their_references`:** 65,536 threads.
+  - The byte forms are compared with the host's exact sums. Every thread's words are checked, and a third of the
+    threads get random bits.
+  - The float references are compared with the host's to the bit. The native float forms are compared with the
+    reference within one rounding, and to the bit on small integers.
+  - The f16 conversion is checked on all 65,536 bit patterns, NaNs included.
+  - It passes on the CPU and CUDA (a GB10), on Metal (an Apple-silicon Mac), and on OpenCL on the Radeon 680M. On the Radeon,
+    AMD's native forms ran: `fdot2` equalled the reference to the bit in 40,699 cases and was within one rounding in
+    2,992, none of them on small integers.
+- **The matrix units' emulation (§4) is written over these calls,** so a device with dot-product instructions
+  emulates its fragments with them.
 
 ## Requirements, and the test of each
 

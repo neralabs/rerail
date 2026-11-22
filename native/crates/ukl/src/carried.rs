@@ -18,6 +18,7 @@ const HEADERS: &[(&str, &str)] = &[
 pub const LIBRARY: &[(&str, &str)] = &[
     ("ukl/backend.h", include_str!("../lib/ukl/backend.h")),
     ("ukl/bits.h", include_str!("../lib/ukl/bits.h")),
+    ("ukl/dot.h", include_str!("../lib/ukl/dot.h")),
     ("ukl/memory.h", include_str!("../lib/ukl/memory.h")),
     ("ukl/simd.h", include_str!("../lib/ukl/simd.h")),
     ("ukl/group.h", include_str!("../lib/ukl/group.h")),

@@ -138,6 +138,10 @@ UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return simd_max
 #define UKL_NATIVE_SG_SCAN 1
 UKL_INLINE uint32_t ukl_sg_inclusive_sum_native(uint32_t v __UKL_PARAMS) { return simd_prefix_inclusive_sum(v); }
 UKL_INLINE uint32_t ukl_sg_exclusive_sum_native(uint32_t v __UKL_PARAMS) { return simd_prefix_exclusive_sum(v); }
+// An f16's bits as an f32 (ukl/dot.h): Metal's half. Metal has no integer or mixed-precision dot product, so
+// ukl/dot.h's are the reference's arithmetic over this conversion.
+#define UKL_NATIVE_F16 1
+UKL_INLINE float ukl_f16_to_f32_native(uint32_t h) { return float(as_type<half>((ushort)h)); }
 
 #elif defined(UKL_CUDA)
 
@@ -203,6 +207,21 @@ UKL_INLINE void ukl_atomic_store_local(UKL_LOCAL uint32_t* p, uint32_t v) { *(vo
 // The lanes holding the same value as this one (Volta and later).
 #define UKL_NATIVE_SG_MATCH 1
 UKL_INLINE ukl_mask_t ukl_sg_match_native(uint32_t v __UKL_PARAMS) { return __match_any_sync(0xffffffffu, v); }
+
+// ukl/dot.h: an f16's conversion (PTX's, with no header), and the byte dot products (`dp4a`, sm_61 and later). CUDA
+// has no f32-accumulating dot product of f16s or bf16s: those are the reference's arithmetic.
+#define UKL_NATIVE_F16 1
+UKL_INLINE float ukl_f16_to_f32_native(uint32_t h)
+{
+    float f;
+    asm("cvt.f32.f16 %0, %1;" : "=f"(f) : "h"((unsigned short)h));
+    return f;
+}
+#if __CUDA_ARCH__ >= 610
+#define UKL_NATIVE_DOT4 1
+UKL_INLINE int32_t ukl_dot4_i8_native(uint32_t a, uint32_t b, int32_t acc) { return __dp4a((int)a, (int)b, acc); }
+UKL_INLINE uint32_t ukl_dot4_u8_native(uint32_t a, uint32_t b, uint32_t acc) { return __dp4a(a, b, acc); }
+#endif
 
 #if __CUDA_ARCH__ >= 800
 #define UKL_NATIVE_SG_REDUCE 1
@@ -350,6 +369,30 @@ UKL_INLINE uint32_t ukl_ctz64(uint64_t x) { return x == 0ul ? 64u : 63u - (uint3
 
 UKL_INLINE void ukl_tg_barrier() { barrier(CLK_LOCAL_MEM_FENCE); }
 UKL_INLINE void ukl_tg_barrier_device() { barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
+
+// ukl/dot.h: an f16's conversion, OpenCL C's own (`vload_half`, which needs no `cl_khr_fp16`).
+#define UKL_NATIVE_F16 1
+UKL_INLINE float ukl_f16_to_f32_native(uint32_t h)
+{
+    ushort v = (ushort)h;
+    return vload_half(0, (const __private half*)&v);
+}
+#if defined(UKL_OPENCL_AMD_DOT)
+// AMD's dot products (RDNA2, `gfx103x`: the host defines `UKL_OPENCL_AMD_DOT` for those alone, whose instructions
+// these are): `v_dot4_i32_i8`, `v_dot4_u32_u8` and `v_dot2_f32_f16`, none clamping. The last rounds the exact sum once
+// (ukl/dot.h).
+#pragma OPENCL EXTENSION cl_khr_fp16 : enable
+#define UKL_NATIVE_DOT4 1
+UKL_INLINE int32_t ukl_dot4_i8_native(uint32_t a, uint32_t b, int32_t acc) { return __builtin_amdgcn_sdot4((int)a, (int)b, acc, false); }
+UKL_INLINE uint32_t ukl_dot4_u8_native(uint32_t a, uint32_t b, uint32_t acc) { return __builtin_amdgcn_udot4(a, b, acc, false); }
+#define UKL_NATIVE_DOT2_F16 1
+UKL_INLINE float ukl_dot2_f16_native(uint32_t a, uint32_t b, float acc) { return __builtin_amdgcn_fdot2(as_half2(a), as_half2(b), acc, false); }
+#elif defined(UKL_OPENCL_INT_DOT)
+// `cl_khr_integer_dot_product` (OpenCL C 3.0): the bytes' dot product, added to `acc` wrapping.
+#define UKL_NATIVE_DOT4 1
+UKL_INLINE int32_t ukl_dot4_i8_native(uint32_t a, uint32_t b, int32_t acc) { return (int32_t)((uint32_t)acc + (uint32_t)dot(as_char4(a), as_char4(b))); }
+UKL_INLINE uint32_t ukl_dot4_u8_native(uint32_t a, uint32_t b, uint32_t acc) { return acc + dot(as_uchar4(a), as_uchar4(b)); }
+#endif
 
 #if defined(UKL_OPENCL_EMULATED_SG)
 // The SIMD group through threadgroup memory: each thread writes its value to its word of `__ukl_sg`, and reads its
