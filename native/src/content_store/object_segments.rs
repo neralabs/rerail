@@ -345,12 +345,18 @@ impl ObjectsWrite {
 
     pub(super) fn run(&mut self, store: &ContentStore) -> StoreResult<()> {
         let ids = store.put_objects_placed(&self.rows, &mut self.segments)?;
-        // A file's programs, recorded with its tape once it is (decision 0431 step 6).
+        // A file's programs, recorded with its tape once it is (decision 0431 step 6); a file whose load embedded
+        // none, as none (decision 0563 A).
+        let mut none = Vec::new();
         for (row, id) in self.rows.iter().zip(&ids) {
-            if let Some(documents) = row.documents.as_ref().filter(|d| !d.is_empty()) {
-                store.put_programs(*id, (row.grammar_id, row.grammar_version, row.tape_format_version), &documents.iter().map(super::QueuedDocument::payload).collect::<Vec<_>>())?;
+            let grammar = (row.grammar_id, row.grammar_version, row.tape_format_version);
+            match row.documents.as_ref() {
+                Some(documents) if documents.is_empty() => none.push((*id, grammar)),
+                Some(documents) => store.put_programs(*id, grammar, &documents.iter().map(super::QueuedDocument::payload).collect::<Vec<_>>())?,
+                None => {}
             }
         }
+        store.put_no_programs(&none)?;
         store.name_sources(self.rows.iter().zip(ids).filter(|(row, _)| row.named).map(|(_, id)| id));
         Ok(())
     }

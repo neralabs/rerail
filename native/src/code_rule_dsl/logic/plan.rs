@@ -11636,7 +11636,7 @@ impl Reach<'_, '_> {
 /// nearest ancestor, an AST match, a function term): then every column but a `_` is read.
 fn var_uses(rule: super::program_image::RuleRef<'_>) -> Option<HashMap<VarSlot, usize>> {
     let mut uses: HashMap<VarSlot, usize> = HashMap::new();
-    let mut count = |t: TermRef<'_>, uses: &mut HashMap<VarSlot, usize>| match t {
+    let count = |t: TermRef<'_>, uses: &mut HashMap<VarSlot, usize>| match t {
         TermRef::Var(x) => {
             *uses.entry(x).or_default() += 1;
             true

@@ -1,9 +1,10 @@
 # 0563: A relation no rule can fill makes no stratum, and an edit's delta reaches a rule by the kinds it holds
 
 Status: designed (2026-11-21), spiked (2026-11-21, "Spike" below: each part validated on ep2, findings exact; the
-design is amended there), A1–A2 and B built (2026-11-21, "Built" below). A1–A2 hold only for batches whose
-languages embed none; a Python batch's guests are known only once its documents are loaded, so for ep2 that part
-waits for A3's run-time form. The user asked for it (2026-11-21): "okay, please survey and design this.
+design is amended there), A1–A2 and B built (2026-11-21, "Built" below). A1–A2 hold where no document embeds a
+program: its language embeds none, or the store records its text as loaded with none, or (a text not loaded yet)
+its language embeds only by call argument and the text names no place's callee. So they hold on ep2. The user
+asked for it (2026-11-21): "okay, please survey and design this.
 Does it also make sense to track changes per fact type? Presumably much work could be cut out if certain fact
 deltas are empty without needing to propagate it." "This" is the 1,700 strata the merge of the serverplan-quality
 hub (2ac89a3a70) added to every cold run of ep2, which makes no guests. Follows 0101 §1, 0117, 0120 and 0431.
@@ -406,9 +407,21 @@ in the run, whose delta is known only when its stratum has run).
 ### A1 and A2
 
 - **The predicate** (`run_observed_within`, after the split): the file-local part answers no request (`!parsing`),
-  the run is not `.embedded on`, and no language of the batch embeds another (`Dialect::embeds()` empty, for the
-  run's dialect and each document's). There is no switch: the pruned parts are a function of the split's, whose
-  digests the memo's and the components' keys are.
+  the run is not `.embedded on`, and no document may embed a program (`may_embed`). A document may not where:
+  - its language embeds none (`Dialect::embeds()` empty);
+  - or the store records its text, in its grammar, grammar version and tape format, as loaded with no programs
+    (`ContentStore::programs_counts`, the `tape_objects.programs` column, 0 = none, below);
+  - or the store does not know its text (a new file, an edit, an empty store), its language embeds only by call
+    argument (Python: `Markup`, `format_html`, 0470), and the text names none of the places' callees. That is the
+    embedder's own test (`embed::call_argument`'s `memchr` precheck), which then builds nothing. The text is read
+    as the run reads it: held, else the file.
+
+  Any other embedding (an HTML file's scripts, a Vue file's blocks) is of the file's structure, so such a document
+  may embed unless the store says it holds none. There is no switch: the pruned parts are a function of the split's,
+  whose digests the memo's and the components' keys are, and a document's text and grammar are in those digests.
+- **The store records "no programs".** A load wrote a tape's program count only where it was not zero, so a count
+  of 0 read the same as unknown (−1). `ObjectsWrite::run` now writes 0 for a load with none
+  (`ContentStore::put_no_programs`, only over −1). `attach_programs` already read 0 as "recorded, none".
 - **The guest-only set** is `guests::ONLY`, beside `READS`.
 - **One pass, `prune::Unfillable`**, forward and backward:
   - forward: the closure seeded from the empty inputs;
@@ -420,8 +433,15 @@ in the run, whose delta is known only when its stratum has run).
 - **Tests:** `prune::tests::a_rule_joining_an_empty_input_goes_with_what_only_it_reads` (a rule over an empty input
   goes, with the demand only it read; a negated empty relation keeps its rule; a relation a phase binds beside its
   rules is never taken empty), and the guest tests of `corpus` and `rr`.
-- **ep2** is a Python batch, so A does not fire there. Python embeds by call argument, and whether a file has such
-  a call is known only once it is loaded, after the split. That case is A3's run-time form (below).
+- **Test:** `session::tests::a_session_drops_the_guest_rules_where_no_document_embeds`. A Python batch whose
+  `parsed` is asked only across files: the first run (an empty store, the callee test) and an edit (one text
+  recorded with none, one new text naming no callee) drop rules (`Report::unfillable`); an edit that adds a
+  `Markup("…")` call keeps them. Each run's findings are a full run's.
+- **The pass is worklists**, each rule and read visited once. As fixed-point sweeps over ep2's 15,000 rules it took
+  1.38 s of an edit's 4.5 s; as worklists, 11 ms.
+- **ep2**, M3: A fires on the cold run (an empty store) and on every edit; none of its 300 files names `Markup` or
+  `format_html`. Cold: 8,097 → 5,655 strata (the spike measured A at about 2% of a cold run's instructions); the
+  store then records 618 texts with no programs. The edits, with A on, are in B's second table below.
 
 ### B: the reach by kind and key
 
@@ -486,6 +506,14 @@ seen. A line put at a file's top cuts `exists_0` but not `violation` (above). Ea
 | An import at a file's top | 66.1 → 61.4 G | 4.98 → 4.49 s | 3.70 → 3.43 s | 878 → 783 MB |
 | A comprehension added at another file's end | 61.8 → 58.5 G | 4.85 → 4.69 s | 3.54 → 3.34 s | 921 → 903 MB |
 
+With A firing too (both sides; B off and on, the same machine, a later run):
+
+| Edit | Instructions | CPU | Wall | Peak memory |
+|---|---|---|---|---|
+| `append` | 59.1 → 36.6 G | 4.48 → 2.97 s | 3.21 → 2.05 s | 855 → 648 MB |
+| An import at a file's top | 64.7 → 60.0 G | 4.50 → 4.07 s | 3.40 → 3.18 s | 878 → 766 MB |
+| A comprehension at another file's end | 61.0 → 57.4 G | 4.53 → 4.31 s | 3.31 → 3.10 s | 1,018 → 862 MB |
+
 - Before `Net`, the insert was even (66.0 → 66.6 G): 363 strata were cut. With `Net`, 444 are, at 124 ms of
   probes.
 - The profiled edit runs overstate the edits by 20–40%, so the numbers above are unprofiled.
@@ -504,8 +532,9 @@ seen. A line put at a file's top cuts `exists_0` but not `violation` (above). Ea
    - the outputs compared on the `append` and insert edits, and B4's test.
 3. ~~**Stable node identity** across an edit.~~ It was already built: ids are by definition (`granules`). An
    insert's delta is the places that moved, and B's `Net` reads past them.
-4. **A3**, on a corpus that answers requests, and as A1–A2's run-time form: the guest inputs counted empty once a
-   batch's documents are loaded and none holds a guest. That is what serves a Python batch like ep2.
+4. **A3**, on a corpus whose file-local part answers requests: the guest inputs counted empty once admission has
+   closed. A Python batch like ep2 no longer needs it: the store's program counts and the callee test decide before
+   the split (A1–A2, above).
 
 ## Prior art
 
