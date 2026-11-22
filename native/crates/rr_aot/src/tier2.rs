@@ -328,7 +328,6 @@ fn word_in(kind: u32, b: &[u8]) -> u32 {
 /// Each byte's record kind, as a token's first byte (`Records::kinds`).
 const KINDS: [u8; 256] = [0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 4, 1, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 2, 2, 2, 2, 2, 2, 2, 2, 2, 2, 0, 0, 0, 0, 0, 0, 0, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 0, 0, 5, 3, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 5, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0];
 
-
 /// A record of an extra (a comment): the extra's mark in its code.
 #[inline(always)]
 fn is_extra(code: u32) -> bool {
@@ -340,24 +339,8 @@ fn extra_kind(code: u32) -> u16 {
     k::COMMENT
 }
 
-
 type R<X = ()> = Result<X, u32>;
 
-/// Mask `x`'s first bit at or after byte `from`, a word at a time.
-fn first_bit(x: &[u64], from: usize) -> Option<usize> {
-    let mut q = from / 64;
-    let mut w = x.get(q)? & (!0u64 << (from % 64));
-    while w == 0 {
-        q += 1;
-        w = *x.get(q)?;
-    }
-    Some(64 * q + w.trailing_zeros() as usize)
-}
-
-/// Whether mask `x` holds at byte `i`.
-fn bit(x: &[u64], i: usize) -> bool {
-    x.get(i / 64).is_some_and(|w| w >> (i % 64) & 1 == 1)
-}
 
 /// No node made yet at a level.
 const NONE: u32 = u32::MAX;
@@ -372,8 +355,6 @@ pub struct P<'a> {
     starts: &'a [u32],
     lasts: &'a [u32],
     codes: &'a [u32],
-    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).
-    m: &'a crate::tier1::Masks,
     n: usize,
     /// The next grammar token's record; the first record not written yet (the comments before it).
     i: usize,
@@ -410,6 +391,8 @@ pub struct P<'a> {
     /// The extras a mark's question dropped or lost (`drops`, `loses`), by record; the one lost,
     /// its kind and, once its token is taken, that token's start: a pending extra of no width.
     gone: Vec<usize>,
+    /// The nodes a `drop` took out, each by the node it was in: a reading that reaches one refuses (`read_dead`).
+    dead: Vec<u32>,
     lost: Option<(u16, Option<u32>)>,
     /// The extra a mark's `loses since` moved, by record, and where: of no width there.
     moved: Option<(usize, u32)>,
@@ -424,28 +407,19 @@ pub struct P<'a> {
 #[allow(dead_code)]
 impl<'a> P<'a> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
-        let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);
+        let (starts, lasts, codes) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..]);
         let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, gone: Vec::new(), lost: None, moved: None, strings: 0, stack: Vec::with_capacity(64) };
+        let mut p = P { src, starts, lasts, codes, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, gone: Vec::new(), dead: Vec::new(), lost: None, moved: None, strings: 0, stack: Vec::with_capacity(64) };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
     }
 
-    /// At record `i`: split it where tier 2 reads its region in parts.
+    /// At record `i`: no mark known there yet.
     #[inline(always)]
     fn arrive(&mut self) -> R {
         self.known = 0;
-        if self.i < self.n {
-            self.split(self.i)?;
-        }
         Ok(())
-    }
-
-    /// A piece of the record split, `s..=l`, of record kind `kind` and the word its bytes are.
-    fn piece(&mut self, s: usize, l: usize, kind: u32) {
-        let word = word_in(kind, &self.src[s..=l]);
-        self.sub.push((s as u32, l as u32, kind | word << 8));
     }
 
     /// Record `j`'s code, its first and its last byte: the piece's at the token.
@@ -513,11 +487,6 @@ impl<'a> P<'a> {
         }
     }
 
-    #[inline(always)]
-    fn at_end(&self) -> bool {
-        self.i >= self.n
-    }
-
     #[cold]
     fn refuse<X>(&self) -> R<X> {
         // `RERAIL_TIER2_TRACE`: where, as the lean parser's `RERAIL_KOTLIN_TRACE` says it.
@@ -564,65 +533,7 @@ impl<'a> P<'a> {
         }
     }
 
-    /// `loses since`: the first extra pending of no width at the next one's start (the lean
-    /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).
-    fn move_first(&mut self) {
-        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j));
-        if let (Some(a), Some(b)) = (pending.next(), pending.next()) {
-            self.moved = Some((a, self.starts[b]));
-        }
-    }
 
-    /// The comments pending before the line break of settling mark `bit` (an extra's code holds
-    /// the bits of its own gap): written now, into the node open, the node's end past them.
-    fn settle(&mut self, bit: u32) {
-        // An extra a `loses since` moved and the one after it go with those before: the lean
-        // lexer's semicolon is past that one.
-        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);
-        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.codes[k]) && !self.gone.contains(&k)));
-        while self.pend < self.i {
-            let j = self.pend;
-            let c = self.codes[j];
-            if is_extra(c) && c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
-                break;
-            }
-            self.pend += 1;
-            if is_extra(c) && !self.gone.contains(&j) {
-                let (s, e) = self.extra_span(j);
-                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
-                self.w.close(at, e);
-                self.last_end = self.last_end.max(e);
-            }
-        }
-    }
-
-    /// The extra pending last before the token (not yet written, not dropped or lost).
-    fn pending_last(&self) -> Option<usize> {
-        (self.pend..self.i).rev().find(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j))
-    }
-
-    /// `drops`: the extra pending last gone; with none left pending, the nodes closed next end
-    /// at the token, where the semicolon of no width is (the lean lexer's `Asi::Swallow`).
-    fn drop_pending(&mut self) {
-        if let Some(j) = self.pending_last() {
-            self.gone.push(j);
-            if self.pending_last().is_none() {
-                self.last_end = self.start();
-            }
-        }
-    }
-
-    /// `loses`: the extra pending last made again after the token is taken, of no width at its
-    /// start (the lean lexer's `asi` loses it); once a token.
-    fn lose_pending(&mut self) {
-        if self.lost.is_some() {
-            return;
-        }
-        if let Some(j) = self.pending_last() {
-            self.gone.push(j);
-            self.lost = Some((extra_kind(self.codes[j]), None));
-        }
-    }
 
     /// The token taken: its span; the next token's marks not yet taken.
     #[inline(always)]
@@ -806,6 +717,11 @@ impl<'a> P<'a> {
         self.w.set_key(at, k & !(0x3f << 10) | u32::from(field) << 10);
         let start = self.w.start(at);
         self.w.insert(at, u32::from(kind) | (k & (0x3f << 10)), start);
+        for o in &mut self.dead {
+            if *o != NONE && *o as usize >= at {
+                *o += 1;
+            }
+        }
         self.open.push(at as u32);
         self.made.push(at as u32 + 1);
         Ok(())
@@ -834,6 +750,9 @@ impl<'a> P<'a> {
         }
         // The nodes as they are, then written again in preorder.
         let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();
+        if self.dead.iter().any(|&o| (o as usize).wrapping_sub(at) < n) {
+            self.read_dead(&nodes, at, root, way)?;
+        }
         self.w.truncate(at);
         let mut i = 0;
         while i < nodes.len() {
@@ -7061,14 +6980,6 @@ impl P<'_> {
         self.arrive()
     }
 
-    /// Record `j` split where its first byte opens a region tier 2 reads in parts.
-    #[inline(always)]
-    fn split(&mut self, j: usize) -> R {
-        let s = self.starts[j] as usize;
-        let _ = s;
-        Ok(())
-    }
-
 }
 
 /// A reading's way to the level's word (`remember`).
@@ -7112,14 +7023,64 @@ impl P<'_> {
 
     /// `drop`: the node made last at this level goes, the nodes inside it in its place; none is made last at this
     /// level until the next.
+    ///
+    /// As the machine's `drop` leaves its record of kind `DEAD` in the table (left out at `ACCEPT`), the node is held
+    /// as dead in the node open (`dead`), so that a reading that reaches it refuses. A dead node in it goes to that
+    /// node too.
     fn drop_made(&mut self) -> R {
+        let at = *self.made.last().unwrap_or(&NONE);
+        let open = *self.open.last().unwrap_or(&NONE);
+        for o in &mut self.dead {
+            if *o == at {
+                *o = open;
+            }
+        }
         self.reread(Some(None), |_| None, |f| f)?;
+        self.dead.push(open);
         self.set_made(NONE);
+        Ok(())
+    }
+
+    /// The dead nodes (`drop`) in the node read again from `at` (`nodes`, as `reread` has them): one in a node the
+    /// reading reaches, not one it keeps whole, refuses, as the machine's reading refuses the `DEAD` record it
+    /// reaches (it names no such kind). Each other one is then in its node where the reading writes it.
+    fn read_dead(&mut self, nodes: &[(u32, u32, u32, usize)], at: usize, root: Option<Option<u16>>, way: fn(u16) -> Option<Option<u16>>) -> R {
+        let (mut to, mut reached) = (vec![NONE; nodes.len()], vec![false; nodes.len()]);
+        let (mut next, mut kept) = (at as u32, 0);
+        for (i, &(key, _, _, size)) in nodes.iter().enumerate() {
+            let way = if i < kept || key >> 16 & 1 == 1 {
+                None
+            } else if i == 0 {
+                match root {
+                    Some(Some(u16::MAX)) => way((key & 0x3ff) as u16),
+                    r => r,
+                }
+            } else {
+                way((key & 0x3ff) as u16)
+            };
+            match way {
+                None => kept = kept.max(i + size),
+                Some(_) => reached[i] = true,
+            }
+            if way != Some(None) {
+                to[i] = next;
+                next += 1;
+            }
+        }
+        for o in &mut self.dead {
+            let j = (*o as usize).wrapping_sub(at);
+            if j < nodes.len() {
+                if reached[j] {
+                    return self.refuse();
+                }
+                *o = to[j];
+            }
+        }
         Ok(())
     }
 }
 
-/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), or the byte it was refused at.
+/// The tape of `src` from tier 1's records (each token's first and last bytes and code), or the byte it was refused at.
 pub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {
     // Where tier 1 sends the file to tree-sitter.
     if lx.refused {

@@ -1527,6 +1527,20 @@ impl<'a> G<'a> {
             }
             out = out.replace(a, &format!("        // A field that a later token decides (`provisional`), held still at the file's end: refused.\n        if (0..self.w.len()).any(|i| matches!((self.w.key(i) >> 10 & 0x3f) as u16, {})) {{\n            return self.refuse();\n        }}\n{a}", fields.join(" | ")));
         }
+        // A grammar's `drop`: the nodes it took out, held as dead where a reading may reach them (`drop_made`).
+        if rules.contains("self.drop_made(") {
+            for (a, b) in [
+                ("    gone: Vec<usize>,\n", "    gone: Vec<usize>,\n    /// The nodes a `drop` took out, each by the node it was in: a reading that reaches one refuses (`read_dead`).\n    dead: Vec<u32>,\n"),
+                ("gone: Vec::new(), lost: None,", "gone: Vec::new(), dead: Vec::new(), lost: None,"),
+                ("        self.w.insert(at, u32::from(kind) | (k & (0x3f << 10)), start);\n", "        self.w.insert(at, u32::from(kind) | (k & (0x3f << 10)), start);\n        for o in &mut self.dead {\n            if *o != NONE && *o as usize >= at {\n                *o += 1;\n            }\n        }\n"),
+                ("        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();\n", "        let nodes: Vec<(u32, u32, u32, usize)> = (at..at + n).map(|i| (self.w.key(i), self.w.start(i), self.w.end(i), self.w.size(i) as usize)).collect();\n        if self.dead.iter().any(|&o| (o as usize).wrapping_sub(at) < n) {\n            self.read_dead(&nodes, at, root, way)?;\n        }\n"),
+            ] {
+                if out.matches(a).count() != 1 {
+                    return Err(format!("tier 2 as Rust: `drop`'s place in the runtime: {a:?}"));
+                }
+                out = out.replace(a, b);
+            }
+        }
         // The helpers only some grammars' rules call, each written where it is called.
         let used: Vec<&str> = MORE.iter().filter(|(name, _)| rules.contains(&format!("self.{name}("))).map(|(_, code)| *code).collect();
         if !used.is_empty() {
@@ -1534,7 +1548,27 @@ impl<'a> G<'a> {
             out.push_str(&used.join("\n"));
             out.push_str("}\n");
         }
-        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), or the byte it was refused at.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        let mut p = P::new(src, lx, widths)?;\n        p.{entry}()?;\n        match p.w.finish_columns() {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}");
+        // No region read in parts (decision 0619, as 0586's): tier 1 gives no mask, and tier 2 holds none, splits no
+        // record, and writes only the helpers its code calls.
+        if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() {
+            for (a, b) in [
+                ("    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).\n    m: &'a crate::tier1::Masks,\n", ""),
+                ("let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);", "let (starts, lasts, codes) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..]);"),
+                ("P { src, starts, lasts, codes, m, n,", "P { src, starts, lasts, codes, n,"),
+                ("    /// At record `i`: split it where tier 2 reads its region in parts.\n", "    /// At record `i`: no mark known there yet.\n"),
+                ("        if self.i < self.n {\n            self.split(self.i)?;\n        }\n", ""),
+                ("    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {\n        let s = self.starts[j] as usize;\n        let _ = s;\n        Ok(())\n    }\n\n", ""),
+            ] {
+                if !out.contains(a) {
+                    return Err(format!("tier 2: the runtime's masks, not where they were: {a:?}"));
+                }
+                out = out.replacen(a, b, 1);
+            }
+            let parts: Vec<String> = RUNTIME.split("\n\n").map(|p| p.trim_matches('\n').to_owned()).filter(|p| !p.is_empty() && p.matches('{').count() == p.matches('}').count()).collect();
+            out = one_loop::drop_uncalled(out, &parts);
+        }
+        let masks = if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() { "" } else { " and masks (those a region's parts are found by)" };
+        let _ = writeln!(out, "\n/// The tape of `src` from tier 1's records (each token's first and last bytes and code){masks}, or the byte it was refused at.\npub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {{\n    // Where tier 1 sends the file to tree-sitter.\n    if lx.refused {{\n        return Err(0);\n    }}\n    let mut widths = Widths::guess(src.len());\n    loop {{\n        let mut p = P::new(src, lx, widths)?;\n        p.{entry}()?;\n        match p.w.finish_columns() {{\n            Ok(c) => return Ok(c),\n            Err(rerail_tape_format::Redo(w)) => {{\n                if w == widths {{\n                    return Err(u32::MAX);\n                }}\n                widths = w;\n            }}\n        }}\n    }}\n}}");
         Ok(out)
     }
 }
@@ -1589,9 +1623,59 @@ const MORE: &[(&str, &str)] = &[
         "drop_made",
         r#"    /// `drop`: the node made last at this level goes, the nodes inside it in its place; none is made last at this
     /// level until the next.
+    ///
+    /// As the machine's `drop` leaves its record of kind `DEAD` in the table (left out at `ACCEPT`), the node is held
+    /// as dead in the node open (`dead`), so that a reading that reaches it refuses. A dead node in it goes to that
+    /// node too.
     fn drop_made(&mut self) -> R {
+        let at = *self.made.last().unwrap_or(&NONE);
+        let open = *self.open.last().unwrap_or(&NONE);
+        for o in &mut self.dead {
+            if *o == at {
+                *o = open;
+            }
+        }
         self.reread(Some(None), |_| None, |f| f)?;
+        self.dead.push(open);
         self.set_made(NONE);
+        Ok(())
+    }
+
+    /// The dead nodes (`drop`) in the node read again from `at` (`nodes`, as `reread` has them): one in a node the
+    /// reading reaches, not one it keeps whole, refuses, as the machine's reading refuses the `DEAD` record it
+    /// reaches (it names no such kind). Each other one is then in its node where the reading writes it.
+    fn read_dead(&mut self, nodes: &[(u32, u32, u32, usize)], at: usize, root: Option<Option<u16>>, way: fn(u16) -> Option<Option<u16>>) -> R {
+        let (mut to, mut reached) = (vec![NONE; nodes.len()], vec![false; nodes.len()]);
+        let (mut next, mut kept) = (at as u32, 0);
+        for (i, &(key, _, _, size)) in nodes.iter().enumerate() {
+            let way = if i < kept || key >> 16 & 1 == 1 {
+                None
+            } else if i == 0 {
+                match root {
+                    Some(Some(u16::MAX)) => way((key & 0x3ff) as u16),
+                    r => r,
+                }
+            } else {
+                way((key & 0x3ff) as u16)
+            };
+            match way {
+                None => kept = kept.max(i + size),
+                Some(_) => reached[i] = true,
+            }
+            if way != Some(None) {
+                to[i] = next;
+                next += 1;
+            }
+        }
+        for o in &mut self.dead {
+            let j = (*o as usize).wrapping_sub(at);
+            if j < nodes.len() {
+                if reached[j] {
+                    return self.refuse();
+                }
+                *o = to[j];
+            }
+        }
         Ok(())
     }
 "#,

@@ -72,6 +72,22 @@ index form, 0585).
 What stays: the records hold each token's last byte and its code, because tier 2 reads them (0618). Stage 1 keeps the
 masks the token loop reads for the file's blocks, as the lean lexer's `Blocks::of` does.
 
+## Step 3: tier 1 hands tier 2 no mask (0586's part)
+
+0586 made JSON's tier 2 read its tokens from the bytes, so its tier 1 keeps no mask for it. `.rerail`'s tier 2 reads
+tier 1's records instead (0618), because its tokens' codes (kind, word, marks) are tier 1's. So the part of 0586 that
+applies is the masks. Tier 2 read a mask only to split a region read in parts, and `.rerail` has none. Still, tier 1
+built an empty `Masks` into its `Lexed`, and tier 2 held it (`P::m`), called a `split` that did nothing at each
+record, and carried helpers nothing called (`first_bit`, `bit`, the pieces' `piece`, `settle`, `drop_pending`, …).
+
+Now, where no region is read in parts:
+
+- tier 1's `Lexed` has no `masks`, and there is no `Masks` struct;
+- tier 2 holds no mask and makes no `split` call;
+- tier 2 writes only the runtime's helpers its code calls (`drop_uncalled`, as 0586's byte form does).
+
+Kotlin reads regions in parts, so it keeps its masks, and its file is unchanged.
+
 ## Checks
 
 On a Linux arm64 farm host:

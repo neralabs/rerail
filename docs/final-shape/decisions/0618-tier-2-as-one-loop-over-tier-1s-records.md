@@ -53,9 +53,37 @@ On a Linux arm64 farm host:
 - JSON's `json_rust_is_current` and Kotlin's `rust_is_current` (unchanged files), the compiler's and bitlex's library
   tests: all pass.
 
+## Each feature checked by the tests, one at a time
+
+The features went in together, and passed together. The goal asked for them one at a time, each checked by the tape
+comparisons. So afterwards each was taken out alone: the generator changed in one line, `tier2.rs` generated again,
+then the samples' and the corpus's comparisons run (`tapes_are_the_jits`, `corpus_tapes_are_the_jits`).
+
+| Taken out | The first difference |
+|---|---|
+| The caller's word restored at a level's end | sample `X = min(max(Y) : { c(Y) }) : { b(Y) }`: the outer reading takes `max`'s kind |
+| The caller's refused marks restored | corpus file 1679: refused |
+| A level's own refused marks set at its call | sample `.policy {"a": "\q"}`: parsed, the JIT refuses it |
+| A flag restored after its body | corpus file 4: refused |
+| The depth counted back at a level's end | sample 2 and corpus file 13: refused |
+
+`asks` is not in the table: no `.rerail` mark asks a question, so its tier 2 has none.
+
+On the first run, the word's restore was not caught. No sample read a word back after a nested level had set its
+own. The samples now hold `min(…) : {…}` with an aggregate in its arguments.
+
+Those samples then found a difference in the unchanged parser, and the recursive form shares its runtime. The machine's
+`drop` leaves the node's record in the table as `DEAD`, and a reading that reaches it refuses, since it names no such
+kind. That is how `.rerail` refuses a second argument in `sum(Y, Z) : {…}`. The runtime's `drop_made` took the node
+out of the tape, so the reading found nothing and the parser took the file.
+
+Now, where a grammar uses `drop`, the runtime holds each dropped node as dead, by the node it was in (`P::dead`). A
+reading that reaches that node refuses (`read_dead`). A wrap's insert and a reading's rewrite move the indices with the
+nodes. The tape still leaves the node out. A sample holds `sum(Y, Z) : {…}`, and the baseline passes again.
+
 ## Shape
 
-The loop form's `tier2.rs` is 7,142 lines, against 6,350 for the recursive form.
+The loop form's `tier2.rs` is 7,103 lines (7,142 before tier 1's masks went, 0619 step 3), against 6,350 for the recursive form.
 
 The first version wrote a no-level rule that holds a call at every use, and was 29,324 lines. Point 3's single copy
 replaced that.

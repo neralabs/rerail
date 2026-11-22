@@ -1555,7 +1555,7 @@ fn reads_ident(code: &str, id: &str) -> bool {
 }
 
 /// `out` without each of `parts` (a function and its comments, as written in `out`) that nothing else in `out` calls.
-fn drop_uncalled(mut out: String, parts: &[String]) -> String {
+pub(super) fn drop_uncalled(mut out: String, parts: &[String]) -> String {
     let name = |p: &str| p.lines().find_map(|l| l.strip_prefix("fn ").or_else(|| l.strip_prefix("unsafe fn ")).or_else(|| l.strip_prefix("    fn "))).and_then(|l| l.split(['(', '<']).next()).map(str::to_owned);
     loop {
         let mut dropped = false;

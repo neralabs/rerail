@@ -150,6 +150,14 @@ fn cases() -> Vec<String> {
         ".type T = <a: number>\n.input a, b(x)\n.output c\n",
         ".violation v(x: number) code \"C1\" tag {t} \"message\" fix safe r \"d\" suppress tool \"r\", \"s\" over {o}\n",
         "a(X) :- count(Y) : { b(Y) } = X, min(Z) by (W) : { c(Z, W) } > 1.\n",
+        // An aggregate's call read again inside it (`min(…) : {…}`) takes the aggregate's word (`remember`): its own
+        // again after an aggregate in its arguments has set its own.
+        "a(X) :- X = min(Y) : { b(Y) }.\n",
+        "a(X) :- X = min(max(Y) : { c(Y) }) : { b(Y) }.\n",
+        "a(X) :- X = sum(Y, mean(Z) : { c(Z) }) : { b(Y) }.\n",
+        "a(X) :- min(max(Y) : { c(Y) }, Z) : { b(Z) } = X.\n",
+        // A second argument there: its `,` dropped, a dead node the reading reaches, refused (`drop`).
+        "a(X) :- X = sum(Y, Z) : { b(Y) }.\n",
         "a(X) :- !b(X), (c(X); d(X)), X ~ `p`.\n",
         "a(1234567890123456789).\n",
         "a(123456789012345678).\n",
