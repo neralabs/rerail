@@ -93,18 +93,21 @@ impl Drop for LaunchScope {
 /// Takes one launch from the evaluation's budget (a rerun's from the run's reruns', `rerun`): false past it, or with
 /// no evaluation.
 pub fn reserve() -> bool {
-    EVALUATION.with_borrow(|slot| {
-        slot.as_ref().is_some_and(|budget| {
-            let mut evaluation = budget.borrow_mut();
-            if evaluation.rerunning {
-                let taken = evaluation.reruns.take();
-                evaluation.rerun_refused |= !taken;
-                taken
-            } else {
-                evaluation.budget.reserve()
-            }
-        })
-    })
+    EVALUATION.with_borrow(|slot| slot.as_ref().is_some_and(|budget| budget.borrow_mut().charge()))
+}
+
+impl Evaluation {
+    /// One launch from the budget its launches now charge: a rerun's from the run's reruns' (decision 0540), else the
+    /// evaluation's own. A refusal is recorded where `check_submission` reads it for that budget.
+    fn charge(&mut self) -> bool {
+        if self.rerunning {
+            let taken = self.reruns.take();
+            self.rerun_refused |= !taken;
+            taken
+        } else {
+            self.budget.reserve()
+        }
+    }
 }
 
 /// While held, the evaluation's launches are a rerun's (decision 0540): charged to the run's reruns' budget, not the
@@ -236,7 +239,7 @@ pub(crate) fn attempt(pointer: usize, kernel: &str, grid: [u64; 3], group: [u64;
             evaluation.commands.insert(pointer, id);
             id
         };
-        let encoded = evaluation.budget.reserve();
+        let encoded = evaluation.charge();
         let (application_buffer_bytes, private_buffer_bytes) = crate::runtime::buffer_usage();
         evaluation.peak_application_buffer_bytes = evaluation
             .peak_application_buffer_bytes
@@ -308,6 +311,27 @@ mod tests {
             assert!(reserve());
         }
         assert!(!reserve());
+        assert_eq!(check_submission(), Err(Error::BackendLaunchLimit));
+    }
+
+    /// A command's launches (`attempt`, as `lane::Launch` charges them) during a rerun are the reruns' budget's: an
+    /// evaluation whose own budget its first runs spent still encodes a rerun's launches, and a rerun past its budget
+    /// is refused at submission, never run with launches left out (the wave's labels lost on a third run, 0540).
+    #[test]
+    fn a_reruns_command_launches_charge_the_reruns_budget() {
+        let _evaluation = LaunchScope::enter();
+        let launch = || attempt(1, "k", [1; 3], [1; 3], false, Vec::new());
+        for _ in 0..KERNEL_LAUNCH_LIMIT {
+            assert!(launch());
+        }
+        assert!(!launch());
+        assert_eq!(check_submission(), Err(Error::BackendLaunchLimit));
+        let _rerun = rerun();
+        for _ in 0..KERNEL_LAUNCH_LIMIT {
+            assert!(launch());
+        }
+        assert_eq!(check_submission(), Ok(()));
+        assert!(!launch());
         assert_eq!(check_submission(), Err(Error::BackendLaunchLimit));
     }
 
