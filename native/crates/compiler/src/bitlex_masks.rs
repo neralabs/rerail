@@ -3946,7 +3946,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
                 _ => None,
             };
             let words = seq[0].iter().map(|c| if let TokenElem::Word(w) = c { Some(w.clone()) } else { None }).collect();
-            marks.push(bitlex_tier2::Mark { passes: 0, settle: None, drop: None, lose: None, refuse: None, refuse_taken: None, lose_flag: 0, ends: false, drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![], kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: low.mark_next.get(&k).cloned().unwrap_or_default(), unless: vec![] });
+            marks.push(bitlex_tier2::Mark { passes: 0, settle: None, drop: None, lose: None, moved: None, moves: vec![], refuse: None, refuse_taken: None, lose_flag: 0, ends: false, drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![], kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: Some((before, seq)), nexts: low.mark_next.get(&k).cloned().unwrap_or_default(), unless: vec![] });
             continue;
         }
         let mut expr = low.mark_exprs[k].clone();
@@ -4179,7 +4179,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             eprintln!("mark {k} {kind}: on starts {on_starts}, word {:?}, {} first bytes, words {:?}", word.as_ref().map(|w| String::from_utf8_lossy(w).into_owned()), first.iter().map(|w| w.count_ones()).sum::<u32>(), words.as_ref().map(|ws| ws.iter().map(|w| String::from_utf8_lossy(w).into_owned()).collect::<Vec<_>>()));
         }
         let unless = low.unless.get(&k).cloned().unwrap_or_default();
-        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, passes: 0, settle: None, drop: None, lose: None, refuse: None, refuse_taken: None, lose_flag: 0, ends: low.ends.contains(&k), drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![] });
+        marks.push(bitlex_tier2::Mark { kind: mark_kinds[k], mask: k as u16, hidden: low.hidden.contains(&kind), end, word, first, words, tokens: None, nexts, unless, passes: 0, settle: None, drop: None, lose: None, moved: None, moves: vec![], refuse: None, refuse_taken: None, lose_flag: 0, ends: low.ends.contains(&k), drops: vec![], loses: vec![], refuses: vec![], refuses_taken: vec![] });
         // A settling mark: `SETTLE` reads its bit in the pending extras' codes, each the marks
         // of its own gap (`Records::own`), as the lean lexer's `skip` knows a line end before
         // each comment.
@@ -4227,10 +4227,19 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             marks[k].drops = d.clone();
             entries += d.len() as u16;
         }
+        // `loses since`: the first extra pending moved (`Mark::moved`), apart from the others.
         if let Some(l) = low.loses.get(&k) {
-            marks[k].lose = Some(entries);
-            marks[k].loses = l.clone();
-            entries += l.len() as u16;
+            let (moves, loses): (Vec<_>, Vec<_>) = l.iter().cloned().partition(|q| q.since);
+            if !loses.is_empty() {
+                marks[k].lose = Some(entries);
+                entries += loses.len() as u16;
+                marks[k].loses = loses;
+            }
+            if !moves.is_empty() {
+                marks[k].moved = Some(entries);
+                entries += moves.len() as u16;
+                marks[k].moves = moves;
+            }
         }
         if let Some(r) = low.refuses.get(&k) {
             marks[k].refuse = Some(entries);
@@ -4242,10 +4251,10 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
             marks[k].refuses_taken = r.clone();
             entries += r.len() as u16;
         }
-        if marks[k].lose.is_some() || marks[k].refuse.is_some() {
+        if marks[k].asks() {
             // Its flag: one past the grammar's (`flags`) and the marks' before it.
             let named = low.tree.iter().map(|s| if let Stmt::Flags(n) = s { n.len() } else { 0 }).sum::<usize>();
-            let flag = named + marks[..k].iter().filter(|m| m.lose.is_some() || m.refuse.is_some()).count();
+            let flag = named + marks[..k].iter().filter(|m| m.asks()).count();
             if flag >= 16 {
                 return Err(format!("mark {k}'s `loses`: more than 16 flags"));
             }

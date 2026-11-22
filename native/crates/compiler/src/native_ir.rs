@@ -176,6 +176,10 @@ pub enum StructuralOperation {
     /// `SETTLE m=19`, and `m=20+f` with flag `f` set: where gap pattern `pattern` holds at the
     /// token, the file refused (a mark's `refuses`).
     RefuseIf { pattern: u16, flag: Option<u16> },
+    /// `SETTLE m=36`, and `m=37+f` with flag `f` set: where gap pattern `pattern` holds at the
+    /// token, the first extra pending of no width at the next one's start (a mark's `loses
+    /// since`).
+    MoveFirst { pattern: u16, flag: Option<u16> },
     /// To switch on this token again (`again`), or to take the next.
     Return { again: bool },
     Accept,
@@ -250,6 +254,7 @@ impl StructuralOperation {
             Self::DropLast { pattern } => (crate::program::SETTLE, 1, pattern),
             Self::LoseLast { pattern, flag } => (crate::program::SETTLE, flag.map_or(2, |f| 3 + f as u8), pattern),
             Self::RefuseIf { pattern, flag } => (crate::program::SETTLE, flag.map_or(crate::program::SETTLE_REFUSE, |f| crate::program::SETTLE_REFUSE + 1 + f as u8), pattern),
+            Self::MoveFirst { pattern, flag } => (crate::program::SETTLE, flag.map_or(crate::program::SETTLE_MOVE, |f| crate::program::SETTLE_MOVE + 1 + f as u8), pattern),
             Self::Return { again } => (RETURN, u8::from(again), 0),
             Self::Accept => (ACCEPT, 0, 0),
             Self::Text { .. } | Self::Assert { .. } => {
@@ -522,6 +527,7 @@ pub fn lower(program: &Words, value_functions: u16, capture_functions: u16) -> R
             },
             crate::program::CHECK => StructuralOperation::Check { check: operand },
             crate::program::SETTLE if mode == 1 => StructuralOperation::DropLast { pattern: operand },
+            crate::program::SETTLE if mode >= crate::program::SETTLE_MOVE => StructuralOperation::MoveFirst { pattern: operand, flag: (mode > crate::program::SETTLE_MOVE).then(|| u16::from(mode - crate::program::SETTLE_MOVE - 1)) },
             crate::program::SETTLE if mode >= crate::program::SETTLE_REFUSE => StructuralOperation::RefuseIf { pattern: operand, flag: (mode > crate::program::SETTLE_REFUSE).then(|| u16::from(mode - crate::program::SETTLE_REFUSE - 1)) },
             crate::program::SETTLE if mode >= 2 => StructuralOperation::LoseLast { pattern: operand, flag: (mode > 2).then(|| u16::from(mode - 3)) },
             crate::program::SETTLE => StructuralOperation::SettleBefore { mark: operand },

@@ -1081,8 +1081,10 @@ impl<'a> G<'a> {
             // Asked wherever a decision tests it (`refuses`, then `loses`): at a level that takes
             // it, always; where the level may end at it (`end`), where the caller's level is the
             // mark's (`asks`, the lean parser's `stmt`).
-            let (refuses, loses) = (qs(|d| d.refuses), qs(|d| d.loses));
-            if !refuses.is_empty() || !loses.is_empty() {
+            // `loses since`: the first extra pending moved (`move_first`), apart from the others.
+            let (refuses, all) = (qs(|d| d.refuses), qs(|d| d.loses));
+            let (moves, loses): (Vec<_>, Vec<_>) = all.into_iter().partition(|q| q.since);
+            if !refuses.is_empty() || !loses.is_empty() || !moves.is_empty() {
                 let mut ask = String::new();
                 if !refuses.is_empty() {
                     let t = self.gap_test(&refuses, &format!("refuses_{n}"), true, &mut fns)?;
@@ -1091,6 +1093,10 @@ impl<'a> G<'a> {
                 if !loses.is_empty() {
                     let t = self.gap_test(&loses, &format!("loses_{n}"), false, &mut fns)?;
                     let _ = write!(ask, "        if {t} {{\n            self.lose_pending();\n        }}\n");
+                }
+                if !moves.is_empty() {
+                    let t = self.gap_test(&moves, &format!("moves_{n}"), false, &mut fns)?;
+                    let _ = write!(ask, "        if {t} {{\n            self.move_first();\n        }}\n");
                 }
                 let _ = writeln!(out, "    /// Mark `{}`'s questions, where a decision tests it (`end`: where the level may end at it).\n    fn ask_{n}(&mut self, end: bool) -> R {{\n        if end && self.asks >> {order} & 1 == 0 {{\n            return Ok(());\n        }}\n{ask}        Ok(())\n    }}\n", m.name);
             }
@@ -1404,6 +1410,8 @@ pub struct P<'a> {
     /// its kind and, once its token is taken, that token's start: a pending extra of no width.
     gone: Vec<usize>,
     lost: Option<(u16, Option<u32>)>,
+    /// The extra a mark's `loses since` moved, by record, and where: of no width there.
+    moved: Option<(usize, u32)>,
     /// The strings open over a template's code (decision 0600): their parts go on at the next
     /// opener of a reader that resumes them (`advance`).
     strings: usize,
@@ -1414,7 +1422,7 @@ impl<'a> P<'a> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
         let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);
         let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, strings: 0 };
+        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -1537,26 +1545,49 @@ impl<'a> P<'a> {
             self.pend += 1;
             let c = self.codes[j];
             if is_extra(c) && !self.gone.contains(&j) {
-                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, self.starts[j]);
-                self.w.close(at, self.lasts[j] + 1);
+                let (s, e) = self.extra_span(j);
+                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
+                self.w.close(at, e);
             }
+        }
+    }
+
+    /// Extra `j`'s span: its bytes, or of no width where a mark's `loses since` moved it.
+    fn extra_span(&self, j: usize) -> (u32, u32) {
+        match self.moved {
+            Some((m, s)) if m == j => (s, s),
+            _ => (self.starts[j], self.lasts[j] + 1),
+        }
+    }
+
+    /// `loses since`: the first extra pending of no width at the next one's start (the lean
+    /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).
+    fn move_first(&mut self) {
+        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j));
+        if let (Some(a), Some(b)) = (pending.next(), pending.next()) {
+            self.moved = Some((a, self.starts[b]));
         }
     }
 
     /// The comments pending before the line break of settling mark `bit` (an extra's code holds
     /// the bits of its own gap): written now, into the node open, the node's end past them.
     fn settle(&mut self, bit: u32) {
+        // An extra a `loses since` moved and the one after it go with those before: the lean
+        // lexer's semicolon is past that one.
+        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);
+        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.codes[k]) && !self.gone.contains(&k)));
         while self.pend < self.i {
             let j = self.pend;
             let c = self.codes[j];
-            if is_extra(c) && c >> (16 + bit) & 1 == 1 {
+            if is_extra(c) && c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
                 break;
             }
             self.pend += 1;
             if is_extra(c) && !self.gone.contains(&j) {
-                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, self.starts[j]);
-                self.w.close(at, self.lasts[j] + 1);
-                self.last_end = self.last_end.max(self.lasts[j] + 1);
+                let (s, e) = self.extra_span(j);
+                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
+                self.w.close(at, e);
+                self.last_end = self.last_end.max(e);
             }
         }
     }

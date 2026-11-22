@@ -6916,6 +6916,23 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     f.ins().brif(bit, done, &[i.into()], head, &[i1.into()]);
                     f.switch_to_block(done);
                     let stop = f.block_params(done)[0];
+                    // An extra a `loses since` moved (of no width: no other pending is) and the
+                    // one after it go with those before: the lean lexer's semicolon is past that
+                    // one.
+                    let (ask, moved, stopped) = (f.create_block(), f.create_block(), f.create_block());
+                    f.append_block_param(stopped, types::I64);
+                    let stop2 = f.ins().iadd_imm(stop, 2);
+                    let two = f.ins().icmp(IntCC::UnsignedLessThanOrEqual, stop2, nodes);
+                    f.ins().brif(two, ask, &[], stopped, &[stop.into()]);
+                    f.switch_to_block(ask);
+                    let (s0, e0) = (NodeCol::of(end_c.rows, AT_START).get(&mut f, stop), end_c.get(&mut f, stop));
+                    let none = f.ins().icmp(IntCC::Equal, s0, e0);
+                    f.ins().brif(none, moved, &[], stopped, &[stop.into()]);
+                    f.switch_to_block(moved);
+                    f.set_cold_block(moved);
+                    f.ins().jump(stopped, &[stop2.into()]);
+                    f.switch_to_block(stopped);
+                    let stop = f.block_params(stopped)[0];
                     let settled = f.ins().isub(stop, first);
                     let (some, after) = (f.create_block(), f.create_block());
                     f.ins().brif(settled, some, &[], after, &[]);
@@ -7030,6 +7047,51 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         let le = g.ins().select(p, le, keep);
                         (e.set)(g, Mem::LastEnd, le);
                     });
+                }
+                Op::MoveFirst { pattern, flag } => {
+                    // `loses since`: two extras pending or more, and the question holding at the
+                    // token (the lean lexer's `asi`, which reads a block comment through to
+                    // another comment): the first of no width at the next one's start, in its
+                    // place. Twice at a token (a nested level's test) is once.
+                    let pending = mget(&mut f, Mem::Pending);
+                    let some = f.ins().icmp_imm(IntCC::UnsignedGreaterThan, pending, 1);
+                    let next = mget(&mut f, Mem::Next);
+                    let at_end = ended_now(&mut f, next);
+                    let not_end = f.ins().bxor_imm(at_end, 1);
+                    let some = f.ins().band(some, not_end);
+                    let some = f.ins().uextend(types::I64, some);
+                    let some = match flag {
+                        Some(k) => {
+                            let fl = mget(&mut f, Mem::Flags);
+                            let fl = f.ins().ushr_imm(fl, i64::from(k));
+                            let fl = f.ins().band_imm(fl, 1);
+                            f.ins().band(some, fl)
+                        }
+                        None => some,
+                    };
+                    let ask = f.create_block();
+                    f.ins().brif(some, ask, &[], fall, &[]);
+                    f.switch_to_block(ask);
+                    let holds = gap_patterns(&mut f, &env, &native.gap_patterns, usize::from(pattern), native.extras.first().map(|e| e.0), &mut heads);
+                    let moving = f.create_block();
+                    f.ins().brif(holds, moving, &[], fall, &[]);
+                    f.switch_to_block(moving);
+                    f.set_cold_block(moving);
+                    let rows = env_ctx(&mut f, ROWS);
+                    let (n, p) = (mget(&mut f, Mem::Nodes), mget(&mut f, Mem::Pending));
+                    let first = f.ins().isub(n, p);
+                    let second = f.ins().iadd_imm(first, 1);
+                    let (a, b) = (NodeCol::row(&mut f, rows, first), NodeCol::row(&mut f, rows, second));
+                    let s = NodeCol::of(rows, AT_START).get_row(&mut f, b);
+                    NodeCol::of(rows, AT_START).put_row(&mut f, a, s);
+                    NodeCol::of(rows, AT_END).put_row(&mut f, a, s);
+                    // Its cells again: its block's base and offsets from the rows (it may be in a
+                    // block before the last: the extras pending can cross one), and its tail.
+                    let b = f.ins().ushr_imm(first, rerail_tape_format::CHECKPOINT_STRIDE.trailing_zeros() as i64);
+                    table.blocks(&mut f, &env, b, n);
+                    let one = f.ins().iconst(types::I64, 1);
+                    table.close_cells(&mut f, &env, Closed { at: first, size: one, last: first }, s, Some(s));
+                    f.ins().jump(fall, &[]);
                 }
                 // A keyword's: its token's word's kind (`WORD_KIND`), in a word of its own.
                 Op::Remember { kind: WORD_KIND } => {
@@ -8531,6 +8593,7 @@ fn ctx_reads(op: &Op, wrapping: bool) -> Vec<i32> {
         Op::DropLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE],
         Op::LoseLast { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE, ROWS],
         Op::RefuseIf { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE],
+        Op::MoveFirst { .. } => vec![CODES, STARTS, BYTES, NSTARTS, RECORD_STRIDE, ROWS],
         Op::Open { .. } => vec![ROWS, OPEN],
         Op::Close { .. } => vec![OPEN, ROWS],
         Op::Leaf { .. } => vec![ROWS],

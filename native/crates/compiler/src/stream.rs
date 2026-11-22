@@ -73,7 +73,7 @@ pub fn validate_word(program: &Words, pc: usize, opcode: u8, mode: u8, operand: 
         // `m=2`, `m=3+f`: a mark's `loses`, the second where flag `f` is set.
         // A settle's mask, or a `drops`'s or `loses`'s gap pattern (`Words::gap_patterns`).
         SETTLE if mode == 0 => operand < 32 && program.block_programs.first().and_then(|b| b.records.as_ref()).is_some_and(|r| r.own >> operand & 1 == 1),
-        SETTLE => mode < SETTLE_REFUSE + 1 + 16 && program.gap_patterns.get(usize::from(operand)).is_some_and(|m| usize::from(operand) == 0 || program.gap_patterns[usize::from(operand) - 1].order != m.order),
+        SETTLE => mode < SETTLE_MOVE + 1 + 16 && program.gap_patterns.get(usize::from(operand)).is_some_and(|m| usize::from(operand) == 0 || program.gap_patterns[usize::from(operand) - 1].order != m.order),
         CLOSE => mode <= 1 && operand == 0,
         // `m`: the flag the call runs with (`push_flag`), of 16.
         PUSH => mode <= 32 && usize::from(operand) < words,
@@ -636,6 +636,17 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                     pc += 1;
                 }
             }
+            SETTLE if mode >= SETTLE_MOVE => {
+                // `loses since`: where the question holds at the token, at the mark's level, the
+                // first extra pending of no width at the next one's start, in its place.
+                let at_level = mode == SETTLE_MOVE || flags >> (mode - SETTLE_MOVE - 1) & 1 == 1;
+                if at_level && pending > 1 && gap(operand, next, at_end) {
+                    let first = nodes.len() - pending;
+                    let s = nodes[first + 1].start;
+                    nodes[first].start = s;
+                    nodes[first].end = s;
+                }
+            }
             SETTLE if mode >= SETTLE_REFUSE => {
                 // `refuses`: where the question holds at the token, at the mark's level.
                 let at_level = mode == SETTLE_REFUSE || flags >> (mode - SETTLE_REFUSE - 1) & 1 == 1;
@@ -677,6 +688,10 @@ pub fn run_seen(program: &Words, bytes: &[u8], tier1: &crate::block::BlockRun, s
                 let token = if at_end { next } else { next - 1 };
                 let from = token - pending - usize::from(lost.is_some());
                 let settled = (0..pending).take_while(|&i| tier1.codes[from + i] >> (crate::records::MARK_SHIFT + u32::from(operand)) & 1 == 0).count();
+                // An extra a `loses since` moved (of no width: no other pending is) and the one
+                // after it go with those before: the lean lexer's semicolon is past that one.
+                let moved = settled + 1 < pending && nodes[first + settled].start == nodes[first + settled].end;
+                let settled = if moved { settled + 2 } else { settled };
                 if settled > 0 {
                     keep = nodes[first + settled - 1].end;
                     pending -= settled;

@@ -309,7 +309,7 @@ token "'"       = start o_chr read chr parts {
 token backtick_name = start o_tick read tick
 # An operator: one byte, a pair, or a pair and the byte after (`===`, `!==`, `..<`), as the
 # lean lexer reads its first byte, then the next two.
-pairs two_start = "->" "==" "!=" "<=" ">=" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "::" "?." "?:" ".." "!!" "===" "!==" "..<"
+pairs two_start = "->" "==" "!=" "<=" "&&" "||" "++" "--" "+=" "-=" "*=" "/=" "%=" "::" "?:" ".." "!!" "===" "!==" "..<"
 mask second     = (prev(two_start) | prev(two_start_three, 2)) & code
 mask p_start    = code & punct & ~second & ~nb
 token punct     = start p_start pair two_start
@@ -352,7 +352,7 @@ mark by_lf      = lf & code, before "by"
 # it settles nothing and asks no question, so a comment after the annotation is the next
 # token's node's. Before `semi`, so a level that takes it takes it before it ends at `semi`;
 # taken, it passes `semi`.
-mark ann_lf     = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, passes semi
+mark ann_lf     = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally" | "by", unless before "else" ~"->", unless before "else" end, passes semi
 # A block comment first on the line after a line break where a semicolon may come (not after a
 # `;`): the lean lexer's `asi` reads it through, then decides by the token after it, as `semi`'s
 # questions do at that token (decision 0451), the comment's record holding `semi`'s bit of its
@@ -368,18 +368,23 @@ mark ann_lf     = lf & code unless after ";", unless before "}" | "," | "." | ".
 #   reads the comment as part of the line, and tree-sitter loses its bytes: a comment of no
 #   width at the token after it (`asi`'s `lost`). Wherever tier 2 asks for `semi` (`loses`), as
 #   the lean parser asks `asi` only where its state takes a semicolon.
-# - Before `catch`, `finally` or `else`, and before another comment, the scanner reads the
-#   comment through and the tree keeps it where the grammar does not say yet: the file is
-#   refused there (`refuses`), as the lean lexer reads them where `asi` is asked. Another
-#   comment is read after the first after the line break, however many follow (`since`: from
-#   the grammar token before).
-mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | ">=" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?." | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally", unless before "else" ~"->", unless before "else" end, end, settles, ends,
+# - Before another comment, the scanner reads the comment through, finds that the line goes on
+#   (a `/`), and loses its bytes: a comment of no width at the next comment's start, in its
+#   place (`loses since`: from the grammar token before), and the scanner asked again after
+#   that one. After a line comment a line break comes, and the next line decides as the line
+#   break after a token does: `semi`'s other questions, at the token. After a block comment a
+#   token may come on its line, where the scanner inserts none: refused there.
+# - Before `catch`, `finally` or `else`, the scanner reads the comment through and the tree
+#   keeps it where the grammar does not say yet: the file is refused there (`refuses`), as the
+#   lean lexer reads them where `asi` is asked.
+mark semi       = lf & code unless after ";", unless before "}" | "," | "." | ".." | "..<" | ":" | "::" | "*" | "*=" | "%" | "%=" | ">" | "<" | "<=" | "=" | "==" | "===" | "{" | "[" | "(" | "?" | "?:" | "||" | "&&" | "/" | "/=" | "!=" | "!==" | "as" | "where" | "catch" | "finally", unless before "else" ~"->", unless before "else" end, end, settles, ends,
   drops after ~";" multiline_comment with semi before starting "aew",
   drops unless after multiline_comment before "as" | "where" | "else",
   loses after ~";" multiline_comment with semi before starting ",.:*%><={[(?|&/",
   loses after ~";" multiline_comment with semi before "!=" | "!==" | "as" | "where" | "by",
   refuses after ~";" multiline_comment with semi before "catch" | "finally" | "else",
-  refuses since ~";" multiline_comment with semi line_comment | multiline_comment
+  loses since ~";" multiline_comment with semi line_comment,
+  refuses since ~";" multiline_comment with semi multiline_comment
 mark semi_close = close_at, before "}", settles, ends
 # Something between two tokens: a blank or a comment. A token without it touches the token
 # before, as the lean parser's `adjacent(0)` asks.
@@ -404,6 +409,12 @@ mark lab_lam    = tokens simple_identifier "@" without apart "{"
 mark this_at    = tokens "this" "@" without apart
 mark jump_at    = tokens "return" | "break" | "continue" "@" without apart
 mark as_q       = tokens "as" "?" without apart
+# A safe call's `?.`: lexed as its `?` and its `.`, as the lean parser reads a `?.` after a type
+# (`String?.f`, `x as T?.f`, `as?.`: `split_at`), and one leaf again where it is a safe call.
+mark qdot       = tokens "?" "." without apart
+# A comparison's `>=`: lexed as its `>` and its `=`, as the lean parser reads a `>=` that closes
+# type arguments (`List<Int>= x`: `expect_gt`), and one leaf again where it is a comparison.
+mark ge         = tokens ">" "=" without apart
 # A name touching an integer: its suffix, where the integer's rule takes one (`L`, `u`, `U`,
 # `uL`, `UL`), else refused there, as the lean parser's `integer` reads the token after.
 mark sfx        = tokens integer_literal | hex_literal | bin_literal simple_identifier without apart
@@ -429,8 +440,8 @@ mark lam_params = tokens "{" (simple_identifier | backtick_name | "in" | "," | "
 # `)` or a `>`), a token that goes on no annotation and is no modifier and no declaration's word.
 # Where it does not hold, the `@` starts a declaration's modifiers. (`get` and `set` are an
 # accessor's only after a property, where this mark is not asked.)
-mark ann_expr   = tokens "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":"))* nest ("(" to ")") ending (simple_identifier | backtick_name | ")" | ">") ~("@" | "." | ":" | "(" | "<" | "?." | "::" | "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "companion" | "constructor" | "init" | "enum")
-mark decl_mod   = tokens after ~("." | "?." | "::") "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "get" | "set" | "companion" | "constructor" | "enum" | "typealias" | "@"
+mark ann_expr   = tokens "@" (~("fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "{" | "}" | ";" | ":"))* nest ("(" to ")") ending (simple_identifier | backtick_name | ")" | ">") ~("@" | "." | ":" | "(" | "<" | "::" | "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "typealias" | "companion" | "constructor" | "init" | "enum")
+mark decl_mod   = tokens after ~("." | "::") "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" "public" | "private" | "internal" | "protected" | "abstract" | "final" | "open" | "override" | "lateinit" | "const" | "sealed" | "annotation" | "data" | "inner" | "value" | "tailrec" | "operator" | "infix" | "inline" | "external" | "suspend" | "vararg" | "noinline" | "crossinline" | "expect" | "actual" | "fun" | "val" | "var" | "class" | "interface" | "object" | "get" | "set" | "companion" | "constructor" | "enum" | "typealias" | "@"
 # An annotation's use-site target (`@get:`), and a file annotation's `@` (`@file:`).
 mark use_site   = tokens after "@" "field" | "property" | "get" | "set" | "receiver" | "param" | "setparam" | "delegate" ":"
 mark file_at    = tokens "@" "file" ":"
@@ -450,7 +461,7 @@ mark ft_dot_at  = tokens "." "("
 # type arguments or parameters anyway, which take it. Where no rule takes it, the file is refused.
 # The run counts `<` `>` and `(` `)` as the lean parser does: the `>` is the one whose depth closes
 # the `<`, and a `)` with no `(` ends the run.
-mark generic    = tokens after simple_identifier "<" without apart (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("<" to ">") ("(" to ")") ">" "(" | "{" | "." | "?." | "::"
+mark generic    = tokens after simple_identifier "<" without apart (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("<" to ">") ("(" to ")") ">" "(" | "{" | "." | "::"
 # A function type's `(`: its `)` (the lean parser's `paren_end`) before `->`, as the lean
 # parser's `ty_core` reads it; another `(` in a type is a parenthesized type's.
 mark fn_paren   = tokens "(" (simple_identifier | backtick_name | "in" | "," | "." | "?" | "*" | "@" | ":" | "->" | "(" | ")" | "[" | "]" | "<" | ">")* nest ("(" to ")") ("<" to ">") ")" "->"
@@ -482,17 +493,17 @@ mark fn_recv    = tokens after ~("." | "<" | ">") simple_identifier (simple_iden
 # word after one, as the lean parser's `declaration_ahead` asks `accessor_ahead` at the token: where
 # no `.` or `:` follows it, for `get` no `(` with arguments, and no token on its line but `(`,
 # `;` or `}` (`get + 1` is an expression).
-mark acc        = tokens "get" | "set" with semi, unless before "get" | "set" "." | ":", unless before "get" | "set" simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "." | "*" | "/" | "," | ":" | ")" | "{" | "[" | "]" | "<" | ">" | "=" | "+" | "-" | "!" | "?" | "%" | "@" | "->" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "++" | "--" | "+=" | "-=" | "*=" | "/=" | "%=" | "?." | "?:" | ".." | "!!" | "::" | "===" | "!==" | "..<" without semi, unless before "get" "(" ~")"
-mark acc        = tokens after "private" | "protected" | "internal" | "public" with semi "get" | "set" without semi, unless before "get" | "set" "." | ":", unless before "get" | "set" simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "." | "*" | "/" | "," | ":" | ")" | "{" | "[" | "]" | "<" | ">" | "=" | "+" | "-" | "!" | "?" | "%" | "@" | "->" | "==" | "!=" | "<=" | ">=" | "&&" | "||" | "++" | "--" | "+=" | "-=" | "*=" | "/=" | "%=" | "?." | "?:" | ".." | "!!" | "::" | "===" | "!==" | "..<" without semi, unless before "get" "(" ~")"
+mark acc        = tokens "get" | "set" with semi, unless before "get" | "set" "." | ":", unless before "get" | "set" simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "." | "*" | "/" | "," | ":" | ")" | "{" | "[" | "]" | "<" | ">" | "=" | "+" | "-" | "!" | "?" | "%" | "@" | "->" | "==" | "!=" | "<=" | "&&" | "||" | "++" | "--" | "+=" | "-=" | "*=" | "/=" | "%=" | "?:" | ".." | "!!" | "::" | "===" | "!==" | "..<" without semi, unless before "get" "(" ~")"
+mark acc        = tokens after "private" | "protected" | "internal" | "public" with semi "get" | "set" without semi, unless before "get" | "set" "." | ":", unless before "get" | "set" simple_identifier | backtick_name | integer_literal | hex_literal | bin_literal | real_literal | "." | "*" | "/" | "," | ":" | ")" | "{" | "[" | "]" | "<" | ">" | "=" | "+" | "-" | "!" | "?" | "%" | "@" | "->" | "==" | "!=" | "<=" | "&&" | "||" | "++" | "--" | "+=" | "-=" | "*=" | "/=" | "%=" | "?:" | ".." | "!!" | "::" | "===" | "!==" | "..<" without semi, unless before "get" "(" ~")"
 # A declaration's receiver, as the lean parser's `receiver_end` reads it from the token after
 # `fun`, `val` or `var` and the type parameters: a run of the type's tokens to a `.` and a name
 # that no `.`, type argument or `,` follows; but a delegated property's name (`val x by a.b`).
-# The rule asks it where the receiver may come. A receiver ending in `?.` (`String?.f`) holds
-# too, and the receiver's rule, which reads no `?.`, refuses it.
-mark recv       = tokens simple_identifier | backtick_name (simple_identifier | backtick_name | "in" | "." | "<" | ">" | "," | "?" | "*")* "." | "?." simple_identifier | backtick_name ~("." | "<" | ">" | "?." | ","), unless before simple_identifier | backtick_name "by"
+# The rule asks it where the receiver may come. A nullable receiver (`String?.f`) is its `?`
+# and its `.` (`qdot`).
+mark recv       = tokens simple_identifier | backtick_name (simple_identifier | backtick_name | "in" | "." | "<" | ">" | "," | "?" | "*")* "." simple_identifier | backtick_name ~("." | "<" | ">" | ","), unless before simple_identifier | backtick_name "by"
 # A receiver's `.` that is not its last: another `.`, a type argument or a `,` follows its name.
 # The receiver's loop of names goes on there.
-mark dotted     = tokens "." simple_identifier | backtick_name "." | "<" | ">" | "?." | ","
+mark dotted     = tokens "." simple_identifier | backtick_name "." | "<" | ">" | ","
 
 tree kotlin {
   node source_file whole padded = (file_at file_annotation semi)* [package_header] [import_list] (statement (semi | ';'))*
@@ -630,7 +641,7 @@ tree kotlin {
   node type_modifiers   = (annotation | ty_susp 'suspend')+
   node parenthesized_type = '(' type ')'
   choice receiver       = recv receiver: receiver_type '.'
-  node receiver_type    = recv_type
+  node receiver_type    = recv_type [wrap nullable_type _ ('?' as quest)+]
   node recv_type        = retag user_type type_name [type_arguments] (dotted '.' type_name [type_arguments])*
   node user_type        = type_name [type_arguments] ('.' type_name [type_arguments])*
   node type_arguments   = [generic] '<' type_projection (',' type_projection)* (trail_angle | '>')
@@ -666,7 +677,7 @@ tree kotlin {
   choice infix_op       = wrap infix_expression _ name infix_operand
   choice elvis_op       = wrap elvis_expression _ '?:' elvis_operand
   choice check_op       = wrap check_expression _ ['!'] ('in' check_operand | 'is' type)
-  choice cmp_op         = wrap comparison_expression _ ('<' | '>' | '<=' | '>=') cmp_operand
+  choice cmp_op         = wrap comparison_expression _ ('<' | ge '>' merge '>=' '=' | '>' | '<=') cmp_operand
   choice eq_op          = wrap equality_expression _ ('==' | '!=' | '===' | '!==') eq_operand
   choice conj_op        = wrap conjunction_expression _ '&&' conj_operand
   choice disj_op        = wrap disjunction_expression _ '||' disj_operand
@@ -706,7 +717,7 @@ tree kotlin {
   choice lambda_bare_open = '{' '->'
   node lambda_parameters = lambda_parameter (',' lambda_parameter)*
   choice lambda_parameter = variable_declaration | multi_variable_declaration [':' type]
-  node navigation_suffix = ('.' | '?.' | '::') ('class' | name)
+  node navigation_suffix = ('.' | qdot '?' merge '?.' '.' | '::') ('class' | name)
   node indexing_suffix  = '[' expression (',' expression)* (trail_bracket | ']')
   node value_arguments  = '(' [without no_lambda value_argument (',' without no_lambda value_argument)*] (trail_paren | ')')
   node value_argument   = named name '=' expression | spread_expression | expression
@@ -842,6 +853,6 @@ tree kotlin {
   # Every mark a rule takes is asked only where a rule takes it, as the lean parser asks each
   # question where it branches (decision 0492). Not hidden: `generic`, where a `<` that opens type
   # arguments no rule reads refuses the file.
-  hidden apart this_at jump_at as_q sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod
+  hidden apart this_at jump_at as_q qdot ge sfx recv dotted fn_recv semi ann_lf semi_close head_ctor named cref trail lam_params lam_bare blk use_site file_at real ann_expr decl_mod wild obj_lit ft_dot_at enum_class fun_iface acc by_lf fn_paren ty_susp ds_susp cp_mod
   extra line_comment multiline_comment
 }

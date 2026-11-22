@@ -745,9 +745,7 @@ fn what_the_grammar_does_not_read_is_refused() {
         "val x = 0x\n",
         "class A { val x = 1 }\n",
         "fun f(noinline: Int) {}\n",
-        "fun String?.h() = 1\n",
         "val a = b as java.util.List<Int>\n",
-        "fun f() {\n    a()\n    /* c */\n    // d\n    b()\n}\n",
         // A comment lost before `catch`, `finally` or `else` (not `else ->`): not read yet.
         "fun f() {\n    try { a() }\n    /* c */ catch (e: E) {}\n}\n",
     ]);
@@ -863,6 +861,56 @@ fn templates_read_again_across_a_block_are_the_lean_parsers() {
     let head = format!("//{}\n", "x".repeat(67));
     let texts: Vec<String> = (122..127).map(|at| format!("{head}{l1}//{}\nval b = \"${{C.D}}\"\n", "x".repeat(at - head.len() - l1.len() - 11))).collect();
     assert_eq!(texts[2].find("\"${C").expect("the second template"), 124);
+    same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
+}
+
+/// A `?.` after a type is its `?` and a `.` (a nullable receiver, `x as T?.f`, `as?.`), and a
+/// `>=` that closes type arguments its `>` and a `=`, as the lean parser's `split_at` reads them;
+/// a safe call's `?.` and a comparison's `>=` are one leaf, and apart they are no operator.
+#[test]
+fn split_operators_are_the_lean_parsers() {
+    same(&[
+        "fun A?.f() {}\n",
+        "fun String?.h() = 1\n",
+        "val A?.b: Int get() = 1\n",
+        "fun <T> T?.g(c: T.() -> Unit) {}\n",
+        "fun A.B<C>?.f() {}\n",
+        "val a = b?.c?.d()\n",
+        "val a = b\n    ?.c\n",
+        "val a = (x as? T)?.y\n",
+        "val a = b?.let { it }?:c\n",
+        "val a: List<Int>= x\n",
+        "fun f(): Map<A, B>= m\n",
+        "val a = b >= c\n",
+        "val a = if (b>=c) 1 else 2\n",
+        "val a = b<c>=d\n",
+    ]);
+    for text in ["val a = b ? .c\n", "val a = b > = c\n", "val a = b >\n  = c\n"] {
+        assert!(lean_text(text).is_none(), "the lean parser reads {text:?}");
+        assert!(compiled().expect("compiles").parser.image(text.as_bytes()).is_err(), "the grammar reads {text:?}");
+    }
+}
+
+/// A block comment first on a line where a semicolon may come, then another comment: the lean
+/// lexer's `asi` reads the block comment through and loses its bytes (no width, at the next
+/// comment's start), and its semicolon is past that comment (an import header's holds both).
+#[test]
+fn a_block_comment_before_a_comment_is_the_lean_parsers() {
+    same(&[
+        "fun f() {\n  a()\n  /* x */\n\n  // c\n  b()\n}\n",
+        "fun f() {\n  a()\n  /* x */ // c\n  b()\n}\n",
+        "fun f() {\n  a()\n  /* x */\n  // c\n  .b()\n}\n",
+        "fun f() {\n  a()\n  /* x */\n  // c\n  // d\n  b()\n}\n",
+        "fun f() {\n  a()\n  /* x */\n  // c\n  /* y */\n  b()\n}\n",
+        "fun f() {\n  a()\n  /* x */\n  // c\n  /* y */\n  .b()\n}\n",
+        "class A {\n  val a = 1\n  /* x */\n  // c\n  fun b() {}\n}\n",
+        "val x = 1\n\n/** d */\n// c\n\nprivate val u = 1\n",
+        "import a.b\n\n/** d */\n// c\n\nprivate val u = 1\n",
+        "import a.b\n\n/** d */\n// c\n// e\n\nprivate val u = 1\n",
+        "package a\n/* x */\n// c\nimport b\n",
+    ]);
+    // The tape's blocks between the two comments, at each node count: a name a node.
+    let texts: Vec<String> = (0..rerail_tape_format::CHECKPOINT_STRIDE).map(|k| format!("fun f() {{\n{}  /* x */\n  // c\n  d()\n}}\n", "  a\n".repeat(k))).collect();
     same(&texts.iter().map(String::as_str).collect::<Vec<_>>());
 }
 
@@ -1861,6 +1909,21 @@ fn probe() {
         }
         if std::env::var_os("RERAIL_KOTLIN_PROBE_LEAN").is_some() {
             eprintln!("  lean:\n{}", lean.as_deref().unwrap_or("(refused)"));
+        }
+        if std::env::var_os("RERAIL_KOTLIN_PROBE_INTERP").is_some() {
+            // The interpreter's nodes, in its order: kind and span.
+            let run = c.program.block_programs[0].run(text.as_bytes());
+            match rerail_compiler::stream::run(&c.program, text.as_bytes(), &run) {
+                Ok(nodes) => {
+                    let shown: Vec<String> = nodes.iter().map(|n| format!("{}[{}..{}]", n.kind, n.start, n.end)).collect();
+                    eprintln!("  interpreter: {}", shown.join(" "));
+                }
+                Err(why) => eprintln!("  interpreter refuses: {why:?}"),
+            }
+            if let Ok(nodes) = c.parser.tier2.run(text.as_bytes(), &run) {
+                let shown: Vec<String> = nodes.iter().map(|n| format!("{}[{}..{}]", n.kind, n.start, n.end)).collect();
+                eprintln!("  JIT tier 2:  {}", shown.join(" "));
+            }
         }
         if std::env::var_os("RERAIL_KOTLIN_PROBE_TOKENS").is_some() {
             // The reference evaluator's errors and tokens, marks by name.
