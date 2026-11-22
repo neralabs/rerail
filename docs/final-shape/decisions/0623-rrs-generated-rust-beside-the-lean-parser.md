@@ -190,3 +190,18 @@ the masks:
 Kotlin has both, and its files are unchanged.
 
 `rr_parser`'s 51 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes included.
+
+## Step 8: tier 2 finishes as the grammar's lean parser finishes (done)
+
+Tier 2's `parse` takes a `Finish` (`rerail_tape_format::Finish`), as the lean parsers' `tape_into` does. The crate's
+`parse` picks it:
+
+- `rerail-rr-aot` finishes into format 15's image (`Writer::finish`), as `rr_syntax::lean::tape` does. There is no
+  `Columns`, so there is no code column copied out of the image, and no column cut to its length.
+- `rerail-kotlin-aot` finishes into the columns (`Writer::finish_columns`), as `kotlin_lean` does: its tape is
+  `kotlin_lean::Tape`, and its tests read it as that.
+
+`rr_parser`'s tests read the parser as Rust's tape as they read the JIT's, with `image_nodes`. The reader of the columns
+(`columns_nodes`) is gone. `rr_parser`'s 51 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes included.
+
+That is the last step of the order.

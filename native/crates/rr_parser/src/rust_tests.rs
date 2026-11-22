@@ -23,43 +23,17 @@ fn rust_is_current() {
 /// A tape's nodes, in order: each one's key (its kind, field, flags and supertype classes), start, end and size.
 type Nodes = Vec<(u32, u32, u32, usize)>;
 
-/// The JIT's image's nodes.
+/// An image's nodes: the JIT's, or the parser as Rust's.
 fn image_nodes(image: &[u8]) -> Nodes {
     let v = rerail_tape_format::View::new(image).expect("an image");
     (0..v.len()).map(|i| (v.key(i), v.start(i), v.end(i), v.size(i))).collect()
-}
-
-/// The parser as Rust's tape's nodes (`rerail_rr_aot::parse`), as `image_nodes` reads an image's.
-fn columns_nodes(t: &rerail_tape_format::Columns) -> Nodes {
-    let cell = |column: &[u8], width: u8, i: usize| -> u32 {
-        let w = usize::from(width & 0x7f);
-        let b = &column[i * w..i * w + w];
-        match w {
-            1 => u32::from(b[0]),
-            2 => u32::from(u16::from_le_bytes([b[0], b[1]])),
-            _ => u32::from_le_bytes([b[0], b[1], b[2], b[3]]),
-        }
-    };
-    let start = |i: usize| {
-        let b = i / rerail_tape_format::CHECKPOINT_STRIDE;
-        u32::from_le_bytes(t.base[4 * b..4 * b + 4].try_into().expect("a base")) + cell(&t.off, t.widths[1], i)
-    };
-    (0..t.code.len() / 2)
-        .map(|i| {
-            let code = u16::from_le_bytes([t.code[2 * i], t.code[2 * i + 1]]);
-            let size = cell(&t.size, t.widths[0], i) as usize;
-            let s = start(i);
-            let from = if t.widths[2] & rerail_tape_format::TAIL_FROM_START != 0 { s } else { start(i + size - 1) };
-            (t.keys[usize::from(code)], s, from + cell(&t.tail, t.widths[2], i), size)
-        })
-        .collect()
 }
 
 /// Where the parser as Rust's tape is not the JIT's: whether it refuses the file, and where neither does, the first
 /// node that differs.
 fn tape_differs(c: &Compiled, text: &str) -> Option<String> {
     let theirs = c.parser.image(text.as_bytes()).ok().map(|i| image_nodes(&i));
-    let ours = rerail_rr_aot::parse(&rerail_rr_aot::padded(text.as_bytes()), text.len()).ok().map(|t| columns_nodes(&t));
+    let ours = rerail_rr_aot::parse(&rerail_rr_aot::padded(text.as_bytes()), text.len()).ok().map(|i| image_nodes(&i));
     match (theirs, ours) {
         (None, None) => None,
         (Some(_), None) => Some("the JIT parses it, the parser as Rust refuses it".into()),
@@ -295,7 +269,7 @@ fn rr_aot_against_jit() {
         rerail_prof::thread_cpu() - t
     };
     let lex = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len()).recs.len()).sum::<usize>();
-    let aot = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::parse(b, t.len()).map_or(0, |c| c.keys.len())).sum::<usize>();
+    let aot = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::parse(b, t.len()).map_or(0, |c| c.len())).sum::<usize>();
     let jit = || files.iter().map(|t| c.parser.image(t.as_bytes()).map_or(0, |i| i.len())).sum::<usize>();
     let engine = || files.iter().map(|t| crate::engine_tape(t).len()).sum::<usize>();
     // The JIT's tier 1 alone: its batch made and called, as `image` makes it.

@@ -10453,8 +10453,9 @@ impl<L: Layout> P<'_, L> {
 
 }
 
-/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), or the byte it was refused at.
-pub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format::Columns, u32> {
+/// The tape of `src` from tier 1's records (each token's first and last bytes and code) and masks (those a region's parts are found by), finished by `finish` (the
+/// image, or the columns, as the grammar's lean parser finishes), or the byte it was refused at.
+pub fn parse<F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, finish: &mut F) -> Result<F::Out, u32> {
     // Where tier 1 sends the file to tree-sitter.
     if lx.refused {
         return Err(0);
@@ -10462,7 +10463,7 @@ pub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format:
     let mut widths = Widths::guess(src.len());
     loop {
         // Nearly every file is parsed at the narrow widths, fixed in the parser's code, as the lean parser's.
-        let at = if widths == Narrow::WIDTHS { parse_at(src, lx, Narrow)? } else { parse_at(src, lx, widths)? };
+        let at = if widths == Narrow::WIDTHS { parse_at(src, lx, Narrow, finish)? } else { parse_at(src, lx, widths, finish)? };
         match at {
             Ok(c) => return Ok(c),
             Err(rerail_tape_format::Redo(w)) => {
@@ -10475,9 +10476,10 @@ pub fn parse(src: &[u8], lx: &crate::tier1::Lexed) -> Result<rerail_tape_format:
     }
 }
 
-/// `parse` at `layout`'s widths: the tape, or the widths to parse at again; or the byte it was refused at.
-fn parse_at<L: Layout>(src: &[u8], lx: &crate::tier1::Lexed, layout: L) -> R<Result<rerail_tape_format::Columns, rerail_tape_format::Redo>> {
+/// `parse` at `layout`'s widths: the tape `finish` makes of the writer, or the widths to parse at again; or the byte
+/// it was refused at.
+fn parse_at<L: Layout, F: rerail_tape_format::Finish>(src: &[u8], lx: &crate::tier1::Lexed, layout: L, finish: &mut F) -> R<Result<F::Out, rerail_tape_format::Redo>> {
     let mut p = P::new(src, lx, layout)?;
     p.source_file()?;
-    Ok(p.w.finish_columns())
+    Ok(finish.finish(p.w))
 }

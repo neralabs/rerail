@@ -34,7 +34,7 @@ fn main() {
         t.elapsed()
     };
     let lex = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::lex(b, t.len()).recs.len()).sum::<usize>();
-    let parse = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::parse(b, t.len()).map_or(0, |c| c.keys.len())).sum::<usize>();
+    let parse = || bufs.iter().zip(&files).map(|(b, t)| rerail_rr_aot::parse(b, t.len()).map_or(0, |c| c.len())).sum::<usize>();
     let mut best = [Duration::MAX; 2];
     for _ in 0..rounds {
         best[0] = best[0].min(time(&lex));
