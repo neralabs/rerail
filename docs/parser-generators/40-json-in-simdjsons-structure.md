@@ -637,7 +637,7 @@ source the compiler writes. The order is the order of the fixes: what one unbloc
 5. Tier 1 makes the strings and the masks made of them in its pass, and writes the structurals there. Done (decision 0585).
 6. Tier 1 writes no codes tier 2 does not read (done in 0585), and keeps no mask that tier 2 can read from the bytes, as `walk`
    reads a string and a number. Done (decision 0586).
-7. Tier 1's UTF-8 check in simdjson's form.
+7. Tier 1's UTF-8 check in simdjson's form. Done (decision 0591).
 
 Steps 5 and 6 are also 0556's second step (`bitlex_lex_rust` is Kotlin's and `.rerail`'s tier 1 too); steps 1 to 4
 are `tier2_loop`'s, which only JSON's grammar reaches.

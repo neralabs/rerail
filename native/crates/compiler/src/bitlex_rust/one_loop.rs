@@ -447,7 +447,7 @@ impl Lp<'_, '_> {
             Test::Mark(_) => return self.err("marks are not written yet"),
         };
         // A run's check is read where its end is found.
-        let run_checked = matches!(end, End::Run) && self.checked.iter().any(|c| *c == name);
+        let run_checked = matches!(end, End::Run) && self.checked.contains(&name.to_owned());
         let body = |t: T| -> Result<String, String> {
             // A word's decision bound its start and its end.
             let mut body = if t == T::Word { "i += 1;\ne = end;\n".to_owned() } else { format!("let s = starts[i] as usize;\ni += 1;\ne = {};\n", self.end_code(&name, &end)?) };
@@ -598,7 +598,7 @@ impl Lp<'_, '_> {
             })?;
             let (call, k2) = (self.call(&ident(name), &ns, at)?, k.clone());
             arms.push((first, Box::new(move |_| Ok(format!("{call}{}", Self::jump(&k2))))));
-            for a in h.alts.iter().filter(|a| self.calls(a)).cloned() {
+            for a in h.alts.into_iter().filter(|a| self.calls(a)) {
                 let (first, _) = self.g.first(&a)?;
                 let (akey, k) = (h.key.clone(), k.clone());
                 arms.push((first, Box::new(move |t| self.walk(&a, &akey, k.clone(), t))));

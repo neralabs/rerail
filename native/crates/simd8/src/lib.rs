@@ -102,6 +102,17 @@ pub unsafe trait Simd8x64 {
     /// # Safety
     /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
     unsafe fn shift_in(a: Self::V, next: u8) -> Self::V;
+    /// Byte by byte, `a ^ b`.
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
+    unsafe fn xor(a: Self::V, b: Self::V) -> Self::V;
+    /// Each byte's `k`th byte before it (`k` 1, 2 or 3), the first `k` from the end of `before`, the
+    /// block before (simdjson's `prev<N>`).
+    ///
+    /// # Safety
+    /// The CPU runs `Self::BACKEND`'s instructions (the backend `best` names, or one the target has).
+    unsafe fn prev(a: Self::V, before: Self::V, k: usize) -> Self::V;
 
     /// Bit `i`: byte `i` is `x`.
     ///
@@ -315,6 +326,22 @@ mod arm64 {
         unsafe fn shift_in(a: Self::V, next: u8) -> Self::V {
             unsafe { [vextq_u8::<1>(a[0], a[1]), vextq_u8::<1>(a[1], a[2]), vextq_u8::<1>(a[2], a[3]), vextq_u8::<1>(a[3], vdupq_n_u8(next))] }
         }
+        #[inline(always)]
+        unsafe fn xor(a: Self::V, b: Self::V) -> Self::V {
+            unsafe { std::array::from_fn(|i| veorq_u8(a[i], b[i])) }
+        }
+        /// As simdjson's `prev<N>`: `vext` of the chunk before and this one.
+        #[inline(always)]
+        unsafe fn prev(a: Self::V, before: Self::V, k: usize) -> Self::V {
+            let p = [before[3], a[0], a[1], a[2]];
+            unsafe {
+                match k {
+                    1 => std::array::from_fn(|i| vextq_u8::<15>(p[i], a[i])),
+                    2 => std::array::from_fn(|i| vextq_u8::<14>(p[i], a[i])),
+                    _ => std::array::from_fn(|i| vextq_u8::<13>(p[i], a[i])),
+                }
+            }
+        }
         /// simdjson's `to_bitmask`: each byte ANDed with its bit, then pairwise adds.
         #[inline(always)]
         unsafe fn to_bitmask(a: Self::V) -> u64 {
@@ -419,6 +446,22 @@ mod x86 {
                 std::array::from_fn(|i| _mm256_alignr_epi8::<1>(_mm256_permute2x128_si256::<0x21>(a[i], after[i]), a[i]))
             }
         }
+        #[inline(always)]
+        unsafe fn xor(a: Self::V, b: Self::V) -> Self::V {
+            unsafe { [_mm256_xor_si256(a[0], b[0]), _mm256_xor_si256(a[1], b[1])] }
+        }
+        /// As simdjson's `prev<N>`: the lane before by a lane permute, then `alignr`.
+        #[inline(always)]
+        unsafe fn prev(a: Self::V, before: Self::V, k: usize) -> Self::V {
+            unsafe {
+                let p = [_mm256_permute2x128_si256::<0x21>(before[1], a[0]), _mm256_permute2x128_si256::<0x21>(a[0], a[1])];
+                match k {
+                    1 => std::array::from_fn(|i| _mm256_alignr_epi8::<15>(a[i], p[i])),
+                    2 => std::array::from_fn(|i| _mm256_alignr_epi8::<14>(a[i], p[i])),
+                    _ => std::array::from_fn(|i| _mm256_alignr_epi8::<13>(a[i], p[i])),
+                }
+            }
+        }
     }
 
     pub struct Westmere;
@@ -494,6 +537,22 @@ mod x86 {
                 [_mm_alignr_epi8::<1>(a[1], a[0]), _mm_alignr_epi8::<1>(a[2], a[1]), _mm_alignr_epi8::<1>(a[3], a[2]), _mm_alignr_epi8::<1>(n, a[3])]
             }
         }
+        #[inline(always)]
+        unsafe fn xor(a: Self::V, b: Self::V) -> Self::V {
+            unsafe { std::array::from_fn(|i| _mm_xor_si128(a[i], b[i])) }
+        }
+        /// As simdjson's `prev<N>`: `alignr` of this chunk and the one before.
+        #[inline(always)]
+        unsafe fn prev(a: Self::V, before: Self::V, k: usize) -> Self::V {
+            let p = [before[3], a[0], a[1], a[2]];
+            unsafe {
+                match k {
+                    1 => std::array::from_fn(|i| _mm_alignr_epi8::<15>(a[i], p[i])),
+                    2 => std::array::from_fn(|i| _mm_alignr_epi8::<14>(a[i], p[i])),
+                    _ => std::array::from_fn(|i| _mm_alignr_epi8::<13>(a[i], p[i])),
+                }
+            }
+        }
     }
 }
 
@@ -556,6 +615,14 @@ unsafe impl Simd8x64 for Fallback {
     unsafe fn shift_in(a: Self::V, next: u8) -> Self::V {
         std::array::from_fn(|i| if i < 63 { a[i + 1] } else { next })
     }
+    #[inline(always)]
+    unsafe fn xor(a: Self::V, b: Self::V) -> Self::V {
+        std::array::from_fn(|i| a[i] ^ b[i])
+    }
+    #[inline(always)]
+    unsafe fn prev(a: Self::V, before: Self::V, k: usize) -> Self::V {
+        std::array::from_fn(|i| if i >= k { a[i - k] } else { before[64 + i - k] })
+    }
     /// 8 bytes a word (SWAR): each equal byte's low bit, the 8 gathered into one byte by a
     /// multiply.
     #[inline(always)]
@@ -579,7 +646,7 @@ mod tests {
 
     /// Per backend: the masks of `eq`, `classify`, `nonzero`, `test` and `ge` over a block.
     #[inline(always)]
-    unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> [u64; 7] {
+    unsafe fn masks<S: Simd8x64>(b: &[u8; 64]) -> [u64; 11] {
         const LO: [u8; 16] = [1, 2, 4, 8, 16, 32, 64, 128, 3, 5, 9, 17, 33, 65, 129, 255];
         const HI: [u8; 16] = [255, 1, 2, 4, 8, 16, 32, 64, 128, 6, 10, 18, 34, 66, 130, 0];
         unsafe {
@@ -593,12 +660,16 @@ mod tests {
                 S::to_bitmask(S::test(c, S::splat(0x11))),
                 S::to_bitmask(S::or(S::ge(v, 0x80), S::ge(v, 0x7b))),
                 S::eq_mask(S::shift_in(v, b'x'), b'x'),
+                S::eq_mask(S::xor(v, S::splat(b'x' ^ b'{')), b'{'),
+                S::eq_mask(S::prev(v, S::splat(b'x'), 1), b'x'),
+                S::eq_mask(S::prev(v, S::splat(b'x'), 2), b'x'),
+                S::eq_mask(S::prev(v, S::splat(b'x'), 3), b'x'),
             ]
         }
     }
 
     dispatch! {
-        fn block_masks(b: &[u8; 64]) -> [u64; 7] = masks, on block_masks_on;
+        fn block_masks(b: &[u8; 64]) -> [u64; 11] = masks, on block_masks_on;
     }
 
     #[test]
@@ -622,6 +693,10 @@ mod tests {
             let want = block_masks_on(Backend::Fallback, &b).unwrap();
             assert_eq!(want[5], (0..64).fold(0u64, |m, i| m | u64::from(b[i] >= 0x7b) << i));
             assert_eq!(want[6], (0..64).fold(0u64, |m, i| m | u64::from(b.get(i + 1).copied().unwrap_or(b'x') == b'x') << i));
+            assert_eq!(want[7], (0..64).fold(0u64, |m, i| m | u64::from(b[i] == b'x') << i));
+            for k in 1..=3 {
+                assert_eq!(want[7 + k], (0..64).fold(0u64, |m, i| m | u64::from(i < k || b[i - k] == b'x') << i));
+            }
             assert_eq!(block_masks(&b), want);
             for be in Backend::ALL {
                 if let Some(got) = block_masks_on(be, &b) {

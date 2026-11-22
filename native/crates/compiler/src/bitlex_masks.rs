@@ -4348,7 +4348,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         v.dedup();
         v
     };
-    for b in 0..256 {
+    for (b, kind) in kinds.iter_mut().enumerate() {
         let mut sig: Vec<u16> = lowered.switches.iter().filter(|s| s.offset == 0).map(|s| s.targets[b]).collect();
         // A moved row's tokens have their own kind (decision 0509): its first bytes are not its
         // column's, so a `0` is one class with `1`..`9`, as the lean lexer's one `Int`. A shared
@@ -4362,7 +4362,7 @@ fn tree_section(symbols: &Symbols<'_>, low: &mut Lowering, token_rows: &[(String
         if classes.len() > 256 {
             return Err("more than 256 kinds of first byte".into());
         }
-        kinds[b] = k;
+        *kind = k;
     }
     // Numbered so a switch on the kind has few ranges of one target (its compare tree is
     // shallow, as a jump table on the lean lexer's kinds is small): from byte 0's class, each

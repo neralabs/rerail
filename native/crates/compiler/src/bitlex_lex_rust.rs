@@ -226,6 +226,8 @@ struct Node {
     kept: bool,
     /// A carry from block to block of its own (`fill`, `escaped`): `c_NAME`.
     carry: bool,
+    /// A class's bytes: its code is made again where stage 1 writes it, in the tables of the classes it reads.
+    class: Option<std::boxed::Box<[bool; 256]>>,
 }
 
 /// A class's nibble-table bit: the high nibbles and the low nibbles it holds (one bit a nibble).
@@ -267,6 +269,8 @@ struct Gen<'a> {
     /// Simdjson's stage 1 (no `skip`, every mask in the pass): the mask whose bits are the records, written as
     /// indexes at its block (`bit_indexer`), the source padded (`PADDING`) and each block loaded where it is.
     index: Option<usize>,
+    /// The byte-pair errors in simdjson's `utf8_checker` form (`bitlex_pair_lookup`), in simdjson's stage 1.
+    lookup: Option<crate::bitlex_pair_lookup::Lookup>,
 }
 
 /// What a name means where a statement reads it: made of the regions or not, its local after stage 1,
@@ -396,7 +400,7 @@ impl Gen<'_> {
     /// A stage-1 mask of its own, `name`'s, with its word's code and lag.
     fn push_node(&mut self, key: String, name: String, what: String, code: String, lag: u32, carry: bool) -> usize {
         let id = self.nodes.len();
-        self.nodes.push(Node { name, what, code, lag, kept: false, carry });
+        self.nodes.push(Node { name, what, code, lag, kept: false, carry, class: None });
         self.node_of.insert(key, id);
         id
     }
@@ -404,59 +408,11 @@ impl Gen<'_> {
     /// Class `name` of bytes `set`: one compare where it is one byte, else its nibble-table bits,
     /// each a product of high nibbles and low nibbles, in the first pair of tables with room.
     fn class(&mut self, name: &str, set: &[bool; 256]) -> usize {
-        let bytes: Vec<u8> = (0..=255u8).filter(|&c| set[usize::from(c)]).collect();
-        let code = match bytes.as_slice() {
-            [] => "0".to_owned(),
-            [c] => format!("S::eq_mask(v, {c:#04x}) & lv"),
-            _ => {
-                // Its bytes by high nibble; the high nibbles with the same low ones are one bit.
-                let mut lows = [0u16; 16];
-                for &c in &bytes {
-                    lows[usize::from(c >> 4)] |= 1 << (c & 15);
-                }
-                let mut rects: Vec<Rect> = Vec::new();
-                for (h, &l) in lows.iter().enumerate() {
-                    if l == 0 {
-                        continue;
-                    }
-                    match rects.iter_mut().find(|r| r.1 == l) {
-                        Some(r) => r.0 |= 1 << h,
-                        None => rects.push((1 << h, l)),
-                    }
-                }
-                let mut tests = Vec::new();
-                let mut left = rects;
-                while !left.is_empty() {
-                    // The first pair with room for all it lacks of them, else a new pair.
-                    let fits = |p: &Vec<Rect>, rs: &[Rect]| p.len() + rs.iter().filter(|r| !p.contains(r)).count() <= 8;
-                    let p = match self.pairs.iter().position(|p| fits(p, &left)) {
-                        Some(p) => p,
-                        None => {
-                            self.pairs.push(Vec::new());
-                            self.pairs.len() - 1
-                        }
-                    };
-                    let mut bits = 0u8;
-                    let mut rest = Vec::new();
-                    for r in left {
-                        let pair = &mut self.pairs[p];
-                        match pair.iter().position(|x| *x == r) {
-                            Some(b) => bits |= 1 << b,
-                            None if pair.len() < 8 => {
-                                bits |= 1 << pair.len();
-                                pair.push(r);
-                            }
-                            None => rest.push(r),
-                        }
-                    }
-                    tests.push(format!("S::to_bitmask(S::test(c{p}, S::splat({bits:#04x})))"));
-                    left = rest;
-                }
-                if tests.len() == 1 { format!("{} & lv", tests[0]) } else { format!("({}) & lv", tests.join(" | ")) }
-            }
-        };
+        let code = class_code(&mut self.pairs, set);
         let local = format!("m_{}", ident(name));
-        self.push_node(format!("={name}"), local, format!("class {name}"), code, 0, false)
+        let id = self.push_node(format!("={name}"), local, format!("class {name}"), code, 0, false);
+        self.nodes[id].class = Some(std::boxed::Box::new(*set));
+        id
     }
 
     /// The one-byte class of `c`, for `text`.
@@ -602,7 +558,30 @@ impl Gen<'_> {
     /// the file's words of those read later and testing the escapes.
     fn stage1(&self) -> String {
         let mut out = String::new();
-        for (p, rects) in self.pairs.iter().enumerate() {
+        // The masks stage 1 writes: those an escape, the records or a later stage reads, and their operands.
+        let mut live: Vec<bool> = self.nodes.iter().enumerate().map(|(i, n)| n.kept || self.index == Some(i) || self.sinks.iter().any(|(_, s)| *s == i)).collect();
+        for i in (0..self.nodes.len()).rev() {
+            if live[i] {
+                let code = &self.nodes[i].code;
+                for (l, m) in live[..i].iter_mut().zip(&self.nodes) {
+                    if code.contains(&format!("r_{}[", m.name)) {
+                        *l = true;
+                    }
+                }
+            }
+        }
+        // The classes' tables, of the classes it writes alone.
+        let mut pairs: Vec<Vec<Rect>> = Vec::new();
+        let codes: Vec<String> = self
+            .nodes
+            .iter()
+            .zip(&live)
+            .map(|(n, &l)| match &n.class {
+                Some(set) if l => class_code(&mut pairs, set),
+                _ => n.code.clone(),
+            })
+            .collect();
+        for (p, rects) in pairs.iter().enumerate() {
             let (mut lo, mut hi) = ([0u8; 16], [0u8; 16]);
             for (b, &(h, l)) in rects.iter().enumerate() {
                 for i in 0..16 {
@@ -618,6 +597,18 @@ impl Gen<'_> {
             let _ = writeln!(out, "/// The classes' nibble tables, pair {p} (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.");
             let _ = writeln!(out, "static LO_{p}: [u8; 16] = [{}];\nstatic HI_{p}: [u8; 16] = [{}];\n", list(&lo), list(&hi));
         }
+        if let Some(l) = &self.lookup {
+            let list = |t: &[u8; 16]| t.iter().map(|b| format!("{b:#04x}")).collect::<Vec<_>>().join(", ");
+            let whys: Vec<String> = l.covers.iter().map(|(_, w)| format!("`{w}`")).collect();
+            let _ = writeln!(
+                out,
+                "/// The byte-pair errors ({}) as simdjson's `check_special_cases`: each rule a bit of the byte before's high\n/// nibble's table, its low nibble's, and this byte's high nibble's.\nstatic BYTE_1_HIGH: [u8; 16] = [{}];\nstatic BYTE_1_LOW: [u8; 16] = [{}];\nstatic BYTE_2_HIGH: [u8; 16] = [{}];\n",
+                whys.join(", "),
+                list(&l.byte_1_high),
+                list(&l.byte_1_low),
+                list(&l.byte_2_high)
+            );
+        }
         let kept: Vec<&Node> = self.nodes.iter().filter(|n| n.kept).collect();
         out.push_str("/// Stage 1's masks a later stage reads, a bit a byte, and whether an escape holds.\nstruct Stage1 {\n");
         for n in &kept {
@@ -627,14 +618,14 @@ impl Gen<'_> {
             out.push_str("    /// The records (simdjson's structural indexes), then `n`, `n` and 0; and their count.\n    starts: Vec<u32>,\n    count: usize,\n");
         }
         out.push_str("    refused: bool,\n}\n\n");
-        let most = self.nodes.iter().map(|n| n.lag).max().unwrap_or(0);
+        let most = self.nodes.iter().zip(&live).filter(|(_, l)| **l).map(|(n, _)| n.lag).max().unwrap_or(0);
         let ring = (most as usize + 2).next_power_of_two();
         let _ = writeln!(out, "/// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`, each mask of block `t - lag` (a `next` reads the block after its operand's), its last {ring} words in a ring.\n#[inline(always)]\nunsafe fn stage1<S: rerail_simd8::Simd8x64>({}) -> Stage1 {{\n{}    let nw = n.div_ceil(64);\n    const RING: usize = {ring};", if self.index.is_some() { "src: &[u8], n: usize" } else { "src: &[u8]" }, if self.index.is_some() { "" } else { "    let n = src.len();\n" });
         if self.index.is_some() {
             // Room for a record a byte, and the slack of a block's unconditional writes.
             out.push_str("    let mut starts: Vec<u32> = Vec::with_capacity(n + 64 + 3);\n    let si = starts.as_mut_ptr();\n    let mut count = 0usize;\n");
         }
-        for n in &self.nodes {
+        for n in self.nodes.iter().zip(&live).filter(|(_, l)| **l).map(|(n, _)| n) {
             let _ = writeln!(out, "    let mut r_{} = [0u64; RING];", n.name);
             if n.carry {
                 let _ = writeln!(out, "    let mut c_{} = 0u64;", n.name);
@@ -643,9 +634,12 @@ impl Gen<'_> {
         for n in &kept {
             let _ = writeln!(out, "    let mut {} = vec![0u64; nw];", n.name);
         }
+        if self.lookup.is_some() {
+            out.push_str("    // The byte-pair errors' check, simdjson's `utf8_checker`: the block before, the errors, and whether the block before left\n    // a sequence open.\n    let mut prev_input = unsafe { S::splat(0) };\n    let mut error = unsafe { S::splat(0) };\n    let mut prev_incomplete = false;\n");
+        }
         let _ = writeln!(out, "    let mut refused = false;\n    for t in 0..nw + {most} {{");
         for lag in 0..=most {
-            let ids: Vec<usize> = (0..self.nodes.len()).filter(|&i| self.nodes[i].lag == lag).collect();
+            let ids: Vec<usize> = (0..self.nodes.len()).filter(|&i| live[i] && self.nodes[i].lag == lag).collect();
             if ids.is_empty() {
                 continue;
             }
@@ -660,15 +654,18 @@ impl Gen<'_> {
                 } else {
                     let _ = writeln!(out, "            let b = if q < nw {{ block(src, q) }} else {{ [0u8; 64] }};\n            let v = unsafe {{ S::load(&b) }};");
                 }
-                for p in 0..self.pairs.len() {
+                for p in 0..pairs.len() {
                     let _ = writeln!(out, "            let c{p} = unsafe {{ S::classify(v, &LO_{p}, &HI_{p}) }};");
+                }
+                if let Some(l) = &self.lookup {
+                    out.push_str(&lookup_code(l));
                 }
             }
             for i in ids {
                 let n = &self.nodes[i];
-                let code = indent(&n.code, "            ");
+                let code = indent(&codes[i], "            ");
                 let code = code.trim();
-                let unsafe_ = if n.code.contains("S::") { format!("unsafe {{ {code} }}") } else { code.to_owned() };
+                let unsafe_ = if codes[i].contains("S::") { format!("unsafe {{ {code} }}") } else { code.to_owned() };
                 let _ = writeln!(out, "            // {}\n            let w = {unsafe_};\n            r_{}[q % RING] = w;", n.what, n.name);
                 if n.kept {
                     let _ = writeln!(out, "            if q < nw {{\n                {}[q] = w;\n            }}", n.name);
@@ -685,6 +682,9 @@ impl Gen<'_> {
             out.push_str("        }\n");
         }
         out.push_str("    }\n");
+        if self.lookup.is_some() {
+            out.push_str("    // The byte-pair errors (simdjson's `errors()`).\n    refused |= unsafe { S::nonzero(error) } != 0;\n");
+        }
         if self.index.is_some() {
             // simdjson's: the index ends in `n`, `n` and 0, so that stage 2 reads past its last record unchecked.
             out.push_str("    // SAFETY: `count` records written, and room for three more.\n    unsafe {\n        *si.add(count) = n as u32;\n        *si.add(count + 1) = n as u32;\n        *si.add(count + 2) = 0;\n        starts.set_len(count + 3);\n    }\n");
@@ -1151,7 +1151,10 @@ impl Gen<'_> {
             let _ = write!(out, "/// The masks tier 2 reads, a bit a byte: those it finds a token's end by, and splits a region by.\npub struct Masks {{\n{decl}}}\n\n");
         }
         if in_pass {
-            // The records and the masks tier 2 reads, nothing more: simdjson's stage 1 writes its indexes alone.
+            // Nothing after stage 1 reads a mask: simdjson's stage 1 writes its indexes alone.
+            for n in &mut self.nodes {
+                n.kept = false;
+            }
             out.push_str("/// The bytes the source has past its end, spaces (simdjson's padding): tier 1 loads each block where it is, and\n/// tier 2 reads the byte at the index's last entries.\npub const PADDING: usize = 64;\n\n");
             out.push_str("/// Tier 1's records, simdjson's stage 1: each token's first byte (its structural index), then `len`, `len` and 0;\n/// their count; the file's length; and whether the file goes to tree-sitter. Tier 2 reads the rest from the bytes.\npub struct Lexed {\n    pub starts: Vec<u32>,\n    pub count: usize,\n    pub len: usize,\n    pub refused: bool,\n}\n\n");
             out.push_str(&self.stage1());
@@ -1275,6 +1278,19 @@ impl Gen<'_> {
         // With no `skip`, tier 1 is simdjson's stage 1 (`records`): no token reads a region in it, so each of the
         // regions' escapes is tested over the file.
         let records = skip.is_none() && marks.is_empty() && token_escapes.is_empty();
+        // In simdjson's stage 1, the byte-pair errors are its `utf8_checker`, where they are its form.
+        if records {
+            self.lookup = crate::bitlex_pair_lookup::lookup(x.stmts, self.prefix.as_deref()).ok();
+        }
+        let covered: Vec<*const Expr> = self
+            .lookup
+            .iter()
+            .flat_map(|l| l.covers.iter())
+            .filter_map(|(i, _)| match &x.stmts[*i] {
+                Stmt::Error(_, e) | Stmt::Escape(_, e) => Some(e as *const Expr),
+                _ => None,
+            })
+            .collect();
         let read: Vec<usize> = match &self.opens {
             Some(_) if records => Vec::new(),
             Some(o) => x
@@ -1290,7 +1306,7 @@ impl Gen<'_> {
             None => Vec::new(),
         };
         let mut refuse = Vec::new();
-        for (why, e, at) in &escapes {
+        for (why, e, at) in escapes.iter().filter(|(_, e, _)| !covered.contains(&(*e as *const Expr))) {
             let line = self.in_scope(at, e, |g| {
                 if !g.regional(e) {
                     let id = g.node(e)?;
@@ -1603,6 +1619,82 @@ impl Gen<'_> {
     }
 }
 
+/// The byte-pair errors' check of block `q` (its bytes `b`, its vector `v`), as simdjson's `utf8_checker::check_next_input`.
+fn lookup_code(l: &crate::bitlex_pair_lookup::Lookup) -> String {
+    let mut out = String::new();
+    out.push_str("            // The byte-pair errors, as simdjson's `utf8_checker`: a block of ASCII holds one only where the block before left a\n            // sequence open.\n            if unsafe { S::to_bitmask(v) } == 0 {\n                refused |= prev_incomplete;\n            } else {\n");
+    out.push_str("                // The byte before's nibbles and this byte's high nibble, each rule a bit (`check_special_cases`).\n                let p1 = unsafe { S::prev(v, prev_input, 1) };\n                let sc = unsafe { S::and(S::and(S::lookup_16(S::high_nibbles(p1), &BYTE_1_HIGH), S::lookup_16(S::low_nibbles(p1), &BYTE_1_LOW)), S::lookup_16(S::high_nibbles(v), &BYTE_2_HIGH)) };\n");
+    match l.xor {
+        Some((x, y)) => {
+            let _ = writeln!(out, "                // A continuation needed 2 or 3 bytes after a lead byte (`must_be_2_3_continuation`), against two in a row (bit 0x80).\n                let must23 = unsafe {{ S::and(S::or(S::ge(S::prev(v, prev_input, 2), {x:#04x}), S::ge(S::prev(v, prev_input, 3), {y:#04x})), S::splat(0x80)) }};\n                error = unsafe {{ S::or(error, S::xor(sc, must23)) }};");
+        }
+        None => out.push_str("                error = unsafe { S::or(error, sc) };\n"),
+    }
+    let tests: Vec<String> = l.open.iter().enumerate().filter_map(|(k, t)| t.map(|t| format!("b[{}] >= {t:#04x}", 63 - k))).collect();
+    let _ = writeln!(
+        out,
+        "                // A sequence the block's last bytes leave open (`is_incomplete`).\n                prev_incomplete = {};\n            }}\n            prev_input = v;",
+        if tests.is_empty() { "false".to_owned() } else { tests.join(" || ") }
+    );
+    out
+}
+
+/// Class `set`'s code in stage 1: one compare where it is one byte, else its nibble-table bits, each a product of high
+/// nibbles and low nibbles, in the first pair of `pairs` with room.
+fn class_code(pairs: &mut Vec<Vec<Rect>>, set: &[bool; 256]) -> String {
+    let bytes: Vec<u8> = (0..=255u8).filter(|&c| set[usize::from(c)]).collect();
+    match bytes.as_slice() {
+        [] => "0".to_owned(),
+        [c] => format!("S::eq_mask(v, {c:#04x}) & lv"),
+        _ => {
+            // Its bytes by high nibble; the high nibbles with the same low ones are one bit.
+            let mut lows = [0u16; 16];
+            for &c in &bytes {
+                lows[usize::from(c >> 4)] |= 1 << (c & 15);
+            }
+            let mut rects: Vec<Rect> = Vec::new();
+            for (h, &l) in lows.iter().enumerate() {
+                if l == 0 {
+                    continue;
+                }
+                match rects.iter_mut().find(|r| r.1 == l) {
+                    Some(r) => r.0 |= 1 << h,
+                    None => rects.push((1 << h, l)),
+                }
+            }
+            let mut tests = Vec::new();
+            let mut left = rects;
+            while !left.is_empty() {
+                // The first pair with room for all it lacks of them, else a new pair.
+                let fits = |p: &Vec<Rect>, rs: &[Rect]| p.len() + rs.iter().filter(|r| !p.contains(r)).count() <= 8;
+                let p = match pairs.iter().position(|p| fits(p, &left)) {
+                    Some(p) => p,
+                    None => {
+                        pairs.push(Vec::new());
+                        pairs.len() - 1
+                    }
+                };
+                let mut bits = 0u8;
+                let mut rest = Vec::new();
+                for r in left {
+                    let pair = &mut pairs[p];
+                    match pair.iter().position(|x| *x == r) {
+                        Some(b) => bits |= 1 << b,
+                        None if pair.len() < 8 => {
+                            bits |= 1 << pair.len();
+                            pair.push(r);
+                        }
+                        None => rest.push(r),
+                    }
+                }
+                tests.push(format!("S::to_bitmask(S::test(c{p}, S::splat({bits:#04x})))"));
+                left = rest;
+            }
+            if tests.len() == 1 { format!("{} & lv", tests[0]) } else { format!("({}) & lv", tests.join(" | ")) }
+        }
+    }
+}
+
 /// `e` with its constants folded: `empty` (none) and `~empty` (every byte).
 fn simplify(e: Expr) -> Expr {
     let all = |x: &Expr| matches!(x, Expr::Not(a) if matches!(**a, Expr::Empty));
@@ -1876,5 +1968,5 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, lookup: None }.source()
 }

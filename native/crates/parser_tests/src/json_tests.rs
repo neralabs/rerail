@@ -1198,3 +1198,25 @@ fn json_rusts_tapes_are_the_jits() {
     eprintln!("{same} tapes the JIT's, {refused} refused by both");
     assert!(same > 0 && refused > 0);
 }
+
+/// JSON's UTF-8 errors (`invalid UTF-8`, `UTF-8 cut short at the end`) are simdjson's `utf8_checker` in tier 1's Rust
+/// (decision 0591): the lookup is proved the grammar's statements (`bitlex_pair_lookup`), and tier 1 holds its three
+/// tables, the 2-and-3 test, the ASCII skip and the open-sequence test, and none of the UTF-8 classes' masks.
+#[test]
+fn json_utf8_is_simdjsons_lookup() {
+    let source = std::fs::read_to_string(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../json_parser/json-simdjson.bitlex")).expect("reads");
+    let stmts = ::bitlex::syntax::parse(&source).expect("parses");
+    let l = rerail_bitlex::bitlex_pair_lookup::lookup(&stmts, Some(&[0xef, 0xbb, 0xbf])).unwrap_or_else(|e| panic!("not the lookup form: {e}"));
+    let whys: Vec<&str> = l.covers.iter().map(|(_, w)| w.as_str()).collect();
+    assert_eq!(whys, ["invalid UTF-8", "UTF-8 cut short at the end"]);
+    // simdjson's: the 2-and-3 test at 0xe0 and 0xf0, and a block's end open at 0xc0, 0xe0, 0xf0 from its last byte.
+    assert_eq!(l.xor, Some((0xe0, 0xf0)));
+    assert_eq!(l.open, [Some(0xc0), Some(0xe0), Some(0xf0)]);
+    let (tier1, _) = json_rust();
+    for part in ["static BYTE_1_HIGH", "static BYTE_1_LOW", "static BYTE_2_HIGH", "let must23 =", "if unsafe { S::to_bitmask(v) } == 0 {", "prev_incomplete = b[63] >= 0xc0 || b[62] >= 0xe0 || b[61] >= 0xf0;"] {
+        assert!(tier1.contains(part), "tier 1 has no `{part}`");
+    }
+    for class in ["cont", "lead3", "lead4", "e0", "ed", "f0", "f4", "below_a0", "from_a0", "below_90", "from_90", "not_cont", "lead", "c0c1", "f5ff", "third", "fourth"] {
+        assert!(!tier1.contains(&format!("r_m_{class}[")), "tier 1 still makes the mask `{class}`");
+    }
+}

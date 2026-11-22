@@ -19,6 +19,8 @@ pub mod answers;
 pub mod bitlex_lex_rust;
 #[path = "../../compiler/src/bitlex_masks.rs"]
 pub mod bitlex_masks;
+#[path = "../../compiler/src/bitlex_pair_lookup.rs"]
+pub mod bitlex_pair_lookup;
 #[path = "../../compiler/src/bitlex_prove.rs"]
 pub mod bitlex_prove;
 #[path = "../../compiler/src/bitlex_rust.rs"]

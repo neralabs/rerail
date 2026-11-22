@@ -179,20 +179,16 @@ fn pair_52(src: &[u8], s: usize) -> usize {
 }
 
 /// The classes' nibble tables, pair 0 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_0: [u8; 16] = [0xb6, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x7c, 0x3c, 0x3d, 0x39, 0x08, 0x09, 0x09, 0x08, 0x18];
-static HI_0: [u8; 16] = [0x01, 0x00, 0x42, 0x04, 0x08, 0x10, 0x88, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+static LO_0: [u8; 16] = [0x36, 0x3c, 0xbc, 0x3c, 0x3c, 0x3c, 0x3c, 0x3c, 0x7c, 0x3d, 0x39, 0x08, 0x09, 0x09, 0x08, 0x18];
+static HI_0: [u8; 16] = [0x01, 0x00, 0x02, 0x04, 0x88, 0x50, 0x88, 0x60, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// The classes' nibble tables, pair 1 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_1: [u8; 16] = [0x20, 0xa0, 0xa2, 0xa0, 0xa0, 0xa4, 0xa8, 0x20, 0x21, 0x20, 0x00, 0x10, 0x00, 0x10, 0x00, 0x40];
-static HI_1: [u8; 16] = [0x00, 0x00, 0x10, 0x20, 0x8e, 0x41, 0x8e, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+static LO_1: [u8; 16] = [0xc8, 0xe8, 0xa8, 0xa8, 0xa8, 0xa9, 0xaa, 0x88, 0x88, 0x88, 0x80, 0x84, 0x80, 0x84, 0x80, 0x90];
+static HI_1: [u8; 16] = [0x00, 0x00, 0x04, 0x48, 0x23, 0x10, 0x23, 0x00, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80, 0x80];
 
 /// The classes' nibble tables, pair 2 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_2: [u8; 16] = [0x25, 0x0d, 0x04, 0x0c, 0x0c, 0x0c, 0x0c, 0x04, 0x0c, 0x0c, 0x1c, 0x5c, 0x5c, 0x5c, 0x5c, 0x1e];
-static HI_2: [u8; 16] = [0x00, 0x00, 0x08, 0x11, 0x20, 0x42, 0x00, 0x40, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04];
-
-/// The classes' nibble tables, pair 3 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_3: [u8; 16] = [0x00, 0x00, 0x00, 0x00, 0x00, 0x01, 0x01, 0x00, 0x01, 0x00, 0x03, 0x0c, 0x0b, 0x02, 0x03, 0x03];
-static HI_3: [u8; 16] = [0x00, 0x00, 0x01, 0x02, 0x00, 0x04, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+static LO_2: [u8; 16] = [0x04, 0x01, 0x00, 0x01, 0x01, 0x01, 0x01, 0x00, 0x01, 0x01, 0x03, 0x0b, 0x0b, 0x0b, 0x0b, 0x03];
+static HI_2: [u8; 16] = [0x00, 0x00, 0x01, 0x02, 0x04, 0x08, 0x00, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// Stage 1's masks a later stage reads, a bit a byte, and whether an escape holds.
 struct Stage1 {
@@ -282,7 +278,6 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut r_m_dq = [0u64; RING];
     let mut r_m_sq = [0u64; RING];
     let mut r_m_bt = [0u64; RING];
-    let mut r_m_sq_bt = [0u64; RING];
     let mut r_m_u_letter = [0u64; RING];
     let mut r_m_zero = [0u64; RING];
     let mut r_m_x_letter = [0u64; RING];
@@ -300,7 +295,6 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut r_m_lbrace = [0u64; RING];
     let mut r_m_high = [0u64; RING];
     let mut r_m_punct = [0u64; RING];
-    let mut r_m_goes_on = [0u64; RING];
     let mut r_m_pair_byte_2d = [0u64; RING];
     let mut r_m_pair_byte_3e = [0u64; RING];
     let mut r_m_pair_byte_3d = [0u64; RING];
@@ -437,7 +431,6 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             let c0 = unsafe { S::classify(v, &LO_0, &HI_0) };
             let c1 = unsafe { S::classify(v, &LO_1, &HI_1) };
             let c2 = unsafe { S::classify(v, &LO_2, &HI_2) };
-            let c3 = unsafe { S::classify(v, &LO_3, &HI_3) };
             // class ws
             let w = unsafe { S::to_bitmask(S::test(c0, S::splat(0x03))) & lv };
             r_m_ws[q % RING] = w;
@@ -519,9 +512,6 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             if q < nw {
                 m_bt[q] = w;
             }
-            // class sq_bt
-            let w = unsafe { S::to_bitmask(S::test(c0, S::splat(0xc0))) & lv };
-            r_m_sq_bt[q % RING] = w;
             // class u_letter
             let w = unsafe { S::eq_mask(v, 0x75) & lv };
             r_m_u_letter[q % RING] = w;
@@ -535,31 +525,31 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_zero[q] = w;
             }
             // class x_letter
-            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x01))) & lv };
+            let w = unsafe { S::to_bitmask(S::test(c0, S::splat(0x40))) & lv };
             r_m_x_letter[q % RING] = w;
             if q < nw {
                 m_x_letter[q] = w;
             }
             // class b_letter
-            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x02))) & lv };
+            let w = unsafe { S::to_bitmask(S::test(c0, S::splat(0x80))) & lv };
             r_m_b_letter[q % RING] = w;
             if q < nw {
                 m_b_letter[q] = w;
             }
             // class e_letter
-            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x04))) & lv };
+            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x01))) & lv };
             r_m_e_letter[q % RING] = w;
             if q < nw {
                 m_e_letter[q] = w;
             }
             // class f_letter
-            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x08))) & lv };
+            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x02))) & lv };
             r_m_f_letter[q % RING] = w;
             if q < nw {
                 m_f_letter[q] = w;
             }
             // class sign
-            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x10))) & lv };
+            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x04))) & lv };
             r_m_sign[q % RING] = w;
             if q < nw {
                 m_sign[q] = w;
@@ -571,22 +561,22 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_underscore[q] = w;
             }
             // class decd
-            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x60))) & lv };
+            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x18))) & lv };
             r_m_decd[q % RING] = w;
             // class hexd
-            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0xe0))) & lv };
+            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x38))) & lv };
             r_m_hexd[q % RING] = w;
             if q < nw {
                 m_hexd[q] = w;
             }
             // class hex_digit
-            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0xa0))) & lv };
+            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x28))) & lv };
             r_m_hex_digit[q % RING] = w;
             if q < nw {
                 m_hex_digit[q] = w;
             }
             // class bind
-            let w = unsafe { S::to_bitmask(S::test(c2, S::splat(0x03))) & lv };
+            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x50))) & lv };
             r_m_bind[q % RING] = w;
             if q < nw {
                 m_bind[q] = w;
@@ -610,20 +600,17 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_lbrace[q] = w;
             }
             // class high
-            let w = unsafe { S::to_bitmask(S::test(c2, S::splat(0x04))) & lv };
+            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x80))) & lv };
             r_m_high[q % RING] = w;
             if q < nw {
                 m_high[q] = w;
             }
             // class punct
-            let w = unsafe { S::to_bitmask(S::test(c2, S::splat(0x78))) & lv };
+            let w = unsafe { S::to_bitmask(S::test(c2, S::splat(0x0f))) & lv };
             r_m_punct[q % RING] = w;
             if q < nw {
                 m_punct[q] = w;
             }
-            // class goes_on
-            let w = unsafe { S::to_bitmask(S::test(c3, S::splat(0x0f))) & lv };
-            r_m_goes_on[q % RING] = w;
             // class pair_byte_2d
             let w = unsafe { S::eq_mask(v, 0x2d) & lv };
             r_m_pair_byte_2d[q % RING] = w;

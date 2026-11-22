@@ -513,8 +513,8 @@ impl<'a> G<'a> {
         }
         let mut out = format!("{pad}let arm: usize;\n{sel}{pad}match arm {{\n");
         let (q, r) = (format!("{pad}    "), format!("{pad}        "));
-        for t in 0..=n {
-            if uses[t] > 0 {
+        for (t, &u) in uses.iter().enumerate().take(n + 1) {
+            if u > 0 {
                 let _ = write!(out, "{q}{t} => {{\n{}{q}}}\n", indent(&body_of(t), &r));
             }
         }
@@ -589,10 +589,10 @@ impl<'a> G<'a> {
         let mut asked: Vec<(usize, bool)> = Vec::new();
         for (fs, _) in arms {
             for (t, _) in fs {
-                if let Test::Mark(m) = t {
-                    if !asked.iter().any(|a| a.0 == *m) {
-                        asked.push((*m, false));
-                    }
+                if let Test::Mark(m) = t
+                    && !asked.iter().any(|a| a.0 == *m)
+                {
+                    asked.push((*m, false));
                 }
             }
         }
@@ -1170,10 +1170,10 @@ impl<'a> G<'a> {
                 let t = self.gap_test(&refuses_taken, &format!("refuses_taken_{n}"), true, &mut fns)?;
                 let _ = write!(take, "        if {t} {{\n            return self.refuse();\n        }}\n");
             }
-            if m.settles {
-                if let Some(b) = m.bit {
-                    let _ = writeln!(take, "        self.settle({b});");
-                }
+            if m.settles
+                && let Some(b) = m.bit
+            {
+                let _ = writeln!(take, "        self.settle({b});");
             }
             let drops = qs(|d| d.drops);
             if !drops.is_empty() {
@@ -1233,7 +1233,7 @@ impl<'a> G<'a> {
                     Some(f) => format!("match first_bit(&m.{f}, e) {{\n                            Some(l) => l,\n                            None => return self.refuse(),\n                        }}"),
                     None => format!("e + {}", usize::from(bytes).saturating_sub(1)),
                 };
-                let _ = write!(lasts, "                        {i} => ({l}, {}),\n", kind_or(piece(name, false), "e"));
+                let _ = writeln!(lasts, "                        {i} => ({l}, {}),", kind_or(piece(name, false), "e"));
             }
             // The closer: one of a kind of its own (`closes`), else its region's own, its bytes.
             let own = kind_or(piece(&rd.kind, true), "c");
@@ -1275,7 +1275,7 @@ impl<'a> G<'a> {
             for w in words {
                 if let Some(id) = self.word_of(&String::from_utf8_lossy(w)) {
                     let lit: String = w.iter().map(|&c| if c.is_ascii_alphanumeric() || c == b'_' { (c as char).to_string() } else { format!("\\x{c:02x}") }).collect();
-                    let _ = write!(pats, "            b\"{lit}\" => w::{},\n", self.word_const(id));
+                    let _ = writeln!(pats, "            b\"{lit}\" => w::{},", self.word_const(id));
                 }
             }
             if !pats.is_empty() {
@@ -1319,16 +1319,16 @@ impl<'a> G<'a> {
                     ::bitlex::syntax::ReadKind::Gone => "Some(None)".to_owned(),
                     ::bitlex::syntax::ReadKind::Keep => "None".to_owned(),
                 };
-                let _ = write!(arms, "            {id} => {to},\n");
+                let _ = writeln!(arms, "            {id} => {to},");
             }
             for e in self.x.extras {
                 let id = (self.x.kind)(e).ok_or_else(|| format!("no kind `{e}`"))?;
-                let _ = write!(arms, "            {id} => None,\n");
+                let _ = writeln!(arms, "            {id} => None,");
             }
             let mut fields = String::new();
             for (a, b) in &r.fields {
                 let (fa, fb) = (self.field_id(a).map_err(|e| format!("reading {name}: {e}"))?, self.field_id(b).map_err(|e| format!("reading {name}: {e}"))?);
-                let _ = write!(fields, "            {fa} => {fb},\n");
+                let _ = writeln!(fields, "            {fa} => {fb},");
             }
             let root = match &r.root {
                 Some(::bitlex::syntax::ReadKind::As(m)) => format!("Some(Some({}))", (self.x.kind)(m).ok_or_else(|| format!("no kind `{m}`"))?),

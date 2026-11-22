@@ -63,6 +63,7 @@ them by name. JSON has none.
 
 ## Not checked, not done
 
-- `marks` on x86 (Haswell, Westmere) was not compiled or run. Only arm64 ran.
+- `marks` on x86 (Haswell, Westmere) was not compiled or run. Only arm64 ran. Later, the same day: JSON's tests passed on
+  an x86_64 host on Haswell (0591's checks).
 - The lean parser writes a string with no escape as two nodes at once. Here each piece is still its own leaf.
-- Fix 7, the UTF-8 check.
+- Fix 7, the UTF-8 check (done in 0591).
