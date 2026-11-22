@@ -698,7 +698,8 @@ impl<'a, 'b> Cg<'a, 'b> {
         let ps: Vec<Value> = self.b.block_params(e).to_vec();
         self.sg = ps[0];
         self.fp = ps[1];
-        self.lane0 = ps[2];
+        // A SIMD group of 32 lanes at 32 is one chunk, its first lane 0.
+        self.lane0 = if w == 32 { self.b.ins().iconst(I64, 0) } else { ps[2] };
         let mp = mask_parts(w);
         let entry_mask: Vec<Value> = if self.full {
             // Every lane of the chunk: as `mask_of_bits` of all its lanes' bits.
@@ -1623,6 +1624,17 @@ impl<'a, 'b> Cg<'a, 'b> {
         }
     }
 
+    /// The constant Cranelift value `c` is (an `iconst`, through extensions), if it is one.
+    fn known(&self, c: Value) -> Option<i64> {
+        let dfg = &self.b.func.dfg;
+        let ir::ValueDef::Result(inst, _) = dfg.value_def(c) else { return None };
+        match dfg.insts[inst] {
+            ir::InstructionData::UnaryImm { opcode: ir::Opcode::Iconst, imm } => Some(imm.bits()),
+            ir::InstructionData::Unary { opcode: ir::Opcode::Uextend | ir::Opcode::Sextend, arg } => self.known(arg),
+            _ => None,
+        }
+    }
+
     /// The integer constant `x` is, through uniform integer casts that keep it.
     fn konst(&self, x: V) -> Option<u64> {
         let i = self.f.inst(x);
@@ -2430,8 +2442,14 @@ impl<'a, 'b> Cg<'a, 'b> {
             O::Any | O::AnyGroup if self.all(i.a) => Rp::U(self.b.ins().iconst(I64, 1)),
             O::Any if self.lane_test(i.a).is_some() => {
                 // Whether lane `u` is in the chunk: `u - lane0 < w`.
-                let u = self.lane_test(i.a).expect("a lane's test");
-                let u = self.u(u);
+                let uv = self.lane_test(i.a).expect("a lane's test");
+                if self.w == 32 {
+                    // A SIMD group's one chunk: a lane under 32 runs.
+                    if let Some(k) = self.konst(uv) {
+                        return Ok(Rp::U(self.b.ins().iconst(I64, i64::from(k < 32))));
+                    }
+                }
+                let u = self.u(uv);
                 let j = self.b.ins().isub(u, self.lane0);
                 let c = self.b.ins().icmp_imm(IntCC::UnsignedLessThan, j, i64::from(self.w));
                 Rp::U(self.b.ins().uextend(I64, c))
@@ -2924,7 +2942,16 @@ impl<'a, 'b> Cg<'a, 'b> {
             O::Br => {
                 let c = self.decided(i.a, i.d);
                 let c = self.cond(c);
-                self.b.ins().brif(c, self.blocks[i.b as usize], &[], self.blocks[i.c as usize], &[]);
+                match self.known(c) {
+                    // A known decision: a jump (Cranelift's mid-end keeps a branch on a constant).
+                    Some(k) => {
+                        let t = if k != 0 { i.b } else { i.c };
+                        self.b.ins().jump(self.blocks[t as usize], &[]);
+                    }
+                    None => {
+                        self.b.ins().brif(c, self.blocks[i.b as usize], &[], self.blocks[i.c as usize], &[]);
+                    }
+                }
                 Rp::None
             }
             O::Switch => {

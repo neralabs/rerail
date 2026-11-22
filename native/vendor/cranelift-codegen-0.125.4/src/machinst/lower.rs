@@ -1195,6 +1195,11 @@ impl<'func, I: VCodeInst> Lower<'func, I> {
         Ok(vcode)
     }
 
+    /// Whether `val` may be used in more than one place (rerail's patch).
+    pub fn value_is_multiply_used(&self, val: Value) -> bool {
+        self.value_ir_uses[val] == ValueUseState::Multiple
+    }
+
     pub fn value_is_unused(&self, val: Value) -> bool {
         match self.value_ir_uses[val] {
             ValueUseState::Unused => true,
