@@ -295,8 +295,13 @@ const RET: u64 = 3;
 const END: u64 = 4;
 /// The function's result.
 const RESULT: u64 = 5;
-/// A lane's variable at frame offset `o` (`LOCAL + o`); a temporary (`TEMP + n`).
+/// A lane's variable of `s` bytes at frame offset `o` (`local(o, s)`); a temporary (`TEMP + n`).
 const LOCAL: u64 = 1 << 32;
+
+/// A kept variable's id: its offset and size (variables of disjoint scopes share their places, each its own).
+fn local(o: u32, s: u32) -> u64 {
+    LOCAL + (u64::from(s) << 24) + u64::from(o)
+}
 const TEMP: u64 = 2 << 32;
 
 /// A phi being made: its block, variable, and operands in its block's predecessors' order.
@@ -421,7 +426,7 @@ struct Fb<'a, 't> {
     /// Each variable's type.
     var_m: HashMap<u64, M>,
     /// The frame's variables kept as values: offset to size.
-    promoted: HashMap<u32, u32>,
+    promoted: std::collections::HashSet<(u32, u32)>,
     entry: V,
     temps: u64,
     extra: Vec<u32>,
@@ -456,7 +461,7 @@ impl<'a, 't> Fb<'a, 't> {
             phis: HashMap::new(),
             repl: HashMap::new(),
             var_m: HashMap::new(),
-            promoted: HashMap::new(),
+            promoted: std::collections::HashSet::new(),
             entry: NONE,
             temps: 0,
             extra: Vec::new(),
@@ -471,47 +476,38 @@ impl<'a, 't> Fb<'a, 't> {
     /// its `Local` directly, never as an address. A function's parameters among them.
     fn promote(&mut self, root: usize, args: &[(u32, M)]) {
         let v = self.v;
-        // Each byte range accessed, and whether it may be kept: offset -> (size, ok, float).
-        let mut seen: HashMap<u32, (u32, bool, Option<bool>)> = HashMap::new();
-        let mut spans: Vec<(u32, u32)> = Vec::new();
+        // Each variable (its offset and size: variables of disjoint scopes share places) and whether it may be kept,
+        // and whether as a float. A variable is one size, so another size at its offset is another variable.
+        let mut seen: HashMap<(u32, u32), (bool, Option<bool>)> = HashMap::new();
         for i in root..root + v.size(root) {
             if v.kind(i) != Kind::Local {
                 continue;
             }
             let p = v.p(i);
             let (off, size, inner) = (p[0], p[1], p[2]);
-            spans.push((off, size));
             let parent_ok = self.whole_access(i);
-            let e = seen.entry(off).or_insert((size, true, None));
-            if e.0 != size || inner != 0 || parent_ok.is_none() {
-                e.1 = false;
+            let e = seen.entry((off, size)).or_insert((true, None));
+            if inner != 0 || parent_ok.is_none() {
+                e.0 = false;
             }
             if let Some(m) = parent_ok {
                 if m.bytes() != size || m.is_agg() {
-                    e.1 = false;
+                    e.0 = false;
                 }
-                match e.2 {
-                    None => e.2 = Some(m.float()),
-                    Some(f) if f != m.float() => e.1 = false,
+                match e.1 {
+                    None => e.1 = Some(m.float()),
+                    Some(f) if f != m.float() => e.0 = false,
                     _ => {}
                 }
             }
         }
         for &(off, m) in args {
-            let e = seen.entry(off).or_insert((m.bytes(), true, Some(m.float())));
-            if e.0 != m.bytes() || m.is_agg() {
-                e.1 = false;
+            let e = seen.entry((off, m.bytes())).or_insert((true, Some(m.float())));
+            if m.is_agg() {
+                e.0 = false;
             }
         }
-        // A range that overlaps another's is memory.
-        let mut ok: Vec<(u32, u32)> = seen.iter().filter(|(_, e)| e.1).map(|(&o, e)| (o, e.0)).collect();
-        ok.sort_unstable();
-        let overlaps = |o: u32, s: u32| spans.iter().any(|&(o2, s2)| (o2, s2) != (o, s) && o2 < o + s && o < o2 + s2);
-        for (o, s) in ok {
-            if !overlaps(o, s) {
-                self.promoted.insert(o, s);
-            }
-        }
+        self.promoted = seen.into_iter().filter(|(_, e)| e.0).map(|(k, _)| k).collect();
     }
 
     /// If `Local` node `i` is the address of its parent's whole access (a `Load`, `Store` or `Update` of it, as its
@@ -944,8 +940,8 @@ impl<'a, 't> Fb<'a, 't> {
             let x = self.ins(O::Arg, m, a as u32, 0, 0, 0);
             self.shaped(x, shape);
             let am = args[a].1;
-            if self.promoted.contains_key(&off) {
-                let var = LOCAL + u64::from(off);
+            if self.promoted.contains(&(off, am.bytes())) {
+                let var = local(off, am.bytes());
                 self.var_m.insert(var, am);
                 self.write(var, x);
             } else if self.kernel {
@@ -1368,7 +1364,7 @@ impl<'a, 't> Fb<'a, 't> {
             return None;
         }
         let p = self.v.p(a);
-        (p[2] == 0 && self.promoted.get(&p[0]) == Some(&p[1])).then_some(LOCAL + u64::from(p[0]))
+        (p[2] == 0 && self.promoted.contains(&(p[0], p[1]))).then_some(local(p[0], p[1]))
     }
 
     /// The address node `a` gives (a frame variable's directly).
