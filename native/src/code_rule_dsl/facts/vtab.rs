@@ -1551,6 +1551,49 @@ impl Relation {
         self
     }
 
+    /// Whether its rows lie in a part `other`'s do (decision 0613's tests: read where they lie, not copied).
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn shares_rows(&self, other: &Relation) -> bool {
+        self.cells().shares(other.cells())
+    }
+    /// How many rows a reader binding it whole in one block reads (`rows::Rows::in_block`), parts merged.
+    #[cfg(any(test, feature = "test-hooks"))]
+    pub fn bound_rows(&self) -> Option<u32> {
+        self.cells().in_block().map(|b| b.rows)
+    }
+
+    /// How many parts hold its rows `range` (`rows::Rows::runs`): the segments a relation of them has.
+    pub fn parts_in(&self, range: std::ops::Range<usize>) -> usize {
+        if range.is_empty() {
+            return 0;
+        }
+        self.cells().runs(range.start as u32, range.end as u32).len()
+    }
+
+    /// A relation of `runs`' rows, in order: each run rows `lo..hi` of a relation of the same columns, read where
+    /// they lie (`rows::Part::range`), no row copied (decision 0613). The rows a later `grown` adds go on in a
+    /// relation of their own after them. Its orders are not known.
+    pub fn of_runs(columns: &[String], runs: &[(&Relation, std::ops::Range<usize>)]) -> Self {
+        let k = columns.len();
+        let mut parts = Vec::new();
+        for (r, range) in runs {
+            assert_eq!(&r.columns, columns, "a run of a relation of other columns");
+            parts.extend(r.cells().runs(range.start as u32, range.end as u32));
+        }
+        let cells = super::rows::Rows::of_parts(k, super::rows::Life::Source, parts);
+        let rows = cells.rows();
+        Relation {
+            columns: columns.to_vec(),
+            staged: Default::default(),
+            rows,
+            cells: OnceLock::from(cells),
+            indexes: columns.iter().map(|_| OnceLock::new()).collect(),
+            ordered: columns.iter().map(|_| None).collect(),
+            identity: OnceLock::new(),
+            grows: true,
+        }
+    }
+
     /// These rows and then `more`'s, as a batch grows by a round's documents (decision 0431 §6): this relation's rows
     /// shared, not rewritten (`Rows::shared`: their writer taken, so the rows that follow go on in the same block
     /// relation, which the device binds whole), and `more`'s written after them. This relation still reads its own

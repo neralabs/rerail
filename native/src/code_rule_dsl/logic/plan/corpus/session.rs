@@ -169,6 +169,9 @@ pub(super) struct HeldCorpus {
     /// documents' table keeps them for a new process: the next run's batch knows its row space without projecting
     /// a document to count it.
     pub counts: std::collections::HashMap<u32, ([u8; 32], crate::code_rule_dsl::facts::vtab::syntax::made::ViewCounts)>,
+    /// The batch itself, its rows made: the next run's is renewed from it, taking its unchanged groups' rows where
+    /// they lie (decision 0613).
+    pub batch: Option<std::sync::Arc<crate::code_rule_dsl::facts::vtab::syntax::Batch>>,
 }
 
 /// The session held for a run.

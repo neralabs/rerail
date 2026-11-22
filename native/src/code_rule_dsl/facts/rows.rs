@@ -29,7 +29,7 @@ use rerail_blocks::relation::{Relation, Spec};
 use rerail_blocks::rows::ColRead;
 
 /// The most segments a frozen relation holds; past them its newest are merged.
-const MAX_SEGMENTS: usize = 8;
+pub(crate) const MAX_SEGMENTS: usize = 8;
 
 /// Whether a reservation is address space only (a 64-bit Unix or Windows: `rerail_blocks::mem::reserve`), its pages
 /// taken (on Windows, committed) as they are written; elsewhere (WASI) it is a zeroed allocation of its whole length.
@@ -927,6 +927,12 @@ pub struct Part {
     /// Its rows are the relation's first `cap` (`u32::MAX`: all of them): a segment shared with the tail it was
     /// taken from (`Rows::clone`, `shared`), whose writer goes on past it. A capped part is never written.
     cap: u32,
+    /// A range's first row (`Part::range`): its row `i` is the relation's `skip + i`. 0 for every other part.
+    skip: u32,
+    /// A range's end (`u32::MAX`: no range): its rows are the relation's `skip..end`, read where they lie (a held
+    /// batch's runs of rows a session's next batch takes, decision 0613). A range is never written, continued, or
+    /// bound alone: rows holding one read it through `Rows::get`, and are merged when bound.
+    end: u32,
 }
 
 /// A part's relation, where it lies.
@@ -1175,7 +1181,7 @@ impl Part {
                 }
                 let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
                 let rel = std::ptr::from_ref(rel);
-                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0 }), cap: u32::MAX });
+                return Ok(Part { held: Arc::new(Held { facts, life, rel, cols, lent: std::sync::atomic::AtomicU32::new(0), free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: None, absorbed: 0 }), cap: u32::MAX, skip: 0, end: u32::MAX });
             }
         }
         unreachable!("a new block of {} bytes holds a relation of {need}", 2 * need + MARGIN)
@@ -1245,23 +1251,40 @@ impl Part {
 
     #[inline]
     pub fn len(&self) -> u32 {
+        if self.end != u32::MAX {
+            return self.end - self.skip;
+        }
         self.rel().rows.len().min(self.cap)
     }
 
     /// This part's rows as they are now, as a segment: shared, not copied, and blind to rows its writer adds later.
     fn prefix(&self) -> Part {
-        Part { held: self.held.clone(), cap: self.len() }
+        if self.is_range() {
+            return Part { held: self.held.clone(), cap: self.cap, skip: self.skip, end: self.end };
+        }
+        Part { held: self.held.clone(), cap: self.len(), skip: 0, end: u32::MAX }
+    }
+
+    /// Its rows `lo..hi` (its own numbers), read where they lie (decision 0613): a range of its relation.
+    pub fn range(&self, lo: u32, hi: u32) -> Part {
+        debug_assert!(lo <= hi && hi <= self.len(), "rows {lo}..{hi} of a part of {}", self.len());
+        Part { held: self.held.clone(), cap: self.cap, skip: self.skip + lo, end: self.skip + hi }
+    }
+
+    /// Whether it is a range of its relation (`range`).
+    pub fn is_range(&self) -> bool {
+        self.end != u32::MAX
     }
 
     /// Whether it is a prefix of its relation (`prefix`), which a reader of the relation itself would read past.
     fn capped(&self) -> bool {
-        self.cap != u32::MAX
+        self.cap != u32::MAX || self.is_range()
     }
 
     /// Its row `i`'s value in column `c`, where it lies.
     #[inline(always)]
     pub fn get(&self, i: u32, c: usize) -> i64 {
-        self.cols[c].get(i)
+        self.cols[c].get(self.skip + i)
     }
 
     /// An empty relation of `k` columns in a run's block, with room for `rows` rows that a writer other than the
@@ -1482,7 +1505,7 @@ impl Part {
         let cols = (0..k).map(|c| rel.rows.reader(c)).collect();
         let held = Held { facts: base.facts.clone(), life: base.life, rel: std::ptr::from_ref(rel), cols, lent: std::sync::atomic::AtomicU32::new(0),
                           free_at: std::sync::atomic::AtomicU32::new(u32::MAX), base: Some(base.prefix()), absorbed: 0 };
-        Some(Part { held: Arc::new(held), cap: u32::MAX })
+        Some(Part { held: Arc::new(held), cap: u32::MAX, skip: 0, end: u32::MAX })
     }
 
     /// Whether it continues `base`'s rows, all it reads (`continuing`).
@@ -1514,7 +1537,7 @@ impl Part {
             for c in 0..dst.ncols as usize {
                 let read = src.reader(c);
                 for i in 0..n {
-                    dst.put(at + i, c, read.get(lo + i));
+                    dst.put(at + i, c, read.get(from.skip + lo + i));
                 }
             }
         }
@@ -1879,7 +1902,7 @@ impl Rows {
         }
         // The last segment's writer, free for a relation started from these rows, at its rows: a prefix of its relation,
         // which a writer goes on past.
-        if let Some((first, p)) = self.segs.last() && p.capped() && first + p.len() == self.from && p.rel().rows.len() == p.len() {
+        if let Some((first, p)) = self.segs.last() && p.capped() && !p.is_range() && first + p.len() == self.from && p.rel().rows.len() == p.len() {
             p.free_at.store(p.len(), std::sync::atomic::Ordering::Release);
         }
         self
@@ -1901,13 +1924,14 @@ impl Rows {
         // Taken by one at a time: free at the segment's rows, and none written past them since.
         let take = |first: u32, p: &Part| {
             (first + p.len()) as usize == n
+                && !p.is_range()
                 && p.free_at.compare_exchange(p.len(), u32::MAX, std::sync::atomic::Ordering::AcqRel, std::sync::atomic::Ordering::Acquire).is_ok()
         };
         match segs.last() {
             Some(&(first, ref p)) if take(first, p) => {
                 debug_assert_eq!(p.rel().rows.len(), p.len(), "a free writer's relation holds its prefix's rows");
                 let (first, p) = segs.pop().expect("the writer's segment");
-                let writer = Part { held: p.held.clone(), cap: u32::MAX };
+                let writer = Part { held: p.held.clone(), cap: u32::MAX, skip: 0, end: u32::MAX };
                 let took = Some(Took { writer: writer.clone(), at: writer.len() });
                 Rows { segs, from: first, tail: Some(writer), k: self.k, hint: 0, life: self.life, took, ..Rows::default() }
             }
@@ -1915,6 +1939,27 @@ impl Rows {
             // continues the rows' relation (`opened`): a reader binds the rows as one (`one`), each where it lies.
             _ => Rows { segs, from: n as u32, tail: None, k: self.k, hint: 0, life: self.life, ..Rows::default() },
         }
+    }
+
+    /// Rows `lo..hi` of these, part by part, each a range of the relation that holds it (`Part::range`): read where
+    /// they lie, no row copied (decision 0613).
+    pub fn runs(&self, lo: u32, hi: u32) -> Vec<Part> {
+        let mut out = Vec::new();
+        self.each_run(lo, hi, |p, from, to, _| out.push(p.range(from, to)));
+        out
+    }
+
+    /// Rows of `k` values made of `parts`, in order, ids from 0, each part's rows where they lie: the relation a
+    /// session's next batch starts from (decision 0613). Frozen: the rows pushed after them open a relation of their own.
+    pub fn of_parts(k: usize, life: Life, parts: Vec<Part>) -> Rows {
+        let mut segs = Vec::with_capacity(parts.len());
+        let mut from = 0u32;
+        for p in parts.into_iter().filter(|p| p.len() > 0) {
+            let n = p.len();
+            segs.push((from, p));
+            from += n;
+        }
+        Rows { segs, from, tail: None, k, hint: 0, life, ..Rows::default() }
     }
 
     /// The rows as one relation in one block, ids from 0: the one part, or every part merged into one (made once,
@@ -1968,7 +2013,7 @@ impl Rows {
     /// The relation that holds its last rows, in its block, whatever its parts: where its sorted orders' directory
     /// is (decision 0478 step 5b). Its rows are that part's own, not the relation's.
     pub fn last_in_block(&self) -> Option<InBlock> {
-        let p = self.parts().last()?;
+        let p = self.parts().last().filter(|p| !p.is_range())?;
         Some(p.in_block(p.len()))
     }
 
@@ -2182,7 +2227,7 @@ impl Rows {
             return Row::of(&[]);
         }
         let (p, i) = self.part_of(id);
-        Row::from_fn(k, |c| p.cols[c].get(i))
+        Row::from_fn(k, |c| p.get(i, c))
     }
 
     /// Row `id`'s value in column `c`: one read where it lies.
@@ -2190,7 +2235,7 @@ impl Rows {
     #[inline(always)]
     pub fn get(&self, id: u32, c: usize) -> i64 {
         let (p, i) = self.part_of(id);
-        p.cols[c].get(i)
+        p.get(i, c)
     }
 
     /// The relation holding row `id`, and the row's place in it.
@@ -2221,6 +2266,9 @@ fn chain_of<'a>(parts: impl DoubleEndedIterator<Item = (u32, &'a Part)>) -> Opti
     let mut want = Some(last);
     for (first, p) in parts {
         let w = want?;
+        if w.is_range() || p.is_range() {
+            return None;
+        }
         let start = if w.is_continuation() { w.rel().base_rows } else { 0 };
         if !Arc::ptr_eq(&w.held, &p.held) || w.len() != p.len() || first != start {
             return None;

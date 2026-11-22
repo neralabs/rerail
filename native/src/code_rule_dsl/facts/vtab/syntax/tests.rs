@@ -2561,6 +2561,66 @@ fn a_probe_by_a_node_and_another_document_makes_no_document() {
     assert_eq!(found, BTreeSet::from([(node, home)]), "its row");
 }
 
+/// A relation of another's runs reads their rows where they lie (decision 0613, R3): it shares the other's part, its
+/// rows are the runs' in order, the rows grown after them follow, and a reader binding it whole (merged) reads the
+/// same rows.
+#[test]
+fn a_relation_of_runs_reads_them_where_they_lie() {
+    let cols = ["a", "b"];
+    let base = Relation::from_rows(&cols, &mut (0..10i64).map(|i| vec![i, 100 + i])).growable();
+    let names: Vec<String> = cols.iter().map(|c| (*c).to_owned()).collect();
+    let runs = Relation::of_runs(&names, &[(&base, 2..5), (&base, 7..9)]);
+    let rows = |r: &Relation| -> Vec<(i64, i64)> { (0..Source::len(r)).map(|i| (Source::value(r, i, 0), Source::value(r, i, 1))).collect() };
+    assert_eq!(rows(&runs), vec![(2, 102), (3, 103), (4, 104), (7, 107), (8, 108)], "the runs' rows, in order");
+    assert!(runs.shares_rows(&base), "read in the base's part, not copied");
+    let grown = runs.grown(Relation::from_rows(&cols, &mut [vec![50, 150], vec![51, 151]].into_iter()));
+    assert_eq!(rows(&grown), vec![(2, 102), (3, 103), (4, 104), (7, 107), (8, 108), (50, 150), (51, 151)], "the rows grown after them follow");
+    assert_eq!(rows(&base), (0..10).map(|i| (i, 100 + i)).collect::<Vec<_>>(), "the base is as it was");
+    let more = grown.grown(Relation::from_rows(&cols, &mut [vec![52, 152]].into_iter()));
+    assert_eq!(Source::len(&more), 8);
+    assert_eq!(Source::value(&more, 7, 0), 52);
+    assert_eq!(more.bound_rows(), Some(8), "a reader binding it whole reads every row");
+    assert_eq!(more.lookup(0, &[7]).unwrap(), vec![3], "its own index finds a run's row by its id");
+}
+
+/// A session's next corpus batch is renewed from its last (decision 0613): a held group every document of which is
+/// unchanged is taken as made, and an edit makes the changed document alone (R2). Every relation's rows are a fresh
+/// batch's, by probe and whole (R1), and so is its vocabulary (R4).
+#[test]
+fn a_renewed_batch_takes_its_unchanged_groups_and_makes_the_changed_document_alone() {
+    let store = ContentStore::open(&temp("renewed")).unwrap();
+    let src = |k: u32, v: u32| format!("def f{k}(x, y={v}):\n    return g(x, 'w{v}')\n\nclass C{k}:\n    pass\n");
+    let docs = |changed: bool| -> Vec<Document> { (1..=4).map(|k| document(k, &format!("m{k}.py"), "python", &src(k, if changed && k == 3 { 99 } else { k }))).collect() };
+    let reads = ["node", "child", "docof", "src_line", "doc", "text"];
+    let projection = Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let make = |docs: Vec<Document>, renew: Option<Arc<Batch>>| -> Arc<Batch> { Batch::renewed(&store, docs, &projection, renew).unwrap() };
+    let of = |b: &Arc<Batch>, name: &str| Arc::clone(&made_sources(b).into_iter().find(|(n, _, _)| *n == name).expect("made as rows").2);
+    // The last run made each document's rows in a group of its own, as an edit's probes do.
+    let held = make(docs(false), None);
+    for k in 0..4 {
+        of(&held, "docof").lookup(1, &[i64::from(held.docs.key(k))]).unwrap();
+    }
+    assert_eq!(held.groups(), 4, "one group a document");
+    let renewed = make(docs(true), Some(Arc::clone(&held)));
+    let fresh = Batch::new(&store, docs(true), &projection, &[], &[], false, None, &HashMap::new()).unwrap();
+    let rows = |s: &Arc<dyn Source>, found: Vec<usize>| -> Vec<Vec<i64>> {
+        let mut v: Vec<Vec<i64>> = found.into_iter().map(|r| (0..s.columns().len()).map(|c| s.value(r, c)).collect()).collect();
+        v.sort();
+        v
+    };
+    for k in 0..4 {
+        let key = i64::from(renewed.docs.key(k));
+        assert_eq!(rows(&of(&renewed, "docof"), of(&renewed, "docof").lookup(1, &[key]).unwrap()), rows(&of(&fresh, "docof"), of(&fresh, "docof").lookup(1, &[key]).unwrap()), "document {key}'s docof rows");
+    }
+    assert_eq!(renewed.docs.made_count(), 1, "the changed document's projection alone is made");
+    assert_eq!(renewed.makes(), 1, "and its rows alone, in one group");
+    for (name, _, source) in made_sources(&renewed) {
+        let theirs = of(&fresh, name);
+        assert_eq!(rows(&source, (0..source.len()).collect()), rows(&theirs, (0..theirs.len()).collect()), "{name}: a fresh batch's rows");
+    }
+    assert_eq!(renewed.vocabulary_strings(), fresh.vocabulary_strings(), "a fresh batch's vocabulary");
+}
+
 /// A tape value admitted into the batch (decision 0431 §8) runs no `ast` matcher: the files the batch was started
 /// with are matched once, and are not matched again (a value alone is no file, `Grower::admit`). Each round of guests
 /// ran the wave over every file of the chunk again, 17 s of 131 s of CPU on `all` once the reference graph's rules

@@ -487,3 +487,59 @@ fn an_edit_of_a_file_with_guests_patches_every_base_relations_statistics() {
     }
     assert!(failed.is_empty(), "{}", failed.join("\n"));
 }
+
+/// A session's corpus batch is renewed from its last run's (decision 0613, R5): an edit takes the held groups whose
+/// documents did not change, and its outputs are a fresh run's, at each of three edits, of a program without guests
+/// and one whose string annotations' guests are read across files (their producer's knowledge carried over).
+#[test]
+fn a_sessions_edit_takes_its_unchanged_groups_from_the_last_run() {
+    use crate::code_rule_dsl::logic::profile;
+    let mut failed: Vec<String> = Vec::new();
+    for (program, outputs) in [(PROGRAM, OUTPUTS), (GUESTS, GUESTS_OUTPUTS)] {
+        let mut c = Corpus::with(&format!("renewed-{}", outputs[0]), program, outputs);
+        if program == GUESTS {
+            c.write("a.py", "def f(x: \"List[int]\"):\n    return x\n\ndef k(y: \"Dict[str, int]\"):\n    pass\n");
+            c.write("d.py", "from c import h\nfrom a import k\n\ndef i(a: \"A\"):\n    h()\n");
+        }
+        let handle = super::session::Handle::open(&c.dir.join("session")).unwrap();
+        let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+        profile::set(true);
+        let run = |c: &mut Corpus| {
+            let _run = crate::code_rule_dsl::logic::run::scope(crate::code_rule_dsl::logic::native::width::Settings::from_env);
+            profile::take_decisions();
+            let (_, rows) = {
+                let _bound = handle.bind();
+                c.run()
+            };
+            let made = profile::take_decisions();
+            let of = |topic: &str| made.keys().filter(|(t, _)| t == topic).map(|(_, x)| x.clone()).collect::<BTreeSet<String>>();
+            (of("a session's corpus batch renewed (decision 0613)"), rows)
+        };
+        run(&mut c);
+        run(&mut c);
+        let taken = |x: &String| x.split(' ').next().and_then(|n| n.parse::<usize>().ok()).unwrap_or(0);
+        let edits: [(&str, String); 3] = [
+            ("b.py", "from a import f\n\ndef g(y, z):\n    return f(z)\n".into()),
+            ("c.py", "from a import f\nfrom b import g\n\ndef h():\n    g(1, 2)\n".into()),
+            ("a.py", if program == GUESTS { "def f(x: \"Set[bytes]\"):\n    return x\n\ndef k(y: \"Dict[str, float]\"):\n    pass\n".into() } else { "def f(x):\n    return [x]\n\ndef k():\n    pass\n".into() }),
+        ];
+        let mut any = false;
+        for (path, text) in edits {
+            c.write(path, &text);
+            let (renewed, rows) = run(&mut c);
+            let route = format!("{}, edit of {path}", outputs[0]);
+            if renewed.is_empty() {
+                failed.push(format!("{route}: the corpus batch is renewed from the last run's"));
+            }
+            any |= renewed.iter().any(|x| taken(x) > 0);
+            if rows != c.fresh() {
+                failed.push(format!("{route}: the outputs are a fresh run's"));
+            }
+        }
+        profile::set(false);
+        if !any {
+            failed.push(format!("{}: an edit takes the held groups of unchanged documents", outputs[0]));
+        }
+    }
+    assert!(failed.is_empty(), "{}", failed.join("\n"));
+}

@@ -7122,7 +7122,14 @@ fn run_observed_within(
             })
             .collect();
         crate::code_rule_dsl::logic::profile::decision("the corpus batch's row space (decision 0494)", || format!("{} of {} documents' views' counts kept", given.len(), all.len()));
-        let sources = syntax::with_matchers(store, all, sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &given).map_err(|e| Error::Plan(e.to_string()))?;
+        // A session's batch is renewed from its last run's (decision 0613): the unchanged documents' rows as made.
+        let sources = if session.is_some() {
+            let held = session_corpus.as_mut().and_then(|h| h.batch.take());
+            syntax::with_matchers_renewed(store, all, sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &given, held)
+        } else {
+            syntax::with_matchers(store, all, sets, &cross_matchers, &cross_vocabulary, binding, &cross_projection, &given)
+        }
+        .map_err(|e| Error::Plan(e.to_string()))?;
         corpus_batch = sources.iter().find_map(|(_, s)| s.python_batch());
         sources.into_iter().filter(|(r, _)| stored.iter().any(|(s, _)| s == r)).collect()
     };
@@ -9001,7 +9008,7 @@ fn run_observed_within(
                     if let (Some(b), Some(docs)) = (session_binds, session_corpus_next.take()) {
                         let stats = base_stats_out.iter().map(|(rel, digest, k)| (rel.clone(), (*digest, k.clone()))).collect();
                         let counts = corpus_batch.as_ref().map(|batch| batch.kept_counts().into_iter().map(|k| (k.key, (k.digest, k.counts))).collect()).unwrap_or_default();
-                        session.as_ref().expect("a session's run").corpus.lock().expect("the session's corpus batches").insert(b, session::HeldCorpus { docs, digest: corpus_digest, stats, counts });
+                        session.as_ref().expect("a session's run").corpus.lock().expect("the session's corpus batches").insert(b, session::HeldCorpus { docs, digest: corpus_digest, stats, counts, batch: corpus_batch.clone() });
                     }
                 }
                 None => {
