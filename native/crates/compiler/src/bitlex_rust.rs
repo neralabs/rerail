@@ -1548,10 +1548,39 @@ impl<'a> G<'a> {
             out.push_str(&used.join("\n"));
             out.push_str("}\n");
         }
+        // No mark drops or loses an extra (`drops`, `loses`, decision 0623 step 7): tier 2 keeps no extra gone or
+        // lost, and a taken token checks none.
+        if ["self.drop_pending()", "self.lose_pending()", "self.move_first()"].iter().all(|c| !out.contains(c)) {
+            for (a, b) in [
+                ("    /// The extras a mark's question dropped or lost (`drops`, `loses`), by record; the one lost,\n    /// its kind and, once its token is taken, that token's start: a pending extra of no width.\n    gone: Vec<usize>,\n", ""),
+                ("    lost: Option<(u16, Option<u32>)>,\n    /// The extra a mark's `loses since` moved, by record, and where: of no width there.\n    moved: Option<(usize, u32)>,\n", ""),
+                ("gone: Vec::new(), ", ""),
+                ("lost: None, moved: None, ", ""),
+                ("        if let Some((kind, Some(s))) = self.lost {\n            self.lost = None;\n            let at = self.w.push(u32::from(kind) | 1 << 16, s);\n            self.w.close(at, s);\n        }\n", ""),
+                ("        if let Some((kind, None)) = self.lost {\n            self.lost = Some((kind, Some(self.start())));\n        }\n", ""),
+                ("        // An extra a `loses since` moved and the one after it go with those before: the lean\n        // lexer's semicolon is past that one.\n        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);\n        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.recs[k].code) && !self.gone.contains(&k)));\n", ""),
+                (" && Some(j) != moved && Some(j) != through {", " {"),
+                ("            if is_extra(c) && !self.gone.contains(&j) {\n                let (s, e) = self.extra_span(j);\n", "            if is_extra(c) {\n                let (s, e) = (self.recs[j].start, self.recs[j].last + 1);\n"),
+                ("    /// Extra `j`'s span: its bytes, or of no width where a mark's `loses since` moved it.\n    fn extra_span(&self, j: usize) -> (u32, u32) {\n        match self.moved {\n            Some((m, s)) if m == j => (s, s),\n            _ => (self.recs[j].start, self.recs[j].last + 1),\n        }\n    }\n\n", ""),
+                ("    /// `loses since`: the first extra pending of no width at the next one's start (the lean\n    /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).\n    fn move_first(&mut self) {\n        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j));\n        if let (Some(a), Some(b)) = (pending.next(), pending.next()) {\n            self.moved = Some((a, self.recs[b].start));\n        }\n    }\n\n", ""),
+                ("    /// The extra pending last before the token (not yet written, not dropped or lost).\n    fn pending_last(&self) -> Option<usize> {\n        (self.pend..self.i).rev().find(|&j| is_extra(self.recs[j].code) && !self.gone.contains(&j))\n    }\n\n    /// `drops`: the extra pending last gone; with none left pending, the nodes closed next end\n    /// at the token, where the semicolon of no width is (the lean lexer's `Asi::Swallow`).\n    fn drop_pending(&mut self) {\n        if let Some(j) = self.pending_last() {\n            self.gone.push(j);\n            if self.pending_last().is_none() {\n                self.last_end = self.start();\n            }\n        }\n    }\n\n    /// `loses`: the extra pending last made again after the token is taken, of no width at its\n    /// start (the lean lexer's `asi` loses it); once a token.\n    fn lose_pending(&mut self) {\n        if self.lost.is_some() {\n            return;\n        }\n        if let Some(j) = self.pending_last() {\n            self.gone.push(j);\n            self.lost = Some((extra_kind(self.recs[j].code), None));\n        }\n    }\n\n", ""),
+            ] {
+                if !out.contains(a) {
+                    return Err(format!("tier 2: the runtime's lost extras, not where they were: {a:?}"));
+                }
+                out = out.replace(a, b);
+            }
+        }
         // No region read in parts (decision 0619, as 0586's): tier 1 gives no mask, and tier 2 holds none, splits no
         // record, and writes only the helpers its code calls.
         if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() {
             for (a, b) in [
+                ("    /// The pieces of record `i` where tier 2 splits it (a string, decision 0323's lowering B), as\n    /// the lean parser's string arm reads its pieces: each one's first and last byte and code;\n    /// the token is piece `k`.\n    sub: Vec<(u32, u32, u32)>,\n    k: usize,\n", ""),
+                ("sub: Vec::new(), k: 0, ", ""),
+                ("    /// A piece of the record split, `s..=l`, of record kind `kind` and the word its bytes are.\n    fn piece(&mut self, s: usize, l: usize, kind: u32) {\n        let word = word_in(kind, &self.src[s..=l]);\n        self.sub.push((s as u32, l as u32, kind | word << 8));\n    }\n\n", ""),
+                ("    /// Record `j`'s code, its first and its last byte: the piece's at the token.\n    #[inline(always)]\n    fn code_at(&self, j: usize) -> u32 {\n        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.recs[j].code }\n    }\n", "    /// Record `j`'s code.\n    #[inline(always)]\n    fn code_at(&self, j: usize) -> u32 {\n        self.recs[j].code\n    }\n"),
+                ("        } else if self.k < self.sub.len() {\n            self.sub[self.k].0\n", ""),
+                ("        if self.k < self.sub.len() {\n            let (s, l, _) = self.sub[self.k];\n            self.k += 1;\n            if self.k < self.sub.len() {\n                self.known = 0;\n                self.last_end = l + 1;\n                return Ok((s, l + 1));\n            }\n            self.sub.clear();\n            self.k = 0;\n            self.advance(l as usize + 1)?;\n            self.last_end = l + 1;\n            return Ok((s, l + 1));\n        }\n", ""),
                 ("    /// Tier 1's masks, a bit a byte: those a region's parts are found by (`split`).\n    m: &'a crate::tier1::Masks,\n", ""),
                 ("let (recs, m) = (&lx.recs[..], &lx.masks);", "let recs = &lx.recs[..];"),
                 ("P { src, recs, m, n,", "P { src, recs, n,"),
@@ -1565,6 +1594,7 @@ impl<'a> G<'a> {
                 out = out.replacen(a, b, 1);
             }
             let parts: Vec<String> = RUNTIME.split("\n\n").map(|p| p.trim_matches('\n').to_owned()).filter(|p| !p.is_empty() && p.matches('{').count() == p.matches('}').count()).collect();
+            out = out.replace("if self.k == 0 && self.refusing != 0 ", "if self.refusing != 0 ");
             out = one_loop::drop_uncalled(out, &parts);
         }
         let masks = if crate::bitlex_lex_rust::readers(self.x.lexer).is_empty() { "" } else { " and masks (those a region's parts are found by)" };

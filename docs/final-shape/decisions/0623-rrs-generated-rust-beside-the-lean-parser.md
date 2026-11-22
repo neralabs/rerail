@@ -173,3 +173,20 @@ are then written for constant widths. Otherwise it parses at the widths read at 
 where the writer asks (`Redo`). Kotlin's tier 2 takes the same form.
 
 `rr_parser`'s 51 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes included.
+
+## Step 7: a taken token checks only what the grammar has (done)
+
+Tier 2's runtime is written for every grammar, and patched where a grammar lacks a feature, as step 3 of 0619 does for
+the masks:
+
+- **No region read in parts: no split string.** There are no pieces (`sub`, `k`, `piece`). A token's code is its
+  record's (`code_at`), its start is its record's (`start`), and `bump` takes the record. The refused marks' test does
+  not ask which piece is the token.
+- **No mark that `drops` or `loses` an extra: no extra gone or lost.** There is no `gone`, `lost` or `moved`. `flush`
+  writes each comment before the token with no `gone.contains` test and no lost comment first. `bump` keeps no lost
+  comment's start, and `settle` moves no extra. The helpers that dropped, lost or moved one are gone.
+
+`.rerail` has neither, so its `bump` is lean's: the refused marks where a level refuses one, then the record's span.
+Kotlin has both, and its files are unchanged.
+
+`rr_parser`'s 51 library tests and `kotlin_parser`'s 70 pass, the corpus's tapes included.

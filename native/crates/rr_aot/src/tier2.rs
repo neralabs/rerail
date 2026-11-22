@@ -357,11 +357,6 @@ pub struct P<'a, L: Layout> {
     n: usize,
     /// The next grammar token's record; the first record not written yet (the comments before it).
     i: usize,
-    /// The pieces of record `i` where tier 2 splits it (a string, decision 0323's lowering B), as
-    /// the lean parser's string arm reads its pieces: each one's first and last byte and code;
-    /// the token is piece `k`.
-    sub: Vec<(u32, u32, u32)>,
-    k: usize,
     pend: usize,
     w: Writer<L>,
     /// The nodes open, and the node made last at each.
@@ -387,14 +382,8 @@ pub struct P<'a, L: Layout> {
     /// The marks the level open refuses (`refuse M in L`), their bits in a record's code: a token it takes with one
     /// refuses the file. A call's are its own, the caller's again where it returns.
     refusing: u32,
-    /// The extras a mark's question dropped or lost (`drops`, `loses`), by record; the one lost,
-    /// its kind and, once its token is taken, that token's start: a pending extra of no width.
-    gone: Vec<usize>,
     /// The nodes a `drop` took out, each by the node it was in: a reading that reaches one refuses (`read_dead`).
     dead: Vec<u32>,
-    lost: Option<(u16, Option<u32>)>,
-    /// The extra a mark's `loses since` moved, by record, and where: of no width there.
-    moved: Option<(usize, u32)>,
     /// The strings open over a template's code (decision 0600): their parts go on at the next
     /// opener of a reader that resumes them (`advance`).
     strings: usize,
@@ -408,7 +397,7 @@ impl<'a, L: Layout> P<'a, L> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: L) -> R<Self> {
         let recs = &lx.recs[..];
         let n = recs.len();
-        let mut p = P { src, recs, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, gone: Vec::new(), dead: Vec::new(), lost: None, moved: None, strings: 0, stack: Vec::with_capacity(64) };
+        let mut p = P { src, recs, n, i: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, dead: Vec::new(), strings: 0, stack: Vec::with_capacity(64) };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -421,10 +410,10 @@ impl<'a, L: Layout> P<'a, L> {
         Ok(())
     }
 
-    /// Record `j`'s code, its first and its last byte: the piece's at the token.
+    /// Record `j`'s code.
     #[inline(always)]
     fn code_at(&self, j: usize) -> u32 {
-        if j == self.i && self.k < self.sub.len() { self.sub[self.k].2 } else { self.recs[j].code }
+        self.recs[j].code
     }
 
     /// Whether mark `order` holds at the token (`h`), found once a token, as the lean parser
@@ -507,8 +496,6 @@ impl<'a, L: Layout> P<'a, L> {
     fn start(&self) -> u32 {
         if self.i >= self.n {
             self.src.len() as u32
-        } else if self.k < self.sub.len() {
-            self.sub[self.k].0
         } else {
             self.recs[self.i].start
         }
@@ -535,32 +522,36 @@ impl<'a, L: Layout> P<'a, L> {
     /// The comments before the token, written into the node open: the one a mark lost first.
     #[inline(always)]
     fn flush(&mut self) {
-        if let Some((kind, Some(s))) = self.lost {
-            self.lost = None;
-            let at = self.w.push(u32::from(kind) | 1 << 16, s);
-            self.w.close(at, s);
-        }
         while self.pend < self.i {
             let j = self.pend;
             self.pend += 1;
             let c = self.recs[j].code;
-            if is_extra(c) && !self.gone.contains(&j) {
-                let (s, e) = self.extra_span(j);
+            if is_extra(c) {
+                let (s, e) = (self.recs[j].start, self.recs[j].last + 1);
                 let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
                 self.w.close(at, e);
             }
         }
     }
 
-    /// Extra `j`'s span: its bytes, or of no width where a mark's `loses since` moved it.
-    fn extra_span(&self, j: usize) -> (u32, u32) {
-        match self.moved {
-            Some((m, s)) if m == j => (s, s),
-            _ => (self.recs[j].start, self.recs[j].last + 1),
+    /// The comments pending before the line break of settling mark `bit` (an extra's code holds
+    /// the bits of its own gap): written now, into the node open, the node's end past them.
+    fn settle(&mut self, bit: u32) {
+        while self.pend < self.i {
+            let j = self.pend;
+            let c = self.recs[j].code;
+            if is_extra(c) && c >> (16 + bit) & 1 == 1 {
+                break;
+            }
+            self.pend += 1;
+            if is_extra(c) {
+                let (s, e) = (self.recs[j].start, self.recs[j].last + 1);
+                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
+                self.w.close(at, e);
+                self.last_end = self.last_end.max(e);
+            }
         }
     }
-
-
 
     /// The token taken: its span; the next token's marks not yet taken.
     #[inline(always)]
@@ -569,28 +560,11 @@ impl<'a, L: Layout> P<'a, L> {
             return self.refuse();
         }
         // A mark the level refuses, at the token it takes (`refuse M in L`).
-        if self.k == 0 && self.refusing != 0 && self.marks_hold(self.i, self.refusing) {
+        if self.refusing != 0 && self.marks_hold(self.i, self.refusing) {
             return self.refuse();
-        }
-        if let Some((kind, None)) = self.lost {
-            self.lost = Some((kind, Some(self.start())));
         }
         self.taken = 0;
         self.marked = false;
-        if self.k < self.sub.len() {
-            let (s, l, _) = self.sub[self.k];
-            self.k += 1;
-            if self.k < self.sub.len() {
-                self.known = 0;
-                self.last_end = l + 1;
-                return Ok((s, l + 1));
-            }
-            self.sub.clear();
-            self.k = 0;
-            self.advance(l as usize + 1)?;
-            self.last_end = l + 1;
-            return Ok((s, l + 1));
-        }
         let (s, e) = (self.recs[self.i].start, self.recs[self.i].last + 1);
         self.advance(e as usize)?;
         self.last_end = e;
