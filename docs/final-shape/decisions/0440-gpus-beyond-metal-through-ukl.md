@@ -1620,6 +1620,37 @@ old suffix, `gpu/src/library_tests.ukl`, is renamed.
   workspace's Windows build, plan step 4), or native Linux on the machine (radeonsi under rusticl; ROCm, which
   runs gfx1035 only as gfx1030, with `HSA_OVERRIDE_GFX_VERSION`).
 
+**The Radeon 680M through AMD's Windows OpenCL: its waves are the SIMD groups (2026-11-22).**
+
+- **The device:** the same Ryzen 7 7735HS's Radeon 680M (gfx1035), from native Windows: AMD's OpenCL 2.0
+  (AMD-APP 3652.0, PAL with the LLVM compiler, driver 32.0.21030.2001). It has `cl_khr_subgroups` (reductions, scans,
+  broadcast, barrier) and `cl_amd_device_attribute_query`, and neither shuffle extension, no ballot one, no
+  required sub-group size and no USM. So `lanes` (above) gave it the emulated groups: every SIMD-group operation a
+  threadgroup barrier and a word of threadgroup memory a thread.
+- **Its waves are 32 lanes, and the compiler takes the wave's own operations:** a kernel run on it (`clc run`) gave
+  `get_sub_group_size()` 32, and right answers from `__builtin_amdgcn_ds_bpermute` (a lane's read of another, by
+  byte address), `__builtin_amdgcn_ballot_w32`, `mbcnt` and `cl_khr_subgroups`' reductions and scans.
+- **So the device layer has three kinds of groups (`Groups`):** emulated; required (Intel's: OpenCL 3.0's
+  sub-groups at a width each kernel requires); and AMD's (`UKL_OPENCL_AMD`, with `UKL_OPENCL_SUBGROUPS`, built as
+  OpenCL C 2.0): a device of 32-lane waves (`CL_DEVICE_WAVEFRONT_WIDTH_AMD`), its shuffles `ds_bpermute`, its ballot
+  `ballot_w32`, its reductions native, its kernels with no width attribute. With no attribute to require the width,
+  the device's opening runs a kernel that checks it (`sub_groups_are`: each thread's sub-group size, maximum, lane,
+  and a shuffle's read), and a device that fails it keeps the emulated groups.
+- **Its scans are the shuffles':** in the block interpreter's kernels the driver's `sub_group_scan_inclusive_add`
+  and `_exclusive_add` scanned each 16-lane row of the wave apart. The extract test's positions at 64-byte lanes
+  showed lane 16 at lane 0's offset, and at 16-byte lanes a quote in lane 29 at offset 0, without the quote in
+  lane 2. The kernels with the scans built from `ds_bpermute` (`ukl/simd.h`'s form) are right, and the small probe
+  kernels' native scans were right too. The reductions stay native: every test passes with them.
+- **Tests on the Radeon:** the device layer's OpenCL tests, and every GPU test of the parser library (`block_tests`,
+  `compile_tests` with the batch of files and programs, `json_tests`, `metal_tests`, `corpus_tests`), pass. The
+  dumped kernels are OpenCL C 2.0 with `ds_bpermute` and none of the emulation's threadgroup words. AMD's compiler
+  builds a `tempo_batch` in 0.3-0.6 s, the interpreter's `block_batch` in 0.5-0.8 s and the 12 serial kernels in
+  1.4-1.5 s, with none of Intel's slowdown within a process (decision 0576).
+- **Found on the way, not the GPU's:** on x86-64 the stream JIT's clustered form (a cluster's word in another a tail
+  call) needs Cranelift's frame pointers (`preserve_frame_pointers`, set there on x86-64 alone); the old Rust
+  lowering's AOT test (`grammars_rust_tapes_are_the_jits`) writes `core::arch::aarch64` and cannot build on x86-64;
+  and `rr_tests::a_reading_is_checked` takes over a minute on x86-64 Windows' debug build.
+
 A comes first because C and D port the files the branch changes; B before C so that each ported file runs on every
 backend as it lands. Between them, small: a 64-lane mask type (`ukl_mask_t`), tested on the CPU at width 64 (AMD's
 width, with no AMD device). Native OpenCL subgroups and SVM wait for a device to test them on.

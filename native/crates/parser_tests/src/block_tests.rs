@@ -96,17 +96,8 @@ fn eq_refusals() {
 
 #[test]
 fn eq_equals_reference_on_every_executor() {
-    for byte in [b'"', b'\\', 0x00, 0xff, b'a'] {
-        let p = program(&format!("  block 0 %0 = eq {byte:#04x}\n  block 0 output %0\n"));
-        let ex = Executors::new(&p);
-        let cases = inputs();
-        for (bytes, runs) in cases.iter().zip(ex.every_of(&cases)) {
-            let want = reference(bytes, |b| b == byte);
-            for (name, got) in runs {
-                assert_eq!(got, std::slice::from_ref(&want), "{name}, eq {byte:#04x}, {} bytes", bytes.len());
-            }
-        }
-    }
+    let wants: Vec<_> = [b'"', b'\\', 0x00, 0xff, b'a'].map(|byte| (byte, move |bytes: &[u8]| vec![reference(bytes, |b| b == byte)])).into();
+    check_each(&wants.iter().map(|(byte, want)| (format!("  block 0 %0 = eq {byte:#04x}\n  block 0 output %0\n"), want as &dyn Fn(&[u8]) -> Vec<Vec<u64>>)).collect::<Vec<_>>());
 }
 
 #[test]
@@ -1084,7 +1075,19 @@ fn extract_equals_reference_on_every_executor() {
         let soh: Vec<u32> = (0..bytes.len() as u32).filter(|&i| bytes[i as usize] == 0x01).collect();
         let want = vec![ones.clone(), quotes.clone(), soh.clone()];
         for (name, got) in extract_executors(&p, &bytes) {
-            assert_eq!(got.positions, want, "{name}, {} bytes", bytes.len());
+            // Where each extract first differs, not its thousands of positions.
+            let differ: Vec<String> = got
+                .positions
+                .iter()
+                .zip(&want)
+                .enumerate()
+                .filter(|(_, (g, w))| g != w)
+                .map(|(k, (g, w))| {
+                    let at = g.iter().zip(w.iter()).position(|(a, b)| a != b).unwrap_or(g.len().min(w.len()));
+                    format!("extract {k}: {} positions, {} wanted, first differs at {at}: {:?} for {:?}", g.len(), w.len(), g.get(at..(at + 4).min(g.len())), w.get(at..(at + 4).min(w.len())))
+                })
+                .collect();
+            assert!(got.positions.len() == want.len() && differ.is_empty(), "{name}, {} bytes: {differ:?}", bytes.len());
         }
         // One poll: a group whose predecessor has not published its count leaves unfinished,
         // and the launch is repeated.

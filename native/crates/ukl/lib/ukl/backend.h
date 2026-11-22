@@ -390,6 +390,35 @@ UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS)
     return m;
 }
 UKL_INLINE void ukl_sg_barrier() { barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
+#elif defined(UKL_OPENCL_SUBGROUPS) && defined(UKL_OPENCL_AMD)
+// AMD's waves, `UKL_SIMD_WIDTH` (32) lanes (the host checks the width at the device's opening): AMD's OpenCL 2.0 has
+// `cl_khr_subgroups` (reductions, scans, broadcast, barrier) but no shuffle or ballot extension, so those are the
+// wave's own: `ds_bpermute` (each lane reads the lane at its byte address, a lane's 4 bytes) and `ballot_w32`. A lane
+// outside the group, or the group's own (`shuffle_up` below lane `d`, `shuffle_down` past the last lane), reads its own
+// value, as CUDA's and the emulation's do.
+UKL_INLINE uint32_t __ukl_amd_read(uint32_t v, uint32_t from) { return (uint32_t)__builtin_amdgcn_ds_bpermute((int)((from & (UKL_SIMD_WIDTH - 1u)) << 2), (int)v); }
+UKL_INLINE uint32_t ukl_sg_shuffle(uint32_t v, uint32_t lane __UKL_PARAMS) { return __ukl_amd_read(v, lane); }
+UKL_INLINE uint32_t ukl_sg_shuffle_up(uint32_t v, uint32_t d __UKL_PARAMS)
+{
+    uint32_t l = __UKL_CL_LANE;
+    return __ukl_amd_read(v, l >= d ? l - d : l);
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_down(uint32_t v, uint32_t d __UKL_PARAMS)
+{
+    uint32_t l = __UKL_CL_LANE;
+    return __ukl_amd_read(v, l + d < UKL_SIMD_WIDTH ? l + d : l);
+}
+UKL_INLINE uint32_t ukl_sg_shuffle_xor(uint32_t v, uint32_t m __UKL_PARAMS) { return __ukl_amd_read(v, __UKL_CL_LANE ^ m); }
+UKL_INLINE ukl_mask_t ukl_sg_ballot(bool b __UKL_PARAMS) { return (ukl_mask_t)__builtin_amdgcn_ballot_w32(b); }
+UKL_INLINE void ukl_sg_barrier() { sub_group_barrier(CLK_LOCAL_MEM_FENCE | CLK_GLOBAL_MEM_FENCE); }
+// Native forms: the wave's reductions (`cl_khr_subgroups`). Not its scans: on a Radeon 680M (gfx1035, driver
+// 32.0.21030.2001) `sub_group_scan_inclusive_add` and `_exclusive_add` in the block interpreter's kernels scanned each
+// 16-lane row of the 32-lane wave apart (the second row's lanes without the first row's total), while a small kernel's
+// were right: so a scan's own form is the shuffles' (`ukl/simd.h`), `ds_bpermute` above.
+#define UKL_NATIVE_SG_REDUCE 1
+UKL_INLINE uint32_t ukl_sg_sum_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_add(v); }
+UKL_INLINE uint32_t ukl_sg_min_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_min(v); }
+UKL_INLINE uint32_t ukl_sg_max_native(uint32_t v __UKL_PARAMS) { return sub_group_reduce_max(v); }
 #elif defined(UKL_OPENCL_SUBGROUPS)
 // The device's sub-groups, `UKL_SIMD_WIDTH` lanes (the shim requires it of each kernel): OpenCL 3.0's functions. A lane outside
 // the group, or the group's own (`shuffle_up` below lane `d`, `shuffle_down` past the last lane), reads its own
@@ -460,8 +489,8 @@ UKL_INLINE uint32_t ukl_atomic_max(UKL_GLOBAL uint32_t* p, uint32_t v) { return 
 UKL_INLINE uint32_t ukl_atomic_cas(UKL_GLOBAL uint32_t* p, uint32_t e, uint32_t n) { return atomic_cmpxchg((volatile __global uint32_t*)p, e, n); }
 // A fence between this thread's device accesses as other threads see them. OpenCL 1.2's `mem_fence` orders a
 // work-item's own accesses alone; OpenCL C 3.0 (the device's sub-groups, `UKL_OPENCL_SUBGROUPS`) has a fence of device
-// scope. Without it, on an Arc 140V a pool's taker read a pushed block's link from before its push, and a block was
-// handed out twice (`ukl/pool.h`).
+// scope (2.0's too: AMD's waves). Without it, on an Arc 140V a pool's taker read a pushed block's link from before its
+// push, and a block was handed out twice (`ukl/pool.h`).
 #if defined(UKL_OPENCL_SUBGROUPS)
 UKL_INLINE void ukl_fence_device() { atomic_work_item_fence(CLK_GLOBAL_MEM_FENCE, memory_order_seq_cst, memory_scope_device); }
 #else
