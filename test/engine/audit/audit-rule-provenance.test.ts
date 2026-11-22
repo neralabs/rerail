@@ -8,7 +8,7 @@ import Database from "better-sqlite3";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { SqliteAuditReader, SqliteAuditStore } from "../../../src/engine/audit/audit-store.js";
 import type {
-  AuditInput, AuditRecord, AuditRuleProvenance, LegacyAuditRuleProvenance, RepositoryAuditRuleProvenance,
+  AuditFailure, AuditInput, AuditRecord, AuditRuleProvenance, LegacyAuditRuleProvenance, RepositoryAuditRuleProvenance,
 } from "../../../src/engine/audit/audit.js";
 import { eraseFreedPages, openRerailDatabase, resetRepositoryHistory } from "../../../src/engine/storage/database.js";
 import { RERAIL_BASELINE_SCHEMA_STATEMENTS } from "../../../src/engine/storage/baseline-schema.js";
@@ -1641,5 +1641,158 @@ describe("an audit whose rule provenance does not read", () => {
       + `rerail: ${path}: audit ${auditIds[4]} reads with no rule provenance, and a failure that says so: the rule_provenance_json `
       + `of its own row is not a JSON array (${parseFailure(text)}).\n`,
     );
+  });
+});
+
+/** Each other list an `audits` row holds, by its column, and what the failure an audit lists for it calls it. */
+const STORED_LISTS = {
+  ruleRevisions: { column: "rule_revisions_json", clauseId: "rule-revisions", name: "rule revisions" },
+  paths: { column: "paths_json", clauseId: "paths", name: "paths" },
+  violations: { column: "violations_json", clauseId: "violations", name: "violations" },
+  failures: { column: "failures_json", clauseId: "failures", name: "failures" },
+} as const;
+type StoredList = keyof typeof STORED_LISTS;
+const LISTS = Object.keys(STORED_LISTS) as StoredList[];
+
+/** The failure an audit lists after its own when the text the database holds for its `list` is not a JSON array. */
+function unreadableList(list: StoredList): AuditFailure {
+  return {
+    clauseId: STORED_LISTS[list].clauseId, code: "adapter-error", stage: "persistence",
+    message: `The audit's ${STORED_LISTS[list].name} in the database are not a JSON array, which only a damaged file or a hand edit leaves, so they read as none.`,
+  };
+}
+
+const VIOLATION = {
+  id: "violation-1", ruleId: "typescript/rule-000", clauseId: "clause-a", code: "forbidden-call", mode: "steer" as const,
+  message: "forbidden call", path: "src/a.ts", captures: {}, variables: {},
+};
+const FAILURE: AuditFailure = { clauseId: "clause-b", code: "adapter-error", message: "failed", stage: "evaluate" };
+
+/** Three finished audits of one session, each with a rule revision, a path, a violation and a failure; their ids. */
+function threeAudits(path: string): string[] {
+  const store = new SqliteAuditStore(path);
+  try {
+    return [0, 1, 2].map(() => {
+      const auditId = store.start({ ...auditInput("/home/dev/app", provenanceOf("/home/dev/app", 2)), ruleRevisions: [{ ruleId: "typescript/rule-000", revision: 1 }] });
+      store.finish(auditId, { status: "completed", violations: [VIOLATION], failures: [FAILURE] });
+      return auditId;
+    });
+  } finally {
+    store.close();
+  }
+}
+
+/**
+ * Writes `text` over one list of an audit's row, past the CHECK on `audits`. The history triggers parse the rule
+ * revisions and the violations on UPDATE and refuse such text, so those that name the column are set aside for the
+ * write and put back: the state a damaged file leaves.
+ */
+function damageList(path: string, auditId: string, list: StoredList, text: string): void {
+  const { column } = STORED_LISTS[list];
+  const database = new Database(path);
+  try {
+    database.pragma("ignore_check_constraints = ON");
+    const triggers = database.prepare("SELECT name, sql FROM sqlite_master WHERE type = 'trigger' AND tbl_name = 'audits' AND sql LIKE ?")
+      .all(`%${column}%`) as Array<{ name: string; sql: string }>;
+    database.transaction(() => {
+      for (const trigger of triggers) database.exec(`DROP TRIGGER "${trigger.name}"`);
+      database.prepare(`UPDATE audits SET ${column} = ? WHERE audit_id = ?`).run(text, auditId);
+      for (const trigger of triggers) database.exec(trigger.sql);
+    })();
+  } finally {
+    database.close();
+  }
+}
+
+/** The audit `auditId` as a store on `path` reads it. */
+function readAudit(path: string, auditId: string): AuditRecord | undefined {
+  const store = new SqliteAuditStore(path);
+  try {
+    return store.get(auditId);
+  } finally {
+    store.close();
+  }
+}
+
+describe("an audit whose other stored lists do not read", () => {
+  it.each(LISTS)("lists every audit of each page that holds one whose %s do not parse, that one with none and a failure that says so", async list => {
+    const path = await temporaryDatabase();
+    const auditIds = threeAudits(path);
+    const before = readAudit(path, auditIds[1]!)!;
+    const healthy = readAudit(path, auditIds[0]!);
+    damageList(path, auditIds[1]!, list, '[{"ruleId":"typescript/broken"');
+    const failures = list === "failures" ? [unreadableList(list)] : [FAILURE, unreadableList(list)];
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    const reader = new SqliteAuditReader(path);
+    try {
+      const listed = store.list({ limit: 200 }).audits;
+      expect(listed.map(audit => audit.auditId).sort()).toEqual([...auditIds].sort());
+      const record = listed.find(audit => audit.auditId === auditIds[1]);
+      expect(record).toEqual({ ...before, [list]: list === "failures" ? failures : [], failures, failureCount: failures.length });
+      expect(listed.find(audit => audit.auditId === auditIds[0])).toEqual(healthy);
+      expect(store.get(auditIds[1]!)).toEqual(record);
+      expect(reader.list({ limit: 200 }).audits).toEqual(listed);
+      expect(reader.get(auditIds[1]!)).toEqual(record);
+    } finally {
+      reader.close();
+      store.close();
+      stderr.restore();
+    }
+  });
+
+  it.each([...LISTS, "ruleProvenance" as const])("answers the session's summary when its latest audit's %s do not parse, counting what the audit lists", async list => {
+    const path = await temporaryDatabase();
+    threeAudits(path);
+    const latest = new SqliteAuditStore(path);
+    const latestId = latest.list({ limit: 1 }).audits[0]!.auditId;
+    latest.close();
+    const healthy = { workspaceRoot: "/home/dev/app", scope: "touched-files", mode: "steer", status: "completed", violationCount: 1,
+      failureCount: 1, unlistedFailureCount: 0, blindFileCount: 0, gapCount: 0, outOfWorkRuleCount: 0, fileWorkStoppedRuleCount: 0 };
+    if (list === "ruleProvenance") damageAuditRow(path, latestId, "{}");
+    else damageList(path, latestId, list, '[{"ruleId":"typescript/broken"');
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    const reader = new SqliteAuditReader(path);
+    try {
+      const record = store.get(latestId)!;
+      expect(record.failureCount).toBe(list === "failures" ? 1 : 2);
+      expect(store.latestSummary("session-a")).toEqual({ ...healthy, violationCount: record.violations.length, failureCount: record.failureCount });
+      expect(reader.latestSummary("session-a")).toEqual(store.latestSummary("session-a"));
+    } finally {
+      reader.close();
+      store.close();
+      stderr.restore();
+    }
+  });
+
+  it("names in its log, once for each damaged list, the audit that read it with none and the column that holds it", async () => {
+    const path = await temporaryDatabase();
+    const auditIds = threeAudits(path);
+    const text = '[{"ruleId":"typescript/broken"';
+    damageList(path, auditIds[0]!, "paths", text);
+    damageList(path, auditIds[1]!, "violations", "{}");
+    const stderr = spyOnStderr();
+    const store = new SqliteAuditStore(path);
+    const reader = new SqliteAuditReader(path);
+    let logged = "";
+    try {
+      store.list({ limit: 200 });
+      store.list({ limit: 200 });
+      store.get(auditIds[0]!);
+      reader.list({ limit: 200 });
+    } finally {
+      logged = stderr.logged();
+      reader.close();
+      store.close();
+      stderr.restore();
+    }
+    expect(logged.split("\n").sort()).toEqual([
+      "",
+      `rerail: ${path}: audit ${auditIds[0]} reads with no paths, and a failure that says so: the paths_json of its own row is `
+      + `not a JSON array (${parseFailure(text)}).`,
+      `rerail: ${path}: audit ${auditIds[1]} reads with no violations, and a failure that says so: the violations_json of its `
+      + "own row is not a JSON array (it parses to another JSON value).",
+    ].sort());
   });
 });
