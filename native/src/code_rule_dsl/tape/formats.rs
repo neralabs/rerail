@@ -600,8 +600,10 @@ impl DocTape {
     /// The tape, a 16z tape's blocks decoded into `cache`, its batch's: a read of it in that batch. A tape of
     /// another format is read as held.
     pub fn tape_with<'a>(&'a self, cache: Option<&'a f16::ZCache>) -> AnyTape<'a> {
+        // Its own cache where it holds one: its batch's, or its own batch's where its blocks did not fit the batch's
+        // entries (`TapeDoc::in_batch`). `cache` is for a document held outside every batch.
         match (&self.reader, cache) {
-            (AnyTape::F16Z(_), Some(_)) => self.image.tape_in(cache),
+            (AnyTape::F16Z(_), Some(_)) if self.cache.is_none() => self.image.tape_in(cache),
             _ => self.reader,
         }
     }
@@ -614,7 +616,7 @@ impl DocTape {
     /// `tape_in`, a 16z tape's blocks decoded into `cache`, its batch's.
     pub fn tape_in_with<'a>(&'a self, format: Format, cache: Option<&'a f16::ZCache>) -> AnyTape<'a> {
         if format == self.image.format() {
-            return self.image.tape_in(cache.or(self.cache.as_deref()));
+            return self.image.tape_in(self.cache.as_deref().or(cache));
         }
         let slot = Format::ALL.iter().position(|&f| f == format).expect("a format");
         let (image, own) = self.other[slot].get_or_init(|| {
