@@ -119,6 +119,8 @@ struct Lp<'g, 'a> {
     /// Whether the token taken now is followed in its node by a token of the node's (so no close reads its end):
     /// a separator, an opener, a pair's `:` (`walk`'s `take!()`, its end not kept).
     end_unread: std::cell::Cell<bool>,
+    /// Each checked kind's check (`check K = G`).
+    check_of: BTreeMap<String, Gram>,
     /// The methods that decide every byte themselves (a choice's alternatives that call no level, `walk`'s
     /// `primitive`), refusing what none takes as a decision does: a decision's arm calling one is its `_`.
     deciding: RefCell<std::collections::BTreeSet<String>>,
@@ -483,7 +485,17 @@ impl Lp<'_, '_> {
                 for h in self.hard_words(name).iter().filter(|h| !words.iter().any(|(w, _)| w == *h)) {
                     let _ = write!(out, "{} => {{\n{none}}}\n", word(*h).0);
                 }
-                let _ = write!(out, "{} => {{\nlet end = {};\n{}}}\n", pattern(&self.bytes_of(*rk)), self.end_code(name, &end)?, code(*a, T::Word)?);
+                // A checked run's arm at its check's first bytes alone, where the rest is refused at the token's byte, as
+                // the check refuses there (`walk`'s number at a digit or `-`).
+                let mut bytes = self.bytes_of(*rk);
+                if matches!(end, End::Run)
+                    && none == "return Err(at(src, starts, i));\n"
+                    && let Some(body) = self.check_of.get(name)
+                    && let Ok((first, false)) = self.check_first(body)
+                {
+                    bytes.retain(|b| first.contains(b));
+                }
+                let _ = write!(out, "{} => {{\nlet end = {};\n{}}}\n", pattern(&bytes), self.end_code(name, &end)?, code(*a, T::Word)?);
             }
         }
         let _ = write!(out, "_ => {{\n{otherwise}}}\n}}\n");
@@ -1317,7 +1329,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             _ => {}
         }
     }
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), deciding: RefCell::new(std::collections::BTreeSet::new()) };
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), end_unread: std::cell::Cell::new(false), check_of: checks.iter().cloned().collect(), deciding: RefCell::new(std::collections::BTreeSet::new()) };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {

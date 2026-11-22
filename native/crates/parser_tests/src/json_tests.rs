@@ -1291,6 +1291,8 @@ fn json_tier2_is_walks_shape() {
     }
     assert!(!primitive.contains("0x7b") && !primitive.contains("0x5b"), "a container is the place's");
     assert_eq!(tier2.matches("fn number_end(").count(), 1, "a number's end written once");
+    // A number at a digit or `-` alone (`walk`'s `*v - '0' < 10 || *v == '-'`), any other byte refused.
+    assert!(primitive.contains("0x2d | 0x30..=0x39 => {\nlet end = number_end(src, s)?;"), "the number's arm its check's first bytes:\n{primitive}");
     assert!(!tier2.contains("i += 1;\ne = end;\nleaf("), "a token's leaf written out at a place");
     // The nodes stored through the walk's hold on the tape, a local of `run` (`Cursor`, the lean parser's `Walk`), not
     // the writer's ops on its state.
