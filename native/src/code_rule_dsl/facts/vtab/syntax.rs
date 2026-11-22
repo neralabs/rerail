@@ -58,6 +58,7 @@ pub mod ranks;
 /// A batch's documents and rows, each made when first read (decision 0494).
 pub mod made;
 mod cells;
+mod places;
 #[cfg(any(target_os = "macos", target_os = "linux"))]
 pub mod device_chunk;
 pub mod view_docs;
@@ -1975,8 +1976,7 @@ impl KindRows {
 
 /// A span's id (core.rerail's `span`: a piece of a document's text): `d << 32 | granules::extra_low(kind, i)`, in slots of
 /// its kind's past every node of its document, so no node view has a row of it (`Batch::node`). `ExtraSpan::Line` `0`
-/// is the whole source (`source`), `Line` `l` physical line `l` (`src_line`), `Lf` `l` the `\n`-line `l`
-/// (`src_line_lf`), `Tape` `l` the tape's line `l` (`tape_line`), `Comment` `k` the document's `k`-th comment from 1,
+/// is the whole source (`source`), `Line` `l` line `l` (`src_line`), `Comment` `k` the document's `k`-th comment from 1,
 /// in source order, of those no node is (`comment`: T's nodes leave out a grammar's `comment` kind, as Python's, but
 /// keep Rust's `line_comment`, which is then the comment's id) and `Match` `i` the document's `i`th match or group of
 /// a `match_all`, `match_group` or `rx_span` regex. A document with more of a kind than its capacity fails, named.
@@ -2227,6 +2227,9 @@ struct Extra {
     value_type_of: bool,
     value_type: bool,
     comment: bool,
+    /// core.rerail's shape: a node's, token's and end point's places are the `Loc` view's (`places::Placed`), and the
+    /// place rows made here are the spans' alone (Q216).
+    spans_only: bool,
     sources: Vec<[i64; 2]>,
     src_lines: Vec<[i64; 3]>,
     line_counts: Vec<[i64; 2]>,
@@ -2278,6 +2281,7 @@ impl Extra {
         if shape == Shape::Core && !extra.spans() {
             (extra.end_line, extra.col, extra.docof) = (false, false, false);
         }
+        extra.spans_only = shape == Shape::Core;
         extra
     }
 
@@ -2325,7 +2329,8 @@ impl Extra {
         self.source || self.src_line || self.comment || self.rx_span
     }
 
-    /// Whether `line` is made as rows rather than read off the node view: spans have lines too.
+    /// Whether `line` is made as rows rather than read off the node view: spans have lines too (in core.rerail's shape
+    /// the spans' alone, after the `Loc` view's rows: `places::Placed`).
     fn line_rows(&self) -> bool {
         self.line && self.spans()
     }
@@ -2362,7 +2367,7 @@ impl Extra {
             Some(x) => x.place(span),
             None => f.lines.place(span),
         };
-        let (line, end_line, col) = (self.line_rows(), self.end_line, self.col);
+        let (line, end_line, col) = if self.spans_only { (false, false, false) } else { (self.line_rows(), self.end_line, self.col) };
         let mut placed = |n: i64, span: [u32; 2]| {
             let (first, last, c) = place(span);
             if line {
@@ -2392,7 +2397,7 @@ impl Extra {
                 self.node_texts.push([n, string(f.text(id)) as i64]);
             }
         }
-        if self.docof {
+        if self.docof && !self.spans_only {
             let key = i64::from(p.file);
             self.docofs.extend(p.node_ids().chain(p.token_ids()).map(|(_, _, n)| n).chain(ends.map(|local| p.global(local))).map(|n| [n, key]));
         }
@@ -4414,7 +4419,22 @@ pub fn shaped(store: &ContentStore, documents: Vec<Document>, projection: &Proje
     let batch = Batch::new(store, documents, projection, &[], &[], false, None, &HashMap::new())?;
     let mut out: Vec<(&'static str, Arc<dyn Source>)> = made_sources(&batch).into_iter().filter_map(|(_, name, source)| Some((name?, source))).collect();
     out.extend(views(&batch));
+    placed(&mut out, &batch);
     Ok(out)
+}
+
+/// In core.rerail's shape, each place relation `Extra` made rows of (its spans', where a program reads spans) bound as
+/// the `Loc` view's rows then those (`places::Placed`, Q216): no node's or token's place is a row.
+fn placed<N: AsRef<str>>(out: &mut [(N, Arc<dyn Source>)], batch: &Arc<Batch>) {
+    if batch.shape != Shape::Core {
+        return;
+    }
+    for (name, view) in named_views(Shape::Core).into_iter().filter(|(name, view)| matches!(view, View::Loc(_)) && batch.made.contains(name)) {
+        if let Some((_, source)) = out.iter_mut().find(|(n, _)| n.as_ref() == name) {
+            let view: Arc<dyn Source> = Arc::new(Viewed { batch: Arc::clone(batch), view, home: std::sync::OnceLock::new() });
+            *source = Arc::new(places::Placed { view, spans: Arc::clone(source) });
+        }
+    }
 }
 
 /// The views a batch of `shape` binds by name (`views`).
@@ -4717,6 +4737,7 @@ fn finish(mut out: Vec<(String, Arc<dyn Source>)>, batch: &Arc<Batch>, sets: &[(
     let rows_named: BTreeSet<String> = out.iter().map(|(n, _)| n.clone()).collect();
     let viewing = crate::code_rule_dsl::logic::profile::span(|| "views".into());
     out.extend(views(&batch).into_iter().filter(|(name, _)| !projection.derived.contains(*name)).map(|(name, source)| (name.to_owned(), source)));
+    placed(&mut out, &batch);
     drop(viewing);
     // The kind-set axes, made per looked-up node like containment (decision 0050): a set no join reads, and the nodes
     // no join binds, cost nothing. Their statistics come from the tree.

@@ -303,11 +303,14 @@ program read them, and `Batch::made` bound those rows in place of the views (`li
 no span: 3 interleaved pairs at load 23–25, `extra document rows` 0.094–0.135 s and 254–271 MB allocated to none;
 findings 1,629 in each; 73.5 B instructions (median) against 80.2 B.
 
-Where spans are made, the nodes' and tokens' place rows are still made beside the spans' (the spans' are derived
-facts; the nodes' are copies of tape answers), and bound in place of the view. The view already covers the whole
-source and its lines (`Locs::positions`, the `ExtraSpan::Line` ids); the other spans (`src_line_lf`, `tape_line`,
-matches, comments, `rx_span`) have their byte ranges only in `Extra`. Q216: those ranges written once into the
-batch's block, and the view reading them past its own positions, so nothing makes a node's place.
+**Where spans are made** (Q216, 2026-11-22), no node's or token's place is made either. In core.rr's shape `Extra`
+makes place rows for its spans alone (`Extra::spans_only`): a match, a comment no node is, `source` and `src_line`.
+A span is a derived fact, placed once where it is made (`LineTable::place`). Each place relation is bound as the
+`Loc` view's rows, then those (`places::Placed`). A lookup by id goes to the side that holds the id
+(`granules::is_extra`), so a probe of a node's place reads the tape and makes no document. Before, such a probe
+made the node's document and its group: on ep2's `body` edit, 38 unchanged documents, about 0.09 s of 4.0 s.
+`a_span_reader_s_places_are_the_view_s_then_the_spans` checks the made rows (spans' alone), the view's rows first,
+and each line span's place.
 
 **Step 3's other relations of row 7** (2026-11-17), each checked against "Not copies":
 - `visit_index` (CPython's visit order), `host_node` (a guest node's innermost host node, an axis's answer) and
@@ -316,7 +319,7 @@ batch's block, and the view reading them past its own positions, so nothing make
 - `intval` and `op_t` are read by no core.rr library rule; in core.rr's shape `NodeRows` runs only where a program
   reads them. In T's shape they come with `NodeRows`' eager `text`, `name` and `str`, deferred with Q121.
 - What row 7 keeps: `core_rr`'s and `NodeRows`' eager derived values (`text`, `name`, `value`'s literals, T's
-  rows), deferred (Q121), and the nodes' place rows beside spans (Q216).
+  rows), deferred (Q121).
 
 Found on the way and fixed:
 - `Locs::token_spans` copied every token's start and end into a `Vec` on a span's first read: unmarked, and missed by

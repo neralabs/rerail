@@ -2458,3 +2458,44 @@ fn a_value_admitted_into_the_batch_matches_no_file_again() {
     seen.sort();
     assert_eq!(seen, ["m1.py", "m2.py"], "the started files matched once, and none again when a value is admitted");
 }
+
+/// Q216 (decision 0353 step 3): where a program reads spans, a node's and a token's places are the `Loc` view's, and
+/// the place rows made are the spans' alone. The bound relation is the view's rows, then the spans', and a span's
+/// place is read by its id: a line's own line, its start's column 0.
+#[test]
+fn a_span_reader_s_places_are_the_view_s_then_the_spans() {
+    let store = ContentStore::open(&temp("span-places")).unwrap();
+    let docs = || vec![document(1, "a.py", "python", "x = 1\n# c\ny = 2\n")];
+    let projection = |reads: &[&str]| Projection { shape: Shape::Core, reads: Some(reads.iter().map(|r| (*r).to_owned()).collect()), ..Projection::core() };
+    let places = ["line", "end_line", "col", "docof"];
+    let spans = projection(&["node", "line", "end_line", "col", "docof", "source", "src_line"]);
+    let batch = Batch::new(&store, docs(), &spans, &[], &[], false, None, &HashMap::new()).unwrap();
+    let mut made: HashMap<&str, usize> = HashMap::new();
+    for (name, _, s) in made_sources(&batch) {
+        if places.contains(&name) {
+            assert!(s.len() > 0, "{name}: the spans' places are made");
+            assert!((0..s.len()).all(|r| granules::is_extra(s.value(r, 0) as u32)), "{name}: no node's or token's place is made");
+            made.insert(name, s.len());
+        }
+    }
+    let out = shaped(&store, docs(), &spans).unwrap();
+    let views = shaped(&store, docs(), &projection(&["node", "line", "end_line", "col", "docof"])).unwrap();
+    let bound = |name: &str| Arc::clone(&out.iter().find(|(n, _)| *n == name).unwrap().1);
+    for name in places {
+        let (whole, view) = (bound(name), Arc::clone(&views.iter().find(|(n, _)| *n == name).unwrap().1));
+        assert_eq!(whole.len(), view.len() + made[name], "{name}: the view's rows, then the spans'");
+        assert!((0..view.len()).all(|r| whole.value(r, 0) == view.value(r, 0) && whole.value(r, 1) == view.value(r, 1)), "{name}: the view's rows first");
+        let node = view.value(0, 0);
+        assert_eq!(whole.lookup(0, &[node]).unwrap(), view.lookup(0, &[node]).unwrap(), "{name}: a node's place is the view's");
+    }
+    let src_line = bound("src_line");
+    assert_eq!(src_line.len(), 4, "every line, the empty last one too");
+    for r in 0..src_line.len() {
+        let (l, sp) = (src_line.value(r, 1), src_line.value(r, 2));
+        for (name, want) in [("line", l), ("end_line", l), ("col", 0)] {
+            let s = bound(name);
+            let rows = s.lookup(0, &[sp]).unwrap();
+            assert_eq!(rows.iter().map(|&row| s.value(row, 1)).collect::<Vec<_>>(), [want], "{name} of line {l}'s span");
+        }
+    }
+}

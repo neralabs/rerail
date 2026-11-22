@@ -5634,7 +5634,7 @@ sha) or `program_shared`'s order may hand back the files recorded before the edi
 - **Also seen**: on m3 the guard reads three files the checkout deleted (`metal_frontier_conformance.rs`,
   `metal_frontier_reduce.rs`, `metal_register_conformance.rs`). That is Q63's stale mirror, not the tree.
 
-### Q216. (Q123 on Native-and-GPU-strata until 2026-11-18; Q184 on oscar until 2026-11-18) Spans' places read by the `Loc` views (0353 step 3, row 7)
+### Q216. (Q123 on Native-and-GPU-strata until 2026-11-18; Q184 on oscar until 2026-11-18) Spans' places read by the `Loc` views (0353 step 3, row 7) — done 2026-11-22
 
 Where `Extra` makes spans (`source`, `src_line`, `src_line_lf`, `tape_line`, a regex's matches, comments, `rx_span`),
 it also makes `line`, `end_line`, `col` and `docof` rows for every node and token, and `Batch::made` binds those in
@@ -5650,6 +5650,11 @@ place of the views: copies of tape answers. The views already cover the whole so
   `line` (its rows after the edited line moved) probe the lines of every document's diagnostics: 38 unchanged
   documents made, `line` by node 32 times and `visit_index` 4 (the profile's "a batch's documents made by a probe"),
   about 0.09 s of the edit's 4.0 s. The view reads a node's place off the tape and makes nothing.
+- **Done** (2026-11-22): in core.rerail's shape `Extra` makes place rows for its spans alone (`spans_only`). Each place
+  relation is bound as the `Loc` view's rows, then the spans' (`places::Placed`). A lookup by id goes to the side that
+  holds it (`granules::is_extra`), so a node's place is read off the tape. A span is a derived fact placed once where
+  it is made, so no byte ranges were written for the view. `a_span_reader_s_places_are_the_view_s_then_the_spans`
+  checks it; decision 0353's step 3 says what was built.
 
 
 ### Q264. (Q124 on Native-and-GPU-strata until 2026-11-18; Q185 on oscar until 2026-11-18) The device's `str_cmp` of made texts loses rows under load — done 2026-11-18
