@@ -1241,6 +1241,15 @@ fn the_nearest_kernels_atomics_are_loads_stores_and_one_maximum() {
     // source chooses none), so `stats`' address is uniform.
     let chosen: Vec<_> = (0..f.insts.len() as super::ssa::V).filter(|&x| f.inst(x).op == super::ssa::O::Select && f.inst(x).m == super::k::M::PTR).collect();
     assert!(chosen.is_empty(), "addresses chosen by lanes {chosen:?}:\n{}", ssa.listing());
+    // The loop's `steps < args.nodes`, which every running lane agrees on, an operand of `&&` with a lane's own
+    // `(v & FINAL) == 0`: a compare in lanes, not the first running lane's `steps` taken (a horizontal operation each
+    // round) and the compare's bool made a mask again.
+    let firsts: Vec<_> = (0..f.insts.len() as super::ssa::V).filter(|&x| f.inst(x).op == super::ssa::O::First).collect();
+    assert!(firsts.is_empty(), "values taken from the first running lane {firsts:?}:\n{}", ssa.listing());
+    // `w`'s load set in the running lanes, then `v` to it: one select each, neither reading through the other.
+    let sel = |x: super::ssa::V| f.inst(x).op == super::ssa::O::Select;
+    let chained: Vec<_> = (0..f.insts.len() as super::ssa::V).filter(|&x| sel(x) && [f.inst(x).b, f.inst(x).c].iter().any(|&y| sel(y) && f.inst(y).a == f.inst(x).a)).collect();
+    assert!(chained.is_empty(), "selects of selects under one mask {chained:?}:\n{}", ssa.listing());
     for w in [1u32, 2, 4, 8, 16, 32] {
         let (c, _) = super::cl::compile(&ssa, &k.name, w, &super::exec::places()).unwrap();
         let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
@@ -1264,6 +1273,9 @@ fn the_nearest_kernels_atomics_are_loads_stores_and_one_maximum() {
             let scaled = lines.iter().filter(|l| l.starts_with("ldr w") && l.to_lowercase().ends_with(", uxtw #2]")).count();
             let widened = lines.iter().filter(|l| l.starts_with("shl v") && l.contains(".2d")).count();
             assert!(w < 4 || (scaled >= w as usize && widened == 0), "w{w}: {scaled} scaled lane loads, {widened} indexes scaled to addresses in vectors:\n{code}");
+            // The thread's `cell` (its global id, a `uint32_t`) made as 32-bit lanes: no 64-bit lanes narrowed to it.
+            let wide = lines.iter().filter(|l| l.starts_with("add v") && l.contains(".2d")).count();
+            assert!(w < 4 || wide == 0, "w{w}: {wide} sums in 64-bit lanes:\n{code}");
         }
     }
 }

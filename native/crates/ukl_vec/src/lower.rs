@@ -1226,7 +1226,7 @@ impl L<'_> {
         let Some(b) = Builtin::named(&name) else { return self.err(f, "a call of an unknown function") };
         let arg = |k: usize| tys.get(k).cloned().unwrap_or(U32);
         let (ret, params) = match b {
-            Builtin::LocalId | Builtin::LocalSize | Builtin::GlobalId | Builtin::GlobalSize | Builtin::GroupId | Builtin::NumGroups => (U64, vec![U32]),
+            Builtin::LocalId | Builtin::LocalSize | Builtin::GlobalId | Builtin::GlobalSize | Builtin::GroupId | Builtin::NumGroups => (U32, vec![U32]),
             Builtin::SubGroupLocalId => (U32, vec![]),
             Builtin::Barrier | Builtin::SubGroupBarrier | Builtin::MemFence => (Ty::Void, vec![]),
             Builtin::Yield => (Ty::Void, vec![]),

@@ -506,6 +506,8 @@ struct Fb<'a, 't> {
     /// The values made once in the entry block past its constants and arguments (`in_entry`), by instruction.
     entry_vals: HashMap<(O, u8, u32, u32, u32, u32, u32), V>,
     entry_made: std::collections::HashSet<V>,
+    /// The node being made is an operand of an operation in lanes (`expr`): its value is the lanes', not made once.
+    lanes_parent: bool,
     entry: V,
     temps: u64,
     extra: Vec<u32>,
@@ -559,6 +561,7 @@ impl<'a, 't> Fb<'a, 't> {
             read_only: std::collections::HashSet::new(),
             entry_vals: HashMap::new(),
             entry_made: std::collections::HashSet::new(),
+            lanes_parent: false,
             entry: NONE,
             temps: 0,
             extra: Vec::new(),
@@ -1787,10 +1790,21 @@ impl<'a, 't> Fb<'a, 't> {
         self.assign(var, x);
     }
 
+    /// Node `n`'s value. A value the SIMD group agrees on is made once (`once_node`, from its lanes' first), unless it
+    /// is an operand of an operation in lanes: there it is the lanes' (`steps < n` of a loop's `(v & F) == 0 &&
+    /// steps < n` a compare in lanes, as written by hand, not the first lane's taken and its result splat back).
     fn expr(&mut self, n: usize) -> R<Option<V>> {
+        let once = self.once_node(n) && !self.lanes_parent;
+        let lanes = !once && matches!(self.v.kind(n), Kind::Bin | Kind::Un | Kind::Cast | Kind::Cond | Kind::Logic);
+        let outer = std::mem::replace(&mut self.lanes_parent, lanes);
+        let r = self.expr_of(n, once);
+        self.lanes_parent = outer;
+        r
+    }
+
+    fn expr_of(&mut self, n: usize, once: bool) -> R<Option<V>> {
         let v = self.v;
         let p = v.p(n);
-        let once = self.once_node(n);
         let kids: Vec<usize> = v.children(n).collect();
         Ok(Some(match v.kind(n) {
             Kind::Const => {
@@ -2283,6 +2297,24 @@ impl<'a, 't> Fb<'a, 't> {
                     continue;
                 }
                 let i = self.insts[x as usize];
+                // A select of a select under the same mask reads past it: `m ? (m ? a : b) : c` is `m ? a : c`, and
+                // `m ? a : (m ? b : c)` is `m ? a : c` (a value assigned in the lanes that run, then another
+                // variable set to it there: one select each, not a chain).
+                if i.op == O::Select {
+                    let m = self.resolve(i.a);
+                    let (b, c) = (self.resolve(i.b), self.resolve(i.c));
+                    let (ib, ic) = (self.insts[b as usize], self.insts[c as usize]);
+                    if b != x && ib.op == O::Select && self.resolve(ib.a) == m {
+                        self.insts[x as usize].b = ib.b;
+                        changed = true;
+                        continue;
+                    }
+                    if c != x && ic.op == O::Select && self.resolve(ic.a) == m {
+                        self.insts[x as usize].c = ic.c;
+                        changed = true;
+                        continue;
+                    }
+                }
                 let no = |u: V| self.insts[u as usize].op == O::NoLanes;
                 let to = match i.op {
                     // Masks with none, or of one mask twice (a loop's exits, found none once its phis are).
