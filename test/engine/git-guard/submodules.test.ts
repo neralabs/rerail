@@ -528,7 +528,8 @@ describe("Rerail's diffs start no program a submodule's config names", () => {
       const gits = [gitStderr(work, AUDIT_DIFF), gitStderr(work, SCAN_DIFF)];
 
       expect(answers.map(answer => answer.status === 0 ? undefined : answer.stderr)).toEqual(gits);
-      expect(gits.map(stderr => stderr === undefined)).toEqual([marked, marked]);
+      // Git for Windows answers for a `.git` another program holds open sharing nothing, marked or not, as measured.
+      expect(gits.map(stderr => stderr === undefined)).toEqual(process.platform === "win32" ? [true, true] : [marked, marked]);
     } finally {
       giveBack();
     }
