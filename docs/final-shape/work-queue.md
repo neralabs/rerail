@@ -10193,3 +10193,9 @@ Each choice is read by both sides' invariants in `notes/roll-up-44-cuda-support.
 - **Large reads cold** (0548): `CLIF_TAPE_READ` takes its linkage. Ours' six large reads are `UKL_COLD`.
 - **The launch**: ours' `dispatch_batch`, with theirs' choice of the batch format's interpreter.
 - **Generated view reads**: written again from the merged generator.
+
+### Q466. Roll-up 45 (build-and-test-loop-time c4d091a46f onto Pulling-it-all-together): what the merge chose
+
+The farm tooling (farm 54–57) is taken whole. In `test-remote`'s main, theirs' one line takes the new
+`--arch`/`--memory`/`--cpu-feature` results and keeps the single `pack_data` trees line both sides added
+(`notes/roll-up-45-build-and-test-loop-time.md`).

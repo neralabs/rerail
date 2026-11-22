@@ -1,0 +1,82 @@
+#!/usr/bin/python3
+"""What each farm host's CPU offers: its model, its vector units and their lengths, and every
+feature its kernel reports, under one set of names for macOS and Linux (README.md, "CPU features").
+
+    scripts/build/farm/features                  # every host and this Mac: model, vector units
+    scripts/build/farm/features sve2 [i8mm...]   # the hosts that have all of these, and why not the rest
+    scripts/build/farm/features --host NAME      # every feature of one host (`local`: this Mac)
+    scripts/build/farm/features --json           # all of it, for a script
+
+The names: Linux x86's flags as the kernel gives them (`avx2`, `avx512f`, `avx_vnni`, `amx_tile`);
+on arm64 Linux's (`sve`, `sve2`, `sme`, `bf16`, `i8mm`), with `neon` for asimd/AdvSIMD, `fp16`,
+`dotprod`, `fhm` and `rdm` for the asimd* ones, and macOS's FEAT_X as `x` (FEAT_SME2: `sme2`).
+Each host's record is from its last health probe (`status` probes); a stopped guest's from its last
+run, or none yet. A command run by `scripts/dev/test-remote` gets its host's as RERAIL_FARM_CPU_MODEL,
+RERAIL_FARM_CPU_FEATURES (space-separated), RERAIL_FARM_SVE_BITS and RERAIL_FARM_SME_BITS, and
+`test-remote --cpu-feature F` takes only hosts with F.
+"""
+import json
+import os
+import sys
+
+sys.path.insert(0, os.path.dirname(os.path.realpath(__file__)))
+import farm  # noqa: E402
+
+LOCAL = "local"
+
+
+def machines():
+    """(name, os, cpu record, health why or "") for this Mac and each enabled host."""
+    out = [(LOCAL, "macos", farm.local_cpu(), "")]
+    for h in farm.hosts():
+        if h.get("enabled", True):
+            health = farm.health(h)
+            out.append((h["name"], farm.host_os(h), farm.host_cpu(h), "" if health.get("ok") else health.get("why") or ""))
+    return out
+
+
+def main(argv):
+    if argv in (["-h"], ["--help"]):
+        print(__doc__.strip())
+        return
+    rows = machines()
+    if argv == ["--json"]:
+        print(json.dumps({n: dict(c, os=o) for n, o, c, _ in rows}, indent=1))
+        return
+    if argv[:1] == ["--host"]:
+        if len(argv) != 2:
+            sys.exit("features: --host NAME")
+        row = next((r for r in rows if r[0] == argv[1]), None)
+        if row is None:
+            sys.exit(f"features: {argv[1]} is not in the farm's configuration")
+        name, os_, c, why = row
+        if not c:
+            sys.exit(f"features: {name}: not known yet ({why or 'not probed since farm 57'})")
+        print(f"{name} ({os_}): {c.get('model') or 'a VM: the CPU model is not shown'}")
+        print(f"vector: {farm.vector_summary(c) or '-'}")
+        print("features: " + " ".join(c.get("features") or []))
+        return
+    if any(a.startswith("-") for a in argv):
+        sys.exit(__doc__.strip())
+    if argv:
+        want = [w.lower() for a in argv for w in a.split(",") if w]
+        for name, os_, c, why in rows:
+            if not c:
+                print(f"  {name}: not known yet{' (' + why + ')' if why else ''}")
+                continue
+            missing = [f for f in want if f not in c.get("features", [])]
+            state = "has them" if not missing else "lacks " + ", ".join(missing)
+            print(f"  {name} ({os_}): {state}{'; now not usable: ' + why if why and not missing else ''}")
+        if not any(c and all(f in c.get("features", []) for f in want) for _, _, c, _ in rows):
+            print("No machine of the farm has all of them (`features --host NAME` lists a host's names).")
+        return
+    for name, os_, c, why in rows:
+        if not c:
+            print(f"  {name} ({os_}): not known yet{' (' + why + ')' if why else ''}")
+            continue
+        model = c.get("model") or "a VM (model not shown)"
+        print(f"  {name} ({os_}, {model}): {farm.vector_summary(c) or '-'}")
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
