@@ -154,6 +154,11 @@ fn fill(store: &Path) -> std::result::Result<(), String> {
     let handle = crate::content_store::ContentStore::open(store).map_err(|e| e.to_string())?;
     handle.flush_atoms().map_err(|e| e.to_string())?;
     handle.written().map_err(|e| e.to_string())?;
+    // Its segments in one file each kind: every test store copies the template's files, and removes its copy at
+    // the end. Filled, the rule library's sources were one segment each (247 files, most of them one source), and
+    // copying and removing them was a fifth of a store-heavy test's thread (the reach index's, on m3).
+    handle.pack_object_segments().map_err(|e| e.to_string())?;
+    handle.pack_memo_pack().map_err(|e| e.to_string())?;
     Ok(())
 }
 
