@@ -605,7 +605,12 @@ fn a_string_with_templates_is_one_record() {
         "val h = \"${f(\"\"\"a\"\"\")} b ${c}\" + \"\"\"${d}\"\"\"\n",
         "val h = \"\"\"a ${f(\"b\")} \"c\" ${'d'}e\"\"\"\n",
     ];
-    for text in texts {
+    // A template at a block's edge (bytes 64, 65, 128): its `$`, its code and its `}` each
+    // across a block from the string's opener.
+    let at = |q: usize, line: &str| format!("//{}\n{line}\n", "x".repeat(q - line.find('$').expect("a dollar") - 3));
+    let lines = ["val v = \"c${a}d\"", "val v = \"\"\"${f(\"a\")} ${b}\"\"\"", "val v = \"c${ab} ${'d'}\""];
+    let edges: Vec<String> = [64, 65, 66, 128].iter().flat_map(|&q| lines.iter().map(move |l| at(q, l))).collect();
+    for text in texts.iter().copied().chain(edges.iter().map(String::as_str)) {
         let bytes = text.as_bytes();
         let want = lean_text(text).unwrap_or_else(|| panic!("the lean parser refuses {text:?}"));
         let program = &c.program.block_programs[0];
@@ -651,6 +656,17 @@ fn a_string_with_templates_is_one_record() {
         let nodes = rerail_compiler::stream::run(&c.program, bytes, &run).unwrap_or_else(|why| panic!("the interpreter refuses {text:?}: {why:?}"));
         let interp = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, bytes);
         assert_eq!(image_text(&interp).expect("a tape image"), want, "the interpreter, {text:?}");
+        // The CPU's tier 1: the interpreter's records and codes.
+        let cpu = c.parser.tier1.extract(bytes);
+        assert_eq!(cpu.totals, run.totals, "the CPU's tier 1 refuses, {text:?}");
+        let n = run.codes.len();
+        assert_eq!((&cpu.positions[0][..n.min(cpu.positions[0].len())], &cpu.positions[1][..n.min(cpu.positions[1].len())], &cpu.codes[..]), (&starts[..], &lasts[..], &run.codes[..]), "the CPU's tier 1, {text:?}\n{}", c.explain(text));
+        // The CPU's tier 2, over the interpreter's tier 1 and over its own: the lean parser's.
+        let nodes = c.parser.tier2.run(bytes, &run).unwrap_or_else(|why| panic!("the CPU's tier 2 refuses {text:?}: {why:?}\n{}", c.explain(text)));
+        let over = rerail_compiler::stream::image(&nodes, &c.program.readings.extras, TAG, bytes);
+        assert_eq!(image_text(&over).expect("a tape image"), want, "the CPU's tier 2 over the interpreter's tier 1, {text:?}");
+        let image = c.parser.image(bytes).unwrap_or_else(|why| panic!("the CPU refuses {text:?}: {why:?}\n{}", c.explain(text)));
+        assert_eq!(image_text(&image).expect("a tape image"), want, "the CPU, {text:?}");
     }
 }
 

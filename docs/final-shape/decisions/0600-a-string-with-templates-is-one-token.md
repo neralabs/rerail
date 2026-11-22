@@ -50,3 +50,20 @@ template's code where it reaches the `${` (`parse/expr.rs`, `string_literal`, `i
 - `kotlin.bitlex`: `tail`'s closer is `dq_close or t_dollar`, which means the same, so its `or` is its template.
 - `bitlex_lex_rust`: a closer whose `or` has its own length is one expression, and a region's comment shows its
   `or`.
+
+## What changed (step 2)
+
+- Both tiers make one level of templates: a template in a template's code refuses the file (the interpreter's
+  walk too). Kotlin's grammar refuses that already ("a `${…}` template with … a template").
+- `native_cpu_block`, the CPU's tier 1:
+  - A template's arm and a resuming reader's arm set flags in the exit's refusal value, whose sign alone refuses
+    (`TEMPLATE_FLAG`, `RESUME_FLAG`). Only those rules' exits test them.
+  - The open record's cursor is a word of the file's (`open_slot`, `RecPart::open`), stored and read only on
+    those paths. A read that resumes writes its last into the open record, and stays where it is: its own record,
+    written, is the next token's place. The gap marks' state is as the token before left it.
+- `native_cpu_stream`, the CPU's tier 2: `Mem::Strings` counts the strings open over a template's code.
+  - A template reader's closer piece ends at the closer's own last (`closer_last`).
+  - With a string open, `split_resume` enters the resuming reader at its opener where that comes before the next
+    record. The opener's code is the reader's tag.
+- The test also checks the CPU's records and codes, and its tier 2 over both tier 1s, with templates across
+  blocks' edges.

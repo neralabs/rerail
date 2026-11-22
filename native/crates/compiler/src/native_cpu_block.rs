@@ -3530,6 +3530,18 @@ fn gap_last(
     f.block_params(done)[0]
 }
 
+/// The record a template left open (`RecPart::open`, decision 0600): a word of its own, zero,
+/// where a reader resumes a string's record; none else.
+fn open_slot(f: &mut FunctionBuilder<'_>, r: &crate::records::Records) -> Option<cranelift_codegen::ir::StackSlot> {
+    if !r.readers.iter().any(|x| x.resumes) {
+        return None;
+    }
+    let slot = f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8, 3));
+    let zero = f.ins().iconst(types::I64, 0);
+    f.ins().stack_store(zero, slot, 0);
+    Some(slot)
+}
+
 /// A token's record at cursor `cur`: its start and last where the loop made them, and its code,
 /// at once at its end, as the lean lexer writes its `Tok` (`out.add(len).write(..)`): adjacent
 /// stores in rows (`RecordLayout::Rows`), which rustc pairs as it does lean's fields (`stp`).
@@ -5492,7 +5504,10 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     // The end and the count tests in one pass (`read_fn`), as a lexer's string
                     // reader: its last and its hits on to the other tests (`tested`'s rest).
                     // A closer to its last (`ReadArm::last`): read here, a word at a time.
-                    let read = rd.calls.iter().find(|x| x.0 == READ_CALL | (k as u16) << 3 | j as u16).filter(|_| a.last.is_none());
+                    // A template's arm, or one that resumes (decision 0600): its flags from its
+                    // closer, here (`TEMPLATE_FLAG`), so no call.
+                    let flagged = a.template.is_some() || reader.resumes;
+                    let read = rd.calls.iter().find(|x| x.0 == READ_CALL | (k as u16) << 3 | j as u16).filter(|_| a.last.is_none() && !flagged);
                     // A short reader's (`RuleMode::Short`): the read's first window inline, as
                     // `read_fn`'s, and a token whose closer is past it, or whose bytes the
                     // counts need, its whole function's call, returned. As a lexer reads a short
@@ -5602,7 +5617,7 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                     // A short reader's (`RuleMode::Short`): its closer's 64 bytes from the token's
                     // second inline, as a lexer's search from where it is, and a region past them
                     // its whole function's call, returned.
-                    let whole = match (mode, rd.bytes.filter(|(b, _)| b.can(a.closer) && a.last.is_none())) {
+                    let whole = match (mode, rd.bytes.filter(|(b, _)| b.can(a.closer) && a.last.is_none() && !flagged)) {
                         (RuleMode::Short(_), Some(bytes)) => rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16).map(|w| (w, bytes)),
                         (RuleMode::Calls, Some(bytes)) if in_arm => rd.calls.iter().find(|x| x.0 == LONG_CALL | k as u16).map(|w| (w, bytes)),
                         _ => None,
@@ -5708,7 +5723,27 @@ fn rule_last(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Recor
                             f.block_params(lfound)[0]
                         }
                     };
-                    f.ins().jump(ended, &[l.into(), tag.into(), nohits.into()]);
+                    // The flags (decision 0600): a close at the template's `$`
+                    // (`ReadArm::template`), and a read that resumes a string's record
+                    // (`Reader::resumes`), in the refusal's value, which only its sign refuses.
+                    let flags = if flagged {
+                        let resumes = f.ins().iconst(types::I64, if reader.resumes { RESUME_FLAG } else { 0 });
+                        match a.template {
+                            Some(t) => {
+                                let q = f.ins().ushr_imm(at, 6);
+                                let x = word_at(f, q, t, heads);
+                                let sh = f.ins().band_imm(at, 63);
+                                let b = f.ins().ushr(x, sh);
+                                let b = f.ins().band_imm(b, 1);
+                                let b = f.ins().imul_imm(b, TEMPLATE_FLAG);
+                                f.ins().bor(b, resumes)
+                            }
+                            None => resumes,
+                        }
+                    } else {
+                        nohits
+                    };
+                    f.ins().jump(ended, &[l.into(), tag.into(), flags.into()]);
                     f.switch_to_block(none);
                     read_none(f, a.none, c, s, tag, nohits, ended);
                     f.switch_to_block(not);
@@ -6921,6 +6956,15 @@ fn record_file(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &Rec
 /// yet in `pending` (`from`), and the word of the grammar token before (`unless after`); six.
 const STATE_WORDS: usize = 6;
 
+/// In a token's refusal (its sign the refusal, `rule_last`'s exits): its read closed at a
+/// template's `$` (`ReadArm::template`, decision 0600): its record stays open over the
+/// template's code.
+const TEMPLATE_FLAG: i64 = 2;
+
+/// In a token's refusal: its read resumes a string's record (`Reader::resumes`): it makes no
+/// record, and ends the open one.
+const RESUME_FLAG: i64 = 4;
+
 /// In the marks so far (`pending`): the cursor's block has a gap mark's bit (`loop_marks`'
 /// lift), set by the refill. A token whose `pending` and hits are zero then takes no merge of
 /// the marks, and its gap test reads no word (`record_tokens`). Past every mark's bit.
@@ -7181,6 +7225,9 @@ struct BlockRegs {
 struct RecPart {
     ready: Value,
     init: [Value; STATE_WORDS],
+    /// The record a template left open (decision 0600), its cursor plus one (0: none): a word
+    /// of the file's, made zero at its start, which the parts share (`open_slot`).
+    open: Option<cranelift_codegen::ir::StackSlot>,
     /// The block the body just made and its refill words (`Hand`), where it hands them.
     hand: Option<Hand>,
 }
@@ -7300,6 +7347,13 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     let stores = MemFlags::new().with_notrap();
     let zero = f.ins().iconst(types::I64, 0);
     let tables = c.tables;
+    // The record a template left open (decision 0600): the parts' word, or the loop's own, made
+    // zero here, once a file. Only a template's read and a read that resumes touch it, as the
+    // lean lexer's string reader keeps its string over the template's code.
+    let open_slot = match part.as_ref() {
+        Some(p) => p.open,
+        None => open_slot(f, r),
+    };
     // The file's last block and its bytes' bits (`valid`), once a file, as the lean lexer's
     // `valid`: the refill cuts its starts by them, no token compares its start with the length.
     let file_end = walked.map(|_| {
@@ -8351,6 +8405,53 @@ fn record_tokens(f: &mut FunctionBuilder<'_>, r: &crate::records::Records, t: &R
     }
     write_record(f, c, stores, cv[0], start_kept.then_some(s), last_kept, code);
     let mut k1 = c.step(f, cv[0]);
+    // A read whose flags are set (decision 0600, `TEMPLATE_FLAG`): only a template's arm's or a
+    // resuming reader's, so a rare class of no such rule tests none. A template's close keeps
+    // the record's cursor; a read that resumes writes its last into the open record, and
+    // stays where it is (its record, written, is the next token's place), the gap marks' state
+    // as the token before left it.
+    let flaggable = |k: usize| matches!(r.rules.get(k), Some(&crate::records::EndRule::Read(i)) if r.readers[usize::from(i)].resumes || r.readers[usize::from(i)].arms.iter().any(|a| a.template.is_some()));
+    let may_flag = !common && match side {
+        Side::Rare(Some(x)) => flaggable(x.rule),
+        Side::Fused => false,
+        _ => (0..r.rules.len()).any(flaggable),
+    };
+    if let (true, Some(slot), Some(flags)) = (may_flag, open_slot, refused) {
+        let fl = f.ins().band_imm(flags, TEMPLATE_FLAG | RESUME_FLAG);
+        let (cold, resume, opens, patch, set, nested, join) = (f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block(), f.create_block());
+        for _ in 0..4 {
+            f.append_block_param(join, types::I64);
+        }
+        f.ins().brif(fl, cold, &[], join, &[k1.into(), pending.into(), from.into(), word_before.into()]);
+        f.switch_to_block(cold);
+        f.set_cold_block(cold);
+        let open = f.ins().stack_load(types::I64, slot, 0);
+        let res = f.ins().band_imm(fl, RESUME_FLAG);
+        f.ins().brif(res, resume, &[], opens, &[]);
+        f.switch_to_block(resume);
+        f.ins().brif(open, patch, &[], nested, &[]);
+        f.switch_to_block(patch);
+        let cur = f.ins().iadd_imm(open, -1);
+        let (a, o) = c.at(f, crate::records::FIELD_LAST, cur);
+        f.ins().istore32(stores, l, a, o);
+        let again = f.ins().band_imm(fl, TEMPLATE_FLAG);
+        let keep = f.ins().select(again, open, zero);
+        f.ins().stack_store(keep, slot, 0);
+        f.ins().jump(join, &[cv[0].into(), cv[3].into(), cv[4].into(), cv[5].into()]);
+        // A template's close: none open, its cursor; a template in a template's code refuses.
+        f.switch_to_block(opens);
+        f.ins().brif(open, nested, &[], set, &[]);
+        f.switch_to_block(set);
+        let cur1 = f.ins().iadd_imm(cv[0], 1);
+        f.ins().stack_store(cur1, slot, 0);
+        f.ins().jump(join, &[k1.into(), pending.into(), from.into(), word_before.into()]);
+        f.switch_to_block(nested);
+        let all = f.ins().iconst(types::I64, -1);
+        f.ins().jump(finish, &[all.into(), cv[0].into(), cv[3].into(), cv[4].into()]);
+        f.switch_to_block(join);
+        let p = f.block_params(join).to_vec();
+        (k1, pending, from, word_before) = (p[0], p[1], p[2], p[3]);
+    }
     // A region read in parts (decision 0323): its parts' and closer's records after its
     // opener's, and the loop on past its closer. In its rule's own tail, or a tail it may
     // reach; never the fused rules'. Each reader in parts in turn: a token that opens none of
@@ -9782,6 +9883,8 @@ fn forward(jit: Jit<'_>, native: &BlockNative, made: &BlockNative, slot_of: &[u1
             .chain(rowed.then_some(scratch.into()))
             .chain(state.iter().map(|&v| v.into()))
             .collect();
+        // The record a template left open (decision 0600), zero at the row's start.
+        let open_part = records.and_then(|(rec, _, _)| open_slot(&mut f, rec));
         // The row's record slot (`REC_SLOT`): its columns, and the token loop's state at zero.
         let rec_slot = (!part_calls.is_empty()).then(|| f.create_sized_stack_slot(cranelift_codegen::ir::StackSlotData::new(cranelift_codegen::ir::StackSlotKind::ExplicitSlot, 8 * REC_SLOT as u32, 3)));
         let callee_of = |f: &mut FunctionBuilder<'_>, k: usize| {
@@ -9981,7 +10084,7 @@ fn forward(jit: Jit<'_>, native: &BlockNative, made: &BlockNative, slot_of: &[u1
             let ready = tp[params + STATE_WORDS];
             let init: [Value; STATE_WORDS] = std::array::from_fn(|k| tp[params + k]);
             let hand = (handed > 0).then(|| Hand { block: tp[params + STATE_WORDS + 2], outs: lp.hand.clone(), words: tp[params + STATE_WORDS + 3..].to_vec() });
-            record_tokens(&mut f, rec, t, native.extracts.len(), outputs, &cols, Some(RecPart { ready, init, hand }), Some((&bytewise, &consts, &byte_ids)), after, &mut heads);
+            record_tokens(&mut f, rec, t, native.extracts.len(), outputs, &cols, Some(RecPart { ready, init, hand, open: open_part }), Some((&bytewise, &consts, &byte_ids)), after, &mut heads);
             reads_back += cols.reads_back.get();
             arms += cols.arms.get();
             arm_rules.extend(cols.arm_rules.borrow().iter().copied());

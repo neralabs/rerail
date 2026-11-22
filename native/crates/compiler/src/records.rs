@@ -775,6 +775,8 @@ pub fn walk(records: &Records, skip: u16, bytes: &[u8], outputs: &[Vec<u64>]) ->
                     continue;
                 }
                 if template {
+                    // A template in a template's code: refused, as by the CPU's loop.
+                    read |= !open.is_empty();
                     open.push(starts.len());
                 }
                 l
