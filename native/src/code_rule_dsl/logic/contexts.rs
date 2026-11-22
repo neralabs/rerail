@@ -274,7 +274,7 @@ fn plan(v: &Version, d: &Declared) -> Plan {
         let mut seen: BTreeSet<String> = todo.iter().cloned().collect();
         while let Some(rel) = todo.pop() {
             let Some(id) = v.rel(&rel) else { continue };
-            for r in v.heads(id) {
+            for r in v.heads(id).filter(|&r| !reads_own_export(v, d, &c.name, r)) {
                 for a in r.reads() {
                     let x = v.rel_name(a.rel());
                     if !stop(x) && set.insert(x.to_owned()) && seen.insert(x.to_owned()) {
@@ -369,6 +369,16 @@ fn view_nodes<'v>(v: &'v Version, d: &Declared, pass: &str, r: RuleRef<'v>) -> V
     out
 }
 
+/// Whether rule `r` reads what context `c` exports, by another pass's name for it: a host's rule counting the
+/// context's rows in a relation of its own (rule 5, `name_node(n) :- guest_names(n)`), so no rule of the context's
+/// instance of that relation.
+fn reads_own_export(v: &Version, d: &Declared, c: &str, r: RuleRef<'_>) -> bool {
+    r.reads().any(|a| {
+        let x = v.rel_name(a.rel());
+        d.reads.iter().any(|read| read.source == c && read.reader != c && read.local == x)
+    })
+}
+
 /// Context `c`'s nodes (`NODES`): its roots, and what is within them where the program reads trees (`within`).
 fn write_nodes(v: &Version, d: &Declared, c: &Context, b: &mut Builder<'_>) -> Result<(), Error> {
     let nodes = instance(&c.name, NODES);
@@ -405,7 +415,7 @@ fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<
         let nodes = instance(c, NODES);
         for rel in own {
             let Some(id) = v.rel(rel) else { continue };
-            for r in v.heads(id) {
+            for r in v.heads(id).filter(|&r| !reads_own_export(v, d, c, r)) {
                 let guards = view_nodes(v, d, c, r);
                 let mut rb = b.rewrite(v, r, &mut Renaming { v, d, pass: c, own: Some(own) });
                 for t in &guards {

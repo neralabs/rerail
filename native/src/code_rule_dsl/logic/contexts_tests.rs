@@ -154,3 +154,16 @@ fn a_contexts_read_of_its_hosts_node_binds_only_its_own() {
     let names = rules_of(&v, "rr_cx_annotation_ann_names");
     assert!(names.len() == 1 && names[0].contains("rr_cx_annotation_rr_nodes($n)") && !names[0].contains("rr_cx_annotation_rr_nodes($h)"), "{}", v.show());
 }
+
+/// 0597 step 3, rung 3.3: a host relation that counts the context's rows says so in a rule of its own (rule 5), reading
+/// the context's export of the same relation: `name_node` holds the host's names and the annotations'. That rule is
+/// the host's: the context's instance of `name_node` is its own rule over its nodes, not a read of itself.
+#[test]
+fn a_hosts_rule_reading_a_contexts_export_is_no_rule_of_the_context() {
+    let text = PROGRAM.replace("exports ann_names", "exports ann_names, name_node").replace("name_node(n) :- kind(n, \"identifier\").", "name_node(n) :- kind(n, \"identifier\").\nname_node(n) :- guest_names(n).") + ".from annotation name_node as guest_names\n";
+    let v = parse_version(&text).unwrap();
+    let inner = rules_of(&v, "rr_cx_annotation_name_node");
+    assert!(inner.len() == 1 && inner[0].contains("kind($n, \"identifier\")"), "{}", v.show());
+    let host = rules_of(&v, "name_node");
+    assert!(host.len() == 2 && host.iter().any(|r| r.contains("rr_cx_annotation_name_node($n)")), "{}", v.show());
+}
