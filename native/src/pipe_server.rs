@@ -16,15 +16,53 @@ pub struct NamedPipeServer {
     pub started_at: Option<f64>,
 }
 
+/// [`pipe_server`], run on a thread of the host's worker pool: the caller's own thread runs on while the lookup waits
+/// for a busy pipe. Not in a `headless` build, where `#[napi]` derives nothing (napi-derive `noop`), so
+/// `NamedPipeServer` cannot be handed to a host.
+#[cfg(not(feature = "headless"))]
+#[napi]
+pub fn named_pipe_server(
+    path: String,
+    timeout_ms: u32,
+) -> napi::bindgen_prelude::AsyncTask<NamedPipeServerTask> {
+    napi::bindgen_prelude::AsyncTask::new(NamedPipeServerTask { path, timeout_ms })
+}
+
+/// [`named_pipe_server`]'s work, with what it was asked.
+#[cfg(not(feature = "headless"))]
+pub struct NamedPipeServerTask {
+    path: String,
+    timeout_ms: u32,
+}
+
+#[cfg(not(feature = "headless"))]
+impl napi::Task for NamedPipeServerTask {
+    type Output = Option<NamedPipeServer>;
+    type JsValue = Option<NamedPipeServer>;
+
+    fn compute(&mut self) -> napi::Result<Option<NamedPipeServer>> {
+        crate::panic_boundary::contain_panic(std::any::type_name::<Self>(), || {
+            Ok(pipe_server(&self.path, self.timeout_ms))
+        })
+    }
+
+    fn resolve(
+        &mut self,
+        _env: napi::Env,
+        output: Option<NamedPipeServer>,
+    ) -> napi::Result<Option<NamedPipeServer>> {
+        Ok(output)
+    }
+}
+
 /// The process holding the server end of the Windows named pipe `path`, and when it started. Opening the pipe takes
 /// one of its instances as a client and sends nothing; while other clients hold every instance it waits for one to free
-/// and opens again until `timeout_ms` has passed ([`open_within`]), and then says no pid. Null where no pipe of that
+/// and opens again until `timeout_ms` has passed ([`open_within`]), and then says no pid. None where no pipe of that
 /// name exists or this user may not open it, and on every other system, which has no named pipes.
-#[napi]
-pub fn named_pipe_server(path: String, timeout_ms: u32) -> Option<NamedPipeServer> {
+fn pipe_server(path: &str, timeout_ms: u32) -> Option<NamedPipeServer> {
     #[cfg(windows)]
     {
-        windows::named_pipe_server(&path, timeout_ms)
+        windows::named_pipe_server(path, timeout_ms)
     }
     #[cfg(not(windows))]
     {

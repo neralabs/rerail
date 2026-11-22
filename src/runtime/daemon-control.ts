@@ -166,7 +166,7 @@ async function provenEnginePipe(pipe: NamedPipe, deadline: number | undefined): 
   const { socketPath, machine } = pipe;
   const { state, accessToken } = capabilityToProve(pipe);
   if (provedSinceArrival(pipe, accessToken, deadline)) return { socketPath, accessToken };
-  const holder = machine.pipeServer(socketPath, ENGINE_ANSWER_WAIT_MS);
+  const holder = await machine.pipeServer(socketPath, ENGINE_ANSWER_WAIT_MS);
   if (heldByRecordedDaemon(holder, state)) return { socketPath, accessToken };
   const answerBy = Date.now() + ENGINE_ANSWER_WAIT_MS;
   const answer = pipeStayedBusy(holder) ? "silent" : await machine.capabilityProof(socketPath, accessToken, ENGINE_ANSWER_WAIT_MS);
@@ -669,9 +669,9 @@ export interface DaemonMachine {
   /**
    * Windows: the process holding the server end of the named pipe `socketPath` and when it started, as Windows records
    * them, opening again while other clients hold every instance until `timeoutMs` has passed, with no pid once it has;
-   * undefined where Windows does not say (`pipeServer`).
+   * undefined where Windows does not say (`pipeServer`). This process's own thread runs on while it waits.
    */
-  pipeServer(socketPath: string, timeoutMs: number): PipeServer | undefined;
+  pipeServer(socketPath: string, timeoutMs: number): Promise<PipeServer | undefined>;
   /** Removes the main-instance record when it names `pid` (`forgetMainInstanceHolder`). */
   forgetMainInstanceHolder(pid: number): void;
   /**

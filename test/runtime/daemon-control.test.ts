@@ -835,7 +835,7 @@ describe("a state file Windows left behind", () => {
         asked.push([socketPath, accessToken, timeoutMs]);
         return answer;
       },
-      pipeServer: (socketPath, timeoutMs) => {
+      pipeServer: async (socketPath, timeoutMs) => {
         held.push([socketPath, timeoutMs]);
         return server;
       },
@@ -880,9 +880,9 @@ describe("a state file Windows left behind", () => {
      */
     const slowed = (machine: DaemonMachine, advance: (ms: number) => void, freedAfterMs: number, proofMs = 0): DaemonMachine => ({
       ...machine,
-      pipeServer: (socketPath, timeoutMs) => {
+      pipeServer: async (socketPath, timeoutMs) => {
         advance(freedAfterMs);
-        return machine.pipeServer(socketPath, timeoutMs);
+        return await machine.pipeServer(socketPath, timeoutMs);
       },
       capabilityProof: async (socketPath, accessToken, timeoutMs) => {
         advance(proofMs);

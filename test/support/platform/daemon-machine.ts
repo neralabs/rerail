@@ -18,7 +18,7 @@ export function fakeMachine(platform: NodeJS.Platform, overrides: Partial<Daemon
     env: {},
     pipes: () => [],
     capabilityProof: async () => "refused",
-    pipeServer: () => undefined,
+    pipeServer: async () => undefined,
     forgetMainInstanceHolder: () => undefined,
     mainInstanceLockHeld: () => undefined,
     homeDaemonLockHeld: () => undefined,

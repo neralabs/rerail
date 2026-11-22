@@ -555,10 +555,10 @@ export interface NativeBinding {
   pathsOwnedByCurrentUser?(paths: string[]): boolean;
   /**
    * Windows only: the process holding the server end of the named pipe `path` and when it started, opening again while
-   * other clients hold every instance until `timeoutMs` has passed; null where no pipe of that name takes a connection,
-   * and on every other system. A binary built before it lacks it.
+   * other clients hold every instance until `timeoutMs` has passed, on a thread of the worker pool; null where no pipe
+   * of that name takes a connection, and on every other system. A binary built before it lacks it.
    */
-  namedPipeServer?(path: string, timeoutMs: number): NativeNamedPipeServer | null;
+  namedPipeServer?(path: string, timeoutMs: number): Promise<NativeNamedPipeServer | null>;
   /** The content-store file name this binary's store schema owns (`content-v5.sqlite` at store floor 5). */
   contentStoreFileName(): string;
   /** Locks `path` exclusively, creating the file; null while any other handle, in any process, holds it. */

@@ -1,4 +1,5 @@
 import { spawnSync } from "node:child_process";
+import { once } from "node:events";
 import { closeSync, existsSync, mkdirSync, openSync } from "node:fs";
 import { chmod, lstat, mkdir, mkdtemp, symlink, writeFile } from "node:fs/promises";
 import { ClientRequest, createServer as createHttpServer } from "node:http";
@@ -526,7 +527,7 @@ describe("the holder of a Windows named pipe", () => {
     const server = createServer(socket => socket.destroy());
     await new Promise<void>(resolve => server.listen(pipe, resolve));
     try {
-      const holder = pipeServer(pipe, 1_000);
+      const holder = await pipeServer(pipe, 1_000);
       expect(holder?.pid).toBe(process.pid);
       // Node starts a moment after Windows creates its process.
       const nodeStarted = Date.now() - process.uptime() * 1_000;
@@ -535,36 +536,33 @@ describe("the holder of a Windows named pipe", () => {
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()));
     }
-    expect(pipeServer(pipe, 0)).toBeUndefined();
+    expect(await pipeServer(pipe, 0)).toBeUndefined();
   });
 
-  it.runIf(process.platform === "win32")("is not named while another client keeps the pipe's one instance open for the whole wait, and says so with no pid", async () => {
+  it.runIf(process.platform === "win32")("is not named while another client keeps the pipe's one instance open for the whole wait, says so with no pid, and leaves this process's timers running meanwhile", async () => {
     const pipe = String.raw`\\.\pipe\rerail-holder-busy-${process.pid}-${Date.now()}`;
-    // Node reads how many instances a pipe server keeps listening from this variable as it listens.
-    const instances = process.env.NODE_PENDING_PIPE_INSTANCES;
-    process.env.NODE_PENDING_PIPE_INSTANCES = "1";
-    const server = createServer(socket => socket.destroy());
+    // Another process holds the pipe's one instance, which it never lists again once a client takes it.
+    const holder = await oneInstanceHolder(pipe);
+    const client = connect(pipe).on("error", () => undefined);
     try {
-      await new Promise<void>(resolve => server.listen(pipe, resolve));
-    } finally {
-      if (instances === undefined) delete process.env.NODE_PENDING_PIPE_INSTANCES;
-      else process.env.NODE_PENDING_PIPE_INSTANCES = instances;
-    }
-    try {
-      // The client opens the one instance before connect returns, and the server lists another only once this process's
-      // event loop runs again, which each synchronous lookup below holds up for its whole wait.
-      const client = connect(pipe).on("error", () => undefined);
-      const answers = [pipeServer(pipe, 0), pipeServer(pipe, 100)];
-      client.destroy();
+      await once(client, "connect");
+      const fired: number[] = [];
+      setTimeout(() => fired.push(Date.now()), 50);
+      const answers = [await pipeServer(pipe, 0), await pipeServer(pipe, 1_000)];
+      const answeredAt = Date.now();
       // An answer with no pid, which tells a pipe kept busy from one no one holds.
       expect(answers.map(answer => answer !== undefined && typeof answer.pid !== "number")).toEqual([true, true]);
+      // The timer fired while the lookup waited for a free instance, before its answer.
+      expect(fired).toHaveLength(1);
+      expect(fired[0]).toBeLessThan(answeredAt);
     } finally {
-      await new Promise<void>(resolve => server.close(() => resolve()));
+      client.destroy();
+      await holder.end();
     }
   });
 
-  it.runIf(process.platform !== "win32")("is no one off Windows, which has no named pipes", () => {
-    expect(pipeServer(String.raw`\\.\pipe\rerail-holder-${process.pid}`, 0)).toBeUndefined();
+  it.runIf(process.platform !== "win32")("is no one off Windows, which has no named pipes", async () => {
+    expect(await pipeServer(String.raw`\\.\pipe\rerail-holder-${process.pid}`, 0)).toBeUndefined();
   });
 });
 

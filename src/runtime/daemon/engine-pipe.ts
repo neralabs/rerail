@@ -91,14 +91,15 @@ export type PipeServer = NativeNamedPipeServer;
 /**
  * The process holding the server end of the Windows named pipe at `path` and when it started, as Windows records them
  * for each pipe instance (the native binding's `namedPipeServer`). While other clients hold every instance it waits for
- * one to free and opens again, as Node's own client does, until `timeoutMs` has passed. Any local user can create a pipe
- * of any name, but not one Windows records as another process's. Undefined where no such pipe takes a connection, or
- * where the binding predates the question, will not load in this process or throws, so the engine's proof decides; the
- * first load failure or throw is reported ({@link reportPipeServerFailure}).
+ * one to free and opens again, as Node's own client does, until `timeoutMs` has passed, on a thread of the worker pool,
+ * so this process's own thread and its timers run on meanwhile. Any local user can create a pipe of any name, but not
+ * one Windows records as another process's. Undefined where no such pipe takes a connection, or where the binding
+ * predates the question, will not load in this process or throws, so the engine's proof decides; the first load failure
+ * or throw is reported ({@link reportPipeServerFailure}).
  */
-export function pipeServer(path: string, timeoutMs: number): PipeServer | undefined {
+export async function pipeServer(path: string, timeoutMs: number): Promise<PipeServer | undefined> {
   try {
-    return loadNativeBinding().namedPipeServer?.(path, timeoutMs) ?? undefined;
+    return await loadNativeBinding().namedPipeServer?.(path, timeoutMs) ?? undefined;
   } catch (error) {
     reportPipeServerFailure(path, error);
     return undefined;
