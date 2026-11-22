@@ -27,9 +27,11 @@
 //! bounded binary search; every candidate's keys are compared whole, so a collision costs a comparison, never a row.
 //! A relation's upload (`DevRel`) and each of its sorts (`DevIndex`) stay on the device while the engine holds them.
 //!
-//! **One submission.** A `Batch` encodes every stage of every rule it is given into one submission of the device
-//! layer's queue (serial: each dispatch sees the last one's writes), and commits a new one only when the launch budget
-//! of one would be exceeded. The kernels are UKL (`join_stages.uglykl`, `chunk_views.uglykl`; decision 0440 step C),
+//! **One submission, a launch a level.** A `Batch` encodes every stage of every rule it is given into one submission
+//! of the device layer's queue (serial: each dispatch sees the last one's writes). Its stages are queued and launched
+//! a level at a time (`Batch::flush`, decision 0601): every rule's stage at one depth in one launch of each kernel,
+//! each job's buffers reached by their device addresses, one scan of all their counts; so a stratum's launches are
+//! its levels', not its rules'. Every launch counts in the evaluation's launch budget. The kernels are UKL (`join_stages.uglykl`, `chunk_views.uglykl`; decision 0440 step C),
 //! on every backend; a view read in place (decision 0353 step 4d) is read through its directory's addresses, which
 //! only a device with them has (`ViewInPlace`, made on Metal alone). A table's capacity is fixed when its stage is
 //! encoded; a stage whose rows overflow it writes none past it and reports its true count, and the caller runs it again
@@ -41,7 +43,7 @@
 //! address) lies in a buffer of its own (`Batch::block`), which the batch keeps until its work completes.
 
 use super::Error;
-use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, encode_sort, groups, pipeline, scratch, simd_group};
+use rerail_accel::gpu::join::{FREE, Held, Pass, Scan, Submitted, Width, encode_order, groups, pipeline, scratch, simd_group};
 use rerail_device::device::Buffer;
 use std::sync::Arc;
 
@@ -296,8 +298,9 @@ fn chunk_views_source() -> String {
 /// (`MatcherDevice::kernels_ahead`): each asked for as its use asks for it (`pipeline`), so its use finds it.
 pub(in crate::code_rule_dsl) fn kernels_ahead() -> Vec<super::device::KernelAhead> {
     const JOIN: [&str; 21] = [
-        "ix_bucket", "ix_place", "stage_count", "stage_scatter", "stage_map", "scan_count", "scan_scatter", "witness_count", "row_text", "row_scatter", "rows_copy",
-        "dedup_claim", "dedup_clear", "dedup_mark", "dedup_scatter", "lat_best", "lat_claim", "lat_clear", "lat_hclear", "lat_merge", "lat_rehash",
+        "ix_bucket_all", "ix_place_all", "stage_count_all", "stage_scatter_all", "stage_map_all", "scan_count_all", "scan_scatter_all", "witness_count_all", "row_text_all",
+        "row_scatter_all", "rows_copy_all", "dedup_claim_all", "dedup_clear_all", "dedup_mark_all", "dedup_scatter_all", "lat_best", "lat_claim", "lat_clear", "lat_hclear",
+        "lat_merge", "lat_rehash",
     ];
     let made = |variant: &'static str, name: &'static str, source: fn() -> String| -> super::device::KernelAhead {
         let make = move || {
@@ -341,7 +344,7 @@ static SOURCE: std::sync::LazyLock<String> = std::sync::LazyLock::new(|| {
 /// The join kernels that read a view (`vread`): each compiled for the tape format of the views it reads (decision 0576),
 /// the view's format field a constant, so it holds that format's reads alone. On an Arc 140V `stage_count` compiled in
 /// 36 s over every format, 16 s over format 16's and 7 s over format 15's.
-const VIEW_KERNELS: [&str; 7] = ["ix_bucket", "stage_count", "stage_scatter", "scan_count", "scan_scatter", "witness_count", "rows_copy"];
+const VIEW_KERNELS: [&str; 7] = ["ix_bucket_all", "stage_count_all", "stage_scatter_all", "scan_count_all", "scan_scatter_all", "witness_count_all", "rows_copy_all"];
 
 /// The join kernels' source for views of tape format `format` (0: of several, each view read tells its own).
 fn view_source(format: u32) -> String {
@@ -1087,16 +1090,6 @@ impl Words {
     }
 }
 
-/// A stage whose table's space is past this many rows has its grids sized on the device (`Scan::size`): below it,
-/// the threads past the rows are fewer than the sizing's own dispatch costs. `RERAIL_DEVICE_SIZED_MIN` sets it
-/// (0: every stage's, to test them), `RERAIL_DEVICE_SIZED=off` turns the sizing off.
-fn sized_min() -> usize {
-    rerail_prof::code_rule_dsl::logic::profile::setting(|| match std::env::var("RERAIL_DEVICE_SIZED") {
-        Ok(v) if v == "off" => usize::MAX,
-        _ => std::env::var("RERAIL_DEVICE_SIZED_MIN").ok().and_then(|v| v.parse().ok()).unwrap_or(4096),
-    })
-}
-
 /// An automaton the device reads (a test's table, a regex's replacement automata) where the automata block holds it
 /// (decision 0478 step 2c): the block's device buffer (a no-copy wrap), bound at the automaton's offset. Nothing is
 /// uploaded; the automata it lies in are held while it is.
@@ -1180,16 +1173,20 @@ pub(in crate::code_rule_dsl) struct Done {
     pub(in crate::code_rule_dsl) submissions: u32,
     pub(in crate::code_rule_dsl) dispatches: u32,
     pub(in crate::code_rule_dsl) gpu_seconds: f64,
-    /// Stages whose grids were sized on the device (`Scan::size`).
-    pub(in crate::code_rule_dsl) sized: u32,
+    /// Levels launched (`Batch::flush`): each kernel once for the jobs queued between two dependencies.
+    pub(in crate::code_rule_dsl) levels: u32,
     /// Stages screened by their relation's kept filter (`Stage::screen`, decision 0488).
     pub(in crate::code_rule_dsl) screened: u32,
 }
 
-/// Work encoded into one submission at a time, committed when the launch budget of one is near and at `finish`;
-/// every submission runs on the process's queue, in order.
+/// Work encoded into one submission at a time, committed at `commit_open` and `finish`; every submission runs on the
+/// process's queue, in order. Its stages, maps, text rows and dedups are queued (`queue`) and launched a level at a
+/// time (`flush`, decision 0601): each kernel once for every job between two dependencies, so a stratum's launches
+/// are its levels', not its rules'.
 pub(in crate::code_rule_dsl) struct Batch {
     pass: Option<Pass>,
+    /// The level's jobs, not launched yet (`queue`).
+    queued: Vec<Job>,
     committed: Vec<Submitted>,
     done: Done,
     dummy: Held,
@@ -1248,7 +1245,7 @@ impl Batch {
     /// A batch whose text arena holds `cap` bytes.
     pub(in crate::code_rule_dsl) fn with_arena(cap: usize) -> Result<Batch, Error> {
         rerail_accel::gpu::join::device()?;
-        Ok(Batch { pass: None, committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, arena: None, arena_cap: cap, building: Vec::new(), atoms: None, kept: None, written: Vec::new() })
+        Ok(Batch { pass: None, queued: Vec::new(), committed: Vec::new(), done: Done::default(), dummy: Held::new(64)?, arena: None, arena_cap: cap, building: Vec::new(), atoms: None, kept: None, written: Vec::new() })
     }
 
     /// Notes that its kernels write `rel` (`what`): its rows' `needed` now, checked when the batch is done.
@@ -1305,10 +1302,16 @@ impl Batch {
         Ok(self.arena.clone().expect("the arena"))
     }
 
-    /// The open submission (a new one when none is open). Its launches are charged to the evaluation's launch budget
-    /// as they are made (`rerail_accel::gpu::launch`): a batch's work past the budget is refused at its commit, never
-    /// split into submissions of their own count.
+    /// The open submission, for a launch made at once: the level queued before it launched first (`flush`), so it
+    /// sees their writes. Its launches are charged to the evaluation's launch budget as they are made
+    /// (`rerail_accel::gpu::launch`): past it, the hard failure (decision 0601).
     fn pass(&mut self) -> Result<&Pass, Error> {
+        self.flush()?;
+        self.open()
+    }
+
+    /// The open submission (a new one when none is open), the level left queued: what a queued job makes resident.
+    fn open(&mut self) -> Result<&Pass, Error> {
         if self.pass.is_none() {
             super::metal_sort::ready()?;
             self.pass = Some(Pass::new()?);
@@ -1326,6 +1329,7 @@ impl Batch {
 
     /// Commits the open submission (`Pass::commit`, checked against the launch budget).
     fn submit_open(&mut self) -> Result<(), Error> {
+        self.flush()?;
         let Some(pass) = self.pass.take() else { return Ok(()) };
         self.done.dispatches += pass.dispatches() as u32;
         rerail_accel::exec::command_committed();
@@ -1479,9 +1483,8 @@ impl Batch {
         let buffer = bound(&home)?;
         assert!(room.rows as u64 + 4 * n as u64 <= buffer.buffer.length(), "the index's room within the buffer bound");
         if n > 0 {
-            let bucket = view_pipe("ix_bucket", views_format([rel]))?;
-            let place = pipeline("join", "ix_place", || SOURCE.to_owned())?;
-            let bits = (u64::BITS - room.mask.leading_zeros()).max(8).div_ceil(8) * 8;
+            // Queued in the batch's level: every index of the level bucketed in one launch, sorted in one sort, placed
+            // in one launch (`flush`), before the level's stages, which probe it.
             assert!(cols.len() <= 8, "an index of {} columns", cols.len());
             let mut ix = IxParams { n: n as u32, ncols: cols.len() as u32, at: rel.at, mask: room.mask, cols: [0; 8], dir: 0, kind: 0 };
             for (k, &c) in cols.iter().enumerate() {
@@ -1490,22 +1493,16 @@ impl Batch {
             if let Some(v) = &rel.view {
                 (ix.dir, ix.kind) = (v.dir, u64::from(v.kind));
             }
-            let params = self.block(ix.bytes())?;
-            // A sort is at most 4 passes of three dispatches and two scans' levels, and a few more.
-            let pass = self.pass()?;
-            let words = Held::new(4 * n)?;
-            // A sort refused after the bucket's dispatch leaves `words`, which the dispatch writes, with the batch
-            // until its submission is done: dropped here, it would go back to the pool at once.
-            rel.resident_in(pass);
-            pass.run_bytes(&bucket, &[&buffer.buffer, &words.buffer, &params.buffer], &[], groups(n));
-            let parts = match encode_sort(pass, &words.buffer, Width::W32, bits, n) {
-                Ok(parts) => parts,
-                Err(e) => {
-                    return Err(e.into());
-                }
-            };
-            pass.run(&place, &[&buffer.buffer, &parts.perm.buffer, &parts.starts.buffer, &parts.rkeys.buffer, &parts.nruns.buffer], &[n as u32, (room.mask + 1) as u32],
-                     &[room.offs as i64, room.rows as i64], groups(n));
+            rel.resident_in(self.open()?);
+            let mut job = Job::new(JobKind::Index, views_format([rel]), Stage::default());
+            job.p = Some(ix.bytes().to_vec());
+            // It reads the relation and writes its index's room in the block, which no queued job reads.
+            job.desc.l = job.reach(&buffer.buffer, 0, true)?;
+            job.desc.a = job.desc.l + room.offs as u64;
+            job.desc.counters = job.desc.l + room.rows as u64;
+            (job.count, job.buckets) = (n, room.mask as usize + 1);
+            job.order(&[job.desc.l], &[]);
+            self.queue(job)?;
         }
         let index = room.index as u32;
         let before = Building::descriptor(std::ptr::from_ref(r));
@@ -1534,15 +1531,12 @@ impl Batch {
         Ok(())
     }
 
-    /// A stage from `left` into `out`, over `right` (its relation and, read by keys, its index): count, scan,
-    /// scatter. `stage`'s sizes are set here.
-    #[allow(clippy::too_many_arguments)]
+    /// A stage from `left` into `out`, over `right` (its relation and, read by keys, its index), queued in the batch's
+    /// level (`queue`): count, the level's scan, scatter. `stage`'s sizes are set here.
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn stage(&mut self, mut stage: Stage, left: &Table, right: Option<(&DevRel, Option<&DevIndex>)>, screen: Option<&Screen>, in_slot: usize, out_slot: usize,
                                           totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
         let format = views_format(right.map(|(rel, index)| probed(rel, index)));
-        let count = view_pipe("stage_count", format)?;
-        let scatter = view_pipe("stage_scatter", format)?;
         stage.cap_in = left.cap as u32;
         stage.cap_out = out.cap as u32;
         stage.in_slot = in_slot as u32;
@@ -1554,74 +1548,44 @@ impl Batch {
             Some((rel, index)) => {
                 let rel = index.map_or(rel, |ix| ix.of(rel));
                 bind_right(&mut stage, rel, index);
+                rel.resident_in(self.open()?);
                 index.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone()
             }
             None => self.dummy.buffer.clone(),
         };
         let fbuf = self.screen(&mut stage, screen);
-        if left.cap == 1 && stage.mode == JOIN && right.is_some() {
-            // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
-            let scount = view_pipe("scan_count", format)?;
-            let sscatter = view_pipe("scan_scatter", format)?;
-            let n = stage.nr as usize + 1;
-            let counts = scratch(FREE, 4 * (n + 1))?;
-            let scan = Scan::new(n)?;
-            let sb = self.block(stage.bytes())?;
-            let pass = self.pass()?;
-            if let Some((rel, index)) = right {
-                index.map_or(rel, |ix| ix.of(rel)).resident_in(pass);
-            }
-            let lbuf: &Buffer = &left.buffer.buffer;
-            pass.run_bytes(&scount, &[lbuf, &rbuf, &counters.buffer.buffer, &counts, &totals.buffer.buffer, &sb.buffer], &[], groups(n));
-            scan.encode(pass, &counts)?;
-            pass.run_bytes(&sscatter, &[lbuf, &rbuf, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb.buffer], &[], groups(n));
-            return Ok(());
-        }
-        let n = left.cap + 1;
-        let counts = scratch(FREE, 4 * (n + 1))?;
-        let scan = Scan::new(n)?;
+        // From one binding: a thread per candidate row (`scan_count`), its rows in the relation's order.
+        let from_one = left.cap == 1 && stage.mode == JOIN && right.is_some();
         let arena: Buffer = if matches!(stage.mode, STRCMP | TEXTOP) && (stage.agg[1] & 15 == OPND_ARENA || stage.agg[1] >> 4 == OPND_ARENA) {
             self.arena()?.buffer.buffer.clone()
         } else {
             self.dummy.buffer.clone()
         };
-        let sb = self.block(stage.bytes())?;
         // A text op's or `str_cmp`'s symbols read through the batch's atoms directory (decision 0478 step 2e).
         let reads_names = matches!(stage.mode, STRCMP | TEXTOP);
         let atoms = self.atoms.clone().filter(|_| reads_names);
         if reads_names && atoms.is_none() {
             return Err(Error::BackendCapacity);
         }
-        let dummy = self.dummy.buffer.clone();
-        let pass = self.pass()?;
-        if let Some((rel, index)) = right {
-            index.map_or(rel, |ix| ix.of(rel)).resident_in(pass);
-        }
-        let lbuf: &Buffer = &left.buffer.buffer;
-        let (d, d_at): (&Buffer, u64) = match &atoms {
+        let n = if from_one { stage.nr as usize + 1 } else { left.cap + 1 };
+        let mut job = Job::new(if from_one { JobKind::Scan } else { JobKind::Stage }, format, stage);
+        job.desc.l = job.reach(&left.buffer.buffer, 0, false)?;
+        job.desc.r = job.reach(&rbuf, 0, false)?;
+        job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
+        job.desc.counters = job.reach(&counters.buffer.buffer, 0, true)?;
+        job.desc.o = job.reach(&out.buffer.buffer, 0, true)?;
+        job.desc.a = job.reach(&arena, 0, true)?;
+        job.desc.f = job.reach(&fbuf, 0, false)?;
+        job.desc.d = match &atoms {
             Some(a) => {
-                a.resident_in(pass);
-                (&a.dir.0, a.dir.1)
+                a.resident_in(self.open()?);
+                job.reach(&a.dir.0, a.dir.1, false)?
             }
-            None => (&dummy, 0),
+            None => job.reach(&self.dummy.buffer, 0, false)?,
         };
-        let count_bufs: [(&Buffer, u64); 9] = [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&arena, 0), (d, d_at), (&fbuf, 0), (&sb.buffer, 0)];
-        let scatter_bufs: [(&Buffer, u64); 10] =
-            [(lbuf, 0), (&rbuf, 0), (&totals.buffer.buffer, 0), (&counts, 0), (&out.buffer.buffer, 0), (&arena, 0), (&counters.buffer.buffer, 0), (d, d_at), (&fbuf, 0), (&sb.buffer, 0)];
-        if n > sized_min() {
-            // The table's space is the host's guess: the grids are sized on the device, from the rows the stage
-            // before made (decision 0113's GPU-sized work); at most the table's.
-            let sizes = scan.size(pass, &totals.buffer.buffer, in_slot, left.cap)?;
-            pass.run_bytes_indirect_at(&count, &count_bufs, &[], &sizes.buffer, 4 * 32, groups(n));
-            scan.encode_sized(pass, &counts, &sizes)?;
-            pass.run_bytes_indirect_at(&scatter, &scatter_bufs, &[], &sizes.buffer, 4 * 32, groups(n));
-            self.done.sized += 1;
-            return Ok(());
-        }
-        pass.run_bytes_at(&count, &count_bufs, &[], groups(n));
-        scan.encode(pass, &counts)?;
-        pass.run_bytes_at(&scatter, &scatter_bufs, &[], groups(n));
-        Ok(())
+        (job.n, job.count, job.scatter) = (n, n, n);
+        job.order(&[job.desc.l, job.desc.r], &[job.desc.o]);
+        self.queue(job)
     }
 
     /// A witness stage (`WITNESS`, decision 0277) from `left` into `out`: per binding, the candidates of `right` in
@@ -1632,8 +1596,6 @@ impl Batch {
                                             in_slot: usize, out_slot: usize, totals: &Words, out: &Table) -> Result<(), Error> {
         assert!(rest.len() <= WITNESS_PROBES, "a witness of more probes than it takes");
         let format = views_format(std::iter::once(probed(right.0, right.1)).chain(rest.iter().map(|(_, rel, index)| probed(rel, *index))));
-        let count = view_pipe("witness_count", format)?;
-        let scatter = view_pipe("stage_scatter", format)?;
         stage.cap_in = left.cap as u32;
         stage.cap_out = out.cap as u32;
         stage.in_slot = in_slot as u32;
@@ -1641,7 +1603,6 @@ impl Batch {
         stage.counter = NONE;
         stage.nslots = left.slots as u32;
         stage.agg[0] = rest.len() as u32;
-        let dummy: Buffer = self.dummy.buffer.clone();
         let rel = right.1.map_or(right.0, |ix| ix.of(right.0));
         bind_right(&mut stage, rel, right.1);
         let a = right.1.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone();
@@ -1656,34 +1617,38 @@ impl Batch {
             probes[k] = b;
             bufs.push(ix.map_or(&rel.buffer.buffer, |ix| ix.bound()).clone());
         }
-        while bufs.len() < WITNESS_PROBES {
-            bufs.push(dummy.clone());
-        }
-        let held = Held::of(probes.iter().flat_map(|p| p.bytes().iter().copied()).collect::<Vec<u8>>().into_iter()).map_err(|_| Error::BackendCapacity)?;
-        let n = left.cap + 1;
-        let counts = scratch(FREE, 4 * (n + 1))?;
-        let scan = Scan::new(n)?;
         // The bindings with a witness out as they are: a semi-join's scatter (mode 1 writes the binding alone).
         let mut write = stage;
         write.mode = SEMI;
         write.nbinds = 0;
         write.screen = 0;
-        let (sb, wb) = (self.block(stage.bytes())?, self.block(write.bytes())?);
-        let pass = self.pass()?;
-        rel.resident_in(pass);
-        for &(_, r, ix) in rest {
-            ix.map_or(r, |ix| ix.of(r)).resident_in(pass);
+        {
+            let pass = self.open()?;
+            rel.resident_in(pass);
+            for &(_, r, ix) in rest {
+                ix.map_or(r, |ix| ix.of(r)).resident_in(pass);
+            }
         }
-        let lbuf: &Buffer = &left.buffer.buffer;
-        let mut count_bufs: Vec<&Buffer> = vec![lbuf, &a, &totals.buffer.buffer, &counts, &held.buffer];
-        count_bufs.extend(bufs.iter());
-        count_bufs.push(&fbuf);
-        count_bufs.push(&sb.buffer);
-        pass.run_bytes(&count, &count_bufs, &[], groups(n));
-        scan.encode(pass, &counts)?;
-        let scatter_bufs: [&Buffer; 10] = [lbuf, &a, &totals.buffer.buffer, &counts, &out.buffer.buffer, &dummy, &dummy, &dummy, &dummy, &wb.buffer];
-        pass.run_bytes(&scatter, &scatter_bufs, &[], groups(n));
-        Ok(())
+        let n = left.cap + 1;
+        let dummy = self.dummy.buffer.clone();
+        let mut job = Job::new(JobKind::Witness, format, stage);
+        job.write = Some(write);
+        job.probes = Some(probes);
+        job.desc.l = job.reach(&left.buffer.buffer, 0, false)?;
+        job.desc.r = job.reach(&a, 0, false)?;
+        job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
+        job.desc.o = job.reach(&out.buffer.buffer, 0, true)?;
+        job.desc.f = job.reach(&fbuf, 0, false)?;
+        for k in 0..WITNESS_PROBES {
+            job.desc.w[k] = job.reach(bufs.get(k).unwrap_or(&dummy), 0, false)?;
+        }
+        // A semi-join's scatter reads no arena, counters or names.
+        job.desc.a = job.reach(&dummy, 0, false)?;
+        job.desc.counters = job.reach(&dummy, 0, false)?;
+        job.desc.d = job.reach(&dummy, 0, false)?;
+        (job.n, job.count, job.scatter) = (n, n, n);
+        job.order(&[job.desc.l, job.desc.r, job.desc.w[0], job.desc.w[1], job.desc.w[2]], &[job.desc.o]);
+        self.queue(job)
     }
 
     /// A mode 10 stage (`ROWTEXT`) from `left` into `out`: `row_text` (a SIMD group a row, its symbols' bytes read
@@ -1693,8 +1658,6 @@ impl Batch {
     #[allow(clippy::too_many_arguments)]
     pub(in crate::code_rule_dsl) fn row_stage(&mut self, mut stage: Stage, left: &Table, auto: Option<(&DevBytes, [u32; 4])>, id: u32,
                                               in_slot: usize, out_slot: usize, totals: &Words, counters: &Words, counter: Option<usize>, out: &Table) -> Result<(), Error> {
-        let text = pipeline("join", "row_text", || SOURCE.to_owned())?;
-        let scatter = pipeline("join", "row_scatter", || SOURCE.to_owned())?;
         stage.cap_in = left.cap as u32;
         stage.cap_out = out.cap as u32;
         stage.in_slot = in_slot as u32;
@@ -1707,39 +1670,35 @@ impl Batch {
         // rows a lane.
         let [kept, states, classes, start] = auto.map_or([1, 0, 0, 0], |a| a.1);
         let work = Held::new(ngroups * 2 * simd_group() * kept.max(1) as usize)?;
-        let p = Held::of([ngroups as u32, kept, states, classes, start, id, 0, 0].into_iter()).map_err(|_| Error::BackendCapacity)?;
-        let counts = scratch(FREE, 4 * (n + 1))?;
         let values = Held::new(8 * n)?;
-        let scan = Scan::new(n)?;
         let arena = self.arena()?.buffer.buffer.clone();
         let (g, g_at): (Buffer, u64) = auto.map_or_else(|| (self.dummy.buffer.clone(), 0), |a| (a.0.buffer.clone(), a.0.at));
         let atoms = self.atoms.clone().ok_or(Error::BackendCapacity)?;
         let cache = self.kept.clone().ok_or(Error::BackendCapacity)?;
-        let dummy = self.dummy.buffer.clone();
-        let sb = self.block(stage.bytes())?;
-        let pass = self.pass()?;
-        let lbuf: &Buffer = &left.buffer.buffer;
-        let (vc, vc_at) = (&cache.cache.0, cache.cache.1);
-        atoms.resident_in(pass);
-        // A SIMD group a row, a threadgroup each.
-        pass.run_bytes_simd_at(
-            &text,
-            &[(lbuf, 0), (&dummy, 0), (&arena, 0), (&totals.buffer.buffer, 0), (&counters.buffer.buffer, 0), (&counts, 0), (&values.buffer, 0), (&g, g_at), (&work.buffer, 0), (&p.buffer, 0), (&atoms.dir.0, atoms.dir.1), (vc, vc_at), (&sb.buffer, 0)],
-            &[],
-            ngroups,
-        );
-        scan.encode(pass, &counts)?;
-        pass.run_bytes(&scatter, &[lbuf, &values.buffer, &totals.buffer.buffer, &counts, &out.buffer.buffer, &sb.buffer], &[], groups(n));
-        Ok(())
+        atoms.resident_in(self.open()?);
+        let mut job = Job::new(JobKind::Row, 0, stage);
+        job.p = Some([ngroups as u32, kept, states, classes, start, id, 0, 0].iter().flat_map(|w| w.to_ne_bytes()).collect());
+        job.desc.l = job.reach(&left.buffer.buffer, 0, false)?;
+        job.desc.a = job.reach(&arena, 0, true)?;
+        job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
+        job.desc.counters = job.reach(&counters.buffer.buffer, 0, true)?;
+        job.desc.v = job.reach(&values.buffer, 0, true)?;
+        job.desc.g = job.reach(&g, g_at, false)?;
+        job.desc.s = job.reach(&work.buffer, 0, true)?;
+        job.desc.d = job.reach(&atoms.dir.0, atoms.dir.1, false)?;
+        job.desc.vc = job.reach(&cache.cache.0, cache.cache.1, true)?;
+        job.desc.o = job.reach(&out.buffer.buffer, 0, true)?;
+        // A SIMD group a row, a threadgroup each: its count's grid is its groups.
+        (job.n, job.count, job.scatter) = (n, ngroups, n);
+        job.own.extend([work, values]);
+        job.order(&[job.desc.l], &[job.desc.o]);
+        self.queue(job)
     }
 
     /// `table`'s distinct rows over slots `cols` (at most 16) into `out` (a column per slot of `cols`, in that order,
     /// the same capacity), their count into `totals[out_slot]`; the first of equal rows is kept, and the order kept.
+    /// Queued in the batch's level, as a stage is: a stratum's heads' dedups launch together.
     pub(in crate::code_rule_dsl) fn dedup(&mut self, table: &Table, cols: &[usize], in_slot: usize, out_slot: usize, totals: &Words, out: &Table) -> Result<(), Error> {
-        let clear = pipeline("join", "dedup_clear", || SOURCE.to_owned())?;
-        let claim = pipeline("join", "dedup_claim", || SOURCE.to_owned())?;
-        let mark = pipeline("join", "dedup_mark", || SOURCE.to_owned())?;
-        let scatter = pipeline("join", "dedup_scatter", || SOURCE.to_owned())?;
         assert!(cols.len() <= 16 && out.cap == table.cap);
         let places = (2 * table.cap).next_power_of_two().max(16);
         let mut d = [0u32; 21];
@@ -1751,20 +1710,18 @@ impl Batch {
         for (i, &c) in cols.iter().enumerate() {
             d[5 + i] = c as u32;
         }
-        let bytes: &[u8] = unsafe { std::slice::from_raw_parts(d.as_ptr().cast::<u8>(), std::mem::size_of_val(&d)) };
         let p = Held::new(4 * places)?;
         let n = table.cap + 1;
-        let counts = scratch(FREE, 4 * (n + 1))?;
-        let scan = Scan::new(n)?;
-        let db = self.block(bytes)?;
-        let pass = self.pass()?;
-        let t: &Buffer = &table.buffer.buffer;
-        pass.run_bytes(&clear, &[&p.buffer, &db.buffer], &[], groups(places));
-        pass.run_bytes(&claim, &[t, &totals.buffer.buffer, &p.buffer, &db.buffer], &[], groups(table.cap));
-        pass.run_bytes(&mark, &[t, &totals.buffer.buffer, &p.buffer, &counts, &db.buffer], &[], groups(n));
-        scan.encode(pass, &counts)?;
-        pass.run_bytes(&scatter, &[t, &totals.buffer.buffer, &counts, &out.buffer.buffer, &db.buffer], &[], groups(n));
-        Ok(())
+        let mut job = Job::new(JobKind::Dedup, 0, Stage::default());
+        job.dedup = Some(d);
+        job.desc.l = job.reach(&table.buffer.buffer, 0, false)?;
+        job.desc.totals = job.reach(&totals.buffer.buffer, 0, true)?;
+        job.desc.h = job.reach(&p.buffer, 0, true)?;
+        job.desc.o = job.reach(&out.buffer.buffer, 0, true)?;
+        (job.n, job.count, job.scatter, job.clear, job.claim) = (n, n, n, places, table.cap);
+        job.own.push(p);
+        job.order(&[job.desc.l], &[job.desc.o]);
+        self.queue(job)
     }
 
     /// `n` rows of `src` into `dst` at row `dst_off`, column k of `dst` as `cols[k]` says (a column of `src`, or a
@@ -1792,10 +1749,10 @@ impl Batch {
             return Ok(());
         }
         assert!(cols.len() <= 16);
-        let copy = view_pipe("rows_copy", views_format(match src {
+        let format = views_format(match src {
             Rows::Rel(r) => Some(r),
             Rows::Table(_) => None,
-        }))?;
+        });
         let (s, src_rows, src_at, _) = src.of();
         let (d, dst_rows, _, dst_rows_at) = dst.of();
         if let Rows::Rel(r) = dst {
@@ -1825,26 +1782,379 @@ impl Batch {
         let bytes = unsafe { std::slice::from_raw_parts((&p as *const CopyParams).cast::<u8>(), std::mem::size_of::<CopyParams>()) };
         let (s, d) = (s.clone(), d.clone());
         let totals = count.map_or_else(|| self.dummy.buffer.clone(), |c| c.1.buffer.buffer.clone());
-        let cb = self.block(bytes)?;
-        let pass = self.pass()?;
         if let Some(r) = view {
-            r.resident_in(pass);
+            r.resident_in(self.open()?);
         }
-        pass.run_bytes(&copy, &[&s, &d, &totals, &cb.buffer], &[], groups(n));
-        Ok(())
+        // Queued in the batch's level, whose copies launch first, all in one launch (`flush`).
+        let mut job = Job::new(JobKind::Copy, format, Stage::default());
+        job.p = Some(bytes.to_vec());
+        job.desc.l = job.reach(&s, 0, false)?;
+        job.desc.o = job.reach(&d, 0, true)?;
+        job.desc.totals = job.reach(&totals, 0, false)?;
+        job.count = n;
+        job.span = Some((job.desc.o, dst_off, dst_off + n));
+        let mut reads = vec![job.desc.l];
+        reads.extend(count.map(|_| job.desc.totals));
+        job.order(&reads, &[job.desc.o]);
+        self.queue(job)
     }
 
-    /// Sets slots of `table` in place (`stage`'s binds: program columns of the binding's slots, or parameters).
+    /// Sets slots of `table` in place (`stage`'s binds: program columns of the binding's slots, or parameters), queued
+    /// in the batch's level.
     pub(in crate::code_rule_dsl) fn map(&mut self, mut stage: Stage, table: &Table, in_slot: usize, totals: &Words) -> Result<(), Error> {
-        let map = pipeline("join", "stage_map", || SOURCE.to_owned())?;
         stage.cap_in = table.cap as u32;
         stage.cap_out = table.cap as u32;
         stage.in_slot = in_slot as u32;
         stage.nslots = table.slots as u32;
-        let sb = self.block(stage.bytes())?;
-        let pass = self.pass()?;
-        pass.run_bytes(&map, &[&table.buffer.buffer, &totals.buffer.buffer, &sb.buffer], &[], groups(table.cap));
+        let mut job = Job::new(JobKind::Map, 0, stage);
+        job.desc.o = job.reach(&table.buffer.buffer, 0, true)?;
+        job.desc.totals = job.reach(&totals.buffer.buffer, 0, false)?;
+        job.count = table.cap;
+        job.order(&[job.desc.o], &[job.desc.o]);
+        self.queue(job)
+    }
+
+    /// Queues `job` in the batch's level: launched with every job of its kernel at the level's end (`flush`). A job
+    /// that reads or writes what a queued one writes, or writes what one reads, ends the level first: each sees the
+    /// writes of the work before it, as if each were launched alone, in order.
+    ///
+    /// A level launches its copies first, then its indexes, then the rest (`JobKind::phase`): a job of a later phase
+    /// than a queued one sees its writes in the same level, and copies into one table's rows apart are one launch.
+    fn queue(&mut self, job: Job) -> Result<(), Error> {
+        let after = self.queued.iter().any(|q| {
+            if q.kind.phase() < job.kind.phase() {
+                return false;
+            }
+            let apart = q.kind == JobKind::Copy && job.kind == JobKind::Copy && match (q.span, job.span) {
+                (Some((a, a0, a1)), Some((b, b0, b1))) => a != b || a1 <= b0 || b1 <= a0,
+                _ => false,
+            };
+            let waw = job.writes.iter().any(|a| q.writes.contains(a)) && !apart;
+            waw || job.reads.iter().any(|a| q.writes.contains(a)) || job.writes.iter().any(|a| q.reads.contains(a))
+        });
+        if after {
+            self.flush()?;
+        }
+        self.queued.push(job);
         Ok(())
+    }
+
+    /// Launches the level: the jobs queued (`queue`), each kernel once for all of them (decision 0601), in the
+    /// level's order: the dedups' clears and claims; the maps and the counts; one scan of every job's counts (each
+    /// job's from its `base`); the scatters. Each launch's table says each of its threadgroups' job and its group in
+    /// the job. The level's buffers (its jobs', parameter blocks', counts', tables') are held by the submission until
+    /// its work completes.
+    fn flush(&mut self) -> Result<(), Error> {
+        if self.queued.is_empty() {
+            return Ok(());
+        }
+        let jobs = std::mem::take(&mut self.queued);
+        // The parameter blocks, each at 16 bytes, in one buffer.
+        let mut params: Vec<u8> = Vec::new();
+        let mut put = |b: &[u8]| -> u64 {
+            let at = params.len() as u64;
+            // copy: not block data: the jobs' parameter blocks, laid end to end.
+            params.extend_from_slice(b);
+            params.resize(params.len().next_multiple_of(16), 0);
+            at
+        };
+        let placed: Vec<[Option<u64>; 5]> = jobs
+            .iter()
+            .map(|j| {
+                [
+                    Some(put(j.stage.bytes())),
+                    j.write.as_ref().map(|w| put(w.bytes())),
+                    j.probes.as_ref().map(|p| put(&p.iter().flat_map(|s| s.bytes().iter().copied()).collect::<Vec<u8>>())),
+                    j.dedup.as_ref().map(|d| put(&d.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>())),
+                    j.p.as_ref().map(|b| put(b)),
+                ]
+            })
+            .collect();
+        let params = self.block(&params)?;
+        let pa = address(&params.buffer)?;
+        // The level's indexes' keys, sorted at once: each index's buckets from its first (`kb`), its rows' keys from
+        // its first (`eb`); and the sort's order of them.
+        let (buckets, ix_rows) = jobs.iter().filter(|j| j.kind == JobKind::Index).fold((0usize, 0usize), |(b, e), j| (b + j.buckets, e + j.count));
+        if u32::try_from(buckets).is_err() {
+            return Err(Error::BackendCapacity);
+        }
+        let keys = Held::new(4 * ix_rows.max(1))?;
+        let perm = Held::new(4 * ix_rows.max(1))?;
+        let (ka, pa_perm) = (address(&keys.buffer)?, address(&perm.buffer)?);
+        let (mut kb, mut eb) = (0usize, 0usize);
+        let mut total = 0usize;
+        let mut descs = Vec::with_capacity(jobs.len());
+        for (j, at) in jobs.iter().zip(&placed) {
+            let mut d = j.desc;
+            let s = pa + at[0].expect("a job's stage");
+            d.stage = s;
+            d.ws = at[1].map_or(s, |w| pa + w);
+            d.bs = at[2].map_or(s, |b| pa + b);
+            d.dd = at[3].map_or(s, |b| pa + b);
+            d.p = at[4].map_or(s, |b| pa + b);
+            d.base = u32::try_from(total).map_err(|_| Error::BackendCapacity)?;
+            d.n = j.n as u32;
+            total += j.n;
+            if j.kind == JobKind::Index {
+                (d.kb, d.eb) = (kb as u32, eb as u32);
+                (d.h, d.s) = (ka, pa_perm + 4 * eb as u64);
+                kb += j.buckets;
+                eb += j.count;
+            }
+            descs.push(d);
+        }
+        // SAFETY: `JobDesc` is `repr(C)` integers with no padding (its size asserted).
+        let desc_bytes = unsafe { std::slice::from_raw_parts(descs.as_ptr().cast::<u8>(), std::mem::size_of_val(descs.as_slice())) };
+        let descs = self.block(desc_bytes)?;
+        let counts = Held::new(4 * (total + 1))?;
+        let scan = if total > 0 { Some(Scan::new(total)?) } else { None };
+        // The launches, before the scan and after it: each its kernel, whether it binds the counts, whether its
+        // threadgroups are SIMD groups, its table's first word and its threadgroups.
+        let mut formats: Vec<u32> = Vec::new();
+        for j in &jobs {
+            if matches!(j.kind, JobKind::Stage | JobKind::Scan | JobKind::Witness | JobKind::Copy | JobKind::Index) && !formats.contains(&j.format) {
+                formats.push(j.format);
+            }
+        }
+        let plain = |name: &'static str| pipeline("join", name, || SOURCE.to_owned());
+        type Launch = (Arc<rerail_accel::gpu::join::Pipe>, bool, bool, usize, usize);
+        let mut table: Vec<u32> = Vec::new();
+        let mut add = |to: &mut Vec<Launch>, pipe: Arc<rerail_accel::gpu::join::Pipe>, with_counts: bool, simd: bool, of: &dyn Fn(&Job) -> Option<usize>| {
+            // Each launch's table at 256 bytes, as a buffer's offset is bound on every backend.
+            table.resize(table.len().next_multiple_of(64), 0);
+            let at = table.len();
+            for (i, j) in jobs.iter().enumerate() {
+                if let Some(threads) = of(j) {
+                    let groups = if simd { threads.max(1) } else { threads.div_ceil(rerail_accel::gpu::join::GROUP as usize).max(1) };
+                    for g in 0..groups {
+                        table.extend([i as u32, g as u32]);
+                    }
+                }
+            }
+            let groups = (table.len() - at) / 2;
+            if groups > 0 {
+                to.push((pipe, with_counts, simd, at, groups));
+            }
+        };
+        let kind = |k: JobKind, f: Option<u32>, threads: fn(&Job) -> usize| move |j: &Job| (j.kind == k && f.is_none_or(|f| f == j.format)).then(|| threads(j));
+        let (mut copies, mut bucket, mut place) = (Vec::new(), Vec::new(), Vec::new());
+        for &f in &formats {
+            add(&mut copies, view_pipe("rows_copy_all", f)?, false, false, &kind(JobKind::Copy, Some(f), |j| j.count));
+            add(&mut bucket, view_pipe("ix_bucket_all", f)?, false, false, &kind(JobKind::Index, Some(f), |j| j.count));
+        }
+        add(&mut place, plain("ix_place_all")?, false, false, &kind(JobKind::Index, None, |j| j.count));
+        let (mut before, mut after): (Vec<Launch>, Vec<Launch>) = (Vec::new(), Vec::new());
+        add(&mut before, plain("dedup_clear_all")?, false, false, &kind(JobKind::Dedup, None, |j| j.clear));
+        add(&mut before, plain("dedup_claim_all")?, false, false, &kind(JobKind::Dedup, None, |j| j.claim));
+        add(&mut before, plain("stage_map_all")?, false, false, &kind(JobKind::Map, None, |j| j.count));
+        for &f in &formats {
+            add(&mut before, view_pipe("stage_count_all", f)?, true, false, &kind(JobKind::Stage, Some(f), |j| j.count));
+            add(&mut before, view_pipe("scan_count_all", f)?, true, false, &kind(JobKind::Scan, Some(f), |j| j.count));
+            add(&mut before, view_pipe("witness_count_all", f)?, true, false, &kind(JobKind::Witness, Some(f), |j| j.count));
+        }
+        add(&mut before, plain("row_text_all")?, true, true, &kind(JobKind::Row, None, |j| j.count));
+        add(&mut before, plain("dedup_mark_all")?, true, false, &kind(JobKind::Dedup, None, |j| j.count));
+        for &f in &formats {
+            let (stage, witness) = (kind(JobKind::Stage, Some(f), |j| j.scatter), kind(JobKind::Witness, Some(f), |j| j.scatter));
+            add(&mut after, view_pipe("stage_scatter_all", f)?, true, false, &|j: &Job| stage(j).or_else(|| witness(j)));
+            add(&mut after, view_pipe("scan_scatter_all", f)?, true, false, &kind(JobKind::Scan, Some(f), |j| j.scatter));
+        }
+        add(&mut after, plain("row_scatter_all")?, true, false, &kind(JobKind::Row, None, |j| j.scatter));
+        add(&mut after, plain("dedup_scatter_all")?, true, false, &kind(JobKind::Dedup, None, |j| j.scatter));
+        let tables = self.block(&table.iter().flat_map(|w| w.to_ne_bytes()).collect::<Vec<u8>>())?;
+        self.done.levels += 1;
+        let pass = self.open()?;
+        // What the jobs reach by address: resident for the launches, and held until their work completes.
+        pass.use_read(&[&params.buffer]);
+        if ix_rows > 0 {
+            pass.use_read_write(&keys.buffer);
+            pass.use_read_write(&perm.buffer);
+        }
+        let mut seen = std::collections::HashSet::new();
+        for j in &jobs {
+            for (b, write) in &j.uses {
+                if seen.insert((b.contents() as usize, b.length(), *write)) {
+                    if *write {
+                        pass.use_read_write(b);
+                    } else {
+                        pass.use_read(&[b]);
+                    }
+                }
+            }
+        }
+        let run = |launches: &[Launch]| {
+            for (pipe, with_counts, simd, at, groups) in launches {
+                let mut bufs: Vec<(&Buffer, u64)> = vec![(&descs.buffer, 0), (&tables.buffer, 4 * *at as u64)];
+                if *with_counts {
+                    bufs.push((&counts.buffer, 0));
+                }
+                if *simd {
+                    pass.run_bytes_simd_at(pipe, &bufs, &[], *groups);
+                } else {
+                    pass.run_bytes_at(pipe, &bufs, &[], *groups);
+                }
+            }
+        };
+        run(&copies);
+        if ix_rows > 0 {
+            run(&bucket);
+            // Every index's buckets in one span; whole bytes, as the sort's passes are a byte each.
+            let bits = (usize::BITS - (buckets - 1).leading_zeros()).max(8).div_ceil(8) * 8;
+            encode_order(pass, &keys.buffer, Width::W32, bits, ix_rows, &perm.buffer)?;
+            run(&place);
+        }
+        run(&before);
+        if let Some(scan) = &scan {
+            scan.encode(pass, &counts.buffer)?;
+        }
+        run(&after);
+        Ok(())
+    }
+}
+
+/// A buffer's address for the device's kernels (decision 0601's jobs): a device whose buffers have none
+/// (OpenCL without unified shared memory) runs no join on the device, as a view read in place needs one too.
+fn address(b: &Buffer) -> Result<u64, Error> {
+    b.device_address().ok_or(Error::UnsupportedBackend)
+}
+
+/// `join_stages.uglykl`'s `Job`, byte for byte: a queued launch's buffers by device address, its parameter blocks'
+/// (`flush` places them), and its counts' place in its level's.
+#[repr(C)]
+#[derive(Clone, Copy, Default)]
+struct JobDesc {
+    l: u64,
+    r: u64,
+    totals: u64,
+    counters: u64,
+    o: u64,
+    a: u64,
+    d: u64,
+    f: u64,
+    w: [u64; WITNESS_PROBES],
+    g: u64,
+    s: u64,
+    vc: u64,
+    v: u64,
+    h: u64,
+    stage: u64,
+    ws: u64,
+    bs: u64,
+    dd: u64,
+    p: u64,
+    base: u32,
+    n: u32,
+    /// An index's first bucket and first key in the level's sort (`ix_bucket_all`).
+    kb: u32,
+    eb: u32,
+    pad: [u32; 2],
+}
+
+const _: () = assert!(std::mem::size_of::<JobDesc>() == 192);
+
+/// What a queued job launches (`Batch::flush`'s order).
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum JobKind {
+    /// `stage_count_all`, the scan, `stage_scatter_all`.
+    Stage,
+    /// A join from one binding (a rule's first table), a thread per candidate row: `scan_count_all`, the scan,
+    /// `scan_scatter_all`.
+    Scan,
+    /// `witness_count_all`, the scan, `stage_scatter_all` of its write (a semi-join's).
+    Witness,
+    /// `row_text_all` (a SIMD group a row), the scan, `row_scatter_all`.
+    Row,
+    /// `stage_map_all`.
+    Map,
+    /// `dedup_clear_all`, `dedup_claim_all`, `dedup_mark_all`, the scan, `dedup_scatter_all`.
+    Dedup,
+    /// `rows_copy_all`, first in its level.
+    Copy,
+    /// `ix_bucket_all`, one sort of the level's keys, `ix_place_all`: after the copies, before the rest.
+    Index,
+}
+
+impl JobKind {
+    /// Its place in its level's launches: the copies, the indexes, the rest.
+    fn phase(self) -> u8 {
+        match self {
+            JobKind::Copy => 0,
+            JobKind::Index => 1,
+            _ => 2,
+        }
+    }
+}
+
+/// A launch queued in a batch's level (`Batch::queue`).
+struct Job {
+    kind: JobKind,
+    /// The view format its kernels are compiled for (`views_format`); 0 for the kernels that read no view.
+    format: u32,
+    desc: JobDesc,
+    /// Its parameter blocks: its stage, its scatter's (a witness's write), its probes, its dedup's, its row's words.
+    stage: Stage,
+    write: Option<Stage>,
+    probes: Option<[Stage; WITNESS_PROBES]>,
+    dedup: Option<[u32; 21]>,
+    /// Its parameters read through `P`: a row's words, a copy's, an index's.
+    p: Option<Vec<u8>>,
+    /// Its counts' values (0: none); its grids' threads: the count's (a map's, a copy's, an index's; a row's, its
+    /// SIMD groups), the scatter's, a dedup's clear's and claim's.
+    n: usize,
+    count: usize,
+    scatter: usize,
+    clear: usize,
+    claim: usize,
+    /// An index's buckets, its keys' span in the level's sort.
+    buckets: usize,
+    /// A copy's rows written: its destination's address, and its rows from and to.
+    span: Option<(u64, usize, usize)>,
+    /// The buffers it reaches by address, each with whether it writes them.
+    uses: Vec<(Buffer, bool)>,
+    /// The tables it reads and writes, by address: its order against the jobs queued before it.
+    reads: Vec<u64>,
+    writes: Vec<u64>,
+    /// Buffers of its own (a row's values and scratch, a dedup's places), kept until its level is launched.
+    own: Vec<Held>,
+}
+
+impl Job {
+    fn new(kind: JobKind, format: u32, stage: Stage) -> Job {
+        Job {
+            kind,
+            format,
+            desc: JobDesc::default(),
+            stage,
+            write: None,
+            probes: None,
+            dedup: None,
+            p: None,
+            n: 0,
+            count: 0,
+            scatter: 0,
+            clear: 0,
+            claim: 0,
+            buckets: 0,
+            span: None,
+            uses: Vec::new(),
+            reads: Vec::new(),
+            writes: Vec::new(),
+            own: Vec::new(),
+        }
+    }
+
+    /// `b`'s address `at` bytes in, which the job reaches (and writes, when `write`).
+    fn reach(&mut self, b: &Buffer, at: u64, write: bool) -> Result<u64, Error> {
+        let a = address(b)?;
+        self.uses.push((b.clone(), write));
+        Ok(a + at)
+    }
+
+    /// The tables it reads and writes (their addresses).
+    fn order(&mut self, reads: &[u64], writes: &[u64]) {
+        // copy: not block data: the tables' addresses.
+        self.reads.extend_from_slice(reads);
+        self.writes.extend_from_slice(writes);
     }
 }
 

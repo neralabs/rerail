@@ -1555,9 +1555,10 @@ impl<'p> Run<'p> {
         }
     }
 
-    /// Encodes stages `from..` into `batch`; the component's own relations are `own`'s.
-    fn encode(&mut self, from: usize, batch: &mut mj::Batch, rep: &mut Report, own: &mut Own, names: &Interner) -> Result<(), String> {
-        for k in from..self.plan.stages.len() {
+    /// Encodes stage `k` into `batch`, queued in its level (`encode_levels`); the component's own relations are
+    /// `own`'s.
+    fn encode_stage(&mut self, k: usize, batch: &mut mj::Batch, rep: &mut Report, own: &mut Own, names: &Interner) -> Result<(), String> {
+        {
             let s = &self.plan.stages[k];
             let (i, o) = self.io[k];
             match &s.kind {
@@ -1651,7 +1652,12 @@ impl<'p> Run<'p> {
                 }
             }
         }
-        // The head rows made distinct, as the store keeps them (fewer rows back to the host).
+        Ok(())
+    }
+
+    /// Encodes its head's rows made distinct, as the store keeps them (fewer rows back to the host), after its last
+    /// stage.
+    fn encode_head(&mut self, batch: &mut mj::Batch) -> Result<(), String> {
         let last = self.io.last().map_or(0, |io| io.1);
         let table = self.tables[last].as_ref().expect("the last table");
         let uniq = mj::Table::new(self.uniq_cols.len(), table.cap).map_err(|e| format!("{e:?}: the head's table of {} rows", table.cap))?;
@@ -1660,6 +1666,28 @@ impl<'p> Run<'p> {
         Ok(())
     }
 
+}
+
+/// Encodes `runs` (each with its first stage) into `batch`, level-major (decision 0601): every run's stage at a depth
+/// before any run's next, then their heads' dedups. A batch launches a level at a time (`mj::Batch::flush`), each
+/// kernel once for its level's jobs, so a stratum's launches are its depths', not its rules'. The component's own
+/// relations are `own`'s.
+fn encode_levels(runs: &mut [(&mut Run<'_>, usize)], batch: &mut mj::Batch, rep: &mut Report, own: &mut Own, names: &Interner) -> Result<(), String> {
+    let depth = runs.iter().map(|(r, _)| r.plan.stages.len()).max().unwrap_or(0);
+    for k in 0..depth {
+        for (r, from) in runs.iter_mut() {
+            if k >= *from && k < r.plan.stages.len() {
+                r.encode_stage(k, batch, rep, own, names)?;
+            }
+        }
+    }
+    for (r, _) in runs.iter_mut() {
+        r.encode_head(batch)?;
+    }
+    Ok(())
+}
+
+impl<'p> Run<'p> {
     /// Its first text function's stage: a run that runs again in a new batch runs again from it (or before), its
     /// texts all in the new batch's arena.
     fn first_textfn(&self) -> Option<usize> {
@@ -1809,7 +1837,7 @@ thread_local! {
 ///
 /// It is the stratum's evaluation of the launch budget (`rerail_accel::gpu::launch`), or the caller's when it is in
 /// one: every launch of its joins, of its rounds and of its stages run again (those a rerun's, decision 0540) is
-/// charged to it, and a stratum past it is refused and runs on the CPU.
+/// charged to it, and past it is the hard failure (decision 0601).
 struct InDevice(#[allow(dead_code, reason = "held: the stratum's evaluation")] rerail_accel::gpu::launch::LaunchScope);
 
 fn in_device() -> InDevice {
@@ -1977,7 +2005,7 @@ fn resume_(ticket: u64, rules: &[(&Plan, &JoinRule, usize)], store: &Store, name
         rep.submissions += d.submissions;
         rep.dispatches += d.dispatches;
         rep.gpu_seconds += d.gpu_seconds;
-        rep.sized += d.sized;
+        rep.levels += d.levels;
         rep.screened += d.screened;
     }
     rep.waved = 1;
@@ -2008,19 +2036,20 @@ fn encode_runs(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: 
 
 fn encode_runs_bounded(rules: &[(&Plan, &JoinRule, usize)], batch: &mut mj::Batch, rep: &mut Report, names: &Interner) -> Result<Vec<Run<'static>>, String> {
     let _h = crate::code_rule_dsl::logic::lanes::prof::host("device join (decision 0095)", "encode: uploads, sorts, stages");
-    let mut runs: Vec<Run<'static>> = Vec::with_capacity(rules.len());
-    let mut bytes = 0;
+    // The rules whose tables' expected bytes (`Plan::expected`, as `admitted` reserves them) fit one submission's
+    // space, encoded together, level-major: their stages at each depth launch together (decision 0601).
+    let (mut take, mut bytes) = (0, 0);
     for (plan, _, _) in rules {
-        if !runs.is_empty() && (bytes > batch_max() || mj::device_bytes_left() < headroom()) {
+        if take > 0 && (bytes > batch_max() || mj::device_bytes_left() < headroom()) {
             break;
         }
-        // On a refusal the runs encoded so far go, with this one's stages before it: the passes that bind their
-        // buffers hold them until their work completes (decision 0491 step 2).
-        let mut r = Run::new(plan)?;
-        r.encode(0, batch, rep, &mut Own::default(), names)?;
-        bytes += r.bytes();
-        runs.push(r);
+        bytes += plan.expected().0;
+        take += 1;
     }
+    let mut runs = rules[..take].iter().map(|(plan, _, _)| Run::new(plan)).collect::<Result<Vec<Run<'static>>, String>>()?;
+    // On a refusal the runs go, with the stages encoded: the passes that reach their buffers hold them until their
+    // work completes (decision 0491 step 2).
+    encode_levels(&mut runs.iter_mut().map(|r| (r, 0)).collect::<Vec<_>>(), batch, rep, &mut Own::default(), names)?;
     Ok(runs)
 }
 
@@ -2033,7 +2062,7 @@ fn finish_timed(batch: &mut mj::Batch, rep: &mut Report) -> Result<(), String> {
     rep.submissions += done.submissions;
     rep.dispatches += done.dispatches;
     rep.gpu_seconds += done.gpu_seconds;
-    rep.sized += done.sized;
+    rep.levels += done.levels;
     rep.screened += done.screened;
     Ok(())
 }
@@ -2098,9 +2127,9 @@ fn complete(mut runs: Vec<Run<'static>>, rules: &[(&Plan, &JoinRule, usize)], st
         };
         // A run again is a rerun (decision 0540): its launches charge the run's reruns' budget.
         let _rerun = rerail_accel::gpu::launch::rerun();
-        for (k, s) in again {
-            runs[k].encode(s, b, rep, &mut Own::default(), names)?;
-        }
+        let mut todo: Vec<(&mut Run<'static>, usize)> =
+            runs.iter_mut().enumerate().filter_map(|(k, r)| again.iter().find(|a| a.0 == k).map(|&(_, s)| (r, s))).collect();
+        encode_levels(&mut todo, b, rep, &mut Own::default(), names)?;
         finish_timed(b, rep)?;
     }
     // Each head's rows written in place, in a relation of a block, which the store takes as they lie (decision 0325
@@ -2436,13 +2465,13 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
             runs.push(None);
             continue;
         }
-        let mut r = Run::new(plan)?;
-        if let Err(e) = r.encode(0, &mut batch, rep, own, names) {
-            // The batch's work writes the runs' buffers: done before they go back to the pool.
-            let _ = batch.finish();
-            return Err(e);
-        }
-        runs.push(Some(r));
+        runs.push(Some(Run::new(plan)?));
+    }
+    // The round's rules level-major, their stages at each depth launched together (decision 0601).
+    if let Err(e) = encode_levels(&mut runs.iter_mut().flatten().map(|r| (r, 0)).collect::<Vec<_>>(), &mut batch, rep, own, names) {
+        // The batch's work writes the runs' buffers: done before they go back to the pool.
+        let _ = batch.finish();
+        return Err(e);
     }
     let mut pending: Vec<usize> = (0..runs.len()).filter(|&k| runs[k].is_some()).collect();
     // Once a stage runs again, a rerun (decision 0540): its launches, and the finish that commits them, charge the
@@ -2456,7 +2485,7 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         rep.submissions += done.submissions;
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
-        rep.sized += done.sized;
+        rep.levels += done.levels;
         rep.screened += done.screened;
         let mut again = Vec::new();
         for &k in &pending {
@@ -2482,11 +2511,11 @@ fn round<'p>(rules: &[(&'p Plan, &JoinRule, usize)], own: &mut Own, names: &Inte
         rep.reruns += again.len() as u32;
         pending = again.iter().map(|&(k, _)| k).collect();
         rerun.get_or_insert_with(rerail_accel::gpu::launch::rerun);
-        for (k, s) in again {
-            if let Err(e) = runs[k].as_mut().expect("a run").encode(s, &mut batch, rep, own, names) {
-                let _ = batch.finish();
-                return Err(e);
-            }
+        let mut todo: Vec<(&mut Run<'p>, usize)> =
+            runs.iter_mut().enumerate().filter_map(|(k, r)| again.iter().find(|a| a.0 == k).and_then(|&(_, s)| r.as_mut().map(|r| (r, s)))).collect();
+        if let Err(e) = encode_levels(&mut todo, &mut batch, rep, own, names) {
+            let _ = batch.finish();
+            return Err(e);
         }
     }
     let mut out = Vec::with_capacity(runs.len());
@@ -2721,7 +2750,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         rep.submissions += done.submissions;
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
-        rep.sized += done.sized;
+        rep.levels += done.levels;
         rep.screened += done.screened;
         drop(ran);
         drop((hold, old_maps));
@@ -2822,7 +2851,7 @@ fn fixpoint_here(seeds: &[(&Plan, &JoinRule, usize)], deltas: &[(&Plan, &JoinRul
         rep.submissions += done.submissions;
         rep.dispatches += done.dispatches;
         rep.gpu_seconds += done.gpu_seconds;
-        rep.sized += done.sized;
+        rep.levels += done.levels;
         rep.screened += done.screened;
         if !any {
             break;

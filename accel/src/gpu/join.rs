@@ -31,7 +31,7 @@ use super::shared;
 use crate::rows::{bits, span};
 use rerail_device::compute_kernel::GridComputeFunctionArgumentDisposition;
 use rerail_device::device::{Buffer, BufferRef, ComputeFunction, ComputeQueue, SharedEvent};
-use rerail_gpu::library::{radix_sort_pairs_in, scan_exclusive_u32_in, scan_sized, RadixSpace, ScanSpace, SCAN_SIZES};
+use rerail_gpu::library::{radix_sort_pairs_in, scan_exclusive_u32_in, RadixSpace, ScanSpace};
 use std::cell::{Cell, RefCell};
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
@@ -775,22 +775,6 @@ impl Scan {
         pass.library([input, output].into_iter().chain(self.space.buffers()), |q| scan_exclusive_u32_in(q, input, output, self.count as u32, false, &self.space));
         Ok(())
     }
-
-    /// Encodes the sizes of a scan sized on the device: of `min(totals[slot], cap)` values (a stage's rows), from the
-    /// binding table's count the work before wrote, not the host's guess of its space; `cap` below `count`. Returns the
-    /// sizes, for `encode_sized` and `Pass::run_bytes_indirect` (the grid over the `n + 1` outputs at
-    /// `SCAN_OUTPUT_GRID`, `GROUP` threads a group).
-    pub fn size(&self, pass: &Pass, totals: &Buffer, slot: usize, cap: usize) -> Result<Held, String> {
-        let sizes = Held::new(4 * SCAN_SIZES)?;
-        pass.library([totals, &sizes.buffer].into_iter().chain(self.space.buffers()), |q| self.space.size(q, totals, slot as u32, cap as u32, GROUP as u32, &sizes.buffer));
-        Ok(sizes)
-    }
-
-    /// `encode`, of `size`'s count, on its grids.
-    pub fn encode_sized(&self, pass: &Pass, data: &Buffer, sizes: &Held) -> Result<(), String> {
-        pass.library([data, &sizes.buffer].into_iter().chain(self.space.buffers()), |q| scan_sized(q, data, &sizes.buffer, &self.space));
-        Ok(())
-    }
 }
 
 /// A count of values the device's scans and sorts take: 32 bits.
@@ -1123,6 +1107,27 @@ pub fn encode_sort(pass: &Pass, lead: &Buffer, width: Width, bits: u32, n: usize
         pass.run(&compact, &[keys, &heads_buf, &starts.buffer, &rkeys.buffer, &nruns.buffer], &[nn], &[], groups(n));
     }
     Ok(SortParts { perm, starts, rkeys, nruns, key })
+}
+
+/// Encodes into `pass` a stable LSD radix sort of the `n` values of `lead` (each `width` wide, their span `bits`
+/// bits): each sorted place's row into `perm` (`4 * n` bytes), and nothing more (`encode_sort` finds the runs too).
+/// `lead` is left as it is, so a reader finds a place's value as `lead[perm[place]]`. Every allocation is made
+/// before the first dispatch, as `encode_sort`'s.
+pub fn encode_order(pass: &Pass, lead: &Buffer, width: Width, bits: u32, n: usize, perm: &Buffer) -> Result<(), String> {
+    if n == 0 {
+        return Ok(());
+    }
+    let key = width.key();
+    let [init, _, _] = sort_pipes(width)?;
+    let kb = key.bytes();
+    let (keys_a, keys_b) = (scratch(KEYS_A, kb * n)?, scratch(KEYS_B, kb * n)?);
+    // The order ends in `idx_a` after an even number of passes.
+    let other = scratch(IDX, 4 * n)?;
+    let (idx_a, idx_b): (&Buffer, &Buffer) = if bits.div_ceil(8).is_multiple_of(2) { (perm, &other) } else { (&other, perm) };
+    let space = RadixSpace::new_in(device_count(n)?, |k, words| scratch(if k == 0 { HIST } else { SCAN + k - 1 }, 4 * words))?;
+    pass.run(&init, &[lead, &keys_a, idx_a], &[n as u32], &[], groups(n));
+    radix_sort(pass, key, [&keys_a, idx_a], [&keys_b, idx_b], n, bits, &space);
+    Ok(())
 }
 
 /// A column's statistics made on the device (decision 0209 §6): its rows, distinct values, the sums of its values'
