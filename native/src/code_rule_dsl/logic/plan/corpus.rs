@@ -166,6 +166,7 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_PUSH_EQUAL_COLUMNS",
     "RERAIL_AST_PARTS",
     "RERAIL_AST_PART_CAPTURES",
+    "RERAIL_AST_PART_PARENTS",
     "RERAIL_RULE_ORDER",
     // Guests' copies kept unfolded (`combining::FoldOwn`).
     "RERAIL_SHOWN_COPIES",

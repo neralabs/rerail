@@ -33,7 +33,7 @@ pub struct Found {
 /// The text passes on `p`, for a program of `dialect`, as `plan::corpus`'s preparation runs them.
 pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::GrammarDialect) -> Result<Found> {
     if dialect == crate::code_rule_dsl::language::GrammarDialect::Python && !std::env::var("RERAIL_AST_PARTS").is_ok_and(|v| v == "off") {
-        p.rules(&mut Absorb { capture: !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off"), rewritten: 0 });
+        p.rules(&mut Absorb { capture: !std::env::var("RERAIL_AST_PART_CAPTURES").is_ok_and(|v| v == "off"), parents: !std::env::var("RERAIL_AST_PART_PARENTS").is_ok_and(|v| v == "off"), rewritten: 0 });
     }
     let mut lowering = MatcherRelations::default();
     p.rules(&mut lowering);
@@ -56,7 +56,7 @@ pub fn passes(p: &mut Pipeline<'_>, dialect: crate::code_rule_dsl::language::Gra
 /// rule reads further captured: that version and the number of rules rewritten.
 pub fn tree_parts_as_matchers(v: Arc<Version>, capture: bool) -> Result<(Arc<Version>, usize)> {
     let mut p = Pipeline::new("tree-shaped parts as matchers", v);
-    let mut absorb = Absorb { capture, rewritten: 0 };
+    let mut absorb = Absorb { capture, parents: true, rewritten: 0 };
     p.rules(&mut absorb);
     Ok((p.finish()?.0, absorb.rewritten))
 }
@@ -152,16 +152,20 @@ fn fresh(held: &mut HashSet<String>, count: &mut usize, stem: &str) -> String {
 /// `capture`, a field the rule reads further is part of it too, its node the matcher's capture (`"pattern": "$C1"`,
 /// `C1: x`: decision 0107). Only a field a node of kind `K` holds at most one of ([`single_field`]): a matcher's
 /// `field` is the field's first node, where `field(r, "F", x)` is each of them (`import os, sys`'s two names). A field
-/// tested without a kind stays a join. `rewritten` counts the rules rewritten.
+/// tested without a kind stays a join. With `parents`, a negated parent edge of the root, `!field(_, "F", r)` (the
+/// root is no parent's field `F`, whatever the parent's kind), is the matcher's `{"not": {"inside": {"pattern":
+/// "$_P", "field": "F", "stopBy": "neighbor"}}}`, tested in its pass rather than probed per row as an anti-join (t50
+/// step 6: `nameref`'s). `rewritten` counts the rules rewritten.
 struct Absorb {
     capture: bool,
+    parents: bool,
     rewritten: usize,
 }
 
 impl RulePass for Absorb {
     const NAME: &'static str = "tree patterns as matchers";
     fn settings(&self) -> Vec<u8> {
-        vec![self.capture as u8]
+        vec![self.capture as u8, self.parents as u8]
     }
     fn rule(&mut self, cx: &Cx<'_>, r: RuleRef<'_>, out: &mut RuleOut<'_, '_>) -> Result<Step> {
         let v = cx.v();
@@ -222,6 +226,20 @@ impl RulePass for Absorb {
                     parts.push(serde_json::json!({"has": {"field": fname, "kind": k2, "stopBy": "neighbor"}}));
                 }
                 taken.extend([fi, ki]);
+            }
+            // The root's negated parent edges: `!field(_, "F", r)`, its first argument a wildcard.
+            if self.parents {
+                for (ni, nl) in body.iter().enumerate() {
+                    let Lit::Atom(a) = nl.view() else { continue };
+                    if !a.neg() || v.rel_name(a.rel()) != "field" || drop.contains(&ni) || taken.contains(&ni) {
+                        continue;
+                    }
+                    let a = args(a);
+                    if let ([TermRef::Wild, f, n], Some(fname)) = (a.as_slice(), str_of(a.get(1))) && matches!(f, TermRef::Str(_)) && var_of(Some(n)) == Some(rv) {
+                        parts.push(serde_json::json!({"not": {"inside": {"pattern": "$_P", "field": fname, "stopBy": "neighbor"}}}));
+                        taken.push(ni);
+                    }
+                }
             }
             if parts.len() < 2 || captures.len() > MOST_CAPTURES {
                 continue;
