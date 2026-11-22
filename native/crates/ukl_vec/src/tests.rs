@@ -1258,6 +1258,12 @@ fn the_nearest_kernels_atomics_are_loads_stores_and_one_maximum() {
             // A compare's lanes as a mask: the compare's own, not one made again of its bool.
             let again = lines.windows(2).filter(|l| l[0].starts_with("ushr v") && l[0].ends_with("#31") && l[1].starts_with("cmeq v") && l[1].ends_with("#0")).count();
             assert!(w < 4 || again == 0, "w{w}: {again} masks made again of a compare's bools:\n{code}");
+            // A gather of `state[base + v]` as written by hand: each lane's 32-bit index out of its vector, and the
+            // load scales and extends it (`ldr w, [x, w, uxtw #2]`), and a store's lanes the same: no lane's 64-bit
+            // address made in vectors.
+            let scaled = lines.iter().filter(|l| l.starts_with("ldr w") && l.to_lowercase().ends_with(", uxtw #2]")).count();
+            let widened = lines.iter().filter(|l| l.starts_with("shl v") && l.contains(".2d")).count();
+            assert!(w < 4 || (scaled >= w as usize && widened == 0), "w{w}: {scaled} scaled lane loads, {widened} indexes scaled to addresses in vectors:\n{code}");
         }
     }
 }

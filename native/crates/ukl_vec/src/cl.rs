@@ -14,7 +14,7 @@
 //!   integer, a gather) is done a lane at a time, each lane's the uniform code's (`u_bin` and the rest), so a value's
 //!   result is the same whichever way it is made.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use cranelift_codegen::ir::condcodes::{FloatCC, IntCC};
 use cranelift_codegen::ir::types::{F32, F32X4, F64, F64X2, I8, I8X16, I16, I16X8, I32, I32X4, I64, I64X2};
@@ -787,6 +787,9 @@ struct Cg<'a, 'b> {
     reg_ids: HashMap<crate::ssa::Lab, usize>,
     reg_blocks: Vec<ir::Block>,
     over: Vec<Vec<(V, Rp, Option<Steps>)>>,
+    /// The values each region reads again (not made again): their own values are this region's, their operands' not
+    /// (an operand not live at the region's start is another region's), so a pattern of operands (`based`) skips them.
+    reloaded: HashSet<(usize, V)>,
     applied: Vec<(V, Rp, Option<Steps>, Option<Vec<Value>>)>,
     region: usize,
     /// The values kept across regions: each one's place in the save area (a chunk's at `16 * parts * chunk` past
@@ -860,6 +863,7 @@ impl<'a, 'b> Cg<'a, 'b> {
             reg_ids: HashMap::new(),
             reg_blocks: Vec::new(),
             over: Vec::new(),
+            reloaded: HashSet::new(),
             applied: Vec::new(),
             region: 0,
             saved: HashMap::new(),
@@ -1584,6 +1588,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                 let old = std::mem::replace(&mut self.vals[v as usize], rp.clone());
                 self.applied.push((v, old, old_st, old_raw));
                 self.over[k].push((v, rp, None));
+                self.reloaded.insert((k, v));
             }
         }
     }
@@ -3637,9 +3642,10 @@ impl<'a, 'b> Cg<'a, 'b> {
             }
         }
         if w > 1 {
-            if let Some((base, off, from)) = self.based(addr) {
-                // A uniform base and each lane's 32-bit offset: a load of base and the offset, extended, a lane; a
-                // lane that does not run reads the first running lane's place (none running: the scratch area's).
+            if let Some((base, off, from, shift)) = self.based(addr) {
+                // A uniform base and each lane's 32-bit index: a lane's load of base and the index, extended and
+                // scaled (`ldr w, [x, w, uxtw #2]`), the index out of its vector; a lane that does not run reads the
+                // first running lane's place (none running: the scratch area's).
                 let po = self.lanes(off, from);
                 let (base, po) = if full {
                     (base, po)
@@ -3661,6 +3667,7 @@ impl<'a, 'b> Cg<'a, 'b> {
                 return self.gather(m, &mut |g, j| {
                     let o = g.b.ins().extractlane(po[(j / 4) as usize], (j % 4) as u8);
                     let o = if from.signed() { g.b.ins().sextend(I64, o) } else { g.b.ins().uextend(I64, o) };
+                    let o = if shift == 0 { o } else { g.b.ins().ishl_imm(o, i64::from(shift)) };
                     g.b.ins().iadd(base, o)
                 });
             }
@@ -3691,25 +3698,47 @@ impl<'a, 'b> Cg<'a, 'b> {
         self.gather(m, &mut |g, j| g.extract(&pa, M::PTR, j))
     }
 
-    /// If lanes address `addr` is a uniform base plus each lane's 32-bit integer, extended: the base, the integer's
-    /// value and its type.
-    fn based(&mut self, addr: V) -> Option<(Value, V, M)> {
+    /// If lanes address `addr` is a uniform base plus each lane's 32-bit integer, extended and scaled by 1, 2, 4 or 8
+    /// (a subscript's `base + (uint64_t)i * size`): the base, the integer's value, its type and the scale's shift.
+    fn based(&mut self, addr: V) -> Option<(Value, V, M, u8)> {
         let i = *self.f.inst(addr);
-        if i.op != O::Bin || Op::of(u32::from(i.sub)) != Op::Add {
+        if self.reloaded.contains(&(self.region, addr)) || i.op != O::Bin || Op::of(u32::from(i.sub)) != Op::Add {
             return None;
         }
         for (u, o) in [(i.a, i.b), (i.b, i.a)] {
             let Rp::U(base) = self.vals[u as usize] else { continue };
+            let (o, shift) = self.scaled(o);
             let c = *self.f.inst(o);
             if c.op != O::Cast || c.shape != Shape::Lanes {
                 continue;
             }
             let from = M(c.b);
             if from.bytes() == 4 && !from.float() && !from.is_agg() && matches!(self.vals[c.a as usize], Rp::L(_)) {
-                return Some((base, c.a, from));
+                return Some((base, c.a, from, shift));
             }
         }
         None
+    }
+
+    /// `x` as a value times 2, 4 or 8 (a product by the constant, or a shift by one): the value and the shift; else
+    /// `x` itself, unshifted.
+    fn scaled(&self, x: V) -> (V, u8) {
+        let i = *self.f.inst(x);
+        if i.op != O::Bin || i.shape != Shape::Lanes {
+            return (x, 0);
+        }
+        let k = |v: V| {
+            let c = self.f.inst(v);
+            (c.op == O::Const).then(|| u64::from(c.a) | u64::from(c.b) << 32)
+        };
+        match Op::of(u32::from(i.sub)) {
+            Op::Mul => [(i.a, i.b), (i.b, i.a)]
+                .into_iter()
+                .find_map(|(v, c)| k(c).filter(|n| matches!(n, 2 | 4 | 8)).map(|n| (v, n.trailing_zeros() as u8)))
+                .unwrap_or((x, 0)),
+            Op::Shl => k(i.b).filter(|n| (1..=3).contains(n)).map_or((x, 0), |n| (i.a, n as u8)),
+            _ => (x, 0),
+        }
     }
 
     /// The parts of `m` whose lane `j` is the value of `m` at the address `addr(j)` gives, each part made as its lanes
@@ -3954,12 +3983,34 @@ impl<'a, 'b> Cg<'a, 'b> {
                 return;
             }
         }
+        // Each lane's address as written by hand: the first lane's plus the lane's place (consecutive), a uniform
+        // base plus the lane's 32-bit index scaled (`str w, [x, w, uxtw #2]`), else the lane's of the addresses.
         let k = self.mask(mask);
-        let pa = self.lanes(addr, M::PTR);
+        enum At {
+            Next(Value),
+            Based(Value, Vec<Value>, M, u8),
+            Lanes(Vec<Value>),
+        }
+        let at = if let Some(a) = self.consecutive(addr, m.bytes()) {
+            At::Next(a)
+        } else if let Some((base, off, from, shift)) = self.based(addr).filter(|_| w > 1) {
+            At::Based(base, self.lanes(off, from), from, shift)
+        } else {
+            At::Lanes(self.lanes(addr, M::PTR))
+        };
         let px = self.lanes(x, m);
         let scratch = self.b.ins().load(I64, mf(), self.env, self.pl.scratch);
         for j in 0..w {
-            let a = self.extract(&pa, M::PTR, j);
+            let a = match &at {
+                At::Next(a) => self.b.ins().iadd_imm(*a, i64::from(j * m.bytes())),
+                At::Based(base, po, from, shift) => {
+                    let o = self.b.ins().extractlane(po[(j / 4) as usize], (j % 4) as u8);
+                    let o = if from.signed() { self.b.ins().sextend(I64, o) } else { self.b.ins().uextend(I64, o) };
+                    let o = if *shift == 0 { o } else { self.b.ins().ishl_imm(o, i64::from(*shift)) };
+                    self.b.ins().iadd(*base, o)
+                }
+                At::Lanes(pa) => self.extract(pa, M::PTR, j),
+            };
             let on = self.mask_lane(&k, j);
             let a = self.b.ins().select(on, a, scratch);
             let s = self.extract(&px, m, j);

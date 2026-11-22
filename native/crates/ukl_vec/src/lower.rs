@@ -1426,7 +1426,6 @@ impl L<'_> {
                 self.lv(self.c.child(e, "argument").expect("an operand"))?;
             }
             "field_expression" => {
-                let a = self.c.child(e, "argument").expect("a structure");
                 self.load(e, &t)?;
             }
             "parenthesized_expression" => {
