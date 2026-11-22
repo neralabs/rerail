@@ -95,6 +95,57 @@ impl crate::code_rule_dsl::logic::program_image::manager::Analysis for Shapes {
         let l = cx.get::<crate::code_rule_dsl::logic::program_image::layouts::Layouts>()?;
         Ok(Shapes::of_layouts(cx.v(), &l))
     }
+    /// Kept by the version's identity (`plan::kept_analyses`, t33 K4): a relation's row is `rel`, its name, its
+    /// columns' count, its columns and its facts (`LayoutFact::placed`); a `from` row the relations its facts were
+    /// inferred from; a `left` row the relations left out.
+    fn rows(&self, _v: &crate::code_rule_dsl::logic::program_image::Version) -> Option<Vec<crate::code_rule_dsl::logic::program_image::manager::Row>> {
+        use crate::code_rule_dsl::logic::front::Value;
+        let s = |x: &str| Value::Str(x.into());
+        let mut out = Vec::new();
+        let mut rels: Vec<&String> = self.0.keys().collect();
+        rels.sort();
+        for rel in rels {
+            let (cols, facts) = &self.0[rel];
+            let mut r = vec![s("rel"), s(rel), Value::Int(cols.len() as i64)];
+            r.extend(cols.iter().map(|c| s(c)));
+            r.extend(facts.iter().map(|f| s(&f.placed())));
+            out.push(r);
+        }
+        let mut from: Vec<(&String, &BTreeSet<String>)> = self.1.iter().collect();
+        from.sort();
+        for (rel, of) in from {
+            out.push(std::iter::once(s("from")).chain(std::iter::once(s(rel))).chain(of.iter().map(|r| s(r))).collect());
+        }
+        if !self.2.is_empty() {
+            out.push(std::iter::once(s("left")).chain(self.2.iter().map(|r| s(r))).collect());
+        }
+        Some(out)
+    }
+    fn of_rows(_v: &crate::code_rule_dsl::logic::program_image::Version, rows: &[crate::code_rule_dsl::logic::program_image::manager::Row]) -> Option<Shapes> {
+        use crate::code_rule_dsl::logic::front::Value;
+        let text = |v: &Value| match v {
+            Value::Str(x) => Some(x.to_string()),
+            _ => None,
+        };
+        let mut out = Shapes::default();
+        for r in rows {
+            match text(r.first()?)?.as_str() {
+                "rel" => {
+                    let Value::Int(n) = r.get(2)? else { return None };
+                    let n = usize::try_from(*n).ok()?;
+                    let cols = r.get(3..3 + n)?.iter().map(text).collect::<Option<Vec<_>>>()?;
+                    let facts = r.get(3 + n..)?.iter().map(|f| LayoutFact::of_placed(&text(f)?).ok()).collect::<Option<Vec<_>>>()?;
+                    out.0.insert(text(r.get(1)?)?, (cols, facts));
+                }
+                "from" => {
+                    out.1.insert(text(r.get(1)?)?, r.get(2..)?.iter().map(text).collect::<Option<_>>()?);
+                }
+                "left" => out.2 = r.get(1..)?.iter().map(text).collect::<Option<_>>()?,
+                _ => return None,
+            }
+        }
+        Some(out)
+    }
 }
 
 impl Shapes {

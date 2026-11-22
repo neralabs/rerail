@@ -98,7 +98,7 @@
         assert!(read_plans(&store, &prepared).unwrap().0.is_empty());
         // As the run's record applies it: the entry made on the run's side.
         let write_plans = |store: &ContentStore, prepared: &[u8; 32], rows: &[Vec<Value>], notes: &NoteRows| {
-            keep_plans(store, prepared, &plans_facts(rows, notes, &[]));
+            keep_plans(store, prepared, &plans_facts(rows, notes, &[], &[]));
             apply_plans(&crate::content_store::record::Apply { store, bytes: &[], pieces: &[] }, crate::content_store::record::codec::body(prepared)).map(|()| true)
         };
         assert!(write_plans(&store, &prepared, &[row.into_iter().map(Value::Int).collect()], &Default::default()).unwrap());
@@ -122,9 +122,16 @@
         use super::super::prepared::{ByVersion, Prepared, PreparedPlan};
         let made = Prepared([(0xfeed_u128 << 64 | 7, PreparedPlan { order: vec![Step { at: 2, mode: None }, Step { at: 0, mode: Some(Mode::Climb) }], work_per_node: 0.75, rows_per_node: 0.125, assumed: vec![("anc".to_owned(), 8.0)] })].into_iter().collect());
         let by: ByVersion = [([3u8; 32], Arc::new(made.clone())), ([4u8; 32], Arc::new(Prepared::default()))].into_iter().collect();
-        keep_plans(&store, &prepared, &plans_facts(&[StoredPlan::row(key, &stored).into_iter().map(Value::Int).collect()], &Default::default(), &super::super::prepared::store_rows(&by)));
+        // And the analyses of the versions planned (t33 K4): one with rows, kept in order, and one with none.
+        let rows = vec![vec![Value::Str("b".into()), Value::Int(2)], vec![Value::Int(1)], vec![Value::Str("a".into())]];
+        let analyses: super::super::kept_analyses::ByVersion =
+            [(([3u8; 32], "shapes".to_owned(), 1), Arc::new(rows.clone())), (([3u8; 32], "well-founded components".to_owned(), 1), Arc::new(Vec::new()))].into_iter().collect();
+        keep_plans(&store, &prepared, &plans_facts(&[StoredPlan::row(key, &stored).into_iter().map(Value::Int).collect()], &Default::default(), &super::super::prepared::store_rows(&by), &super::super::kept_analyses::store_rows(&analyses)));
         apply_plans(&crate::content_store::record::Apply { store: &store, bytes: &[], pieces: &[] }, crate::content_store::record::codec::body(&prepared)).unwrap();
-        let (plans, ready) = read_plans(&store, &prepared).unwrap();
+        let (plans, ready, kept) = read_plans(&store, &prepared).unwrap();
+        assert_eq!(kept.get(&([3u8; 32], "shapes".to_owned(), 1)).map(|r| r.as_slice()), Some(rows.as_slice()), "an analysis's rows read back, in order");
+        assert!(kept.get(&([3u8; 32], "well-founded components".to_owned(), 1)).is_some_and(|r| r.is_empty()), "one with no rows is kept as its key, read back");
+        assert_eq!(kept.len(), 2);
         assert_eq!(plans.get(&key), Some(&stored), "the plans are kept beside the prepared plans");
         assert_eq!(ready.get(&[3u8; 32]).map(|p| &**p), Some(&made), "a version's prepared plans read back");
         assert!(ready.get(&[4u8; 32]).is_some_and(|p| p.0.is_empty()), "a version with none is kept as its id alone, read back with nothing to make again");

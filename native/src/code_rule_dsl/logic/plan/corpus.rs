@@ -2667,7 +2667,7 @@ fn run_observed_within(
     // The base relations' layouts (core.rerail's, decision 0361 item 5): the columns they answer are not counted when a
     // chunk's base relations are measured (`sampled_statistics_unanswered`), but for a relation whose facts the run's
     // rows broke (step 6, `Shapes::for_run` at each measure).
-    let base_shapes = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' shapes".into()); super::shapes::Shapes::of_version(&local_v) };
+    let base_shapes = { let _s = crate::code_rule_dsl::logic::profile::span(|| "the base relations' shapes".into()); super::kept_analyses::shapes(&local_v) };
     let constants_only = {
         // The split's (`Programs::constants`): empty where no document is read, and then so is the file-local part.
         let constant = &split.constants;
@@ -3138,7 +3138,7 @@ fn run_observed_within(
     drop(section.take()); section = Some(crate::code_rule_dsl::logic::profile::span(|| "the measures' keys".into()));
     let measure_keys: BTreeSet<String> = {
         use crate::code_rule_dsl::logic::plan::wellfounded::Order;
-        let proofs = crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>(&split.program).ok();
+        let proofs = crate::code_rule_dsl::logic::plan::kept_analyses::kept::<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>(&split.program).ok();
         let derived_here = |r: &str| cross_run.rel(r).is_some_and(|id| cross_run.heads(id).next().is_some());
         let mut keys = BTreeSet::new();
         if let Some(proofs) = proofs {
@@ -8662,7 +8662,7 @@ fn run_observed_within(
                                 // The whole program's proofs (0364 §5), else none: a program the split holds whole may
                                 // not stratify as one (phase 1's C includes read their own results negatively, ranked by
                                 // phase), though each part it runs does; the part's run then checks its own version.
-                                proofs: crate::code_rule_dsl::logic::program_image::manager::analysis::<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>(&split.program).ok(),
+                                proofs: crate::code_rule_dsl::logic::plan::kept_analyses::kept::<crate::code_rule_dsl::logic::plan::wellfounded::Proofs>(&split.program).ok(),
                             };
                             let hooks = crate::code_rule_dsl::logic::plan::Hooks { maintain: Some(&mut driver), hand_off: hand_off.then_some(&mut hand as &mut dyn FnMut(&str) -> Result<bool>), unload: let_go_inputs.then_some(&mut unload as &mut dyn FnMut(&[String]) -> Result<()>), texts: Some(Arc::clone(&vocabulary)), ..Default::default() };
                             let got = super::run_atoms_native_hooked(part, db, "main", stats, keep, modes, hooks)?;
