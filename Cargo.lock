@@ -6580,6 +6580,7 @@ name = "rerail-ukl-aot"
 version = "0.1.0"
 dependencies = [
  "rerail-clif",
+ "rerail-gpu",
  "rerail-json-aot",
  "rerail-tape-format",
  "rerail-ukl-aot",

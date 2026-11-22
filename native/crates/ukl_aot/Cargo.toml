@@ -21,3 +21,6 @@ rerail-json-aot = { path = "../json_aot" }
 [dev-dependencies]
 # This crate's own test build turns on its test hooks, as the engine's does (`test-hooks`).
 rerail-ukl-aot = { path = ".", features = ["test-hooks"] }
+# The process's GPU (Metal, CUDA; the UKL CPU backend): `f16_parent`'s kernels compiled from their UKL and timed
+# there (`examples/parent_gpu`).
+rerail-gpu = { path = "../../../gpu" }
