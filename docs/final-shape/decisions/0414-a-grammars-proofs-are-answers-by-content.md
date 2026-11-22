@@ -3,7 +3,7 @@
 Status: decided (the user, 2026-11-18: "please figure out how we can also implement a proof
 cache so that we don't do the heavy work over and over"). Follows 0264 (images by content), 0092
 and 0103 (a cache is a key and a result, nothing more).
-Numbered 0402 where it was written.
+Numbered 0402 where it was written, then 0404.
 
 ## Intro
 

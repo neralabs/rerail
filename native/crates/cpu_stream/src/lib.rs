@@ -1,8 +1,8 @@
 //! Tier 2 on the CPU, on the compiler's front end (`rerail-compiler`) and tier 1's lowering (`rerail-cpu-block`): the
 //! stream program's words lowered to Cranelift (`native_cpu_stream`), the tape they write (`native_cpu_tape`), the
 //! functions they are cut into (`native_cpu_clusters`), and the parser of both tiers (`native_cpu_stream::Parser`).
-//! Tier 2 read over tier 1's records where the device left them is `tier2_on`. The Rust lowerings (`rust_stream`,
-//! `rust_block`, `clif_rust`) are here too: the JIT's direct format 16 runs are decided by `rust_stream`'s facts
+//! Tier 2 read over tier 1's records where the device left them is `tier2_on`. The deprecated Rust lowerings (decision 0550:
+//! `rust_stream`, `clif_rust`) are here too: the JIT's direct format 16 runs are decided by `rust_stream`'s facts
 //! (`direct_keys`, `open_bound`), where the Rust takes the program. The sources stay in the compiler's folder
 //! (`crates/compiler/src`); this crate mounts them.
 
@@ -32,8 +32,6 @@ pub mod native_cpu_clusters;
 pub mod clif_rust;
 #[path = "../../compiler/src/rust_stream.rs"]
 pub mod rust_stream;
-#[path = "../../compiler/src/rust_block.rs"]
-pub mod rust_block;
 /// The Bitlex ladder's checks, for this crate's tests and the engine's.
 #[cfg(any(test, feature = "test-hooks"))]
 #[path = "../../compiler/src/ladder.rs"]

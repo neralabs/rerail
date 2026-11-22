@@ -1489,7 +1489,7 @@ mod tests {
             let (v, _) = p.finish().unwrap();
             let made = v.declared_names().iter().filter(|r| r.starts_with("rr_in_")).count();
             let mut p = Pipeline::new("test", v);
-            let mut fold = super::super::combining::FoldOwn { label, folded: 0 };
+            let mut fold = super::super::combining::FoldOwn { label, folded: 0, diffed: Default::default() };
             let (mut merge, mut repeats) = (super::super::merge::MergeIdentical::default(), super::super::merge::DropRepeated::default());
             p.program(&mut fold).program(&mut repeats).program(&mut merge).program(&mut repeats);
             let (v, _) = p.finish().unwrap();
@@ -1540,7 +1540,7 @@ mod tests {
             e.finish().unwrap()
         };
         let mut p = Pipeline::new("test", v);
-        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0, diffed: Default::default() };
         p.program(&mut fold);
         let (v, _) = p.finish().unwrap();
         assert!(fold.folded > 0);
@@ -1577,7 +1577,7 @@ mod tests {
             RUN_VALUE_KEYS,
         );
         let mut p = Pipeline::new("test", v);
-        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0, diffed: Default::default() };
         p.program(&mut fold);
         let (v, _) = p.finish().unwrap();
         assert!(fold.folded > 0);
@@ -1619,7 +1619,7 @@ mod tests {
             RUN_VALUE_KEYS,
         );
         let mut p = Pipeline::new("test", v);
-        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0, diffed: Default::default() };
         p.program(&mut fold);
         let (v, _) = p.finish().unwrap();
         let all: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
@@ -1691,7 +1691,7 @@ mod tests {
         let axes = |v: &Version| -> Vec<String> { v.rules().flat_map(|r| v.show_rule(r).split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| is_axis(w)).map(str::to_owned).collect::<Vec<_>>()).collect() };
         assert!(axes(&v).iter().any(|r| r.contains("rr_in_annotation_")), "the clone reads the annotation's axis: {:?}", axes(&v));
         let mut p = Pipeline::new("test", v);
-        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0, diffed: Default::default() };
         let (mut merge, mut repeats) = (super::super::merge::MergeIdentical::default(), super::super::merge::DropRepeated::default());
         p.program(&mut fold).program(&mut repeats).program(&mut merge).program(&mut repeats);
         let (v, _) = p.finish().unwrap();

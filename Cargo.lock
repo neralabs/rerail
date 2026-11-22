@@ -3872,6 +3872,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "rerail-json-aot"
+version = "0.1.0"
+dependencies = [
+ "rerail-json-aot",
+ "rerail-tape-format",
+]
+
+[[package]]
 name = "rerail-json-lean"
 version = "0.1.0"
 dependencies = [
@@ -3884,15 +3892,8 @@ dependencies = [
 name = "rerail-kotlin-aot"
 version = "0.1.0"
 dependencies = [
- "libc",
- "rerail-compiler",
- "rerail-context",
- "rerail-cpu-block",
- "rerail-cpu-stream",
  "rerail-kotlin-aot",
- "rerail-kotlin-lean",
- "rerail-kotlin-parser",
- "rerail-simd8",
+ "rerail-tape-format",
 ]
 
 [[package]]
@@ -3913,6 +3914,7 @@ dependencies = [
  "rerail-compiler",
  "rerail-cpu-block",
  "rerail-cpu-stream",
+ "rerail-kotlin-aot",
  "rerail-kotlin-lean",
  "rerail-kotlin-parser",
  "rerail-tape-format",
@@ -4558,6 +4560,7 @@ dependencies = [
  "rerail-context",
  "rerail-cpu-block",
  "rerail-cpu-stream",
+ "rerail-json-aot",
  "rerail-kotlin-parser",
  "rerail-metal",
  "rerail-parser-tests",

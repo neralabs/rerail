@@ -14,10 +14,14 @@ use rerail_compiler::*;
 #[cfg(not(target_family = "wasm"))]
 #[path = "../../compiler/src/answers.rs"]
 pub mod answers;
+#[path = "../../compiler/src/bitlex_lex_rust.rs"]
+pub mod bitlex_lex_rust;
 #[path = "../../compiler/src/bitlex_masks.rs"]
 pub mod bitlex_masks;
 #[path = "../../compiler/src/bitlex_prove.rs"]
 pub mod bitlex_prove;
+#[path = "../../compiler/src/bitlex_rust.rs"]
+pub mod bitlex_rust;
 #[path = "../../compiler/src/bitlex_sat.rs"]
 pub mod bitlex_sat;
 #[path = "../../compiler/src/bitlex_tier2.rs"]

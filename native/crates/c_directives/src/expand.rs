@@ -222,6 +222,7 @@ pub fn expand_tu<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool
     expand_tu_with(main, io, cpp, g, &native)
 }
 
+/// **Deprecated** (decision 0550): `rerail-pp-aot` is Rust from the JIT's IR; its use goes with it.
 /// Whether the ahead-of-time build (`rerail_pp_aot::BUILD`) is the words this process has: made
 /// from the same text (its `words` fingerprint, `EXPAND`'s) for the harness's interface now
 /// (`native_cpu_pp::ABI`), checked once.

@@ -341,11 +341,18 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // One function, as `walk_document`: the nesting on a stack of its own (`s.ret`, as
     // `is_array[depth]`), not the machine's; the loops a value is entered at from an array, an
     // object and the document are dispatched (`match d`), as simdjson's `goto`s into them.
-    // A rule's function is named by its rule (`rust_stream`'s `function`): counted by its signature.
-    assert!(src.matches("/// The rule entered at word ").count() == 1 && src.contains("match ret {"), "one function, an explicit stack");
+    let rules = src.match_indices("\nfn r").filter(|&(at, _)| src[at + 5..].starts_with(|c: char| c.is_ascii_digit())).count();
+    assert!(rules == 1 && src.contains("ret = s.taken_ret();"), "one function, an explicit stack");
+    // A return as `scope_end`'s (`rust_stream::root_number`, decision 0558): the document's where the depth is 0,
+    // else the container's two places by one test of its number; no match, no refusal of a number, no number kept
+    // by the document's own calls.
+    let two_ways = |what: &str, code: &str| {
+        assert!(code.contains("s.depth -= 1;\nif s.depth == 0 {") && code.contains("} else {\nif ret == 1 {") && !code.contains("match ret {") && !code.contains("why::RETURN)") && !code.contains("s.keep_ret(0)"), "format {what}: a return two ways");
+    };
+    two_ways("15", &src);
     // The token's state the one rule's local, as `walk`'s `next`, `v` and `end`: not the run's fields.
     let state = src.split("\nstruct S {").nth(1).and_then(|s| s.split("\n}\n").next()).expect("the run's state");
-    assert!(src.contains("(s: &mut S) -> Result<bool, u32> {\nlet t = &mut T::NEW;") && !state.contains("start: u32") && !state.contains("rec_end") && !state.contains("last_end"), "the token's state a local of the rule");
+    assert!(src.contains("fn r0(s: &mut S) -> Result<bool, u32> {\nlet t = &mut T::NEW;") && !state.contains("start: u32") && !state.contains("rec_end") && !state.contains("last_end"), "the token's state a local of the rule");
     // One stack, the nodes': a call's number kept in its container's row (`keep_ret`), read back
     // by the `CLOSE` before its `RETURN`; no call stack of its own, and no `CLOSE` tests for a
     // node open (`OneFn::stacked`). The depth counts as simdjson's, for its limit alone.
@@ -364,8 +371,6 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // the escape `\u`; every other escape goes past them.
     let words = &aot.program.block_programs[0].records.as_ref().expect("records").words;
     let u = words.iter().position(|w| w.as_slice() == b"\\u").expect("the escape \\u") + 1;
-    // The word by its name (`mod w`), else its number.
-    let u = src.lines().skip_while(|l| *l != "mod w {").find_map(|l| l.strip_prefix("pub const ").and_then(|r| r.strip_suffix(&format!(": u32 = {u};")))).map_or_else(|| u.to_string(), |n| format!("w::{n}"));
     let calls = src.matches("s.check_1(t)?;").count();
     assert!(calls > 0 && src.matches(&format!("{u} => {{\ns.check_1(t)?;")).count() == calls, "the \\u checks in the \\u arm alone");
     // The end tested only where it is taken: `TOKEN` gives the file's length as the start past
@@ -443,6 +448,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // An end made only where a word reads it (`rust_stream::end_read`), as the lean parser makes a node's end where
     // it writes it: no `,`, `:`, `{` or `[` makes its end; `}` and `]` do, for the close of their container.
     let flat16 = flat(&src16);
+    two_ways("16", &flat16);
     assert!(!src16.contains("part_at") && src16.contains("fn string(&mut self, mut at: u32, t: &mut T) -> R {"), "a direct run's string is given the opener's place");
     assert_eq!(src16.matches("match d {").count(), 1, "a direct run's one dispatch");
     for (byte, made) in [("0x2c", false), ("0x3a", false), ("0x7b", false), ("0x5b", false), ("0x7d", true), ("0x5d", true)] {
@@ -460,8 +466,11 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // of it reads `rec_end` where no arm made it again, and `last_end` where the arm before it kept it.
     let take = src16.split("fn token_all(&mut self, t: &mut T) -> R {").nth(1).and_then(|r| r.split("\n    }\n").next()).expect("the token's step");
     assert_eq!(take.trim(), "t.start = unsafe { *self.starts.add(t.next as usize * self.rs) };\n        t.next += 1;\n        Ok(())", "the token's step");
-    assert!(flat16.contains("\n0x2c => {\ns.close::<false, true>(t.rec_end)?;\n"), "a `,` closes the value by the end it left");
-    assert!(flat16.contains("\n0x7d => {\nt.last_end = t.rec_end;\nt.rec_end = t.start + 1;\ns.close::<false, true>(t.last_end)?;\n"), "a `}}` keeps the value's end before it makes its own");
+    assert!(flat16.contains("\n0x2c => {\ns.close::<false, true>(t.rec_end);\n"), "a `,` closes the value by the end it left");
+    assert!(flat16.contains("\n0x7d => {\nt.last_end = t.rec_end;\nt.rec_end = t.start + 1;\ns.close::<false, true>(t.last_end);\n"), "a `}}` keeps the value's end before it makes its own");
+    // A close cannot fail (`rust_stream::sure_closes`, decision 0557): no result, no `?`, the writer's close asserts.
+    assert!(src16.contains("    fn close<const THIS: bool, const SURE: bool>(&mut self, end: u32) {\n") && !src16.lines().any(|l| l.contains("s.close::<") && l.contains(")?;")), "a close returns nothing");
+    assert!(src16.contains("debug_assert!(self.open_len != 0, \"a close of an open node\");") && !src16.contains("self.fail(w::fail::NO_OPEN"), "the writer's close cannot fail");
     // The language holds every key a direct run writes (`direct_entries`): no node word refuses for want of its
     // number (`rust_stream::UNNUMBERED`).
     let unnumbered = src16.matches(rerail_cpu_stream::rust_stream::UNNUMBERED).count();
@@ -474,9 +483,9 @@ fn simdjson_forms_rust_trees_are_the_jits() {
         let arms: Vec<&str> = flat16.split(&format!("\n{opener} => {{")).skip(1).collect();
         assert!(!arms.is_empty(), "the arms of {opener}");
         for arm in arms {
-            // Its enclosing nodes opened first (the document's, at the top).
+            // Its enclosing nodes opened first (the document's, at the top, with its closer checked: 0559).
             let at = arm.find(&empty(closer));
-            let first = at.is_some_and(|k| arm[..k].lines().all(|l| l.is_empty() || l.starts_with("s.open16(")));
+            let first = at.is_some_and(|k| arm[..k].lines().all(|l| l.is_empty() || l.starts_with("s.open16(") || l.starts_with("if s.n == 0 || s.byte(unsafe { *s.starts.add((s.n - 1) * s.rs) })")));
             assert!(first, "{opener}'s arm looks for its closer first: {}", &arm[..arm.len().min(160)]);
         }
     }
@@ -484,8 +493,14 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // as the lean parser's `next == index + count`: no token taken for it, no other word tests it, `ACCEPT` neither.
     assert!(!src16.contains("t.start == s.len") && !src16.contains("t.start == self.len") && !src16.contains("t.at_end"), "the end tested once, by the count");
     assert!(flat16.contains("\nif (t.next as usize == s.n) {\n") && src16.contains("    fn accept(&mut self, t: &T) -> R {\n        if self.wr.open_len != 1 {"), "the end the stream's count, `ACCEPT` past it");
+    // The document's container closed by the stream's last token, checked before the walk as the lean parser's
+    // `last != '}'` (`rust_stream::last_closers`, decision 0559): in the `{` and `[` arms, once each.
+    for closer in ["0x7d", "0x5d"] {
+        let check = format!("if s.n == 0 || s.byte(unsafe {{ *s.starts.add((s.n - 1) * s.rs) }}) != {closer} {{ return refuse(why::BYTE); }}\n");
+        assert_eq!(flat16.matches(&check).count(), 1, "the document's closer {closer} the last token, checked before the walk");
+    }
     let empties = flat16.matches("\nlet st = t.start;\ns.token_all(t)?;\nt.rec_end = t.start + 1;\ns.leaf16(").count();
-    assert!(empties > 0 && made16 == made + empties && src16.contains("mod ops {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
+    assert!(empties > 0 && made16 == made + empties && src16.contains("mod w {") && !src16.contains("self.finish(") && !src16.contains("s.code_now("), "each node to the ops as it is made, no image");
     // Written once: no format 15 cell (an offset, a block's base, a size, a tail) beside the ops' cells.
     // (The edits' methods, which no word of this program calls, keep theirs.)
     let body = |name: &str| src16.split(name).nth(1).and_then(|rest| rest.split("\n    }\n").next()).unwrap_or_else(|| panic!("{name}")).to_string();
@@ -576,7 +591,7 @@ fn simdjson_forms_rust_trees_are_the_jits() {
     // (`Batch::end_streams`), the file's length, as the unclamped `TOKEN` takes them (decision 0543): the Rust refuses
     // each, as the JIT does (whose refusal names its word, not the reason). Ends of 0, as before, would read the
     // file's first byte as the next token's.
-    for f in [&b"["[..], b"{", b"[1", b"[1,", b"[\"a\"", b"[\"a\",", b"{\"a\"", b"{\"a\":", b"{\"a\":1", b"{\"a\":1,", b"[[", b"[[1,", b"{\"a\":[", b"{\"a\":{\"b\":", b"", b"[1] 2", b"{} {}", b"\"a\" \"b\"", b"1 2", b"[]]", b"{}}"] {
+    for f in [&b"["[..], b"{", b"[1", b"[1,", b"[\"a\"", b"[\"a\",", b"{\"a\"", b"{\"a\":", b"{\"a\":1", b"{\"a\":1,", b"[[", b"[[1,", b"{\"a\":[", b"{\"a\":{\"b\":", b"", b"[1] 2", b"{} {}", b"\"a\" \"b\"", b"1 2", b"[]]", b"{}}", b"[1}", b"{\"a\":1]", b"[{}", b"{\"a\":[]", b"[1] ]", b"{} }", b"[1,2]}"] {
         let want = jit.parser.image16(f, &lang, &numbers, false).map(|_| ());
         let got = aot.parser.image16(f, &lang, &numbers, false).map(|_| ());
         assert!(want.is_err() && got.is_err(), "{:?}: the Rust refuses it as the JIT does: {got:?}, {want:?}", String::from_utf8_lossy(f));
@@ -1460,4 +1475,66 @@ fn jsonc_refusals_by_reason() {
     if let Ok(out) = std::env::var("RERAIL_DISASM") {
         std::fs::write(out, rerail_compiler::rir_asm::disassemble(&c.program)).expect("writes");
     }
+}
+
+/// JSON's parser as Rust in simdjson's structure (`rerail_json_aot`): tier 1 and tier 2 as the Bitlex compiler writes
+/// them from the grammar, tier 1 from the lexer's statements (`bitlex_lex_rust`, stage 1) and tier 2 from the tree
+/// rules in one loop (`bitlex_rust::tier2_loop`), never from tier 2's native IR (decision 0551).
+fn json_rust() -> (String, String) {
+    let source = std::fs::read_to_string(std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../json_parser/json-simdjson.bitlex")).expect("reads");
+    let stmts = ::bitlex::syntax::parse(&source).expect("parses");
+    let ids = rerail_cpu_stream::ladder::Ids::default();
+    let kind = |n: &str| Some(ids.of(n));
+    let field = |n: &str| Some(ids.of(&format!("field {n}")));
+    let symbols = rerail_bitlex::bitlex_masks::Symbols { kind: &kind, field: &field };
+    let c = rerail_bitlex::bitlex_masks::compile_shaped(&stmts, &[rerail_bitlex::bitlex_masks::FALLBACK], Some(&symbols), rerail_bitlex::bitlex_masks::Shape::Auto).expect("compiles");
+    let tier1 = c.lexer_rust.expect("a tree section").unwrap_or_else(|e| panic!("tier 1 as Rust: {e}"));
+    let tier2 = c.rust_loop.expect("a tree section").unwrap_or_else(|e| panic!("tier 2 as one loop: {e}"));
+    (tier1, tier2)
+}
+
+/// `rerail_json_aot`'s `tier1.rs` and `tier2.rs` are the Bitlex compiler's output for the grammar (`json_rust`);
+/// `RERAIL_BLESS=1` writes them again.
+#[test]
+fn json_rust_is_current() {
+    let (tier1, tier2) = json_rust();
+    for (file, rust) in [("tier1.rs", tier1), ("tier2.rs", tier2)] {
+        let path = format!("{}/../json_aot/src/{file}", env!("CARGO_MANIFEST_DIR"));
+        if std::env::var_os("RERAIL_BLESS").is_some() {
+            std::fs::write(&path, &rust).expect("writes");
+        }
+        assert!(std::fs::read_to_string(&path).is_ok_and(|have| have == rust), "json_aot's {file} is not the compiler's: RERAIL_BLESS=1");
+    }
+}
+
+/// The generated parser's format 16 and 16z tapes are the JIT's, byte for byte, in a language whose table is the
+/// one the generator made (`ENTRIES`); it refuses the files the JIT refuses.
+#[test]
+fn json_rusts_tapes_are_the_jits() {
+    let jit = simdjson_form();
+    let (_, tag) = jit.parser.sixteen().expect("a format 16 tier 2").widths_tag();
+    let entries = rerail_json_aot::ENTRIES.iter().map(|&(kind, field, classes)| rerail_tape_format::tape::Entry { kind, field, flags: 0, alias: None, classes: classes.to_vec() }).collect();
+    let lang = rerail_tape_format::f16::Lang::new(rerail_tape_format::tape::CodeTable::new(entries), [1, 1, 1], 1).expect("a language");
+    let numbers = jit.parser.sixteen().expect("a format 16 tier 2").numbers(&lang);
+    let mut inputs = tree_inputs();
+    inputs.extend(deep_nests(1023..1026));
+    let (mut same, mut refused) = (0, 0);
+    for (k, f) in inputs.iter().enumerate() {
+        let show = || String::from_utf8_lossy(&f[..f.len().min(60)]).into_owned();
+        for z in [false, true] {
+            let want = jit.parser.image16(f, &lang, &numbers, z).map(|w| w.extent().to_vec());
+            let mut w = rerail_tape_format::f16::Writer::new(&lang, f, tag, z, true, f.len() / 2 + 16);
+            let got = rerail_json_aot::parse(f, &mut w).map_err(|b| format!("refused at byte {b}")).and_then(|()| w.finish().map(|d| d.tape.extent().to_vec()));
+            match (&want, &got) {
+                (Ok(a), Ok(b)) => {
+                    assert!(a == b, "file {k} ({:?}, 16z {z}): the Rust's tape is not the JIT's; the JIT's nodes {:?}", show(), ours(&jit, f));
+                    same += 1;
+                }
+                (Err(_), Err(_)) => refused += 1,
+                _ => panic!("file {k} ({:?}, 16z {z}): the JIT {want:?}, the Rust {got:?}", show()),
+            }
+        }
+    }
+    eprintln!("{same} tapes the JIT's, {refused} refused by both");
+    assert!(same > 0 && refused > 0);
 }
