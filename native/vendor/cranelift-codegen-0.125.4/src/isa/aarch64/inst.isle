@@ -3970,6 +3970,22 @@
         (if-let true (u64_eq (ty_bytes ty) (u64_wrapping_shl 1 (shift_masked_imm ty n))))
         (amode_reg_scaled (amode_add x offset) y))
 
+;; A sum with a constant offset that fits an immediate (rerail's patch): the sum
+;; once, in a register, and the offset in the instruction, so the loads and stores
+;; at offsets from one sum (a vector's parts) share it instead of each adding the
+;; offset to one of its terms first.
+(rule 8 (amode_no_more_iconst ty val @ (iadd _ _) offset)
+        (if-let true (i32_nonzero offset))
+        (if-let simm9 (simm9_from_i64 offset))
+        (AMode.Unscaled val simm9))
+(rule 9 (amode_no_more_iconst ty val @ (iadd _ _) offset)
+        (if-let true (i32_nonzero offset))
+        (if-let uimm12 (uimm12_scaled_from_i64 offset ty))
+        (AMode.UnsignedOffset val uimm12))
+
+(decl pure i32_nonzero (i32) bool)
+(extern constructor i32_nonzero i32_nonzero)
+
 (decl amode_reg_scaled (Reg Value) AMode)
 (rule 0 (amode_reg_scaled base index)
         (AMode.RegScaled base index))

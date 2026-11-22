@@ -165,7 +165,7 @@ pub fn compiled_kept<'k>(p: &Program, k: &'k Kernel, kept: impl FnOnce() -> Opti
             return Ok(c);
         }
         let t = std::time::Instant::now();
-        let ssa = crate::ssa::build(&k.tape, &|id| if id == u32::MAX { k.name.clone() } else { p.funcs[id as usize].name.clone() }).map_err(|e| e.0)?;
+        let ssa = crate::ssa::build(&k.tape, &|id| if id == u32::MAX { k.name.clone() } else { p.funcs[id as usize].name.clone() }, &|id| p.funcs[id as usize].called).map_err(|e| e.0)?;
         let st = t.elapsed().as_secs_f64();
         let (c, bytes) = cl::compile(&ssa, &k.name, width(), &places()).map_err(|e| e.0)?;
         if std::env::var("RERAIL_UKL_VEC_TIMES").is_ok() {

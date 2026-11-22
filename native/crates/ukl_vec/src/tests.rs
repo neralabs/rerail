@@ -167,7 +167,7 @@ fn the_written_sources_lower_and_vectorize() {
                     let vt = t.elapsed().as_secs_f64();
                     let t = std::time::Instant::now();
                     let names = |id: u32| if id == u32::MAX { vk.name.clone() } else { p.funcs[id as usize].name.clone() };
-                    let ssa = super::ssa::build(&vk.tape, &names);
+                    let ssa = super::ssa::build(&vk.tape, &names, &|id| p.funcs[id as usize].called);
                     if let (Ok(dir), Ok(s)) = (std::env::var("RERAIL_UKL_VEC_SSA"), &ssa) {
                         std::fs::write(format!("{dir}/{f}.ssa"), s.listing()).unwrap();
                     }
@@ -406,7 +406,7 @@ fn compiled_code_kept_as_bytes_runs_the_same() {
 /// Kernel `k`'s SSA (`ssa`), built and checked, or the test fails with why; its listing to `RERAIL_UKL_VEC_SSA`'s
 /// directory when set.
 fn ssa_of(p: &super::lower::Program, k: &super::vector::Kernel) -> super::ssa::Ssa {
-    let s = super::ssa::build(&k.tape, &|id| if id == u32::MAX { k.name.clone() } else { p.funcs[id as usize].name.clone() }).unwrap_or_else(|e| panic!("{}: {e}", k.name));
+    let s = super::ssa::build(&k.tape, &|id| if id == u32::MAX { k.name.clone() } else { p.funcs[id as usize].name.clone() }, &|id| p.funcs[id as usize].called).unwrap_or_else(|e| panic!("{}: {e}", k.name));
     if let Ok(dir) = std::env::var("RERAIL_UKL_VEC_SSA") {
         std::fs::write(format!("{dir}/{}.ssa", k.name), s.listing()).unwrap();
     }
@@ -611,7 +611,7 @@ fn a_cross_lane_kernel_runs_as_chunks_of_its_lanes() {
 /// called while twelve lanes values live in its caller keeps its callers' registers (`CallConv::PreserveAll`), and the kernel runs as the interpreter does at every width.
 #[test]
 fn a_small_callee_keeps_its_callers_registers() {
-    let prelude = "static uint32_t mix(uint32_t x) { return (x ^ (x >> 3)) * 2654435761u; }\n";
+    let prelude = "static __attribute__((noinline)) uint32_t mix(uint32_t x) { return (x ^ (x >> 3)) * 2654435761u; }\n";
     let names: Vec<String> = (0..12).map(|j| format!("a{j}")).collect();
     let mut body = String::new();
     for (j, n) in names.iter().enumerate() {
@@ -655,5 +655,18 @@ fn an_element_sum_is_a_horizontal_sum_and_one_atomic() {
         let at = super::vector::Kernel::from_bytes(&k.to_bytes()).unwrap();
         let _ = at.cl.set(Ok(c));
         assert_eq!(run(&at, super::run::Exec::Ssa), want, "the compiled SSA at width {w}");
+    }
+}
+
+/// A per-lane atomic (each lane its own address, under a branch that varies) of a SIMD group's sum: every lane that
+/// runs adds the group's sum to its own word, as the interpreter does (the sum computed once, not again for each
+/// lane's atomic: Cranelift's elaboration places a pure value no deeper than its uses' common dominator).
+#[test]
+fn a_per_lane_atomic_of_a_sum_adds_it_in_each_lane() {
+    let out = ran("    uint32_t s = ukl_sg_sum(lid * 3u + 1u __UKL_ARGS);\n    if (lid % 3u == 0u) ukl_atomic_add(&out[lid], s);");
+    for l in 0..64u32 {
+        let g = l / 32 * 32;
+        let s: u32 = (g..g + 32).map(|i| i * 3 + 1).sum();
+        assert_eq!(out[l as usize], if l % 3 == 0 { s } else { 0 }, "lane {l}");
     }
 }

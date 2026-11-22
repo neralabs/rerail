@@ -820,6 +820,10 @@ impl Context for IsleContext<'_, '_, MInst, AArch64Backend> {
         SImm7Scaled::maybe_from_i64(val, ty)
     }
 
+    fn i32_nonzero(&mut self, x: i32) -> bool {
+        x != 0
+    }
+
     fn simm9_from_i64(&mut self, val: i64) -> Option<SImm9> {
         SImm9::maybe_from_i64(val)
     }

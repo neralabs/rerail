@@ -20,6 +20,9 @@ pub struct Func {
     /// Its node in the kernel tape, once its body is written.
     pub node: Option<usize>,
     pub kernel: bool,
+    /// Declared `noinline` (`UKL_CALLED`, `UKL_COLD`): a function of its own in compiled code. Every other function's
+    /// calls are its body's instructions at each call.
+    pub called: bool,
     /// Its parameters' names (a kernel's, for its launch).
     pub names: Vec<String>,
 }
@@ -554,7 +557,7 @@ impl L<'_> {
             f.names = params.into_iter().map(|p| p.0).collect();
             return id;
         }
-        self.funcs.push(Func { name: name.to_string(), ret, params: types, node: None, kernel, names: params.into_iter().map(|p| p.0).collect() });
+        self.funcs.push(Func { name: name.to_string(), ret, params: types, node: None, kernel, called: false, names: params.into_iter().map(|p| p.0).collect() });
         let id = (self.funcs.len() - 1) as u32;
         self.fnames.entry(name.to_string()).or_default().push(id);
         id
@@ -566,7 +569,8 @@ impl L<'_> {
             if let Some((f, ret)) = self.function_declarator(x, base.clone())? {
                 let (name, _) = self.declarator(f, Ty::Void)?;
                 let params = self.params(f)?;
-                self.declare(&name, ret, params, false);
+                let id = self.declare(&name, ret, params, false);
+                self.funcs[id as usize].called |= self.has_attr(d, "noinline");
                 continue;
             }
             self.global(x, base.clone(), d)?;
@@ -795,6 +799,7 @@ impl L<'_> {
         let params = self.params(f)?;
         let kernel = self.has_attr(d, "ukl_kernel");
         let id = self.declare(&name, ret.clone(), params.clone(), kernel);
+        self.funcs[id as usize].called |= self.has_attr(d, "noinline");
         let body = self.c.child(d, "body").map_or_else(|| self.err(d, "a function with no body"), Ok)?;
         // [id, frame bytes, threadgroup bytes, return type, parameters, (offset, type) a parameter]
         let mut words = vec![id, 0, 0, self.m(&ret).0, params.len() as u32];
