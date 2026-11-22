@@ -14,12 +14,8 @@ pub struct Lexed {
 }
 
 /// The classes' nibble tables, pair 0 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_0: [u8; 16] = [0x46, 0xc4, 0xc4, 0xc4, 0xc4, 0xc4, 0xc4, 0x44, 0x44, 0x45, 0x15, 0x24, 0x0c, 0x25, 0x04, 0x04];
-static HI_0: [u8; 16] = [0x05, 0x04, 0x0a, 0x50, 0x80, 0x20, 0x80, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-
-/// The classes' nibble tables, pair 1 (simdjson's `classify`): a byte's bit `b` is set in both where it is of bit `b`'s high and low nibbles.
-static LO_1: [u8; 16] = [0x00, 0x04, 0x04, 0x08, 0x09, 0x08, 0x08, 0x00, 0x02, 0x02, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
-static HI_1: [u8; 16] = [0x00, 0x00, 0x00, 0x02, 0x0d, 0x00, 0x0d, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
+static LO_0: [u8; 16] = [0x06, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04, 0x05, 0x15, 0x24, 0x0c, 0x25, 0x04, 0x04];
+static HI_0: [u8; 16] = [0x05, 0x04, 0x0a, 0x10, 0x00, 0x20, 0x00, 0x20, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00];
 
 /// The byte-pair errors (`invalid UTF-8`, `UTF-8 cut short at the end`) as simdjson's `check_special_cases`: each rule a bit of the byte before's high
 /// nibble's table, its low nibble's, and this byte's high nibble's.
@@ -35,66 +31,40 @@ struct Stage1 {
     refused: bool,
 }
 
-/// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`, each mask of block `t - lag` (a `next` reads the block after its operand's), its last 4 words in a ring.
+/// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`, each mask a local of its block and the block before's where it is read.
 #[inline(always)]
 unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
     let nw = n.div_ceil(64);
-    const RING: usize = 4;
     let mut starts: Vec<u32> = Vec::with_capacity(n + 64 + 3);
     let si = starts.as_mut_ptr();
     let mut count = 0usize;
-    let mut r_m_quote = [0u64; RING];
-    let mut r_m_backslash = [0u64; RING];
-    let mut r_m_ws = [0u64; RING];
-    let mut r_m_control = [0u64; RING];
-    let mut r_m_op = [0u64; RING];
-    let mut r_m_hex = [0u64; RING];
-    let mut r_m_u = [0u64; RING];
-    let mut r_m_dee = [0u64; RING];
-    let mut r_m_high_2 = [0u64; RING];
-    let mut r_m_low_2 = [0u64; RING];
-    let mut r_t0 = [0u64; RING];
-    let mut r_m_last_byte = [0u64; RING];
-    let mut r_m_escaped = [0u64; RING];
     let mut c_m_escaped = 0u64;
-    let mut r_m_q = [0u64; RING];
-    let mut r_m_f_str = [0u64; RING];
+    let mut v_m_f_str = 0u64;
     let mut c_m_f_str = 0u64;
-    let mut r_m_o_str = [0u64; RING];
-    let mut r_m_hidden = [0u64; RING];
-    let mut r_m_body = [0u64; RING];
-    let mut r_m_esc_last = [0u64; RING];
-    let mut r_m_unicode = [0u64; RING];
-    let mut r_m_high_1 = [0u64; RING];
-    let mut r_m_low = [0u64; RING];
-    let mut r_m_code = [0u64; RING];
-    let mut r_m_wordbyte = [0u64; RING];
-    let mut r_m_word = [0u64; RING];
-    let mut r_t2 = [0u64; RING];
-    let mut r_t3 = [0u64; RING];
-    let mut r_t4 = [0u64; RING];
-    let mut r_t5 = [0u64; RING];
-    let mut r_t6 = [0u64; RING];
-    let mut r_t7 = [0u64; RING];
+    let mut v_m_word = 0u64;
     // The byte-pair errors' check, simdjson's `utf8_checker`: the block before, the errors, and whether the block before left
     // a sequence open.
     let mut prev_input = unsafe { S::splat(0) };
     let mut error = unsafe { S::splat(0) };
     let mut prev_incomplete = false;
+    // `prefix`: a file that starts with these bytes is read from after them.
+    let prefix = src.starts_with(&[0xef, 0xbb, 0xbf]);
+    // The errors' bits in the blocks so far, ORed.
+    let mut errors = 0u64;
     let mut refused = false;
-    for t in 0..nw + 1 {
+    for t in 0..nw {
+        // The block's bits inside the file (none past its end).
+        let lv_0 = {
+            let lv = if 64 * t + 64 <= n { !0u64 } else { (1u64 << (n % 64)) - 1 };
+            if t == 0 && prefix { lv & !((1u64 << 3) - 1) } else { lv }
+        };
         // The classes, and the masks no blocks behind the classes.
-        if t <= nw {
+        {
             let q = t;
-            // The block's bits inside the file (none past its end).
-            let lv = if 64 * q + 64 <= n { !0u64 } else if q < nw { (1u64 << (n % 64)) - 1 } else { 0 };
-            // `prefix`: a file that starts with these bytes is read from after them.
-            let lv = if q == 0 && src.starts_with(&[0xef, 0xbb, 0xbf]) { lv & !((1u64 << 3) - 1) } else { lv };
-            const NONE: [u8; 64] = [0u8; 64];
-            let b: &[u8; 64] = if q < nw { src[64 * q..64 * q + 64].try_into().expect("a padded block") } else { &NONE };
+            let lv = lv_0;
+            let b: &[u8; 64] = src[64 * q..64 * q + 64].try_into().expect("a padded block");
             let v = unsafe { S::load(b) };
             let c0 = unsafe { S::classify(v, &LO_0, &HI_0) };
-            let c1 = unsafe { S::classify(v, &LO_1, &HI_1) };
             // The byte-pair errors, as simdjson's `utf8_checker`: a block of ASCII holds one only where the block before left a
             // sequence open.
             if unsafe { S::to_bitmask(v) } == 0 {
@@ -111,42 +81,19 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
             }
             prev_input = v;
             // class quote
-            let w = unsafe { S::eq_mask(v, 0x22) & lv };
-            r_m_quote[q % RING] = w;
+            let v_m_quote = unsafe { S::eq_mask(v, 0x22) & lv };
             // class backslash
-            let w = unsafe { S::eq_mask(v, 0x5c) & lv };
-            r_m_backslash[q % RING] = w;
+            let v_m_backslash = unsafe { S::eq_mask(v, 0x5c) & lv };
             // class ws
-            let w = unsafe { S::to_bitmask(S::test(c0, S::splat(0x03))) & lv };
-            r_m_ws[q % RING] = w;
+            let v_m_ws = unsafe { S::to_bitmask(S::test(c0, S::splat(0x03))) & lv };
             // class control
-            let w = unsafe { S::to_bitmask(S::test(c0, S::splat(0x04))) & lv };
-            r_m_control[q % RING] = w;
+            let v_m_control = unsafe { S::to_bitmask(S::test(c0, S::splat(0x04))) & lv };
             // class op
-            let w = unsafe { S::to_bitmask(S::test(c0, S::splat(0x38))) & lv };
-            r_m_op[q % RING] = w;
-            // class hex
-            let w = unsafe { S::to_bitmask(S::test(c0, S::splat(0xc0))) & lv };
-            r_m_hex[q % RING] = w;
-            // class u
-            let w = unsafe { S::eq_mask(v, 0x75) & lv };
-            r_m_u[q % RING] = w;
-            // class dee
-            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x01))) & lv };
-            r_m_dee[q % RING] = w;
-            // class high_2
-            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x06))) & lv };
-            r_m_high_2[q % RING] = w;
-            // class low_2
-            let w = unsafe { S::to_bitmask(S::test(c1, S::splat(0x08))) & lv };
-            r_m_low_2[q % RING] = w;
-            // ~empty
-            let w = !0 & lv;
-            r_t0[q % RING] = w;
+            let v_m_op = unsafe { S::to_bitmask(S::test(c0, S::splat(0x38))) & lv };
             // mask escaped = escaped(backslash)
-            let w = {
+            let v_m_escaped = {
                     const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
-                    let bs = r_m_backslash[q % RING];
+                    let bs = v_m_backslash;
                     let potential = bs & !c_m_escaped;
                     let series = ((potential << 1) | ODD).wrapping_sub(potential);
                     let escape_and_terminal = series ^ ODD;
@@ -154,13 +101,11 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
                     c_m_escaped = (escape_and_terminal & bs) >> 63;
                     escaped & lv
                 };
-            r_m_escaped[q % RING] = w;
             // mask q = quote & ~escaped
-            let w = r_m_quote[q % RING] & (!r_m_escaped[q % RING] & lv);
-            r_m_q[q % RING] = w;
+            let v_m_q = v_m_quote & (!v_m_escaped & lv);
             // f_str: a region's opener to its closer, `toggle(q)`
-            let w = {
-                    let mut x = r_m_q[q % RING];
+            v_m_f_str = {
+                    let mut x = v_m_q;
                     x ^= x << 1;
                     x ^= x << 2;
                     x ^= x << 4;
@@ -171,104 +116,55 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8], n: usize) -> Stage1 {
                     c_m_f_str = x >> 63;
                     x & lv
                 };
-            r_m_f_str[q % RING] = w;
             // o_str: its openers
-            let w = r_m_q[q % RING] & r_m_f_str[q % RING];
-            r_m_o_str[q % RING] = w;
+            let v_m_o_str = v_m_q & v_m_f_str;
             // hidden: after its opener to its closer
-            let w = (r_m_f_str[q % RING] ^ r_m_q[q % RING]);
-            r_m_hidden[q % RING] = w;
+            let v_m_hidden = (v_m_f_str ^ v_m_q);
             // mask body = f_str & ~o_str
-            let w = r_m_f_str[q % RING] & (!r_m_o_str[q % RING] & lv);
-            r_m_body[q % RING] = w;
-            // mask esc_last = escaped & body
-            let w = r_m_escaped[q % RING] & r_m_body[q % RING];
-            r_m_esc_last[q % RING] = w;
-            // mask unicode = esc_last & u
-            let w = r_m_esc_last[q % RING] & r_m_u[q % RING];
-            r_m_unicode[q % RING] = w;
+            let v_m_body = v_m_f_str & (!v_m_o_str & lv);
             // mask code = ~hidden & ~o_str
-            let w = (!r_m_hidden[q % RING] & lv) & (!r_m_o_str[q % RING] & lv);
-            r_m_code[q % RING] = w;
+            let v_m_code = (!v_m_hidden & lv) & (!v_m_o_str & lv);
             // mask wordbyte = ~((ws | op) | quote)
-            let w = !((r_m_ws[q % RING] | r_m_op[q % RING]) | r_m_quote[q % RING]) & lv;
-            r_m_wordbyte[q % RING] = w;
+            let v_m_wordbyte = !((v_m_ws | v_m_op) | v_m_quote) & lv;
+            let p_m_word = v_m_word;
             // mask word = code & wordbyte
-            let w = r_m_code[q % RING] & r_m_wordbyte[q % RING];
-            r_m_word[q % RING] = w;
+            v_m_word = v_m_code & v_m_wordbyte;
             // body & control
-            let w = r_m_body[q % RING] & r_m_control[q % RING];
-            r_t2[q % RING] = w;
+            let v_t2 = v_m_body & v_m_control;
             // a control byte in a string
-            refused |= q < nw && w != 0;
+            errors |= v_t2;
             // ((quote & o_str) | (code & op)) | (word & ~prev(word))
-            let w = ((r_m_quote[q % RING] & r_m_o_str[q % RING] | r_m_code[q % RING] & r_m_op[q % RING]) | r_m_word[q % RING] & (!(r_m_word[q % RING] << 1 | r_m_word[(q + RING - 1) % RING] >> 63) & lv & lv));
-            r_t7[q % RING] = w;
+            let v_t3 = ((v_m_quote & v_m_o_str | v_m_code & v_m_op) | v_m_word & (!(v_m_word << 1 | p_m_word >> 63) & lv));
             // The records: the block's bits as indexes (simdjson's `bit_indexer::write`).
-            if q < nw {
-                let (base, cnt, mut bits) = (64 * q as u32, w.count_ones() as usize, w);
-                // SAFETY: `count + cnt` is at most `n`; the room is `n + 64 + 3`.
-                unsafe {
-                    for k in 0..4 {
+            let (base, cnt, mut bits) = (64 * q as u32, v_t3.count_ones() as usize, v_t3);
+            // SAFETY: `count + cnt` is at most `n`; the room is `n + 64 + 3`.
+            unsafe {
+                for k in 0..4 {
+                    *si.add(count + k) = base + bits.trailing_zeros();
+                    bits &= bits.wrapping_sub(1);
+                }
+                if cnt > 4 {
+                    for k in 4..8 {
                         *si.add(count + k) = base + bits.trailing_zeros();
                         bits &= bits.wrapping_sub(1);
-                    }
-                    if cnt > 4 {
-                        for k in 4..8 {
-                            *si.add(count + k) = base + bits.trailing_zeros();
-                            bits &= bits.wrapping_sub(1);
-                        }
-                    }
-                    let mut k = 8;
-                    while k < cnt {
-                        *si.add(count + k) = base + bits.trailing_zeros();
-                        bits &= bits.wrapping_sub(1);
-                        k += 1;
                     }
                 }
-                count += cnt;
+                let mut k = 8;
+                while k < cnt {
+                    *si.add(count + k) = base + bits.trailing_zeros();
+                    bits &= bits.wrapping_sub(1);
+                    k += 1;
+                }
             }
-        }
-        // The masks 1 block behind the classes.
-        if t >= 1 && t - 1 <= nw {
-            let q = t - 1;
-            // The block's bits inside the file (none past its end).
-            let lv = if 64 * q + 64 <= n { !0u64 } else if q < nw { (1u64 << (n % 64)) - 1 } else { 0 };
-            // `prefix`: a file that starts with these bytes is read from after them.
-            let lv = if q == 0 && src.starts_with(&[0xef, 0xbb, 0xbf]) { lv & !((1u64 << 3) - 1) } else { lv };
-            // mask last_byte = ~next(~empty)
-            let w = !(r_t0[q % RING] >> 1 | r_t0[(q + 1) % RING] << 63) & lv;
-            r_m_last_byte[q % RING] = w;
-            // mask high = (unicode & next(dee, 1)) & next(high_2, 2)
-            let w = r_m_unicode[q % RING] & (r_m_dee[q % RING] >> 1 | r_m_dee[(q + 1) % RING] << 63) & (r_m_high_2[q % RING] >> 2 | r_m_high_2[(q + 1) % RING] << 62);
-            r_m_high_1[q % RING] = w;
-            // mask low = (unicode & next(dee, 1)) & next(low_2, 2)
-            let w = r_m_unicode[q % RING] & (r_m_dee[q % RING] >> 1 | r_m_dee[(q + 1) % RING] << 63) & (r_m_low_2[q % RING] >> 2 | r_m_low_2[(q + 1) % RING] << 62);
-            r_m_low[q % RING] = w;
-            // unicode & ~(((next(hex, 1) & next(hex, 2)) & next(hex, 3)) & next(hex, 4))
-            let w = r_m_unicode[q % RING] & (!((r_m_hex[q % RING] >> 1 | r_m_hex[(q + 1) % RING] << 63) & (r_m_hex[q % RING] >> 2 | r_m_hex[(q + 1) % RING] << 62) & (r_m_hex[q % RING] >> 3 | r_m_hex[(q + 1) % RING] << 61) & (r_m_hex[q % RING] >> 4 | r_m_hex[(q + 1) % RING] << 60)) & lv);
-            r_t3[q % RING] = w;
-            // \u without four hex digits
-            refused |= q < nw && w != 0;
-            // high & ~(((next(backslash, 5) & next(u, 6)) & next(dee, 7)) & next(low_2, 8))
-            let w = r_m_high_1[q % RING] & (!((r_m_backslash[q % RING] >> 5 | r_m_backslash[(q + 1) % RING] << 59) & (r_m_u[q % RING] >> 6 | r_m_u[(q + 1) % RING] << 58) & (r_m_dee[q % RING] >> 7 | r_m_dee[(q + 1) % RING] << 57) & (r_m_low_2[q % RING] >> 8 | r_m_low_2[(q + 1) % RING] << 56)) & lv);
-            r_t4[q % RING] = w;
-            // a lone high surrogate
-            refused |= q < nw && w != 0;
-            // low & ~prev(high, 6)
-            let w = r_m_low[q % RING] & (!(r_m_high_1[q % RING] << 6 | r_m_high_1[(q + RING - 1) % RING] >> 58) & lv & lv);
-            r_t5[q % RING] = w;
-            // a lone low surrogate
-            refused |= q < nw && w != 0;
-            // f_str & last_byte
-            let w = r_m_f_str[q % RING] & r_m_last_byte[q % RING];
-            r_t6[q % RING] = w;
-            // a string open at the end of the file
-            refused |= q < nw && w != 0;
+            count += cnt;
         }
     }
-    // The byte-pair errors (simdjson's `errors()`).
-    refused |= unsafe { S::nonzero(error) } != 0;
+    // The errors, once.
+    refused |= errors != 0;
+    // a string open at the end of the file: at the file's last byte, once (its block's word, the pass's last).
+    refused |= n > 0 && !(prefix && n <= 3) && v_m_f_str >> ((n - 1) % 64) & 1 != 0;
+    // The byte-pair errors (simdjson's `errors()`), and a sequence the file's last block leaves open (`check_eof`).
+    refused |= unsafe { S::nonzero(error) } != 0 || prev_incomplete;
     // SAFETY: `count` records written, and room for three more.
     unsafe {
         *si.add(count) = n as u32;

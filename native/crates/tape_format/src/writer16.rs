@@ -905,6 +905,42 @@ impl State {
         Ok(())
     }
 
+    /// A node of one leaf child, both at once (`walk`'s `string` with no escape: the string and its content): the
+    /// node from `start` to `end`, a leaf of its parent with no frame of its own, its size and length written as it
+    /// is; its child, the node after it, from `cs` to `ce`. The same slots as `open`, `leaf`, `close`.
+    #[inline(always)]
+    unsafe fn leaf_in_x<X: CellWidths>(&mut self, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) -> R {
+        // SAFETY: the open's block, made by it; the child's, made here where it is its first.
+        unsafe {
+            let (i, j, block) = self.open_node_x::<X>(number, start, false)?;
+            if cs < start || ce < cs || end < ce || end > self.source_len || i.wrapping_add(2) >= MAX_NODES {
+                return self.fail(fail::BOUNDS, i);
+            }
+            self.put_at_x::<X>(2, j, end - start, block);
+            self.put_at_x::<X>(0, j, 2 << 1, block);
+            // The child: the node's first, so no slot of the node before describes it.
+            let c = i + 1;
+            let (cb, cj) = (c / Z, c % Z);
+            if cj == 0 {
+                self.new_block(cb)?;
+            }
+            let cblock = self.block(cb);
+            self.put_code_at(cj, child, cblock);
+            self.put_at_x::<X>(1, cj, cs - start, cblock);
+            if cj.is_multiple_of(K) {
+                self.put_checkpoint_x::<X>(cblock.room, cj, cs);
+            }
+            self.put_at_x::<X>(2, cj, ce - cs, cblock);
+            self.prev_start = cs;
+            self.n = c + 1;
+            // The block before has its last slot now.
+            if cj == 0 && cb != 0 {
+                self.settle(cb - 1)?;
+            }
+        }
+        Ok(())
+    }
+
     unsafe fn commit(&mut self) -> R {
         let was = self.frontier / Z;
         self.frontier = self.n;
@@ -1716,6 +1752,16 @@ pub unsafe fn w_close_with<X: CellWidths>(desc: *const u8, end: u64) -> u32 {
 pub unsafe fn w_leaf_with<X: CellWidths>(desc: *const u8, number: u32, start: u64, end: u64) -> u32 {
     // SAFETY: the caller's.
     unsafe { code(state(desc).leaf_x::<X>(number, start, end)) }
+}
+
+/// A node of one leaf child, both written at once (`leaf_in_x`), as `w_open_with`.
+///
+/// # Safety
+/// As `w_leaf`'s; the state's widths are `X`'s.
+#[inline(always)]
+pub unsafe fn w_leaf_in_with<X: CellWidths>(desc: *const u8, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) -> u32 {
+    // SAFETY: the caller's.
+    unsafe { code(state(desc).leaf_in_x::<X>(number, child, start, cs, ce, end)) }
 }
 
 /// The nodes so far final but for the open ones; the blocks the frontier passed settled.

@@ -21,6 +21,8 @@ pub mod bitlex_lex_rust;
 pub mod bitlex_masks;
 #[path = "../../compiler/src/bitlex_pair_lookup.rs"]
 pub mod bitlex_pair_lookup;
+#[path = "../../compiler/src/bitlex_piece_checks.rs"]
+pub mod bitlex_piece_checks;
 #[path = "../../compiler/src/bitlex_prove.rs"]
 pub mod bitlex_prove;
 #[path = "../../compiler/src/bitlex_rust.rs"]

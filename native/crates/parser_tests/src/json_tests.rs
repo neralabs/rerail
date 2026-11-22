@@ -1178,6 +1178,20 @@ fn json_rusts_tapes_are_the_jits() {
     for f in [&b"[\"\xc3\"]"[..], b"[\"\x80\"]", b"[\"\xc0\xaf\"]", b"[\"\xed\xa0\x80\"]", b"[\"\xf5\x80\x80\x80\"]", b"[\"\xe6\x97\"]", b"[\"a\"]\xc3"] {
         inputs.push(f.to_vec());
     }
+    // `\u`'s digits and surrogates, tier 2's at the escape (decision 0599): pairs, lone ones each way, a high one before
+    // another escape or another high, too few digits or not hex, an escaped backslash before a `u`, a pair split over two
+    // strings, and a pair across a block's edge.
+    for f in [
+        r#"["\uD83D\uDE00"]"#, r#"["\ud83d\ude00"]"#, r#"["\uD83D"]"#, r#"["\uDE00"]"#, r#"["\uDE00\uD83D"]"#, r#"["\uD83D\n"]"#,
+        r#"["\uD83Dx\uDE00"]"#, r#"["\uD83D\uD83D\uDE00"]"#, r#"["\u12"]"#, r#"["\u12G4"]"#, r#"["\\u12"]"#, r#"["\\uD83D\uDE00"]"#,
+        r#"["\\uDE00"]"#, r#"["a\uD83D","\uDE00"]"#, r#"{"\u00e9": "\u0041\u00"}"#,
+    ] {
+        inputs.push(f.as_bytes().to_vec());
+    }
+    for k in 50..70 {
+        inputs.push(format!("[\"{}\\uD83D\\uDE00\"]", "x".repeat(k)).into_bytes());
+        inputs.push(format!("[\"{}\\uD83D\\u0041\"]", "x".repeat(k)).into_bytes());
+    }
     let (mut same, mut refused) = (0, 0);
     for (k, f) in inputs.iter().enumerate() {
         let show = || String::from_utf8_lossy(&f[..f.len().min(60)]).into_owned();
@@ -1219,4 +1233,70 @@ fn json_utf8_is_simdjsons_lookup() {
     for class in ["cont", "lead3", "lead4", "e0", "ed", "f0", "f4", "below_a0", "from_a0", "below_90", "from_90", "not_cont", "lead", "c0c1", "f5ff", "third", "fourth"] {
         assert!(!tier1.contains(&format!("r_m_{class}[")), "tier 1 still makes the mask `{class}`");
     }
+}
+
+/// Tier 2 in `walk`'s shape (page 40, fixes 8, 9 and 12; decision 0599): each container's cycle one loop, its opener
+/// taken in its arm, a pair closed where its value ends, a value's byte matched once, a string with no escape written
+/// as its node and its content at once.
+#[test]
+fn json_tier2_is_walks_shape() {
+    let (_, tier2) = json_rust();
+    // Each container's list one labeled loop, its separator back to the element inside it.
+    let loops: Vec<&str> = tier2.lines().filter(|l| l.starts_with("'l") && l.ends_with(": loop {")).collect();
+    assert_eq!(loops.len(), 2, "an object's and an array's loop: {loops:?}");
+    for l in &loops {
+        let label = l.trim_end_matches(": loop {");
+        assert!(tier2.contains(&format!("continue {label};")), "{label}: its separator goes back inside the loop");
+    }
+    // Its opener taken in the loop's arm (`ObjectBegin | ObjectKey`).
+    assert_eq!(tier2.lines().filter(|l| l.strip_suffix(" => {").and_then(|p| p.split_once(" | ")).is_some_and(|(a, b)| a.parse::<usize>().is_ok() && b.parse::<usize>().is_ok())).count(), 2, "a begin and its loop one arm, each container");
+    // No place that only closes a node and goes on: a pair is closed where its value ends.
+    assert!(!tier2.contains("=> {\nclose(d, e as u64);\nst = "), "a place of a pair's close alone");
+    // A value's alternatives: `_` of the place's decision, and one `match` in `value`.
+    let value = tier2.split("fn value(").nth(1).expect("value").split("\nOk(e)\n}").next().expect("its body");
+    assert_eq!(value.matches("match src[").count() + value.matches("match peek(").count(), 1, "one match on the byte in value:\n{value}");
+    assert!(tier2.contains("_ => {\ne = value(src, len, starts, d, &mut i, ["), "the value the `_` arm");
+    // A string with no escape: the node and its content at once.
+    let string = tier2.split("fn string(").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
+    assert!(string.contains("leaf_in(d, "), "a plain string at once:\n{string}");
+}
+
+/// `\u`'s digits and surrogates are tested where tier 2 reads the escape (page 40, fix 10; decision 0599): tier 1 has
+/// none of their classes or masks, and tier 2's `string` tests them at a `\u` alone.
+#[test]
+fn json_escape_checks_are_tier2s() {
+    let (tier1, tier2) = json_rust();
+    for m in ["unicode", "r_m_hex", "r_m_dee", "high_2", "low_2", "r_m_low", "lone"] {
+        assert!(!tier1.contains(m), "tier 1 still has `{m}`");
+    }
+    let string = tier2.split("fn string(").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
+    let at = string.split("let y = p + 1;\n").nth(1).expect("the checks at an escape");
+    assert!(at.starts_with("if matches!(src[y], 0x75) {\n"), "at a `\\u` alone:\n{at}");
+    for why in ["// \\u without four hex digits", "// a lone high surrogate", "// a lone low surrogate"] {
+        assert!(at.contains(why), "{why}");
+    }
+}
+
+/// Tier 1's masks are its block's locals (page 40, fix 11; decision 0599): no ring, the block before's word kept only
+/// where a `prev` reads it, the file's bits and the byte order mark made once, no block past the file, the test at the
+/// file's last byte (a string open there) once, after the pass, and the errors ORed and tested once.
+#[test]
+fn json_tier1_masks_are_block_locals() {
+    let (tier1, _) = json_rust();
+    let stage1 = tier1.split("unsafe fn stage1<").nth(1).expect("stage 1").split("\nrerail_simd8::dispatch!").next().expect("its body");
+    assert!(!stage1.contains("RING") && !stage1.contains("r_m_"), "no ring:\n{stage1}");
+    assert!(stage1.contains("    for t in 0..nw {\n"), "the file's blocks alone");
+    assert!(!stage1.contains("NONE"), "no block past the file");
+    assert_eq!(stage1.matches("src.starts_with(").count(), 1, "the byte order mark tested once");
+    assert_eq!(stage1.matches("let lv_0 = ").count(), 1, "the file's bits made once a block");
+    // The words read past their block's code: `word`, for the block before's (a local of its code there), and the
+    // string open at the end's `f_str`.
+    let outer: Vec<&str> = stage1.lines().filter(|l| l.starts_with("    let mut v_") || l.starts_with("    let mut p_")).collect();
+    assert_eq!(outer, ["    let mut v_m_f_str = 0u64;", "    let mut v_m_word = 0u64;"]);
+    assert!(stage1.contains("            let p_m_word = v_m_word;\n"), "the block before's `word`, a local");
+    let after = stage1.split("\n    }\n").nth(1).expect("after the pass");
+    assert!(after.contains("// a string open at the end of the file: at the file's last byte, once"), "the end's test after the pass:\n{after}");
+    assert!(!stage1.contains("last_byte"), "no mask of the last byte");
+    // The errors' bits ORed into one word, tested once after the pass (`index`'s `unescaped_chars_error`).
+    assert!(stage1.contains("            errors |= v_t2;\n") && after.contains("    refused |= errors != 0;\n"), "the errors tested once");
 }

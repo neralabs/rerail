@@ -31,6 +31,10 @@ use std::fmt::Write;
 enum K {
     Go(usize),
     Code(String),
+    /// Out of the decision this is an arm of, to the code after it, which is the continuation inside: a `walk` arm
+    /// that ends falls out of its `match`, as `walk`'s cases end in one `close` and one `,` or `}` after it; a level's
+    /// call returns to the inside as a place.
+    Fall(std::boxed::Box<K>),
 }
 
 /// What the decision an arm is reached by has already found of the token it starts at: nothing (`No`: the arm's
@@ -110,6 +114,11 @@ struct Lp<'g, 'a> {
     method_code: RefCell<Vec<String>>,
     /// The numbers of the methods being made, innermost last.
     making: RefCell<Vec<Numbers>>,
+    /// Each place made of code (`to_place`), by its code.
+    placed: RefCell<BTreeMap<String, usize>>,
+    /// The methods that decide every byte themselves (a choice's alternatives), refusing what none takes as a
+    /// decision does: a decision's arm calling one is its `_`.
+    deciding: RefCell<std::collections::BTreeSet<String>>,
 }
 
 /// A set of bytes.
@@ -198,19 +207,50 @@ impl Lp<'_, '_> {
         match k {
             K::Go(l) => Self::go(*l),
             K::Code(c) => c.clone(),
+            K::Fall(_) => String::new(),
         }
+    }
+
+    /// `code` as a place's (`own`, `None` for a new one): a list's `continue 'lN` is its loop's only inside its own
+    /// place; elsewhere it goes to the place (`st = N`).
+    fn labels(code: &str, own: Option<usize>) -> String {
+        let mut out = String::new();
+        let mut rest = code;
+        while let Some(p) = rest.find("continue 'l") {
+            out.push_str(&rest[..p]);
+            let after = &rest[p + "continue 'l".len()..];
+            let digits: String = after.chars().take_while(char::is_ascii_digit).collect();
+            let n: usize = digits.parse().expect("a list's place");
+            rest = &after[digits.len()..];
+            if own == Some(n) {
+                let _ = write!(out, "continue 'l{n}");
+            } else {
+                let tail = rest.strip_prefix(";\n").expect("a list's continue ends its line");
+                let _ = write!(out, "{}", Self::go(n));
+                rest = tail;
+            }
+        }
+        out.push_str(rest);
+        out
     }
 
     /// `k` as a place: code used more than once is written once. Code that only goes on to a place is that place.
     fn to_place(&self, k: K) -> usize {
         match k {
             K::Go(l) => l,
+            K::Fall(k) => self.to_place(*k),
             K::Code(c) => {
+                let c = Self::labels(&c, None);
                 if let Some(l) = c.strip_prefix("st = ").and_then(|r| r.strip_suffix(";\ncontinue 'run;\n")).and_then(|l| l.parse().ok()) {
                     return l;
                 }
+                // The same code is one place.
+                if let Some(&l) = self.placed.borrow().get(&c) {
+                    return l;
+                }
                 let root = c == self.root_end;
-                let l = self.place(c);
+                let l = self.place(c.clone());
+                self.placed.borrow_mut().insert(c, l);
                 if root {
                     self.root_place.set(Some(l));
                 }
@@ -394,7 +434,6 @@ impl Lp<'_, '_> {
                 }
             }
         }
-        let mut out = String::from("match peek(src, starts, i) {\n");
         // The byte arms, each arm's bytes one pattern.
         let mut arm_bytes: BTreeMap<usize, Vec<u8>> = BTreeMap::new();
         for (&b, &a) in &by_byte {
@@ -403,6 +442,24 @@ impl Lp<'_, '_> {
             }
             arm_bytes.entry(a).or_default().push(b);
         }
+        // An arm that calls a method deciding every byte itself is the `_`, where none passing is refused: the byte
+        // is decided once, there (`walk`'s `_ => primitive`).
+        let err = "return Err(at(src, starts, i));\n";
+        let mut otherwise = none.to_owned();
+        if none == err && split.is_empty() {
+            let deciding = self.deciding.borrow().clone();
+            for &a in arm_bytes.keys() {
+                let c = code(a, T::Byte)?;
+                if deciding.iter().any(|m| c.starts_with(&format!("e = {m}(src, len, starts, d, &mut i, ["))) {
+                    otherwise = c;
+                    arm_bytes.remove(&a);
+                    break;
+                }
+            }
+        }
+        // One `match` on the token's first byte: a split kind's words its arms too, each a guard on its bytes, and the
+        // kind's own arm its row's bytes after them (simdjson's `primitive`: one `switch`).
+        let mut out = if split.is_empty() { String::from("match peek(src, starts, i) {\n") } else { String::from("let s = starts[i] as usize;\nmatch src[s] {\n") };
         for (a, bs) in &arm_bytes {
             let _ = write!(out, "{} => {{\n{}}}\n", pattern(bs), code(*a, T::Byte)?);
         }
@@ -413,25 +470,20 @@ impl Lp<'_, '_> {
                 let b = &self.g.x.words[usize::from(w) - 1];
                 (format!("{:#04x} if src[s..s + {l}] == *b\"{}\" && !in_row(src[s + {l}], {})", b[0], lit(b), rk + 1, l = b.len()), b.len())
             };
-            let mut inner = String::new();
+            let _ = writeln!(out, "// `{name}`: its words by their bytes, then its own.");
             for (w, a) in words {
                 let (test, l) = word(*w);
-                let _ = write!(inner, "{test} => {{\nlet end = s + {l};\n{}}}\n", code(*a, T::Word)?);
+                let _ = write!(out, "{test} => {{\nlet end = s + {l};\n{}}}\n", code(*a, T::Word)?);
             }
-            let rest = match own {
-                Some(a) => {
-                    // The kind's own arm: none of its hard words.
-                    for h in self.hard_words(name).iter().filter(|h| !words.iter().any(|(w, _)| w == *h)) {
-                        let _ = write!(inner, "{} => {{\n{none}}}\n", word(*h).0);
-                    }
-                    format!("let end = {};\n{}", self.end_code(name, &end)?, code(*a, T::Word)?)
+            if let Some(a) = own {
+                // The kind's own arm: none of its hard words.
+                for h in self.hard_words(name).iter().filter(|h| !words.iter().any(|(w, _)| w == *h)) {
+                    let _ = write!(out, "{} => {{\n{none}}}\n", word(*h).0);
                 }
-                None => none.to_owned(),
-            };
-            let _ = write!(inner, "_ => {{\n{rest}}}\n");
-            let _ = write!(out, "{} => {{\n// `{name}`: its word, by its bytes.\nlet s = starts[i] as usize;\nmatch src[s] {{\n{inner}}}\n}}\n", pattern(&self.bytes_of(*rk)));
+                let _ = write!(out, "{} => {{\nlet end = {};\n{}}}\n", pattern(&self.bytes_of(*rk)), self.end_code(name, &end)?, code(*a, T::Word)?);
+            }
         }
-        let _ = write!(out, "_ => {{\n{none}}}\n}}\n");
+        let _ = write!(out, "_ => {{\n{otherwise}}}\n}}\n");
         Ok(out)
     }
 
@@ -500,7 +552,6 @@ impl Lp<'_, '_> {
         if !rd.closes.is_empty() || kinds.iter().any(|k| *k != part && *k != rd.content) {
             return self.err(format!("`{kind}`: its pieces are not its region's"));
         }
-        let _ = part_start;
         let words: Vec<Vec<u8>> = self.g.x.keywords.iter().filter(|r| r.0 == *part && r.2).flat_map(|r| r.1.iter().map(|(w, _)| w.clone())).collect();
         let required: Vec<String> = words.iter().map(|w| format!("b\"{}\"", lit(w))).collect();
         // The closer's byte (the opener's), and the pieces' first (their words'): the read finds both in the bytes.
@@ -512,7 +563,16 @@ impl Lp<'_, '_> {
             [b] if *b != quote => *b,
             _ => return self.err(format!("`{kind}`: pieces of other than one first byte are not written yet")),
         };
-        let check = if required.is_empty() { String::new() } else { format!("if !matches!(&src[p..p + {len}], {}) {{\nreturn Err(p as u32);\n}}\n", required.join(" | ")) };
+        let mut check = if required.is_empty() { String::new() } else { format!("if !matches!(&src[p..p + {len}], {}) {{\nreturn Err(p as u32);\n}}\n", required.join(" | ")) };
+        // The grammar's errors at an escape, where it is read (the lean parser's stage 2; decision 0599): tier 1 leaves
+        // them out (`bitlex_lex_rust::piece_covers`).
+        let state = match crate::bitlex_piece_checks::piece_checks(self.g.x.lexer, part_start) {
+            Ok(pc) => {
+                check.push_str(&pc.at_piece);
+                pc.state
+            }
+            Err(_) => String::new(),
+        };
         let test = if t == T::No { format!("match peek(src, starts, i) {{\n{} => {{}}\n_ => return Err(at(src, starts, i)),\n}}\n", pattern(&self.bytes_of(self.token(&o)?.0))) } else { String::new() };
         // The read, a method of its own (`string` in the lean parser), the node's number its caller's.
         let ns = self.method(&ident(kind), &format!("`{kind}`, its pieces leaves"), |key| {
@@ -522,12 +582,22 @@ impl Lp<'_, '_> {
             Ok(format!(
             "let s = starts[i] as usize;\n\
              i += 1;\n\
+             let (lead, quote) = marks(src, s + 1, {lead:#04x}, {quote:#04x});\n\
+             // A closer before every piece in the first block (simdjson's likely case): the node and its content at once,\n\
+             // or the node a leaf where it is empty.\n\
+             if lead.wrapping_sub(1) & quote != 0 {{\n\
+             let c = s + 1 + quote.trailing_zeros() as usize;\n\
+             e = c + 1;\n\
+             if c == s + 1 {{\nleaf(d, {node}, s as u64, e as u64);\n}} else {{\nleaf_in(d, {node}, {content}, s as u64, (s + 1) as u64, c as u64, e as u64);\n}}\n\
+             *ip = i;\n\
+             return Ok(e);\n\
+             }}\n\
              open(d, {node}, s as u64);\n\
              // The content from `p`, read from `x` a block at a time: its pieces' first bytes and its closers.\n\
              let (mut p, mut x) = (s + 1, s + 1);\n\
+             let (mut lead, mut quote) = (lead, quote);\n\
+             {state}\
              loop {{\n\
-             if x >= len {{\nreturn Err(s as u32);\n}}\n\
-             let (lead, quote) = marks(src, x, {lead:#04x}, {quote:#04x});\n\
              // A closer before every piece: the end (simdjson's `(bs - 1) & quote`).\n\
              if lead.wrapping_sub(1) & quote != 0 {{\n\
              let c = x + quote.trailing_zeros() as usize;\n\
@@ -535,15 +605,19 @@ impl Lp<'_, '_> {
              e = c + 1;\n\
              break;\n\
              }}\n\
-             if lead == 0 {{\nx += 64;\ncontinue;\n}}\n\
+             if lead == 0 {{\nx += 64;\nif x >= len {{\nreturn Err(s as u32);\n}}\n(lead, quote) = marks(src, x, {lead_b:#04x}, {quote_b:#04x});\ncontinue;\n}}\n\
              let q = x + lead.trailing_zeros() as usize;\n\
              if q > p {{\nleaf(d, {content}, p as u64, q as u64);\n}}\n\
              p = q;\n{check}\
              leaf(d, {piece}, p as u64, (p + {len}) as u64);\n\
              p += {len};\n\
              x = p;\n\
+             if x >= len {{\nreturn Err(s as u32);\n}}\n\
+             (lead, quote) = marks(src, x, {lead_b:#04x}, {quote_b:#04x});\n\
              }}\n\
              close(d, e as u64);\n",
+            lead_b = lead,
+            quote_b = quote,
             ))
         })?;
         Ok(Some(format!("{test}{}", self.call(&ident(kind), &ns, key)?)))
@@ -596,6 +670,7 @@ impl Lp<'_, '_> {
                 let mine: Vec<Gram> = hp.alts.into_iter().filter(|a| !self.calls(a)).collect();
                 self.plain(&Gram::Alt(mine), &hp.key, T::No)
             })?;
+            self.deciding.borrow_mut().insert(ident(name));
             let (call, k2) = (self.call(&ident(name), &ns, at)?, k.clone());
             arms.push((first, Box::new(move |_| Ok(format!("{call}{}", Self::jump(&k2))))));
             for a in h.alts.into_iter().filter(|a| self.calls(a)) {
@@ -684,20 +759,22 @@ impl Lp<'_, '_> {
     /// A list `a (sep a)*`, then `rest`, then `k`: its head (`a`, its first token tested there) and its cycle (a
     /// decision on the separator, going on to the head, and on what follows, going on to `rest`), one place each.
     fn list(&self, a: &Gram, sep: &[Gram], rest: &[Gram], k: K) -> Result<usize, String> {
-        let (head, cycle) = (self.place(String::new()), self.place(String::new()));
+        let head = self.place(String::new());
+        let again = format!("continue 'l{head};\n");
         let (sep, rest, none) = (Gram::Seq(sep.to_vec()), Gram::Seq(rest.to_vec()), Key::default());
-        let mut arms: Vec<Arm<'_>> = vec![(self.g.first(&sep)?.0, Box::new(|t| self.walk(&sep, &none, K::Go(head), t)))];
+        let mut arms: Vec<Arm<'_>> = vec![(self.g.first(&sep)?.0, Box::new(|t| self.walk(&sep, &none, K::Code(again.clone()), t)))];
         let (_, empty) = self.g.first(&rest)?;
         let otherwise = if empty {
-            Self::go(self.to_place(K::Code(self.walk(&rest, &none, k, T::No)?)))
+            self.walk(&rest, &none, k, T::No)?
         } else {
             arms.extend(self.walk_arms(&rest, &none, k)?);
             "return Err(at(src, starts, i));\n".to_owned()
         };
-        let code = self.decide(&arms, &otherwise)?;
-        self.places.borrow_mut()[cycle] = code;
-        let code = self.walk(a, &none, K::Go(cycle), T::No)?;
-        self.places.borrow_mut()[head] = code;
+        // The cycle after the element, written where the element ends (a level's call returns to it as a place).
+        let cycle = self.decide(&arms, &otherwise)?;
+        let body = self.walk(a, &none, K::Code(cycle), T::No)?;
+        let code = format!("// The list: its element, then its separator back to the element, or what follows it.\n'l{head}: loop {{\n{body}}}\n");
+        self.places.borrow_mut()[head] = Self::labels(&code, Some(head));
         Ok(head)
     }
 
@@ -813,7 +890,10 @@ impl Lp<'_, '_> {
                         return self.decide(&[(first, Box::new(move |t| self.walk(g, key, k.clone(), t)))], "return Err(at(src, starts, i));\n");
                     }
                     let first = self.level(n)?;
+                    // Empty, it falls out where its continuation is after the decision, else goes to it.
+                    let falls = matches!(k, K::Fall(_));
                     let ret = self.to_place(k);
+                    let empty_end = if falls { String::new() } else { Self::go(ret) };
                     let number = self.number(kind, key)?;
                     let mut out = String::new();
                     if let Some((_, close)) = self.brackets(n)? {
@@ -826,13 +906,16 @@ impl Lp<'_, '_> {
                         // its depth tested as a level's.
                         let _ = write!(
                             out,
-                            "if depth == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nif peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\n{}}}\n",
-                            Self::go(ret)
+                            "if depth == DEPTH {{\nreturn Err(at(src, starts, i));\n}}\nif peek(src, starts, i + 1) == {close:#04x} {{\n// `{kind}`, empty.\nlet s = starts[i] as usize;\ne = starts[i + 1] as usize + 1;\ni += 2;\nleaf(d, {number}, s as u64, e as u64);\n{}}} else {{\n",
+                            empty_end
                         );
                     } else {
                         out.push_str("if depth == DEPTH {\nreturn Err(at(src, starts, i));\n}\n");
                     }
                     let _ = write!(out, "open(d, {number}, at(src, starts, i) as u64);\nret[depth] = {ret};\ndepth += 1;\n{}", Self::go(first));
+                    if self.brackets(n)?.is_some() {
+                        out.push_str("}\n");
+                    }
                     out
                 }
                 Some(Stmt::Node { kind, body, .. }) => {
@@ -841,8 +924,10 @@ impl Lp<'_, '_> {
                 }
                 Some(Stmt::Choice { nested: false, supertype, body, .. }) => match self.heads(g, key)? {
                     Some(h) => {
-                        let after = self.to_place(k);
-                        self.decide(&self.alt_arms(h, K::Go(after))?, "return Err(at(src, starts, i));\n")?
+                        // Each alternative that ends falls out of the decision to the continuation, written once after
+                        // it; a level's call returns to it as a place.
+                        let arms = self.alt_arms(h, K::Fall(std::boxed::Box::new(k.clone())))?;
+                        format!("{}{}", self.decide(&arms, "return Err(at(src, starts, i));\n")?, Self::jump(&k))
                     }
                     None => self.walk(body, &self.through(key, supertype.as_deref())?, k, t)?,
                 },
@@ -1037,6 +1122,14 @@ fn leaf(d: *mut u8, number: u32, start: u64, end: u64) {
     debug_assert_eq!(r, 0, "the writer's leaf, its room reserved");
 }
 
+/// A node of one leaf child, both at once (the writer's `leaf_in`), as `open`.
+#[inline(always)]
+fn leaf_in(d: *mut u8, number: u32, child: u32, start: u64, cs: u64, ce: u64, end: u64) {
+    // SAFETY: as `open`'s.
+    let r = unsafe { w_leaf_in_with::<Cells>(d, number, child, start, cs, ce, end) };
+    debug_assert_eq!(r, 0, "the writer's node of one leaf, its room reserved");
+}
+
 /// The innermost open node closed at `end`, as `open`.
 #[inline(always)]
 fn close(d: *mut u8, end: u64) {
@@ -1170,7 +1263,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
             _ => {}
         }
     }
-    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()) };
+    let lp = Lp { g: &g, places: RefCell::new(Vec::new()), entries: RefCell::new(Vec::new()), levels: RefCell::new(BTreeMap::new()), ends, readers, checked, row_of, root_end: String::new(), root_place: std::cell::Cell::new(None), methods: RefCell::new(BTreeMap::new()), method_code: RefCell::new(Vec::new()), making: RefCell::new(Vec::new()), placed: RefCell::new(BTreeMap::new()), deciding: RefCell::new(std::collections::BTreeSet::new()) };
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {
@@ -1206,9 +1299,31 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
         check_fns.push_str(&lp.check_fn(k, b)?);
     }
     let places = lp.places.borrow();
+    // A place that takes a token and goes on to a list's loop is one arm with it, as `walk`'s `ObjectBegin |
+    // ObjectKey`: its code first where it is the place, then the loop.
+    let mut into: BTreeMap<usize, usize> = BTreeMap::new();
+    for (l, code) in places.iter().enumerate() {
+        let Some(prefix) = code.strip_suffix(";\ncontinue 'run;\n").and_then(|c| c.rsplit_once("st = ")) else { continue };
+        let Ok(b) = prefix.1.parse::<usize>() else { continue };
+        let straight = !prefix.0.contains("continue 'run") && !prefix.0.contains("return ") && !prefix.0.contains("match ");
+        if straight && b != l && places[b].starts_with("// The list:") && !into.values().any(|&x| x == b) {
+            into.insert(l, b);
+        }
+    }
     let mut arms = String::new();
     for (l, code) in places.iter().enumerate() {
-        let _ = write!(arms, "{l} => {{\n{code}}}\n");
+        if into.contains_key(&l) {
+            continue;
+        }
+        match into.iter().find(|(_, b)| **b == l) {
+            Some((&a, _)) => {
+                let prefix = places[a].rsplit_once("st = ").expect("its jump").0;
+                let _ = write!(arms, "{a} | {l} => {{\nif st == {a} {{\n{prefix}}}\n{code}}}\n");
+            }
+            None => {
+                let _ = write!(arms, "{l} => {{\n{code}}}\n");
+            }
+        }
     }
     let ty = if places.len() <= 256 { "u8" } else { "u16" };
     // A level's nodes open at once: its own, and those written where they are used inside it (the root's too).
@@ -1224,7 +1339,7 @@ pub fn tier2_loop(x: &Input<'_>) -> Result<String, String> {
     }
     let mut out = String::new();
     out.push_str("// Generated by the Bitlex compiler (`rerail_bitlex::bitlex_rust::tier2_loop`) from the grammar's tree rules. Do not edit.\n\n");
-    out.push_str("use rerail_tape_format::f16::Writer;\nuse rerail_tape_format::writer16::{Fixed, w_close_with, w_leaf_with, w_open_with};\n\n");
+    out.push_str("use rerail_tape_format::f16::Writer;\nuse rerail_tape_format::writer16::{Fixed, w_close_with, w_leaf_in_with, w_leaf_with, w_open_with};\n\n");
     // The language's widths (slots, gaps, lengths) are the parser's: a value past its width is its side list's, as
     // every format 16 tape's. One byte each, the implementer's choice.
     out.push_str("/// The language's cell widths, slots, gaps and lengths: the writer's language is to have these (`Lang::new`).\npub const WIDTHS: [usize; 3] = [1, 1, 1];\n\n/// The writer's cells at those widths, constants in the ops.\ntype Cells = Fixed<1, 1, 1>;\n\n");

@@ -671,16 +671,42 @@ Tier 1 against `index`:
 | UTF-8 | `utf8_checker` | `utf8_checker`, derived from the grammar (0591); a block's end tested by three byte compares, not a vector compare |
 | The strings, the escapes, the records, the padding | | the same as `index` (0585, 0586) |
 
-### What is left, in order
+### What was left, in order: done (decision 0599)
 
 8. Tier 2's cycles as loops: a list's head and cycle one inner loop inside the place of its level, the opener taken in it,
-   and a pair's close written where its value ends. Only a level's call and its end go through `match st`.
+   and a pair's close written where its value ends. Only a level's call and its end go through `match st`. Done.
 9. A value decided once: `value`'s alternatives as the arms of the place's own `match`, so the byte is matched once.
+   Done.
 10. `\u`'s digits and surrogates checked where tier 2 reads an escape, with tier 1's five classes and its second stage
-    gone. This is a grammar question too: the checks are the grammar's `error` statements over masks.
+    gone. This is a grammar question too: the checks are the grammar's `error` statements over masks. Done
+    (`bitlex_piece_checks`).
 11. Tier 1's masks as locals of the block, except those a `next` reads. The length's bits and the byte order mark worked
-    out once; the end's errors tested once after the loop.
-12. A string with no escape written as its node and its content at once.
+    out once; the end's errors tested once after the loop. Done.
+12. A string with no escape written as its node and its content at once. Done (the writer's `leaf_in`).
+
+### After the twelve fixes (2026-11-21)
+
+The same reading, after 0599. These are the differences left, by source shape.
+
+Tier 2 against `walk`:
+
+| | `walk` | `tier2.rs` |
+|---|---|---|
+| A container's cycle | an inner `loop`; `ObjectBegin \| ObjectKey` one arm | the same: `'l2: loop` and `'l5: loop`, `1 \| 2` and `4 \| 5` |
+| A pair's close, a value's byte | after the value; one `match` | the same |
+| A string with no escape | its node and its content at once, from 32 bytes | the same, from 64 bytes (`marks`) |
+| `\u`'s digits and surrogates | in `escaped_string`: the four digits read as a number, the surrogates tested on it | at a `\u` in `string`: each digit's class, `D`, and the third byte's class; a low one's high one from a word of the pieces before |
+| A node's write | the columns' stores, through pointers in `Walk`'s locals | the writer's ops on its state (`d`): `open`, `leaf`, `leaf_in`, `close` |
+
+Tier 1 against `index`:
+
+| | `index` | `tier1.rs` |
+|---|---|---|
+| A mask's word, the file's bits, the byte order mark, the end | locals; once; once; after the loop | the same |
+| The classes | one pair of nibble tables, compares for `"` and `\` | the same |
+| The masks made of the strings | `scalar`, `follows`, `in_string`: those the structurals need | the grammar's names: `o_str`, `hidden`, `body`, `code`, `wordbyte`, `word`, each a local |
+| A control byte in a string | ORed into the error word, tested after the loop | the same (`errors \|= v_t2`) |
+| UTF-8 | `utf8_checker` | `utf8_checker`, derived from the grammar (0591); a block's end tested by three byte compares, not a vector compare |
 
 ## Step 58, done: the benchmark on the generated Rust, `rust_stream`'s tests gone (decision 0555)
 

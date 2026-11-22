@@ -97,6 +97,126 @@ fn field_of(e: &Expr, r: usize, role: &str, masks: &mut Vec<(String, Expr)>, all
     name
 }
 
+/// The error statements tier 2 tests at a region's escapes (`bitlex_piece_checks`): of a grammar whose one region read
+/// in parts has one part of a fixed length, as tier 2's loop reads it.
+pub fn piece_covers(stmts: &[Stmt]) -> Vec<usize> {
+    match readers(stmts).as_slice() {
+        [rd] => match rd.parts.as_slice() {
+            [(_, start, PartLen::Bytes(_), _)] => crate::bitlex_piece_checks::piece_checks(stmts, start).map(|c| c.covers).unwrap_or_default(),
+            _ => Vec::new(),
+        },
+        _ => Vec::new(),
+    }
+}
+
+/// Each ring read in `code` (`r_NAME[q % RING]`, `[(q + RING - 1) % RING]`, `[(q + 1) % RING]`): its node and its
+/// block's offset from the reader's.
+fn ring_reads(code: &str, by_name: &HashMap<&str, usize>) -> Vec<(usize, i32)> {
+    let mut out = Vec::new();
+    let mut at = 0;
+    while let Some(k) = code[at..].find("r_") {
+        let start = at + k;
+        at = start + 2;
+        if start > 0 && code[..start].chars().next_back().is_some_and(|c| c.is_ascii_alphanumeric() || c == '_') {
+            continue;
+        }
+        let Some(open) = code[start..].find('[') else { break };
+        let Some(&id) = by_name.get(&code[start + 2..start + open]) else { continue };
+        let rest = &code[start + open + 1..];
+        let off = if rest.starts_with("q % RING]") {
+            0
+        } else if rest.starts_with("(q + RING - 1) % RING]") {
+            -1
+        } else if rest.starts_with("(q + 1) % RING]") {
+            1
+        } else {
+            continue;
+        };
+        out.push((id, off));
+    }
+    out
+}
+
+/// The blocks between a word's write (its stage `lx`) and its read (by stage `lr`, at `off` from the reader's block):
+/// `None` where the writer's stage may have stopped by then.
+fn age(lr: u32, lx: u32, off: i32) -> Option<u32> {
+    if lr >= lx + 2 {
+        return None;
+    }
+    u32::try_from(i64::from(lr) - i64::from(lx) - i64::from(off)).ok()
+}
+
+/// `code` (of a node of stage `lr`) with each ring read its local where it has one.
+fn local_reads(code: &str, by_name: &HashMap<&str, usize>, nodes: &[Node], lr: u32) -> String {
+    let mut out = String::new();
+    let mut rest = code;
+    loop {
+        let reads = ring_reads(rest, by_name);
+        let Some(&(id, off)) = reads.first() else { break };
+        let name = &nodes[id].name;
+        let index = match off {
+            0 => "q % RING]",
+            -1 => "(q + RING - 1) % RING]",
+            _ => "(q + 1) % RING]",
+        };
+        let pat = format!("r_{name}[{index}");
+        let k = rest.find(&pat).expect("the read found");
+        out.push_str(&rest[..k]);
+        match age(lr, nodes[id].lag, off) {
+            Some(0) => {
+                let _ = write!(out, "v_{name}");
+            }
+            Some(1) => {
+                let _ = write!(out, "p_{name}");
+            }
+            _ => out.push_str(&pat),
+        }
+        rest = &rest[k + pat.len()..];
+    }
+    out.push_str(rest);
+    out
+}
+
+/// `e`'s bits in a file of `n` bytes whose first `pre` are its `prefix`, where it reads the file's length alone (no
+/// class): `~empty` is the file's bytes, `next` past the end nothing, each operation's bits in the file.
+fn length_bits(e: &Expr, defs: &HashMap<String, Expr>, n: usize, pre: usize, depth: u32) -> Option<Vec<bool>> {
+    if depth > 32 {
+        return None;
+    }
+    let lv = |i: usize| i >= pre;
+    let r = |x: &Expr| length_bits(x, defs, n, pre, depth + 1);
+    Some(match e {
+        Expr::Empty => vec![false; n],
+        Expr::Name(m) => r(defs.get(m)?)?,
+        Expr::Not(a) => r(a)?.iter().enumerate().map(|(i, b)| !b && lv(i)).collect(),
+        Expr::And(a, b) => r(a)?.iter().zip(r(b)?).map(|(x, y)| *x && y).collect(),
+        Expr::Or(a, b) => r(a)?.iter().zip(r(b)?).map(|(x, y)| *x || y).collect(),
+        Expr::Xor(a, b) => r(a)?.iter().zip(r(b)?).map(|(x, y)| *x ^ y).collect(),
+        Expr::Call(f, args) if f == "next" || f == "prev" => {
+            let Some(Arg::E(a)) = args.first() else { return None };
+            let k = match args.get(1) {
+                None => 1,
+                Some(Arg::N(k)) => usize::try_from(*k).ok()?,
+                _ => return None,
+            };
+            let a = r(a)?;
+            (0..n).map(|i| if f == "next" { i + k < n && a[i + k] } else { i >= k && a[i - k] && lv(i) }).collect()
+        }
+        _ => return None,
+    })
+}
+
+/// Whether `e` holds at the file's last byte alone (outside its `prefix`), at every length tried: of up to three
+/// blocks, the `prefix` there or not.
+fn is_last_byte(e: &Expr, defs: &HashMap<String, Expr>, pre: usize) -> bool {
+    (1..=200).all(|n| {
+        [0, pre].iter().filter(|&&p| p <= n).all(|&p| match length_bits(e, defs, n, p, 0) {
+            Some(bits) => bits.iter().enumerate().all(|(i, b)| *b == (i + 1 == n && i >= p)),
+            None => false,
+        })
+    })
+}
+
 /// The regions tier 2 reads in parts, in the order their tokens are declared: one a kind.
 pub fn readers(stmts: &[Stmt]) -> Vec<Reader> {
     let mut out: Vec<Reader> = Vec::new();
@@ -253,6 +373,9 @@ struct Gen<'a> {
     pairs: Vec<Vec<Rect>>,
     /// The escapes stage 1 tests: a bit of any refuses the file.
     sinks: Vec<(String, usize)>,
+    /// The escapes that hold only at the file's last byte (`A & M`, `M` that byte): `A`'s mask, tested there once,
+    /// after the pass (the lean lexer's test of the string open at the end).
+    end_sinks: Vec<(String, usize)>,
     /// The regions (`regions H { … }`) as the token loop opens them at a token's start: each kind,
     /// its opener's local, the regions it is `after` (by index), and whether it has none (a region
     /// of those is `plain`, the one the `after`s ask of). `None`: none, or one the loop does not
@@ -559,7 +682,7 @@ impl Gen<'_> {
     fn stage1(&self) -> String {
         let mut out = String::new();
         // The masks stage 1 writes: those an escape, the records or a later stage reads, and their operands.
-        let mut live: Vec<bool> = self.nodes.iter().enumerate().map(|(i, n)| n.kept || self.index == Some(i) || self.sinks.iter().any(|(_, s)| *s == i)).collect();
+        let mut live: Vec<bool> = self.nodes.iter().enumerate().map(|(i, n)| n.kept || self.index == Some(i) || self.sinks.iter().chain(&self.end_sinks).any(|(_, s)| *s == i)).collect();
         for i in (0..self.nodes.len()).rev() {
             if live[i] {
                 let code = &self.nodes[i].code;
@@ -619,16 +742,66 @@ impl Gen<'_> {
         }
         out.push_str("    refused: bool,\n}\n\n");
         let most = self.nodes.iter().zip(&live).filter(|(_, l)| **l).map(|(n, _)| n.lag).max().unwrap_or(0);
+        // Each mask's words where its readers read them, by age (the blocks between its write and the read): this
+        // block's a local (`v_`), the block before's another (`p_`), older ones a ring. A reader two stages or more
+        // behind its operand reads a ring too: past the file's last block, the operand's stage stops first.
+        let by_name: HashMap<&str, usize> = self.nodes.iter().enumerate().map(|(i, n)| (n.name.as_str(), i)).collect();
+        // The block before's word: a local of its stage where only that stage reads it.
+        let (mut needs_p, mut p_outer, mut needs_ring) = (vec![false; self.nodes.len()], vec![false; self.nodes.len()], vec![false; self.nodes.len()]);
+        for i in (0..self.nodes.len()).filter(|&i| live[i]) {
+            for (x, off) in ring_reads(&codes[i], &by_name) {
+                match age(self.nodes[i].lag, self.nodes[x].lag, off) {
+                    Some(0) => {}
+                    Some(1) => {
+                        needs_p[x] = true;
+                        p_outer[x] |= self.nodes[i].lag != self.nodes[x].lag;
+                    }
+                    _ => needs_ring[x] = true,
+                }
+            }
+        }
+        let rings = needs_ring.iter().any(|r| *r);
+        let mut outer: Vec<bool> = (0..self.nodes.len()).map(|i| needs_p[i] || (most == 0 && self.end_sinks.iter().any(|(_, s)| *s == i))).collect();
+        for i in (0..self.nodes.len()).filter(|&i| live[i]) {
+            for (x, off) in ring_reads(&codes[i], &by_name) {
+                if self.nodes[i].lag != self.nodes[x].lag && age(self.nodes[i].lag, self.nodes[x].lag, off).is_some() {
+                    outer[x] = true;
+                }
+            }
+        }
         let ring = (most as usize + 2).next_power_of_two();
-        let _ = writeln!(out, "/// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`, each mask of block `t - lag` (a `next` reads the block after its operand's), its last {ring} words in a ring.\n#[inline(always)]\nunsafe fn stage1<S: rerail_simd8::Simd8x64>({}) -> Stage1 {{\n{}    let nw = n.div_ceil(64);\n    const RING: usize = {ring};", if self.index.is_some() { "src: &[u8], n: usize" } else { "src: &[u8]" }, if self.index.is_some() { "" } else { "    let n = src.len();\n" });
+        let _ = writeln!(
+            out,
+            "/// Stage 1: one pass over the blocks, 64 bytes a step, as the lean lexer's `Blocks::of`: the classes of block `t`{}, each mask a local of its block{}.\n#[inline(always)]\nunsafe fn stage1<S: rerail_simd8::Simd8x64>({}) -> Stage1 {{\n{}    let nw = n.div_ceil(64);",
+            if most > 0 { ", each mask of block `t - lag` (a `next` reads the block after its operand's)" } else { "" },
+            if rings { format!(", the block before's where it is read, its last {ring} words in a ring where older ones are") } else { " and the block before's where it is read".to_owned() },
+            if self.index.is_some() { "src: &[u8], n: usize" } else { "src: &[u8]" },
+            if self.index.is_some() { "" } else { "    let n = src.len();\n" }
+        );
+        if rings {
+            let _ = writeln!(out, "    const RING: usize = {ring};");
+        }
         if self.index.is_some() {
             // Room for a record a byte, and the slack of a block's unconditional writes.
             out.push_str("    let mut starts: Vec<u32> = Vec::with_capacity(n + 64 + 3);\n    let si = starts.as_mut_ptr();\n    let mut count = 0usize;\n");
         }
-        for n in self.nodes.iter().zip(&live).filter(|(_, l)| **l).map(|(n, _)| n) {
-            let _ = writeln!(out, "    let mut r_{} = [0u64; RING];", n.name);
+        for (i, n) in self.nodes.iter().enumerate().filter(|(i, _)| live[*i]) {
+            if outer[i] {
+                let _ = writeln!(out, "    let mut v_{} = 0u64;", n.name);
+            }
+            if p_outer[i] {
+                let _ = writeln!(out, "    let mut p_{} = 0u64;", n.name);
+            }
+            if needs_ring[i] {
+                let _ = writeln!(out, "    let mut r_{} = [0u64; RING];", n.name);
+            }
             if n.carry {
                 let _ = writeln!(out, "    let mut c_{} = 0u64;", n.name);
+            }
+        }
+        if most > 0 {
+            for (_, id) in &self.end_sinks {
+                let _ = writeln!(out, "    let mut e_{} = 0u64;", self.nodes[*id].name);
             }
         }
         for n in &kept {
@@ -637,20 +810,47 @@ impl Gen<'_> {
         if self.lookup.is_some() {
             out.push_str("    // The byte-pair errors' check, simdjson's `utf8_checker`: the block before, the errors, and whether the block before left\n    // a sequence open.\n    let mut prev_input = unsafe { S::splat(0) };\n    let mut error = unsafe { S::splat(0) };\n    let mut prev_incomplete = false;\n");
         }
-        let _ = writeln!(out, "    let mut refused = false;\n    for t in 0..nw + {most} {{");
+        // The file's bits of each block (`lv`), once a block: a stage behind takes the block before's.
+        if let Some(b) = &self.prefix {
+            let bytes = b.iter().map(|x| format!("{x:#04x}")).collect::<Vec<_>>().join(", ");
+            let _ = writeln!(out, "    // `prefix`: a file that starts with these bytes is read from after them.\n    let prefix = src.starts_with(&[{bytes}]);");
+        }
+        let lv_of = |q: &str, past: bool| {
+            let mut c = if past { format!("if 64 * {q} + 64 <= n {{ !0u64 }} else if {q} < nw {{ (1u64 << (n % 64)) - 1 }} else {{ 0 }}") } else { format!("if 64 * {q} + 64 <= n {{ !0u64 }} else {{ (1u64 << (n % 64)) - 1 }}") };
+            if let Some(b) = &self.prefix {
+                c = format!("{{\n    let lv = {c};\n    if {q} == 0 && prefix {{ lv & !((1u64 << {}) - 1) }} else {{ lv }}\n}}", b.len());
+            }
+            c
+        };
+        if most > 0 {
+            out.push_str("    let mut lv_1 = 0u64;\n");
+        }
+        if !self.sinks.is_empty() {
+            out.push_str("    // The errors' bits in the blocks so far, ORed.\n    let mut errors = 0u64;\n");
+        }
+        let _ = writeln!(out, "    let mut refused = false;\n    for t in 0..{} {{\n        // The block's bits inside the file (none past its end).\n        let lv_0 = {};", if most == 0 { "nw".to_owned() } else { format!("nw + {most}") }, indent(&lv_of("t", most > 0), "        ").trim());
         for lag in 0..=most {
             let ids: Vec<usize> = (0..self.nodes.len()).filter(|&i| live[i] && self.nodes[i].lag == lag).collect();
             if ids.is_empty() {
                 continue;
             }
             let _ = writeln!(out, "        // {} behind the classes.", if lag == 0 { "The classes, and the masks no blocks".to_owned() } else { format!("The masks {lag} block{}", if lag == 1 { "" } else { "s" }) });
-            let guard = if lag == 0 { "if t <= nw {\n            let q = t;".to_owned() } else { format!("if t >= {lag} && t - {lag} <= nw {{\n            let q = t - {lag};") };
-            let _ = writeln!(out, "        {guard}\n            // The block's bits inside the file (none past its end).\n            let lv = if 64 * q + 64 <= n {{ !0u64 }} else if q < nw {{ (1u64 << (n % 64)) - 1 }} else {{ 0 }};");
-            out.push_str(&self.prefix_code(true, "            "));
+            // With no stage behind, every block is the file's: no guard.
+            let (guard, lv) = match lag {
+                0 if most == 0 => ("{\n            let q = t;".to_owned(), "lv_0".to_owned()),
+                0 => ("if t <= nw {\n            let q = t;".to_owned(), "lv_0".to_owned()),
+                1 => ("if t >= 1 && t - 1 <= nw {\n            let q = t - 1;".to_owned(), "lv_1".to_owned()),
+                _ => (format!("if t >= {lag} && t - {lag} <= nw {{\n            let q = t - {lag};"), lv_of("q", true)),
+            };
+            let _ = writeln!(out, "        {guard}\n            let lv = {lv};");
             if lag == 0 {
                 if self.index.is_some() {
                     // The source padded: each block of the file loaded where it is (`PADDING` past its end).
-                    let _ = writeln!(out, "            const NONE: [u8; 64] = [0u8; 64];\n            let b: &[u8; 64] = if q < nw {{ src[64 * q..64 * q + 64].try_into().expect(\"a padded block\") }} else {{ &NONE }};\n            let v = unsafe {{ S::load(b) }};");
+                    if most == 0 {
+                        let _ = writeln!(out, "            let b: &[u8; 64] = src[64 * q..64 * q + 64].try_into().expect(\"a padded block\");\n            let v = unsafe {{ S::load(b) }};");
+                    } else {
+                        let _ = writeln!(out, "            const NONE: [u8; 64] = [0u8; 64];\n            let b: &[u8; 64] = if q < nw {{ src[64 * q..64 * q + 64].try_into().expect(\"a padded block\") }} else {{ &NONE }};\n            let v = unsafe {{ S::load(b) }};");
+                    }
                 } else {
                     let _ = writeln!(out, "            let b = if q < nw {{ block(src, q) }} else {{ [0u8; 64] }};\n            let v = unsafe {{ S::load(&b) }};");
                 }
@@ -663,27 +863,69 @@ impl Gen<'_> {
             }
             for i in ids {
                 let n = &self.nodes[i];
-                let code = indent(&codes[i], "            ");
+                let code = local_reads(&codes[i], &by_name, &self.nodes, n.lag).replace(" & lv & lv", " & lv");
+                let code = indent(&code, "            ");
                 let code = code.trim();
                 let unsafe_ = if codes[i].contains("S::") { format!("unsafe {{ {code} }}") } else { code.to_owned() };
-                let _ = writeln!(out, "            // {}\n            let w = {unsafe_};\n            r_{}[q % RING] = w;", n.what, n.name);
-                if n.kept {
-                    let _ = writeln!(out, "            if q < nw {{\n                {}[q] = w;\n            }}", n.name);
+                // The block's word: a local of the block's code, or of the pass where it is read past it.
+                let w = format!("v_{}", n.name);
+                if needs_p[i] {
+                    let _ = writeln!(out, "            {}p_{1} = v_{1};", if p_outer[i] { "" } else { "let " }, n.name);
                 }
+                let _ = writeln!(out, "            // {}\n            {}{w} = {unsafe_};", n.what, if outer[i] { "" } else { "let " });
+                if needs_ring[i] {
+                    let _ = writeln!(out, "            r_{}[q % RING] = {w};", n.name);
+                }
+                if n.kept {
+                    let _ = writeln!(out, "            if q < nw {{\n                {}[q] = {w};\n            }}", n.name);
+                }
+                // An error's bits, ORed into one word, tested after the pass (`index`'s `unescaped_chars_error`).
                 for (why, _) in self.sinks.iter().filter(|(_, s)| *s == i) {
-                    let _ = writeln!(out, "            // {why}\n            refused |= q < nw && w != 0;");
+                    if most == 0 {
+                        let _ = writeln!(out, "            // {why}\n            errors |= {w};");
+                    } else {
+                        let _ = writeln!(out, "            // {why}\n            if q < nw {{\n                errors |= {w};\n            }}");
+                    }
                 }
                 if self.index == Some(i) {
                     // simdjson's `bit_indexer::write`: four indexes, four more where there are, then one at a time; each
                     // write past the count is written over by the next block's, or past the end.
-                    out.push_str("            // The records: the block's bits as indexes (simdjson's `bit_indexer::write`).\n            if q < nw {\n                let (base, cnt, mut bits) = (64 * q as u32, w.count_ones() as usize, w);\n                // SAFETY: `count + cnt` is at most `n`; the room is `n + 64 + 3`.\n                unsafe {\n                    for k in 0..4 {\n                        *si.add(count + k) = base + bits.trailing_zeros();\n                        bits &= bits.wrapping_sub(1);\n                    }\n                    if cnt > 4 {\n                        for k in 4..8 {\n                            *si.add(count + k) = base + bits.trailing_zeros();\n                            bits &= bits.wrapping_sub(1);\n                        }\n                    }\n                    let mut k = 8;\n                    while k < cnt {\n                        *si.add(count + k) = base + bits.trailing_zeros();\n                        bits &= bits.wrapping_sub(1);\n                        k += 1;\n                    }\n                }\n                count += cnt;\n            }\n");
+                    let write = "let (base, cnt, mut bits) = (64 * q as u32, {W}.count_ones() as usize, {W});\n// SAFETY: `count + cnt` is at most `n`; the room is `n + 64 + 3`.\nunsafe {\n    for k in 0..4 {\n        *si.add(count + k) = base + bits.trailing_zeros();\n        bits &= bits.wrapping_sub(1);\n    }\n    if cnt > 4 {\n        for k in 4..8 {\n            *si.add(count + k) = base + bits.trailing_zeros();\n            bits &= bits.wrapping_sub(1);\n        }\n    }\n    let mut k = 8;\n    while k < cnt {\n        *si.add(count + k) = base + bits.trailing_zeros();\n        bits &= bits.wrapping_sub(1);\n        k += 1;\n    }\n}\ncount += cnt;\n";
+                    let write = write.replace("{W}", &w);
+                    let write = write.as_str();
+                    out.push_str("            // The records: the block's bits as indexes (simdjson's `bit_indexer::write`).\n");
+                    if most == 0 {
+                        out.push_str(&indent(write, "            "));
+                    } else {
+                        let _ = write!(out, "            if q < nw {{\n{}            }}\n", indent(write, "                "));
+                    }
+                }
+                // An end test's mask, its file's last block's word (the pass ends at it with no stage behind).
+                if most > 0 && self.end_sinks.iter().any(|(_, s)| *s == i) {
+                    let _ = writeln!(out, "            if q + 1 == nw {{\n                e_{} = {w};\n            }}", n.name);
                 }
             }
             out.push_str("        }\n");
         }
+        if most > 0 {
+            out.push_str("        lv_1 = lv_0;\n");
+        }
         out.push_str("    }\n");
+        if !self.sinks.is_empty() {
+            out.push_str("    // The errors, once.\n    refused |= errors != 0;\n");
+        }
+        // The tests at the file's last byte, once.
+        for (why, id) in &self.end_sinks {
+            let word = if most == 0 { format!("v_{}", self.nodes[*id].name) } else { format!("e_{}", self.nodes[*id].name) };
+            let inside = match &self.prefix {
+                Some(b) => format!(" && !(prefix && n <= {})", b.len()),
+                None => String::new(),
+            };
+            let _ = writeln!(out, "    // {why}: at the file's last byte, once (its block's word, the pass's last).\n    refused |= n > 0{inside} && {word} >> ((n - 1) % 64) & 1 != 0;");
+        }
         if self.lookup.is_some() {
-            out.push_str("    // The byte-pair errors (simdjson's `errors()`).\n    refused |= unsafe { S::nonzero(error) } != 0;\n");
+            // The block past the file's end is zeros: an ASCII block, so the same test as there.
+            out.push_str("    // The byte-pair errors (simdjson's `errors()`), and a sequence the file's last block leaves open (`check_eof`).\n    refused |= unsafe { S::nonzero(error) } != 0 || prev_incomplete;\n");
         }
         if self.index.is_some() {
             // simdjson's: the index ends in `n`, `n` and 0, so that stage 2 reads past its last record unchecked.
@@ -1282,11 +1524,14 @@ impl Gen<'_> {
         if records {
             self.lookup = crate::bitlex_pair_lookup::lookup(x.stmts, self.prefix.as_deref()).ok();
         }
+        // In simdjson's stage 1, the errors at an escape are tier 2's, where it reads the escape (decision 0599).
+        let pieces: Vec<usize> = if records { piece_covers(x.stmts) } else { Vec::new() };
         let covered: Vec<*const Expr> = self
             .lookup
             .iter()
-            .flat_map(|l| l.covers.iter())
-            .filter_map(|(i, _)| match &x.stmts[*i] {
+            .flat_map(|l| l.covers.iter().map(|(i, _)| i))
+            .chain(pieces.iter())
+            .filter_map(|i| match &x.stmts[*i] {
                 Stmt::Error(_, e) | Stmt::Escape(_, e) => Some(e as *const Expr),
                 _ => None,
             })
@@ -1309,6 +1554,16 @@ impl Gen<'_> {
         for (why, e, at) in escapes.iter().filter(|(_, e, _)| !covered.contains(&(*e as *const Expr))) {
             let line = self.in_scope(at, e, |g| {
                 if !g.regional(e) {
+                    // At the file's last byte alone: once, after the pass.
+                    if let Expr::And(a, b) = e {
+                        let (pre, defs) = (g.prefix.as_ref().map_or(0, Vec::len), &g.defs);
+                        let other = if is_last_byte(b, defs, pre) { Some(a) } else if is_last_byte(a, defs, pre) { Some(b) } else { None };
+                        if let Some(other) = other {
+                            let id = g.node(other)?;
+                            g.end_sinks.push((why.to_string(), id));
+                            return Ok(None);
+                        }
+                    }
                     let id = g.node(e)?;
                     g.sinks.push((why.to_string(), id));
                     return Ok(None);
@@ -1968,5 +2223,5 @@ fn toggle(x: &[u64]) -> Vec<u64> {
 
 /// Tier 1's Rust, written from the lexer's statements.
 pub fn tier1(x: &Input<'_>) -> Result<String, String> {
-    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, lookup: None }.source()
+    Gen { x, body: String::new(), names: HashMap::new(), temps: HashMap::new(), next: 0, nodes: Vec::new(), node_of: HashMap::new(), regional: Default::default(), pairs: Vec::new(), sinks: Vec::new(), end_sinks: Vec::new(), opens: None, defs: HashMap::new(), region_checks: Vec::new(), prefix: None, index: None, lookup: None }.source()
 }

@@ -2139,7 +2139,7 @@ fn gap_pattern(f: &mut FunctionBuilder<'_>, e: &WordEnv<'_>, m: &crate::program:
             Some(f.block_params(found)[0])
         }
         // No extras: the grammar token before is the record before.
-        None => Some(here).filter(|_| m.elems.iter().any(|el| el.since)),
+        None => m.elems.iter().any(|el| el.since).then_some(here),
     };
     for el in &m.elems {
         let (on, past) = (f.create_block(), f.create_block());
@@ -6312,7 +6312,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                         }
                         // Kept: the callee its arm calls takes it.
                         if !keep {
-                            let rest = f.ins().band_imm(live, !(native.taken[usize::from(order as u8)] as i64));
+                            let rest = f.ins().band_imm(live, !(native.taken[usize::from(order)] as i64));
                             mset(&mut f, Mem::Live, rest);
                         }
                         f.ins().jump(fall, &[]);
@@ -6359,7 +6359,7 @@ pub fn compile_with(native: &Structure, cut: &crate::native_cpu_clusters::Cut, w
                     // calls takes it.
                     if !keep {
                         let live = mget(&mut f, Mem::Live);
-                        let rest = f.ins().band_imm(live, !(native.taken[usize::from(order as u8)] as i64));
+                        let rest = f.ins().band_imm(live, !(native.taken[usize::from(order)] as i64));
                         mset(&mut f, Mem::Live, rest);
                     }
                     f.ins().jump(fall, &[]);
