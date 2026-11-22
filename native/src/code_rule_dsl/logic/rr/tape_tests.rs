@@ -394,8 +394,14 @@ fn a_policy_beside_one_that_reads_annotations_finds_what_it_finds_alone() {
         path
     };
     let cmps = policy("cmps", ".violation Cmp(at: node) code \"cmp\" \"in an empty list\"\nCmp(c) :- cmp(c, \"in\", _, r), empty_literal(r, _).");
-    // A tape value's node is no file's (decision 0431 R9): `Ann` is placed at the string.
-    let anns = policy("anns", ".violation Ann(at: node) code \"ann\" \"a list in an annotation\"\nAnn(s) :- annotation(e), list_like(e, _), guest_of(e, s).");
+    // A tape value's node is no file's (decision 0431 R9): `Ann` is placed at the string. An annotation's nodes are
+    // the annotation context's to read (decision 0597): the policy adds an export to the library's context.
+    let anns = policy(
+        "anns",
+        ".decl ann_list(s: node)\nann_list(s) :- ann_in(e, s), list_like(e, _).\n\
+         .context annotation of python roots ann_tree exports ann_list\n.from annotation ann_list as lists\n\
+         .violation Ann(at: node) code \"ann\" \"a list in an annotation\"\nAnn(s) :- lists(s).",
+    );
     let found = |report: &serde_json::Value, policy: &str| -> Vec<(u64, String)> {
         let rows = report["diagnostics"].as_array().unwrap().iter().filter(|d| d["policy"] == policy);
         let mut found: Vec<(u64, String)> = rows.map(|d| (d["line"].as_u64().unwrap_or(0), d["code"].as_str().unwrap_or("").to_owned())).collect();

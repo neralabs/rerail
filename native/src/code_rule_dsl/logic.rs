@@ -386,6 +386,7 @@ pub use rerail_planner::code_rule_dsl::logic::program_image;
 pub use rerail_planner::code_rule_dsl::logic::program_text;
 /// Contexts: code inside code analysed as a pass of its own rules (decision 0597).
 pub mod contexts;
+pub use rerail_planner::code_rule_dsl::logic::passes_made;
 pub use rerail_logic_core::code_rule_dsl::logic::version_trace;
 /// Main's JSON rules translated to `.rerail` on read (decision 0175).
 pub mod json_rules;

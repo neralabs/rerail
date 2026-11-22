@@ -30,8 +30,8 @@ use super::rr::Error;
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
-/// The prefix of a context's instance of a relation (`instance`).
-pub const PREFIX: &str = "rr_cx_";
+pub use super::passes_made::{Made, PREFIX, made, of_a_context};
+use super::passes_made::words;
 
 /// Context `context`'s instance of relation `rel`.
 pub fn instance(context: &str, rel: &str) -> String {
@@ -93,9 +93,10 @@ impl Declared {
         if pass == self.language { rel.to_owned() } else { instance(pass, rel) }
     }
 
-    /// The pass a relation of the rewritten program is of.
+    /// The pass a relation of the rewritten program is of (an instance's under a pack's prefix too, `of_a_context`).
     pub fn pass_of<'a>(&'a self, rel: &str) -> &'a str {
-        rel.strip_prefix(PREFIX)
+        rel.find(PREFIX)
+            .map(|i| &rel[i + PREFIX.len()..])
             .and_then(|rest| self.contexts.keys().filter(|c| rest.strip_prefix(c.as_str()).is_some_and(|t| t.starts_with('_'))).max_by_key(|c| c.len()))
             .map_or(self.language.as_str(), |c| c.as_str())
     }
@@ -103,11 +104,6 @@ impl Declared {
 
 fn bad<T>(message: String) -> Result<T, Error> {
     Err(Error::Syntax(message))
-}
-
-/// A setting's words, a comma one of them.
-fn words(text: &str) -> Vec<String> {
-    text.replace(',', " , ").split_whitespace().map(str::to_owned).collect()
 }
 
 /// A list of names separated by commas, each possibly `name as local`, up to `stop` or the end: the names, and the
@@ -198,12 +194,15 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
     // a context left with none is no pass. One a rule reads that nothing derives, or one never declared, is refused
     // below.
     let read_rels: BTreeSet<&str> = v.rules().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).collect::<Vec<_>>()).collect();
+    // A made pass's instance is derived under a pack's prefix too (`p1_rr_cx_annotation_ann_list`, `of_a_context`).
+    let heads: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
+    let held = |name: &str| heads.iter().any(|h| *h == name || h.strip_suffix(name).is_some_and(|p| p.ends_with('_')));
     let mut dropped: BTreeSet<(String, String)> = BTreeSet::new();
     for c in d.contexts.values_mut() {
         let reads = &d.reads;
         c.exports.retain(|e| {
             let made = instance(&c.name, e);
-            let derived = [e, &made].into_iter().any(|e| v.rel(e).is_some_and(|r| v.heads(r).next().is_some()));
+            let derived = heads.contains(e.as_str()) || held(&made);
             let local_read = |l: &str| read_rels.contains(l);
             let read = local_read(e) || local_read(&made) || reads.iter().any(|r| r.source == c.name && &r.rel == e && local_read(&r.local));
             let unreached = !derived && !read && (v.rel(e).is_some() || v.declares(e));
@@ -230,8 +229,7 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
             None => return bad(format!(".context {}: its roots {} are not declared", c.name, c.roots)),
         }
         for e in &c.exports {
-            let derived = if c.made { instance(&c.name, e) } else { e.clone() };
-            if v.rel(&derived).is_none_or(|r| v.heads(r).next().is_none()) {
+            if !(if c.made { held(&instance(&c.name, e)) } else { heads.contains(e.as_str()) }) {
                 return bad(format!(".context {} exports {e}: no rule derives it", c.name));
             }
         }
@@ -294,12 +292,21 @@ fn plan(v: &Version, d: &Declared) -> Plan {
     for c in d.contexts.values() {
         // Read as it is: another pass's (an instance, what it reads `.from`, its roots), or a view.
         let roots = d.name_in(&c.host, &c.roots);
-        let stop = |x: &str| x.starts_with(PREFIX) || x == roots || if c.made { c.reads.contains(x) } else { d.read_of(&c.name, x).is_some() } || !derived(x);
+        // A view is read as it is, though a combined program derives `kind` and `docof` from `node`.
+        let view = |x: &str| super::plan::corpus::hiding::VIEWS.contains(&x);
+        let stop = |x: &str| of_a_context(x) || x == roots || view(x) || if c.made { c.reads.contains(x) } else { d.read_of(&c.name, x).is_some() } || !derived(x);
         let mut set: BTreeSet<String> = BTreeSet::new();
         let mut todo: Vec<String> = Vec::new();
         if c.made {
-            // Its instance as made: what its rules read.
-            todo.extend(v.rules().map(|r| v.rel_name(r.head().rel())).filter(|h| h.starts_with(PREFIX) && d.pass_of(h) == c.name).map(str::to_owned));
+            // Its instance as made: what its rules read. A pack's member's own context (all its instance under the
+            // member's prefix, `p0_rr_cx_quoted_…`) was made whole in its part; a library's context a member's rule
+            // joins (`p1_rr_cx_annotation_ann_list` beside `rr_cx_annotation_…`) is completed here.
+            let heads: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).filter(|h| of_a_context(h) && d.pass_of(h) == c.name).collect();
+            if !heads.iter().any(|h| h.starts_with(PREFIX)) {
+                new.insert(c.name.clone(), set);
+                continue;
+            }
+            todo.extend(heads.into_iter().map(str::to_owned));
         } else {
             set.extend(c.exports.iter().cloned());
             todo.extend(c.exports.iter().cloned());
@@ -326,7 +333,7 @@ fn plan(v: &Version, d: &Declared) -> Plan {
     let mut host: BTreeSet<String> = v
         .rules()
         .map(|r| v.rel_name(r.head().rel()))
-        .filter(|h| !in_context.contains(&h.to_string()) && !aliased(h) && !h.starts_with(PREFIX))
+        .filter(|h| !in_context.contains(&h.to_string()) && !aliased(h) && !of_a_context(h))
         .map(str::to_owned)
         .collect();
     let mut todo: Vec<String> = host.iter().cloned().collect();
@@ -358,7 +365,19 @@ impl Renaming<'_> {
         if let Some(r) = self.d.read_of(self.pass, rel) {
             return Some(self.d.name_in(&r.source, &r.rel));
         }
-        self.own.filter(|own| own.contains(rel)).map(|_| instance(self.pass, rel))
+        if let Some(own) = self.own {
+            if own.contains(rel) {
+                return Some(instance(self.pass, rel));
+            }
+            // What the pass holds already that the host no longer does: a library's export a program's rule of the
+            // context reads by its own name (`ann_in`), which the made library holds as the instance alone.
+            let derived = |x: &str| self.v.rel(x).is_some_and(|id| self.v.heads(id).next().is_some());
+            let held = instance(self.pass, rel);
+            if !derived(rel) && derived(&held) {
+                return Some(held);
+            }
+        }
+        None
     }
 }
 
@@ -379,13 +398,18 @@ impl Rewrite for Renaming<'_> {
 const HOSTS_NODE: &[(&str, usize)] = &[("host_node", 1), ("guest_of", 1)];
 
 fn view_nodes<'v>(v: &'v Version, d: &Declared, pass: &str, r: RuleRef<'v>) -> Vec<T<'v>> {
+    // A base relation is an input: a relation a program lowered against its library reads of the library has no rule
+    // in it, and is no view (`ann_in(e, s)` read by a policy's rule of the library's context).
+    let base: BTreeSet<&str> = v.inputs().map(|a| v.text(a)).collect();
     let derived = |x: &str| v.rel(x).is_some_and(|id| v.heads(id).next().is_some());
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
     for l in r.body() {
         let L::Atom(a) = l.view() else { continue };
         let rel = v.rel_name(a.rel());
-        if a.neg() || derived(rel) || rel.starts_with(PREFIX) || d.read_of(pass, rel).is_some() {
+        // A view is a base read though a combined program derives it (`kind` from `node`, `whole::Projected`).
+        let read_in_place = super::plan::corpus::hiding::VIEWS.contains(&rel) || (base.contains(rel) && !derived(rel));
+        if a.neg() || !read_in_place || of_a_context(rel) || d.read_of(pass, rel).is_some() {
             continue;
         }
         let Some(cols) = v.columns_of(rel) else { continue };
@@ -436,7 +460,7 @@ fn write(v: &Version, d: &Declared, plan: &Plan, b: &mut Builder<'_>) -> Result<
         let head = v.rel_name(r.head().rel());
         if plan.host.contains(head) {
             finish(b.rewrite(v, r, &mut Renaming { v, d, pass: &d.language, own: None }).finish())?;
-        } else if head.starts_with(PREFIX) {
+        } else if of_a_context(head) {
             // A made pass's instance, completed: its reads of what it makes its own now read that.
             let pass = d.pass_of(head);
             finish(b.rewrite(v, r, &mut Renaming { v, d, pass, own: plan.new.get(pass) }).finish())?;
@@ -525,28 +549,6 @@ impl super::program_image::manager::ProgramPass for CrossingCycles {
         }
         refuse_crossing_cycles(v, &d).map_err(|e| e.to_string())
     }
-}
-
-/// A pass made (`passes`): a context, its host and its roots, as the made program's `.pass` settings hold them
-/// (`.pass annotation of python roots ann_root exports ann_type, …`: the roots as the made program names them).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub struct Made {
-    pub name: String,
-    pub host: String,
-    /// The host's relation of its roots, as the made program names it.
-    pub roots: String,
-}
-
-/// The passes program `v` was made into (`passes`), from its `.pass` settings.
-pub fn made(v: &Version) -> Vec<Made> {
-    ProgramFields::settings(v)
-        .into_iter()
-        .filter(|(k, _)| k == "pass")
-        .filter_map(|(_, text)| match words(&text).as_slice() {
-            [name, of, host, roots, rel, exports, ..] if of == "of" && roots == "roots" && exports == "exports" => Some(Made { name: name.clone(), host: host.clone(), roots: rel.clone() }),
-            _ => None,
-        })
-        .collect()
 }
 
 /// A cycle through relations of two passes is refused, naming the passes and its relations.

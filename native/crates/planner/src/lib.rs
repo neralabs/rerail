@@ -41,6 +41,8 @@ pub mod code_rule_dsl {
         pub use rerail_logic_core::code_rule_dsl::logic::{analysis, bloom, costs, crypto, derived, join_size, liveness, reach_form, sql, version_trace};
         pub use rerail_setfix::code_rule_dsl::logic::{device, lanes, native, run, run_state};
         pub mod answers;
+        /// The passes a program was made into (decision 0597), read below `contexts`.
+        pub mod passes_made;
         pub mod plan;
         pub mod program_text;
         pub mod rank_form;
