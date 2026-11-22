@@ -145,11 +145,12 @@ struct Stage1 {
     m_two_start: Vec<u64>,
     m_num_run: Vec<u64>,
     m_str_bad: Vec<u64>,
+    t12: Vec<u64>,
     t13: Vec<u64>,
     t14: Vec<u64>,
+    t15: Vec<u64>,
     t16: Vec<u64>,
-    t21: Vec<u64>,
-    t23: Vec<u64>,
+    t17: Vec<u64>,
     refused: bool,
 }
 
@@ -231,11 +232,12 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut m_two_start = vec![0u64; nw];
     let mut m_num_run = vec![0u64; nw];
     let mut m_str_bad = vec![0u64; nw];
+    let mut t12 = vec![0u64; nw];
     let mut t13 = vec![0u64; nw];
     let mut t14 = vec![0u64; nw];
+    let mut t15 = vec![0u64; nw];
     let mut t16 = vec![0u64; nw];
-    let mut t21 = vec![0u64; nw];
-    let mut t23 = vec![0u64; nw];
+    let mut t17 = vec![0u64; nw];
     let mut lv_1 = 0u64;
     let mut refused = false;
     for t in 0..nw + 1 {
@@ -498,29 +500,34 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_num_run[q] = v_m_num_run;
             }
             // uesc & ~h4
-            let v_t13 = p_m_uesc & (!v_m_h4 & lv);
+            let v_t12 = p_m_uesc & (!v_m_h4 & lv);
+            if q < nw {
+                t12[q] = v_t12;
+            }
+            // uesc & ~u_ok
+            let v_t13 = p_m_uesc & (!v_m_u_ok & lv);
             if q < nw {
                 t13[q] = v_t13;
             }
-            // uesc & ~u_ok
-            let v_t14 = p_m_uesc & (!v_m_u_ok & lv);
+            // line_open | block_open
+            let v_t14 = (v_m_line_open | v_m_block_open);
             if q < nw {
                 t14[q] = v_t14;
             }
-            // line_open | block_open
-            let v_t16 = (v_m_line_open | v_m_block_open);
+            // (tick1 | tick2) | tick3
+            let v_t15 = ((v_m_tick1 | v_m_tick2) | v_m_tick3);
+            if q < nw {
+                t15[q] = v_t15;
+            }
+            // zero & next(digit)
+            let v_t16 = p_m_zero & (p_m_digit >> 1 | v_m_digit << 63);
             if q < nw {
                 t16[q] = v_t16;
             }
-            // zero & next(digit)
-            let v_t21 = p_m_zero & (p_m_digit >> 1 | v_m_digit << 63);
-            if q < nw {
-                t21[q] = v_t21;
-            }
             // minus & ~next(digit)
-            let v_t23 = p_m_minus & (!(p_m_digit >> 1 | v_m_digit << 63) & lv);
+            let v_t17 = p_m_minus & (!(p_m_digit >> 1 | v_m_digit << 63) & lv);
             if q < nw {
-                t23[q] = v_t23;
+                t17[q] = v_t17;
             }
         }
         lv_1 = lv_0;
@@ -555,11 +562,12 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
         m_two_start,
         m_num_run,
         m_str_bad,
+        t12,
         t13,
         t14,
+        t15,
         t16,
-        t21,
-        t23,
+        t17,
         refused,
     }
 }
@@ -579,11 +587,11 @@ pub fn lex(src: &[u8]) -> Lexed {
     // Each word's bits inside the file.
     let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
     // Stage 1: the masks the regions and the tokens read, and whether an escape holds.
-    let Stage1 { m_quote, m_ws, m_lf, m_slash, m_hash, m_word, m_alpha, m_digit, m_dot, m_lbrace, m_punct, m_tick, m_ff, m_rbrace, m_lbracket, m_rbracket, m_q, m_line_open, m_block_open, m_block_end, m_tt, m_ttt, m_tick1, m_tick2, m_tick3, t7, m_two_start, m_num_run, m_str_bad, t13, t14, t16, t21, t23, refused: escapes } = stage1_best(src);
+    let Stage1 { m_quote, m_ws, m_lf, m_slash, m_hash, m_word, m_alpha, m_digit, m_dot, m_lbrace, m_punct, m_tick, m_ff, m_rbrace, m_lbracket, m_rbracket, m_q, m_line_open, m_block_open, m_block_end, m_tt, m_ttt, m_tick1, m_tick2, m_tick3, t7, m_two_start, m_num_run, m_str_bad, t12, t13, t14, t15, t16, t17, refused: escapes } = stage1_best(src);
     let mut refused = escapes;
     // The regions' walk and the masks made of it: only a test build's checks read them.
     #[cfg(feature = "test-hooks")]
-    let (m_o_line, m_o_block, m_o_t1, m_o_t2, m_e_t2, m_o_t3, t1, t2, t3, t12, t15, t17, t18, t19, t20, t22) = {
+    let (m_o_line, m_o_block, m_o_t1, m_o_t2, m_e_t2, m_o_t3, t1, t2, t3) = {
         // regions hidden { … }: the first opener not hidden opens its region, to its closer.
         let mut m_hidden = vec![0u64; nw];
         let mut m_o_str = vec![0u64; nw];
@@ -803,6 +811,8 @@ pub fn lex(src: &[u8]) -> Lexed {
         let m_p_start: Vec<u64> = (0..nw).map(|i| m_p[i] & (!m_second[i] & lv[i])).collect();
         // mask p_last = (p_start & ~two_start) | second
         let m_p_last: Vec<u64> = (0..nw).map(|i| (m_p_start[i] & (!m_two_start[i] & lv[i]) | m_second[i])).collect();
+        // mask int_first = (digit & int) & ~prev(int)
+        let m_int_first: Vec<u64> = (0..nw).map(|i| m_digit[i] & m_int[i] & (!prev(&m_int, i, 1) & lv[i])).collect();
         // mask numeral = (int | f_dot) | frac
         let m_numeral: Vec<u64> = (0..nw).map(|i| ((m_int[i] | m_f_dot[i]) | m_frac[i])).collect();
         let t10: Vec<u64> = (0..nw).map(|i| m_code[i] & (m_lbrace[i] | m_lbracket[i])).collect();
@@ -827,14 +837,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                 }
             }
         }
-        let t12: Vec<u64> = (0..nw).map(|i| m_quote[i] & m_o_str[i]).collect();
-        let t15: Vec<u64> = (0..nw).map(|i| m_slash[i] & (m_o_line[i] | m_o_block[i])).collect();
-        let t17: Vec<u64> = (0..nw).map(|i| m_tick[i] & m_o_tick[i]).collect();
-        let t18: Vec<u64> = (0..nw).map(|i| m_hash[i] & m_directive[i]).collect();
-        let t19: Vec<u64> = (0..nw).map(|i| m_alpha[i] & m_ident[i] & (!prev(&m_ident, i, 1) & lv[i])).collect();
-        let t20: Vec<u64> = (0..nw).map(|i| m_digit[i] & m_int[i] & (!prev(&m_int, i, 1) & lv[i])).collect();
-        let t22: Vec<u64> = (0..nw).map(|i| m_punct[i] & m_p_start[i]).collect();
-        (m_o_line, m_o_block, m_o_t1, m_o_t2, m_e_t2, m_o_t3, t1, t2, t3, t12, t15, t17, t18, t19, t20, t22)
+        (m_o_line, m_o_block, m_o_t1, m_o_t2, m_e_t2, m_o_t3, t1, t2, t3)
     };
     // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
     let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);
@@ -861,45 +864,23 @@ pub fn lex(src: &[u8]) -> Lexed {
             // The row: the first whose start holds, of those whose start may be the byte's.
             let row = match group {
                 // `!%&()*+,-.:;<=>@[]^{|}~`
-                0 | 1 | 2 | 3 | 4 => if bit(&t22, s) {
-                    6
-                } else {
-                    usize::MAX
-                },
+                0 | 1 | 2 | 3 | 4 => 6,
                 // `"`
-                5 => if bit(&t12, s) {
-                    0
-                } else {
-                    usize::MAX
-                },
+                5 => 0,
                 // `#`
-                6 => if bit(&t18, s) {
-                    3
-                } else {
-                    usize::MAX
-                },
+                6 => 3,
                 // `/`
-                7 => if bit(&t15, s) {
+                7 => if (bit(&m_line_open, s) || bit(&m_block_open, s)) {
                     1
-                } else if bit(&t22, s) {
-                    6
                 } else {
-                    usize::MAX
+                    6
                 },
                 // `0123456789`
-                8 => if bit(&t20, s) {
-                    5
-                } else {
-                    usize::MAX
-                },
+                8 => 5,
                 // `ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz`
-                9 | 10 | 11 => if bit(&t19, s) {
-                    4
-                } else {
-                    usize::MAX
-                },
+                9 | 10 | 11 => 4,
                 // ```
-                12 => if bit(&t17, s) {
+                12 => if bit(&t15, s) {
                     2
                 } else {
                     usize::MAX
@@ -920,11 +901,11 @@ pub fn lex(src: &[u8]) -> Lexed {
                     if count_in(&m_str_bad, s, l) >= 1 {
                         hits |= 1 << 28;
                     }
-                    if count_in(&t13, s, l) >= 1 {
+                    if count_in(&t12, s, l) >= 1 {
                         hits |= 1 << 28;
                     }
                     // a \u escape the engine checks
-                    if count_in(&t14, s, l) >= 1 {
+                    if count_in(&t13, s, l) >= 1 {
                         refused = true;
                         break 'tokens;
                     }
@@ -933,10 +914,18 @@ pub fn lex(src: &[u8]) -> Lexed {
 ,
                 1 => {
                     // `comment`: read line | block
-                    let l = if bit(&m_o_line, s) {
+                    let l = if {
+                        #[cfg(feature = "test-hooks")]
+                        assert_eq!(bit(&m_line_open, s), bit(&m_o_line, s), "region `line` opens at byte {s}");
+                        bit(&m_line_open, s)
+                    } {
                         first_bit(&m_lf, s + 1).unwrap_or(n) - 1
 
-                    } else if bit(&m_o_block, s) {
+                    } else if {
+                        #[cfg(feature = "test-hooks")]
+                        assert_eq!(bit(&m_block_open, s), bit(&m_o_block, s), "region `block` opens at byte {s}");
+                        bit(&m_block_open, s)
+                    } {
                         match first_bit(&m_block_end, s + 1) {
                             Some(c) => c + 0,
                             None => {
@@ -950,7 +939,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                         break 'tokens;
                     };
                     let l = l.max(s);
-                    if count_in(&t16, s, l) >= 1 {
+                    if count_in(&t14, s, l) >= 1 {
                         hits |= 1 << 28;
                     }
                     (l, 0, true, 0x8000)
@@ -958,7 +947,11 @@ pub fn lex(src: &[u8]) -> Lexed {
 ,
                 2 => {
                     // `code_literal`: read t1 | t2 | t3
-                    let l = if bit(&m_o_t1, s) {
+                    let l = if {
+                        #[cfg(feature = "test-hooks")]
+                        assert_eq!(bit(&m_tick1, s), bit(&m_o_t1, s), "region `t1` opens at byte {s}");
+                        bit(&m_tick1, s)
+                    } {
                         match first_bit(&m_tick, s + 1) {
                             Some(c) => c + 0,
                             None => {
@@ -967,13 +960,21 @@ pub fn lex(src: &[u8]) -> Lexed {
                             }
                         }
 
-                    } else if bit(&m_o_t2, s) || bit(&m_e_t2, s) {
+                    } else if {
+                        #[cfg(feature = "test-hooks")]
+                        assert_eq!(bit(&m_tick2, s), bit(&m_o_t2, s) || bit(&m_e_t2, s), "region `t2` opens at byte {s}");
+                        bit(&m_tick2, s)
+                    } {
                         match first_bit(&m_tt, s + 1) {
                             Some(c) => c + 1,
                             None => s + 1,
                         }
 
-                    } else if bit(&m_o_t3, s) {
+                    } else if {
+                        #[cfg(feature = "test-hooks")]
+                        assert_eq!(bit(&m_tick3, s), bit(&m_o_t3, s), "region `t3` opens at byte {s}");
+                        bit(&m_tick3, s)
+                    } {
                         match first_bit(&m_ttt, s + 1) {
                             Some(c) => c + 2,
                             None => {
@@ -1011,7 +1012,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     if count_in(&m_dot, s, l) >= 1 {
                         hits |= 1 << 16;
                     }
-                    if l + 1 - s >= 1 && first_clear(&t21, s, s + 1).is_none() {
+                    if l + 1 - s >= 1 && first_clear(&t16, s, s + 1).is_none() {
                         hits |= 1 << 12;
                     }
                     // a number of 19 digits or more
@@ -1026,7 +1027,7 @@ pub fn lex(src: &[u8]) -> Lexed {
                     // `punct`: pair
                     let l = pair_6(src, s);
                     let l = l.max(s);
-                    if l + 1 - s >= 1 && first_clear(&t23, s, s + 1).is_none() {
+                    if l + 1 - s >= 1 && first_clear(&t17, s, s + 1).is_none() {
                         hits |= 1 << 12;
                     }
                     (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)

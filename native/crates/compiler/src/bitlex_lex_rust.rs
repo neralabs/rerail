@@ -1795,7 +1795,6 @@ impl Gen<'_> {
             }
             return self.at_start(a);
         }
-        let Some(opens) = &self.opens else { return Ok(None) };
         // Assumed at a region token's last byte: never a start where every region token is two
         // bytes at least (a closer is looked for after the opener; one outside after its body).
         if let Expr::Name(n) = e
@@ -1806,8 +1805,12 @@ impl Gen<'_> {
         }
         Ok(match e {
             Expr::Name(n) => {
-                if let Some(k) = opens.iter().position(|(kind, _, _)| *n == format!("o_{kind}") || *n == format!("f_{kind}")) {
+                if let Some(k) = self.opens.as_ref().and_then(|opens| opens.iter().position(|(kind, _, _)| *n == format!("o_{kind}") || *n == format!("f_{kind}"))) {
                     Some(format!("open == {k}"))
+                } else if self.kinds.iter().any(|r| *n == format!("o_{}", r.kind) || *n == format!("f_{}", r.kind) || r.empty.as_ref().is_some_and(|(e, _)| e == n)) {
+                    // A region's mask where the loop numbers no regions (`opens`: a region opens no token of its own
+                    // there): what the grammar states of it (`assume … at starts`), else unknown.
+                    None
                 } else if let Some(d) = self.defs.get(n).cloned() {
                     self.at_start(&d)?
                 } else {
@@ -1817,7 +1820,7 @@ impl Gen<'_> {
             }
             Expr::Empty => Some("false".to_owned()),
             Expr::Not(a) => {
-                let n = opens.len();
+                let n = self.opens.as_ref().map_or(0, Vec::len);
                 self.at_start(a)?.map(|a| match a.as_str() {
                     "false" => "true".to_owned(),
                     "true" => "false".to_owned(),
@@ -5006,10 +5009,18 @@ impl Gen<'_> {
                         // (the records' reader's `ReadNone::Bytes`).
                         let o = match self.opens.as_ref().and_then(|v| v.iter().position(|(k, _, _)| *k == r.kind)) {
                             Some(k) => format!("open == {k}"),
-                            None => match &r.empty {
-                                Some((e, _)) => format!("bit(&{}, s) || bit(&{}, s)", self.val(&Expr::Name(format!("o_{}", r.kind)))?, self.val(&Expr::Name(e.clone()))?),
-                                None => format!("bit(&{}, s)", self.val(&Expr::Name(format!("o_{}", r.kind)))?),
-                            },
+                            None => {
+                                // Where the loop numbers no regions: the region the token opens is the first whose
+                                // opener holds at its start, which is never hidden (the loop is in no region); its
+                                // `else` form (no closer after it) too, which `none` reads. A test build checks it
+                                // against the regions' walk.
+                                let at = self.at_start(&r.opener)?.ok_or_else(|| format!("tier 1 as Rust: region `{}`'s opener at a start reads a region", r.kind))?;
+                                let walk = match &r.empty {
+                                    Some((e, _)) => format!("bit(&{}, s) || bit(&{}, s)", self.val(&Expr::Name(format!("o_{}", r.kind)))?, self.val(&Expr::Name(e.clone()))?),
+                                    None => format!("bit(&{}, s)", self.val(&Expr::Name(format!("o_{}", r.kind)))?),
+                                };
+                                format!("{{\n                #[cfg(feature = \"test-hooks\")]\n                assert_eq!({at}, {walk}, \"region `{}` opens at byte {{s}}\");\n                {at}\n            }}", r.kind)
+                            }
                         };
                         let none = match &r.empty {
                             Some((_, m)) => format!("s + {},", m.saturating_sub(1)),
