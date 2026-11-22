@@ -126,6 +126,18 @@ impl Unit {
     /// addresses reads a unit in one slab only.
     pub fn of(documents: Vec<Arc<Resident>>) -> Result<Unit, Error> {
         let block = documents.first().map(|d| Arc::clone(&d.slab));
+        Unit::from_slab(documents, block)
+    }
+
+    /// The unit's documents read from `base`'s first slab, the one a batch's command binds (a team's unit,
+    /// `pp_expand::expand_teams`): refused (`BackendCapacity`) where a device with no buffer addresses has them in
+    /// another.
+    pub fn rebased(&self, base: &Unit) -> Result<Unit, Error> {
+        Unit::from_slab(self.documents.clone(), base.documents.first().map(|d| Arc::clone(&d.slab)))
+    }
+
+    /// `of`, each view's offset counting from `block`.
+    fn from_slab(documents: Vec<Arc<Resident>>, block: Option<Arc<crate::slabs::Slab>>) -> Result<Unit, Error> {
         let base = block.as_ref().map(|b| b.device_buffer().device_address());
         let mut slabs: Vec<Arc<crate::slabs::Slab>> = Vec::new();
         let mut views = Vec::with_capacity(documents.len());
@@ -464,6 +476,30 @@ fn evaluate_at(unit: &Unit, nodes: bool, groups: u64) -> Result<Evaluated, Error
     front.read()
 }
 
+/// A batch's units, a team each (decision 0588 §6): `pp_teams` over the arena, each unit's stores laid out as its
+/// `Lay` (written into its front's slots), `teams` the units' slots and seats (`pp_grid.uglykl`'s `pp_teams`),
+/// `groups` groups dispatched, each taking the next seat; then `pp_check_teams`, a thread a unit, where every unit runs
+/// to the whole setup. `data` is the slab the units' views count from, `resident` their other slabs. The launches and
+/// the command's GPU time in seconds. A team's barrier that fails is its unit's (`Front::barrier_failed`).
+pub fn on_teams<'a>(arena: &'a Arena, teams: &'a Buf, units: &[(&Front, &Lay)], data: &'a dyn crate::pp_arena::Bound, resident: &'a [Arc<crate::slabs::Slab>], groups: u64) -> Result<(usize, f64), Error> {
+    for (front, l) in units {
+        l.write(&front.lay);
+    }
+    let all = units.iter().all(|(_, l)| l.get("LAST") == TO_ALL);
+    let checks = (units.len() as u64).div_ceil(crate::pp_arena::tg());
+    let ran = run_timed_over(resident, |enc| {
+        enc.run("pp_teams", &[("arena", arena), ("data", data), ("teams", teams)], None, groups);
+        if all {
+            enc.run("pp_check_teams", &[("arena", arena), ("teams", teams)], None, checks);
+        }
+        Ok(())
+    })?;
+    if std::env::var_os("RERAIL_PP_BARRIERS").is_some() {
+        eprintln!("TEAMS {} units, {groups} groups, gpu {:.1} us", units.len(), ran.1 * 1e6);
+    }
+    Ok(ran)
+}
+
 /// Runs the persistent grid over the arena, `groups` groups dispatched, laid out as `l`, in one
 /// command buffer: `pp_setup` to the stage `l` names (the text pass is inside its P1 iterations,
 /// decision 0485), and for the whole setup (`TO_ALL`) `pp_check` after it. The launches it made and
@@ -499,7 +535,7 @@ const TRACE_N: usize = 2048;
 
 /// A trace's report: the phases' time by source line (where the device has a clock), most first, and the lines'
 /// text in the evaluator's source.
-fn report_trace(t: &[(u32, u64)], gpu: f64, barriers: u32) {
+pub(crate) fn report_trace(t: &[(u32, u64)], gpu: f64, barriers: u32) {
     let lines: Vec<&str> = crate::pp_arena::source().lines().collect();
     let text = |l: u32| lines.get(l as usize - 1).map_or("", |s| s.trim()).chars().take(110).collect::<String>();
     let mut by: std::collections::BTreeMap<u32, (u64, u32)> = Default::default();

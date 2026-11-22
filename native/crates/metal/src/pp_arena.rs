@@ -129,6 +129,11 @@ impl Buf {
         unsafe { l.host.add(l.base + self.at) }
     }
 
+    /// The store's offset in its arena's layout: where its kernels' slots count it from.
+    pub fn offset(&self) -> usize {
+        self.at
+    }
+
     /// The store's length in bytes.
     pub fn byte_length(&self) -> usize {
         self.len

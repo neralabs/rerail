@@ -374,21 +374,25 @@ type SettledUnit = Result<(super::rounds::Settled, Vec<Vec<u8>>), &'static str>;
 /// refused it; the runs counted in `ran`.
 fn settled_many(cfg: &rerail_c_pp::Config, units: &mut [(Box<dyn rerail_c_pp::files::Files + '_>, String)], ran: &mut Ran) -> Vec<SettledUnit> {
     let cpp = cfg.opts.cpp;
-    let r = super::rounds::run_many(cfg, cpp, units, |u, l, s| {
+    let r = super::rounds::run_many(cfg, cpp, units, |pairs, sizes| {
         let t0 = std::time::Instant::now();
-        let x = rerail_metal::pp_expand::expand_sized(u, l, s, rerail_metal::pp_arena::groups());
-        if std::env::var_os("RERAIL_PP_TIME").is_some() {
-            eprintln!("TIME expand {:.3} ms (device {:.3} ms)", t0.elapsed().as_secs_f64() * 1e3, x.as_ref().map_or(0.0, |x| x.gpu_seconds * 1e3));
-        }
-        if let Ok(x) = &x {
+        let xs = rerail_metal::pp_expand::expand_teams(pairs, sizes);
+        if let Ok(xs) = &xs {
+            // The batch's GPU time is each answer's (`Expanded::run`): counted once.
+            let gpu = xs.iter().flatten().map(|x| x.gpu_seconds).next().unwrap_or(0.0);
+            if std::env::var_os("RERAIL_PP_TIME").is_some() {
+                eprintln!("TIME expand {} units {:.3} ms (device {:.3} ms)", pairs.len(), t0.elapsed().as_secs_f64() * 1e3, gpu * 1e3);
+            }
             ran.runs += 1;
-            ran.gpu_seconds += x.gpu_seconds;
-            for (k, &(u, c)) in x.room.iter().enumerate() {
-                ran.per_top[k] = ran.per_top[k].max(f64::from(u) / x.caps.top.max(1) as f64);
-                ran.per_cap[k] = ran.per_cap[k].max(f64::from(u) / f64::from(c.max(1)));
+            ran.gpu_seconds += gpu;
+            for x in xs.iter().flatten() {
+                for (k, &(u, c)) in x.room.iter().enumerate() {
+                    ran.per_top[k] = ran.per_top[k].max(f64::from(u) / x.caps.top.max(1) as f64);
+                    ran.per_cap[k] = ran.per_cap[k].max(f64::from(u) / f64::from(c.max(1)));
+                }
             }
         }
-        x
+        xs
     });
     r.into_iter()
         .zip(units.iter())
@@ -1043,8 +1047,8 @@ fn counters_in_directives_are_the_serial_passes() {
 /// Decision 0468, batching: units expanded in one batch give each its own serial answer. The same
 /// names are defined differently, undefined, or left undefined from unit to unit, so a unit that
 /// saw an earlier unit's row would differ; `__FILE__` used after another unit redefined it; one
-/// unit the device refuses (a call past its file's end), so the batch splits and that unit alone
-/// is refused.
+/// unit the device refuses (a call past its file's end), and that unit alone is refused: each
+/// unit is a team of its own (decision 0588 §6), and the batch is one run.
 #[test]
 fn a_batch_is_its_units() {
     use rerail_c_pp::files::Search;
@@ -1083,9 +1087,11 @@ fn a_batch_is_its_units() {
     }
     eprintln!("refused alone: {alone:?}");
     same(alone, vec![(5, rerail_metal::pp_expand::X_ACROSS)], "the units refused: a call past its file's end");
-    // The units before a refused one ran in a batch of more than one; the unit with an include
-    // took two rounds, the others riding with it.
-    assert!(std::rc::Rc::ptr_eq(&settled[0].0.part.x, &settled[1].0.part.x), "units 0 and 1 in one batch");
+    // Every unit's first round, the refused one's too, was the batch's one run; the unit with an
+    // include took two rounds, and its second ran alone.
+    let runs: Vec<u64> = settled.iter().map(|(s, _)| s.part.x.run).collect();
+    assert!(runs.iter().enumerate().all(|(k, &r)| k == 6 || r == runs[0]), "the units of one round in one run: {runs:?}");
+    assert_ne!(runs[6], runs[0], "the include's second round its own run");
     same(settled.iter().map(|(s, _)| s.rounds).collect::<Vec<_>>(), vec![1, 1, 1, 1, 1, 1, 2, 1], "each unit's rounds");
 }
 
@@ -1519,15 +1525,22 @@ fn against_serial(langs: Vec<(Vec<String>, bool)>, dirs: Vec<(String, rerail_c_p
         if let Some(k) = std::env::var("RERAIL_PP_STAGES").ok().and_then(|k| k.parse::<usize>().ok()) {
             batch_stages(&units[..k.min(units.len())]);
         }
-        let mut seen: Vec<*const Expanded> = Vec::new();
+        // A batch's units answer with its run (`Expanded::run`): its GPU time once, and its units.
+        let mut seen: Vec<u64> = Vec::new();
         for e in &entries {
             let (path, part) = (e.path, &e.s.part);
             let x = &*part.x;
-            if !seen.contains(&std::ptr::from_ref(x)) {
-                seen.push(std::ptr::from_ref(x));
-                launches = launches.max(x.launches);
-                gpu.push(x.gpu_seconds);
-                batches.push(x.unit_out.len().saturating_sub(1).max(1));
+            launches = launches.max(x.launches);
+            match seen.iter().position(|&r| r == x.run) {
+                Some(b) => {
+                    let at = batches.len() - seen.len() + b;
+                    batches[at] += 1;
+                }
+                None => {
+                    seen.push(x.run);
+                    gpu.push(x.gpu_seconds);
+                    batches.push(1);
+                }
             }
             // Room counts only alone: with another refusal the unit is not rerun, and the other is why.
             let refused_by = if x.refused & !X_ROOM != 0 { x.refused & !X_ROOM } else { x.refused };

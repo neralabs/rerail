@@ -392,8 +392,11 @@ impl Caps {
             dirs = 2 * n(NEED_GROUPS);
         }
         let gaps = (2 * n(NEED_GAPS) + share(now.gaps, was.gaps, n(NEED_GAPS)) + 16).max(dirs + nodes);
+        // The top tokens: a run that made requests stopped at them, before the text (the corpus:
+        // 9 units of 80 refused at 4,096, needing up to 44k), so its use says nothing of it, and
+        // the text's room is the first.
         let t = n(NEED_IF_TOP).max(n(NEED_TEXT_TOP));
-        let top = 2 * t + share(now.top, was.top, t) + 4096;
+        let top = if n(NEED_REQS) > 0 { now.top.max(2 * t + 4096) } else { 2 * t + share(now.top, was.top, t) + 4096 };
         let reqs = 2 * n(NEED_REQS) + more(now.reqs, was.reqs) + 64;
         let names = 2 * n(NEED_NAMES) + more(now.names, was.names) + 4096;
         Caps { nodes, dirs, gaps, top, reqs, names, rung }
@@ -1187,7 +1190,7 @@ impl Exp {
             cu_slot: zeroed(2 * cnt_cap)?,
             cu_sub: zeroed(2 * cnt_cap)?,
             cu_unit: zeroed(2 * cnt_cap)?,
-            trn: zeroed(20)?,
+            trn: zeroed(24)?,
             lread: zeroed(dirs)?,
             cnt_cap: cnt_cap as u32,
             lb_cap: lb_cap as u32,
@@ -1410,6 +1413,14 @@ pub struct Expanded {
     /// The givings back at the loop's substitutions (decision 0486 §10), every top's.
     pub gives: u32,
     pub def_rung: u32,
+    /// The command it ran in (`next_run`): a batch's units ran in one, and its GPU time is that command's.
+    pub run: u64,
+}
+
+/// A command's number, the process's next (`Expanded::run`).
+pub fn next_run() -> u64 {
+    static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
 }
 
 /// The arena's stores, as `Expanded::room` lists them.
@@ -1441,97 +1452,272 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
 }
 
 fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -> Result<Expanded, Error> {
-    let Sizes { p1, x, defs: def_rung, .. } = *sizes;
-    let (mut def_rung, mut p1, mut x) = (def_rung, p1, x);
-    let (mut p1_tries, mut x_tries) = (0, 0);
-    // The last run refused for the expansion's room: its answer stands where the next run's
-    // room is past the device's (the serial pass takes the unit).
-    let mut short: Option<Expanded> = None;
+    let mut r = Runs::new(unit, lay, sizes);
     loop {
-        x = x.fit(p1.top);
-        let rung = x.rung;
         // At most `groups`, one a small grid's work: the unit's nodes, or its expansion's tokens, whose room each
         // refused run grows (`pp_arena::groups_for`).
-        let groups = groups.min(crate::pp_arena::groups_for(unit.node_bound.max(x.tok)));
+        let groups = groups.min(crate::pp_arena::groups_for(unit.node_bound.max(r.x.fit(r.p1.top).tok)));
         let arena = Arena::new();
+        let m = match r.make(&arena, groups) {
+            Ok(m) => m,
+            Err(done) => return done,
+        };
+        match arena.lease() {
+            Ok(()) => {}
+            Err(Error::BackendCapacity) if r.short.is_some() => return Ok(r.short.take().unwrap()),
+            Err(e) => return Err(e),
+        }
+        let (launches, gpu_seconds) = on_grid(&arena, unit, &m.front, &m.l, groups)?;
+        let joined = m.front.joined();
+        if let Some(done) = r.after(m, launches, gpu_seconds, joined, next_run(), sizes) {
+            return done;
+        }
+    }
+}
+
+/// A batch's units expanded together, a team each (decision 0588 §6): each round of runs is one
+/// command (`pp_eval::on_teams`) over the units still running, each in stores of its own in one
+/// arena, its setup a group's, and a unit that runs again (a room grown) does so in the next. Each
+/// unit's answer, by its index, from the rooms `sizes` (its last round's), which it leaves at the
+/// rooms each settled at. `Err(BackendCapacity)` for the batch where a round's arena is past the
+/// budget, or its documents are where a batch cannot read them together: the caller runs it in
+/// halves.
+pub fn expand_teams(units: &[(&Unit, &Layout)], sizes: &mut [Sizes]) -> Result<Vec<Result<Expanded, Error>>, Error> {
+    let n = units.len();
+    let Some(&(first, _)) = units.first() else { return Ok(Vec::new()) };
+    // Every unit's views from the first unit's slab, the one the command binds.
+    let members: Vec<Unit> = units.iter().map(|(u, _)| u.rebased(first)).collect::<Result<_, _>>()?;
+    let mut resident: Vec<std::sync::Arc<crate::slabs::Slab>> = Vec::new();
+    for m in &members {
+        for s in &m.slabs {
+            if !resident.iter().any(|r| r.id == s.id) {
+                resident.push(std::sync::Arc::clone(s));
+            }
+        }
+    }
+    let mut runs: Vec<Runs<'_>> = members.iter().zip(units).zip(sizes.iter()).map(|((m, (_, l)), s)| Runs::new(m, l, s)).collect();
+    let mut out: Vec<Option<Result<Expanded, Error>>> = (0..n).map(|_| None).collect();
+    let mut stopped = 0;
+    let (run, mut gpu) = (next_run(), 0f64);
+    let most = crate::pp_arena::groups();
+    // A team's groups at most: the grid's, or one after its barrier failed.
+    let mut alone = vec![false; n];
+    loop {
+        // Each unit's team: its share of the grid by its work (its nodes, or its expansion's
+        // tokens), at least one group.
+        let work: Vec<usize> = (0..n).map(|k| members[k].node_bound.max(runs[k].x.fit(runs[k].p1.top).tok)).collect();
+        let live: Vec<usize> = (0..n).filter(|&k| out[k].is_none()).collect();
+        let all: usize = live.iter().map(|&k| work[k]).sum::<usize>().max(1);
+        let arena = Arena::new();
+        let mut made: Vec<(usize, Made, u64)> = Vec::new();
+        for &k in &live {
+            let share = (most as usize * work[k]).div_ceil(all) as u64;
+            let team = if alone[k] { 1 } else { share.clamp(1, most) };
+            match runs[k].make(&arena, team) {
+                Ok(m) => made.push((k, m, team)),
+                Err(done) => out[k] = Some(done),
+            }
+        }
+        if made.is_empty() {
+            break;
+        }
+        // The largest first: its team's groups are the first wave's, and the last a group takes is a small one.
+        made.sort_by_key(|(k, _, team)| (std::cmp::Reverse(*team), std::cmp::Reverse(work[*k])));
+        let seats: u64 = made.iter().map(|(_, _, t)| t).sum();
+        let mut words = vec![made.len() as u32, 0, seats as u32];
+        let mut first = 0u32;
+        for (_, m, team) in &made {
+            words.push(u32::try_from(m.front.lay.offset()).map_err(|_| crate::pp_arena::capacity(concat!(file!(), ":", line!())))?);
+            words.extend([first, *team as u32]);
+            first += *team as u32;
+        }
+        let teams = arena.from_slice(&words)?;
+        arena.lease()?;
+        let groups = most.min(seats);
+        let ran = {
+            let refs: Vec<(&Front, &Lay)> = made.iter().map(|(_, m, _)| (&m.front, &m.l)).collect();
+            let data: &dyn crate::pp_arena::Bound = match members[0].data() {
+                Some(b) => b,
+                None => &made[0].1.front.files,
+            };
+            crate::pp_eval::on_teams(&arena, &teams, &refs, data, &resident, groups)
+        };
+        match ran {
+            Ok((launches, gpu_seconds)) => {
+                gpu += gpu_seconds;
+                // `RERAIL_PP_TRACE`: the largest team's phases (its unit's trace).
+                if std::env::var_os("RERAIL_PP_TRACE").is_some() {
+                    let (k, m, team) = &made[0];
+                    eprintln!("TRACE the largest of {} teams: unit {k}, {team} groups, nodes {}", made.len(), members[*k].node_bound);
+                    crate::pp_eval::report_trace(&m.front.trace(), gpu_seconds, m.front.barriers());
+                }
+                for (k, m, team) in made {
+                    // A team's barrier past its bound: the unit again, its team one group.
+                    if team > 1 && m.front.barrier_failed() {
+                        alone[k] = true;
+                        continue;
+                    }
+                    if let Some(done) = runs[k].after(m, launches, gpu_seconds, team, run, &mut sizes[k]) {
+                        out[k] = Some(done);
+                    }
+                }
+            }
+            // The system stopped the command (`pp_eval::at_resident`'s rule): the round again.
+            Err(Error::BackendPreempted) if stopped + 1 < crate::pp_eval::PREEMPTED_RUNS => stopped += 1,
+            Err(Error::BackendPreempted) => return Err(crate::pp_arena::failure(concat!(file!(), ":", line!(), ": stopped by the system each run"))),
+            Err(e) => return Err(e),
+        }
+    }
+    // Each answer's GPU time is the batch's: every command of the call (`run`).
+    Ok(out
+        .into_iter()
+        .map(|r| {
+            let mut x = r.unwrap_or_else(|| Err(crate::pp_arena::failure(concat!(file!(), ":", line!()))))?;
+            (x.gpu_seconds, x.run) = (gpu, run);
+            Ok(x)
+        })
+        .collect())
+}
+
+/// One unit's runs toward its expansion (`expand_sized_at`, `expand_teams`): its rooms, the rooms'
+/// tries so far, and the last run's answer where it refused for the expansion's room (it stands
+/// where the next run's room is past the device's: the serial pass takes the unit).
+struct Runs<'u> {
+    unit: &'u Unit,
+    lay: &'u Layout,
+    def_rung: u32,
+    p1: Caps,
+    x: XCaps,
+    p1_tries: u32,
+    x_tries: u32,
+    short: Option<Expanded>,
+}
+
+/// A unit's stores for one run, in its arena, and their layout.
+struct Made {
+    front: Front,
+    defs: Defs,
+    vis: Vis,
+    exp: Exp,
+    l: Lay,
+}
+
+impl<'u> Runs<'u> {
+    fn new(unit: &'u Unit, lay: &'u Layout, sizes: &Sizes) -> Runs<'u> {
+        Runs { unit, lay, def_rung: sizes.defs, p1: sizes.p1, x: sizes.x, p1_tries: 0, x_tries: 0, short: None }
+    }
+
+    /// The next run's stores in `arena`, for a grid of `groups`; or the unit's answer, where they
+    /// are past the device's room.
+    fn make(&mut self, arena: &Arena, groups: u64) -> Result<Made, Result<Expanded, Error>> {
+        let (unit, lay) = (self.unit, self.lay);
+        self.x = self.x.fit(self.p1.top);
+        let rung = self.x.rung;
         let made = (|| -> Result<_, Error> {
-            let front = Front::new(&arena, unit, false, groups)?;
-            let defs = Defs::new(&arena, unit, def_rung)?;
-            let vis = Vis::new(&arena, unit, lay, p1, rung)?;
-            let exp = Exp::new(&arena, unit, lay, x, p1)?;
+            let front = Front::new(arena, unit, false, groups)?;
+            let defs = Defs::new(arena, unit, self.def_rung)?;
+            let vis = Vis::new(arena, unit, lay, self.p1, rung)?;
+            let exp = Exp::new(arena, unit, lay, self.x, self.p1)?;
             Ok((front, defs, vis, exp))
         })();
         let (front, defs, vis, exp) = match made {
             Ok(m) => m,
-            Err(Error::BackendCapacity) if short.is_some() => return Ok(short.take().unwrap()),
-            Err(e) => return Err(e),
+            Err(Error::BackendCapacity) if self.short.is_some() => return Err(Ok(self.short.take().unwrap())),
+            Err(e) => return Err(Err(e)),
         };
         let mut l = Lay::new();
         front.lay(&mut l, TO_ALL);
         defs.lay(&mut l);
         vis.lay(&mut l);
         exp.lay(&mut l);
-        arena_log(&arena, &l, format_args!("expansion at rung {rung}, p1 rung {}, defs rung {def_rung}", p1.rung));
-        match arena.lease() {
-            Ok(()) => {}
-            Err(Error::BackendCapacity) if short.is_some() => return Ok(short.take().unwrap()),
-            Err(e) => return Err(e),
-        }
-        let (launches, gpu_seconds) = on_grid(&arena, unit, &front, &l, groups)?;
+        arena_log(arena, &l, format_args!("expansion at rung {rung}, p1 rung {}, defs rung {}", self.p1.rung, self.def_rung));
+        Ok(Made { front, defs, vis, exp, l })
+    }
+
+    /// The run `m` read (its `launches` and GPU time; the groups that ran it): the unit's answer,
+    /// or `None` where it runs again (a room grown). `sizes` is left at the rooms it ran at.
+    fn after(&mut self, m: Made, launches: usize, gpu_seconds: f64, groups: u64, run: u64, sizes: &mut Sizes) -> Option<Result<Expanded, Error>> {
+        let (unit, lay) = (self.unit, self.lay);
+        let Made { front, defs, vis, exp, .. } = m;
+        let (p1, x, def_rung) = (self.p1, self.x, self.def_rung);
+        let rung = x.rung;
         if std::env::var_os("RERAIL_PP_LOOP_LOG").is_some() {
-            // SAFETY: the device finished; `trn` holds 20 words, 16 to 19 the longest piece's.
+            // SAFETY: the device finished; `trn` holds 24 words, 16 to 19 the longest piece's, 20 to 23 the slowest's.
             let w = |k: usize| unsafe { *exp.trn.host().cast::<u32>().add(k) };
-            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out", exp.loop_pieces(), w(16), w(17), w(18), w(19));
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out; the slowest {} us, {} steps, top tokens {}..{} (nodes {})", exp.loop_pieces(), w(16), w(17), w(18), w(19), f64::from(w(20)) / 1e3, w(22), w(21), w(23), unit.node_bound);
         }
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
+        let expanded = |refused: u32, p1_flags: u32, requests: Vec<Request>, out: Vec<u32>, unit_out: Vec<u32>, scratch: Vec<u8>, stoks: Vec<[u32; 3]>| -> Result<Expanded, Error> {
+            Ok(Expanded { ev: front.read()?, refused, p1_flags, requests, out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung, run })
+        };
         // SAFETY: the device finished writing `room`.
-        if unsafe { *defs.room.host().cast::<u32>() } != 0 {
-            def_rung += 1;
-            if def_rung >= RUNGS {
-                return Err(crate::pp_arena::capacity(concat!(file!(), ":", line!())));
+        let why = |room: &str| {
+            if std::env::var_os("RERAIL_PP_WHY").is_some() {
+                eprintln!("pp: again, larger: {room} (nodes {})", unit.node_bound);
             }
-            continue;
+        };
+        if unsafe { *defs.room.host().cast::<u32>() } != 0 {
+            why("the definitions");
+            self.def_rung += 1;
+            if self.def_rung >= RUNGS {
+                return Some(Err(crate::pp_arena::capacity(concat!(file!(), ":", line!()))));
+            }
+            return None;
         }
         // P1 ended the round: room (a rung up), requests (the host's to answer), or a refusal.
         let p1_flags = vis.p1_flags();
-        if p1_flags == P1_ROOM && p1_tries + 1 < P1_RUNGS {
+        if p1_flags == P1_ROOM && self.p1_tries + 1 < P1_RUNGS {
+            why("P1");
             vis.log_room(unit, p1);
-            p1 = p1.grown(unit, lay, vis.p1_need());
-            p1_tries += 1;
-            continue;
+            self.p1 = p1.grown(unit, lay, vis.p1_need());
+            self.p1_tries += 1;
+            return None;
         }
         // The lines' room (their tokens are the expansion's stores): what they decided is not to
         // be read, so before the requests and P1's refusals.
         let lines = exp.line_refusals();
-        if lines & X_ROOM != 0 && x_tries + 1 < EXP_RUNGS {
-            x = x.grown(p1.top, exp.room());
-            x_tries += 1;
-            continue;
+        if lines & X_ROOM != 0 && self.x_tries + 1 < EXP_RUNGS {
+            why("the lines' expansion");
+            self.x = x.grown(p1.top, exp.room());
+            self.x_tries += 1;
+            return None;
         }
         let requests = vis.requests();
         if p1_flags != 0 || !requests.is_empty() {
-            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups: front.joined(), gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung });
+            return Some(expanded(0, p1_flags, requests, Vec::new(), Vec::new(), Vec::new(), Vec::new()));
         }
-        vis.read()?;
-        let (refused, out) = exp.read(&front, &vis, &defs)?;
+        if let Err(e) = vis.read() {
+            return Some(Err(e));
+        }
+        let (refused, out) = match exp.read(&front, &vis, &defs) {
+            Ok(r) => r,
+            Err(e) => return Some(Err(e)),
+        };
         // A run out of room runs again larger whatever else it refused: past the room that ran
         // out, its items read what was never written (a list cut short reads as a call past its
         // end), so its other refusals are the larger run's to give.
-        if refused & X_ROOM != 0 && x_tries + 1 < EXP_RUNGS {
+        if refused & X_ROOM != 0 && self.x_tries + 1 < EXP_RUNGS {
+            why("the expansion");
             if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
                 eprintln!("expansion room at rung {rung}: (used, cap) {:?} {:?}", ROOM_STORES, exp.room());
             }
-            x = x.grown(p1.top, exp.room());
-            x_tries += 1;
-            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups: front.joined(), gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung });
-            continue;
+            self.x = x.grown(p1.top, exp.room());
+            self.x_tries += 1;
+            match expanded(refused, 0, Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new()) {
+                Ok(mut e) => {
+                    e.xcaps = self.x;
+                    self.short = Some(e);
+                }
+                Err(e) => return Some(Err(e)),
+            }
+            return None;
         }
         if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
             eprintln!("settled: p1 need {:?} against nodes {} dirs {} gaps {} top {} reqs {} names {}; expansion {:?}", vis.p1_need(), p1.nodes, p1.dirs, p1.gaps, p1.top, p1.reqs, p1.names, exp.room());
         }
         let (scratch, stoks) = exp.scratch();
         let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, lay.units(), out.len()) };
-        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups: front.joined(), gpu_seconds, unit_out, scratch, stoks, room: exp.room(), pieces: exp.pieces(), caps: p1, xcaps: x, passes: exp.passes(), gives: exp.gives(), def_rung });
+        Some(expanded(refused, 0, Vec::new(), out, unit_out, scratch, stoks))
     }
 }
 

@@ -152,10 +152,48 @@ a load of 4 to 13).
   memory): 2.62 ms on the GB10's 20 cores (10.7 ms on one), 2.0 to 2.4 ms on the M3 Max's 16. The device is
   slower: 1.6 times on the GB10, 6 times on the M3 Max.
 
+## Built: §6, a unit a team (2026-11-22)
+
+- **`pp_unit` is a unit's setup** (the front, the definitions, P1's iterations, the loops inside them), on a grid
+  of its own: its barriers are its grid words' only. `pp_setup` runs it on the whole grid, and `pp_teams` runs a
+  batch's units on teams of it.
+- **`pp_teams`**: each unit's stores at its own place in the batch's one arena (its `Lay`), and its views rebased
+  onto the batch's first slab. `teams` holds each unit's slots, first seat and seats. A group takes the next seat
+  from a counter and runs its unit as the team's group `seat - first`, then takes the next seat. The units go
+  largest first, so a team's seats are taken before any later team's, by groups that are running, and its barrier
+  waits only for groups that come. A unit's team is its share of the grid by its work (its nodes, or its
+  expansion's tokens), at least one group.
+- **Each unit settles alone** (`rounds.rs`'s `batch_round`, `pp_expand::expand_teams`). A unit refused for room
+  runs again larger by itself, its batch's other units settled, where the grid ran the whole batch again. A team
+  whose barrier gave up runs again as one group.
+- **P1's text room after a round that made requests.** Such a run stops at its requests, before the text, so its
+  use of the text's room is 0. The next round sized the text from that 0, and 9 of the corpus's 80 units then ran
+  again larger (needing up to 44k top tokens of 4,096). That round now takes the first rooms for the text.
+- **`RERAIL_PP_LOOP_LOG`** also names the slowest piece by the device's clock: its µs, steps and top tokens.
+  `RERAIL_PP_TRACE` traces the largest team.
+
+The corpus, warm, per run (GPU time; the first run's 9 ms, the device's first use, left out):
+
+| | Grid | Teams |
+|---|---|---|
+| GB10 (CUDA) | 4.2, 1.6, 2.9 ms | 4.5, 1.5, 2.9 ms |
+| M3 Max (Metal), two runs | 17.0, 8.5, 8.4 and 18.9, 8.0, 8.5 ms | 15.6, 6.8, 12.5 and 13.4, 7.7, 12.7 ms |
+
+These are about equal: inside a run, the time is each unit's own chain, not how the groups are shared. More groups
+a team is slower on the M3 (a group for each 4,096 of a unit's work: 13.7 ms for the last run; for each 1,024:
+20 to 25 ms), since each barrier then costs more. The chain:
+
+- **Its longest serial piece.** The GB10's 4.5 ms run holds one piece of 1,070 steps (libtiff's `tif_ojpeg.c`,
+  top tokens 7268..7306) taking 1.9 ms: 1.8 µs a step, each step's lookups dependent loads.
+- **Its barriers.** The largest unit (51k nodes) passes 235 barriers, its P1 iterating 4 times, against 52 for a
+  unit with no `#if` left to settle.
+
 **What is left.**
-- **§6, the front and P1: now the most of a batch.** On the GB10 the loop is 15% of a run; the rest is about 170
-  phases of the front and P1, each a grid barrier, most of them tens of µs over little work. A unit's work in its
-  own team, its barriers the team's, is the lever, and what the serial pass on all cores sets as the bar.
+- **A step of the loop is too slow.** The 1,070-step piece is the GB10's floor for its run. Each step's name
+  lookups (`visible_walk`'s binary searches, in device memory) are the lever, and so is the share of the steps a
+  SIMD group's lanes take ahead.
+- **A unit's barriers.** P1's iterations each re-run the whole `#if` pass. Iterating only the lines whose inputs
+  changed, and fusing the phases that do little work, cut the chain on every device, most on the M3.
 - **One serial line.** `a_line_past_its_room_runs_again_larger`'s `#if` line (131,071 tokens from one piece) is one
   group's: 78, 259 and 389 ms a run on the GB10, 207, 730 and 1,083 ms on the M3 Max. P1's second iteration expands
   and evaluates it again, though nothing before it changed. On the mini, with every test running at once, macOS's

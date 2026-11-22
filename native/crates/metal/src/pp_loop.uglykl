@@ -1203,6 +1203,7 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
     // `#define C F(`, its arguments in the text after it) goes on, and the piece ends at the first
     // start it reaches back at the top (`ee`): the pieces between are its (`lp_swallow`).
     uint32_t re = 0u, e = 0u, ee = 0u, step = 0u;
+    uint64_t t0 = ukl_clock_ns();
     LpOut o;
     if (me) {
         re = lp_run_end(u, s0); e = s0 + 1u; ee = re;
@@ -1403,6 +1404,10 @@ UKL_INLINE void lp_piece(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL ui
                     ukl_atomic_add(&trn[13], 1u);
                     // The longest piece's steps (`TRN` 16), its start, its end read and its tokens out (17 to 19), for measurements.
                     if (ukl_atomic_max(&trn[16], step) < step) { trn[17] = s0; trn[18] = ee; trn[19] = o.nv; }
+                    // The longest by the device's clock (where it has one, `ukl_clock_ns`): its ns, start, steps, end.
+                    uint64_t dt = ukl_clock_ns() - t0;
+                    uint32_t ns = dt > 0xffffffffull ? 0xffffffffu : (uint32_t)dt;
+                    if (ukl_atomic_max(&trn[20], ns) < ns) { trn[21] = s0; trn[22] = step; trn[23] = ee; }
                     v[s0] = o.nv; opv[s0] = o.np;
                     for (uint32_t s = s0 + 1u; s < e; s++) { v[s] = 0u; opv[s] = 0u; ovr[s] = 0u; }
                     ovr[s0] = ee > e ? 1u : 0u;
