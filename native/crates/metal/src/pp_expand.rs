@@ -42,6 +42,8 @@ pub struct Defs {
     bscan: Scan,
     pub pkeys: Buf,
     pub items: Buf,
+    /// Each body leaf's name's rows in the sorted rows (`pd_item_rows`), two words a leaf.
+    irows: Buf,
     /// Each body leaf's place in a `__VA_OPT__` (`VA_*` in `pp_expand.uglykl`; decision 0527 §2).
     pub vai: Buf,
     /// Set where a store's room ran out (decision 0448 §2): the unit runs again at the next rung.
@@ -70,6 +72,7 @@ impl Defs {
             bscan: Scan::new(arena)?,
             pkeys: arena.zeroed::<u64>(nodes)?,
             items: words(nodes)?,
+            irows: words(2 * nodes)?,
             vai: words(nodes)?,
             room: words(1)?,
             cap: nodes as u32,
@@ -84,7 +87,7 @@ impl Defs {
         let va = name_key(b"__VA_ARGS__");
         let vo = name_key(b"__VA_OPT__");
         l.at("DEFS", &self.defs).at("PCOUNT", &self.pcount).at("BCOUNT", &self.bcount).at("PFIRST", &self.pfirst).at("IFIRST", &self.ifirst);
-        l.at("PTOTAL", &self.pscan.total).at("ITOTAL", &self.bscan.total).at("PKEYS", &self.pkeys).at("ITEMS", &self.items).at("VAI", &self.vai).at("ROOM", &self.room);
+        l.at("PTOTAL", &self.pscan.total).at("ITOTAL", &self.bscan.total).at("PKEYS", &self.pkeys).at("ITEMS", &self.items).at("IROWS", &self.irows).at("VAI", &self.vai).at("ROOM", &self.room);
         l.word("CAP", self.cap).word("VA_LO", va as u32).word("VA_HI", (va >> 32) as u32).word("VO_LO", vo as u32).word("VO_HI", (vo >> 32) as u32);
     }
 }
@@ -712,6 +715,8 @@ pub struct Vis {
     pub(crate) gat: Buf,
     pub(crate) gscan: Scan,
     pub lookups: Buf,
+    /// Each top token's node (`pe_lookups`): the loop's reads of the top level, without a search.
+    topnode: Buf,
     pub bad: Buf,
 }
 
@@ -879,6 +884,7 @@ impl Vis {
             gat: zeroed(ng)?,
             gscan: Scan::new(arena)?,
             lookups: zeroed(top)?,
+            topnode: zeroed(top)?,
             tc: top as u32,
             bad: zeroed(1)?,
         })
@@ -916,7 +922,7 @@ impl Vis {
         l.at("SORT_KB", &self.sort.keys_b).at("SORT_VA", &self.sort.vals_a).at("SORT_VB", &self.sort.vals_b).at("SORT_HIST", &self.sort.hist);
         l.at("GCOUNTS", &self.gcounts).at("GFIRSTS", &self.gfirsts).at("GKEYS", &self.gkeys);
         l.at("GSORT_KB", &self.gsort.keys_b).at("GSORT_VA", &self.gsort.vals_a).at("GSORT_VB", &self.gsort.vals_b).at("GSORT_HIST", &self.gsort.hist);
-        l.at("SSLOT", &self.sslot).at("SINST", &self.sinst).at("GAT", &self.gat).at("GTOTAL", &self.gscan.total).at("LOOKUPS", &self.lookups).at("VBAD", &self.bad);
+        l.at("SSLOT", &self.sslot).at("SINST", &self.sinst).at("GAT", &self.gat).at("GTOTAL", &self.gscan.total).at("LOOKUPS", &self.lookups).at("TOPNODE", &self.topnode).at("VBAD", &self.bad);
     }
 
     /// The layout P1 made on the device (decision 0467 §2), read back for tests: each directive's
@@ -1170,7 +1176,7 @@ impl Exp {
             cu_slot: zeroed(2 * cnt_cap)?,
             cu_sub: zeroed(2 * cnt_cap)?,
             cu_unit: zeroed(2 * cnt_cap)?,
-            trn: zeroed(16)?,
+            trn: zeroed(20)?,
             lread: zeroed(dirs)?,
             cnt_cap: cnt_cap as u32,
             lb_cap: lb_cap as u32,
@@ -1268,13 +1274,13 @@ impl Exp {
 
     /// The last text pass's pieces (`TRN[13]`, decision 0588).
     pub fn loop_pieces(&self) -> u32 {
-        // SAFETY: the device finished; `trn` holds 16 words.
+        // SAFETY: the device finished; `trn` holds 24 words.
         unsafe { *self.trn.host().cast::<u32>().add(13) }
     }
 
     /// P1's iterations and the text passes the run made (`TRN[11]`, `TRN[10]`).
     pub fn passes(&self) -> (u32, u32) {
-        // SAFETY: the device finished; `trn` holds 16 words.
+        // SAFETY: the device finished; `trn` holds 24 words.
         unsafe { (*self.trn.host().cast::<u32>().add(11), *self.trn.host().cast::<u32>().add(10)) }
     }
 
@@ -1447,7 +1453,9 @@ fn expand_sized_at(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) ->
         }
         let (launches, gpu_seconds) = on_grid(&arena, unit, &front, &l, groups)?;
         if std::env::var_os("RERAIL_PP_LOOP_LOG").is_some() {
-            eprintln!("pp loop: {} pieces", exp.loop_pieces());
+            // SAFETY: the device finished; `trn` holds 20 words, 16 to 19 the longest piece's.
+            let w = |k: usize| unsafe { *exp.trn.host().cast::<u32>().add(k) };
+            eprintln!("pp loop: {} pieces; the longest {} steps, top tokens {}..{}, {} tokens out", exp.loop_pieces(), w(16), w(17), w(18), w(19));
         }
         *sizes = Sizes { p1, x, defs: def_rung, used: Some((vis.p1_need(), Caps::first(unit, lay))) };
         // SAFETY: the device finished writing `room`.

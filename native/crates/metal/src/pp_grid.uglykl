@@ -69,7 +69,8 @@
               AT(uint32_t, TOKENS), AT(uint32_t, OUT), AT(uint32_t, CTL), AT(const uint32_t, WORDS), AT(PxScratch, SCRATCH), AT(const uint32_t, FLOORS), W(N_UNITS), \
               AT(const uint64_t, IF_OPKEYS), AT(const uint32_t, IF_OPKINDS), W(N_IFOP), AT(const uint64_t, IF_FEATKEYS), AT(const uint64_t, IF_FEATVALS), W(N_FEAT), \
               AT(uint32_t, CNT), W(CNT_CAP), AT(const uint32_t, LDELTA), AT(const uint32_t, LCTL)[0], &xu, &xa); \
-    xu.vai = AT(const uint32_t, VAI)
+    xu.vai = AT(const uint32_t, VAI); xu.irows = AT(const uint32_t, IROWS);                         \
+    xu.tnode = is_if ? AT(const uint32_t, IF_NODES) : AT(const uint32_t, TOPNODE)
 
 // The arena made ready for another top: its fronts back to the file literals' (`CTL` 6 and 7 keep
 // them). The refusals stay.
@@ -134,7 +135,7 @@
 #define IF_UX(u)                                                                                       \
     Ux u;                                                                                              \
     u.files = files; u.data = data; u.bases = AT(const uint32_t, BASES); u.n_files = nf; u.keys = AT(const uint64_t, KEYS); \
-    u.defs = AT(const PpDef, DEFS); u.items = AT(const uint32_t, ITEMS); u.vai = AT(const uint32_t, VAI); u.sorted = AT(const uint64_t, SORT_KEYS);          \
+    u.defs = AT(const PpDef, DEFS); u.items = AT(const uint32_t, ITEMS); u.vai = AT(const uint32_t, VAI); u.irows = AT(const uint32_t, IROWS); u.tnode = AT(const uint32_t, IF_NODES); u.sorted = AT(const uint64_t, SORT_KEYS);          \
     u.perm = AT(const uint32_t, SORT_VA); u.n_rows = N(N_ROWS); u.name_keys = AT(const uint64_t, NAME_KEYS);                 \
     u.values = AT(const uint32_t, VALUES); u.text_nodes = AT(const uint32_t, IF_NODES); u.gat = AT(const uint32_t, IF_AT);  \
     u.n_gaps = N(N_DIRS); u.firsts = AT(const uint32_t, IF_AT); u.n_toks = N(IF_TOTAL);                                     \
@@ -265,6 +266,9 @@ UKL_ONCE bool lp_loop(RWBUFFER(uint8_t) arena, ROBUFFER(uint8_t) data, ROBUFFER(
         }
         {
             PX_UA(DR);
+            // A thread a token, the pieces' starts running: a start about every 32 tokens, so a SIMD group
+            // mostly holds one piece. Packed in a list, a group's pieces branch apart and it runs each
+            // one's path in turn (twice the time on GB10, 2026-11-21).
             EACH(s, nt) lp_run(xu, xa, AT(const uint32_t, IF_OPS), AT(uint32_t, STATE), AT(const uint32_t, LOOKUPS), AT(const uint32_t, XFLAG),
                                AT(uint32_t, V), AT(uint32_t, OPV), AT(uint32_t, OBASE), AT(const uint32_t, OPBASE),
                                AT(uint32_t, DELTA), AT(uint32_t, DEPTH), AT(uint32_t, THEADS), AT(uint32_t, TRN), AT(uint32_t, OFLAG), g.ctl, pass == 1u, s);
@@ -453,6 +457,10 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
             EACH(c, nr) pe_stack_values(AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint32_t, RTYPES), AT(const uint32_t, STK_MATCH), AT(const uint32_t, STK_SRC), AT(uint32_t, VALUES), c);
             BARRIER();
         }
+        // Each body item's name's rows in the sorted rows (the loop's lookups of body names).
+        EACH(s, ukl_min(N(ITOTAL), W(CAP))) pd_item_rows(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, DIR_BASES), AT(const uint32_t, DIR_TOTAL), AT(const PpDef, DEFS), AT(const uint32_t, IFIRST), AT(const uint32_t, ITOTAL),
+                                                         AT(const uint64_t, SORT_KEYS), AT(const uint32_t, N_ROWS), AT(uint32_t, IROWS), nf, W(CAP), s);
+        BARRIER();
         // The `#if`s' and `#elif`s' values (§4): their lines a top of their own, expanded by the
         // text's passes and queue, then evaluated a thread a test.
         EACH(w, nd) p1_if_count(files, data, AT(const uint32_t, BASES), AT(const PpInst, INSTS), AT(const uint32_t, N_INSTS), nodes, W(P1_MAXDEPTH), AT(const uint32_t, N_DIRS), AT(const uint32_t, DIR_BASES), AT(const PpDir, ROWS),
@@ -573,7 +581,7 @@ DEFINE_KERNEL2(pp, pp_setup, PP_GRID_ROWS)
         ONE(x) AT(uint32_t, P1_NEED)[NEED_TEXT_TOP] = ukl_max(AT(uint32_t, P1_NEED)[NEED_TEXT_TOP], N(GTOTAL));
         if (N(GTOTAL) > W(TC)) { ONE(x) ukl_atomic_or(AT(uint32_t, P1_FLAGS), P1_ROOM); break; }
         EACH(p, N(N_GAPS)) p1_unit_firsts(AT(const uint32_t, SSLOT), AT(const uint32_t, N_GAPS), AT(const uint32_t, FLOORS), W(N_UNITS), AT(uint32_t, P1_UFIRST), p);
-        EACH(s, N(GTOTAL)) pe_lookups(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, SSLOT), AT(const uint32_t, GTOTAL), AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), AT(const uint32_t, VALUES), AT(const uint32_t, FLOORS), W(N_UNITS), AT(uint32_t, LOOKUPS), AT(uint32_t, VBAD), nf, s);
+        EACH(s, N(GTOTAL)) pe_lookups(files, data, AT(const uint32_t, BASES), AT(const uint64_t, KEYS), AT(const uint32_t, TEXT_NODES), AT(const uint32_t, GAT), AT(const uint32_t, N_GAPS), AT(const uint32_t, GFIRSTS), AT(const uint32_t, SSLOT), AT(const uint32_t, GTOTAL), AT(const uint64_t, SORT_KEYS), AT(const uint32_t, SORT_VA), AT(const uint32_t, N_ROWS), AT(const uint64_t, NAME_KEYS), AT(const uint32_t, VALUES), AT(const uint32_t, FLOORS), W(N_UNITS), AT(uint32_t, LOOKUPS), AT(uint32_t, TOPNODE), AT(uint32_t, VBAD), nf, s);
         BARRIER();
         // The top level: depth, the close table, the calls, the outermost, the lists.
         PX_RESET();

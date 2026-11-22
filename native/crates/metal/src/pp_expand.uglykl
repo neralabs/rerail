@@ -495,17 +495,18 @@ UKL_INLINE uint32_t unit_floor(PP_GLOBAL const uint32_t* floors, uint32_t n_unit
 // What `key` means at slot `slot`: the latest row of it before the slot and in the slot's unit,
 // else a built-in's (slot 0), in the sorted rows (`sorted`, their places in `perm`). A row of an
 // earlier unit sends the walk to the built-ins' rows at once.
-UKL_INLINE uint32_t visible(PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const uint32_t* perm, uint32_t n, PP_GLOBAL const uint64_t* name_keys,
-                    PP_GLOBAL const uint32_t* values, PP_GLOBAL const uint32_t* floors, uint32_t n_units, uint64_t key, uint32_t slot, PP_GLOBAL uint32_t* bad) {
-    uint64_t q = (key & 0xffffffff00000000ul) | ((uint64_t)(slot));
-    uint32_t c = pb_lower_bound(sorted, n, q);
-    uint32_t floor = unit_floor(floors, n_units, slot);
+// `visible` within the rows of `key`'s upper 32 bits (`sorted[lo..hi)`, `name_rows`), the slot's
+// unit's first slot `floor`.
+UKL_INLINE uint32_t visible_at(PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const uint32_t* perm, PP_GLOBAL const uint64_t* name_keys, PP_GLOBAL const uint32_t* values,
+                               uint32_t lo, uint32_t hi, uint64_t key, uint32_t slot, uint32_t floor, PP_GLOBAL uint32_t* bad) {
+    uint64_t kh = key & 0xffffffff00000000ul;
+    uint32_t c = pb_lower_bound_in(sorted, lo, hi, kh | ((uint64_t)(slot)));
     for (uint32_t k = 0u; k < WALK; k++) {
-        if (c == 0u || (sorted[c - 1u] >> 32) != (key >> 32)) return L_NONE;
+        if (c == lo) return L_NONE;
         c--;
         uint32_t at = ((uint32_t)(sorted[c]));
         if (at != 0u && at < floor) {
-            c = pb_lower_bound(sorted, n, (key & 0xffffffff00000000ul) | 1ul);
+            c = pb_lower_bound_in(sorted, lo, hi, kh | 1ul);
             continue;
         }
         uint32_t p = perm[c];
@@ -517,6 +518,37 @@ UKL_INLINE uint32_t visible(PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const ui
     }
     ukl_atomic_or(bad, 1u << 29);
     return L_NONE;
+}
+
+// The rows of `key`'s upper 32 bits: `[lo, hi)` of the sorted rows.
+UKL_INLINE uint32_t name_rows_lo(PP_GLOBAL const uint64_t* sorted, uint32_t n, uint64_t key) { return pb_lower_bound(sorted, n, key & 0xffffffff00000000ul); }
+UKL_INLINE uint32_t name_rows_hi(PP_GLOBAL const uint64_t* sorted, uint32_t n, uint64_t key) {
+    uint32_t kh = (uint32_t)(key >> 32);
+    return kh == 0xffffffffu ? n : pb_lower_bound(sorted, n, ((uint64_t)(kh + 1u)) << 32);
+}
+
+UKL_INLINE uint32_t visible(PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const uint32_t* perm, uint32_t n, PP_GLOBAL const uint64_t* name_keys,
+                    PP_GLOBAL const uint32_t* values, PP_GLOBAL const uint32_t* floors, uint32_t n_units, uint64_t key, uint32_t slot, PP_GLOBAL uint32_t* bad) {
+    return visible_at(sorted, perm, name_keys, values, name_rows_lo(sorted, n, key), n, key, slot, unit_floor(floors, n_units, slot), bad);
+}
+
+// No name: a body item that is no identifier (`IROWS`).
+#define IR_NONE (0xffffffffu)
+// A body item's name's rows (decision 0588: the loop reads them, not a search of every row), two
+// words an item: `[lo, hi)` of the sorted rows of its key's upper 32 bits, or `IR_NONE`. A thread an
+// item, after each sort of the rows.
+UKL_INLINE void pd_item_rows(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint64_t* keys, PP_GLOBAL const uint32_t* dir_bases, PP_GLOBAL const uint32_t* dir_total, PP_GLOBAL const PpDef* defs, PP_GLOBAL const uint32_t* ifirst, PP_GLOBAL const uint32_t* itotal,
+                             PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const uint32_t* n_rows, PP_GLOBAL uint32_t* irows, uint32_t n_files, uint32_t cap, uint32_t s) {
+    if (s >= itotal[0] || s >= cap) return;
+    uint32_t r = pb_item_of(ifirst, dir_total[0], s);
+    uint32_t k = s - ifirst[r];
+    uint32_t f = file_of(dir_bases, n_files, r);
+    PpDef d = defs[r];
+    uint32_t g = d.body + k;
+    if (node_kind(tape_at(data, files, f), g - bases[f]) != K_IDENTIFIER) { irows[2u * s] = IR_NONE; irows[2u * s + 1u] = IR_NONE; return; }
+    uint32_t n = n_rows[0];
+    irows[2u * s] = name_rows_lo(sorted, n, keys[g]);
+    irows[2u * s + 1u] = name_rows_hi(sorted, n, keys[g]);
 }
 
 // --- Push and pop (decision 0467 §3) --------------------------------------------------------------
@@ -652,10 +684,11 @@ UKL_INLINE void pe_run_ends(PP_GLOBAL const uint32_t* gat, PP_GLOBAL const uint3
 
 // Each active stretch token's meaning where it stands (R4's test): `L_NOT_NAME` where it is no
 // identifier, else what its key means at its stretch's slot.
-UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint64_t* keys, PP_GLOBAL const uint32_t* text_nodes, PP_GLOBAL const uint32_t* gap_at, PP_GLOBAL const uint32_t* n_gaps, PP_GLOBAL const uint32_t* firsts, PP_GLOBAL const uint32_t* gslot, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const uint32_t* perm, PP_GLOBAL const uint32_t* n_rows, PP_GLOBAL const uint64_t* name_keys, PP_GLOBAL const uint32_t* values, PP_GLOBAL const uint32_t* floors, uint32_t n_units, PP_GLOBAL uint32_t* out, PP_GLOBAL uint32_t* bad, uint32_t n_files, uint32_t s) {
+UKL_INLINE void pe_lookups(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* data, PP_GLOBAL const uint32_t* bases, PP_GLOBAL const uint64_t* keys, PP_GLOBAL const uint32_t* text_nodes, PP_GLOBAL const uint32_t* gap_at, PP_GLOBAL const uint32_t* n_gaps, PP_GLOBAL const uint32_t* firsts, PP_GLOBAL const uint32_t* gslot, PP_GLOBAL const uint32_t* n_toks, PP_GLOBAL const uint64_t* sorted, PP_GLOBAL const uint32_t* perm, PP_GLOBAL const uint32_t* n_rows, PP_GLOBAL const uint64_t* name_keys, PP_GLOBAL const uint32_t* values, PP_GLOBAL const uint32_t* floors, uint32_t n_units, PP_GLOBAL uint32_t* out, PP_GLOBAL uint32_t* tnode, PP_GLOBAL uint32_t* bad, uint32_t n_files, uint32_t s) {
     if (s >= n_toks[0]) return;
     uint32_t j = pb_item_of(gap_at, n_gaps[0], s);
     uint32_t g = text_nodes[firsts[j] + (s - gap_at[j])];
+    tnode[s] = g;
     uint32_t f = file_of(bases, n_files, g);
     Tape t = tape_at(data, files, f);
     if (node_kind(t, g - bases[f]) != K_IDENTIFIER) {
@@ -716,11 +749,6 @@ UKL_INLINE At node_at(UKL_GLOBAL const PpFile* files, UKL_GLOBAL const uint8_t* 
     return a;
 }
 
-// The node of top token `s`, and the end of its stretch.
-UKL_INLINE uint32_t top_ref(PP_GLOBAL const uint32_t* text_nodes, PP_GLOBAL const uint32_t* gat, uint32_t n_gaps, PP_GLOBAL const uint32_t* firsts, uint32_t s) {
-    uint32_t j = pb_item_of(gat, n_gaps, s);
-    return text_nodes[firsts[j] + (s - gat[j])];
-}
 UKL_INLINE uint32_t top_end(PP_GLOBAL const uint32_t* gat, uint32_t n_gaps, uint32_t n_toks, uint32_t s) {
     uint32_t j = pb_item_of(gat, n_gaps, s);
     return j + 1u < n_gaps ? gat[j + 1u] : n_toks;
@@ -789,8 +817,11 @@ UKL_INLINE uint64_t ka_end(KeyAcc a) {
 typedef struct Ux {
     UKL_GLOBAL const PpFile* files; UKL_GLOBAL const uint8_t* data; PP_GLOBAL const uint32_t* bases; uint32_t n_files;
     PP_GLOBAL const uint64_t* keys; PP_GLOBAL const PpDef* defs; PP_GLOBAL const uint32_t* items;
-    // Each body leaf's place in a `__VA_OPT__` (`pd_va_opt`).
-    PP_GLOBAL const uint32_t* vai;
+    // Each body leaf's place in a `__VA_OPT__` (`pd_va_opt`), and its name's rows (`pd_item_rows`).
+    PP_GLOBAL const uint32_t* vai; PP_GLOBAL const uint32_t* irows;
+    // Each top token's node (`TOPNODE`, `pe_lookups`; a line's are `IF_NODES`): `top_ref` without a
+    // search of the stretches.
+    PP_GLOBAL const uint32_t* tnode;
     PP_GLOBAL const uint64_t* sorted; PP_GLOBAL const uint32_t* perm; uint32_t n_rows; PP_GLOBAL const uint64_t* name_keys; PP_GLOBAL const uint32_t* values;
     PP_GLOBAL const uint32_t* text_nodes; PP_GLOBAL const uint32_t* gat; uint32_t n_gaps; PP_GLOBAL const uint32_t* firsts; uint32_t n_toks;
     PP_GLOBAL const uint8_t* sbytes; PP_GLOBAL const PxScratch* stoks; uint32_t relex_options;
@@ -891,10 +922,10 @@ typedef struct Ar {
 
 // Whether the sorted table has a pop of `key` at exactly `slot`: one a `_Pragma` of the invocation
 // whose lists look names up there made (decision 0485 §2).
-UKL_INLINE bool px_pops_here(Ux u, Tf tf, uint64_t key, uint32_t slot) {
+UKL_INLINE bool px_pops_at(Ux u, Tf tf, uint32_t lo, uint32_t hi, uint64_t key, uint32_t slot) {
     uint64_t q = (key & 0xffffffff00000000ul) | ((uint64_t)(slot));
-    uint32_t c = pb_lower_bound(u.sorted, u.n_rows, q);
-    for (uint32_t k = 0u; k < 8u && c + k < u.n_rows && u.sorted[c + k] == q; k++)
+    uint32_t c = pb_lower_bound_in(u.sorted, lo, hi, q);
+    for (uint32_t k = 0u; k < 8u && c + k < hi && u.sorted[c + k] == q; k++)
         if (u.name_keys[u.perm[c + k]] == key && tf.rtypes[u.perm[c + k]] == RT_POP) return true;
     return false;
 }
@@ -921,8 +952,8 @@ UKL_INLINE bool px_pops_here(Ux u, Tf tf, uint64_t key, uint32_t slot) {
 // A token as a piece array reads it: its ref, its flags (`T_SPACE`, `T_NOEXP`), its origin.
 typedef struct Tk { uint32_t ref, flags, exp; } Tk;
 
-// Token `o` of piece `i` of the five columns from `cols`, `cap` words each (the tokens' store or the
-// output's): every reader of a piece decodes it here.
+// Token `o` of piece `i` of the output's five columns from `cols`, `cap` words each: every reader
+// of a piece decodes it here.
 UKL_INLINE Tk pc_tok_in(Ux u, PP_GLOBAL const uint32_t* cols, uint32_t cap, uint32_t i, uint32_t o) {
     uint32_t src = cols[i], n = cols[cap + i], st = cols[2u * cap + i] + o, kind = src & P_KIND;
     Tk t;
@@ -930,7 +961,7 @@ UKL_INLINE Tk pc_tok_in(Ux u, PP_GLOBAL const uint32_t* cols, uint32_t cap, uint
     t.flags = (n & PF_NOEXP) != 0u ? T_NOEXP : 0u;
     bool sp = (n & PF_SP) != 0u;
     if (kind == P_TOP) {
-        t.ref = top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, st);
+        t.ref = u.tnode[st];
         if (o != 0u || (n & PF_SPSET) == 0u) sp = top_space(u, t.ref);
     } else if (kind == P_BODY) {
         PpDef d = u.defs[src & ~P_KIND];

@@ -115,6 +115,10 @@ typedef struct LpRun {
     uint32_t clast, crank;
     // Reading a call's arguments: a frame that ends frees nothing (what the reading writes is above).
     bool collecting;
+    // The stretch of the last top token read (`[sl_lo, sl_hi)`, its first slot `sl_base`) and its
+    // unit's slots (`[fl_lo, fl_hi)`): a piece reads a few of each, so a name's slot and floor are
+    // not a search each (`lp_slot_of`, `lp_floor`).
+    uint32_t sl_lo, sl_hi, sl_base, fl_lo, fl_hi;
     // 0 going on; else why the run stopped (`LP_*`).
     uint32_t stop;
 } LpRun;
@@ -154,7 +158,7 @@ UKL_INLINE void lp_flush(UKL_PRIVATE LpOut* o) {
 UKL_INLINE uint32_t lp_space(Ux u, LpTok t) {
     if ((t.flags & LT_SPSET) != 0u) return t.flags & T_SPACE;
     uint32_t k = t.src & P_KIND;
-    if (k == P_TOP) return top_space(u, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, t.st)) ? T_SPACE : 0u;
+    if (k == P_TOP) return top_space(u, u.tnode[t.st]) ? T_SPACE : 0u;
     if (k == P_BODY) return (u.items[u.defs[t.src & ~P_KIND].ifirst + t.st] & I_SPACE) != 0u ? T_SPACE : 0u;
     return t.flags & T_SPACE;
 }
@@ -178,7 +182,7 @@ UKL_INLINE void lp_emit(UKL_PRIVATE LpOut* o, Ux u, LpTok t) {
 
 UKL_INLINE uint32_t lp_ref(Ux u, LpTok t) {
     uint32_t k = t.src & P_KIND;
-    if (k == P_TOP) return top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, t.st);
+    if (k == P_TOP) return u.tnode[t.st];
     if (k == P_BODY) return u.defs[t.src & ~P_KIND].body + t.st;
     return t.st;
 }
@@ -319,7 +323,27 @@ UKL_INLINE bool lp_next_is_lparen(UKL_PRIVATE LpRun* r, Ux u, Ar a) {
 }
 
 // The slot of the furthest top token read: what a name means where the reader stands.
-UKL_INLINE uint32_t lp_slot(Ux u, uint32_t s) { return top_slot(u.sc, u.gat, u.n_gaps, s); }
+// The slot of top token `s` (`top_slot`), its stretch kept for the next.
+UKL_INLINE uint32_t lp_slot_of(UKL_PRIVATE LpRun* r, Ux u, uint32_t s) {
+    if (s < r->sl_lo || s >= r->sl_hi) {
+        uint32_t p = pb_item_of(u.gat, u.n_gaps, s);
+        r->sl_lo = u.gat[p]; r->sl_hi = p + 1u < u.n_gaps ? u.gat[p + 1u] : LP_NONE; r->sl_base = u.sc.gslot[p];
+    }
+    return r->sl_base + (u.sc.runs != 0u ? s - r->sl_lo : 0u);
+}
+
+// The first slot of `slot`'s unit (`unit_floor`), its unit kept for the next.
+UKL_INLINE uint32_t lp_floor(UKL_PRIVATE LpRun* r, Ux u, uint32_t slot) {
+    if (slot < r->fl_lo || slot >= r->fl_hi) {
+        uint32_t lo = 0u, hi = u.n_units;
+        for (uint32_t k = 0u; k < 32u && hi - lo > 1u; k++) {
+            uint32_t mid = (lo + hi) / 2u;
+            if (u.floors[mid] <= slot) lo = mid; else hi = mid;
+        }
+        r->fl_lo = u.floors[lo]; r->fl_hi = lo + 1u < u.n_units ? u.floors[lo + 1u] : LP_NONE;
+    }
+    return r->fl_lo;
+}
 
 // The next token read (`lex_raw`), into `t`: false at an argument's end (its `STOP`) or the run's
 // end (`*at_stop` says which). A list that ends here is left, its macro enabled again.
@@ -478,7 +502,7 @@ UKL_INLINE void lp_substitute(UKL_PRIVATE LpRun* r, Ux u, Ar a, uint32_t name_sp
     uint32_t s = lp_alloc(r, a, 0u, n);
     if (s == LP_NONE) return;
     uint32_t w = s;
-    uint32_t slot = lp_slot(u, r->last);
+    uint32_t slot = lp_slot_of(r, u, r->last);
     // `__VA_OPT__`: present, its content (its first token takes the name's space: `vw` where the
     // content starts, `vsp` that space); absent, a placemarker. A `__VA_OPT__` in another's
     // content, or stringized, is refused (`X_VA_OPT`).
@@ -679,11 +703,11 @@ UKL_INLINE LpTok lp_builtin(UKL_PRIVATE LpRun* r, Ux u, Ar a, uint32_t m, LpTok 
         uint32_t s = r->last, p = pb_item_of(u.gat, u.n_gaps, s);
         if (m == L_LINE) {
             uint32_t row = u.tline[p], delta = row != 0u ? u.ldelta[row - 1u] : 0u;
-            ref = px_number(a, t.org != LP_NONE ? px_line(u, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, t.org)) + delta : 0u);
+            ref = px_number(a, t.org != LP_NONE ? px_line(u, u.tnode[t.org]) + delta : 0u);
         } else if (m == L_COUNTER) {
             ref = lp_counter(r, u, a);
         } else {
-            uint32_t f = file_of(u.bases, u.n_files, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, s));
+            uint32_t f = file_of(u.bases, u.n_files, u.tnode[s]);
             PpNode nd = u.nodes[u.tinst[p]];
             uint32_t row = u.tlinen[p];
             if (m == L_FILE) ref = SCRATCH | (row != 0u ? u.lt0 + 2u * (row - 1u) : f);
@@ -788,11 +812,11 @@ UKL_INLINE void lp_pragma_text(UKL_PRIVATE LpRun* r, Ux u, Ar a, Span x) {
     }
     if (r->line) { px_refuse(a.ctl, X_PRAGMA); return; }
     if (!r->write) return;
-    uint32_t slot = lp_slot(u, r->last);
+    uint32_t slot = lp_slot_of(r, u, r->last);
     if (once) {
         uint32_t k = ukl_atomic_add(&a.tf.n[1], 1u);
         if (k >= a.tf.cap) { px_refuse(a.ctl, X_ROOM); return; }
-        a.tf.of[k] = file_of(u.bases, u.n_files, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, r->last));
+        a.tf.of[k] = file_of(u.bases, u.n_files, u.tnode[r->last]);
         a.tf.os[k] = slot;
         return;
     }
@@ -935,7 +959,7 @@ UKL_INLINE uint32_t lp_run_end(Ux u, uint32_t s) {
 UKL_INLINE bool lp_test_raw(Ux u, uint32_t s, uint32_t kind) {
     if (kind < OPK_HAS_INCLUDE || kind > OPK_HAS_EMBED) return true;
     if (s + 2u >= top_end(u.gat, u.n_gaps, u.n_toks, s)) return false;
-    Span x = ref_span(u, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, s + 2u));
+    Span x = ref_span(u, u.tnode[s + 2u]);
     return (x.kind == K_LITERAL && x.len >= 1u && x.p[0] == ((uint8_t)('"'))) || (x.kind == K_PUNCT && x.len == 1u && x.p[0] == ((uint8_t)('<')));
 }
 // Each top token's run head (its run not the token before's) and depth change, for the depth's
@@ -943,7 +967,7 @@ UKL_INLINE bool lp_test_raw(Ux u, uint32_t s, uint32_t kind) {
 UKL_INLINE void lp_parens(Ux u, PP_GLOBAL uint32_t* heads, PP_GLOBAL uint32_t* delta, uint32_t s) {
     if (s >= u.n_toks) return;
     heads[s] = s == 0u || lp_run_of(u, s) != lp_run_of(u, s - 1u) ? 1u : 0u;
-    delta[s] = paren_delta(u, top_ref(u.text_nodes, u.gat, u.n_gaps, u.firsts, s));
+    delta[s] = paren_delta(u, u.tnode[s]);
 }
 // A piece's join word (`lp_run`'s count): its head's length, and whether its last piece is top
 // text to its end inside its run.
@@ -1025,8 +1049,10 @@ UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint
     r.sp = 1u; r.nc = 0u; r.last = s0; r.s0 = s0; r.collecting = false; r.stop = 0u;
     r.line = u.sc.runs == 0u; r.state = state; r.ops = ops; r.raw = 0u; r.clast = LP_NONE; r.crank = 0u;
     r.cfree = 0u; r.write = write;
+    r.sl_lo = 1u; r.sl_hi = 0u; r.sl_base = 0u; r.fl_lo = 1u; r.fl_hi = 0u;
     for (uint32_t x = 0u; x < 3u; x++) { r.mem[x].base = 0u; r.mem[x].cap = 0u; r.mem[x].top = 0u; }
-    for (uint32_t step = 0u; r.stop == 0u; step++) {
+    uint32_t step = 0u;
+    for (; r.stop == 0u; step++) {
         if (step == LP_WORK) { px_refuse(a.ctl, X_WORK); r.stop = LP_REFUSED; break; }
         // A long piece: the groups waiting at the phase's barrier see it progress (`ukl_grid_beat`).
         if ((step & 4095u) == 4095u) ukl_grid_beat(grid);
@@ -1065,12 +1091,23 @@ UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint
         if ((t.flags & T_NOEXP) == 0u && !raw) {
             if (r.sp == 1u) {
                 m = lookups[t.st];
-            } else if (ref_kind(u, g) == K_IDENTIFIER) {
-                uint32_t slot = lp_slot(u, r.last);
+            } else {
+                // A body's name: its rows found when the rows were sorted (`IROWS`); any other's
+                // searched.
+                uint32_t lo = IR_NONE, hi = IR_NONE;
                 uint64_t key = ref_key(u, g);
-                m = visible(u.sorted, u.perm, u.n_rows, u.name_keys, u.values, u.floors, u.n_units, key, slot, a.ctl + 2);
-                // A name the invocation pops: the serial pass reads it after the pop or before.
-                if (!r.line && px_pops_here(u, a.tf, key, slot)) px_refuse(a.ctl, X_PRAGMA);
+                if ((t.src & P_KIND) == P_BODY) {
+                    uint32_t it = u.defs[t.src & ~P_KIND].ifirst + t.st;
+                    lo = u.irows[2u * it]; hi = u.irows[2u * it + 1u];
+                } else if (ref_kind(u, g) == K_IDENTIFIER) {
+                    lo = name_rows_lo(u.sorted, u.n_rows, key); hi = name_rows_hi(u.sorted, u.n_rows, key);
+                }
+                if (lo != IR_NONE) {
+                    uint32_t slot = lp_slot_of(&r, u, r.last);
+                    m = visible_at(u.sorted, u.perm, u.name_keys, u.values, lo, hi, key, slot, lp_floor(&r, u, slot), a.ctl + 2);
+                    // A name the invocation pops: the serial pass reads it after the pop or before.
+                    if (!r.line && px_pops_at(u, a.tf, lo, hi, key, slot)) px_refuse(a.ctl, X_PRAGMA);
+                }
             }
         }
         bool plain = m == L_NOT_NAME || m == L_NONE || m == L_IDENT;
@@ -1147,6 +1184,8 @@ UKL_INLINE void lp_run(Ux u, Ar a, PP_GLOBAL const uint32_t* ops, PP_GLOBAL uint
     if (!write) {
         pend[s0] = ee; pjoin[s0] = o.head | (tail ? LJ_TAIL : 0u); joined[s0] = 0u;
         ukl_atomic_add(&trn[13], 1u);
+        // The longest piece's steps (`TRN` 16), its start, its end read and its tokens out (17 to 19), for measurements.
+        if (ukl_atomic_max(&trn[16], step) < step) { trn[17] = s0; trn[18] = ee; trn[19] = o.nv; }
         v[s0] = o.nv; opv[s0] = o.np;
         for (uint32_t s = s0 + 1u; s < e; s++) { v[s] = 0u; opv[s] = 0u; ovr[s] = 0u; }
         ovr[s0] = ee > e ? 1u : 0u;
