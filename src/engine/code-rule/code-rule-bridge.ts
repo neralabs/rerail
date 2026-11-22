@@ -2807,7 +2807,7 @@ export class CodeRuleBridge {
     const auditor = this.#auditor;
     if (discovery.cancelled || auditor.worktreeRoots === undefined) return;
     // An auditor that learns its worktrees ahead has each walk learn them first, so the walk's start asks Git nothing.
-    const prepare = auditor.learnWorktreeRoots === undefined ? {} : { prepare: async (signal: AbortSignal) => await auditor.learnWorktreeRoots?.(signal) };
+    const prepare = auditor.learnWorktreeRoots === undefined ? {} : { prepare: (git: GitReads) => auditor.learnWorktreeRoots?.(git) };
     discovery.worktrees.watch ??= this.#sharedWorktreeWalks().watch({
       clock: filesystemClock,
       ...prepare,
@@ -2874,9 +2874,10 @@ export class CodeRuleBridge {
 
   /** One walk of the session folder; the other worktrees' walk is shared (`#scheduleWorktreeWalk`), and neither changes what the other owns. */
   async #walkSources(discovery: SourceDiscovery, checkpoint: DiscoveryCheckpoint): Promise<void> {
-    const auditor = this.#auditor;
-    // What the worktrees' list asks Git is learnt first, as a process no thread waits on, so the list below starts none.
-    if (auditor.learnWorktreeRoots !== undefined) await discovery.git.run(async signal => await auditor.learnWorktreeRoots?.(signal));
+    // What the worktrees' list would ask Git is learnt first, as a process no thread waits on, so the list below starts
+    // none; while the stored list stands there is nothing to wait for.
+    const learning = this.#auditor.learnWorktreeRoots?.(discovery.git);
+    if (learning !== undefined) await learning;
     const worktrees = this.#syncWorktrees(discovery);
     const walk: WalkStart = {
       inSession: true, baseline: !discovery.baselineComplete, checkpoint, worktrees: new Set(discovery.worktrees.roots),

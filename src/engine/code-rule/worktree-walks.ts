@@ -180,10 +180,11 @@ export interface WorktreeWatcher {
   /** The filesystem's clock (`filesystemClock`). */
   clock(): Promise<number>;
   /**
-   * Called before each walk begins, before {@link WorktreeWatcher.start}: learns what `start` asks Git as processes no
-   * thread waits on, so `start` finds it kept. Never rejects; starts no Git once `signal` is aborted.
+   * Called before each walk begins, before {@link WorktreeWatcher.start}: what `start` would ask Git, learnt through `git`
+   * as processes no thread waits on, so `start` finds it kept; undefined, with nothing started, when `start` would ask
+   * Git nothing. Never rejects.
    */
-  prepare?(signal: AbortSignal): Promise<void>;
+  prepare?(git: GitReads): Promise<void> | undefined;
   /** Called as each walk begins, before it reads anything; undefined once the session has closed or cannot say. */
   start(): WatcherWalk | undefined;
 }
@@ -664,7 +665,9 @@ export class WorktreeWalks {
 
   /** One walk, for every session asking and every session sharing a worktree with one; returns the sessions that asked. */
   async #walkOnce(): Promise<Watching[]> {
-    await this.#prepare();
+    // A walk with nothing to learn begins at once.
+    const preparing = this.#prepare();
+    if (preparing.length > 0) await Promise.allSettled(preparing);
     const starts = this.#start();
     this.#forget([...starts.values()].map(walk => rootsOf(walk)));
     this.#watchRegistries(starts.values());
@@ -678,11 +681,10 @@ export class WorktreeWalks {
     return askers;
   }
 
-  /** Each watching session's {@link WorktreeWatcher.prepare}, through the walks' Git reads, which stop with the last session. */
-  async #prepare(): Promise<void> {
+  /** Each watching session's {@link WorktreeWatcher.prepare} that learns something, through the walks' Git reads, which stop with the last session. */
+  #prepare(): Promise<void>[] {
     const git = this.#git;
-    const preparing = this.#watching.filter(({ watcher }) => watcher.prepare !== undefined).map(({ watcher }) => git.run(async signal => await watcher.prepare?.(signal)));
-    if (preparing.length > 0) await Promise.allSettled(preparing);
+    return this.#watching.flatMap(({ watcher }) => watcher.prepare?.(git) ?? []);
   }
 
   /** Each open session's part in the walk beginning now; one that cannot say has its request dropped. */

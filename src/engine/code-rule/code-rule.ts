@@ -1,6 +1,7 @@
 import type { SteerRule } from "../adapter-contract.js";
 import type { AuditFailure, AuditMode, AuditScope } from "../audit/audit.js";
 import type { RuleMode } from "../catalog/rule-mode.js";
+import type { GitReads } from "../git.js";
 import { sensitiveByName } from "../path-boundary.js";
 import type { CodeRuleDialectLabel, CodeRuleLanguageId } from "./code-rule-languages.js";
 import type { CodeRuleDslSemanticAstRuleFields, CodeRuleDslSemanticCompareText, CodeRuleDslSuppress } from "./code-rule-semantic.js";
@@ -1632,10 +1633,11 @@ export interface CodeRuleAuditor {
   /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
   worktreeRoots?(): readonly string[];
   /**
-   * Learns what {@link CodeRuleAuditor.worktreeRoots} asks Git, as processes no thread waits on, so its next call finds
-   * it kept while nothing changed meanwhile. Never rejects; starts no Git once `signal` is aborted.
+   * Learns what {@link CodeRuleAuditor.worktreeRoots} would ask Git, through `git` as processes no thread waits on, so its
+   * next call finds it kept while nothing changed meanwhile; undefined, with nothing started, when it would ask Git
+   * nothing. Never rejects.
    */
-  learnWorktreeRoots?(signal: AbortSignal): Promise<void>;
+  learnWorktreeRoots?(git: GitReads): Promise<void> | undefined;
   /**
    * The folder where Git registers the repository's linked worktrees (`worktrees` in its common Git folder), physical, as
    * `worktreeRoots` last found it: a change there may add one of them. Undefined when unknown; none when absent.

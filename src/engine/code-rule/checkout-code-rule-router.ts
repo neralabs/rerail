@@ -14,6 +14,7 @@ import { dirname, join, relative, resolve, sep } from "node:path";
 import { storedPath } from "../catalog/checkout-control.js";
 import type { CheckoutOwner, CheckoutOwners } from "../catalog/checkout-owner.js";
 import { learnWorktreeList, worktreeRegistry } from "../catalog/repository-identity.js";
+import type { GitReads } from "../git.js";
 import { GIT_OPEN_AGAIN_MS, gitReadTimedOut, nativeGitAccess } from "../native/git-access.js";
 import type { NativeGitAccess, NativeGitIgnoreMatcher } from "../native/native.js";
 import { NativeCodeRuleEnforcer } from "./code-rule-enforcer.js";
@@ -553,11 +554,12 @@ export class CheckoutCodeRuleRouter implements CodeRuleAuditor {
   }
 
   /**
-   * Git's list of the worktrees `worktreeRoots` reads, learnt as a process no thread waits on and kept as the registry
-   * keeps it (`learnWorktreeList`): a worktree added since the last list costs the daemon's thread no Git.
+   * Git's list of the worktrees `worktreeRoots` reads, learnt through `git` as a process no thread waits on and kept as
+   * the registry keeps it (`learnWorktreeList`): a worktree added since the last list costs the daemon's thread no Git.
+   * Undefined while the stored list stands.
    */
-  async learnWorktreeRoots(signal: AbortSignal): Promise<void> {
-    await learnWorktreeList(this.#options.startingCheckout, { signal }).catch(() => undefined);
+  learnWorktreeRoots(git: GitReads): Promise<void> | undefined {
+    return learnWorktreeList(this.#options.startingCheckout, git);
   }
 
   /** The folder where Git registers the worktrees `worktreeRoots` last named (`worktrees` in the common Git folder). */
