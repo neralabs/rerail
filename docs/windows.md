@@ -577,7 +577,8 @@ capability, refused every start as "alive but not answering", and `rerail daemon
   and to run `rerail daemon start`. `rerail daemon stop`, `rerail daemon start`, a hook's start, set-up and `rerail
   install --remove` end it through its process: one call opens the process, reads its creation time, ends it through
   that handle and waits on it for the exit, so a pid Windows gives to another process meanwhile is never ended. The
-  wait is bounded at the stop's 5 s kill wait only so that an end that hangs cannot hold the command for good.
+  wait is bounded at the stop's 5 s kill wait, and for `rerail install --remove` at 15 s with PowerShell's own start
+  (below), only so that an end that hangs cannot hold the command for good.
   `rerail daemon start` then starts this release's daemon and says, in one line, which daemon it ended. A hook's
   start and set-up replace it whatever package it ran from, since it predates the fields hooks send; a hook that may
   not replace it (`RERAIL_AUTOSTART=0`, or a daemon found only after the start looked) sends it nothing and logs each
