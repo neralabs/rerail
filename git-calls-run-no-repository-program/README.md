@@ -1,6 +1,6 @@
 # Git: Rerail's own Git calls start no program a repository's config names
 
-For [pull request #978](https://github.com/neralabs/rerail/pull/978), head f1a6d791b. [report.html](report.html) is the same report as one page: download it and open it.
+For [pull request #978](https://github.com/neralabs/rerail/pull/978), head bbcdd72d8. [report.html](report.html) is the same report as one page: download it and open it.
 
 ## 1. The decision
 
@@ -12,7 +12,7 @@ For [pull request #978](https://github.com/neralabs/rerail/pull/978), head f1a6d
 
 | Size | Risk and review | Waits on | Not verified |
 |---|---|---|---|
-| 4,057 lines in 23 files: 1,645 ship, 2,412 are tests and text | Maintainer approves. It changes what Rerail's own Git calls start. | Nothing. It stands on main alone. | 4 |
+| 4,771 lines in 24 files: 1,772 ship, 2,999 are tests and text | Maintainer approves. It changes what Rerail's own Git calls start. | Nothing. It stands on main alone. | 4 |
 
 ## 2. Intent, and the gap
 
@@ -34,7 +34,7 @@ Found in November 2026 on Linux x64 and Windows 11 machines, with a stand-in pro
 
 ## 3. Where to look
 
-<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Submodules asked through the guard, medium risk, 952 lines; B, Drivers set for each call, medium risk, 693 lines. Read first: submodule-state.ts, git.ts, filter-drivers.ts. To skim: 2,374 lines of tests and 38 lines of the threat model and a release note.">
+<img src="map.png" width="544" alt="The changed files as bars sized by changed lines, grouped by change and coloured by risk. Code to read: A, Submodules asked through the guard, medium risk, 1,058 lines; B, Drivers set for each call, medium risk, 714 lines. Read first: submodule-state.ts, git.ts, filter-drivers.ts. To skim: 2,956 lines of tests and 43 lines of the threat model and a release note.">
 
 1. **Read first**, 15 min: `submodule-state.ts`: `withChangedSubmodules`, `submoduleChanged`, `worktreeIndex`. Does each diff list the submodules Git's own diff lists?
 2. **Read first**, 15 min: `git.ts`: `runGit`, `runGitWithoutBlocking`, `guardedBy`, `submoduleOpener`. Can a call that reads worktree files still start a repository's driver?
@@ -53,7 +53,7 @@ Start with the submodule rules: they follow Git's own and are where a wrong answ
 
 | Change | Check | Its limit, or why it does not hold yet |
 |---|---|---|
-| A. Submodules | users lose nothing | Layouts under eleven rule sets equal Git's own stdout byte for byte. A checkout of more than about four million files that records a submodule fails where main answered. |
+| A. Submodules | users lose nothing | Layouts under eighteen rule sets equal Git's own stdout byte for byte. A checkout of more than about four million files that records a submodule fails where main answered. |
 | B. Drivers | users lose nothing | A file under a driver only the repository defines is listed as changed when only its stat changed. |
 | B. Drivers | Windows 11: no new failure | The test files pass on Windows 11; the cases with a stand-in Git run on Linux only. |
 | A and B | CI at this head | CI runs once the branch is on GitHub. |
@@ -114,7 +114,7 @@ Start with the submodule rules: they follow Git's own and are where a wrong answ
 
 Nothing has to merge first. It meets #964 in two import lines; whichever lands second keeps both.
 
-The change is based on main at 1e80e3b04, merged in with no conflict. A trial merge with the open pull request #964 conflicts in two import lines, and whichever lands second keeps both.
+The change is based on main at 1609ac3a3, merged in with no conflict. A trial merge with the open pull request #964 conflicts in two import lines, and whichever lands second keeps both.
 
 **The shared lines and the trial merge.** A trial merge with #964 conflicts in line 3 of `integration/rerail-without-daemon.test.ts`, the `node:fs/promises` names, and line 10 of `src/engine/audit/audit-control.ts`, the imports beside `../git.js`. No other open pull request of ours touches these files.
 
@@ -149,9 +149,9 @@ The description on GitHub is the record: "How you tested it" holds the failing r
 |---|---|---|
 | Linux x64 | The five calls, at main and here | All five fail at main and pass here. |
 | Windows 11 | The five calls, at main and here | All five fail at main and pass here. |
-| Linux x64 | 29 test files importing a changed module | 1,216 passed, 31 skipped; main's 37 files passed. |
-| Windows 11 | The same 40 files | 1,184 passed, 65 skipped, 3 failed beside other runs and passed run again at main and here, with the engine built for this tree. |
-| Linux x64 | Each new line changed, 19 runs | With nothing changed the files pass; each of the 18 changes fails a case. |
+| Linux x64 | 28 test files importing a changed module | 953 passed, 31 skipped; main's 25 files: 810 passed, 30 skipped. |
+| Windows 11 | The same 28 files | 925 passed, 64 skipped, with the engine built for this tree; main's: 807 passed, 38 skipped. |
+| Linux x64 | Each line of the review's answer taken out, 11 runs | With nothing changed the cases pass; each of the 8 changes fails its case. |
 
 **Sources.** The branch and its diff against main, read on 21 November 2026; Git 2.53 and 2.56 for Git's own answers.
 
