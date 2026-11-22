@@ -29,7 +29,7 @@ use crate::code_rule_dsl::logic::plan::Cells;
 use crate::code_rule_dsl::facts::vtab::Source;
 use crate::code_rule_dsl::logic::front;
 use crate::code_rule_dsl::logic::plan::body::Placed;
-use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef};
+use crate::code_rule_dsl::logic::program_image::{Lit, RuleRef, TermRef, Version};
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::sync::Arc;
 use crate::code_rule_dsl::logic::native::component::InRel;
@@ -474,6 +474,28 @@ pub(in crate::code_rule_dsl) struct Cut {
 /// The relations a `nearest` literal reads.
 pub(in crate::code_rule_dsl) const TREE: [&str; 2] = ["node", "child"];
 
+/// What a stratum whose rules call a Git functor (`GIT_FUNCTORS`) reads beside its relations: their answers
+/// (`strings::git::Answers`), which move between runs. It is an input of those strata by their digest, as a relation
+/// is: a run that finds an answer changed runs them again, and a kept stratum names it among its reads.
+pub(in crate::code_rule_dsl) const GIT: &str = "@git: the Git functors' answers";
+
+/// The functors that answer from the repository holding the run's root (`strings::git`).
+const GIT_FUNCTORS: [&str; 3] = ["git_tracked", "git_commit", "git_has"];
+
+/// Whether rule `r` calls a Git functor: in its head, its atoms' (and aggregates' atoms') terms, or a comparison.
+fn calls_git(v: &Version, r: RuleRef<'_>) -> bool {
+    fn calls(v: &Version, t: TermRef<'_>) -> bool {
+        matches!(t, TermRef::Call(f, args) if GIT_FUNCTORS.contains(&v.text(f)) || args.clone().any(|a| calls(v, a)))
+    }
+    std::iter::once(r.head()).chain(r.body().filter_map(|l| l.atom())).any(|a| a.args().any(|t| calls(v, t)))
+        || r.body().any(|l| matches!(l.view(), Lit::Cmp { l, r, .. } if calls(v, l) || calls(v, r)))
+}
+
+/// Whether a rule of `prog` calls a Git functor (`GIT`): its run gives their answers' digest as an input's.
+pub(in crate::code_rule_dsl) fn reads_git(prog: &Placed) -> bool {
+    prog.v.rules().any(|r| calls_git(&prog.v, r))
+}
+
 /// The relations each stratum's rules read (atoms, aggregates' atoms and a native operator's inputs), its rules found
 /// by their heads in one pass over the program: a scan of every rule per stratum was 15% of a one-file run of the
 /// Python pack (16 k rules, 10 k strata).
@@ -499,6 +521,9 @@ impl<'a> Reads<'a> {
         // A `nearest` literal climbs the tree: it reads `node` and `child`, which an edit changes.
         if rules().any(|r| r.body().any(|l| matches!(l.view(), Lit::Nearest { .. }))) {
             out.extend(TREE.iter().map(|r| (*r).to_owned()));
+        }
+        if rules().any(|r| calls_git(v, *r)) {
+            out.insert(GIT.to_owned());
         }
         for rel in scc {
             if let Some(native) = self.f.native(rel) {

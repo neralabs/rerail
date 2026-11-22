@@ -10022,12 +10022,22 @@ fn run_observed_within(
                     // text test's, its kept statistics', which its `len`, a scan of the batch's strings, is not).
                     let digest_only: BTreeMap<String, Option<usize>> = stored.iter().map(|(r, _)| (r.clone(), totals.rels.get(r).map(|t| t.0))).collect();
                     // A base relation's digest was taken when its source was made: its documents' (decision 0458).
-                    let digests: HashMap<String, u64> = cross_inputs
+                    let mut digests: HashMap<String, u64> = cross_inputs
                         .iter()
                         .map(|(rel, source)| (rel.clone(), input_digests.get(rel).copied().unwrap_or_else(|| retain::digest(source.as_ref(), &retain::cells_of(&store.atoms_handle(), &cross_placed, &cross.domains, rel, source.columns().len())))))
                         .collect();
                     drop(s);
                     let (ckey, binds) = retain::keys(&prepared_key, cross.digest()?);
+                    // The Git functors' answers move between runs: an input of the strata that call them, by the
+                    // digest of the last run's questions answered now (`strings::git::Answers`), kept under the cross
+                    // program (`binds`) with this run's answers.
+                    let mut git_answers = retain::reads_git(&cross_placed).then(|| {
+                        let key = format!("git-answers:{}", crate::content_store::observe::hex(&binds));
+                        let rows = observe(|o| o.run_record(&key)).and_then(|(rows, _)| reuse::decode_consulted(&rows)).unwrap_or_default();
+                        let answers = crate::code_rule_dsl::logic::strings::git::Answers::again(root, rows);
+                        digests.insert(retain::GIT.to_owned(), answers.digest());
+                        (key, answers)
+                    });
                     part_keys.lock().expect("the parts' keys").push(ckey);
                     let mut cells = cell.lock().expect("the session's cross-file part");
                     // Taken out while the run uses it; a run that fails leaves no kept part for this program.
@@ -10663,6 +10673,13 @@ fn run_observed_within(
                     let (made, lazy_made) = kept_statistics(lazies, &mut measured_kept);
                     step(&format!("kept statistics: {made} of {lazy_made} lazy relations planned with"));
                     drop(s);
+                    // The strata kept name the Git answers as this run left them: the last run's, and what it asked.
+                    if let Some((key, answers)) = git_answers.take() {
+                        let answers = answers.and_this_run(root);
+                        digests.insert(retain::GIT.to_owned(), answers.digest());
+                        let rows = reuse::encode_consulted(&answers.rows());
+                        observe(|o| o.put_run_record(&key, &rows, &[]));
+                    }
                     let s = span("retain");
                     let mut next = retain::after(cell.take(), ckey, digests.clone(), &cut, rows, &derived_outputs, &cross_inputs, measured_kept, input_docs, (run_docs_held.lock().expect("the run's documents").clone(), memo_whole), retain::budget(), false);
                     if let Some(was) = &was_kept {

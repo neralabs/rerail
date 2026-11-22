@@ -38,7 +38,8 @@ const FUNCTIONS: &[(&str, &[Kind], Kind)] = &[
     ("slice", &[Text, Number, Number], Text),
     ("count_matches", &[Text, Text], Number),
     ("sha256", &[Text], Text),
-    // Git objects of the repository holding the run's root (`strings::git`): never stale, so never invalidated.
+    // The repository holding the run's root (`strings::git`): its index and objects, whose answers move between runs;
+    // a kept stratum that calls one is kept by their digest (`retain::GIT`).
     ("git_commit", &[Text], Number),
     ("git_has", &[Text, Text], Number),
     ("git_tracked", &[Text], Number),

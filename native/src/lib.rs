@@ -319,6 +319,38 @@ struct LoadedRrPolicy {
     location: PolicyLocation,
     program: std::sync::Arc<code_rule_dsl::logic::program_image::Version>,
     files: Vec<code_rule_dsl::logic::rr::LibraryFile>,
+    /// What its load did (`LoadedRrPolicies::load`'s stages: compiles, graph hits): a scan handed it ran that load
+    /// first, and its profile counts it (`Prepared::add`).
+    prepared: Prepared,
+}
+
+/// The stages a run counted (`rerail_prof::stages`) between two readings: a policy load's, carried to the scan.
+#[cfg(not(feature = "headless"))]
+#[derive(Clone, Default)]
+struct Prepared(std::sync::Arc<Vec<(String, std::time::Duration, usize)>>);
+
+#[cfg(not(feature = "headless"))]
+impl Prepared {
+    fn now() -> std::collections::BTreeMap<String, (std::time::Duration, usize)> {
+        rerail_prof::stages().clone()
+    }
+    /// What the run counted since `before`.
+    fn since(before: &std::collections::BTreeMap<String, (std::time::Duration, usize)>) -> Prepared {
+        let was = |stage: &str| before.get(stage).copied().unwrap_or_default();
+        Prepared(std::sync::Arc::new(Self::now().into_iter().filter_map(|(stage, (time, count))| {
+            let (t, c) = was(&stage);
+            (time > t || count > c).then(|| (stage, time.saturating_sub(t), count.saturating_sub(c)))
+        }).collect()))
+    }
+    /// Counted again by the run under way.
+    fn add(&self) {
+        let mut stages = rerail_prof::stages();
+        for (stage, time, count) in self.0.iter() {
+            let at = stages.entry(stage.clone()).or_default();
+            at.0 += *time;
+            at.1 += count;
+        }
+    }
 }
 
 #[cfg(not(feature = "headless"))]
@@ -330,7 +362,7 @@ impl LoadedRrPolicy {
             Some(snapshot) => PolicyLocation::Git { snapshot, inputs: git },
             None => PolicyLocation::Worktree { path: path.clone(), library: code_rule_dsl::logic::rr::library_root() },
         };
-        Ok(Self { location, program, files })
+        Ok(Self { location, program, files, prepared: Prepared::default() })
     }
 
     fn inspection(&self) -> Result<String> {
@@ -367,7 +399,9 @@ impl LoadedRrPolicies {
                 self.programs.lock().unwrap_or_else(|err| err.into_inner()).get(key)
                     .and_then(|versions| versions.get(&None)).map(|policy| policy.files.clone())
             } else { None };
-            let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), inspected.as_deref())?;
+            let before = Prepared::now();
+            let mut policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), inspected.as_deref())?;
+            policy.prepared = Prepared::since(&before);
             let inspection = policy.inspection()?;
             let origin = match &policy.location {
                 PolicyLocation::Git { snapshot, .. } => Some(snapshot.source_key()),
@@ -521,6 +555,10 @@ impl ScanRrPolicies {
         let profiled = if profile::on() { profile::hold_records() } else { None };
         if profiled.is_some() {
             profile::reset();
+            // The loads it was handed ran first, for it: its profile counts them.
+            for policy in self.policies.iter().flatten().flatten() {
+                policy.prepared.add();
+            }
         }
         let path = Path::new(&self.store);
         let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
@@ -559,7 +597,7 @@ impl ScanRrPolicies {
             let mut reports = Vec::new();
             let mut ephemeral = path == Path::new(":memory:");
             for (i, policy) in policies.into_iter().enumerate() {
-                let (LoadedRrPolicy { program, files, location }, ids) = match policy {
+                let (LoadedRrPolicy { program, files, location, .. }, ids) = match policy {
                     Ok(policy) => policy,
                     Err(error) => {
                         // A program that did not load names the policy its own text declares.

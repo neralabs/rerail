@@ -1914,10 +1914,13 @@ File(@place(p, 1)) :- git_source_tree(r, t), git_tree_file(r, t, p, _, _).
       published.finish(true);
       finishNamedAnalysisRegistration(database, name, "same", published);
       await expect(deleteNamedAnalysisScope(database, name)).rejects.toThrow(/multiple stores/u);
-      expect(await deleteNamedAnalysisScope(database, name, first)).toEqual({ store: first, hadMembers: false });
+      // A release that would revoke a running scan fails and is retried after it (decision 0494): the aborted
+      // acquisition is retired, the concurrent one with the same scan ID runs on and publishes.
+      await expect(deleteNamedAnalysisScope(database, name, first)).rejects.toThrow(/analysis scope in use/u);
       active.finish(true);
-      expect(active.publication).toBe("released");
+      expect(active.publication).toBe("published");
       finishNamedAnalysisRegistration(database, name, "same", active);
+      expect(await deleteNamedAnalysisScope(database, name, first)).toEqual({ store: first, hadMembers: true });
       expect(await deleteNamedAnalysisScope(database, name)).toEqual({ store: second, hadMembers: true });
     } finally { vi.unstubAllEnvs(); }
   }, 30_000);
@@ -1986,10 +1989,13 @@ File(@place(p, 1)) :- git_source_tree(r, t), git_tree_file(r, t, p, _, _).
     `, new URL("../../src/engine/native/analysis-scope.ts", import.meta.url).href, database, store, root]);
     expect(child.error).toBeUndefined();
     const registry = database + ".analysis-stores.sqlite";
-    expect(queryContentStore(store, "SELECT id FROM analysis_scope_pending")).toHaveLength(1);
+    // What the killed run leaves of its hold on the scope: its lease beside the store, unlocked (decision 0494: a
+    // run's start writes nothing to the store), which whoever finds it removes.
+    const leases = () => fs.readdirSync(store + ".scopes").filter(name => /^\d+$/u.test(name));
+    expect(leases()).toHaveLength(1);
     expect(queryContentStore(registry, "SELECT name FROM analysis_named_acquisition")).toEqual([{ name: "interrupted" }]);
     await collectAnalysisCaches(database);
-    expect(queryContentStore(store, "SELECT id FROM analysis_scope_pending")).toEqual([]);
+    expect(leases()).toEqual([]);
     expect(queryContentStore(registry, "SELECT name FROM analysis_named_acquisition")).toEqual([]);
   }, 30_000);
 
@@ -3300,7 +3306,7 @@ try {
     const blob = git(root, "rev-parse", first + ":" + child);
     const object = join(root, ".git", "objects", blob.slice(0, 2), blob.slice(2));
     renameSync(object, join(home, "removed-blob"));
-    expect(read(first).error).toMatch(/selected\.rr/u);
+    expect(read(first).error).toMatch(/selected\.rerail/u);
     renameSync(join(home, "removed-blob"), object);
     expect(read(first)).toEqual(expected("one", 0, 1));
     writeFileSync(join(library, "selected.rerail"), word("bundled"));
@@ -4283,11 +4289,14 @@ Unreadable(@place("tree", 1), why) :- git_tree_walk_error(_, _, _, why).
       expect(report.status, JSON.stringify(report.failures)).toBe("completed");
       expect(report.violations.map(v => v.path)).toContain("a.py");
       expect(report.violations.map(v => v.path)).not.toContain(ignoredPath);
+      // What the store keeps on disk: its file and the folders beside it (its memo, its tapes and sources, its atoms'
+      // blocks, its kept facts), every file in them.
+      const filesOf = (path: string): string[] => !existsSync(path) ? []
+        : statSync(path).isDirectory() ? fs.readdirSync(path).flatMap(name => filesOf(join(path, name))) : [path];
+      const kept = [store, ...[".memo", ".objects", ".atoms", ".facts"].flatMap(suffix => filesOf(store + suffix))];
+      expect(kept.some(path => path.startsWith(store + ".atoms")), "the atoms' blocks are on disk").toBe(true);
       for (const basename of [secret, ignoredPath]) {
-        // The atom dictionary can hold plain strings as well as packed segments.
-        const found = queryContentStore(store, "SELECT 1 FROM atom_segment WHERE instr(bytes, cast(? AS blob))>0 LIMIT 1", [basename]);
-        expect(found, basename).toEqual([]);
-        expect(readFileSync(store).includes(Buffer.from(basename)), basename).toBe(false);
+        expect(kept.filter(path => readFileSync(path).includes(Buffer.from(basename))), basename).toEqual([]);
       }
     } finally { vi.unstubAllEnvs(); }
   });
