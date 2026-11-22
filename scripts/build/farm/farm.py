@@ -1285,7 +1285,7 @@ def probe(host, cfg, fell_back=False, recovered=False):
               " echo \"$(sysctl -n vm.loadavg) busy=$(ps -A -o %cpu= | awk -v n=$(sysctl -n hw.logicalcpu) '{s+=$1} END {print int(s/n)}')\";"
               " mount -t nfs | sed 's/.* on \\(.*\\) (.*/\\1/'")
     if host.get("fleet"):
-        # A nera-fleet node (`"fleet": true`): the fleet's jobs are containers carrying `fleet.job`.
+        # A node of Nera's job fleet (`"fleet": true`): the fleet's jobs are containers carrying `fleet.job`.
         # Counted first; docker may be outside a plain ssh command's PATH on a Mac.
         script = ('echo "fleet $(PATH=$PATH:/usr/local/bin:/opt/homebrew/bin:$HOME/.orbstack/bin '
                   'docker ps -q --filter label=fleet.job 2>/dev/null | wc -l)"; ' + script)
@@ -1386,7 +1386,7 @@ def probe(host, cfg, fell_back=False, recovered=False):
         return probe(host, cfg, fell_back=fell_back, recovered=True)
     h["route"] = route(name)
     if fleet_jobs:
-        h["why"] = (f"running {fleet_jobs} nera-fleet job{'s' * (fleet_jobs > 1)}: the farm and the fleet are equals there, "
+        h["why"] = (f"running {fleet_jobs} fleet job{'s' * (fleet_jobs > 1)}: the farm and the fleet are equals there, "
                     "and the farm starts nothing more until they end")
     elif link and arrival != link:
         h["why"] = f"not on its link: reached over its {arrival or '?'}, not {link}"

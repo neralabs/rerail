@@ -37,7 +37,7 @@ The existing parser backend stores tapes by source digest, grammar tag, grammar 
 That backend does not establish that language selection or Git-derived results already follow the proposed logical cache contract.
 Both the relation rules and the physical tape store need inspection during implementation.
 
-The nera-data-layer library importer walks trees and reads blobs by object ID through `pygit2`.
+The internal data layer's library importer walks trees and reads blobs by object ID through `pygit2`.
 Its useful precedent is direct object access and reuse by blob identity.
 Its Python dictionaries are not the cache architecture for rerail.
 

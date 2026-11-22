@@ -1,5 +1,5 @@
 //! Read-only source views of Git trees. Paths identify objects; they never name an extracted checkout.
-//! Like nera-data-layer's library Git importer, tree walks retain blob IDs and bytes are read on demand.
+//! Like the internal data layer's library Git importer, tree walks retain blob IDs and bytes are read on demand.
 
 use rerail_store::Canonical as _;
 use std::cell::RefCell;
