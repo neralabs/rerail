@@ -289,6 +289,9 @@ class Gce:
     def state(self):
         out = on_parent(self.g, self.GCLOUD + f"compute instances describe {shlex.quote(self.vm)}{self.where} --format='value(status)'", 60)
         if out is None or out.returncode != 0:
+            err = out.stderr if out is not None else ""
+            self.error = ("gcloud's sign-in has expired: the user runs `gcloud auth login` in a terminal (nothing was started)"
+                          if "auth login" in err else "gcloud did not answer: " + ((err.strip().splitlines() or ["no output"])[0])[:200])
             return None
         return self.STATES.get(out.stdout.strip(), "stopped")
 
@@ -514,8 +517,9 @@ def start(name, why="a command needs it"):
         k = kind(g)
         now_state = k.state()
         if now_state is None:
-            update(base["name"], state="unknown", why="its machine did not answer", checked=time.time())
-            return "its machine did not answer"
+            why = getattr(k, "error", None) or "its machine did not answer"
+            update(base["name"], state="unknown", why=why, checked=time.time())
+            return why
         if now_state == "running":
             update(base["name"], state="running", since=record(base["name"]).get("since") or time.time(),
                    last_busy=time.time(), why=None, checked=time.time())

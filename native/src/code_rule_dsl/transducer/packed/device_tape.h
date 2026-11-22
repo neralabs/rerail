@@ -30,40 +30,40 @@ UKL_INLINE DocView doc_of(UKL_GLOBAL const DocView* docs,uint32_t count,uint32_t
 // ---- the reads (decision 0310): `<ukl/reads/tape.h>`, the tape's reads in CLIF written by hand (0524), which the CPU's
 // JIT and the tape crate read through too; each takes the document's first byte and its view.
 #define TAPE_READ(C,D) tape_doc(C,D),(CLIF_VIEW_SPACE const uint32_t*)&(D)
-UKL_INLINE uint32_t tape_size(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_size(TAPE_READ(s,d),i);}
+UKL_COLD uint32_t tape_size(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_size(TAPE_READ(s,d),i);}
 // The node's code's number in its document's (format 16: its language's) table.
-UKL_INLINE uint32_t tape_number(UKL_GLOBAL const uint8_t* doc,DocView d,uint32_t i){return clif_tape_number(doc,(CLIF_VIEW_SPACE const uint32_t*)&d,i);}
+UKL_COLD uint32_t tape_number(UKL_GLOBAL const uint8_t* doc,DocView d,uint32_t i){return clif_tape_number(doc,(CLIF_VIEW_SPACE const uint32_t*)&d,i);}
 // The node's code: its document's table (format 15), or its language's, its slab's (format 16): `codes` from the
 // document, modulo 2^32 (an i32), so a table before the document is reached too (decision 0336 §7).
-UKL_INLINE UKL_GLOBAL const DeviceCode* tape_code(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){UKL_GLOBAL const uint8_t* doc=tape_doc(s,d);return ((UKL_GLOBAL const DeviceCode*)(doc+(int32_t)d.codes))+tape_number(doc,d,i);}
-UKL_INLINE uint32_t tape_kind(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->kind;}
-UKL_INLINE uint32_t tape_field(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->field;}
-UKL_INLINE uint32_t tape_flags(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->flags;}
-UKL_INLINE bool tape_named(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return (tape_flags(s,d,i)&1u)!=0u;}
-UKL_INLINE bool tape_has_class(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t kind){UKL_GLOBAL const DeviceCode* c=tape_code(s,d,i);for(uint32_t k=0u;k<c->classCount;k++){if(c->classes[k]==kind)return true;if(c->classes[k]>kind)return false;}return false;}
-UKL_INLINE uint32_t tape_start(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_start(TAPE_READ(s,d),i);}
-UKL_INLINE uint32_t tape_end(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_end(TAPE_READ(s,d),i);}
+UKL_COLD UKL_GLOBAL const DeviceCode* tape_code(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){UKL_GLOBAL const uint8_t* doc=tape_doc(s,d);return ((UKL_GLOBAL const DeviceCode*)(doc+(int32_t)d.codes))+tape_number(doc,d,i);}
+UKL_COLD uint32_t tape_kind(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->kind;}
+UKL_COLD uint32_t tape_field(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->field;}
+UKL_COLD uint32_t tape_flags(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return tape_code(s,d,i)->flags;}
+UKL_COLD bool tape_named(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return (tape_flags(s,d,i)&1u)!=0u;}
+UKL_COLD bool tape_has_class(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t kind){UKL_GLOBAL const DeviceCode* c=tape_code(s,d,i);for(uint32_t k=0u;k<c->classCount;k++){if(c->classes[k]==kind)return true;if(c->classes[k]>kind)return false;}return false;}
+UKL_COLD uint32_t tape_start(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_start(TAPE_READ(s,d),i);}
+UKL_COLD uint32_t tape_end(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_end(TAPE_READ(s,d),i);}
 // The parent: a search (format 16 back over the siblings' slots; format 15 back over at most 64 nodes, else a descent
 // from the root over the siblings' subtrees).
-UKL_INLINE uint32_t tape_parent(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_parent(TAPE_READ(s,d),i);}
+UKL_COLD uint32_t tape_parent(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_parent(TAPE_READ(s,d),i);}
 // The node after `i`'s subtree while it is before `end` (its parent's subtree's end).
-UKL_INLINE uint32_t tape_next_in(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t end){return clif_tape_next_in(TAPE_READ(s,d),i,end);}
-UKL_INLINE uint32_t tape_end_of(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_end_of(TAPE_READ(s,d),i);}
-UKL_INLINE uint32_t tape_next(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_next(TAPE_READ(s,d),i);}
+UKL_COLD uint32_t tape_next_in(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t end){return clif_tape_next_in(TAPE_READ(s,d),i,end);}
+UKL_COLD uint32_t tape_end_of(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_end_of(TAPE_READ(s,d),i);}
+UKL_COLD uint32_t tape_next(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_next(TAPE_READ(s,d),i);}
 // The end of a node's siblings (its parent's subtree; 0 at the root): one parent read, a search (CLIF's `parent`), for
 // a walk over the siblings by `tape_next_in`. `tape_next` reads the parent at each hop (0457).
-UKL_INLINE uint32_t tape_siblings_end(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){uint32_t p=tape_parent(s,d,i);return p==TAPE_NONE?0u:tape_end_of(s,d,p);}
-UKL_INLINE uint32_t tape_next_named_in(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t end){uint32_t j=tape_next_in(s,d,i,end);while(j!=TAPE_NONE&&!tape_named(s,d,j))j=tape_next_in(s,d,j,end);return j;}
-UKL_INLINE uint32_t tape_next_named(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){uint32_t p=tape_parent(s,d,i);if(p==TAPE_NONE)return TAPE_NONE;return tape_next_named_in(s,d,i,tape_end_of(s,d,p));}
-UKL_INLINE uint32_t tape_first_child(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_first_child(TAPE_READ(s,d),i);}
-UKL_INLINE uint32_t tape_child_count(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_child_count(TAPE_READ(s,d),i);}
-UKL_INLINE uint32_t tape_child(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t k){return clif_tape_child(TAPE_READ(s,d),i,k);}
-UKL_INLINE uint8_t tape_byte(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t at){return (tape_doc(s,d)+d.source)[at];}
-UKL_INLINE UKL_GLOBAL const uint8_t* tape_source(UKL_GLOBAL const uint8_t* s,DocView d){return tape_doc(s,d)+d.source;}
+UKL_COLD uint32_t tape_siblings_end(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){uint32_t p=tape_parent(s,d,i);return p==TAPE_NONE?0u:tape_end_of(s,d,p);}
+UKL_COLD uint32_t tape_next_named_in(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t end){uint32_t j=tape_next_in(s,d,i,end);while(j!=TAPE_NONE&&!tape_named(s,d,j))j=tape_next_in(s,d,j,end);return j;}
+UKL_COLD uint32_t tape_next_named(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){uint32_t p=tape_parent(s,d,i);if(p==TAPE_NONE)return TAPE_NONE;return tape_next_named_in(s,d,i,tape_end_of(s,d,p));}
+UKL_COLD uint32_t tape_first_child(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_first_child(TAPE_READ(s,d),i);}
+UKL_COLD uint32_t tape_child_count(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i){return clif_tape_child_count(TAPE_READ(s,d),i);}
+UKL_COLD uint32_t tape_child(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t i,uint32_t k){return clif_tape_child(TAPE_READ(s,d),i,k);}
+UKL_COLD uint8_t tape_byte(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t at){return (tape_doc(s,d)+d.source)[at];}
+UKL_COLD UKL_GLOBAL const uint8_t* tape_source(UKL_GLOBAL const uint8_t* s,DocView d){return tape_doc(s,d)+d.source;}
 // Lines (decision 0336 §6): format 16's newline index, format 15's line starts. A byte's line (from 0), and a
 // line's first byte, document-local.
-UKL_INLINE uint32_t tape_line(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t at){return clif_tape_line(TAPE_READ(s,d),at);}
-UKL_INLINE uint32_t tape_line_start(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t line){return clif_tape_line_start(TAPE_READ(s,d),line);}
+UKL_COLD uint32_t tape_line(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t at){return clif_tape_line(TAPE_READ(s,d),at);}
+UKL_COLD uint32_t tape_line_start(UKL_GLOBAL const uint8_t* s,DocView d,uint32_t line){return clif_tape_line_start(TAPE_READ(s,d),line);}
 // A pass's roots (`label_passes::Roots`; decisions 0033, 0293 §10), with no list of them. In
 // `roots`: word 0 the batch's file count F, words 1..=F+1 each file's first group of 64 nodes
 // (groups start at each document's first node) and the total. A rule at word `at`: its kind (0

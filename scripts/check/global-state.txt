@@ -279,7 +279,6 @@ native/src/code_rule_dsl/transducer/packed/json_parser/simdjson.rs::KINDS	stays	
 native/src/code_rule_dsl/transducer/packed/metal_join.rs::SOURCE	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_label_passes.rs::SOURCES	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::EVICTOR	stays	registers the workspaces' evictor once (code registered at load, a hook)
-native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::RESIDENT_PREFIX	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::TAPE_PREFIX	stays	computed once from the engine's own source
 native/src/code_rule_dsl/transducer/packed/metal_program_backend.rs::VIEW_PIECES	stays	computed once from the engine's own source (was metal_label_passes.rs::TAPE_VIEWS)
 native/src/code_rule_dsl/value/names.rs::TABLE	stays	computed once from the engine's own files

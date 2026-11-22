@@ -168,7 +168,7 @@ pub mod matcher {
         }
 
         fn compile_background(&self, batch: &[Program]) -> Result<(), Error> {
-            programs::compile_sweep_cached()?;
+            programs::compile_sweep_cached(crate::code_rule_dsl::transducer::packed::metal_program_backend::label_passes::run_format())?;
             programs::compile_jit_cached(batch).map(|_| ())
         }
 

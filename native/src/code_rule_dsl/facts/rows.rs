@@ -831,16 +831,21 @@ impl<T: rerail_blocks::Pod + std::fmt::Debug> std::fmt::Debug for BlockVec<T> {
 /// The bytes a relation of `k` 8-byte columns and `rows` rows takes in its block: its descriptor and directories,
 /// and its chunks as `Rows::try_reserve` makes them (quarter steps of doubling groups, each chunk aligned).
 fn room_for(k: usize, rows: usize) -> usize {
+    room_for_widths(&vec![8; k], rows)
+}
+
+/// `room_for`, of columns `widths` bytes wide.
+fn room_for_widths(widths: &[u32], rows: usize) -> usize {
     let min_log = rerail_blocks::rows::MIN_LOG;
     let align = |bytes: usize| if bytes >= rerail_blocks::block::PAGE { rerail_blocks::block::PAGE } else { 64 };
     let mut chunks = 0;
     let mut bytes = 0;
     while rerail_blocks::rows::capacity(chunks, min_log) < rows as u64 {
-        let b = rerail_blocks::rows::chunk_rows(chunks as usize, min_log) as usize * 8;
-        bytes += k * (b + align(b));
+        let r = rerail_blocks::rows::chunk_rows(chunks as usize, min_log) as usize;
+        bytes += widths.iter().map(|&w| r * w as usize + align(r * w as usize)).sum::<usize>();
         chunks += 1;
     }
-    bytes + (k + 1) * size_of::<rerail_blocks::rows::ColDir>() + 4096
+    bytes + (widths.len() + 1) * size_of::<rerail_blocks::rows::ColDir>() + 4096
 }
 
 /// A block of the device's own of at least `bytes`: a relation alone in it, from the block policy (decision 0342) as
@@ -877,6 +882,36 @@ pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     }
     let at = facts.block.offset_of(rel);
     InBlock { facts, at, rows: rows as u32, dead: 0, kills: None, part: None }
+}
+
+/// The room `indexes` indexes of a relation of `rows` rows take past its rows (`Part::with_index_room`).
+fn index_room(rows: usize, indexes: usize) -> usize {
+    let cap = rows.next_power_of_two().max(1);
+    let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
+    indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>()
+}
+
+/// The run table of a relation under key runs (`Part::over_key_runs`), for its writer.
+pub struct KeyRuns {
+    t: *mut u32,
+    runs: usize,
+    /// The relation whose block holds it.
+    part: Part,
+}
+
+impl KeyRuns {
+    /// Run `k`: its rows from `first` (past the run's before; the first's 0) hold ids of high bits `key`.
+    pub fn put(&self, k: usize, first: u32, key: u32) {
+        assert!(k < self.runs, "run {k} of {}", self.runs);
+        assert!(self.part.len() == 0, "a run set after its relation's rows");
+        // SAFETY: a table of `runs` runs in the relation's block, which `part` keeps; read only once rows are written.
+        unsafe { rerail_blocks::rows::put_run(self.t, k, first, key) };
+    }
+
+    /// Its offset in its block (a device writer's).
+    pub fn at(&self) -> usize {
+        self.part.facts.block.offset_of(self.t.cast_const())
+    }
 }
 
 /// A relation of `k` values a row, 8 bytes each, read in their order.
@@ -1094,8 +1129,13 @@ impl Part {
     /// `rewritten`: its rows' values change in place (`for_writes_with_room`): its block alone keeps a free list, and
     /// its indexes are whole chunks the next takes again (`Relation::rewritten`).
     fn try_new_with(life: Life, k: usize, rows: usize, extra: usize, rewritten: bool) -> Result<Part, String> {
-        let spec = spec(k);
-        let need = room_for(k, rows);
+        Part::try_new_spec(life, spec(k), rows, extra, rewritten)
+    }
+
+    /// `try_new_with`, of columns `spec`'s widths.
+    fn try_new_spec(life: Life, spec: Spec, rows: usize, extra: usize, rewritten: bool) -> Result<Part, String> {
+        let k = spec.widths.len();
+        let need = room_for_widths(&spec.widths, rows);
         // A device relation is written once at its size, and lives as the device's buffers did: alone in a block of
         // its size (leased within the device's budget), given back with it. A run's tail grows: its block has room for
         // it to double.
@@ -1237,10 +1277,24 @@ impl Part {
     /// (`DevIndex::moved`). The room is the block's address space: its pages are taken as an index is written. Not
     /// leased from the device's budget.
     pub fn with_index_room(life: Life, k: usize, rows: usize, indexes: usize) -> Part {
-        let cap = rows.next_power_of_two().max(1);
-        let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
-        let room = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>();
-        Part::try_new_with(life, k, rows, room, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+        Part::try_new_with(life, k, rows, index_room(rows, indexes), false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+    }
+
+    /// `with_index_room` of `k` columns of ids under key runs (an axis's solve, decision 0494 step 7): each column 4
+    /// bytes a row, its ids' low bits, their high bits (a document's key) the runs' of one table of `runs` runs in
+    /// the relation's block (`rows::ColDir`'s `runs`), which every column reads. The writer sets each run (`KeyRuns::put`)
+    /// before it writes a row.
+    pub fn over_key_runs(life: Life, k: usize, rows: usize, indexes: usize, runs: usize) -> (Part, KeyRuns) {
+        let spec = Spec { widths: vec![4; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG };
+        let table = 8 * (runs + 2) + 64;
+        let part = Part::try_new_spec(life, spec, rows, index_room(rows, indexes) + table, false).unwrap_or_else(|e| panic!("an axis of {rows} rows: {e}"));
+        let t = rerail_blocks::rows::alloc_runs(&part.facts.block, runs);
+        for c in 0..k {
+            // SAFETY: the table is in the relation's block, which it lives as long as; its runs are set before a row.
+            unsafe { part.rel().rows.set_runs(c, t) };
+        }
+        let keys = KeyRuns { t, runs, part: part.clone() };
+        (part, keys)
     }
 
     /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device
