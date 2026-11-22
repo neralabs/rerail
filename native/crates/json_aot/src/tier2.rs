@@ -219,9 +219,6 @@ break;
 }
 if lead == 0 {
 x += 32;
-if x >= len {
-return Err(s as u32);
-}
 (lead, quote) = unsafe { marks::<S>(src, x, 0x5c, 0x22) };
 continue;
 }
@@ -230,12 +227,11 @@ if q > p {
 leaf(d, 1, p as u64, q as u64);
 }
 p = q;
-if !matches!(&src[p..p + 2], b"\x5c\x22" | b"\x5c\x5c" | b"\x5c\x2f" | b"\x5cb" | b"\x5cf" | b"\x5cn" | b"\x5cr" | b"\x5ct" | b"\x5cu") {
-return Err(p as u32);
-}
 // The grammar's errors at an escape, from its bytes: its second byte `y`.
 let y = p + 1;
-if matches!(src[y], 0x75) {
+// Its second byte decided once: the words', the checks at the gate's.
+match src[y] {
+0x75 => {
 // Not the low half of the pair the escape 6 before checked (`escaped_string`'s `low_checked`): there no error
 // holds.
 if after2 != y {
@@ -263,12 +259,12 @@ after2 = y + 6;
 }
 }
 }
+0x22 | 0x5c | 0x2f | 0x62 | 0x66 | 0x6e | 0x72 | 0x74 => {}
+_ => return Err(p as u32),
+}
 leaf(d, 2, p as u64, (p + 2) as u64);
 p += 2;
 x = p;
-if x >= len {
-return Err(s as u32);
-}
 (lead, quote) = unsafe { marks::<S>(src, x, 0x5c, 0x22) };
 }
 close(d, e as u64);

@@ -1185,7 +1185,7 @@ fn json_rusts_tapes_are_the_jits() {
         r#"["\uD83D\uDE00"]"#, r#"["\ud83d\ude00"]"#, r#"["\uD83D"]"#, r#"["\uDE00"]"#, r#"["\uDE00\uD83D"]"#, r#"["\uD83D\n"]"#,
         r#"["\uD83Dx\uDE00"]"#, r#"["\uD83D\uD83D\uDE00"]"#, r#"["\u12"]"#, r#"["\u12G4"]"#, r#"["\\u12"]"#, r#"["\\uD83D\uDE00"]"#,
         r#"["\\uDE00"]"#, r#"["a\uD83D","\uDE00"]"#, r#"{"\u00e9": "\u0041\u00"}"#,
-        r#"["\uD83D\uDE0g"]"#, r#"["\uD83D\uDE"]"#, r#"["\uD83D\uDE00\uDE00"]"#, r#"["\uD83D\uDE00\uD83D\uDE01x"]"#, r#"["\uD83D\uDBFF"]"#, r#"[1"a"]"#, r#"[true"a"]"#, r#"{"a":1"b"}"#, r#"[1 "a"]"#, r#"["a""b"]"#,
+        r#"["\uD83D\uDE0g"]"#, r#"["\uD83D\uDE"]"#, r#"["\uD83D\uDE00\uDE00"]"#, r#"["\uD83D\uDE00\uD83D\uDE01x"]"#, r#"["\uD83D\uDBFF"]"#, r#"[1"a"]"#, r#"[true"a"]"#, r#"{"a":1"b"}"#, r#"[1 "a"]"#, r#"["a""b"]"#, r#"["\x"]"#, r#"["\'"]"#, r#"["\U0041"]"#, r#"["a\"#, r#"["\"#, r#"["\\"]"#, r#"["\/\b\f\n\r\t\""]"#,
     ] {
         inputs.push(f.as_bytes().to_vec());
     }
@@ -1315,7 +1315,12 @@ fn json_escape_checks_are_tier2s() {
     }
     let string = tier2.split("fn string<S").nth(1).expect("string").split("\nOk(e)\n}").next().expect("its body");
     let at = string.split("let y = p + 1;\n").nth(1).expect("the checks at an escape");
-    assert!(at.starts_with("if matches!(src[y], 0x75) {\n"), "at a `\\u` alone:\n{at}");
+    // The escape's second byte decided once, as `escaped_string`'s `c`: the `u`'s checks, the other words, else refused.
+    assert!(at.starts_with("// Its second byte decided once: the words', the checks at the gate's.\nmatch src[y] {\n0x75 => {\n"), "at a `\\u` alone:\n{at}");
+    assert!(at.contains("\n0x22 | 0x5c | 0x2f | 0x62 | 0x66 | 0x6e | 0x72 | 0x74 => {}\n_ => return Err(p as u32),\n}"), "the other words, then refused:\n{at}");
+    assert!(!string.contains("if !matches!(&src[p..p + 2]"), "the two bytes matched against the words");
+    // No end bound: tier 1 refuses a file a string is open at the end of (`refuses_open_at_end`), as `walk` reads.
+    assert!(!string.contains("x >= len"), "a bound at the file's end:\n{string}");
     for why in ["// \\u without four hex digits", "// a lone high surrogate", "// a lone low surrogate"] {
         assert!(at.contains(why), "{why}");
     }

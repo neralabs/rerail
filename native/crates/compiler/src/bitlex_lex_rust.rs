@@ -206,6 +206,35 @@ fn length_bits(e: &Expr, defs: &HashMap<String, Expr>, n: usize, pre: usize, dep
     })
 }
 
+/// Whether tier 1 refuses a file whose region `kind` is open at its end: an error `F & L`, `F` its fill (`f_KIND`, or
+/// a mask that is it alone) and `L` the file's last byte. Then a read of the region in tier 2 meets its closer before
+/// the file's end.
+pub fn refuses_open_at_end(stmts: &[Stmt], kind: &str) -> bool {
+    let f = format!("f_{kind}");
+    let mut defs: HashMap<String, Expr> = HashMap::new();
+    let mut prefix = 0;
+    let mut fills = vec![f.clone()];
+    for s in stmts {
+        match s {
+            Stmt::Mask(m, e) => {
+                if matches!(e, Expr::Name(n) if fills.contains(n)) {
+                    fills.push(m.clone());
+                }
+                defs.insert(m.clone(), e.clone());
+            }
+            Stmt::Prefix(b) => prefix = b.len(),
+            _ => {}
+        }
+    }
+    stmts.iter().any(|s| match s {
+        Stmt::Error(_, Expr::And(a, b)) => {
+            let fill = |x: &Expr| matches!(x, Expr::Name(n) if fills.contains(n));
+            (fill(a) && is_last_byte(b, &defs, prefix)) || (fill(b) && is_last_byte(a, &defs, prefix))
+        }
+        _ => false,
+    })
+}
+
 /// Whether `e` holds at the file's last byte alone (outside its `prefix`), at every length tried: of up to three
 /// blocks, the `prefix` there or not.
 fn is_last_byte(e: &Expr, defs: &HashMap<String, Expr>, pre: usize) -> bool {
@@ -2563,6 +2592,17 @@ mod tests {
         assert!(matches!(refused_equal(&u, &stmts), Some(Expr::Name(n)) if n == "structural_start"));
         let without: Vec<Stmt> = stmts.into_iter().filter(|s| !matches!(s, Stmt::Error(why, _) if why == "a string right after a scalar")).collect();
         assert!(refused_equal(&factored(&starts(&without), &without), &without).is_none(), "no error refuses a quote after a scalar");
+    }
+
+    /// JSON's tier 1 refuses a string open at the end (its fill, as `in_string`, at the last byte): without that
+    /// error, not.
+    #[test]
+    fn json_refuses_a_string_open_at_the_end() {
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../json_parser/json-simdjson.bitlex");
+        let stmts = ::bitlex::syntax::parse(&std::fs::read_to_string(path).expect("reads")).expect("parses");
+        assert!(refuses_open_at_end(&stmts, "str"));
+        let without: Vec<Stmt> = stmts.into_iter().filter(|s| !matches!(s, Stmt::Error(why, _) if why == "a string open at the end of the file")).collect();
+        assert!(!refuses_open_at_end(&without, "str"));
     }
 
     /// A mask's `& lv` dropped: where it ends an operand, and `(!x)` then `!x`; not where `lv` begins a longer name.

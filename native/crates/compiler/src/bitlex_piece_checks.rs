@@ -90,6 +90,9 @@ pub struct PieceChecks {
     pub at_piece: String,
     /// The module's tables the test reads.
     pub statics: String,
+    /// Where every error needs the piece's second byte `y` of these bytes: they, the code before the test of them
+    /// (`y`'s definition), and the code inside it. `at_piece` is the three as one.
+    pub gate: Option<([bool; 256], String, String)>,
 }
 
 fn conjuncts<'e>(e: &'e Expr, out: &mut Vec<&'e Expr>) {
@@ -698,8 +701,10 @@ pub fn piece_checks(stmts: &[Stmt], part_start: &str, closer: Option<u8>) -> Res
     let mut at = String::from("// The grammar's errors at an escape, from its bytes: its second byte `y`.\nlet y = p + 1;\n");
     // Inside the gate, a mask that is it is true too.
     let mut truth = vec![a];
+    let mut inside = at.len();
     if let Some(g) = &gate {
         let _ = writeln!(at, "if matches!(src[y], {}) {{", pattern(g));
+        inside = at.len();
         for (id, m) in masks.iter().enumerate() {
             if matches!(m.1, R::True) {
                 truth.push(id);
@@ -789,7 +794,11 @@ pub fn piece_checks(stmts: &[Stmt], part_start: &str, closer: Option<u8>) -> Res
     } else {
         String::new()
     };
-    Ok(PieceChecks { covers: errors.iter().map(|(i, _, _)| *i).collect(), state, at_piece: at, statics })
+    let gate = gate.map(|g| {
+        let head = at[..at.find("if matches!(src[y], ").expect("the gate's test")].to_owned();
+        (g, head, at[inside..at.len() - 2].to_owned())
+    });
+    Ok(PieceChecks { covers: errors.iter().map(|(i, _, _)| *i).collect(), state, at_piece: at, statics, gate })
 }
 
 #[cfg(test)]

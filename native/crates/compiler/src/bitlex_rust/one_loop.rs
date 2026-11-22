@@ -579,9 +579,20 @@ impl Lp<'_, '_> {
         let mut check = if required.is_empty() { String::new() } else { format!("if !matches!(&src[p..p + {len}], {}) {{\nreturn Err(p as u32);\n}}\n", required.join(" | ")) };
         // The grammar's errors at an escape, where it is read (the lean parser's stage 2; decision 0599): tier 1 leaves
         // them out (`bitlex_lex_rust::piece_covers`).
+        // The pieces' words of two bytes, the lead's, decided by their second byte once (`escaped_string`'s `c`): the
+        // gate's bytes its checks' arm, the other words' an arm of none, any other byte refused.
+        let seconds: Option<Vec<u8>> = (*len == 2 && words.iter().all(|w| w.len() == 2)).then(|| words.iter().map(|w| w[1]).collect());
         let state = match crate::bitlex_piece_checks::piece_checks(self.g.x.lexer, part_start, Some(quote)) {
             Ok(pc) => {
-                check.push_str(&pc.at_piece);
+                match (&pc.gate, &seconds) {
+                    (Some((g, head, inside)), Some(sec)) if sec.iter().any(|b| g[usize::from(*b)]) && (0..256).all(|b| !g[b] || sec.contains(&(b as u8))) => {
+                        let gb: Vec<u8> = sec.iter().copied().filter(|b| g[usize::from(*b)]).collect();
+                        let rest: Vec<u8> = sec.iter().copied().filter(|b| !g[usize::from(*b)]).collect();
+                        let others = if rest.is_empty() { String::new() } else { format!("{} => {{}}\n", pattern(&rest)) };
+                        check = format!("{head}// Its second byte decided once: the words', the checks at the gate's.\nmatch src[y] {{\n{} => {{\n{inside}}}\n{others}_ => return Err(p as u32),\n}}\n", pattern(&gb));
+                    }
+                    _ => check.push_str(&pc.at_piece),
+                }
                 if !self.method_code.borrow().contains(&pc.statics) {
                     self.method_code.borrow_mut().push(pc.statics);
                 }
@@ -589,6 +600,9 @@ impl Lp<'_, '_> {
             }
             Err(_) => String::new(),
         };
+        // Tier 1 refuses a file the region is open at the end of: the read meets its closer before it, as simdjson's
+        // stage 2 reads past no bound.
+        let bound = if !rd.regions.is_empty() && rd.regions.iter().all(|r| crate::bitlex_lex_rust::refuses_open_at_end(self.g.x.lexer, &r.kind)) { String::new() } else { "if x >= len {\nreturn Err(s as u32);\n}\n".to_owned() };
         let test = if t == T::No { format!("match peek(src, starts, i) {{\n{} => {{}}\n_ => return Err(at(src, starts, i)),\n}}\n", pattern(&self.bytes_of(self.token(&o)?.0))) } else { String::new() };
         // The read, a method of its own (`string` in the lean parser), the node's number its caller's.
         let ns = self.method(&ident(kind), &format!("`{kind}`, its pieces leaves"), |key| {
@@ -621,14 +635,13 @@ impl Lp<'_, '_> {
              e = c + 1;\n\
              break;\n\
              }}\n\
-             if lead == 0 {{\nx += 32;\nif x >= len {{\nreturn Err(s as u32);\n}}\n(lead, quote) = unsafe {{ marks::<S>(src, x, {lead_b:#04x}, {quote_b:#04x}) }};\ncontinue;\n}}\n\
+             if lead == 0 {{\nx += 32;\n{bound}(lead, quote) = unsafe {{ marks::<S>(src, x, {lead_b:#04x}, {quote_b:#04x}) }};\ncontinue;\n}}\n\
              let q = x + lead.trailing_zeros() as usize;\n\
              if q > p {{\nleaf(d, {content}, p as u64, q as u64);\n}}\n\
              p = q;\n{check}\
              leaf(d, {piece}, p as u64, (p + {len}) as u64);\n\
              p += {len};\n\
-             x = p;\n\
-             if x >= len {{\nreturn Err(s as u32);\n}}\n\
+             x = p;\n{bound}\
              (lead, quote) = unsafe {{ marks::<S>(src, x, {lead_b:#04x}, {quote_b:#04x}) }};\n\
              }}\n\
              close(d, e as u64);\n",
