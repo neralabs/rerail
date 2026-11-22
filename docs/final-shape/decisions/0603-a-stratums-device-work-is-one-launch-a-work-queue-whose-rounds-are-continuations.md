@@ -244,7 +244,7 @@ its launches: fewer than its rounds.
   than its levels need once.
 - **What the script writes is read as words, coherent.** A job's descriptor and a scan level are read as the host
   wrote them, and their patched words (a first word, an offset, a count) are read as words from a coherent pointer.
-  Reading the whole descriptor through a coherent pointer (its fields are pointers) crashed the M2's Metal compiler
+  Reading the whole descriptor through a coherent pointer (its fields are pointers) crashed the M1's Metal compiler
   service (`XPC_ERROR_CONNECTION_INTERRUPTED`, at each try). The offline check (`metal` to AIR) did not show it.
   So a table the script places (5c) is an offset from the arena, not a pointer it writes.
 - **Measured:** spark2's CPU backend, 45 of 45; the mini's Metal, 32 of 32.
