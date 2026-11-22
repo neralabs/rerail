@@ -24,6 +24,9 @@ type Result<T> = std::result::Result<T, String>;
 enum S {
     Var(Slot),
     Str(String),
+    /// A membership test, `@equals($k, @set("a", "b"))`: a disjunction of `$k`'s comparisons with strings (a kind
+    /// variable's, `(k = "identifier" ; k = "…")`), the strings as written.
+    Member(Slot, Vec<String>),
     Wild,
     Other,
 }
@@ -34,6 +37,16 @@ impl S {
             TermRef::Var(s) => S::Var(s),
             TermRef::Str(a) => S::Str(v.text(a).to_owned()),
             TermRef::Wild => S::Wild,
+            TermRef::Call(f, args) if v.text(f).trim_start_matches('@') == "equals" => {
+                let mut args = args;
+                match (args.next(), args.next(), args.next()) {
+                    (Some(TermRef::Var(k)), Some(TermRef::Call(set, members)), None) if v.text(set).trim_start_matches('@') == "set" => {
+                        let strs: Option<Vec<String>> = members.map(|m| if let TermRef::Str(a) = m { Some(v.text(a).to_owned()) } else { None }).collect();
+                        strs.map_or(S::Other, |strs| S::Member(k, strs))
+                    }
+                    _ => S::Other,
+                }
+            }
             _ => S::Other,
         }
     }
@@ -249,6 +262,16 @@ impl ProgramPass for Hide {
                                 changed = true;
                                 continue;
                             }
+                            // A membership test of the kind (`bound_name`'s `(pk = "identifier" ; …)`): each string in
+                            // the guest's grammar, as one comparison's.
+                            L::Cmp { l: S::Member(x, set), .. } | L::Cmp { r: S::Member(x, set), .. } if kind_of.contains_key(x) && set.iter().any(|s| qualified(s).is_none()) => {
+                                let label = dialect_label(&kind_of[x]);
+                                for s in set.iter().filter(|s| qualified(s).is_none()) {
+                                    edits.push((i, k, Edit::Str(s.clone(), format!("{label}:{s}"))));
+                                }
+                                changed = true;
+                                continue;
+                            }
                             // Negated as well: `kind(s, k), !def_or_class(k)` over a guest's node
                             // reads the set's qualified copy; the bare set holds none of the guest's kinds.
                             L::Atom(a)
@@ -260,7 +283,7 @@ impl ProgramPass for Hide {
                                     && let Some(g) = kind_of.get(x)
                                     && let Some(rows) = prog.states_facts(a.rel.as_str()).then(|| prog.fact_rows(a.rel.as_str())) =>
                             {
-                                let name = format!("rr_in_{}_rows_{}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"), a.rel);
+                                let name = format!("rr_in_{}_rows_{}", dialect_label(g).replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"), a.rel);
                                 if made.insert(name.clone()) {
                                     let label = dialect_label(g);
                                     let names = rows.iter().filter_map(|row| match row.as_slice() {
@@ -281,9 +304,11 @@ impl ProgramPass for Hide {
                         if let Some(g) = grammar_of(*n)
                             && !set.starts_with("rr_in_")
                         {
-                            let name = format!("rr_in_{g}_{set}");
+                            // Named by the kinds' grammar: a Vue template's pieces (`vue-for-alias`, decision 0597)
+                            // share TypeScript's copy, and a name holds no `-`.
+                            let label = dialect_label(&g);
+                            let name = format!("rr_in_{}_{set}", label.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"));
                             if made.insert(name.clone()) {
-                                let label = dialect_label(&g);
                                 let kinds = all_kindsets.get(set.as_str()).cloned().unwrap_or_default();
                                 kindsets.push((name.clone(), kinds.into_iter().map(|k| if qualified(&k).is_some() { k } else { format!("{label}:{k}") }).collect()));
                             }
@@ -301,7 +326,7 @@ impl ProgramPass for Hide {
                         && all_kindsets.contains_key(set)
                         && let Some(g) = a.args.iter().find_map(|t| t.var().and_then(grammar_of))
                     {
-                        let copy = format!("rr_in_{}_{set}", g.replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"));
+                        let copy = format!("rr_in_{}_{set}", dialect_label(&g).replace(|ch: char| !ch.is_ascii_alphanumeric(), "_"));
                         let prefix = if descendants { front::DESCENDANTS } else { front::AXIS };
                         let name = format!("{prefix}{copy}");
                         if made.insert(name.clone()) {
@@ -366,8 +391,10 @@ impl ProgramPass for Hide {
                     // The string side of the comparison the edit was recorded for: the one that named `from`.
                     (L::Cmp { l, r, .. }, Edit::Str(from, to)) => {
                         for t in [l, r] {
-                            if matches!(t, S::Str(s) if *s == from) {
-                                *t = S::Str(to.clone());
+                            match t {
+                                S::Str(s) if *s == from => *t = S::Str(to.clone()),
+                                S::Member(_, set) => set.iter_mut().filter(|s| **s == from).for_each(|s| *s = to.clone()),
+                                _ => {}
                             }
                         }
                     }
@@ -961,9 +988,12 @@ impl<'a> Writing<'a> {
                 L::Cmp { l, r, .. } => {
                     if let Some(L::Cmp { l: l0, r: r0, .. }) = was.get(node) {
                         for (now, then) in [(l, l0), (r, r0)] {
-                            if let (S::Str(now), S::Str(then)) = (now, then)
-                                && now != then
-                            {
+                            let pairs: Vec<(&String, &String)> = match (now, then) {
+                                (S::Str(now), S::Str(then)) => vec![(now, then)],
+                                (S::Member(_, now), S::Member(_, then)) => now.iter().zip(then).collect(),
+                                _ => Vec::new(),
+                            };
+                            for (now, then) in pairs.into_iter().filter(|(now, then)| now != then) {
                                 cmps.entry(*node).or_default().push((then.clone(), b.atom(now)));
                             }
                         }

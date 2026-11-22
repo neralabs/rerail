@@ -126,7 +126,7 @@ The template's findings stand at the file's lines.
    the cross-pass cycle check. Tests: a context program's reads and exports; a cycle across passes refused, naming it.
    Done (2026-11-21, `logic::contexts`, applied by `rr::parse_version`): the declarations read and checked (a pass
    named is declared, a context's roots exist with a node first, a read of a context is of its exports, an export is
-   derived, a reader names a relation once); each context's instance `rr_cx_<context>_<r>` of every relation its
+   derived, a reader names a relation once); each context's instance `rr_pass_<context>_<r>` of every relation its
    exports reach but its `.from` reads and the views, the library's rules as written (`unparen` in the annotation's
    and the host's own); each reader's `.from` names reading the source's relation; a relation only a context reaches
    is not the host's; a cycle through two passes refused, naming them and its relations. The views are shared until
@@ -165,7 +165,7 @@ The template's findings stand at the file's lines.
      name is declared by its pass), so every reading path makes them: a policy file, a printed program, a pack's
      `combine`. A made pass is completed there with what its instance reaches that it does not hold yet (a part
      lowered in a library's scope holds less than the combined pack); its roots and reads stay its host's.
-   - 2.3: each context's nodes, `rr_cx_<context>_rr_nodes(n)`, are its roots and what is `within` them, a derived
+   - 2.3: each context's nodes, `rr_pass_<context>_rr_nodes(n)`, are its roots and what is `within` them, a derived
      fact; each node variable a positive view atom of its rules reads is joined with them. The views stay read in
      place (the tape); nothing is made of their rows. Tests: `a_host_reading_a_contexts_export_runs_on_every_reading_path`,
      `a_contexts_views_are_its_roots_nodes_alone` (`x: "List[int]"` and `def f(y: float)`: `List`, `int`, never `float` or `x`, alone and in a
@@ -260,7 +260,7 @@ The template's findings stand at the file's lines.
        `CrossingCycles`. A member's rule of the library's context (#923's `anns`, `.context annotation … exports
        ann_list`) reads the library's rules as the context's. A member's own context, made whole in its part, is left
        as it is.
-     - Instances are recognised under a pack's prefix (`p0_rr_cx_quoted_…`). The link renames a member's `.pass`
+     - Instances are recognised under a pack's prefix (`p0_rr_pass_quoted_…`). The link renames a member's `.pass`
        roots and reads as it renames its relations.
      - A view is guarded though a combined program derives it (`kind` from `node`). A guard is on base reads only.
      - `CrossingCycles`, made in rung 2.2, was never run; it runs after `Passes` on both paths.
@@ -311,6 +311,48 @@ The template's findings stand at the file's lines.
    | 5.5 | a Vue template's code is the context `expression`, its identifiers the template's alone; the script is the context `script` | the two passes of a component's code |
    | 5.6 | `<li v-for="item in items">` beside `const item = 1` in the script: no-template-shadow finds the shadow through the script's export | `vue/expression` reads the script's bindings |
    | 5.7 | the Vue pack's policies find on their examples what they found before | the move kept each policy's meaning |
+
+   As built (2026-11-22), rungs 5.1-5.5:
+   - 5.1-5.4 (474213092b, a39939f137): a region root's holes are its host's (`holes`); `python/format-spec`; an
+     f-string's template a text root; `python/sql-template`'s context `sql`. A context guards no token column
+     (`first_token`, `token_after`, …: `contexts::view_nodes`' `TOKENS`), so a hole's value stands at its token.
+   - A context's instances are `rr_pass_<context>_<r>` (`passes_made::PREFIX`): `rr_cx_` was the import components'
+     prefix too (`rr_cx_reach`), and a program reading both read the one as the other.
+   - **A Vue component's code is pieces built on demand.** The registry's `"demand": true` embedding
+     (`languages/vue.json`: `vue-script`, `vue-expression`, `vue-statements`, `vue-params`, `vue-for-alias`,
+     `vue-for-source`, each TypeScript's) is no file's program at its load: `embeds()` and `program_embeds()` leave
+     it out, `demand_embeds()` lists it, and a demand embedding has no places. A rule's `parsed(v, "vue-expression",
+     g)` asks for it at its place (a constant grammar, `rr_embed_req`); the run builds the host's pieces of that
+     kind once (`guests::demanded`, `embed::vue_code`) and gives the one at the place, its `Guest.grammar` the name
+     asked. A piece's code is copied byte for byte between written wrappers (`(E)`, `(P)=>0`, `let [A]=0`), so its
+     nodes stand at the file's bytes; its `docof` is its file's (0431 §4). Test:
+     `a_components_code_is_pieces_made_where_a_rule_asks`; the registry's `a_demand_embedding_is_listed_apart`.
+   - **Grammars that share their kinds join to their label.** `vcode`'s `g` is filled from five roles, each its
+     own grammar name; `hiding::Fact::join` joins two grammars whose kinds' label is one (`kinds_label`, a demand
+     embedding's one dialect) to that label, where it joined them to none and every kind went unqualified. Copies
+     made for a grammar's kinds (`rr_in_<label>_…`: the nearest set's, an axis's, a rows copy) are named by the
+     label, sanitized.
+   - **A membership test of a guest's kind is the guest's.** `(k = "identifier" ; k = "…")` reaches hide as
+     `@equals($k, @set(…))`; each of its strings is qualified as one comparison's (`hide`'s `S::Member`), where
+     they stayed the run language's (Vue's: none), and `tsx/names`' `bound_name` bound nothing in a piece. Test:
+     `a_guest_kind_compared_with_constants_is_the_guests`.
+   - **A scan of a source made on lookup holds its values' rows.** A tape value admitted in the fixpoint is a part
+     of each chunk source (`values::Layered`); an axis's (`within`, made on lookup) gave its parts' rows to a lookup
+     only, at `MADE_AT`, and its scan held the batch's alone. `vcode(_, g, _), has(g, r, S)` planned the axis's scan
+     first and found no piece's node. The scan now makes every part's rows once, numbered past the base's (whose
+     scan made them all), a segment per round of parts admitted, each written once where it is made (0353); a lookup
+     then reads the same rows. Test: `values::tests::a_scan_of_a_source_made_on_lookup_holds_its_values_rows`.
+   - 5.5: `vue/script` (the context `script` over the script blocks: `vscript_decl`, `vscript_option`,
+     `vscript_prop`, by document) and `vue/expression` (the context `expression` over the template's pieces:
+     `vexpr_ref(g, x)`, `vexpr_script_ref(g, x)`, by piece, read through `script`'s `vscript_decl`). The host reads
+     them at each piece's host node (`vtemplate_ref(a, x) :- vcode(a, g, _), vexpr_q_ref(g, x)`): rule 1, no rule
+     reads another context's nodes, so a host rule's `line(r, l)` of a piece's identifier is nothing. Test:
+     `a_components_template_and_script_are_contexts_of_their_own`.
+   - 5.6, found: `vue/code`'s template variables (`tvar`, `tref`, `tbind`, `tfree`, read by seven policies) are host
+     rules over the pieces' nodes; with a context of the component's code in the program they read nothing (rule
+     1). They move into the context `expression`, exported by piece and read at the directive's node. Asking the
+     scripts by a grammar name of their own (`vue-script`) kept the two contexts' grammars apart but never ended
+     hide's rounds (two names, one label); the scripts stay `typescript`.
 6. **Measure.** corpus0 × B-now against the targets (one pack 0.786 T, normal packs 2.428 T, 463 findings,
    d067ec2ebf6f).
 

@@ -6,6 +6,10 @@
 //! - A string a rule parses (`rr_embed_req(at, grammar)`: what a rule's `parsed(at, grammar, r)` or
 //!   `sub_tape(at, grammar, t)` asks for, from the literals that bind `at`, `rr::lower`): a tape value, admitted in
 //!   the program's fixpoint (`admit`, decision 0431 §8).
+//! - A program built on demand (the registry's `demand` embeddings, decision 0597: a Vue component's script and
+//!   template pieces): asked by a rule's `parsed(at, "vue-expression", g)` at its place, never at the file's load; the
+//!   host's pieces of that embedding are built at the first ask, and each is given at its place (`demanded`), a
+//!   program whose nodes are the file's, its grammar the name asked.
 //! - A tape operation's value (`@parse(g, x)`, `@splice`): made by the slice's rounds (`make`), at most [`DEPTH`].
 //!
 //! A string's text:
@@ -147,6 +151,13 @@ pub enum Request {
 fn embedding(host: &Document, name: &str) -> Option<crate::code_rule_dsl::language::Via> {
     let dialect = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts))?;
     dialect.embeds().iter().map(|&(via, _)| via).find(|via| via.id() == name)
+}
+
+/// The embedding built on demand (`GrammarDialect::demand_embeds`, decision 0597) a grammar name names for `host`: one
+/// of that id (`vue-expression`), or one that gives that dialect (`typescript`: a `.vue` file's `<script lang="ts">`).
+fn demand_embedding(host: &Document, name: &str) -> Option<crate::code_rule_dsl::language::Via> {
+    let dialect = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts))?;
+    dialect.demand_embeds().iter().find(|&&(via, d)| via.id() == name || crate::code_rule_dsl::language::label(d) == Some(name)).map(|&(via, _)| via)
 }
 
 /// A grammar name's dialect label, and the fragment it parses (decision 0466: from a node kind, its tapes under its
@@ -333,6 +344,9 @@ pub struct Guests {
     /// made by an embedder from a file whose record is not known.
     pub programs_read: usize,
     pub programs_made: usize,
+    /// The programs built on demand (`GrammarDialect::demand_embeds`, decision 0597), by host and embedding: each at
+    /// its host node, taken when a rule asks for it there. A host's are built at the first ask, all at once.
+    demanded: HashMap<(u32, crate::code_rule_dsl::language::Via), Vec<(i64, Option<crate::code_rule_dsl::embed::Program>)>>,
 }
 
 /// A program to place in its file (`Guests::placed_program`): an embedder's, or one read off the file's record (decision
@@ -542,6 +556,9 @@ impl Guests {
         if let Some(via) = embedding(host, grammar_name) {
             return Ok(self.program(host, at, via, "program")?.map_or(Got::Not, |d| Got::New(Box::new(d))));
         }
+        if let Some(via) = demand_embedding(host, grammar_name) {
+            return Ok(self.demanded(host, at, via, grammar_name)?.map_or(Got::Not, |d| Got::New(Box::new(d))));
+        }
         let Some((label, fragment)) = grammar(grammar_name) else { return Ok(Got::Not) };
         // A tape value is never code to rules that do not name it: its nodes are no file's, so a finding on one has no
         // place, and a context's rules read it (decision 0597). Shown, a string the demand asked for only because its
@@ -600,7 +617,31 @@ impl Guests {
     /// through the segments (`Placement::Segments`). `None` where the host embeds no program (no script, `lang="coffee"`).
     fn program(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, role: &str) -> Result<Option<Document>, String> {
         let Some(program) = embedded(host, &mut |root, source| crate::code_rule_dsl::embed::embedder(via).build(root, source, &|| false).into_iter().collect()).into_iter().next() else { return Ok(None) };
-        self.placed_program(host, Some(at), via, role, Held::made(program))
+        self.placed_program(host, Some(at), via, role, Held::made(program), None)
+    }
+
+    /// The program built on demand through `via` (decision 0597) at host node `at`, asked as `name`: the embedding's id
+    /// (`vue-expression`), or the dialect a program of it is (`typescript`), which its own must then be. The host's
+    /// programs of `via` are built at its first ask, each at the host node over its bytes (`Program::at`), and each is
+    /// made once, when asked: no reader of the file's programs sees one it did not ask for.
+    fn demanded(&mut self, host: &Document, at: i64, via: crate::code_rule_dsl::language::Via, name: &str) -> Result<Option<Document>, String> {
+        let host_key = (at >> 32) as u32;
+        if !self.demanded.contains_key(&(host_key, via)) {
+            let programs = embedded(host, &mut |root, source| crate::code_rule_dsl::embed::embedder(via).build_all(root, source, &|| false));
+            let ids = self.numbering(host)?;
+            let narrow = |b: usize| u32::try_from(b).unwrap_or(u32::MAX);
+            let placed: Vec<_> = programs.into_iter().filter_map(|p| {
+                let bytes = p.at.as_ref().map(|r| [narrow(r.start), narrow(r.end)])?;
+                Some((ids.over(bytes)?, Some(p)))
+            }).collect();
+            self.demanded.insert((host_key, via), placed);
+        }
+        let label_is = |p: &crate::code_rule_dsl::embed::Program| via.id() == name || crate::code_rule_dsl::language::label(p.dialect) == Some(name);
+        let Some(program) = self.demanded.get_mut(&(host_key, via)).and_then(|ps| ps.iter_mut().find(|(a, p)| *a == at && p.as_ref().is_some_and(label_is))).and_then(|(_, p)| p.take()) else {
+            return Ok(None);
+        };
+        self.programs_made += 1;
+        self.placed_program(host, Some(at), via, "program", Held::made(program), Some(name))
     }
 
     /// The files' programs among `docs` (made with the batch, `programs`), as made: their places, under their grammar
@@ -636,7 +677,7 @@ impl Guests {
             if let Some(record) = host.facts.programs.as_ref() {
                 for image in record.iter() {
                     self.programs_read += 1;
-                    out.extend(self.placed_program(host, None, image.via, "program", Held::kept(image))?);
+                    out.extend(self.placed_program(host, None, image.via, "program", Held::kept(image), None)?);
                 }
                 continue;
             }
@@ -662,7 +703,7 @@ impl Guests {
                 };
                 for program in programs {
                     self.programs_made += 1;
-                    out.extend(self.placed_program(host, None, via, "program", Held::made(program))?);
+                    out.extend(self.placed_program(host, None, via, "program", Held::made(program), None)?);
                 }
             }
         }
@@ -670,8 +711,10 @@ impl Guests {
     }
 
     /// The document of `program`, which `via` built from `host`, at host node `at` (else the innermost node over its
-    /// bytes, and made once there); `None` where the run does not see it, or its text does not parse.
-    fn placed_program(&mut self, host: &Document, at: Option<i64>, via: crate::code_rule_dsl::language::Via, role: &str, program: Held) -> Result<Option<Document>, String> {
+    /// bytes, and made once there); `None` where the run does not see it, or its text does not parse. Its grammar is
+    /// its dialect's label, or the name a rule asked for it by (`asked`: `vue-expression`, decision 0597), as its
+    /// `parsed` row says.
+    fn placed_program(&mut self, host: &Document, at: Option<i64>, via: crate::code_rule_dsl::language::Via, role: &str, program: Held, asked: Option<&str>) -> Result<Option<Document>, String> {
         let Some(label) = crate::code_rule_dsl::language::label(program.dialect) else { return Ok(None) };
         let range = if label == self.run { Range::Code } else { Range::Hidden };
         if !self.seen.sees(range) {
@@ -715,7 +758,7 @@ impl Guests {
             core: format!("{}#guest:{}:{at}", host.core, via.id()),
             digest,
             facts,
-            guest: Some(Arc::new(Guest { host: host_key, file, at, grammar: label.to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
+            guest: Some(Arc::new(Guest { host: host_key, file, at, grammar: asked.unwrap_or(label).to_owned(), role: role.to_owned(), root, place, in_file, made: Made::Host })),
             module: host.module.clone(),
             unpackaged: host.unpackaged,
             tape,

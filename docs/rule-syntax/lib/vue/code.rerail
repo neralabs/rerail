@@ -1,6 +1,6 @@
 // vue/code: the JavaScript a component's template holds, and the names it reads.
 // A Vue file's code is parsed as guest trees of its document (core's `parsed`), at the file's own lines and columns:
-//   parsed(raw, "typescript" | "javascript" | "tsx", program)   a <script> block's text, as its lang says
+//   parsed(raw, "typescript", program)       a <script> block's text, a TypeScript program (no lang, js, ts)
 //   parsed(v, "vue-expression", program)      a directive's value or a {{ }}'s text, wrapped as `( … )`
 //   parsed(v, "vue-statements", program)      a v-on value, as statements: @click="n++; done()"
 //   parsed(v, "vue-params", program)          v-slot, #name, slot-scope, scope: parameters, wrapped `( … )=>0`
@@ -32,10 +32,19 @@
 //   ref(r, x, space), ref_site(r, site), decl_site(s, x, site, form, space)
 
 .decl vcode(a: node, g: node, role: symbol)
-vcode(a, g, role) :- vval(a, v), parsed(v, role, g).
-vcode(a, g, role) :- vattr(_, a), child(a, dv, _), kind(dv, "dynamic_directive_value"), child(dv, iv, _),
-    parsed(iv, role, g).
-vcode(i, g, role) :- kind(i, "interpolation"), child(i, raw, _), kind(raw, "raw_text"), parsed(raw, role, g).
+// Each role is a grammar a rule names, so the engine makes the piece (decision 0597: built on demand, `vue-code`'s
+// embeddings); a value holds the piece its directive gives, and asks for none of the others.
+vcode(a, g, "vue-expression") :- vval(a, v), parsed(v, "vue-expression", g).
+vcode(a, g, "vue-statements") :- vval(a, v), parsed(v, "vue-statements", g).
+vcode(a, g, "vue-params") :- vval(a, v), parsed(v, "vue-params", g).
+vcode(a, g, "vue-for-alias") :- vval(a, v), parsed(v, "vue-for-alias", g).
+vcode(a, g, "vue-for-source") :- vval(a, v), parsed(v, "vue-for-source", g).
+vcode(a, g, "vue-expression") :- vattr(_, a), child(a, dv, _), kind(dv, "dynamic_directive_value"), child(dv, iv, _),
+    parsed(iv, "vue-expression", g).
+vcode(i, g, "vue-expression") :- kind(i, "interpolation"), child(i, raw, _), kind(raw, "raw_text"),
+    parsed(raw, "vue-expression", g).
+// A piece's nodes are its file's (decision 0431 §4: a program's `docof` is its file's key), so `docof` joins a piece
+// with the file's markup and its scripts.
 .decl vcode_el(a: node, e: node)
 vcode_el(a, e) :- vattr(e, a), vcode(a, _, _).
 vcode_el(i, e) :- kind(i, "interpolation"), vcode(i, _, _), nearest(i, e, vel_kind), vel(e).

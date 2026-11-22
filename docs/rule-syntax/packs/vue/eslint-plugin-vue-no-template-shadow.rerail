@@ -3,8 +3,8 @@
 .language vue
 .mode steer
 .scope include "**/*.vue"
-#include "vue/component.rerail"
-//   tvar(e, x, id, k), vname(o, g, x, n), vprop_name(c, x, n), vscript(p, setup), vsetup_doc(d), decl_site(…)
+#include "vue/script.rerail"
+//   tvar(e, x, id, k), vsetup_doc(d), vscript_name(d, x), vscript_option_name(d, g, x), vscript_prop_name(d, x)
 
 // eslint-plugin-vue's no-template-shadow: a template variable (v-for alias, slot parameter) whose name is already
 // taken by
@@ -22,10 +22,10 @@ shadow(id, x) :- tvar(e, x, id, _), !option_item("allow", _, x), taken(e, id, x)
 taken(e, id, x) :- tvar(e, x, id, _), within(e, p), tvar(p, x, _, _).
 taken(e, id, x) :- tvar(e, x, id, _), tvar(e, x, j, _), earlier(j, id).
 taken(e, id, x) :- tvar(e, x, id, _), docof(id, d), script_name(d, x).
-// script_name(d, x): what document d's script declares for the template.
+// script_name(d, x): what document d's scripts declare for the template, the context `script`'s exports.
 .decl script_name(d: number, x: symbol)
-script_name(d, x) :- vname(o, g, x, _), group(g), docof(o, d).
-script_name(d, x) :- vprop_name(c, x, _), docof(c, d).
-script_name(d, x) :- vsetup_doc(d), vscript(p, _), docof(p, d), decl_site(p, x, _, _, _).
+script_name(d, x) :- vscript_option_name(d, g, x), group(g).
+script_name(d, x) :- vscript_prop_name(d, x).
+script_name(d, x) :- vsetup_doc(d), vscript_name(d, x).
 .decl group(g: symbol)
 group("props"). group("computed"). group("data"). group("asyncData"). group("methods"). group("setup").

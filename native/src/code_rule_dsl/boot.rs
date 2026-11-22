@@ -140,6 +140,18 @@ pub fn install_languages(tests: bool) {
         (language::Via::Pattern, &embed::rule_pattern::RulePattern),
         #[cfg(feature = "lang-vue")]
         (language::Via::ScriptBlock, &embed::script_block::ScriptBlock),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueScript, &embed::vue_code::SCRIPT),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueExpression, &embed::vue_code::EXPRESSION),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueStatements, &embed::vue_code::STATEMENTS),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueParams, &embed::vue_code::PARAMS),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueForAlias, &embed::vue_code::FOR_ALIAS),
+        #[cfg(feature = "lang-vue")]
+        (language::Via::VueForSource, &embed::vue_code::FOR_SOURCE),
         #[cfg(any(test, feature = "test-hooks"))]
         (language::Via::TestScript, &embed::TestScript),
     ]);

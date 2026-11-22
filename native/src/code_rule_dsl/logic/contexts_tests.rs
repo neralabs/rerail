@@ -37,7 +37,7 @@ fn refusal(text: &str) -> String {
     }
 }
 
-/// A context holds its own instance of each relation its exports reach (`rr_cx_annotation_name_node`, the library
+/// A context holds its own instance of each relation its exports reach (`rr_pass_annotation_name_node`, the library
 /// rule as written), reads the host's relation it names `.from` (`bound`), and the host reads the context's export
 /// through its `.from` (`used`). The host keeps the relations it reaches itself; one only the context reaches
 /// (`ann_names`) is the context's alone.
@@ -45,15 +45,15 @@ fn refusal(text: &str) -> String {
 fn a_context_holds_its_own_instance_of_the_rules_its_exports_reach() {
     let v = parse_version(PROGRAM).unwrap();
     let all = v.show();
-    let name = rules_of(&v, "rr_cx_annotation_name_node");
+    let name = rules_of(&v, "rr_pass_annotation_name_node");
     assert!(name.len() == 1 && name[0].contains("kind($n, \"identifier\")"), "{all}");
-    let names = rules_of(&v, "rr_cx_annotation_ann_names");
-    assert!(names.len() == 1 && names[0].contains("rr_cx_annotation_name_node(") && names[0].contains(" bound(") && !names[0].contains("rr_cx_annotation_bound"), "{all}");
+    let names = rules_of(&v, "rr_pass_annotation_ann_names");
+    assert!(names.len() == 1 && names[0].contains("rr_pass_annotation_name_node(") && names[0].contains(" bound(") && !names[0].contains("rr_pass_annotation_bound"), "{all}");
     assert!(rules_of(&v, "name_node").len() == 1 && rules_of(&v, "bound").iter().all(|r| r.contains(" name_node(")), "the host's own: {all}");
-    assert!(rules_of(&v, "used").iter().all(|r| r.contains("rr_cx_annotation_ann_names(")), "{all}");
+    assert!(rules_of(&v, "used").iter().all(|r| r.contains("rr_pass_annotation_ann_names(")), "{all}");
     assert!(rules_of(&v, "ann_names").is_empty() && !v.declares("ann_names"), "the context's alone: {all}");
-    assert!(v.declares("rr_cx_annotation_ann_names") && v.declares("rr_cx_annotation_name_node"), "{all}");
-    assert!(rules_of(&v, "rr_cx_annotation_bound").is_empty(), "read from the host, not made again: {all}");
+    assert!(v.declares("rr_pass_annotation_ann_names") && v.declares("rr_pass_annotation_name_node"), "{all}");
+    assert!(rules_of(&v, "rr_pass_annotation_bound").is_empty(), "read from the host, not made again: {all}");
 }
 
 /// A read under a name of the reader's own (`as`).
@@ -61,7 +61,7 @@ fn a_context_holds_its_own_instance_of_the_rules_its_exports_reach() {
 fn a_pass_reads_another_under_a_name_of_its_own() {
     let text = PROGRAM.replace("used(x) :- ann_names(x).", "used(x) :- quoted(x).").replace(".from annotation ann_names", ".from annotation ann_names as quoted");
     let v = parse_version(&text).unwrap();
-    assert!(rules_of(&v, "used").iter().all(|r| r.contains("rr_cx_annotation_ann_names(")), "{}", v.show());
+    assert!(rules_of(&v, "used").iter().all(|r| r.contains("rr_pass_annotation_ann_names(")), "{}", v.show());
 }
 
 /// A program that declares no pass is read as it is.
@@ -85,7 +85,7 @@ fn a_read_of_what_a_context_does_not_export_is_refused() {
 fn a_cycle_through_two_passes_is_refused_naming_it() {
     let text = PROGRAM.replace(".from python bound for annotation", ".from python bound, used for annotation").replace("ann_names(x) :- name_node(n), text(n, x), bound(x).", "ann_names(x) :- name_node(n), text(n, x), bound(x).\nann_names(x) :- used(x).");
     let e = refusal(&text);
-    assert!(e.contains("a cycle through the passes annotation and python") && e.contains("rr_cx_annotation_ann_names") && e.contains("used"), "{e}");
+    assert!(e.contains("a cycle through the passes annotation and python") && e.contains("rr_pass_annotation_ann_names") && e.contains("used"), "{e}");
 }
 
 /// What a declaration names must be there: a context's host and roots, a read's passes.
@@ -123,7 +123,7 @@ fn a_read_of_a_pass_made_already_reads_its_instance() {
     let made = crate::code_rule_dsl::logic::rr::print_version(&parse_version(PROGRAM).unwrap()).unwrap();
     let text = format!("{made}\n.decl late(x: symbol)\nlate(x) :- names(x).\n.output late\n.from annotation ann_names as names\n.from annotation ann_names as names\n");
     let v = parse_version(&text).unwrap();
-    assert!(rules_of(&v, "late").iter().all(|r| r.contains("rr_cx_annotation_ann_names(")), "{}", v.show());
+    assert!(rules_of(&v, "late").iter().all(|r| r.contains("rr_pass_annotation_ann_names(")), "{}", v.show());
     let e = refusal(&format!("{made}\n.from python bound for annotation\n"));
     assert!(e.contains("annotation is made already"), "{e}");
 }
@@ -138,7 +138,7 @@ fn a_context_declared_twice_exports_both_declarations() {
         ".decl ann_bound(x: symbol)\nann_bound(x) :- bound(x).\n.context annotation of python roots ann_root exports ann_names\n.context annotation of python roots ann_root exports ann_bound",
     ) + ".from annotation ann_bound as late\n.decl later(x: symbol)\nlater(x) :- late(x).\n.output later\n";
     let v = parse_version(&text).unwrap();
-    assert!(rules_of(&v, "later").iter().all(|r| r.contains("rr_cx_annotation_ann_bound(")), "{}", v.show());
+    assert!(rules_of(&v, "later").iter().all(|r| r.contains("rr_pass_annotation_ann_bound(")), "{}", v.show());
     let settings = crate::code_rule_dsl::logic::program_image::fields::ProgramFields::settings(&*v);
     assert_eq!(settings.iter().filter(|(k, _)| k == "pass").count(), 1, "{settings:?}");
     let e = refusal(&PROGRAM.replace(".context annotation of python roots ann_root exports ann_names", ".context annotation of python roots ann_root exports ann_names\n.context annotation of python roots name_node exports ann_names"));
@@ -151,8 +151,8 @@ fn a_context_declared_twice_exports_both_declarations() {
 fn a_contexts_read_of_its_hosts_node_binds_only_its_own() {
     let text = PROGRAM.replace(".input kind, text", ".decl host_node(n: node, h: node)\n.input kind, text, host_node").replace("ann_names(x) :- name_node(n), text(n, x), bound(x).", "ann_names(x) :- name_node(n), host_node(n, h), text(n, x), bound(x).");
     let v = parse_version(&text).unwrap();
-    let names = rules_of(&v, "rr_cx_annotation_ann_names");
-    assert!(names.len() == 1 && names[0].contains("rr_cx_annotation_rr_nodes($n)") && !names[0].contains("rr_cx_annotation_rr_nodes($h)"), "{}", v.show());
+    let names = rules_of(&v, "rr_pass_annotation_ann_names");
+    assert!(names.len() == 1 && names[0].contains("rr_pass_annotation_rr_nodes($n)") && !names[0].contains("rr_pass_annotation_rr_nodes($h)"), "{}", v.show());
 }
 
 /// 0597 step 3, rung 3.3: a host relation that counts the context's rows says so in a rule of its own (rule 5), reading
@@ -162,10 +162,10 @@ fn a_contexts_read_of_its_hosts_node_binds_only_its_own() {
 fn a_hosts_rule_reading_a_contexts_export_is_no_rule_of_the_context() {
     let text = PROGRAM.replace("exports ann_names", "exports ann_names, name_node").replace("name_node(n) :- kind(n, \"identifier\").", "name_node(n) :- kind(n, \"identifier\").\nname_node(n) :- guest_names(n).") + ".from annotation name_node as guest_names\n";
     let v = parse_version(&text).unwrap();
-    let inner = rules_of(&v, "rr_cx_annotation_name_node");
+    let inner = rules_of(&v, "rr_pass_annotation_name_node");
     assert!(inner.len() == 1 && inner[0].contains("kind($n, \"identifier\")"), "{}", v.show());
     let host = rules_of(&v, "name_node");
-    assert!(host.len() == 2 && host.iter().any(|r| r.contains("rr_cx_annotation_name_node($n)")), "{}", v.show());
+    assert!(host.len() == 2 && host.iter().any(|r| r.contains("rr_pass_annotation_name_node($n)")), "{}", v.show());
 }
 
 /// Two exports, one read by the other's rule: the host reads both by their own names (`.from annotation ann_in`), so
@@ -174,9 +174,9 @@ fn a_hosts_rule_reading_a_contexts_export_is_no_rule_of_the_context() {
 fn a_contexts_rule_reading_an_export_by_its_own_name_is_the_contexts() {
     let text = PROGRAM.replace("exports ann_names", "exports ann_names, ann_short").replace(".output used, bound", ".decl ann_short(x: symbol)\nann_short(x) :- ann_names(x), !bound(x).\n.decl short(x: symbol)\nshort(x) :- ann_short(x).\n.output used, bound, short") + ".from annotation ann_short\n";
     let v = parse_version(&text).unwrap();
-    let inner = rules_of(&v, "rr_cx_annotation_ann_short");
-    assert!(inner.len() == 1 && inner[0].contains("rr_cx_annotation_ann_names("), "{}", v.show());
-    assert!(rules_of(&v, "short").iter().all(|r| r.contains("rr_cx_annotation_ann_short(")), "{}", v.show());
+    let inner = rules_of(&v, "rr_pass_annotation_ann_short");
+    assert!(inner.len() == 1 && inner[0].contains("rr_pass_annotation_ann_names("), "{}", v.show());
+    assert!(rules_of(&v, "short").iter().all(|r| r.contains("rr_pass_annotation_ann_short(")), "{}", v.show());
 }
 
 /// A program of no `.language` (a test's, a typing phase's) is of the language its library is written for: the host
@@ -184,5 +184,5 @@ fn a_contexts_rule_reading_an_export_by_its_own_name_is_the_contexts() {
 #[test]
 fn a_program_of_no_language_is_its_librarys_host() {
     let v = parse_version(&PROGRAM.replace(".language python\n", "")).unwrap();
-    assert!(rules_of(&v, "used").iter().all(|r| r.contains("rr_cx_annotation_ann_names(")), "{}", v.show());
+    assert!(rules_of(&v, "used").iter().all(|r| r.contains("rr_pass_annotation_ann_names(")), "{}", v.show());
 }

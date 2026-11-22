@@ -73,6 +73,7 @@ pub mod code_rule_dsl {
     pub mod embed {
         pub use rerail_lang::code_rule_dsl::embed::*;
         pub mod script_block;
+        pub mod vue_code;
         #[allow(unused_imports)]
         #[cfg(any(test, feature = "test-hooks"))]
         pub(crate) use crate::code_rule_dsl::embed::test_script::TestScript;

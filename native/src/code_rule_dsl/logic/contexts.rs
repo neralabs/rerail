@@ -13,7 +13,7 @@
 //! ```
 //!
 //! A context's relations are those its exports reach through the rules, but for what it reads `.from` another pass
-//! and the views (relations no rule derives): each is the context's own instance of the rules, `rr_cx_<context>_<r>`,
+//! and the views (relations no rule derives): each is the context's own instance of the rules, `rr_pass_<context>_<r>`,
 //! the library's rules included as they are. A reader's `.from` names read the source pass's relation. The host keeps
 //! the relations it reaches itself; one only a context reaches is the context's alone. A cycle through two passes is
 //! refused, naming its relations: the passes run in an order (0597 rule 4).
@@ -228,7 +228,7 @@ pub fn declared(v: &Version) -> Result<Declared, Error> {
     // a context left with none is no pass. One a rule reads that nothing derives, or one never declared, is refused
     // below.
     let read_rels: BTreeSet<&str> = v.rules().flat_map(|r| r.body().filter_map(|l| l.atom()).map(|a| v.rel_name(a.rel())).collect::<Vec<_>>()).collect();
-    // A made pass's instance is derived under a pack's prefix too (`p1_rr_cx_annotation_ann_list`, `of_a_context`).
+    // A made pass's instance is derived under a pack's prefix too (`p1_rr_pass_annotation_ann_list`, `of_a_context`).
     let heads: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).collect();
     let held = |name: &str| heads.iter().any(|h| *h == name || h.strip_suffix(name).is_some_and(|p| p.ends_with('_')));
     let mut dropped: BTreeSet<(String, String)> = BTreeSet::new();
@@ -340,8 +340,8 @@ fn plan(v: &Version, d: &Declared) -> Plan {
         let mut todo: Vec<String> = Vec::new();
         if c.made {
             // Its instance as made: what its rules read. A pack's member's own context (all its instance under the
-            // member's prefix, `p0_rr_cx_quoted_…`) was made whole in its part; a library's context a member's rule
-            // joins (`p1_rr_cx_annotation_ann_list` beside `rr_cx_annotation_…`) is completed here.
+            // member's prefix, `p0_rr_pass_quoted_…`) was made whole in its part; a library's context a member's rule
+            // joins (`p1_rr_pass_annotation_ann_list` beside `rr_pass_annotation_…`) is completed here.
             let heads: BTreeSet<&str> = v.rules().map(|r| v.rel_name(r.head().rel())).filter(|h| of_a_context(h) && d.pass_of(h) == c.name).collect();
             if !heads.iter().any(|h| h.starts_with(PREFIX)) {
                 new.insert(c.name.clone(), set);

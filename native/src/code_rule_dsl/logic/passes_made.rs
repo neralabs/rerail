@@ -6,7 +6,7 @@ use super::program_image::Version;
 use super::program_image::fields::ProgramFields;
 
 /// The prefix of a context's instance of a relation (`contexts::instance`).
-pub const PREFIX: &str = "rr_cx_";
+pub const PREFIX: &str = "rr_pass_";
 
 /// Whether relation `rel` is a context's instance of one: its name is an instance's, under any prefix a later pass
 /// gives a program's relations (a pack's `p0_`, a file-local part's `fl<k>_`).

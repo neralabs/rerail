@@ -68,7 +68,8 @@ impl Fact {
         let mut changed = (other.scoped && !self.scoped) || (other.definite && !self.definite);
         self.scoped |= other.scoped;
         self.definite |= other.definite;
-        // Two grammars join to none known (`""`).
+        // Two grammars join to their kinds' grammar where they share it (`vue-expression` and `vue-statements`, a Vue
+        // template's pieces, are TypeScript's, decision 0597), else to none known (`""`).
         match (&self.grammar, &other.grammar) {
             (_, None) => {}
             (None, Some(b)) => {
@@ -76,6 +77,11 @@ impl Fact {
                 changed = true;
             }
             (Some(a), Some(b)) if a == b || a.is_empty() => {}
+            (Some(a), Some(b)) if !b.is_empty() && dialect_label(a) == dialect_label(b) => {
+                let label = dialect_label(a).to_owned();
+                changed |= *a != label;
+                self.grammar = Some(label);
+            }
             (Some(_), Some(_)) => {
                 self.grammar = Some(String::new());
                 changed = true;

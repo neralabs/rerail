@@ -2601,10 +2601,10 @@ seen(e) :- host_inner(e).
 ";
     let v = parse_version(text).unwrap();
     let all = v.show();
-    assert!(!rules_of(&v, "rr_cx_quoted_unparen").is_empty(), "the context's own unparen: {all}");
-    assert!(rules_of(&v, "rr_cx_quoted_quoted_inner").iter().all(|r| r.contains("rr_cx_quoted_unparen(") && r.contains(" quoted_root(")), "{all}");
+    assert!(!rules_of(&v, "rr_pass_quoted_unparen").is_empty(), "the context's own unparen: {all}");
+    assert!(rules_of(&v, "rr_pass_quoted_quoted_inner").iter().all(|r| r.contains("rr_pass_quoted_unparen(") && r.contains(" quoted_root(")), "{all}");
     assert!(!rules_of(&v, "unparen").is_empty() && rules_of(&v, "host_inner").iter().all(|r| r.contains(" unparen(")), "the host's own: {all}");
-    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_cx_quoted_quoted_inner(")), "{all}");
+    assert!(rules_of(&v, "seen").iter().any(|r| r.contains("rr_pass_quoted_quoted_inner(")), "{all}");
 }
 
 // ---- decision 0597: a guest context is a pass of its own rules (step 2's ladder) ----
@@ -2889,12 +2889,12 @@ fn a_run_with_no_root_runs_no_stratum_of_the_context() {
         assert!(status.success());
         // part, head, cpu_s, work (rows into the head's steps), plans
         let heads = std::fs::read_to_string(profile.join("heads.tsv")).unwrap();
-        heads.lines().skip(1).filter(|l| l.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_cx_quoted_"))).map(str::to_owned).collect()
+        heads.lines().skip(1).filter(|l| l.split('\t').nth(1).is_some_and(|h| h.starts_with("rr_pass_quoted_"))).map(str::to_owned).collect()
     };
     let none = ran("x = 1\ndef f(y: int): ...\n");
     assert!(none.is_empty(), "no root, no rule of the context runs: {none:?}");
     let some = ran("x: \"List[int]\" = []\n");
-    assert!(some.iter().any(|h| h.split('\t').nth(1) == Some("rr_cx_quoted_ann_ident")), "with a root they run: {some:?}");
+    assert!(some.iter().any(|h| h.split('\t').nth(1) == Some("rr_pass_quoted_ann_ident")), "with a root they run: {some:?}");
 }
 
 #[test]
@@ -2920,3 +2920,85 @@ fn a_contexts_rows_on_metal_are_the_cpus() {
         assert_eq!(metal, cpu, "{name}: the device's rows are the CPU's");
     }
 }
+
+/// A Vue program for `alone_and_together`'s second: one that reads the component and makes no context.
+const VUE_PLAIN: &str = ".language vue\n#include \"vue/component.rerail\"\n.decl setup(d: number)\nsetup(d) :- vsetup_doc(d).\n.output setup\n";
+
+/// 0597 rung 5.5: a component's code is two contexts. `script` (vue/script) over its script blocks exports what they
+/// declare; `expression` (vue/expression) over the template's code exports the names each piece reads, the template's
+/// alone (the script's `base` is never one), and which of them a script declares, read of `script`'s export. The host
+/// reads them by each piece's host node (rule 1: no rule sees another context's nodes), here its line.
+#[test]
+fn a_components_template_and_script_are_contexts_of_their_own() {
+    let file = ("a.vue", "<script setup>\nconst count = base\nfunction inc() {}\n</script>\n<template>\n  <button @click=\"inc\">{{ count + other }}</button>\n</template>\n");
+    let program = "\
+.language vue
+#include \"vue/expression.rerail\"
+.decl names(x: symbol)
+names(x) :- vscript_name(_, x).
+.decl reads(x: symbol, l: number)
+reads(x, l) :- vtemplate_ref(a, x), line(a, l).
+.decl script_reads(x: symbol)
+script_reads(x) :- vtemplate_script_ref(_, x).
+.output names, reads, script_reads
+";
+    let row = |r: &[&str]| r.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+    let sorted = |(mut a, mut b): (Vec<Vec<String>>, Vec<Vec<String>>)| {
+        a.sort();
+        b.sort();
+        assert_eq!(b, a);
+        a
+    };
+    assert_eq!(sorted(alone_and_together("vue-names", file, program, VUE_PLAIN, "names")), [row(&["count"]), row(&["inc"])]);
+    assert_eq!(sorted(alone_and_together("vue-reads", file, program, VUE_PLAIN, "reads")), [row(&["count", "6"]), row(&["inc", "6"]), row(&["other", "6"])]);
+    assert_eq!(sorted(alone_and_together("vue-script-reads", file, program, VUE_PLAIN, "script_reads")), [row(&["count"]), row(&["inc"])]);
+}
+
+/// 0597 rung 5.6: no-template-shadow reads a `<script setup>`'s names of the context `script`: `item` of the script
+/// shadowed by a v-for's alias is found; a name only the template reads (`items`) is no shadow.
+#[test]
+fn no_template_shadow_reads_the_scripts_names_of_its_context() {
+    let policy = crate::source_tree::native().join("../docs/rule-syntax/packs/vue/eslint-plugin-vue-no-template-shadow.rerail");
+    let policy = std::fs::read_to_string(policy).unwrap();
+    assert!(policy.contains("vscript_name"), "the policy reads the script's names of its context");
+    let file = ("a.vue", "<script setup>\nconst item = 1\n</script>\n<template>\n  <ul><li v-for=\"item in items\">{{ item }}</li><li v-for=\"x in items\">{{ x }}</li></ul>\n</template>\n");
+    let (found, together) = alone_and_together("vue-shadow", file, &policy, VUE_PLAIN, "shadow");
+    assert_eq!(together, found);
+    assert_eq!(found.len(), 1, "{found:?}");
+    assert_eq!(found[0].last().map(String::as_str), Some("item"), "{found:?}");
+}
+
+/// 0597 step 5: a Vue component's code is pieces of their own, made where a rule asks for one (`demand` embeddings,
+/// `embed::vue_code`): each `<script>`, `{{ }}`, directive value and v-for part a TypeScript program at its host node,
+/// its nodes at the file's lines and its `docof` the file's (decision 0431 §4). A v-on value is statements, never an
+/// expression; v-for's value is its alias and its list.
+#[test]
+fn a_components_code_is_pieces_made_where_a_rule_asks() {
+    let file = ("a.vue", "<script setup>\nconst count = base\nfunction inc() {}\n</script>\n<template>\n  <button @click=\"inc\">{{ count + other }}</button>\n  <li v-for=\"(item, i) in items\" :key=\"item\">{{ i }}</li>\n</template>\n");
+    let program = "\
+.language vue
+#include \"vue/component.rerail\"
+.decl pieces(r: symbol, x: symbol, l: number)
+pieces(r, x, l) :- vcode(_, g, r), within(i, g), kind(i, \"identifier\"), text(i, x), line(i, l).
+.decl files(f: symbol)
+files(f) :- vcode(_, g, _), docof(g, d), doc(d, f, _).
+files(f) :- vscript(p, _), docof(p, d), doc(d, f, _).
+.decl names(x: symbol)
+names(x) :- vscript(p, \"true\"), decl_site(p, x, _, _, _).
+.output pieces, files, names
+";
+    let row = |r: &[&str]| r.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+    let sorted = |(mut a, mut b): (Vec<Vec<String>>, Vec<Vec<String>>)| {
+        a.sort();
+        b.sort();
+        assert_eq!(b, a);
+        a
+    };
+    let pieces = sorted(alone_and_together("vue-pieces", file, program, VUE_PLAIN, "pieces"));
+    let want = [["vue-expression", "count", "6"], ["vue-expression", "i", "7"], ["vue-expression", "item", "7"], ["vue-expression", "other", "6"], ["vue-for-alias", "i", "7"], ["vue-for-alias", "item", "7"], ["vue-for-source", "items", "7"], ["vue-statements", "inc", "6"]];
+    assert_eq!(pieces, want.map(|r| row(&r)));
+    assert_eq!(sorted(alone_and_together("vue-files", file, program, VUE_PLAIN, "files")), [row(&["a.vue"])]);
+    assert_eq!(sorted(alone_and_together("vue-names", file, program, VUE_PLAIN, "names")), [row(&["count"]), row(&["inc"])]);
+}
+
+

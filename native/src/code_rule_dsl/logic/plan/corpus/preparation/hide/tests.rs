@@ -46,6 +46,23 @@
         assert!(out.iter().any(|r| r.contains("!rr_in_python_rows_def_or_class(")), "{out:?}");
     }
 
+    /// A guest node's kind compared with constants (`kind(p, k), (k = "identifier" ; …)`, tsx/names' `bound_name`) is
+    /// compared with the guest grammar's kinds, the node's grammar known as a context's are (decision 0597): left
+    /// unqualified, each is the run language's kind, or none (a Vue run's -1), and a v-for alias bound nothing.
+    #[test]
+    fn a_guest_kind_compared_with_constants_is_the_guests() {
+        let v = hidden(
+            concat!(
+                ".decl parsed(s: node, g: symbol, r: node)\n.input parsed\n",
+                ".decl out(x: symbol)\n.output out\n",
+                "out(x) :- parsed(_, \"typescript\", g), within(p, g), kind(p, k), (k = \"identifier\" ; k = \"shorthand_property_identifier_pattern\"), text(p, x).\n",
+            ),
+            1 << 30,
+        );
+        let out = rules_of(&v, "out");
+        assert!(out.iter().all(|r| r.contains("\"typescript:")), "{out:?}");
+    }
+
     /// A relation read with guest variables in two columns its rules bind apart is copied once, with both seeded:
     /// copying the copy lost the first seed, so its reader read it at that column again, and schema-architecture's
     /// `rr_agg36` nested `rr_in_annotation_1_rr_in_annotation_0_…` without end.
@@ -128,7 +145,7 @@
             crate::code_rule_dsl::logic::plan::corpus::hiding::BOUND,
         );
         let axes: Vec<String> = v.rules().flat_map(|r| v.show_rule(r).split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| is_axis(w)).map(str::to_owned).collect::<Vec<_>>()).collect();
-        assert!(axes.iter().any(|r| r.contains("rr_in_annotation_")), "the clone reads the annotation's axis: {axes:?}");
+        assert!(axes.iter().any(|r| r.contains("rr_in_python_")), "the clone reads the axis in the annotation's kinds (Python's): {axes:?}");
         let sets = ProgramFields::kindsets(&*v);
         let inputs: Vec<String> = v.inputs().map(|a| v.text(a).to_owned()).filter(|r| is_axis(r)).collect();
         for rel in axes.iter().chain(&inputs) {
@@ -138,7 +155,7 @@
     }
 
     /// 0597 rung 2.4: what a context holds is its own pass's, never widened, copied or narrowed for the host's
-    /// annotations. Hidden at the shown bound, the context's instances (`rr_cx_quoted_*`) get no `rr_in_annotation_`
+    /// annotations. Hidden at the shown bound, the context's instances (`rr_pass_quoted_*`) get no `rr_in_annotation_`
     /// copy, and the host's `ident`, read by both passes as written, stays the host's: no rule of it takes the
     /// annotations in. Step 4 removed the fold and the narrow copies; neither name is made.
     #[test]
@@ -179,6 +196,6 @@
         let all: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
         let names: Vec<String> = v.declared_names().iter().map(|n| n.to_string()).chain(v.rules().map(|r| v.rel_name(r.head().rel()).to_owned())).collect();
         assert!(names.iter().all(|n| !n.starts_with("rr_in_annotation") && !n.starts_with("rr_narrow_")), "no copy: {all:#?}");
-        assert!(all.iter().any(|r| r.starts_with("rr_cx_quoted_ann_ident(")), "the context's own: {all:#?}");
+        assert!(all.iter().any(|r| r.starts_with("rr_pass_quoted_ann_ident(")), "the context's own: {all:#?}");
         assert!(rules_of(&v, "ident").len() == 1, "the host's ident is its rule as written, no clone: {all:#?}");
     }
