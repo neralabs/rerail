@@ -410,7 +410,10 @@ impl<'a> G<'a> {
     /// test; then a `match` on the word, a kind's test a guard of its arm. `exits`: marks that
     /// leave the decision (`exit`, the code after it takes them, or the level ends there). None
     /// passes: `none`. An arm reached by two tests apart is numbered, its code written once.
-    fn decide(&self, arms: &[(Vec<First>, String)], exits: &[usize], unmarked: &[usize], exit: &str, none: &str, pad: &str) -> String {
+    /// `gated`: exits where the level ends at a hidden mark that ends levels and has questions,
+    /// tested only where the caller's level is the mark's (`asks`): elsewhere (inside
+    /// parentheses) the mark is passed, as the lean parser asks `asi` only where `stmt` is set.
+    fn decide(&self, arms: &[(Vec<First>, String)], exits: &[usize], unmarked: &[usize], gated: &[usize], exit: &str, none: &str, pad: &str) -> String {
         let n = arms.len();
         let mut marks: Vec<(usize, Option<String>, usize)> = Vec::new();
         let mut words: Vec<(u8, Option<String>, usize)> = Vec::new();
@@ -439,6 +442,7 @@ impl<'a> G<'a> {
         for (m, f, t) in &marks {
             let c = guard(f, format!("self.m_{}()", ident(&self.x.marks[*m].name)));
             let c = if *t == n && unmarked.contains(m) { format!("!self.marked && {c}") } else { c };
+            let c = if *t == n && gated.contains(m) { format!("self.asks >> {m} & 1 != 0 && {c}") } else { c };
             match mg.last_mut() {
                 Some((cs, tt)) if tt == t => cs.push(c),
                 _ => mg.push((vec![c], *t)),
@@ -574,6 +578,13 @@ impl<'a> G<'a> {
         let first: Vec<usize> = fr.iter().filter_map(|t| if let Test::Mark(m) = t.0 { Some(m) } else { None }).collect();
         let ending = self.ending();
         Ok(self.follow(rule)?.into_iter().filter(|m| !first.contains(m) && ending.contains(m) && self.x.marks[*m].hidden).collect())
+    }
+
+    /// The exits of `ex` where the level ends at a hidden mark that ends levels and has
+    /// questions: those `decide` tests only where `asks` has the mark (`gated`).
+    fn gated(&self, ex: &[(usize, bool)]) -> Vec<usize> {
+        let ending = self.ending();
+        ex.iter().filter(|e| e.1 && ending.contains(&e.0) && self.x.marks[e.0].hidden && self.asks(e.0)).map(|e| e.0).collect()
     }
 
     /// Whether mark `m`'s name has questions a decision asks (`refuses`, `loses`).
@@ -766,7 +777,7 @@ impl<'a> G<'a> {
                 let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = self.after_mark(rest, rule)?;
-                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, "", "", pad)
+                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, &self.gated(&ex), "", "", pad)
             }
             Gram::Star(a) | Gram::Plus(a) => {
                 let mut out = String::new();
@@ -780,7 +791,7 @@ impl<'a> G<'a> {
                 let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = self.after_mark(rest, rule)?;
-                let d = self.asking(&arms, &ex, &deeper) + &self.decide(&arms, &exits, &unmarked, "break;\n", "break;\n", &deeper);
+                let d = self.asking(&arms, &ex, &deeper) + &self.decide(&arms, &exits, &unmarked, &self.gated(&ex), "break;\n", "break;\n", &deeper);
                 let _ = write!(out, "{pad}loop {{\n{d}{pad}}}\n");
                 out
             }
@@ -795,7 +806,7 @@ impl<'a> G<'a> {
                 let exits: Vec<usize> = ex.iter().map(|e| e.0).collect();
                 let arms: Vec<(Vec<First>, String)> = arms.into_iter().map(|(f, b, _)| (f, b)).collect();
                 let unmarked = if empty.is_some() { self.after_mark(rest, rule)? } else { Vec::new() };
-                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, &none, &none, pad)
+                self.asking(&arms, &ex, pad) + &self.decide(&arms, &exits, &unmarked, &self.gated(&ex), &none, &none, pad)
             }
             Gram::Field(f, a) => {
                 let mut out = self.code(a, rest, rule, pad)?;
@@ -881,7 +892,7 @@ impl<'a> G<'a> {
             arms.push((self.first(a)?.0, body));
         }
         let none = "return self.refuse();\n";
-        Ok(self.asking(&arms, &[], pad) + &self.decide(&arms, &[], &[], none, none, pad))
+        Ok(self.asking(&arms, &[], pad) + &self.decide(&arms, &[], &[], &[], none, none, pad))
     }
 
     /// A token element: its test and its leaf's kind.
@@ -914,9 +925,9 @@ impl<'a> G<'a> {
     }
 
     fn rule(&self, name: &str) -> Result<String, String> {
-        let (body, node, nested, whole) = match self.rules[name] {
-            Stmt::Node { body, nested, whole, .. } => (body, true, *nested, *whole),
-            Stmt::Choice { body, nested, .. } => (body, false, *nested, false),
+        let (body, node, nested, whole, padded) = match self.rules[name] {
+            Stmt::Node { body, nested, whole, padded, .. } => (body, true, *nested, *whole, *padded),
+            Stmt::Choice { body, nested, .. } => (body, false, *nested, false, false),
             _ => unreachable!(),
         };
         let root = self.order.first() == Some(&name);
@@ -927,7 +938,7 @@ impl<'a> G<'a> {
         if root {
             let _ = writeln!(out, "        self.open_root({});", self.kind_const(name)?);
             out.push_str(&self.code(body, &[], name, "        ")?);
-            let _ = writeln!(out, "        self.close_root({whole})");
+            let _ = writeln!(out, "        self.close_root({whole}, {padded})");
         } else {
             if node {
                 // A kind of the grammar's own (no tape kind, always retagged inside): a placeholder until its retag.
@@ -1184,8 +1195,10 @@ impl<'a> G<'a> {
             // Asked wherever a decision tests it (`refuses`, then `loses`): at a level that takes
             // it, always; where the level may end at it (`end`), where the caller's level is the
             // mark's (`asks`, the lean parser's `stmt`).
-            let (refuses, loses) = (qs(|d| d.refuses), qs(|d| d.loses));
-            if !refuses.is_empty() || !loses.is_empty() {
+            // `loses since`: the first extra pending moved (`move_first`), apart from the others.
+            let (refuses, all) = (qs(|d| d.refuses), qs(|d| d.loses));
+            let (moves, loses): (Vec<_>, Vec<_>) = all.into_iter().partition(|q| q.since);
+            if !refuses.is_empty() || !loses.is_empty() || !moves.is_empty() {
                 let mut ask = String::new();
                 if !refuses.is_empty() {
                     let t = self.gap_test(&refuses, &format!("refuses_{n}"), true, &mut fns)?;
@@ -1194,6 +1207,10 @@ impl<'a> G<'a> {
                 if !loses.is_empty() {
                     let t = self.gap_test(&loses, &format!("loses_{n}"), false, &mut fns)?;
                     let _ = write!(ask, "        if {t} {{\n            self.lose_pending();\n        }}\n");
+                }
+                if !moves.is_empty() {
+                    let t = self.gap_test(&moves, &format!("moves_{n}"), false, &mut fns)?;
+                    let _ = write!(ask, "        if {t} {{\n            self.move_first();\n        }}\n");
                 }
                 let _ = writeln!(out, "    /// Mark `{}`'s questions, where a decision tests it (`end`: where the level may end at it).\n    fn ask_{n}(&mut self, end: bool) -> R {{\n        if end && self.asks >> {order} & 1 == 0 {{\n            return Ok(());\n        }}\n{ask}        Ok(())\n    }}\n", m.name);
             }
@@ -1212,13 +1229,21 @@ impl<'a> G<'a> {
     /// `split_R` a reader; `word_in`, a piece's word; `KINDS`, a byte's record kind.
     fn splits(&self, out: &mut String, free: &mut String) -> Result<(), String> {
         let mut at = String::new();
+        // A string's region a template's `}` resumes (decision 0600): the reader that resumes
+        // it, entered at its opener where that comes before the next record.
+        let mut resume = String::new();
+        let readers = crate::bitlex_lex_rust::readers(self.x.lexer);
+        let lexer_regions: Vec<&::bitlex::syntax::Region> = readers.iter().flat_map(|rd| &rd.regions).collect();
         let kind_or = |k: Option<u8>, at: &str| match k {
             Some(k) => format!("{k}"),
             None => format!("u32::from(KINDS[usize::from(self.src[{at}])])"),
         };
-        for (r, rd) in crate::bitlex_lex_rust::readers(self.x.lexer).iter().enumerate() {
+        for (r, rd) in readers.iter().enumerate() {
             let piece = |name: &str, closes: bool| crate::bitlex_lex_rust::piece_kind(self.x.lexer, self.x.row_kinds, &rd.kind, name, closes);
-            let _ = write!(at, "        if bit(&self.m.{}, s) {{\n            return self.split_{r}(j);\n        }}\n", rd.open);
+            // A reader that resumes has no record of its own to split (`advance` enters it).
+            if !rd.regions.iter().all(|g| g.resumes) {
+                let _ = write!(at, "        if bit(&self.m.{}, s) {{\n            return self.split_{r}(j);\n        }}\n", rd.open);
+            }
             let content = kind_or(piece(&rd.content, false), "at");
             let mut parts = String::new();
             let mut lasts = String::new();
@@ -1256,14 +1281,40 @@ impl<'a> G<'a> {
                 }
             }
             let regions: Vec<&str> = rd.regions.iter().map(|g| g.kind.as_str()).collect();
+            // Its closer at a template (decision 0600): a string open over the template's code;
+            // a read that resumes one and closes at its quote, that string's end.
+            let resumes = rd.regions.iter().all(|g| g.resumes);
+            let resumed = |g: &::bitlex::syntax::Region| g.resumes || lexer_regions.iter().any(|q| q.resumes && q.after.contains(&g.kind));
+            let mut templates: Vec<&String> = rd.regions.iter().zip(&rd.region_or).filter(|(g, _)| resumed(g)).filter_map(|(_, f)| f.as_ref()).collect();
+            templates.dedup();
+            let strings = if templates.is_empty() {
+                String::new()
+            } else {
+                let t = templates.iter().map(|f| format!("bit(&m.{f}, c)")).collect::<Vec<_>>().join(" || ");
+                if resumes {
+                    format!("                    if !({t}) {{\n                        self.strings = self.strings.saturating_sub(1);\n                    }}\n")
+                } else {
+                    format!("                    if {t} {{\n                        self.strings += 1;\n                    }}\n")
+                }
+            };
+            let (name, doc, head) = if resumes {
+                // Its opener's kind: its own row's.
+                let rows = self.x.lexer.iter().filter(|s| matches!(s, ::bitlex::syntax::Stmt::Token { .. }));
+                let own = rows.enumerate().find(|(_, s)| matches!(s, ::bitlex::syntax::Stmt::Token { kind, .. } if *kind == rd.kind)).and_then(|(i, _)| self.x.row_kinds.get(i).copied().flatten());
+                let _ = write!(resume, "        if self.strings > 0 && let Some(p) = first_bit(&self.m.{}, from).filter(|&p| self.i + 1 >= self.n || p < self.starts[self.i + 1] as usize) {{\n            self.known = 0;\n            return self.resume_{r}(p);\n        }}\n", rd.open);
+                (format!("resume_{r}"), "at byte `s`, no record of its own: the string's parts after its template's `}`", format!("s: usize) -> R {{\n        self.sub.clear();\n        self.k = 0;\n        self.piece(s, s, {});", kind_or(own, "s")))
+            } else {
+                (format!("split_{r}"), "record `j`", "j: usize) -> R {\n        let s = self.starts[j] as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.codes[j]));".to_owned())
+            };
             let _ = write!(
                 out,
-                "    /// `{kind}`'s region (`read {regions} parts`), record `j`: its opener's byte, each part, each run of the bytes between, its closer.\n    fn split_{r}(&mut self, j: usize) -> R {{\n        let s = self.starts[j] as usize;\n        self.sub.clear();\n        self.k = 0;\n        self.sub.push((s as u32, s as u32, self.codes[j]));\n        let m = self.m;\n        let mut at = s + 1;\n        loop {{\n            let Some(c) = first_bit(&m.{close}, at) else {{\n                return self.refuse();\n            }};\n            // The part first after `at`, before the closer: the earliest, the shortest at one byte.\n            let mut part: Option<(usize, u8, usize)> = None;\n{parts}            let to = part.map_or(c, |q| q.0);\n            if to > at {{\n                self.piece(at, to - 1, {content});\n            }}\n            match part {{\n                Some((e, _, i)) => {{\n                    let (l, kind) = match i {{\n{lasts}                        _ => unreachable!(),\n                    }};\n                    self.piece(e, l, kind);\n                    at = l + 1;\n                }}\n                None => {{\n                    let (l, kind) = {closer};\n                    self.piece(c, l, kind);\n                    return Ok(());\n                }}\n            }}\n        }}\n    }}\n\n",
+                "    /// `{kind}`'s region (`read {regions} parts`), {doc}: its opener's byte, each part, each run of the bytes between, its closer.\n    fn {name}(&mut self, {head}\n        let m = self.m;\n        let mut at = s + 1;\n        loop {{\n            let Some(c) = first_bit(&m.{close}, at) else {{\n                return self.refuse();\n            }};\n            // The part first after `at`, before the closer: the earliest, the shortest at one byte.\n            let mut part: Option<(usize, u8, usize)> = None;\n{parts}            let to = part.map_or(c, |q| q.0);\n            if to > at {{\n                self.piece(at, to - 1, {content});\n            }}\n            match part {{\n                Some((e, _, i)) => {{\n                    let (l, kind) = match i {{\n{lasts}                        _ => unreachable!(),\n                    }};\n                    self.piece(e, l, kind);\n                    at = l + 1;\n                }}\n                None => {{\n                    let (l, kind) = {closer};\n                    self.piece(c, l, kind);\n{strings}                    return Ok(());\n                }}\n            }}\n        }}\n    }}\n\n",
                 kind = rd.kind,
                 regions = regions.join(" | "),
                 close = rd.close
             );
         }
+        let _ = write!(out, "    /// Past the token, to the next grammar token's record{}.\n    #[inline(always)]\n    fn advance(&mut self, from: usize) -> R {{\n{resume}        self.i = self.next_tok(self.i + 1);\n        self.arrive()\n    }}\n\n", if resume.is_empty() { "" } else { ", or the string's parts a template's `}` resumes, at the record before the next (decision 0600)" });
         let _ = write!(out, "    /// Record `j` split where its first byte opens a region tier 2 reads in parts.\n    #[inline(always)]\n    fn split(&mut self, j: usize) -> R {{\n        let s = self.starts[j] as usize;\n{at}        let _ = s;\n        Ok(())\n    }}\n\n");
         // A piece's word: its kind's keywords', as the lean lexer finds a word.
         let mut arms = String::new();
@@ -1585,6 +1636,11 @@ pub struct P<'a> {
     /// its kind and, once its token is taken, that token's start: a pending extra of no width.
     gone: Vec<usize>,
     lost: Option<(u16, Option<u32>)>,
+    /// The extra a mark's `loses since` moved, by record, and where: of no width there.
+    moved: Option<(usize, u32)>,
+    /// The strings open over a template's code (decision 0600): their parts go on at the next
+    /// opener of a reader that resumes them (`advance`).
+    strings: usize,
 }
 
 #[allow(dead_code)]
@@ -1592,7 +1648,7 @@ impl<'a> P<'a> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
         let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);
         let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None };
+        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, depth: 0, marked: false, asks: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -1715,26 +1771,49 @@ impl<'a> P<'a> {
             self.pend += 1;
             let c = self.codes[j];
             if is_extra(c) && !self.gone.contains(&j) {
-                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, self.starts[j]);
-                self.w.close(at, self.lasts[j] + 1);
+                let (s, e) = self.extra_span(j);
+                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
+                self.w.close(at, e);
             }
+        }
+    }
+
+    /// Extra `j`'s span: its bytes, or of no width where a mark's `loses since` moved it.
+    fn extra_span(&self, j: usize) -> (u32, u32) {
+        match self.moved {
+            Some((m, s)) if m == j => (s, s),
+            _ => (self.starts[j], self.lasts[j] + 1),
+        }
+    }
+
+    /// `loses since`: the first extra pending of no width at the next one's start (the lean
+    /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).
+    fn move_first(&mut self) {
+        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j));
+        if let (Some(a), Some(b)) = (pending.next(), pending.next()) {
+            self.moved = Some((a, self.starts[b]));
         }
     }
 
     /// The comments pending before the line break of settling mark `bit` (an extra's code holds
     /// the bits of its own gap): written now, into the node open, the node's end past them.
     fn settle(&mut self, bit: u32) {
+        // An extra a `loses since` moved and the one after it go with those before: the lean
+        // lexer's semicolon is past that one.
+        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);
+        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.codes[k]) && !self.gone.contains(&k)));
         while self.pend < self.i {
             let j = self.pend;
             let c = self.codes[j];
-            if is_extra(c) && c >> (16 + bit) & 1 == 1 {
+            if is_extra(c) && c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
                 break;
             }
             self.pend += 1;
             if is_extra(c) && !self.gone.contains(&j) {
-                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, self.starts[j]);
-                self.w.close(at, self.lasts[j] + 1);
-                self.last_end = self.last_end.max(self.lasts[j] + 1);
+                let (s, e) = self.extra_span(j);
+                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
+                self.w.close(at, e);
+                self.last_end = self.last_end.max(e);
             }
         }
     }
@@ -1788,14 +1867,12 @@ impl<'a> P<'a> {
             }
             self.sub.clear();
             self.k = 0;
-            self.i = self.next_tok(self.i + 1);
-            self.arrive()?;
+            self.advance(l as usize + 1)?;
             self.last_end = l + 1;
             return Ok((s, l + 1));
         }
         let (s, e) = (self.starts[self.i], self.lasts[self.i] + 1);
-        self.i = self.next_tok(self.i + 1);
-        self.arrive()?;
+        self.advance(e as usize)?;
         self.last_end = e;
         Ok((s, e))
     }
@@ -1867,15 +1944,21 @@ impl<'a> P<'a> {
         self.made.push(NONE);
     }
 
-    /// The root closed at the end of the file: the whole file (`whole`, from byte 0, as the machine opens it), or
-    /// from its first token or comment to its last token's end.
-    fn close_root(&mut self, whole: bool) -> R {
+    /// The root closed at the end of the file: from the file's start (`whole`), else (or `whole padded`) from its
+    /// first token or comment, as tree-sitter's root starts past the file's leading blanks.
+    fn close_root(&mut self, whole: bool, padded: bool) -> R {
         if self.i < self.n {
             return self.refuse();
         }
         self.flush();
-        // From byte 0 (`whole`), else its first token or comment (none: the file's end).
-        let first = if whole { 0 } else if self.w.len() > 1 { self.w.start(1) } else { self.src.len() as u32 };
+        // From its first token or comment (none: the file's end), to the file's end (`whole`) or its last token's.
+        let first = if whole && !padded {
+            0
+        } else if self.w.len() > 1 {
+            self.w.start(1)
+        } else {
+            self.src.len() as u32
+        };
         let end = if whole { self.src.len() as u32 } else { self.last_end };
         self.w.set_start(0, first);
         self.w.close(0, end);

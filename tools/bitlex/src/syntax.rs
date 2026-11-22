@@ -422,10 +422,19 @@ pub struct Region {
     /// byte of either; one of `C2` is `M` bytes, the others `bytes N` (a raw string's `"""`, or
     /// its template's `$`).
     pub or: Option<(Expr, u8)>,
-    /// `after K …`: the region opens only where the last region opened before its opener, of
-    /// the kinds with no `after`, is one of `K …` (a template's tail goes back to the kind of
-    /// string the template is in). Such a kind has no `else` and no `outside`.
+    /// `after K …`: the region opens only where the last region closed at its second closer
+    /// (`or`, a template's `$`) before its opener, of the kinds with no `after`, is one of `K …`:
+    /// a template's tail goes back to the kind of string the template is in, as the lean lexer's
+    /// string reader returns to its loop after the template's code. A region in the template's
+    /// code, closed at its own closer, leaves it so. Such a kind has no `else` and no `outside`;
+    /// the kinds it names have an `or`.
     pub after: Vec<String>,
+    /// `resumes K …` in place of `after K …`: the same openers, and the region is the rest of
+    /// the token whose region its template closed, as the lean lexer reads a string with its
+    /// templates as one token (decision 0600). Its reader's read makes no record of its own: it
+    /// ends that token's record, or, closed at its own second closer, leaves it open over the
+    /// next template's code. Tier 2 reads the template's code's records inside the string's.
+    pub resumes: bool,
 }
 
 impl Regions {
@@ -445,8 +454,10 @@ impl Regions {
     /// from it: `c = prev(f_K) & ~f_K`, and `prev(f_K) | prev(c & ~C2) | … | prev(c & ~C2, N
     /// - 1) | prev(c & C2) | … | prev(c & C2, M - 1)`. A kind with `after A …`
     /// comes after the kinds with none, which it reads: its openers are where the last of
-    /// their openers before is an `A`, `o_K = O & ~H & prev(fill(o_A | …, o_B | …))`, the `B`s
-    /// the others.
+    /// their closers at a `C2` before (`c & C2`, `t_K`) is an `A`'s, `o_K = O & ~H &
+    /// prev(fill(t_A | …, t_B | …))`, the `B`s the other kinds with an `or`. With a kind that
+    /// `resumes`, a second carry `H_ended`: the places after its closes at its own closer
+    /// (`prev(c & ~C2)`, the string ended), from the round before, among the `B`s and no opener.
     pub fn body(&self) -> Vec<Stmt> {
         let name = |s: &str| Expr::Name(s.to_string());
         let and = |a: Expr, b: Expr| Expr::And(Box::new(a), Box::new(b));
@@ -459,17 +470,25 @@ impl Regions {
             out.push(Stmt::Mask(r.later(), later));
         }
         out.push(Stmt::Carry(self.hidden.clone(), Expr::Empty));
+        let ended = format!("{}_ended", self.hidden);
+        let resumes = self.kinds.iter().any(|r| r.resumes);
+        if resumes {
+            out.push(Stmt::Carry(ended.clone(), Expr::Empty));
+        }
+        let mut ends: Option<Expr> = None;
         let mut hide: Option<Expr> = None;
         let mut or = |e: Expr| hide = Some(match hide.take() {
             Some(h) => Expr::Or(Box::new(h), Box::new(e)),
             None => e,
         });
-        let plain: Vec<&Region> = self.kinds.iter().filter(|r| r.after.is_empty()).collect();
+        let plain: Vec<&Region> = self.kinds.iter().filter(|r| r.after.is_empty() && r.or.is_some()).collect();
+        // Each plain kind's closers at its second closer: where a template opens.
+        let mut templates: Vec<(String, Expr)> = Vec::new();
         // Where two kinds open a byte the walk opens the first listed that may: each kind's
         // opener excludes the earlier kinds' taken.
         let mut earlier: Option<Expr> = None;
-        let any = |rs: Vec<&Region>| rs.iter().fold(None, |a: Option<Expr>, r| {
-            let o = name(&format!("o_{}", r.kind));
+        let any = |rs: Vec<&Region>, templates: &[(String, Expr)]| rs.iter().fold(None, |a: Option<Expr>, r| {
+            let o = templates.iter().find(|t| t.0 == r.kind).map(|t| t.1.clone()).expect("verified: a kind before");
             Some(match a {
                 Some(a) => Expr::Or(Box::new(a), Box::new(o)),
                 None => o,
@@ -478,9 +497,13 @@ impl Regions {
         for r in &self.kinds {
             let mut open = and(r.opener.clone(), not(name(&self.hidden)));
             if !r.after.is_empty() {
-                let named = any(plain.iter().copied().filter(|k| r.after.contains(&k.kind)).collect()).expect("verified: a kind named");
-                let others = any(plain.iter().copied().filter(|k| !r.after.contains(&k.kind)).collect()).unwrap_or(Expr::Empty);
+                let named = any(plain.iter().copied().filter(|k| r.after.contains(&k.kind)).collect(), &templates).expect("verified: a kind named");
+                let others = any(plain.iter().copied().filter(|k| !r.after.contains(&k.kind)).collect(), &templates).unwrap_or(Expr::Empty);
+                let others = if resumes { Expr::Or(Box::new(others), Box::new(name(&ended))) } else { others };
                 open = and(open, call("prev", vec![Arg::E(call("fill", vec![Arg::E(named), Arg::E(others)]))]));
+                if resumes {
+                    open = and(open, not(name(&ended)));
+                }
             }
             if let Some(e) = &earlier {
                 open = and(open, not(e.clone()));
@@ -511,6 +534,15 @@ impl Regions {
                 let pk = |e: Expr, k: u8| call("prev", vec![Arg::E(e), Arg::N(u64::from(k))]);
                 let c = and(prev(&f, 1), not(name(&f)));
                 let (l, l2) = (and(c.clone(), not(c2.clone())), and(c, c2.clone()));
+                if r.after.is_empty() {
+                    templates.push((r.kind.clone(), l2.clone()));
+                }
+                if r.resumes {
+                    ends = Some(match ends.take() {
+                        Some(e) => Expr::Or(Box::new(e), Box::new(l.clone())),
+                        None => l.clone(),
+                    });
+                }
                 or(prev(&f, 1));
                 for k in 1..r.bytes {
                     or(pk(l.clone(), k));
@@ -525,6 +557,9 @@ impl Regions {
             }
         }
         out.push(Stmt::Next(self.hidden.clone(), hide.unwrap_or(Expr::Empty)));
+        if resumes {
+            out.push(Stmt::Next(ended, call("prev", vec![Arg::E(ends.unwrap_or(Expr::Empty))])));
+        }
         out
     }
 }
@@ -701,6 +736,20 @@ pub enum Stmt {
     /// `escape "WHY" when E`: a construct the lexer does not handle; a file with a bit of `E` goes
     /// to tree-sitter. Unlike an error, it does not say the file is malformed.
     Escape(String, Expr),
+    /// `assume "WHY" at starts NAME = E` (decision 0607): a fact the grammar's writer knows of the
+    /// token loop, that mask `NAME` is `E` at every byte a token starts at. It changes no mask: a
+    /// lexer that reads tokens one at a time reads `NAME` there as `E`. The compiler proves it
+    /// where it can (the prover, its answers cached by content, 0414); else a test build checks it
+    /// at every token.
+    ///
+    /// `assume "WHY" in KIND NAME = E`: in every token of the kind, after its start through the byte
+    /// its run ends at, mask `NAME` reads as `E`: the token's rule is read with `E` for it.
+    Assume { why: String, scope: Option<String>, name: String, expr: Expr },
+    /// `assume "WHY" at ends NAME`: mask `NAME` holds only at the last byte of a token that
+    /// reads a region, so the token loop knows it there, from the region it read (a template's
+    /// `{`, after its string's `${`), and a fill from the byte after it (`fill(prev(NAME), E)`) is
+    /// the loop's to keep, from that token to the next byte of `E`.
+    AssumeEnds { why: String, name: String },
     /// `escape "WHY" at KIND when count(E) at least N` (or `run(E)`): a test of each token of
     /// the kind over its own bytes, as a lexer checks a token it reads (decision 0177): `count`,
     /// `E`'s bits in the token at least `N`; `run`, `E` at each of its first `N` bytes (the token
@@ -711,8 +760,10 @@ pub enum Stmt {
     Tree { name: String, body: Vec<Stmt> },
     /// `node KIND [nested] = G`: a node of the kind spans what `G` matches; the first is the
     /// root. `nested`: it may contain itself, and runs on a stack frame (doc 18 §1).
-    /// `whole`: the root spans the whole file, from byte 0, and may hold no token.
-    Node { kind: String, nested: bool, whole: bool, body: Gram },
+    /// `whole`: the root spans the whole file, from byte 0, and may hold no token. `whole
+    /// padded`: from its first token or comment (none: the file's end), as tree-sitter's root
+    /// starts past the file's leading blanks, its padding.
+    Node { kind: String, nested: bool, whole: bool, padded: bool, body: Gram },
     /// `choice NAME [supertype S] = A | B …`: no node of its own; each alternative's node has
     /// supertype `S`.
     /// `choice N [supertype S] [nested] = …`: `nested`, a level of its own, called where it is
@@ -1626,28 +1677,30 @@ impl P {
                 None
             };
             let mut after = Vec::new();
-            if self.eat_kw("after") {
+            let resumes = self.eat_kw("resumes");
+            if resumes || self.eat_kw("after") {
                 while matches!(self.peek(), Some(Tok::Ident(_))) {
                     after.push(self.ident()?);
                 }
                 if after.is_empty() || outside || empty.is_some() {
-                    return self.err("`after` and the kinds it names, on a kind with no `outside` or `else`");
+                    return self.err("`after` or `resumes` and the kinds it names, on a kind with no `outside` or `else`");
                 }
             }
             if !(1..=3).contains(&bytes) || (outside && bytes != 1) || (outside && or.is_some()) || empty.as_ref().is_some_and(|e| !(1..=3).contains(&e.1)) {
                 return self.err("a closer of 1 to 3 bytes (`outside`: 1, and no `or`), an `else` of 1 to 3");
             }
-            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after });
+            kinds.push(Region { kind, opener, closer, bytes: bytes as u8, outside, empty: empty.map(|(e, m)| (e, m as u8)), or, after, resumes });
             self.nls();
         }
         if kinds.is_empty() {
             return self.err("a region");
         }
-        // `after` names kinds of these regions with no `after` of their own; at most 15 kinds.
+        // `after` names kinds of these regions with no `after` of their own and with an `or` (a
+        // template's closer); at most 15 kinds.
         for r in &kinds {
             for a in &r.after {
-                if !kinds.iter().any(|k| k.kind == *a && k.after.is_empty()) {
-                    return Err(format!("region {}: `after {a}`, not a kind of these regions with no `after`", r.kind));
+                if !kinds.iter().any(|k| k.kind == *a && k.after.is_empty() && k.or.is_some()) {
+                    return Err(format!("region {}: `after {a}`, not a kind of these regions with an `or` and no `after`", r.kind));
                 }
             }
         }
@@ -1869,6 +1922,22 @@ impl P {
                 self.want_p("=")?;
                 self.pairs(n)?
             }
+            "assume" => {
+                let why = String::from_utf8_lossy(&self.string()?).into_owned();
+                let scope = if self.eat_kw("in") {
+                    Some(self.ident()?)
+                } else {
+                    self.want_kw("at")?;
+                    if self.eat_kw("ends") {
+                        return Ok(Stmt::AssumeEnds { why, name: self.ident()? });
+                    }
+                    self.want_kw("starts")?;
+                    None
+                };
+                let name = self.ident()?;
+                self.want_p("=")?;
+                Stmt::Assume { why, scope, name, expr: self.expr()? }
+            }
             "mask" => {
                 let n = self.ident()?;
                 self.want_p("=")?;
@@ -2050,8 +2119,9 @@ impl P {
                 let kind = self.kind()?;
                 let nested = self.eat_kw("nested");
                 let whole = self.eat_kw("whole");
+                let padded = whole && self.eat_kw("padded");
                 self.want_p("=")?;
-                Stmt::Node { kind, nested, whole, body: self.gram()? }
+                Stmt::Node { kind, nested, whole, padded, body: self.gram()? }
             }
             "choice" => {
                 let name = self.ident()?;

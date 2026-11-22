@@ -145,11 +145,11 @@ struct Stage1 {
     m_two_start: Vec<u64>,
     m_num_run: Vec<u64>,
     m_str_bad: Vec<u64>,
-    t12: Vec<u64>,
     t13: Vec<u64>,
     t14: Vec<u64>,
-    t15: Vec<u64>,
-    t17: Vec<u64>,
+    t16: Vec<u64>,
+    t21: Vec<u64>,
+    t23: Vec<u64>,
     refused: bool,
 }
 
@@ -231,11 +231,11 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
     let mut m_two_start = vec![0u64; nw];
     let mut m_num_run = vec![0u64; nw];
     let mut m_str_bad = vec![0u64; nw];
-    let mut t12 = vec![0u64; nw];
     let mut t13 = vec![0u64; nw];
     let mut t14 = vec![0u64; nw];
-    let mut t15 = vec![0u64; nw];
-    let mut t17 = vec![0u64; nw];
+    let mut t16 = vec![0u64; nw];
+    let mut t21 = vec![0u64; nw];
+    let mut t23 = vec![0u64; nw];
     let mut lv_1 = 0u64;
     let mut refused = false;
     for t in 0..nw + 1 {
@@ -476,7 +476,7 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
             let v_m_u_ok = (v_m_u_four & (!v_m_u_brace & lv) | v_m_u_brace & (((v_m_b_short | v_m_b_four) | v_m_b_five) | v_m_b_six));
             // ((((((pair_byte_3a & next(pair_byte_2d)) | (pair_byte_3d & next(pair_byte_3e))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3a))) | (pair_byte_3e & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3e))
             let v_t9 = ((((((p_m_pair_byte_3a & (p_m_pair_byte_2d >> 1 | v_m_pair_byte_2d << 63) | p_m_pair_byte_3d & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63)) | p_m_pair_byte_21 & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_3c & (p_m_pair_byte_3a >> 1 | v_m_pair_byte_3a << 63)) | p_m_pair_byte_3e & (p_m_pair_byte_3d >> 1 | v_m_pair_byte_3d << 63)) | p_m_pair_byte_2d & (p_m_pair_byte_3e >> 1 | v_m_pair_byte_3e << 63));
-            // escaped(((((((pair_byte_3a & next(pair_byte_2d)) | (pair_byte_3d & next(pair_byte_3e))) | (pair_byte_21 & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3d))) | (pair_byte_3c & next(pair_byte_3a))) | (pair_byte_3e & next(pair_byte_3d))) | (pair_byte_2d & next(pair_byte_3e)))
+            // escaped(t9)
             let v_t8 = {
                     const ODD: u64 = 0xaaaa_aaaa_aaaa_aaaa;
                     let bs = v_t9;
@@ -498,29 +498,29 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
                 m_num_run[q] = v_m_num_run;
             }
             // uesc & ~h4
-            let v_t12 = p_m_uesc & (!v_m_h4 & lv);
-            if q < nw {
-                t12[q] = v_t12;
-            }
-            // line_open | block_open
-            let v_t13 = (v_m_line_open | v_m_block_open);
+            let v_t13 = p_m_uesc & (!v_m_h4 & lv);
             if q < nw {
                 t13[q] = v_t13;
             }
-            // minus & ~next(digit)
-            let v_t14 = p_m_minus & (!(p_m_digit >> 1 | v_m_digit << 63) & lv);
+            // uesc & ~u_ok
+            let v_t14 = p_m_uesc & (!v_m_u_ok & lv);
             if q < nw {
                 t14[q] = v_t14;
             }
-            // zero & next(digit)
-            let v_t15 = p_m_zero & (p_m_digit >> 1 | v_m_digit << 63);
+            // line_open | block_open
+            let v_t16 = (v_m_line_open | v_m_block_open);
             if q < nw {
-                t15[q] = v_t15;
+                t16[q] = v_t16;
             }
-            // uesc & ~u_ok
-            let v_t17 = p_m_uesc & (!v_m_u_ok & lv);
+            // zero & next(digit)
+            let v_t21 = p_m_zero & (p_m_digit >> 1 | v_m_digit << 63);
             if q < nw {
-                t17[q] = v_t17;
+                t21[q] = v_t21;
+            }
+            // minus & ~next(digit)
+            let v_t23 = p_m_minus & (!(p_m_digit >> 1 | v_m_digit << 63) & lv);
+            if q < nw {
+                t23[q] = v_t23;
             }
         }
         lv_1 = lv_0;
@@ -555,11 +555,11 @@ unsafe fn stage1<S: rerail_simd8::Simd8x64>(src: &[u8]) -> Stage1 {
         m_two_start,
         m_num_run,
         m_str_bad,
-        t12,
         t13,
         t14,
-        t15,
-        t17,
+        t16,
+        t21,
+        t23,
         refused,
     }
 }
@@ -568,6 +568,10 @@ rerail_simd8::dispatch! {
     fn stage1_best(src: &[u8]) -> Stage1 = stage1, on stage1_on;
 }
 
+/// The token's first byte's group (`dispatch`), as simdjson's `classify`: a byte's bit `r` is set in both where it is of product `r`'s high and low nibbles; each product is one group's.
+static DISPATCH_LO: [u16; 16] = [0x1d04, 0xf01, 0xf20, 0xf40, 0xf00, 0xf01, 0xf01, 0xf00, 0xf01, 0xf01, 0xe03, 0x21b, 0x213, 0x21b, 0x21b, 0x680];
+static DISPATCH_HI: [u16; 16] = [0x0, 0x0, 0xe1, 0x102, 0x204, 0x408, 0x1200, 0x810, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0, 0x0];
+
 /// `src`'s records.
 pub fn lex(src: &[u8]) -> Lexed {
     let n = src.len();
@@ -575,258 +579,263 @@ pub fn lex(src: &[u8]) -> Lexed {
     // Each word's bits inside the file.
     let lv: Vec<u64> = (0..nw).map(|q| if 64 * q + 64 <= n { !0 } else { (1u64 << (n % 64)) - 1 }).collect();
     // Stage 1: the masks the regions and the tokens read, and whether an escape holds.
-    let Stage1 { m_quote, m_ws, m_lf, m_slash, m_hash, m_word, m_alpha, m_digit, m_dot, m_lbrace, m_punct, m_tick, m_ff, m_rbrace, m_lbracket, m_rbracket, m_q, m_line_open, m_block_open, m_block_end, m_tt, m_ttt, m_tick1, m_tick2, m_tick3, t7, m_two_start, m_num_run, m_str_bad, t12, t13, t14, t15, t17, refused: escapes } = stage1_best(src);
-    // regions hidden { … }: the first opener not hidden opens its region, to its closer.
-    let mut m_hidden = vec![0u64; nw];
-    let mut m_o_str = vec![0u64; nw];
-    let mut m_f_str = vec![0u64; nw];
-    let mut m_o_line = vec![0u64; nw];
-    let mut m_f_line = vec![0u64; nw];
-    let mut m_o_block = vec![0u64; nw];
-    let mut m_f_block = vec![0u64; nw];
-    let mut m_o_t1 = vec![0u64; nw];
-    let mut m_f_t1 = vec![0u64; nw];
-    let mut m_o_t2 = vec![0u64; nw];
-    let mut m_f_t2 = vec![0u64; nw];
-    let mut m_e_t2 = vec![0u64; nw];
-    let mut m_o_t3 = vec![0u64; nw];
-    let mut m_f_t3 = vec![0u64; nw];
-    {
-        let mut at = 0usize;
-        // Each kind's next opener, at or after where it was looked for (`n`: none).
-        let mut nx = [first_bit(&m_q, 0).unwrap_or(n), first_bit(&m_line_open, 0).unwrap_or(n), first_bit(&m_block_open, 0).unwrap_or(n), first_bit(&m_tick1, 0).unwrap_or(n), first_bit(&m_tick2, 0).unwrap_or(n), first_bit(&m_tick3, 0).unwrap_or(n)];
-        loop {
-            let (mut p, mut k) = (n, usize::MAX);
-            // `str`
-            if nx[0] < at {
-                nx[0] = first_bit(&m_q, at).unwrap_or(n);
-            }
-            if nx[0] < p {
-                p = nx[0];
-                k = 0;
-            }
-            // `line`
-            if nx[1] < at {
-                nx[1] = first_bit(&m_line_open, at).unwrap_or(n);
-            }
-            if nx[1] < p {
-                p = nx[1];
-                k = 1;
-            }
-            // `block`
-            if nx[2] < at {
-                nx[2] = first_bit(&m_block_open, at).unwrap_or(n);
-            }
-            if nx[2] < p {
-                p = nx[2];
-                k = 2;
-            }
-            // `t1`
-            if nx[3] < at {
-                nx[3] = first_bit(&m_tick1, at).unwrap_or(n);
-            }
-            if nx[3] < p {
-                p = nx[3];
-                k = 3;
-            }
-            // `t2`
-            if nx[4] < at {
-                nx[4] = first_bit(&m_tick2, at).unwrap_or(n);
-            }
-            if nx[4] < p {
-                p = nx[4];
-                k = 4;
-            }
-            // `t3`
-            if nx[5] < at {
-                nx[5] = first_bit(&m_tick3, at).unwrap_or(n);
-            }
-            if nx[5] < p {
-                p = nx[5];
-                k = 5;
-            }
-            match k {
-                0 => {
-                    // `str = q .. q`
-                    set(&mut m_o_str, p, p + 1);
-                    match first_bit(&m_q, p + 1) {
-                        Some(c) => {
-                            let last = c + 0;
-                            set(&mut m_f_str, p, c);
-                            set(&mut m_hidden, p + 1, last + 1);
-                            at = last + 1;
-                        }
-                        None => {
-                            set(&mut m_f_str, p, n);
-                            set(&mut m_hidden, p + 1, n);
-                            at = n;
-                        }
-                    }
+    let Stage1 { m_quote, m_ws, m_lf, m_slash, m_hash, m_word, m_alpha, m_digit, m_dot, m_lbrace, m_punct, m_tick, m_ff, m_rbrace, m_lbracket, m_rbracket, m_q, m_line_open, m_block_open, m_block_end, m_tt, m_ttt, m_tick1, m_tick2, m_tick3, t7, m_two_start, m_num_run, m_str_bad, t13, t14, t16, t21, t23, refused: escapes } = stage1_best(src);
+    let mut refused = escapes;
+    // The regions' walk and the masks made of it: only a test build's checks read them.
+    #[cfg(feature = "test-hooks")]
+    let (m_o_line, m_o_block, m_o_t1, m_o_t2, m_e_t2, m_o_t3, t1, t2, t3, t12, t15, t17, t18, t19, t20, t22) = {
+        // regions hidden { … }: the first opener not hidden opens its region, to its closer.
+        let mut m_hidden = vec![0u64; nw];
+        let mut m_o_str = vec![0u64; nw];
+        let mut m_f_str = vec![0u64; nw];
+        let mut m_o_line = vec![0u64; nw];
+        let mut m_f_line = vec![0u64; nw];
+        let mut m_o_block = vec![0u64; nw];
+        let mut m_f_block = vec![0u64; nw];
+        let mut m_o_t1 = vec![0u64; nw];
+        let mut m_f_t1 = vec![0u64; nw];
+        let mut m_o_t2 = vec![0u64; nw];
+        let mut m_f_t2 = vec![0u64; nw];
+        let mut m_e_t2 = vec![0u64; nw];
+        let mut m_o_t3 = vec![0u64; nw];
+        let mut m_f_t3 = vec![0u64; nw];
+        {
+            let mut at = 0usize;
+            // Each kind's next opener, at or after where it was looked for (`n`: none).
+            let mut nx = [first_bit(&m_q, 0).unwrap_or(n), first_bit(&m_line_open, 0).unwrap_or(n), first_bit(&m_block_open, 0).unwrap_or(n), first_bit(&m_tick1, 0).unwrap_or(n), first_bit(&m_tick2, 0).unwrap_or(n), first_bit(&m_tick3, 0).unwrap_or(n)];
+            loop {
+                let (mut p, mut k) = (n, usize::MAX);
+                // `str`
+                if nx[0] < at {
+                    nx[0] = first_bit(&m_q, at).unwrap_or(n);
                 }
-                1 => {
-                    // `line = line_open .. lf`
-                    set(&mut m_o_line, p, p + 1);
-                    let c = first_bit(&m_lf, p + 1).unwrap_or(n);
-                    set(&mut m_f_line, p, c);
-                    set(&mut m_hidden, p + 1, c);
-                    at = c.max(p + 1);
+                if nx[0] < p {
+                    p = nx[0];
+                    k = 0;
                 }
-                2 => {
-                    // `block = block_open .. block_end`
-                    set(&mut m_o_block, p, p + 1);
-                    match first_bit(&m_block_end, p + 1) {
-                        Some(c) => {
-                            let last = c + 0;
-                            set(&mut m_f_block, p, c);
-                            set(&mut m_hidden, p + 1, last + 1);
-                            at = last + 1;
-                        }
-                        None => {
-                            set(&mut m_f_block, p, n);
-                            set(&mut m_hidden, p + 1, n);
-                            at = n;
-                        }
-                    }
+                // `line`
+                if nx[1] < at {
+                    nx[1] = first_bit(&m_line_open, at).unwrap_or(n);
                 }
-                3 => {
-                    // `t1 = tick1 .. tick`
-                    set(&mut m_o_t1, p, p + 1);
-                    match first_bit(&m_tick, p + 1) {
-                        Some(c) => {
-                            let last = c + 0;
-                            set(&mut m_f_t1, p, c);
-                            set(&mut m_hidden, p + 1, last + 1);
-                            at = last + 1;
-                        }
-                        None => {
-                            set(&mut m_f_t1, p, n);
-                            set(&mut m_hidden, p + 1, n);
-                            at = n;
-                        }
-                    }
+                if nx[1] < p {
+                    p = nx[1];
+                    k = 1;
                 }
-                4 => {
-                    // `t2 = tick2 .. tt`
-                    if first_bit(&m_tt, p + 1).is_none() {
-                        set(&mut m_e_t2, p, p + 1);
-                        set(&mut m_hidden, p + 1, p + 2);
-                        at = (p + 2).max(p + 1);
-                    } else {
-                        set(&mut m_o_t2, p, p + 1);
-                        match first_bit(&m_tt, p + 1) {
+                // `block`
+                if nx[2] < at {
+                    nx[2] = first_bit(&m_block_open, at).unwrap_or(n);
+                }
+                if nx[2] < p {
+                    p = nx[2];
+                    k = 2;
+                }
+                // `t1`
+                if nx[3] < at {
+                    nx[3] = first_bit(&m_tick1, at).unwrap_or(n);
+                }
+                if nx[3] < p {
+                    p = nx[3];
+                    k = 3;
+                }
+                // `t2`
+                if nx[4] < at {
+                    nx[4] = first_bit(&m_tick2, at).unwrap_or(n);
+                }
+                if nx[4] < p {
+                    p = nx[4];
+                    k = 4;
+                }
+                // `t3`
+                if nx[5] < at {
+                    nx[5] = first_bit(&m_tick3, at).unwrap_or(n);
+                }
+                if nx[5] < p {
+                    p = nx[5];
+                    k = 5;
+                }
+                match k {
+                    0 => {
+                        // `str = q .. q`
+                        set(&mut m_o_str, p, p + 1);
+                        match first_bit(&m_q, p + 1) {
                             Some(c) => {
-                                let last = c + 1;
-                                set(&mut m_f_t2, p, c);
+                                let last = c + 0;
+                                set(&mut m_f_str, p, c);
                                 set(&mut m_hidden, p + 1, last + 1);
                                 at = last + 1;
                             }
                             None => {
-                                set(&mut m_f_t2, p, n);
+                                set(&mut m_f_str, p, n);
                                 set(&mut m_hidden, p + 1, n);
                                 at = n;
                             }
                         }
                     }
-                }
-                5 => {
-                    // `t3 = tick3 .. ttt`
-                    set(&mut m_o_t3, p, p + 1);
-                    match first_bit(&m_ttt, p + 1) {
-                        Some(c) => {
-                            let last = c + 2;
-                            set(&mut m_f_t3, p, c);
-                            set(&mut m_hidden, p + 1, last + 1);
-                            at = last + 1;
-                        }
-                        None => {
-                            set(&mut m_f_t3, p, n);
-                            set(&mut m_hidden, p + 1, n);
-                            at = n;
+                    1 => {
+                        // `line = line_open .. lf`
+                        set(&mut m_o_line, p, p + 1);
+                        let c = first_bit(&m_lf, p + 1).unwrap_or(n);
+                        set(&mut m_f_line, p, c);
+                        set(&mut m_hidden, p + 1, c);
+                        at = c.max(p + 1);
+                    }
+                    2 => {
+                        // `block = block_open .. block_end`
+                        set(&mut m_o_block, p, p + 1);
+                        match first_bit(&m_block_end, p + 1) {
+                            Some(c) => {
+                                let last = c + 0;
+                                set(&mut m_f_block, p, c);
+                                set(&mut m_hidden, p + 1, last + 1);
+                                at = last + 1;
+                            }
+                            None => {
+                                set(&mut m_f_block, p, n);
+                                set(&mut m_hidden, p + 1, n);
+                                at = n;
+                            }
                         }
                     }
-                }
-                _ => break,
-            }
-        }
-    }
-    // mask o_tick = ((o_t1 | o_t2) | o_t3) | e_t2
-    let m_o_tick: Vec<u64> = (0..nw).map(|i| (((m_o_t1[i] | m_o_t2[i]) | m_o_t3[i]) | m_e_t2[i])).collect();
-    // mask region = (((hidden | o_str) | o_line) | o_block) | o_tick
-    let m_region: Vec<u64> = (0..nw).map(|i| ((((m_hidden[i] | m_o_str[i]) | m_o_line[i]) | m_o_block[i]) | m_o_tick[i])).collect();
-    // mask code = ~region
-    let m_code: Vec<u64> = (0..nw).map(|i| !m_region[i] & lv[i]).collect();
-    // mask directive = code & hash
-    let m_directive: Vec<u64> = (0..nw).map(|i| m_code[i] & m_hash[i]).collect();
-    // mask hashword = fill(directive, ~(code & word))
-    let t1: Vec<u64> = (0..nw).map(|i| !(m_code[i] & m_word[i]) & lv[i]).collect();
-    let m_hashword = fill(&m_directive, &t1);
-    // mask w = (code & word) & ~hashword
-    let m_w: Vec<u64> = (0..nw).map(|i| m_code[i] & m_word[i] & (!m_hashword[i] & lv[i])).collect();
-    // mask ident = fill(w & alpha, ~w)
-    let t2: Vec<u64> = (0..nw).map(|i| m_w[i] & m_alpha[i]).collect();
-    let t3: Vec<u64> = (0..nw).map(|i| !m_w[i] & lv[i]).collect();
-    let m_ident = fill(&t2, &t3);
-    // mask num = w & ~ident
-    let m_num: Vec<u64> = (0..nw).map(|i| m_w[i] & (!m_ident[i] & lv[i])).collect();
-    // mask c_dot = ((code & dot) & prev(num)) & next(digit)
-    let m_c_dot: Vec<u64> = (0..nw).map(|i| m_code[i] & m_dot[i] & prev(&m_num, i, 1) & next(&m_digit, i, 1)).collect();
-    // mask chain = num | c_dot
-    let m_chain: Vec<u64> = (0..nw).map(|i| (m_num[i] | m_c_dot[i])).collect();
-    // mask c_par = toggle(c_dot)
-    let m_c_par = toggle(&m_c_dot);
-    // mask c_odd = fill((chain & ~prev(chain)) & c_par, ~chain)
-    let t4: Vec<u64> = (0..nw).map(|i| m_chain[i] & (!prev(&m_chain, i, 1) & lv[i]) & m_c_par[i]).collect();
-    let t5: Vec<u64> = (0..nw).map(|i| !m_chain[i] & lv[i]).collect();
-    let m_c_odd = fill(&t4, &t5);
-    // mask f_dot = c_dot & (c_par ^ c_odd)
-    let m_f_dot: Vec<u64> = (0..nw).map(|i| m_c_dot[i] & (m_c_par[i] ^ m_c_odd[i])).collect();
-    // mask frac = fill(prev(f_dot), ~digit)
-    let t6: Vec<u64> = (0..nw).map(|i| prev(&m_f_dot, i, 1)).collect();
-    let m_frac = fill(&t6, &t7);
-    // mask int = num & ~frac
-    let m_int: Vec<u64> = (0..nw).map(|i| m_num[i] & (!m_frac[i] & lv[i])).collect();
-    // mask id_first = (alpha & ident) & ~prev(ident)
-    let m_id_first: Vec<u64> = (0..nw).map(|i| m_alpha[i] & m_ident[i] & (!prev(&m_ident, i, 1) & lv[i])).collect();
-    // mask second = prev(two_start) & code
-    let m_second: Vec<u64> = (0..nw).map(|i| prev(&m_two_start, i, 1) & m_code[i]).collect();
-    // mask p = (code & punct) & ~f_dot
-    let m_p: Vec<u64> = (0..nw).map(|i| m_code[i] & m_punct[i] & (!m_f_dot[i] & lv[i])).collect();
-    // mask p_start = p & ~second
-    let m_p_start: Vec<u64> = (0..nw).map(|i| m_p[i] & (!m_second[i] & lv[i])).collect();
-    // mask p_last = (p_start & ~two_start) | second
-    let m_p_last: Vec<u64> = (0..nw).map(|i| (m_p_start[i] & (!m_two_start[i] & lv[i]) | m_second[i])).collect();
-    // mask numeral = (int | f_dot) | frac
-    let m_numeral: Vec<u64> = (0..nw).map(|i| ((m_int[i] | m_f_dot[i]) | m_frac[i])).collect();
-    let mut refused = escapes;
-    let t10: Vec<u64> = (0..nw).map(|i| m_code[i] & (m_lbrace[i] | m_lbracket[i])).collect();
-    let t11: Vec<u64> = (0..nw).map(|i| (m_code[i] & (m_lbrace[i] | m_lbracket[i]) | m_code[i] & (m_rbrace[i] | m_rbracket[i]))).collect();
-    // scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 127
-    {
-        let mut c = 0u32;
-        'count: for (q, &word) in t11.iter().enumerate() {
-            let mut bits = word;
-            while bits != 0 {
-                let i = bits.trailing_zeros();
-                bits &= bits - 1;
-                if t10[q] >> i & 1 == 1 {
-                    c += 1;
-                    if c > 127 {
-                        refused = true;
-                        break 'count;
+                    3 => {
+                        // `t1 = tick1 .. tick`
+                        set(&mut m_o_t1, p, p + 1);
+                        match first_bit(&m_tick, p + 1) {
+                            Some(c) => {
+                                let last = c + 0;
+                                set(&mut m_f_t1, p, c);
+                                set(&mut m_hidden, p + 1, last + 1);
+                                at = last + 1;
+                            }
+                            None => {
+                                set(&mut m_f_t1, p, n);
+                                set(&mut m_hidden, p + 1, n);
+                                at = n;
+                            }
+                        }
                     }
-                } else {
-                    c = c.saturating_sub(1);
+                    4 => {
+                        // `t2 = tick2 .. tt`
+                        if first_bit(&m_tt, p + 1).is_none() {
+                            set(&mut m_e_t2, p, p + 1);
+                            set(&mut m_hidden, p + 1, p + 2);
+                            at = (p + 2).max(p + 1);
+                        } else {
+                            set(&mut m_o_t2, p, p + 1);
+                            match first_bit(&m_tt, p + 1) {
+                                Some(c) => {
+                                    let last = c + 1;
+                                    set(&mut m_f_t2, p, c);
+                                    set(&mut m_hidden, p + 1, last + 1);
+                                    at = last + 1;
+                                }
+                                None => {
+                                    set(&mut m_f_t2, p, n);
+                                    set(&mut m_hidden, p + 1, n);
+                                    at = n;
+                                }
+                            }
+                        }
+                    }
+                    5 => {
+                        // `t3 = tick3 .. ttt`
+                        set(&mut m_o_t3, p, p + 1);
+                        match first_bit(&m_ttt, p + 1) {
+                            Some(c) => {
+                                let last = c + 2;
+                                set(&mut m_f_t3, p, c);
+                                set(&mut m_hidden, p + 1, last + 1);
+                                at = last + 1;
+                            }
+                            None => {
+                                set(&mut m_f_t3, p, n);
+                                set(&mut m_hidden, p + 1, n);
+                                at = n;
+                            }
+                        }
+                    }
+                    _ => break,
                 }
             }
         }
-    }
-    let t16: Vec<u64> = (0..nw).map(|i| m_quote[i] & m_o_str[i]).collect();
-    let t18: Vec<u64> = (0..nw).map(|i| m_slash[i] & (m_o_line[i] | m_o_block[i])).collect();
-    let t19: Vec<u64> = (0..nw).map(|i| m_tick[i] & m_o_tick[i]).collect();
-    let t20: Vec<u64> = (0..nw).map(|i| m_hash[i] & m_directive[i]).collect();
-    let t21: Vec<u64> = (0..nw).map(|i| m_alpha[i] & m_ident[i] & (!prev(&m_ident, i, 1) & lv[i])).collect();
-    let t22: Vec<u64> = (0..nw).map(|i| m_digit[i] & m_int[i] & (!prev(&m_int, i, 1) & lv[i])).collect();
-    let t23: Vec<u64> = (0..nw).map(|i| m_punct[i] & m_p_start[i]).collect();
+        // mask o_tick = ((o_t1 | o_t2) | o_t3) | e_t2
+        let m_o_tick: Vec<u64> = (0..nw).map(|i| (((m_o_t1[i] | m_o_t2[i]) | m_o_t3[i]) | m_e_t2[i])).collect();
+        // mask region = (((hidden | o_str) | o_line) | o_block) | o_tick
+        let m_region: Vec<u64> = (0..nw).map(|i| ((((m_hidden[i] | m_o_str[i]) | m_o_line[i]) | m_o_block[i]) | m_o_tick[i])).collect();
+        // mask code = ~region
+        let m_code: Vec<u64> = (0..nw).map(|i| !m_region[i] & lv[i]).collect();
+        // mask directive = code & hash
+        let m_directive: Vec<u64> = (0..nw).map(|i| m_code[i] & m_hash[i]).collect();
+        // mask hashword = fill(directive, ~(code & word))
+        let t1: Vec<u64> = (0..nw).map(|i| !(m_code[i] & m_word[i]) & lv[i]).collect();
+        let m_hashword = fill(&m_directive, &t1);
+        // mask w = (code & word) & ~hashword
+        let m_w: Vec<u64> = (0..nw).map(|i| m_code[i] & m_word[i] & (!m_hashword[i] & lv[i])).collect();
+        // mask ident = fill(w & alpha, ~w)
+        let t2: Vec<u64> = (0..nw).map(|i| m_w[i] & m_alpha[i]).collect();
+        let t3: Vec<u64> = (0..nw).map(|i| !m_w[i] & lv[i]).collect();
+        let m_ident = fill(&t2, &t3);
+        // mask num = w & ~ident
+        let m_num: Vec<u64> = (0..nw).map(|i| m_w[i] & (!m_ident[i] & lv[i])).collect();
+        // mask c_dot = ((code & dot) & prev(num)) & next(digit)
+        let m_c_dot: Vec<u64> = (0..nw).map(|i| m_code[i] & m_dot[i] & prev(&m_num, i, 1) & next(&m_digit, i, 1)).collect();
+        // mask chain = num | c_dot
+        let m_chain: Vec<u64> = (0..nw).map(|i| (m_num[i] | m_c_dot[i])).collect();
+        // mask c_par = toggle(c_dot)
+        let m_c_par = toggle(&m_c_dot);
+        // mask c_odd = fill((chain & ~prev(chain)) & c_par, ~chain)
+        let t4: Vec<u64> = (0..nw).map(|i| m_chain[i] & (!prev(&m_chain, i, 1) & lv[i]) & m_c_par[i]).collect();
+        let t5: Vec<u64> = (0..nw).map(|i| !m_chain[i] & lv[i]).collect();
+        let m_c_odd = fill(&t4, &t5);
+        // mask f_dot = c_dot & (c_par ^ c_odd)
+        let m_f_dot: Vec<u64> = (0..nw).map(|i| m_c_dot[i] & (m_c_par[i] ^ m_c_odd[i])).collect();
+        // mask frac = fill(prev(f_dot), ~digit)
+        let t6: Vec<u64> = (0..nw).map(|i| prev(&m_f_dot, i, 1)).collect();
+        let m_frac = fill(&t6, &t7);
+        // mask int = num & ~frac
+        let m_int: Vec<u64> = (0..nw).map(|i| m_num[i] & (!m_frac[i] & lv[i])).collect();
+        // mask id_first = (alpha & ident) & ~prev(ident)
+        let m_id_first: Vec<u64> = (0..nw).map(|i| m_alpha[i] & m_ident[i] & (!prev(&m_ident, i, 1) & lv[i])).collect();
+        // mask second = prev(two_start) & code
+        let m_second: Vec<u64> = (0..nw).map(|i| prev(&m_two_start, i, 1) & m_code[i]).collect();
+        // mask p = (code & punct) & ~f_dot
+        let m_p: Vec<u64> = (0..nw).map(|i| m_code[i] & m_punct[i] & (!m_f_dot[i] & lv[i])).collect();
+        // mask p_start = p & ~second
+        let m_p_start: Vec<u64> = (0..nw).map(|i| m_p[i] & (!m_second[i] & lv[i])).collect();
+        // mask p_last = (p_start & ~two_start) | second
+        let m_p_last: Vec<u64> = (0..nw).map(|i| (m_p_start[i] & (!m_two_start[i] & lv[i]) | m_second[i])).collect();
+        // mask numeral = (int | f_dot) | frac
+        let m_numeral: Vec<u64> = (0..nw).map(|i| ((m_int[i] | m_f_dot[i]) | m_frac[i])).collect();
+        let t10: Vec<u64> = (0..nw).map(|i| m_code[i] & (m_lbrace[i] | m_lbracket[i])).collect();
+        let t11: Vec<u64> = (0..nw).map(|i| (m_code[i] & (m_lbrace[i] | m_lbracket[i]) | m_code[i] & (m_rbrace[i] | m_rbracket[i]))).collect();
+        // scan depth = count(code & (lbrace | lbracket), code & (rbrace | rbracket)) max 127
+        {
+            let mut c = 0u32;
+            'count: for (q, &word) in t11.iter().enumerate() {
+                let mut bits = word;
+                while bits != 0 {
+                    let i = bits.trailing_zeros();
+                    bits &= bits - 1;
+                    if t10[q] >> i & 1 == 1 {
+                        c += 1;
+                        if c > 127 {
+                            refused = true;
+                            break 'count;
+                        }
+                    } else {
+                        c = c.saturating_sub(1);
+                    }
+                }
+            }
+        }
+        let t12: Vec<u64> = (0..nw).map(|i| m_quote[i] & m_o_str[i]).collect();
+        let t15: Vec<u64> = (0..nw).map(|i| m_slash[i] & (m_o_line[i] | m_o_block[i])).collect();
+        let t17: Vec<u64> = (0..nw).map(|i| m_tick[i] & m_o_tick[i]).collect();
+        let t18: Vec<u64> = (0..nw).map(|i| m_hash[i] & m_directive[i]).collect();
+        let t19: Vec<u64> = (0..nw).map(|i| m_alpha[i] & m_ident[i] & (!prev(&m_ident, i, 1) & lv[i])).collect();
+        let t20: Vec<u64> = (0..nw).map(|i| m_digit[i] & m_int[i] & (!prev(&m_int, i, 1) & lv[i])).collect();
+        let t22: Vec<u64> = (0..nw).map(|i| m_punct[i] & m_p_start[i]).collect();
+        (m_o_line, m_o_block, m_o_t1, m_o_t2, m_e_t2, m_o_t3, t1, t2, t3, t12, t15, t17, t18, t19, t20, t22)
+    };
     // The tokens: from the first byte `skip` does not hold, the token whose start holds there, to its last byte by its rule.
     let mut starts: Vec<u32> = Vec::with_capacity(n / 4 + 1);
     let mut lasts: Vec<u32> = Vec::with_capacity(n / 4 + 1);
@@ -834,124 +843,203 @@ pub fn lex(src: &[u8]) -> Lexed {
     let mut at = 0usize;
     // The gap's start, since the grammar token before and since the record before; the grammar token before's word; the marks its tests carry to the next grammar token.
     let (mut from, mut from_record, mut before, mut pending) = (0usize, 0usize, 0u32, 0u32);
-    while let Some(s) = first_clear(&m_ws, at, n) {
+    // The blocks of 64 bytes, and in each the bytes `skip` does not hold from the last token's end on: each a token's first byte (the lean lexer's `lex_blocks`).
+    let mut b = at / 64;
+    'tokens: while b < nw {
+        let base = b * 64;
+        let mut firsts = !m_ws[b] & (!0u64 << at.saturating_sub(base));
+        while firsts != 0 {
+        let s = base + firsts.trailing_zeros() as usize;
+        if s >= n {
+            break 'tokens;
+        }
+        // The token's first byte's group, by the dispatch tables (simdjson's `classify`).
+        let c = src[s];
+        let group = (DISPATCH_LO[usize::from(c & 15)] & DISPATCH_HI[usize::from(c >> 4)]).trailing_zeros();
         let mut hits = 0u32;
-        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = if bit(&t16, s) {
-            // `string`: read str
-            let l = match first_bit(&m_q, s + 1) {
-                Some(c) => c + 0,
-                None => {
+        let (l, kind, extra, mut marks): (usize, u32, bool, u32) = {
+            // The row: the first whose start holds, of those whose start may be the byte's.
+            let row = match group {
+                // `!%&()*+,-.:;<=>@[]^{|}~`
+                0 | 1 | 2 | 3 | 4 => if bit(&t22, s) {
+                    6
+                } else {
+                    usize::MAX
+                },
+                // `"`
+                5 => if bit(&t12, s) {
+                    0
+                } else {
+                    usize::MAX
+                },
+                // `#`
+                6 => if bit(&t18, s) {
+                    3
+                } else {
+                    usize::MAX
+                },
+                // `/`
+                7 => if bit(&t15, s) {
+                    1
+                } else if bit(&t22, s) {
+                    6
+                } else {
+                    usize::MAX
+                },
+                // `0123456789`
+                8 => if bit(&t20, s) {
+                    5
+                } else {
+                    usize::MAX
+                },
+                // `ABCDEFGHIJKLMNOPQRSTUVWXYZ_abcdefghijklmnopqrstuvwxyz`
+                9 | 10 | 11 => if bit(&t19, s) {
+                    4
+                } else {
+                    usize::MAX
+                },
+                // ```
+                12 => if bit(&t17, s) {
+                    2
+                } else {
+                    usize::MAX
+                },
+                _ => usize::MAX,
+            };
+            match row {
+                0 => {
+                    // `string`: read str
+                    let l = match first_bit(&m_q, s + 1) {
+                        Some(c) => c + 0,
+                        None => {
+                            refused = true;
+                            break 'tokens;
+                        }
+                    };
+                    let l = l.max(s);
+                    if count_in(&m_str_bad, s, l) >= 1 {
+                        hits |= 1 << 28;
+                    }
+                    if count_in(&t13, s, l) >= 1 {
+                        hits |= 1 << 28;
+                    }
+                    // a \u escape the engine checks
+                    if count_in(&t14, s, l) >= 1 {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                1 => {
+                    // `comment`: read line | block
+                    let l = if bit(&m_o_line, s) {
+                        first_bit(&m_lf, s + 1).unwrap_or(n) - 1
+
+                    } else if bit(&m_o_block, s) {
+                        match first_bit(&m_block_end, s + 1) {
+                            Some(c) => c + 0,
+                            None => {
+                                refused = true;
+                                break 'tokens;
+                            }
+                        }
+
+                    } else {
+                        refused = true;
+                        break 'tokens;
+                    };
+                    let l = l.max(s);
+                    if count_in(&t16, s, l) >= 1 {
+                        hits |= 1 << 28;
+                    }
+                    (l, 0, true, 0x8000)
+                }
+,
+                2 => {
+                    // `code_literal`: read t1 | t2 | t3
+                    let l = if bit(&m_o_t1, s) {
+                        match first_bit(&m_tick, s + 1) {
+                            Some(c) => c + 0,
+                            None => {
+                                refused = true;
+                                break 'tokens;
+                            }
+                        }
+
+                    } else if bit(&m_o_t2, s) || bit(&m_e_t2, s) {
+                        match first_bit(&m_tt, s + 1) {
+                            Some(c) => c + 1,
+                            None => s + 1,
+                        }
+
+                    } else if bit(&m_o_t3, s) {
+                        match first_bit(&m_ttt, s + 1) {
+                            Some(c) => c + 2,
+                            None => {
+                                refused = true;
+                                break 'tokens;
+                            }
+                        }
+
+                    } else {
+                        refused = true;
+                        break 'tokens;
+                    };
+                    let l = l.max(s);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                3 => {
+                    // `hash_word`: run word
+                    let l = run_last(&m_word, s);
+                    let l = l.max(s);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                4 => {
+                    // `identifier`: run word
+                    let l = run_last(&m_word, s);
+                    let l = l.max(s);
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                5 => {
+                    // `number`: run num_run once dot
+                    let l = run_once_last(&m_num_run, &m_dot, s);
+                    let l = l.max(s);
+                    if count_in(&m_dot, s, l) >= 1 {
+                        hits |= 1 << 16;
+                    }
+                    if l + 1 - s >= 1 && first_clear(&t21, s, s + 1).is_none() {
+                        hits |= 1 << 12;
+                    }
+                    // a number of 19 digits or more
+                    if l + 1 - s >= 19 && first_clear(&m_digit, s, l + 1).is_none() {
+                        refused = true;
+                        break 'tokens;
+                    }
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                6 => {
+                    // `punct`: pair
+                    let l = pair_6(src, s);
+                    let l = l.max(s);
+                    if l + 1 - s >= 1 && first_clear(&t23, s, s + 1).is_none() {
+                        hits |= 1 << 12;
+                    }
+                    (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
+                }
+,
+                _ => {
+                    // A byte no token begins with.
                     refused = true;
-                    break;
+                    break 'tokens;
                 }
-            };
-            let l = l.max(s);
-            if count_in(&m_str_bad, s, l) >= 1 {
-                hits |= 1 << 28;
             }
-            if count_in(&t12, s, l) >= 1 {
-                hits |= 1 << 28;
-            }
-            // a \u escape the engine checks
-            if count_in(&t17, s, l) >= 1 {
-                refused = true;
-                break;
-            }
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else if bit(&t18, s) {
-            // `comment`: read line | block
-            let l = if bit(&m_o_line, s) {
-                first_bit(&m_lf, s + 1).unwrap_or(n) - 1
-
-            } else if bit(&m_o_block, s) {
-                match first_bit(&m_block_end, s + 1) {
-                    Some(c) => c + 0,
-                    None => {
-                        refused = true;
-                        break;
-                    }
-                }
-
-            } else {
-                refused = true;
-                break;
-            };
-            let l = l.max(s);
-            if count_in(&t13, s, l) >= 1 {
-                hits |= 1 << 28;
-            }
-            (l, 0, true, 0x8000)
-        } else if bit(&t19, s) {
-            // `code_literal`: read t1 | t2 | t3
-            let l = if bit(&m_o_t1, s) {
-                match first_bit(&m_tick, s + 1) {
-                    Some(c) => c + 0,
-                    None => {
-                        refused = true;
-                        break;
-                    }
-                }
-
-            } else if bit(&m_o_t2, s) || bit(&m_e_t2, s) {
-                match first_bit(&m_tt, s + 1) {
-                    Some(c) => c + 1,
-                    None => s + 1,
-                }
-
-            } else if bit(&m_o_t3, s) {
-                match first_bit(&m_ttt, s + 1) {
-                    Some(c) => c + 2,
-                    None => {
-                        refused = true;
-                        break;
-                    }
-                }
-
-            } else {
-                refused = true;
-                break;
-            };
-            let l = l.max(s);
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else if bit(&t20, s) {
-            // `hash_word`: run word
-            let l = run_last(&m_word, s);
-            let l = l.max(s);
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else if bit(&t21, s) {
-            // `identifier`: run word
-            let l = run_last(&m_word, s);
-            let l = l.max(s);
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else if bit(&t22, s) {
-            // `number`: run num_run once dot
-            let l = run_once_last(&m_num_run, &m_dot, s);
-            let l = l.max(s);
-            if count_in(&m_dot, s, l) >= 1 {
-                hits |= 1 << 16;
-            }
-            if l + 1 - s >= 1 && first_clear(&t15, s, s + 1).is_none() {
-                hits |= 1 << 12;
-            }
-            // a number of 19 digits or more
-            if l + 1 - s >= 19 && first_clear(&m_digit, s, l + 1).is_none() {
-                refused = true;
-                break;
-            }
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else if bit(&t23, s) {
-            // `punct`: pair
-            let l = pair_6(src, s);
-            let l = l.max(s);
-            if l + 1 - s >= 1 && first_clear(&t14, s, s + 1).is_none() {
-                hits |= 1 << 12;
-            }
-            (l, u32::from(KINDS[usize::from(src[s])]), false, 0x0)
-        } else {
-            // A byte no token begins with.
-            refused = true;
-            break;
-        };
+        }
+;
         let word = if extra { 0 } else { word(&src[s..=l]) };
         // The token marks: tier 2 tests the rest of each.
         if word == 40 {
@@ -1017,6 +1105,13 @@ pub fn lex(src: &[u8]) -> Lexed {
         lasts.push(l as u32);
         codes.push(kind | word << 8 | marks << 16);
         at = l + 1;
+        if at >= base + 64 {
+            b = at / 64;
+            continue 'tokens;
+        }
+        firsts &= !0u64 << (at - base);
+        }
+        b += 1;
     }
     // `float_after`, else escape: a float the file ends with
     if pending >> 0 & 1 == 1 {
@@ -1169,6 +1264,53 @@ fn any_in(x: &[u64], a: usize, b: usize) -> bool {
     a <= b && first_bit(x, a).is_some_and(|i| i <= b)
 }
 
+/// The first byte in `a..=b` that `x` holds, a word at a time.
+fn first_in(x: &[u64], a: usize, b: usize) -> Option<usize> {
+    if a > b {
+        return None;
+    }
+    let mut q = a / 64;
+    let mut w = x.get(q).copied().unwrap_or(0) & (!0u64 << (a % 64));
+    loop {
+        if q == b / 64 && b % 64 != 63 {
+            w &= (1u64 << (b % 64 + 1)) - 1;
+        }
+        if w != 0 {
+            return Some(64 * q + w.trailing_zeros() as usize);
+        }
+        if q == b / 64 {
+            return None;
+        }
+        q += 1;
+        w = x.get(q).copied().unwrap_or(0);
+    }
+}
+
+/// The last byte in `a..=b` that `x` holds, a word at a time.
+fn last_in(x: &[u64], a: usize, b: usize) -> Option<usize> {
+    if a > b {
+        return None;
+    }
+    let mut q = b / 64;
+    let mut w = x.get(q).copied().unwrap_or(0);
+    if b % 64 != 63 {
+        w &= (1u64 << (b % 64 + 1)) - 1;
+    }
+    loop {
+        if q == a / 64 {
+            w &= !0u64 << (a % 64);
+        }
+        if w != 0 {
+            return Some(64 * q + 63 - w.leading_zeros() as usize);
+        }
+        if q == a / 64 {
+            return None;
+        }
+        q -= 1;
+        w = x.get(q).copied().unwrap_or(0);
+    }
+}
+
 /// `x`'s bits in bytes `a..=b`, a word at a time.
 fn count_in(x: &[u64], a: usize, b: usize) -> u32 {
     let mut n = 0;
@@ -1183,6 +1325,31 @@ fn count_in(x: &[u64], a: usize, b: usize) -> u32 {
         n += w.count_ones();
     }
     n
+}
+
+/// `v`'s bits at bytes `a..=b` made `m`'s.
+#[inline(always)]
+fn put(v: &mut [u64], m: &[u64], a: usize, b: usize) {
+    let mut i = a;
+    while i <= b {
+        let (q, r) = (i / 64, i % 64);
+        let k = (b + 1 - i).min(64 - r);
+        let w = (if k == 64 { !0 } else { (1u64 << k) - 1 }) << r;
+        v[q] = v[q] & !w | m[q] & w;
+        i += k;
+    }
+}
+
+/// `v`'s bits at bytes `a..=b` cleared.
+#[inline(always)]
+fn clear(v: &mut [u64], a: usize, b: usize) {
+    let mut i = a;
+    while i <= b {
+        let (q, r) = (i / 64, i % 64);
+        let k = (b + 1 - i).min(64 - r);
+        v[q] &= !((if k == 64 { !0 } else { (1u64 << k) - 1 }) << r);
+        i += k;
+    }
 }
 
 /// Bytes `a..b` set in `v` (cut to its words).

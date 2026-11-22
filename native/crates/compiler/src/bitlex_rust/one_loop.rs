@@ -1396,7 +1396,7 @@ matches!(ROWS[usize::from(b)], {pat})
     // The root: its node, its body, then the stream's end. It ends at the file's end, as tree-sitter's root does.
     let root = *g.order.first().ok_or("tier 2 as one loop: no rule")?;
     let (kind, body) = match g.rules[root] {
-        Stmt::Node { kind, body, nested: false, whole: false } => (kind, body),
+        Stmt::Node { kind, body, nested: false, whole: false, .. } => (kind, body),
         _ => return Err("tier 2 as one loop: a root other than a node of no nesting is not written yet".into()),
     };
     let first = lp.place(String::new());

@@ -411,6 +411,11 @@ pub struct P<'a> {
     /// its kind and, once its token is taken, that token's start: a pending extra of no width.
     gone: Vec<usize>,
     lost: Option<(u16, Option<u32>)>,
+    /// The extra a mark's `loses since` moved, by record, and where: of no width there.
+    moved: Option<(usize, u32)>,
+    /// The strings open over a template's code (decision 0600): their parts go on at the next
+    /// opener of a reader that resumes them (`advance`).
+    strings: usize,
 }
 
 #[allow(dead_code)]
@@ -418,7 +423,7 @@ impl<'a> P<'a> {
     fn new(src: &'a [u8], lx: &'a crate::tier1::Lexed, widths: Widths) -> R<Self> {
         let (starts, lasts, codes, m) = (&lx.starts[..], &lx.lasts[..], &lx.codes[..], &lx.masks);
         let n = codes.len();
-        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, gone: Vec::new(), lost: None };
+        let mut p = P { src, starts, lasts, codes, m, n, i: 0, sub: Vec::new(), k: 0, pend: 0, w: Writer::new(0, widths, src.len() / 3 + 16), open: Vec::with_capacity(64), made: Vec::with_capacity(64), last_end: 0, taken: 0, known: 0, holds: 0, flags: 0, word: 0, depth: 0, marked: false, asks: 0, refusing: 0, gone: Vec::new(), lost: None, moved: None, strings: 0 };
         p.i = p.next_tok(0);
         p.arrive()?;
         Ok(p)
@@ -541,26 +546,49 @@ impl<'a> P<'a> {
             self.pend += 1;
             let c = self.codes[j];
             if is_extra(c) && !self.gone.contains(&j) {
-                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, self.starts[j]);
-                self.w.close(at, self.lasts[j] + 1);
+                let (s, e) = self.extra_span(j);
+                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
+                self.w.close(at, e);
             }
+        }
+    }
+
+    /// Extra `j`'s span: its bytes, or of no width where a mark's `loses since` moved it.
+    fn extra_span(&self, j: usize) -> (u32, u32) {
+        match self.moved {
+            Some((m, s)) if m == j => (s, s),
+            _ => (self.starts[j], self.lasts[j] + 1),
+        }
+    }
+
+    /// `loses since`: the first extra pending of no width at the next one's start (the lean
+    /// lexer's `asi` reads a block comment through to another comment and loses its bytes there).
+    fn move_first(&mut self) {
+        let mut pending = (self.pend..self.i).filter(|&j| is_extra(self.codes[j]) && !self.gone.contains(&j));
+        if let (Some(a), Some(b)) = (pending.next(), pending.next()) {
+            self.moved = Some((a, self.starts[b]));
         }
     }
 
     /// The comments pending before the line break of settling mark `bit` (an extra's code holds
     /// the bits of its own gap): written now, into the node open, the node's end past them.
     fn settle(&mut self, bit: u32) {
+        // An extra a `loses since` moved and the one after it go with those before: the lean
+        // lexer's semicolon is past that one.
+        let moved = self.moved.map(|(m, _)| m).filter(|&m| m >= self.pend && m < self.i);
+        let through = moved.and_then(|m| (m + 1..self.i).find(|&k| is_extra(self.codes[k]) && !self.gone.contains(&k)));
         while self.pend < self.i {
             let j = self.pend;
             let c = self.codes[j];
-            if is_extra(c) && c >> (16 + bit) & 1 == 1 {
+            if is_extra(c) && c >> (16 + bit) & 1 == 1 && Some(j) != moved && Some(j) != through {
                 break;
             }
             self.pend += 1;
             if is_extra(c) && !self.gone.contains(&j) {
-                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, self.starts[j]);
-                self.w.close(at, self.lasts[j] + 1);
-                self.last_end = self.last_end.max(self.lasts[j] + 1);
+                let (s, e) = self.extra_span(j);
+                let at = self.w.push(u32::from(extra_kind(c)) | 1 << 16, s);
+                self.w.close(at, e);
+                self.last_end = self.last_end.max(e);
             }
         }
     }
@@ -618,14 +646,12 @@ impl<'a> P<'a> {
             }
             self.sub.clear();
             self.k = 0;
-            self.i = self.next_tok(self.i + 1);
-            self.arrive()?;
+            self.advance(l as usize + 1)?;
             self.last_end = l + 1;
             return Ok((s, l + 1));
         }
         let (s, e) = (self.starts[self.i], self.lasts[self.i] + 1);
-        self.i = self.next_tok(self.i + 1);
-        self.arrive()?;
+        self.advance(e as usize)?;
         self.last_end = e;
         Ok((s, e))
     }
@@ -697,15 +723,21 @@ impl<'a> P<'a> {
         self.made.push(NONE);
     }
 
-    /// The root closed at the end of the file: the whole file (`whole`, from byte 0, as the machine opens it), or
-    /// from its first token or comment to its last token's end.
-    fn close_root(&mut self, whole: bool) -> R {
+    /// The root closed at the end of the file: from the file's start (`whole`), else (or `whole padded`) from its
+    /// first token or comment, as tree-sitter's root starts past the file's leading blanks.
+    fn close_root(&mut self, whole: bool, padded: bool) -> R {
         if self.i < self.n {
             return self.refuse();
         }
         self.flush();
-        // From byte 0 (`whole`), else its first token or comment (none: the file's end).
-        let first = if whole { 0 } else if self.w.len() > 1 { self.w.start(1) } else { self.src.len() as u32 };
+        // From its first token or comment (none: the file's end), to the file's end (`whole`) or its last token's.
+        let first = if whole && !padded {
+            0
+        } else if self.w.len() > 1 {
+            self.w.start(1)
+        } else {
+            self.src.len() as u32
+        };
         let end = if whole { self.src.len() as u32 } else { self.last_end };
         // A field that a later token decides (`provisional`), held still at the file's end: refused.
         if (0..self.w.len()).any(|i| matches!((self.w.key(i) >> 10 & 0x3f) as u16, 63)) {
@@ -881,7 +913,7 @@ impl P<'_> {
                 }
             }
         }
-        self.close_root(true)
+        self.close_root(true, false)
     }
 
     /// `include`.
@@ -6228,6 +6260,13 @@ impl P<'_> {
     fn reread_parenthesized_strict(&mut self) -> R {
         let root: Option<Option<u16>> = Some(Some(u16::MAX));
         self.reread(root, Self::reading_parenthesized_strict, Self::reading_field_parenthesized_strict)
+    }
+
+    /// Past the token, to the next grammar token's record.
+    #[inline(always)]
+    fn advance(&mut self, from: usize) -> R {
+        self.i = self.next_tok(self.i + 1);
+        self.arrive()
     }
 
     /// Record `j` split where its first byte opens a region tier 2 reads in parts.
