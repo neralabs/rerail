@@ -818,6 +818,23 @@ function takeCheckouts(
 }
 
 /**
+ * Puts into `listed` (`WalkStart.listedAtFirstSight`) what the Git of each checkout of the worktree at `root` listed as
+ * modified or untracked for the walk that first shows it to a session (`WorktreeFindings.listed`), for each checkout
+ * whose listing finished and whose index the walk read with no unmerged entry: a conflict is judged by reading Git.
+ */
+function takeFirstSightListings(root: string, findings: WorktreeFindings, listed: Map<string, ReadonlySet<string>>): void {
+  for (const [checkout, paths] of findings.listed) {
+    const entries = checkout === root ? findings.unmerged : findings.inner.unmerged.get(checkout) ?? findings.inner.passed.get(checkout);
+    if (paths !== undefined && entries?.size === 0) listed.set(checkout, new Set(paths));
+  }
+}
+
+/** Whether `edit`, of the file at `path` in its checkout, is one Git's listing (`listed`) leaves out: it holds what its index holds. */
+function listedUnchanged(edit: CodeRuleEdit, path: string, listed: ReadonlySet<string>): boolean {
+  return edit.deleted !== true && edit.readError === undefined && !listed.has(path);
+}
+
+/**
  * Puts what the session reads now of a changed source the walk kept no text of (`#reread`) into `scan`, and into `kept`
  * a source it leaves to the next walk: one it cannot read now, with what it saw before, and one it never saw and finds gone.
  */
@@ -1107,6 +1124,12 @@ interface WalkStart {
   readonly callsEnded: number;
   /** Filesystem-clock reading taken as the walk started. */
   readonly observedAt: number;
+  /**
+   * In a take of the other worktrees' walk, by checkout (physical), the files its Git listed as modified or untracked
+   * when the walk first showed the session that checkout's worktree (`takeFirstSightListings`): every other file there
+   * holds what its index holds.
+   */
+  readonly listedAtFirstSight?: ReadonlyMap<string, ReadonlySet<string>>;
 }
 /** A worktree whose walk a session takes: its root (physical), its path as the session names it, and what the walk found. */
 interface TakenWorktree {
@@ -2988,17 +3011,19 @@ export class CodeRuleBridge {
     const snapshots = new Map<string, WorktreeSnapshot>();
     const heads = new Map<string, string>();
     const unmerged = new Map<string, ReadonlyMap<string, string>>();
+    const listedAtFirstSight = new Map<string, ReadonlySet<string>>();
     const kept = this.#keptWorktreePaths(start.worktrees);
     for (const [root, findings] of found) {
       const worktree = sessionPath(discovery.root, root);
       if (!start.worktrees.has(worktree)) continue;
       snapshots.set(worktree, findings.snapshot);
       takeCheckouts(root, findings, { heads, unmerged, passed: scan.unmerged });
+      if (discovery.worktrees.fresh.has(worktree)) takeFirstSightListings(root, findings, listedAtFirstSight);
       this.#takeFindings(discovery, { root, worktree }, findings, kept.get(worktree) ?? [], { previous, scan });
     }
     const walk: WalkStart = {
       inSession: false, baseline: false, checkpoint: "edit", worktrees: new Set(snapshots.keys()), previous, versions: start.versions,
-      heads, unmerged, callsEnded: start.callsEnded, observedAt,
+      heads, unmerged, callsEnded: start.callsEnded, observedAt, listedAtFirstSight,
     };
     const views = await this.#readTakenTexts(discovery, walk, scan, found);
     // Not this take's to record: the session keeps what it saw of them (`#takeSnapshots`).
@@ -3493,7 +3518,10 @@ export class CodeRuleBridge {
     const { owned, unowned } = this.#byOwningCheckout(discovery.root, edits, edit => edit.path);
     sorted.unwritten.push(...unowned);
     for (const [checkout, group] of owned) {
-      const verdicts = await this.#gitVerdicts(discovery, checkout, group, uncaptured);
+      const listed = walk.listedAtFirstSight?.get(checkout);
+      const verdicts = listed === undefined
+        ? await this.#gitVerdicts(discovery, checkout, group, uncaptured)
+        : await this.#firstSightVerdicts(discovery, { checkout, listed }, group, uncaptured);
       if (await this.#checkoutStands(discovery, walk, checkout, group)) this.#sortByVerdicts(group, verdicts, sorted);
     }
     const { unwritten, notOwn } = sorted;
@@ -3588,6 +3616,27 @@ export class CodeRuleBridge {
       notOwn.push(edit.generatedText === undefined ? edit : { ...withoutUncaptured(edit), previousText: edit.generatedText });
     // The next shell edit measures from the text left, which neither the index nor `HEAD` may hold.
     else if (keptAs !== undefined && edit.generatedText !== undefined) this.#rememberText(edit.path, edit.generatedText, keptAs);
+  }
+
+  /**
+   * `#gitVerdicts` of the changes in `checkout` that a walk first showing the session its worktree found there. A file
+   * its Git did not list then as modified or untracked (`listed`, `WalkStart.listedAtFirstSight`) holds what the index
+   * holds, Git's own text, as a reading of its blob would find (`#heldByGit`): it is judged so without asking Git again.
+   * Every file of a worktree Git added while the session ran is stamped since the session opened, so the reading asked
+   * Git for the blobs of all of them, and of `HEAD`'s moves, in the queue a shell command's result waits on, for every
+   * such worktree and every session watching it. The rest, and a file the walk could not read, are read as before.
+   */
+  async #firstSightVerdicts(
+    discovery: SourceDiscovery,
+    { checkout, listed }: { readonly checkout: string; readonly listed: ReadonlySet<string> },
+    group: readonly CodeRuleEdit[],
+    uncaptured: ReadonlyMap<string, string>,
+  ): Promise<Map<string, GitVerdict>> {
+    const unchanged = new Set(group.filter(edit => listedUnchanged(edit, sessionPath(checkout, resolve(discovery.root, edit.path)), listed)));
+    const asked = group.filter(edit => !unchanged.has(edit));
+    const verdicts = asked.length === 0 ? new Map<string, GitVerdict>() : await this.#gitVerdicts(discovery, checkout, asked, uncaptured);
+    for (const edit of unchanged) verdicts.set(edit.path, {});
+    return verdicts;
   }
 
   /**
