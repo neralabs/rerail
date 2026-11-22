@@ -595,12 +595,16 @@ impl ProgramPass for FoldOwn<'_> {
         // those whose narrow rows are their rows (`same`, read as they are), and those whose narrow copy is their rows
         // under the narrow bound (`within`). Each `same` found may leave another one's readers alone, so the reads are
         // found again.
+        // Of those within one document, a local original its every narrow reader bounds is read as it is: the reader's
+        // bound is the filter's (`Narrowing::unbounded`).
+        let layouts = cx.get::<crate::code_rule_dsl::logic::program_image::layouts::Layouts>()?;
         let kept = |folded: &HashMap<String, String>| -> Result<(BTreeSet<String>, BTreeSet<String>, BTreeSet<String>)> {
             let originals = annotated(folded);
             let mut narrowing = Narrowing { widened: &originals, asking: asks.clone(), shown: shown.clone(), same: BTreeSet::new() };
             loop {
                 let read = narrowing.reads(v, folded);
-                let (within, same) = one_document(v, &f, &read, &narrowing, folded, [narrow, narrow << 32])?;
+                let (within, mut same) = one_document(v, &f, &read, &narrowing, folded, [narrow, narrow << 32])?;
+                same.extend(narrowing.unbounded(v, folded, &layouts, &read, &within, narrow));
                 if same.is_empty() {
                     return Ok((narrowing.same, read, within));
                 }
@@ -1591,6 +1595,116 @@ impl Narrowing<'_> {
             }
         }
         read
+    }
+
+    /// Of the originals `within` (`one_document`: their narrow copy is their rows under the narrow bound, a filter),
+    /// those whose filter need not be made: their narrow readers bound them themselves, so they read the original as it
+    /// is (`same`). An original is read so where every row of it is one document's (`Local`, its folded copies' too:
+    /// a filter bounds every node column, a reader one, and the two agree only where a row's nodes are one
+    /// document's), every original read narrow its rules read
+    /// (positive, negated or aggregated) is read so too, no native operator reads it (its rows are made from the
+    /// relation its fields name, under no bound), and each atom of it a narrow reader holds has a node column the
+    /// reader bounds narrow. The annotations are documents of their own (`RUN_VALUE_KEYS` to `HIDDEN_KEYS`), so a
+    /// document's rows of a local relation are made from that document's rows alone, and none of a file's is an
+    /// annotation's. Made apart, the copies derived the relations a second time: hogql's `nameref`, `attr_of` and
+    /// `walk` twice (main's #923 took cold hogql from 90.5 B instructions to 102.9 B).
+    fn unbounded(&self, v: &Version, folded: &HashMap<String, String>, layouts: &crate::code_rule_dsl::logic::program_image::layouts::Layouts, read: &BTreeSet<String>, within: &BTreeSet<String>, narrow: i64) -> BTreeSet<String> {
+        use crate::code_rule_dsl::logic::front::LayoutFact;
+        let local = |rel: &str| v.rel(rel).is_some_and(|r| layouts.of(r).any(|f| *f == LayoutFact::Local));
+        let orig = |rel: &str| folded.get(rel).cloned().unwrap_or_else(|| rel.to_owned());
+        let natives: BTreeSet<String> = v.native_map().map(|m| m.values().flat_map(|n| n.reads().into_iter().map(orig).collect::<Vec<_>>()).collect()).unwrap_or_default();
+        let node_col = |rel: &str, c: usize| v.decl_of(rel).and_then(|d| d.cols().nth(c)).is_some_and(|(_, t)| v.text(t) == "node");
+        let mut same: BTreeSet<String> = within.iter().filter(|x| local(x) && !natives.contains(*x) && folded.iter().all(|(c, o)| o != *x || local(c))).cloned().collect();
+        // A rule's text with its copies' names their originals' (`show_rule`'s identifiers mapped).
+        let as_folded = |text: String| -> String {
+            let mut out = String::with_capacity(text.len());
+            let mut word = String::new();
+            for ch in text.chars().chain(std::iter::once(' ')) {
+                if ch.is_ascii_alphanumeric() || ch == '_' {
+                    word.push(ch);
+                    continue;
+                }
+                out.push_str(folded.get(&word).map_or(word.as_str(), String::as_str));
+                word.clear();
+                out.push(ch);
+            }
+            out.pop();
+            out
+        };
+        // Each atom a narrow reader holds of an original: it reads the original bounded, by a node column, or the
+        // reader repeats a rule of its head over the copies (hiding's twin for the annotation, `walk`'s over
+        // `rr_in_annotation_0_nameref`): read so, it is that rule once the copies fold, and goes as a repeat.
+        for r in v.rules() {
+            let head = v.rel_name(r.head().rel());
+            if folded.contains_key(head) || !(self.sees(head) || read.contains(head)) {
+                continue;
+            }
+            let reads_copy = |o: RuleRef<'_>| o.body().any(|l| matches!(l.view(), Lit::Atom(a) | Lit::Agg { atom: a, .. } if folded.contains_key(v.rel_name(a.rel()))));
+            let text = v.show_rule(r);
+            if v.heads(r.head().rel()).any(|o| o.id() != r.id() && reads_copy(o) && as_folded(v.show_rule(o)) == text) {
+                continue;
+            }
+            let mut bounded: BTreeSet<_> = r
+                .body()
+                .filter_map(|l| match l.view() {
+                    Lit::Cmp { op: CmpOp::Lt, l: TermRef::Var(x), r: TermRef::Int(b) } if b == narrow << 32 || b == narrow => Some(x),
+                    _ => None,
+                })
+                .collect();
+            // A node one document's with a bounded one is bounded too: joined by `nearest`, an equality, or a local
+            // atom (`wstart`'s `nearest($n, $s, lscope)`, `$s` bounded), as `layouts::local` groups them.
+            loop {
+                let before = bounded.len();
+                for l in r.body() {
+                    let group: Vec<_> = match l.view() {
+                        Lit::Nearest { n, a, .. } => vec![n, a],
+                        Lit::Cmp { op: CmpOp::Eq, l: TermRef::Var(x), r: TermRef::Var(y) } => vec![x, y],
+                        Lit::Atom(a) if !a.neg() && local(v.rel_name(a.rel())) => {
+                            let rel = v.rel_name(a.rel());
+                            a.args().enumerate().filter(|(c, _)| node_col(rel, *c)).filter_map(|(_, t)| t.var()).collect()
+                        }
+                        _ => continue,
+                    };
+                    if group.iter().any(|x| bounded.contains(x)) {
+                        bounded.extend(group);
+                    }
+                }
+                if bounded.len() == before {
+                    break;
+                }
+            }
+            for l in r.body() {
+                let (Lit::Atom(a) | Lit::Agg { atom: a, .. }) = l.view() else { continue };
+                let rel = v.rel_name(a.rel());
+                if same.contains(rel) && !a.args().enumerate().any(|(c, t)| node_col(rel, c) && t.var().is_some_and(|x| bounded.contains(&x))) {
+                    same.remove(rel);
+                }
+            }
+        }
+        // Every original read narrow that its rules (its copies' too) read is read bounded too: the greatest such set.
+        loop {
+            let out: Vec<String> = v
+                .rules()
+                .filter_map(|r| {
+                    let head = orig(v.rel_name(r.head().rel()));
+                    let reads_kept = r.body().any(|l| match l.view() {
+                        Lit::Atom(a) | Lit::Agg { atom: a, .. } => {
+                            let rel = orig(v.rel_name(a.rel()));
+                            read.contains(&rel) && !same.contains(&rel)
+                        }
+                        _ => false,
+                    });
+                    (same.contains(&head) && reads_kept).then_some(head)
+                })
+                .collect();
+            if out.is_empty() {
+                break;
+            }
+            for x in out {
+                same.remove(&x);
+            }
+        }
+        same
     }
 }
 
