@@ -3351,12 +3351,9 @@ export class CodeRuleBridge {
     }
   }
 
-  /**
-   * Puts back what `walk` had observed of `edits`, but in a worktree Git did not list for the whole walk (`walkHeld`),
-   * which took its files with it (`#forgetWorktrees`). No edit of the session folder's walk lies in a worktree.
-   */
+  /** Puts back what `walk` had observed of `edits`, but in a worktree removed since, which took its files with it (`#forgetWorktrees`). */
   #restoreObservations(discovery: SourceDiscovery, walk: WalkStart, edits: readonly CodeRuleEdit[]): void {
-    const gone = new Set([...walk.worktrees].filter(worktree => !walkHeld(discovery, walk, worktree)));
+    const gone = new Set([...walk.worktrees].filter(worktree => !discovery.worktrees.roots.has(worktree)));
     for (const edit of edits.filter(edit => !underBaselineRoot(gone, edit.path))) {
       const before = walk.previous.get(edit.path);
       if (before === undefined) this.#unobserve(edit.path);
