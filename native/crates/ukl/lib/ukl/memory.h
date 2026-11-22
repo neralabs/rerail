@@ -188,5 +188,9 @@ UKL_DEFINE_ATOMICS_AT(uint64_t)
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_or_at(UKL_COHERENT const uint8_t* t, A a, uint32_t x) { return ukl_atomic_or_at((UKL_GLOBAL const uint8_t*)t, a, x); } \
     UKL_INLINE UKL_OVERLOAD uint32_t ukl_atomic_cas_at(UKL_COHERENT const uint8_t* t, A a, uint32_t e, uint32_t n) { return ukl_atomic_cas_at((UKL_GLOBAL const uint8_t*)t, a, e, n); }
 
+// The vector path (`__UKL_VEC`, decision 0567) reads one memory: a coherent base is a global one there, and its C
+// reader tells no overload apart by `volatile` (rerail-ukl-vec's `overload`), so its atomics are the global ones.
+#if !defined(__UKL_VEC)
 UKL_DEFINE_COHERENT_ATOMICS_AT(uint32_t)
 UKL_DEFINE_COHERENT_ATOMICS_AT(uint64_t)
+#endif

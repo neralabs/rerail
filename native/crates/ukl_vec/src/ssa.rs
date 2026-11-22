@@ -12,8 +12,10 @@
 //! - **Masks are SSA values too**: the lanes running (`CUR`) and those that took a `break`, a `continue`, a `return`
 //!   or ended. A uniform branch is a branch; a varying one sets the running lanes for each side, each side skipped
 //!   when it has none (`Any`), as the code tape's lowering does (`code`), whose semantics this keeps.
-//! - **Calls are functions**: their arguments values (uniform where every call's context has them so), their result
-//!   a value, under the lanes that call.
+//! - **A call is its callee's instructions** in its caller, its locals past its caller's region in the frame, its
+//!   result and its returned lanes variables of its own, unless the callee is declared `noinline`
+//!   (`lower::Func::called`): then a function, its arguments values (uniform where every call's context has them so),
+//!   its result a value, under the lanes that call; the call's extra words its arguments, then the frame's advance.
 //! - **Cross-lane operations** (a ballot, a shuffle, a reduction, an agreed branch's check, a barrier, a poll, a call
 //!   of a function that has one) are marked: the back ends run the code between them at a width of their choosing.
 //!
@@ -193,7 +195,7 @@ impl Inst {
             O::Select | O::Store => [Some(a), Some(b), Some(c), None],
             O::First | O::Load | O::Zero | O::Reduce => [Some(a), Some(b), None, None],
             O::Copy | O::Shuffle => [Some(a), Some(b), Some(c), None],
-            O::LaneOp => [Some(a), Some(b), None, None],
+            O::LaneOp => [Some(a), Some(b), Some(d), None],
             O::Atomic => [Some(a), Some(b), Some(c), Some(d)],
             O::Agree => [Some(c), Some(d), None, None],
             O::Call => [Some(d), None, None, None],
@@ -210,7 +212,8 @@ impl Inst {
         let v: Vec<&mut u32> = match op {
             O::Const | O::Arg | O::Entry | O::NoLanes | O::Undef | O::Param | O::Global | O::Shared | O::FrameAddr | O::Lane | O::Bar | O::Yield | O::SgBar | O::Jump | O::Halt => vec![],
             O::Bin => vec![a, b, c],
-            O::MAnd | O::MOr | O::MAndNot | O::First | O::Load | O::Zero | O::Reduce | O::LaneOp => vec![a, b],
+            O::MAnd | O::MOr | O::MAndNot | O::First | O::Load | O::Zero | O::Reduce => vec![a, b],
+            O::LaneOp => vec![a, b, d],
             O::Un | O::Cast | O::MaskOf | O::Any | O::AnyGroup | O::Bits | O::Lid | O::Gid | O::GroupInfo | O::Ret => vec![a],
             O::Br | O::Switch => vec![a, d],
             O::Select | O::Store | O::Copy | O::Shuffle => vec![a, b, c],
@@ -263,6 +266,12 @@ impl Func {
     }
 
     /// A jump's or call's arguments.
+    /// If `c` (a `bool`'s lanes) is `lane == u` (through casts), `u` uniform: `u` (at most one lane of a SIMD group
+    /// has it true, lanes being distinct).
+    pub fn lane_is(&self, c: V) -> Option<V> {
+        lane_is(&self.insts, c)
+    }
+
     pub fn args_of(&self, i: &Inst) -> &[u32] {
         &self.extra[i.b as usize..][..i.c as usize]
     }
@@ -309,6 +318,40 @@ fn local(o: u32, s: u32) -> u64 {
     LOCAL + (u64::from(s) << 24) + u64::from(o)
 }
 const TEMP: u64 = 2 << 32;
+/// `Func::lane_is` over the values `insts`.
+fn lane_is(insts: &[Inst], c: V) -> Option<V> {
+    let strip = |mut x: V| {
+        while insts[x as usize].op == O::Cast {
+            x = insts[x as usize].a;
+        }
+        x
+    };
+    let i = insts[strip(c) as usize];
+    if i.op != O::Bin || Op::of(u32::from(i.sub)) != Op::Eq {
+        return None;
+    }
+    let lane = |x: V| insts[strip(x) as usize].op == O::Lane;
+    let uniform = |x: V| insts[x as usize].shape == Shape::Uniform;
+    if lane(i.a) && uniform(i.b) {
+        Some(i.b)
+    } else if lane(i.b) && uniform(i.a) {
+        Some(i.a)
+    } else {
+        None
+    }
+}
+
+/// The most values a function's SSA may have: past it the kernel is refused as it is built, never compiled or run.
+/// The compiled code's size and its compile's time grow with it (Cranelift took 17 to 24 s on functions of 110,000 to
+/// 330,000 values); the library's kernels' largest function is under 8,000.
+pub const MAX_VALUES: usize = 20_000;
+
+/// The most values a function's builder may make (dead ones and those simplified away among them, which `finish`
+/// drops): a function past it would be past `MAX_VALUES`, its build stopped there.
+const MAX_MADE: usize = 8 * MAX_VALUES;
+
+/// A body whose calls are its instructions (`build`'s `bodies`).
+const INLINE: usize = usize::MAX;
 
 /// A phi being made: its block, variable, and operands in its block's predecessors' order.
 struct Phi {
@@ -318,7 +361,7 @@ struct Phi {
 }
 
 /// The SSA of the vector tape `vt`.
-pub fn build(vt: &Tape, names: &dyn Fn(u32) -> String) -> R<Ssa> {
+pub fn build(vt: &Tape, names: &dyn Fn(u32) -> String, called: &dyn Fn(u32) -> bool) -> R<Ssa> {
     let v = View::new(vt);
     let n = v.len();
     let mut exits = vec![false; n];
@@ -329,18 +372,29 @@ pub fn build(vt: &Tape, names: &dyn Fn(u32) -> String) -> R<Ssa> {
             _ => v.children(i).any(|c| exits[c]),
         };
     }
-    let kids: Vec<usize> = v.children(0).collect();
-    // Each body by its id: its node, its index among the functions.
-    let bodies: HashMap<u32, (usize, usize)> = kids[1..].iter().enumerate().map(|(k, &b)| (v.w(b, 0), (b, k + 1))).collect();
-    // The calls each function makes, and each body's arguments' uniformity (every call's, by its context's levels).
+    let all: Vec<usize> = v.children(0).collect();
+    // The functions: the kernel's, then each body of a `noinline` function. Each body by its id: its node, and its
+    // index among the functions (`INLINE`: its calls are its instructions).
+    let kids: Vec<usize> = std::iter::once(all[0]).chain(all[1..].iter().copied().filter(|&b| called(v.w(b, 1)))).collect();
+    let mut bodies: HashMap<u32, (usize, usize)> = all[1..].iter().map(|&b| (v.w(b, 0), (b, INLINE))).collect();
+    for (k, &b) in kids.iter().enumerate().skip(1) {
+        bodies.insert(v.w(b, 0), (b, k));
+    }
+    // The calls each function makes (through the bodies it has inlined too), and each called body's arguments'
+    // uniformity (every call's, by its context's levels).
     let mut calls: Vec<Vec<usize>> = vec![Vec::new(); kids.len()];
     let mut uniform_arg: HashMap<u32, Vec<bool>> = HashMap::new();
-    for (k, &f) in kids.iter().enumerate() {
-        for i in f..f + v.size(f) {
+    fn walk(v: &View, root: usize, bodies: &HashMap<u32, (usize, usize)>, out: &mut Vec<usize>, uniform_arg: &mut HashMap<u32, Vec<bool>>) {
+        for i in root..root + v.size(root) {
             if v.kind(i) == Kind::Call {
                 let id = v.w(i, 3);
-                calls[k].push(bodies[&id].1);
-                let bp = v.p(bodies[&id].0);
+                let (body, k) = bodies[&id];
+                if k == INLINE {
+                    walk(v, body, bodies, out, uniform_arg);
+                    continue;
+                }
+                out.push(k);
+                let bp = v.p(body);
                 let u: Vec<bool> = v.children(i).enumerate().map(|(a, c)| v.level(c) <= Level::SimdGroup && !M(bp[8 + 2 * a]).is_agg()).collect();
                 let e = uniform_arg.entry(id).or_insert_with(|| u.clone());
                 for (x, y) in e.iter_mut().zip(&u) {
@@ -348,6 +402,9 @@ pub fn build(vt: &Tape, names: &dyn Fn(u32) -> String) -> R<Ssa> {
                 }
             }
         }
+    }
+    for (k, &f) in kids.iter().enumerate() {
+        walk(&v, f, &bodies, &mut calls[k], &mut uniform_arg);
     }
     // The functions callees first (a call that recurses is refused before: `vector`).
     let mut order = Vec::new();
@@ -380,8 +437,12 @@ pub fn build(vt: &Tape, names: &dyn Fn(u32) -> String) -> R<Ssa> {
         let uni = if k == 0 { vec![true; args.len()] } else { uniform_arg.get(&body_id).cloned().unwrap_or_else(|| vec![false; args.len()]) };
         let name = if k == 0 { names(u32::MAX) } else { names(v.w(f, 1)) };
         let mut b = Fb::new(&v, &exits, &bodies, &funcs, root, k == 0);
+        b.region = region;
         b.promote(root, &args);
         let func = b.function(k as u32, name, region, &args, &uni, ret, root)?;
+        if func.insts.len() > MAX_VALUES {
+            return Err(Error(format!("{}: {} values, over {MAX_VALUES}: too large to compile", func.name, func.insts.len())));
+        }
         funcs[k] = Some(func);
     }
     let funcs: Vec<Func> = funcs.into_iter().map(|f| f.expect("each function built")).collect();
@@ -443,8 +504,21 @@ struct Fb<'a, 't> {
     /// Whether a value is uniform whatever its block's parameters turn out to be (none of its operands one): what a
     /// branch may be on as it is made.
     stable: Vec<bool>,
-    /// This function's region in a lane's frame (a call advances the frame by it).
+    /// The region in a lane's frame of the body being built (the function's, or an inlined call's): a call from it
+    /// advances the frame past it.
     region: u32,
+    /// Where the body being built is in the function's frame: 0, or past the regions of the calls it is inlined in.
+    base: u32,
+    /// The body's returned lanes (a mask variable) and its result: `RET` and `RESULT`, or an inlined call's own.
+    rv: u64,
+    res: u64,
+    /// The ends of a uniform branch's sides whose lanes have all left (a `return`, a `break`, a `continue`), not
+    /// yet ended: each goes on past the statements its exit skips (`stmts`), never through the code under the lanes
+    /// that remain, so that code's lanes stay what they were (the entry's, where they were).
+    dead: Vec<u32>,
+    /// Whether the statement being built is followed by those its exits skip (`stmts`): its sides' ends may go
+    /// past them (`dead`).
+    skips: bool,
 }
 
 impl<'a, 't> Fb<'a, 't> {
@@ -475,22 +549,56 @@ impl<'a, 't> Fb<'a, 't> {
             phi_users: HashMap::new(),
             stable: Vec::new(),
             region: 0,
+            base: 0,
+            rv: RET,
+            res: RESULT,
+            dead: Vec::new(),
+            skips: false,
         }
     }
 
     /// The frame's variables kept as values: those every access of reads or writes whole, at one type's size, by
     /// its `Local` directly, never as an address. A function's parameters among them.
     fn promote(&mut self, root: usize, args: &[(u32, M)]) {
-        let v = self.v;
         // Each variable (its offset and size: variables of disjoint scopes share places) and whether it may be kept,
         // and whether as a float. A variable is one size, so another size at its offset is another variable.
         let mut seen: HashMap<(u32, u32), (bool, Option<bool>)> = HashMap::new();
+        self.scan(root, 0, self.region, &mut seen);
+        for &(off, m) in args {
+            let e = seen.entry((off, m.bytes())).or_insert((true, Some(m.float())));
+            if m.is_agg() {
+                e.0 = false;
+            }
+        }
+        self.promoted = seen.into_iter().filter(|(_, e)| e.0).map(|(k, _)| k).collect();
+    }
+
+    /// `promote`'s variables of the body at `root`, at `base` in the frame, its region `region`, and of each call it
+    /// inlines (past its region), their parameters too.
+    fn scan(&self, root: usize, base: u32, region: u32, seen: &mut HashMap<(u32, u32), (bool, Option<bool>)>) {
+        let v = self.v;
         for i in root..root + v.size(root) {
+            if v.kind(i) == Kind::Call {
+                let (body, k) = self.bodies[&v.w(i, 3)];
+                if k == INLINE {
+                    let bp = v.p(body);
+                    let at = base + region;
+                    self.scan(v.child(body, 0), at, crate::vector::region(bp[2], M(bp[4])), seen);
+                    for a in 0..bp[6] as usize {
+                        let (off, m) = (bp[7 + 2 * a], M(bp[8 + 2 * a]));
+                        let e = seen.entry((at + off, m.bytes())).or_insert((true, Some(m.float())));
+                        if m.is_agg() {
+                            e.0 = false;
+                        }
+                    }
+                }
+                continue;
+            }
             if v.kind(i) != Kind::Local {
                 continue;
             }
             let p = v.p(i);
-            let (off, size, inner) = (p[0], p[1], p[2]);
+            let (off, size, inner) = (p[0] + base, p[1], p[2]);
             let parent_ok = self.whole_access(i);
             let e = seen.entry((off, size)).or_insert((true, None));
             if inner != 0 || parent_ok.is_none() {
@@ -507,13 +615,6 @@ impl<'a, 't> Fb<'a, 't> {
                 }
             }
         }
-        for &(off, m) in args {
-            let e = seen.entry((off, m.bytes())).or_insert((true, Some(m.float())));
-            if m.is_agg() {
-                e.0 = false;
-            }
-        }
-        self.promoted = seen.into_iter().filter(|(_, e)| e.0).map(|(k, _)| k).collect();
     }
 
     /// If `Local` node `i` is the address of its parent's whole access (a `Load`, `Store` or `Update` of it, as its
@@ -622,6 +723,18 @@ impl<'a, 't> Fb<'a, 't> {
     }
 
     /// Whether `x` is uniform for good (`stable`).
+    /// Whether mask `m` has at most one lane of its SIMD group: made of `lane == u`'s (`lane_is`).
+    fn single(&self, m: V) -> bool {
+        let i = self.insts[self.resolve(m) as usize];
+        match i.op {
+            O::NoLanes => true,
+            O::MaskOf => lane_is(&self.insts, self.resolve(i.a)).is_some(),
+            O::MAnd => self.single(i.a) || self.single(i.b),
+            O::MAndNot => self.single(i.a),
+            _ => false,
+        }
+    }
+
     fn is_uniform(&self, x: V) -> bool {
         let x = self.resolve(x);
         self.stable[x as usize] && self.insts[x as usize].shape == Shape::Uniform
@@ -666,6 +779,48 @@ impl<'a, 't> Fb<'a, 't> {
         self.seal(t);
         self.seal(e);
         (t, e)
+    }
+
+    /// A branch on uniform `c` to blocks `t` and `e`, which other branches may reach too (sealed by the caller): a
+    /// branch's own blocks (a branch's targets have no other predecessor), each a jump on.
+    fn br_to(&mut self, c: V, t: u32, e: u32) {
+        let (a, b) = self.br(c);
+        self.switch_to(a);
+        self.jump(t);
+        self.switch_to(b);
+        self.jump(e);
+    }
+
+    /// A uniform condition `n` (its level the SIMD group's or below) as branches to `t` where it is true and `e`
+    /// where it is false: an `&&` or `||` a branch on each side, no truth value made of them to branch on again.
+    fn cond_to(&mut self, n: usize, t: u32, e: u32) -> R<()> {
+        let v = self.v;
+        let l = self.logic_of(n);
+        if v.kind(l) == Kind::Logic && !self.exits[n] {
+            let n = l;
+            let and = v.w(n, 0) != 0;
+            let kids: Vec<usize> = v.children(n).collect();
+            let mid = self.block();
+            if and { self.cond_to(kids[0], mid, e)? } else { self.cond_to(kids[0], t, mid)? }
+            self.seal(mid);
+            self.switch_to(mid);
+            return self.cond_to(kids[1], t, e);
+        }
+        let c = self.cond(n)?;
+        let c = self.scalar(c);
+        self.br_to(c, t, e);
+        Ok(())
+    }
+
+    /// The `&&` or `||` that `n` is, through casts (of its 0 or 1, which keep its truth), else `n`.
+    fn logic_of(&self, n: usize) -> usize {
+        let v = self.v;
+        let mut x = n;
+        while v.kind(x) == Kind::Cast {
+            let Some(k) = v.children(x).next() else { return n };
+            x = k;
+        }
+        if v.kind(x) == Kind::Logic { x } else { n }
     }
 
     fn switch_to(&mut self, b: u32) {
@@ -968,6 +1123,7 @@ impl<'a, 't> Fb<'a, 't> {
         if ret != M::VOID && !ret.is_agg() {
             self.var_m.insert(RESULT, ret);
         }
+        self.base = 0;
         self.stmt(root)?;
         if self.kernel {
             self.ins(O::Halt, M::VOID, 0, 0, 0, 0);
@@ -984,6 +1140,22 @@ impl<'a, 't> Fb<'a, 't> {
 
     fn stmt(&mut self, n: usize) -> R<()> {
         let v = self.v;
+        // Only a block's and a uniform branch's sides' ends may go past the statements that follow (`dead`): a
+        // loop's, a switch's, a call's, a masked branch's join them.
+        let skips = self.skips;
+        if !matches!(v.kind(n), Kind::Block | Kind::If) {
+            self.skips = false;
+        }
+        let r = self.stmt_of(n);
+        self.skips = skips;
+        r
+    }
+
+    fn stmt_of(&mut self, n: usize) -> R<()> {
+        let v = self.v;
+        if self.insts.len() > MAX_MADE {
+            return Err(Error(format!("over {MAX_MADE} values made in one function: too large to compile")));
+        }
         match v.kind(n) {
             Kind::Block => {
                 let kids: Vec<usize> = v.children(n).collect();
@@ -1005,15 +1177,17 @@ impl<'a, 't> Fb<'a, 't> {
                 } else {
                     if let Some(x) = x {
                         if m.is_agg() {
-                            let to = self.frame_addr(slot * W as u32, m.bytes());
+                            let to = self.frame_addr((self.base + slot) * W as u32, m.bytes());
                             let c = self.cur();
                             self.ins(O::Copy, M(m.bytes()), to, x, c, 0);
                         } else {
                             let x = self.fit(x, m);
-                            self.assign(RESULT, x);
+                            let res = self.res;
+                            self.assign(res, x);
                         }
                     }
-                    self.exit(RET);
+                    let rv = self.rv;
+                    self.exit(rv);
                 }
             }
             Kind::Break => self.exit(BRK),
@@ -1027,13 +1201,39 @@ impl<'a, 't> Fb<'a, 't> {
 
     /// Statements in order, those past one that may exit run only where lanes remain.
     fn stmts(&mut self, kids: &[usize]) -> R<()> {
+        let outer = self.skips;
         for (k, &c) in kids.iter().enumerate() {
+            let more = k + 1 < kids.len();
+            // The last statement's exits skip what the list's do.
+            self.skips = if more { self.exits[c] } else { outer };
+            let mark = self.dead.len();
             self.stmt(c)?;
-            if self.exits[c] && k + 1 < kids.len() {
+            if self.exits[c] && more {
+                self.skips = outer;
+                let dead: Vec<u32> = self.dead.drain(mark..).collect();
                 let rest = &kids[k + 1..];
-                return self.guarded(|g| g.stmts(rest));
+                return self.skipped(dead, |g| g.stmts(rest));
             }
         }
+        self.skips = outer;
+        Ok(())
+    }
+
+    /// `body` (the statements past one that may exit), where lanes remain (`guarded`), and the ends `dead` whose
+    /// lanes have all left on past it.
+    fn skipped(&mut self, dead: Vec<u32>, body: impl FnOnce(&mut Self) -> R<()>) -> R<()> {
+        if dead.is_empty() {
+            return self.guarded(body);
+        }
+        let join = self.block();
+        self.guarded(body)?;
+        self.jump(join);
+        for d in dead {
+            self.switch_to(d);
+            self.jump(join);
+        }
+        self.seal(join);
+        self.switch_to(join);
         Ok(())
     }
 
@@ -1064,20 +1264,43 @@ impl<'a, 't> Fb<'a, 't> {
         let site = v.w(n, 0);
         let check = v.field(n) & CHECK != 0;
         let kids: Vec<usize> = v.children(n).collect();
-        let c = self.cond(kids[0])?;
-        let c = if v.level(kids[0]) <= Level::SimdGroup { self.scalar(c) } else { c };
-        if self.is_uniform(c) {
-            let c = if check { self.agree(n, site, c) } else { c };
-            let (t, e) = self.br(c);
+        let direct = !check && v.kind(self.logic_of(kids[0])) == Kind::Logic && v.level(kids[0]) <= Level::SimdGroup;
+        let c = if direct { NONE } else { self.cond(kids[0])? };
+        let c = if !direct && v.level(kids[0]) <= Level::SimdGroup { self.scalar(c) } else { c };
+        if direct || self.is_uniform(c) {
+            let skips = self.skips;
+            let (t, e) = if direct {
+                let (t, e) = (self.block(), self.block());
+                self.cond_to(kids[0], t, e)?;
+                self.seal(t);
+                self.seal(e);
+                (t, e)
+            } else {
+                let c = if check { self.agree(n, site, c) } else { c };
+                self.br(c)
+            };
             let join = self.block();
+            // A side whose lanes have all left goes past the statements that follow, where they do (`dead`); one
+            // side at least joins.
             self.switch_to(t);
             self.stmt(kids[1])?;
-            self.jump(join);
+            let t_dead = skips && self.cur() == self.none();
+            let t_end = self.cur;
+            if !t_dead {
+                self.jump(join);
+            }
             self.switch_to(e);
             if kids.len() > 2 {
                 self.stmt(kids[2])?;
             }
-            self.jump(join);
+            if skips && !t_dead && self.cur() == self.none() {
+                self.dead.push(self.cur);
+            } else {
+                self.jump(join);
+            }
+            if t_dead {
+                self.dead.push(t_end);
+            }
             self.seal(join);
             self.switch_to(join);
             return Ok(());
@@ -1092,6 +1315,7 @@ impl<'a, 't> Fb<'a, 't> {
             self.ins(O::Agree, M::VOID, n as u32, site, d, 0);
         }
         self.set_cur(t);
+        self.skips = false;
         self.guarded(|g| g.stmt(kids[1]))?;
         if kids.len() > 2 {
             self.set_cur(e);
@@ -1100,7 +1324,7 @@ impl<'a, 't> Fb<'a, 't> {
         self.set_cur(s0);
         if self.exits[n] {
             let c = self.cur();
-            self.rejoin(c, &[BRK, CONT, RET, END]);
+            { let rv = self.rv; self.rejoin(c, &[BRK, CONT, rv, END]); }
         }
         Ok(())
     }
@@ -1148,7 +1372,7 @@ impl<'a, 't> Fb<'a, 't> {
             self.seal(top);
             self.switch_to(done);
         }
-        self.rejoin(s0, &[CONT, RET, END]);
+        { let rv = self.rv; self.rejoin(s0, &[CONT, rv, END]); }
         self.write(BRK, sb);
         Ok(())
     }
@@ -1232,6 +1456,42 @@ impl<'a, 't> Fb<'a, 't> {
         let (sb, sc) = (self.read(BRK), self.read(CONT));
         let none = self.none();
         self.write(BRK, none);
+        // A uniform condition (with no sync point in it): tested before the loop and at its body's end, the branch
+        // back there (no jump to a test at the top each time round).
+        if !check && v.level(cond) <= Level::SimdGroup && v.field(cond) & crate::k::SYNC == 0 {
+            let first = self.block();
+            let exit = self.block();
+            if k == Kind::Do {
+                self.jump(first);
+            } else {
+                self.loop_test(cond, first, exit)?;
+            }
+            self.switch_to(first);
+            let si = self.cur();
+            self.write(CONT, none);
+            self.stmt(body)?;
+            { let rv = self.rv; self.rejoin(si, &[BRK, rv, END]); }
+            if k == Kind::For && v.kind(kids[2]) != Kind::Empty {
+                match self.any_cur() {
+                    None => self.stmt(kids[2])?,
+                    Some(a) => {
+                        let (go, out) = self.br(a);
+                        self.switch_to(out);
+                        self.jump(exit);
+                        self.switch_to(go);
+                        self.stmt(kids[2])?;
+                    }
+                }
+            }
+            self.loop_test(cond, first, exit)?;
+            self.seal(first);
+            self.seal(exit);
+            self.switch_to(exit);
+            { let rv = self.rv; self.rejoin(sl, &[rv, END]); }
+            self.write(BRK, sb);
+            self.write(CONT, sc);
+            return Ok(());
+        }
         let top = self.block();
         let first = self.block();
         let exit = self.block();
@@ -1279,7 +1539,7 @@ impl<'a, 't> Fb<'a, 't> {
         let si = self.cur();
         self.write(CONT, none);
         self.stmt(body)?;
-        self.rejoin(si, &[BRK, RET, END]);
+        { let rv = self.rv; self.rejoin(si, &[BRK, rv, END]); }
         if k == Kind::For && v.kind(kids[2]) != Kind::Empty {
             match self.any_cur() {
                 None => self.stmt(kids[2])?,
@@ -1296,9 +1556,27 @@ impl<'a, 't> Fb<'a, 't> {
         self.seal(top);
         self.seal(exit);
         self.switch_to(exit);
-        self.rejoin(sl, &[RET, END]);
+        { let rv = self.rv; self.rejoin(sl, &[rv, END]); }
         self.write(BRK, sb);
         self.write(CONT, sc);
+        Ok(())
+    }
+
+    /// A loop's test of uniform condition `cond`: lanes left and the condition true, to `first`, else to `exit`.
+    fn loop_test(&mut self, cond: usize, first: u32, exit: u32) -> R<()> {
+        if let Some(a) = self.any_cur() {
+            let (go, out) = self.br(a);
+            self.switch_to(out);
+            self.jump(exit);
+            self.switch_to(go);
+        }
+        let c = self.cond(cond)?;
+        let c = self.scalar(c);
+        let (go, out) = self.br(c);
+        self.switch_to(out);
+        self.jump(exit);
+        self.switch_to(go);
+        self.jump(first);
         Ok(())
     }
 
@@ -1357,7 +1635,7 @@ impl<'a, 't> Fb<'a, 't> {
         match v.kind(a) {
             Kind::Local => {
                 let p = v.p(a);
-                Some((p[0], p[1], p[2]))
+                Some((p[0] + self.base, p[1], p[2]))
             }
             Kind::Bin if matches!(Op::of(v.w(a, 0)), Op::Add | Op::Sub) && M(v.w(a, 1)) == M::PTR => {
                 let (off, size, inner) = self.direct(v.child(a, 0))?;
@@ -1374,7 +1652,8 @@ impl<'a, 't> Fb<'a, 't> {
             return None;
         }
         let p = self.v.p(a);
-        (p[2] == 0 && self.promoted.contains(&(p[0], p[1]))).then_some(local(p[0], p[1]))
+        let o = p[0] + self.base;
+        (p[2] == 0 && self.promoted.contains(&(o, p[1]))).then_some(local(o, p[1]))
     }
 
     /// The address node `a` gives (a frame variable's directly).
@@ -1425,7 +1704,7 @@ impl<'a, 't> Fb<'a, 't> {
             }
             Kind::Global => self.once(O::Global, M::PTR, p[0], 0),
             Kind::Shared => self.once(O::Shared, M::PTR, p[0], 0),
-            Kind::Local => self.frame_addr(p[0] * W as u32 + p[2], p[1]),
+            Kind::Local => self.frame_addr((p[0] + self.base) * W as u32 + p[2], p[1]),
             Kind::Load => {
                 let m = M(p[0]);
                 if m.is_agg() {
@@ -1612,7 +1891,7 @@ impl<'a, 't> Fb<'a, 't> {
         self.set_cur(s0);
         if self.exits[n] {
             let c = self.cur();
-            self.rejoin(c, &[BRK, CONT, RET, END]);
+            { let rv = self.rv; self.rejoin(c, &[BRK, CONT, rv, END]); }
         }
         Ok(self.read(d))
     }
@@ -1632,7 +1911,8 @@ impl<'a, 't> Fb<'a, 't> {
             Builtin::LocalId | Builtin::GlobalId => {
                 let dim = self.scalar(args[0]);
                 let x = self.ins(if b == Builtin::LocalId { O::Lid } else { O::Gid }, m, dim, 0, 0, 0);
-                set(self, x, Shape::Lanes)
+                // The second or third dimension's: the SIMD group's (`vector`'s `Level::SimdGroup`).
+                set(self, x, if v.level(n) <= Level::SimdGroup { Shape::Uniform } else { Shape::Lanes })
             }
             Builtin::SubGroupLocalId => {
                 let x = self.ins(O::Lane, M::U32, 0, 0, 0, 0);
@@ -1684,7 +1964,10 @@ impl<'a, 't> Fb<'a, 't> {
                 set(self, r, Shape::Lanes)
             }
             _ if crate::vector::is_atomic(b) => {
-                let one = self.v.level(n) <= Level::SimdGroup;
+                // Once for the SIMD group: where its control is the group's, or where at most one lane runs it
+                // (`single`) and its operands are uniform.
+                let cur = self.cur();
+                let one = self.v.level(n) <= Level::SimdGroup || (self.single(cur) && args.iter().all(|&a| self.is_uniform(a)));
                 let mut ops = [NONE; 3];
                 for (k, &a) in args.iter().enumerate() {
                     let a = if k == 0 { self.fit(a, M::PTR) } else { self.fit(a, m) };
@@ -1701,13 +1984,14 @@ impl<'a, 't> Fb<'a, 't> {
             }
             _ => {
                 let from = arg_m(0);
-                let mut held = [NONE; 2];
-                for (k, &a) in args.iter().enumerate().take(2) {
+                // A third operand (`fma`'s) in `d`.
+                let mut held = [NONE; 3];
+                for (k, &a) in args.iter().enumerate().take(3) {
                     let a = self.fit(a, arg_m(k));
                     held[k] = if once { self.scalar(a) } else { a };
                 }
                 let s = held.iter().filter(|&&x| x != NONE).map(|&x| self.shape(x)).max().unwrap_or(Shape::Uniform);
-                let r = self.ins_sub(O::LaneOp, b as u32, m, held[0], held[1], from.0, 0);
+                let r = self.ins_sub(O::LaneOp, b as u32, m, held[0], held[1], from.0, held[2]);
                 set(self, r, s)
             }
         }))
@@ -1734,6 +2018,9 @@ impl<'a, 't> Fb<'a, 't> {
         let p = v.p(n);
         let (m, temp, id) = (M(p[1]), p[2], p[3]);
         let (body, k) = self.bodies[&id];
+        if k == INLINE {
+            return self.inline(n);
+        }
         let bp = v.p(body);
         let slot = bp[3];
         let callee = self.built[k].as_ref().expect("a callee built before its callers");
@@ -1747,17 +2034,19 @@ impl<'a, 't> Fb<'a, 't> {
             vals.push(x);
         }
         let (ret_m, ret_s) = callee.ret;
+        // The callee's frame is past the body the call is in.
+        let advance = self.base + self.region;
         let at = self.extra.len() as u32;
         self.extra.extend_from_slice(&vals);
+        self.extra.push(advance);
         let c = self.cur();
         let r = self.ins(O::Call, if ret_m.is_agg() { M::VOID } else { ret_m }, k as u32, at, vals.len() as u32, c);
         self.shaped(r, if m == M::VOID || m.is_agg() { Shape::None } else { ret_s });
-        let region = self.region_of_caller();
         Ok(if m == M::VOID {
             None
         } else if m.is_agg() {
-            let from = self.frame_addr((region + slot) * W as u32, m.bytes());
-            let to = self.frame_addr(temp * W as u32, m.bytes());
+            let from = self.frame_addr((advance + slot) * W as u32, m.bytes());
+            let to = self.frame_addr((self.base + temp) * W as u32, m.bytes());
             let c = self.cur();
             self.ins(O::Copy, M(m.bytes()), to, from, c, 0);
             Some(to)
@@ -1766,9 +2055,66 @@ impl<'a, 't> Fb<'a, 't> {
         })
     }
 
-    /// This function's region (what a call advances the frame by). Set by `function`.
-    fn region_of_caller(&self) -> u32 {
-        self.region
+    /// A call of a function whose calls are its instructions (not `noinline`): its body built here, under the
+    /// lanes that call, its frame past the body the call is in, its result and its returned lanes variables of its
+    /// own. Every lane that called goes on after it (a `return` leaves the callee only).
+    fn inline(&mut self, n: usize) -> R<Option<V>> {
+        let v = self.v;
+        let p = v.p(n);
+        let (m, temp, id) = (M(p[1]), p[2], p[3]);
+        let (body, _) = self.bodies[&id];
+        let bp = v.p(body);
+        let (slot, ret) = (bp[3], M(bp[4]));
+        let kids: Vec<usize> = v.children(n).collect();
+        let mut vals = Vec::with_capacity(kids.len());
+        for (a, &c) in kids.iter().enumerate() {
+            let pm = M(bp[8 + 2 * a]);
+            let x = self.value(c)?;
+            vals.push(if pm.is_agg() { x } else { self.fit(x, pm) });
+        }
+        let at = self.base + self.region;
+        let saved = (self.base, self.region, self.rv, self.res);
+        self.base = at;
+        self.region = crate::vector::region(bp[2], ret);
+        // No lane has returned from this call yet (a call in a loop is made again each time).
+        self.rv = self.temp(M::VOID);
+        let none = self.none();
+        self.write(self.rv, none);
+        self.res = if ret == M::VOID || ret.is_agg() { RESULT } else { self.temp(ret) };
+        for (a, &x) in vals.iter().enumerate() {
+            let (off, pm) = (bp[7 + 2 * a], M(bp[8 + 2 * a]));
+            if self.promoted.contains(&(at + off, pm.bytes())) {
+                let var = local(at + off, pm.bytes());
+                self.write_var(var, pm, x);
+            } else {
+                let to = self.frame_addr((at + off) * W as u32, pm.bytes());
+                let c = self.cur();
+                if pm.is_agg() {
+                    let mut i = Inst::new(O::Copy, M(pm.bytes()), to, x, c, 0);
+                    i.shape = Shape::None;
+                    self.push(i);
+                } else {
+                    self.ins(O::Store, pm, to, x, c, 0);
+                }
+            }
+        }
+        let lanes = self.cur();
+        self.stmt(v.child(body, 0))?;
+        self.set_cur(lanes);
+        let res = self.res;
+        let r = if m == M::VOID {
+            None
+        } else if m.is_agg() {
+            let from = self.frame_addr((at + slot) * W as u32, m.bytes());
+            let to = self.frame_addr((saved.0 + temp) * W as u32, m.bytes());
+            let c = self.cur();
+            self.ins(O::Copy, M(m.bytes()), to, from, c, 0);
+            Some(to)
+        } else {
+            Some(self.read(res))
+        };
+        (self.base, self.region, self.rv, self.res) = saved;
+        Ok(r)
     }
 
     // The function, finished: values renumbered in block order, the phis' operands its jumps' arguments, shapes to
@@ -2061,6 +2407,7 @@ impl<'a, 't> Fb<'a, 't> {
                         for e in i.b..i.b + i.c {
                             extra.push(map(&self, &num, self.extra[e as usize]));
                         }
+                        extra.push(self.extra[(i.b + i.c) as usize]);
                         i.b = at;
                     }
                     _ => {}
@@ -2151,30 +2498,7 @@ pub fn verify(f: &Func) -> Result<(), String> {
             _ => {}
         }
     }
-    let rpo = rpo(f);
-    let mut idom = vec![usize::MAX; nb];
-    let mut order = vec![usize::MAX; nb];
-    for (k, &b) in rpo.iter().enumerate() {
-        order[b] = k;
-    }
-    idom[0] = 0;
-    let mut changed = true;
-    while changed {
-        changed = false;
-        for &b in &rpo[1..] {
-            let mut new = usize::MAX;
-            for &p in &preds[b] {
-                if idom[p] == usize::MAX {
-                    continue;
-                }
-                new = if new == usize::MAX { p } else { intersect(&idom, &order, p, new) };
-            }
-            if new != idom[b] {
-                idom[b] = new;
-                changed = true;
-            }
-        }
-    }
+    let idom = idoms(f);
     let dominates = |a: usize, mut b: usize| {
         loop {
             if a == b {
@@ -2219,7 +2543,6 @@ pub fn verify(f: &Func) -> Result<(), String> {
     Ok(())
 }
 
-/// The blocks reached, in reverse postorder.
 /// Whether each block of function `f` of `ssa` has an operation that reads the SIMD group's lanes as a whole: a
 /// cross-lane one, a uniform atomic (made once for the group), a call of a function that has one.
 pub fn cross_blocks(ssa: &Ssa, f: &Func) -> Vec<bool> {
@@ -2237,16 +2560,18 @@ pub fn cross_blocks(ssa: &Ssa, f: &Func) -> Vec<bool> {
 /// Whether each block's branch (`Br`, `Switch`) must be the SIMD group's decision where its lanes run as chunks of
 /// their own (decision 0567, step 3): whether what it branches to reaches an operation of the group's lanes as a
 /// whole (`cross_blocks`) before the blocks join again (its immediate post-dominator), so every chunk meets the
-/// group's operations in one order. A block with no such branch is false.
+/// group's operations in one order. A block with no such branch is false, and so is one whose decision every chunk
+/// makes alike (`chunk_alike`): it needs no exchange.
 pub fn group_decisions(ssa: &Ssa, f: &Func) -> Vec<bool> {
     let nb = f.blocks.len();
     let cross = cross_blocks(ssa, f);
+    let alike = chunk_alike(f, std::ptr::eq(f, &ssa.funcs[0]));
     let succs: Vec<Vec<u32>> = (0..nb).map(|b| f.succs(b)).collect();
     let ipdom = post_dominators(&succs);
     (0..nb)
         .map(|b| {
             let t = f.inst(*f.blocks[b].insts.last().expect("a terminator"));
-            if !matches!(t.op, O::Br | O::Switch) {
+            if !matches!(t.op, O::Br | O::Switch) || alike[t.a as usize] {
                 return false;
             }
             let stop = ipdom[b];
@@ -2265,6 +2590,188 @@ pub fn group_decisions(ssa: &Ssa, f: &Func) -> Vec<bool> {
             false
         })
         .collect()
+}
+
+/// Whether each value of function `f` is the same in every chunk of a SIMD group (decision 0567, step 3) by how it
+/// is made, whatever lanes each chunk runs: a constant, an address of constant or threadgroup memory, the group's
+/// sizes and id, the kernel's arguments (`kernel`), a uniform operation of such values, and a uniform load from such an
+/// address that nothing the function does before it can have written (no store, copy, clear, atomic, call, barrier or
+/// poll on a path from the entry to it): every chunk reads the same bytes. A block's parameter is not.
+pub fn chunk_alike(f: &Func, kernel: bool) -> Vec<bool> {
+    let writes = |op: O| matches!(op, O::Store | O::Copy | O::Zero | O::Atomic | O::Call | O::Bar | O::Yield | O::SgBar);
+    let nb = f.blocks.len();
+    // The blocks a write can precede: those a writing block reaches.
+    let mut after = vec![false; nb];
+    let mut stack: Vec<usize> = (0..nb).filter(|&b| f.blocks[b].insts.iter().any(|&x| writes(f.inst(x).op))).flat_map(|b| f.succs(b)).map(|s| s as usize).collect();
+    while let Some(b) = stack.pop() {
+        if !after[b] {
+            after[b] = true;
+            stack.extend(f.succs(b).into_iter().map(|s| s as usize));
+        }
+    }
+    // The loads a write can precede: in such a block, or after a write in their own.
+    let mut late = vec![false; f.insts.len()];
+    for (b, blk) in f.blocks.iter().enumerate() {
+        let mut wrote = after[b];
+        for &x in &blk.insts {
+            late[x as usize] = wrote;
+            wrote |= writes(f.inst(x).op);
+        }
+    }
+    let mut alike = vec![false; f.insts.len()];
+    loop {
+        let mut changed = false;
+        for x in 0..f.insts.len() {
+            let i = &f.insts[x];
+            if alike[x] || i.shape != Shape::Uniform {
+                continue;
+            }
+            let a = |v: V| v != NONE && alike[v as usize];
+            let yes = match i.op {
+                O::Const | O::Global | O::Shared => true,
+                O::Arg => kernel,
+                O::GroupInfo | O::Un | O::Cast => a(i.a),
+                O::Bin => a(i.a) && a(i.b),
+                O::Select => a(i.a) && a(i.b) && a(i.c),
+                O::LaneOp => a(i.a) && (i.b == NONE || a(i.b)) && (i.d == NONE || a(i.d)),
+                O::Load => a(i.a) && !late[x],
+                _ => false,
+            };
+            if yes {
+                alike[x] = true;
+                changed = true;
+            }
+        }
+        if !changed {
+            return alike;
+        }
+    }
+}
+
+/// Each value an instruction of `f` reads: its operands (`Inst::uses`), and a jump's or a call's arguments.
+pub fn reads(f: &Func, x: V) -> Vec<V> {
+    let i = f.inst(x);
+    let mut r: Vec<V> = i.uses().collect();
+    if matches!(i.op, O::Jump | O::Call) {
+        r.extend(f.args_of(i).iter().copied().filter(|&v| v != NONE));
+    }
+    r
+}
+
+/// The values of `f` live at the end of each block: read on a path from there before they are made again (a block's
+/// parameter is made at its block's start, from its jumps' arguments, which the jump reads).
+pub fn live_out(f: &Func) -> Vec<Vec<bool>> {
+    let (nb, n) = (f.blocks.len(), f.insts.len());
+    let mut live_in = vec![vec![false; n]; nb];
+    let mut out = vec![vec![false; n]; nb];
+    loop {
+        let mut changed = false;
+        for b in (0..nb).rev() {
+            let mut o = vec![false; n];
+            for s in f.succs(b) {
+                for (v, &l) in live_in[s as usize].iter().enumerate() {
+                    o[v] |= l;
+                }
+                for &p in &f.blocks[s as usize].params {
+                    o[p as usize] = false;
+                }
+            }
+            let mut l = o.clone();
+            for &x in f.blocks[b].insts.iter().rev() {
+                l[x as usize] = false;
+                for u in reads(f, x) {
+                    l[u as usize] = true;
+                }
+            }
+            if l != live_in[b] || o != out[b] {
+                (live_in[b], out[b]) = (l, o);
+                changed = true;
+            }
+        }
+        if !changed {
+            return out;
+        }
+    }
+}
+
+/// A region of a chunked kernel's code (decision 0567, step 3; `cl`'s chunk loop) by where it starts: the kernel's
+/// start, after an instruction's `n`th exchange (or barrier), at a block where different regions join.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub enum Lab {
+    Start,
+    Split(V, u8),
+    Join(usize),
+}
+
+/// The regions instruction `x` of block `b` of a chunked kernel `f` ends (`dec` its group decisions,
+/// `group_decisions`): an exchange's, a barrier's, a decision of the SIMD group's its chunks exchange; an atomic made
+/// once for the SIMD group, two (its leader's turn, its result).
+pub fn splits(f: &Func, dec: &[bool], b: usize, x: V) -> u8 {
+    let i = f.inst(x);
+    match i.op {
+        O::AnyGroup | O::Bits | O::Shuffle | O::Reduce | O::Agree | O::Bar | O::Yield | O::SgBar => 1,
+        O::Atomic if i.shape == Shape::Uniform => 2,
+        O::Br | O::Switch if dec[b] => match f.inst(i.a).op {
+            O::Agree | O::Const | O::AnyGroup => 0,
+            _ => 1,
+        },
+        _ => 0,
+    }
+}
+
+/// Each block's region at its start (none: not reached), and the blocks that start one: a block that regions of
+/// different starts reach (a join after an exchange on one side, a loop's header whose body has one). Every such
+/// block's predecessors jump to it (a branch's targets have one predecessor each).
+pub fn regions(f: &Func, dec: &[bool]) -> (Vec<Option<Lab>>, Vec<bool>) {
+    let nb = f.blocks.len();
+    let order = rpo(f);
+    let mut preds = vec![Vec::new(); nb];
+    for b in 0..nb {
+        for s in f.succs(b) {
+            preds[s as usize].push(b);
+        }
+    }
+    let last: Vec<Option<Lab>> = (0..nb)
+        .map(|b| f.blocks[b].insts.iter().rev().find_map(|&x| match splits(f, dec, b, x) { 0 => None, n => Some(Lab::Split(x, n - 1)) }))
+        .collect();
+    let (mut lab, mut resume) = (vec![None; nb], vec![false; nb]);
+    loop {
+        let mut changed = false;
+        for &b in &order {
+            let e = if b == 0 {
+                Lab::Start
+            } else if resume[b] {
+                Lab::Join(b)
+            } else {
+                let ends: Vec<Lab> = preds[b].iter().filter_map(|&p| last[p].or(lab[p])).collect();
+                if ends.iter().all(|&e| e == ends[0]) {
+                    ends[0]
+                } else {
+                    resume[b] = true;
+                    changed = true;
+                    Lab::Join(b)
+                }
+            };
+            if lab[b] != Some(e) {
+                lab[b] = Some(e);
+                changed = true;
+            }
+        }
+        if !changed {
+            return (lab, resume);
+        }
+    }
+}
+
+/// Whether a region of a chunked kernel makes value `x` again rather than keep it: a constant, an argument, an
+/// address, the group's sizes, a thread's ids, and casts of them (so their steps are known again).
+pub fn remade(f: &Func, x: V) -> bool {
+    let i = f.inst(x);
+    match i.op {
+        O::Const | O::Global | O::Shared | O::NoLanes | O::Undef | O::Lane | O::FrameAddr | O::Arg => true,
+        O::Lid | O::Gid | O::GroupInfo | O::Cast => reads(f, x).into_iter().all(|u| remade(f, u)),
+        _ => false,
+    }
 }
 
 /// Each block's immediate post-dominator (none: the function's exit, or a block that reaches no exit), by the
@@ -2328,6 +2835,45 @@ fn post_dominators(succs: &[Vec<u32>]) -> Vec<Option<usize>> {
         }
     }
     (0..nb).map(|b| if idom[b] == usize::MAX || idom[b] == exit { None } else { Some(idom[b]) }).collect()
+}
+
+/// Each block's immediate dominator (the entry's itself; `usize::MAX` a block no path reaches): the iterative
+/// algorithm, over the blocks in reverse postorder.
+pub fn idoms(f: &Func) -> Vec<usize> {
+    let nb = f.blocks.len();
+    let mut preds = vec![Vec::new(); nb];
+    for b in 0..nb {
+        for s in f.succs(b) {
+            if (s as usize) < nb {
+                preds[s as usize].push(b);
+            }
+        }
+    }
+    let rpo = rpo(f);
+    let mut idom = vec![usize::MAX; nb];
+    let mut order = vec![usize::MAX; nb];
+    for (k, &b) in rpo.iter().enumerate() {
+        order[b] = k;
+    }
+    idom[0] = 0;
+    let mut changed = true;
+    while changed {
+        changed = false;
+        for &b in &rpo[1..] {
+            let mut new = usize::MAX;
+            for &p in &preds[b] {
+                if idom[p] == usize::MAX {
+                    continue;
+                }
+                new = if new == usize::MAX { p } else { intersect(&idom, &order, p, new) };
+            }
+            if new != idom[b] {
+                idom[b] = new;
+                changed = true;
+            }
+        }
+    }
+    idom
 }
 
 pub fn rpo(f: &Func) -> Vec<usize> {

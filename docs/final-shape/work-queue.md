@@ -10398,3 +10398,12 @@ Decision 0588, the expansion as one loop phase and §6's teams (`notes/roll-up-6
   `RERAIL_PP_WHY`. Only a capacity refusal counts as capacity (87fe4b4a28).
 - **The setup's split** is 9 libraries, 5 calls deep: ours' and theirs' levels both counted.
 - **`pp_expand::RUNS`** is an id counter in the global-state list.
+
+### Q488. Roll-up 67 (uglykl-CPU-SIMD-parallelization 7ff70f5dd7 onto Pulling-it-all-together): what the merge chose
+
+0567 step 3, UKL on the CPU as hand-shaped vector code (`notes/roll-up-67-uglykl-simd.md`):
+- **Git's merge**: one base, no file both sides changed.
+- **Theirs' vendored Cranelift patches** are recorded in its `PATCHES.md`.
+- **Roll-up 65's coherent atomics** are not defined on the vector path, which has one memory and whose C reader saw
+  them as defined twice. rerail-ukl-vec's 35 tests pass again.
+- **`fiber.rs`' `PREPARED`** is listed as `Thread`.

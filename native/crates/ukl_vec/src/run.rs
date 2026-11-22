@@ -506,7 +506,7 @@ impl Cx<'_> {
 
     /// A builtin with no effect beyond its lane: a size or id's (`a` the dimension), or the lane's own operation on
     /// `a`, `x` (values of `from`, the result `m`).
-    fn lane_builtin(&self, b: Builtin, m: M, from: M, a: u64, x: u64) -> R<u64> {
+    fn lane_builtin(&self, b: Builtin, m: M, from: M, a: u64, x: u64, y: u64) -> R<u64> {
         let d = a as usize;
         let dim = |v: [u32; 3], or: u32| if d < 3 { v[d] } else { or };
         Ok(match b {
@@ -530,6 +530,9 @@ impl Cx<'_> {
                 let less = ops::bin(Op::Lt, m, a, x).unwrap_or(0) != 0;
                 if less == (b == Builtin::Min) { a } else { x }
             }
+            // Rounded once, as the compiled code's `fmla`.
+            Builtin::Fma if m == M::F32 => f32::from_bits(a as u32).mul_add(f32::from_bits(x as u32), f32::from_bits(y as u32)).to_bits() as u64,
+            Builtin::Fma if m == M::F64 => f64::from_bits(a).mul_add(f64::from_bits(x), f64::from_bits(y)).to_bits(),
             _ => return Err(self.err(&format!("{b:?} as a lane's own"))),
         })
     }
@@ -825,7 +828,7 @@ unsafe fn exec_in<const ONE: bool>(cx: &Cx, sg: &mut Sg) -> R<Stop> {
                 I::SBin => s!(a) = ops::bin(Op::of(f1), M(f2), s!(b), s!(c)).map_err(|e| cx.err(e))?,
                 I::SUn => s!(a) = ops::un(Op::of(f1), M(f2), s!(b)),
                 I::SCast => s!(a) = ops::cast(M(f1), M(f2), s!(b)),
-                I::SBuiltin => s!(a) = cx.lane_builtin(Builtin::of(f1), M(f2), M(f3), s!(b), s!(c))?,
+                I::SBuiltin => s!(a) = cx.lane_builtin(Builtin::of(f1), M(f2), M(f3), s!(b), s!(c), s!(d))?,
                 I::SLoad => s!(a) = ops::load(M(f1), s!(b)),
                 I::SStore => ops::store(M(f1), s!(a), s!(b)),
                 I::SAtomic => s!(a) = Cx::atomic(Builtin::of(f1), M(f2), s!(b), s!(c), s!(d)),
@@ -1046,8 +1049,8 @@ unsafe fn exec_in<const ONE: bool>(cx: &Cx, sg: &mut Sg) -> R<Stop> {
                 I::VBuiltinGen => {
                     let (op, m, from) = (Builtin::of(f1), M(f2), M(f3));
                     for l in lanes(cur) {
-                        let (x, y) = if from.bytes() == 8 { (r64!(b)[l], r64!(c)[l]) } else { (wide(from, r32!(b)[l]), wide(from, r32!(c)[l])) };
-                        let r = cx.lane_builtin(op, m, from, x, y)?;
+                        let (x, y, z) = if from.bytes() == 8 { (r64!(b)[l], r64!(c)[l], r64!(d)[l]) } else { (wide(from, r32!(b)[l]), wide(from, r32!(c)[l]), wide(from, r32!(d)[l])) };
+                        let r = cx.lane_builtin(op, m, from, x, y, z)?;
                         if m.bytes() == 8 {
                             w64!(a)[l] = r;
                         } else {
