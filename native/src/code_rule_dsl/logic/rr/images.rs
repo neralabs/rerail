@@ -178,41 +178,6 @@ pub fn shipped() -> Option<&'static Bundle> {
         .as_ref()
 }
 
-/// The store the run's rule images are kept in (decision 0264): the engine build's, shared by every project
-/// (`RERAIL_IMAGE_STORE`: a path, or `project` for the run's own store); a test's own store under test.
-pub fn store() -> Option<Arc<ContentStore>> {
-    match where_kept() {
-        Where::Project => crate::code_rule_dsl::logic::plan::corpus::phases::reading_store(),
-        Where::Path(path) => ContentStore::open_images(&path).ok().map(Arc::new),
-    }
-}
-
-/// Where `store` keeps the run's rule images: the run's own store, or a store of its own at a path.
-enum Where {
-    Project,
-    Path(PathBuf),
-}
-
-fn where_kept() -> Where {
-    if cfg!(any(test, feature = "test-hooks")) {
-        return Where::Project;
-    }
-    match std::env::var("RERAIL_IMAGE_STORE") {
-        Ok(v) if v == "project" => Where::Project,
-        Ok(v) => Where::Path(PathBuf::from(v)),
-        Err(_) => Where::Path(crate::code_rule_dsl::logic::plan::corpus::build_store("rerail-images", None)),
-    }
-}
-
-/// The path of the store `store` opens, found without opening it: the run's own store's (`tape_cache_path`), or the
-/// images' own. A caller that keeps an image once a store (phase 0's graphs) names the store by it.
-pub fn store_path() -> Option<PathBuf> {
-    match where_kept() {
-        Where::Project => crate::code_rule_dsl::logic::plan::corpus::tape_cache_path(),
-        Where::Path(path) => Some(path),
-    }
-}
-
 /// The entry kept under `key` (a group of automata, a phase 0 graph: bytes their reader decodes, not a program image,
 /// which `read_image` reads in place): the shipped bundle's, else `store`'s, with its source there (for its lease).
 pub fn read(store: Option<&ContentStore>, key: HashKey) -> Option<(Cow<'static, [u8]>, Option<SourceId>)> {

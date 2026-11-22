@@ -1,6 +1,7 @@
 //! Read-only source views of Git trees. Paths identify objects; they never name an extracted checkout.
-//! Like nera-data-layer's library Git importer, tree walks retain blob IDs and bytes are read on demand.
+//! Like the internal data layer's library Git importer, tree walks retain blob IDs and bytes are read on demand.
 
+use rerail_store::Canonical as _;
 use std::cell::RefCell;
 use std::io;
 use std::path::{Component, Path, PathBuf};
@@ -112,6 +113,22 @@ pub struct Inventory {
     pub tree_failures: Vec<SourceFailure>,
     pub tree_observations: std::collections::BTreeMap<gix::ObjectId, String>,
     pub selection: String,
+    /// The memo plans the runs that made it recorded manifests of, under `manifest_root`: a run that reuses it owns
+    /// them again for its scope (`own_recorded_manifests`), as it would by running them.
+    pub plans: Vec<[u8; 32]>,
+    pub manifest_root: String,
+}
+
+/// Whether a run reusing `inventory` holds what its runs recorded: under an owner, their manifests owned again for its
+/// scope. False when they are gone (collected): the inventory runs again, and records them.
+fn owned_again(inventory: &Inventory, store: Option<&Path>, owner: Option<&AnalysisOwner>) -> Result<bool, InventoryError> {
+    let (Some(store), Some(owner)) = (store, owner) else { return Ok(true) };
+    if inventory.plans.is_empty() {
+        return Ok(true);
+    }
+    let now = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |d| d.as_secs() as i64);
+    let store = crate::content_store::ContentStore::open(store).map_err(InventoryError::Cache)?;
+    Ok(store.own_recorded_manifests(&inventory.manifest_root, &inventory.plans, owner, now).map_err(InventoryError::Cache)? > 0)
 }
 
 #[derive(Clone, Debug)]
@@ -509,6 +526,7 @@ impl View {
         if let Some((_, value)) = saved
             && inventory_selection(&self.root).as_ref() == Some(&value.selection)
             && self.inventory.lock().unwrap_or_else(|e| e.into_inner()).generation == generation
+            && owned_again(&value, store, owner)?
         {
             return Ok(value);
         }
@@ -860,10 +878,10 @@ impl Snapshot {
     fn open(source: &Path, revision: &str, scope: Option<String>, invocation: &Path) -> Result<Self, String> {
         let repo = physical_objects(crate::git_access::opener::open(source).map_err(|e| e.to_string())?);
         let directories = identity::Directories::open(&repo).map_err(|e| e.to_string())?;
-        let work = repo.workdir().map(std::fs::canonicalize).transpose().map_err(|e| e.to_string())?;
+        let work = repo.workdir().map(dunce::canonicalize).transpose().map_err(|e| e.to_string())?;
         let relative = |path: &Path| -> Result<PathBuf, String> {
             let Some(work) = &work else { return Ok(PathBuf::new()); };
-            path.canonicalize().map_err(|e| e.to_string())?.strip_prefix(work)
+            path.canonical().map_err(|e| e.to_string())?.strip_prefix(work)
                 .map(Path::to_owned).map_err(|e| e.to_string())
         };
         let prefix = relative(source)?;
@@ -892,7 +910,7 @@ impl Snapshot {
         let prefix = if selects_path { PathBuf::new() } else { prefix };
         let git_dir = repo
             .git_dir()
-            .canonicalize()
+            .canonical()
             .map_err(|e| e.to_string())?;
         static NEXT: AtomicU64 = AtomicU64::new(1);
         let invocation = NEXT.fetch_add(1, Ordering::Relaxed);

@@ -25,7 +25,7 @@ pub mod block;
 pub mod bloom;
 pub mod chunk;
 pub mod col;
-#[cfg(unix)]
+#[cfg(any(unix, windows))]
 pub mod deferrable;
 pub mod facts;
 pub mod free;

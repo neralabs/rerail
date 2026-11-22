@@ -194,6 +194,34 @@ fn a_waves_kept_puts_are_one_block_per_space() {
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
 }
 
+/// A program's reader record put twice in one wave (two of its puts in a space, decision 0401 step 8) is one put
+/// naming both's entries: a record only grows. Gathered as any key, the later replaced the earlier, the kept record
+/// named the last put's entries only, and the warm run after asked the others again and wrote its record (the
+/// corpus's `the_run_after_a_cold_one_writes_nothing`).
+#[test]
+fn a_waves_two_puts_of_a_programs_record_are_one_naming_both() {
+    let (path, c) = store("wave-readers");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    let program = [0x33u8; 32];
+    let (one, two, asked) = ([1u8; 32], [2u8; 32], [3u8; 32]);
+    let entry = |rel: &str, ident: [u8; 32], v: i64| KeptPut { ident, ..put(rel, 0, v as u64, flat(&[v, v])) };
+    let log = std::sync::Arc::new(ReaderLog::new(program));
+    {
+        let _bound = rerail_prof::code_rule_dsl::logic::profile::bind(KeptReader(Some(std::sync::Arc::clone(&log))));
+        let _waves = crate::content_store::write_back::run_waves();
+        store.queue_kept(SPACE, vec![entry("a", one, 1)]);
+        store.queue_kept(SPACE, vec![entry("b", two, 2)]);
+        log.asked(&SPACE, &asked, |_| Vec::new());
+        log.flush(&store);
+    }
+    store.written().unwrap();
+    let rows = chain_rows(&c, &SPACE).unwrap();
+    let kept = KeptSpace::open(&path, &SPACE, &rows).unwrap();
+    let records: Vec<([u8; 32], Vec<[u8; 32]>)> = kept.view().of(READERS).map(|k| (*k.key.ident, record_idents(&k).collect())).collect();
+    assert_eq!(records, [(program, vec![one, two, asked])], "the wave's record: both puts' entries and the one asked");
+    let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
 /// A wave's puts are gathered by space and appended as one file each: a later put of a key replaces an earlier one, a
 /// retag keeps the rows the wave gave its key with its own reads, and a gone entry stays gone. Two spaces, one
 /// write each.
@@ -471,4 +499,26 @@ fn collection_rewrites_without_dead_entries() {
     assert_eq!(store.collect_kept_facts().unwrap(), 1);
     assert_eq!(read(&path, &c).iter().map(|e| e.0.as_str()).collect::<Vec<_>>(), ["l"]);
     let _ = std::fs::remove_dir_all(path.parent().unwrap());
+}
+
+/// Rows this process holds of a space are kept current by its own writer alone: another writer (another shared
+/// object's in this process, or another process; here a connection of its own) commits, and its next write sweeps the
+/// files the held rows name. Opened by those rows, the space is the store's last commit's, and the rows held are its.
+#[test]
+fn rows_another_writer_replaced_open_as_the_last_commit() {
+    let (path, c) = store("foreign-writer");
+    let store = crate::content_store::ContentStore::open(&path).unwrap();
+    write(&path, &c, vec![put("a", 0, 1, flat(&[1, 1]))]);
+    store.preload_kept_state().unwrap();
+    let held = store.kept_row(&SPACE).unwrap().expect("held");
+    write(&path, &c, vec![put("b", 0, 2, flat(&[2, 2]))]);
+    write(&path, &c, vec![put("c", 0, 3, flat(&[3, 3]))]);
+    let now = chain_rows(&c, &SPACE).unwrap();
+    assert!(held.iter().any(|(_, name, _)| !space_dir(&path, &SPACE).join(name).exists()), "the held rows name a file the foreign write swept: {held:?}");
+    assert_eq!(store.kept_row(&SPACE).unwrap().as_ref(), Some(&held), "the process still holds the rows it read");
+    let (opened, kept) = store.open_kept(&SPACE, held).unwrap().expect("kept");
+    assert_eq!(opened, now, "opened by the last commit's rows");
+    let rels: Vec<String> = kept.view().all().map(|k| k.key.rel.to_owned()).collect();
+    assert_eq!(rels, ["a", "b", "c"], "every entry the last commit keeps");
+    assert_eq!(store.kept_row(&SPACE).unwrap(), Some(now), "the rows held are the last commit's");
 }

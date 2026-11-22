@@ -229,7 +229,7 @@ pub fn expand_tu<F: rerail_c_pp::files::Files>(main: &str, io: &mut F, cpp: bool
 pub fn aot_build() -> Option<rerail_pp_aot::Build> {
     static SAME: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
     let b = rerail_pp_aot::BUILD?;
-    SAME.get_or_init(|| b.words == rerail_compiler::clif_rust::fingerprint(EXPAND) && b.abi == rerail_compiler::native_cpu_pp::ABI).then_some(b)
+    SAME.get_or_init(|| b.words == rerail_cpu_stream::clif_rust::fingerprint(EXPAND) && b.abi == rerail_cpu_pp::native_cpu_pp::ABI).then_some(b)
 }
 
 /// The words' CPU path: rustc's build of their compiled code (`rerail-pp-aot`, decision 0348 and
@@ -244,12 +244,12 @@ pub fn native(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bou
     if let Some(b) = aot_build() {
         // SAFETY: `b.run` is `rust_source`'s `pp_run` for `program`: the build was made from
         // `EXPAND`'s text (`aot_build`), and `program` is `EXPAND` assembled (`program()`).
-        return unsafe { rerail_compiler::native_cpu_pp::run_aot(b.run, program, files, env, bounds) };
+        return unsafe { rerail_cpu_pp::native_cpu_pp::run_aot(b.run, program, files, env, bounds) };
     }
     thread_local! {
-        static JIT: std::cell::OnceCell<Option<rerail_compiler::native_cpu_pp::CompiledPp>> = const { std::cell::OnceCell::new() };
+        static JIT: std::cell::OnceCell<Option<rerail_cpu_pp::native_cpu_pp::CompiledPp>> = const { std::cell::OnceCell::new() };
     }
-    JIT.with(|j| match j.get_or_init(|| rerail_compiler::native_cpu_pp::compile(program).ok()) {
+    JIT.with(|j| match j.get_or_init(|| rerail_cpu_pp::native_cpu_pp::compile(program).ok()) {
         Some(c) => c.run(program, files, env, bounds),
         None => pp_words::run(program, files, env, bounds),
     })
@@ -259,18 +259,18 @@ pub fn native(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bou
 /// process: the device runs the same IR as the CPU.
 pub fn ukl() -> Result<&'static str, String> {
     static UKL: std::sync::OnceLock<Result<String, String>> = std::sync::OnceLock::new();
-    UKL.get_or_init(|| rerail_compiler::native_cpu_pp::ukl_source(program()?)).as_deref().map_err(Clone::clone)
+    UKL.get_or_init(|| rerail_cpu_pp::native_cpu_pp::ukl_source(program()?)).as_deref().map_err(Clone::clone)
 }
 
 /// The words on the process's device, a TU a batch (`rerail_metal::pp_on`).
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn on_device(program: &Words, files: &[File], env: &pp_words::Env, bounds: &Bounds) -> Result<pp_words::Expanded, pp_words::Refused> {
     on_device_batch(&[(program, files, env, bounds)]).pop().expect("one result")
 }
 
 /// The words on the device over a batch of TUs' rounds, a TU a thread (0408, L3): the batch
 /// runner of `expand_tus_with`.
-#[cfg(any(target_os = "macos", target_os = "linux"))]
+#[cfg(any(target_os = "macos", target_os = "linux", windows))]
 pub fn on_device_batch(jobs: &[Job<'_>]) -> Vec<Result<pp_words::Expanded, pp_words::Refused>> {
     let refused = |why: &'static str| jobs.iter().map(|_| Err(pp_words::Refused { pc: 0, why })).collect();
     let Ok(source) = ukl() else { return refused("the words do not translate to UKL") };

@@ -242,6 +242,8 @@ impl MetalComputeFunctionLibrary {
         }
         let lib = objc::rc::autoreleasepool(|| device.new_library_with_source(preprocessed_source, &metal::CompileOptions::new()));
         let mtl_library = lib.map_err(|e| format!("Error compiling Metal library from source ({file_name_to_appear_in_error_messages}): {e}"))?;
+        // Compiled: the device layer keeps no Metal form (the engine's Metal kernels are `rerail_accel::gpu::kernels`').
+        crate::store::count(false);
         Ok(MetalComputeFunctionLibrary { mtl_library })
     }
 

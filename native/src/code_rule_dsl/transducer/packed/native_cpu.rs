@@ -2601,7 +2601,7 @@ pub(super) fn execute_batch_packed_with_result_limits(
     )
 }
 
-#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux")))]
+#[cfg(all(any(test, feature = "test-hooks"), any(target_os = "macos", target_os = "linux", windows)))]
 pub fn execute_terminal_reference_with_work_limit(
     programs: &[Program],
     files: &[TapeDoc],
@@ -2762,6 +2762,8 @@ struct PreparedRun {
     entries: Vec<NativeTaskEntry>,
     contexts: Vec<(usize, NativeTaskContext)>,
     _tapes: Vec<FileTape>,
+    /// The 16z tapes' readers, whose views the contexts point at: held until the tasks have run.
+    _readers: Readers,
     workspace: BatchRegions,
     _compiled: Vec<Arc<CompiledStraightLine>>,
     allocation_elapsed: std::time::Duration,
@@ -2797,7 +2799,7 @@ fn prepare_run(
     let mut workspace = BatchRegions::allocate(batch, totals)?;
     let evaluation_starts = evaluation_arena_starts(batch)?;
     drop(regions);
-    let (tapes, contexts) = build_task_contexts(files, batch, &mut workspace, &evaluation_starts, totals, work_limit)?;
+    let (tapes, readers, contexts) = build_task_contexts(files, batch, &mut workspace, &evaluation_starts, totals, work_limit)?;
     let allocation_elapsed = allocation_started.elapsed();
     let entries = compiled
         .iter()
@@ -2805,7 +2807,7 @@ fn prepare_run(
         .collect::<Vec<_>>();
     let execution_started = std::time::Instant::now();
     drop(setup);
-    Ok(PreparedRun { entries, contexts, _tapes: tapes, workspace, _compiled: compiled, allocation_elapsed, execution_started })
+    Ok(PreparedRun { entries, contexts, _tapes: tapes, _readers: readers, workspace, _compiled: compiled, allocation_elapsed, execution_started })
 }
 
 /// Each evaluation's first record in each arena: the evaluations' quotas laid end to end.
@@ -2845,8 +2847,12 @@ fn file_tapes(files: &[TapeDoc], batch: &PackedBatch) -> Result<Vec<FileTape>, E
     Ok(tapes)
 }
 
-/// Each task's context, over its evaluation's share of `workspace`; the contexts point into the tapes returned with
-/// them.
+/// A 16z tape's reader for each (evaluation, file) that reads it (0353 step 4b).
+type Readers = std::collections::HashMap<(u32, u32), rerail_clif::view::Reader>;
+
+/// Each task's context, over its evaluation's share of `workspace`; the contexts point into the tapes and the readers
+/// returned with them, which the caller holds while the tasks run (roll-up 35 dropped the readers here, as the
+/// function returned: every 16z run read freed memory).
 fn build_task_contexts(
     files: &[TapeDoc],
     batch: &PackedBatch,
@@ -2854,7 +2860,7 @@ fn build_task_contexts(
     evaluation_starts: &[[u32; ARENA_KIND_COUNT]],
     totals: super::packed_workspace::WorkspaceTotals,
     work_limit: u32,
-) -> Result<(Vec<FileTape>, Vec<(usize, NativeTaskContext)>), Error> {
+) -> Result<(Vec<FileTape>, Readers, Vec<(usize, NativeTaskContext)>), Error> {
     let _contexts = crate::code_rule_dsl::prof::Stage::start("jit.contexts");
     let BatchRegions {
         paths: PathRegions { pending, captures, cursors, repeats },
@@ -2865,7 +2871,7 @@ fn build_task_contexts(
     let node_count = batch.files.iter().map(|file| file.node_count).sum::<u32>();
     // A 16z tape's reader for each evaluation that reads it (0353 step 4b): its reads decode a block into the
     // reader's slots, and an evaluation's tasks run on one worker, in order.
-    let mut readers: std::collections::HashMap<(u32, u32), rerail_clif::view::Reader> = std::collections::HashMap::new();
+    let mut readers = Readers::new();
     let mut contexts = Vec::with_capacity(batch.tasks.len());
 
     for (task_index, task) in batch.tasks.iter().enumerate() {
@@ -3002,7 +3008,7 @@ fn build_task_contexts(
         contexts.push((task.program as usize, context));
     }
     drop(_contexts);
-    Ok((tapes, contexts))
+    Ok((tapes, readers, contexts))
 }
 
 fn evaluation_spans<'a>(

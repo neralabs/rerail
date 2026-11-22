@@ -2,14 +2,13 @@
 //! carries the same file context, persisted reuse never crosses file context, transient failures
 //! are retried, and paged results agree with complete results.
 
-use super::super::CodeRuleDslRuntime;
 use super::super::matcher::UtilLimit;
 use super::api::{CodeRuleDslWorkspace, WorkspaceApplyTask};
 use super::index::{WorkspaceIndexTask, repository_module, repository_package};
 use super::ingest::{BINARY_REQUEST_MAGIC, PACKAGE_CONTEXT_PATH_VISITS};
 use super::persisted::{decode_local_result, encode_local_result};
 use super::storage::{StorageContext, storage_context_in};
-use super::tests::{WORKSPACE_TEST_SLOT, git, result_page};
+use super::fixtures::{PACKAGE_SOURCE, TempDir, WORKSPACE_TEST_SLOT, git, package_repository, result_page};
 use super::*;
 use crate::code_rule_dsl::CompiledCodeRuleDsl;
 use crate::content_store::{ContentStore, GitTree, HashKey};
@@ -36,20 +35,14 @@ const CAPABILITIES: &str = r#"{
 const MAXIMUM_PAGE_BYTES: u32 = 64 * 1024 * 1024;
 
 /// `from . import helper` resolves to `alpha.helper` only in a module of the `alpha` package.
-const PACKAGE_SOURCE: &str = "from . import helper\nhelper()\n";
-
 fn compile(id: &str, clauses: Value) -> CompiledCodeRuleDsl {
-    CodeRuleDslRuntime::compile(
-        json!({
+    crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": id, "revision": 1,
             "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
             "clauses": clauses,
         })
-        .to_string(),
-        "json".into(),
-        CAPABILITIES.into(),
-    )
+        .to_string(), "json", CAPABILITIES)
     .unwrap()
 }
 
@@ -77,67 +70,6 @@ fn helper_call_code_rule() -> CompiledCodeRuleDsl {
                 "kind": "identifier", "regex": "^helper$", "inside": { "kind": "call" } } } }
         }]),
     )
-}
-
-struct TempDir(PathBuf);
-
-impl TempDir {
-    fn new(tag: &str) -> Self {
-        let nanos = SystemTime::now()
-            .duration_since(UNIX_EPOCH)
-            .unwrap()
-            .as_nanos();
-        let path = std::env::temp_dir().join(format!(
-            "rerail-context-{tag}-{}-{nanos}",
-            std::process::id()
-        ));
-        std::fs::create_dir_all(&path).unwrap();
-        Self(dunce::canonicalize(path).unwrap())
-    }
-
-    fn store(&self) -> PathBuf {
-        self.0.join("store").join("content.sqlite")
-    }
-}
-
-impl Drop for TempDir {
-    fn drop(&mut self) {
-        let _ = std::fs::remove_dir_all(&self.0);
-    }
-}
-
-/// A committed repository with two packages holding identical module source and one loose file.
-fn package_repository(tag: &str) -> TempDir {
-    let directory = TempDir::new(tag);
-    let root = directory.0.join("repo");
-    for (path, source) in [
-        ("alpha/__init__.py", ""),
-        ("alpha/helper.py", "def helper():\n    pass\n"),
-        ("alpha/x.py", PACKAGE_SOURCE),
-        ("beta/__init__.py", ""),
-        ("beta/x.py", PACKAGE_SOURCE),
-        ("loose/x.py", PACKAGE_SOURCE),
-    ] {
-        let file = root.join(path);
-        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(file, source).unwrap();
-    }
-    git(&root, &["init", "-q"]);
-    git(&root, &["add", "."]);
-    git(
-        &root,
-        &[
-            "-c",
-            "user.name=rerail",
-            "-c",
-            "user.email=rerail@example.invalid",
-            "commit",
-            "-q",
-            "-m",
-            "fixture",
-        ],
-    );
-    directory
 }
 
 fn apply_json(workspace: &CodeRuleDslWorkspace, revision: u32, files: Value) -> Value {
@@ -279,189 +211,6 @@ fn expected_package_violations() -> Vec<(String, String, u64)> {
     vec![("alpha/x.py".to_owned(), "alpha-helper".to_owned(), 21)]
 }
 
-#[test]
-fn hosts_and_repository_ingestion_share_one_python_module_derivation() {
-    let repository = package_repository("module-path");
-    let root = repository.0.join("repo");
-    let module = |path: &str| match super::super::module_path(
-        "python".to_owned(),
-        root.join(path).to_string_lossy().into_owned(),
-    ) {
-        Some(napi::Either::A(dotted)) => Some(dotted),
-        Some(napi::Either::B(names)) => Some(names.join("|")),
-        None => None,
-    };
-    assert_eq!(module("alpha/x.py").as_deref(), Some("alpha.x"));
-    assert_eq!(
-        module("alpha/__init__.py").as_deref(),
-        Some("alpha.__init__")
-    );
-    assert_eq!(module("loose/x.py"), None);
-    let repository_module =
-        |path: &str| repository_module(&git_workspace::discover(&root).unwrap(), path, "python");
-    assert_eq!(repository_module("beta/x.py"), Some(json!("beta.x")));
-    assert_eq!(repository_module("loose/x.py"), None);
-}
-
-#[test]
-fn hosts_repository_ingestion_and_file_sets_share_one_package_derivation() {
-    let directory = TempDir::new("package-facts");
-    let root = directory.0.join("repo");
-    let oversized = format!(
-        "{{\"type\":\"module\",\"description\":\"{}\"}}",
-        "x".repeat(1024 * 1024)
-    );
-    let root_manifest = r#"{ "name": "root", "type": "esm", "bin": { "a": "./bin/../cli.js", "b": "/abs.js", "c": "../out.js" },
-        "engines": { "node": "not a range" }, "devEngines": { "runtime": [{ "name": "bun" }, { "name": "node", "version": "^20.9" }] },
-        "dependencies": { "react": "19" }, "devDependencies": { "vitest": "4" } }"#;
-    let files = [
-        ("package.json", root_manifest),
-        ("a.js", ""),
-        (
-            "esm/package.json",
-            r#"{ "type": "module", "bin": "x.js", "engines": { "node": ">=22" } }"#,
-        ),
-        ("esm/deep/a.js", ""),
-        (
-            "esm/cjs/package.json",
-            r#"{ "type": "commonjs", "peerDependencies": { "vue": "3" } }"#,
-        ),
-        ("esm/cjs/a.js", ""),
-        ("broken/package.json", "{ \"type\": \"module\""),
-        ("broken/a.js", ""),
-        ("large/package.json", oversized.as_str()),
-        ("large/a.js", ""),
-        ("linked/a.js", ""),
-        ("sub/a.js", ""),
-    ];
-    for (path, source) in files {
-        let file = root.join(path);
-        std::fs::create_dir_all(file.parent().unwrap()).unwrap();
-        std::fs::write(file, source).unwrap();
-    }
-    #[cfg(unix)]
-    std::os::unix::fs::symlink(
-        root.join("esm/package.json"),
-        root.join("linked/package.json"),
-    )
-    .unwrap();
-    git(&root, &["init", "-q"]);
-    git(&root, &["add", "."]);
-    git(
-        &root,
-        &[
-            "-c",
-            "user.name=rerail",
-            "-c",
-            "user.email=rerail@example.invalid",
-            "commit",
-            "-q",
-            "-m",
-            "fixture",
-        ],
-    );
-    // What a host sends: `packageFacts`, in the shape of the wire's `package`.
-    let host_as = |root: &std::path::Path, path: &str, label: &str| {
-        super::super::package_facts(
-            label.to_owned(),
-            root.join(path).to_string_lossy().into_owned(),
-            root.to_string_lossy().into_owned(),
-        )
-        .map(|facts| {
-            let mut wire = json!({ "folder": facts.folder, "type": facts.package_type });
-            if !facts.bin.is_empty() {
-                wire["bin"] = json!(facts.bin);
-            }
-            if let Some(version) = facts.node_version {
-                wire["nodeVersion"] = json!(version);
-            }
-            if !facts.dependencies.is_empty() {
-                wire["dependencies"] = json!(facts.dependencies);
-            }
-            wire
-        })
-    };
-    let host = |root: &std::path::Path, path: &str| host_as(root, path, "javascript");
-    let repository = git_workspace::discover(&root).unwrap();
-    let mut manifests = crate::code_rule_dsl::package_manifest::Manifests::new(root.clone());
-    let mut indexed = |path: &str, language: &str| {
-        repository_package(&mut manifests, &repository, path, language).map(|manifest| {
-            crate::code_rule_dsl::package_manifest::of_file(&manifest)
-                .expect("an ECMA manifest")
-                .to_wire()
-        })
-    };
-    // A workspace or snapshot holding the same texts (the symlink is not one of its entries).
-    let entries = files
-        .iter()
-        .filter_map(|(path, source)| {
-            let directory = crate::code_rule_dsl::package_manifest::manifest_directory(path)?;
-            Some((
-                directory,
-                StdArc::new(crate::code_rule_dsl::package_manifest::Manifest::parse(
-                    directory.to_owned(),
-                    source.as_bytes(),
-                )),
-            ))
-        })
-        .collect::<HashMap<_, _>>();
-    let in_file_set = |path: &str| {
-        crate::code_rule_dsl::package_manifest::manifest_in(path, |directory| {
-            entries.get(directory)
-        })
-        .map(|manifest| {
-            crate::code_rule_dsl::package_manifest::of_file(&manifest)
-                .expect("an ECMA manifest")
-                .to_wire()
-        })
-    };
-    // The nearest manifest decides. `bin` targets resolve against its folder (an absolute one or
-    // one outside it never names a file below it); an unparsable `engines.node` falls through to
-    // `devEngines.runtime`'s `node` entry. One without a valid `type`, malformed, oversized or a
-    // symlink has nothing else either.
-    let unreadable = |folder: &str| json!({ "folder": folder, "type": "unset" });
-    for (path, expected) in [
-        (
-            "a.js",
-            json!({ "folder": "", "type": "unset", "bin": ["cli.js"], "nodeVersion": "^20.9",
-                "dependencies": ["react", "vitest"] }),
-        ),
-        (
-            "esm/deep/a.js",
-            json!({ "folder": "esm", "type": "module", "bin": ["x.js"], "nodeVersion": ">=22" }),
-        ),
-        (
-            "esm/cjs/a.js",
-            json!({ "folder": "esm/cjs", "type": "commonjs", "dependencies": ["vue"] }),
-        ),
-        ("broken/a.js", unreadable("broken")),
-        ("large/a.js", unreadable("large")),
-        ("sub/a.js", indexed("a.js", "javascript").unwrap()),
-    ] {
-        assert_eq!(host(&root, path), Some(expected.clone()), "{path}");
-        assert_eq!(
-            indexed(path, "javascript"),
-            Some(expected.clone()),
-            "{path}"
-        );
-        assert_eq!(in_file_set(path), Some(expected), "{path}");
-    }
-    #[cfg(unix)]
-    for read in [
-        host(&root, "linked/a.js"),
-        indexed("linked/a.js", "javascript"),
-    ] {
-        assert_eq!(read, Some(unreadable("linked")));
-    }
-    // Only ECMA files carry one, and no manifest above the root counts.
-    assert_eq!(indexed("a.js", "python"), None);
-    assert_eq!(host_as(&root, "a.py", "python"), None);
-    assert!(
-        super::super::reads_package_manifests("javascript".to_owned())
-            && !super::super::reads_package_manifests("python".to_owned())
-    );
-    assert_eq!(host(&root.join("sub"), "a.js"), None);
-}
 
 fn package_marker_code_rule() -> CompiledCodeRuleDsl {
     compile(
@@ -948,8 +697,7 @@ fn a_derived_server_graph_follows_a_late_next_dependency_and_nested_packages() {
 #[test]
 fn a_derived_server_graph_keeps_inputs_outside_the_code_rules_scope() {
     let _slot = WORKSPACE_TEST_SLOT.lock();
-    let scoped = CodeRuleDslRuntime::compile(
-        json!({
+    let scoped = crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": "server-graph-scoped", "revision": 1,
             "mode": "steer",
             "scope": { "include": ["app/shared/**", "src/**"], "exclude": [] },
@@ -958,10 +706,7 @@ fn a_derived_server_graph_keeps_inputs_outside_the_code_rules_scope() {
                 "forbid": { "ast": { "language": "typescript",
                     "file": { "package": { "serverGraph": true } }, "rule": { "kind": "program" } } } }],
         })
-        .to_string(),
-        "json".into(),
-        CAPABILITIES.into(),
-    )
+        .to_string(), "json", CAPABILITIES)
     .unwrap();
     let mut workspace = CodeRuleDslWorkspace::new();
     workspace.add_code_rule(&scoped, None).unwrap();
@@ -1115,18 +860,14 @@ fn a_syntax_error_is_no_failure_where_the_file_gates_exclude_the_file() {
         if let Some(file) = file {
             ast["file"] = file;
         }
-        CodeRuleDslRuntime::compile(
-            json!({
+        crate::code_rule_dsl::rule_api::compile(&json!({
                 "format": "rerail.policy/v1", "id": "gated", "revision": 1, "mode": "steer",
                 "scope": { "include": ["**/*"], "exclude": [] },
                 "clauses": [{ "id": "gated",
                     "violation": { "anchor": "witness.span", "code": "GATED", "message": "gated" },
                     "forbid": { "ast": ast } }],
             })
-            .to_string(),
-            "json".into(),
-            CAPABILITIES.into(),
-        )
+            .to_string(), "json", CAPABILITIES)
         .unwrap()
     };
     let failures = |compiled: &CompiledCodeRuleDsl, files: Value| {
@@ -3323,8 +3064,7 @@ fn selector_index_misses_keep_input_budget_failures() {
         &mut None,
     );
     // `plain.py` has no lambda, but it is over this code rule's source-byte cap.
-    let capped = CodeRuleDslRuntime::compile(
-        json!({
+    let capped = crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": "capped-lambdas", "revision": 1,
             "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
@@ -3334,10 +3074,7 @@ fn selector_index_misses_keep_input_budget_failures() {
                 "forbid": { "ast": { "language": "python", "rule": { "kind": "lambda" } } }
             }],
         })
-        .to_string(),
-        "json".into(),
-        CAPABILITIES.replace("\"maxSourceBytes\": 1000000", "\"maxSourceBytes\": 4"),
-    )
+        .to_string(), "json", &CAPABILITIES.replace("\"maxSourceBytes\": 1000000", "\"maxSourceBytes\": 4"))
     .unwrap();
     let narrowed = stored_workspace(&store, "/selector-limits-second", &capped);
     let applied = apply_json(&narrowed, 1, files.clone());
@@ -4350,94 +4087,6 @@ fn a_symlinked_folder_pointing_outside_the_root_holds_no_manifest() {
     );
 }
 
-/// On disk, a host's `package` facts carry the manifest's `private` and each file's own
-/// `published`, read from the manifest's `files` and `main` and its folder's `.npmignore` (a
-/// regular file, never a symlink): one reader reads each manifest once for every file below it,
-/// and the manifest's digest, which reuse keys carry, follows its ignore files.
-#[test]
-fn host_package_facts_read_private_and_each_files_publication_on_disk() {
-    let directory = TempDir::new("package-publication");
-    let root = directory.0.clone();
-    std::fs::create_dir_all(root.join("lib")).unwrap();
-    std::fs::create_dir_all(root.join("pkg")).unwrap();
-    std::fs::write(
-        root.join("package.json"),
-        r#"{ "files": ["lib"], "main": "main.js", "private": true }"#,
-    )
-    .unwrap();
-    std::fs::write(root.join(".npmignore"), "lib/x.js\n").unwrap();
-    std::fs::write(root.join("pkg/package.json"), "{}").unwrap();
-    let absolute = |path: &str| root.join(path).to_string_lossy().into_owned();
-    let reader = crate::code_rule_dsl::PackageFactsReader::new(root.to_string_lossy().into_owned());
-    let facts = |path: &str| {
-        reader
-            .facts("javascript".to_owned(), absolute(path))
-            .map(|facts| (facts.folder, facts.private, facts.published))
-    };
-    assert_eq!(
-        facts("lib/a.js"),
-        Some((String::new(), Some(true), Some(true)))
-    );
-    assert_eq!(
-        facts("lib/x.js"),
-        Some((String::new(), Some(true), Some(false)))
-    );
-    assert_eq!(
-        facts("src/b.js"),
-        Some((String::new(), Some(true), Some(false)))
-    );
-    assert_eq!(
-        facts("main.js"),
-        Some((String::new(), Some(true), Some(true)))
-    );
-    assert_eq!(
-        facts("pkg/a.js"),
-        Some(("pkg".to_owned(), None, Some(true)))
-    );
-    let one_shot = crate::code_rule_dsl::package_facts(
-        "javascript".to_owned(),
-        absolute("lib/x.js"),
-        root.to_string_lossy().into_owned(),
-    )
-    .expect("the root manifest");
-    assert_eq!(
-        (one_shot.private, one_shot.published),
-        (Some(true), Some(false))
-    );
-    // The digest follows the ignore files.
-    let digest = || {
-        *crate::code_rule_dsl::package_manifest::Manifests::new(root.clone())
-            .of_file(&root.join("pkg/a.js"))
-            .expect("the package's manifest")
-            .digest()
-    };
-    let before = digest();
-    std::fs::write(root.join("pkg/.gitignore"), "a.js\n").unwrap();
-    assert_ne!(digest(), before);
-    let reader = crate::code_rule_dsl::PackageFactsReader::new(root.to_string_lossy().into_owned());
-    assert_eq!(
-        reader
-            .facts("javascript".to_owned(), absolute("pkg/a.js"))
-            .and_then(|facts| facts.published),
-        Some(false)
-    );
-    // A symlinked ignore file is not read.
-    #[cfg(unix)]
-    {
-        std::fs::remove_file(root.join("pkg/.gitignore")).unwrap();
-        std::fs::write(root.join("ignore-all"), "*\n").unwrap();
-        std::os::unix::fs::symlink(root.join("ignore-all"), root.join("pkg/.npmignore")).unwrap();
-        let reader =
-            crate::code_rule_dsl::PackageFactsReader::new(root.to_string_lossy().into_owned());
-        assert_eq!(
-            reader
-                .facts("javascript".to_owned(), absolute("pkg/a.js"))
-                .and_then(|facts| facts.published),
-            Some(true)
-        );
-    }
-}
-
 /// A clean tree's reuse follows the configuration a nested package's `extends` reaches outside
 /// it: editing the base's `jsxImportSource` leaves the tree's key as it was, but each restored
 /// file's results are keyed by its context (`file_context`), whose package digest carries the
@@ -4594,8 +4243,7 @@ fn derived_documents_code_rule(id: &str) -> CompiledCodeRuleDsl {
             "forbid": { "ast": ast }
         })
     };
-    CodeRuleDslRuntime::compile(
-        json!({
+    crate::code_rule_dsl::rule_api::compile(&json!({
             "format": "rerail.policy/v1", "id": id, "revision": 1, "mode": "steer",
             "scope": { "include": ["**/*"], "exclude": [] },
             "clauses": [
@@ -4606,10 +4254,7 @@ fn derived_documents_code_rule(id: &str) -> CompiledCodeRuleDsl {
                 clause("python", json!({ "language": "python", "rule": { "kind": "call" } })),
             ],
         })
-        .to_string(),
-        "json".into(),
-        include_str!("../capabilities.json").into(),
-    )
+        .to_string(), "json", include_str!("../capabilities.json"))
     .unwrap()
 }
 

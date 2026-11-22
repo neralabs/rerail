@@ -20,11 +20,18 @@
 //!
 //! Nothing else writes a kernel's pages back: not `sync`, not the OS's flush, not the process's exit (0295 §7). So
 //! the state written last is what makes them safe.
+//!
+//! On Windows the mapping is `CreateFileMappingW`'s view (`crate::windows`), flushed with `FlushViewOfFile` (and
+//! `FlushFileBuffers` where a flush waits). Windows truncates no file a view maps: a host-written block keeps its
+//! readers' view, so its file is cut to the length when the last view goes, and until then `Block::open_file` reads
+//! a frozen block's length from its header.
 
 use crate::block::{Backing, Block, FROZEN, Flush, Frozen, Header};
-use std::fs::OpenOptions;
+use std::fs::{File, OpenOptions};
 use std::io;
+#[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::fs::FileExt;
 use std::path::{Path, PathBuf};
 #[cfg(any(target_os = "macos", target_os = "linux", windows))]
@@ -41,6 +48,9 @@ struct Mapping {
     /// The no-copy wrap the GPU binds the block through, made once with the mapping; let go at the seal.
     #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     gpu: Mutex<Option<rerail_device::device::Buffer>>,
+    /// Windows: the file and the length it is cut to once this view goes (no view may be cut; module doc).
+    #[cfg(windows)]
+    cut: Mutex<Option<(PathBuf, u64)>>,
 }
 
 unsafe impl Send for Mapping {}
@@ -48,7 +58,13 @@ unsafe impl Sync for Mapping {}
 
 impl Drop for Mapping {
     fn drop(&mut self) {
-        unsafe { libc::munmap(self.base.cast(), self.len) };
+        // SAFETY: the mapping's own, which nothing reads after its last holder.
+        unsafe { unmap(self.base, self.len) };
+        #[cfg(windows)]
+        if let Some((path, length)) = self.cut.get_mut().unwrap_or_else(|e| e.into_inner()).take() {
+            // Best effort: a file left longer still opens frozen (`Block::open_file` reads its header's length).
+            let _ = OpenOptions::new().write(true).open(path).and_then(|f| f.set_len(length));
+        }
     }
 }
 
@@ -103,16 +119,13 @@ impl Deferrable {
         let len = len.max(crate::block::PAGE).div_ceil(crate::block::PAGE) * crate::block::PAGE;
         let f = OpenOptions::new().read(true).write(true).create(true).truncate(fresh).open(path)?;
         f.set_len(len as u64)?;
-        let p = unsafe { libc::mmap(std::ptr::null_mut(), len, libc::PROT_READ | libc::PROT_WRITE, libc::MAP_SHARED, f.as_raw_fd(), 0) };
-        if p == libc::MAP_FAILED {
-            return Err(io::Error::last_os_error());
-        }
+        let p: *mut libc::c_void = map_shared(&f, len, true)?.cast();
         // SAFETY: the mapping outlives the wrap, which it holds and lets go at the seal, before it is unmapped.
         #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         let gpu = match device.map(|d| unsafe { rerail_device::device::wrap_host_memory(d, p.cast(), len) }).transpose() {
             Ok(g) => g,
             Err(e) => {
-                unsafe { libc::munmap(p, len) };
+                unsafe { unmap(p.cast(), len) };
                 return Err(io::Error::other(e));
             }
         };
@@ -126,6 +139,8 @@ impl Deferrable {
             wrapped,
             #[cfg(any(target_os = "macos", target_os = "linux", windows))]
             gpu: Mutex::new(gpu),
+            #[cfg(windows)]
+            cut: Mutex::new(None),
         });
         let block = Block::over_with(kind, Box::new(Shared(mapping.clone())), !fresh);
         Ok(Deferrable { block: Some(block), mapping, path: path.to_owned(), kind, on_release: None })
@@ -207,17 +222,22 @@ impl Sealed {
         // Written by the host alone: no page is wired, so one `MS_SYNC` writes every one, and the mapping stays,
         // its readers reading on (the block a queued write's readers hold).
         if !mapping.wrapped {
-            if flush.waits() {
-                msync(mapping.base, length, libc::MS_SYNC)?;
-            }
             let f = OpenOptions::new().read(true).write(true).open(&path)?;
+            if flush.waits() {
+                flush_pages(mapping.base, length, Some(&f))?;
+            }
+            #[cfg(unix)]
             f.set_len(length as u64)?;
-            f.write_all_at(&FROZEN.to_ne_bytes(), std::mem::offset_of!(Header, state) as u64)?;
+            #[cfg(windows)]
+            {
+                *mapping.cut.lock().unwrap() = Some((path.clone(), length as u64));
+            }
+            write_at(&f, &FROZEN.to_ne_bytes(), std::mem::offset_of!(Header, state) as u64)?;
             let _ = kind;
             return Ok(frozen);
         }
         // The host's dirty pages: written now, on this thread. A kernel's are wired and skipped.
-        msync(mapping.base, length, libc::MS_ASYNC)?;
+        start_pages(mapping.base, length)?;
         // The unmap, once the readers let go: the driver's wire on a kernel's pages ends with it.
         let gone: Weak<Mapping> = Arc::downgrade(&mapping);
         drop(mapping);
@@ -233,16 +253,14 @@ impl Sealed {
         // of them some time after the unmap (190–260 ms measured, whatever the size), and an `msync` meanwhile skips
         // them and still succeeds: so it is repeated until no page of the range is dirty.
         {
-            let p = unsafe { libc::mmap(std::ptr::null_mut(), length, libc::PROT_READ, libc::MAP_SHARED, f.as_raw_fd(), 0) };
-            if p == libc::MAP_FAILED {
-                return Err(io::Error::last_os_error());
-            }
-            let r = written_back(p.cast(), length, flush);
-            unsafe { libc::munmap(p, length) };
+            let p = map_shared(&f, length, false)?;
+            let r = written_back(p, length, flush, &f);
+            // SAFETY: the mapping just made, read no more.
+            unsafe { unmap(p, length) };
             r?;
         }
         // The state, last.
-        f.write_all_at(&FROZEN.to_ne_bytes(), std::mem::offset_of!(Header, state) as u64)?;
+        write_at(&f, &FROZEN.to_ne_bytes(), std::mem::offset_of!(Header, state) as u64)?;
         drop(f);
         Block::open_file(&path, kind).map_err(io::Error::other)
     }
@@ -255,13 +273,13 @@ const LET_GO: Duration = Duration::from_secs(10);
 /// `msync`s the range with `MS_SYNC` until no page of it is dirty (`mincore`): a page still wired for the GPU is
 /// skipped by each `msync` until the driver lets go of it.
 #[cfg(target_os = "macos")]
-fn written_back(base: *mut u8, len: usize, _: Flush) -> io::Result<()> {
+fn written_back(base: *mut u8, len: usize, _: Flush, _: &File) -> io::Result<()> {
     let pages = len.div_ceil(crate::block::PAGE);
     let mut v = vec![0 as libc::c_char; pages];
     let start = std::time::Instant::now();
     let mut wait = Duration::from_millis(1);
     loop {
-        msync(base, len, libc::MS_SYNC)?;
+        flush_pages(base, len, None)?;
         if unsafe { libc::mincore(base as *const libc::c_void, len, v.as_mut_ptr()) } != 0 {
             return Err(io::Error::last_os_error());
         }
@@ -277,30 +295,115 @@ fn written_back(base: *mut u8, len: usize, _: Flush) -> io::Result<()> {
     }
 }
 
-/// With `Synced`, `msync`s the range with `MS_SYNC`; otherwise the OS writes it (decision 0481). Off macOS no device
-/// wraps a slab's pages (no Metal), so none is wired and one `msync` writes every dirty page back; and Linux's
-/// `mincore` reports a page's residency only, never whether it is dirty.
+/// With `Synced`, writes the range back and waits for it; otherwise the OS writes it (decision 0481). Off macOS no
+/// device wire keeps a page from its write-back, so one flush writes every dirty page; and Linux's `mincore` reports
+/// a page's residency only, never whether it is dirty.
 #[cfg(not(target_os = "macos"))]
-fn written_back(base: *mut u8, len: usize, flush: Flush) -> io::Result<()> {
+fn written_back(base: *mut u8, len: usize, flush: Flush, f: &File) -> io::Result<()> {
     if !flush.waits() {
         return Ok(());
     }
-    msync(base, len, libc::MS_SYNC)
+    flush_pages(base, len, Some(f))
 }
 
-fn msync(base: *mut u8, len: usize, flags: i32) -> io::Result<()> {
+/// `len` bytes of `f` mapped shared, read and written (`writable`) or read.
+#[cfg(unix)]
+fn map_shared(f: &File, len: usize, writable: bool) -> io::Result<*mut u8> {
+    let prot = if writable { libc::PROT_READ | libc::PROT_WRITE } else { libc::PROT_READ };
+    // SAFETY: the file's own descriptor, open for the call; the system picks the address.
+    let p = unsafe { libc::mmap(std::ptr::null_mut(), len, prot, libc::MAP_SHARED, f.as_raw_fd(), 0) };
+    if p == libc::MAP_FAILED { Err(io::Error::last_os_error()) } else { Ok(p.cast()) }
+}
+
+#[cfg(windows)]
+fn map_shared(f: &File, len: usize, writable: bool) -> io::Result<*mut u8> {
+    crate::windows::map_file(f, len, writable)
+}
+
+/// # Safety
+/// The whole of a mapping `map_shared` made, read no more.
+#[cfg(unix)]
+unsafe fn unmap(base: *mut u8, len: usize) {
+    unsafe { libc::munmap(base.cast(), len) };
+}
+
+#[cfg(windows)]
+unsafe fn unmap(base: *mut u8, _len: usize) {
+    crate::windows::unmap_view(base);
+}
+
+/// The range's dirty pages written back, waited for: `msync(MS_SYNC)`; on Windows `FlushViewOfFile`, then
+/// `FlushFileBuffers` of `f` (the view's flush does not wait for the disk).
+fn flush_pages(base: *mut u8, len: usize, f: Option<&File>) -> io::Result<()> {
     if len == 0 {
         return Ok(());
     }
-    if unsafe { libc::msync(base.cast(), len, flags) } != 0 {
-        return Err(io::Error::last_os_error());
+    #[cfg(unix)]
+    {
+        let _ = f;
+        // SAFETY: a range of the caller's mapping.
+        if unsafe { libc::msync(base.cast(), len, libc::MS_SYNC) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
     }
-    Ok(())
+    #[cfg(windows)]
+    {
+        crate::windows::flush_view(base, len)?;
+        match f {
+            Some(f) => f.sync_data(),
+            None => Ok(()),
+        }
+    }
 }
 
-/// The bytes of `path` the file system holds on disk: a sparse file's written-back extent.
+/// The range's dirty pages' write-back started, not waited for: `msync(MS_ASYNC)`; on Windows `FlushViewOfFile`.
+fn start_pages(base: *mut u8, len: usize) -> io::Result<()> {
+    if len == 0 {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    {
+        // SAFETY: a range of the caller's mapping.
+        if unsafe { libc::msync(base.cast(), len, libc::MS_ASYNC) } != 0 {
+            return Err(io::Error::last_os_error());
+        }
+        Ok(())
+    }
+    #[cfg(windows)]
+    {
+        crate::windows::flush_view(base, len)
+    }
+}
+
+/// `bytes` written into `f` at `at`.
+fn write_at(f: &File, bytes: &[u8], at: u64) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        f.write_all_at(bytes, at)
+    }
+    #[cfg(windows)]
+    {
+        // The kernel reads a reservation's pages without faulting them in (`crate::windows`).
+        crate::mem::commit(bytes.as_ptr().cast_mut(), bytes.len())?;
+        let mut done = 0;
+        while done < bytes.len() {
+            done += std::os::windows::fs::FileExt::seek_write(f, &bytes[done..], at + done as u64)?;
+        }
+        Ok(())
+    }
+}
+
+/// The bytes of `path` the file system holds on disk: a sparse file's written-back extent (on Windows, its length).
 pub fn on_disk(path: &Path) -> u64 {
-    std::fs::metadata(path).map_or(0, |m| std::os::unix::fs::MetadataExt::blocks(&m) * 512)
+    #[cfg(unix)]
+    {
+        std::fs::metadata(path).map_or(0, |m| std::os::unix::fs::MetadataExt::blocks(&m) * 512)
+    }
+    #[cfg(windows)]
+    {
+        std::fs::metadata(path).map_or(0, |m| m.len())
+    }
 }
 
 #[cfg(test)]

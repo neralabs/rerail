@@ -30,28 +30,28 @@ use crate::content_store::atoms::Sym;
 pub(crate) const HEADER: &str = "# rerail.types/v1";
 
 #[derive(Debug, PartialEq)]
-pub(crate) struct Error {
-    pub(crate) line: usize,
-    pub(crate) message: String,
+pub struct Error {
+    pub line: usize,
+    pub message: String,
 }
 
 /// One declaration file's signatures, by qualified name.
 #[derive(Debug, Default)]
-pub(crate) struct Declarations {
+pub struct Declarations {
     pub(crate) module: String,
     pub(crate) signatures: BTreeMap<String, Tid>,
 }
 
 /// A declared signature that differs from the source's annotation (reported, the source's kept).
 #[derive(Debug, PartialEq)]
-pub(crate) struct Conflict {
+pub struct Conflict {
     pub(crate) name: String,
     pub(crate) source: Tid,
     pub(crate) declared: Tid,
 }
 
 /// Reads one `rerail.types/v1` file. `intern` gives a name's atom (the single interner).
-pub(crate) fn parse(text: &str, terms: &mut Terms, intern: &mut dyn FnMut(&str) -> Sym) -> Result<Declarations, Error> {
+pub fn parse(text: &str, terms: &mut Terms, intern: &mut dyn FnMut(&str) -> Sym) -> Result<Declarations, Error> {
     let mut lines = text.lines().enumerate();
     match lines.next() {
         Some((_, l)) if l.trim() == HEADER => {}
@@ -129,7 +129,7 @@ pub(crate) fn parse(text: &str, terms: &mut Terms, intern: &mut dyn FnMut(&str) 
 
 /// The source's signatures with the declarations filling its gaps: a declared name the source does not annotate
 /// is added; one it annotates keeps the source's, and differing ones are reported.
-pub(crate) fn fill(source: &BTreeMap<String, Tid>, declared: &Declarations) -> (BTreeMap<String, Tid>, Vec<Conflict>) {
+pub fn fill(source: &BTreeMap<String, Tid>, declared: &Declarations) -> (BTreeMap<String, Tid>, Vec<Conflict>) {
     let mut out = source.clone();
     let mut conflicts = Vec::new();
     for (name, &d) in &declared.signatures {

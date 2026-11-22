@@ -85,7 +85,7 @@ fn readers_put(key: [u8; 32], idents: &BTreeSet<[u8; 32]>) -> KeptPut {
     let mut hash = sha2::Sha256::new();
     for id in idents {
         hash.update(id);
-        rows.extend(id.chunks_exact(8).map(|w| i64::from_le_bytes(w.try_into().expect("8 bytes"))));
+        rows.extend(id.as_chunks::<8>().0.iter().map(|w| i64::from_le_bytes(*w)));
     }
     let digest = u64::from_le_bytes(hash.finalize()[..8].try_into().expect("8 bytes"));
     KeptPut { rel: READERS.into(), ident: key, part: 0, digest, reads: Vec::new(), types: b"iiii".to_vec(), what: KeptWhat::Flat { widths: vec![8; 4], rows, n: idents.len(), levels: None, given: true } }
@@ -95,8 +95,8 @@ fn readers_put(key: [u8; 32], idents: &BTreeSet<[u8; 32]>) -> KeptPut {
 pub fn record_idents<'a>(record: &'a rerail_blocks::kept::Kept<'_>) -> impl Iterator<Item = [u8; 32]> + 'a {
     (0..record.rows.len()).map(|i| {
         let mut id = [0u8; 32];
-        for (c, w) in id.chunks_exact_mut(8).enumerate() {
-            w.copy_from_slice(&record.rows.get(i, c).to_le_bytes());
+        for (c, w) in id.as_chunks_mut::<8>().0.iter_mut().enumerate() {
+            *w = record.rows.get(i, c).to_le_bytes();
         }
         id
     })
@@ -208,11 +208,19 @@ pub struct KeptSpace {
 impl KeptSpace {
     /// The files `rows` name, mapped, each checked against its tag.
     pub fn open(store: &Path, space: &[u8; 32], rows: &ChainRows) -> StoreResult<KeptSpace> {
+        Self::mapped(store, space, rows).map_err(|(path, e)| StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display())))
+    }
+
+    /// `open`'s files, or the first that does not open, with why.
+    fn mapped(store: &Path, space: &[u8; 32], rows: &ChainRows) -> Result<KeptSpace, (PathBuf, std::io::Error)> {
         let dir = space_dir(store, space);
         let files = rows
             .iter()
-            .map(|(_, name, tag)| KeptFacts::open(&dir.join(name), *tag).map_err(|e| StoreError::Corrupt(format!("a space's kept facts: {e}"))))
-            .collect::<StoreResult<_>>()?;
+            .map(|(_, name, tag)| {
+                let path = dir.join(name);
+                KeptFacts::open(&path, *tag).map_err(|e| (path, e))
+            })
+            .collect::<Result<_, _>>()?;
         Ok(KeptSpace { files })
     }
 
@@ -380,8 +388,7 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
     // A reader record only grows: a put of one is what the space keeps and what it adds (decision 0401 step 8).
     for p in puts.iter_mut().filter(|p| p.rel == READERS) {
         let Some(was) = chain.get(&p.key()) else { continue };
-        let mut all: BTreeSet<[u8; 32]> = record_idents(&was).collect();
-        all.extend(put_idents(p));
+        let all: BTreeSet<[u8; 32]> = record_idents(&was).chain(put_idents(p)).collect();
         *p = readers_put(p.ident, &all);
     }
     // Collection's: the whole chain rewritten without what `keep` drops, when it drops any.
@@ -559,6 +566,10 @@ impl KeptGather {
                         *was = readers_put(p.ident, &all);
                     } else if matches!(p.what, KeptWhat::Reads) && !matches!(was.what, KeptWhat::Reads | KeptWhat::Gone) {
                         was.reads = p.reads;
+                    } else if p.rel == READERS {
+                        // A reader record only grows (decision 0401 step 8): two of a wave are one, naming both's.
+                        let all: BTreeSet<[u8; 32]> = put_idents(was).chain(put_idents(&p)).collect();
+                        *was = readers_put(p.ident, &all);
                     } else {
                         *was = p;
                     }
@@ -732,16 +743,40 @@ impl super::ContentStore {
         Ok(done)
     }
 
-    /// `space`'s chain as `rows` name it, mapped.
-    pub fn open_kept(&self, space: &[u8; 32], rows: &ChainRows) -> StoreResult<KeptSpace> {
-        KeptSpace::open(&self.database_path, space, rows)
+    /// `space`'s chain as `rows` (`kept_row`'s) name it, mapped, with the rows it was opened by; `None` when it keeps
+    /// none. Where a file `rows` name is gone, they are rows a writer has since replaced: the rows this process holds
+    /// are kept current by its own writer alone, and another writes the store too (another shared object's writer in
+    /// this process, or another process), whose next write sweeps the files its commit replaced. The store's last
+    /// commit is then read, held in their place, and opened. A file its rows name that is gone is corruption.
+    pub fn open_kept(&self, space: &[u8; 32], rows: ChainRows) -> StoreResult<Option<(ChainRows, KeptSpace)>> {
+        match KeptSpace::mapped(&self.database_path, space, &rows) {
+            Ok(kept) => return Ok(Some((rows, kept))),
+            Err((path, e)) if e.kind() != std::io::ErrorKind::NotFound => {
+                return Err(StoreError::Corrupt(format!("a space's kept facts: {}: {e}", path.display())));
+            }
+            Err(_) => {}
+        }
+        let now = {
+            let connection = self.connection.lock().expect("content store mutex poisoned");
+            chain_rows(&connection, space)?
+        };
+        super::held::snapshot_kept(&self.database_path, |kept| {
+            if let Some(kept) = kept {
+                kept.insert(*space, now.clone());
+            }
+        });
+        if now.is_empty() {
+            return Ok(None);
+        }
+        let kept = KeptSpace::open(&self.database_path, space, &now)?;
+        Ok(Some((now, kept)))
     }
 
-    /// The kept facts of `space` as this process holds its chain's rows (else the store's last commit), mapped;
-    /// `None` when it keeps none.
+    /// The kept facts of `space` as this process holds its chain's rows (else the store's last commit), mapped
+    /// (`open_kept`); `None` when it keeps none.
     pub fn kept_space(&self, space: &[u8; 32]) -> StoreResult<Option<KeptSpace>> {
         let Some(rows) = self.kept_row(space)? else { return Ok(None) };
-        KeptSpace::open(&self.database_path, space, &rows).map(Some)
+        Ok(self.open_kept(space, rows)?.map(|(_, kept)| kept))
     }
 }
 

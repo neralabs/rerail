@@ -1,6 +1,7 @@
 //! The N-API surface: the `CodeRuleDslWorkspace` class, the lease that guards its state, and the
 //! storage, apply, completion and result page async tasks.
 
+use rerail_store::Canonical as _;
 use super::crossfile::{ConsumerRefresh, CrossFileScheduler};
 use super::documents;
 use super::evaluate::{Job, JobContext, evaluate_file, run_jobs};
@@ -304,7 +305,7 @@ impl AnalysisScopeRun {
         if !run.is_open() {
             return Err(invalid("analysis scope run has finished"));
         }
-        if store != run.store_path() && !store.canonicalize().ok().zip(run.store_path().canonicalize().ok())
+        if store != run.store_path() && !store.canonical().ok().zip(run.store_path().canonical().ok())
             .is_some_and(|(requested, owned)| requested == owned) {
             return Err(invalid("analysis scope run belongs to another content store"));
         }
@@ -1175,6 +1176,9 @@ impl Task for WorkspaceStorageTask {
             // The task's run, on the workspace's shared object (decision 0442).
             let _in_run = crate::code_rule_dsl::logic::profile::within(Arc::clone(&self.shared));
             check_closed(&self.closed)?;
+            // Every write of the attach waits on other writers for one deadline in all: the store's open, the
+            // analysis scope's acquisition and the snapshot's publication (which joins this one).
+            let _deadline = OperationDeadline::enter();
             // A workspace Git cannot describe (no repository, an unreadable untracked directory, a
             // corrupt index) attaches no store: the host walks it, reporting what it cannot read,
             // and interactive edits evaluate without reuse. Only a root outside any repository is
@@ -1249,17 +1253,16 @@ impl Task for WorkspaceStorageTask {
                 deferred,
             )?;
             let publication_milliseconds = publication_started.elapsed().as_secs_f64() * 1000.0;
+            let unavailable = |reason: String| StorageAttachment {
+                attached: false,
+                reason: Some(reason),
+                cache_unavailable: true,
+                discovery_milliseconds,
+                publication_milliseconds,
+            };
             let context = match attached {
                 Attached::Storage(context) => context,
-                Attached::Unavailable(reason) => {
-                    return Ok(StorageAttachment {
-                        attached: false,
-                        reason: Some(reason),
-                        cache_unavailable: true,
-                        discovery_milliseconds,
-                        publication_milliseconds,
-                    });
-                }
+                Attached::Unavailable(reason) => return Ok(unavailable(reason)),
             };
             let owner = if scoped_after {
                 if let Err(error) = check_store_identity(&context.store, self.expected_store.as_deref()) { return Ok(cache_failed(error)); }

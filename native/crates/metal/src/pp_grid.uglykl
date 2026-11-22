@@ -889,15 +889,17 @@
 #define PP_TG_BIG UKL_GRID_SORT_WORDS
 typedef struct PpTg {
     uint32_t flag;
+    // The grid's join (`ukl_grid_join`): this group's ticket and the grid's count.
+    uint32_t join[2];
     uint32_t scratch[UKL_TG_SCRATCH];
     uint32_t big[PP_TG_BIG];
 } PpTg;
 
-// The stage word of `GRID` (after the barrier's three): 0 the rounds, 1 the places' rounds,
-// 2 done.
-#define PG_STAGE (3u)
+// The stage word of `GRID` (after the grid's four: its barriers' three and its join's tickets,
+// `ukl/grid.h`): 0 the rounds, 1 the places' rounds, 2 done.
+#define PG_STAGE (4u)
 // Set where P1 ends the round before the expansion (requests, or a refusal: decision 0467 §1).
-#define PG_STOP (4u)
+#define PG_STOP (5u)
 
 // The rows of every grid kernel: the arena, the slab, the layout, the group's memory, and where
 // the thread is.
@@ -920,7 +922,10 @@ typedef struct PpTg {
 
 #define PP_GRID_BEGIN                                                                                  \
     UklGrid g;                                                                                         \
-    g.ctl = IN(uint32_t, GRID); g.groups = gsz / lsz; g.group = group; g.lid = lid; g.lsz = lsz;      \
+    g.ctl = IN(uint32_t, GRID); g.lid = lid; g.lsz = lsz;                                              \
+    /* The grid is the groups that are running (decision 0540 §3), not the host's count: the rest end. */ \
+    if (!ukl_grid_join(&g, gsz / lsz, tg->join)) return;                                               \
+    (void)group;                                                                                       \
     PP_SORT_LOCAL;                                                                                     \
     UKL_GLOBAL const PpFile* files = IN(const PpFile, FILES);                                              \
     uint32_t nf = W(N_FILES);                                                                              \

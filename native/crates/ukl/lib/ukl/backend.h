@@ -287,6 +287,9 @@ UKL_INLINE void ukl_tg_barrier_device() { __ukl_cpu_wait(__UKL_AT_TG); }
 // group yields to the others that run with it (ukl_cpu_shim.h). So a poll there is a round of every other group, and
 // a grid barrier's bound is a thousand rounds, not a GPU's million spins.
 #define ukl_poll_yield() __ukl_cpu_wait(__UKL_YIELD)
+// The groups that run together, known exactly (the launch's `resident`): a grid's join closes when they all have
+// joined, with no window (decision 0540 §3).
+#define UKL_GRID_RESIDENT() __ukl_cpu_resident()
 #ifndef UKL_GRID_SPINS
 #define UKL_GRID_SPINS 1000u
 #endif

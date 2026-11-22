@@ -1,5 +1,4 @@
     use super::{candidates_tested, may_bind, reset_candidates_tested};
-    use crate::code_rule_dsl::CodeRuleDslRuntime;
     use crate::code_rule_dsl::test_support::*;
     use serde_json::{Value, json};
 
@@ -106,11 +105,7 @@
                 "violation": { "anchor": "witness.span", "code": "AST_MATCH", "message": "in $NAME" },
             }],
         });
-        let reason = rejection(CodeRuleDslRuntime::compile(
-            document.to_string(),
-            "json".to_owned(),
-            CAPABILITIES.to_owned(),
-        ));
+        let reason = rejection(crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", CAPABILITIES));
         assert!(reason.contains("$NAME"), "{reason}");
         let reason = rejection(compile_typescript_ast(json!({
             "rule": { "pattern": "$F()", "inside": { "kind": "program", "stopBy": { "pattern": "$G($$$)" } } },

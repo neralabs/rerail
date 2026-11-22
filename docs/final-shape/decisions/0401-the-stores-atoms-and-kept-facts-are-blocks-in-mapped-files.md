@@ -446,15 +446,19 @@ a rule's literal, so the cross program's key changes and every statistic kept un
 (`docof`, `end_line`, `visit_index`, `node_order`, `ast_depth`) are not kept inputs (0458 keeps the exports alone),
 so `kept_input_stats` never answered for them:
 - A semi-join counted at the held nodes walked every held node's document, making all 300 (1.1 s of the edit's
-  stats, 0.06 s before). Its rows at the held nodes are kept beside the documents' table (`#semijoin-at-held/`),
+  stats, 0.06 s before). Its rows at the held nodes are kept beside the documents' table (`#semijoin-rows-at-held/`),
   patched by the changed documents' nodes (b82ac99d4b).
 - The three whose keyed walk is refused (`docof`, `end_line`, `visit_index`) were measured whole each run. They are
   counted as a base relation is, kept and patched beside the documents' table (ebb6e0d6ea).
 - The held nodes were made by visiting every export's rows (1.56 s of the edit's stats, 560,675 nodes). The kept
   rows carry the digest of the exports they were taken of, the one the cross part's kept inputs are written with;
   exports of that digest hold the kept rows' nodes (95eec15f57).
-- A semi-join answered by its kept rows still counted every row for its statistics. The kept rows carry them
-  (2ddc67b45e).
+- A semi-join answered by its kept rows still counted every row for its statistics. The kept rows carried them
+  (2ddc67b45e); since the hub's t51 item 2 (e870c85994), merged in roll-up 29, they are kept in the documents'
+  table as every base relation's are (`held_stats_name`), and the kept rows (`#semijoin-rows-at-held/`) hold the
+  held nodes and their rows alone. The statistics stand while the documents are the same and, where rows were kept,
+  the exports too; else they are counted at the held nodes, the kept rows answering for the documents no edit changed.
+  A semi-join whose keyed walk is refused is counted as a base relation is, and patched.
 - Phase 0 opened the image store and asked it for each held graph's image at every lookup (1,263 lookups of 316
   graphs), since retaining a working tree's policies in the store that evaluates them (6e3f1618e8). It opens the
   store on the first ask, and retains a held graph once a store (6f0044f081).

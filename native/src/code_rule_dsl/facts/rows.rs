@@ -73,12 +73,6 @@ pub fn moved() -> (u64, u64) {
 /// Room a block keeps past a new relation's: what its other relations' tails may take meanwhile.
 const MARGIN: usize = 1 << 20;
 
-/// The least block of a relation alone in it outside a run (`Part::try_new_with`'s `unowned`): its address space,
-/// whose pages are taken as they are written, so that its tail and its tables (a key map, its pending rows) grow in
-/// it as in a run's open block (decision 0384), where a block of twice its first rows moved its tail out at once and
-/// left its tables behind. A thousand of them reserve 64 GiB, not the 16 TiB a run's size each did.
-const UNOWNED_ROOM: usize = 64 << 20;
-
 /// A block of relations: shared by every segment and tail in it, given back (to the pool) with the last.
 pub struct Facts {
     /// Held by handle (decision 0491 step 3): a region of it keeps it as its relations do.
@@ -157,6 +151,20 @@ pub enum Life {
 /// run's, so no two runs' relations share a block).
 #[derive(Default)]
 struct Open([Mutex<Option<Arc<Facts>>>; 4]);
+
+/// The open blocks new relations go in outside a chunk (`Open`): the run's, or outside a run the machine's (decision
+/// 0442: every piece of state has an owner). A session's work between its runs shares the machine's, as a run's
+/// relations share the run's: a relation's tables grow in its block (0384), and a relation dropped gives its chunks
+/// back to it (0342). Outside a run `local` is a value of its own each time it is asked for: every relation then
+/// leased a block of a run's size, 16 GiB of address space where blocks reserve it (decision 0445), and a session's
+/// 1,000 one-document batches' relations reserved all of it (mmap refused at 256 TiB).
+fn open_blocks() -> Arc<Open> {
+    if crate::code_rule_dsl::logic::profile::run_own().is_some() {
+        crate::code_rule_dsl::logic::profile::local::<Open>()
+    } else {
+        crate::code_rule_dsl::logic::profile::machine::<Open>()
+    }
+}
 
 /// Every block leased on this machine, by `Life`, while it lives: what a profile reads (`held`; decision 0442: the
 /// machine's, as the memory it counts is).
@@ -426,7 +434,7 @@ fn new_open(chunk: &Option<Arc<Chunk>>, life: Life, need: usize) -> Result<Arc<F
 /// (an index's 2.5 MB, the data layer's 50 policies on 901 files). A new open block when that one has no such chunk.
 fn open_chunk(life: Life, need: usize, align: usize) -> Result<(Arc<Facts>, (usize, usize)), String> {
     let chunk = current_chunk();
-    let runs = crate::code_rule_dsl::logic::profile::local::<Open>();
+    let runs = open_blocks();
     let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
     if let Some(f) = &*open
         && f.block.reserved().saturating_sub(f.block.used()) >= need + MARGIN
@@ -823,16 +831,21 @@ impl<T: rerail_blocks::Pod + std::fmt::Debug> std::fmt::Debug for BlockVec<T> {
 /// The bytes a relation of `k` 8-byte columns and `rows` rows takes in its block: its descriptor and directories,
 /// and its chunks as `Rows::try_reserve` makes them (quarter steps of doubling groups, each chunk aligned).
 fn room_for(k: usize, rows: usize) -> usize {
+    room_for_widths(&vec![8; k], rows)
+}
+
+/// `room_for`, of columns `widths` bytes wide.
+fn room_for_widths(widths: &[u32], rows: usize) -> usize {
     let min_log = rerail_blocks::rows::MIN_LOG;
     let align = |bytes: usize| if bytes >= rerail_blocks::block::PAGE { rerail_blocks::block::PAGE } else { 64 };
     let mut chunks = 0;
     let mut bytes = 0;
     while rerail_blocks::rows::capacity(chunks, min_log) < rows as u64 {
-        let b = rerail_blocks::rows::chunk_rows(chunks as usize, min_log) as usize * 8;
-        bytes += k * (b + align(b));
+        let r = rerail_blocks::rows::chunk_rows(chunks as usize, min_log) as usize;
+        bytes += widths.iter().map(|&w| r * w as usize + align(r * w as usize)).sum::<usize>();
         chunks += 1;
     }
-    bytes + (k + 1) * size_of::<rerail_blocks::rows::ColDir>() + 4096
+    bytes + (widths.len() + 1) * size_of::<rerail_blocks::rows::ColDir>() + 4096
 }
 
 /// A block of the device's own of at least `bytes`: a relation alone in it, from the block policy (decision 0342) as
@@ -841,7 +854,7 @@ fn room_for(k: usize, rows: usize) -> usize {
 /// anonymous memory, which the CPU's reads take as they take any block.
 fn lease_exact(bytes: usize, life: Life) -> Result<Block, String> {
     use rerail_blocks::alloc::{Budget, Device, Need, Size, Writes};
-    let device = if cfg!(any(target_os = "macos", target_os = "linux")) && life == Life::Device && rerail_accel::gpu::shared::layer().is_some() {
+    let device = if cfg!(any(target_os = "macos", target_os = "linux", windows)) && life == Life::Device && rerail_accel::gpu::shared::layer().is_some() {
         Device::Must
     } else {
         Device::No
@@ -869,6 +882,36 @@ pub fn anon_in_block(k: usize, vals: &[i64]) -> InBlock {
     }
     let at = facts.block.offset_of(rel);
     InBlock { facts, at, rows: rows as u32, dead: 0, kills: None, part: None }
+}
+
+/// The room `indexes` indexes of a relation of `rows` rows take past its rows (`Part::with_index_room`).
+fn index_room(rows: usize, indexes: usize) -> usize {
+    let cap = rows.next_power_of_two().max(1);
+    let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
+    indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>()
+}
+
+/// The run table of a relation under key runs (`Part::over_key_runs`), for its writer.
+pub struct KeyRuns {
+    t: *mut u32,
+    runs: usize,
+    /// The relation whose block holds it.
+    part: Part,
+}
+
+impl KeyRuns {
+    /// Run `k`: its rows from `first` (past the run's before; the first's 0) hold ids of high bits `key`.
+    pub fn put(&self, k: usize, first: u32, key: u32) {
+        assert!(k < self.runs, "run {k} of {}", self.runs);
+        assert!(self.part.len() == 0, "a run set after its relation's rows");
+        // SAFETY: a table of `runs` runs in the relation's block, which `part` keeps; read only once rows are written.
+        unsafe { rerail_blocks::rows::put_run(self.t, k, first, key) };
+    }
+
+    /// Its offset in its block (a device writer's).
+    pub fn at(&self) -> usize {
+        self.part.facts.block.offset_of(self.t.cast_const())
+    }
 }
 
 /// A relation of `k` values a row, 8 bytes each, read in their order.
@@ -1086,8 +1129,13 @@ impl Part {
     /// `rewritten`: its rows' values change in place (`for_writes_with_room`): its block alone keeps a free list, and
     /// its indexes are whole chunks the next takes again (`Relation::rewritten`).
     fn try_new_with(life: Life, k: usize, rows: usize, extra: usize, rewritten: bool) -> Result<Part, String> {
-        let spec = spec(k);
-        let need = room_for(k, rows);
+        Part::try_new_spec(life, spec(k), rows, extra, rewritten)
+    }
+
+    /// `try_new_with`, of columns `spec`'s widths.
+    fn try_new_spec(life: Life, spec: Spec, rows: usize, extra: usize, rewritten: bool) -> Result<Part, String> {
+        let k = spec.widths.len();
+        let need = room_for_widths(&spec.widths, rows);
         // A device relation is written once at its size, and lives as the device's buffers did: alone in a block of
         // its size (leased within the device's budget), given back with it. A run's tail grows: its block has room for
         // it to double.
@@ -1095,18 +1143,12 @@ impl Part {
         // too, so its indexes lie with it.
         let alone = life == Life::Device || extra > 0;
         let chunk = crate::code_rule_dsl::logic::profile::bound::<InChunk>().0;
-        // Outside a run and a chunk (a session's work between its runs, decision 0442) the open block is no one's: a
-        // value of its own each time it is asked for, so every relation leased a block of the run's size, 16 GiB of
-        // address space where blocks reserve it (decision 0445), held while it lived. A session's 1,000 one-document
-        // batches' relations reserved all of it (mmap refused at 256 TiB). It is alone in a block of its room, with
-        // room for its tail to double, and at least `UNOWNED_ROOM`.
-        let unowned = !alone && chunk.is_none() && crate::code_rule_dsl::logic::profile::run_own().is_none();
-        let (runs, live_blocks) = (crate::code_rule_dsl::logic::profile::local::<Open>(), crate::code_rule_dsl::logic::profile::machine::<Live>());
+        let (runs, live_blocks) = (open_blocks(), crate::code_rule_dsl::logic::profile::machine::<Live>());
         let mut open = chunk.as_ref().map_or(&runs.0[life as usize], |c| &c.open[life as usize]).lock().unwrap_or_else(|e| e.into_inner());
         for fresh in [false, true] {
             let facts = match &*open {
-                _ if alone || unowned => {
-                    let block = if unowned { lease_room((2 * need + MARGIN).max(UNOWNED_ROOM))? } else { lease_exact(need + extra, life)? };
+                _ if alone => {
+                    let block = lease_exact(need + extra, life)?;
                     let f = Arc::new(Facts::new(if rewritten { block.with_free_list() } else { block }, life));
                     if let Some(c) = &chunk {
                         c.made.lock().unwrap_or_else(|e| e.into_inner()).push(Arc::downgrade(&f));
@@ -1175,12 +1217,12 @@ impl Part {
         Ok(part)
     }
 
-    /// How long its rows live: the blocks it is in.
     /// Whether nothing else holds its relation (no other part, reader or borrowed array of it).
     pub fn is_unique(&self) -> bool {
         Arc::strong_count(&self.held) == 1
     }
 
+    /// How long its rows live: the blocks it is in.
     pub fn life(&self) -> Life {
         self.life
     }
@@ -1235,10 +1277,24 @@ impl Part {
     /// (`DevIndex::moved`). The room is the block's address space: its pages are taken as an index is written. Not
     /// leased from the device's budget.
     pub fn with_index_room(life: Life, k: usize, rows: usize, indexes: usize) -> Part {
-        let cap = rows.next_power_of_two().max(1);
-        let one = 4 * (cap + 1) + 4 * rows.max(1) + 3 * 64;
-        let room = indexes.clamp(1, rerail_blocks::relation::ADDED_INDEXES) * one + rerail_blocks::relation::ADDED_INDEXES * size_of::<rerail_blocks::relation::Index>();
-        Part::try_new_with(life, k, rows, room, false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+        Part::try_new_with(life, k, rows, index_room(rows, indexes), false).unwrap_or_else(|e| panic!("a relation of {k} columns and {rows} rows: {e}"))
+    }
+
+    /// `with_index_room` of `k` columns of ids under key runs (an axis's solve, decision 0494 step 7): each column 4
+    /// bytes a row, its ids' low bits, their high bits (a document's key) the runs' of one table of `runs` runs in
+    /// the relation's block (`rows::ColDir`'s `runs`), which every column reads. The writer sets each run (`KeyRuns::put`)
+    /// before it writes a row.
+    pub fn over_key_runs(life: Life, k: usize, rows: usize, indexes: usize, runs: usize) -> (Part, KeyRuns) {
+        let spec = Spec { widths: vec![4; k], order: Vec::new(), indexes: Vec::new(), min_log: rerail_blocks::rows::MIN_LOG };
+        let table = 8 * (runs + 2) + 64;
+        let part = Part::try_new_spec(life, spec, rows, index_room(rows, indexes) + table, false).unwrap_or_else(|e| panic!("an axis of {rows} rows: {e}"));
+        let t = rerail_blocks::rows::alloc_runs(&part.facts.block, runs);
+        for c in 0..k {
+            // SAFETY: the table is in the relation's block, which it lives as long as; its runs are set before a row.
+            unsafe { part.rel().rows.set_runs(c, t) };
+        }
+        let keys = KeyRuns { t, runs, part: part.clone() };
+        (part, keys)
     }
 
     /// `for_writes` alone in a block with `room` bytes past its rows' (decision 0384 step 5): a relation the device
@@ -2071,6 +2127,11 @@ impl Rows {
         }
         let (_, p) = self.segs.last()?;
         Some(Home { facts: p.facts.clone(), life: p.life, grow: 0 })
+    }
+
+    /// Whether `facts` is its home's block (`home`), read with no reference counted.
+    pub fn home_is(&self, facts: &Arc<Facts>) -> bool {
+        self.tail.as_ref().map(|t| &t.facts).or_else(|| self.segs.last().map(|(_, p)| &p.facts)).is_none_or(|f| Arc::ptr_eq(f, facts))
     }
 
     /// Its relations, oldest first: the frozen segments, then the tail if it has rows. A reader that keeps them
@@ -2947,6 +3008,25 @@ mod tests {
         let live = [(Life::Run, 10 << 20, 4 << 20), (Life::Kept, 2 << 20, 2 << 20), (Life::Device, 64 << 20, 64 << 20), (Life::Source, 1 << 20, 0)];
         assert_eq!(held_of(&live), 6 << 20);
         assert_eq!(held_of(&live[..2]), held_of(&live), "the device's blocks, alive or not, change nothing");
+    }
+
+    /// Outside a run the open blocks are the machine's (decision 0442, `open_blocks`): a session's relations made
+    /// between its runs share one block, as a run's do, not a block of their own each (16 GiB of address space each
+    /// where blocks reserve it: a session's 1,000 one-document batches' relations reserved all of it).
+    #[test]
+    fn relations_made_outside_a_run_share_the_machines_block() {
+        assert!(crate::code_rule_dsl::logic::profile::run_own().is_none(), "outside a run");
+        let made: Vec<Rows> = (0..1000i64)
+            .map(|i| {
+                let mut r = Rows::new(2);
+                // copy: not block data (a test's literal rows)
+                r.extend_from_slice(&[i, i + 1, i + 2, i + 3]);
+                r
+            })
+            .collect();
+        let first = block_of(&made[0]);
+        assert!(made.iter().all(|r| Arc::ptr_eq(&block_of(r), &first)), "one block");
+        assert_eq!(*made[999].row(1, 2), [1001, 1002]);
     }
 
     /// A relation a chunk drops gives its chunks back to the chunk's block (decision 0342): the next relation of

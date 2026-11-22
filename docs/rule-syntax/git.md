@@ -37,6 +37,16 @@ view_tip(r, v, c) :- git_root_view(r, v), git_view_revision(v, "HEAD", c).
 `git_view_revision_error(view, expression, reason)` retains the requested view on failure.
 The repository convenience relation `git_revision(repo, expression, oid)` uses the invocation's root view.
 For immutable data such as a commit message, pass the repository and the resolved object ID.
+This program finds a view whose HEAD commit has an empty message. The join binds the repository and the commit.
+
+```rr
+#include "git.rerail"
+
+.decl empty_head_message(repo: symbol, view: symbol, commit: symbol)
+git_view_revision_request(v, "HEAD") :- git_root_view(_, v).
+empty_head_message(r, v, c) :- git_root_view(r, v), git_view_revision(v, "HEAD", c), git_message(r, c, "").
+.output empty_head_message
+```
 
 ## Read one analysis scope's history
 

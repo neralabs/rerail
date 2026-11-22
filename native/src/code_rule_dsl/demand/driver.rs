@@ -270,11 +270,11 @@ pub struct ExecutionStatement {
 }
 
 fn production_backend() -> ExecutionBackend {
-    #[cfg(any(target_os = "macos", target_os = "linux"))]
+    #[cfg(any(target_os = "macos", target_os = "linux", windows))]
     {
         ExecutionBackend::MetalJit
     }
-    #[cfg(not(any(target_os = "macos", target_os = "linux")))]
+    #[cfg(not(any(target_os = "macos", target_os = "linux", windows)))]
     {
         ExecutionBackend::CpuJit
     }

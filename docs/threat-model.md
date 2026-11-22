@@ -494,9 +494,11 @@ Rerail must not be presented as a control the agent cannot switch off.
 
 - `serveHook` answers `{}` to any error (`src/harness/hook-adapter.ts`).
 - The launcher turns a hook's non-zero exit, a thrown error or `process.exit` included, into exit 0, with `{}` when
-  the hook wrote nothing (`src/harness/hook-launcher.ts`), whether it runs the hook as a child or in its own process.
-  In its own process, a native crash or an out-of-memory abort ends the process before the launcher can answer, so
-  that exit code stays under the `node` entry; Claude Code shows it as a hook error and does not block on it.
+  the hook wrote nothing (`src/harness/hook-launcher.ts`). It runs the hook in its own process, or starts a launcher
+  under the recorded node that does. Where the hook runs in the process the agent started, a native crash or an
+  out-of-memory abort ends that process before the launcher can answer, so that exit code stays under the `node`
+  entry; Claude Code shows it as a hook error and does not block on it. Where it runs in the second launcher, the first
+  turns that crash into exit 0 too, with `{}` when the hook wrote nothing.
 - The `cmd.exe` entry of Claude Code's hooks on Windows turns a recorded Node that is there but cannot start, and a
   launcher that ends in a native crash, into exit 0 with no answer, which Claude Code reads as `{}`, while the launcher's
   file is there (`cmdHookArgs` in `src/setup/harness-registration.ts`). Once the launcher is gone, or `node.exe` is

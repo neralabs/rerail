@@ -1011,3 +1011,97 @@ pub fn gap_marks(records: &Records, bytes: &[u8], starts: &[u32], lasts: &[u32],
         pending >> m & 1 == 1 || records.tested_only >> m & 1 == 0 && words > 0 && any_in(outputs, o, from, 64 * words - 1)
     })
 }
+
+/// The marks the token loop sets itself (decision 0177), their masks made from the bytes
+/// (`Reads`): each `(mark, output)`. The gap marks' (`lift`), from the bytes between grammar
+/// tokens, as `records::gap_marks`; the others', at a token's first byte. A mark a reader gives
+/// (`Reader::retag`) or of tests alone is not.
+pub fn loop_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> (Vec<(u8, u16)>, Vec<(u8, u16)>) {
+    if r.skip.is_none() {
+        return (Vec::new(), Vec::new());
+    }
+    let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
+    let blank = blank_bits(r, bytewise);
+    let known = extra_known(r, bytewise);
+    let mut lift = Vec::new();
+    let mut at = Vec::new();
+    for (k, &(o, w)) in r.marks.iter().enumerate() {
+        if o == crate::records::WORD_ALONE || w != 0 || retagged >> k & 1 == 1 || r.tested_only >> k & 1 == 1 || r.alone >> k & 1 == 1 || blank >> k & 1 == 1 || !bytewise(o) {
+            continue;
+        }
+        if r.gaps >> k & 1 == 1 {
+            if known {
+                lift.push((k as u8, o));
+            }
+        } else {
+            at.push((k as u8, o));
+        }
+    }
+    (lift, at)
+}
+
+/// The gap marks tier 2 on the CPU tests itself, where a state asks (decision 0177): each
+/// `(mark, output)`, a gap mark made from the bytes (no `else escape`, not the extras'). The
+/// token loop makes none of their gaps; tier 2 reads the mask from the grammar token before to
+/// the token, as the lean parser asks whether a token is on a line only where a statement asks
+/// it (`on_line`), and reads a JSON document's bytes only where it takes one. A mark with token
+/// tests too (`lazy_coded`) keeps them in the code, as a lexer marks what it reads: tier 2
+/// takes its bit there first. Metal and the interpreter set them in the codes: the compiler
+/// chooses by the target, the GPU's tier 1 making every mark at once.
+pub fn lazy_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> Vec<(u8, u16)> {
+    // A mark with tests and an `unless after` stays the loop's: the word before holds its
+    // tests' hits too. So does one a token pattern's `without` reads (`Records::read`).
+    let coded = lazy_coded(r);
+    let held = |k: u8| coded >> k & 1 == 1 && r.unless.iter().any(|&(m, _)| m == k);
+    loop_marks(r, bytewise).0.into_iter().filter(|&(k, _)| r.tested_only >> k & 1 == 0 && r.alone >> k & 1 == 0 && r.read >> k & 1 == 0 && r.unplaced >> k & 1 == 0 && r.extra != Some(k) && !held(k)).collect()
+}
+
+/// The code bits of `block`'s gap marks tier 2 on the CPU tests itself (`lazy_marks`): the
+/// CPU's tier 1 sets none of them, where Metal and the interpreter do. None without records.
+pub fn lazy_code_bits(block: &crate::block_native::BlockNative) -> u32 {
+    let Some(r) = block.records.as_ref() else {
+        return 0;
+    };
+    let bw = crate::byte_needs::MadeFromBytes::of(block);
+    lazy_marks(r, &|o| bw.can(o)).iter().fold(0, |a, &(k, _)| a | 1 << (crate::records::MARK_SHIFT + u32::from(k)))
+}
+
+/// The marks of `lazy_marks` with token tests too: their tests' hits are in the code (the
+/// token loop's), their gaps tier 2's.
+pub fn lazy_coded(r: &crate::records::Records) -> u32 {
+    r.checks.iter().fold(0, |a, c| match c.then {
+        crate::records::CheckThen::At(k) | crate::records::CheckThen::After(k) => a | 1 << k,
+        crate::records::CheckThen::Escape | crate::records::CheckThen::Cut => a,
+    })
+}
+
+/// The gap marks the token loop reads from the blanks (`Records::blanks`, decision 0430): each
+/// `(mark, class output)`, the class read from the bytes. While it passes the blank run before
+/// each token, the loop tests the class there, as the lean lexer's `skip` notes `nl`; an
+/// extra's run goes on to the grammar token after it. No mask of the mark is made.
+pub fn blank_marks(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> Vec<(u8, u16)> {
+    if r.skip.is_none() {
+        return Vec::new();
+    }
+    if !extra_known(r, bytewise) {
+        return Vec::new();
+    }
+    r.blanks.iter().copied().filter(|&(_, o)| bytewise(o)).collect()
+}
+
+/// Whether the token loop knows an extra at its token (Q347): it tells one by the extra's mark
+/// in the code, so the mark must be the loop's there (a reader's, or its first byte's), not
+/// set after the tokens (`late_marks`). The gap marks the loop sets (`loop_marks`' lifted,
+/// `blank_marks`) go past an extra to the grammar token after it only so.
+fn extra_known(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> bool {
+    let Some(e) = r.extra else { return true };
+    let retagged: u32 = r.readers.iter().flat_map(|rd| rd.tags()).fold(0, |a, (_, m)| a | m);
+    let (o, w) = r.marks[usize::from(e)];
+    let at_first = o != crate::records::WORD_ALONE && w == 0 && r.gaps >> e & 1 == 0 && r.tested_only >> e & 1 == 0 && r.alone >> e & 1 == 0 && bytewise(o);
+    retagged >> e & 1 == 1 || at_first
+}
+
+/// `blank_marks`' marks, as bits `1 << mark`.
+pub fn blank_bits(r: &crate::records::Records, bytewise: &dyn Fn(u16) -> bool) -> u32 {
+    blank_marks(r, bytewise).iter().fold(0, |a, &(k, _)| a | 1 << k)
+}

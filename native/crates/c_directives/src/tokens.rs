@@ -112,9 +112,9 @@ mod tests {
             return Err(format!("the interpreter's tape differs ({} / {})", interp.is_some(), image.is_some()));
         }
         // The device's tape: on a Mac it always runs, so a failure is the test's (a failed device compile is fatal,
-        // never skipped). A Linux host's GPU lane (decision 0440 step E) may have no device (`UnsupportedBackend`),
-        // and is then skipped; where there is one, any other failure is the test's there too.
-        #[cfg(any(target_os = "macos", target_os = "linux"))]
+        // never skipped). A Linux or Windows host's GPU lane (decision 0440 step E) may have no device
+        // (`UnsupportedBackend`), and is then skipped; where there is one, any other failure is the test's there too.
+        #[cfg(any(target_os = "macos", target_os = "linux", windows))]
         match c.metal_images(&[src]) {
             Ok(m) if m[0] != image => return Err(format!("Metal's tape differs ({} / {})", m[0].is_some(), image.is_some())),
             Ok(_) | Err(rerail_compiler::Error::UnsupportedBackend) => {}
@@ -211,7 +211,7 @@ mod lowering_time {
     #[test]
     #[ignore = "a measurement"]
     fn lowering_steps() {
-        use rerail_compiler::bitlex_masks as bc;
+        use rerail_bitlex::bitlex_masks as bc;
         for cpp in [false, true] {
             let t = std::time::Instant::now();
             let stmts = ::bitlex::syntax::parse(&super::grammar(cpp)).unwrap();

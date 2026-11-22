@@ -838,8 +838,9 @@ fn expanded_run(files: &[(&str, &str)], cfg: rerail_c_pp::Config, dirs: &[(&str,
 
 /// Decisions 0468 §4 and 0485 §1: an evaluation is a fixed handful of launches, `pp_setup` (the
 /// text inside its P1 iterations) and `pp_check`, whatever the unit's size: an empty unit, one of thousands of tokens and
-/// definitions, and one that runs again at a larger rung. A grid past the groups the device holds
-/// at once fails its barrier, never hangs, and runs again at half the groups to the same output.
+/// definitions, and one that runs again at a larger rung. A grid dispatched past the groups the
+/// device holds at once is the groups that join it (decision 0540 §3): it passes its barriers the
+/// first time, on fewer groups than dispatched, to the same output.
 #[test]
 fn an_evaluation_is_a_fixed_handful_of_launches() {
     let mut big = String::new();
@@ -864,10 +865,11 @@ fn an_evaluation_is_a_fixed_handful_of_launches() {
     let (unit, lay) = (&d.unit, &d.lay);
     let wide = rerail_metal::pp_expand::expand_at(unit, lay, 0, 4096).unwrap();
     let narrow = rerail_metal::pp_expand::expand_from(unit, lay, 0).unwrap();
-    assert!(wide.groups < 4096, "the grid past residency ran at {} groups", wide.groups);
-    same(wide.refused, 0, "the halved grid's refusals");
-    same(&wide.out, &narrow.out, "the halved grid's output");
-    eprintln!("past residency: ran again at {} groups", wide.groups);
+    same(wide.groups, 4096, "the grid past residency, run once: no barrier failed");
+    assert!((1..4096).contains(&wide.joined), "the grid is the groups that run: {} joined of 4096", wide.joined);
+    same(wide.refused, 0, "the joined grid's refusals");
+    same(&wide.out, &narrow.out, "the joined grid's output");
+    eprintln!("past residency: {} of 4096 groups joined", wide.joined);
 }
 
 /// A part's output spelled: each ref's token in its file (`files` and `tapes`, the unit's), each

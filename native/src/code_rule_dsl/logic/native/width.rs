@@ -47,7 +47,7 @@ impl Settings {
         Settings {
             cap: parse_cap(std::env::var("RERAIL_WIDEST_ROWS").ok().as_deref()),
             cut: std::env::var("RERAIL_WIDEST").is_ok_and(|v| v == "cut"),
-            ceiling: crate::code_rule_dsl::logic::profile::watch::memory_ceiling(),
+            ceiling: crate::code_rule_dsl::logic::profile::memory::memory_ceiling(),
         }
     }
 }
@@ -239,7 +239,7 @@ pub(in crate::code_rule_dsl) fn watch(run: &Arc<run::Run>) {
             if r.ended() || r.width.stop.get().is_some() {
                 return;
             }
-            let Some(now) = crate::code_rule_dsl::logic::profile::watch::resident_bytes() else { return };
+            let Some(now) = crate::code_rule_dsl::logic::profile::memory::resident_bytes() else { return };
             if now > max {
                 let _ = r.width.stop.set(r.width.ceiling_message(max, now));
                 return;
@@ -398,7 +398,7 @@ mod tests {
     /// The memory watch stops a run past its ceiling, naming the widest relations it held.
     #[test]
     fn the_memory_watch_stops_a_run_past_its_ceiling() {
-        if crate::code_rule_dsl::logic::profile::watch::resident_bytes().is_none() {
+        if crate::code_rule_dsl::logic::profile::memory::resident_bytes().is_none() {
             return;
         }
         let run = run::scope(|| Settings { cap: DEFAULT_ROWS, cut: false, ceiling: Some(1) });

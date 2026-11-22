@@ -7,6 +7,8 @@
 // The browser build has no JIT: wasm/cranelift-jit stands in under the same name (wasm/README.md).
 #[cfg(target_family = "wasm")]
 extern crate cranelift_jit_wasm as cranelift_jit;
+// Canonical paths without Windows' verbatim prefix: the engine's every one (`rerail_store::Canonical`).
+use rerail_store::Canonical as _;
 /// `build.rs` compiles this file too; the library builds it only for tests, so `cargo test`
 /// checks the identities the build script computes.
 #[cfg(test)]
@@ -44,10 +46,10 @@ pub mod git_access {
 pub mod git_start;
 pub use rerail_store::git_workspace;
 pub use rerail_store::source_tree;
-pub use rerail_w::git_ignore;
+pub use rerail_classic::git_ignore;
 mod main_instance;
 mod model;
-pub use rerail_w::panic_boundary;
+pub use rerail_classic::panic_boundary;
 mod path_owner;
 pub mod process;
 pub use rerail_logic::threads;
@@ -63,11 +65,15 @@ use napi_derive::napi;
 use rules::{CompileSummary, ModelEncoder, NativeMatch, NativeRuleInput, NativeSample, RuleSet};
 use std::path::Path;
 
-// jemalloc does not build for MSVC targets; Windows keeps the system allocator. The test build declares it too
+// jemalloc does not build for MSVC targets; Windows takes mimalloc (below). The test build declares it too
 // (`rust_allocations_reach_the_profile_allocator` checks it).
 #[cfg(not(any(windows, target_family = "wasm", feature = "system-allocator")))]
 #[global_allocator]
 static GLOBAL: Sampled = Sampled;
+
+#[cfg(all(windows, not(feature = "system-allocator")))]
+#[global_allocator]
+static GLOBAL: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 /// jemalloc, with the heap sampler around it (`rerail_prof::heap`, `RERAIL_HEAP_SAMPLE`): off, one load more an
 /// allocation. Tree-sitter's allocations go to jemalloc directly and are not sampled.
@@ -147,15 +153,7 @@ pub(crate) fn install_store_functions() {
             .ok()
             .filter(|id| id.len() == 32 && id.bytes().all(|byte| byte.is_ascii_hexdigit()))
             .map_or(grammar, |id| Box::leak(id.into_boxed_str()));
-        code_rule_dsl::build_ids::set(env!("RERAIL_ENGINE_BUILD_ID"), grammar);
-        code_rule_dsl::install_devices();
-        code_rule_dsl::install_languages();
-        code_rule_dsl::logic::plan::corpus::install_git_inventory();
-        content_store::set_connection_functions(|db| {
-            code_rule_dsl::text::install(db)?;
-            code_rule_dsl::prefilter::tapes::install(db)
-        });
-        code_rule_dsl::sql_hazards::strict_on_every_connection();
+        code_rule_dsl::boot::install(code_rule_dsl::boot::BuildIds { engine: env!("RERAIL_ENGINE_BUILD_ID"), grammar });
     });
 }
 
@@ -302,7 +300,7 @@ fn on_revisions<'s, T>(snapshots: impl IntoIterator<Item = &'s git_workspace::sn
 
 #[cfg(not(feature = "headless"))]
 #[napi]
-pub fn inspect_rr_policy(path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+pub fn inspect_rr_policy(path: String, source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
     let snapshot = source.map(|source| source.pinned_snapshot());
     on_revisions(snapshot.as_deref(), || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(||
         LoadedRrPolicy::read(&path, snapshot.clone(), None)?.inspection()))
@@ -321,6 +319,38 @@ struct LoadedRrPolicy {
     location: PolicyLocation,
     program: std::sync::Arc<code_rule_dsl::logic::program_image::Version>,
     files: Vec<code_rule_dsl::logic::rr::LibraryFile>,
+    /// What its load did (`LoadedRrPolicies::load`'s stages: compiles, graph hits): a scan handed it ran that load
+    /// first, and its profile counts it (`Prepared::add`).
+    prepared: Prepared,
+}
+
+/// The stages a run counted (`rerail_prof::stages`) between two readings: a policy load's, carried to the scan.
+#[cfg(not(feature = "headless"))]
+#[derive(Clone, Default)]
+struct Prepared(std::sync::Arc<Vec<(String, std::time::Duration, usize)>>);
+
+#[cfg(not(feature = "headless"))]
+impl Prepared {
+    fn now() -> std::collections::BTreeMap<String, (std::time::Duration, usize)> {
+        rerail_prof::stages().clone()
+    }
+    /// What the run counted since `before`.
+    fn since(before: &std::collections::BTreeMap<String, (std::time::Duration, usize)>) -> Prepared {
+        let was = |stage: &str| before.get(stage).copied().unwrap_or_default();
+        Prepared(std::sync::Arc::new(Self::now().into_iter().filter_map(|(stage, (time, count))| {
+            let (t, c) = was(&stage);
+            (time > t || count > c).then(|| (stage, time.saturating_sub(t), count.saturating_sub(c)))
+        }).collect()))
+    }
+    /// Counted again by the run under way.
+    fn add(&self) {
+        let mut stages = rerail_prof::stages();
+        for (stage, time, count) in self.0.iter() {
+            let at = stages.entry(stage.clone()).or_default();
+            at.0 += *time;
+            at.1 += count;
+        }
+    }
 }
 
 #[cfg(not(feature = "headless"))]
@@ -332,7 +362,7 @@ impl LoadedRrPolicy {
             Some(snapshot) => PolicyLocation::Git { snapshot, inputs: git },
             None => PolicyLocation::Worktree { path: path.clone(), library: code_rule_dsl::logic::rr::library_root() },
         };
-        Ok(Self { location, program, files })
+        Ok(Self { location, program, files, prepared: Prepared::default() })
     }
 
     fn inspection(&self) -> Result<String> {
@@ -362,14 +392,16 @@ impl LoadedRrPolicies {
     }
 
     #[napi]
-    pub fn load(&self, path: String, source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
+    pub fn load(&self, path: String, source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>) -> Result<String> {
         let key = policy_file_path(&path)?;
         let read = || code_rule_dsl::logic::plan::corpus::combined::inspect_separately(|| {
             let inspected = if source.is_none() && self.store.is_some() {
                 self.programs.lock().unwrap_or_else(|err| err.into_inner()).get(key)
                     .and_then(|versions| versions.get(&None)).map(|policy| policy.files.clone())
             } else { None };
-            let policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), inspected.as_deref())?;
+            let before = Prepared::now();
+            let mut policy = LoadedRrPolicy::read(&path, source.map(|source| source.pinned_snapshot()), inspected.as_deref())?;
+            policy.prepared = Prepared::since(&before);
             let inspection = policy.inspection()?;
             let origin = match &policy.location {
                 PolicyLocation::Git { snapshot, .. } => Some(snapshot.source_key()),
@@ -380,10 +412,51 @@ impl LoadedRrPolicies {
         });
         let snapshot = source.map(|source| source.pinned_snapshot());
         on_revisions(snapshot.as_deref(), || match &self.store {
-            Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, read),
+            Some(store) => code_rule_dsl::logic::plan::corpus::with_tape_cache_path(store, None, || {
+                let inspection = read()?;
+                // The load is a command (decision 0441): what it queued for the store (its program's version) is in
+                // the store as it returns, not applied behind a later command, whose store may by then be another file.
+                // The store the load ran under (`tape_cache_path`): none for `:memory:`, which names no file to open.
+                if let Some(path) = code_rule_dsl::logic::plan::corpus::tape_cache_path()
+                    && let Ok(handle) = content_store::ContentStore::open(&path)
+                    && let Err(error) = handle.written()
+                {
+                    eprintln!("rerail: {}: the policy load's writes: {error}", path.display());
+                }
+                Ok(inspection)
+            }),
             None => read(),
         })
     }
+
+    /// The policy a failed `load` of `path` names: the one `.policy` its own text declares, read without lowering
+    /// (`declared_policy_ids`); `null` when it declares none or several, or cannot be read.
+    #[napi]
+    pub fn failed_policy(&self, path: String, source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>) -> Option<String> {
+        let snapshot = source.map(|source| source.pinned_snapshot());
+        on_revisions(snapshot.as_deref(), || failed_policy_id(declared_policy_ids(&path, snapshot.as_deref())))
+    }
+}
+
+/// The `.policy` IDs the policy at `path` declares in its own text (`rr::declared_policies`), read where `snapshot`
+/// (a Git view, registered: `on_revisions`) or the worktree holds it, without its includes or lowering: what a policy
+/// whose program does not load names in its failure. Empty when the text cannot be read.
+#[cfg(not(feature = "headless"))]
+fn declared_policy_ids(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Vec<String> {
+    let Ok(path) = rr_policy_path(path, snapshot) else { return Vec::new() };
+    let bytes = if git_workspace::snapshot::view_root(&path).is_some() {
+        git_workspace::snapshot::read_bounded(&path, 1024 * 1024).ok()
+    } else {
+        std::fs::read(&path).ok()
+    };
+    bytes.and_then(|bytes| String::from_utf8(bytes).ok()).map(|text| code_rule_dsl::logic::rr::declared_policies(&text)).unwrap_or_default()
+}
+
+/// The one policy a policy's failure names: its single declared `.policy` (`declared_policy_ids`), else none.
+#[cfg(not(feature = "headless"))]
+fn failed_policy_id(ids: Vec<String>) -> Option<String> {
+    let [id] = <[String; 1]>::try_from(ids).ok()?;
+    Some(id)
 }
 
 #[cfg(not(feature = "headless"))]
@@ -399,7 +472,7 @@ fn policy_file_path(path: &str) -> Result<&Path> {
 fn rr_policy_path(path: &str, snapshot: Option<&git_workspace::snapshot::Snapshot>) -> Result<std::path::PathBuf> {
     let path = policy_file_path(path)?;
     match snapshot {
-        None => path.canonicalize().map_err(|error| Error::from_reason(format!("{}: {error}", path.display()))),
+        None => path.canonical().map_err(|error| Error::from_reason(format!("{}: {error}", path.display()))),
         Some(snapshot) if path.is_relative() && path.components().all(|part| matches!(part, std::path::Component::Normal(_))) => Ok(snapshot.root().join(path)),
         Some(_) => Err(Error::from_reason("Expected a repository-relative policy path")),
     }
@@ -421,9 +494,9 @@ pub struct RrScanTarget {
 #[napi]
 pub fn scan_rr_policies_async(
     target: RrScanTarget,
-    analysis: Option<&rerail_w::code_rule_dsl::workspace::api::AnalysisScopeRun>,
-    source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
-    policy_source: Option<&rerail_w::code_rule_dsl::workspace::api::GitRevisionSource>,
+    analysis: Option<&rerail_classic::code_rule_dsl::workspace::api::AnalysisScopeRun>,
+    source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>,
+    policy_source: Option<&rerail_classic::code_rule_dsl::workspace::api::GitRevisionSource>,
     loaded: Option<&LoadedRrPolicies>,
 ) -> Result<napi::bindgen_prelude::AsyncTask<ScanRrPolicies>> {
     let RrScanTarget { paths, root, store, output, source_paths } = target;
@@ -486,7 +559,19 @@ impl napi::Task for ScanRrPolicies {
 impl ScanRrPolicies {
     fn scan(&mut self) -> Result<String> {
         use content_store::analysis_scope::{self, AnalysisRun, RunSource};
-        use code_rule_dsl::logic::plan::corpus;
+        use code_rule_dsl::logic::{plan::corpus, profile};
+        // The scan is one run (decision 0441: a command's): every policy's runs join it, and the programs each runs
+        // first (its dialects', Git's inventory). Its profile is theirs together (decision 0442: the records are the
+        // run's), held here and written once at its end; held by a corpus run, each run's would replace the last's.
+        let _run = code_rule_dsl::logic::run::scope(code_rule_dsl::logic::native::width::Settings::from_env);
+        let profiled = if profile::on() { profile::hold_records() } else { None };
+        if profiled.is_some() {
+            profile::reset();
+            // The loads it was handed ran first, for it: its profile counts them.
+            for policy in self.policies.iter().flatten().flatten() {
+                policy.prepared.add();
+            }
+        }
         let path = Path::new(&self.store);
         let root = self.snapshot.as_ref().map_or_else(|| Path::new(&self.root), |snapshot| snapshot.root());
         let mut warning = None;
@@ -524,10 +609,12 @@ impl ScanRrPolicies {
             let mut reports = Vec::new();
             let mut ephemeral = path == Path::new(":memory:");
             for (i, policy) in policies.into_iter().enumerate() {
-                let (LoadedRrPolicy { program, files, location }, ids) = match policy {
+                let (LoadedRrPolicy { program, files, location, .. }, ids) = match policy {
                     Ok(policy) => policy,
                     Err(error) => {
-                        reports.push(serde_json::json!({"error": error, "ruleId": null}));
+                        // A program that did not load names the policy its own text declares.
+                        let id = self.paths.get(i).and_then(|path| failed_policy_id(declared_policy_ids(path, self.policy_snapshot.as_deref())));
+                        reports.push(serde_json::json!({"error": error, "ruleId": id}));
                         continue;
                     }
                 };
@@ -572,6 +659,11 @@ impl ScanRrPolicies {
             }
             (reports, corpus::git_source_reads_complete())
         });
+        if profiled.is_some() && let Some(dir) = profile::directory() {
+            let header = format!("Profile of a policy scan: {} policies, each run and the programs it ran first\n", self.paths.len());
+            profile::report::write(&dir, &header).map_err(|e| Error::from_reason(format!("profile: {e}")))?;
+        }
+        drop(profiled);
         if let Some(mut run) = run {
             let succeeded = source_complete && reports.iter().all(|report| report.get("error").is_none());
             warning = match run.finish(succeeded) {
@@ -712,7 +804,7 @@ pub fn owning_directory_analysis_store(store_path: String, directory: String, ho
 #[napi]
 pub fn retire_upkeep_under(directory: String) {
     let path = Path::new(&directory);
-    let root = path.canonicalize().unwrap_or_else(|_| path.to_owned());
+    let root = path.canonical().unwrap_or_else(|_| path.to_owned());
     rerail_accel::upkeep::retire_files_under(&root);
 }
 

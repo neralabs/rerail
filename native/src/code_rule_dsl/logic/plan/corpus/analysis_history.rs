@@ -6,11 +6,11 @@ use std::collections::BTreeMap;
 
 type FactRows = BTreeMap<String, Vec<Vec<Value>>>;
 
-pub(super) const INPUT: &str = "analysis_run_record";
+// The inputs' names are the planner's (`plan::phased`), which typing reads.
+pub(super) use crate::code_rule_dsl::logic::plan::phased::analysis_history::{INPUT, SCOPE, is_input};
 pub(super) const REQUEST: &str = "analysis_history_lookup";
 pub(super) const ANSWER: &str = "analysis_history_of";
 
-const SCOPE: &str = "analysis_scope_record";
 
 fn run_fields(id: i64, record: crate::content_store::analysis_scope::CompletedRun) -> [String; 10] {
     let kind = if record.scope.starts_with("cwd:") { "directory" } else { "named" };
@@ -59,10 +59,6 @@ pub(super) fn kept(kind: &str, key: &str, previous: &[&Vec<i64>], text: impl Fn(
     }
     crate::code_rule_dsl::logic::profile::decision("scope history reuse", || format!("{kind} {key:?}: retained {} run records", previous.len()));
     Some(digest)
-}
-
-pub(super) fn is_input(name: &str) -> bool {
-    matches!(name, INPUT | SCOPE)
 }
 
 #[derive(Clone, Copy)]

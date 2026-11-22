@@ -30,15 +30,29 @@ import {
 import { CheckoutCodeRuleRouter } from "../../../../src/engine/code-rule/checkout-code-rule-router.js";
 import { CheckoutCatalogs, startingCheckout } from "../../../../src/engine/code-rule/code-rule-dsl-catalog.js";
 import { recordCheckout } from "../../../../src/engine/catalog/repository-registry.js";
-import { gitText, runGit } from "../../../../src/engine/git.js";
+import { gitText, isRepositoryVariable, runGit, runGitBytes } from "../../../../src/engine/git.js";
 import { pathsOwnedByCurrentUser } from "../../../../src/engine/native/native.js";
 import { setUpTestRepository } from "../../../support/repository-rules.js";
 import { linkFolder, symlinkOrSkip } from "../../../support/platform/links.js";
 import { removeFolder } from "../../../support/platform/remove-folder.js";
 
+/** Every Git process Rerail starts, in order, by either runner (`runGit`, or `runGitBytes` for byte output). */
+const gitStarted = vi.hoisted(() => [] as Array<[string, readonly string[]]>);
+
 vi.mock("../../../../src/engine/git.js", async importOriginal => {
   const actual = await importOriginal<typeof import("../../../../src/engine/git.js")>();
-  return { ...actual, runGit: vi.fn(actual.runGit), gitText: vi.fn(actual.gitText) };
+  return {
+    ...actual,
+    runGit: vi.fn((cwd: string, args: readonly string[], options?: Parameters<typeof actual.runGit>[2]) => {
+      gitStarted.push([cwd, args]);
+      return actual.runGit(cwd, args, options);
+    }),
+    runGitBytes: vi.fn((cwd: string, args: readonly string[], options?: Parameters<typeof actual.runGitBytes>[2]) => {
+      gitStarted.push([cwd, args]);
+      return actual.runGitBytes(cwd, args, options);
+    }),
+    gitText: vi.fn(actual.gitText),
+  };
 });
 
 vi.mock("../../../../src/engine/catalog/checkout-control.js", async importOriginal => {
@@ -94,14 +108,33 @@ function gitsAnswer(folder: string, env: NodeJS.ProcessEnv = process.env): Repos
 
 /** How many Git processes Rerail started to place `folder`. */
 function locateCalls(folder: string): number {
-  return vi.mocked(runGit).mock.calls.filter(([cwd, args]) => cwd === resolve(folder) && args.includes("--show-toplevel")).length;
+  return gitStarted.filter(([cwd, args]) => cwd === resolve(folder) && args.includes("--show-toplevel")).length;
 }
 
 /** Rerail's answer for each folder, in order, against Git's own; returns how many Git processes Rerail started for them. */
 function expectGitsAnswers(...folders: string[]): number {
+  return expectAnswers(folders, folder => gitsAnswer(folder));
+}
+
+/** This process's environment as Rerail's Git gets it: with no repository variable ({@link isRepositoryVariable}). */
+function ownEnvironment(): NodeJS.ProcessEnv {
+  return Object.fromEntries(Object.entries(process.env).filter(([name]) => !isRepositoryVariable(name)));
+}
+
+/** {@link expectGitsAnswers} against Git's answers with no repository variable set ({@link ownEnvironment}). */
+function expectOwnAnswers(...folders: string[]): number {
+  return expectAnswers(folders, folder => gitsAnswer(folder, ownEnvironment()));
+}
+
+/** {@link expectGitsAnswers} for linked worktrees whose Git folder is gone, where Rerail's answer also says so, and no main checkout. */
+function expectGoneWorktreesAnswers(...folders: string[]): number {
+  return expectAnswers(folders, folder => ({ ...gitsAnswer(folder), main: false, gitFolderGone: true }));
+}
+
+function expectAnswers(folders: readonly string[], answer: (folder: string) => RepositoryIdentityLocation): number {
   const asked = [...new Set(folders.map(folder => resolve(folder)))];
   const before = asked.reduce((sum, folder) => sum + locateCalls(folder), 0);
-  for (const folder of folders) expect(repositoryIdentityLocation(folder), folder).toEqual(gitsAnswer(folder));
+  for (const folder of folders) expect(repositoryIdentityLocation(folder), folder).toEqual(answer(folder));
   return asked.reduce((sum, folder) => sum + locateCalls(folder), 0) - before;
 }
 
@@ -162,7 +195,7 @@ describe("every other folder, and every worktree whose files Git might read othe
     expect(expectGitsAnswers(main, join(main, "src"), join(root, "work"), join(main, "sub"))).toBe(4);
   });
 
-  it("a bare repository, a folder inside a Git folder, an empty .git folder, and a .git file whose Git folder is gone", async () => {
+  it("a bare repository, a folder inside a Git folder and an empty .git folder; not a .git file whose worktree Git folder is gone", async () => {
     const root = await temporaryRoot();
     git(root, "init", "--quiet", "--bare", join(root, "bare.git"));
     git(root, "init", "--quiet", `--separate-git-dir=${join(root, "kept-apart.git")}`, join(root, "work"));
@@ -170,8 +203,10 @@ describe("every other folder, and every worktree whose files Git might read othe
     mkdirSync(join(root, "orphan"));
     await writeFile(join(root, "orphan", ".git"), `gitdir: ${join(root, "gone", ".git", "worktrees", "orphan")}\n`);
 
-    const folders = [join(root, "bare.git"), join(root, "bare.git", "refs"), join(root, "kept-apart.git", "refs"), join(root, "stray"), join(root, "orphan")];
+    const folders = [join(root, "bare.git"), join(root, "bare.git", "refs"), join(root, "kept-apart.git", "refs"), join(root, "stray")];
     expect(expectGitsAnswers(...folders)).toBe(folders.length);
+    // Git refuses a linked worktree whose Git folder is gone, reading its .git file first: answered so with no Git process.
+    expect(expectGoneWorktreesAnswers(join(root, "orphan"))).toBe(0);
   });
 
   it("a link into a checkout, a link inside a checkout to a folder outside one, a plain folder and a folder that is gone", async () => {
@@ -246,7 +281,8 @@ describe("every other folder, and every worktree whose files Git might read othe
     expect(expectGitsAnswers(join(root, "moved"), join(root, "mover"))).toBe(1);
 
     await rename(main, join(root, "relocated"));
-    expect(expectGitsAnswers(join(root, "linked"))).toBe(1);
+    // The worktree's Git folder moved with the repository, so Git refuses it: answered so with no Git process.
+    expect(expectGoneWorktreesAnswers(join(root, "linked"))).toBe(0);
     git(join(root, "relocated"), "worktree", "repair", join(root, "linked"));
     expect(expectGitsAnswers(join(root, "relocated"))).toBe(1);
     expect(expectGitsAnswers(join(root, "linked"))).toBe(0);
@@ -265,69 +301,59 @@ describe("every other folder, and every worktree whose files Git might read othe
     expect(expectGitsAnswers(main)).toBe(0);
   });
 
-  it("asks Git each time while GIT_DIR names a repository, or Git is told to take every folder for another user's", async () => {
+  it("answers from the checkout's own files while GIT_DIR names a repository, and asks Git each time it is told to take every folder for another user's", async () => {
     const root = await temporaryRoot();
     const main = repository(join(root, "main"));
     git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
     expectGitsAnswers(main, join(root, "linked"));
 
+    // A Git hook's repository variables never reach Rerail's Git: the answers are the checkout's own, as kept.
     vi.stubEnv("GIT_DIR", join(main, ".git"));
-    expect(expectGitsAnswers(join(root, "linked"), join(root, "linked"))).toBe(2);
+    expect(expectOwnAnswers(join(root, "linked"), join(root, "linked"), main)).toBe(0);
     vi.unstubAllEnvs();
     vi.stubEnv("GIT_TEST_ASSUME_DIFFERENT_OWNER", "1");
     expect(expectGitsAnswers(join(root, "linked"), main)).toBe(2);
   });
 
-  it("lists a checkout's worktrees with one placement while a lookup variable is set, as Git lists them", async () => {
+  it("lists a checkout's own worktrees while a repository variable names another repository, or none", async () => {
     const root = await temporaryRoot();
     const main = repository(join(root, "main"));
     const other = repository(join(root, "other"));
     git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
     git(other, "worktree", "add", "--quiet", "-b", "elsewhere", join(root, "elsewhere"));
-    const lists = (): number => vi.mocked(runGit).mock.calls.filter(([cwd, args]) => cwd === main && args[0] === "worktree").length;
-    // Each value names another common folder, so each lists once; the second is Git's answer only under its value.
-    const variables: Array<[string, string]> = [["GIT_OBJECT_DIRECTORY", join(main, ".git", "objects")], ["GIT_DIR", join(other, ".git")]];
+    const lists = (): number => gitStarted.filter(([cwd, args]) => cwd === main && args[0] === "worktree").length;
+    const [placements, listed] = [locateCalls(main), lists()];
+    const variables: Array<[string, string]> = [
+      ["GIT_OBJECT_DIRECTORY", join(main, ".git", "objects")],
+      ["GIT_DIR", join(other, ".git")],
+      ["GIT_DIR", join(root, "later", ".git")],
+    ];
     for (const [name, value] of variables) {
       vi.unstubAllEnvs();
       vi.stubEnv(name, value);
-      const [placements, listed] = [locateCalls(main), lists()];
       for (let use = 0; use < 3; use += 1) {
         const registry = worktreeRegistry(main);
-        expect(registry?.worktrees, `${name}=${value}`).toEqual(gitsRegistry(main));
-        expect(registry?.commonDirectory, `${name}=${value}`).toBe(physicalPath(dirname(gitsAnswer(main).identityPath)));
+        expect(registry?.worktrees, `${name}=${value}`).toEqual(gitsRegistry(main, ownEnvironment()));
+        expect(registry?.commonDirectory, `${name}=${value}`).toBe(physicalPath(dirname(gitsAnswer(main, ownEnvironment()).identityPath)));
       }
-      // Main's registry kept the common folder Git first named; each value of the variables is asked once.
-      expect({ placements: locateCalls(main) - placements, lists: lists() - listed }, `${name}=${value}`).toEqual({ placements: 1, lists: 1 });
     }
-
-    // A refusal is not kept: Git takes the folder once the repository the variable names is there.
-    vi.unstubAllEnvs();
-    vi.stubEnv("GIT_DIR", join(root, "later", ".git"));
-    expect(worktreeRegistry(main)).toBeUndefined();
-    vi.unstubAllEnvs();
-    repository(join(root, "later"));
-    vi.stubEnv("GIT_DIR", join(root, "later", ".git"));
-    expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
+    // Main is placed and listed once, as with no variable set: none of them moves what Git answers Rerail.
+    expect({ placements: locateCalls(main) - placements, lists: lists() - listed }).toEqual({ placements: 1, lists: 1 });
   });
 
-  it("asks Git again under a lookup variable once Git refused the checkout, when the checkout's files come back as they were", async () => {
+  it("keeps a checkout's own registry while a repository variable names an object store that goes away", async () => {
     const root = await temporaryRoot();
     const main = repository(join(root, "main"));
     git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
-    // An object store outside the files the placement reads: taking it away makes Git refuse every folder.
     const objects = join(root, "objects");
     cpSync(join(main, ".git", "objects"), objects, { recursive: true });
     vi.stubEnv("GIT_OBJECT_DIRECTORY", objects);
-    expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main));
+    expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main, ownEnvironment()));
 
+    // Git under the variable would now refuse every folder; Rerail's Git never sees it.
     await rename(objects, `${objects}.away`);
-    const config = join(main, ".git", "config");
-    await rename(config, `${config}.away`);
-    expect(worktreeRegistry(main)).toBeUndefined();
-    // Moved back, the config gives the checkout the placement inputs Git accepted it under; Git still refuses it.
-    await rename(`${config}.away`, config);
     expect(gitsRegistry(main)).toEqual([]);
-    expect(worktreeRegistry(main)).toBeUndefined();
+    expect(worktreeRegistry(main)?.worktrees).toEqual(gitsRegistry(main, ownEnvironment()));
   });
 });
 
@@ -829,17 +855,20 @@ function takeOwnersAway(): void {
  * `takeown` gave to one, while Rerail's own reads see the environment as it is.
  */
 function gitSeesAnotherOwner(): void {
-  const actual = vi.mocked(runGit).getMockImplementation()!;
-  vi.mocked(runGit).mockImplementation((cwd, args, options) => {
+  const [text, bytes] = [vi.mocked(runGit).getMockImplementation()!, vi.mocked(runGitBytes).getMockImplementation()!];
+  const asAnotherOwner = <T,>(run: () => T): T => {
     process.env["GIT_TEST_ASSUME_DIFFERENT_OWNER"] = "1";
     try {
-      return actual(cwd, args, options);
+      return run();
     } finally {
       delete process.env["GIT_TEST_ASSUME_DIFFERENT_OWNER"];
     }
-  });
+  };
+  vi.mocked(runGit).mockImplementation((cwd, args, options) => asAnotherOwner(() => text(cwd, args, options)));
+  vi.mocked(runGitBytes).mockImplementation((cwd, args, options) => asAnotherOwner(() => bytes(cwd, args, options)));
   cleanups.push(async () => {
-    vi.mocked(runGit).mockImplementation(actual);
+    vi.mocked(runGit).mockImplementation(text);
+    vi.mocked(runGitBytes).mockImplementation(bytes);
   });
 }
 
@@ -897,7 +926,7 @@ describe("a kept answer follows the folders' owners, and the user's trust in ano
     vi.stubEnv("GIT_CONFIG_NOSYSTEM", "1");
     takeOwnersAway();
     gitSeesAnotherOwner();
-    const lists = (): number => vi.mocked(runGit).mock.calls.filter(([, args]) => args[0] === "worktree").length;
+    const lists = (): number => gitStarted.filter(([, args]) => args[0] === "worktree").length;
     const [placements, listed] = [locateCalls(main), lists()];
 
     for (let use = 0; use < 3; use += 1) {
@@ -1014,14 +1043,15 @@ function registryPlacements(checkout: string): number {
 }
 
 describe("the worktree registry keeps Git's acceptance of a checkout its files cannot describe while what Git reads there is unchanged", () => {
-  it("places a checkout whose .git is a link once for three lists, under a lookup variable too", async () => {
+  it("places a checkout whose .git is a link once for three lists, and not again under a repository variable", async () => {
     const root = await temporaryRoot();
     const main = await gitFolderLinked(join(root, "main"), join(root, "main.git"));
     git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
     expect(registryPlacements(main)).toBe(1);
 
+    // A repository variable never reaches Rerail's Git ({@link isRepositoryVariable}): the acceptance stands.
     vi.stubEnv("GIT_OBJECT_DIRECTORY", join(root, "main.git", "objects"));
-    expect(registryPlacements(main)).toBe(1);
+    expect(registryPlacements(main)).toBe(0);
   });
 
   it("places such a checkout once for lists around a commit at a detached HEAD and a switch to another branch, and again once Git no longer takes its HEAD", async () => {
@@ -1285,9 +1315,9 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     // The repository above adds a worktree: its lists follow, and the checkouts keep the folder between's with no Git process.
     git(outer, "worktree", "add", "--quiet", "-b", "w", join(root, "w"));
     for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(outer)?.worktrees).toEqual(gitsRegistry(outer));
-    const started = vi.mocked(runGit).mock.calls.length;
+    const started = gitStarted.length;
     for (const checkout of [inner, emptied]) expect(worktreeRegistry(checkout)?.worktrees, checkout).toEqual(gitsRegistry(checkout));
-    expect(vi.mocked(runGit).mock.calls.length).toBe(started);
+    expect(gitStarted.length).toBe(started);
   });
 
   it("lists as Git does once a folder between such a checkout and the repository above becomes a repository while Git places the checkout", async () => {
@@ -1359,9 +1389,9 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
 
     await writeFile(join(root, "HEAD"), "ref: refs/heads/main\n");
     mkdirSync(join(root, ".git"));
-    const started = vi.mocked(runGit).mock.calls.length;
+    const started = gitStarted.length;
     for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(inner)?.worktrees).toEqual(gitsRegistry(inner));
-    expect(vi.mocked(runGit).mock.calls.length).toBe(started);
+    expect(gitStarted.length).toBe(started);
   });
 
   it("lists the folder between's list once a folder between such a checkout and the repository above holding an empty .git folder is made a repository in place", async () => {
@@ -1435,7 +1465,7 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     mkdirSync(inner, { recursive: true });
     expect(registryPlacements(inner)).toBe(1);
 
-    const started = vi.mocked(runGit).mock.calls.length;
+    const started = gitStarted.length;
     for (const [work, act] of personsWork(outer, first, second)) {
       act();
       expect(worktreeRegistry(inner)?.worktrees, work).toEqual(gitsRegistry(inner));
@@ -1568,7 +1598,7 @@ describe("the worktree registry keeps Git's acceptance of a checkout its files c
     mkdirSync(inner, { recursive: true });
     expect(registryPlacements(inner)).toBe(1);
 
-    const started = vi.mocked(runGit).mock.calls.length;
+    const started = gitStarted.length;
     for (const [work, act] of personsWork(outer, first, second)) {
       act();
       expect(worktreeRegistry(inner)?.worktrees, work).toEqual(gitsRegistry(inner));
@@ -1766,8 +1796,8 @@ function behindLink(link: string, calls: ReadonlyArray<readonly unknown[]>): str
 }
 
 /** `git worktree list` in `checkout`, read as `worktreeRegistry` reads it. */
-function gitsRegistry(checkout: string): string[] {
-  const result = spawnSync("git", ["-C", checkout, "worktree", "list", "--porcelain"], { encoding: "utf8" });
+function gitsRegistry(checkout: string, env: NodeJS.ProcessEnv = process.env): string[] {
+  const result = spawnSync("git", ["-C", checkout, "worktree", "list", "--porcelain"], { encoding: "utf8", env });
   return result.stdout.split("\n").filter(line => line.startsWith("worktree ")).map(line => line.slice("worktree ".length));
 }
 
@@ -1783,14 +1813,14 @@ function expectGitsRegistries(...checkouts: string[]): void {
 
 /** Lists `checkout`'s registry three times, each against Git's list; returns each Git process Rerail started meanwhile. */
 function gitsProcessesForThreeLists(checkout: string): string[] {
-  const started = vi.mocked(runGit).mock.calls.length;
+  const started = gitStarted.length;
   for (let use = 0; use < 3; use += 1) expect(worktreeRegistry(checkout)?.worktrees, checkout).toEqual(gitsRegistry(checkout));
   return gitProcessesSince(started);
 }
 
 /** Each Git process Rerail started since the `started`th, with the folder it ran in. */
 function gitProcessesSince(started: number): string[] {
-  return vi.mocked(runGit).mock.calls.slice(started).map(([cwd, args]) => `${cwd} ${args.join(" ")}`);
+  return gitStarted.slice(started).map(([cwd, args]) => `${cwd} ${args.join(" ")}`);
 }
 
 /**
@@ -1968,14 +1998,14 @@ describe("a repository start", () => {
       catalogs.close();
     });
     await auditor.openWorkspace("start");
-    const gitBefore = vi.mocked(runGit).mock.calls.length;
+    const gitBefore = gitStarted.length;
     const textBefore = vi.mocked(gitText).mock.calls.length;
 
     // Each worktree gets recorded on the way, and each record makes every kept answer of the owners go.
     expect(auditor.worktreeRoots().toSorted()).toEqual(worktrees.toSorted());
     expect(auditor.worktreeRoots().toSorted()).toEqual(worktrees.toSorted());
 
-    const started = vi.mocked(runGit).mock.calls.slice(gitBefore).map(([, args]) => args[0]);
+    const started = gitStarted.slice(gitBefore).map(([, args]) => args[0]);
     expect({ started, configReads: vi.mocked(gitText).mock.calls.length - textBefore }).toEqual({ started: ["worktree"], configReads: 0 });
   });
 
@@ -1983,7 +2013,7 @@ describe("a repository start", () => {
     const root = await temporaryRoot();
     const main = repository(join(root, "main"));
     git(main, "worktree", "add", "--quiet", "-b", "linked", join(root, "linked"));
-    const lists = () => vi.mocked(runGit).mock.calls.filter(([, args]) => args[0] === "worktree").length;
+    const lists = () => gitStarted.filter(([, args]) => args[0] === "worktree").length;
     const before = lists();
 
     expect(worktreeRegistry(main)?.worktrees).toEqual(worktreeRegistry(join(root, "linked"))?.worktrees);
@@ -2013,10 +2043,10 @@ describe("a repository start", () => {
     const main = repository(join(root, "main"));
     const source = repository(join(root, "source"));
     const owners = new CheckoutOwners();
-    const before = vi.mocked(runGit).mock.calls.filter(([, args]) => args.includes(".gitmodules")).length;
+    const before = gitStarted.filter(([, args]) => args.includes(".gitmodules")).length;
 
     expect(owners.declaredSubmodules(main)).toEqual([]);
-    expect(vi.mocked(runGit).mock.calls.filter(([, args]) => args.includes(".gitmodules")).length).toBe(before);
+    expect(gitStarted.filter(([, args]) => args.includes(".gitmodules")).length).toBe(before);
     git(main, "submodule", "add", "--quiet", source, "sub");
     expect(owners.declaredSubmodules(main)).toEqual([realpathSync.native(join(main, "sub"))]);
   });

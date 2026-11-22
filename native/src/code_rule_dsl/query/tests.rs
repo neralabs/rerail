@@ -2,7 +2,7 @@ use super::regex_matches;
 use crate::code_rule_dsl::budget::{MatchBudget, set_shortcuts_off};
 use crate::code_rule_dsl::model::RegexSource;
 use crate::code_rule_dsl::test_support::{CAPABILITIES, evaluate_file, pack_test_data};
-use crate::code_rule_dsl::{CodeRuleDslRuntime, CompiledCodeRuleDsl};
+use crate::code_rule_dsl::{CompiledCodeRuleDsl};
 use regex::Regex;
 use serde_json::{Value, json};
 use std::sync::Arc;
@@ -44,16 +44,10 @@ fn regex_matches_stop_at_the_deadline() {
 /// A Python pack code rule (a path under `packs/python/`: `rules/` or `candidates/rules/`), as
 /// the conformance runner registers it.
 fn python_pack_code_rule(rule: &str) -> CompiledCodeRuleDsl {
-    let path = std::path::PathBuf::from(
-        std::env::var_os("CARGO_MANIFEST_DIR").expect("CARGO_MANIFEST_DIR"),
-    )
+    let path = crate::source_tree::native()
     .join("../packs/python")
     .join(rule);
-    CodeRuleDslRuntime::compile(
-        std::fs::read_to_string(&path).expect("pack policy"),
-        "json".to_owned(),
-        CAPABILITIES.to_owned(),
-    )
+    crate::code_rule_dsl::rule_api::compile(&std::fs::read_to_string(&path).expect("pack policy"), "json", CAPABILITIES)
     .unwrap_or_else(|error| panic!("{}: {}", path.display(), error.reason))
 }
 

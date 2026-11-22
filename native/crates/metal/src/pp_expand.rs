@@ -1497,8 +1497,10 @@ pub struct Expanded {
     pub rung: u32,
     /// The command buffer's launches: 2 for every unit, `pp_setup` and `pp_check` (decisions 0468 §4, 0485 §1).
     pub launches: usize,
-    /// The groups of the grid it ran on, after any halving.
+    /// The groups its grid was dispatched at, after any halving.
     pub groups: u64,
+    /// The groups that joined the grid (decision 0540 §3): the ones running, at most `groups`.
+    pub joined: u64,
     /// The command buffer's time on the GPU (its last run's), in seconds.
     pub gpu_seconds: f64,
     /// Where each unit of the batch begins in `out`, and its end.
@@ -1612,7 +1614,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let requests = vis.requests();
         if p1_flags != 0 || !requests.is_empty() {
-            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
+            return Ok(Expanded { ev: front.read()?, refused: 0, p1_flags, requests, out: Vec::new(), rung, launches, groups, joined: front.joined(), gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
         }
         vis.read()?;
         let (refused, out) = exp.read(&front, &vis, &defs);
@@ -1625,7 +1627,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
             }
             x = x.grown(p1.top, exp.room());
             x_tries += 1;
-            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
+            short = Some(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out: Vec::new(), rung, launches, groups, joined: front.joined(), gpu_seconds, unit_out: Vec::new(), scratch: Vec::new(), stoks: Vec::new(), room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
             continue;
         }
         if std::env::var_os("RERAIL_PP_ARENA_LOG").is_some() {
@@ -1633,7 +1635,7 @@ pub fn expand_sized(unit: &Unit, lay: &Layout, sizes: &mut Sizes, groups: u64) -
         }
         let (scratch, stoks) = exp.scratch();
         let unit_out = if refused != 0 { Vec::new() } else { exp.unit_out(&vis, lay.units(), out.len()) };
-        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
+        return Ok(Expanded { ev: front.read()?, refused, p1_flags: 0, requests: Vec::new(), out, rung, launches, groups, joined: front.joined(), gpu_seconds, unit_out, scratch, stoks, room: exp.room(), caps: p1, xcaps: x, passes: exp.passes(), rounds: exp.rounds(), gives: exp.gives(), def_rung });
     }
 }
 

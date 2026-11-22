@@ -12,7 +12,7 @@
 //! not the program's: they are left out (`python/calls.rerail`'s).
 
 #[allow(unused_imports)]
-use rerail_store::source_tree::Canonical as _;
+use rerail_store::Canonical as _;
 pub use rerail_rr::code_rule_dsl::logic::rr::check;
 // Its files are its test modules alone.
 #[cfg_attr(any(test, feature = "test-hooks"), path = "rr/aggregate_demand")]
@@ -28,13 +28,15 @@ pub use rerail_rr::code_rule_dsl::logic::rr::clause;
 pub use from_tape::{code_body, string_value, syntax_error};
 mod git_policy;
 pub use git_policy::GitPolicyInputs;
-pub mod images;
+/// The planner's (`program_text` keeps its images); the store they are kept in is `images_store`, here.
+pub use rerail_planner::code_rule_dsl::logic::rr::images;
 pub mod module_image;
 pub use rerail_rr::code_rule_dsl::logic::rr::lower;
 /// The text tests `.rerail` names, and the engine's test each lowers to (the coverage gate probes each).
 pub use rerail_rr::code_rule_dsl::logic::rr::lower::TESTS as RR_TESTS;
 pub use rerail_rr::code_rule_dsl::logic::rr::print::{self};
 // The parser and the tape's tree, the `.rerail` parser crate's (`rerail_rr_syntax`).
+use rerail_store::Canonical as _;
 use rerail_rr_syntax::syntax;
 pub use rerail_rr_syntax::tape;
 use from_tape::{RrFile, S, Stmt};
@@ -77,13 +79,7 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
     }
     let Ok(file) = RrFile::read(src) else { return Vec::new() };
     let statements = file.statements();
-    let policy = statements
-        .iter()
-        .find_map(|s| match s.what()? {
-            S::Setting { key: "policy", text } => text.split('"').nth(1).map(str::to_owned),
-            _ => None,
-        })
-        .unwrap_or_default();
+    let policy = policy_settings(&statements).next().unwrap_or_default();
     statements
         .iter()
         .filter_map(|s| match s.what()? {
@@ -96,6 +92,22 @@ pub fn message_templates(src: &str) -> Vec<(String, String, String)> {
         })
         .map(|(clause, template)| (policy.clone(), clause, template))
         .collect()
+}
+
+/// The `.policy` IDs a text's own statements declare, in order, read without its includes or its lowering: what a
+/// policy whose program does not load (a setting its lowering refuses) names in its failure. Empty when the text
+/// does not parse.
+pub fn declared_policies(src: &str) -> Vec<String> {
+    let Ok(file) = RrFile::read(src) else { return Vec::new() };
+    policy_settings(&file.statements()).collect()
+}
+
+/// The names the `.policy` settings among `statements` give, in order.
+fn policy_settings(statements: &[Stmt]) -> impl Iterator<Item = String> + '_ {
+    statements.iter().filter_map(|s| match s.what()? {
+        S::Setting { key: "policy", text } => text.split('"').nth(1).map(str::to_owned),
+        _ => None,
+    })
 }
 
 /// A `.message` setting's clause and template (`B101 "…"`).
@@ -754,9 +766,44 @@ fn library_modules_with_files(paths: &[PathBuf], files: Files, store: Option<&cr
     Ok((modules, units.iter().map(|members| members.iter().map(|&i| paths[i].clone()).collect()).collect(), keys))
 }
 
-/// The store rule images are read from and kept in (`images::store`), unless `RERAIL_MODULE_IMAGES=off`.
+/// The store rule images are read from and kept in (`images_store`), unless `RERAIL_MODULE_IMAGES=off`.
+/// The store the run's rule images are kept in (decision 0264, `images`): the engine build's, shared by every project
+/// (`RERAIL_IMAGE_STORE`: a path, or `project` for the run's own store); a test's own store under test.
+fn images_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+    match images_kept() {
+        ImagesKept::Project => crate::code_rule_dsl::logic::plan::corpus::phases::reading_store(),
+        ImagesKept::Path(path) => crate::content_store::ContentStore::open_images(&path).ok().map(std::sync::Arc::new),
+    }
+}
+
+/// Where `images_store` keeps the run's rule images: the run's own store, or a store of its own at a path.
+enum ImagesKept {
+    Project,
+    Path(std::path::PathBuf),
+}
+
+fn images_kept() -> ImagesKept {
+    if cfg!(any(test, feature = "test-hooks")) {
+        return ImagesKept::Project;
+    }
+    match std::env::var("RERAIL_IMAGE_STORE") {
+        Ok(v) if v == "project" => ImagesKept::Project,
+        Ok(v) => ImagesKept::Path(std::path::PathBuf::from(v)),
+        Err(_) => ImagesKept::Path(crate::code_rule_dsl::logic::plan::corpus::build_store("rerail-images", None)),
+    }
+}
+
+/// The path of the store `images_store` opens, found without opening it: the run's own store's (`tape_cache_path`),
+/// or the images' own. A caller that keeps an image once a store (phase 0's graphs) names the store by it.
+pub(in crate::code_rule_dsl) fn images_store_path() -> Option<std::path::PathBuf> {
+    match images_kept() {
+        ImagesKept::Project => crate::code_rule_dsl::logic::plan::corpus::tape_cache_path(),
+        ImagesKept::Path(path) => Some(path),
+    }
+}
+
 pub(in crate::code_rule_dsl) fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
-    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { images::store() } else { None }
+    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { images_store() } else { None }
 }
 
 /// How long a module's or program's image stays in the store after the last run that read or wrote it

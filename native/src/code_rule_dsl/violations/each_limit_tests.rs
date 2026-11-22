@@ -1,5 +1,4 @@
     use super::*;
-    use crate::code_rule_dsl::CodeRuleDslRuntime;
 
     /// Evaluates `source` as `a.ts` under the one clause `clause` of a code rule `bounded-each`,
     /// with a one-witness allowance.
@@ -7,18 +6,14 @@
         let mut capabilities: Value =
             serde_json::from_str(include_str!("../capabilities.json")).expect("capabilities");
         capabilities["limits"]["maxWitnesses"] = json!(1);
-        let compiled = CodeRuleDslRuntime::compile(
-            json!({
+        let compiled = crate::code_rule_dsl::rule_api::compile(&json!({
                 "format": "rerail.policy/v1",
                 "id": "bounded-each",
                 "revision": 1,
                 "mode": "steer",
                 "clauses": [clause]
             })
-            .to_string(),
-            "json".to_owned(),
-            capabilities.to_string(),
-        )
+            .to_string(), "json", &capabilities.to_string())
         .expect("policy compiles");
         let output = compiled
             .evaluate(
