@@ -2809,6 +2809,33 @@ other(t) :- fmt_spec_other(s), text(s, t).
     assert_eq!(other, [row(&[":%Y"])]);
 }
 
+/// 0597 rung 5.4: `python/sql-template.rerail` reads SQL in an f-string's template in the context `sql`, by the SQL
+/// library's rules: the tables a query names, and each hole's place in it, read by the host at its f-strings. A
+/// string that reads as no query is no root.
+#[test]
+fn sql_in_a_template_is_read_in_its_own_context() {
+    let file = ("a.py", "def f(db, table, uid, col):\n    db.execute(f\"SELECT name FROM users WHERE id = {uid}\")\n    db.execute(f\"SELECT {col} FROM {table} WHERE a = {uid}\")\n    print(f\"hello {uid} from here\")\n");
+    let program = "\
+.language python
+#include \"python/sql-template.rerail\"
+.decl tables(x: symbol, l: number)
+tables(x, l) :- sql_template_table(s, x), line(s, l).
+.decl holes(x: symbol, k: symbol, l: number)
+holes(x, k, l) :- sql_template_hole(_, i, k), text(i, x), line(i, l).
+.output tables, holes
+";
+    let row = |r: &[&str]| r.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+    let (tables, together) = alone_and_together("sqlt-tables", file, program, PLAIN_PASS, "tables");
+    assert_eq!(together, tables);
+    assert_eq!(tables, [row(&["users", "2"])]);
+    let (mut holes, together) = alone_and_together("sqlt-holes", file, program, PLAIN_PASS, "holes");
+    let mut together = together;
+    together.sort();
+    holes.sort();
+    assert_eq!(together, holes);
+    assert_eq!(holes, [row(&["{col}", "name", "3"]), row(&["{table}", "table", "3"]), row(&["{uid}", "value", "2"]), row(&["{uid}", "value", "3"])]);
+}
+
 /// 0597 rung 2.8: a finding at a context's node stands at its string's line in the file (0431 §3, R9's
 /// `guest_place`): the unresolved name of `y: "Bar"`, on line 3.
 #[test]

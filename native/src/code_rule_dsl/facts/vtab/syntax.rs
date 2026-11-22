@@ -971,6 +971,44 @@ pub trait Producer: Send + Sync {
     }
     /// A run over one batch whose program reads `reads` (with `markers`, the program's interpolation markers).
     fn start(&self, reads: &BTreeSet<String>, markers: &[String]) -> Box<dyn ProducerRun>;
+    /// The template of string node `id` of `doc`, a document of its dialect: its text, each interpolation `marker`,
+    /// and each character's place, `[its byte in the text, its source start, its source end]`. `None` where the node
+    /// has no template (a plain string, bytes, a value not known). Python's f-strings (`template`).
+    fn template(&self, _doc: &crate::code_rule_dsl::tape::TapeDoc, _id: u32, _marker: &str) -> Option<(String, Vec<[u32; 3]>)> {
+        None
+    }
+}
+
+/// The text of a template's holes (decision 0597): an f-string's template parsed as a guest has this identifier for
+/// each interpolation, standing at its field (`template`). An identifier, so it parses where a name or a value goes.
+pub const HOLE: &str = "rr_hole";
+
+/// The template of string node `id` of `doc` (of `dialect`), as its family's producer reads it (`Producer::template`),
+/// its holes [`HOLE`], placed: a copied stretch at its bytes, an escape's output at the escape, a hole whole at its
+/// field; kept within `within`, the node's bytes. An f-string's template is a text root (decision 0597).
+pub fn template(dialect: crate::code_rule_dsl::language::GrammarDialect, doc: &crate::code_rule_dsl::tape::TapeDoc, id: u32, within: [u32; 2]) -> Option<(String, Placement)> {
+    let (text, spans) = producers().iter().filter(|p| p.dialect() == dialect).find_map(|p| p.template(doc, id, HOLE))?;
+    let mut pieces: Vec<normalized::Piece> = Vec::new();
+    // The previous character: whether it is copied, and its source bytes.
+    let mut prev: Option<(bool, [u32; 2])> = None;
+    for (i, &[at, start, end]) in spans.iter().enumerate() {
+        let len = spans.get(i + 1).map_or(text.len() as u32, |n| n[0]) - at;
+        let copied = end - start == len;
+        // A copied character goes on its stretch at the same offset; a hole's characters (or an escape's) stand
+        // together at their one source.
+        let continues = match (prev, pieces.last()) {
+            (Some((true, _)), Some(p)) if copied => !p.escape && p.s - i64::from(p.d) == i64::from(start) - i64::from(at),
+            (Some((false, span)), _) if !copied => span == [start, end],
+            _ => false,
+        };
+        if !continues {
+            pieces.push(normalized::Piece { d: at, s: i64::from(start), escape: !copied });
+        }
+        prev = Some((copied, [start, end]));
+    }
+    let end = spans.last().map_or(within[1], |s| s[2]);
+    pieces.push(normalized::Piece { d: text.len() as u32, s: i64::from(end), escape: false });
+    Some((text, Placement::Mapped { pieces: pieces.into(), within }))
 }
 
 /// A [`Producer`]'s run over one batch.

@@ -2777,6 +2777,36 @@ counted(c) :- c = count : { kind(_, "sql:object_reference") }.
     assert!(counted.iter().all(|c| c == &["0"]), "{counted:?}");
 }
 
+/// 0597 rung 5.3: an f-string in a language's grammar is its template, a text root whose holes are a marker
+/// (`syntax::HOLE`): `users` stands at its own column, the hole stands at `{uid}`, and its host node is the
+/// interpolation. Python's `annotation` reads a str's value, so an f-string parses as none.
+#[test]
+fn an_fstrings_template_is_a_guest_whose_holes_stand_at_their_fields() {
+    let py = "def f(db, uid):\n    db.execute(f\"SELECT name FROM users WHERE id = {uid}\")\n    db.execute(f\"SELECT \\\"id\\\" FROM orders WHERE a = {uid!r} AND b = {uid:>3}\")\n";
+    let rule = r#"
+.decl q(s: node)
+q(s) :- kind(c, "call"), field(c, "arguments", a), child(a, s, _), kind(s, "string").
+.decl objects(x: symbol, l: number, c: number)
+objects(x, l, c) :- q(s), parsed(s, "sql", r), within(n, r), kind(n, "object_reference"), text(n, x), guest_place(n, s, l, c).
+.decl holes(x: symbol, l: number, c: number)
+holes(x, l, c) :- q(s), parsed(s, "sql", r), within(m, r), text(m, "rr_hole"), !hole_inner(m), host_node(m, h), kind(h, "interpolation"), text(h, x), guest_place(m, s, l, c).
+.decl hole_inner(m: node)
+hole_inner(m) :- q(s), parsed(s, "sql", r), within(m, r), text(m, "rr_hole"), within(m, p), text(p, "rr_hole"), within(p, r).
+.decl annotated(s: node)
+annotated(s) :- q(s), parsed(s, "annotation", _).
+.output objects, holes, annotated
+"#;
+    let names = ["objects", "holes", "annotated"];
+    let shown = guests_run_with("fstring-sql", &[("a.py", py)], rule, |o| names.iter().map(|rel| o.get(rel).map(|r| r.shown()).unwrap_or_default()).collect::<Vec<Vec<Vec<String>>>>());
+    let [objects, holes, annotated] = <[Vec<Vec<String>>; 3]>::try_from(shown).unwrap();
+    assert!(objects.contains(&shown_row(&["users", "2", "34"])), "{objects:?}");
+    // Past an escape (`\"id\"`), `orders` keeps its column.
+    assert!(objects.contains(&shown_row(&["orders", "3", "36"])), "{objects:?}");
+    assert!(holes.contains(&shown_row(&["{uid}", "2", "51"])), "{holes:?}");
+    assert!(holes.contains(&shown_row(&["{uid!r}", "3", "53"])) && holes.contains(&shown_row(&["{uid:>3}", "3", "69"])), "{holes:?}");
+    assert!(annotated.is_empty(), "an f-string is no annotation: {annotated:?}");
+}
+
 /// An HTML file's `<script>` and `<style>` are its grammar's programs (decision 0238; 0431 §4: `embed::raw_text`, which
 /// `html/embeds.rerail` describes): a script's text is
 /// JavaScript, or JSON by its type, and none for a type no grammar reads; a style's text is CSS. Each stands at its

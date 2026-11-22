@@ -433,26 +433,44 @@ impl Rewrite for Renaming<'_> {
 
 /// The node variables of rule `r` of pass `pass` that a view reads (a positive atom of a relation no rule derives,
 /// not another pass's, in a column of type `node`): each joined with the pass's nodes, so a context's views give its
-/// roots' nodes alone (0597 rule 2).
-/// The views of a guest's host (0431): `host_node(n, h)` and `guest_of(n, s)` give a guest node's host's node, which is
-/// no node of the guest's context.
+/// roots' nodes alone (0597 rule 2). A guest's host (0431): `host_node(n, h)` and `guest_of(n, s)` give a guest node's
+/// host's node, which is no node of the guest's context; another view of it is bounded (rule 1).
 const HOSTS_NODE: &[(&str, usize)] = &[("host_node", 1), ("guest_of", 1)];
+
+/// The token a token relation gives (core's `span` columns, nodes once lowered): a leaf of its node's document, which
+/// `within` does not give, so no view of it is bounded. The node it is read from is (`comparison`'s
+/// `token_after(l, t), text(t, o)`: `l`), so the token is in a document of the context. A token read from a token
+/// (`token_after(t, u)`, `t` a `loc`) is bounded as a node, and gives none.
+const TOKENS: &[(&str, usize)] = &[("first_token", 1), ("last_token", 1), ("token_before", 1), ("token_after", 1), ("end_point", 1)];
 
 fn view_nodes<'v>(v: &'v Version, d: &Declared, pass: &str, r: RuleRef<'v>) -> Vec<T<'v>> {
     // A base relation is an input: a relation a program lowered against its library reads of the library has no rule
     // in it, and is no view (`ann_in(e, s)` read by a policy's rule of the library's context).
     let base: BTreeSet<&str> = v.inputs().map(|a| v.text(a)).collect();
     let derived = |x: &str| v.rel(x).is_some_and(|id| v.heads(id).next().is_some());
+    let views: Vec<_> = r
+        .body()
+        .filter_map(|l| {
+            let L::Atom(a) = l.view() else { return None };
+            let rel = v.rel_name(a.rel());
+            // A view is a base read though a combined program derives it (`kind` from `node`, `whole::Projected`).
+            let read_in_place = super::plan::corpus::hiding::VIEWS.contains(&rel) || (base.contains(rel) && !derived(rel));
+            (!a.neg() && read_in_place && !of_a_context(rel) && d.read_of(pass, rel).is_none()).then_some((a, rel))
+        })
+        .collect();
+    // The rule's tokens: never bounded.
     let mut seen = BTreeSet::new();
-    let mut out = Vec::new();
-    for l in r.body() {
-        let L::Atom(a) = l.view() else { continue };
-        let rel = v.rel_name(a.rel());
-        // A view is a base read though a combined program derives it (`kind` from `node`, `whole::Projected`).
-        let read_in_place = super::plan::corpus::hiding::VIEWS.contains(&rel) || (base.contains(rel) && !derived(rel));
-        if a.neg() || !read_in_place || of_a_context(rel) || d.read_of(pass, rel).is_some() {
-            continue;
+    for (a, rel) in &views {
+        for (i, t) in a.args().enumerate() {
+            if let TermRef::Var(slot) = t
+                && TOKENS.contains(&(*rel, i))
+            {
+                seen.insert(r.var(slot).0);
+            }
         }
+    }
+    let mut out = Vec::new();
+    for (a, rel) in views {
         let Some(cols) = v.columns_of(rel) else { continue };
         for (i, (t, (_, ty))) in a.args().zip(cols.iter()).enumerate() {
             if let TermRef::Var(slot) = t

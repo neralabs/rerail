@@ -188,6 +188,16 @@ pub(crate) fn template<D: Doc>(node: &Node<'_, D>, marker: &str) -> Option<Strin
     }
 }
 
+/// The template of f-string `node` with interpolation slot text `marker` (`template`'s text), with the source span
+/// of each of its characters: a literal's at its source, each marker character at its whole field. A guest parsed
+/// from the template stands so (decision 0597: an f-string's template is a text root, its holes the marker). `None`
+/// where `parse` gives no tree.
+pub(crate) fn template_spans<D: Doc>(node: &Node<'_, D>, marker: &str) -> Option<Decoded> {
+    let mut builder = build(node, marker)?.ok()?;
+    builder.flush();
+    Some(builder.decoded)
+}
+
 pub(crate) fn parse<D: Doc>(
     node: &Node<'_, D>,
     marker: &str,
@@ -196,6 +206,29 @@ pub(crate) fn parse<D: Doc>(
     if !spend(node.range().len() + 1) {
         return None;
     }
+    let mut builder = match build(node, marker)? {
+        Ok(builder) => builder,
+        Err(parsed) => return Some(parsed),
+    };
+    builder.flush();
+    let mut root = PNode::new(G, "template", 0, builder.decoded.text.len())
+        .with_value(Value::Str(builder.decoded.text.clone()));
+    root.children = builder.children;
+    if !spend(root.size() + builder.decoded.text.len()) {
+        return None;
+    }
+    Some(Parsed::Tree(Arc::new(SubTree::new(
+        G,
+        builder.decoded.text.clone(),
+        0,
+        root,
+        HostMap::Spans(builder.decoded),
+    ))))
+}
+
+/// `node`'s pieces read into a builder, flushed by its caller; `Err` with what `parse` gives where there is no tree
+/// (`Unknown`, `NotString`), `None` where `parse` gives none.
+fn build<D: Doc>(node: &Node<'_, D>, marker: &str) -> Option<Result<Builder, Parsed>> {
     let mut builder = Builder {
         decoded: Decoded {
             text: String::new(),
@@ -229,15 +262,15 @@ pub(crate) fn parse<D: Doc>(
                     start,
                     &pref,
                 ) {
-                    return Some(Parsed::Unknown);
+                    return Some(Err(Parsed::Unknown));
                 }
                 if !builder.field(&field, marker) {
-                    return Some(Parsed::Unknown);
+                    return Some(Err(Parsed::Unknown));
                 }
                 start = field.range().end;
             }
             if !builder.literal(&text[start - part.range().start..], start, &pref) {
-                return Some(Parsed::Unknown);
+                return Some(Err(Parsed::Unknown));
             }
             continue;
         }
@@ -248,41 +281,28 @@ pub(crate) fn parse<D: Doc>(
         let quote = text.find(['\'', '"'])?;
         let pref = prefix(&text[..quote])?;
         if pref.bytes || pref.template {
-            return Some(Parsed::NotString);
+            return Some(Err(Parsed::NotString));
         }
         formatted |= pref.format;
         for child in part.children() {
             match child.kind().as_ref() {
                 "string_content" if !builder.literal(&child.text(), child.range().start, &pref) => {
-                    return Some(Parsed::Unknown);
+                    return Some(Err(Parsed::Unknown));
                 }
                 "interpolation" if !builder.field(&child, marker) => {
-                    return Some(Parsed::Unknown);
+                    return Some(Err(Parsed::Unknown));
                 }
                 _ => {}
             }
         }
         if builder.decoded.text.len() > MAX_STRING_BYTES {
-            return Some(Parsed::Unknown);
+            return Some(Err(Parsed::Unknown));
         }
     }
     if !formatted {
-        return Some(Parsed::NotString);
+        return Some(Err(Parsed::NotString));
     }
-    builder.flush();
-    let mut root = PNode::new(G, "template", 0, builder.decoded.text.len())
-        .with_value(Value::Str(builder.decoded.text.clone()));
-    root.children = builder.children;
-    if !spend(root.size() + builder.decoded.text.len()) {
-        return None;
-    }
-    Some(Parsed::Tree(Arc::new(SubTree::new(
-        G,
-        builder.decoded.text.clone(),
-        0,
-        root,
-        HostMap::Spans(builder.decoded),
-    ))))
+    Some(Ok(builder))
 }
 
 /// The `pythonFString` grammar (`literal::LiteralGrammar`).

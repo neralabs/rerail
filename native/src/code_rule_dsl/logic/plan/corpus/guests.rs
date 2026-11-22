@@ -11,8 +11,10 @@
 //! A string's text:
 //! - a string node, for any grammar: its contents. A plain one (no escapes, no `r` prefix) is a copied stretch of the
 //!   host, so its nodes have the file's lines and columns; an escaped one, or a concatenation of strings, is its
-//!   decoded value, and every node stands at the string. A bytes literal or an f-string gives no guest, as Ruff
-//!   parses neither as a type;
+//!   decoded value, and every node stands at the string. A bytes literal gives no guest. An f-string, in a language's
+//!   grammar (`sql`), is its template (decision 0597): its decoded text, each interpolation the marker `syntax::HOLE`
+//!   standing at its field; Python's `annotation` reads a str's value, and an f-string has none (Ruff parses no
+//!   f-string as a type);
 //! - any other node: its text, copied.
 //!
 //! A grammar name is a dialect label (`python`, `sql`, `typescript`, …) or `annotation`: Python's expression, parsed
@@ -287,6 +289,23 @@ fn host_text(host: &Document, ids: &syntax::Numbering, local: u32) -> Option<(St
     Some((f.text(id).to_owned(), Placement::Copied { delta: i64::from(start), within: node }))
 }
 
+/// The template of host node `local`, a string with an f-string among its parts, as its family's producer reads it
+/// (`syntax::template`): its text, each interpolation `syntax::HOLE`, a hole standing at its field. Read off the host's
+/// tape in place.
+fn template_text(host: &Document, ids: &syntax::Numbering, local: u32) -> Option<(String, Placement)> {
+    let (id, kind) = ids.node(local)?;
+    if !matches!(kind, "string" | "concatenated_string") {
+        return None;
+    }
+    let dialect = crate::code_rule_dsl::language::from_tape_tag(core::facts_tag(&host.facts))?;
+    let doc = match host.tape.as_ref() {
+        Some((doc, _)) => doc.clone(),
+        None => crate::code_rule_dsl::tape::TapeDoc::over(Arc::clone(host.facts.tape.as_ref()?), Arc::clone(host.facts.grammar()?), Arc::clone(&host.facts.lines)),
+    };
+    let f = &*host.facts;
+    syntax::template(dialect, &doc, id, [f.start(id), f.end(id)])
+}
+
 /// The guests' makers' state for one chunk: the run's language and shape, the hosts' numberings, the guests made, and
 /// the run's guest keys (the store's, decision 0391).
 #[derive(Default)]
@@ -536,7 +555,10 @@ impl Guests {
         let ids = self.numbering(host)?;
         // A node id's low bits are its local id only under preorder ids (`syntax::Numbering`).
         let Some(local) = ids.local((at & 0xffff_ffff) as u32) else { return Ok(Got::Not) };
-        let Some((text, place)) = host_text(host, ids, local) else { return Ok(Got::Not) };
+        // An f-string in a language's grammar (`sql`, not Python's `annotation`, which reads a str's value) is its
+        // template, its holes the marker (decision 0597).
+        let text = host_text(host, ids, local).or_else(|| if fragment.is_none() { template_text(host, ids, local) } else { None });
+        let Some((text, place)) = text else { return Ok(Got::Not) };
         self.tape_value(host, host_key, at, grammar_name, "fragment", label, fragment, text, place, range, parses)
     }
 
