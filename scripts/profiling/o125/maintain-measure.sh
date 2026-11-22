@@ -52,6 +52,8 @@ case $MODE in
     script=$OUT/script.txt; : > $script
     echo "env RERAIL_SESSION=$OUTA/session" >> $script
     echo "env RERAIL_TAPE_CACHE=$OUTA/store.sqlite" >> $script
+    # SESSION_ENV: more settings of the session's process (VAR=VALUE ...), set as the script's first lines.
+    for e in ${=SESSION_ENV:-}; do echo "env $e" >> $script; done
     for s in $steps; do
       [ $s != 00 ] && echo "sh cd $PWD && rsync -rlpc --exclude .deleted $IN/o125-replay/$s/ $W/ && (while read f; do [ -n \"\$f\" ] && mv $W/\$f /tmp/ai-trash/mm-$$-\$(echo \$f | tr / _); done < $IN/o125-replay/$s/.deleted; true)" >> $script
       [ "${PROFILE_STEP:-}" = $s ] && echo "env RERAIL_PROFILE=$OUTA/prof-$s" >> $script

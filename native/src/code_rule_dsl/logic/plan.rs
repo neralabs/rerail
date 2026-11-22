@@ -476,26 +476,44 @@ fn add_answers(db: &Connection, answered: &mut BTreeMap<String, Vec<Vec<i64>>>, 
 
 /// A changed read's versions as a stratum reads them: a row gone and a row added that agree on every column it reads
 /// (`used`, its source's) are no change to it, and neither is in its delta. Each is a set of rows picked where they lie
-/// in the versions (0364 R2), found through a transient order of each version's row ids. `None` when no pair agrees.
-/// A line inserted moves the `start` and `end` of every node after it alone: ep2's one-line edit gave `node` 1,637 rows
-/// added and 1,633 gone, and a stratum that read nodes' kinds saw each as a change, past the threshold (0090 §4).
+/// in the versions (0364 R2). `None` when no pair agrees. A line inserted moves the `start` and `end` of every node
+/// after it alone: ep2's one-line edit gave `node` 1,637 rows added and 1,633 gone, and a stratum that read nodes'
+/// kinds saw each as a change, past the threshold (0090 §4).
+///
+/// Each version's rows are found by a hash of their read columns, each row's columns read once: a row agrees with
+/// the other version's rows of its hash, compared where they lie. Sorted by a comparison that read both rows'
+/// columns through the source at each step, the data layer's 27,000-row `node` and `visit_index` versions took 0.4 s
+/// of an edit at 334 files (t43 step 21).
 pub(crate) fn unchanged_as_read(minus: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, plus: &Arc<dyn crate::code_rule_dsl::facts::vtab::Source>, used: &[usize]) -> Option<[Arc<dyn crate::code_rule_dsl::facts::vtab::Source>; 2]> {
     use crate::code_rule_dsl::facts::vtab::Source;
-    fn row<'a>(s: &'a dyn Source, r: u32, used: &'a [usize]) -> impl Iterator<Item = i64> + 'a {
-        used.iter().map(move |&c| s.value(r as usize, c))
-    }
-    let order = |s: &dyn Source| {
-        let mut ids: Vec<u32> = (0..s.len() as u32).collect();
-        ids.sort_unstable_by(|&a, &b| row(s, a, used).cmp(row(s, b, used)));
-        ids
+    use std::hash::Hasher;
+    let hash = |s: &dyn Source, r: usize| {
+        let mut h = rustc_hash::FxHasher::default();
+        for &c in used {
+            h.write_i64(s.value(r, c));
+        }
+        h.finish()
     };
-    let (by_minus, by_plus) = (order(minus.as_ref()), order(plus.as_ref()));
-    // The rows of `s` whose columns read no row of `t` holds.
-    let alone = |s: &dyn Source, t: &dyn Source, by: &[u32]| -> Vec<u32> { (0..s.len() as u32).filter(|&r| by.binary_search_by(|&x| row(t, x, used).cmp(row(s, r, used))).is_err()).collect() };
-    let (m, p) = (alone(minus.as_ref(), plus.as_ref(), &by_plus), alone(plus.as_ref(), minus.as_ref(), &by_minus));
+    let agree = |s: &dyn Source, r: usize, t: &dyn Source, x: usize| used.iter().all(|&c| s.value(r, c) == t.value(x, c));
+    // Each version's rows by hash: the rows of the other version that may agree with one.
+    let by_hash = |s: &dyn Source| {
+        let mut by: rustc_hash::FxHashMap<u64, Vec<u32>> = rustc_hash::FxHashMap::default();
+        let hashes: Vec<u64> = (0..s.len()).map(|r| hash(s, r)).collect();
+        for (r, &h) in hashes.iter().enumerate() {
+            by.entry(h).or_default().push(r as u32);
+        }
+        (by, hashes)
+    };
+    let ((by_minus, minus_hashes), (by_plus, plus_hashes)) = (by_hash(minus.as_ref()), by_hash(plus.as_ref()));
+    // The rows of `s` whose columns read agree with no row of `t`.
+    let alone = |s: &dyn Source, hashes: &[u64], t: &dyn Source, by: &rustc_hash::FxHashMap<u64, Vec<u32>>| -> Vec<u32> {
+        (0..s.len()).filter(|&r| !by.get(&hashes[r]).is_some_and(|xs| xs.iter().any(|&x| agree(s, r, t, x as usize)))).map(|r| r as u32).collect()
+    };
+    let m = alone(minus.as_ref(), &minus_hashes, plus.as_ref(), &by_plus);
     if m.len() == minus.len() {
         return None;
     }
+    let p = alone(plus.as_ref(), &plus_hashes, minus.as_ref(), &by_minus);
     let picked = |s: &Arc<dyn Source>, ids| super::native::component::InRel::picked(Arc::clone(s), ids, s.columns());
     Some([picked(minus, m), picked(plus, p)])
 }
@@ -8776,6 +8794,27 @@ impl Walker<'_, '_> {
 #[cfg(test)]
 mod ordered_tests {
     use super::*;
+
+    /// 0090 §4: a changed read's rows gone and added that agree on the columns its strata read are no change to it;
+    /// the rest of each version is its delta, as read where they lie, in their order. With none agreeing, `None`.
+    #[test]
+    fn a_changed_reads_rows_that_agree_on_the_read_columns_are_no_change() {
+        use crate::code_rule_dsl::facts::vtab::Source;
+        let cols = || ["a", "b", "c"].map(String::from).to_vec();
+        let rel = |rows: &[[i64; 3]]| crate::code_rule_dsl::logic::native::component::columns_source(cols(), (0..3).map(|c| Some(rows.iter().map(|r| r[c]).collect())).collect());
+        let minus = rel(&[[1, 10, 5], [2, 20, 6], [3, 30, 7], [2, 20, 1]]);
+        let plus = rel(&[[1, 10, 9], [2, 21, 6], [4, 40, 7], [1, 10, 8]]);
+        let rows = |s: &Arc<dyn Source>| (0..s.len()).map(|r| (0..3).map(|c| s.value(r, c)).collect::<Vec<i64>>()).collect::<Vec<_>>();
+        let [m, p] = unchanged_as_read(&minus, &plus, &[0, 1]).expect("a pair agrees on (a, b)");
+        assert_eq!(rows(&m), vec![vec![2, 20, 6], vec![3, 30, 7], vec![2, 20, 1]], "the rows gone that no row added agrees with");
+        assert_eq!(rows(&p), vec![vec![2, 21, 6], vec![4, 40, 7]], "the rows added that no row gone agrees with");
+        // On the last column alone: 5 and 1 are added by none; 9 and 8 gone by none.
+        let [m, p] = unchanged_as_read(&minus, &plus, &[2]).expect("6 and 7 agree");
+        assert_eq!(rows(&m), vec![vec![1, 10, 5], vec![2, 20, 1]]);
+        assert_eq!(rows(&p), vec![vec![1, 10, 9], vec![1, 10, 8]]);
+        assert!(unchanged_as_read(&rel(&[[5, 5, 5]]), &plus, &[0, 1]).is_none(), "no pair agrees");
+        assert!(unchanged_as_read(&rel(&[]), &plus, &[0, 1]).is_none(), "nothing gone");
+    }
 
     /// Q88: a chunk plans from the run's plans as filed once the chunks `window` before it were, never from a chunk
     /// beside it: what each sees is fixed by the chunks' order, whatever finishes or is filed first. What it plans and
