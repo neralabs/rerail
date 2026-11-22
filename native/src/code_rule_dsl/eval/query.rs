@@ -1025,8 +1025,7 @@ fn anchor_roots(
     None
 }
 
-/// Selects candidate ordinals through the same postings used by workspace ingestion. Incomplete
-/// indexes retain the existing bounded root walk. Kind-only queries also use SQL postings.
+/// P's selects them from its anchor corpus, where a program registered it (`ANCHOR_CORPUS`).
 #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
 fn anchor_roots(
     target: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
@@ -1034,47 +1033,7 @@ fn anchor_roots(
     bound: usize,
     path: &str,
 ) -> Option<Arc<[u32]>> {
-    use crate::code_rule_dsl::matcher::p_anchors::{plan_for, sql::FileAnchorIndex};
-    let anchors = plan_for(grammar);
-    if !anchors.needs_index() {
-        return None;
-    }
-    #[cfg(feature = "code-rule-profile")]
-    let timer = crate::code_rule_dsl::profile::PhaseTimer::start(
-        crate::code_rule_dsl::profile::Phase::Index,
-    );
-    let index = FileAnchorIndex::build_at(
-        target,
-        &[&anchors],
-        bound,
-        crate::code_rule_dsl::budget::matcher_budget_exhausted,
-        path,
-    );
-    #[cfg(feature = "code-rule-profile")]
-    {
-        drop(timer);
-        crate::code_rule_dsl::profile::record_index(
-            index.len(),
-            index.estimated_bytes(),
-            index.complete(),
-        );
-    }
-    selected_roots(&index, &anchors)
-}
-
-#[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
-fn selected_roots(
-    index: &crate::code_rule_dsl::matcher::p_anchors::sql::FileAnchorIndex<
-        '_,
-        crate::code_rule_dsl::tape::TapeDoc,
-    >,
-    anchors: &Arc<crate::code_rule_dsl::matcher::p_anchors::AnchorPlan>,
-) -> Option<Arc<[u32]>> {
-    #[cfg(feature = "code-rule-profile")]
-    let _timer = crate::code_rule_dsl::profile::PhaseTimer::start(
-        crate::code_rule_dsl::profile::Phase::Selection,
-    );
-    index.selected(anchors)
+    super::ANCHOR_CORPUS.try_get()?.roots(target, grammar, bound, path)
 }
 
 /// Evaluates one file with its grammar matcher on the file's tape: nodes count towards

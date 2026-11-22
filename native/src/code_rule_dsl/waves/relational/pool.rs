@@ -9,7 +9,7 @@ use std::{
 };
 
 #[derive(Default, Clone)]
-pub(in crate::code_rule_dsl) struct Backing(Arc<Mutex<Option<Database>>>);
+pub struct Backing(Arc<Mutex<Option<Database>>>);
 struct Inner {
     db: OnceCell<Database>,
 }

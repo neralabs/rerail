@@ -67,6 +67,9 @@ rerail-json-rules	core
 rerail-matcher	core
 rerail-run	core
 rerail-rules-base	core
+rerail-p-anchors	core
+rerail-d-relational	core
+rerail-d-anchors	core
 rerail-setfix	core
 rerail-rules	core
 rerail-plan-base	core

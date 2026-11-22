@@ -5,6 +5,8 @@ use crate::code_rule_dsl::language::adapter::{Adapter, ValueRules};
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::code_rule_dsl::walks::{Walk, record_walk};
 pub mod semantic;
+#[cfg(feature = "p-anchor-corpus")]
+pub mod evaluation;
 #[cfg(any(test, feature = "test-hooks"))]
 use crate::code_rule_dsl::language::GrammarDialect;
 use ast_grep_core::MatchStrictness;

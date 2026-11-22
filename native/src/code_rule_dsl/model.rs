@@ -749,9 +749,11 @@ pub struct CompiledClause {
     /// A synthetic leaf under a `select_when`'s `exists` side: one witness answers it, so a file's
     /// evaluation stops at its first witness.
     pub decision: bool,
-    /// D's plan for a relational clause, compiled by D's compiler beside P's (test-only, O19).
+    /// D's plan for a relational clause, compiled by D's compiler beside P's (test-only, O19). D is above the code
+    /// rules (rerail-d-relational), so the plan is D's own type, which only D reads (`waves::relational::Plan::of`);
+    /// its compiler is registered (`compile::DATA_LAYER`).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub data_layer: Option<std::sync::Arc<crate::code_rule_dsl::waves::relational::Plan>>,
+    pub data_layer: Option<std::sync::Arc<dyn std::any::Any + Send + Sync>>,
 }
 
 impl CompiledClause {

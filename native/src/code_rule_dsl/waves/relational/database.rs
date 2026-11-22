@@ -77,7 +77,7 @@ impl Database {
         ))
     }
     /// SQLite-owned storage held by a suspended consumer, without scanning rows.
-    pub(in crate::code_rule_dsl) fn resident_bytes(&self) -> rusqlite::Result<usize> {
+    pub fn resident_bytes(&self) -> rusqlite::Result<usize> {
         let mut total = 0usize;
         for kind in [
             rusqlite::ffi::SQLITE_DBSTATUS_CACHE_USED,

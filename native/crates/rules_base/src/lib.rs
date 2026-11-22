@@ -2,8 +2,9 @@
 //! (`eval`, `query`, `violations`, `resolution`), with the SQLite hooks and functions (`hooks`, `crypto`) and the
 //! relational admission's base (`residency::admission::relational`: its plans, its database, and the admission
 //! behind a registered trait, `ADMISSION`). Over the matcher (`rerail-matcher`), below the admission
-//! (rerail-rules). The matcher's facade here mounts P's and D's SQL anchor engines and `waves::relational`
-//! (test-only copies), which read the model and the admission's database.
+//! (rerail-rules). P's and D's SQL anchor engines and `waves::relational` (test-only copies) are above it
+//! (rerail-p-anchors, rerail-d-relational): its compiler and evaluator read them through slots (`compile::DATA_LAYER`,
+//! `eval::ANCHOR_CORPUS`).
 //!
 //! Its sources stay where they were (native/src): this crate mounts them in place, as the engine did.
 // A mounted module re-exports its dependency's by glob, and its sources import the same items
@@ -63,53 +64,6 @@ pub mod code_rule_dsl {
         pub use rerail_prof::code_rule_dsl::logic::profile;
         pub use rerail_facts::code_rule_dsl::logic::strings;
     }
-    pub mod matcher {
-        pub use rerail_matcher::code_rule_dsl::matcher::*;
-        /// P's anchors module and SQL anchor engine as copied (2814d875), test-only (O20).
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(dead_code, unused_imports)]
-        pub mod p_anchors;
-        // P's anchor corpus at P's paths, for P's relational workspace code and the `p-anchor-corpus` path.
-        #[cfg(any(test, feature = "test-hooks"))]
-        pub use p_anchors::sql::{Corpus, CorpusSlot};
-        #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
-        pub use p_anchors::sql::{anchor_plans, anchor_plans_for_file};
-        /// D's anchors module and SQL anchor engine as copied (bb79b40a), test-only: the closure of D's
-        /// plan-input statistics (O19).
-        #[cfg(any(test, feature = "test-hooks"))]
-        #[allow(dead_code, unused_imports)]
-        pub mod d_anchors;
-        // `matcher/mod.rs`'s imports, which the anchor copies read (`use super::*`).
-        #[allow(unused_imports)]
-        use super::budget;
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::language::{GrammarDialect, SourceType};
-        #[allow(unused_imports)]
-        use crate::code_rule_dsl::regexes::Regex;
-        #[allow(unused_imports)]
-        use ast_grep_core::matcher::Matcher;
-        #[allow(unused_imports)]
-        use ast_grep_core::matcher::{KindMatcher, Pattern};
-        #[allow(unused_imports)]
-        use ast_grep_core::matcher::{MatcherExt, NodeMatch};
-        #[allow(unused_imports)]
-        use ast_grep_core::meta_var::{MetaVarEnv, MetaVariable};
-        #[allow(unused_imports)]
-        use ast_grep_core::{Doc, Node};
-        #[allow(unused_imports)]
-        use std::borrow::Cow;
-        #[allow(unused_imports)]
-        use std::collections::BTreeSet;
-        #[allow(unused_imports)]
-        use std::sync::Arc;
-        #[allow(unused_imports)]
-        use util::{
-            MAX_UTIL_STACK_BYTES, UTIL_DEPTH, UTIL_EXCEEDED, UTIL_STACK_BASE, UTIL_STEPS_LEFT,
-            stack_address,
-        };
-        #[allow(unused_imports)]
-        use util::{THREE_VALUED, UNKNOWN};
-    }
     pub mod model;
     pub mod query;
     #[path = "residency"]
@@ -162,11 +116,6 @@ pub mod code_rule_dsl {
         use crate::code_rule_dsl::tape::wire::{CHECKPOINT_STRIDE, WIDTH};
     }
     pub mod violations;
-    #[cfg_attr(any(test, feature = "test-hooks"), path = "waves")]
-    pub mod waves {
-        #[cfg(any(test, feature = "test-hooks"))]
-        pub mod relational;
-    }
     #[allow(unused_imports)]
     use crate::code_rule_dsl::residency::admission::relational;
     #[allow(unused_imports)]

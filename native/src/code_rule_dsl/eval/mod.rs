@@ -150,7 +150,7 @@ pub fn evaluate_clauses(
 ) -> Result<Evaluation> {
     // P's anchor corpus for every rule (the `p-anchor-corpus` path, open item O20).
     #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
-    let _corpus = crate::code_rule_dsl::matcher::CorpusSlot::enter();
+    let _corpus = ANCHOR_CORPUS.try_get().map(|corpus| corpus.enter());
     let _tapes = TapeCacheSlot::install();
     // P's syntax facts, shared by P's relational inputs (test-only, open item O18): the admission's pool, where a
     // program registered the admission (`relational::ADMISSION`).
@@ -189,7 +189,9 @@ pub fn evaluate_clauses(
         clauses: covered,
     };
     #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
-    prepare_candidates(code_rule, snapshot);
+    if let Some(corpus) = ANCHOR_CORPUS.try_get() {
+        corpus.prepare(code_rule, snapshot);
+    }
     // Import targets resolve among the snapshot's files; a workspace's evaluation installed the
     // view of the files it holds instead (`resolution::install_snapshot_unless_present`).
     let _view = code_rule
@@ -375,54 +377,29 @@ fn merge(evaluation: &mut Evaluation, mut other: Evaluation) {
     evaluation.metrics.observe_native_work(&other.metrics);
 }
 
-/// P's corpus publication and candidate preparation for one rule's stateless evaluation (the
-/// `p-anchor-corpus` path, open item O20).
+/// P's anchor corpus (the `p-anchor-corpus` path, open item O20): the corpus a rule's stateless evaluation publishes
+/// its files to, and the roots each file's anchors select from it. P is above the code rules (rerail-p-anchors),
+/// which registers it ([`ANCHOR_CORPUS`]); with none registered, every root is walked.
 #[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
-fn prepare_candidates(code_rule: &CompiledCodeRule, snapshot: &Snapshot) {
-    use crate::code_rule_dsl::matcher::{CorpusSlot, anchor_plans};
-    let plans = anchor_plans(std::iter::once(code_rule));
-    if plans.is_empty() {
-        return;
-    }
-    let corpus = CorpusSlot::current();
-    let mut demands = BTreeMap::new();
-    for file in snapshot
-        .files
-        .iter()
-        .filter(|file| code_rule.scope.matches(&file.path))
-    {
-        let Some(lang) = file_language(file) else {
-            continue;
-        };
-        if !plans.contains_key(&u32::from(
-            crate::code_rule_dsl::language::tape_tag(lang).expect("tape language"),
-        )) {
-            continue;
-        }
-        match file_tape(lang, file) {
-            Ok(None) => {}
-            Ok(Some((doc, _))) => {
-                demands.insert(
-                    file.path.clone(),
-                    crate::code_rule_dsl::matcher::anchor_plans_for_file(code_rule, file, &doc),
-                );
-                if let Err(error) = corpus.put(
-                    &file.path,
-                    &doc,
-                    &crate::code_rule_dsl::budget::matcher_budget_exhausted,
-                ) {
-                    eprintln!("SQL AST batch publication unavailable: {error}");
-                }
-            }
-            Err(error) => eprintln!("SQL AST batch source unavailable: {error}"),
-        }
-    }
-    #[cfg(feature = "code-rule-profile")]
-    corpus.record_origins(std::iter::once(code_rule));
-    if let Err(error) = corpus.prepare_files(&demands) {
-        eprintln!("SQL AST corpus batch unavailable; retaining authoritative candidates: {error}");
-    }
+pub trait AnchorCorpus: Send + Sync {
+    /// Enters the evaluation's corpus: its calls, nested inputs included, share one index until the guard drops.
+    fn enter(&self) -> Box<dyn std::any::Any>;
+    /// Publishes the rule's files in scope to the corpus and prepares their candidates.
+    fn prepare(&self, code_rule: &CompiledCodeRule, snapshot: &Snapshot);
+    /// The roots a file's anchors select, or `None` to walk every root.
+    fn roots(
+        &self,
+        target: &ast_grep_core::AstGrep<crate::code_rule_dsl::tape::TapeDoc>,
+        grammar: &crate::code_rule_dsl::matcher::GrammarMatcher,
+        bound: usize,
+        path: &str,
+    ) -> Option<Arc<[u32]>>;
 }
+
+/// P's anchor corpus (rerail-p-anchors' `matcher::p_anchors::evaluation::register`).
+#[cfg(all(any(test, feature = "test-hooks"), feature = "p-anchor-corpus"))]
+pub static ANCHOR_CORPUS: rerail_registry::Slot<&'static dyn AnchorCorpus> =
+    rerail_registry::Slot::new("P's anchor corpus (eval::ANCHOR_CORPUS)");
 
 /// Each input relation's rows of a relational clause (P's, test-only, open item O18).
 #[cfg(any(test, feature = "test-hooks"))]
@@ -430,30 +407,6 @@ pub fn relational_rows(
     code_rule: &CompiledCodeRule,
     clause: &CompiledClause,
     plan: &crate::code_rule_dsl::residency::admission::relational::Plan,
-    snapshot: &Snapshot,
-    metrics: &mut Metrics,
-) -> Result<Vec<evidence::Rows>> {
-    let _calls = stateless_calls(code_rule, snapshot, std::slice::from_ref(clause), metrics)?;
-    plan.inputs
-        .iter()
-        .map(|(_, input)| {
-            stateless_rows(
-                code_rule,
-                clause,
-                (input, evidence::Side::Counted),
-                snapshot,
-                metrics,
-            )
-        })
-        .collect()
-}
-
-/// Each input relation's rows of D's relational plan (test-only, open item O19).
-#[cfg(any(test, feature = "test-hooks"))]
-pub fn data_layer_rows(
-    code_rule: &CompiledCodeRule,
-    clause: &CompiledClause,
-    plan: &crate::code_rule_dsl::waves::relational::Plan,
     snapshot: &Snapshot,
     metrics: &mut Metrics,
 ) -> Result<Vec<evidence::Rows>> {

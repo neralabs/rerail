@@ -28,7 +28,7 @@ struct Slots {
 
 impl Hooks {
     /// Registers the dispatchers on `connection`. Its owner calls this once, before sharing it.
-    pub(in crate::code_rule_dsl) fn register(connection: &mut Connection) -> rusqlite::Result<Self> {
+    pub fn register(connection: &mut Connection) -> rusqlite::Result<Self> {
         let progress = Arc::new(Mutex::new(None::<Progress>));
         let slot = Arc::clone(&progress);
         connection.progress_handler(PROGRESS_STEPS, Some(move || slot.lock().as_mut().is_some_and(|handler| handler())))?;

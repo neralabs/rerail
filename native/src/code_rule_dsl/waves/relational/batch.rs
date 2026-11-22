@@ -152,7 +152,7 @@ pub fn run_prepared(
                         "producer-prepare",
                         "admitted-session",
                     );
-                    let Some(plan) = job.clause.data_layer.as_deref() else {
+                    let Some(plan) = crate::code_rule_dsl::waves::relational::Plan::of(job.clause) else {
                         return Err(super::invalid("expected relational job"));
                     };
                     if plan.require_nonempty.is_some() {

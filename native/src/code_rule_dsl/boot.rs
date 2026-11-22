@@ -62,6 +62,12 @@ fn install_with(ids: Option<BuildIds>) {
         // What the store hands the observer and git below it: the observer's kept facts, a reused inventory's
         // manifests owned again.
         crate::content_store::register_below();
+        // D's compiler of a clause's relational plan, and P's anchor corpus, above the code rules that read them
+        // (test-only copies, O19 and O20).
+        #[cfg(feature = "test-hooks")]
+        crate::code_rule_dsl::waves::relational::register();
+        #[cfg(all(feature = "test-hooks", feature = "p-anchor-corpus"))]
+        crate::code_rule_dsl::matcher::p_anchors::evaluation::register();
         crate::content_store::set_connection_functions(|db| {
             text::install(db)?;
             prefilter::tapes::install(db)

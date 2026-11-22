@@ -31,7 +31,7 @@ pub(in crate::code_rule_dsl) fn check(
     if crate::code_rule_dsl::budget::matcher_budget_exhausted() {
         return Err(invalid("relational input work budget exceeded"));
     }
-    let Some(plan) = clause.data_layer.as_deref() else {
+    let Some(plan) = crate::code_rule_dsl::waves::relational::Plan::of(clause) else {
         return Err(invalid("expected relational job"));
     };
     let Some(slot) = plan.require_nonempty else {

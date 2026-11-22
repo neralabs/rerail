@@ -208,7 +208,7 @@ fn projection_demand_includes_nested_predicates_and_wildcards_but_not_counted_ro
         let document = json!({"format":"rerail.policy/v1","id":"columns","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"partitionBy":"file","inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"kind":"module"}}},"project":{"used":"file.path","unused":"file.name"}}}},"stages":stages,"query":query},"violation":{"code":"COLUMNS","message":"columns","anchor":"witness.span"}}]});
         let rule = crate::code_rule_dsl::rule_api::compile(&document.to_string(), "json", include_str!("../../../capabilities.json"))
         .unwrap();
-        let Some(plan) = rule.inner.clauses[0].data_layer.as_deref() else {
+        let Some(plan) = crate::code_rule_dsl::waves::relational::Plan::of(&rule.inner.clauses[0]) else {
             panic!("relational");
         };
         plan.inputs[0]
@@ -246,7 +246,7 @@ fn projection_demand_includes_nested_predicates_and_wildcards_but_not_counted_ro
 fn narrowing_a_consumer_keeps_the_shared_ast_and_unmodified_schemas() {
     use crate::code_rule_dsl::model::{Projection, ProjectionSource};
     let rule = rule();
-    let Some(plan) = rule.inner.clauses[0].data_layer.as_deref() else {
+    let Some(plan) = crate::code_rule_dsl::waves::relational::Plan::of(&rule.inner.clauses[0]) else {
         panic!("relational");
     };
     let mut full = plan.inputs[0].1.clone();
@@ -288,7 +288,7 @@ fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
     let rule=crate::code_rule_dsl::rule_api::compile(&json!({"format":"rerail.policy/v1","id":"input-payload","revision":1,"mode":"log","clauses":[{"id":"rows","relational":{"partitionBy":"file","inputs":{"facts":{"evidence":{"as":"f","query":{"ast":{"language":"python","rule":{"all":[{"kind":"function_definition"},{"has":{"field":"name","pattern":"$NAME"}},{"has":{"field":"parameters","pattern":"$PARAMS"}}]}}},"project":{"name":"capture.NAME"}}}},"query":"SELECT __path path,__start start_byte,__end end_byte,name FROM facts"},"violation":{"code":"INPUT","message":"unused input message","anchor":"witness.span"}}]}).to_string(), "json", include_str!("../../../capabilities.json")).unwrap();
     let code_rule = &rule.inner;
     let clause = &code_rule.clauses[0];
-    let Some(plan) = clause.data_layer.as_deref() else {
+    let Some(plan) = crate::code_rule_dsl::waves::relational::Plan::of(clause) else {
         panic!("relational");
     };
     let snapshot = Snapshot {
@@ -296,7 +296,7 @@ fn sql_facts_keep_typed_values_and_only_the_capture_needed_for_the_anchor() {
         files: files(1),
     };
     let rows =
-        eval::data_layer_rows(code_rule, clause, plan, &snapshot, &mut Metrics::default()).unwrap();
+        crate::code_rule_dsl::waves::relational::data_layer_rows(code_rule, clause, plan, &snapshot, &mut Metrics::default()).unwrap();
     let witness = &rows[0].witnesses[0];
     assert_eq!(
         witness.captures.projection().unwrap().json(),

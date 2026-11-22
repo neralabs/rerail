@@ -573,15 +573,7 @@ fn compile_clause(
     )?;
     #[cfg(any(test, feature = "test-hooks"))]
     let data_layer = clause.get("relational").and_then(|relational| {
-        crate::code_rule_dsl::waves::relational::compile::compile(
-            relational,
-            &format!("{path}/relational"),
-            capabilities,
-            defines,
-            required_ast,
-        )
-        .ok()
-        .map(std::sync::Arc::new)
+        DATA_LAYER.try_get()?(relational, &format!("{path}/relational"), capabilities, defines, required_ast)
     });
     Ok(CompiledClause {
         id,
@@ -593,6 +585,23 @@ fn compile_clause(
         data_layer,
     })
 }
+
+/// D's compiler of a clause's `relational` object (`waves::relational::compile`, test-only, O19): D's plan, or
+/// `None` where D refuses it. D is above the code rules (rerail-d-relational), which registers it; a program that
+/// registers none compiles no clause's D plan.
+#[cfg(any(test, feature = "test-hooks"))]
+pub type DataLayerCompile = fn(
+    &Value,
+    &str,
+    &Capabilities,
+    &Defines<'_>,
+    &mut BTreeSet<(String, String)>,
+) -> Option<Arc<dyn std::any::Any + Send + Sync>>;
+
+/// D's compiler of a clause's relational plan (rerail-d-relational's `waves::relational::compile::register`).
+#[cfg(any(test, feature = "test-hooks"))]
+pub static DATA_LAYER: rerail_registry::Slot<DataLayerCompile> =
+    rerail_registry::Slot::new("D's relational compiler (compile::DATA_LAYER)");
 
 pub fn compile_query(
     value: &Value,

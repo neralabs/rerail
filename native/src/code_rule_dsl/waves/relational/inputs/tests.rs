@@ -47,7 +47,7 @@ fn fill(sink: &mut Sink<'_>, count: usize, source: &Arc<String>) {
 #[test]
 fn columns_stream_in_bounded_batches_preserving_unicode_nulls_and_duplicates() {
     let rule = rule();
-    let Some(plan) = rule.inner.clauses[0].data_layer.as_deref() else {
+    let Some(plan) = crate::code_rule_dsl::waves::relational::Plan::of(&rule.inner.clauses[0]) else {
         panic!()
     };
     let input = &plan.inputs[0].1;
@@ -101,7 +101,7 @@ fn columns_stream_in_bounded_batches_preserving_unicode_nulls_and_duplicates() {
 #[test]
 fn failed_stream_rolls_back_previously_imported_batches() {
     let rule = rule();
-    let Some(plan) = rule.inner.clauses[0].data_layer.as_deref() else {
+    let Some(plan) = crate::code_rule_dsl::waves::relational::Plan::of(&rule.inner.clauses[0]) else {
         panic!()
     };
     let input = &plan.inputs[0].1;

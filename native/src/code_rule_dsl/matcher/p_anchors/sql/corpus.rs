@@ -547,7 +547,7 @@ impl CorpusSlot {
     }
 
     /// Stateless calls own one index for their complete evaluation, including nested inputs.
-    pub(in crate::code_rule_dsl) fn enter() -> Self {
+    pub fn enter() -> Self {
         Self::install(Self::current())
     }
 

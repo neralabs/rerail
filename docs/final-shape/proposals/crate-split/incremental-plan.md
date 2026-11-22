@@ -1215,3 +1215,27 @@ decision record. There are no A/B triples. One run per state, with the host's lo
 
     `definition_ids_are_pinned` reads its Ruff fixtures through `pack_test_data`. Tests: on a Linux host, both crates
     in full: 246 of 248. The 2 failures are pack data.
+- **Step 8a** (2026-11-22): rerail-rules-base's test-only engines, 31.4k lines behind `test-hooks`, are now three
+  crates above it. They are P's and D's SQL anchor engines and D's relational waves.
+
+  | crate | lines | what it holds |
+  |---|---:|---|
+  | rerail-p-anchors | 10.0k | `matcher::p_anchors`, its corpus (`Corpus`, `CorpusSlot`), and its part in a rule's evaluation (`p_anchors::evaluation`, the `p-anchor-corpus` path) |
+  | rerail-d-relational | 10.4k | `waves::relational`, over P's (its waves enter P's corpus) |
+  | rerail-d-anchors | 10.7k | `matcher::d_anchors`, over D's waves (its stores keep their database and pools) |
+
+  - rerail-rules-base keeps 18.2k of production code. It reads the engines back through slots:
+    - `compile::DATA_LAYER` is D's compiler of a clause's `relational` object.
+    - `CompiledClause::data_layer` holds D's plan as `Arc<dyn Any + Send + Sync>`. Only D reads it, through
+      `waves::relational::Plan::of`.
+    - `eval::ANCHOR_CORPUS` is P's corpus: `enter`, `prepare` and `roots`. These are the old `prepare_candidates` and
+      `anchor_roots`, moved into P unchanged.
+    - `eval::data_layer_rows` is D's, in `waves::relational`.
+  - rerail-rules re-exports the three engines in its `matcher` and `waves`, so every path above is unchanged.
+  - Boot's `install_with` registers both slots, under `test-hooks` (P's also needs `p-anchor-corpus`). Each new
+    crate's own test binary registers them too.
+  - A build without `test-hooks` mounts nothing in any of the three crates.
+  - Tests:
+    - On a Linux host, the three crates and rules-base: 137 of 137 (33 P, 34 D's waves, 41 D's anchors, 29 rules-base).
+    - On a Linux host, the hosted tests: rerail-tests-anchors (162), and rerail-tests-logic's `waves::` (33). All pass.
+    - Checks: the workspace with `--tests` is clean, and so is the `p-anchor-corpus` build of the four crates.

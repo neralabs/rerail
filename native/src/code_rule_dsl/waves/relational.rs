@@ -91,6 +91,52 @@ pub struct Plan {
     pub reads_source: bool,
 }
 
+impl Plan {
+    /// D's plan of a clause (`CompiledClause::data_layer`, which the code rules keep as D's own type).
+    pub fn of(clause: &CompiledClause) -> Option<&Plan> {
+        clause.data_layer.as_deref()?.downcast_ref::<Plan>()
+    }
+}
+
+/// D's compiler as the code rules' compiler calls it (`compile::DATA_LAYER`): D's plan, `None` where D refuses it.
+fn compile_data_layer(
+    value: &Value,
+    path: &str,
+    capabilities: &crate::code_rule_dsl::model::Capabilities,
+    defines: &crate::code_rule_dsl::compile::define::Defines<'_>,
+    required_ast: &mut BTreeSet<(String, String)>,
+) -> Option<Arc<dyn std::any::Any + Send + Sync>> {
+    compile::compile(value, path, capabilities, defines, required_ast).ok().map(|plan| Arc::new(plan) as Arc<dyn std::any::Any + Send + Sync>)
+}
+
+/// Registers D's compiler with the code rules' (`compile::DATA_LAYER`): boot, as it installs, and this crate's tests.
+pub fn register() {
+    crate::code_rule_dsl::compile::DATA_LAYER.register("rerail-d-relational", compile_data_layer);
+}
+
+/// Each input relation's rows of D's relational plan (test-only, open item O19); moved from `eval`.
+pub fn data_layer_rows(
+    code_rule: &CompiledCodeRule,
+    clause: &CompiledClause,
+    plan: &Plan,
+    snapshot: &Snapshot,
+    metrics: &mut crate::code_rule_dsl::model::Metrics,
+) -> Result<Vec<Rows>> {
+    let _calls = crate::code_rule_dsl::eval::stateless_calls(code_rule, snapshot, std::slice::from_ref(clause), metrics)?;
+    plan.inputs
+        .iter()
+        .map(|(_, input)| {
+            crate::code_rule_dsl::eval::stateless_rows(
+                code_rule,
+                clause,
+                (input, crate::code_rule_dsl::eval::evidence::Side::Counted),
+                snapshot,
+                metrics,
+            )
+        })
+        .collect()
+}
+
 pub(in crate::code_rule_dsl) fn identifier(value: &str) -> bool {
     !value.is_empty()
         && value.len() <= 64
@@ -464,7 +510,7 @@ impl<'a> Session<'a> {
         let supplied = inputs.facts;
         let limits = &code_rule.capabilities.limits;
         admission::limits(code_rule, snapshot)?;
-        let Some(plan) = clause.data_layer.as_deref() else {
+        let Some(plan) = Plan::of(clause) else {
             return Err(invalid("expected relational job"));
         };
         // Input writes spend one work unit per row. Adjust to the exact row/node allowance
