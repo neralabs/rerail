@@ -1,4 +1,5 @@
     use rusqlite::Connection;
+    use crate::code_rule_dsl::facts::vtab::syntax::PythonBatch as _;
 
     fn hex(s: &str) -> String {
         s.bytes().map(|b| format!("{b:02x}")).collect()

@@ -166,7 +166,7 @@ pub struct RootRecord {
 }
 
 impl RootRecord {
-    pub(in crate::code_rule_dsl) fn captures(&self) -> &[(u16, u32)] {
+    pub fn captures(&self) -> &[(u16, u32)] {
         &self.captures[..usize::from(self.captured)]
     }
 }
@@ -472,7 +472,7 @@ impl Micro {
     /// (its member) and node, as `run` marks them. A start's walk does not end at its first emit,
     /// which answers one member: in set mode each member's later emits are skipped instead.
     #[allow(clippy::too_many_arguments)]
-    pub(in crate::code_rule_dsl) fn run_labelled(
+    pub fn run_labelled(
         &self,
         tape: &TapeDoc,
         labels: &[Vec<u64>],

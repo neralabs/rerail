@@ -22,12 +22,12 @@ use std::{
 };
 
 /// `axis` values: a node's children in order, its ancestors nearest first, its parent alone.
-pub(super) const CHILDREN: i64 = 0;
-pub(super) const ANCESTORS: i64 = 1;
-pub(super) const PARENT: i64 = 2;
+pub const CHILDREN: i64 = 0;
+pub const ANCESTORS: i64 = 1;
+pub const PARENT: i64 = 2;
 
 /// A tape's structure: each node's subtree size, by preorder.
-pub(super) trait Structure: Send {
+pub trait Structure: Send {
     /// The subtree size of node `pre` of tape `fid`; an error past the tape's end.
     fn size(&mut self, fid: i64, pre: usize) -> Result<usize>;
     /// `node`'s ancestors, nearest first: by descent from the root, each step skipping siblings.
@@ -37,7 +37,7 @@ pub(super) trait Structure: Send {
 }
 
 /// `node`'s ancestors, nearest first, by descent from the root through `structure`'s sizes.
-pub(super) fn descend<S: Structure + ?Sized>(structure: &mut S, fid: i64, node: usize, out: &mut Vec<i64>) -> Result<()> {
+pub fn descend<S: Structure + ?Sized>(structure: &mut S, fid: i64, node: usize, out: &mut Vec<i64>) -> Result<()> {
     {
         let end = structure.size(fid, 0)?;
         if node >= end {
@@ -68,7 +68,7 @@ pub(super) fn descend<S: Structure + ?Sized>(structure: &mut S, fid: i64, node: 
 }
 
 /// The structure `nera_tree` reads, shared with its owner.
-pub(super) type Shared = Arc<parking_lot::Mutex<dyn Structure>>;
+pub type Shared = Arc<parking_lot::Mutex<dyn Structure>>;
 
 impl Structure for Reader {
     fn size(&mut self, fid: i64, pre: usize) -> Result<usize> {
@@ -111,7 +111,7 @@ struct Cursor {
     node: i64,
     axis: i64,
 }
-pub(super) fn install(db: &Connection, reader: Shared) -> Result<()> {
+pub fn install(db: &Connection, reader: Shared) -> Result<()> {
     const MODULE: Module<Table> = Module::eponymous_only_module();
     db.create_module(c"nera_tree", &MODULE, Some(reader))
 }
@@ -246,5 +246,4 @@ unsafe impl VTabCursor for Cursor {
     }
 }
 
-#[cfg(test)]
-mod tests;
+// tests: a test the engine hosts (it reads above this crate; boot mounts it)

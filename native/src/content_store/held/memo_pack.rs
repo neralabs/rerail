@@ -24,7 +24,7 @@
 //! Rows of the packs before (`framed` 0: compressed bytes in `<pack>.pack`) are not read; compaction removes them.
 
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::super::{ContentStore, StoreResult};
 use super::super::segments::{ALIGN, Moved, Place, SEGMENT_BUDGET, SealedSegments, SegmentBytes, SegmentKind, SegmentMaps, SegmentUse, SegmentWriter, retired};
 use rusqlite::params;

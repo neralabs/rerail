@@ -46,7 +46,7 @@ const INFSTR: &str = "1e309";
 const ALL_QUOTES: [&str; 4] = ["'", "\"", "\"\"\"", "'''"];
 
 /// The classes of `ast.expr`.
-pub(crate) fn is_expr(class: &str) -> bool {
+pub fn is_expr(class: &str) -> bool {
     matches!(
         class,
         "BoolOp"
@@ -82,7 +82,7 @@ pub(crate) fn is_expr(class: &str) -> bool {
 
 /// `ast.unparse(n)` of an expression, a `keyword`, an `arg` or an `alias`; `None` for another node, or where CPython
 /// raises or the tree holds a value it does not give exactly.
-pub(crate) fn unparse(n: &Node) -> Option<String> {
+pub fn unparse(n: &Node) -> Option<String> {
     let mut o = String::new();
     match n.class {
         "keyword" => keyword(n, &mut o)?,

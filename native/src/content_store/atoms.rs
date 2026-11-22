@@ -19,7 +19,7 @@
 //! dies. A process that waits for it holds a shared lock on `<db>-atoms.want`; the holder sees that
 //! at its next interning and flushes, which gives the lease back.
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use super::{StoreError, StoreResult};
 use parking_lot::Mutex;
 use rusqlite::{Connection, OptionalExtension, ffi};

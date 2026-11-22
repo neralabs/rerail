@@ -952,3 +952,272 @@ decision record. There are no A/B triples. One run per state, with the host's lo
     clean; clippy clean on the seven crates). On a Linux host:
     - rerail-rir, the compiler, `cpu_pp`, `cpu_stream` and `c_directives` in full: 129 of 129.
     - The transducer's RIR and regex-block tests and the `.rerail` parser's RIR and token-local tests: 13 of 13.
+- **Step 7b** (2026-11-22): the store, 36.1k production lines, is now three crates.
+  - **rerail-store-base** (`native/crates/store_base`, 4.6k) holds the store's reads that take no `ContentStore`:
+    - `content_store/base.rs`: the root's types, moved from `mod.rs`. They are the hash key, the Git trees, the error,
+      the ids, the payloads, the cached bytes, the capacity, the test hooks, `flush_of` and the `Cached` trait (moved
+      from `connection.rs`), and `FileStat` (moved from `corpus_runs.rs`).
+    - The modules that read nothing above them: `bounded_insert`, `compression`, `hazards`, `journal`, `postings`,
+      `private_files`, `read_cache`, `rows`, `scope_lease`, `segments`, `vocabulary` and `working_set`.
+    - `analysis_scope/base.rs`: the analysis owner, run sources and warnings, and the directory reads.
+    - `source_tree`, `probes` and `Canonical`.
+    - The `HashKey` and `TapeId` impls the upper modules had (`blake3`, `for_benchmark`) moved here with their types.
+    - The id newtypes' fields and the moved structs' fields are `pub`.
+  - **rerail-observe** (`native/crates/observe`, 9.7k): `content_store::observe`, `git_access` and `git_workspace`,
+    over the base.
+    - `GitWorkspace::publish_snapshot` and `store_source` named the `ContentStore`. The one production caller
+      (`workspace/storage.rs`) now calls `ContentStore::publish_snapshot` with the workspace's trees.
+    - `git_workspace`'s tests publish to a store, so they moved to `src/git_workspace_tests.rs`. rerail-store mounts
+      that file, and it has the two methods as a test trait.
+  - **rerail-store** (20.8k) keeps `ContentStore` and the 29 modules that `impl` it.
+    - It keeps `atoms`, which reads the guest keys, the kept facts and the write-back.
+    - It keeps `WorkspaceRegistration`, whose `register` reads the reclamation.
+    - Its `mod.rs` re-exports the observer's `content_store` by glob, so every path is as it was.
+  - `tools/cratify/crate-order.tsv` has the base and the observer before the store.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on a Mac; clippy is clean on the three crates and the engine,
+      with and without tests.
+    - On a Linux host, the three crates in full: 293 of 293 (4 ignored child-process and measurement tests).
+    - The engine's and rerail-workspace's `git_access`, `git_ignore`, `workspace` and `content_store` tests: 54 of 54.
+  - **Amended in roll-up 70: rerail-observe is rerail-store again.** On the hub, the observer's answers, canonical
+    forms and settings are kept facts of the content store (t33 K2, `observe/facts.rs`), and the store's collection
+    sweeps the observer under its lease (`corpus_runs`). `git_workspace`'s snapshot reads the observer and the store
+    (`owned_again`), and it and `git_access` read each other. The observer and git read the store, and the store
+    reads them: one crate. rerail-store mounts them (`mod.rs`: `observe`; its root: `git_access`, `git_workspace`),
+    over rerail-store-base, which keeps the rest of the step.
+- **Step 7c** (2026-11-22): the facts, 32.9k production lines, are now three crates.
+  - **rerail-ygraph** (`native/crates/ygraph`, 4.0k): M's Y1 reference graph (`facts::ygraph`). It reads nothing else
+    of the facts, only `logic::profile`; `facts.rs` re-exports it.
+  - **rerail-facts-base** (`native/crates/facts_base`, 15.9k): every module of the facts but the syntax table and
+    the families' store reads. It also has the text, the strings, the producers, the SQL profiles and admission,
+    and the statistics.
+  - **rerail-facts** (13.0k; same name, so no reader above changes) mounts `facts::vtab::syntax` and
+    `facts::families` over a glob of the base.
+  - Four reads went up into the syntax table. Each one is cut:
+    - `core::input_columns` read the families' columns for `py_*` relations. It now reads them through
+      `facts::core::FAMILY_COLUMNS`, a `rerail_registry::Slot` that boot registers beside the families
+      (`register_family_columns`).
+    - The device's kind-set axis in a chunk (`ChunkAxis`, a OnceLock in `nearest.rs`) named the chunk's type. It
+      moved beside the chunk (`device_chunk::CHUNK_AXIS`), as a `Slot` the Metal device registers. Its hook left
+      `install-hooks.txt`.
+    - `Source::python_batch` returned the syntax table's `Batch`. The base's `Source` now has `syntax_batch` (an
+      `Arc<dyn Any + Send + Sync>`), and the syntax table's `PythonBatch` extension trait gives it as a `Batch`.
+      Its readers import that trait.
+    - The string functions' node reads (`rr_node_text`, `_any`, `rr_node_value`, `rr_node_str`) downcast their
+      source to `LongTexts` (`LongTexts::of`). They are now a `Source` method, `node_read`, which `LongTexts` and
+      the layered binding implement. `LONG_TEXT_NODES` and `NODE_READS` moved down to `vtab.rs`; `syntax`
+      re-exports them.
+  - Fixed on the way, from 7b: the journal's test reads (`current_id`, `id_past`, `forget_streams`, `fsevents::since`)
+    were `cfg(test)` in the store base. The observer's Mac tests, a crate above, could not see them. They are
+    `test-hooks` items now.
+  - `tools/cratify/crate-order.tsv` has rerail-ygraph and the base before rerail-facts.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the three crates and
+      boot.
+    - On a Linux host, the three crates in full: 109 of 110, 2 ignored. The one failure is a pack-data test
+      (`serverplan_quality_s_regexes_lower`; its data is not pulled).
+    - The logic's and the compiler's test crates' tests of Python's families, the node reads and the Python batch:
+      90 of 93. The 3 failures are pack-data tests (`python_shortcuts_change_no_pack_result_*`).
+    - On a Mac, the store base and the observer in full: 61 of 61, with the FSEvents journal's tests.
+- **Step 7d** (2026-11-22): the transducer, 47.2k production lines, is now three crates. The base and the CPU
+  executor read none of W.
+  - **rerail-transducer-base** (`native/crates/transducer_base`, 21.4k) has the packed programs and their
+    interpreter, the batch ABI, the device interface, the query front end (`scm`), the label sets and micro walks,
+    the verifiers, the scheduler and `space`. It does not depend on rerail-rules.
+  - **rerail-transducer-cpu** (`native/crates/transducer_cpu`, 19.3k) has the compiled CPU executor (`native_cpu` and
+    its 11 parts), the capture runs and the admission spike, over the base. The scm audit (`scm_audit_tests.rs`,
+    moved out of `scm.rs`'s tests) times this crate's executor, so it is mounted here.
+  - **rerail-transducer** (6.5k; same name, so no reader above changes) mounts `compile_matcher` (W's matchers and
+    waves, lowered), `demand`, `residency` (the rules' admission) and the `set_census` test over the CPU crate. It
+    is the transducer's one crate that reads W.
+  - The base's reads up are cut:
+    - Its dispatch (`execute_planned_once`, `execute_with_backend_outcomes`, `warm_production_programs`,
+      `compilation::resolve_plan`) called `native_cpu`. It now reads `packed::CPU`, a `rerail_registry::Slot` of
+      `CpuExecutor`. Boot registers it (`install_devices`), and so do the CPU crate's, the top's and the Metal
+      device's own test binaries. With none, `CpuJit` is `UnsupportedBackend`, as a device's backend with no device
+      is.
+    - `MatcherDevice` named the lowered matcher's types in four methods (`matcher_roots`, `wave_roots`,
+      `wave_labelled`, `wave_pattern_sources`). They are now `compile_matcher::WaveDevice`, a second trait the Metal
+      device registers (`WAVES`).
+    - `compile_sets::Index` held W's `SiblingPositions`. It now holds a slot, which the lowered matcher fills on
+      first read (`compile_matcher::siblings`).
+    - `impl Program` (`relabelled`, `shifted`) moved from `compile/matcher.rs` to `compile/sets.rs`, with its type.
+    - `transducer.rs` re-exported the rules' `semantic_facts`. The top crate's facade does that now.
+  - Fixed on the way:
+    - rerail-rules-base's facade had a `#[path]` on an inline module that a build without tests reported as unused.
+    - The budget test (`a_clause_over_its_budget_goes_to_w_…`) reads its large file from pack test data. Without
+      the data it failed with "no evaluation ran over its budget"; it now fails with the pack-data message
+      (`pack_test_data`).
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the three crates and boot.
+    - On a Linux host:
+      - The three crates in full: 65 of 65 (6 ignored).
+      - `rerail-tests-transducer` in full: 174 of 186. The 12 failures are 8 Metal parity tests (no device on
+        Linux), 3 pack-data tests, and `sqlite_virtual_table_drives_batched_matching_and_relational_composition`.
+      - The crates between the transducer and boot, whose test binaries are not booted (workspace, planner,
+        typing, corpus memo, rr root, logic, sessions): 426 of 426.
+    - On a Mac:
+      - `rerail-tests-transducer` in full: 184 of 187. The Metal parity tests and the SQLite test pass there; the 3
+        failures are the pack-data tests.
+      - The Metal device's test binary, filtered (`block_rows_tests`, `regex_relocation`): 4 of 4.
+- **Step 7e** (2026-11-22): the PHP pack, 30.9k production lines, is now two crates.
+  - **rerail-forte** (`native/crates/forte`, 11.2k, a provider): Blade's Forte parser (`blade::forte`: its lexer,
+    parser, directives, scan and trees).
+    - It reads only the language's metavariables (rerail-lang) and the literal trees' ids
+      (`literal::{ID_FLAG, NEXT_TREE, TREE_MASK}`, rerail-adapters'). `NEXT_TREE` is one counter, shared with the
+      literal trees.
+    - `blade.rs` re-exports it, so `blade::view`, `blade::tape` and `php_view` read it where they did.
+    - Its tests stay rerail-tests-compile's: they compile and evaluate rules over Blade documents.
+  - **rerail-lang-php** (19.7k) keeps the rest: PHP's scopes, values, calls, phpdoc, the suppressions, the Blade view
+    and its tape.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the two crates.
+    - On a Linux host, lang-php's own tests and rerail-tests-compile's Blade, Forte and PHP-view tests: 61 of 61.
+- **Step 7f** (2026-11-22): the Python pack, 23.4k production lines, is now two crates.
+  - **rerail-cpython** (`native/crates/cpython`, 4.8k, a provider): CPython's facts about Python source (`cpython`:
+    `ast.parse`'s verdict, `literal_eval`, the `ast` tree, `unparse`, `dump`), computed over Ruff's parser.
+    - It reads only `identifier::nfkc` (rerail-adapters').
+    - Its own tests (`cpython::tests`) run in its test binary.
+  - **rerail-lang-python** (18.6k) keeps the rest. It re-exports the crate under `cpython`, and mounts these two
+    there, because they read the facts and the pack:
+    - the parity oracle (`cpython::parity`, ignored tests that run real CPython);
+    - the test load that registers the Python pack for its test binary.
+  - The types the pack reads were widened to `pub`: `Literal`, `Class`, `Located`, `Raised`, `Const`, `Int`,
+    `VERSION`, `explain` and `is_expr`.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the two crates.
+    - On a Linux host, both crates' tests: 36 of 36 (the 5 parity tests ignored).
+- **Step 7g** (2026-11-22): the SQL executor's sessions, 25.1k production lines, are now two crates.
+  - **rerail-sessions-base** (`native/crates/sessions_base`, 14.8k) has the executor's parts below the executor: the
+    runs (`session`), tuple maintenance, reductions, versions, phases, walks, the work graph, frontiers, recursion,
+    scratch, planning and the rest.
+  - **rerail-sessions** (10.5k; same name, so no reader above changes) has the rest:
+    - the executor (`CodeRuleSqlExecutor`, now in `sql_executor/executor.rs` with its executions' impl from
+      `session.rs`);
+    - the modules that read the executor or the traces: catalog, compiler, documents, explain, producers,
+      profiling, updates, verification;
+    - the retained traces (`temporal`).
+  - The base's reads of the traces are cut:
+    - `Execution::temporal` holds `Box<dyn session::Trace>`. The trait has what the base and the executor read of a
+      trace: `apply`, `objects`, the planning statistics and strategy, `stable_phases`, `explain` and `frames`. The
+      traces' own code and tests read the type (`temporal::Trace::of`, `of_mut`).
+    - The run with one retained trace is maintained through `maintenance::TEMPORAL`, a `rerail_registry::Slot` of
+      `Temporal` (`apply_initial`). Boot registers it (`install_with`), and so does rerail-sessions' own test binary.
+    - The batches' runtime in `scratch::Pool` is held as `Any` and read as its type by the batches.
+    - `temporal::delta`, the native version difference, reads only the versions and the scratch work. It is now
+      `versions::delta`, which `temporal` re-exports, so the base's maintenance and the bulk version tests call it
+      directly.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the two crates and boot.
+    - On a Linux host, both crates' own tests and rerail-tests-logic's SQL executor, SQL admission and tools tests:
+      208 of 209. The one failure, `sql_sessions_use_shared_explain_profiles_…`, runs `node` (the SQL report),
+      which that host lacks.
+    - On a Mac, that test passes.
+- **Step 7h** (2026-11-22): boot, 23.4k production lines, is now two crates.
+  - **rerail-prefilter** (`native/crates/prefilter`, 6.3k, under boot): the prefilter (`prefilter`).
+    - It holds the tape's terms as candidate sets, the plans, gates, readers, the lowering and the frontier audit.
+    - It reads the rule API and the stats (rerail-workspace), the label sets and `space` (rerail-transducer), and
+      the lanes (rerail-run).
+    - Only boot reads it: `boot.rs` registers its tapes, image and audit, and `waves::matches` selects sets with
+      it.
+  - **rerail-boot** (16.8k) keeps the rest.
+  - The prefilter's Metal set steps called the device's kernel (`metal_program_backend::set_steps::run`). They now
+    go through the device interface:
+    - `MatcherDevice::set_steps` is a new method, and Metal implements it.
+    - `SetStep` moved to `transducer::packed::device`. Its kernel encoding is a function of the Metal module's
+      (`encoded`), since the type is no longer that crate's.
+  - The prefilter's tests that compile rules need the languages boot registers. Boot now hosts them, in its
+    `prefilter` facade:
+    - `tests.rs`, `lower_tests.rs`, `tree/tests.rs`;
+    - the audit's test (`lower/audit_tests.rs`, moved out of `audit.rs`);
+    - the lab's runs and replay test (`lab_tests.rs`, moved out of `lab.rs`, which keeps the capture).
+  - The items those tests read were widened to `pub`. `lower::finish` and `reschedule` are now `test-hooks` items.
+  - The unit tests that need no engine (`graph`, `gates`, `probes`) stay in rerail-prefilter's own test binary.
+  - Tests:
+    - `cargo check --tests --workspace` is clean on Linux and on a Mac; clippy is clean on the prefilter, boot, the
+      transducer's base and the Metal device.
+    - On a Linux host, rerail-prefilter's tests and boot's prefilter and `waves::matches` tests: 50 of 51. The one
+      failure, `metal_set_steps_compute_the_cpus_candidate_sets`, needs a GPU, and that host's layer has none.
+    - On a Mac, that test passes.
+- **Step 7i** (2026-11-22): the test crates are split by subject, about 10k test lines each. Each new crate is the old
+  crate's facade cut to its mounts, with the same manifest, test load and `test_support`. A mount goes with the
+  subject whose prefix it falls under.
+  - rerail-tests-logic (36.7k) is now four crates:
+
+    | crate | test lines | what it holds |
+    |---|---:|---|
+    | rerail-tests-corpus | 9.2k | `logic::plan::corpus` and `coverage`, the warm tier among them (`--profile warm` now runs `-p rerail-tests-corpus`) |
+    | rerail-tests-rr | 8.9k | `logic::rr`, `program_image`, `program_text`, `json_rules` |
+    | rerail-tests-sql | 11.1k | `sql_executor`, `sql_admission`, `residency` |
+    | rerail-tests-logic | 8.9k | the rest: the planner's tests, the native kernels, the profile, typing, the waves, the stats |
+
+  - CI's step that named `rerail-tests-logic` for `logic::rr::tests` names `rerail-tests-rr`.
+  - Tests: on a Linux host, the four crates in full: 878 of 880. The two failures are one pack-data test and the SQL
+    report test that runs `node`, which that host lacks.
+  - rerail-tests-compile (38.4k) is now five crates. Two mounts follow what they read: `compile::parse::ruff` goes
+    with resolve, since it reads `binds::ruff`, and `scope::php::flow_tests` goes with value, since it reads the
+    PHP oracle (`value::php::tests`).
+
+    | crate | test lines | what it holds |
+    |---|---:|---|
+    | rerail-tests-resolve | 10.3k | `compile::resolve`, `binds`, `binding_tests`, `order`, `parse::ruff` |
+    | rerail-tests-scope | 6.9k | `scope` (but PHP's flow tests), `module_graph`, `identifier`, `lines` |
+    | rerail-tests-value | 9.6k | `value`, `blade`, `php_view`, `matcher::arguments`, `scope::php::flow_tests` |
+    | rerail-tests-calls | 6.6k | `calls`, `literal`, `eval`, `query`, `soundness`, `embed`, `regexes` |
+    | rerail-tests-compile | 6.9k | the rest of `compile` (parse, format arguments, configuration, values) |
+
+    Tests: on a Linux host, the five crates in full: 752 of 756. The 4 failures are pack-data tests.
+  - rerail-tests-matcher (34.1k) is now four crates. The anchors' SQL tests read their anchors' `tests`
+    (`compile_rule`, `document`, `planned_batch`), and cross-file findings read `storage_tests`, so each pair stays
+    in one crate.
+
+    | crate | test lines | what it holds |
+    |---|---:|---|
+    | rerail-tests-anchors | 9.6k | `matcher::d_anchors`, `matcher::p_anchors` |
+    | rerail-tests-workspace | 8.7k | `workspace::tests`, `workspace::context_tests` |
+    | rerail-tests-findings | 7.6k | the rest of `workspace` (storage, cross-file, placement, results), `findings`, `violations` |
+    | rerail-tests-matcher | 9.6k | the rest of `matcher`, and `suppress` |
+
+    Tests: on a Linux host, the four crates in full: 624 of 624.
+  - rerail-tests-transducer (25.1k) is now four crates. The Metal crate is named `conformance`, since test-remote
+    sends a command that names "metal" to a Mac. The greedy contracts read the admission experiment's cases, so the
+    two stay together.
+
+    | crate | test lines | what it holds |
+    |---|---:|---|
+    | rerail-tests-conformance | 8.9k | `metal_semantic_conformance` (with the Metal operator tests it mounts), `metal_program_backend`, `metal_backend` |
+    | rerail-tests-cpu | 6.4k | `native_cpu`, `rir`, `regex_block`, `compilation`, `set_mode`, the capture runs |
+    | rerail-tests-admission | 6.7k | `compile_matcher_tests`, `admission_spike`, `greedy_contract_tests`, `cycle_progress_tests` |
+    | rerail-tests-transducer | 4.6k | the rest: `packed::tests`, `transducer::tests` |
+
+  - Tests:
+    - On a Linux host, cpu, admission and transducer: 183 of 194. Seven of the failures are `UnsupportedBackend`,
+      one is the SQL test's Metal batch (the host has no GPU), and three are pack data.
+    - On one farm Mac, conformance, admission and transducer: 115 of 118. All three failures are pack data.
+    - The binding fixtures of `compile_matcher_tests` now read their Ruff fixtures through `pack_test_data`, so a
+      missing archive gives the pack-data message rather than "No such file".
+  - rerail-tests-demand (24.2k) is now a support crate and the tests over it. 23.2k of its lines were one mount, the
+    reference catalog lowering (`demand::driver::catalog`). That is test-only code which two suites drive, not tests
+    itself.
+    - The new crate rerail-demand-catalog (class `test`, under rerail-tests-demand) holds the lowering: 14.4k lines,
+      with its 1.9k of inline tests, which run in its own test binary.
+      - Its 39 `cfg(test)` helpers that the suites call are `cfg(any(test, feature = "test-hooks"))`. Its 7 inline
+        test modules stay `cfg(test)`.
+      - What the suites read is widened to `pub`, as the split's facades are.
+    - rerail-tests-demand keeps 8.4k of tests: the contract and policy suites, mounted under the lowering's facade
+      (`catalog { pub use rerail_demand_catalog::…::catalog::*; mod policy_lowering_tests; mod
+      production_contract_tests; }`), and the driver's and the virtual tables' tests. The contract suite reads the
+      policy suite's helpers, so the two stay together.
+    - Tests:
+      - On a Linux host, both crates in full: 196 of 202. All 6 failures are device tests (4 `UnsupportedBackend`, 2
+        Metal dispatch counts), as before the split.
+      - On one farm Mac, those 6 tests' filter: 12 of 12.
+  - rerail-tests-lang (16.1k) is now two crates:
+
+    | crate | test lines | what it holds |
+    |---|---:|---|
+    | rerail-tests-tape | 10.7k | `tape` (its tests, tokens, residency, corpus parity) |
+    | rerail-tests-lang | 5.9k | `facts`, `language`, `vue`, `tree` |
+
+    `definition_ids_are_pinned` reads its Ruff fixtures through `pack_test_data`. Tests: on a Linux host, both crates
+    in full: 246 of 248. The 2 failures are pack data.

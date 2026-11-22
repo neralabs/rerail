@@ -10423,3 +10423,15 @@ The width census, 0165 §3's in-place local original, and t52 step 4 (`notes/rol
 - **Theirs' own commits on ours' files**: the census's `made_in` on ours' `Held`, and `Narrowing::unbounded` in ours'
   narrowing loop.
 - **The census's `RANGED`, `BY_NAME` and `BY_SPAN`** are in the global-state list.
+
+### Q491. Roll-up 70 (engine-crating 001841e689 onto Pulling-it-all-together): what the merge chose
+
+Crate split steps 7b to 7i (`notes/roll-up-70-engine-crating.md`):
+- **rerail-observe is rerail-store again.** On ours, the observer's answers are the store's kept facts (t33 K2), and
+  the store's collection sweeps the observer. Git reads both. rerail-store mounts the observer and git over
+  rerail-store-base.
+- **Ours' `mod.rs` changes on theirs' split**: t33's removals and the in-memory store's own folder, in `mod.rs` and
+  `base.rs`.
+- **Ours' code on theirs' interfaces**: `Places::syntax_batch`, the `CHUNK_AXIS` slot in `within.rs`, and boot's
+  ungated `native_cpu::register`.
+- **The global-state list** follows theirs' moves and new slots.

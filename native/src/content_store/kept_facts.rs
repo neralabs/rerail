@@ -793,7 +793,7 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
     drop(putting);
     let finishing = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: the block finished and synced".into());
     // Written back as the store's flush mode says (decision 0481): by default the OS writes it at its own pace.
-    let flush = crate::content_store::connection::flush_of(t);
+    let flush = crate::content_store::flush_of(t);
     w.finish(flush).map_err(io)?;
     std::fs::rename(&making, dir.join(&name)).map_err(io)?;
     sync_dir(&dir, flush).map_err(io)?;

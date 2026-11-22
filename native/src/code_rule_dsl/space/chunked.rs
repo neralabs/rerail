@@ -381,7 +381,7 @@ impl NodeSet {
 
     /// File `file`'s positions (ascending), added to the set.
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))] // tests and measurements
-    pub(in crate::code_rule_dsl) fn insert_file(&mut self, space: &NodeSpace, file: usize, positions: impl IntoIterator<Item = u32>) {
+    pub fn insert_file(&mut self, space: &NodeSpace, file: usize, positions: impl IntoIterator<Item = u32>) {
         let base = space.base(file);
         let mut b = Builder::default();
         positions.into_iter().for_each(|p| b.node(base + p));
@@ -390,7 +390,7 @@ impl NodeSet {
 
     /// File `file`'s runs `ranges` (sorted, apart), added to the set: §3's tree axes build sets this way.
     #[allow(dead_code)] // no tree-axis set is built on the host yet
-    pub(in crate::code_rule_dsl) fn insert_runs(&mut self, space: &NodeSpace, file: usize, ranges: impl IntoIterator<Item = std::ops::Range<u32>>) {
+    pub fn insert_runs(&mut self, space: &NodeSpace, file: usize, ranges: impl IntoIterator<Item = std::ops::Range<u32>>) {
         let base = space.base(file);
         let mut b = Builder::default();
         ranges.into_iter().for_each(|r| b.run(base + r.start, base + r.end));
@@ -870,7 +870,7 @@ impl NodeSet {
     }
 
     #[cfg_attr(not(any(test, feature = "test-hooks")), allow(dead_code))] // the programs use `difference`
-    pub(in crate::code_rule_dsl) fn difference_with(&mut self, other: &Self) {
+    pub fn difference_with(&mut self, other: &Self) {
         *self = self.apply(other, Op::AndNot);
     }
 
@@ -1049,7 +1049,7 @@ impl NodeSet {
 
     /// The same members with every chunk a bitmap (to measure what runs cost against words).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(in crate::code_rule_dsl) fn as_bitmaps(&self) -> Self {
+    pub fn as_bitmaps(&self) -> Self {
         let mut out = Self::default();
         for e in &self.directory {
             let v = self.view(e);
@@ -1077,7 +1077,7 @@ impl NodeSet {
 
     /// Per form: (chunks, containers' elements: values, words or runs).
     #[cfg(any(test, feature = "test-hooks"))]
-    pub(in crate::code_rule_dsl) fn census(&self) -> [(usize, usize); 3] {
+    pub fn census(&self) -> [(usize, usize); 3] {
         let mut s = [(0, 0); 3];
         for e in &self.directory {
             let at = match e.form {

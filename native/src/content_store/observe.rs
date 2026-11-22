@@ -35,7 +35,7 @@
 
 #[allow(unused_imports)]
 use crate::git_workspace::snapshot as source;
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use crate::content_store::RACY_NS;
 use rusqlite::{Connection, params};
 use sha2::{Digest as _, Sha256};

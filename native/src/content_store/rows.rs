@@ -3,10 +3,10 @@
 
 use super::{HashKey, STRING_PATH, StoreError, StoreResult};
 #[allow(unused_imports)]
-use crate::content_store::connection::Cached as _;
+use crate::content_store::Cached as _;
 use rusqlite::{Connection, OptionalExtension, params};
 
-pub(super) fn generation(transaction: &Connection) -> StoreResult<i64> {
+pub fn generation(transaction: &Connection) -> StoreResult<i64> {
     transaction
         .query_row_cached(
             "SELECT generation FROM store_state WHERE singleton=1",
@@ -16,7 +16,7 @@ pub(super) fn generation(transaction: &Connection) -> StoreResult<i64> {
         .map_err(StoreError::from)
 }
 
-pub(super) fn hash_params(key: HashKey) -> [i64; 5] {
+pub fn hash_params(key: HashKey) -> [i64; 5] {
     [
         key.algorithm,
         key.lanes[0],
@@ -26,7 +26,7 @@ pub(super) fn hash_params(key: HashKey) -> [i64; 5] {
     ]
 }
 
-pub(super) fn intern_hash(transaction: &Connection, key: HashKey) -> StoreResult<i64> {
+pub fn intern_hash(transaction: &Connection, key: HashKey) -> StoreResult<i64> {
     let existing = transaction
         .prepare_cached(
             "SELECT hash_id FROM hashes INDEXED BY hashes_by_prefix \
@@ -45,7 +45,7 @@ pub(super) fn intern_hash(transaction: &Connection, key: HashKey) -> StoreResult
     Ok(transaction.last_insert_rowid())
 }
 
-pub(super) fn intern_string(
+pub fn intern_string(
     transaction: &Connection,
     domain: i64,
     value: &str,
@@ -59,7 +59,7 @@ pub(super) fn intern_string(
 }
 
 /// `intern_string` for a `value` whose SHA-256 `hash` the caller computed outside the transaction.
-pub(super) fn intern_hashed_string(
+pub fn intern_hashed_string(
     transaction: &Connection,
     domain: i64,
     value: &str,
@@ -88,7 +88,7 @@ pub(super) fn intern_hashed_string(
     Ok(transaction.last_insert_rowid())
 }
 
-pub(super) fn intern_path(transaction: &Connection, path: &str) -> StoreResult<i64> {
+pub fn intern_path(transaction: &Connection, path: &str) -> StoreResult<i64> {
     let string_id = intern_string(transaction, STRING_PATH, path)?;
     transaction
         .prepare_cached(
@@ -101,7 +101,7 @@ pub(super) fn intern_path(transaction: &Connection, path: &str) -> StoreResult<i
         .map_err(StoreError::from)
 }
 
-pub(super) fn validate_relative_path(path: &str) -> StoreResult<()> {
+pub fn validate_relative_path(path: &str) -> StoreResult<()> {
     if path.is_empty()
         || path.starts_with('/')
         || path

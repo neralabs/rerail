@@ -12,7 +12,7 @@ use std::{
     sync::Arc,
 };
 
-pub(in crate::code_rule_dsl) fn plans<'a>(
+pub fn plans<'a>(
     rules: impl IntoIterator<Item = &'a CompiledCodeRule>,
 ) -> BTreeMap<u32, Vec<Arc<AnchorPlan>>> {
     fn query(q: &Query, out: &mut BTreeMap<u32, Vec<Arc<AnchorPlan>>>, seen: &mut HashSet<usize>) {

@@ -1,4 +1,4 @@
-# The engine's tests of the languages: tapes, the language registry, facts, trees, Blade and Vue (docs/final-shape/proposals/crate-split/incremental-plan.md, step 2).
+# The engine's tests of the languages: their adapters and kit, the facts and their producers and virtual tables, Vue and the tree (docs/final-shape/proposals/crate-split/incremental-plan.md, step 7i).
 # A test crate: its library is its tests (`#![cfg(test)]`). Its manifest is boot's, with boot below it
 # (tools/cratify/split_test_crates.py), and kept by hand since.
 [package]
@@ -6,7 +6,7 @@ name = "rerail-tests-lang"
 version = "0.1.0"
 edition = "2024"
 publish = false
-description = "The engine's tests of the languages: tapes, the language registry, facts, trees, Blade and Vue."
+description = "The engine's tests of the languages: their adapters and kit, the facts and their producers and virtual tables, Vue and the tree."
 
 [features]
 # Every registry language (`languages/<id>.json`) is built by default. A build without `lang-<id>` keeps the

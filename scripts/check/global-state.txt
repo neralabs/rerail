@@ -78,7 +78,7 @@ native/src/code_rule_dsl/build_ids.rs::GRAMMAR	stays	computed once from the engi
 native/src/code_rule_dsl/build_ids.rs::REBUILT	stays	computed once from the engine's own grammar
 native/src/code_rule_dsl/compile/ast_rule.rs::BY_DIALECT	stays	each grammar's supertype names, computed once from its kind catalog (the engine's own constants)
 native/src/code_rule_dsl/compile/resolve.rs::FLOW_RESOLVES	stays	computed once from the engine's constants
-native/src/code_rule_dsl/cpython/mod.rs::LOAD	stays	code registered at load (an init-array entry)
+native/crates/lang_python/src/lib.rs::LOAD	stays	code registered at load (an init-array entry)
 native/src/code_rule_dsl/cpython/syntax.rs::NOT	stays	a regex of a literal
 native/src/code_rule_dsl/device_metal.rs::LOAD	stays	code registered at load
 native/src/code_rule_dsl/device_metal.rs::METAL	stays	code registered at load
@@ -93,7 +93,7 @@ native/src/code_rule_dsl/facts/facts_a/facts.rs::MADE	stays	process-unique numbe
 native/src/code_rule_dsl/facts/families.rs::PREFILTER_IMAGE	stays	computed once from the engine's own files
 native/src/code_rule_dsl/facts/grammar_shape.rs::GRAMMAR	stays	computed once from the engine's own grammar
 native/src/code_rule_dsl/facts/grammar_shape.rs::KEPT	stays	computed from the engine's own grammar, per kind
-native/src/code_rule_dsl/facts/nearest.rs::CHUNK_AXIS	stays	compiled once from the engine's own code
+native/src/code_rule_dsl/facts/vtab/syntax/device_chunk.rs::CHUNK_AXIS	stays	code a crate above registers at load (the device's kind-set axis in a chunk)
 native/src/code_rule_dsl/facts/nearest.rs::NEAREST	stays	compiled once from the engine's own code
 native/src/code_rule_dsl/facts/rows.rs::BLOCK_DEVICE	stays	code a crate above registers at load
 native/src/code_rule_dsl/facts/rows.rs::HEAP_NET	stays	code a crate above registers at load (the allocator's net count)
@@ -298,7 +298,7 @@ native/src/content_store/connection.rs::CONNECTION_FUNCTIONS	stays	code a crate 
 native/src/content_store/connection.rs::MADE	stays	process-unique numbers of the connection registries (a thread's connections are kept by them)
 native/src/content_store/connection.rs::ONCE	stays	a hook registered once
 native/src/content_store/journal.rs::COUNTER	stays	an id counter: append-only
-native/src/content_store/mod.rs::SEARCH_INDEX_FAMILY_WRITES	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
+native/src/content_store/base.rs::SEARCH_INDEX_FAMILY_WRITES	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/content_store/observe.rs::JOURNAL	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build (a test process's choice of the journal; a run's is its setting)
 native/src/content_store/record.rs::KINDS	stays	code a crate above registers at load
 native/src/content_store/record.rs::LOG	stays	a test's log
@@ -311,7 +311,6 @@ native/src/git_access/opener.rs::ASSUME_ANOTHER_OWNER	stays	a test hook (test-ho
 native/src/git_access/pool.rs::ROOTS	shared	one-per-repository resources (Git's opened roots)
 native/src/git_access/setup.rs::INSTALLED	stays	the Git setup the host installs once (code registered at load)
 native/src/git_workspace.rs::NAMES	stays	computed once from the engine's own files (the host's ignored folders, compiled in)
-native/src/git_workspace.rs::NEXT_FIXTURE	stays	an id counter: append-only
 native/src/git_workspace.rs::SOURCE_ALIAS_HASHES	stays	exists only in a test build (cfg test-hooks): a test's observation of the process, never in a product build
 native/src/lib.rs::GLOBAL	stays	the allocator (code registered at load)
 native/src/lib.rs::ONCE	stays	a hook registered once
@@ -330,12 +329,31 @@ native/crates/typing/src/lib.rs::LOAD	stays	code registered at load (an init-arr
 native/src/code_rule_dsl/logic/costs/join_steps.rs::INSTALL	stays	code a crate above registers at load (the planner's batch pricer over a trained join model)
 native/src/code_rule_dsl/logic/plan/keeps.rs::CORE_NAMES	stays	code a crate above registers at load (the core's relation names)
 native/src/code_rule_dsl/logic/run_state.rs::CARRIERS	stays	code the program's composition registers at load (the run's carried context, in order)
+native/src/code_rule_dsl/facts/core.rs::FAMILY_COLUMNS	stays	code a crate above registers at load (a family's columns)
+native/src/code_rule_dsl/sql_executor/maintenance.rs::TEMPORAL	stays	code a crate above registers at load (the executor's temporal tables)
+native/src/code_rule_dsl/transducer/packed.rs::CPU	stays	code a crate above registers at load (the compiled CPU executor)
+native/src/code_rule_dsl/transducer/packed/compile/matcher.rs::WAVES	stays	code a crate above registers at load (the device that runs the matchers' waves)
 native/crates/tests_compile/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_resolve/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_scope/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_value/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_calls/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/demand_catalog/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_demand/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_lang/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_tape/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_logic/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_corpus/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_rr/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_sql/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_matcher/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_anchors/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_workspace/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_findings/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/crates/tests_transducer/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_conformance/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_cpu/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
+native/crates/tests_admission/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the test binary boots the program)
 native/src/code_rule_dsl/boot.rs::LOAD	stays	code registered at load (an init-array entry: a test binary boots the program)
 native/src/code_rule_dsl/boot.rs::MIBS	stays	jemalloc's control ids for its per-thread peak, looked up once (the allocator's own)
 native/src/code_rule_dsl/boot.rs::ONCE	stays	the providers registered once a process (code registered at load: `boot::install`)
@@ -352,6 +370,9 @@ native/crates/plan_base/src/lib.rs::LOAD	stays	code registered at load (an init-
 native/crates/plan_search/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/rr_root/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/crates/run/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/sessions/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/transducer/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
+native/crates/transducer_cpu/src/lib.rs::LOAD	stays	code registered at load (an init-array entry: the crate's own test binary boots the program)
 native/src/code_rule_dsl/logic/device.rs::DEVICE	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/plan/corpus/base.rs::RUNNER	stays	code a crate above registers at load
 native/src/code_rule_dsl/logic/profile/memory.rs::BYTES	stays	the process's width census (RERAIL_WIDTH_CENSUS): a measurement of the process's held columns, as the footprint sampler's

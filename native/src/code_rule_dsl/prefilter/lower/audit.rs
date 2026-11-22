@@ -2,7 +2,7 @@
 use crate::code_rule_dsl::{json::hex_digest, model::CompiledCodeRule};
 use serde_json::json;
 
-pub(in crate::code_rule_dsl) fn candidate_frontier_audit(
+pub fn candidate_frontier_audit(
     rule: &CompiledCodeRule,
 ) -> serde_json::Value {
     let mut languages = Vec::new();
@@ -71,21 +71,4 @@ pub(in crate::code_rule_dsl) fn candidate_frontier_audit(
     json!({"format":"rerail.frontier-audit/v1","rule":rule.id,"policyDigest":rule.digest,"deterministic":languages.iter().all(|v|v["deterministic"]==true),"languages":languages,"sqlExecution":"none; plan compilation only","scope":"one compiled policy; identical plan objects, capabilities and tape input slot"})
 }
 
-#[cfg(test)]
-mod tests {
-    use crate::code_rule_dsl::test_support::compiled;
-    use serde_json::json;
-
-    #[test]
-    fn plan_permutations_compile_to_the_same_statement() {
-        let rule = compiled(json!({ "rule": { "any": [
-            { "kind": "call_expression", "regex": "fetch" },
-            { "kind": "string", "regex": "secret" },
-            { "kind": "identifier", "regex": "^eval$" }
-        ] } }));
-        let report = super::candidate_frontier_audit(&rule.inner);
-        assert_eq!(report["format"], "rerail.frontier-audit/v1");
-        assert!(!report["languages"].as_array().unwrap().is_empty(), "{report}");
-        assert_eq!(report["deterministic"], true, "{report}");
-    }
-}
+// tests (audit_tests.rs): a test the engine hosts (it reads above this crate; boot mounts it)

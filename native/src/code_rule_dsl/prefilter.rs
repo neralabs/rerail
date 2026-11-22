@@ -13,38 +13,38 @@ use crate::code_rule_dsl::{language, tape::TapeDoc};
 use crate::content_store::{ContentStore, StoreError, StoreResult, TapeId, TapePrefilter};
 use ast_grep_core::Doc;
 
-mod candidates;
-mod vocabulary;
-mod execute;
-mod gates;
-mod graph;
-mod kinds;
-mod lab;
-mod lower;
-pub(crate) mod plans;
+pub mod candidates;
+pub mod vocabulary;
+pub mod execute;
+pub mod gates;
+pub mod graph;
+pub mod kinds;
+pub mod lab;
+pub mod lower;
+pub mod plans;
 /// The store's crate holds it (its vocabulary uses it too).
 #[path = "prefilter/lower/audit.rs"]
-mod audit;
-pub(in crate::code_rule_dsl) use audit::candidate_frontier_audit;
+pub mod audit;
+pub use audit::candidate_frontier_audit;
 // P's incremental BLOB reader and `nera_tree`, for the §17 pure-SQL fallback; `tapes` is the
 // store's tapes as `nera_tree` reads them.
 #[allow(dead_code)]
-mod reader;
-pub(in crate::code_rule_dsl) mod sets;
-pub(in crate::code_rule_dsl) mod terms;
-pub(crate) mod tapes;
-mod tree;
-mod values;
+pub mod reader;
+pub mod sets;
+pub mod terms;
+pub mod tapes;
+pub mod tree;
+pub mod values;
 
-pub(crate) use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
+pub use crate::code_rule_dsl::facts::core::KIND_STRIDE as LANG_STRIDE;
 
-pub(crate) use super::search_index::kind_code;
+pub use super::search_index::kind_code;
 #[cfg(test)]
 use super::search_index::kind_token;
 
 
 /// A tape's prefilter rows, from the tape alone.
-pub(in crate::code_rule_dsl) fn image(tape_id: TapeId, doc: &TapeDoc, interrupted: &impl Fn() -> bool) -> StoreResult<TapePrefilter> {
+pub fn image(tape_id: TapeId, doc: &TapeDoc, interrupted: &impl Fn() -> bool) -> StoreResult<TapePrefilter> {
     let lang = u32::from(language::tape_tag(*doc.get_lang()).ok_or_else(|| StoreError::Invalid("unregistered tape language".to_owned()))?);
     let mut positions = kinds::Builder::default();
     let mut counts = [0_u32; LANG_STRIDE as usize];
@@ -99,7 +99,7 @@ pub fn publish(store: &ContentStore, tapes: &[TapeId], docs: &[TapeDoc]) -> Stor
 /// (tape, preorder) rows in order. Tapes of another language or without prefilter rows have none.
 /// A superset of each plan's roots (`lower.rs`); the matcher confirms them.
 #[cfg_attr(not(test), allow(dead_code))]
-pub(in crate::code_rule_dsl) fn select(
+pub fn select(
     store: &ContentStore,
     lang: u32,
     plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
@@ -117,7 +117,7 @@ pub(in crate::code_rule_dsl) fn select(
 
 /// `select`'s rows as (index in `tapes`, preorder), unordered: 8 bytes a row, not 16. On Metal the
 /// rows are held while the labels' GPU runs are (06 S7: 1.15 M rows, at the footprint's peak).
-pub(in crate::code_rule_dsl) fn select_indexed(
+pub fn select_indexed(
     store: &ContentStore,
     lang: u32,
     plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
@@ -133,7 +133,7 @@ pub(in crate::code_rule_dsl) fn select_indexed(
 }
 
 /// Each plan's candidates over `tapes` as sets over their node space (`sets`; decision 0024 §2).
-pub(in crate::code_rule_dsl) fn select_sets(
+pub fn select_sets(
     store: &ContentStore,
     lang: u32,
     plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
@@ -146,7 +146,7 @@ pub(in crate::code_rule_dsl) fn select_sets(
 
 /// `select_indexed` by the candidate SQL (`lower::batch`, `execute`): the reference the set
 /// program is checked against, and the anchor lab's subject.
-pub(in crate::code_rule_dsl) fn select_indexed_sql(
+pub fn select_indexed_sql(
     store: &ContentStore,
     lang: u32,
     plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
@@ -183,7 +183,7 @@ pub(in crate::code_rule_dsl) fn select_indexed_sql(
 /// they are exactly its rule's roots; where not, they are a superset, as `select`'s. The wave's
 /// `Candidates::Sql` route (`RERAIL_CANDIDATES=sql`) drives it.
 #[allow(clippy::type_complexity)]
-pub(in crate::code_rule_dsl) fn fallback(
+pub fn fallback(
     store: &ContentStore,
     lang: u32,
     plans: &[&crate::code_rule_dsl::matcher::AnchorPlan],
@@ -213,5 +213,4 @@ pub(in crate::code_rule_dsl) fn fallback(
 // The tests' fixtures: this crate's tests and the engine's read them.
 #[cfg(any(test, feature = "test-hooks"))]
 pub mod fixtures;
-#[cfg(test)]
-pub(in crate::code_rule_dsl) mod tests;
+// tests: a test the engine hosts (it reads above this crate; boot mounts it)

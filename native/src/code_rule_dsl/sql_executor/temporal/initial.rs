@@ -198,7 +198,7 @@ pub fn run(
                 run.objects.retain(|(name,_)|!unused.contains(name));
             }
             run.objects.extend(trace.objects());
-            run.temporal.insert(0, trace);
+            run.temporal.insert(0, Box::new(trace));
             Ok(Some(waves))
         }
         Err(err) => {
@@ -252,7 +252,7 @@ pub fn apply(
     changes: &mut BTreeMap<String, Delta>,
     limit: u32,
 ) -> Result<Value> {
-    let mut trace = run.temporal.remove(&0).unwrap();
+    let mut trace = *run.temporal.remove(&0).unwrap().into_any().downcast::<Trace>().expect("a retained trace");
     let result = (|| {
         let mut report = json!({"positive_waves":0,"overdelete_waves":0,"refreshed_strata":[],"incremental_strata":[],"recursive_partitions":0,"recursive_frames":0,"reducer_groups":0,"context_rows":0,"outputs":{}});
         let store = w
@@ -291,6 +291,6 @@ pub fn apply(
             .extend(trace.objects().filter(|(n, _)| !owned.contains(n)));
         Ok(report)
     })();
-    run.temporal.insert(0, trace);
+    run.temporal.insert(0, Box::new(trace));
     result
 }

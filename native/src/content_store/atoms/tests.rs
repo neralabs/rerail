@@ -1,4 +1,5 @@
 use super::super::*;
+use std::sync::atomic::Ordering;
 
 /// A test database's path, in a directory of its own that goes with it: the store's side files (WAL, locks, the
 /// files database) too. Bound before the stores opened on it, so it is dropped after them.

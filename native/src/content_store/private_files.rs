@@ -26,7 +26,7 @@ pub fn prepare_cache_directory(path: &Path) -> io::Result<()> {
 }
 
 /// Prepares a database at a caller-supplied path. Only new parent directories get a mode here.
-pub(super) fn prepare(path: &Path) -> io::Result<()> {
+pub fn prepare(path: &Path) -> io::Result<()> {
     if let Some(folder) = path.parent().filter(|folder| !folder.as_os_str().is_empty()) {
         create_directory(folder)?;
     }
