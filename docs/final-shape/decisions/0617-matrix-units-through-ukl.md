@@ -103,7 +103,7 @@ Every operation is convergent over the owner: every lane of every owning SIMD gr
 | Apple M5 | Metal 4 `matmul2d` over `cooperative_tensor` | f16, bf16; i8 to verify | configured (dividing 64), several groups | the M5 |
 | Intel Xe2 (the Arc 140V) | `cl_intel_subgroup_matrix_multiply_accumulate` (DPAS) | f16, bf16, i8 | 8×16×16 (i8: K 32) at sub-group width 16 (to verify) | the Arc: shape only, no performance work (decision 0576's compile times) |
 | AMD RDNA3 and later | `v_wmma_*` | f16, bf16, i8 | 16×16×16, 1 group (wave32) | none yet: emulated until one joins the farm |
-| AMD RDNA2 (the Radeon 680M) | none | none | emulated: 16×16×16, 1 group | win2 |
+| AMD RDNA2 (the Radeon 680M) | none | none | emulated: 16×16×16, 1 group | the Radeon 680M host |
 | The CPU | none | none | emulated: 16×16×16, 1 group, shim lanes | every host |
 
 - **Emulated means the reference form.** It is the library's portable UKL, written over the SIMD group's shuffles:
