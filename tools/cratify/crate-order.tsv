@@ -13,6 +13,7 @@ rerail-simdjson	core
 rerail-clif	core
 rerail-json-lean	core
 rerail-tape-format	core
+rerail-json-aot	core
 rerail-compiler	core
 rerail-rir	core
 rerail-rr-syntax	core

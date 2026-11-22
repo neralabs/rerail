@@ -5698,6 +5698,11 @@ place of the views: copies of tape answers. The views already cover the whole so
   `granules::span_of`); then `Extra` makes no place rows, and `made` binds no place relation.
 - **Check**: the view's rows equal the rows made today, for a program reading each span relation.
 - **Done when**: no place row is made for a node or token in core.rerail's shape.
+- **Its cost on an edit** (2026-11-21, ep2's `body` on the M1 Max, Q332): a node's place in a made relation is a
+  probe that makes the node's document, every relation of its group (decision 0494). The strata derived again over
+  `line` (its rows after the edited line moved) probe the lines of every document's diagnostics: 38 unchanged
+  documents made, `line` by node 32 times and `visit_index` 4 (the profile's "a batch's documents made by a probe"),
+  about 0.09 s of the edit's 4.0 s. The view reads a node's place off the tape and makes nothing.
 
 
 ### Q264. (Q124 on Native-and-GPU-strata until 2026-11-18; Q185 on oscar until 2026-11-18) The device's `str_cmp` of made texts loses rows under load — done 2026-11-18
@@ -10232,3 +10237,12 @@ the Neural Engine's models as kept facts, and each native step's answer declared
 is the union of both lists, and both sides' new rr tests are kept. Found red at both tips, fixed at root in the next
 commits: the prepared-plans test counted phase 0's line, since Q242 left its own rule unprepared; and two Git modules
 read relations no file in their program declared (`notes/roll-up-50-typing.md`).
+
+### Q472. Roll-up 51 (cost-classifier-metal-rf ca7e1c18a6 onto Pulling-it-all-together): what the merge chose
+
+Theirs' 83 commits taken: `rerail-json-aot` (0551, 0552), 0563, 0592, 0597's contexts, the witnessed greedy order, the
+held image store and kept rows staged. Theirs' edits of code ours' split moved are applied where it now is
+(`plan/search.rs`, `corpus/base.rs`, `statkeep/tests.rs`). `contexts` is rerail-rr-root's, beside `rr`, which runs it;
+R9's test of `own_names` stands beside it in `base.rs`. Found red at both tips, fixed at root in the next commits: a
+session's aggregate stratum derived again, and a warm host edit building an unchanged document from its tape, both only
+beside the other corpus tests (`notes/roll-up-51-cost-classifier-metal-rf.md`).

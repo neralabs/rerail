@@ -150,6 +150,9 @@ pub struct Report {
     pub cross_quiet: (usize, usize),
     /// A session's maintained run: the strata it skipped, no read of them changed (0364 R9; `Outcome::walked`).
     pub cross_skipped: usize,
+    /// Of those, the strata a changed read reached that no rule of saw a row of its delta, by kind or key (decision
+    /// 0563 B; `Outcome::unseen`), by their keys.
+    pub cross_unseen: Vec<String>,
     /// The cross-file relations handed off as the run went, their frames made once no later stratum read them and
     /// their rows let go (Q74): a run not driven by deltas.
     pub cross_handed: usize,
@@ -1531,8 +1534,13 @@ pub fn drop_relations<P: link::Part>(part: &mut P, relations: &BTreeSet<String>)
 pub fn own_names<P: link::Part>(part: &P, core: &BTreeSet<String>) -> BTreeSet<String> {
     let prog = part.head();
     let heads: Vec<String> = part.rules().into_iter().map(|(head, _)| head).collect();
-    // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy).
-    let shared_outputs = |r: &str| r == "violation" || r == crate::code_rule_dsl::logic::rr::UNPLACED || crate::code_rule_dsl::logic::rr::is_diagnostic(r);
+    // `violation`, and each finding's relation (`rr::is_diagnostic`, named by its policy). R9's relations too: each
+    // program's findings' nodes by clause (named by the clause), one rule refusing them and the placement it reads,
+    // the same rules in every program, so a pack holds one of each, not one a program.
+    let shared_outputs = |r: &str| {
+        use crate::code_rule_dsl::logic::rr::{FOUND_NODE, FOUND_THROUGH, PLACED_AT, PLACED_LINE, UNPLACED};
+        r == "violation" || [UNPLACED, FOUND_NODE, FOUND_THROUGH, PLACED_AT, PLACED_LINE].contains(&r) || crate::code_rule_dsl::logic::rr::is_diagnostic(r)
+    };
     let file_inputs = file_inputs(prog);
     let inputs = prog.input_names();
     let (declared, facts) = (prog.declared_names(), prog.fact_names());
@@ -2354,3 +2362,30 @@ pub fn combine(programs: &[&str]) -> Result<Arc<crate::code_rule_dsl::logic::pro
     combine_version(programs, &masked.iter().map(|t| t.as_ref()).collect::<Vec<_>>(), &graphs, &added::Added::default(), None).map(|(program, _)| program)
 }
 
+
+// Its own tests, which read `link`'s parts (this crate's); `base_tests` is the engine's: it compiles rule documents.
+#[cfg(test)]
+mod tests {
+    /// Decision 0431 R9's relations are a pack's, not a program's (`own_names`): each program's findings' nodes by
+    /// clause and the one rule refusing them are the same relations in every program, so a pack holds one of each.
+    /// Each program's own, they were 310 relations and as many strata in one pack of corpus0's policies.
+    #[test]
+    fn a_packs_programs_share_their_unplaced_findings_relations() {
+        use super::super::link::Part as _;
+        let text = r#"
+.policy "t:shared-unplaced" revision 1
+.decl e(n: node)
+.input e
+.violation Hit(at: node) "a hit"
+Hit(n) :- e(n).
+"#;
+        let v = crate::code_rule_dsl::logic::rr::parse_version(text).unwrap();
+        let heads: Vec<String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).collect();
+        assert!(heads.iter().any(|h| h == crate::code_rule_dsl::logic::rr::FOUND_NODE), "the finding's node by its clause: {heads:?}");
+        let own = super::own_names(&super::super::link::Versioned::of_version(v).unwrap(), &crate::code_rule_dsl::logic::rr::core_names());
+        for shared in [crate::code_rule_dsl::logic::rr::FOUND_NODE, crate::code_rule_dsl::logic::rr::FOUND_THROUGH, crate::code_rule_dsl::logic::rr::UNPLACED, crate::code_rule_dsl::logic::rr::PLACED_AT, crate::code_rule_dsl::logic::rr::PLACED_LINE] {
+            assert!(!own.contains(shared), "{shared} is the pack's: {own:?}");
+        }
+        assert!(own.contains("Hit"), "the finding's relation is the program's own: {own:?}");
+    }
+}

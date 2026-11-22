@@ -57,6 +57,13 @@ fn documents_read_where_they_lie_count_as_their_flat_rows() {
     scanned.documents_scanned(&source(&docs[4]), &from, -1);
     scanned.documents_scanned(&source(&doc(5, 90, 1)), &from, 1);
     assert_eq!(scanned, fresh);
+    // Counted in windows that end where a document does (a large relation's, bounding the count's lists): the
+    // same counts, at a window shorter than a document and at one of several.
+    for window in [7, 100, 1000] {
+        let mut windowed = RelStats::new(names());
+        windowed.documents_scanned_in(&source(&all), &from, 1, window);
+        assert_eq!(windowed, flat, "window {window}");
+    }
 }
 
 #[test]

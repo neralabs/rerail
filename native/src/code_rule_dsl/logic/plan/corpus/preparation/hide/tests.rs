@@ -133,7 +133,7 @@
             let (v, _) = p.finish().unwrap();
             let made = v.declared_names().iter().filter(|r| r.starts_with("rr_in_")).count();
             let mut p = Pipeline::new("test", v);
-            let mut fold = super::super::combining::FoldOwn { label, folded: 0 };
+            let mut fold = super::super::combining::FoldOwn { label, folded: 0, diffed: Default::default() };
             let (mut merge, mut repeats) = (super::super::merge::MergeIdentical::default(), super::super::merge::DropRepeated::default());
             p.program(&mut fold).program(&mut repeats).program(&mut merge).program(&mut repeats);
             let (v, _) = p.finish().unwrap();
@@ -184,7 +184,7 @@
             e.finish().unwrap()
         };
         let mut p = Pipeline::new("test", v);
-        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0, diffed: Default::default() };
         p.program(&mut fold);
         let (v, _) = p.finish().unwrap();
         assert!(fold.folded > 0);
@@ -221,7 +221,7 @@
             RUN_VALUE_KEYS,
         );
         let mut p = Pipeline::new("test", v);
-        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0, diffed: Default::default() };
         p.program(&mut fold);
         let (v, _) = p.finish().unwrap();
         assert!(fold.folded > 0);
@@ -236,6 +236,82 @@
         let pair = rules_of(&v, "rr_narrow_pair");
         assert!(!pair.is_empty() && pair.iter().all(|r| r.contains("rr_narrow_asg(") && !r.contains(" pair(") && !r.contains(&wide)), "made again, narrow: {all:#?}");
         assert!(rules_of(&v, "paired").iter().all(|r| r.contains("rr_narrow_pair(")), "{all:#?}");
+    }
+
+    /// A narrow copy is its original's rows under the narrow bound where its head holds a constant for no node (`-1`,
+    /// `param_parts`' shape on corpus0; `whole` reads it, its `-1` or its node), and where it joins its document through
+    /// a relation's number column that its
+    /// rules make a document's (`modnode(d: number, m: node) :- node(d, m, …)`, `modname`'s shape): neither is
+    /// another document.
+    #[test]
+    fn a_narrow_copy_is_its_originals_rows_under_the_narrow_bound_through_constants_and_document_columns() {
+        use crate::code_rule_dsl::facts::vtab::syntax::{HIDDEN_KEYS, RUN_VALUE_KEYS};
+        let v = hidden(
+            concat!(
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+                ".decl part(n: node, d: node)\npart(n, -1) :- e(n), kind(n, \"identifier\").\npart(n, d) :- e(n), field(n, \"value\", d).\n",
+                ".decl modnode(d: number, m: node)\nmodnode(d, m) :- node(d, m, \"module\", _, _).\n",
+                ".decl modname(m: node, q: symbol)\nmodname(m, q) :- modnode(d, m), doc(d, _, q).\n",
+                ".decl only(n: node)\nonly(r) :- parsed(_, \"annotation\", r).\n",
+                ".decl pp(n: node)\npp(n) :- part(n, _).\n",
+                ".decl whole(n: node, d: node)\nwhole(n, d) :- part(n, d), e(n).\n.decl wh(n: node)\nwh(n) :- whole(n, _).\n",
+                ".decl sk(kind: symbol)\nsk(\"module\").\n.decl ee(n: node, s: node)\nee(n, s) :- nearest(n, s, sk).\n.decl ex(n: node)\nex(n) :- ee(n, _).\n",
+                ".decl mn(n: node)\nmn(n) :- modname(n, _).\n",
+                ".decl out(n: node)\n.output out\n",
+                "out(n) :- only(n), part(n, _).\nout(n) :- only(n), modname(n, _).\nout(n) :- only(n), whole(n, _).\nout(n) :- only(n), ee(n, _).\nout(n) :- pp(n).\nout(n) :- mn(n).\nout(n) :- wh(n).\nout(n) :- ex(n).\n",
+            ),
+            RUN_VALUE_KEYS,
+        );
+        let mut p = Pipeline::new("test", v);
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0, diffed: Default::default() };
+        p.program(&mut fold);
+        let (v, _) = p.finish().unwrap();
+        let all: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+        let (wide, narrow) = ((i64::from(HIDDEN_KEYS) << 32).to_string(), (i64::from(RUN_VALUE_KEYS) << 32).to_string());
+        for rel in ["part", "modname", "whole"] {
+            let copy = rules_of(&v, &format!("rr_narrow_{rel}"));
+            assert!(copy.len() == 1 && copy[0].contains(&format!(" {rel}(")) && copy[0].contains(&narrow) && !copy[0].contains(&wide), "{rel}, its rows under the narrow bound: {all:#?}");
+        }
+        // `ee` reads no bound (`scope_node`'s shape on corpus0): widened or not, its rows are the same, and its readers
+        // read it.
+        assert!(rules_of(&v, "ee").iter().all(|r| !r.contains(&narrow) && !r.contains(&wide)), "{all:#?}");
+        assert!(rules_of(&v, "rr_narrow_ee").is_empty() && rules_of(&v, "ex").iter().all(|r| r.contains(" ee(")), "ee is read as it is: {all:#?}");
+    }
+
+    /// A narrow copy that holds an annotation's rows is made again, not its original's rows under the narrow bound:
+    /// `wstart` on corpus0 joins an annotation's name (`n`, from `parsed_in`'s tree) to its host file's scopes (`s`)
+    /// through the annotation's copy of `nameref`, which hiding wrote and its narrow copy reads widened too; `walk` and
+    /// `hosts` read it, and `parsed_in` holds an annotation's nodes itself. `nameref` and `astr`, bounded in one
+    /// document, are their originals' rows under the bound.
+    #[test]
+    fn a_narrow_copy_that_holds_an_annotations_rows_is_made_again() {
+        use crate::code_rule_dsl::facts::vtab::syntax::RUN_VALUE_KEYS;
+        let v = hidden(
+            concat!(
+                ".decl parsed(s: node, g: symbol, r: node)\n.decl e(a: node)\n.input parsed, e\n",
+                ".decl nameref(n: node)\nnameref(n) :- e(n), kind(n, \"identifier\").\n",
+                ".decl astr(s: node)\nastr(s) :- e(s), kind(s, \"string\").\n",
+                ".decl parsed_in(x: node, s: node)\nparsed_in(x, s) :- astr(s), parsed(s, \"annotation\", x).\n",
+                ".decl wstart(n: node, s: node)\nwstart(n, s) :- nameref(n), parsed_in(n, h), child(s, h, _).\n",
+                ".decl walk(n: node, s: node)\nwalk(n, s) :- wstart(n, s).\nwalk(n, p) :- walk(n, s), child(p, s, _).\n",
+                ".decl hosts(s: node)\nhosts(s) :- wstart(_, s).\n",
+                ".decl out(n: node)\n.output out\nout(n) :- walk(n, _).\nout(n) :- hosts(n).\nout(n) :- parsed_in(n, _).\n",
+            ),
+            RUN_VALUE_KEYS,
+        );
+        let read: std::collections::BTreeSet<String> = ["nameref", "astr", "parsed_in", "wstart", "walk", "hosts"].map(str::to_owned).into();
+        let folded: std::collections::HashMap<String, String> = v.rules().map(|r| v.rel_name(r.head().rel()).to_owned()).filter(|h| h.starts_with("rr_in_annotation_")).map(|h| (h.clone(), h.trim_start_matches(|c: char| c != '_').trim_start_matches("_in_annotation_").trim_start_matches(|c: char| c.is_ascii_digit()).trim_start_matches('_').to_owned())).collect();
+        assert!(folded.get("rr_in_annotation_0_nameref").is_some_and(|o| o == "nameref"), "{folded:?}");
+        assert!(v.rules().map(|r| v.show_rule(r)).any(|r| r.starts_with("wstart(") && r.contains("rr_in_annotation_0_nameref(")), "wstart reads the annotation's copy");
+        let (within, same) = super::super::combining::filters_of(&v, &read, &folded);
+        assert!(same.is_empty(), "each reads one that differs: {same:?}");
+        let all: Vec<String> = v.rules().map(|r| v.show_rule(r)).collect();
+        for rel in ["nameref", "astr"] {
+            assert!(within.contains(rel), "{rel} is its original's rows under the bound: {within:?} {all:#?}");
+        }
+        for rel in ["parsed_in", "wstart", "walk", "hosts"] {
+            assert!(!within.contains(rel), "{rel} is made again: {within:?} {all:#?}");
+        }
     }
 
     /// A tree axis read over a node that may be an annotation's is the clone's copy of the axis, over a copy of its kind
@@ -261,7 +337,7 @@
         let axes = |v: &Version| -> Vec<String> { v.rules().flat_map(|r| v.show_rule(r).split(|c: char| !(c.is_alphanumeric() || c == '_')).filter(|w| is_axis(w)).map(str::to_owned).collect::<Vec<_>>()).collect() };
         assert!(axes(&v).iter().any(|r| r.contains("rr_in_annotation_")), "the clone reads the annotation's axis: {:?}", axes(&v));
         let mut p = Pipeline::new("test", v);
-        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0 };
+        let mut fold = super::super::combining::FoldOwn { label: "python", folded: 0, diffed: Default::default() };
         let (mut merge, mut repeats) = (super::super::merge::MergeIdentical::default(), super::super::merge::DropRepeated::default());
         p.program(&mut fold).program(&mut repeats).program(&mut merge).program(&mut repeats);
         let (v, _) = p.finish().unwrap();

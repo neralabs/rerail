@@ -324,7 +324,9 @@ impl Writer {
         let (laid, free) = (self.len_of(part::LAID), self.len_of(part::FREE));
         self.reserve(part::LAID, laid + blocks * LAID_MAX);
         self.reserve(part::FREE, free + 4 * blocks);
-        let count = self.state.blocks as usize;
+        // Each block's entry by its number: the blocks made, and the `blocks` more a run (`reserve_run`) may make
+        // before it lays them.
+        let count = self.state.blocks as usize + blocks;
         self.reserve(part::LAID_AT, count * LAID_AT as usize);
         if self.z {
             let (out, rooms) = (self.len_of(part::OUT), self.len_of(part::ROOM_FREE));

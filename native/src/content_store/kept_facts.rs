@@ -232,15 +232,107 @@ impl KeptSpace {
 
 /// Removes the files of `dir` that `rows` (read in the write transaction) do not name: the files a committed write
 /// replaced, a rolled-back write's, a crashed maker's under its making name. A process mapping one keeps reading it.
+/// A file this process staged (`KeptStage`) is kept until a chain row names it: its wave has not committed yet.
 fn sweep(dir: &Path, rows: &ChainRows) {
     let named: HashSet<&str> = rows.iter().map(|(_, n, _)| n.as_str()).collect();
     let Ok(entries) = std::fs::read_dir(dir) else { return };
+    let staging = staging();
+    let mut pending = staging.0.lock().expect("the staged kept files");
     for e in entries.flatten() {
         let name = e.file_name().to_string_lossy().into_owned();
-        if !named.contains(name.as_str()) {
-            let _ = std::fs::remove_file(e.path());
+        let path = e.path();
+        if named.contains(name.as_str()) {
+            pending.remove(&path);
+        } else if !pending.contains(&path) {
+            let _ = std::fs::remove_file(path);
         }
     }
+}
+
+/// The kept files this process wrote ahead of their wave's commit (`KeptStage`), by path: until a chain row names
+/// one, no sweep removes it. Another process's (or a crashed one's) are removed as any unnamed file.
+#[derive(Default)]
+struct Staging(std::sync::Mutex<HashSet<PathBuf>>);
+
+fn staging() -> std::sync::Arc<Staging> {
+    rerail_prof::code_rule_dsl::logic::profile::shared::<Staging>()
+}
+
+/// A space's puts written to a file of their own ahead of their wave (`KeptStage`): what its commit links.
+#[derive(Clone)]
+struct StagedFile {
+    space: [u8; 32],
+    name: String,
+    tag: u64,
+}
+
+/// Where a gather's stage job leaves its files for the gather's commit job: `None` until it ran.
+type StagedSlot = std::sync::Arc<std::sync::Mutex<Option<Result<Vec<StagedFile>, String>>>>;
+
+/// Whether `p` is written ahead of its wave (`KeptStage`): its rows are columns as they are, no atom column that a
+/// forked process maps to the store's ids at its commit, and no documents' places the commit's transaction finds.
+/// Not a reader record: it only grows (decision 0401 step 8), the record the chain holds joined in the commit's
+/// transaction (`write_chain`); staged alone, the newest wave's record hid every earlier one's, and the next run asked
+/// their entries again and wrote its record, a write in a warm run.
+fn stages(p: &KeptPut) -> bool {
+    p.rel != READERS && matches!(p.what, KeptWhat::Rows(_) | KeptWhat::Flat { .. }) && !p.types.contains(&b's')
+}
+
+/// A kept gather's rows, written as it closes (`Gather::close`'s `now`): each space's in a file of its own, on the
+/// writer's thread, outside any transaction, and let go. Its wave's commit (`KeptWrite`) only links the files into
+/// their chains. Held until the wave sealed, a cold run's kept puts were 2.3 GB of the writer's queue at the cross
+/// part's peak (3,089 files).
+pub(super) struct KeptStage {
+    spaces: Vec<([u8; 32], Vec<KeptPut>)>,
+    slot: StagedSlot,
+}
+
+impl KeptStage {
+    pub(super) fn run(&mut self, store: &super::ContentStore) -> StoreResult<()> {
+        let spaces = std::mem::take(&mut self.spaces);
+        let flush = store.connection.lock().map_or(rerail_blocks::block::Flush::Os, |c| super::connection::flush_of(&c));
+        let made = spaces.into_iter().map(|(space, puts)| stage_space(&store.database_path, &space, &puts, flush)).collect::<StoreResult<Vec<_>>>();
+        let outcome = made.as_ref().map(|_| ()).map_err(|e| StoreError::Invalid(format!("kept facts staged: {e}")));
+        *self.slot.lock().expect("the staged slot") = Some(made.map_err(|e| e.to_string()));
+        outcome
+    }
+}
+
+/// `puts` (all `stages`) of `space` written to a new file of the space's directory, named by its tag alone: its
+/// chain row, and so its place in the chain, is the commit's.
+fn stage_space(store: &Path, space: &[u8; 32], puts: &[KeptPut], flush: rerail_blocks::block::Flush) -> StoreResult<StagedFile> {
+    let io = |e: std::io::Error| StoreError::Io(e);
+    let _span = rerail_prof::code_rule_dsl::logic::profile::span(|| "kept facts: a gather's rows staged".into());
+    let dir = space_dir(store, space);
+    private_dir(&dir).map_err(io)?;
+    let tag = loop {
+        let t = new_tag();
+        if t != 0 {
+            break t;
+        }
+    };
+    let name = format!("s-{tag:016x}.blk");
+    let path = dir.join(&name);
+    staging().0.lock().expect("the staged kept files").insert(path.clone());
+    let reserve = puts.iter().map(|p| room_of(&p.what)).sum::<usize>() + (64 << 20);
+    let mut w = KeptW::create(&path, tag, reserve).map_err(io)?;
+    for p in puts {
+        let reads: Vec<(&str, u64)> = p.reads.iter().map(|(r, d)| (r.as_str(), *d)).collect();
+        let meta = Meta { key: p.key(), digest: p.digest, reads: &reads, types: &p.types };
+        let (cols, n, a, levels) = columns(&p.what, &p.types, None)?;
+        let given = if matches!(p.what, KeptWhat::Flat { given: true, .. }) { rerail_blocks::packed::Order::AsGiven } else { rerail_blocks::packed::Order::Canonical };
+        w.put_cols(meta, &cols, n, a, levels.as_deref(), given).map_err(io)?;
+    }
+    w.finish(flush).map_err(io)?;
+    sync_dir(&dir, flush).map_err(io)?;
+    Ok(StagedFile { space: *space, name, tag })
+}
+
+/// Links `f` as the newest file of its space's chain, in the commit's transaction.
+fn link_staged(t: &Connection, f: &StagedFile) -> StoreResult<()> {
+    let seq = chain_rows(t, &f.space)?.last().map_or(1, |r| r.0 + 1);
+    t.prepare_cached("INSERT INTO main.facts_chain(space, seq, name, tag) VALUES (?1, ?2, ?3, ?4)")?.execute(rusqlite::params![&f.space[..], seq, f.name, f.tag as i64])?;
+    Ok(())
 }
 
 /// A put's rows as columns (`n` rows of `a`, column-major) and their levels: a relation's live rows (neither its own
@@ -498,19 +590,35 @@ fn write_chain(store: &Path, t: &Connection, space: &[u8; 32], puts: Vec<KeptPut
 /// together, appended as one file in the wave's transaction.
 pub(super) struct KeptWrite {
     spaces: Vec<([u8; 32], Vec<KeptPut>)>,
+    /// The files its gather's rows were staged in (`KeptStage`), linked before its own puts are written.
+    staged: Option<StagedSlot>,
 }
 
 impl KeptWrite {
     pub(super) fn run(&mut self, store: &super::ContentStore) -> StoreResult<()> {
         let spaces = std::mem::take(&mut self.spaces);
+        let staged: Vec<StagedFile> = match self.staged.as_ref().map(|s| s.lock().expect("the staged slot").clone()) {
+            None => Vec::new(),
+            Some(Some(Ok(files))) => files,
+            Some(Some(Err(e))) => return Err(StoreError::Invalid(format!("kept facts staged: {e}"))),
+            Some(None) => return Err(StoreError::Invalid("kept facts: the gather's rows were not staged before its wave".into())),
+        };
         let path = store.database_path.clone();
         let written = store.immediate_transaction_once(|t| {
             // Forked (decision 0170): the puts' atom columns are mapped to the store's ids in this transaction.
             let map = |v: &mut [i64]| store.atoms.to_store(t, super::ProcessIds::of_process(v)).map(drop);
+            for f in &staged {
+                link_staged(t, f)?;
+            }
             let mut written = Vec::new();
             for (space, puts) in spaces {
                 if let Some(row) = write_space(&path, t, &space, puts, store.atoms.forked().then_some(&map as &dyn Fn(&mut [i64]) -> StoreResult<()>))? {
                     written.push((space, row));
+                }
+            }
+            for f in &staged {
+                if !written.iter().any(|(s, _)| *s == f.space) {
+                    written.push((f.space, chain_rows(t, &f.space)?));
                 }
             }
             Ok(written)
@@ -603,12 +711,28 @@ impl super::write_back::Gather for KeptGather {
         if spaces.is_empty() {
             return None;
         }
+        let keys = spaces.iter().map(|(s, _)| (space_key(s), None)).collect();
+        // Its rows staged now (`KeptStage`); the rest, and the links, at its wave's commit.
+        let (mut staged, mut rest, mut staged_bytes) = (Vec::new(), Vec::new(), 0);
+        for (space, puts) in spaces {
+            let (now, later): (Vec<KeptPut>, Vec<KeptPut>) = puts.into_iter().partition(stages);
+            staged_bytes += now.iter().map(held_bytes).sum::<usize>();
+            if !now.is_empty() {
+                staged.push((space, now));
+            }
+            if !later.is_empty() {
+                rest.push((space, later));
+            }
+        }
+        let slot = (!staged.is_empty()).then(StagedSlot::default);
+        let now = slot.clone().map(|slot| (staged_bytes, super::write_back::Work(super::write_back::Kind::KeptStage(Box::new(KeptStage { spaces: staged, slot })))));
         Some(super::write_back::Closed {
             what: "kept facts",
-            bytes: self.bytes,
-            keys: spaces.iter().map(|(s, _)| (space_key(s), None)).collect(),
+            bytes: self.bytes - staged_bytes,
+            keys,
             syms: super::write_back::Syms::Mapped,
-            job: super::write_back::Work(super::write_back::Kind::Kept(Box::new(KeptWrite { spaces }))),
+            job: super::write_back::Work(super::write_back::Kind::Kept(Box::new(KeptWrite { spaces: rest, staged: slot }))),
+            now,
         })
     }
 }
@@ -637,7 +761,7 @@ impl super::ContentStore {
         // Outside a run's waves (or with no writer): its own job.
         let puts = puts.take().expect("the puts");
         let held: usize = puts.iter().map(held_bytes).sum();
-        let write = KeptWrite { spaces: vec![(space, puts)] };
+        let write = KeptWrite { spaces: vec![(space, puts)], staged: None };
         self.write_back_syms(super::write_back::Syms::Mapped, "kept facts", held, vec![(space_key(&space), None)], super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
     }
 
@@ -651,7 +775,7 @@ impl super::ContentStore {
             return;
         }
         let held: usize = puts.iter().map(held_bytes).sum();
-        let write = KeptWrite { spaces: vec![(space, puts)] };
+        let write = KeptWrite { spaces: vec![(space, puts)], staged: None };
         self.write_back_syms(super::write_back::Syms::Mapped, what, held, vec![(space_key(&space), None)], super::write_back::Work(super::write_back::Kind::Kept(Box::new(write))));
     }
 

@@ -401,6 +401,8 @@ pub use rerail_json_rules::code_rule_dsl::logic::json_rules;
 // with the corpus's base they read (the corpus runner is behind its registered `plan::corpus::RUNNER`).
 pub use rerail_rr_root::code_rule_dsl::logic::rr;
 pub use rerail_rr_root::code_rule_dsl::logic::settings;
+/// Contexts: code inside code analysed as a pass of its own rules (decision 0597), read with the language's root.
+pub use rerail_rr_root::code_rule_dsl::logic::contexts;
 pub use rerail_logic_core::code_rule_dsl::logic::sql;
 /// The reach index's form found in a program (decision 0119).
 pub use rerail_logic_core::code_rule_dsl::logic::reach_form;

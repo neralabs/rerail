@@ -715,6 +715,8 @@ fn a_clause_over_its_budget_goes_to_w_where_w_costs_less_and_runs_again_where_it
     // One large file (the fixtures' sources one after another) and a few small ones.
     let mut sources = Vec::new();
     files(pack().join("upstream").as_path(), "py", &mut sources);
+    // Without them the large file is empty, and no evaluation outruns its budget: say so.
+    assert!(!sources.is_empty(), "no fixtures under {}: the packs' test data is not pulled (`npm run fixtures:pull`)", pack().join("upstream").display());
     sources.sort();
     let joined: String = sources.iter().step_by(8).filter_map(|path| std::fs::read_to_string(path).ok()).collect::<Vec<_>>().join("\n");
     let mut tapes = vec![python_tape(&joined)];
@@ -876,6 +878,8 @@ fn on_metal_an_unfinished_pass_goes_to_w_where_w_costs_less_and_runs_again_where
     use metal_program_backend::label_passes::INTERPRET_ONLY;
     let mut sources = Vec::new();
     files(pack().join("upstream").as_path(), "py", &mut sources);
+    // Without them the large file is empty, and no evaluation outruns its budget: say so.
+    assert!(!sources.is_empty(), "no fixtures under {}: the packs' test data is not pulled (`npm run fixtures:pull`)", pack().join("upstream").display());
     sources.sort();
     let joined: String = sources.iter().step_by(8).filter_map(|path| std::fs::read_to_string(path).ok()).collect::<Vec<_>>().join("\n");
     let mut tapes = vec![python_tape(&joined)];

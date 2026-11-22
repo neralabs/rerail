@@ -2546,8 +2546,13 @@ impl Model {
         } else {
             kept
         };
-        if let Some((_, _, _, _, Some(priced), _)) = &kept
+        // A kept price is a prediction, its line's last run what the order cost: a line that ran far over its kept
+        // price (`REPLAN` times it, by over `REPLAN_ROWS` rows) is not reused at that price, however near its sizes
+        // (corpus0, 2026-11-21: `open_tuple`'s seed kept at 753 rows, run at 41 M, reused at 753 by 7 strata).
+        let ran_over = |priced: &Priced, ran: Option<f64>| ran.is_some_and(|ran| ran > REPLAN * priced.got.0.1 && ran - priced.got.0.1 > REPLAN_ROWS);
+        if let Some((_, _, _, _, Some(priced), ran)) = &kept
             && near(&priced.sizes, &sizes)
+            && !ran_over(priced, *ran)
             && self.valid_live_driver(&priced.got.0.0, b, first)
         {
             super::super::profile::decision("plan cache (decision 0038)", || format!("a kept plan reused at its kept price: no size it reads moved over {PRICE_DRIFT}x"));
@@ -3882,7 +3887,8 @@ impl Model {
             // each column's distinct values takes the columns as independent, and one often determines another:
             // `walk($n, $x, $s)` by `$n` and `$x`, `$x` being `$n`'s name, was priced at 0.0007 rows a binding for
             // about 2 (`annotated_on_chain`: 6.8 M rows of work for 0.03 M priced).
-            // Only where the placed atoms join the columns' variables (one reached from another): two variables bound by
+            // Only where the placed atoms join the columns' variables (one reached from another), or a constant fixes one
+            // (`pinned`: one value, no product): two variables bound by
             // atoms sharing none are a cross product's pairs, independent, and most pairs are none of the relation's.
             // `open_tuple`'s `child($t, $c, _)` after `kind($t, tuple)` and a scan of `unparen($c, $m)` was priced at a row
             // a pair (10.7 M) for 790, and the tail's witness pricing (Q146) took the cross product as nearly free:
@@ -3902,7 +3908,7 @@ impl Model {
                         }
                     }
                 }
-                vars.iter().all(|v| reached.contains(*v))
+                vars.iter().all(|v| reached.contains(*v) || pinned.contains(*v))
             };
             if cols.len() >= 2 && cols.len() < args.len() && cols.iter().all(|&c| b.constant(args[c]).is_none()) && card > 0.0 && joined_by_placed() {
                 let combinations = cols.iter().map(|&c| t.col(c, b, i, self).ndv1).product::<f64>().clamp(1.0, card);
@@ -4111,16 +4117,12 @@ impl Model {
                 _ => None,
             }
         };
-        let step = |l: usize, rows: f64, bound: &VarSet| -> Option<(f64, f64, Option<Mode>)> {
-            let (w, out, mode) = step_all(l, rows, bound)?;
-            // A step joined by a bound variable: a cross product reads its rows until one passes the rest (Q240).
-            let joined = b.args(l).iter().any(|t| matches!(t, TermRef::Var(v) if bound.contains(*v)));
-            if out > rows && head_vars.is_subset(bound) && joined {
-                let atom = matches!(b.view(l), Lit::Atom(_));
-                return Some((if atom { w - out + rows } else { w }, rows, mode));
-            }
-            Some((w, out, mode))
-        };
+        // A step as every order prices it: the rows it walks, past the head's binding too. The walk's stop at a
+        // binding's first witness is the whole order's (`witnessed`, over its tail), not a step's: priced a step at a
+        // time, as one read a binding, the greedy order read a document's every node as one where none of them
+        // passed (decision 0431 R9's `exists_10($d) :- demand($d), node($d, $v, …), !placed($v), finding($v)`,
+        // 118 rows of work priced, 100 k read a call), and took it unsearched.
+        let step = |l: usize, rows: f64, bound: &VarSet| step_all(l, rows, bound);
         // A computed value (`$s = @rr_node_text($n)`) waits while a positive atom still to join reads its arguments
         // and not the value: that atom only narrows the rows, so computing it first computes (and interns) values for
         // rows it drops. `def_name`'s long-text twin seeded every node past the text bound and read each one's text
@@ -4294,6 +4296,8 @@ impl Model {
         let greedy = |candidates: &mut u64| -> Option<Best> {
             let (mut work, mut rows, mut order, mut bound, mut rest) = best_of.get(&0).cloned().expect("the empty order");
             let mut done: u64 = 0;
+            // The work and rows where the head's variables are all bound before a join (`witnessed`), as `price`'s.
+            let mut tail: Option<(f64, f64)> = None;
             while done != full_mask {
                 let mut best: Option<(usize, f64, f64, Option<Mode>)> = None;
                 for (i, &l) in joins.iter().enumerate() {
@@ -4310,6 +4314,9 @@ impl Model {
                     }
                 }
                 let Some((i, w, out, mode)) = best else { break };
+                if tail.is_none() && head_vars.is_subset(&bound) {
+                    tail = Some((work, rows));
+                }
                 order.push(Step { at: joins[i], mode });
                 bound.extend(b.vars(joins[i]));
                 let (closed, filtered) = close(&mut order, out, &mut bound, &mut rest);
@@ -4317,7 +4324,31 @@ impl Model {
                 work += w + filtered;
                 done |= 1 << i;
             }
-            (done == full_mask).then_some((work, rows, order, bound, rest))
+            (done == full_mask).then_some((witnessed(work, tail, rows), rows, order, bound, rest))
+        };
+        // `RERAIL_PLAN_SHOW=<head>` (dev): what the planner knows of each atom where it orders the head's rules: the
+        // search's, and a greedy order's taken without a search.
+        let shown = std::env::var("RERAIL_PLAN_SHOW").is_ok_and(|r| r.split(',').any(|name| name == b.rel(b.head())));
+        let show_atoms = |what: &str| {
+            eprintln!("plan show {} {what} first {first:?} fixed {} no_size {no_size:b} no_rows {no_rows:b}", b.show_head(), fixed.is_some());
+            for &j in &joins {
+                let Some(a) = b.atom(j) else { continue };
+                let rel = b.rel(a);
+                let cols: Vec<String> = (0..b.args(j).len()).map(|c| format!("ndv {:?} fan {:?}", self.ndv.get(&(rel.to_owned(), c)), self.stats.fan.get(&(rel.to_owned(), c)))).collect();
+                eprintln!(
+                    "plan show   atom {}: derived {} held {} view {} card {:?} lazy {} solving {} prior_later {} col {:?} | {}",
+                    b.show_atom(a),
+                    self.derived.contains(rel),
+                    self.stats.held.contains(rel),
+                    self.view_src.contains_key(rel),
+                    self.stats.card.get(rel),
+                    self.stats.lazy.0.contains_key(rel),
+                    self.stats.solving.contains(rel),
+                    self.stats.prior_later.contains(rel),
+                    self.stats.col.get(&(rel.to_owned(), sql_col(rel, 0))),
+                    cols.join("; ")
+                );
+            }
         };
         let (probe, greedy_first) = rerail_prof::code_rule_dsl::logic::profile::setting(|| (std::env::var_os("RERAIL_PLAN_GREEDY_PROBE").is_some(), std::env::var("RERAIL_PLAN_GREEDY_FIRST").map_or(true, |v| v != "off")));
         let greedy_probe = (probe && joins.len() >= 3).then(|| { let mut c = 0; let g = greedy(&mut c); (g, c) });
@@ -4338,6 +4369,15 @@ impl Model {
         let cheap_greedy = (started.is_none() && greedy_first && !cx.wide && fixed.is_none() && joins.len() >= 3 && joins.len() <= GREEDY)
             .then(|| greedy(&mut candidates))
             .flatten()
+            // Priced as the walk runs it (`price`: `witnessed` over the tail past the bound head), as a start is, not
+            // at `step`'s one witness a step: a tail whose rows hold no witness reads every one of them. ep2's hiding
+            // bound, `fzk($d) :- demand($d), node($d, $s, …), guest_place(_, $s, …)`, must join `node` before the
+            // unconnected `guest_place`; with no guest place, priced at a row a document (80), it read every node of
+            // each (400,983 rows a chunk, 131 M in the run's 329 programs).
+            .and_then(|g| {
+                let (work, rows, _) = price(&g.2, &mut candidates).ok()?;
+                Some((work, rows, g.2, g.3, g.4))
+            })
             .filter(|g| g.0 <= search_rows(b, first));
         if started.is_none() {
             run_counts().searches[usize::from(cheap_greedy.is_some())].fetch_add(1, std::sync::atomic::Ordering::Relaxed);
@@ -4346,6 +4386,10 @@ impl Model {
             best_of.insert(full_mask, g);
         } else if let Some(g) = cheap_greedy {
             super::super::profile::decision("plan cache (decision 0038)", || "greedy first: its work under a search's".into());
+            if shown {
+                show_atoms("greedy first");
+                eprintln!("plan show   greedy work {:.1} rows {:.1}: {}", g.0, g.1, b.shown(&g.2).join(" , "));
+            }
             best_of.insert(full_mask, g);
         } else if joins.len() > joins::greedy_limit(GREEDY, cx.wide) || n_vars > 128 {
             if let Some(g) = greedy(&mut candidates) {
@@ -4657,26 +4701,8 @@ impl Model {
             Some((cell.work, cell.rows, order, bound, rest))
         };
         // `RERAIL_PLAN_SHOW=<head>` (dev): the search's cells of one and two joins, and the full order's, as priced.
-        if std::env::var("RERAIL_PLAN_SHOW").is_ok_and(|r| r.split(',').any(|name| name == b.rel(b.head()))) {
-            eprintln!("plan show {} first {first:?} fixed {} no_size {no_size:b} no_rows {no_rows:b}", b.show_head(), fixed.is_some());
-            for &j in &joins {
-                let Some(a) = b.atom(j) else { continue };
-                let rel = b.rel(a);
-                let cols: Vec<String> = (0..b.args(j).len()).map(|c| format!("ndv {:?} fan {:?}", self.ndv.get(&(rel.to_owned(), c)), self.stats.fan.get(&(rel.to_owned(), c)))).collect();
-                eprintln!(
-                    "plan show   atom {}: derived {} held {} view {} card {:?} lazy {} solving {} prior_later {} col {:?} | {}",
-                    b.show_atom(a),
-                    self.derived.contains(rel),
-                    self.stats.held.contains(rel),
-                    self.view_src.contains_key(rel),
-                    self.stats.card.get(rel),
-                    self.stats.lazy.0.contains_key(rel),
-                    self.stats.solving.contains(rel),
-                    self.stats.prior_later.contains(rel),
-                    self.stats.col.get(&(rel.to_owned(), sql_col(rel, 0))),
-                    cols.join("; ")
-                );
-            }
+        if shown {
+            show_atoms("search");
             for (m, c) in cells.iter().enumerate().filter_map(|(m, c)| c.as_ref().map(|c| (m as u64, c))) {
                 if m.count_ones() <= 5 || m == full_mask {
                     let lits: Vec<String> = (0..joins.len()).filter(|&i| m >> i & 1 == 1).map(|i| b.atom(joins[i]).map_or_else(|| format!("#{}", joins[i]), |a| b.show_atom(a))).collect();

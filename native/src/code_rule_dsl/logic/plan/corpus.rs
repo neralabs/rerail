@@ -129,6 +129,8 @@ pub const PREPARING: &[&str] = &[
     "RERAIL_RULE_ORDER",
     // Guests' copies kept unfolded (`combining::FoldOwn`).
     "RERAIL_SHOWN_COPIES",
+    // A narrow copy as its original less the annotations' change (decision 0575), `=off` to derive every copy again.
+    "RERAIL_NARROW_DIFF",
 ];
 
 pub mod owner {
@@ -1382,6 +1384,7 @@ pub fn run_handed(
     let root = &dunce::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
     // The `RERAIL_*` switches stay as they are until the run ends: a test sets them only while no run reads them.
     let _switches = switches::reading();
+    let _images = crate::code_rule_dsl::logic::rr::HoldImages::enter();
     let git_batch = crate::git_workspace::snapshot::StorageBatch::begin(root).map_err(|error| Error::Plan(error.to_string()))?;
     // Upkeep yields to the run (decision 0190 §8): this process's, and other processes' over its store and the cost
     // statistics, stop at their next check, their work left due, until the run ends.
@@ -2503,7 +2506,13 @@ fn run_observed_within(
             if let Some((listed, outcome)) = &demand {
                 let listed = listed.join(", ");
                 match outcome {
-                    Ok(r) => crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0145)", || format!("{listed}: adornments {}; computed in full where demand would not hold: {}; {} magic rules", r.adornments.join(", "), if r.full_for_negation.is_empty() { "none".to_owned() } else { r.full_for_negation.join(", ") }, r.magic_rules)),
+                    Ok(r) => {
+                        crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0145)", || format!("{listed}: adornments {}; computed in full where demand would not hold: {}; {} magic rules; {} changed to keep the program's components", r.adornments.join(", "), if r.full_for_negation.is_empty() { "none".to_owned() } else { r.full_for_negation.join(", ") }, r.magic_rules, r.reasons.len()));
+                        // Each split, or relations computed in full: the cycle demand would have made, rule by rule.
+                        for why in &r.reasons {
+                            crate::code_rule_dsl::logic::profile::decision(crate::code_rule_dsl::logic::plan::corpus::preparation::magic::REASON_TOPIC, || why.clone());
+                        }
+                    }
                     Err(e) => crate::code_rule_dsl::logic::profile::decision("the program's demand (decision 0145)", || format!("{listed}: not applied ({e}); computed in full")),
                 }
             }
@@ -2859,6 +2868,20 @@ fn run_observed_within(
     // the fixpoint). The memo's keys are the split's, made before.
     let answering = guests::answering(&local_version);
     let parsing = !answering.is_empty();
+    // Decision 0563 A: a run admits no guest where its file-local part answers no request (0431 §8), it is not
+    // `.embedded on` (0512), and no language of its documents embeds another (0431 §4: an HTML file's scripts, a
+    // Python call's HTML argument are programs of their file, made at its load). Its guest relations are then empty
+    // in both parts, so the rules no row can reach go, and what only they read (`Prune`). Both parts are a function of
+    // the split's, whose digests the memo's and the components' keys are.
+    let embeds = {
+        let labels: BTreeSet<&str> = docs.iter().filter_map(|(_, p)| crate::code_rule_dsl::language::label_of_path(p)).collect();
+        std::iter::once(dialect).chain(labels.into_iter().filter_map(crate::code_rule_dsl::language::dialect_by_label)).any(|d| !d.embeds().is_empty())
+    };
+    let (local_version, cross_version) = if !parsing && !embeds && !embedded_on(&*local_version) {
+        (preparation::unfillable(local_version, "file-local", &split.exports).map_err(Error::Plan)?, preparation::unfillable(cross_version, "cross-file", &[]).map_err(Error::Plan)?)
+    } else {
+        (local_version, cross_version)
+    };
     let local_version = if parsing {
         let answers: BTreeMap<String, Vec<String>> = answering.iter().map(|(r, (produced, _))| (r.clone(), produced.clone())).collect();
         crate::code_rule_dsl::logic::answers::gate(&super::body::Placed::whole(local_version), &answers).map_err(Error::Plan)?
@@ -7607,6 +7630,22 @@ fn run_observed_within(
                 }),
                 _ => None,
             };
+            // Not kept: a source whose rows are made on lookup answers them from its structure (`Source::statistics`:
+            // `within`'s, from the tree), with no row made. Counted, `within`'s rows were every node's containers, 1.1 GB
+            // allocated on 1,000 files and past 16 GB on 3,089: the count's lists are 48 bytes a row, over a relation
+            // `len` had made whole. Kept for the next run as counted ones are (`RelStats::of_statistics`): read again
+            // from the structure, a run whose documents are pending built every one to walk its tree (Q332, R7).
+            if counted.is_none()
+                && let Some(known) = source.statistics()
+            {
+                let by_name: HashMap<&str, &Stat> = known.iter().map(|m| (m.0.as_str(), m)).collect();
+                if let Some(batch) = &corpus_batch {
+                    batch.give_distinct(rel, columns.iter().map(|c| by_name.get(c.as_str()).and_then(|m| usize::try_from(m.2).ok())).collect());
+                }
+                let rows = known.first().map_or(0, |m| m.1);
+                let st = columns.iter().map(|c| by_name.get(c.as_str()).map_or_else(|| (c.clone(), rows, rows, rows, rows), |m| (*m).clone())).collect();
+                return (st, "the source's own, from its structure (no row made)", keeps.then(|| super::statkeep::RelStats::of_statistics(names.clone(), &known)));
+            }
             let (counted, how, keep) = counted.unwrap_or_else(|| {
                 let _s = crate::code_rule_dsl::logic::profile::span(|| format!("count {rel}'s statistics off the corpus batch"));
                 let mut k = super::statkeep::RelStats::new(names.clone());
@@ -7775,6 +7814,8 @@ fn run_observed_within(
             let bytes = |c: &Count| match () {
                 () if c.kept.is_some() => 0,
                 () if semijoin.contains(&c.rel) => held_nodes.len() * ROW_BYTES,
+                // Answered by the source from its structure (`base_counted`): no row is listed, and `len` would make them.
+                () if c.source.statistics().is_some() => 0,
                 () => c.source.len() * ROW_BYTES,
             };
             let mut counted: Vec<Counted> = Vec::with_capacity(counts.len());
@@ -8030,6 +8071,7 @@ fn run_observed_within(
     let mut cross_derived_again = 0;
     let mut cross_quiet = (0, 0);
     let mut cross_skipped = 0;
+    let mut cross_unseen = Vec::new();
     // What the cross part binds as rows it holds (`Stats::held`): the exports. Its base relations are the corpus
     // batch's (decision 0458), views and made relations of the tapes, no held rows (`setfix::held_rel`).
     cross_stats.held = Arc::new(split.exports.iter().cloned().collect());
@@ -8472,7 +8514,11 @@ fn run_observed_within(
                     let derived_again: std::cell::RefCell<BTreeSet<String>> = std::cell::RefCell::new(BTreeSet::new());
                     // The inputs' frames, before the run: they depend on the inputs alone.
                     let inputs_done = match (&was_kept, let_go_inputs) {
-                        (Some(was), true) => Some(retain::write_input_kept(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &|rel: &str| input_docs.get(rel).cloned(), &digest_only)),
+                        (Some(was), true) => {
+                            let written = retain::write_input_kept(store, was, &cross_placed, &cross.domains, &split.locations, &cross_inputs, &digests, &|rel: &str| input_docs.get(rel).cloned(), &digest_only);
+                            crate::content_store::write_back::end_wave(crate::content_store::write_back::Boundary::CrossInputs);
+                            Some(written)
+                        }
                         _ => None,
                     };
                     // `false`: not taken, so the run holds it to its end as before.
@@ -8585,7 +8631,7 @@ fn run_observed_within(
                     // The relations whose rows are as they were (decision 0117 step 4): their frames are not written.
                     let unchanged_rels = std::mem::take(&mut got.unchanged);
                     let run_deltas = std::mem::take(&mut got.deltas);
-                    let (run_quiet, run_skipped) = (got.quiet, got.walked.1);
+                    let (run_quiet, run_skipped, run_unseen) = (got.quiet, got.walked.1, std::mem::take(&mut got.unseen));
                     step("ran");
                     step("collected");
                     if spike {
@@ -8834,6 +8880,7 @@ fn run_observed_within(
                     cross_derived_again = maintained.derived_again;
                     cross_quiet = run_quiet;
                     cross_skipped = run_skipped;
+                    cross_unseen = run_unseen;
                     cross_changed = cut.changed.clone();
                     cross_again = maintained.again.iter().fold(BTreeMap::new(), |mut m, (_, why)| {
                         *m.entry(*why).or_insert(0) += 1;
@@ -9273,7 +9320,7 @@ fn run_observed_within(
         CorpusDocs { from_tape: built(&hit_docs_built.0), parsed: built(&hit_docs_built.1), held: corpus_held, made, documents }
     };
     crate::code_rule_dsl::logic::profile::decision("the corpus batch's documents (Q332)", || format!("{corpus_docs:?}"));
-    let report = Report { corpus_docs, parsed: core::parses(), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
+    let report = Report { corpus_docs, parsed: core::parses(), phases, phase_instructions, phase_clock, files: docs.len(), nodes, native: native.len(), rows, chunks, typing: typed, text: (vocabulary.tests.len(), tested, text_cpu), phase_runs, memo: (memo_hits, memo_unattributed), memo_partial: partial_hits.load(std::sync::atomic::Ordering::Relaxed), memo_kept, stats_kept: stats_kept.into_inner(), prepared: origin, cross_strata, cross_kept, cone_kept, guests_unseen: guests_unseen.load(std::sync::atomic::Ordering::Relaxed), guest_parses: guest_parses.parsed(), programs: (programs_counted.0.load(std::sync::atomic::Ordering::Relaxed), programs_counted.1.load(std::sync::atomic::Ordering::Relaxed)), values_admitted: values_admitted.load(std::sync::atomic::Ordering::Relaxed), file_tapes: (file_tapes.0.load(std::sync::atomic::Ordering::Relaxed), file_tapes.1.load(std::sync::atomic::Ordering::Relaxed)), cone_rounds, cross_maintained: (cross_maintained, cross_recursive, cross_derived_again), cross_quiet, cross_skipped, cross_unseen, language_asked, cross_handed, cross_unloaded, cross_changed, cross_again, cross_delta_counts, consulted, cone_inputs, not_per_document, files_observed: Default::default(), run: None, plans: std::iter::once(memo::plan_digest(&memo_program)).chain(program_plans.iter().copied()).chain(part_keys.into_inner().expect("the parts' keys")).chain(nested_plans).collect() };
     handed.succeeded();
     Ok(report)
 }
@@ -10201,7 +10248,9 @@ pub mod tests {
         let git = |args: &[&str]| assert!(std::process::Command::new("git").env("GIT_CONFIG_GLOBAL", "/dev/null").env("GIT_CONFIG_NOSYSTEM", "1").arg("-C").arg(work.path()).args(args).output().unwrap().status.success(), "git {args:?}");
         git(&["init", "-q"]);
         make(work.path());
-        git(&["add", "-A"]);
+        // Each file by name (a shell may refuse `add -A`), but those under `.git`, which no commit holds.
+        let named: Vec<&str> = listed.iter().copied().chain(skipped.iter().map(String::as_str)).filter(|p| !p.split('/').any(|c| c == ".git")).collect();
+        git(&[&["add", "--"][..], &named].concat());
         git(&["-c", "user.name=t", "-c", "user.email=t@t", "commit", "-q", "-m", "every directory committed"]);
         assert_eq!(files(work.path()), listed, "Git's listing");
         let site = tempfile::tempdir().unwrap();

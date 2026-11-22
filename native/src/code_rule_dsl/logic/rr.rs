@@ -143,7 +143,7 @@ pub use super::front::Error;
 #[cfg(any(test, feature = "test-hooks"))]
 pub use lower::drop_unread_core;
 pub use lower::is_core;
-pub use lower::findings::{is_diagnostic, HEAD as DIAGNOSTIC_HEAD, UNPLACED};
+pub use lower::findings::{is_diagnostic, FOUND_NODE, FOUND_THROUGH, HEAD as DIAGNOSTIC_HEAD, PLACED_AT, PLACED_LINE, UNPLACED};
 pub use lower::{FILE_SYSTEM, WORLD};
 pub use print::print_version;
 pub use syntax::quote;
@@ -177,7 +177,7 @@ pub fn library_root() -> PathBuf {
 /// them: `core.rerail` first unless the text is in T's shape, each file once, includes first. A text that includes nothing
 /// is read as it is, without `core.rerail`.
 pub fn parse_version(src: &str) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
-    read_text(src)?.lower_version(true)
+    super::contexts::passes(&read_text(src)?.lower_version(true)?)
 }
 
 /// A program's `.rerail` text as `parse_version` reads it, but with only its libraries' declarations, not their clauses:
@@ -283,6 +283,7 @@ impl Text {
         if asked.is_empty() {
             return Ok(Some(own));
         }
+        let _cone = crate::code_rule_dsl::logic::profile::span(|| "the library's cone copied".to_owned());
         super::plan::corpus::cone_on_version(&own, &library.version, &asked, &declared).map(Some).map_err(Error::Syntax)
     }
 
@@ -362,7 +363,13 @@ impl Text {
             return Ok(Some(version));
         }
         let Some(version) = self.lowered_in_version(library, scoped)? else { return Ok(None) };
-        let version = if version.base_bytes().is_some() { version } else { version.fold().map_err(Error::Syntax)? };
+        let version = if version.base_bytes().is_some() {
+            version
+        } else {
+            let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's version folded".into());
+            version.fold().map_err(Error::Syntax)?
+        };
+        let _s = crate::code_rule_dsl::logic::profile::span(|| "a program's image kept".into());
         if keep_image(store, "a program image", key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
             crate::code_rule_dsl::prof::count("rr.program_image_written", 1);
         }
@@ -577,6 +584,7 @@ pub fn lower_library(paths: &[PathBuf], store: Option<&crate::content_store::Con
             None => {
                 // Linked on versions (decision 0377): the modules' rules are never a tree.
                 let version = link_library_versions(modules.iter().map(lower::Module::clone).collect())?;
+                let _s = crate::code_rule_dsl::logic::profile::span(|| "a linked library's image kept, its kind sets".into());
                 if keep_image(store, "a linked library's image", key, version.own_image().filter(|_| version.base_bytes().is_some()).expect("a folded version is a base").clone()) {
                     crate::code_rule_dsl::prof::count("rr.linked_library_written", 1);
                 }
@@ -776,7 +784,53 @@ fn images_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> 
 }
 
 pub fn image_store() -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
-    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { images_store() } else { None }
+    if cfg!(feature = "tape-cache") && std::env::var("RERAIL_MODULE_IMAGES").map_or(true, |v| v != "off") { held_image_store(images_store) } else { None }
+}
+
+/// The image store a run opened, held while the run's call runs (`HoldImages`, one of the run's own values, decision
+/// 0442): opened at each ask, it was opened and closed once a program text (phase 0's graphs, a text's header, its
+/// guests' asks), and each close of its last connection made SQLite delete and make again its write-ahead log (1.9 s
+/// of a 90 s run). Outside a run's call, opened at each ask. Held past the call, a test's store stayed open after its
+/// run (`a_tests_store_is_a_copy_of_the_template_and_goes_with_its_test`).
+#[derive(Default)]
+struct HeldImageStore {
+    store: std::sync::Mutex<Option<Option<std::sync::Arc<crate::content_store::ContentStore>>>>,
+    calls: std::sync::atomic::AtomicUsize,
+}
+
+pub fn held_image_store(open: impl FnOnce() -> Option<std::sync::Arc<crate::content_store::ContentStore>>) -> Option<std::sync::Arc<crate::content_store::ContentStore>> {
+    if crate::code_rule_dsl::logic::profile::run_own().is_none() {
+        return open();
+    }
+    let held = crate::code_rule_dsl::logic::profile::local::<HeldImageStore>();
+    if held.calls.load(std::sync::atomic::Ordering::Acquire) == 0 {
+        return open();
+    }
+    held.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner).get_or_insert_with(open).clone()
+}
+
+/// The image store held while a run's call runs (`held_image_store`): the outermost call's guard lets it go.
+pub struct HoldImages(Option<std::sync::Arc<HeldImageStore>>);
+
+impl HoldImages {
+    pub fn enter() -> HoldImages {
+        if crate::code_rule_dsl::logic::profile::run_own().is_none() {
+            return HoldImages(None);
+        }
+        let held = crate::code_rule_dsl::logic::profile::local::<HeldImageStore>();
+        held.calls.fetch_add(1, std::sync::atomic::Ordering::AcqRel);
+        HoldImages(Some(held))
+    }
+}
+
+impl Drop for HoldImages {
+    fn drop(&mut self) {
+        if let Some(held) = &self.0 {
+            if held.calls.fetch_sub(1, std::sync::atomic::Ordering::AcqRel) == 1 {
+                held.store.lock().unwrap_or_else(std::sync::PoisonError::into_inner).take();
+            }
+        }
+    }
 }
 
 /// How long a module's or program's image stays in the store after the last run that read or wrote it
@@ -1045,6 +1099,7 @@ fn link_seeded_version(linked: lower::Linked, own_v: std::sync::Arc<super::progr
     let seeds = &scoped.seeds;
     let lower::Linked { lowered, stated, own_stated, .. } = linked;
     let v = lowering_tail_on(scoped.version()?, vec![(own_v, stated, own_stated)], true, lowered, library)?;
+    let _unseeding = crate::code_rule_dsl::logic::profile::span(|| "the scope's seeds taken out".to_owned());
     let mut b = Builder::on(&v);
     lower::unseed(&mut b.fields(), seeds, core, library.map(|l| &*l.version));
     b.finish().map(|(v, _)| v).map_err(Error::Syntax)
@@ -1062,6 +1117,7 @@ pub fn lower_statements_version(statements: Vec<Stmt>) -> Result<std::sync::Arc<
 pub fn link_library_versions(modules: Vec<lower::Module>) -> Result<std::sync::Arc<super::program_image::Version>, Error> {
     let linked = lower::link_versions(modules)?;
     let version = lowering_tail_on(linked.first, linked.appended, false, linked.lowered, None)?;
+    let _s = crate::code_rule_dsl::logic::profile::span(|| "a library's version folded".into());
     if version.base_bytes().is_some() { Ok(version) } else { version.fold().map_err(Error::Syntax) }
 }
 
@@ -1106,6 +1162,7 @@ fn lowering_tail_on(start: std::sync::Arc<super::program_image::Version>, append
             break;
         }
     }
+    let _finishing = crate::code_rule_dsl::logic::profile::span(|| "the lowering's tail: its version made".to_owned());
     let (v, _) = p.finish().map_err(Error::Syntax)?;
     Ok(v)
 }
