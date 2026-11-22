@@ -179,6 +179,11 @@ export interface WatcherWalk {
 export interface WorktreeWatcher {
   /** The filesystem's clock (`filesystemClock`). */
   clock(): Promise<number>;
+  /**
+   * Called before each walk begins, before {@link WorktreeWatcher.start}: learns what `start` asks Git as processes no
+   * thread waits on, so `start` finds it kept. Never rejects; starts no Git once `signal` is aborted.
+   */
+  prepare?(signal: AbortSignal): Promise<void>;
   /** Called as each walk begins, before it reads anything; undefined once the session has closed or cannot say. */
   start(): WatcherWalk | undefined;
 }
@@ -659,6 +664,7 @@ export class WorktreeWalks {
 
   /** One walk, for every session asking and every session sharing a worktree with one; returns the sessions that asked. */
   async #walkOnce(): Promise<Watching[]> {
+    await this.#prepare();
     const starts = this.#start();
     this.#forget([...starts.values()].map(walk => rootsOf(walk)));
     this.#watchRegistries(starts.values());
@@ -670,6 +676,13 @@ export class WorktreeWalks {
     const found = await this.#read(walking);
     for (const [watching, walk] of walking) this.#deliver(watching, { walk, found, answers: answers.get(watching)! });
     return askers;
+  }
+
+  /** Each watching session's {@link WorktreeWatcher.prepare}, through the walks' Git reads, which stop with the last session. */
+  async #prepare(): Promise<void> {
+    const git = this.#git;
+    const preparing = this.#watching.filter(({ watcher }) => watcher.prepare !== undefined).map(({ watcher }) => git.run(async signal => await watcher.prepare?.(signal)));
+    if (preparing.length > 0) await Promise.allSettled(preparing);
   }
 
   /** Each open session's part in the walk beginning now; one that cannot say has its request dropped. */

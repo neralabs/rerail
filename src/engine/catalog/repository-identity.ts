@@ -690,6 +690,15 @@ export async function learnWorktreeRegistry(checkout: string, options: GitReadOp
   return await listing;
 }
 
+/**
+ * {@link learnWorktreeRegistry} of `checkout` for the registry's next ask, where that ask takes what it learns with no
+ * Git: not for a checkout placed by a kept acceptance, which a placement without blocking places by Git again and whose
+ * list, kept with no stamp, Git gives at each ask; the registry places and lists that one as before.
+ */
+export async function learnWorktreeList(checkout: string, options: GitReadOptions = {}): Promise<void> {
+  if (!gitAcceptances.has(resolve(checkout))) await learnWorktreeRegistry(checkout, options);
+}
+
 /** The lists of a registry read without blocking, by common directory: sessions opening together share one Git process. */
 const listingWithoutBlocking = new Map<string, Promise<WorktreeRegistry | undefined>>();
 

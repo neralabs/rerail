@@ -2804,9 +2804,13 @@ export class CodeRuleBridge {
    * seen.
    */
   #scheduleWorktreeWalk(discovery: SourceDiscovery): void {
-    if (discovery.cancelled || this.#auditor.worktreeRoots === undefined) return;
+    const auditor = this.#auditor;
+    if (discovery.cancelled || auditor.worktreeRoots === undefined) return;
+    // An auditor that learns its worktrees ahead has each walk learn them first, so the walk's start asks Git nothing.
+    const prepare = auditor.learnWorktreeRoots === undefined ? {} : { prepare: async (signal: AbortSignal) => await auditor.learnWorktreeRoots?.(signal) };
     discovery.worktrees.watch ??= this.#sharedWorktreeWalks().watch({
       clock: filesystemClock,
+      ...prepare,
       start: () => this.#startWorktreeWalk(discovery),
     });
     discovery.worktrees.watch.request();

@@ -1632,6 +1632,11 @@ export interface CodeRuleAuditor {
   /** The repository's other worktrees (physical) a source walk covers as well as the session folder; none when absent. */
   worktreeRoots?(): readonly string[];
   /**
+   * Learns what {@link CodeRuleAuditor.worktreeRoots} asks Git, as processes no thread waits on, so its next call finds
+   * it kept while nothing changed meanwhile. Never rejects; starts no Git once `signal` is aborted.
+   */
+  learnWorktreeRoots?(signal: AbortSignal): Promise<void>;
+  /**
    * The folder where Git registers the repository's linked worktrees (`worktrees` in its common Git folder), physical, as
    * `worktreeRoots` last found it: a change there may add one of them. Undefined when unknown; none when absent.
    */
