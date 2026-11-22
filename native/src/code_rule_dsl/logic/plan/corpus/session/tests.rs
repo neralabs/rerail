@@ -962,3 +962,65 @@ fn cache_boundary_edits_explain_the_current_snapshot() {
         }
     }
 }
+
+/// 0597 rung 2.11: a pass runs only on what changed in its inputs (rule 7, 0563 B). In a session, an edit that changes
+/// no root and no relation the context reads `.from` (b.py's own line) changes no input of the context, so none of its
+/// cross strata runs. Renaming the class the annotation names (a.py's `Foo`, the annotation's text unchanged) changes
+/// what the context reads `.from` its host (`defined`, a cross-file relation, so the context's `resolved` is the cross
+/// part's), and the row goes. Each run's rows are a full run's.
+#[test]
+fn a_contexts_strata_run_only_on_changes_to_its_roots_and_reads() {
+    let base = crate::code_rule_dsl::fixtures::temp().with_extension("session-context");
+    let (src, out) = (base.join("src"), base.join("out"));
+    std::fs::create_dir_all(&src).unwrap();
+    let rule = base.join("context.rerail");
+    std::fs::write(
+        &rule,
+        r#".policy "test-context" revision 1
+.language python
+.mode steer
+.scope include "**/*.py"
+#include "python/ast.rerail"
+.decl defined(x: symbol)
+defined(x) :- kind(c, "class_definition"), field(c, "name", n), text(n, x).
+.decl quoted_root(r: node)
+quoted_root(r) :- string_annotation(s), parsed(s, "annotation", r).
+.decl resolved(x: symbol)
+resolved(x) :- kind(i, "identifier"), text(i, x), defined(x).
+.decl quoted_resolved(x: symbol)
+quoted_resolved(x) :- res(x).
+.output quoted_resolved
+.context quoted of python roots quoted_root exports resolved
+.from python defined for quoted
+.from quoted resolved as res
+"#,
+    )
+    .unwrap();
+    std::fs::write(src.join("a.py"), "class Foo: ...\nx: \"Foo\" = 1\n").unwrap();
+    std::fs::write(src.join("b.py"), "y = 1\n").unwrap();
+    let program = crate::code_rule_dsl::tools::flatten(&rule).unwrap();
+    let run = || super::super::run(&program, &src, None, &out, "program", Binding::Cpu, 1 << 18).unwrap();
+    let rows = || {
+        let mut rows: Vec<Vec<String>> = crate::code_rule_dsl::logic::plan::output::shown(&out, "quoted_resolved").unwrap_or_default();
+        rows.sort();
+        rows
+    };
+    let full = || {
+        full(run);
+        rows()
+    };
+    let session = start(&base.join("session")).unwrap();
+    run();
+    assert_eq!(rows(), [["Foo"]]);
+    std::fs::write(src.join("b.py"), "y = 2\n").unwrap();
+    let report = run();
+    assert_eq!(rows(), full(), "the session's rows are a full run's");
+    assert!(!report.cross_changed.iter().any(|c| c.contains("rr_cx_quoted") || c == "defined_at"), "no input of the context changed: {:?}", report.cross_changed);
+    std::fs::write(src.join("a.py"), "class Bar: ...\nx: \"Foo\" = 1\n").unwrap();
+    let report = run();
+    assert_eq!(rows(), full(), "the session's rows are a full run's");
+    assert!(rows().is_empty(), "Foo names no class now: {:?}", rows());
+    assert!(report.cross_changed.iter().any(|c| c == "defined_at"), "what the context reads .from changed: {:?}", report.cross_changed);
+    drop(session);
+    let _ = std::fs::remove_dir_all(&base);
+}
