@@ -4117,7 +4117,11 @@ impl Model {
             // A first scan (nothing bound yet) of a member that had rows when the component opened reads those rows
             // once: its card, measured then (`Stats::sized`). A whole plan priced by the floor took `pv` (65 k rows)
             // first, tied with `decfn` (1 k) at the corpus's 180 k, and read it in full (O125 step 07).
-            let sized = bound.is_empty() && stats.sized.contains(rel);
+            // A whole plan (no delta atom) runs in the wave whose delta is each member's whole relation, its rows the
+            // seeds' (`setfix`'s `whole`), and is replanned from their live counts: a first scan reads those rows,
+            // its card. Floored, the candidates of a copy (`rr_cand_pt_walk`, 2,635 rows) were priced as the corpus
+            // (1.76 M), and the whole plan scanned `rr_nearest_pt_fscope` (1.83 M) to probe them, in each call.
+            let sized = bound.is_empty() && (stats.sized.contains(rel) || (first.is_none() && stats.card.contains_key(rel)));
             if !delta && !sized && stats.solving.contains(rel) && !args.iter().any(|t| matches!(t, TermRef::Var(v) if bound.contains(*v))) {
                 let mut floor = stats.nodes;
                 for (c, t) in args.iter().enumerate() {

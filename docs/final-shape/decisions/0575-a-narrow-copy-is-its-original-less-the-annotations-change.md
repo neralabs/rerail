@@ -103,6 +103,19 @@ or read `guest_of` (784 to 809 G) were unsound, and are not counted.
     copy of a member (§3's mixed points-to components), its guests' copies are not folded: each holds the
     annotations' rows alone, reading what the annotations see (`Narrowing::apart`), and the originals stay narrow, so
     no copy of them is derived. 44 copies. Every copy unfolded instead costs 857 G.
+12. **Whether a copy is read in place is a rule's choice.** A rule whose reads cannot all be written in place (an
+    aggregate's, past 16 ways) reads the copies it reads as relations, kept for it (§9's form); every other rule
+    reads them in place. A copy goes when no rule reads it. Kept for every reader instead, one rule of
+    `rr_cand_pt_outside_dec` kept `pt_nameref`'s copy for all of them. 183 read in place, 19 of them kept for 27
+    rules.
+13. **A pushed join is named by its literals in one order** (`PushLocalJoins`: by their text, the interface by first
+    sight in it). The recheck of `pt_walk` and `pt_walk`'s seed push one join written in two orders, so it was made
+    twice in every chunk (449 K rows).
+14. **A whole plan's first scan of a member is priced by its rows** (`plan.rs`, `atom_rows`). A whole plan runs in
+    the wave whose delta is each member's whole relation (the seeds' rows), replanned from their live counts. Floored
+    at the corpus, as a member nothing measured is, `rr_cand_pt_walk` (2,635 rows) was priced at 1.76 M, and its
+    whole plan scanned `rr_nearest_pt_fscope` (1.83 M rows) to probe it, in each of 10 calls: 1.1 s of CPU and
+    631 MB allocated, now 2.5 ms and 1.3 MB. `pt_walk`'s whole plans gain the same way.
 7. **A rule beside its annotation twin reads only the copies' deltas** (`Folding::beside_twin`). Since #923 a rule
    that reads an original (narrow, so its copy) sits beside a twin of the same head that reads an annotation's copy
    (folded, so the whole original) and is the rule otherwise: each derivation was made twice (`pt_vopen`). The rule is
@@ -124,13 +137,15 @@ as its own rules again (781 G: the work moves into its readers).
 | 10, inputs bound empty | 741.6 G | 1.49 GB |
 | 9, copies kept read in place | 737.7 G | 1.49 GB |
 | 11, mixed copies apart | 730.2 G | 1.48 GB |
+| 12, read in place by rule | 735.6-737.2 G | 1.48-1.49 GB |
+| 13, one pushed join | 724.8 G | 1.49 GB |
+| 14, whole plans by members' rows | 697.1 G | 1.49 GB |
 
 Two runs of one binary differed by up to 8 G at loads of 20 to 30.
 
 ## What is left
 
-Against the profiled baseline, the run has 3 times the strata (2,151 against 690; 1,023 held empty) and twice the
-rules. Joins are 2.1 s of the 8.4 s of CPU over it; the rest is per stratum (planning, statistics, opening) and in
-preparation (pushing the file-local joins, the well-founded components, cutting the exports). The candidates' rules
-also take readers past the inliner's limit (`pt_nameref`: 12 reader copies, stored where it was inlined).
-`rr_ann_node` reads every row of `kind` for the 2,454 in the annotations' range.
+Against the profiled baseline (605 G), the run is 735 G profiled. It has 3 times the strata (2,187 against 690;
+about 1,000 held empty) and twice the rules; the machinery's strata cost about 2 s of CPU, and preparation 1 s more.
+The candidates' rules also take readers past the inliner's limit (`pt_nameref`: 14 reader copies, stored where it was
+inlined). `rr_ann_node` reads every row of `kind` for the 2,454 in the annotations' range.
